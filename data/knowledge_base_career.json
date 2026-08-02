@@ -1,0 +1,44 @@
+[
+  {
+    "asset_uuid": "ast_career_001",
+    "title": "Panduan & Spreadsheet Job Search Tracker",
+    "description": "Spreadsheet Google Sheets interaktif untuk melacak status lamaran kerja, jadwal follow-up HRD, dan dashboard progress interview.",
+    "category": "CAREER_MANAGEMENT",
+    "estimated_time_minutes": 10,
+    "outcomes": [
+      "Tracker Lamaran Kerja terorganisir",
+      "Jadwal & Template Follow-up HRD",
+      "Dashboard Progress Interview"
+    ],
+    "delivery_url": "https://docs.google.com/spreadsheets/d/1yK3C4cKqG1l3y63EaZ42A6T7_dZJkKq_Zz7l_1s2k00/edit?usp=sharing",
+    "keywords": ["cari kerja", "job tracker", "spreadsheet lamaran", "baru lulus", "fresh graduate"]
+  },
+  {
+    "asset_uuid": "ast_career_002",
+    "title": "Template CV ATS Friendly & Modern (Word & Canva)",
+    "description": "Kumpulan template Curriculum Vitae yang lolos pemindaian sistem ATS (Applicant Tracking System) perusahaan besar.",
+    "category": "RESUME_BUILDING",
+    "estimated_time_minutes": 15,
+    "outcomes": [
+      "CV berstandar ATS lolos seleksi awal",
+      "Format penulisan pengalaman & skill yang terstruktur",
+      "Mudah diedit di Microsoft Word atau Canva"
+    ],
+    "delivery_url": "https://docs.google.com/document/d/1HZHdlzPrud-Z3GqOtVLEt0g_Pxnsn2iK/edit?usp=sharing",
+    "keywords": ["bikin cv", "cv ats", "template cv", "resume", "lamaran kerja", "minta cv"]
+  },
+  {
+    "asset_uuid": "ast_career_003",
+    "title": "Script & Template Chat Follow-Up HRD via WA & Email",
+    "description": "Kumpulan kalimat ramah dan profesional untuk menanyakan status wawancara atau lamaran kerja tanpa terkesan memaksa.",
+    "category": "COMMUNICATION",
+    "estimated_time_minutes": 5,
+    "outcomes": [
+      "Draft pesan follow-up siap pakai",
+      "Gaya bahasa sopan & profesional",
+      "Meningkatkan respon balik dari perekrut/HRD"
+    ],
+    "delivery_url": "https://docs.google.com/document/d/example_wa_hrd_script",
+    "keywords": ["follow up hrd", "chat hrd", "email lamaran", "tanya hasil interview"]
+  }
+]

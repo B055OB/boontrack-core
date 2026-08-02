@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: boontrack_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: boontrack_user
+      POSTGRES_PASSWORD: boontrack_password
+      POSTGRES_DB: boontrack_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U boontrack_user -d boontrack_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: boontrack_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://boontrack_user:boontrack_password@postgres:5432/boontrack_db
+      - ENVIRONMENT=development
+      - PYTHONPATH=/app
+      - BACKEND_URL=http://backend:8000/api/v1/search
+      - LLM_PROVIDER=groq
+      - GROQ_API_KEY=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
+      - TELEGRAM_BOT_TOKEN=8858717294:AAGzXo3pfizX7qL-Z6ln7DLliSaeVEAApMQ
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
