@@ -13,7 +13,7 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from app.services.solution_engine import SolutionEngine
+from app.intelligence.gateway import AIGateway
 
 # Logging configuration
 logging.basicConfig(
@@ -39,20 +39,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-solution_engine = SolutionEngine()
+ai_gateway = AIGateway()
 
 
 @app.get("/")
 async def root():
     return {"status": "online", "message": "BoonTrack Core Engine is Running"}
-
-
-@app.get("/api/v1/search")
-async def search_endpoint(q: str = ""):
-    if not q:
-        raise HTTPException(status_code=400, detail="Query parameter 'q' cannot be empty.")
-    result = await solution_engine.find_solution(user_message=q)
-    return result
 
 
 # --- HANDLER CONVERSATION TELEGRAM BOT ---
@@ -75,28 +67,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip().lower()
 
-    # Jika user memilih menu 1 (Buat/Update CV)
     if text == "1" or "cv" in text or "buat" in text or "perbarui" in text:
         await update.message.reply_text(
-            "Siap, mari kita buat/perbarui CV kamu! Pertama-tama, boleh tahu siapa **nama lengkap kamu**?",
+            "Siap, mari kita buat/perbarui CV kamu! Pertama-tama, siapa **nama lengkap kamu**?",
             parse_mode="Markdown"
         )
         return NAMA
     else:
-        # Jika memilih menu 2, 3, 4 atau pertanyaan bebas lainnya
         try:
-            result = await solution_engine.find_solution(user_message=text)
-            reply = result.get("text") or result.get("message") or "Ada yang bisa saya bantu lagi?"
+            res = await ai_gateway.generate(prompt=text)
+            reply = res.text if hasattr(res, 'text') else str(res)
             await update.message.reply_text(reply, parse_mode="Markdown")
         except Exception as e:
-            logger.error(f"Error pada handle_menu_choice: {e}")
-            await update.message.reply_text("Ada yang bisa saya bantu lagi?")
+            logger.error(f"Error AI Menu: {e}")
+            await update.message.reply_text("Ada yang bisa saya bantu lagi? Ketik /start untuk kembali ke menu utama.")
 
         return ConversationHandler.END
 
 
 async def get_nama(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['nama'] = update.message.text
+    context.user_data['nama'] = update.message.text.strip()
     await update.message.reply_text(
         f"Salam kenal, **{context.user_data['nama']}**! 😊\n\n"
         "Selanjutnya, **posisi atau bidang pekerjaan apa yang ingin kamu lamar?** (Contoh: Admin, Auditor, Digital Marketing)",
@@ -106,7 +96,7 @@ async def get_nama(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def get_posisi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['posisi'] = update.message.text
+    context.user_data['posisi'] = update.message.text.strip()
     await update.message.reply_text(
         f"Sip! Untuk posisi **{context.user_data['posisi']}**, apa **pendidikan terakhir kamu**? (Sebutkan Nama Sekolah/Kampus & Jurusan)",
         parse_mode="Markdown"
@@ -115,7 +105,7 @@ async def get_posisi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def get_pendidikan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['pendidikan'] = update.message.text
+    context.user_data['pendidikan'] = update.message.text.strip()
     await update.message.reply_text(
         "Oke terdata! Apa **pengalaman kerja terakhir atau organisasi** yang pernah kamu ikuti?\n"
         "*(Jika belum pernah kerja, ketik: 'Belum ada pengalaman')*",
@@ -125,7 +115,7 @@ async def get_pendidikan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def get_pengalaman(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['pengalaman'] = update.message.text
+    context.user_data['pengalaman'] = update.message.text.strip()
     await update.message.reply_text(
         "Terakhir, apa saja **keahlian (skill) utama, software, atau sertifikasi** yang kamu miliki?",
         parse_mode="Markdown"
@@ -134,28 +124,54 @@ async def get_pengalaman(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def get_skill_and_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['skill'] = update.message.text
+    context.user_data['skill'] = update.message.text.strip()
 
     await update.message.reply_text("Sedang meracik dan menyusun draft CV ATS-friendly kamu... Tunggu sebentar ya! ⏳")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     prompt_final = (
-        f"Tolong buatkan draft struktur CV ATS-Friendly lengkap dalam format Markdown berdasarkan data berikut:\n"
-        f"- Nama Lengkap: {context.user_data.get('nama')}\n"
-        f"- Posisi Dilamar: {context.user_data.get('posisi')}\n"
-        f"- Pendidikan Terakhir: {context.user_data.get('pendidikan')}\n"
-        f"- Pengalaman Kerja/Organisasi: {context.user_data.get('pengalaman')}\n"
-        f"- Keahlian / Skill: {context.user_data.get('skill')}\n\n"
-        f"Buat dengan struktur rapi: Ringkasan Profil, Pendidikan, Pengalaman, dan Skill."
+        f"Tolong buatkan draft struktur CV ATS-Friendly lengkap dalam format Markdown berdasarkan data berikut:\n\n"
+        f"Nama Lengkap: {context.user_data.get('nama')}\n"
+        f"Posisi Dilamar: {context.user_data.get('posisi')}\n"
+        f"Pendidikan Terakhir: {context.user_data.get('pendidikan')}\n"
+        f"Pengalaman Kerja/Organisasi: {context.user_data.get('pengalaman')}\n"
+        f"Keahlian / Skill: {context.user_data.get('skill')}\n\n"
+        f"Format susunan rapi:\n"
+        f"1. Ringkasan Profil\n"
+        f"2. Pendidikan\n"
+        f"3. Pengalaman\n"
+        f"4. Keahlian/Skill\n\n"
+        f"Berikan juga 2-3 tips singkat peningkat daya saing untuk posisi tersebut."
     )
 
     try:
-        result = await solution_engine.find_solution(user_message=prompt_final)
-        reply = result.get("text") or result.get("message") or "Draft CV berhasil dibuat!"
+        res = await ai_gateway.generate(prompt=prompt_final)
+        reply = res.text if hasattr(res, 'text') else str(res)
         await update.message.reply_text(reply, parse_mode="Markdown")
+        await update.message.reply_text(
+            "\n✨ **Draft CV kamu sudah selesai dibuat!**\n"
+            "Ketik /start kapan saja jika ingin membuat CV baru atau memilih menu lainnya.",
+            parse_mode="Markdown"
+        )
     except Exception as e:
         logger.error(f"Error generating CV: {e}")
-        await update.message.reply_text("Maaf, terjadi kendala teknis saat menyusun CV.")
+        # Fallback manual jika API Groq mengalami timeout / limit
+        fallback_text = (
+            f"📄 **DRAFT CV ATS-FRIENDLY**\n\n"
+            f"**Nama:** {context.user_data.get('nama')}\n"
+            f"**Posisi Dilamar:** {context.user_data.get('posisi')}\n\n"
+            f"--- **RINGKASAN PROFIL** ---\n"
+            f"Kandidat profesional berdedikasi yang melamar untuk posisi {context.user_data.get('posisi')}. "
+            f"Memiliki latar belakang pendidikan dari {context.user_data.get('pendidikan')} serta didukung oleh keahlian {context.user_data.get('skill')}.\n\n"
+            f"--- **PENDIDIKAN** ---\n"
+            f"• {context.user_data.get('pendidikan')}\n\n"
+            f"--- **PENGALAMAN** ---\n"
+            f"• {context.user_data.get('pengalaman')}\n\n"
+            f"--- **KEAHLIAN / SKILL** ---\n"
+            f"• {context.user_data.get('skill')}\n\n"
+            f"✨ Ketik /start untuk kembali ke menu utama."
+        )
+        await update.message.reply_text(fallback_text, parse_mode="Markdown")
 
     return ConversationHandler.END
 
