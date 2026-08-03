@@ -3,7 +3,6 @@ import os
 import logging
 from typing import Dict, Any, List
 from app.services.delivery.delivery_service import DeliveryService
-# Path import AIGateway yang benar
 from app.intelligence.gateway import AIGateway 
 
 logger = logging.getLogger(__name__)
@@ -18,7 +17,6 @@ class SolutionEngine:
             self.assets_path = str(assets_path)
 
         self.assets = self._load_assets()
-        # Inisialisasi AI Gateway
         self.ai_gateway = AIGateway()
 
     def _load_assets(self) -> List[Dict[str, Any]]:
@@ -94,25 +92,25 @@ class SolutionEngine:
                         "download_url": download_url,
                     }
 
-            # LAYER 2: Generative AI via AIGateway (Interactive Guided Interview)
+            # LAYER 2: Generative AI via AIGateway (Interactive Guided Interviewer)
             sys_prompt = (
-                "Kamu adalah BoonTrack Assistant, seorang konsultan karir & pembuat CV interaktif.\n\n"
-                "PERINTAH DAN ALUR UTAMA (SANGAT KETAT):\n"
-                "Tugasmu adalah memandu pengguna secara step-by-step dalam membuat CV. Jawab singkat dan LANGSUNG LALU TANYA PERTANYAAN BERIKUTNYA.\n\n"
-                "LOGIKA DETEKSI JAWABAN PENGGUNA:\n"
-                "1. Jika pengguna memilih angka '1' atau minta 'buat CV':\n"
-                "   -> Jawab: 'Siap, mari kita buat CV kamu! Pertama-tama, siapa nama lengkap kamu?'\n\n"
-                "2. Jika pengguna menyebutkan NAMA (misal hanya 1-3 kata nama orang seperti 'Rayi', 'Aldi', 'Budi Santoso'):\n"
-                "   -> Anggap itu jawaban nama! Sapa namanya dan LANGSUNG TANYAKAN POSISI IMPIAN/DILAMAR.\n"
-                "   -> Contoh Balasan: 'Salam kenal, [Nama]! Selanjutnya, posisi atau bidang pekerjaan apa yang ingin kamu lamar?'\n\n"
-                "3. Jika pengguna menyebutkan POSISI/BIDANG (misal 'Digital Marketing', 'Software Engineer', 'Admin'):\n"
-                "   -> Catat posisi tersebut dan LANGSUNG TANYAKAN PENDIDIKAN TERAKHIR.\n"
-                "   -> Contoh Balasan: 'Oke, bidang [Posisi]! Apa pendidikan terakhir kamu (Nama kampus/sekolah & jurusan)?'\n\n"
-                "4. Jika pengguna menyebut PENDIDIKAN:\n"
-                "   -> LANGSUNG TANYAKAN PENGALAMAN KERJA TERAKHIR / ORGANISASI.\n\n"
-                "ATURAN TAMBAHAN:\n"
-                "- DILARANG KERAS mengulang salam pembuka umum seperti 'Selamat datang! Saya senang membantu Anda dalam persiapan melamar kerja...' jika pengguna sedang menjawab data CV.\n"
-                "- Selalu akhiri pesan dengan SATU pertanyaan spesifik untuk data CV berikutnya."
+                "Kamu adalah BoonTrack Assistant, konsultan karir & pembuat CV interaktif.\n\n"
+                "ATURAN ALUR INTERVIEW (SANGAT KETAT):\n"
+                "Analisislah teks dari pengguna dan tentukan tahap mana yang sedang diresponnya:\n\n"
+                "1. Jika pengguna memilih angka '1' atau kata 'buat cv' / 'update cv':\n"
+                "   -> Tanya: 'Siap, mari kita buat/perbarui CV kamu! Pertama-tama, boleh tahu siapa nama lengkap kamu?'\n\n"
+                "2. Jika pengguna menyebutkan NAMA (misal: 'Rayi', 'Aldi Rinaldiawan'):\n"
+                "   -> Tanya: 'Salam kenal! Selanjutnya, posisi atau bidang pekerjaan apa yang ingin kamu lamar?'\n\n"
+                "3. Jika pengguna menyebut POSISI / BIDANG (misal: 'Akuntan Pajak', 'Auditor', 'Digital Marketing'):\n"
+                "   -> Tanya: 'Oke, bidang tersebut sangat menarik! Apa pendidikan terakhir kamu (Nama kampus/sekolah & jurusan)?'\n\n"
+                "4. Jika pengguna menyebut PENDIDIKAN (misal: 'S1 Universitas Widyatama Akuntansi'):\n"
+                "   -> Tanya: 'Sip! Apa pengalaman kerja terakhir atau organisasi yang pernah kamu ikuti? (Jika belum pernah kerja, ketik: belum pernah kerja)'\n\n"
+                "5. Jika pengguna menyebut PENGALAMAN / PERUSAHAAN ATAU 'BELUM PERNAH KERJA' (misal: 'Gojek', 'PT ABC', 'Belum pernah kerja'):\n"
+                "   -> JANGAN LAKUKAN SALAM KENAL LAGI! Catat pengalamannya dan LANGSUNG TANYAKAN KEAHLIAN/SKILL KUNCI.\n"
+                "   -> Contoh Balasan: 'Catatan pengalaman/organisasi dicatat! Terakhir, apa saja keahlian/skill utama atau sertifikasi yang kamu miliki?'\n\n"
+                "6. Jika pengguna menyebut KEAHLIAN / SKILL:\n"
+                "   -> Buatkan ringkasan struktur draft CV lengkap berdasarkan seluruh informasi di atas.\n\n"
+                "DILARANG KERAS menyapa 'Salam kenal, [Kata]!' jika kata tersebut adalah nama perusahaan (seperti Gojek), nama posisi, atau pengalaman kerja!"
             )
 
             # Panggil method generate() milik AIGateway
