@@ -17,20 +17,53 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Definisi State/Tahapan Wawancara
-NAMA, POSISI, PENDIDIKAN, PENGALAMAN, SKILL = range(5)
+# Definisi State / Tahapan Wawancara
+MENU, NAMA, POSISI, PENDIDIKAN, PENGALAMAN, SKILL = range(6)
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000/api/v1/search")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     welcome_text = (
-        "Halo! Saya **BoonTrack Assistant**, konsultan karir impianmu. 🚀\n\n"
-        "Mari kita buat CV ATS-Friendly kamu secara sistematis.\n"
-        "Pertama-tama, **siapa nama lengkap kamu?**"
+        "Selamat datang di **BoonTrack Assistant**! 👋\n\n"
+        "Aku siap bantu kamu persiapan karir, bikin CV ATS-friendly, latihan interview, sampe atasi grogi saat wawancara.\n\n"
+        "Bagaimana saya bisa membantumu hari ini?\n"
+        "1. Memperbarui atau membuat CV\n"
+        "2. Mempersiapkan diri untuk wawancara\n"
+        "3. Membahas rencana & strategi karir\n"
+        "4. Mengatasi tantangan dalam mencari kerja\n\n"
+        "Silakan pilih nomor atau ketik langsung kebutuhanmu di sini ya! 😊"
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
-    return NAMA
+    return MENU
+
+
+async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip().lower()
+
+    # Jika user memilih angka 1 atau kata kunci buat CV
+    if text == "1" or "cv" in text or "buat" in text or "perbarui" in text:
+        await update.message.reply_text(
+            "Siap, mari kita buat/perbarui CV kamu! Pertama-tama, boleh tahu siapa **nama lengkap kamu**?",
+            parse_mode="Markdown"
+        )
+        return NAMA
+    else:
+        # Jika memilih menu 2, 3, 4 atau pertanyaan bebas lainnya
+        try:
+            async with httpx.AsyncClient(timeout=40.0) as client:
+                response = await client.get(BACKEND_URL, params={"q": text})
+                if response.status_code == 200:
+                    data = response.json()
+                    reply = data.get("text") or data.get("message") or "Ada yang bisa saya bantu lagi?"
+                    await update.message.reply_text(reply, parse_mode="Markdown")
+                else:
+                    await update.message.reply_text("Maaf, terjadi kendala saat memproses jawaban.")
+        except Exception as e:
+            logger.error(f"Error pada handle_menu_choice: {e}")
+            await update.message.reply_text("Ada yang bisa saya bantu lagi?")
+
+        return ConversationHandler.END
 
 
 async def get_nama(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -55,7 +88,7 @@ async def get_posisi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def get_pendidikan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['pendidikan'] = update.message.text
     await update.message.reply_text(
-        "Oke terdata! Apa **pengalaman kerja atau organisasi** yang pernah kamu ikuti?\n"
+        "Oke terdata! Apa **pengalaman kerja terakhir atau organisasi** yang pernah kamu ikuti?\n"
         "*(Jika belum pernah kerja, ketik: 'Belum ada pengalaman')*",
         parse_mode="Markdown"
     )
@@ -77,7 +110,6 @@ async def get_skill_and_generate(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text("Sedang meracik dan menyusun draft CV ATS-friendly kamu... Tunggu sebentar ya! ⏳")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
-    # Susun prompt utuh berisi seluruh data yang sudah dikumpulkan secara pasti
     prompt_final = (
         f"Tolong buatkan draft struktur CV ATS-Friendly lengkap dalam format Markdown berdasarkan data berikut:\n"
         f"- Nama Lengkap: {context.user_data.get('nama')}\n"
@@ -105,7 +137,7 @@ async def get_skill_and_generate(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Proses pembuatan CV dibatalkan. Ketik /start kapan saja untuk mulai lagi ya!")
+    await update.message.reply_text("Proses dibatalkan. Ketik /start kapan saja untuk membuka menu utama lagi ya!")
     return ConversationHandler.END
 
 
@@ -120,6 +152,7 @@ def run_bot():
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
+            MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_choice)],
             NAMA: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_nama)],
             POSISI: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_posisi)],
             PENDIDIKAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_pendidikan)],
@@ -130,7 +163,7 @@ def run_bot():
     )
 
     app.add_handler(conv_handler)
-    logger.info("Bot Telegram BoonTrack (Mode Form Wizard) Berhasil Aktif!")
+    logger.info("Bot Telegram BoonTrack (Mode Form Wizard + Menu) Berhasil Aktif!")
     app.run_polling()
 
 
