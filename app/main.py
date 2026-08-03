@@ -1,7 +1,6 @@
 import os
 import logging
 import asyncio
-import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update
@@ -24,7 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Definisi State untuk ConversationHandler
-NAMA, POSISI, PENDIDIKAN, PENGALAMAN, SKILL = range(5)
+MENU, NAMA, POSISI, PENDIDIKAN, PENGALAMAN, SKILL = range(6)
 
 app = FastAPI(
     title="BoonTrack Core API",
@@ -60,12 +59,35 @@ async def search_endpoint(q: str = ""):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     welcome_text = (
-        "Halo! Saya **BoonTrack Assistant**, konsultan karir impianmu. 🚀\n\n"
-        "Mari kita buat CV ATS-Friendly kamu secara sistematis.\n\n"
-        "Pertama-tama, **siapa nama lengkap kamu?**"
+        "Selamat datang di **BoonTrack Assistant**! 👋\n\n"
+        "Aku siap bantu kamu persiapan karir, bikin CV ATS-friendly, latihan interview, sampe atasi grogi saat wawancara.\n\n"
+        "Bagaimana saya bisa membantumu hari ini?\n"
+        "1. Memperbarui atau membuat CV\n"
+        "2. Mempersiapkan diri untuk wawancara\n"
+        "3. Membahas rencana & strategi karir\n"
+        "4. Mengatasi tantangan dalam mencari kerja\n\n"
+        "Silakan pilih nomor atau ketik langsung kebutuhanmu di sini ya! 😊"
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
-    return NAMA
+    return MENU
+
+
+async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip().lower()
+
+    # Jika user memilih menu 1 (Buat CV)
+    if text == "1" or "cv" in text or "buat" in text or "perbarui" in text:
+        await update.message.reply_text(
+            "Siap, mari kita buat/perbarui CV kamu! Pertama-tama, siapa nama lengkap kamu?",
+            parse_mode="Markdown"
+        )
+        return NAMA
+    else:
+        # Jika memilih menu lain (2, 3, 4) atau pertanyaan umum, langsung ditangani AI
+        result = await solution_engine.find_solution(user_message=text)
+        reply = result.get("text") or result.get("message") or "Ada yang bisa saya bantu lagi?"
+        await update.message.reply_text(reply, parse_mode="Markdown")
+        return ConversationHandler.END
 
 
 async def get_nama(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -134,7 +156,7 @@ async def get_skill_and_generate(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Proses pembuatan CV dibatalkan. Ketik /start kapan saja untuk mulai lagi ya!")
+    await update.message.reply_text("Proses dibatalkan. Ketik /start kapan saja untuk membuka menu utama lagi ya!")
     return ConversationHandler.END
 
 
@@ -150,6 +172,7 @@ async def startup_event():
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler("start", start)],
             states={
+                MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_choice)],
                 NAMA: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_nama)],
                 POSISI: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_posisi)],
                 PENDIDIKAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_pendidikan)],
