@@ -25,6 +25,7 @@ services:
       dockerfile: docker/Dockerfile
     container_name: boontrack_backend
     restart: always
+    command: python run_bot.py
     ports:
       - "8000:8000"
     env_file:
