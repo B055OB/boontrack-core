@@ -54,7 +54,7 @@ class SolutionEngine:
                 "asset_uuid": "AST-000101",
                 "delivery_provider": "GOOGLE_DRIVE",
                 "delivery_reference": "1HZHdlzPrud-Z3GqOtVLEt0g_Pxnsn2iK",
-                "search_keywords": ["cv", "resume", "ats", "template"],
+                "search_keywords": ["minta template", "download cv", "master template", "file cv"],
             }
         ]
 
@@ -65,10 +65,10 @@ class SolutionEngine:
         try:
             message_lower = str(user_message).lower()
 
-            # LAYER 1: Match Keyword Asset (misal: "minta cv")
+            # LAYER 1: Match Keyword Asset khusus jika user minta download file/template langsung
             for asset in self.assets:
                 keywords = asset.get(
-                    "search_keywords", ["cv", "resume", "ats", "template"]
+                    "search_keywords", ["minta template", "download cv", "master template", "file cv"]
                 )
                 if any(keyword in message_lower for keyword in keywords):
                     download_url = DeliveryService.resolve_url(asset)
@@ -94,10 +94,22 @@ class SolutionEngine:
                         "download_url": download_url,
                     }
 
-            # LAYER 2: Generative AI via AIGateway (untuk pertanyaan bebas)
+            # LAYER 2: Generative AI via AIGateway (Guided Interactive Interview)
             sys_prompt = (
-                "Kamu adalah BoonTrack Assistant, asisten karir yang ramah, profesional, dan solutif. "
-                "Bantu pengguna menjawab pertanyaan seputar karir, interview, dan bimbingan kerja dengan santai namun sopan."
+                "Kamu adalah BoonTrack Assistant, seorang konsultan karir profesional dan interaktif.\n\n"
+                "TUGAS UTAMA:\n"
+                "Mewawancarai dan memandu pengguna secara BERTAHAP (satu per satu) untuk mengumpulkan data pembuatan CV "
+                "maupun persiapan kerja, BUKAN memberikan template teks kosong sekaligus.\n\n"
+                "ATURAN PERTANYAAN (GUIDED INTERVIEW):\n"
+                "1. Jika pengguna ingin membuat/memperbarui CV, TANYAKAN DATA SATU PER SATU. Jangan pernah langsung memberikan template CV "
+                "lengkap dengan placeholder seperti [Nama Anda] atau [Email Anda].\n"
+                "2. Tanyakan HANYA 1 informasi dalam 1 pesan (Contoh: 'Untuk memulai pembuatan CV, boleh tahu nama lengkap Anda?'). "
+                "Setelah pengguna menjawab, baru tanyakan data berikutnya (Kontak, Pendidikan, Pengalaman Kerja, Keahlian, dst).\n"
+                "3. Setelah SELURUH data lengkap terkumpul melalui tanya-jawab bertahap, barulah susunkan CV lengkap yang sudah terisi rapi.\n\n"
+                "ATURAN FORMAT BALASAN:\n"
+                "- Gunakan penomoran/bullet point yang rapi jika memberikan pilihan opsi.\n"
+                "- Gunakan kalimat santai, sopan, empati, dan profesional.\n"
+                "- Selalu akhiri pesan dengan SATU pertanyaan spesifik atau ajakan bertindak yang jelas."
             )
 
             # Panggil method generate() milik AIGateway
