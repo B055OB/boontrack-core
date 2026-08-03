@@ -46,7 +46,7 @@ async def search_endpoint(q: str = ""):
     return result
 
 
-# Handler Telegram Bot untuk /start (Menu Pilihan Rapi)
+# Handler Telegram Bot untuk /start
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         "Halo! Senang sekali bertemu denganmu! Saya **BoonTrack Assistant**, "
@@ -82,12 +82,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Maaf ya, sempat ada kendala teknis sedikit. Coba kirim ulang pesan kamu!")
 
 
-# Background Task untuk Run Polling Telegram Bot bersamaan dengan FastAPI
+# Background Task untuk Run Polling Telegram Bot
 @app.on_event("startup")
 async def startup_event():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if token:
-        logger.info("Mulai mengaktifkan Bot Telegram Polling...")
+        logger.info("Mulai mengaktifkan Bot Telegram Polling di backend...")
         bot_app = ApplicationBuilder().token(token).build()
         bot_app.add_handler(CommandHandler("start", start_command))
         bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -95,6 +95,6 @@ async def startup_event():
         await bot_app.initialize()
         await bot_app.start()
         await bot_app.updater.start_polling()
-        logger.info("Bot Telegram Berhasil Aktif di Background!")
+        logger.info("Bot Telegram Berhasil Aktif!")
     else:
         logger.warning("TELEGRAM_BOT_TOKEN tidak ditemukan, bot Telegram di-skip.")
