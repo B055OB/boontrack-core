@@ -1,102 +1,100 @@
+import os
 import logging
+import asyncio
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
-from typing import Optional
+from fastapi.middleware.cors import CORSMiddleware
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-from app.intelligence.gateway import AIGateway
-from app.services.drive_resolver import DriveResolver
+from app.services.solution_engine import SolutionEngine
 
-# Configure Logging
-logging.basicConfig(level=logging.INFO)
+# Logging configuration
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="BoonTrack Core API",
-    description="Backend API untuk BoonTrack dengan AI Gateway & Drive Resolver",
+    description="Backend engine for BoonTrack Assistant",
     version="1.0.0"
 )
 
-# Inisialisasi Service Engine
-ai_gateway = AIGateway()
-drive_resolver = DriveResolver()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-
-class SearchQuery(BaseModel):
-    query: str
-    user_id: Optional[str] = "default_user"
-
-
-class SearchResponse(BaseModel):
-    text: str
-    provider: str
+solution_engine = SolutionEngine()
 
 
 @app.get("/")
 async def root():
-    return {
-        "status": "online",
-        "service": "BoonTrack Core API",
-        "llm_provider": ai_gateway.provider_name
-    }
+    return {"status": "online", "message": "BoonTrack Core Engine is Running"}
 
 
-@app.api_route("/api/v1/search", methods=["GET", "POST"], response_model=SearchResponse)
-async def search_endpoint(request: Request, payload: Optional[SearchQuery] = None):
-    # 1. Ekstraksi query user dari POST JSON body atau GET query parameters (q/query)
-    user_message = ""
-    user_id = "default_user"
+@app.get("/api/v1/search")
+async def search_endpoint(q: str = ""):
+    if not q:
+        raise HTTPException(status_code=400, detail="Query parameter 'q' cannot be empty.")
+    
+    result = await solution_engine.find_solution(user_message=q)
+    return result
 
-    if request.method == "POST":
-        try:
-            body = await request.json()
-            user_message = body.get("query", "").strip()
-            user_id = body.get("user_id", "default_user")
-        except Exception:
-            if payload:
-                user_message = payload.query.strip()
-                user_id = payload.user_id or "default_user"
-    else:  # Method GET
-        user_message = request.query_params.get("q", "") or request.query_params.get("query", "")
-        user_message = user_message.strip()
-        user_id = request.query_params.get("user_id", "default_user")
 
-    if not user_message:
-        raise HTTPException(status_code=400, detail="Query tidak boleh kosong.")
-
-    logger.info(f"Menerima query [{request.method}] dari user [{user_id}]: {user_message}")
-
-    # 2. Cek apakah ada folder/file di Google Drive yang cocok dengan keyword user
-    matched_asset = drive_resolver.find_asset_by_query(user_message)
-
-    # 3. Susun System Prompt yang mengarahkan LLM memberikan link Drive resmi BoonTrack
-    system_prompt = (
-        "Kamu adalah BoonTrack Assistant, konsultan karir yang sangat ramah, empatik, dan solutif. "
-        "Tugasmu adalah membimbing job seeker (pencari kerja) dalam persiapan melamar kerja, pemetaan karir, "
-        "pembuatan CV, dan persiapan wawancara secara praktis serta mendukung mental mereka."
+# Handler Telegram Bot
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    welcome_text = (
+        "Halo! Senang sekali bertemu denganmu! Saya **BoonTrack Assistant**, "
+        "konsultan karir yang siap membantu kamu mencapai tujuan karir impianmu. 🚀\n\n"
+        "Bagaimana saya bisa membantumu hari ini?\n"
+        "1. Memperbarui atau membuat CV\n"
+        "2. Mempersiapkan diri untuk wawancara\n"
+        "3. Membahas rencana & strategi karir\n"
+        "4. Mengatasi tantangan dalam mencari kerja\n\n"
+        "Silakan pilih nomor atau ketik langsung kebutuhanmu di sini ya! 😊"
     )
+    await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
-    if matched_asset:
-        logger.info(f"Aset Drive cocok ditemukan: {matched_asset['folder_name']}")
-        system_prompt += (
-            f"\n\n[INSTRUKSI KHUSUS - ASET TERSEDIA]:\n"
-            f"Sistem menemukan materi/dokumen resmi BoonTrack yang sangat relevan dengan pertanyaan user:\n"
-            f"- Judul Aset: {matched_asset['title']}\n"
-            f"- Deskripsi: {matched_asset['description']}\n"
-            f"- Link Akses Google Drive: {matched_asset['drive_link']}\n"
-            f"WAJIB sertakan link Google Drive tersebut di dalam balasanmu dengan bahasa yang hangat dan mengajak user "
-            f"untuk membuka/mengunduhnya!"
-        )
 
-    # 4. Minta jawaban dari AI Gateway (OpenRouter)
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_text = update.message.text
+    if not user_text:
+        return
+
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
     try:
-        ai_response = await ai_gateway.generate(
-            prompt=user_message,
-            system_prompt=system_prompt
-        )
-        return SearchResponse(
-            text=ai_response.text,
-            provider=ai_response.provider
-        )
+        result = await solution_engine.find_solution(user_message=user_text)
+        reply_message = result.get("text") or result.get("message") or "Ada yang bisa saya bantu lagi?"
+
+        try:
+            await update.message.reply_text(reply_message, parse_mode="Markdown")
+        except Exception:
+            await update.message.reply_text(reply_message)
+
     except Exception as e:
-        logger.error(f"Error saat memproses AI response: {str(e)}")
-        raise HTTPException(status_code=500, detail="Terjadi kesalahan pada engine AI.")
+        logger.error(f"Error handling message: {e}")
+        await update.message.reply_text("Maaf ya, sempat ada kendala teknis sedikit. Coba kirim ulang pesan kamu!")
+
+
+# Background Task untuk Run Polling Telegram Bot bersamaan dengan FastAPI
+@app.on_event("startup")
+async def startup_event():
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if token:
+        logger.info("Mulai mengaktifkan Bot Telegram Polling...")
+        bot_app = ApplicationBuilder().token(token).build()
+        bot_app.add_handler(CommandHandler("start", start_command))
+        bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        
+        await bot_app.initialize()
+        await bot_app.start()
+        await bot_app.updater.start_polling()
+        logger.info("Bot Telegram Berhasil Aktif di Background!")
+    else:
+        logger.warning("TELEGRAM_BOT_TOKEN tidak ditemukan, bot Telegram di-skip.")
