@@ -10,7 +10,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Mengutamakan host 'backend' bawaan Docker Network
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000/api/v1/search")
 
 
@@ -33,7 +32,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_text:
         return
 
-    # Indikator typing agar natural
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     try:
@@ -42,27 +40,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if response.status_code == 200:
                 data = response.json()
-                
-                # Menangkap teks respons dari berbagai kemungkinan kunci (answer, text, message, response)
                 reply_message = (
                     data.get("answer") or 
                     data.get("text") or 
                     data.get("message") or 
                     data.get("response")
                 )
-                
-                # Jika data bertingkat / list fallback
-                if not reply_message and isinstance(data.get("data"), list) and len(data["data"]) > 0:
-                    reply_message = data["data"][0].get("description") or data["data"][0].get("text")
 
                 if not reply_message:
                     reply_message = "Aku paham maksud kamu. Boleh ceritakan lebih spesifik lagi biar aku bisa kasih saran yang pas?"
 
-                # Kirim balasan
                 try:
                     await update.message.reply_text(reply_message, parse_mode="Markdown")
                 except Exception:
-                    # Fallback jika ada error parsing Markdown dari karakter aneh
                     await update.message.reply_text(reply_message)
             else:
                 logger.error(f"Backend HTTP status error: {response.status_code}")
