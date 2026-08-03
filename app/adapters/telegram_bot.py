@@ -16,10 +16,14 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000/api/v1/search")
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
-        "Selamat datang di **BoonTrack Assistant**! 👋\n\n"
-        "Aku siap bantu kamu persiapan karir, bikin CV ATS-friendly, latihan interview, "
-        "sampe atasi grogi saat wawancara.\n\n"
-        "Silakan ceritakan masalah atau pertanyaan kamu langsung di sini ya! 😊"
+        "Halo! Senang sekali bertemu denganmu! Saya **BoonTrack Assistant**, "
+        "konsultan karir yang siap membantu kamu mencapai tujuan karir impianmu. 🚀\n\n"
+        "Bagaimana saya bisa membantumu hari ini?\n"
+        "1. Memperbarui atau membuat CV\n"
+        "2. Mempersiapkan diri untuk wawancara\n"
+        "3. Membahas rencana & strategi karir\n"
+        "4. Mengatasi tantangan dalam mencari kerja\n\n"
+        "Silakan pilih nomor atau ketik langsung kebutuhanmu di sini ya! 😊"
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
