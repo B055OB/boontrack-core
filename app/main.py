@@ -46,7 +46,7 @@ async def search_endpoint(q: str = ""):
     return result
 
 
-# Handler Telegram Bot
+# Handler Telegram Bot untuk /start (Menu Pilihan Rapi)
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         "Halo! Senang sekali bertemu denganmu! Saya **BoonTrack Assistant**, "
