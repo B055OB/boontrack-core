@@ -6,15 +6,16 @@ alembic>=1.11.0
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
 
-# SDK Resmi Terbaru Google AI (Menggantikan google-generativeai)
+# SDK Resmi Terbaru Google AI
 google-genai>=0.1.0
 
-# SDK Google Drive API (Untuk pencarian file otomatis di Drive)
+# SDK Google Drive API
 google-api-python-client>=2.100.0
 google-auth>=2.23.0
 google-auth-httplib2>=0.1.1
 
 # Telegram & Utility
+aiogram==2.25.1
 python-telegram-bot>=20.0
 httpx>=0.24.0
 python-dotenv>=1.0.0

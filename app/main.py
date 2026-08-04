@@ -19,10 +19,8 @@ DB_PASS = os.getenv("POSTGRES_PASSWORD", "boontrack_pass")
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
-# In-memory storage untuk menyimpan session temporary user
 user_sessions = {}
 
-# Daftar kata kunci ucapan terima kasih yang akan diabaikan setelah flow selesai
 THANK_YOU_WORDS = [
     "terima kasih", "terimakasih", "makasih", "thanks", "thank you",
     "suwun", "matur nuhun", "hatur nuhun", "arigato", "tengkiu", "tq"
@@ -106,21 +104,18 @@ def save_cv_to_db(user_id, data):
 def create_cv_docx(data, file_path):
     doc = Document()
 
-    # Margin Standard ATS (1 inch)
     for section in doc.sections:
         section.top_margin = Inches(1)
         section.bottom_margin = Inches(1)
         section.left_margin = Inches(1)
         section.right_margin = Inches(1)
 
-    # Styling Default
     style = doc.styles['Normal']
     font = style.font
     font.name = 'Calibri'
     font.size = Pt(11)
     font.color.rgb = RGBColor(0x33, 0x33, 0x33)
 
-    # 1. HEADER (Nama & Kontak)
     p_name = doc.add_paragraph()
     p_name.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_name = p_name.add_run(data.get(1, 'NAMA LENGKAP').upper())
@@ -134,12 +129,11 @@ def create_cv_docx(data, file_path):
     run_target.bold = True
     run_target.font.size = Pt(12)
 
-    # Kontak Line
     kontak_parts = [
-        data.get(4, ''), # Domisili
-        data.get(3, ''), # No HP
-        data.get(2, ''), # Email
-        data.get(5, '')  # LinkedIn
+        data.get(4, ''),
+        data.get(3, ''),
+        data.get(2, ''),
+        data.get(5, '')
     ]
     kontak_str = " | ".join([k for k in kontak_parts if k and k != '-'])
     
@@ -148,7 +142,7 @@ def create_cv_docx(data, file_path):
     run_contact = p_contact.add_run(kontak_str)
     run_contact.font.size = Pt(9.5)
 
-    doc.add_paragraph() # Spacing
+    doc.add_paragraph()
 
     def add_section_heading(title):
         p = doc.add_paragraph()
@@ -159,25 +153,21 @@ def create_cv_docx(data, file_path):
         p.paragraph_format.space_before = Pt(12)
         p.paragraph_format.space_after = Pt(4)
 
-    # 2. PENDIDIKAN
     if data.get(7) and data.get(7) != '-':
         add_section_heading("Pendidikan")
         p_edu = doc.add_paragraph(data.get(7))
         p_edu.paragraph_format.space_after = Pt(6)
 
-    # 3. PENGALAMAN KERJA / ORGANISASI
     if data.get(8) and data.get(8) != '-':
         add_section_heading("Pengalaman Kerja & Organisasi")
         p_exp = doc.add_paragraph(data.get(8))
         p_exp.paragraph_format.space_after = Pt(6)
 
-    # 4. PENCAPAIAN / PROJECT
     if data.get(9) and data.get(9) != '-':
         add_section_heading("Pencapaian Utama & Project")
         p_ach = doc.add_paragraph(data.get(9))
         p_ach.paragraph_format.space_after = Pt(6)
 
-    # 5. SKILL / SOFTWARE
     if data.get(10) and data.get(10) != '-':
         add_section_heading("Keahlian & Sertifikasi")
         p_skill = doc.add_paragraph(data.get(10))
@@ -207,7 +197,6 @@ async def handle_message(message: types.Message):
     text = message.text.strip()
     text_lower = text.lower()
 
-    # 1. PRIORITAS UTAMA: Perintah /start (Akan SELALU mereset session kapan saja diketik)
     if text == "/start":
         user_sessions[user_id] = {"step": 1, "data": {}}
         
@@ -225,51 +214,37 @@ async def handle_message(message: types.Message):
         await message.answer(start_text, parse_mode="Markdown")
         return
 
-    # 2. Ambil session user saat ini
     session = user_sessions.get(user_id)
 
-    # 3. Jika session kosong atau flow pembuatan CV sudah selesai
     if not session or session.get("step") is None:
-        # Jika user cuma bilang 'terima kasih', ABAIKAN (bot DIAM, tidak membalas)
         if any(word in text_lower for word in THANK_YOU_WORDS):
             return
         
-        # Jika user mengetik hal lain di luar flow, ingatkan untuk tekan /start
         await message.answer("Ketik **/start** jika ingin membuat CV baru lagi ya! 😊", parse_mode="Markdown")
         return
 
-    # 4. Jika sedang dalam proses mengisi step 1-10
     current_step = session["step"]
-
-    # Simpan jawaban step saat ini
     session["data"][current_step] = text
 
-    # Cek apakah masih ada step berikutnya
     if current_step < 10:
         next_step = current_step + 1
         session["step"] = next_step
         await message.answer(STEP_QUESTIONS[next_step], parse_mode="Markdown")
     else:
-        # Flow Step Selesai
-        session["step"] = None # Tandai flow selesai
+        session["step"] = None
         await message.answer("🔄 **Data tersimpan di DB! Memproses file Word (.docx)...**", parse_mode="Markdown")
 
         try:
-            # 1. Simpan ke Database PostgreSQL
             save_cv_to_db(user_id, session["data"])
-
-            # 2. Buat File Word
             file_name = f"CV_{user_id}.docx"
             create_cv_docx(session["data"], file_name)
 
-            # 3. Kirim File Word ke Telegram User
             with open(file_name, "rb") as file_doc:
                 await message.answer_document(
                     document=file_doc,
                     caption="✅ **CV ATS BERHASIL DIBUAT!** Ketik **/start** jika ingin buat lagi."
                 )
 
-            # Cleanup file lokal temp
             if os.path.exists(file_name):
                 os.remove(file_name)
 
