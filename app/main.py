@@ -62,13 +62,13 @@ def save_field(telegram_id: int, **fields):
     finally:
         db.close()
 
-# DEFINISI STATE (100% UNIK DARI 201 SAMPAI 210)
+# STATE DEFINITION (100% UNIK)
 ST_NAMA, ST_EMAIL, ST_PHONE, ST_DOMISILI, ST_LINKEDIN, ST_POSISI, ST_PENDIDIKAN, ST_PENGALAMAN, ST_PENCAPAIAN, ST_SKILL = range(201, 211)
 
 app = FastAPI()
 bot_app_instance = None
 
-# --- HANDLER DENGAN PERTANYAAN CLEAN (TANPA TEKS VERSI LAMA) ---
+# --- HANDLER 10 STEP BERSIH & MURNI ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
