@@ -93,8 +93,8 @@ def get_user_cv_data(telegram_id: int):
         db.close()
 
 
-# --- DEFINISI STATE URUT 100% ---
-NAMA, EMAIL, PHONE, DOMISILI, LINKEDIN, POSISI, PENDIDIKAN, PENGALAMAN, PENCAPAIAN, SKILL = range(10)
+# --- DEFINISI STATE UNIK ---
+NAMA, EMAIL, PHONE, DOMISILI, LINKEDIN, POSISI, PENDIDIKAN, PENGALAMAN, PENCAPAIAN, SKILL = range(101, 111)
 
 app = FastAPI(title="BoonTrack Core API", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -108,6 +108,7 @@ async def root():
 # --- TELEGRAM HANDLERS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.clear()
     await update.message.reply_text(
         "Halo! Saya **BoonTrack Assistant**. 🚀\n\n"
         "Mari kita susun CV ATS-Friendly kamu secara sistematis.\n"
@@ -311,7 +312,8 @@ async def get_skill_and_generate(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Proses dibatalkan. Ketik /start untuk mulai lagi ya!")
+    context.user_data.clear()
+    await update.message.reply_text("Proses dibatalkan & dibersihkan. Ketik /start untuk mulai baru ya!")
     return ConversationHandler.END
 
 
@@ -337,7 +339,11 @@ async def startup_event():
                 PENCAPAIAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_pencapaian)],
                 SKILL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_skill_and_generate)],
             },
-            fallbacks=[CommandHandler("cancel", cancel)],
+            fallbacks=[
+                CommandHandler("cancel", cancel),
+                CommandHandler("start", start)
+            ],
+            allow_reentry=True
         )
 
         bot_app.add_handler(conv_handler)
