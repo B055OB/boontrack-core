@@ -6,7 +6,7 @@ from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# ================= ============================================
+# ==============================================================
 # CONFIG & INITIALIZATION
 # ==============================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
@@ -207,7 +207,7 @@ async def handle_message(message: types.Message):
     text = message.text.strip()
     text_lower = text.lower()
 
-    # Perintah /start
+    # 1. PRIORITAS UTAMA: Perintah /start (Akan SELALU mereset session kapan saja diketik)
     if text == "/start":
         user_sessions[user_id] = {"step": 1, "data": {}}
         
@@ -225,18 +225,20 @@ async def handle_message(message: types.Message):
         await message.answer(start_text, parse_mode="Markdown")
         return
 
+    # 2. Ambil session user saat ini
     session = user_sessions.get(user_id)
 
-    # Jika session kosong atau flow pembuatan CV sudah selesai
+    # 3. Jika session kosong atau flow pembuatan CV sudah selesai
     if not session or session.get("step") is None:
-        # Abaikan ucapan terima kasih (bot DIAM, tidak membalas)
+        # Jika user cuma bilang 'terima kasih', ABAIKAN (bot DIAM, tidak membalas)
         if any(word in text_lower for word in THANK_YOU_WORDS):
             return
         
-        # Jika mengetik teks lain di luar flow, beri arahan /start
+        # Jika user mengetik hal lain di luar flow, ingatkan untuk tekan /start
         await message.answer("Ketik **/start** jika ingin membuat CV baru lagi ya! 😊", parse_mode="Markdown")
         return
 
+    # 4. Jika sedang dalam proses mengisi step 1-10
     current_step = session["step"]
 
     # Simpan jawaban step saat ini
