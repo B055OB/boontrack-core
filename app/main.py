@@ -58,7 +58,6 @@ Base.metadata.create_all(bind=engine)
 
 
 def clean_input(text: str) -> str:
-    """Helper untuk menormalisasi jawaban user yang menyatakan 'tidak ada'."""
     val = text.strip()
     lowered = val.lower()
     skip_words = ['-', 'belum ada', 'tidak ada', 'ga ada', 'gak ada', 'skip', 'kosong', 'belum', 'none', 'no']
@@ -325,10 +324,7 @@ async def startup_event():
         bot_app = ApplicationBuilder().token(token).build()
 
         conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("start", start),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, start)
-            ],
+            entry_points=[CommandHandler("start", start)],
             states={
                 NAMA: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_nama)],
                 EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_email)],
