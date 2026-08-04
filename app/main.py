@@ -4,7 +4,6 @@ import io
 from datetime import datetime
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -23,7 +22,6 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- DATABASE SETUP ---
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://boontrack_user:boontrack_password@postgres:5432/boontrack_db")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -62,13 +60,11 @@ def save_field(telegram_id: int, **fields):
     finally:
         db.close()
 
-# STATE DEFINITION (100% UNIK DARI 201 SAMPAI 210)
-ST_NAMA, ST_EMAIL, ST_PHONE, ST_DOMISILI, ST_LINKEDIN, ST_POSISI, ST_PENDIDIKAN, ST_PENGALAMAN, ST_PENCAPAIAN, ST_SKILL = range(201, 211)
+# STATE DEFINITION UNIK
+ST_NAMA, ST_EMAIL, ST_PHONE, ST_DOMISILI, ST_LINKEDIN, ST_POSISI, ST_PENDIDIKAN, ST_PENGALAMAN, ST_PENCAPAIAN, ST_SKILL = range(501, 511)
 
 app = FastAPI()
 bot_app_instance = None
-
-# --- HANDLER 10 STEP BERSIH & MURNI ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
@@ -160,8 +156,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Batal. Ketik /start untuk mulai lagi.")
     return ConversationHandler.END
 
-# --- LIFECYCLE EVENTS ---
-
 @app.on_event("startup")
 async def startup_event():
     global bot_app_instance
@@ -186,10 +180,9 @@ async def startup_event():
                 ST_SKILL: [MessageHandler(filters.TEXT & ~filters.COMMAND, step_skill_and_finish)],
             },
             fallbacks=[
-                CommandHandler("cancel", cancel),
-                CommandHandler("start", start)
+                CommandHandler("cancel", cancel)
             ],
-            name="cv_builder_conversation",
+            name="cv_builder_v2",
             persistent=True,
             allow_reentry=True
         )
