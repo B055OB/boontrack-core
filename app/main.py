@@ -62,7 +62,7 @@ def save_field(telegram_id: int, **fields):
     finally:
         db.close()
 
-# STATE DEFINITION (100% UNIK)
+# STATE DEFINITION (100% UNIK DARI 201 SAMPAI 210)
 ST_NAMA, ST_EMAIL, ST_PHONE, ST_DOMISILI, ST_LINKEDIN, ST_POSISI, ST_PENDIDIKAN, ST_PENGALAMAN, ST_PENCAPAIAN, ST_SKILL = range(201, 211)
 
 app = FastAPI()
