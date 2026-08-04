@@ -11,6 +11,7 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     ConversationHandler,
+    PicklePersistence,
     filters,
     ContextTypes,
 )
@@ -23,6 +24,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --- DATABASE SETUP ---
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://boontrack_user:boontrack_password@postgres:5432/boontrack_db")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -61,10 +63,11 @@ def save_field(telegram_id: int, **fields):
     finally:
         db.close()
 
-# DEFINISI STATE (100% UNIK DAN TERPISAH)
+# STATE DEFINITION (100% UNIK)
 ST_NAMA, ST_EMAIL, ST_PHONE, ST_DOMISILI, ST_LINKEDIN, ST_POSISI, ST_PENDIDIKAN, ST_PENGALAMAN, ST_PENCAPAIAN, ST_SKILL = range(201, 211)
 
 app = FastAPI()
+bot_app_instance = None  # Global reference untuk Graceful Shutdown
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
@@ -156,11 +159,18 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Batal. Ketik /start untuk mulai lagi.")
     return ConversationHandler.END
 
+# --- LIFECYCLE EVENTS ---
+
 @app.on_event("startup")
 async def startup_event():
+    global bot_app_instance
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if token:
-        bot_app = ApplicationBuilder().token(token).build()
+        # Buat folder data jika belum ada
+        os.makedirs("/app/data", exist_ok=True)
+        persistence = PicklePersistence(filepath="/app/data/bot_persistence.pkl")
+        
+        bot_app = ApplicationBuilder().token(token).persistence(persistence).build()
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler("start", start)],
             states={
@@ -179,9 +189,21 @@ async def startup_event():
                 CommandHandler("cancel", cancel),
                 CommandHandler("start", start)
             ],
+            name="cv_builder_conversation",
+            persistent=True,
             allow_reentry=True
         )
         bot_app.add_handler(conv_handler)
         await bot_app.initialize()
         await bot_app.start()
         await bot_app.updater.start_polling(drop_pending_updates=True)
+        bot_app_instance = bot_app
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    global bot_app_instance
+    if bot_app_instance:
+        logger.info("Shutting down bot gracefully...")
+        await bot_app_instance.updater.stop()
+        await bot_app_instance.stop()
+        await bot_app_instance.shutdown()
