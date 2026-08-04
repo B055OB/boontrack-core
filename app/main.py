@@ -1,202 +1,284 @@
 import os
-import logging
-import io
-from datetime import datetime
-
-from fastapi import FastAPI
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ConversationHandler,
-    PicklePersistence,
-    filters,
-    ContextTypes,
-)
+import asyncio
+from aiogram import Bot, Dispatcher, executor, types
+import psycopg2
 from docx import Document
+from docx.shared import Pt, Inches, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-from sqlalchemy import create_engine, Column, String, Text, BigInteger, DateTime
-from sqlalchemy.orm import declarative_base, sessionmaker
+# ================= ============================================
+# CONFIG & INITIALIZATION
+# ==============================================================
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+DB_HOST = os.getenv("POSTGRES_HOST", "boontrack_postgres")
+DB_PORT = os.getenv("POSTGRES_PORT", "5432")
+DB_NAME = os.getenv("POSTGRES_DB", "boontrack_db")
+DB_USER = os.getenv("POSTGRES_USER", "boontrack_user")
+DB_PASS = os.getenv("POSTGRES_PASSWORD", "boontrack_pass")
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(bot)
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://boontrack_user:boontrack_password@postgres:5432/boontrack_db")
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+# In-memory storage untuk menyimpan session temporary user
+user_sessions = {}
 
-class UserCVData(Base):
-    __tablename__ = "user_cv_data"
-    telegram_id = Column(BigInteger, primary_key=True, index=True)
-    nama = Column(String, nullable=True)
-    email = Column(String, nullable=True)
-    phone_number = Column(String, nullable=True)
-    domisili = Column(String, nullable=True)
-    linkedin_url = Column(String, nullable=True)
-    posisi = Column(String, nullable=True)
-    pendidikan = Column(Text, nullable=True)
-    pengalaman = Column(Text, nullable=True)
-    pencapaian = Column(Text, nullable=True)
-    skill = Column(Text, nullable=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+# Daftar kata kunci ucapan terima kasih yang akan diabaikan setelah flow selesai
+THANK_YOU_WORDS = [
+    "terima kasih", "terimakasih", "makasih", "thanks", "thank you",
+    "suwun", "matur nuhun", "hatur nuhun", "arigato", "tengkiu", "tq"
+]
 
-Base.metadata.create_all(bind=engine)
-
-def save_field(telegram_id: int, **fields):
-    db = SessionLocal()
-    try:
-        user = db.query(UserCVData).filter(UserCVData.telegram_id == telegram_id).first()
-        if not user:
-            user = UserCVData(telegram_id=telegram_id)
-            db.add(user)
-        for k, v in fields.items():
-            setattr(user, k, v.strip() if v else "-")
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        logger.error(f"DB Error: {e}")
-    finally:
-        db.close()
-
-# STATE DEFINITION UNIK
-ST_NAMA, ST_EMAIL, ST_PHONE, ST_DOMISILI, ST_LINKEDIN, ST_POSISI, ST_PENDIDIKAN, ST_PENGALAMAN, ST_PENCAPAIAN, ST_SKILL = range(501, 511)
-
-app = FastAPI()
-bot_app_instance = None
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data.clear()
-    await update.message.reply_text("🚀 **PEMBUATAN CV ATS STARTED**\n\n1️⃣ **Siapa Nama Lengkap kamu?**", parse_mode="Markdown")
-    return ST_NAMA
-
-async def step_nama(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    save_field(update.effective_user.id, nama=update.message.text)
-    await update.message.reply_text("2️⃣ **Masukkan Email kamu:**")
-    return ST_EMAIL
-
-async def step_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    save_field(update.effective_user.id, email=update.message.text)
-    await update.message.reply_text("3️⃣ **Masukkan No WhatsApp / HP:**")
-    return ST_PHONE
-
-async def step_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    save_field(update.effective_user.id, phone_number=update.message.text)
-    await update.message.reply_text("4️⃣ **Kota Domisili saat ini:**")
-    return ST_DOMISILI
-
-async def step_domisili(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    save_field(update.effective_user.id, domisili=update.message.text)
-    await update.message.reply_text("5️⃣ **Link LinkedIn / Portfolio:** (Ketik '-' jika tidak ada)")
-    return ST_LINKEDIN
-
-async def step_linkedin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    save_field(update.effective_user.id, linkedin_url=update.message.text)
-    await update.message.reply_text("6️⃣ **Posisi / Jabatan yang dilamar:**")
-    return ST_POSISI
-
-async def step_posisi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    save_field(update.effective_user.id, posisi=update.message.text)
-    await update.message.reply_text("7️⃣ **Pendidikan Terakhir (Sekolah/Kampus & Jurusan):**")
-    return ST_PENDIDIKAN
-
-async def step_pendidikan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    save_field(update.effective_user.id, pendidikan=update.message.text)
-    await update.message.reply_text("8️⃣ **Pengalaman Kerja / Organisasi:**")
-    return ST_PENGALAMAN
-
-async def step_pengalaman(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    save_field(update.effective_user.id, pengalaman=update.message.text)
-    await update.message.reply_text("9️⃣ **Pencapaian Utama / Project:** (Ketik '-' jika tidak ada)")
-    return ST_PENCAPAIAN
-
-async def step_pencapaian(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    save_field(update.effective_user.id, pencapaian=update.message.text)
-    await update.message.reply_text("🔟 **Skill / Software / Sertifikasi yang dikuasai:**")
-    return ST_SKILL
-
-async def step_skill_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = update.effective_user.id
-    save_field(user_id, skill=update.message.text)
-    
-    await update.message.reply_text("⏳ Data tersimpan di DB! Memproses file Word (.docx)...")
-    
-    db = SessionLocal()
-    data = db.query(UserCVData).filter(UserCVData.telegram_id == user_id).first()
-    db.close()
-
-    doc = Document()
-    doc.add_heading(data.nama.upper() if data and data.nama else "CURRICULUM VITAE", level=0)
-    doc.add_paragraph(f"Posisi: {data.posisi} | Domisili: {data.domisili}")
-    doc.add_paragraph(f"Email: {data.email} | HP: {data.phone_number} | LinkedIn: {data.linkedin_url}")
-    doc.add_heading("Pendidikan", level=1)
-    doc.add_paragraph(data.pendidikan)
-    doc.add_heading("Pengalaman Kerja", level=1)
-    doc.add_paragraph(data.pengalaman)
-    doc.add_heading("Pencapaian", level=1)
-    doc.add_paragraph(data.pencapaian)
-    doc.add_heading("Keahlian & Skill", level=1)
-    doc.add_paragraph(data.skill)
-
-    file_stream = io.BytesIO()
-    doc.save(file_stream)
-    file_stream.seek(0)
-    
-    await context.bot.send_document(
-        chat_id=update.effective_chat.id,
-        document=file_stream,
-        filename=f"CV_{user_id}.docx",
-        caption="✅ **CV ATS BERHASIL DIBUAT!** Ketik /start jika ingin buat lagi."
+# ==============================================================
+# DATABASE FUNCTIONS
+# ==============================================================
+def get_db_connection():
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASS
     )
-    return ConversationHandler.END
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data.clear()
-    await update.message.reply_text("Batal. Ketik /start untuk mulai lagi.")
-    return ConversationHandler.END
+def init_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_cv_data (
+            telegram_id BIGINT PRIMARY KEY,
+            nama TEXT,
+            email TEXT,
+            phone_number TEXT,
+            domisili TEXT,
+            linkedin_url TEXT,
+            posisi TEXT,
+            pendidikan TEXT,
+            pengalaman TEXT,
+            pencapaian TEXT,
+            skill TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
 
-@app.on_event("startup")
-async def startup_event():
-    global bot_app_instance
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    if token:
-        os.makedirs("/app/data", exist_ok=True)
-        persistence = PicklePersistence(filepath="/app/data/bot_persistence.pkl")
+def save_cv_to_db(user_id, data):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO user_cv_data (
+            telegram_id, nama, email, phone_number, domisili,
+            linkedin_url, posisi, pendidikan, pengalaman, pencapaian, skill, updated_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (telegram_id) DO UPDATE SET
+            nama = EXCLUDED.nama,
+            email = EXCLUDED.email,
+            phone_number = EXCLUDED.phone_number,
+            domisili = EXCLUDED.domisili,
+            linkedin_url = EXCLUDED.linkedin_url,
+            posisi = EXCLUDED.posisi,
+            pendidikan = EXCLUDED.pendidikan,
+            pengalaman = EXCLUDED.pengalaman,
+            pencapaian = EXCLUDED.pencapaian,
+            skill = EXCLUDED.skill,
+            updated_at = NOW();
+    """, (
+        user_id,
+        data.get(1, ''),
+        data.get(2, ''),
+        data.get(3, ''),
+        data.get(4, ''),
+        data.get(5, ''),
+        data.get(6, ''),
+        data.get(7, ''),
+        data.get(8, ''),
+        data.get(9, ''),
+        data.get(10, '')
+    ))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+# ==============================================================
+# WORD DOCUMENT GENERATOR (ATS FRIENDLY)
+# ==============================================================
+def create_cv_docx(data, file_path):
+    doc = Document()
+
+    # Margin Standard ATS (1 inch)
+    for section in doc.sections:
+        section.top_margin = Inches(1)
+        section.bottom_margin = Inches(1)
+        section.left_margin = Inches(1)
+        section.right_margin = Inches(1)
+
+    # Styling Default
+    style = doc.styles['Normal']
+    font = style.font
+    font.name = 'Calibri'
+    font.size = Pt(11)
+    font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+    # 1. HEADER (Nama & Kontak)
+    p_name = doc.add_paragraph()
+    p_name.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_name = p_name.add_run(data.get(1, 'NAMA LENGKAP').upper())
+    run_name.bold = True
+    run_name.font.size = Pt(18)
+    run_name.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
+
+    p_target = doc.add_paragraph()
+    p_target.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_target = p_target.add_run(data.get(6, 'Target Posisi').upper())
+    run_target.bold = True
+    run_target.font.size = Pt(12)
+
+    # Kontak Line
+    kontak_parts = [
+        data.get(4, ''), # Domisili
+        data.get(3, ''), # No HP
+        data.get(2, ''), # Email
+        data.get(5, '')  # LinkedIn
+    ]
+    kontak_str = " | ".join([k for k in kontak_parts if k and k != '-'])
+    
+    p_contact = doc.add_paragraph()
+    p_contact.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_contact = p_contact.add_run(kontak_str)
+    run_contact.font.size = Pt(9.5)
+
+    doc.add_paragraph() # Spacing
+
+    def add_section_heading(title):
+        p = doc.add_paragraph()
+        run = p.add_run(title.upper())
+        run.bold = True
+        run.font.size = Pt(12)
+        run.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
+        p.paragraph_format.space_before = Pt(12)
+        p.paragraph_format.space_after = Pt(4)
+
+    # 2. PENDIDIKAN
+    if data.get(7) and data.get(7) != '-':
+        add_section_heading("Pendidikan")
+        p_edu = doc.add_paragraph(data.get(7))
+        p_edu.paragraph_format.space_after = Pt(6)
+
+    # 3. PENGALAMAN KERJA / ORGANISASI
+    if data.get(8) and data.get(8) != '-':
+        add_section_heading("Pengalaman Kerja & Organisasi")
+        p_exp = doc.add_paragraph(data.get(8))
+        p_exp.paragraph_format.space_after = Pt(6)
+
+    # 4. PENCAPAIAN / PROJECT
+    if data.get(9) and data.get(9) != '-':
+        add_section_heading("Pencapaian Utama & Project")
+        p_ach = doc.add_paragraph(data.get(9))
+        p_ach.paragraph_format.space_after = Pt(6)
+
+    # 5. SKILL / SOFTWARE
+    if data.get(10) and data.get(10) != '-':
+        add_section_heading("Keahlian & Sertifikasi")
+        p_skill = doc.add_paragraph(data.get(10))
+        p_skill.paragraph_format.space_after = Pt(6)
+
+    doc.save(file_path)
+
+# ==============================================================
+# TELEGRAM BOT HANDLERS
+# ==============================================================
+STEP_QUESTIONS = {
+    1: "📌 **Step 1/10:** Siapa Nama Lengkap kamu?",
+    2: "📌 **Step 2/10:** Masukkan **Alamat Email** kamu:",
+    3: "📌 **Step 3/10:** Masukkan **Nomor WhatsApp / HP** kamu:",
+    4: "📌 **Step 4/10:** Masukkan **Domisili Kota** tempat tinggal kamu saat ini:",
+    5: "📌 **Step 5/10:** Masukkan **URL LinkedIn** kamu *(Ketik `-` jika tidak ada)*:",
+    6: "📌 **Step 6/10:** Masukkan **Posisi / Jabatan Pekerjaan** yang ingin kamu lamar:",
+    7: "📌 **Step 7/10:** Masukkan **Riwayat Pendidikan** (Jurusan, Universitas/Sekolah, Tahun Lulus):",
+    8: "📌 **Step 8/10:** Masukkan **Pengalaman Kerja / Organisasi** (Perusahaan, Posisi, Tahun, & Detail Deskripsi Singkat):",
+    9: "📌 **Step 9/10:** Masukkan **Pencapaian Utama / Project** yang pernah dikerjakan *(Ketik `-` jika tidak ada)*:",
+    10: "📌 **Step 10/10:** Masukkan **Skill / Software / Sertifikasi** yang kamu kuasai:"
+}
+
+@dp.message_handler()
+async def handle_message(message: types.Message):
+    user_id = message.from_user.id
+    text = message.text.strip()
+    text_lower = text.lower()
+
+    # Perintah /start
+    if text == "/start":
+        user_sessions[user_id] = {"step": 1, "data": {}}
         
-        bot_app = ApplicationBuilder().token(token).persistence(persistence).build()
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler("start", start)],
-            states={
-                ST_NAMA: [MessageHandler(filters.TEXT & ~filters.COMMAND, step_nama)],
-                ST_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, step_email)],
-                ST_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, step_phone)],
-                ST_DOMISILI: [MessageHandler(filters.TEXT & ~filters.COMMAND, step_domisili)],
-                ST_LINKEDIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, step_linkedin)],
-                ST_POSISI: [MessageHandler(filters.TEXT & ~filters.COMMAND, step_posisi)],
-                ST_PENDIDIKAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, step_pendidikan)],
-                ST_PENGALAMAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, step_pengalaman)],
-                ST_PENCAPAIAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, step_pencapaian)],
-                ST_SKILL: [MessageHandler(filters.TEXT & ~filters.COMMAND, step_skill_and_finish)],
-            },
-            fallbacks=[
-                CommandHandler("cancel", cancel)
-            ],
-            name="cv_builder_v2",
-            persistent=True,
-            allow_reentry=True
+        start_text = (
+            "🚀 **PEMBUATAN CV ATS FRIENDLY STARTED**\n\n"
+            "Halo! Saya akan membantu membuatkan CV ATS-Friendly kamu secara otomatis.\n"
+            "Proses ini terdiri dari **4 Kelompok Data Utama**:\n"
+            "1️⃣ **Data Pribadi** (Nama, Email, HP, Domisili)\n"
+            "2️⃣ **Profil & Posisi** (Posisi Dilamar, LinkedIn)\n"
+            "3️⃣ **Riwayat Pendidikan & Pengalaman**\n"
+            "4️⃣ **Pencapaian & Skill**\n\n"
+            "-----------------------------------\n"
+            f"{STEP_QUESTIONS[1]}"
         )
-        bot_app.add_handler(conv_handler)
-        await bot_app.initialize()
-        await bot_app.start()
-        await bot_app.updater.start_polling(drop_pending_updates=True)
-        bot_app_instance = bot_app
+        await message.answer(start_text, parse_mode="Markdown")
+        return
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    global bot_app_instance
-    if bot_app_instance:
-        logger.info("Shutting down bot gracefully...")
-        await bot_app_instance.updater.stop()
-        await bot_app_instance.stop()
-        await bot_app_instance.shutdown()
+    session = user_sessions.get(user_id)
+
+    # Jika session kosong atau flow pembuatan CV sudah selesai
+    if not session or session.get("step") is None:
+        # Abaikan ucapan terima kasih (bot DIAM, tidak membalas)
+        if any(word in text_lower for word in THANK_YOU_WORDS):
+            return
+        
+        # Jika mengetik teks lain di luar flow, beri arahan /start
+        await message.answer("Ketik **/start** jika ingin membuat CV baru lagi ya! 😊", parse_mode="Markdown")
+        return
+
+    current_step = session["step"]
+
+    # Simpan jawaban step saat ini
+    session["data"][current_step] = text
+
+    # Cek apakah masih ada step berikutnya
+    if current_step < 10:
+        next_step = current_step + 1
+        session["step"] = next_step
+        await message.answer(STEP_QUESTIONS[next_step], parse_mode="Markdown")
+    else:
+        # Flow Step Selesai
+        session["step"] = None # Tandai flow selesai
+        await message.answer("🔄 **Data tersimpan di DB! Memproses file Word (.docx)...**", parse_mode="Markdown")
+
+        try:
+            # 1. Simpan ke Database PostgreSQL
+            save_cv_to_db(user_id, session["data"])
+
+            # 2. Buat File Word
+            file_name = f"CV_{user_id}.docx"
+            create_cv_docx(session["data"], file_name)
+
+            # 3. Kirim File Word ke Telegram User
+            with open(file_name, "rb") as file_doc:
+                await message.answer_document(
+                    document=file_doc,
+                    caption="✅ **CV ATS BERHASIL DIBUAT!** Ketik **/start** jika ingin buat lagi."
+                )
+
+            # Cleanup file lokal temp
+            if os.path.exists(file_name):
+                os.remove(file_name)
+
+        except Exception as e:
+            await message.answer(f"❌ Terjadi kesalahan saat memproses CV: {str(e)}")
+
+# ==============================================================
+# MAIN RUNNER
+# ==============================================================
+if __name__ == '__main__':
+    print("Inisialisasi Database...")
+    init_db()
+    print("Bot Telegram Boontrack Berjalan...")
+    executor.start_polling(dp, skip_updates=True)
