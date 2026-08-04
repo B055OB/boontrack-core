@@ -23,7 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Definisi State untuk ConversationHandler
-MENU, NAMA, POSISI, PENDIDIKAN, PENGALAMAN, SKILL = range(6)
+NAMA, POSISI, PENDIDIKAN, PENGALAMAN, SKILL = range(5)
 
 app = FastAPI(
     title="BoonTrack Core API",
@@ -50,46 +50,21 @@ async def root():
 # --- HANDLER CONVERSATION TELEGRAM BOT ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.clear()
     welcome_text = (
         "Selamat datang di **BoonTrack Assistant**! 👋\n\n"
-        "Aku siap bantu kamu persiapan karir, bikin CV ATS-friendly, latihan interview, sampe atasi grogi saat wawancara.\n\n"
-        "Bagaimana saya bisa membantumu hari ini?\n"
-        "1. Memperbarui atau membuat CV\n"
-        "2. Mempersiapkan diri untuk wawancara\n"
-        "3. Membahas rencana & strategi karir\n"
-        "4. Mengatasi tantangan dalam mencari kerja\n\n"
-        "Silakan pilih nomor atau ketik langsung kebutuhanmu di sini ya! 😊"
+        "Mari kita buat CV ATS-Friendly kamu secara sistematis.\n\n"
+        "Pertama-tama, **siapa nama lengkap kamu?**"
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
-    return MENU
-
-
-async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip().lower()
-
-    if text == "1" or "cv" in text or "buat" in text or "perbarui" in text:
-        await update.message.reply_text(
-            "Siap, mari kita buat/perbarui CV kamu! Pertama-tama, siapa **nama lengkap kamu**?",
-            parse_mode="Markdown"
-        )
-        return NAMA
-    else:
-        try:
-            res = await ai_gateway.generate(prompt=text)
-            reply = res.text if hasattr(res, 'text') else str(res)
-            await update.message.reply_text(reply, parse_mode="Markdown")
-        except Exception as e:
-            logger.error(f"Error AI Menu: {e}")
-            await update.message.reply_text("Ada yang bisa saya bantu lagi? Ketik /start untuk kembali ke menu utama.")
-
-        return ConversationHandler.END
+    return NAMA
 
 
 async def get_nama(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['nama'] = update.message.text.strip()
     await update.message.reply_text(
         f"Salam kenal, **{context.user_data['nama']}**! 😊\n\n"
-        "Selanjutnya, **posisi atau bidang pekerjaan apa yang ingin kamu lamar?** (Contoh: Admin, Auditor, Digital Marketing)",
+        "Selanjutnya, **posisi atau bidang pekerjaan apa yang ingin kamu lamar?** (Contoh: Developer, Admin, Auditor)",
         parse_mode="Markdown"
     )
     return POSISI
@@ -148,36 +123,33 @@ async def get_skill_and_generate(update: Update, context: ContextTypes.DEFAULT_T
         res = await ai_gateway.generate(prompt=prompt_final)
         reply = res.text if hasattr(res, 'text') else str(res)
         await update.message.reply_text(reply, parse_mode="Markdown")
-        await update.message.reply_text(
-            "\n✨ **Draft CV kamu sudah selesai dibuat!**\n"
-            "Ketik /start kapan saja jika ingin membuat CV baru atau memilih menu lainnya.",
-            parse_mode="Markdown"
-        )
     except Exception as e:
         logger.error(f"Error generating CV: {e}")
-        # Fallback manual jika API Groq mengalami timeout / limit
         fallback_text = (
             f"📄 **DRAFT CV ATS-FRIENDLY**\n\n"
             f"**Nama:** {context.user_data.get('nama')}\n"
             f"**Posisi Dilamar:** {context.user_data.get('posisi')}\n\n"
             f"--- **RINGKASAN PROFIL** ---\n"
-            f"Kandidat profesional berdedikasi yang melamar untuk posisi {context.user_data.get('posisi')}. "
-            f"Memiliki latar belakang pendidikan dari {context.user_data.get('pendidikan')} serta didukung oleh keahlian {context.user_data.get('skill')}.\n\n"
+            f"Kandidat profesional berdedikasi yang melamar untuk posisi {context.user_data.get('posisi')}.\n\n"
             f"--- **PENDIDIKAN** ---\n"
             f"• {context.user_data.get('pendidikan')}\n\n"
             f"--- **PENGALAMAN** ---\n"
             f"• {context.user_data.get('pengalaman')}\n\n"
             f"--- **KEAHLIAN / SKILL** ---\n"
-            f"• {context.user_data.get('skill')}\n\n"
-            f"✨ Ketik /start untuk kembali ke menu utama."
+            f"• {context.user_data.get('skill')}\n"
         )
         await update.message.reply_text(fallback_text, parse_mode="Markdown")
+
+    await update.message.reply_text(
+        "\n✨ **Selesai!** Ketik /start jika ingin membuat CV lagi dari awal ya! 😊",
+        parse_mode="Markdown"
+    )
 
     return ConversationHandler.END
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Proses dibatalkan. Ketik /start kapan saja untuk membuka menu utama lagi ya!")
+    await update.message.reply_text("Proses dibatalkan. Ketik /start kapan saja untuk mulai lagi ya!")
     return ConversationHandler.END
 
 
@@ -191,9 +163,11 @@ async def startup_event():
         bot_app = ApplicationBuilder().token(token).build()
 
         conv_handler = ConversationHandler(
-            entry_points=[CommandHandler("start", start)],
+            entry_points=[
+                CommandHandler("start", start),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, start)
+            ],
             states={
-                MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_choice)],
                 NAMA: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_nama)],
                 POSISI: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_posisi)],
                 PENDIDIKAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_pendidikan)],
