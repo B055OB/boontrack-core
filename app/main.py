@@ -16,7 +16,6 @@ from telegram.ext import (
     ContextTypes,
 )
 from docx import Document
-from docx.shared import Pt, Inches, RGBColor
 
 from sqlalchemy import create_engine, Column, String, Text, BigInteger, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -24,7 +23,6 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- DATABASE SETUP ---
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://boontrack_user:boontrack_password@postgres:5432/boontrack_db")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -63,11 +61,10 @@ def save_field(telegram_id: int, **fields):
     finally:
         db.close()
 
-# STATE DEFINITION (100% UNIK)
 ST_NAMA, ST_EMAIL, ST_PHONE, ST_DOMISILI, ST_LINKEDIN, ST_POSISI, ST_PENDIDIKAN, ST_PENGALAMAN, ST_PENCAPAIAN, ST_SKILL = range(201, 211)
 
 app = FastAPI()
-bot_app_instance = None  # Global reference untuk Graceful Shutdown
+bot_app_instance = None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
@@ -159,14 +156,11 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Batal. Ketik /start untuk mulai lagi.")
     return ConversationHandler.END
 
-# --- LIFECYCLE EVENTS ---
-
 @app.on_event("startup")
 async def startup_event():
     global bot_app_instance
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if token:
-        # Buat folder data jika belum ada
         os.makedirs("/app/data", exist_ok=True)
         persistence = PicklePersistence(filepath="/app/data/bot_persistence.pkl")
         
