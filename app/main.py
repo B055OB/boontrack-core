@@ -110,9 +110,9 @@ async def root():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "Halo! Saya **BoonTrack Assistant**. 🚀\n\n"
-        "Mari kita buat CV ATS-Friendly kamu secara sistematis.\n"
+        "Mari kita susun CV ATS-Friendly kamu secara sistematis.\n"
         "*(Catatan: Jika ada pertanyaan yang belum ada jawabannya, cukup ketik: 'belum ada' atau '-')*\n\n"
-        "1️⃣ Pertama-tama, **siapa nama lengkap kamu?**",
+        "1️⃣ Pertanyaan 1 dari 10: **Siapa nama lengkap kamu?**",
         parse_mode="Markdown"
     )
     return NAMA
@@ -121,7 +121,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def get_nama(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     save_or_update_cv_field(update.effective_user.id, nama=clean_input(update.message.text))
     await update.message.reply_text(
-        "2️⃣ Masukkan **alamat Email aktif kamu**:\n*(Ketik 'belum ada' jika belum punya)*",
+        "2️⃣ Pertanyaan 2 dari 10: **Masukkan alamat Email aktif kamu**:\n*(Ketik 'belum ada' jika belum punya)*",
         parse_mode="Markdown"
     )
     return EMAIL
@@ -130,7 +130,7 @@ async def get_nama(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     save_or_update_cv_field(update.effective_user.id, email=clean_input(update.message.text))
     await update.message.reply_text(
-        "3️⃣ Masukkan **Nomor WhatsApp / HP aktif**:\n*(Ketik 'belum ada' jika tidak ingin dicantumkan)*",
+        "3️⃣ Pertanyaan 3 dari 10: **Masukkan Nomor WhatsApp / HP aktif**:\n*(Ketik 'belum ada' jika tidak ingin dicantumkan)*",
         parse_mode="Markdown"
     )
     return PHONE
@@ -139,7 +139,7 @@ async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     save_or_update_cv_field(update.effective_user.id, phone_number=clean_input(update.message.text))
     await update.message.reply_text(
-        "4️⃣ Dimana **Kota Domisili tempat tinggal kamu sekarang?** (Contoh: Bandung, Jawa Barat):",
+        "4️⃣ Pertanyaan 4 dari 10: **Dimana Kota Domisili tempat tinggal kamu sekarang?** (Contoh: Bandung, Jawa Barat):",
         parse_mode="Markdown"
     )
     return DOMISILI
@@ -148,7 +148,7 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def get_domisili(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     save_or_update_cv_field(update.effective_user.id, domisili=clean_input(update.message.text))
     await update.message.reply_text(
-        "5️⃣ Masukkan **Link LinkedIn atau Portofolio kamu**:\n*(Ketik 'belum ada' atau '-' jika tidak ada)*",
+        "5️⃣ Pertanyaan 5 dari 10: **Masukkan Link LinkedIn atau Portofolio kamu**:\n*(Ketik 'belum ada' atau '-' jika tidak ada)*",
         parse_mode="Markdown"
     )
     return LINKEDIN
@@ -157,7 +157,7 @@ async def get_domisili(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 async def get_linkedin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     save_or_update_cv_field(update.effective_user.id, linkedin_url=clean_input(update.message.text))
     await update.message.reply_text(
-        "6️⃣ **Posisi / Jabatan apa yang ingin kamu lamar?** (Contoh: Operations Lead, Software Engineer, Admin):",
+        "6️⃣ Pertanyaan 6 dari 10: **Posisi / Jabatan apa yang ingin kamu lamar?** (Contoh: Operations Lead, Software Engineer, Admin):",
         parse_mode="Markdown"
     )
     return POSISI
@@ -166,7 +166,7 @@ async def get_linkedin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 async def get_posisi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     save_or_update_cv_field(update.effective_user.id, posisi=clean_input(update.message.text))
     await update.message.reply_text(
-        "7️⃣ Tuliskan **Pendidikan Terakhir** kamu (Nama Sekolah/Kampus & Jurusan):",
+        "7️⃣ Pertanyaan 7 dari 10: **Tuliskan Pendidikan Terakhir kamu** (Nama Sekolah/Kampus & Jurusan):",
         parse_mode="Markdown"
     )
     return PENDIDIKAN
@@ -175,7 +175,7 @@ async def get_posisi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def get_pendidikan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     save_or_update_cv_field(update.effective_user.id, pendidikan=clean_input(update.message.text))
     await update.message.reply_text(
-        "8️⃣ Tuliskan **Pengalaman Kerja / Organisasi** utama kamu:\n*(Jika belum pernah kerja, ketik: 'belum ada')*",
+        "8️⃣ Pertanyaan 8 dari 10: **Tuliskan Pengalaman Kerja / Organisasi utama kamu**:\n*(Jika belum pernah kerja, ketik: 'belum ada')*",
         parse_mode="Markdown"
     )
     return PENGALAMAN
@@ -184,7 +184,7 @@ async def get_pendidikan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def get_pengalaman(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     save_or_update_cv_field(update.effective_user.id, pengalaman=clean_input(update.message.text))
     await update.message.reply_text(
-        "9️⃣ Tuliskan **Prestasi / Pencapaian Utama / Project** yang pernah kamu kerjakan:\n*(Ketik 'belum ada' jika tidak ada)*",
+        "9️⃣ Pertanyaan 9 dari 10: **Tuliskan Prestasi / Pencapaian Utama / Project yang pernah kamu kerjakan**:\n*(Ketik 'belum ada' jika tidak ada)*",
         parse_mode="Markdown"
     )
     return PENCAPAIAN
@@ -193,7 +193,7 @@ async def get_pengalaman(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def get_pencapaian(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     save_or_update_cv_field(update.effective_user.id, pencapaian=clean_input(update.message.text))
     await update.message.reply_text(
-        "🔟 Terakhir, tuliskan **Keahlian (Skill), Software, atau Sertifikasi** yang kamu kuasai:",
+        "🔟 Pertanyaan 10 dari 10: **Terakhir, tuliskan Keahlian (Skill), Software, atau Sertifikasi yang kamu kuasai**:",
         parse_mode="Markdown"
     )
     return SKILL
@@ -203,7 +203,7 @@ async def get_skill_and_generate(update: Update, context: ContextTypes.DEFAULT_T
     user_id = update.effective_user.id
     save_or_update_cv_field(user_id, skill=clean_input(update.message.text))
 
-    await update.message.reply_text("Data tersimpan di Database! Sedang membuatkan file Word (.docx) CV ATS-Friendly kamu... ⏳")
+    await update.message.reply_text("Semua data tersimpan di Database! Sedang membuatkan file Word (.docx) CV ATS-Friendly kamu... ⏳")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_document")
 
     try:
