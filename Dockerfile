@@ -1,19 +1,16 @@
 FROM python:3.11-slim
 
+# Install dos2unix untuk netralisir CRLF otomatis
+RUN apt-get update && apt-get install -y dos2unix && rm -rf /var/lib/apt-get/lists/*
+
 WORKDIR /app
 
-# Install dependencies OS untuk PostgreSQL & GCC
-RUN apt-get update && apt-get install -y \
-    gcc \
-    libpq-dev \
-    && rm -rf /var/lib/apt-get/lists/*
-
-# Copy & Install Python packages
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy seluruh source code
+# Konversi requirements.txt ke LF sebelum di-install pip
+RUN dos2unix requirements.txt && pip install --no-cache-dir -r requirements.txt
+
 COPY . .
 
-# Jalankan script main.py secara langsung
-CMD ["python", "app/main.py"]
+# Konversi semua file python dan shell script ke LF
+RUN find . -type f \( -name "*.py" -o -name "*.sh" -o -name "*.yml" \) -exec dos2unix {} +

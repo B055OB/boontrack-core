@@ -1,0 +1,49 @@
+Groq : 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
+OpenRoute : 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
+TELEGRAM_BOT_TOKEN=8858717294:AAGVkXk75XUn4_5IB5e42hgP14rGTx_uit0 (boontrackbot)
+GEmini : AQ.Ab8RN6IFppG3uUKag2nOMeZ9klpf9dNkklzUmwzBup7i6v1fyg
+Token pass GitHub :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
+
+Metabase pass : M3t4b4s3
+. Hubungkan ke Database PostgreSQL VPS
+Pada halaman berikutnya ("Add your data"), masukkan detail konfigurasi berikut:
+
+Database type: PostgreSQL
+Display name: BoonTrack VPS
+Host: 152.42.225.138
+Port: 5432
+Database name: boontrack_db
+Username: boontrack_user
+Password: boontrack_pass
+
+ssh root@152.42.225.138
+cd /root/boontrack-core
+
+Vultr393982!
+
+depa server 
+onlineboost.id@gmail.com
+B00nTr4ck3009!
+
+BOONTRACK_PAGES_KV 69459b6d96cf40429c588ca669180513
+
+
+1. Setup Ngrok / Backend Python Local
+ Menghubungkan MacroDroid HP langsung ke skrip Python yang berjalan di laptop kamu via tunneling Ngrok.
+
+Menguji ekstraksi angka nominal unik dari notifikasi menggunakan regex.
+
+2. Pengembangan Bot Telegram & Cloudflare Worker
+
+Membuat alur command bot Telegram untuk menerima data CV pengguna dan mengirimkan gambar QRIS secara otomatis.
+
+Menyiapkan logika penyimpanannya ke Cloudflare KV untuk deployment Career Page instan.
+
+3. Prompt AI Generator (CV to HTML Page)
+
+Merancang prompt AI khusus untuk mengubah data CV mentah pengguna menjadi struktur HTML/Tailwind CSS yang rapi dan responsif.
+
+
+pin debugger : Debugger PIN: 139-259-349
+
+Cronjob : Cron3009

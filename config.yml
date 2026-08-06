@@ -1,0 +1,7 @@
+tunnel: boontrack-webhook
+credentials-file: C:\Users\Alldy\.cloudflared\c8c3f0a9-3bc7-4dc9-bc44-9c95551beade.json
+
+ingress:
+  - hostname: webhook.boontrack.com
+    service: http://localhost:5000
+  - service: http_status:404
