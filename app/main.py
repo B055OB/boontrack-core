@@ -599,10 +599,13 @@ async def handle_message(message: types.Message):
             await track_event(user_id, "resume_generated", meta={"position": position})
 
             document = InputFile(file_path)
+            
+            # 1. Penyerahan File CV (Tanpa Minta Donasi Dulu)
             await bot.send_document(
                 chat_id=user_id,
                 document=document,
-                caption="📄 <b>CV ATS-Friendly Kamu Sudah Selesai!</b>\n\nFile .docx telah dilampirkan di atas. Semoga ini menjadi langkah pertama menuju pekerjaan impianmu. 🚀",
+                caption="🎉 <b>CV ATS-Friendly kamu sudah selesai!</b>\n\n"
+                        "Silakan di-download dan diperiksa kembali. Semoga file ini menjadi langkah pertama menuju pekerjaan impianmu!",
                 parse_mode="HTML"
             )
             
@@ -611,17 +614,39 @@ async def handle_message(message: types.Message):
             except Exception:
                 pass
 
+            # 2. Edukasi Value-Add (Meningkatkan Nilai Bot)
+            value_text = (
+                "💡 <b>Sebelum kamu mengirim CV ini...</b>\n\n"
+                "Ada 3 hal yang sering membuat lamaran tidak pernah dibalas recruiter:\n"
+                "✅ Nama file CV salah\n"
+                "✅ Email tidak profesional\n"
+                "✅ CV dikirim tanpa menyesuaikan posisi\n\n"
+                "Untungnya CV yang baru saja kamu download sudah menggunakan format ATS-Friendly. "
+                "Semoga peluang interview kamu semakin besar! 🚀"
+            )
+            await bot.send_message(user_id, value_text, parse_mode="HTML")
+
+            # 3. Motivasi Emosional
+            motivation_text = (
+                "Saya tahu... Mencari pekerjaan itu tidak mudah.\n"
+                "Kadang sudah kirim puluhan lamaran tetapi belum ada panggilan. "
+                "Rasa lelah itu sangat wajar.\n\n"
+                "Tapi jangan menyerah ya. Hari ini kamu sudah memperbaiki satu hal yang sangat penting. "
+                "Semoga kabar interview terbaik segera datang! ❤️"
+            )
+            await bot.send_message(user_id, motivation_text, parse_mode="HTML")
+
+            # 4. Donasi (Prespektif User & Empati)
             donation_text = (
-                "🎉 <b>CV kamu sudah selesai.</b>\n"
-                "Semoga ini menjadi langkah pertama menuju pekerjaan impianmu.\n\n"
-                "BoonTrack saat ini masih dikembangkan secara mandiri (bootstrap) tanpa investor.\n"
-                "Kalau hasil CV ini menurutmu bermanfaat, kamu boleh mendukung pengembangannya melalui donasi seikhlasnya.\n"
-                "Tidak wajib.\n"
-                "Tapi setiap dukungan akan membantu kami terus membuat layanan ini tetap gratis untuk banyak pencari kerja.\n"
-                "❤️"
+                "Kalau suatu hari nanti CV ini membantumu mendapatkan panggilan interview... Saya ikut bahagia.\n\n"
+                "BoonTrack dikembangkan secara mandiri tanpa investor. "
+                "Kalau menurutmu layanan ini bermanfaat, kamu boleh mendukung pengembangannya melalui donasi seikhlasnya.\n\n"
+                "<b>Tidak wajib.</b>\n"
+                "Dukungan sekecil apa pun membantu kami menjaga layanan ini tetap gratis untuk pencari kerja lainnya. ❤️"
             )
             await bot.send_message(user_id, donation_text, parse_mode="HTML")
 
+            # 5. Kirim Gambar QRIS
             possible_qris_paths = [
                 QRIS_IMAGE_PATH,
                 "/app/qris.jpg",
@@ -642,18 +667,40 @@ async def handle_message(message: types.Message):
                     caption="Dukungan donasi seikhlasnya melalui QRIS di atas. Terima kasih! 🙏"
                 )
 
+            # 6. Bonus Referral (Portfolio Website Gratis)
             bot_info = await bot.get_me()
-            referral_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+            user_ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
             
+            user_name_clean = clean_val(user_data.get("1", user_data.get("step_1", "namakamu"))).lower().replace(" ", "")
+            if not user_name_clean:
+                user_name_clean = "namakamu"
+
             referral_text = (
-                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "🎁 <b>BONUS TAMBAHAN: WEBSITE LANDING PAGE/PORTOFOLIO GRATIS!</b>\n\n"
-                "Mau dibuatkan <b>Website Portfolio Personal</b> otomatis dengan domain khusus (contoh: <code>namamu.boontrack.com</code>)?\n\n"
-                "Cukup rekomendasikan BoonTrack ke 3 teman pencari kerja menggunakan link ini:\n"
-                f"👉 <code>{referral_link}</code>\n\n"
-                "Setelah 3 temanmu berhasil membuat CV, bot akan otomatis membukakan akses pembuatan website gratis untukmu! 🚀"
+                "🎁 <b>BONUS KHUSUS</b>\n\n"
+                "Kalau kamu berhasil membantu 3 teman membuat CV melalui BoonTrack, kami akan buatkan <b>GRATIS</b>:\n\n"
+                "🌐 <b>Website Portfolio Pribadi</b>\n"
+                f"Contoh: <code>{user_name_clean}.boontrack.com</code>\n\n"
+                "Website ini bisa kamu gunakan untuk:\n"
+                "✅ melamar kerja\n"
+                "✅ portofolio\n"
+                "✅ dibagikan ke HR\n"
+                "✅ LinkedIn\n"
+                "✅ media sosial\n\n"
+                "Tanpa biaya. Tanpa hosting. Tanpa coding.\n\n"
+                "👇 Cukup bagikan link di bawah ini:\n"
+                f"<code>{user_ref_link}</code>"
             )
             await bot.send_message(user_id, referral_text, parse_mode="HTML")
+
+            # 7. Pesan Penutup & Hubungan Jangka Panjang
+            closing_text = (
+                "🤝 <b>Satu permintaan kecil.</b>\n\n"
+                "Kalau suatu hari nanti kamu benar-benar diterima bekerja... Boleh kembali ke bot ini dan kabari saya?\n\n"
+                "Saya ingin ikut merayakan kabar baikmu.\n"
+                "Karena tujuan BoonTrack bukan hanya membuat CV, tetapi membantu lebih banyak orang mendapatkan pekerjaan.\n\n"
+                "Semoga sukses! 🚀❤️"
+            )
+            await bot.send_message(user_id, closing_text, parse_mode="HTML")
 
             if os.path.exists(file_path):
                 os.remove(file_path)
