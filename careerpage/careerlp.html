@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="id" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BoonTrack — Career Assistant & Pendamping Lamaran Kerja AI</title>
+    
+    <!-- Meta Tags Open Graph -->
+    <meta property="og:title" content="BoonTrack — Asisten Karir AI Pribadi Kamu">
+    <meta property="og:description" content="Sulit dipanggil interview? BoonTrack bantu kamu mendampingi pembuatan CV profesional ATS-Friendly siap kirim dalam 5 menit.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://cvats.boontrack.com">
+    <meta property="og:image" content="https://cvats.boontrack.com/qris.jpg">
+
+    <!-- Tailwind CSS CDN & Lucide Icons -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="https://unpkg.com/aos@next/dist/aos.css" />
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#ecfdf5',
+                            500: '#10b981',
+                            600: '#059669',
+                            900: '#064e3b',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans antialiased selection:bg-emerald-500 selection:text-white">
+
+    <!-- 1. ANNOUNCEMENT BAR -->
+    <div class="bg-slate-900 border-b border-slate-800 text-slate-300 text-xs md:text-sm py-2 px-4 text-center font-medium flex items-center justify-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
+        <span>Asisten Karir Pribadi Berbasis AI — 100% Gratis via Telegram</span>
+    </div>
+
+    <!-- NAVBAR -->
+    <nav class="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between border-b border-slate-800/60">
+        <div class="flex items-center gap-2 font-bold text-xl tracking-tight text-white">
+            <span class="w-8 h-8 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 font-black text-lg">B</span>
+            <span>Boon<span class="text-emerald-400">Track</span></span>
+        </div>
+        <a href="https://t.me/BoonTrackBot?start=direct" target="_blank" class="btn-telegram-link px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-semibold text-xs md:text-sm hover:bg-emerald-500/20 transition-all">
+            Mulai di Telegram
+        </a>
+    </nav>
+
+    <!-- 2. HERO SECTION (Arahan CTO: Empati, No Clickbait, Career Assistant) -->
+    <section class="max-w-4xl mx-auto px-6 pt-16 pb-12 text-center relative overflow-hidden">
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-950/30 text-emerald-400 text-xs font-medium mb-6">
+            <span>🤝 Asisten Karir AI Siap Mendampingimu</span>
+        </div>
+        
+        <h1 class="text-3xl md:text-5xl font-black text-white tracking-tight leading-tight mb-6">
+            Sudah berkali-kali melamar kerja tapi belum juga dipanggil interview?
+        </h1>
+        
+        <p class="text-slate-300 text-lg md:text-xl max-w-2xl mx-auto mb-4 font-medium">
+            Jangan buru-buru menyalahkan diri sendiri.
+        </p>
+
+        <p class="text-slate-400 text-base md:text-lg max-w-2xl mx-auto mb-8 leading-relaxed">
+            Bisa jadi masalahnya ada di CV yang belum tersusun dengan baik. Dalam sekitar 5 menit, BoonTrack akan membantu menyusun CV profesional yang siap digunakan untuk melamar pekerjaan.
+        </p>
+
+        <!-- CTA Button -->
+        <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
+            <a href="https://t.me/BoonTrackBot?start=direct" target="_blank" class="btn-telegram-link w-full sm:w-auto px-8 py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-bold text-base shadow-lg shadow-emerald-500/25 transition-all flex items-center justify-center gap-2">
+                <i data-lucide="send" class="w-5 h-5"></i>
+                <span>Mulai Gratis di Telegram</span>
+            </a>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs md:text-sm text-slate-400 font-medium">
+            <div class="flex items-center gap-1.5">
+                <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i>
+                <span>Tanpa Ribet Form Panjang</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+                <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i>
+                <span>Format Word (.docx) Mudah Edit</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+                <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i>
+                <span>Standar Lolos Pindaian ATS</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- 3. MOCKUP TELEGRAM CHAT SHOWCASE (Perbaikan Alur Chat Sambung) -->
+    <section class="max-w-md mx-auto px-6 pb-16">
+        <div class="bg-slate-900 border border-slate-800 rounded-3xl p-4 shadow-2xl relative overflow-hidden">
+            <div class="flex items-center gap-3 pb-3 border-b border-slate-800 mb-4">
+                <div class="w-10 h-10 rounded-full bg-emerald-500/20 text-emerald-400 font-bold flex items-center justify-center">BT</div>
+                <div class="text-left">
+                    <p class="text-sm font-bold text-white">BoonTrack Assistant</p>
+                    <p class="text-xs text-emerald-400">bot • online</p>
+                </div>
+            </div>
+
+            <!-- Chat Stream -->
+            <div class="space-y-3 text-xs md:text-sm text-left">
+                <!-- User Msg -->
+                <div class="flex justify-end">
+                    <div class="bg-emerald-600 text-white px-3 py-2 rounded-2xl rounded-tr-none max-w-[80%]">
+                        Firza
+                    </div>
+                </div>
+
+                <!-- Bot Msg 1 -->
+                <div class="flex justify-start">
+                    <div class="bg-slate-800 text-slate-200 px-3 py-2.5 rounded-2xl rounded-tl-none max-w-[85%] space-y-1">
+                        <p>Halo Firza 😊</p>
+                        <p>Boleh saya tanya, saat ini kamu sedang dalam posisi apa?</p>
+                    </div>
+                </div>
+
+                <!-- Interaktif / Inline Buttons Mockup -->
+                <div class="pl-2 space-y-1.5">
+                    <div class="bg-slate-800/80 border border-emerald-500/40 text-emerald-300 font-medium px-3 py-1.5 rounded-xl text-center">
+                        🎓 Fresh Graduate / Belum Kerja
+                    </div>
+                    <div class="bg-slate-800/80 border border-slate-700 text-slate-300 px-3 py-1.5 rounded-xl text-center">
+                        💼 Sudah Berpengalaman & Ingin Pindah
+                    </div>
+                </div>
+
+                <!-- User Clicked Option -->
+                <div class="flex justify-end pt-1">
+                    <div class="bg-emerald-600 text-white px-3 py-2 rounded-2xl rounded-tr-none max-w-[80%]">
+                        🎓 Fresh Graduate / Belum Kerja
+                    </div>
+                </div>
+
+                <!-- Bot Solutif Response -->
+                <div class="flex justify-start">
+                    <div class="bg-slate-800 text-slate-200 px-3 py-2.5 rounded-2xl rounded-tl-none max-w-[90%] space-y-1">
+                        <p>Baik, terima kasih jawabannya! 👍</p>
+                        <p>Salah satu alasan lamaran kerja sering tidak mendapat panggilan adalah karena susunan CV belum sesuai dengan kriteria pindaian perusahaan modern.</p>
+                        <p class="text-emerald-400 font-medium">Yuk, kita rapihkan bersama langkah demi langkah...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 4. CARA ASSISTANT BEKERJA -->
+    <section class="py-16 max-w-5xl mx-auto px-6 border-t border-slate-800/80">
+        <div class="text-center mb-12" data-aos="fade-up">
+            <h2 class="text-xs font-bold uppercase tracking-wider text-emerald-400 mb-2">Pendampingan Praktis</h2>
+            <h3 class="text-2xl md:text-3xl font-bold text-white">Bagaimana BoonTrack Mendampingimu?</h3>
+        </div>
+        <div class="grid md:grid-cols-3 gap-6">
+            <div class="bg-slate-900/50 border border-slate-800 p-6 rounded-2xl" data-aos="fade-up" data-aos-delay="100">
+                <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold flex items-center justify-center mb-4">
+                    <i data-lucide="message-square-heart" class="w-5 h-5"></i>
+                </div>
+                <h4 class="font-bold text-white mb-2">1. Tanya-Jawab Santai</h4>
+                <p class="text-slate-400 text-sm">Tidak perlu pusing memilih kata formal. Cukup jawab pertanyaan pendek seputar latar belakangmu di chat Telegram.</p>
+            </div>
+            <div class="bg-slate-900/50 border border-slate-800 p-6 rounded-2xl" data-aos="fade-up" data-aos-delay="200">
+                <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold flex items-center justify-center mb-4">
+                    <i data-lucide="sparkles" class="w-5 h-5"></i>
+                </div>
+                <h4 class="font-bold text-white mb-2">2. Penyusunan Otomatis</h4>
+                <p class="text-slate-400 text-sm">AI kami akan merangkai pengalamanmu menjadi kalimat kerja profesional berstandar kebutuhan seleksi HR.</p>
+            </div>
+            <div class="bg-slate-900/50 border border-slate-800 p-6 rounded-2xl" data-aos="fade-up" data-aos-delay="300">
+                <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold flex items-center justify-center mb-4">
+                    <i data-lucide="file-check-2" class="w-5 h-5"></i>
+                </div>
+                <h4 class="font-bold text-white mb-2">3. Terima File Siap Pakai</h4>
+                <p class="text-slate-400 text-sm">Dapatkan dokumen format Word (.docx) yang bersih, rapi, dan mudah kamu sesuaikan kembali kapan saja.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- 5. FAQ SECTION -->
+    <section class="py-16 max-w-3xl mx-auto px-6">
+        <div class="text-center mb-10" data-aos="fade-up">
+            <h2 class="text-xs font-bold uppercase tracking-wider text-emerald-400 mb-2">Pertanyaan Umum</h2>
+            <h3 class="text-2xl font-bold text-white">Hal yang Sering Ditanyakan</h3>
+        </div>
+        <div class="space-y-4">
+            <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl">
+                <h4 class="font-bold text-white mb-1">Apakah layanan ini benar-benar gratis?</h4>
+                <p class="text-slate-400 text-sm">Ya, sepenuhnya gratis. Kami membangun BoonTrack untuk membantu pencari kerja agar lebih mudah menyusun lamaran berkualitas.</p>
+            </div>
+            <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl">
+                <h4 class="font-bold text-white mb-1">Mengapa hasilnya menggunakan format Word (.docx)?</h4>
+                <p class="text-slate-400 text-sm">Format Word sangat disukai sistem pindaian ATS karena mudah dibaca teksnya, sekaligus memberi kebebasan bagimu untuk memperbarui data di kemudian hari.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="border-t border-slate-800/80 py-8 text-center text-slate-500 text-xs">
+        <div class="max-w-6xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <p>&copy; 2026 BoonTrack. Asisten Karir Pribadi Kamu.</p>
+            <div class="flex gap-4">
+                <a href="#" class="hover:text-slate-400">Privasi</a>
+                <a href="#" class="hover:text-slate-400">Ketentuan</a>
+            </div>
+        </div>
+    </footer>
+
+    <script src="https://unpkg.com/aos@next/dist/aos.js"></script>
+    <script>
+        AOS.init({ duration: 800, once: true });
+        lucide.createIcons();
+
+        // --- FULL UTM TRACKING SCRIPT ---
+        (function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            
+            const source = urlParams.get('utm_source') || urlParams.get('utm') || 'direct';
+            const medium = urlParams.get('utm_medium') || 'none';
+            const campaign = urlParams.get('utm_campaign') || 'none';
+            const content = urlParams.get('utm_content') || 'none';
+
+            const utmPayload = `${source}__${medium}__${campaign}__${content}`;
+
+            const telegramButtons = document.querySelectorAll('.btn-telegram-link');
+            telegramButtons.forEach(button => {
+                button.href = `https://t.me/BoonTrackBot?start=${utmPayload}`;
+            });
+        })();
+    </script>
+</body>
+</html>
