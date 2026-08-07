@@ -255,7 +255,7 @@ def clean_val(val):
 def ai_generate_summary(position):
     if not position:
         return "Profesional berdedikasi tinggi yang terbiasa bekerja secara terstruktur, adaptif, serta berkomitmen memberikan kontribusi operasional terbaik bagi perusahaan."
-    return f"Profesional berpengalaman di bidang {position} dengan rekam jejak yang terbukti dalam mengeksecusi target operasional dan manajemen kerja secara efisien."
+    return f"Profesional berpengalaman di bidang {position} dengan rekam jejak yang terbukti dalam mengeksekusi target operasional dan manajemen kerja secara efisien."
 
 def ai_rewrite_achievement(text):
     prompt_text = (
@@ -517,12 +517,19 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     
     await bot.edit_message_reply_markup(user_id, callback_query.message.message_id, reply_markup=None)
     
-    user_data = user_state.get(user_id, {}).get("data", {})
+    # Pastikan dictionary user_state aman
+    if user_id not in user_state:
+        user_state[user_id] = {"step": 0, "data": {}}
+        
+    user_data = user_state[user_id].get("data", {})
     user_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "Teman")
 
     if code in ["status_fresh", "status_exp"]:
-        status_text = "Fresh Graduate" if code == "status_fresh" else "Sudah Berpengalaman"
+        status_text = "Fresh Graduate / Belum Berpengalaman" if code == "status_fresh" else "Sudah Berpengalaman"
         user_data["status_kerja"] = status_text
+        
+        # Kirim konfirmasi pilihan user secara eksplisit
+        await bot.send_message(user_id, f"<i>Status dipilihh: {status_text}</i>", parse_mode="HTML")
         
         # PESAN 3: Penjelasan ATS + Jaminan Keamanan Data + Option Mau Mulai? (Tombol Ya/Nanti Dulu)
         kbd_start = InlineKeyboardMarkup(row_width=2)
@@ -623,11 +630,16 @@ async def handle_message(message: types.Message):
         )
         
         msg_2 = (
-            f"\"Halo {text} 😊\"\n"
+            f"Halo {text} 😊\n\n"
             "Boleh saya tanya...\n"
             "Kamu sedang:"
         )
         await message.reply(msg_2, reply_markup=kbd_status, parse_mode="HTML")
+        return
+
+    # Kunci bot agar menunggu klik dari inline keyboard saat posisi di ONBOARDING_STATUS
+    if current_step == "ONBOARDING_STATUS":
+        await message.reply("Satu langkah lagi! Silakan **klik salah satu tombol di atas** untuk memilih status kamu ya. 👆", parse_mode="Markdown")
         return
 
     # --- FASE 10 PERTANYAAN CV (DATABASE) ---
