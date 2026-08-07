@@ -43,7 +43,7 @@ dp = Dispatcher(bot)
 user_state = {}
 
 CV_QUESTIONS = {
-    1: "👤 Siapa nama lengkapmu?",
+    1: "👤 Boleh kenalan dulu? Siapa nama lengkapmu?",
     2: "📧 Email aktif yang bisa dihubungi recruiter?",
     3: "📱 Nomor WhatsApp / HP aktif? <i>(contoh: 081234567890)</i>",
     4: "📍 Di kota mana kamu berdomisili saat ini?",
@@ -500,14 +500,11 @@ async def send_welcome(message: types.Message):
     user_state[user_id] = {"step": 1, "data": {}, "meta": meta_data}
     await save_dropoff(user_id, 1, {})
     
+    # NEW GREETING FLOW (HUMAN-CENTRIC & EMPATHETIC)
     greeting = (
-        "<b>👋 Halo! Saya BoonTrack Assistant.</b>\n\n"
-        "Saya akan membantumu membuat CV yang bersih, profesional, dan mudah dibaca oleh HR serta sistem rekrutmen perusahaan modern (seperti JobStreet, LinkedIn, Glints, dll).\n\n"
-        "<b>📌 Catatan Penting:</b>\n"
-        "CV ini sengaja dibuat <b>tanpa foto & desain berlebihan</b> agar fokus utama HR langsung ke pengalaman kerjamu, dan peluang lolos seleksi awal jauh lebih besar.\n\n"
-        "Cukup jawab beberapa pertanyaan singkat (~5 menit) dan hasilnya siap di-download dalam format Word (.docx).\n\n"
-        "💡 <i>Tips: Ketik /cancel kapan saja jika ingin membatalkan atau mengulang dari awal.</i>\n\n"
-        "Kalau sudah siap, kita mulai ya 😃\n\n"
+        "👋 <b>Halo! Saya BoonTrack Career Assistant.</b>\n\n"
+        "Saya akan membantu meningkatkan peluang kamu dipanggil interview.\n\n"
+        "Sebelum mulai... Boleh kenalan dulu?\n\n"
         f"{get_progress_bar(1)}\n"
         f"{CV_QUESTIONS[1]}"
     )
@@ -577,10 +574,21 @@ async def handle_message(message: types.Message):
         user_state[user_id]["step"] = next_step
         await save_dropoff(user_id, next_step, user_data)
         
-        await message.reply(
-            f"{get_progress_bar(next_step)}\n{CV_QUESTIONS[next_step]}",
-            parse_mode="HTML"
-        )
+        # Edukasi singkat saat melangkah ke step 2
+        if next_step == 2:
+            user_name = clean_val(user_data.get("1", user_data.get("step_1", "Teman")))
+            edu_bridge = (
+                f"Halo <b>{user_name}</b> 😊\n\n"
+                "Salah satu alasan lamaran kerja sering tidak mendapat panggilan adalah karena CV belum sesuai dengan cara perusahaan modern melakukan proses seleksi.\n\n"
+                "Tenang... Saya akan membantu membuat CV yang lebih mudah dibaca HR dan sistem ATS. Hanya sekitar 5 menit.\n\n"
+                f"{get_progress_bar(next_step)}\n{CV_QUESTIONS[next_step]}"
+            )
+            await message.reply(edu_bridge, parse_mode="HTML")
+        else:
+            await message.reply(
+                f"{get_progress_bar(next_step)}\n{CV_QUESTIONS[next_step]}",
+                parse_mode="HTML"
+            )
     else:
         user_state[user_id]["step"] = 0
         await save_dropoff(user_id, TOTAL_STEPS, user_data)
@@ -600,7 +608,7 @@ async def handle_message(message: types.Message):
 
             document = InputFile(file_path)
             
-            # 1. Penyerahan File CV (Tanpa Minta Donasi Dulu)
+            # 1. Penyerahan File CV
             await bot.send_document(
                 chat_id=user_id,
                 document=document,
@@ -614,7 +622,7 @@ async def handle_message(message: types.Message):
             except Exception:
                 pass
 
-            # 2. Edukasi Value-Add (Meningkatkan Nilai Bot)
+            # 2. Edukasi Value-Add
             value_text = (
                 "💡 <b>Sebelum kamu mengirim CV ini...</b>\n\n"
                 "Ada 3 hal yang sering membuat lamaran tidak pernah dibalas recruiter:\n"
@@ -636,7 +644,7 @@ async def handle_message(message: types.Message):
             )
             await bot.send_message(user_id, motivation_text, parse_mode="HTML")
 
-            # 4. Donasi (Prespektif User & Empati)
+            # 4. Donasi Empatis
             donation_text = (
                 "Kalau suatu hari nanti CV ini membantumu mendapatkan panggilan interview... Saya ikut bahagia.\n\n"
                 "BoonTrack dikembangkan secara mandiri tanpa investor. "
