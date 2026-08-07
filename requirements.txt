@@ -16,7 +16,7 @@ google-auth>=2.23.0
 google-auth-httplib2>=0.1.1
 
 # Telegram & Utility (aiogram diperbarui ke 2.25.2 agar aiohttp aman)
-aiogram>=2.25.2
+aiogram==2.25.2
 httpx>=0.24.0
 python-dotenv>=1.0.0
 
