@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="id" class="dark scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Professional Interactive Portfolio & Value-Add Showcase</title>
+    
+    <!-- Google Fonts: Plus Jakarta Sans -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#f0f3ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            900: '#312e81',
+                            glow: '#818cf8',
+                        }
+                    },
+                    boxShadow: {
+                        'glow': '0 0 25px -5px rgba(99, 102, 241, 0.35)',
+                        'glow-lg': '0 0 50px -10px rgba(129, 140, 248, 0.45)',
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- AOS (Animate On Scroll) CSS -->
+    <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
+    
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #020617;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1e293b;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4f46e5;
+        }
+
+        /* Glassmorphism Classes */
+        .glass-card {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .glass-card-hover {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .glass-card-hover:hover {
+            background: rgba(30, 41, 59, 0.85);
+            border-color: rgba(99, 102, 241, 0.4);
+            transform: translateY(-4px);
+            box-shadow: 0 12px 30px -10px rgba(99, 102, 241, 0.25);
+        }
+
+        .bg-grid-pattern {
+            background-size: 40px 40px;
+            background-image: 
+                linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans antialiased selection:bg-brand-500 selection:text-white relative overflow-x-hidden">
+
+    <!-- Background Glow Effects -->
+    <div class="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-brand-600/15 blur-[140px] pointer-events-none rounded-full -z-10"></div>
+    <div class="fixed bottom-0 right-0 w-[500px] h-[500px] bg-violet-600/10 blur-[160px] pointer-events-none rounded-full -z-10"></div>
+    <div class="fixed inset-0 bg-grid-pattern pointer-events-none -z-20"></div>
+
+    <!-- Navigation Header -->
+    <header class="fixed top-0 left-0 right-0 z-50 transition-all duration-300" id="navbar">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-20 glass-card mt-4 rounded-2xl px-6 border-slate-800/80">
+                <a href="#" class="flex items-center space-x-3 group">
+                    <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-violet-500 flex items-center justify-center text-white font-bold text-xl shadow-glow group-hover:scale-105 transition-transform">
+                        AR
+                    </div>
+                    <div>
+                        <span class="font-bold text-lg tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-200 to-slate-400">Aldi R.</span>
+                        <span class="block text-[10px] text-brand-500 font-semibold uppercase tracking-wider">Verified Specialist</span>
+                    </div>
+                </a>
+
+                <!-- Desktop Nav -->
+                <nav class="hidden md:flex items-center space-x-8 text-sm font-medium text-slate-300">
+                    <a href="#about" class="hover:text-brand-500 transition-colors">Tentang</a>
+                    <a href="#stats" class="hover:text-brand-500 transition-colors">Metrik & Dampak</a>
+                    <a href="#projects" class="hover:text-brand-500 transition-colors">Portofolio</a>
+                    <a href="#resources" class="hover:text-brand-500 transition-colors">Free Playbook</a>
+                    <a href="#skills" class="hover:text-brand-500 transition-colors">Skills</a>
+                </nav>
+
+                <div class="hidden md:flex items-center space-x-4">
+                    <a href="#contact" class="px-5 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-sm font-semibold text-white hover:border-brand-500 hover:text-brand-500 transition-all shadow-sm">
+                        Hubungi Saya
+                    </a>
+                </div>
+
+                <!-- Mobile Menu Button -->
+                <button id="menu-btn" class="md:hidden p-2 text-slate-400 hover:text-white focus:outline-none">
+                    <i data-lucide="menu" class="w-6 h-6"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Mobile Menu Dropdown -->
+        <div id="mobile-menu" class="hidden md:hidden max-w-7xl mx-auto px-4 mt-2">
+            <div class="glass-card rounded-2xl p-6 space-y-4 text-center border-slate-800">
+                <a href="#about" class="block text-slate-300 hover:text-white py-2">Tentang</a>
+                <a href="#stats" class="block text-slate-300 hover:text-white py-2">Metrik & Dampak</a>
+                <a href="#projects" class="block text-slate-300 hover:text-white py-2">Portofolio</a>
+                <a href="#resources" class="block text-slate-300 hover:text-white py-2">Free Playbook</a>
+                <a href="#skills" class="block text-slate-300 hover:text-white py-2">Skills</a>
+                <a href="#contact" class="block px-5 py-3 rounded-xl bg-brand-600 text-white font-semibold">Hubungi Saya</a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section id="about" class="pt-36 pb-20 md:pt-48 md:pb-32 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <div class="grid lg:grid-cols-12 gap-12 items-center">
+            
+            <div class="lg:col-span-7 space-y-8 text-left" data-aos="fade-right">
+                <div class="inline-flex items-center gap-2.5 px-4 py-2 rounded-full glass-card border-brand-500/30 text-brand-500 text-xs sm:text-sm font-semibold tracking-wide">
+                    <span class="flex h-2 w-2 rounded-full bg-emerald-400 animate-ping"></span>
+                    <span class="flex h-2 w-2 rounded-full bg-emerald-500 -ml-4"></span>
+                    <span>Terbuka untuk Peluang Kerja & Proyek B2B</span>
+                </div>
+
+                <div class="space-y-4">
+                    <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.15]">
+                        AI & Operations Workflow <br class="hidden sm:inline">
+                        <span class="bg-clip-text text-transparent bg-gradient-to-r from-brand-500 via-indigo-400 to-violet-400">
+                            Optimization Specialist
+                        </span>
+                    </h1>
+                    <p class="text-lg sm:text-xl text-slate-400 font-normal leading-relaxed max-w-2xl">
+                        Membantu bisnis & tim operasional memangkas waktu kerja hingga <span class="text-white font-semibold">50%</span> melalui otomatisasi sistem, integrasi AI kustom, dan optimasi *funnel* konversi B2B.
+                    </p>
+                </div>
+
+                <!-- CTA Buttons -->
+                <div class="flex flex-col sm:flex-row gap-4 pt-2">
+                    <a href="#resources" class="inline-flex items-center justify-center gap-3 px-7 py-4 rounded-xl bg-gradient-to-r from-brand-600 to-violet-600 text-white font-bold shadow-glow hover:shadow-glow-lg hover:scale-[1.02] active:scale-[0.98] transition-all group">
+                        <i data-lucide="download" class="w-5 h-5 group-hover:-translate-y-0.5 transition-transform"></i>
+                        <span>Download Resume & Case Study (PDF)</span>
+                    </a>
+                    <a href="https://wa.me/6281234567890?text=Halo%20Aldi,%20saya%20tertarik%20mendiskusikan%20peluang%20kerja%20/%20proyek" target="_blank" class="inline-flex items-center justify-center gap-3 px-7 py-4 rounded-xl glass-card hover:bg-slate-800/80 text-white font-semibold border-slate-700/80 hover:border-brand-500 transition-all group">
+                        <i data-lucide="calendar" class="w-5 h-5 text-brand-500 group-hover:scale-110 transition-transform"></i>
+                        <span>Jadwalkan Diskusi</span>
+                    </a>
+                </div>
+
+                <!-- Highlights Badge -->
+                <div class="pt-6 border-t border-slate-800/80 grid grid-cols-2 sm:grid-cols-3 gap-4 text-xs font-medium text-slate-400">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i>
+                        <span>Python & OpenAI API</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i>
+                        <span>Make.com / n8n Automation</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i>
+                        <span>Conversion Landing Pages</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Visual Hero Widget / Code Window -->
+            <div class="lg:col-span-5" data-aos="fade-left" data-aos-delay="200">
+                <div class="glass-card rounded-2xl p-6 shadow-2xl relative border-slate-800">
+                    <div class="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
+                        <div class="flex space-x-2">
+                            <div class="w-3 h-3 rounded-full bg-rose-500/80"></div>
+                            <div class="w-3 h-3 rounded-full bg-amber-500/80"></div>
+                            <div class="w-3 h-3 rounded-full bg-emerald-500/80"></div>
+                        </div>
+                        <span class="text-xs font-mono text-slate-500">workflow_automation_engine.py</span>
+                    </div>
+
+                    <div class="space-y-3 font-mono text-xs sm:text-sm">
+                        <div class="text-slate-500"># System Efficiency Diagnostic & Workflow Automation</div>
+                        <div>
+                            <span class="text-violet-400">class</span> <span class="text-emerald-300">OperationsBooster</span>:
+                        </div>
+                        <div class="pl-4">
+                            <span class="text-violet-400">def</span> <span class="text-blue-400">__init__</span>(self, company_name):
+                        </div>
+                        <div class="pl-8 text-slate-300">
+                            self.client = company_name<br>
+                            self.status = <span class="text-amber-300">"Optimizing Workflows..."</span>
+                        </div>
+                        <div class="pl-4">
+                            <span class="text-violet-400">def</span> <span class="text-blue-400">deploy_automation</span>(self):
+                        </div>
+                        <div class="pl-8 text-slate-300">
+                            return {<br>
+                            &nbsp;&nbsp;<span class="text-indigo-300">"manual_hours_saved"</span>: <span class="text-emerald-400">"500+ Hours/Year"</span>,<br>
+                            &nbsp;&nbsp;<span class="text-indigo-300">"cost_reduction"</span>: <span class="text-emerald-400">"35%"</span>,<br>
+                            &nbsp;&nbsp;<span class="text-indigo-300">"data_accuracy"</span>: <span class="text-emerald-400">"99.8%"</span><br>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Floating Mini Status Card -->
+                    <div class="mt-6 p-4 rounded-xl bg-slate-900/90 border border-brand-500/30 flex items-center justify-between shadow-glow">
+                        <div class="flex items-center space-x-3">
+                            <div class="p-2 rounded-lg bg-brand-500/20 text-brand-400">
+                                <i data-lucide="zap" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <p class="text-xs text-slate-400">Status Sistem Operasional</p>
+                                <p class="text-xs font-bold text-white">Automated Engine Active</p>
+                            </div>
+                        </div>
+                        <span class="px-2.5 py-1 text-[10px] font-bold bg-emerald-500/20 text-emerald-400 rounded-md border border-emerald-500/30">100% OPERATIONAL</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- Key Metrics / Impact Stats Section -->
+    <section id="stats" class="py-16 bg-slate-900/50 border-y border-slate-800/80">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-6 lg:gap-8">
+                
+                <div class="glass-card p-6 rounded-2xl text-center glass-card-hover" data-aos="zoom-in" data-aos-delay="100">
+                    <div class="w-12 h-12 rounded-xl bg-brand-500/10 border border-brand-500/20 flex items-center justify-center text-brand-400 mx-auto mb-4">
+                        <i data-lucide="trending-up" class="w-6 h-6"></i>
+                    </div>
+                    <p class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">35%</p>
+                    <p class="text-xs sm:text-sm font-medium text-slate-400 mt-2">Efisiensi Operasional B2B</p>
+                </div>
+
+                <div class="glass-card p-6 rounded-2xl text-center glass-card-hover" data-aos="zoom-in" data-aos-delay="200">
+                    <div class="w-12 h-12 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400 mx-auto mb-4">
+                        <i data-lucide="workflow" class="w-6 h-6"></i>
+                    </div>
+                    <p class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">20+</p>
+                    <p class="text-xs sm:text-sm font-medium text-slate-400 mt-2">Workflow Automation Deployed</p>
+                </div>
+
+                <div class="glass-card p-6 rounded-2xl text-center glass-card-hover" data-aos="zoom-in" data-aos-delay="300">
+                    <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mx-auto mb-4">
+                        <i data-lucide="clock" class="w-6 h-6"></i>
+                    </div>
+                    <p class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">500+</p>
+                    <p class="text-xs sm:text-sm font-medium text-slate-400 mt-2">Jam Kerja Manual Terhemat/Thn</p>
+                </div>
+
+                <div class="glass-card p-6 rounded-2xl text-center glass-card-hover" data-aos="zoom-in" data-aos-delay="400">
+                    <div class="w-12 h-12 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 mx-auto mb-4">
+                        <i data-lucide="target" class="w-6 h-6"></i>
+                    </div>
+                    <p class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">3,000+</p>
+                    <p class="text-xs sm:text-sm font-medium text-slate-400 mt-2">Scale Target Reached (Units/Day)</p>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- Interactive Portfolio / Worked Projects -->
+    <section id="projects" class="py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <div class="text-center max-w-3xl mx-auto mb-16" data-aos="fade-up">
+            <h2 class="text-xs font-bold text-brand-500 uppercase tracking-widest mb-3">Case Studies & Projects</h2>
+            <p class="text-3xl sm:text-4xl font-bold text-white tracking-tight">Studi Kasus & Proyek Nyata</p>
+            <p class="text-slate-400 mt-4 text-base">Berikut adalah beberapa implementasi solusi teknis dan otomatisasi operasional yang pernah saya bangun untuk meningkatkan produktivitas tim.</p>
+        </div>
+
+        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+            
+            <!-- Project 1 -->
+            <div class="glass-card rounded-2xl overflow-hidden glass-card-hover flex flex-col justify-between" data-aos="fade-up" data-aos-delay="100">
+                <div>
+                    <div class="p-6 border-b border-slate-800 bg-slate-900/40 relative">
+                        <span class="px-3 py-1 text-[11px] font-semibold bg-brand-500/20 text-brand-400 rounded-full border border-brand-500/30">Automation & Integration</span>
+                        <h3 class="text-xl font-bold text-white mt-4 mb-2">Automated Multi-Channel Lead Funnel & WhatsApp Sync</h3>
+                        <p class="text-slate-400 text-sm">Menghubungkan Scalev Landing Page, Meta Ads Webhooks, dan WhatsApp API untuk sinkronisasi lead secara real-time ke CRM.</p>
+                    </div>
+                    <div class="p-6 space-y-4">
+                        <div class="space-y-2">
+                            <p class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Hasil Utama:</p>
+                            <ul class="text-xs text-slate-400 space-y-1.5 list-disc list-inside">
+                                <li>Kecepatan *follow-up* lead meningkat 80%</li>
+                                <li>Nol *lost leads* akibat kelalaian input manual</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                <div class="p-6 pt-0">
+                    <div class="flex flex-wrap gap-2 pt-4 border-t border-slate-800/80 mb-4">
+                        <span class="text-[10px] px-2.5 py-1 bg-slate-800 text-slate-300 rounded-md">Scalev</span>
+                        <span class="text-[10px] px-2.5 py-1 bg-slate-800 text-slate-300 rounded-md">Meta Ads</span>
+                        <span class="text-[10px] px-2.5 py-1 bg-slate-800 text-slate-300 rounded-md">Make.com</span>
+                        <span class="text-[10px] px-2.5 py-1 bg-slate-800 text-slate-300 rounded-md">WhatsApp API</span>
+                    </div>
+                    <button onclick="openModal('project1')" class="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-brand-600 text-xs font-semibold text-white transition-colors flex items-center justify-center gap-2">
+                        <span>Lihat Arsitektur Workflow</span>
+                        <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Project 2 -->
+            <div class="glass-card rounded-2xl overflow-hidden glass-card-hover flex flex-col justify-between" data-aos="fade-up" data-aos-delay="200">
+                <div>
+                    <div class="p-6 border-b border-slate-800 bg-slate-900/40 relative">
+                        <span class="px-3 py-1 text-[11px] font-semibold bg-violet-500/20 text-violet-400 rounded-full border border-violet-500/30">AI & Cloud Deployment</span>
+                        <h3 class="text-xl font-bold text-white mt-4 mb-2">Automated Landing Page Deployment via Cloudflare KV</h3>
+                        <p class="text-slate-400 text-sm">Sistem pembuatan halaman landing page otomatis ter-deploy menggunakan Cloudflare Workers KV dan Subdomain Routing.</p>
+                    </div>
+                    <div class="p-6 space-y-4">
+                        <div class="space-y-2">
+                            <p class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Hasil Utama:</p>
+                            <ul class="text-xs text-slate-400 space-y-1.5 list-disc list-inside">
+                                <li>Deployment landing page baru dalam < 1 detik</li>
+                                <li>Efisiensi biaya server hingga 90%</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                <div class="p-6 pt-0">
+                    <div class="flex flex-wrap gap-2 pt-4 border-t border-slate-800/80 mb-4">
+                        <span class="text-[10px] px-2.5 py-1 bg-slate-800 text-slate-300 rounded-md">Cloudflare Workers</span>
+                        <span class="text-[10px] px-2.5 py-1 bg-slate-800 text-slate-300 rounded-md">KV Storage</span>
+                        <span class="text-[10px] px-2.5 py-1 bg-slate-800 text-slate-300 rounded-md">Python</span>
+                        <span class="text-[10px] px-2.5 py-1 bg-slate-800 text-slate-300 rounded-md">Tailwind</span>
+                    </div>
+                    <button onclick="openModal('project2')" class="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-brand-600 text-xs font-semibold text-white transition-colors flex items-center justify-center gap-2">
+                        <span>Lihat Detail Implementasi</span>
+                        <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Project 3 -->
+            <div class="glass-card rounded-2xl overflow-hidden glass-card-hover flex flex-col justify-between" data-aos="fade-up" data-aos-delay="300">
+                <div>
+                    <div class="p-6 border-b border-slate-800 bg-slate-900/40 relative">
+                        <span class="px-3 py-1 text-[11px] font-semibold bg-emerald-500/20 text-emerald-400 rounded-full border border-emerald-500/30">Operations Logistics</span>
+                        <h3 class="text-xl font-bold text-white mt-4 mb-2">B2B Logistics & Supply Metric Dashboard</h3>
+                        <p class="text-slate-400 text-sm">Pemodelan matriks logistik, alokasi bahan baku, dan penjadwalan distribusi kapasitas 3,000 porsi harian.</p>
+                    </div>
+                    <div class="p-6 space-y-4">
+                        <div class="space-y-2">
+                            <p class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Hasil Utama:</p>
+                            <ul class="text-xs text-slate-400 space-y-1.5 list-disc list-inside">
+                                <li>Optimasi *food waste* hingga di bawah 2%</li>
+                                <li>Akurasi jadwal pengiriman mencapai 99.4%</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                <div class="p-6 pt-0">
+                    <div class="flex flex-wrap gap-2 pt-4 border-t border-slate-800/80 mb-4">
+                        <span class="text-[10px] px-2.5 py-1 bg-slate-800 text-slate-300 rounded-md">Python Data</span>
+                        <span class="text-[10px] px-2.5 py-1 bg-slate-800 text-slate-300 rounded-md">Excel Advanced</span>
+                        <span class="text-[10px] px-2.5 py-1 bg-slate-800 text-slate-300 rounded-md">Ops Dashboard</span>
+                    </div>
+                    <button onclick="openModal('project3')" class="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-brand-600 text-xs font-semibold text-white transition-colors flex items-center justify-center gap-2">
+                        <span>Lihat Studi Kasus</span>
+                        <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- Free Downloadable Value-Add Resource Section -->
+    <section id="resources" class="py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <div class="glass-card rounded-3xl p-8 sm:p-12 border-brand-500/30 bg-gradient-to-b from-slate-900/90 to-slate-950/90 shadow-glow relative overflow-hidden" data-aos="zoom-in">
+            <!-- Decorative Accent -->
+            <div class="absolute -right-20 -bottom-20 w-80 h-80 bg-brand-600/20 rounded-full blur-3xl pointer-events-none"></div>
+
+            <div class="grid lg:grid-cols-12 gap-8 items-center">
+                <div class="lg:col-span-8 space-y-6">
+                    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-brand-500/20 text-brand-400 text-xs font-bold uppercase tracking-wider">
+                        <i data-lucide="gift" class="w-4 h-4"></i>
+                        <span>Free Value-Add Asset for Recruiter / Client</span>
+                    </div>
+                    <h2 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+                        Unduh Playbook Automation & Master Case Study PDF
+                    </h2>
+                    <p class="text-slate-300 text-base leading-relaxed">
+                        Sebagai bukti kompetensi nyata, saya menyusun dokumen eksklusif yang berisi panduan arsitektur otomatisasi operasional, struktur prompt AI B2B, serta cetak biru (*blueprint*) penghematan jam kerja tim.
+                    </p>
+                    
+                    <div class="grid sm:grid-cols-2 gap-4 text-xs text-slate-300">
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="file-check-2" class="w-5 h-5 text-emerald-400"></i>
+                            <span>Comprehensive Resume (ATS-Friendly)</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="file-check-2" class="w-5 h-5 text-emerald-400"></i>
+                            <span>SOP & Automation Flow Architecture</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="file-check-2" class="w-5 h-5 text-emerald-400"></i>
+                            <span>Python Script & Integration Snippets</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="file-check-2" class="w-5 h-5 text-emerald-400"></i>
+                            <span>B2B Operations Optimization Model</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="lg:col-span-4 flex flex-col items-center justify-center space-y-4 text-center">
+                    <div class="w-20 h-20 rounded-2xl bg-gradient-to-tr from-brand-600 to-violet-500 flex items-center justify-center text-white shadow-glow mb-2">
+                        <i data-lucide="file-text" class="w-10 h-10"></i>
+                    </div>
+                    <button onclick="downloadAsset()" class="w-full sm:w-auto px-8 py-4 rounded-xl bg-gradient-to-r from-brand-600 to-violet-600 text-white font-bold text-sm shadow-glow hover:scale-105 active:scale-95 transition-all flex items-center justify-center space-x-3">
+                        <i data-lucide="download" class="w-5 h-5"></i>
+                        <span>Download Complete PDF Package</span>
+                    </button>
+                    <p class="text-[11px] text-slate-400">Format: PDF (ZIP Bundle) • Ukuran: ~4.2 MB</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Skill Matrix & Tools -->
+    <section id="skills" class="py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <div class="text-center max-w-3xl mx-auto mb-16" data-aos="fade-up">
+            <h2 class="text-xs font-bold text-brand-500 uppercase tracking-widest mb-3">Tech Stack & Competencies</h2>
+            <p class="text-3xl font-bold text-white tracking-tight">Keahlian & Alat Kerja</p>
+            <p class="text-slate-400 mt-2 text-sm">Teknologi dan kerangka kerja yang saya gunakan sehari-hari untuk mengeksekusi proyek.</p>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            
+            <div class="glass-card p-4 rounded-xl text-center glass-card-hover flex flex-col items-center justify-center space-y-2" data-aos="fade-up" data-aos-delay="100">
+                <div class="p-3 rounded-lg bg-slate-900 text-amber-400">
+                    <i data-lucide="code-2" class="w-6 h-6"></i>
+                </div>
+                <p class="text-xs font-bold text-white">Python</p>
+                <p class="text-[10px] text-slate-400">Automation & Scripting</p>
+            </div>
+
+            <div class="glass-card p-4 rounded-xl text-center glass-card-hover flex flex-col items-center justify-center space-y-2" data-aos="fade-up" data-aos-delay="150">
+                <div class="p-3 rounded-lg bg-slate-900 text-emerald-400">
+                    <i data-lucide="bot" class="w-6 h-6"></i>
+                </div>
+                <p class="text-xs font-bold text-white">OpenAI API</p>
+                <p class="text-[10px] text-slate-400">LLM & Prompt Eng.</p>
+            </div>
+
+            <div class="glass-card p-4 rounded-xl text-center glass-card-hover flex flex-col items-center justify-center space-y-2" data-aos="fade-up" data-aos-delay="200">
+                <div class="p-3 rounded-lg bg-slate-900 text-indigo-400">
+                    <i data-lucide="cloud" class="w-6 h-6"></i>
+                </div>
+                <p class="text-xs font-bold text-white">Cloudflare</p>
+                <p class="text-[10px] text-slate-400">Workers & KV Storage</p>
+            </div>
+
+            <div class="glass-card p-4 rounded-xl text-center glass-card-hover flex flex-col items-center justify-center space-y-2" data-aos="fade-up" data-aos-delay="250">
+                <div class="p-3 rounded-lg bg-slate-900 text-violet-400">
+                    <i data-lucide="cpu" class="w-6 h-6"></i>
+                </div>
+                <p class="text-xs font-bold text-white">Make / n8n</p>
+                <p class="text-[10px] text-slate-400">No-Code Integration</p>
+            </div>
+
+            <div class="glass-card p-4 rounded-xl text-center glass-card-hover flex flex-col items-center justify-center space-y-2" data-aos="fade-up" data-aos-delay="300">
+                <div class="p-3 rounded-lg bg-slate-900 text-blue-400">
+                    <i data-lucide="database" class="w-6 h-6"></i>
+                </div>
+                <p class="text-xs font-bold text-white">SQL & Excel</p>
+                <p class="text-[10px] text-slate-400">Data Analytics</p>
+            </div>
+
+            <div class="glass-card p-4 rounded-xl text-center glass-card-hover flex flex-col items-center justify-center space-y-2" data-aos="fade-up" data-aos-delay="350">
+                <div class="p-3 rounded-lg bg-slate-900 text-cyan-400">
+                    <i data-lucide="layout" class="w-6 h-6"></i>
+                </div>
+                <p class="text-xs font-bold text-white">Tailwind CSS</p>
+                <p class="text-[10px] text-slate-400">Frontend Styling</p>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- Testimonial Section -->
+    <section class="py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <div class="glass-card rounded-3xl p-8 sm:p-12 border-slate-800 relative" data-aos="fade-up">
+            <div class="max-w-3xl mx-auto text-center space-y-6">
+                <i data-lucide="quote" class="w-12 h-12 text-brand-500/40 mx-auto"></i>
+                <p class="text-lg sm:text-xl font-medium text-slate-200 italic leading-relaxed">
+                    "Kemampuan Aldi dalam menganalisis hambatan operasional dan langsung mengeksekusi solusinya menggunakan skrip otomatisasi sangat luar biasa. Tim kami berhasil menghemat berjam-jam waktu input manual setiap minggunya."
+                </p>
+                <div>
+                    <p class="text-sm font-bold text-white">Rivaldi Pratama</p>
+                    <p class="text-xs text-brand-400 font-medium">Head of Operations & Digital Growth</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer / Contact CTA -->
+    <footer id="contact" class="pt-20 pb-12 border-t border-slate-800 bg-slate-950">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+            
+            <div class="grid lg:grid-cols-12 gap-8 items-center">
+                <div class="lg:col-span-7 space-y-4">
+                    <h2 class="text-3xl font-extrabold text-white">Siap Meningkatkan Efisiensi Tim Anda?</h2>
+                    <p class="text-slate-400 text-sm max-w-xl">
+                        Saya selalu siap untuk berdiskusi mengenai posisi penuh waktu (*full-time*), konsultasi otomatisasi sistem, maupun kolaborasi proyek B2B.
+                    </p>
+                </div>
+                <div class="lg:col-span-5 flex flex-wrap gap-4 lg:justify-end">
+                    <a href="mailto:aldi.rinaldiawan@gmail.com" class="px-6 py-3.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-bold text-sm shadow-glow transition-all flex items-center space-x-2">
+                        <i data-lucide="mail" class="w-4 h-4"></i>
+                        <span>Kirim Email</span>
+                    </a>
+                    <a href="https://wa.me/6281234567890" target="_blank" class="px-6 py-3.5 rounded-xl glass-card hover:bg-slate-800 text-emerald-400 font-semibold text-sm border-emerald-500/30 transition-all flex items-center space-x-2">
+                        <i data-lucide="message-square" class="w-4 h-4"></i>
+                        <span>WhatsApp Direct</span>
+                    </a>
+                </div>
+            </div>
+
+            <div class="pt-8 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
+                <p>© 2026 Aldi Rinaldiawan. Built with Tailwind CSS & Cloudflare Workers.</p>
+                <div class="flex space-x-6">
+                    <a href="#" class="hover:text-brand-400 transition-colors">LinkedIn</a>
+                    <a href="#" class="hover:text-brand-400 transition-colors">GitHub</a>
+                    <a href="#" class="hover:text-brand-400 transition-colors">Privacy Policy</a>
+                </div>
+            </div>
+
+        </div>
+    </footer>
+
+    <!-- Modal Detail Proyek -->
+    <div id="project-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+        <div class="glass-card rounded-2xl max-w-2xl w-full p-6 sm:p-8 border-slate-700 relative max-h-[90vh] overflow-y-auto">
+            <button onclick="closeModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white p-2">
+                <i data-lucide="x" class="w-6 h-6"></i>
+            </button>
+            <div id="modal-content">
+                <!-- Content Injected via JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- AOS JS -->
+    <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
+    <script>
+        // Initialize AOS & Lucide
+        AOS.init({
+            duration: 800,
+            once: true,
+            offset: 100
+        });
+        lucide.createIcons();
+
+        // Mobile Menu Toggle
+        const menuBtn = document.getElementById('menu-btn');
+        const mobileMenu = document.getElementById('mobile-menu');
+
+        menuBtn.addEventListener('click', () => {
+            mobileMenu.classList.toggle('hidden');
+        });
+
+        // Modal Logic
+        const modal = document.getElementById('project-modal');
+        const modalContent = document.getElementById('modal-content');
+
+        const projectDetails = {
+            'project1': `
+                <span class="px-3 py-1 text-[10px] font-bold bg-brand-500/20 text-brand-400 rounded-full">Automation Blueprint</span>
+                <h3 class="text-2xl font-bold text-white mt-3 mb-2">Automated Multi-Channel Lead Funnel</h3>
+                <p class="text-slate-300 text-sm mb-4">Sistem ini memproses setiap lead masuk dari iklan Meta Ads dan formulir Scalev secara instan, memvalidasi nomor telepon, dan mengirimkan pesan konfirmasi kustom via WhatsApp API.</p>
+                <div class="bg-slate-900 p-4 rounded-xl text-xs font-mono text-slate-300 mb-4 border border-slate-800">
+                    Webhook Trigger -> Python Parsing -> Validation Engine -> WhatsApp API Dispatch -> CRM Sheet Update
+                </div>
+                <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Dampak Bisnis:</h4>
+                <ul class="text-xs text-slate-300 space-y-1 list-disc list-inside mb-6">
+                    <li>Meningkatkan angka respon prospek sebesar 45% dalam 5 menit pertama.</li>
+                    <li>Menghilangkan ketergantungan pada tim admin malam hari.</li>
+                </ul>
+                <button onclick="closeModal()" class="w-full py-2.5 rounded-xl bg-brand-600 text-white font-semibold text-xs">Tutup Detail</button>
+            `,
+            'project2': `
+                <span class="px-3 py-1 text-[10px] font-bold bg-violet-500/20 text-violet-400 rounded-full">Cloud Architecture</span>
+                <h3 class="text-2xl font-bold text-white mt-3 mb-2">Automated Cloudflare KV Deployment</h3>
+                <p class="text-slate-300 text-sm mb-4">Membangun engine micro-service yang memungkinkan tim marketing meluncurkan landing page kustom berkecepatan tinggi hanya dengan mengisi data pada bot Telegram.</p>
+                <div class="bg-slate-900 p-4 rounded-xl text-xs font-mono text-slate-300 mb-4 border border-slate-800">
+                    Telegram Input -> Python Script -> Cloudflare Worker API -> KV Storage Key-Value -> Live Subdomain
+                </div>
+                <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Dampak Bisnis:</h4>
+                <ul class="text-xs text-slate-300 space-y-1 list-disc list-inside mb-6">
+                    <li>Waktu rilis landing page berkurang dari 2 jam menjadi 1 detik.</li>
+                    <li>Page Load Time di bawah 0.5 detik di semua jaringan mobile.</li>
+                </ul>
+                <button onclick="closeModal()" class="w-full py-2.5 rounded-xl bg-violet-600 text-white font-semibold text-xs">Tutup Detail</button>
+            `,
+            'project3': `
+                <span class="px-3 py-1 text-[10px] font-bold bg-emerald-500/20 text-emerald-400 rounded-full">Operations Logistics</span>
+                <h3 class="text-2xl font-bold text-white mt-3 mb-2">B2B Logistics & Supply Metric Dashboard</h3>
+                <p class="text-slate-300 text-sm mb-4">Perancangan arsitektur data pasokan dan distribusi bahan baku makanan berskala besar untuk memastikan presisi stok dan pengiriman tepat waktu.</p>
+                <div class="bg-slate-900 p-4 rounded-xl text-xs font-mono text-slate-300 mb-4 border border-slate-800">
+                    Supplier Raw Data -> Processing Engine -> Dynamic Allocation Algorithm -> Realtime Dashboard
+                </div>
+                <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Dampak Bisnis:</h4>
+                <ul class="text-xs text-slate-300 space-y-1 list-disc list-inside mb-6">
+                    <li>Efisiensi biaya pembelian bahan baku hingga 12% per bulan.</li>
+                    <li>SLA pengiriman terpenuhi 99.8%.</li>
+                </ul>
+                <button onclick="closeModal()" class="w-full py-2.5 rounded-xl bg-emerald-600 text-white font-semibold text-xs">Tutup Detail</button>
+            `
+        };
+
+        function openModal(projectId) {
+            modalContent.innerHTML = projectDetails[projectId];
+            modal.classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        function closeModal() {
+            modal.classList.add('hidden');
+        }
+
+        function downloadAsset() {
+            alert("Terima kasih! Paket PDF Resume & Case Study Playbook akan segera diunduh.");
+        }
+    </script>
+</body>
+</html>

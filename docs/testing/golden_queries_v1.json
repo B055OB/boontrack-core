@@ -1,0 +1,13 @@
+[
+  {"query": "buat cv ats", "expected_slug": "template-cv-ats-fresh-graduate"},
+  {"query": "CV ATS!!!", "expected_slug": "template-cv-ats-fresh-graduate"},
+  {"query": "template cv profesional", "expected_slug": "template-cv-ats-experienced"},
+  {"query": "audit cv", "expected_slug": "checklist-review-cv-ats"},
+  {"query": "surat lamaran kerja", "expected_slug": "template-cover-letter-bahasa-indonesia"},
+  {"query": "english cover letter", "expected_slug": "template-cover-letter-english"},
+  {"query": "pertanyaan interview", "expected_slug": "cheatsheet-50-pertanyaan-interview-hrd-user"},
+  {"query": "ceritakan diri anda", "expected_slug": "script-jawaban-ceritakan-diri-anda"},
+  {"query": "optimasi linkedin", "expected_slug": "checklist-optimasi-profil-linkedin"},
+  {"query": "negosiasi gaji", "expected_slug": "script-negosiasi-gaji-via-email"},
+  {"query": "job tracker", "expected_slug": "guide-job-search-tracker-spreadsheet"}
+]

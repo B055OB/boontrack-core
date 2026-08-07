@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BoonTrack — Buat CV ATS-Friendly Otomatis</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background-color: #f8fafc;
+            color: #1e293b;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            width: 100%;
+            background: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01);
+            padding: 40px 30px;
+            text-align: center;
+            border: 1px solid #e2e8f0;
+        }
+
+        .badge {
+            display: inline-block;
+            background-color: #e0f2fe;
+            color: #0369a1;
+            font-size: 0.875rem;
+            font-weight: 600;
+            padding: 6px 16px;
+            border-radius: 9999px;
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            font-size: 1.875rem;
+            font-weight: 800;
+            color: #0f172a;
+            line-height: 1.25;
+            margin-bottom: 16px;
+        }
+
+        p {
+            font-size: 1rem;
+            color: #475569;
+            line-height: 1.6;
+            margin-bottom: 32px;
+        }
+
+        .features {
+            text-align: left;
+            background-color: #f1f5f9;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 32px;
+        }
+
+        .feature-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+            font-size: 0.95rem;
+            color: #334155;
+        }
+
+        .feature-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .feature-icon {
+            margin-right: 12px;
+            font-size: 1.2rem;
+        }
+
+        .btn-telegram {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            background-color: #2481cc;
+            color: #ffffff;
+            font-size: 1.125rem;
+            font-weight: 700;
+            padding: 16px 24px;
+            border-radius: 12px;
+            text-decoration: none;
+            transition: all 0.2s ease-in-out;
+            box-shadow: 0 4px 12px rgba(36, 129, 204, 0.3);
+        }
+
+        .btn-telegram:hover {
+            background-color: #1a6fb3;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(36, 129, 204, 0.4);
+        }
+
+        .footer-text {
+            margin-top: 24px;
+            font-size: 0.85rem;
+            color: #94a3b8;
+            margin-bottom: 0;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <span class="badge">🚀 Gratis & Tanpa Ribet</span>
+        <h1>Buat CV Standar ATS Profesional dalam 5 Menit</h1>
+        <p>Bantu riwayat kerjamu tampil lebih profesional dan siap dibaca oleh sistem rekrutmen perusahaan modern.</p>
+
+        <div class="features">
+            <div class="feature-item">
+                <span class="feature-icon">✨</span>
+                <span>Polesan bahasa profesional berbasis AI</span>
+            </div>
+            <div class="feature-item">
+                <span class="feature-icon">📄</span>
+                <span>Format siap download berbentuk Word (.docx)</span>
+            </div>
+            <div class="feature-item">
+                <span class="feature-icon">🤖</span>
+                <span>Cukup jawab pertanyaan santai via Telegram</span>
+            </div>
+        </div>
+
+        <!-- Tombol Utama Ke Telegram Bot -->
+        <a id="btn-telegram" href="https://t.me/BoonTrackBot" class="btn-telegram">
+            🚀 Buat CV Sekarang di Telegram
+        </a>
+
+        <p class="footer-text">© 2026 BoonTrack. All rights reserved.</p>
+    </div>
+
+    <!-- ======================================================= -->
+    <!-- SCRIPT TRACKING UTAMANYA DI SINI (UTM / Ref Forwarding) -->
+    <!-- ======================================================= -->
+    <script>
+      document.addEventListener("DOMContentLoaded", function() {
+        // 1. Tangkap parameter 'ref' atau 'utm_source' dari URL browser
+        const urlParams = new URLSearchParams(window.location.search);
+        const source = urlParams.get('ref') || urlParams.get('utm_source') || 'landingpage';
+
+        // 2. Cari semua link/tombol yang mengarah ke Telegram (t.me)
+        const telegramLinks = document.querySelectorAll('a[href*="t.me"]');
+
+        // 3. Otomatis tambahkan parameter ?start= ke link tombol Telegram
+        telegramLinks.forEach(link => {
+          link.href = `https://t.me/BoonTrackBot?start=${source}`;
+        });
+      });
+    </script>
+
+</body>
+</html>

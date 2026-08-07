@@ -1,0 +1,38 @@
+[
+  {
+    "asset_uuid": "AST-000101",
+    "title": "03_Audio_Visual_dan_Interaktif",
+    "industry": "general",
+    "role": "general",
+    "level": "fresh_graduate",
+    "goal": "GET_JOB",
+    "intent": "DOWNLOAD_FILE",
+    "delivery_provider": "google_drive",
+    "delivery_reference": "1HZHdlzPrud-Z3GqOtVLEt0g_Pxnsn2iK",
+    "status": "READY"
+  },
+  {
+    "asset_uuid": "AST-000102",
+    "title": "02_Panduan_dan_Ebook",
+    "industry": "general",
+    "role": "general",
+    "level": "fresh_graduate",
+    "goal": "GET_JOB",
+    "intent": "DOWNLOAD_FILE",
+    "delivery_provider": "google_drive",
+    "delivery_reference": "1LdIAIGpdI3J9GtQ2lslKFkb4iea79DxI",
+    "status": "READY"
+  },
+  {
+    "asset_uuid": "AST-000103",
+    "title": "01_Template_CV_dan_Dokumen",
+    "industry": "general",
+    "role": "general",
+    "level": "fresh_graduate",
+    "goal": "GET_JOB",
+    "intent": "DOWNLOAD_CV_ATS",
+    "delivery_provider": "google_drive",
+    "delivery_reference": "1AboURXIN3v6pUVlAEJ_Rmy1qwVQN01db",
+    "status": "READY"
+  }
+]

@@ -1,0 +1,11 @@
+[
+  {"category": "Mudah", "query": "buat cv", "expected_intent": "CREATE_CV"},
+  {"category": "Mudah", "query": "resume ats", "expected_intent": "CREATE_CV"},
+  {"category": "Mudah", "query": "interview hr", "expected_intent": "PREPARE_INTERVIEW"},
+  {"category": "Sedang", "query": "saya baru lulus ingin kerja", "expected_intent": "CREATE_CV"},
+  {"category": "Sedang", "query": "bingung bikin lamaran", "expected_intent": "WRITE_COVER_LETTER"},
+  {"category": "Sedang", "query": "bagaimana supaya HR tertarik", "expected_intent": "BUILD_LINKEDIN"},
+  {"category": "Ambigu", "query": "bantu saya", "expected_intent": "UNKNOWN"},
+  {"category": "Ambigu", "query": "saya bingung", "expected_intent": "UNKNOWN"},
+  {"category": "Ambigu", "query": "kerja", "expected_intent": "FIND_JOB"}
+]
