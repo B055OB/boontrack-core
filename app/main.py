@@ -255,7 +255,7 @@ def clean_val(val):
 def ai_generate_summary(position):
     if not position:
         return "Profesional berdedikasi tinggi yang terbiasa bekerja secara terstruktur, adaptif, serta berkomitmen memberikan kontribusi operasional terbaik bagi perusahaan."
-    return f"Profesional berpengalaman di bidang {position} dengan rekam jejak yang terbukti dalam mengeksekusi target operasional dan manajemen kerja secara efisien."
+    return f"Profesional berpengalaman di bidang {position} dengan rekam jejak yang terbukti dalam mengeksecusi target operasional dan manajemen kerja secara efisien."
 
 def ai_rewrite_achievement(text):
     prompt_text = (
@@ -524,11 +524,11 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         status_text = "Fresh Graduate" if code == "status_fresh" else "Sudah Berpengalaman"
         user_data["status_kerja"] = status_text
         
-        # PESAN 3: Penjelasan ATS + Option Mau Mulai? (Tombol Ya/Tidak)
+        # PESAN 3: Penjelasan ATS + Jaminan Keamanan Data + Option Mau Mulai? (Tombol Ya/Nanti Dulu)
         kbd_start = InlineKeyboardMarkup(row_width=2)
         kbd_start.add(
-            InlineKeyboardButton("Ya", callback_data="start_cv_yes"),
-            InlineKeyboardButton("Tidak", callback_data="start_cv_no")
+            InlineKeyboardButton("Ya, Mulai! 🚀", callback_data="start_cv_yes"),
+            InlineKeyboardButton("Nanti Dulu", callback_data="start_cv_no")
         )
         
         msg_3 = (
@@ -537,6 +537,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             "Tenang...\n"
             "Saya akan membantu membuat CV yang lebih mudah dibaca HR dan sistem ATS.\n"
             "Hanya sekitar 5 menit.\n\n"
+            "🔒 <i>Oh ya, data pribadimu tidak akan disimpan secara permanen. Ini hanya digunakan untuk pengisian dokumen CV yang nanti dicetak dalam bentuk Word.</i>\n\n"
             "Mau kita mulai?"
         )
         await bot.send_message(user_id, msg_3, reply_markup=kbd_start, parse_mode="HTML")
