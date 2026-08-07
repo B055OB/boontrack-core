@@ -43,7 +43,7 @@ dp = Dispatcher(bot)
 user_state = {}
 
 CV_QUESTIONS = {
-    1: "👤 Boleh kenalan dulu? Siapa nama lengkapmu?",
+    1: "👤 Siapa nama lengkapmu?",
     2: "📧 Email aktif yang bisa dihubungi recruiter?",
     3: "📱 Nomor WhatsApp / HP aktif? <i>(contoh: 081234567890)</i>",
     4: "📍 Di kota mana kamu berdomisili saat ini?",
@@ -458,7 +458,7 @@ async def send_welcome(message: types.Message):
     progress, last_cv = await get_user_history(user_id)
     first_name = message.from_user.first_name or "Teman"
 
-    if progress and progress.get("last_step", 0) > 1 and progress.get("last_step", 0) < TOTAL_STEPS:
+    if progress and isinstance(progress.get("last_step"), int) and progress.get("last_step", 0) > 1 and progress.get("last_step", 0) < TOTAL_STEPS:
         last_step = progress["last_step"]
         saved_data = progress.get("data", {})
         user_state[user_id] = {"step": last_step, "data": saved_data, "meta": meta_data}
@@ -497,27 +497,68 @@ async def send_welcome(message: types.Message):
         )
         return
 
-    user_state[user_id] = {"step": 1, "data": {}, "meta": meta_data}
-    await save_dropoff(user_id, 1, {})
+    user_state[user_id] = {"step": "ONBOARDING_NAMA", "data": {}, "meta": meta_data}
+    await save_dropoff(user_id, 0, {})
     
-    # NEW GREETING FLOW (HUMAN-CENTRIC & EMPATHETIC)
-    greeting = (
-        "👋 <b>Halo! Saya BoonTrack Career Assistant.</b>\n\n"
+    # PESAN 1: Menyapa & Tanya Nama
+    msg_1 = (
+        "<b>Saya BoonTrack Career Assistant.</b>\n"
         "Saya akan membantu meningkatkan peluang kamu dipanggil interview.\n\n"
-        "Sebelum mulai... Boleh kenalan dulu?\n\n"
-        f"{get_progress_bar(1)}\n"
-        f"{CV_QUESTIONS[1]}"
+        "Sebelum mulai...\n"
+        "Boleh kenalan dulu?\n"
+        "Ini dengan siapa?"
     )
-    await message.reply(greeting, parse_mode="HTML")
+    await message.reply(msg_1, parse_mode="HTML")
 
-@dp.callback_query_handler(lambda c: c.data in ["resume_flow", "restart_flow", "show_faq"])
+@dp.callback_query_handler(lambda c: c.data in ["status_fresh", "status_exp", "start_cv_yes", "start_cv_no", "resume_flow", "restart_flow", "show_faq"])
 async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     code = callback_query.data
     
     await bot.edit_message_reply_markup(user_id, callback_query.message.message_id, reply_markup=None)
     
-    if code == "resume_flow":
+    user_data = user_state.get(user_id, {}).get("data", {})
+    user_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "Teman")
+
+    if code in ["status_fresh", "status_exp"]:
+        status_text = "Fresh Graduate" if code == "status_fresh" else "Sudah Berpengalaman"
+        user_data["status_kerja"] = status_text
+        
+        # PESAN 3: Penjelasan ATS + Option Mau Mulai? (Tombol Ya/Tidak)
+        kbd_start = InlineKeyboardMarkup(row_width=2)
+        kbd_start.add(
+            InlineKeyboardButton("Ya", callback_data="start_cv_yes"),
+            InlineKeyboardButton("Tidak", callback_data="start_cv_no")
+        )
+        
+        msg_3 = (
+            "Baik.\n"
+            "Salah satu alasan lamaran kerja sering tidak mendapat panggilan adalah karena CV belum sesuai dengan cara perusahaan modern melakukan proses seleksi.\n\n"
+            "Tenang...\n"
+            "Saya akan membantu membuat CV yang lebih mudah dibaca HR dan sistem ATS.\n"
+            "Hanya sekitar 5 menit.\n\n"
+            "Mau kita mulai?"
+        )
+        await bot.send_message(user_id, msg_3, reply_markup=kbd_start, parse_mode="HTML")
+
+    elif code == "start_cv_yes":
+        user_state[user_id]["step"] = 1
+        await save_dropoff(user_id, 1, user_data)
+        
+        await bot.send_message(
+            user_id,
+            f"Sip, mari kita mulai! 👍\n\n{get_progress_bar(1)}\n{CV_QUESTIONS[1]}",
+            parse_mode="HTML"
+        )
+        
+    elif code == "start_cv_no":
+        await bot.send_message(
+            user_id,
+            "Siap, tidak masalah! Jika kamu sudah siap untuk membuat CV, cukup ketik /start kapan saja ya. 😊",
+            parse_mode="HTML"
+        )
+
+    elif code == "resume_flow":
         state = user_state.get(user_id, {"step": 1, "data": {}})
         step = state["step"]
         await bot.send_message(
@@ -526,13 +567,16 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             parse_mode="HTML"
         )
     elif code == "restart_flow":
-        user_state[user_id] = {"step": 1, "data": {}}
-        await save_dropoff(user_id, 1, {})
-        await bot.send_message(
-            user_id,
-            f"Sip, kita mulai dari awal ya! 😊\n\n{get_progress_bar(1)}\n{CV_QUESTIONS[1]}",
-            parse_mode="HTML"
+        user_state[user_id] = {"step": "ONBOARDING_NAMA", "data": {}}
+        await save_dropoff(user_id, 0, {})
+        msg_1 = (
+            "<b>Saya BoonTrack Career Assistant.</b>\n"
+            "Saya akan membantu meningkatkan peluang kamu dipanggil interview.\n\n"
+            "Sebelum mulai...\n"
+            "Boleh kenalan dulu?\n"
+            "Ini dengan siapa?"
         )
+        await bot.send_message(user_id, msg_1, parse_mode="HTML")
     elif code == "show_faq":
         faq_text = (
             "❓ <b>Kenapa CV BoonTrack Tanpa Foto?</b>\n"
@@ -565,177 +609,188 @@ async def handle_message(message: types.Message):
     current_step = user_state[user_id]["step"]
     user_data = user_state[user_id]["data"]
 
-    user_data[str(current_step)] = text
-    user_data[f"step_{current_step}"] = text
-    await track_event(user_id, f"step_{current_step}_completed")
-
-    if current_step < TOTAL_STEPS:
-        next_step = current_step + 1
-        user_state[user_id]["step"] = next_step
-        await save_dropoff(user_id, next_step, user_data)
+    # --- FASE ONBOARDING NAMA ---
+    if current_step == "ONBOARDING_NAMA":
+        user_data["nama_panggilan"] = text
+        user_state[user_id]["step"] = "ONBOARDING_STATUS"
         
-        # Edukasi singkat saat melangkah ke step 2
-        if next_step == 2:
-            user_name = clean_val(user_data.get("1", user_data.get("step_1", "Teman")))
-            edu_bridge = (
-                f"Halo <b>{user_name}</b> 😊\n\n"
-                "Salah satu alasan lamaran kerja sering tidak mendapat panggilan adalah karena CV belum sesuai dengan cara perusahaan modern melakukan proses seleksi.\n\n"
-                "Tenang... Saya akan membantu membuat CV yang lebih mudah dibaca HR dan sistem ATS. Hanya sekitar 5 menit.\n\n"
-                f"{get_progress_bar(next_step)}\n{CV_QUESTIONS[next_step]}"
-            )
-            await message.reply(edu_bridge, parse_mode="HTML")
-        else:
+        # PESAN 2: Sapa Nama + Pilihan Status (Fresh / Exp)
+        kbd_status = InlineKeyboardMarkup(row_width=1)
+        kbd_status.add(
+            InlineKeyboardButton("🔹 Fresh Graduate / Belum berpengalaman", callback_data="status_fresh"),
+            InlineKeyboardButton("🔹 Sudah berpengalaman (Sedang cari kerja baru)", callback_data="status_exp")
+        )
+        
+        msg_2 = (
+            f"\"Halo {text} 😊\"\n"
+            "Boleh saya tanya...\n"
+            "Kamu sedang:"
+        )
+        await message.reply(msg_2, reply_markup=kbd_status, parse_mode="HTML")
+        return
+
+    # --- FASE 10 PERTANYAAN CV (DATABASE) ---
+    if isinstance(current_step, int) and current_step > 0:
+        user_data[str(current_step)] = text
+        user_data[f"step_{current_step}"] = text
+        await track_event(user_id, f"step_{current_step}_completed")
+
+        if current_step < TOTAL_STEPS:
+            next_step = current_step + 1
+            user_state[user_id]["step"] = next_step
+            await save_dropoff(user_id, next_step, user_data)
+            
             await message.reply(
                 f"{get_progress_bar(next_step)}\n{CV_QUESTIONS[next_step]}",
                 parse_mode="HTML"
             )
-    else:
-        user_state[user_id]["step"] = 0
-        await save_dropoff(user_id, TOTAL_STEPS, user_data)
-        
-        processing_msg = await message.reply(
-            "⏳ <b>Sedang memproses & merapikan data CV kamu...</b>\n"
-            "AI kami sedang merangkai kata-kata profesional. Mohon tunggu sekitar 15-30 detik ya!",
-            parse_mode="HTML"
-        )
-
-        try:
-            file_path = await asyncio.to_thread(create_cv_docx, user_id, user_data)
+        else:
+            user_state[user_id]["step"] = 0
+            await save_dropoff(user_id, TOTAL_STEPS, user_data)
             
-            position = clean_val(user_data.get("6", user_data.get("step_6", "General")))
-            await save_cv_version(user_id, position, user_data)
-            await track_event(user_id, "resume_generated", meta={"position": position})
-
-            document = InputFile(file_path)
-            
-            # 1. Penyerahan File CV
-            await bot.send_document(
-                chat_id=user_id,
-                document=document,
-                caption="🎉 <b>CV ATS-Friendly kamu sudah selesai!</b>\n\n"
-                        "Silakan di-download dan diperiksa kembali. Semoga file ini menjadi langkah pertama menuju pekerjaan impianmu!",
+            processing_msg = await message.reply(
+                "⏳ <b>Sedang memproses & merapikan data CV kamu...</b>\n"
+                "AI kami sedang merangkai kata-kata profesional. Mohon tunggu sekitar 15-30 detik ya!",
                 parse_mode="HTML"
             )
-            
+
             try:
-                await bot.delete_message(chat_id=user_id, message_id=processing_msg.message_id)
-            except Exception:
-                pass
-
-            # 2. Edukasi Value-Add
-            value_text = (
-                "💡 <b>Sebelum kamu mengirim CV ini...</b>\n\n"
-                "Ada 3 hal yang sering membuat lamaran tidak pernah dibalas recruiter:\n"
-                "✅ Nama file CV salah\n"
-                "✅ Email tidak profesional\n"
-                "✅ CV dikirim tanpa menyesuaikan posisi\n\n"
-                "Untungnya CV yang baru saja kamu download sudah menggunakan format ATS-Friendly. "
-                "Semoga peluang interview kamu semakin besar! 🚀"
-            )
-            await bot.send_message(user_id, value_text, parse_mode="HTML")
-
-            # 3. Motivasi Emosional
-            motivation_text = (
-                "Saya tahu... Mencari pekerjaan itu tidak mudah.\n"
-                "Kadang sudah kirim puluhan lamaran tetapi belum ada panggilan. "
-                "Rasa lelah itu sangat wajar.\n\n"
-                "Tapi jangan menyerah ya. Hari ini kamu sudah memperbaiki satu hal yang sangat penting. "
-                "Semoga kabar interview terbaik segera datang! ❤️"
-            )
-            await bot.send_message(user_id, motivation_text, parse_mode="HTML")
-
-            # 4. Donasi Empatis
-            donation_text = (
-                "Kalau suatu hari nanti CV ini membantumu mendapatkan panggilan interview... Saya ikut bahagia.\n\n"
-                "BoonTrack dikembangkan secara mandiri tanpa investor. "
-                "Kalau menurutmu layanan ini bermanfaat, kamu boleh mendukung pengembangannya melalui donasi seikhlasnya.\n\n"
-                "<b>Tidak wajib.</b>\n"
-                "Dukungan sekecil apa pun membantu kami menjaga layanan ini tetap gratis untuk pencari kerja lainnya. ❤️"
-            )
-            await bot.send_message(user_id, donation_text, parse_mode="HTML")
-
-            # 5. Kirim Gambar QRIS
-            possible_qris_paths = [
-                QRIS_IMAGE_PATH,
-                "/app/qris.jpg",
-                "qris.jpg",
-                "/root/boontrack-core/assets/qris.jpg"
-            ]
-            found_qris = None
-            for p in possible_qris_paths:
-                if os.path.exists(p):
-                    found_qris = p
-                    break
-
-            if found_qris:
-                qris_img = InputFile(found_qris)
-                await bot.send_photo(
-                    chat_id=user_id,
-                    photo=qris_img,
-                    caption="Dukungan donasi seikhlasnya melalui QRIS di atas. Terima kasih! 🙏"
-                )
-
-            # 6. Bonus Referral (Portfolio Website Gratis)
-            bot_info = await bot.get_me()
-            user_ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
-            
-            user_name_clean = clean_val(user_data.get("1", user_data.get("step_1", "namakamu"))).lower().replace(" ", "")
-            if not user_name_clean:
-                user_name_clean = "namakamu"
-
-            referral_text = (
-                "🎁 <b>BONUS KHUSUS</b>\n\n"
-                "Kalau kamu berhasil membantu 3 teman membuat CV melalui BoonTrack, kami akan buatkan <b>GRATIS</b>:\n\n"
-                "🌐 <b>Website Portfolio Pribadi</b>\n"
-                f"Contoh: <code>{user_name_clean}.boontrack.com</code>\n\n"
-                "Website ini bisa kamu gunakan untuk:\n"
-                "✅ melamar kerja\n"
-                "✅ portofolio\n"
-                "✅ dibagikan ke HR\n"
-                "✅ LinkedIn\n"
-                "✅ media sosial\n\n"
-                "Tanpa biaya. Tanpa hosting. Tanpa coding.\n\n"
-                "👇 Cukup bagikan link di bawah ini:\n"
-                f"<code>{user_ref_link}</code>"
-            )
-            await bot.send_message(user_id, referral_text, parse_mode="HTML")
-
-            # 7. Pesan Penutup & Hubungan Jangka Panjang
-            closing_text = (
-                "🤝 <b>Satu permintaan kecil.</b>\n\n"
-                "Kalau suatu hari nanti kamu benar-benar diterima bekerja... Boleh kembali ke bot ini dan kabari saya?\n\n"
-                "Saya ingin ikut merayakan kabar baikmu.\n"
-                "Karena tujuan BoonTrack bukan hanya membuat CV, tetapi membantu lebih banyak orang mendapatkan pekerjaan.\n\n"
-                "Semoga sukses! 🚀❤️"
-            )
-            await bot.send_message(user_id, closing_text, parse_mode="HTML")
-
-            if os.path.exists(file_path):
-                os.remove(file_path)
-
-            referrer_id = user_state.get(user_id, {}).get("meta", {}).get("referrer_id")
-            if referrer_id:
-                total_refs = await count_referrals(referrer_id)
+                file_path = await asyncio.to_thread(create_cv_docx, user_id, user_data)
                 
-                if total_refs == 3:
-                    reward_text = (
-                        "🎉 <b>SELAMAT! Target 3 Referral Tercapai!</b>\n\n"
-                        "3 teman yang kamu rekomendasikan telah berhasil membuat CV di BoonTrack.\n\n"
-                        "Sesuai janji, kamu berhak mendapatkan <b>Website Portfolio Personal Gratis</b>!\n\n"
-                        "Ketik /claim_website untuk mulai memasukkan data website landing page milikmu! 🌐"
-                    )
-                    try:
-                        await bot.send_message(chat_id=int(referrer_id), text=reward_text, parse_mode="HTML")
-                        await track_event(int(referrer_id), "referral_reward_unlocked", meta={"total_referrals": 3})
-                    except Exception as e:
-                        print(f"Gagal mengirimkan pesan reward ke referrer {referrer_id}: {e}")
+                position = clean_val(user_data.get("6", user_data.get("step_6", "General")))
+                await save_cv_version(user_id, position, user_data)
+                await track_event(user_id, "resume_generated", meta={"position": position})
 
-        except Exception as e:
-            print(f"Error Generate CV Flow: {e}")
-            await message.reply(
-                "❌ Terjadi kendala saat memproses CV kamu. Silakan coba tekan /start kembali ya!",
-                parse_mode="HTML"
-            )
+                document = InputFile(file_path)
+                
+                # 1. Penyerahan File CV
+                await bot.send_document(
+                    chat_id=user_id,
+                    document=document,
+                    caption="🎉 <b>CV ATS-Friendly kamu sudah selesai!</b>\n\n"
+                            "Silakan di-download dan diperiksa kembali. Semoga file ini menjadi langkah pertama menuju pekerjaan impianmu!",
+                    parse_mode="HTML"
+                )
+                
+                try:
+                    await bot.delete_message(chat_id=user_id, message_id=processing_msg.message_id)
+                except Exception:
+                    pass
+
+                # 2. Edukasi Value-Add
+                value_text = (
+                    "💡 <b>Sebelum kamu mengirim CV ini...</b>\n\n"
+                    "Ada 3 hal yang sering membuat lamaran tidak pernah dibalas recruiter:\n"
+                    "✅ Nama file CV salah\n"
+                    "✅ Email tidak profesional\n"
+                    "✅ CV dikirim tanpa menyesuaikan posisi\n\n"
+                    "Untungnya CV yang baru saja kamu download sudah menggunakan format ATS-Friendly. "
+                    "Semoga peluang interview kamu semakin besar! 🚀"
+                )
+                await bot.send_message(user_id, value_text, parse_mode="HTML")
+
+                # 3. Motivasi Emosional
+                motivation_text = (
+                    "Saya tahu... Mencari pekerjaan itu tidak mudah.\n"
+                    "Kadang sudah kirim puluhan lamaran tetapi belum ada panggilan. "
+                    "Rasa lelah itu sangat wajar.\n\n"
+                    "Tapi jangan menyerah ya. Hari ini kamu sudah memperbaiki satu hal yang sangat penting. "
+                    "Semoga kabar interview terbaik segera datang! ❤️"
+                )
+                await bot.send_message(user_id, motivation_text, parse_mode="HTML")
+
+                # 4. Donasi Empatis
+                donation_text = (
+                    "Kalau suatu hari nanti CV ini membantumu mendapatkan panggilan interview... Saya ikut bahagia.\n\n"
+                    "BoonTrack dikembangkan secara mandiri tanpa investor. "
+                    "Kalau menurutmu layanan ini bermanfaat, kamu boleh mendukung pengembangannya melalui donasi seikhlasnya.\n\n"
+                    "<b>Tidak wajib.</b>\n"
+                    "Dukungan sekecil apa pun membantu kami menjaga layanan ini tetap gratis untuk pencari kerja lainnya. ❤️"
+                )
+                await bot.send_message(user_id, donation_text, parse_mode="HTML")
+
+                # 5. Kirim Gambar QRIS
+                possible_qris_paths = [
+                    QRIS_IMAGE_PATH,
+                    "/app/qris.jpg",
+                    "qris.jpg",
+                    "/root/boontrack-core/assets/qris.jpg"
+                ]
+                found_qris = None
+                for p in possible_qris_paths:
+                    if os.path.exists(p):
+                        found_qris = p
+                        break
+
+                if found_qris:
+                    qris_img = InputFile(found_qris)
+                    await bot.send_photo(
+                        chat_id=user_id,
+                        photo=qris_img,
+                        caption="Dukungan donasi seikhlasnya melalui QRIS di atas. Terima kasih! 🙏"
+                    )
+
+                # 6. Bonus Referral (Portfolio Website Gratis)
+                bot_info = await bot.get_me()
+                user_ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+                
+                user_name_clean = clean_val(user_data.get("1", user_data.get("step_1", "namakamu"))).lower().replace(" ", "")
+                if not user_name_clean:
+                    user_name_clean = "namakamu"
+
+                referral_text = (
+                    "🎁 <b>BONUS KHUSUS</b>\n\n"
+                    "Kalau kamu berhasil membantu 3 teman membuat CV melalui BoonTrack, kami akan buatkan <b>GRATIS</b>:\n\n"
+                    "🌐 <b>Website Portfolio Pribadi</b>\n"
+                    f"Contoh: <code>{user_name_clean}.boontrack.com</code>\n\n"
+                    "Website ini bisa kamu gunakan untuk:\n"
+                    "✅ melamar kerja\n"
+                    "✅ portofolio\n"
+                    "✅ dibagikan ke HR\n"
+                    "✅ LinkedIn\n"
+                    "✅ media sosial\n\n"
+                    "Tanpa biaya. Tanpa hosting. Tanpa coding.\n\n"
+                    "👇 Cukup bagikan link di bawah ini:\n"
+                    f"<code>{user_ref_link}</code>"
+                )
+                await bot.send_message(user_id, referral_text, parse_mode="HTML")
+
+                # 7. Pesan Penutup & Hubungan Jangka Panjang
+                closing_text = (
+                    "🤝 <b>Satu permintaan kecil.</b>\n\n"
+                    "Kalau suatu hari nanti kamu benar-benar diterima bekerja... Boleh kembali ke bot ini dan kabari saya?\n\n"
+                    "Saya ingin ikut merayakan kabar baikmu.\n"
+                    "Karena tujuan BoonTrack bukan hanya membuat CV, tetapi membantu lebih banyak orang mendapatkan pekerjaan.\n\n"
+                    "Semoga sukses! 🚀❤️"
+                )
+                await bot.send_message(user_id, closing_text, parse_mode="HTML")
+
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+
+                referrer_id = user_state.get(user_id, {}).get("meta", {}).get("referrer_id")
+                if referrer_id:
+                    total_refs = await count_referrals(referrer_id)
+                    
+                    if total_refs == 3:
+                        reward_text = (
+                            "🎉 <b>SELAMAT! Target 3 Referral Tercapai!</b>\n\n"
+                            "3 teman yang kamu rekomendasikan telah berhasil membuat CV di BoonTrack.\n\n"
+                            "Sesuai janji, kamu berhak mendapatkan <b>Website Portfolio Personal Gratis</b>!\n\n"
+                            "Ketik /claim_website untuk mulai memasukkan data website landing page milikmu! 🌐"
+                        )
+                        try:
+                            await bot.send_message(chat_id=int(referrer_id), text=reward_text, parse_mode="HTML")
+                            await track_event(int(referrer_id), "referral_reward_unlocked", meta={"total_referrals": 3})
+                        except Exception as e:
+                            print(f"Gagal mengirimkan pesan reward ke referrer {referrer_id}: {e}")
+
+            except Exception as e:
+                print(f"Error Generate CV Flow: {e}")
+                await message.reply(
+                    "❌ Terjadi kendala saat memproses CV kamu. Silakan coba tekan /start kembali ya!",
+                    parse_mode="HTML"
+                )
 
 async def health_check_handler(request):
     return web.json_response({"status": "healthy", "message": "Render is awake!"}, status=200)
