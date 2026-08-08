@@ -19,7 +19,7 @@ from google import genai
 from aiohttp import web
 
 # Import Handler Flow dari folder core (Aman dipanggil via PYTHONPATH=app)
-from app.core.cv_flow import cv_conv_handler
+from core.cv_flow import cv_conv_handler
 
 load_dotenv()
 
