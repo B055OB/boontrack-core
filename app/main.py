@@ -205,7 +205,7 @@ def _save_cv_version_sync(user_id, position, data):
 async def save_cv_version(user_id, position, data):
     await asyncio.to_thread(_save_cv_version_sync, user_id, position, data)
 
-# --- REVISED REFERRAL COUNT (COUNT DISTINCT) ---
+# COUNT DISTINCT REFERRAL LOGIC
 def _count_referrals_sync(referrer_id):
     try:
         conn = get_db_connection()
@@ -235,19 +235,17 @@ def clean_val(val):
     return str(val).strip()
 
 def get_question_text(step, target_lang="ID"):
-    is_en = target_lang in ["EN", "HYBRID"]
-    
     questions = {
-        1: "👤 <b>Nama Lengkapmu?</b>\n<i>(Disarankan nama resmi untuk di bagian atas CV)</i>",
+        1: "👤 <b>Nama Lengkapmu?</b>\n<i>(Disarankan nama resmi untuk bagian atas CV)</i>",
         2: "📧 <b>Email aktif kamu?</b>\n<i>(Email yang rutin kamu cek untuk balasan recruiter)</i>",
-        3: "📱 <b>Nomor WhatsApp / HP Aktif?</b>\n<i>(Klik 'Lewati' jika belum mau mencantumkannya di CV)</i>",
+        3: "📱 <b>Nomor WhatsApp / HP Aktif?</b>\n<i>(Klik 'Lewati' jika belum ingin mencantumkannya di CV)</i>",
         4: "📍 <b>Kota Domisili saat ini?</b> <i>(contoh: Bandung, Jakarta Selatan)</i>",
         5: "🔗 <b>Link LinkedIn / Portfolio / GitHub?</b>\n<i>(Klik 'Lewati' jika tidak ada)</i>",
         6: (
             "💼 <b>Pengalaman Kerja / Organisasi / Freelance?</b>\n\n"
-            "💬 <i>Ceritakan santai saja seperti ke teman, misalnya:\n"
+            "💬 <i>Ceritakan santai saja seperti ke teman, contoh:\n"
             "'Kasir di Toko Makmur 2021-2023, lalu Admin Sales di PT ABC 2023-2024'\n"
-            "Nanti saya yang bantu susun menjadi kalimat profesional ATS!</i>\n\n"
+            "Nanti saya bantu susun menjadi kalimat profesional ATS!</i>\n\n"
             "<i>(Ketik '-' atau 'Fresh Grad' jika belum ada)</i>"
         ),
         7: "🏆 <b>Apa tugas utama atau pencapaianmu di pekerjaan tersebut?</b>\n<i>(Tulis apa adanya, tidak perlu dibuat-buat. Nanti saya rapikan!)</i>",
@@ -278,6 +276,7 @@ def ai_rewrite_achievement(text, target_lang="ID"):
         f"Input Pengalaman: {text}"
     )
 
+    # 1. Primary AI: Gemini
     if ai_client:
         try:
             response = ai_client.models.generate_content(
@@ -287,8 +286,9 @@ def ai_rewrite_achievement(text, target_lang="ID"):
             if response and response.text:
                 return response.text.strip()
         except Exception as e:
-            print(f"[Fallback Alert] Gemini API Error: {e}. Beralih ke Groq...")
+            print(f"[Fallback Alert] Gemini Error: {e}. Beralih ke Groq...")
 
+    # 2. Secondary AI Fallback: Groq
     if GROQ_API_KEY:
         try:
             headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
@@ -297,8 +297,9 @@ def ai_rewrite_achievement(text, target_lang="ID"):
             if res.status_code == 200:
                 return res.json()['choices'][0]['message']['content'].strip()
         except Exception as e:
-            print(f"[Fallback Alert] Groq API Error: {e}")
+            print(f"[Fallback Alert] Groq Error: {e}")
 
+    # 3. Local Fallback
     lines = [line.strip().lstrip("-*• ") for line in text.split("\n") if line.strip()]
     return "\n".join([f"• {line}" for line in lines])
 
@@ -425,7 +426,7 @@ def create_cv_docx(user_id, data):
     doc.save(file_path)
     return file_path
 
-# --- BOT COMMAND HANDLERS ---
+# --- HANDLER MESSAGES & CALLBACKS ---
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
     user_id = message.from_user.id
@@ -467,7 +468,6 @@ async def send_welcome(message: types.Message):
     user_state[user_id] = {"step": "ONBOARDING_NAMA", "data": {}, "meta": meta_data}
     await save_dropoff(user_id, 0, {})
     
-    # PESAN 1: Warm Companion Greeting
     msg_1 = (
         "<b>Saya BoonTrack Career Assistant.</b>\n"
         "Saya akan membantu meningkatkan peluang kamu dipanggil interview.\n\n"
@@ -489,7 +489,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_data = user_state[user_id].get("data", {})
     user_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "Teman")
 
-    # FASE STATUS
     if code in ["status_fresh", "status_exp"]:
         user_data["status_kerja"] = "Fresh Graduate" if code == "status_fresh" else "Berpengalaman"
         user_state[user_id]["step"] = "ONBOARDING_POSISI"
@@ -510,7 +509,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             )
         await bot.send_message(user_id, reassurance, parse_mode="HTML")
 
-    # FASE PILIHAN BAHASA
     elif code in ["lang_id", "lang_en", "lang_hybrid"]:
         target_lang = "ID" if code == "lang_id" else ("EN" if code == "lang_en" else "HYBRID")
         user_data["target_lang"] = target_lang
@@ -519,7 +517,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             msg_lang = (
                 "Sip! Pilihan cerdas 🌐\n"
                 "CV kamu dibuat dalam **English profesional**, tapi selama pengisian kamu **bebas cerita dalam Bahasa Indonesia**.\n"
-                "Nanti saya yang bantu terjemahkan ke bahasa CV yang profesional! 😊\n\n"
+                "Nanti saya bantu terjemahkan ke bahasa CV yang profesional! 😊\n\n"
                 "🔒 <i>Privasi kamu aman. Data ini hanya digunakan untuk pencetakan CV dokumenmu.</i>"
             )
         elif code == "lang_en":
@@ -536,7 +534,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         
         await bot.send_message(user_id, msg_lang, parse_mode="Markdown")
         
-        # Mulai Step 1
         user_state[user_id]["step"] = 1
         await save_dropoff(user_id, 1, user_data)
         
@@ -546,7 +543,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             parse_mode="HTML"
         )
 
-    # TOMBOL LEWATI (OPTIONAL STEPS)
     elif code == "skip_optional":
         current_step = user_state[user_id].get("step", 1)
         if isinstance(current_step, int):
@@ -626,21 +622,54 @@ async def handle_message(message: types.Message):
         await message.reply(msg_2, reply_markup=kbd_status, parse_mode="HTML")
         return
 
-    # FASE 2: ONBOARDING POSISI (VALUE BEFORE DATA)
+    # FASE 2: ONBOARDING POSISI (HYBRID LLM INSIGHT WITH FALLBACK)
     if current_step == "ONBOARDING_POSISI":
         user_data["target_position"] = text
         user_state[user_id]["step"] = "SELECT_LANGUAGE"
         
-        # CAREER INSIGHT PER POSISI
-        pos_clean = text.lower()
-        if "marketing" in pos_clean or "sales" in pos_clean:
-            insight_text = "Untuk posisi **Marketing/Sales**, recruiter sangat memperhatikan kemampuan komunikasi, campaign, sosial media, serta pencapaian target yang pernah kamu raih."
-        elif "admin" in pos_clean or "office" in pos_clean:
-            insight_text = "Untuk posisi **Admin**, recruiter menyukai kandidat yang teliti, menguasai pengolahan data (Excel), ketikan rapi, serta rekapitulasi inventaris yang akurat."
-        elif "developer" in pos_clean or "engineer" in pos_clean or "it" in pos_clean:
-            insight_text = "Untuk posisi **Technical/IT**, recruiter berfokus pada tech-stack, portfolio project, serta kemampuan problem solving yang logis."
-        else:
-            insight_text = f"Untuk posisi **{text}**, recruiter akan sangat memperhatikan kejelasan tugas harian, kedisiplinan, serta skill praktis yang kamu miliki."
+        prompt_insight = f"""
+        Pengguna melamar posisi: "{text}".
+        
+        Tugasmu:
+        1. Jelaskan secara singkat peran/tugas utama dari posisi "{text}".
+        2. Tuliskan 2-3 kualifikasi, karakter, atau kemampuan spesifik yang PALING DISUKAI dan dinilai oleh recruiter untuk posisi ini (misal: ketelitian, kerapian, komunikasi, kejujuran, atau keahlian teknis tertentu).
+        
+        Aturan Penulisan:
+        - Tulis dalam 1-2 kalimat yang ringkas dan menyatu.
+        - Maksimal 30 kata.
+        - Gunakan Bahasa Indonesia ramah dan profesional.
+        - DILARANG menggunakan bullet point atau tanda bintang (*).
+        - DILARANG membahas posisi selain "{text}".
+        """
+
+        insight_text = ""
+
+        # 1. Primary AI: Gemini
+        if ai_client:
+            try:
+                res = ai_client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=prompt_insight
+                )
+                if res and res.text:
+                    insight_text = res.text.strip()
+            except Exception as e:
+                print(f"[Fallback Alert] Gemini Error on Insight: {e}. Beralih ke Groq...")
+
+        # 2. Secondary AI Fallback: Groq
+        if not insight_text and GROQ_API_KEY:
+            try:
+                headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+                payload = {"model": "llama3-8b-8192", "messages": [{"role": "user", "content": prompt_insight}], "temperature": 0.3}
+                res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=3)
+                if res.status_code == 200:
+                    insight_text = res.json()['choices'][0]['message']['content'].strip()
+            except Exception as e:
+                print(f"[Fallback Alert] Groq Error on Insight: {e}")
+
+        # 3. Static Default Fallback
+        if not insight_text:
+            insight_text = f"Untuk posisi {text}, recruiter biasanya sangat menghargai kedisiplinan, kerapian, serta tanggung jawab kerja yang baik."
 
         kbd_lang = InlineKeyboardMarkup(row_width=1)
         kbd_lang.add(
@@ -674,7 +703,6 @@ async def handle_message(message: types.Message):
             
             target_lang = user_data.get("target_lang", "ID")
             kbd = None
-            # Tampilkan tombol Lewati untuk No HP (Step 3), Domisili (Step 4), & LinkedIn (Step 5)
             if next_step in [3, 4, 5]:
                 kbd = InlineKeyboardMarkup().add(InlineKeyboardButton("⏩ Lewati Langkah Ini", callback_data="skip_optional"))
 
@@ -702,9 +730,7 @@ async def handle_message(message: types.Message):
 
                 document = InputFile(file_path)
                 
-                # --- POST-CV 3-PHASE EXPERIENCE ---
-                
-                # 🥇 FASE 1: CELEBRATION & DELIVER FILE
+                # FASE 1: CELEBRATION & DELIVER FILE
                 user_name = user_data.get("nama_panggilan", message.from_user.first_name or "Teman")
                 await bot.send_document(
                     chat_id=user_id,
@@ -719,7 +745,7 @@ async def handle_message(message: types.Message):
                 except Exception:
                     pass
 
-                # 🥈 FASE 2: CAREER INSIGHT & TIPS
+                # FASE 2: CAREER INSIGHT & TIPS
                 value_text = (
                     f"💡 <b>Tips Penting untuk Posisi {position}:</b>\n\n"
                     "Saat mengirim lamaran lewat email atau portal kerja:\n"
@@ -730,7 +756,7 @@ async def handle_message(message: types.Message):
                 )
                 await bot.send_message(user_id, value_text, parse_mode="HTML")
 
-                # 🥉 FASE 3: MONETISASI + GAMIFIED REFERRAL (PROGRESS 0/3)
+                # FASE 3: MONETISASI + GAMIFIED REFERRAL (PROGRESS 0/3)
                 total_refs = await count_referrals(user_id)
                 bot_info = await bot.get_me()
                 user_ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
@@ -747,7 +773,7 @@ async def handle_message(message: types.Message):
                 )
                 await bot.send_message(user_id, monetize_and_referral, parse_mode="HTML")
 
-                # Kirim Gambar QRIS
+                # Kirim QRIS
                 possible_qris_paths = [QRIS_IMAGE_PATH, "/app/qris.jpg", "qris.jpg"]
                 found_qris = next((p for p in possible_qris_paths if os.path.exists(p)), None)
                 if found_qris:
@@ -765,7 +791,7 @@ async def handle_message(message: types.Message):
                 if os.path.exists(file_path):
                     os.remove(file_path)
 
-                # TRIGGER REFERRAL REWARD (IF >= 3)
+                # TRIGGER REFERRAL REWARD
                 referrer_id = user_state.get(user_id, {}).get("meta", {}).get("referrer_id")
                 if referrer_id:
                     ref_count = await count_referrals(referrer_id)
