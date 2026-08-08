@@ -18,7 +18,7 @@ from docx.oxml.ns import qn
 import google.generativeai as genai
 from aiohttp import web
 
-# Import Handler Flow dari Folder app/core/ (Path Relatif Lokal)
+# Import Handler Flow dari Core (Jalan Muluss dengan PYTHONPATH=app)
 from core.cv_flow import cv_conv_handler
 
 load_dotenv()
