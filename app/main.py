@@ -15,10 +15,10 @@ from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-import google.generativeai as genai
+from google import genai
 from aiohttp import web
 
-# Import Handler Flow dari Core (Jalan Muluss dengan PYTHONPATH=app)
+# Import Handler Flow dari folder core (Aman dipanggil via PYTHONPATH=app)
 from core.cv_flow import cv_conv_handler
 
 load_dotenv()
@@ -35,10 +35,12 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-QRIS_IMAGE_PATH = "assets/qris.jpg"
-
+ai_client = None
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+    try:
+        ai_client = genai.Client(api_key=GEMINI_API_KEY)
+    except Exception as e:
+        print(f"Gemini Init Error: {e}")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
@@ -162,7 +164,6 @@ def _save_cv_version_sync(user_id, position, data):
 async def save_cv_version(user_id, position, data):
     await asyncio.to_thread(_save_cv_version_sync, user_id, position, data)
 
-# --- REFERRAL QUERY: COUNT DISTINCT USER_ID >= 3 ---
 def _count_referrals_sync(referrer_id):
     try:
         conn = get_db_connection()
@@ -201,7 +202,6 @@ def ai_generate_summary(position, target_lang="en"):
             return "Highly dedicated professional with a proven track record in structured workflows, adaptability, and operational excellence."
         return f"Results-driven professional specializing in {position} with demonstrated expertise in operational management and team execution."
 
-# --- STRICT AI PROMPT: PROFESSIONAL ATS STYLE ONLY (NO FABRICATION) ---
 def ai_rewrite_achievement(text, target_lang="en"):
     lang_name = "English" if target_lang == "en" else "Bahasa Indonesia"
     prompt_text = (
@@ -215,14 +215,16 @@ def ai_rewrite_achievement(text, target_lang="en"):
         f"Data Pengalaman Pengguna: {text}"
     )
 
-    if GEMINI_API_KEY:
+    if ai_client:
         try:
-            model = genai.GenerativeModel('gemini-2.5-flash')
-            response = model.generate_content(prompt_text)
+            response = ai_client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt_text,
+            )
             if response and response.text:
                 return response.text.strip()
         except Exception as e:
-            print(f"[Fallback Alert] Gemini API Error/Limit: {e}. Beralih ke Groq...")
+            print(f"[Fallback Alert] Gemini API Error: {e}. Beralih ke Groq...")
 
     if GROQ_API_KEY:
         try:
@@ -239,14 +241,13 @@ def ai_rewrite_achievement(text, target_lang="en"):
             if res.status_code == 200:
                 return res.json()['choices'][0]['message']['content'].strip()
         except Exception as e:
-            print(f"[Fallback Alert] Groq API Error: {e}. Beralih ke OpenRouter...")
+            print(f"[Fallback Alert] Groq API Error: {e}.")
 
     lines = [line.strip().lstrip("-*• ") for line in text.split("\n") if line.strip()]
     return "\n".join([f"• {line}" for line in lines])
 
 def create_cv_docx(user_id, data):
     doc = Document()
-    
     for section in doc.sections:
         section.top_margin = Inches(0.75)
         section.bottom_margin = Inches(0.75)
@@ -254,7 +255,6 @@ def create_cv_docx(user_id, data):
         section.right_margin = Inches(0.75)
 
     cv_lang = data.get("cv_lang", "en")
-
     name = clean_val(data.get("name", "NAMA LENGKAP"))
     email = clean_val(data.get("email", ""))
     phone = clean_val(data.get("phone", ""))
@@ -267,7 +267,6 @@ def create_cv_docx(user_id, data):
     r_name.font.name = 'Calibri'
     r_name.font.size = Pt(16)
     r_name.font.bold = True
-    r_name.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
 
     contact_parts = [p for p in [email, phone, domicile, linkedin] if p]
     if contact_parts:
@@ -276,7 +275,6 @@ def create_cv_docx(user_id, data):
         r_contact = p_contact.add_run(" | ".join(contact_parts))
         r_contact.font.name = 'Calibri'
         r_contact.font.size = Pt(10)
-        r_contact.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
 
     def add_section_header(title):
         h = doc.add_paragraph()
@@ -287,115 +285,66 @@ def create_cv_docx(user_id, data):
         run.font.size = Pt(11)
         run.font.bold = True
         run.font.color.rgb = RGBColor(0x1F, 0x4E, 0x78)
-        
-        pBdr = OxmlElement('w:pBdr')
-        bottom = OxmlElement('w:bottom')
-        bottom.set(qn('w:val'), 'single')
-        bottom.set(qn('w:sz'), '6')
-        bottom.set(qn('w:space'), '1')
-        bottom.set(qn('w:color'), '1F4E78')
-        pBdr.append(bottom)
-        h._p.get_or_add_pPr().append(pBdr)
 
-    # Summary Section
     summary_header = "PROFESSIONAL SUMMARY" if cv_lang == "en" else "RINGKASAN PROFESIONAL"
     add_section_header(summary_header)
     position_text = clean_val(data.get("target_position", ""))
-    summary_text = ai_generate_summary(position_text, cv_lang)
-    p_sum = doc.add_paragraph(summary_text)
+    p_sum = doc.add_paragraph(ai_generate_summary(position_text, cv_lang))
     p_sum.paragraph_format.space_after = Pt(8)
-    for r in p_sum.runs:
-        r.font.name = 'Calibri'
-        r.font.size = Pt(10.5)
 
-    # Experience Section
     exp = clean_val(data.get("experience", ""))
     ach_raw = clean_val(data.get("achievement", ""))
-
     if exp:
         exp_header = "PROFESSIONAL EXPERIENCE" if cv_lang == "en" else "PENGALAMAN KERJA"
         add_section_header(exp_header)
-        raw_jobs = [j.strip() for j in re.split(r'[\n|]', exp) if j.strip()]
-        
-        for job_title in raw_jobs:
-            if not job_title:
-                continue
-            
+        for job_title in [j.strip() for j in re.split(r'[\n|]', exp) if j.strip()]:
             p_job = doc.add_paragraph()
-            p_job.paragraph_format.space_before = Pt(6)
-            p_job.paragraph_format.space_after = Pt(2)
             r_job = p_job.add_run(job_title)
-            r_job.font.name = 'Calibri'
-            r_job.font.size = Pt(10.5)
             r_job.font.bold = True
 
             if ach_raw:
-                ach_formatted = ai_rewrite_achievement(ach_raw, cv_lang)
-                for bullet in ach_formatted.split("\n"):
+                for bullet in ai_rewrite_achievement(ach_raw, cv_lang).split("\n"):
                     b_text = bullet.strip().lstrip("-*• ")
                     if b_text:
-                        p_b = doc.add_paragraph(style='List Bullet')
-                        p_b.paragraph_format.space_after = Pt(2)
-                        r_b = p_b.add_run(b_text)
-                        r_b.font.name = 'Calibri'
-                        r_b.font.size = Pt(10)
+                        doc.add_paragraph(b_text, style='List Bullet')
 
-    # Education Section
     edu = clean_val(data.get("education", ""))
     if edu:
-        edu_header = "EDUCATION" if cv_lang == "en" else "PENDIDIKAN"
-        add_section_header(edu_header)
-        p_edu = doc.add_paragraph(edu)
-        p_edu.paragraph_format.space_after = Pt(8)
-        for r in p_edu.runs:
-            r.font.name = 'Calibri'
-            r.font.size = Pt(10.5)
+        add_section_header("EDUCATION" if cv_lang == "en" else "PENDIDIKAN")
+        doc.add_paragraph(edu)
 
-    # Skills Section
     skill = clean_val(data.get("skills", ""))
     if skill:
-        skill_header = "SKILLS" if cv_lang == "en" else "KEAHLIAN"
-        add_section_header(skill_header)
+        add_section_header("SKILLS" if cv_lang == "en" else "KEAHLIAN")
         for line in skill.split("\n"):
-            line_str = line.strip()
-            if line_str:
-                p_skill = doc.add_paragraph(line_str)
-                p_skill.paragraph_format.space_after = Pt(3)
-                for r in p_skill.runs:
-                    r.font.name = 'Calibri'
-                    r.font.size = Pt(10)
+            if line.strip():
+                doc.add_paragraph(line.strip())
 
     temp_dir = tempfile.gettempdir()
     file_path = os.path.join(temp_dir, f"CV_{user_id}.docx")
     doc.save(file_path)
     return file_path
 
-# --- RENDER HEALTH CHECK SERVER ---
+# --- HEALTH CHECK SERVER ---
 async def health_check_handler(request):
-    return web.json_response({"status": "healthy", "message": "Render is awake!"}, status=200)
+    return web.json_response({"status": "healthy"}, status=200)
 
 async def start_web_server():
     app_web = web.Application()
     app_web.router.add_get('/', health_check_handler)
-    app_web.router.add_get('/health', health_check_handler)
-    
     port = int(os.getenv("PORT", 10000))
     runner = web.AppRunner(app_web)
     await runner.setup()
-    
     try:
         site = web.TCPSite(runner, '0.0.0.0', port)
         await site.start()
     except OSError:
-        fallback_port = port + 1
-        site = web.TCPSite(runner, '0.0.0.0', fallback_port)
-        await site.start()
+        pass
 
 async def on_startup(dp_obj):
     asyncio.create_task(start_web_server())
 
 if __name__ == '__main__':
-    print("Inisialisasi Database & Schema (Async)...")
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(init_db())
