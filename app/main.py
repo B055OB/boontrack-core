@@ -878,13 +878,24 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         await bot.send_message(user_id, "👋 <b>Kembali ke Menu Utama:</b>", reply_markup=get_career_home_keyboard(), parse_mode="HTML")
 
     elif code == "home_create_cv":
-        user_state[user_id] = {"step": "ONBOARDING_NAMA", "data": {}}
-        await save_dropoff(user_id, 0, {})
-        msg_restart = (
-            "Sip! Kita susun versi CV baru ya. 👍\n\n"
-            "Boleh kenalan lagi atau mau pakai nama panggilan sebelumnya?\n"
-            "<b>Ini dengan siapa?</b>"
-        )
+        old_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "")
+        new_data = {"nama_panggilan": old_name} if old_name else {}
+        
+        user_state[user_id] = {"step": "ONBOARDING_NAMA", "data": new_data}
+        await save_dropoff(user_id, 0, new_data)
+        
+        if old_name:
+            msg_restart = (
+                f"Sip, {old_name}! Kita susun versi CV baru ya. 👍\n\n"
+                f"Kamu mau tetap pakai nama panggilan <b>{old_name}</b> atau mau ganti nama baru?\n"
+                f"<i>(Ketik langsung nama panggilanmu di bawah untuk melanjutkan)</i>"
+            )
+        else:
+            msg_restart = (
+                "Sip! Kita susun versi CV baru ya. 👍\n\n"
+                "Boleh kenalan dulu?\n"
+                "<b>Ini dengan siapa?</b>"
+            )
         await bot.send_message(user_id, msg_restart, parse_mode="HTML")
 
     elif code == "home_check_ref":
@@ -1161,7 +1172,6 @@ async def handle_message(message: types.Message):
         else:
             await process_and_send_cv(message, user_data)
 
-# WEBHOOK PENERIMA NOTIFIKASI DANA (WITH SECURITY TOKEN & IDEMPOTENCY)
 async def dana_webhook_handler(request):
     try:
         incoming_token = request.headers.get("X-BoonTrack-Secret", "")
