@@ -595,7 +595,7 @@ def create_cv_docx(user_id, data):
     doc.save(file_path)
     return file_path
 
-# MENU UTAMA CAREER HOME (LENGKAP DENGAN 4 PILIHAN)
+# MENU UTAMA CAREER HOME (4 PILIHAN)
 def get_career_home_keyboard():
     kbd = InlineKeyboardMarkup(row_width=1)
     kbd.add(
@@ -753,7 +753,7 @@ async def send_welcome(message: types.Message):
     "status_fresh", "status_exp", "lang_id", "lang_en", "lang_hybrid", 
     "skip_optional", "resume_flow", "restart_flow",
     "home_create_cv", "home_check_ref", "home_career_qa",
-    "home_digital_products", "buy_ebook_interview", "home_back_main"
+    "home_digital_products", "buy_test_cv_template", "buy_ebook_interview", "home_back_main"
 ])
 async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
@@ -766,16 +766,20 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_data = user_state[user_id].get("data", {})
     user_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "Teman")
 
-    # PRODUK DIGITAL & CATALOG HANDLERS
+    # KATALOG PRODUK DIGITAL
     if code == "home_digital_products":
         kbd_products = InlineKeyboardMarkup(row_width=1)
         kbd_products.add(
-            InlineKeyboardButton("📘 Ebook Panduan Lolos Interview & Gaji (Rp49rb)", callback_data="buy_ebook_interview"),
+            InlineKeyboardButton("📄 Template CV ATS-Friendly (Rp1.000 - Tes Live)", callback_data="buy_test_cv_template"),
+            InlineKeyboardButton("📘 Ebook Panduan Lolos Interview & Gaji (Rp49.000)", callback_data="buy_ebook_interview"),
             InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="home_back_main")
         )
         msg_catalog = (
             "🚀 <b>PROGRAM & PRODUK DIGITAL KARIR</b>\n\n"
             "Tingkatkan peluang dipanggil dan lolos kerja dengan panduan eksklusif dari BoonTrack:\n\n"
+            "📄 <b>Template CV Profesional ATS-Friendly (Mode Tes Live)</b>\n"
+            "• Template Word (.docx) siap pakai yang lolos scan HRIS\n"
+            "• <i>Produk khusus pengujian live transfer Rp1.000!</i>\n\n"
             "📖 <b>Ebook Panduan Lolos Interview & Negosiasi Gaji</b>\n"
             "• Rangkuman pertanyaan jebakan HR + cara jawabnya\n"
             "• Template surat lamaran & email melamar kerja\n"
@@ -784,6 +788,34 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         )
         await bot.send_message(user_id, msg_catalog, reply_markup=kbd_products, parse_mode="HTML")
 
+    # PRODUK 1: TEMPLATE CV (PRODUK TES RP1.000)
+    elif code == "buy_test_cv_template":
+        base_price = 1000
+        unique_code = random.randint(100, 500)
+        total_amount = base_price + unique_code  # Contoh hasil: Rp1.234
+        
+        await create_order(user_id, "Template CV ATS (Tes)", base_price, unique_code, total_amount)
+        
+        msg_checkout = (
+            f"🛒 <b>CHECKOUT TEST: Template CV ATS-Friendly</b>\n\n"
+            f"💵 Harga Normal: <s>Rp25.000</s>\n"
+            f"🎉 <b>Total Transfer (Mode Tes Live Rp1.xxx):</b>\n"
+            f"<code>{total_amount}</code> 👈 <i>(Tekan/salin angka ini)</i>\n\n"
+            f"👇 <b>Cara Pembayaran Tes:</b>\n"
+            f"1. Scan QRIS di atas atau transfer via DANA Bisnis.\n"
+            f"2. Masukkan nominal <b>PRESISI <code>{total_amount}</code></b> (sampai 3 digit terakhir).\n"
+            f"3. Dalam 1-3 detik setelah transfer, file Template CV otomatis terkirim di sini! 🚀\n\n"
+            f"⏳ <i>Berlaku selama 15 menit.</i>"
+        )
+        
+        possible_qris_paths = [QRIS_IMAGE_PATH, "/app/qris.jpg", "qris.jpg"]
+        found_qris = next((p for p in possible_qris_paths if os.path.exists(p)), None)
+        if found_qris:
+            await bot.send_photo(chat_id=user_id, photo=InputFile(found_qris), caption=msg_checkout, parse_mode="HTML")
+        else:
+            await bot.send_message(user_id, msg_checkout, parse_mode="HTML")
+
+    # PRODUK 2: EBOOK INTERVIEW (PRODUK UTAMA RP49.000)
     elif code == "buy_ebook_interview":
         base_price = 50000
         unique_code = random.randint(100, 999)
@@ -795,7 +827,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             f"🛒 <b>CHECKOUT: Ebook Panduan Lolos Interview</b>\n\n"
             f"💵 Harga Normal: <s>Rp{base_price:,}</s>\n"
             f"🎉 <b>Total Transfer (Dapat Potongan):</b>\n"
-            f"<code>{total_amount}</code> 👈 <i>(Salin angka ini)</i>\n\n"
+            f"<code>{total_amount}</code> 👈 <i>(Tekan/salin angka ini)</i>\n\n"
             f"👇 <b>Cara Pembayaran:</b>\n"
             f"1. Scan QRIS di atas atau transfer via DANA Bisnis.\n"
             f"2. Masukkan nominal <b>PRESISI <code>{total_amount}</code></b> (sampai 3 digit terakhir).\n"
@@ -983,7 +1015,7 @@ async def handle_message(message: types.Message):
             InlineKeyboardButton("🔹 Sudah berpengalaman (Cari kerja baru)", callback_data="status_exp")
         )
         msg_2 = f"Halo {text} 😊\n\nBoleh saya tahu status kamu saat ini?"
-        await message.reply(msg_2, reply_markup=kbd_status, parse_mode="HTML")
+        await message.reply(msg_2, parse_mode="HTML")
         return
 
     if current_step == "ONBOARDING_POSISI":
@@ -1120,9 +1152,9 @@ async def dana_webhook_handler(request):
                 success_msg = (
                     f"🎉 <b>PEMBAYARAN DITERIMA!</b>\n\n"
                     f"Terima kasih! Pembayaran sebesar <b>Rp{incoming_amount:,}</b> untuk <b>{product}</b> telah terkonfirmasi otomatis.\n\n"
-                    f"📥 <b>Akses Ebook Kamu:</b>\n"
+                    f"📥 <b>Akses Produk Kamu:</b>\n"
                     f"https://cvats.boontrack.com/ebook-interview-boontrack.pdf\n\n"
-                    f"Selamat membaca dan semoga sukses interviewnya! 🚀"
+                    f"Semoga bermanfaat dan sukses kariernya! 🚀"
                 )
                 await bot.send_message(chat_id=buyer_id, text=success_msg, parse_mode="HTML")
                 return web.json_response({"status": "success", "order_id": order["order_id"]}, status=200)
