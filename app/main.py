@@ -357,6 +357,46 @@ def ai_rewrite_achievement(text, target_lang="ID"):
     lines = [line.strip().lstrip("-*• ") for line in text.split("\n") if line.strip()]
     return "\n".join([f"• {line}" for line in lines])
 
+# CAREER AI CHAT AI ASSISTANT (INTENT ROUTER & FREE FORM Q&A)
+def ai_career_chat_response(user_query, user_context=None):
+    pos = user_context.get("target_position", "dunia kerja") if user_context else "dunia kerja"
+    status = user_context.get("status_kerja", "Pencari Kerja") if user_context else "Pencari Kerja"
+    
+    prompt = f"""
+    Kamu adalah BoonTrack Career Assistant, teman diskusi karier yang suportif, ramah, dan solutif.
+    
+    Konteks Pengguna:
+    - Target Posisi: {pos}
+    - Status: {status}
+    
+    Pertanyaan/Pesan Pengguna:
+    "{user_query}"
+    
+    Tugasmu:
+    Jawab pertanyaan pengguna secara ringkas, praktis, dan memotivasi (Maksimal 60 kata). 
+    Gunakan Bahasa Indonesia yang santai dan ramah. Jangan gunakan bullet point terlalu panjang.
+    """
+    
+    if ai_client:
+        try:
+            res = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            if res and res.text:
+                return res.text.strip()
+        except Exception:
+            pass
+            
+    if GROQ_API_KEY:
+        try:
+            headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+            payload = {"model": "llama3-8b-8192", "messages": [{"role": "user", "content": prompt}], "temperature": 0.4}
+            res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=4)
+            if res.status_code == 200:
+                return res.json()['choices'][0]['message']['content'].strip()
+        except Exception:
+            pass
+            
+    return f"Tentu! Untuk posisi {pos}, saran utamaku adalah memperkuat skill praktis dan portfolio. Ada hal spesifik lain seputar lamaran atau interview yang mau kamu tanyakan? 😊"
+
 def create_cv_docx(user_id, data):
     doc = Document()
     target_lang = data.get("target_lang", "ID")
@@ -484,7 +524,18 @@ def create_cv_docx(user_id, data):
     doc.save(file_path)
     return file_path
 
+# MENU UTAMA CAREER HOME
+def get_career_home_keyboard():
+    kbd = InlineKeyboardMarkup(row_width=1)
+    kbd.add(
+        InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"),
+        InlineKeyboardButton("🎁 Cek Referral Saya", callback_data="home_check_ref"),
+        InlineKeyboardButton("💼 Tanya Seputar Dunia Kerja", callback_data="home_career_qa")
+    )
+    return kbd
+
 async def process_and_send_cv(message: types.Message, user_id: int, user_data: dict):
+    # Tandai Step = 0 (CV Selesai)
     user_state[user_id]["step"] = 0
     await save_dropoff(user_id, TOTAL_STEPS, user_data)
     
@@ -501,9 +552,9 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         await track_event(user_id, "resume_generated", meta={"position": position})
 
         document = InputFile(file_path)
-        
-        # A. CELEBRATION
         user_name = user_data.get("nama_panggilan", message.from_user.first_name or "Teman")
+
+        # 1. CELEBRATION + SEND FILE
         await bot.send_document(
             chat_id=user_id,
             document=document,
@@ -517,7 +568,7 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         except Exception:
             pass
 
-        # B. CAREER INSIGHT & TIPS POSISI
+        # 2. CAREER INSIGHT & TIPS POSISI
         value_text = (
             f"💡 <b>Tips Penting Sebelum Melamar ({position}):</b>\n\n"
             "1. Gunakan subjek email jernih: <code>[Posisi] - [Nama Kamu]</code>\n"
@@ -527,11 +578,7 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         )
         await bot.send_message(user_id, value_text, parse_mode="HTML")
 
-        # C. MONETISASI / DONASI KOPI
-        total_refs = await count_referrals(user_id)
-        bot_info = await bot.get_me()
-        user_ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
-        
+        # 3. DONASI QRIS (HANYA SEKALI DI SINI)
         monetize_text = (
             "❤️ <b>Dukung BoonTrack Supaya Tetap Gratis</b>\n\n"
             "BoonTrack dikembangkan mandiri agar tetap gratis bagi pencari kerja. "
@@ -544,28 +591,18 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         if found_qris:
             await bot.send_photo(chat_id=user_id, photo=InputFile(found_qris), caption="Dukungan donasi seikhlasnya via QRIS. Terima kasih! 🙏")
 
-        # D. REFERRAL PORTFOLIO WEBSITE
-        referral_text = (
-            "🎁 <b>BONUS PORTOFOLIO WEBSITE PRIBADI</b>\n\n"
-            "Ajak 3 temanmu membuat CV di BoonTrack, dan kami akan buatkan **Website Portfolio Pribadi Gratis**!\n"
-            "<i>Contoh hasil jadinya bisa dicek di: https://rayigemilang.cv.boontrack.com</i>\n\n"
-            f"📊 <b>Progress Referral Kamu: {total_refs} / 3</b>\n"
-            f"👇 Bagikan link referral-mu ke teman:\n"
-            f"<code>{user_ref_link}</code>"
+        # 4. CAREER HOME MENU NAVIGATION
+        home_text = (
+            f"Semoga CV ini jadi langkah awal yang bagus buat kariermu, {user_name}! 🚀\n\n"
+            "Kalau kamu mau bikin versi baru, cek referral, atau sekadar tanya-tanya soal dunia kerja, saya tetap di sini ya. 😊\n\n"
+            "👇 <b>Pilih menu di bawah atau langsung ketik pertanyaanmu:</b>"
         )
-        await bot.send_message(user_id, referral_text, parse_mode="HTML")
-
-        # E. EMOTIONAL CLOSING
-        closing_text = (
-            "🤝 <b>Satu Hal Lagi...</b>\n\n"
-            "Kalau nanti kamu berhasil dapat panggilan interview atau bahkan diterima kerja, balik lagi ke sini dan kabari saya ya. 😄\n\n"
-            "Saya ikut senang kalau bisa membantu perjalanan kariermu. Semoga sukses! ❤️🚀"
-        )
-        await bot.send_message(user_id, closing_text, parse_mode="HTML")
+        await bot.send_message(user_id, home_text, reply_markup=get_career_home_keyboard(), parse_mode="HTML")
 
         if os.path.exists(file_path):
             os.remove(file_path)
 
+        # TRIGGER REFERRAL REWARD
         referrer_id = user_state.get(user_id, {}).get("meta", {}).get("referrer_id")
         if referrer_id:
             ref_count = await count_referrals(referrer_id)
@@ -602,9 +639,21 @@ async def send_welcome(message: types.Message):
 
     await track_event(user_id, "start", meta=meta_data)
     
-    progress, _ = await get_user_history(user_id)
+    progress, last_cv = await get_user_history(user_id)
     first_name = message.from_user.first_name or "Teman"
 
+    # JIKA USER SUDAH PUNYA CV / STEP 0 -> TAMPILKAN CAREER HOME
+    if progress and progress.get("last_step") == TOTAL_STEPS:
+        user_state[user_id] = {"step": 0, "data": progress.get("data", {}), "meta": meta_data}
+        home_msg = (
+            f"Halo lagi, {first_name}! 👋\n\n"
+            "Ada yang bisa saya bantu untuk persiapan kariermu hari ini?\n\n"
+            "👇 <b>Pilih menu di bawah atau langsung ketik pertanyaanmu:</b>"
+        )
+        await message.reply(home_msg, reply_markup=get_career_home_keyboard(), parse_mode="HTML")
+        return
+
+    # JIKA PROSES TERSIMPAN DI TENGAH JALAN
     if progress and isinstance(progress.get("last_step"), int) and progress.get("last_step", 0) > 1 and progress.get("last_step", 0) < TOTAL_STEPS:
         last_step = progress["last_step"]
         saved_data = progress.get("data", {})
@@ -636,7 +685,11 @@ async def send_welcome(message: types.Message):
     )
     await message.reply(msg_1, parse_mode="HTML")
 
-@dp.callback_query_handler(lambda c: c.data in ["status_fresh", "status_exp", "lang_id", "lang_en", "lang_hybrid", "skip_optional", "resume_flow", "restart_flow"])
+@dp.callback_query_handler(lambda c: c.data in [
+    "status_fresh", "status_exp", "lang_id", "lang_en", "lang_hybrid", 
+    "skip_optional", "resume_flow", "restart_flow",
+    "home_create_cv", "home_check_ref", "home_career_qa"
+])
 async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     code = callback_query.data
@@ -648,7 +701,42 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_data = user_state[user_id].get("data", {})
     user_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "Teman")
 
-    if code in ["status_fresh", "status_exp"]:
+    # NAVIGATION CAREER HOME
+    if code == "home_create_cv":
+        user_state[user_id] = {"step": "ONBOARDING_NAMA", "data": {}}
+        await save_dropoff(user_id, 0, {})
+        msg_restart = (
+            "Sip! Kita susun versi CV baru ya. 👍\n\n"
+            "Boleh kenalan lagi atau mau pakai nama panggilan sebelumnya?\n"
+            "<b>Ini dengan siapa?</b>"
+        )
+        await bot.send_message(user_id, msg_restart, parse_mode="HTML")
+
+    elif code == "home_check_ref":
+        total_refs = await count_referrals(user_id)
+        bot_info = await bot.get_me()
+        user_ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+        
+        ref_msg = (
+            "🎁 <b>REFERRAL & BONUS PORTFOLIO WEBSITE</b>\n\n"
+            f"📊 <b>Progress Referral Kamu: {total_refs} / 3</b>\n\n"
+            "Ajak 3 temanmu membuat CV di BoonTrack, dan kami akan buatkan **Website Portfolio Pribadi Gratis**!\n"
+            "<i>Contoh: https://rayigemilang.cv.boontrack.com</i>\n\n"
+            f"👇 Bagikan link referral-mu ke teman:\n"
+            f"<code>{user_ref_link}</code>"
+        )
+        await bot.send_message(user_id, ref_msg, reply_markup=get_career_home_keyboard(), parse_mode="HTML")
+
+    elif code == "home_career_qa":
+        qa_msg = (
+            "💬 <b>Tanya Seputar Dunia Kerja</b>\n\n"
+            "Kamu bisa tanyakan apa saja tentang persiapan kerja, tips interview, negosiasi gaji, atau kualifikasi posisi impianmu.\n\n"
+            "<i>Ketik saja pertanyaanmu langsung di obrolan ini ya!</i> 👇"
+        )
+        await bot.send_message(user_id, qa_msg, parse_mode="HTML")
+
+    # ONBOARDING CALLBACKS
+    elif code in ["status_fresh", "status_exp"]:
         user_data["status_kerja"] = "Fresh Graduate" if code == "status_fresh" else "Berpengalaman"
         user_state[user_id]["step"] = "ONBOARDING_POSISI"
         
@@ -758,23 +846,34 @@ async def cancel_handler(message: types.Message):
     user_id = message.from_user.id
     user_state[user_id] = {"step": 0, "data": {}}
     await save_dropoff(user_id, 0, {})
-    await message.reply("❌ <b>Proses pembuatan CV dibatalkan.</b>\n\nKetik /start kapan saja jika ingin memulai kembali!", parse_mode="HTML")
+    await message.reply("❌ <b>Proses pembuatan CV dibatalkan.</b>\n\nKetik /start kapan saja untuk kembali ke Menu Utama!", parse_mode="HTML")
 
 @dp.message_handler()
 async def handle_message(message: types.Message):
     user_id = message.from_user.id
     text = message.text.strip()
 
-    if user_id not in user_state or user_state[user_id].get("step", 0) == 0:
+    if user_id not in user_state:
         progress, _ = await get_user_history(user_id)
         if progress and progress.get("last_step", 0) > 0:
             user_state[user_id] = {"step": progress["last_step"], "data": progress.get("data", {})}
         else:
-            await message.reply("Ketik <b>/start</b> untuk mulai membuat CV ya!", parse_mode="HTML")
-            return
+            user_state[user_id] = {"step": 0, "data": {}}
 
-    current_step = user_state[user_id]["step"]
-    user_data = user_state[user_id]["data"]
+    current_step = user_state[user_id].get("step", 0)
+    user_data = user_state[user_id].get("data", {})
+
+    # JIKA USER BERADA DI STEP = 0 (CV SUDAH SELESAI / MEMBUKA HOME) -> ROUTING KE CAREER AI CHAT!
+    if current_step == 0:
+        await track_event(user_id, "career_ai_query", meta={"query": text})
+        ai_reply = await asyncio.to_thread(ai_career_chat_response, text, user_data)
+        
+        await message.reply(
+            f"{ai_reply}\n\n<i>Mau lanjut bikin CV baru atau cek referral? Pilih tombol di bawah ya!</i> 👇",
+            reply_markup=get_career_home_keyboard(),
+            parse_mode="HTML"
+        )
+        return
 
     if current_step == "ONBOARDING_NAMA":
         user_data["nama_panggilan"] = text
