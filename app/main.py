@@ -278,12 +278,12 @@ def _match_and_complete_order_sync(amount):
         
         cur.execute("""
             SELECT * FROM product_orders 
-            WHERE total_amount = %s AND status = 'PENDING' AND expires_at > CURRENT_TIMESTAMP
+            WHERE total_amount = %s AND expires_at > CURRENT_TIMESTAMP
             LIMIT 1;
         """, (amount,))
         order = cur.fetchone()
         
-        if order:
+        if order and order.get("status") == "PENDING":
             cur.execute("UPDATE product_orders SET status = 'PAID' WHERE id = %s;", (order["id"],))
             conn.commit()
             
@@ -435,7 +435,7 @@ def ai_career_chat_response(user_query, user_context=None):
     
     q_clean = user_query.strip().lower()
     
-    # 1. FILTER PAMITAN / CLOSING (Respon singkat, ramah, & tidak usah bertanya lagi)
+    # 1. FILTER PAMITAN / CLOSING
     closing_words = [
         "lanjut lagi", "nanti lanjut", "ntar lanjut", "okey", "oke deh", "okedeh",
         "bye", "dada", "dadah", "sampai jumpa", "sampe jumpa", "udah dulu",
@@ -449,7 +449,7 @@ def ai_career_chat_response(user_query, user_context=None):
     if any(word in q_clean for word in thanks_words):
         return "Sama-sama! Semoga bermanfaat dan sukses terus kariernya ya! 😊"
         
-    # 3. FILTER GREETING (HALO/HAI)
+    # 3. FILTER GREETING
     greeting_words = ["halo", "hai", "hi", "pagi", "siang", "sore", "malam", "halo bot"]
     if q_clean in greeting_words:
         return "Halo juga! Ada yang bisa saya bantu seputar persiapan kerja atau CV kamu hari ini? 😊"
@@ -513,8 +513,8 @@ def ai_career_chat_response(user_query, user_context=None):
         except Exception as e:
             print(f"[Career AI Error] OpenRouter failed: {e}")
             
-    # 8. DYNAMIC FALLBACK
-    return f"Untuk pertanyaan seputar '{user_query}' pada posisi {pos}, kunci utamanya adalah menyajikan bukti pencapaian konkret saat evaluasi. Ada hal spesifik lain yang mau kamu bedah? 😊"
+    # 8. DYNAMIC FALLBACK (ZERO-AI SAFE FALLBACK)
+    return f"Sistem AI kami saat ini sedang mengalami lonjakan trafik. Tapi tenang, progres CV kamu tetap tersimpan aman di BoonTrack! Ada hal lain yang ingin kamu cek dari menu di bawah? 😊"
 
 def create_cv_docx(user_id, data):
     doc = Document()
@@ -1047,7 +1047,9 @@ async def handle_message(message: types.Message):
         ai_reply = await asyncio.to_thread(ai_career_chat_response, text, user_data)
         
         await message.reply(
-            f"{ai_reply}\n\n<i>Mau lanjut bikin CV baru atau cek referral? Pilih tombol di bawah ya!</i> 👇",
+            f"{ai_reply}\n\n"
+            f"🎁 <b>Kalau kamu mau lanjut, ada beberapa pilihan yang mungkin berguna buat kariermu:</b>\n"
+            f"👇 <i>Pilih yang ingin kamu lihat.</i>",
             reply_markup=get_career_home_keyboard(),
             parse_mode="HTML"
         )
@@ -1176,7 +1178,7 @@ async def handle_message(message: types.Message):
         else:
             await process_and_send_cv(message, user_data)
 
-# WEBHOOK PENERIMA NOTIFIKASI DANA
+# WEBHOOK PENERIMA NOTIFIKASI DANA (WITH IDEMPOTENCY CHECK)
 async def dana_webhook_handler(request):
     try:
         data = await request.json()
@@ -1194,6 +1196,11 @@ async def dana_webhook_handler(request):
             order = await match_and_complete_order(incoming_amount)
             
             if order:
+                # IDEMPOTENCY CHECK: Mencegah double fulfillment jika notifikasi DANA masuk 2x
+                if order.get("status") == "PAID":
+                    print(f"[Webhook Ignored] Order {order['order_id']} sudah berstatus PAID sebelumnya.")
+                    return web.json_response({"status": "already_fulfilled"}, status=200)
+
                 buyer_id = order["telegram_id"]
                 product = order["product_name"]
                 
