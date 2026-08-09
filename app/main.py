@@ -419,8 +419,8 @@ def ai_rewrite_achievement(text, target_lang="ID"):
     if GROQ_API_KEY:
         try:
             headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-            payload = {"model": "llama3-8b-8192", "messages": [{"role": "user", "content": prompt_text}], "temperature": 0.3}
-            res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=3)
+            payload = {"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt_text}], "temperature": 0.3}
+            res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=4)
             if res.status_code == 200:
                 return res.json()['choices'][0]['message']['content'].strip()
         except Exception as e:
@@ -444,29 +444,55 @@ def ai_career_chat_response(user_query, user_context=None):
     "{user_query}"
     
     Tugasmu:
-    Jawab pertanyaan pengguna secara ringkas, praktis, dan memotivasi (Maksimal 60 kata). 
-    Gunakan Bahasa Indonesia yang santai dan ramah. Jangan gunakan bullet point terlalu panjang.
+    Jawab pertanyaan pengguna secara spesifik sesuai apa yang ditanyakan (misal jika menanyakan naik gaji, jawab strategi negosiasi/prestasi kerja secara kontekstual).
+    Jawab ringkas, praktis, dan memotivasi (Maksimal 60 kata).
+    Gunakan Bahasa Indonesia yang santai dan ramah. Jangan gunakan jawaban kaku/statis.
     """
     
+    # 1. COBA GEMINI (Primary Provider)
     if ai_client:
         try:
             res = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
             if res and res.text:
                 return res.text.strip()
-        except Exception:
-            pass
-            
+        except Exception as e:
+            print(f"[Career AI Error] Gemini failed: {e}")
+
+    # 2. COBA GROQ (Secondary Provider - Model Aktif Llama 3.1)
     if GROQ_API_KEY:
         try:
             headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-            payload = {"model": "llama3-8b-8192", "messages": [{"role": "user", "content": prompt}], "temperature": 0.4}
+            payload = {
+                "model": "llama-3.1-8b-instant", 
+                "messages": [{"role": "user", "content": prompt}], 
+                "temperature": 0.4
+            }
             res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=4)
             if res.status_code == 200:
                 return res.json()['choices'][0]['message']['content'].strip()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[Career AI Error] Groq failed: {e}")
+
+    # 3. COBA OPENROUTER (Open-Source LLM Fallback)
+    if OPENROUTER_API_KEY:
+        try:
+            headers = {
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": "meta-llama/llama-3.1-8b-instruct:free",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.4
+            }
+            res = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers, timeout=5)
+            if res.status_code == 200:
+                return res.json()['choices'][0]['message']['content'].strip()
+        except Exception as e:
+            print(f"[Career AI Error] OpenRouter failed: {e}")
             
-    return f"Tentu! Untuk posisi {pos}, saran utamaku adalah memperkuat skill praktis dan portfolio. Ada hal spesifik lain seputar lamaran atau interview yang mau kamu tanyakan? 😊"
+    # 4. DYNAMIC FALLBACK (Jika seluruh API Key/Provider luar tidak merespons)
+    return f"Untuk pertanyaan seputar '{user_query}' pada posisi {pos}, kunci utamanya adalah menyajikan bukti pencapaian konkret dan mendiskusikannya saat evaluasi kinerja. Ada hal spesifik lain yang mau kamu bedah? 😊"
 
 def create_cv_docx(user_id, data):
     doc = Document()
@@ -792,7 +818,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     elif code == "buy_test_cv_template":
         base_price = 1000
         unique_code = random.randint(100, 500)
-        total_amount = base_price + unique_code  # Contoh hasil: Rp1.234
+        total_amount = base_price + unique_code
         
         await create_order(user_id, "Template CV ATS (Tes)", base_price, unique_code, total_amount)
         
@@ -819,7 +845,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     elif code == "buy_ebook_interview":
         base_price = 50000
         unique_code = random.randint(100, 999)
-        total_amount = base_price - unique_code  # Diskon Potongan Unik
+        total_amount = base_price - unique_code
         
         await create_order(user_id, "Ebook Interview", base_price, unique_code, total_amount)
         
@@ -1050,7 +1076,7 @@ async def handle_message(message: types.Message):
         if not insight_text and GROQ_API_KEY:
             try:
                 headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-                payload = {"model": "llama3-8b-8192", "messages": [{"role": "user", "content": prompt_insight}], "temperature": 0.3}
+                payload = {"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt_insight}], "temperature": 0.3}
                 res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=3)
                 if res.status_code == 200:
                     insight_text = res.json()['choices'][0]['message']['content'].strip()
