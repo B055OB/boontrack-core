@@ -255,7 +255,7 @@ def get_question_text(step, target_lang="ID", status_kerja="Berpengalaman"):
             ),
             5: "🎓 <b>Your Latest Education?</b>\n<i>(e.g., Bachelor of Management - Universitas Terbuka, 2023)</i>",
             6: "🛠️ <b>Your Top Skills / Expertise?</b>\n<i>(e.g., Ms. Excel, Customer Service, Canvassing, Python)</i>",
-            7: "📱 <b>Active WhatsApp / Phone Number?</b>\n<i>This is optional. You can also add it manually to your Word document later.</i>",
+            7: "📱 <b>WhatsApp / Phone Number (Optional)</b>\n<i>Recruiters need contact info to reach you if you pass selection. You can enter your number here, or click 'Skip' to add it manually in Word later.</i>",
             8: "📍 <b>Current City of Residence?</b>\n<i>Optional if you prefer not to display your location on your CV right now.</i>",
             9: "🔗 <b>LinkedIn / Portfolio / GitHub Link?</b>\n<i>Optional. If you don't have one yet, feel free to skip!</i>"
         }
@@ -280,7 +280,7 @@ def get_question_text(step, target_lang="ID", status_kerja="Berpengalaman"):
             ),
             5: "🎓 <b>Pendidikan terakhirmu?</b>\n<i>(contoh: S1 Manajemen - Universitas Terbuka, 2023)</i>",
             6: "🛠️ <b>Skill / Keahlian utama kamu?</b>\n<i>(contoh: Ms. Excel, Customer Service, Canvassing, Python)</i>",
-            7: "📱 <b>Nomor WhatsApp / HP Aktif?</b>\n<i>Ini opsional. Kamu bisa menambahkannya sendiri nanti di file Word jika ingin lebih privat.</i>",
+            7: "📱 <b>Nomor WhatsApp / HP (Opsional)</b>\n<i>Rekruter butuh nomor kontak untuk menghubungi kamu jika lolos seleksi. Kamu bisa masukkan nomor HP di sini, atau tekan tombol [ ⏩ Lewati ] jika ingin mengisinya sendiri nanti di Word.</i>",
             8: "📍 <b>Kota Domisili saat ini?</b>\n<i>Tidak wajib diisi kalau kamu belum ingin mencantumkan lokasi di CV.</i>",
             9: "🔗 <b>Link LinkedIn / Portfolio / GitHub?</b>\n<i>Kalau belum punya, tidak masalah. Kamu bisa menyusul menambahkannya nanti.</i>"
         }
@@ -544,7 +544,7 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         if found_qris:
             await bot.send_photo(chat_id=user_id, photo=InputFile(found_qris), caption="Dukungan donasi seikhlasnya via QRIS. Terima kasih! 🙏")
 
-        # D. REFERRAL PORTFOLIO WEBSITE (DENGAN CONTOH LINK RAYI)
+        # D. REFERRAL PORTFOLIO WEBSITE
         referral_text = (
             "🎁 <b>BONUS PORTOFOLIO WEBSITE PRIBADI</b>\n\n"
             "Ajak 3 temanmu membuat CV di BoonTrack, dan kami akan buatkan **Website Portfolio Pribadi Gratis**!\n"
@@ -746,12 +746,12 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         await save_dropoff(user_id, 0, {})
         msg_1 = (
             "<b>Saya BoonTrack Career Assistant.</b>\n"
-            "I will help increase your interview callback rate.\n\n"
+            "Saya akan membantu meningkatkan peluang kamu dipanggil interview.\n\n"
             "Sebelum mulai...\n"
             "Boleh kenalan dulu?\n"
             "Ini dengan siapa?"
         )
-        await message.reply(msg_1, parse_mode="HTML")
+        await bot.send_message(user_id, msg_1, parse_mode="HTML")
 
 @dp.message_handler(commands=['cancel'])
 async def cancel_handler(message: types.Message):
