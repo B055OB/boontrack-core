@@ -435,16 +435,26 @@ def ai_career_chat_response(user_query, user_context=None):
     
     q_clean = user_query.strip().lower()
     
-    # 1. FILTER PERCAKAPAN SOSIAL (Terima Kasih & Halo)
+    # 1. FILTER PAMITAN / CLOSING (Respon singkat, ramah, & tidak usah bertanya lagi)
+    closing_words = [
+        "lanjut lagi", "nanti lanjut", "ntar lanjut", "okey", "oke deh", "okedeh",
+        "bye", "dada", "dadah", "sampai jumpa", "sampe jumpa", "udah dulu",
+        "siap makasih", "baik terima kasih", "sip makasih", "oke makasih", "ok makasih"
+    ]
+    if any(word in q_clean for word in closing_words):
+        return "Siap, sama-sama! Sampai jumpa lagi, sukses terus ya! 😊"
+
+    # 2. FILTER UCAPAN TERIMA KASIH BIASA
     thanks_words = ["terima kasih", "terimakasih", "makasih", "msh", "thanks", "thx", "thank you", "matur nuwun", "nuhun"]
     if any(word in q_clean for word in thanks_words):
         return "Sama-sama! Semoga bermanfaat dan sukses terus kariernya ya! 😊"
         
+    # 3. FILTER GREETING (HALO/HAI)
     greeting_words = ["halo", "hai", "hi", "pagi", "siang", "sore", "malam", "halo bot"]
     if q_clean in greeting_words:
         return "Halo juga! Ada yang bisa saya bantu seputar persiapan kerja atau CV kamu hari ini? 😊"
 
-    # 2. PROMPT UTAMA UNTUK AI
+    # 4. PROMPT UTAMA UNTUK AI
     prompt = f"""
     Kamu adalah BoonTrack Career Assistant, teman diskusi karier yang suportif, ramah, dan solutif.
     
@@ -456,12 +466,12 @@ def ai_career_chat_response(user_query, user_context=None):
     "{user_query}"
     
     Tugasmu:
-    Jawab pertanyaan pengguna secara spesifik sesuai apa yang ditanyakan (misal jika menanyakan naik gaji, jawab strategi negosiasi/prestasi kerja secara kontekstual).
+    Jawab pertanyaan pengguna secara spesifik sesuai apa yang ditanyakan.
     Jawab ringkas, praktis, dan memotivasi (Maksimal 60 kata).
-    Gunakan Bahasa Indonesia yang santai dan ramah. Jangan berikan jawaban kaku/generik.
+    Gunakan Bahasa Indonesia yang santai dan ramah. Jangan mengulang ucapan pengguna.
     """
     
-    # 3. COBA GEMINI (Primary Provider)
+    # 5. COBA GEMINI (Primary Provider)
     if ai_client:
         try:
             res = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
@@ -470,7 +480,7 @@ def ai_career_chat_response(user_query, user_context=None):
         except Exception as e:
             print(f"[Career AI Error] Gemini failed: {e}")
 
-    # 4. COBA GROQ (Secondary Provider - Llama 3.1)
+    # 6. COBA GROQ (Secondary Provider - Llama 3.1)
     if GROQ_API_KEY:
         try:
             headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
@@ -485,7 +495,7 @@ def ai_career_chat_response(user_query, user_context=None):
         except Exception as e:
             print(f"[Career AI Error] Groq failed: {e}")
 
-    # 5. COBA OPENROUTER (Open-Source LLM Fallback)
+    # 7. COBA OPENROUTER (Open-Source LLM Fallback)
     if OPENROUTER_API_KEY:
         try:
             headers = {
@@ -503,7 +513,7 @@ def ai_career_chat_response(user_query, user_context=None):
         except Exception as e:
             print(f"[Career AI Error] OpenRouter failed: {e}")
             
-    # 6. DYNAMIC FALLBACK
+    # 8. DYNAMIC FALLBACK
     return f"Untuk pertanyaan seputar '{user_query}' pada posisi {pos}, kunci utamanya adalah menyajikan bukti pencapaian konkret saat evaluasi. Ada hal spesifik lain yang mau kamu bedah? 😊"
 
 def create_cv_docx(user_id, data):
@@ -1164,7 +1174,7 @@ async def handle_message(message: types.Message):
                 parse_mode="HTML"
             )
         else:
-            await process_and_send_cv(message, user_id, user_data)
+            await process_and_send_cv(message, user_data)
 
 # WEBHOOK PENERIMA NOTIFIKASI DANA
 async def dana_webhook_handler(request):
