@@ -433,6 +433,18 @@ def ai_career_chat_response(user_query, user_context=None):
     pos = user_context.get("target_position", "dunia kerja") if user_context else "dunia kerja"
     status = user_context.get("status_kerja", "Pencari Kerja") if user_context else "Pencari Kerja"
     
+    q_clean = user_query.strip().lower()
+    
+    # 1. FILTER PERCAKAPAN SOSIAL (Terima Kasih & Halo)
+    thanks_words = ["terima kasih", "terimakasih", "makasih", "msh", "thanks", "thx", "thank you", "matur nuwun", "nuhun"]
+    if any(word in q_clean for word in thanks_words):
+        return "Sama-sama! Semoga bermanfaat dan sukses terus kariernya ya! 😊"
+        
+    greeting_words = ["halo", "hai", "hi", "pagi", "siang", "sore", "malam", "halo bot"]
+    if q_clean in greeting_words:
+        return "Halo juga! Ada yang bisa saya bantu seputar persiapan kerja atau CV kamu hari ini? 😊"
+
+    # 2. PROMPT UTAMA UNTUK AI
     prompt = f"""
     Kamu adalah BoonTrack Career Assistant, teman diskusi karier yang suportif, ramah, dan solutif.
     
@@ -446,10 +458,10 @@ def ai_career_chat_response(user_query, user_context=None):
     Tugasmu:
     Jawab pertanyaan pengguna secara spesifik sesuai apa yang ditanyakan (misal jika menanyakan naik gaji, jawab strategi negosiasi/prestasi kerja secara kontekstual).
     Jawab ringkas, praktis, dan memotivasi (Maksimal 60 kata).
-    Gunakan Bahasa Indonesia yang santai dan ramah. Jangan gunakan jawaban kaku/statis.
+    Gunakan Bahasa Indonesia yang santai dan ramah. Jangan berikan jawaban kaku/generik.
     """
     
-    # 1. COBA GEMINI (Primary Provider)
+    # 3. COBA GEMINI (Primary Provider)
     if ai_client:
         try:
             res = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
@@ -458,7 +470,7 @@ def ai_career_chat_response(user_query, user_context=None):
         except Exception as e:
             print(f"[Career AI Error] Gemini failed: {e}")
 
-    # 2. COBA GROQ (Secondary Provider - Model Aktif Llama 3.1)
+    # 4. COBA GROQ (Secondary Provider - Llama 3.1)
     if GROQ_API_KEY:
         try:
             headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
@@ -473,7 +485,7 @@ def ai_career_chat_response(user_query, user_context=None):
         except Exception as e:
             print(f"[Career AI Error] Groq failed: {e}")
 
-    # 3. COBA OPENROUTER (Open-Source LLM Fallback)
+    # 5. COBA OPENROUTER (Open-Source LLM Fallback)
     if OPENROUTER_API_KEY:
         try:
             headers = {
@@ -491,8 +503,8 @@ def ai_career_chat_response(user_query, user_context=None):
         except Exception as e:
             print(f"[Career AI Error] OpenRouter failed: {e}")
             
-    # 4. DYNAMIC FALLBACK (Jika seluruh API Key/Provider luar tidak merespons)
-    return f"Untuk pertanyaan seputar '{user_query}' pada posisi {pos}, kunci utamanya adalah menyajikan bukti pencapaian konkret dan mendiskusikannya saat evaluasi kinerja. Ada hal spesifik lain yang mau kamu bedah? 😊"
+    # 6. DYNAMIC FALLBACK
+    return f"Untuk pertanyaan seputar '{user_query}' pada posisi {pos}, kunci utamanya adalah menyajikan bukti pencapaian konkret saat evaluasi. Ada hal spesifik lain yang mau kamu bedah? 😊"
 
 def create_cv_docx(user_id, data):
     doc = Document()
@@ -1176,11 +1188,10 @@ async def dana_webhook_handler(request):
                 product = order["product_name"]
                 
                 success_msg = (
-                    f"🎉 <b>PEMBAYARAN DITERIMA!</b>\n\n"
-                    f"Terima kasih! Pembayaran sebesar <b>Rp{incoming_amount:,}</b> untuk <b>{product}</b> telah terkonfirmasi otomatis.\n\n"
-                    f"📥 <b>Akses Produk Kamu:</b>\n"
-                    f"https://cvats.boontrack.com/ebook-interview-boontrack.pdf\n\n"
-                    f"Semoga bermanfaat dan sukses kariernya! 🚀"
+                    f"Sip, pembayaran sebesar <b>Rp{incoming_amount:,}</b> untuk <b>{product}</b> sudah masuk ya! Terima kasih banyak. 🙏\n\n"
+                    f"Ini link akses produkmu:\n"
+                    f"👉 https://cvats.boontrack.com/ebook-interview-boontrack.pdf\n\n"
+                    f"Semoga materinya membantu dan lancar terus urusan karirnya! Kalau ada yang mau ditanyakan seputar CV atau interview, tinggal chat aja di sini ya. 😊"
                 )
                 await bot.send_message(chat_id=buyer_id, text=success_msg, parse_mode="HTML")
                 return web.json_response({"status": "success", "order_id": order["order_id"]}, status=200)
