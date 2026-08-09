@@ -30,6 +30,7 @@ POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+WEBHOOK_SECRET_TOKEN = os.getenv("WEBHOOK_SECRET_TOKEN", "BoonTrackSecretKey123")
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 QRIS_IMAGE_PATH = "assets/qris.jpg"
@@ -100,7 +101,6 @@ def _init_db_sync():
         );
     """)
 
-    # TABEL TRANSAKSI PRODUK DIGITAL
     cur.execute("""
         CREATE TABLE IF NOT EXISTS product_orders (
             id SERIAL PRIMARY KEY,
@@ -242,7 +242,6 @@ def _count_referrals_sync(referrer_id):
 async def count_referrals(referrer_id):
     return await asyncio.to_thread(_count_referrals_sync, referrer_id)
 
-# DATABASE HELPERS PRODUK DIGITAL
 def _create_order_sync(telegram_id, product_name, base_price, unique_code, total_amount):
     try:
         conn = get_db_connection()
@@ -435,7 +434,6 @@ def ai_career_chat_response(user_query, user_context=None):
     
     q_clean = user_query.strip().lower()
     
-    # 1. FILTER PAMITAN / CLOSING
     closing_words = [
         "lanjut lagi", "nanti lanjut", "ntar lanjut", "okey", "oke deh", "okedeh",
         "bye", "dada", "dadah", "sampai jumpa", "sampe jumpa", "udah dulu",
@@ -444,17 +442,14 @@ def ai_career_chat_response(user_query, user_context=None):
     if any(word in q_clean for word in closing_words):
         return "Siap, sama-sama! Sampai jumpa lagi, sukses terus ya! 😊"
 
-    # 2. FILTER UCAPAN TERIMA KASIH BIASA
     thanks_words = ["terima kasih", "terimakasih", "makasih", "msh", "thanks", "thx", "thank you", "matur nuwun", "nuhun"]
     if any(word in q_clean for word in thanks_words):
         return "Sama-sama! Semoga bermanfaat dan sukses terus kariernya ya! 😊"
         
-    # 3. FILTER GREETING
     greeting_words = ["halo", "hai", "hi", "pagi", "siang", "sore", "malam", "halo bot"]
     if q_clean in greeting_words:
         return "Halo juga! Ada yang bisa saya bantu seputar persiapan kerja atau CV kamu hari ini? 😊"
 
-    # 4. PROMPT UTAMA UNTUK AI
     prompt = f"""
     Kamu adalah BoonTrack Career Assistant, teman diskusi karier yang suportif, ramah, dan solutif.
     
@@ -471,7 +466,6 @@ def ai_career_chat_response(user_query, user_context=None):
     Gunakan Bahasa Indonesia yang santai dan ramah. Jangan mengulang ucapan pengguna.
     """
     
-    # 5. COBA GEMINI (Primary Provider)
     if ai_client:
         try:
             res = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
@@ -480,7 +474,6 @@ def ai_career_chat_response(user_query, user_context=None):
         except Exception as e:
             print(f"[Career AI Error] Gemini failed: {e}")
 
-    # 6. COBA GROQ (Secondary Provider - Llama 3.1)
     if GROQ_API_KEY:
         try:
             headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
@@ -495,7 +488,6 @@ def ai_career_chat_response(user_query, user_context=None):
         except Exception as e:
             print(f"[Career AI Error] Groq failed: {e}")
 
-    # 7. COBA OPENROUTER (Open-Source LLM Fallback)
     if OPENROUTER_API_KEY:
         try:
             headers = {
@@ -513,7 +505,6 @@ def ai_career_chat_response(user_query, user_context=None):
         except Exception as e:
             print(f"[Career AI Error] OpenRouter failed: {e}")
             
-    # 8. DYNAMIC FALLBACK (ZERO-AI SAFE FALLBACK)
     return f"Sistem AI kami saat ini sedang mengalami lonjakan trafik. Tapi tenang, progres CV kamu tetap tersimpan aman di BoonTrack! Ada hal lain yang ingin kamu cek dari menu di bawah? 😊"
 
 def create_cv_docx(user_id, data):
@@ -570,7 +561,6 @@ def create_cv_docx(user_id, data):
         pBdr.append(bottom)
         h._p.get_or_add_pPr().append(pBdr)
 
-    # Summary
     add_section_header("PROFESSIONAL SUMMARY" if is_en else "RINGKASAN PROFESIONAL")
     position_text = clean_val(data.get("target_position", ""))
     summary_text = ai_generate_summary(position_text, status_kerja, target_lang)
@@ -580,7 +570,6 @@ def create_cv_docx(user_id, data):
         r.font.name = 'Calibri'
         r.font.size = Pt(10.5)
 
-    # Experience / Projects
     exp = clean_val(data.get("3", ""))
     ach_raw = clean_val(data.get("4", ""))
 
@@ -614,7 +603,6 @@ def create_cv_docx(user_id, data):
                         r_b.font.name = 'Calibri'
                         r_b.font.size = Pt(10)
 
-    # Education
     edu = clean_val(data.get("5", ""))
     if edu:
         add_section_header("EDUCATION" if is_en else "PENDIDIKAN")
@@ -625,7 +613,6 @@ def create_cv_docx(user_id, data):
             r.font.name = 'Calibri'
             r.font.size = Pt(10.5)
 
-    # Skills
     skill = clean_val(data.get("6", ""))
     if skill:
         add_section_header("SKILLS & EXPERTISE" if is_en else "KEAHLIAN")
@@ -643,7 +630,6 @@ def create_cv_docx(user_id, data):
     doc.save(file_path)
     return file_path
 
-# MENU UTAMA CAREER HOME (4 PILIHAN)
 def get_career_home_keyboard():
     kbd = InlineKeyboardMarkup(row_width=1)
     kbd.add(
@@ -709,8 +695,8 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
 
         home_text = (
             f"Semoga CV ini jadi langkah awal yang bagus buat kariermu, {user_name}! 🚀\n\n"
-            "Kalau kamu mau bikin versi baru, cek referral, atau sekadar tanya-tanya soal dunia kerja, saya tetap di sini ya. 😊\n\n"
-            "👇 <b>Pilih menu di bawah atau langsung ketik pertanyaanmu:</b>"
+            "🎁 <b>Kalau kamu mau lanjut, ada beberapa pilihan yang mungkin berguna buat kariermu:</b>\n\n"
+            "👇 <i>Pilih yang ingin kamu lihat:</i>"
         )
         await bot.send_message(user_id, home_text, reply_markup=get_career_home_keyboard(), parse_mode="HTML")
 
@@ -760,8 +746,8 @@ async def send_welcome(message: types.Message):
         user_state[user_id] = {"step": 0, "data": progress.get("data", {}), "meta": meta_data}
         home_msg = (
             f"Halo lagi, {first_name}! 👋\n\n"
-            "Ada yang bisa saya bantu untuk persiapan kariermu hari ini?\n\n"
-            "👇 <b>Pilih menu di bawah atau langsung ketik pertanyaanmu:</b>"
+            "🎁 <b>Kalau kamu mau lanjut, ada beberapa pilihan yang mungkin berguna buat kariermu:</b>\n\n"
+            "👇 <i>Pilih yang ingin kamu lihat:</i>"
         )
         await message.reply(home_msg, reply_markup=get_career_home_keyboard(), parse_mode="HTML")
         return
@@ -814,7 +800,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_data = user_state[user_id].get("data", {})
     user_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "Teman")
 
-    # KATALOG PRODUK DIGITAL
     if code == "home_digital_products":
         kbd_products = InlineKeyboardMarkup(row_width=1)
         kbd_products.add(
@@ -836,7 +821,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         )
         await bot.send_message(user_id, msg_catalog, reply_markup=kbd_products, parse_mode="HTML")
 
-    # PRODUK 1: TEMPLATE CV (PRODUK TES RP1.000)
     elif code == "buy_test_cv_template":
         base_price = 1000
         unique_code = random.randint(100, 500)
@@ -863,7 +847,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         else:
             await bot.send_message(user_id, msg_checkout, parse_mode="HTML")
 
-    # PRODUK 2: EBOOK INTERVIEW (PRODUK UTAMA RP49.000)
     elif code == "buy_ebook_interview":
         base_price = 50000
         unique_code = random.randint(100, 999)
@@ -1049,7 +1032,7 @@ async def handle_message(message: types.Message):
         await message.reply(
             f"{ai_reply}\n\n"
             f"🎁 <b>Kalau kamu mau lanjut, ada beberapa pilihan yang mungkin berguna buat kariermu:</b>\n"
-            f"👇 <i>Pilih yang ingin kamu lihat.</i>",
+            f"👇 <i>Pilih yang ingin kamu lihat:</i>",
             reply_markup=get_career_home_keyboard(),
             parse_mode="HTML"
         )
@@ -1065,7 +1048,7 @@ async def handle_message(message: types.Message):
             InlineKeyboardButton("🔹 Sudah berpengalaman (Cari kerja baru)", callback_data="status_exp")
         )
         msg_2 = f"Halo {text} 😊\n\nBoleh saya tahu status kamu saat ini?"
-        await message.reply(msg_2, parse_mode="HTML")
+        await message.reply(msg_2, reply_markup=kbd_status, parse_mode="HTML")
         return
 
     if current_step == "ONBOARDING_POSISI":
@@ -1178,9 +1161,14 @@ async def handle_message(message: types.Message):
         else:
             await process_and_send_cv(message, user_data)
 
-# WEBHOOK PENERIMA NOTIFIKASI DANA (WITH IDEMPOTENCY CHECK)
+# WEBHOOK PENERIMA NOTIFIKASI DANA (WITH SECURITY TOKEN & IDEMPOTENCY)
 async def dana_webhook_handler(request):
     try:
+        incoming_token = request.headers.get("X-BoonTrack-Secret", "")
+        if incoming_token != WEBHOOK_SECRET_TOKEN:
+            print("[Security Warning] Unauthorized Webhook Attempt!")
+            return web.json_response({"status": "unauthorized"}, status=401)
+
         data = await request.json()
         source = data.get("source", "")
         message = data.get("message", "")
@@ -1196,7 +1184,6 @@ async def dana_webhook_handler(request):
             order = await match_and_complete_order(incoming_amount)
             
             if order:
-                # IDEMPOTENCY CHECK: Mencegah double fulfillment jika notifikasi DANA masuk 2x
                 if order.get("status") == "PAID":
                     print(f"[Webhook Ignored] Order {order['order_id']} sudah berstatus PAID sebelumnya.")
                     return web.json_response({"status": "already_fulfilled"}, status=200)
