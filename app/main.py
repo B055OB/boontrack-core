@@ -178,7 +178,6 @@ def _save_dropoff_sync(user_id, step, data):
         conn = get_db_connection()
         cur = conn.cursor()
         
-        # Konversi string step onboarding ke representasi integer aman untuk DB
         step_val = 0
         if isinstance(step, int):
             step_val = step
@@ -815,21 +814,23 @@ async def send_welcome(message: types.Message):
     await track_event(user_id, "start", meta=meta_data)
     
     progress, last_cv = await get_user_history(user_id)
-    first_name = message.from_user.first_name or "Teman"
+    saved_data = progress.get("data", {}) if progress else {}
+    user_name = saved_data.get("nama_panggilan") or message.from_user.first_name or "Teman"
 
-    if progress and progress.get("last_step") == TOTAL_STEPS:
-        user_state[user_id] = {"step": 0, "data": progress.get("data", {}), "meta": meta_data}
+    # User lama yang sudah punya data / selesai CV
+    if progress and (progress.get("last_step") == TOTAL_STEPS or saved_data.get("nama_panggilan")):
+        user_state[user_id] = {"step": 0, "data": saved_data, "meta": meta_data}
         home_msg = (
-            f"Halo lagi, {first_name}! 👋\n\n"
+            f"Halo lagi, <b>{user_name}</b>! 👋\n\n"
             "🎁 <b>Kalau kamu mau lanjut, ada beberapa pilihan yang mungkin berguna buat kariermu:</b>\n\n"
             "👇 <i>Pilih yang ingin kamu lihat:</i>"
         )
         await message.reply(home_msg, reply_markup=get_career_home_keyboard(), parse_mode="HTML")
         return
 
-    if progress and isinstance(progress.get("last_step"), int) and progress.get("last_step", 0) > 1 and progress.get("last_step", 0) < TOTAL_STEPS:
+    # User yang punya progres gantung (Langkah 1-8)
+    if progress and isinstance(progress.get("last_step"), int) and progress.get("last_step", 0) > 0:
         last_step = progress["last_step"]
-        saved_data = progress.get("data", {})
         user_state[user_id] = {"step": last_step, "data": saved_data, "meta": meta_data}
         
         kbd = InlineKeyboardMarkup(row_width=2)
@@ -838,7 +839,7 @@ async def send_welcome(message: types.Message):
             InlineKeyboardButton("🔄 Mulai Baru", callback_data="restart_flow")
         )
         await message.reply(
-            f"Halo lagi, {first_name}! 👋\n\n"
+            f"Halo lagi, <b>{user_name}</b>! 👋\n\n"
             f"Kemarin kita sempat menyusun CV sampai di <b>Langkah {last_step} dari {TOTAL_STEPS}</b>.\n\n"
             "Mau kita tuntaskan sekarang agar CV kamu siap dipakai melamar kerja?",
             reply_markup=kbd,
@@ -846,6 +847,7 @@ async def send_welcome(message: types.Message):
         )
         return
 
+    # User baru
     user_state[user_id] = {"step": "ONBOARDING_NAMA", "data": {}, "meta": meta_data}
     await save_dropoff(user_id, 0, {})
     
@@ -980,7 +982,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             "• Strategi negosiasi gaji untuk Fresh Graduate & Exp\n\n"
             "👇 <i>Pilih produk di bawah untuk membeli secara otomatis:</i>"
         )
-        await bot.send_message(user_id, msg_catalog, reply_markup=kbd_products, parse_mode="HTML")
+        await bot.send_message(user_id, msg_catalog, parse_mode="HTML")
 
     elif code == "buy_test_cv_template":
         base_price = 1000
