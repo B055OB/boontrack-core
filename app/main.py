@@ -397,9 +397,6 @@ async def match_and_complete_donation(amount):
 # CLOUDFLARE KV HELPER
 # ---------------------------------------------------------
 async def update_cloudflare_kv(slug: str, user_data: dict) -> bool:
-    """
-    Mengirimkan data profil pengguna dari Telegram Bot ke Cloudflare KV Store via REST API.
-    """
     if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_KV_NAMESPACE_ID or not CLOUDFLARE_ACCOUNT_ID:
         print("[KV Alert] Credentials Cloudflare belum lengkap di .env")
         return False
@@ -411,10 +408,10 @@ async def update_cloudflare_kv(slug: str, user_data: dict) -> bool:
         "posisi": user_data.get("target_position", "AI & Operations Workflow Optimization Specialist"),
         "email": user_data.get("2", ""),
         "telepon": user_data.get("7", ""),
-        "ringkasan": user_data.get("3", ""),
-        "pengalaman": user_data.get("3", ""),
+        "ringkasan": user_data.get("ringkasan_web", user_data.get("3", "")),
+        "pengalaman": user_data.get("pengalaman_web", user_data.get("3", "")),
         "pendidikan": user_data.get("5", ""),
-        "keahlian": user_data.get("6", ""),
+        "keahlian": user_data.get("keahlian_web", user_data.get("6", "")),
         "foto": user_data.get("foto_url", ""),
         "resume_url": user_data.get("resume_url", ""),
         "theme": user_data.get("theme", "happy")
@@ -835,7 +832,6 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         )
         await bot.send_message(user_id, value_text, parse_mode="HTML")
 
-        # --- CEK STATUS BAYAR USER CAREER PAGE ---
         is_paid = await check_user_paid(user_id)
         user_slug = user_name.lower().replace(" ", "")
 
@@ -955,6 +951,7 @@ async def send_welcome(message: types.Message):
     "don_5000", "don_10000", "don_25000",
     "cp_build_now", "cp_build_later", "cp_manage", "cp_upload_photo", "cp_edit_resume", "cp_choose_theme", 
     "cp_edit_data", "cp_import_cv", "cp_confirm_import", "cp_deploy_live",
+    "cp_edit_posisi_btn", "cp_edit_summary_btn", "cp_edit_exp_btn", "cp_edit_skills_btn",
     "theme_happy", "theme_blue", "theme_dark", "theme_emerald", "theme_purple"
 ])
 async def handle_callback_navigation(callback_query: types.CallbackQuery):
@@ -1007,13 +1004,13 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
 
         pos = user_data.get("target_position", "AI & Operations Workflow Optimization Specialist")
         email = user_data.get("2", "Belum Diisi")
-        exp = user_data.get("3", "Belum Diisi")
+        exp = user_data.get("pengalaman_web", user_data.get("3", "Belum Diisi"))
         resume_link = user_data.get("resume_url", "Belum Ada (Sembunyi)")
         
         kbd_setup = InlineKeyboardMarkup(row_width=1)
         kbd_setup.add(
-            InlineKeyboardButton("✏️ Isi / Edit Data Website", callback_data="cp_edit_data"),
-            InlineKeyboardButton("🔄 Impor dari Draf CV", callback_data="cp_import_cv"),
+            InlineKeyboardButton("✏️ Pilih Bagian yang Ingin Diisi / Diedit", callback_data="cp_edit_data"),
+            InlineKeyboardButton("🔄 Impor Semua Data dari Draf CV", callback_data="cp_import_cv"),
             InlineKeyboardButton("📸 Upload / Ganti Foto Profil", callback_data="cp_upload_photo"),
             InlineKeyboardButton("📄 Upload / Input Link Resume PDF", callback_data="cp_edit_resume"),
             InlineKeyboardButton("🎨 Pilih Tema Warna Website", callback_data="cp_choose_theme"),
@@ -1030,17 +1027,63 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             f"• <b>Link Resume PDF:</b> <i>{resume_link}</i>\n"
             f"• <b>Foto Profil:</b> <i>(Belum Ada / Standard)</i>\n"
             f"• <b>Tema Warna:</b> <i>{user_data.get('theme', 'happy').capitalize()}</i>\n\n"
-            f"💡 <i>Atur atau impor data dulu di bawah ini sebelum menerbitkan ke web!</i>"
+            f"💡 <i>Klik tombol di bawah untuk memilih bagian spesifik yang mau diisi!</i>"
         )
         await bot.send_message(user_id, summary_msg, reply_markup=kbd_setup, parse_mode="HTML")
 
     elif code == "cp_edit_data":
+        kbd_sections = InlineKeyboardMarkup(row_width=1)
+        kbd_sections.add(
+            InlineKeyboardButton("💼 Edit Posisi / Headline", callback_data="cp_edit_posisi_btn"),
+            InlineKeyboardButton("📝 Edit Ringkasan Profil / Bio", callback_data="cp_edit_summary_btn"),
+            InlineKeyboardButton("🏢 Edit Pengalaman Kerja / Proyek", callback_data="cp_edit_exp_btn"),
+            InlineKeyboardButton("🛠️ Edit Keahlian / Skill Grid", callback_data="cp_edit_skills_btn"),
+            InlineKeyboardButton("🔙 Batal / Kembali ke Menu Career Page", callback_data="cp_manage")
+        )
+        await bot.send_message(
+            user_id,
+            "✏️ <b>Pilih Bagian yang Ingin Kamu Isi atau Edit:</b>",
+            reply_markup=kbd_sections,
+            parse_mode="HTML"
+        )
+
+    elif code == "cp_edit_posisi_btn":
         user_state[user_id]["step"] = "CP_EDIT_POSISI"
         await bot.send_message(
             user_id,
-            "✏️ <b>Edit Posisi / Headline Website</b>\n\n"
-            "Ketik judul posisi impianmu untuk ditampilkan di paling atas website:\n"
+            "💼 <b>Edit Posisi / Headline Website</b>\n\n"
+            "Ketik judul posisi impianmu:\n"
             "<i>(Contoh: AI & Operations Workflow Optimization Specialist)</i>",
+            parse_mode="HTML"
+        )
+
+    elif code == "cp_edit_summary_btn":
+        user_state[user_id]["step"] = "CP_EDIT_SUMMARY"
+        await bot.send_message(
+            user_id,
+            "📝 <b>Edit Ringkasan Profil / Bio Website</b>\n\n"
+            "Ketik deskripsi singkat tentang dirimu (1-3 kalimat):\n"
+            "<i>(Contoh: Membantu tim operasional memangkas waktu kerja manual dengan otomatisasi sistem)</i>",
+            parse_mode="HTML"
+        )
+
+    elif code == "cp_edit_exp_btn":
+        user_state[user_id]["step"] = "CP_EDIT_EXP"
+        await bot.send_message(
+            user_id,
+            "🏢 <b>Edit Pengalaman Kerja / Proyek Website</b>\n\n"
+            "Ketik detail pengalaman kerja atau portofolio utamamu:\n"
+            "<i>(Contoh: Manager HRD di PT ABC (2022-Sekarang) - Memimpin tim 10 orang & merekrut 50+ karyawan)</i>",
+            parse_mode="HTML"
+        )
+
+    elif code == "cp_edit_skills_btn":
+        user_state[user_id]["step"] = "CP_EDIT_SKILLS"
+        await bot.send_message(
+            user_id,
+            "🛠️ <b>Edit Keahlian / Skill Website</b>\n\n"
+            "Ketik skill utama dipisahkan dengan koma:\n"
+            "<i>(Contoh: Python, OpenAI API, Cloudflare Workers, SQL, Recruitment)</i>",
             parse_mode="HTML"
         )
 
@@ -1049,29 +1092,35 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         await bot.send_message(
             user_id,
             "📄 <b>Input / Update Link Resume PDF</b>\n\n"
-            "Ketik atau paste link PDF resume/portofolio publikmu di sini (misal link Google Drive/Dropbox/PDF):\n"
+            "Ketik atau paste link PDF resume/portofolio publikmu di sini:\n"
             "<i>(Contoh: https://cvats.boontrack.com/ebook-interview-boontrack.pdf)</i>\n\n"
-            "<i>Ketik '-' jika ingin menyembunyikan tombol download resume dari website.</i>",
+            "<i>Ketik '-' jika ingin menyembunyikan tombol download resume.</i>",
             parse_mode="HTML"
         )
 
     elif code == "cp_import_cv":
         kbd_import = InlineKeyboardMarkup(row_width=1)
         kbd_import.add(
-            InlineKeyboardButton("✅ Ya, Gunakan Data CV", callback_data="cp_confirm_import"),
-            InlineKeyboardButton("✏️ Batal, Isi Manual Saja", callback_data="cp_edit_data")
+            InlineKeyboardButton("✅ Ya, Gunakan Semua Data CV", callback_data="cp_confirm_import"),
+            InlineKeyboardButton("✏️ Batal, Pilih Edit Bagian Manual", callback_data="cp_edit_data")
         )
         await bot.send_message(
             user_id,
             "⚠️ <b>Konfirmasi Impor Data CV</b>\n\n"
             "Sistem akan menyalin ringkasan profil, kontak, dan keahlian dari draf CV ke website.\n"
-            "Kamu tetap bisa mengedit data ini kapan saja!",
+            "Kamu tetap bisa mengedit bagian mana saja kapan pun!",
             reply_markup=kbd_import,
             parse_mode="HTML"
         )
 
     elif code == "cp_confirm_import":
+        user_data["ringkasan_web"] = user_data.get("3", "")
+        user_data["pengalaman_web"] = user_data.get("3", "")
+        user_data["keahlian_web"] = user_data.get("6", "")
+        
+        await save_dropoff(user_id, TOTAL_STEPS, user_data)
         await update_cloudflare_kv(slug, user_data)
+        
         kbd_done = InlineKeyboardMarkup(row_width=1)
         kbd_done.add(
             InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
@@ -1228,7 +1277,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             f"👇 Bagikan link referral-mu ke teman:\n"
             f"<code>{user_ref_link}</code>"
         )
-        await bot.send_message(user_id, ref_msg, reply_markup=kbd, parse_mode="HTML")
+        await bot.send_message(user_id, ref_msg, parse_mode="HTML")
 
     elif code == "home_career_qa":
         qa_msg = (
@@ -1393,11 +1442,10 @@ async def handle_message(message: types.Message):
     user_name = user_data.get("nama_panggilan", message.from_user.first_name or "Teman")
     slug = user_name.lower().replace(" ", "")
 
-    # --- 1. PRIORITAS UTAMA: EDIT POSISI CAREER PAGE ---
+    # --- 1. EDIT POSISI ---
     if current_step == "CP_EDIT_POSISI":
         user_data["target_position"] = text
         user_state[user_id]["step"] = 0
-        
         await save_dropoff(user_id, TOTAL_STEPS, user_data)
         await update_cloudflare_kv(slug, user_data)
         
@@ -1407,14 +1455,74 @@ async def handle_message(message: types.Message):
             InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
         )
         await message.reply(
-            f"✅ <b>Posisi website berhasil diperbarui ke:</b> {text}\n\n"
+            f"✅ <b>Posisi berhasil diperbarui ke:</b> {text}\n\n"
             f"👉 <i>Cek di:</i> https://{slug}.boontrack.com",
             reply_markup=kbd_done,
             parse_mode="HTML"
         )
         return
 
-    # --- 2. PRIORITAS UTAMA: EDIT RESUME PDF CAREER PAGE ---
+    # --- 2. EDIT RINGKASAN/BIO ---
+    if current_step == "CP_EDIT_SUMMARY":
+        user_data["ringkasan_web"] = text
+        user_state[user_id]["step"] = 0
+        await save_dropoff(user_id, TOTAL_STEPS, user_data)
+        await update_cloudflare_kv(slug, user_data)
+        
+        kbd_done = InlineKeyboardMarkup(row_width=1)
+        kbd_done.add(
+            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+        )
+        await message.reply(
+            f"✅ <b>Ringkasan Profil berhasil diperbarui!</b>\n\n"
+            f"👉 <i>Cek di:</i> https://{slug}.boontrack.com",
+            reply_markup=kbd_done,
+            parse_mode="HTML"
+        )
+        return
+
+    # --- 3. EDIT PENGALAMAN ---
+    if current_step == "CP_EDIT_EXP":
+        user_data["pengalaman_web"] = text
+        user_state[user_id]["step"] = 0
+        await save_dropoff(user_id, TOTAL_STEPS, user_data)
+        await update_cloudflare_kv(slug, user_data)
+        
+        kbd_done = InlineKeyboardMarkup(row_width=1)
+        kbd_done.add(
+            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+        )
+        await message.reply(
+            f"✅ <b>Pengalaman Kerja berhasil diperbarui!</b>\n\n"
+            f"👉 <i>Cek di:</i> https://{slug}.boontrack.com",
+            reply_markup=kbd_done,
+            parse_mode="HTML"
+        )
+        return
+
+    # --- 4. EDIT SKILLS ---
+    if current_step == "CP_EDIT_SKILLS":
+        user_data["keahlian_web"] = text
+        user_state[user_id]["step"] = 0
+        await save_dropoff(user_id, TOTAL_STEPS, user_data)
+        await update_cloudflare_kv(slug, user_data)
+        
+        kbd_done = InlineKeyboardMarkup(row_width=1)
+        kbd_done.add(
+            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+        )
+        await message.reply(
+            f"✅ <b>Keahlian/Skill berhasil diperbarui!</b>\n\n"
+            f"👉 <i>Cek di:</i> https://{slug}.boontrack.com",
+            reply_markup=kbd_done,
+            parse_mode="HTML"
+        )
+        return
+
+    # --- 5. EDIT RESUME LINK ---
     if current_step == "CP_EDIT_RESUME":
         if text.strip() == "-" or text.lower() == "kosong":
             user_data["resume_url"] = ""
@@ -1424,7 +1532,6 @@ async def handle_message(message: types.Message):
             status_resume = text
             
         user_state[user_id]["step"] = 0
-        
         await save_dropoff(user_id, TOTAL_STEPS, user_data)
         await update_cloudflare_kv(slug, user_data)
         
@@ -1441,7 +1548,7 @@ async def handle_message(message: types.Message):
         )
         return
 
-    # --- 3. ONBOARDING & CHAT AI CAREER ---
+    # --- 6. ONBOARDING & CHAT AI CAREER ---
     if current_step == 0:
         await track_event(user_id, "career_ai_query", meta={"query": text})
         ai_reply = await asyncio.to_thread(ai_career_chat_response, text, user_data)
@@ -1533,7 +1640,7 @@ async def handle_message(message: types.Message):
         await message.reply("Silakan <b>pilih salah satu bahasa di atas</b> ya 👆", parse_mode="HTML")
         return
 
-    # --- 4. LANGKAH PENGISIAN CV (ANGKA) ---
+    # --- 7. LANGKAH PENGISIAN CV (ANGKA) ---
     if isinstance(current_step, int) and current_step > 0:
         target_lang = user_data.get("target_lang", "ID")
         status_kerja = user_data.get("status_kerja", "Berpengalaman")
