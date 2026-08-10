@@ -115,6 +115,21 @@ def _init_db_sync():
             expires_at TIMESTAMP
         );
     """)
+
+    # TABEL SESI DONASI DENGAN EXPIRATION & KODE UNIK
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS donation_sessions (
+            id SERIAL PRIMARY KEY,
+            donation_id VARCHAR(50) UNIQUE,
+            telegram_id BIGINT,
+            base_amount INT,
+            unique_code INT,
+            total_amount INT UNIQUE,
+            status VARCHAR(20) DEFAULT 'PENDING',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP
+        );
+    """)
     
     conn.commit()
     cur.close()
@@ -242,6 +257,7 @@ def _count_referrals_sync(referrer_id):
 async def count_referrals(referrer_id):
     return await asyncio.to_thread(_count_referrals_sync, referrer_id)
 
+# HELPER PRODUK DIGITAL
 def _create_order_sync(telegram_id, product_name, base_price, unique_code, total_amount):
     try:
         conn = get_db_connection()
@@ -295,6 +311,61 @@ def _match_and_complete_order_sync(amount):
 
 async def match_and_complete_order(amount):
     return await asyncio.to_thread(_match_and_complete_order_sync, amount)
+
+# HELPER DONASI
+def _create_donation_session_sync(telegram_id, base_amount, unique_code, total_amount):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        donation_id = f"DON-{int(datetime.now().timestamp())}"
+        expires_at = datetime.now() + timedelta(minutes=15)
+        
+        cur.execute("""
+            INSERT INTO donation_sessions (donation_id, telegram_id, base_amount, unique_code, total_amount, expires_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (total_amount) DO UPDATE SET
+                telegram_id = EXCLUDED.telegram_id,
+                base_amount = EXCLUDED.base_amount,
+                expires_at = EXCLUDED.expires_at,
+                status = 'PENDING';
+        """, (donation_id, telegram_id, base_amount, unique_code, total_amount, expires_at))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        return donation_id
+    except Exception as e:
+        print(f"Create Donation Error: {e}")
+        return None
+
+async def create_donation_session(telegram_id, base_amount, unique_code, total_amount):
+    return await asyncio.to_thread(_create_donation_session_sync, telegram_id, base_amount, unique_code, total_amount)
+
+def _match_and_complete_donation_sync(amount):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cur.execute("""
+            SELECT * FROM donation_sessions 
+            WHERE total_amount = %s AND expires_at > CURRENT_TIMESTAMP
+            LIMIT 1;
+        """, (amount,))
+        donation = cur.fetchone()
+        
+        if donation and donation.get("status") == "PENDING":
+            cur.execute("UPDATE donation_sessions SET status = 'VERIFIED' WHERE id = %s;", (donation["id"],))
+            conn.commit()
+            
+        cur.close()
+        conn.close()
+        return donation
+    except Exception as e:
+        print(f"Match Donation Error: {e}")
+        return None
+
+async def match_and_complete_donation(amount):
+    return await asyncio.to_thread(_match_and_complete_donation_sync, amount)
 
 def clean_val(val):
     if not val:
@@ -640,6 +711,17 @@ def get_career_home_keyboard():
     )
     return kbd
 
+def get_donation_options_keyboard():
+    kbd = InlineKeyboardMarkup(row_width=2)
+    kbd.add(
+        InlineKeyboardButton("☕ Rp5.000", callback_data="don_5000"),
+        InlineKeyboardButton("☕ Rp10.000", callback_data="don_10000"),
+        InlineKeyboardButton("☕ Rp25.000", callback_data="don_25000"),
+        InlineKeyboardButton("📣 Pakai Referral Saja", callback_data="home_check_ref"),
+        InlineKeyboardButton("⏩ Nanti Dulu / Lewati", callback_data="home_back_main")
+    )
+    return kbd
+
 async def process_and_send_cv(message: types.Message, user_id: int, user_data: dict):
     user_state[user_id]["step"] = 0
     await save_dropoff(user_id, TOTAL_STEPS, user_data)
@@ -682,31 +764,19 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         await bot.send_message(user_id, value_text, parse_mode="HTML")
 
         monetize_text = (
-            "❤️ <b>Dukung BoonTrack Supaya Tetap Gratis</b>\n\n"
-            "BoonTrack dikembangkan mandiri agar tetap gratis bagi pencari kerja. "
-            "Kalau BoonTrack membantu kamu hari ini, kamu boleh traktir kami kopi seikhlasnya via QRIS di bawah. (Tidak Wajib)"
+            f"❤️ <b>Bantu BoonTrack Tetap Gratis untuk Pencari Kerja</b>\n\n"
+            f"BoonTrack dikembangkan mandiri agar siapa saja bisa membuat CV profesional tanpa biaya.\n"
+            f"Kalau layanan ini membantu kamu hari ini, kamu bisa bantu traktir kopi seikhlasnya untuk mendukung biaya server kami. 😊"
         )
-        await bot.send_message(user_id, monetize_text, parse_mode="HTML")
-
-        possible_qris_paths = [QRIS_IMAGE_PATH, "/app/qris.jpg", "qris.jpg"]
-        found_qris = next((p for p in possible_qris_paths if os.path.exists(p)), None)
-        if found_qris:
-            await bot.send_photo(chat_id=user_id, photo=InputFile(found_qris), caption="Dukungan donasi seikhlasnya via QRIS. Terima kasih! 🙏")
-
-        home_text = (
-            f"Semoga CV ini jadi langkah awal yang bagus buat kariermu, {user_name}! 🚀\n\n"
-            "🎁 <b>Kalau kamu mau lanjut, ada beberapa pilihan yang mungkin berguna buat kariermu:</b>\n\n"
-            "👇 <i>Pilih yang ingin kamu lihat:</i>"
-        )
-        await bot.send_message(user_id, home_text, reply_markup=get_career_home_keyboard(), parse_mode="HTML")
+        await bot.send_message(user_id, monetize_text, reply_markup=get_donation_options_keyboard(), parse_mode="HTML")
 
         if os.path.exists(file_path):
             os.remove(file_path)
 
         referrer_id = user_state.get(user_id, {}).get("meta", {}).get("referrer_id")
         if referrer_id:
-            ref_count = await count_referrals(referrer_id)
-            if ref_count >= 3:
+            ref_count_referrer = await count_referrals(referrer_id)
+            if ref_count_referrer >= 3:
                 reward_text = (
                     "🎉 <b>SELAMAT! Target 3 Referral Kamu Tercapai!</b>\n\n"
                     "3 teman yang kamu ajak telah berhasil menyusun CV.\n"
@@ -787,7 +857,8 @@ async def send_welcome(message: types.Message):
     "status_fresh", "status_exp", "lang_id", "lang_en", "lang_hybrid", 
     "skip_optional", "resume_flow", "restart_flow",
     "home_create_cv", "home_check_ref", "home_career_qa",
-    "home_digital_products", "buy_test_cv_template", "buy_ebook_interview", "home_back_main"
+    "home_digital_products", "buy_test_cv_template", "buy_ebook_interview", "home_back_main",
+    "don_5000", "don_10000", "don_25000"
 ])
 async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
@@ -800,7 +871,32 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_data = user_state[user_id].get("data", {})
     user_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "Teman")
 
-    if code == "home_digital_products":
+    # ALUR DONASI PRESISI KOPI
+    if code in ["don_5000", "don_10000", "don_25000"]:
+        base_amt = 5000 if code == "don_5000" else (10000 if code == "don_10000" else 25000)
+        unique_code = random.randint(100, 999)
+        total_amt = base_amt + unique_code
+        
+        await create_donation_session(user_id, base_amt, unique_code, total_amt)
+        
+        don_msg = (
+            f"☕ <b>Sip! Terima kasih banyak atas dukungannya, {user_name}!</b>\n\n"
+            f"Agar sistem kami mengenali donasimu secara otomatis tanpa perlu kirim bukti transfer, "
+            f"mohon transfer dengan nominal presisi berikut:\n\n"
+            f"👉 <b><code>{total_amt}</code></b> 👈 <i>(Tekan/salin angka ini)</i>\n"
+            f"<i>(Donasi Rp{base_amt:,} + Kode Verifikasi Rp{unique_code})</i>\n\n"
+            f"👇 <b>Bayar via QRIS di bawah:</b>\n"
+            f"<i>Sistem akan otomatis memverifikasi begitu transaksi masuk.</i>"
+        )
+        
+        possible_qris_paths = [QRIS_IMAGE_PATH, "/app/qris.jpg", "qris.jpg"]
+        found_qris = next((p for p in possible_qris_paths if os.path.exists(p)), None)
+        if found_qris:
+            await bot.send_photo(chat_id=user_id, photo=InputFile(found_qris), caption=don_msg, parse_mode="HTML")
+        else:
+            await bot.send_message(user_id, don_msg, parse_mode="HTML")
+
+    elif code == "home_digital_products":
         kbd_products = InlineKeyboardMarkup(row_width=1)
         kbd_products.add(
             InlineKeyboardButton("📄 Template CV ATS-Friendly (Rp1.000 - Tes Live)", callback_data="buy_test_cv_template"),
@@ -1172,6 +1268,7 @@ async def handle_message(message: types.Message):
         else:
             await process_and_send_cv(message, user_data)
 
+# WEBHOOK PENERIMA NOTIFIKASI DANA (DUAL ENGINE: ORDER vs DONATION)
 async def dana_webhook_handler(request):
     try:
         incoming_token = request.headers.get("X-BoonTrack-Secret", "")
@@ -1191,8 +1288,9 @@ async def dana_webhook_handler(request):
         
         if match:
             incoming_amount = int(match.group(1))
-            order = await match_and_complete_order(incoming_amount)
             
+            # 1. CEK ATAU MATCH PRODUCT ORDER DULU
+            order = await match_and_complete_order(incoming_amount)
             if order:
                 if order.get("status") == "PAID":
                     print(f"[Webhook Ignored] Order {order['order_id']} sudah berstatus PAID sebelumnya.")
@@ -1205,12 +1303,31 @@ async def dana_webhook_handler(request):
                     f"Sip, pembayaran sebesar <b>Rp{incoming_amount:,}</b> untuk <b>{product}</b> sudah masuk ya! Terima kasih banyak. 🙏\n\n"
                     f"Ini link akses produkmu:\n"
                     f"👉 https://cvats.boontrack.com/ebook-interview-boontrack.pdf\n\n"
-                    f"Semoga materinya membantu dan lancar terus urusan karirnya! Kalau ada yang mau ditanyakan seputar CV atau interview, tinggal chat aja di sini ya. 😊"
+                    f"Semoga materinya membantu dan lancar terus urusan karirnya!"
                 )
                 await bot.send_message(chat_id=buyer_id, text=success_msg, parse_mode="HTML")
-                return web.json_response({"status": "success", "order_id": order["order_id"]}, status=200)
+                return web.json_response({"status": "success_order", "order_id": order["order_id"]}, status=200)
 
-        return web.json_response({"status": "no_matching_order"}, status=200)
+            # 2. JIKA BUKAN ORDER, CEK DONATION SESSION
+            donation = await match_and_complete_donation(incoming_amount)
+            if donation:
+                if donation.get("status") == "VERIFIED":
+                    print(f"[Webhook Ignored] Donation {donation['donation_id']} sudah VERIFIED sebelumnya.")
+                    return web.json_response({"status": "already_verified"}, status=200)
+
+                donor_id = donation["telegram_id"]
+                base_don = donation["base_amount"]
+                
+                don_thanks = (
+                    f"🎉 <b>DONASI TERKONFIRMASI!</b>\n\n"
+                    f"Terima kasih banyak atas dukunganmu sebesar <b>Rp{incoming_amount:,}</b>! 🙏\n"
+                    f"Bantuanmu sangat berarti untuk menjaga BoonTrack tetap gratis bagi seluruh pencari kerja di Indonesia.\n\n"
+                    f"Sukses terus untuk kariermu ya! ❤️"
+                )
+                await bot.send_message(chat_id=donor_id, text=don_thanks, parse_mode="HTML")
+                return web.json_response({"status": "success_donation", "donation_id": donation["donation_id"]}, status=200)
+
+        return web.json_response({"status": "no_matching_transaction"}, status=200)
     except Exception as e:
         print(f"Webhook Exception: {e}")
         return web.json_response({"status": "error"}, status=500)
