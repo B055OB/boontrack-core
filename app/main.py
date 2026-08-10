@@ -394,6 +394,18 @@ async def match_and_complete_donation(amount):
     return await asyncio.to_thread(_match_and_complete_donation_sync, amount)
 
 # ---------------------------------------------------------
+# HELPER MENDAPATKAN SLUG USER
+# ---------------------------------------------------------
+def get_user_slug(user_data, default_name):
+    custom_slug = user_data.get("custom_slug", "").strip().lower()
+    if custom_slug:
+        return re.sub(r'[^a-z0-9-]', '', custom_slug)
+    
+    raw_name = user_data.get("nama_panggilan", default_name or "user")
+    clean_name = re.sub(r'[^a-z0-9]', '', str(raw_name).lower().replace(" ", ""))
+    return clean_name or "user"
+
+# ---------------------------------------------------------
 # CLOUDFLARE KV HELPER
 # ---------------------------------------------------------
 async def update_cloudflare_kv(slug: str, user_data: dict) -> bool:
@@ -833,7 +845,7 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         await bot.send_message(user_id, value_text, parse_mode="HTML")
 
         is_paid = await check_user_paid(user_id)
-        user_slug = user_name.lower().replace(" ", "")
+        slug = get_user_slug(user_data, message.from_user.first_name)
 
         if is_paid:
             kbd_paid = InlineKeyboardMarkup(row_width=1)
@@ -843,7 +855,7 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
             )
             monetize_text = (
                 f"🌐 <b>Website Career Page Kamu Sudah Aktif!</b>\n\n"
-                f"👉 <i>Link Website Live:</i> https://{user_slug}.boontrack.com\n\n"
+                f"👉 <i>Link Website Live:</i> https://{slug}.boontrack.com\n\n"
                 f"Akses kelola website kamu sudah aktif seumur hidup. Kamu bisa memperbarui foto, posisi, atau mengimpor data CV terbaru kapan saja melalui menu di bawah ini! 🚀"
             )
             await bot.send_message(user_id, monetize_text, reply_markup=kbd_paid, parse_mode="HTML")
@@ -950,7 +962,7 @@ async def send_welcome(message: types.Message):
     "home_digital_products", "buy_ebook_interview", "home_back_main",
     "don_5000", "don_10000", "don_25000",
     "cp_build_now", "cp_build_later", "cp_manage", "cp_upload_photo", "cp_edit_resume", "cp_choose_theme", 
-    "cp_edit_data", "cp_import_cv", "cp_confirm_import", "cp_deploy_live",
+    "cp_edit_data", "cp_import_cv", "cp_confirm_import", "cp_deploy_live", "cp_edit_slug",
     "cp_edit_posisi_btn", "cp_edit_summary_btn", "cp_edit_exp_btn", "cp_edit_skills_btn",
     "theme_happy", "theme_blue", "theme_dark", "theme_emerald", "theme_purple"
 ])
@@ -966,7 +978,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         
     user_data = user_state[user_id].get("data", {})
     user_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "Teman")
-    slug = user_name.lower().replace(" ", "")
+    slug = get_user_slug(user_data, callback_query.from_user.first_name)
 
     if code in ["don_5000", "don_10000", "don_25000"]:
         base_amt = 5000 if code == "don_5000" else (10000 if code == "don_10000" else 25000)
@@ -1009,6 +1021,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         
         kbd_setup = InlineKeyboardMarkup(row_width=1)
         kbd_setup.add(
+            InlineKeyboardButton("🔗 Ubah Subdomain / Slug Website", callback_data="cp_edit_slug"),
             InlineKeyboardButton("✏️ Pilih Bagian yang Ingin Diisi / Diedit", callback_data="cp_edit_data"),
             InlineKeyboardButton("🔄 Impor Semua Data dari Draf CV", callback_data="cp_import_cv"),
             InlineKeyboardButton("📸 Upload / Ganti Foto Profil", callback_data="cp_upload_photo"),
@@ -1020,16 +1033,28 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         
         summary_msg = (
             f"🔍 <b>Konfirmasi Data Career Page Kamu:</b>\n\n"
-            f"• <b>Nama:</b> {user_name}\n"
+            f"🌐 <b>Link Website Kamu:</b> https://{slug}.boontrack.com\n"
+            f"• <b>Nama Panggilan:</b> {user_name}\n"
             f"• <b>Posisi Target:</b> {pos}\n"
             f"• <b>Email:</b> {email}\n"
             f"• <b>Pengalaman:</b> {exp}\n"
             f"• <b>Link Resume PDF:</b> <i>{resume_link}</i>\n"
             f"• <b>Foto Profil:</b> <i>(Belum Ada / Standard)</i>\n"
             f"• <b>Tema Warna:</b> <i>{user_data.get('theme', 'happy').capitalize()}</i>\n\n"
-            f"💡 <i>Klik tombol di bawah untuk memilih bagian spesifik yang mau diisi!</i>"
+            f"💡 <i>Atur atau edit data kamu via tombol di bawah ini!</i>"
         )
         await bot.send_message(user_id, summary_msg, reply_markup=kbd_setup, parse_mode="HTML")
+
+    elif code == "cp_edit_slug":
+        user_state[user_id]["step"] = "CP_EDIT_SLUG"
+        await bot.send_message(
+            user_id,
+            f"🔗 <b>Ubah Subdomain / Slug Website Kamu</b>\n\n"
+            f"Subdomain kamu saat ini: <code>{slug}</code> (https://{slug}.boontrack.com)\n\n"
+            f"Ketik nama subdomain kustom baru yang kamu inginkan (hanya huruf, angka, dan tanda hubung):\n"
+            f"<i>(Contoh: ratuhrd, ratu-official, rayigemilang)</i>",
+            parse_mode="HTML"
+        )
 
     elif code == "cp_edit_data":
         kbd_sections = InlineKeyboardMarkup(row_width=1)
@@ -1277,7 +1302,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             f"👇 Bagikan link referral-mu ke teman:\n"
             f"<code>{user_ref_link}</code>"
         )
-        await bot.send_message(user_id, ref_msg, parse_mode="HTML")
+        await bot.send_message(user_id, ref_msg, reply_markup=kbd, parse_mode="HTML")
 
     elif code == "home_career_qa":
         qa_msg = (
@@ -1400,8 +1425,7 @@ async def handle_photo(message: types.Message):
         user_data["foto_url"] = photo_url
         user_state[user_id]["step"] = 0
         
-        user_name = user_data.get("nama_panggilan", message.from_user.first_name or "Teman")
-        slug = user_name.lower().replace(" ", "")
+        slug = get_user_slug(user_data, message.from_user.first_name)
         
         await save_dropoff(user_id, TOTAL_STEPS, user_data)
         await update_cloudflare_kv(slug, user_data)
@@ -1439,10 +1463,34 @@ async def handle_message(message: types.Message):
 
     current_step = user_state[user_id].get("step", 0)
     user_data = user_state[user_id].get("data", {})
-    user_name = user_data.get("nama_panggilan", message.from_user.first_name or "Teman")
-    slug = user_name.lower().replace(" ", "")
+    slug = get_user_slug(user_data, message.from_user.first_name)
 
-    # --- 1. EDIT POSISI ---
+    # --- 1. EDIT SLUG / SUBDOMAIN WEBSITE ---
+    if current_step == "CP_EDIT_SLUG":
+        clean_slug = re.sub(r'[^a-z0-9-]', '', text.lower())
+        if not clean_slug:
+            await message.reply("⚠️ Nama subdomain hanya boleh mengandung huruf, angka, dan tanda hubung (-). Silakan coba lagi!")
+            return
+            
+        user_data["custom_slug"] = clean_slug
+        user_state[user_id]["step"] = 0
+        await save_dropoff(user_id, TOTAL_STEPS, user_data)
+        await update_cloudflare_kv(clean_slug, user_data)
+        
+        kbd_done = InlineKeyboardMarkup(row_width=1)
+        kbd_done.add(
+            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{clean_slug}.boontrack.com"),
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+        )
+        await message.reply(
+            f"✅ <b>Subdomain website berhasil diubah ke:</b>\n"
+            f"👉 <b>https://{clean_slug}.boontrack.com</b>",
+            reply_markup=kbd_done,
+            parse_mode="HTML"
+        )
+        return
+
+    # --- 2. EDIT POSISI ---
     if current_step == "CP_EDIT_POSISI":
         user_data["target_position"] = text
         user_state[user_id]["step"] = 0
@@ -1462,7 +1510,7 @@ async def handle_message(message: types.Message):
         )
         return
 
-    # --- 2. EDIT RINGKASAN/BIO ---
+    # --- 3. EDIT RINGKASAN/BIO ---
     if current_step == "CP_EDIT_SUMMARY":
         user_data["ringkasan_web"] = text
         user_state[user_id]["step"] = 0
@@ -1482,7 +1530,7 @@ async def handle_message(message: types.Message):
         )
         return
 
-    # --- 3. EDIT PENGALAMAN ---
+    # --- 4. EDIT PENGALAMAN ---
     if current_step == "CP_EDIT_EXP":
         user_data["pengalaman_web"] = text
         user_state[user_id]["step"] = 0
@@ -1502,7 +1550,7 @@ async def handle_message(message: types.Message):
         )
         return
 
-    # --- 4. EDIT SKILLS ---
+    # --- 5. EDIT SKILLS ---
     if current_step == "CP_EDIT_SKILLS":
         user_data["keahlian_web"] = text
         user_state[user_id]["step"] = 0
@@ -1522,7 +1570,7 @@ async def handle_message(message: types.Message):
         )
         return
 
-    # --- 5. EDIT RESUME LINK ---
+    # --- 6. EDIT RESUME LINK ---
     if current_step == "CP_EDIT_RESUME":
         if text.strip() == "-" or text.lower() == "kosong":
             user_data["resume_url"] = ""
@@ -1548,7 +1596,7 @@ async def handle_message(message: types.Message):
         )
         return
 
-    # --- 6. ONBOARDING & CHAT AI CAREER ---
+    # --- 7. ONBOARDING & CHAT AI CAREER ---
     if current_step == 0:
         await track_event(user_id, "career_ai_query", meta={"query": text})
         ai_reply = await asyncio.to_thread(ai_career_chat_response, text, user_data)
@@ -1640,7 +1688,7 @@ async def handle_message(message: types.Message):
         await message.reply("Silakan <b>pilih salah satu bahasa di atas</b> ya 👆", parse_mode="HTML")
         return
 
-    # --- 7. LANGKAH PENGISIAN CV (ANGKA) ---
+    # --- 8. LANGKAH PENGISIAN CV (ANGKA) ---
     if isinstance(current_step, int) and current_step > 0:
         target_lang = user_data.get("target_lang", "ID")
         status_kerja = user_data.get("status_kerja", "Berpengalaman")
