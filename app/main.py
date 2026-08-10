@@ -30,7 +30,6 @@ POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-WEBHOOK_SECRET_TOKEN = os.getenv("WEBHOOK_SECRET_TOKEN", "BoonTrackSecretKey123")
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 QRIS_IMAGE_PATH = "assets/qris.jpg"
@@ -116,7 +115,6 @@ def _init_db_sync():
         );
     """)
 
-    # TABEL SESI DONASI DENGAN EXPIRATION & KODE UNIK
     cur.execute("""
         CREATE TABLE IF NOT EXISTS donation_sessions (
             id SERIAL PRIMARY KEY,
@@ -257,7 +255,6 @@ def _count_referrals_sync(referrer_id):
 async def count_referrals(referrer_id):
     return await asyncio.to_thread(_count_referrals_sync, referrer_id)
 
-# HELPER PRODUK DIGITAL
 def _create_order_sync(telegram_id, product_name, base_price, unique_code, total_amount):
     try:
         conn = get_db_connection()
@@ -312,7 +309,6 @@ def _match_and_complete_order_sync(amount):
 async def match_and_complete_order(amount):
     return await asyncio.to_thread(_match_and_complete_order_sync, amount)
 
-# HELPER DONASI
 def _create_donation_session_sync(telegram_id, base_amount, unique_code, total_amount):
     try:
         conn = get_db_connection()
@@ -871,7 +867,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_data = user_state[user_id].get("data", {})
     user_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "Teman")
 
-    # ALUR DONASI PRESISI KOPI
     if code in ["don_5000", "don_10000", "don_25000"]:
         base_amt = 5000 if code == "don_5000" else (10000 if code == "don_10000" else 25000)
         unique_code = random.randint(100, 999)
@@ -1089,7 +1084,8 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
                 target_lang = user_data.get("target_lang", "ID")
                 status_kerja = user_data.get("status_kerja", "Berpengalaman")
                 kbd = None
-                if next_step in [7, 8, 9]:
+                # MENAMBAHKAN TOMBOL LEWATI UNTUK STEP 4, 7, 8, DAN 9
+                if next_step in [4, 7, 8, 9]:
                     kbd = InlineKeyboardMarkup().add(InlineKeyboardButton("⏩ Lewati Langkah Ini", callback_data="skip_optional"))
                     
                 await bot.send_message(
@@ -1104,9 +1100,13 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         step = state["step"]
         target_lang = state.get("data", {}).get("target_lang", "ID")
         status_kerja = state.get("data", {}).get("status_kerja", "Berpengalaman")
+        kbd = None
+        if step in [4, 7, 8, 9]:
+            kbd = InlineKeyboardMarkup().add(InlineKeyboardButton("⏩ Lewati Langkah Ini", callback_data="skip_optional"))
         await bot.send_message(
             user_id,
             f"Sip, mari kita lanjutkan! 👍\n\n{get_progress_bar(step)}\n{get_question_text(step, target_lang, status_kerja)}",
+            reply_markup=kbd,
             parse_mode="HTML"
         )
 
@@ -1257,7 +1257,8 @@ async def handle_message(message: types.Message):
             await save_dropoff(user_id, next_step, user_data)
             
             kbd = None
-            if next_step in [7, 8, 9]:
+            # MENAMBAHKAN TOMBOL LEWATI UNTUK STEP 4, 7, 8, DAN 9
+            if next_step in [4, 7, 8, 9]:
                 kbd = InlineKeyboardMarkup().add(InlineKeyboardButton("⏩ Lewati Langkah Ini", callback_data="skip_optional"))
 
             await message.reply(
@@ -1268,14 +1269,9 @@ async def handle_message(message: types.Message):
         else:
             await process_and_send_cv(message, user_data)
 
-# WEBHOOK PENERIMA NOTIFIKASI DANA (DUAL ENGINE: ORDER vs DONATION)
+# WEBHOOK PENERIMA NOTIFIKASI DANA (TANPA PERIKSA SECRET HEADER DULU AGAR BISA BACA DANA)
 async def dana_webhook_handler(request):
     try:
-        incoming_token = request.headers.get("X-BoonTrack-Secret", "")
-        if incoming_token != WEBHOOK_SECRET_TOKEN:
-            print("[Security Warning] Unauthorized Webhook Attempt!")
-            return web.json_response({"status": "unauthorized"}, status=401)
-
         data = await request.json()
         source = data.get("source", "")
         message = data.get("message", "")
@@ -1289,7 +1285,7 @@ async def dana_webhook_handler(request):
         if match:
             incoming_amount = int(match.group(1))
             
-            # 1. CEK ATAU MATCH PRODUCT ORDER DULU
+            # 1. CEK MATCH PRODUCT ORDER
             order = await match_and_complete_order(incoming_amount)
             if order:
                 if order.get("status") == "PAID":
@@ -1308,7 +1304,7 @@ async def dana_webhook_handler(request):
                 await bot.send_message(chat_id=buyer_id, text=success_msg, parse_mode="HTML")
                 return web.json_response({"status": "success_order", "order_id": order["order_id"]}, status=200)
 
-            # 2. JIKA BUKAN ORDER, CEK DONATION SESSION
+            # 2. CEK MATCH DONATION SESSION
             donation = await match_and_complete_donation(incoming_amount)
             if donation:
                 if donation.get("status") == "VERIFIED":
@@ -1316,7 +1312,6 @@ async def dana_webhook_handler(request):
                     return web.json_response({"status": "already_verified"}, status=200)
 
                 donor_id = donation["telegram_id"]
-                base_don = donation["base_amount"]
                 
                 don_thanks = (
                     f"🎉 <b>DONASI TERKONFIRMASI!</b>\n\n"
