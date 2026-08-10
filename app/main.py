@@ -21,6 +21,7 @@ from aiohttp import web
 
 load_dotenv()
 
+# --- CONFIGURATION ---
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 POSTGRES_DB = os.getenv("POSTGRES_DB")
@@ -33,6 +34,10 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 QRIS_IMAGE_PATH = "assets/qris.jpg"
+
+CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
+CLOUDFLARE_KV_NAMESPACE_ID = os.getenv("CLOUDFLARE_KV_NAMESPACE_ID", "")
+CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "")
 
 ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
@@ -387,6 +392,45 @@ def _match_and_complete_donation_sync(amount):
 
 async def match_and_complete_donation(amount):
     return await asyncio.to_thread(_match_and_complete_donation_sync, amount)
+
+# ---------------------------------------------------------
+# CLOUDFLARE KV HELPER
+# ---------------------------------------------------------
+async def update_cloudflare_kv(slug: str, user_data: dict) -> bool:
+    """
+    Mengirimkan data profil pengguna dari Telegram Bot ke Cloudflare KV Store via REST API.
+    """
+    if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_KV_NAMESPACE_ID or not CLOUDFLARE_ACCOUNT_ID:
+        print("[KV Alert] Credentials Cloudflare belum lengkap di .env")
+        return False
+        
+    url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces/{CLOUDFLARE_KV_NAMESPACE_ID}/values/{slug.lower()}"
+    
+    payload = {
+        "nama": user_data.get("nama_panggilan", user_data.get("1", "Pelamar")),
+        "posisi": user_data.get("target_position", "AI & Operations Workflow Optimization Specialist"),
+        "email": user_data.get("2", ""),
+        "telepon": user_data.get("7", ""),
+        "ringkasan": user_data.get("3", ""),
+        "pengalaman": user_data.get("3", ""),
+        "pendidikan": user_data.get("5", ""),
+        "keahlian": user_data.get("6", ""),
+        "foto": user_data.get("foto_url", ""),
+        "theme": user_data.get("theme", "happy")
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        res = await asyncio.to_thread(requests.put, url, json=payload, headers=headers, timeout=5)
+        print(f"[KV Sync Status] Status: {res.status_code} untuk slug: {slug.lower()}")
+        return res.status_code == 200
+    except Exception as e:
+        print(f"[KV Sync Error] Gagal update Cloudflare KV: {e}")
+        return False
 
 def clean_val(val):
     if not val:
@@ -891,7 +935,9 @@ async def send_welcome(message: types.Message):
     "home_create_cv", "home_check_ref", "home_career_qa",
     "home_digital_products", "buy_test_cv_template", "buy_ebook_interview", "home_back_main",
     "don_5000", "don_10000", "don_25000",
-    "cp_build_now", "cp_build_later", "cp_manage", "cp_upload_photo", "cp_choose_theme", "cp_deploy_live"
+    "cp_build_now", "cp_build_later", "cp_manage", "cp_upload_photo", "cp_choose_theme", 
+    "cp_edit_data", "cp_import_cv", "cp_confirm_import", "cp_deploy_live",
+    "theme_happy", "theme_blue", "theme_dark", "theme_emerald", "theme_purple"
 ])
 async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
@@ -905,6 +951,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         
     user_data = user_state[user_id].get("data", {})
     user_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "Teman")
+    slug = user_name.lower().replace(" ", "")
 
     if code in ["don_5000", "don_10000", "don_25000"]:
         base_amt = 5000 if code == "don_5000" else (10000 if code == "don_10000" else 25000)
@@ -931,7 +978,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             await bot.send_message(user_id, don_msg, parse_mode="HTML")
 
     elif code in ["cp_build_now", "cp_manage"]:
-        # Proteksi keamanan: pastikan user sudah bayar/verified
         is_paid = await check_user_paid(user_id)
         if not is_paid and code == "cp_manage":
             don_msg = (
@@ -941,16 +987,17 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             await bot.send_message(user_id, don_msg, reply_markup=get_donation_options_keyboard(), parse_mode="HTML")
             return
 
-        pos = user_data.get("target_position", "Profesional")
+        pos = user_data.get("target_position", "AI & Operations Workflow Optimization Specialist")
         email = user_data.get("2", "Belum Diisi")
         exp = user_data.get("3", "Belum Diisi")
         
-        kbd_home = await get_career_home_keyboard(user_id)
         kbd_setup = InlineKeyboardMarkup(row_width=1)
         kbd_setup.add(
+            InlineKeyboardButton("✏️ Isi / Edit Data Website", callback_data="cp_edit_data"),
+            InlineKeyboardButton("🔄 Impor dari Draf CV", callback_data="cp_import_cv"),
             InlineKeyboardButton("📸 Upload / Ganti Foto Profil", callback_data="cp_upload_photo"),
             InlineKeyboardButton("🎨 Pilih Tema Warna Website", callback_data="cp_choose_theme"),
-            InlineKeyboardButton("⚡ Gunakan Data CV (Langsung Terbitkan)", callback_data="cp_deploy_live"),
+            InlineKeyboardButton("🚀 Terbitkan Website Sekarang (Live)", callback_data="cp_deploy_live"),
             InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="home_back_main")
         )
         
@@ -960,11 +1007,52 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             f"• <b>Posisi Target:</b> {pos}\n"
             f"• <b>Email:</b> {email}\n"
             f"• <b>Pengalaman:</b> {exp}\n"
-            f"• <b>Foto Profil:</b> <i>(Belum Ada)</i>\n"
-            f"• <b>Tema Warna:</b> <i>Modern Blue (Default)</i>\n\n"
-            f"💡 <i>Lengkapi dulu Foto Profil & Tema Warna di bawah agar websitemu makin keren!</i>"
+            f"• <b>Foto Profil:</b> <i>(Belum Ada / Standard)</i>\n"
+            f"• <b>Tema Warna:</b> <i>{user_data.get('theme', 'happy').capitalize()}</i>\n\n"
+            f"💡 <i>Atur atau impor data dulu di bawah ini sebelum menerbitkan ke web!</i>"
         )
         await bot.send_message(user_id, summary_msg, reply_markup=kbd_setup, parse_mode="HTML")
+
+    elif code == "cp_edit_data":
+        user_state[user_id]["step"] = "CP_EDIT_POSISI"
+        await bot.send_message(
+            user_id,
+            "✏️ <b>Edit Posisi / Headline Website</b>\n\n"
+            "Ketik judul posisi impianmu untuk ditampilkan di paling atas website:\n"
+            "<i>(Contoh: AI & Operations Workflow Optimization Specialist)</i>",
+            parse_mode="HTML"
+        )
+
+    elif code == "cp_import_cv":
+        kbd_import = InlineKeyboardMarkup(row_width=1)
+        kbd_import.add(
+            InlineKeyboardButton("✅ Ya, Gunakan Data CV", callback_data="cp_confirm_import"),
+            InlineKeyboardButton("✏️ Batal, Isi Manual Saja", callback_data="cp_edit_data")
+        )
+        await bot.send_message(
+            user_id,
+            "⚠️ <b>Konfirmasi Impor Data CV</b>\n\n"
+            "Sistem akan menyalin ringkasan profil, kontak, dan keahlian dari draf CV ke website.\n"
+            "Kamu tetap bisa mengedit data ini kapan saja!",
+            reply_markup=kbd_import,
+            parse_mode="HTML"
+        )
+
+    elif code == "cp_confirm_import":
+        await update_cloudflare_kv(slug, user_data)
+        kbd_done = InlineKeyboardMarkup(row_width=1)
+        kbd_done.add(
+            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.cv.boontrack.com"),
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+        )
+        await bot.send_message(
+            user_id,
+            f"✅ <b>Data CV Berhasil Diimpor & Disinkronkan!</b>\n\n"
+            f"Tampilan web kamu sudah terbarui secara realtime di:\n"
+            f"👉 https://{slug}.cv.boontrack.com",
+            reply_markup=kbd_done,
+            parse_mode="HTML"
+        )
 
     elif code == "cp_build_later":
         kbd = await get_career_home_keyboard(user_id)
@@ -977,11 +1065,18 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         )
 
     elif code == "cp_upload_photo":
-        await bot.send_message(user_id, "📸 <b>Kirimkan foto profil terbaikmu ke chat ini ya!</b>\n<i>(Disarankan foto formal/semi-formal setengah badan)</i>", parse_mode="HTML")
+        user_state[user_id]["step"] = "WAITING_PHOTO"
+        await bot.send_message(
+            user_id, 
+            "📸 <b>Kirimkan foto profil terbaikmu ke chat ini ya!</b>\n"
+            "<i>(Disarankan foto formal/semi-formal setengah badan)</i>", 
+            parse_mode="HTML"
+        )
 
     elif code == "cp_choose_theme":
         kbd_theme = InlineKeyboardMarkup(row_width=2)
         kbd_theme.add(
+            InlineKeyboardButton("💛 Happy Gold", callback_data="theme_happy"),
             InlineKeyboardButton("💙 Modern Blue", callback_data="theme_blue"),
             InlineKeyboardButton("🖤 Dark Minimalist", callback_data="theme_dark"),
             InlineKeyboardButton("💚 Emerald Green", callback_data="theme_emerald"),
@@ -989,17 +1084,34 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         )
         await bot.send_message(user_id, "🎨 <b>Pilih tema warna favoritmu untuk Career Page:</b>", reply_markup=kbd_theme, parse_mode="HTML")
 
-    elif code == "cp_deploy_live":
-        slug = user_name.lower().replace(" ", "")
-        kbd = await get_career_home_keyboard(user_id)
+    elif code.startswith("theme_"):
+        selected_theme = code.replace("theme_", "")
+        user_data["theme"] = selected_theme
+        
+        await save_dropoff(user_id, TOTAL_STEPS, user_data)
+        await update_cloudflare_kv(slug, user_data)
+        
         await bot.send_message(
             user_id,
-            f"🎉 <b>SELAMAT! Career Page Kamu Resmi Aktif!</b>\n\n"
-            f"👉 <i>Akses di:</i> https://{slug}.cv.boontrack.com\n\n"
-            f"Sudah bisa kamu cantumkan di bio LinkedIn/WhatsApp kamu sekarang! 🚀",
-            reply_markup=kbd,
+            f"🎨 <b>Tema berhasil diubah ke {selected_theme.capitalize()}!</b>\n\n"
+            f"Cek perubahannya secara langsung di:\n"
+            f"👉 https://{slug}.cv.boontrack.com",
             parse_mode="HTML"
         )
+
+    elif code == "cp_deploy_live":
+        is_success = await update_cloudflare_kv(slug, user_data)
+        
+        if is_success:
+            msg = (
+                f"🎉 <b>SELAMAT! Website Career Page Kamu Resmi Aktif!</b>\n\n"
+                f"👉 <b>Link Web Live:</b> https://{slug}.cv.boontrack.com\n\n"
+                f"Website ini sudah siap kamu pajang di bio LinkedIn atau WhatsApp kamu! 🚀"
+            )
+        else:
+            msg = "⚠️ Terjadi masalah sinkronisasi server KV. Pastikan konfigurasi `.env` sudah sesuai."
+
+        await bot.send_message(user_id, msg, parse_mode="HTML")
 
     elif code == "home_digital_products":
         kbd_products = InlineKeyboardMarkup(row_width=1)
@@ -1222,6 +1334,39 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             parse_mode="HTML"
         )
 
+# PHOTO HANDLER FOR CAREER PAGE
+@dp.message_handler(content_types=['photo'])
+async def handle_photo(message: types.Message):
+    user_id = message.from_user.id
+    current_step = user_state.get(user_id, {}).get("step")
+    
+    if current_step == "WAITING_PHOTO":
+        photo = message.photo[-1]
+        file_info = await bot.get_file(photo.file_id)
+        photo_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
+        
+        user_data = user_state[user_id].get("data", {})
+        user_data["foto_url"] = photo_url
+        user_state[user_id]["step"] = 0
+        
+        user_name = user_data.get("nama_panggilan", message.from_user.first_name or "Teman")
+        slug = user_name.lower().replace(" ", "")
+        
+        await save_dropoff(user_id, TOTAL_STEPS, user_data)
+        await update_cloudflare_kv(slug, user_data)
+        
+        kbd_done = InlineKeyboardMarkup(row_width=1)
+        kbd_done.add(
+            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.cv.boontrack.com"),
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+        )
+        await message.reply(
+            "📸 <b>Foto profil berhasil diupload & diperbarui di website!</b>\n\n"
+            f"👉 <i>Cek hasilnya di:</i> https://{slug}.cv.boontrack.com",
+            reply_markup=kbd_done,
+            parse_mode="HTML"
+        )
+
 @dp.message_handler(commands=['cancel'])
 async def cancel_handler(message: types.Message):
     user_id = message.from_user.id
@@ -1243,6 +1388,28 @@ async def handle_message(message: types.Message):
 
     current_step = user_state[user_id].get("step", 0)
     user_data = user_state[user_id].get("data", {})
+    user_name = user_data.get("nama_panggilan", message.from_user.first_name or "Teman")
+    slug = user_name.lower().replace(" ", "")
+
+    if current_step == "CP_EDIT_POSISI":
+        user_data["target_position"] = text
+        user_state[user_id]["step"] = 0
+        
+        await save_dropoff(user_id, TOTAL_STEPS, user_data)
+        await update_cloudflare_kv(slug, user_data)
+        
+        kbd_done = InlineKeyboardMarkup(row_width=1)
+        kbd_done.add(
+            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.cv.boontrack.com"),
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+        )
+        await message.reply(
+            f"✅ <b>Posisi website berhasil diperbarui ke:</b> {text}\n\n"
+            f"👉 <i>Cek di:</i> https://{slug}.cv.boontrack.com",
+            reply_markup=kbd_done,
+            parse_mode="HTML"
+        )
+        return
 
     if current_step == 0:
         await track_event(user_id, "career_ai_query", meta={"query": text})
@@ -1381,7 +1548,7 @@ async def handle_message(message: types.Message):
                 parse_mode="HTML"
             )
         else:
-            await process_and_send_cv(message, user_data)
+            await process_and_send_cv(message, user_id, user_data)
 
 async def dana_webhook_handler(request):
     try:
