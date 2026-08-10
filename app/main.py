@@ -835,16 +835,32 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         )
         await bot.send_message(user_id, value_text, parse_mode="HTML")
 
+        # --- CEK STATUS BAYAR USER CAREER PAGE ---
+        is_paid = await check_user_paid(user_id)
         user_slug = user_name.lower().replace(" ", "")
-        monetize_text = (
-            f"🌐 <b>Ingin Punya Website Career Page Personal Seperti Ini?</b>\n"
-            f"👉 <i>Lihat Contoh Live:</i> https://rayigemilang.cv.boontrack.com\n\n"
-            f"Dengan website ini, rekruter cukup klik link di bio LinkedIn/WA kamu untuk melihat profil, pengalaman, dan portofolio interaktifmu secara profesional!\n\n"
-            f"☕ <b>Cara Mengaktifkan Career Page Kamu:</b>\n"
-            f"1. <b>Traktir Kopi Rp10.000</b> untuk dukung biaya server BoonTrack.\n"
-            f"2. <b>Ajak 5 Teman</b> menyusun CV di BoonTrack via link referral unikmu <i>(Gratis!)</i>."
-        )
-        await bot.send_message(user_id, monetize_text, reply_markup=get_donation_options_keyboard(), parse_mode="HTML")
+
+        if is_paid:
+            kbd_paid = InlineKeyboardMarkup(row_width=1)
+            kbd_paid.add(
+                InlineKeyboardButton("🌐 Kelola / Edit Career Page Saya", callback_data="cp_manage"),
+                InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="home_back_main")
+            )
+            monetize_text = (
+                f"🌐 <b>Website Career Page Kamu Sudah Aktif!</b>\n\n"
+                f"👉 <i>Link Website Live:</i> https://{user_slug}.cv.boontrack.com\n\n"
+                f"Akses kelola website kamu sudah aktif seumur hidup. Kamu bisa memperbarui foto, posisi, atau mengimpor data CV terbaru kapan saja melalui menu di bawah ini! 🚀"
+            )
+            await bot.send_message(user_id, monetize_text, reply_markup=kbd_paid, parse_mode="HTML")
+        else:
+            monetize_text = (
+                f"🌐 <b>Ingin Punya Website Career Page Personal Seperti Ini?</b>\n"
+                f"👉 <i>Lihat Contoh Live:</i> https://rayigemilang.cv.boontrack.com\n\n"
+                f"Dengan website ini, rekruter cukup klik link di bio LinkedIn/WA kamu untuk melihat profil, pengalaman, dan portofolio interaktifmu secara profesional!\n\n"
+                f"☕ <b>Cara Mengaktifkan Career Page Kamu:</b>\n"
+                f"1. <b>Traktir Kopi Rp10.000</b> untuk dukung biaya server BoonTrack.\n"
+                f"2. <b>Ajak 5 Teman</b> menyusun CV di BoonTrack via link referral unikmu <i>(Gratis!)</i>."
+            )
+            await bot.send_message(user_id, monetize_text, reply_markup=get_donation_options_keyboard(), parse_mode="HTML")
 
         if os.path.exists(file_path):
             os.remove(file_path)
