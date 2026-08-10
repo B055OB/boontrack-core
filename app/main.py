@@ -42,6 +42,7 @@ dp = Dispatcher(bot)
 user_state = {}
 
 TOTAL_STEPS = 9
+REQUIRED_REFERRALS = 5
 
 def get_progress_bar(step):
     return f"📍 <b>Langkah {step} dari {TOTAL_STEPS}</b>\n━━━━━━━━━━"
@@ -708,13 +709,11 @@ def get_career_home_keyboard():
     return kbd
 
 def get_donation_options_keyboard():
-    kbd = InlineKeyboardMarkup(row_width=2)
+    kbd = InlineKeyboardMarkup(row_width=1)
     kbd.add(
-        InlineKeyboardButton("☕ Rp5.000", callback_data="don_5000"),
-        InlineKeyboardButton("☕ Rp10.000", callback_data="don_10000"),
-        InlineKeyboardButton("☕ Rp25.000", callback_data="don_25000"),
-        InlineKeyboardButton("📣 Pakai Referral Saja", callback_data="home_check_ref"),
-        InlineKeyboardButton("⏩ Nanti Dulu / Lewati", callback_data="home_back_main")
+        InlineKeyboardButton("🚀 Aktifkan Website Career Page (Rp10.000)", callback_data="don_10000"),
+        InlineKeyboardButton("📣 Gratis via Invite 5 Teman (Referral)", callback_data="home_check_ref"),
+        InlineKeyboardButton("⏩ Nanti Dulu / Cukup CV Word", callback_data="home_back_main")
     )
     return kbd
 
@@ -751,18 +750,21 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
             pass
 
         value_text = (
-            f"💡 <b>Tips Penting Sebelum Melamar ({position}):</b>\n\n"
-            "1. Gunakan subjek email jernih: <code>[Posisi] - [Nama Kamu]</code>\n"
-            "2. Jangan biarkan body email kosong (tuliskan Surat Lamaran Singkat)\n"
-            "3. Cantumkan bukti angka/pencapaian kecil jika ada saat interview nanti.\n\n"
+            "💡 <b>Tips Penting Sebelum Melamar:</b>\n\n"
+            "1. <b>Subjek Email Jelas:</b> Gunakan format <code>[Posisi] - [Nama Kamu]</code> (Contoh: <i>Admin Operasional - Rayi Gemilang</i>)\n"
+            "2. <b>Body Email Terisi:</b> Jangan biarkan pesan email kosong; sertakan Surat Lamaran/Cover Letter singkat.\n"
+            "3. <b>Pencapaian Terukur:</b> Cantumkan angka atau pencapaian konkret saat wawancara nanti.\n\n"
             "CV ini sudah bisa kamu edit kapan saja di Word jika ada bagian yang ingin kamu sesuaikan kembali. 🚀"
         )
         await bot.send_message(user_id, value_text, parse_mode="HTML")
 
         monetize_text = (
-            f"❤️ <b>Bantu BoonTrack Tetap Gratis untuk Pencari Kerja</b>\n\n"
-            f"BoonTrack dikembangkan mandiri agar siapa saja bisa membuat CV profesional tanpa biaya.\n"
-            f"Kalau layanan ini membantu kamu hari ini, kamu bisa bantu traktir kopi seikhlasnya untuk mendukung biaya server kami. 😊"
+            f"🌐 <b>Ingin Punya Website Career Page Personal Seperti Ini?</b>\n"
+            f"👉 <i>Lihat Contoh Live:</i> https://rayigemilang.cv.boontrack.com\n\n"
+            f"Dengan website ini, rekruter cukup klik link di bio LinkedIn/WA kamu untuk melihat profil, pengalaman, dan portofolio interaktifmu secara profesional!\n\n"
+            f"☕ <b>Cara Mengaktifkan Career Page Kamu:</b>\n"
+            f"1. <b>Traktir Kopi Rp10.000</b> untuk dukung biaya server BoonTrack.\n"
+            f"2. <b>Ajak 5 Teman</b> menyusun CV di BoonTrack via link referral unikmu <i>(Gratis!)</i>."
         )
         await bot.send_message(user_id, monetize_text, reply_markup=get_donation_options_keyboard(), parse_mode="HTML")
 
@@ -772,10 +774,10 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         referrer_id = user_state.get(user_id, {}).get("meta", {}).get("referrer_id")
         if referrer_id:
             ref_count_referrer = await count_referrals(referrer_id)
-            if ref_count_referrer >= 3:
+            if ref_count_referrer >= REQUIRED_REFERRALS:
                 reward_text = (
-                    "🎉 <b>SELAMAT! Target 3 Referral Kamu Tercapai!</b>\n\n"
-                    "3 teman yang kamu ajak telah berhasil menyusun CV.\n"
+                    f"🎉 <b>SELAMAT! Target {REQUIRED_REFERRALS} Referral Kamu Tercapai!</b>\n\n"
+                    f"{REQUIRED_REFERRALS} teman yang kamu ajak telah berhasil menyusun CV.\n"
                     "Kamu berhak klaim <b>Website Portfolio Personal Gratis</b>!\n\n"
                     "Ketik /claim_website untuk klaim websitemu! 🌐"
                 )
@@ -879,7 +881,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             f"Agar sistem kami mengenali donasimu secara otomatis tanpa perlu kirim bukti transfer, "
             f"mohon transfer dengan nominal presisi berikut:\n\n"
             f"👉 <b><code>{total_amt}</code></b> 👈 <i>(Tekan/salin angka ini)</i>\n"
-            f"<i>(Donasi Rp{base_amt:,} + Kode Verifikasi Rp{unique_code})</i>\n\n"
+            f"<i>(Aktivasi Career Page Rp{base_amt:,} + Kode Verifikasi Rp{unique_code})</i>\n\n"
             f"👇 <b>Bayar via QRIS di bawah:</b>\n"
             f"<i>Sistem akan otomatis memverifikasi begitu transaksi masuk.</i>"
         )
@@ -996,9 +998,9 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         
         ref_msg = (
             "🎁 <b>REFERRAL & BONUS PORTFOLIO WEBSITE</b>\n\n"
-            f"📊 <b>Progress Referral Kamu: {total_refs} / 3</b>\n\n"
-            "Ajak 3 temanmu membuat CV di BoonTrack, dan kami akan buatkan **Website Portfolio Pribadi Gratis**!\n"
-            "<i>Contoh: https://rayigemilang.cv.boontrack.com</i>\n\n"
+            f"📊 <b>Progress Referral Kamu: {total_refs} / {REQUIRED_REFERRALS}</b>\n\n"
+            f"Ajak {REQUIRED_REFERRALS} temanmu membuat CV di BoonTrack, dan kami akan buatkan **Website Portfolio Personal Gratis**!\n"
+            "<i>Contoh Live:</i> https://rayigemilang.cv.boontrack.com\n\n"
             f"👇 Bagikan link referral-mu ke teman:\n"
             f"<code>{user_ref_link}</code>"
         )
@@ -1084,7 +1086,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
                 target_lang = user_data.get("target_lang", "ID")
                 status_kerja = user_data.get("status_kerja", "Berpengalaman")
                 kbd = None
-                # MENAMBAHKAN TOMBOL LEWATI UNTUK STEP 4, 7, 8, DAN 9
                 if next_step in [4, 7, 8, 9]:
                     kbd = InlineKeyboardMarkup().add(InlineKeyboardButton("⏩ Lewati Langkah Ini", callback_data="skip_optional"))
                     
@@ -1257,7 +1258,6 @@ async def handle_message(message: types.Message):
             await save_dropoff(user_id, next_step, user_data)
             
             kbd = None
-            # MENAMBAHKAN TOMBOL LEWATI UNTUK STEP 4, 7, 8, DAN 9
             if next_step in [4, 7, 8, 9]:
                 kbd = InlineKeyboardMarkup().add(InlineKeyboardButton("⏩ Lewati Langkah Ini", callback_data="skip_optional"))
 
@@ -1269,7 +1269,6 @@ async def handle_message(message: types.Message):
         else:
             await process_and_send_cv(message, user_data)
 
-# WEBHOOK PENERIMA NOTIFIKASI DANA (TANPA PERIKSA SECRET HEADER DULU AGAR BISA BACA DANA)
 async def dana_webhook_handler(request):
     try:
         data = await request.json()
@@ -1285,7 +1284,6 @@ async def dana_webhook_handler(request):
         if match:
             incoming_amount = int(match.group(1))
             
-            # 1. CEK MATCH PRODUCT ORDER
             order = await match_and_complete_order(incoming_amount)
             if order:
                 if order.get("status") == "PAID":
@@ -1304,7 +1302,6 @@ async def dana_webhook_handler(request):
                 await bot.send_message(chat_id=buyer_id, text=success_msg, parse_mode="HTML")
                 return web.json_response({"status": "success_order", "order_id": order["order_id"]}, status=200)
 
-            # 2. CEK MATCH DONATION SESSION
             donation = await match_and_complete_donation(incoming_amount)
             if donation:
                 if donation.get("status") == "VERIFIED":
@@ -1314,9 +1311,10 @@ async def dana_webhook_handler(request):
                 donor_id = donation["telegram_id"]
                 
                 don_thanks = (
-                    f"🎉 <b>DONASI TERKONFIRMASI!</b>\n\n"
-                    f"Terima kasih banyak atas dukunganmu sebesar <b>Rp{incoming_amount:,}</b>! 🙏\n"
-                    f"Bantuanmu sangat berarti untuk menjaga BoonTrack tetap gratis bagi seluruh pencari kerja di Indonesia.\n\n"
+                    f"🎉 <b>PEMBAYARAN CAREER PAGE TERKONFIRMASI!</b>\n\n"
+                    f"Terima kasih banyak atas dukunganmu sebesar <b>Rp{incoming_amount:,}</b>! 🙏\n\n"
+                    f"🌐 <b>Website Career Page kamu sedang dalam proses aktivasi.</b>\n"
+                    f"Tim kami sedang menyiapkan domain personal milikmu. Kamu akan menerima notifikasi dan link websitemu begitu siap digunakan untuk melamar kerja! 🚀\n\n"
                     f"Sukses terus untuk kariermu ya! ❤️"
                 )
                 await bot.send_message(chat_id=donor_id, text=don_thanks, parse_mode="HTML")
