@@ -261,6 +261,25 @@ def _count_referrals_sync(referrer_id):
 async def count_referrals(referrer_id):
     return await asyncio.to_thread(_count_referrals_sync, referrer_id)
 
+def _check_user_paid_sync(user_id):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM donation_sessions WHERE telegram_id = %s AND status = 'VERIFIED' LIMIT 1;",
+            (user_id,)
+        )
+        res = cur.fetchone()
+        cur.close()
+        conn.close()
+        return bool(res)
+    except Exception as e:
+        print(f"Check User Paid Error: {e}")
+        return False
+
+async def check_user_paid(user_id):
+    return await asyncio.to_thread(_check_user_paid_sync, user_id)
+
 def _create_order_sync(telegram_id, product_name, base_price, unique_code, total_amount):
     try:
         conn = get_db_connection()
@@ -703,11 +722,18 @@ def create_cv_docx(user_id, data):
     doc.save(file_path)
     return file_path
 
-def get_career_home_keyboard():
+async def get_career_home_keyboard(user_id: int):
+    is_paid = await check_user_paid(user_id)
+
     kbd = InlineKeyboardMarkup(row_width=1)
+    kbd.add(InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"))
+    
+    if is_paid:
+        kbd.add(InlineKeyboardButton("🌐 Kelola / Edit Career Page Saya", callback_data="cp_manage"))
+    else:
+        kbd.add(InlineKeyboardButton("🚀 Aktifkan Website Career Page (Rp10.000)", callback_data="don_10000"))
+        
     kbd.add(
-        InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"),
-        InlineKeyboardButton("🌐 Kelola / Edit Career Page Saya", callback_data="cp_manage"),
         InlineKeyboardButton("📚 Ebook & Program Digital", callback_data="home_digital_products"),
         InlineKeyboardButton("🎁 Cek Referral Saya", callback_data="home_check_ref"),
         InlineKeyboardButton("💼 Tanya Seputar Dunia Kerja", callback_data="home_career_qa")
@@ -817,37 +843,36 @@ async def send_welcome(message: types.Message):
     saved_data = progress.get("data", {}) if progress else {}
     user_name = saved_data.get("nama_panggilan") or message.from_user.first_name or "Teman"
 
-    # User lama yang sudah punya data / selesai CV
-    if progress and (progress.get("last_step") == TOTAL_STEPS or saved_data.get("nama_panggilan")):
-        user_state[user_id] = {"step": 0, "data": saved_data, "meta": meta_data}
-        home_msg = (
-            f"Halo lagi, <b>{user_name}</b>! 👋\n\n"
-            "🎁 <b>Kalau kamu mau lanjut, ada beberapa pilihan yang mungkin berguna buat kariermu:</b>\n\n"
-            "👇 <i>Pilih yang ingin kamu lihat:</i>"
-        )
-        await message.reply(home_msg, reply_markup=get_career_home_keyboard(), parse_mode="HTML")
-        return
-
-    # User yang punya progres gantung (Langkah 1-8)
-    if progress and isinstance(progress.get("last_step"), int) and progress.get("last_step", 0) > 0:
-        last_step = progress["last_step"]
-        user_state[user_id] = {"step": last_step, "data": saved_data, "meta": meta_data}
+    if progress is not None:
+        last_step = progress.get("last_step", 0)
         
-        kbd = InlineKeyboardMarkup(row_width=2)
-        kbd.add(
-            InlineKeyboardButton("▶️ Lanjutkan CV", callback_data="resume_flow"),
-            InlineKeyboardButton("🔄 Mulai Baru", callback_data="restart_flow")
-        )
-        await message.reply(
-            f"Halo lagi, <b>{user_name}</b>! 👋\n\n"
-            f"Kemarin kita sempat menyusun CV sampai di <b>Langkah {last_step} dari {TOTAL_STEPS}</b>.\n\n"
-            "Mau kita tuntaskan sekarang agar CV kamu siap dipakai melamar kerja?",
-            reply_markup=kbd,
-            parse_mode="HTML"
-        )
-        return
+        if last_step == TOTAL_STEPS or last_step == 0:
+            user_state[user_id] = {"step": 0, "data": saved_data, "meta": meta_data}
+            home_msg = (
+                f"Halo lagi, <b>{user_name}</b>! 👋\n\n"
+                "🎁 <b>Kalau kamu mau lanjut, ada beberapa pilihan yang mungkin berguna buat kariermu:</b>\n\n"
+                "👇 <i>Pilih yang ingin kamu lihat:</i>"
+            )
+            kbd = await get_career_home_keyboard(user_id)
+            await message.reply(home_msg, reply_markup=kbd, parse_mode="HTML")
+            return
 
-    # User baru
+        if isinstance(last_step, int) and last_step > 0:
+            user_state[user_id] = {"step": last_step, "data": saved_data, "meta": meta_data}
+            kbd = InlineKeyboardMarkup(row_width=2)
+            kbd.add(
+                InlineKeyboardButton("▶️ Lanjutkan CV", callback_data="resume_flow"),
+                InlineKeyboardButton("🔄 Mulai Baru", callback_data="restart_flow")
+            )
+            await message.reply(
+                f"Halo lagi, <b>{user_name}</b>! 👋\n\n"
+                f"Kemarin kita sempat menyusun CV sampai di <b>Langkah {last_step} dari {TOTAL_STEPS}</b>.\n\n"
+                "Mau kita tuntaskan sekarang agar CV kamu siap dipakai melamar kerja?",
+                reply_markup=kbd,
+                parse_mode="HTML"
+            )
+            return
+
     user_state[user_id] = {"step": "ONBOARDING_NAMA", "data": {}, "meta": meta_data}
     await save_dropoff(user_id, 0, {})
     
@@ -906,10 +931,21 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             await bot.send_message(user_id, don_msg, parse_mode="HTML")
 
     elif code in ["cp_build_now", "cp_manage"]:
+        # Proteksi keamanan: pastikan user sudah bayar/verified
+        is_paid = await check_user_paid(user_id)
+        if not is_paid and code == "cp_manage":
+            don_msg = (
+                f"🔒 <b>Website Career Page Belum Aktif</b>\n\n"
+                f"Kamu perlu mengaktifkan akses Career Page terlebih dahulu (Rp10.000) untuk mengakses menu ini."
+            )
+            await bot.send_message(user_id, don_msg, reply_markup=get_donation_options_keyboard(), parse_mode="HTML")
+            return
+
         pos = user_data.get("target_position", "Profesional")
         email = user_data.get("2", "Belum Diisi")
         exp = user_data.get("3", "Belum Diisi")
         
+        kbd_home = await get_career_home_keyboard(user_id)
         kbd_setup = InlineKeyboardMarkup(row_width=1)
         kbd_setup.add(
             InlineKeyboardButton("📸 Upload / Ganti Foto Profil", callback_data="cp_upload_photo"),
@@ -931,11 +967,12 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         await bot.send_message(user_id, summary_msg, reply_markup=kbd_setup, parse_mode="HTML")
 
     elif code == "cp_build_later":
+        kbd = await get_career_home_keyboard(user_id)
         await bot.send_message(
             user_id,
             f"Siap, {user_name}! Akses pembuatan Career Page kamu sudah tersimpan aman.\n"
             f"Kapan saja kamu siap melengkapi datanya, tinggal klik menu <b>'🌐 Kelola / Edit Career Page Saya'</b> di Menu Utama! 👍",
-            reply_markup=get_career_home_keyboard(),
+            reply_markup=kbd,
             parse_mode="HTML"
         )
 
@@ -954,12 +991,13 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
 
     elif code == "cp_deploy_live":
         slug = user_name.lower().replace(" ", "")
+        kbd = await get_career_home_keyboard(user_id)
         await bot.send_message(
             user_id,
             f"🎉 <b>SELAMAT! Career Page Kamu Resmi Aktif!</b>\n\n"
             f"👉 <i>Akses di:</i> https://{slug}.cv.boontrack.com\n\n"
             f"Sudah bisa kamu cantumkan di bio LinkedIn/WhatsApp kamu sekarang! 🚀",
-            reply_markup=get_career_home_keyboard(),
+            reply_markup=kbd,
             parse_mode="HTML"
         )
 
@@ -982,7 +1020,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             "• Strategi negosiasi gaji untuk Fresh Graduate & Exp\n\n"
             "👇 <i>Pilih produk di bawah untuk membeli secara otomatis:</i>"
         )
-        await bot.send_message(user_id, msg_catalog, parse_mode="HTML")
+        await bot.send_message(user_id, msg_catalog, reply_markup=kbd_products, parse_mode="HTML")
 
     elif code == "buy_test_cv_template":
         base_price = 1000
@@ -1038,7 +1076,8 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
 
     elif code in ["home_back_main", "restart_flow"]:
         user_state[user_id] = {"step": 0, "data": {}}
-        await bot.send_message(user_id, "👋 <b>Kembali ke Menu Utama:</b>", reply_markup=get_career_home_keyboard(), parse_mode="HTML")
+        kbd = await get_career_home_keyboard(user_id)
+        await bot.send_message(user_id, "👋 <b>Kembali ke Menu Utama:</b>", reply_markup=kbd, parse_mode="HTML")
 
     elif code == "home_create_cv":
         old_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "")
@@ -1065,6 +1104,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         total_refs = await count_referrals(user_id)
         bot_info = await bot.get_me()
         user_ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+        kbd = await get_career_home_keyboard(user_id)
         
         ref_msg = (
             "🎁 <b>REFERRAL & BONUS PORTFOLIO WEBSITE</b>\n\n"
@@ -1074,7 +1114,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             f"👇 Bagikan link referral-mu ke teman:\n"
             f"<code>{user_ref_link}</code>"
         )
-        await bot.send_message(user_id, ref_msg, reply_markup=get_career_home_keyboard(), parse_mode="HTML")
+        await bot.send_message(user_id, ref_msg, reply_markup=kbd, parse_mode="HTML")
 
     elif code == "home_career_qa":
         qa_msg = (
@@ -1207,12 +1247,13 @@ async def handle_message(message: types.Message):
     if current_step == 0:
         await track_event(user_id, "career_ai_query", meta={"query": text})
         ai_reply = await asyncio.to_thread(ai_career_chat_response, text, user_data)
+        kbd = await get_career_home_keyboard(user_id)
         
         await message.reply(
             f"{ai_reply}\n\n"
             f"🎁 <b>Kalau kamu mau lanjut, ada beberapa pilihan yang mungkin berguna buat kariermu:</b>\n"
             f"👇 <i>Pilih yang ingin kamu lihat:</i>",
-            reply_markup=get_career_home_keyboard(),
+            reply_markup=kbd,
             parse_mode="HTML"
         )
         return
