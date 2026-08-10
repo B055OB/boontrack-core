@@ -416,6 +416,7 @@ async def update_cloudflare_kv(slug: str, user_data: dict) -> bool:
         "pendidikan": user_data.get("5", ""),
         "keahlian": user_data.get("6", ""),
         "foto": user_data.get("foto_url", ""),
+        "resume_url": user_data.get("resume_url", ""),
         "theme": user_data.get("theme", "happy")
     }
     
@@ -834,6 +835,7 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         )
         await bot.send_message(user_id, value_text, parse_mode="HTML")
 
+        user_slug = user_name.lower().replace(" ", "")
         monetize_text = (
             f"🌐 <b>Ingin Punya Website Career Page Personal Seperti Ini?</b>\n"
             f"👉 <i>Lihat Contoh Live:</i> https://rayigemilang.cv.boontrack.com\n\n"
@@ -935,7 +937,7 @@ async def send_welcome(message: types.Message):
     "home_create_cv", "home_check_ref", "home_career_qa",
     "home_digital_products", "buy_ebook_interview", "home_back_main",
     "don_5000", "don_10000", "don_25000",
-    "cp_build_now", "cp_build_later", "cp_manage", "cp_upload_photo", "cp_choose_theme", 
+    "cp_build_now", "cp_build_later", "cp_manage", "cp_upload_photo", "cp_edit_resume", "cp_choose_theme", 
     "cp_edit_data", "cp_import_cv", "cp_confirm_import", "cp_deploy_live",
     "theme_happy", "theme_blue", "theme_dark", "theme_emerald", "theme_purple"
 ])
@@ -990,12 +992,14 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         pos = user_data.get("target_position", "AI & Operations Workflow Optimization Specialist")
         email = user_data.get("2", "Belum Diisi")
         exp = user_data.get("3", "Belum Diisi")
+        resume_link = user_data.get("resume_url", "Belum Ada (Sembunyi)")
         
         kbd_setup = InlineKeyboardMarkup(row_width=1)
         kbd_setup.add(
             InlineKeyboardButton("✏️ Isi / Edit Data Website", callback_data="cp_edit_data"),
             InlineKeyboardButton("🔄 Impor dari Draf CV", callback_data="cp_import_cv"),
             InlineKeyboardButton("📸 Upload / Ganti Foto Profil", callback_data="cp_upload_photo"),
+            InlineKeyboardButton("📄 Upload / Input Link Resume PDF", callback_data="cp_edit_resume"),
             InlineKeyboardButton("🎨 Pilih Tema Warna Website", callback_data="cp_choose_theme"),
             InlineKeyboardButton("🚀 Terbitkan Website Sekarang (Live)", callback_data="cp_deploy_live"),
             InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="home_back_main")
@@ -1007,6 +1011,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             f"• <b>Posisi Target:</b> {pos}\n"
             f"• <b>Email:</b> {email}\n"
             f"• <b>Pengalaman:</b> {exp}\n"
+            f"• <b>Link Resume PDF:</b> <i>{resume_link}</i>\n"
             f"• <b>Foto Profil:</b> <i>(Belum Ada / Standard)</i>\n"
             f"• <b>Tema Warna:</b> <i>{user_data.get('theme', 'happy').capitalize()}</i>\n\n"
             f"💡 <i>Atur atau impor data dulu di bawah ini sebelum menerbitkan ke web!</i>"
@@ -1020,6 +1025,17 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             "✏️ <b>Edit Posisi / Headline Website</b>\n\n"
             "Ketik judul posisi impianmu untuk ditampilkan di paling atas website:\n"
             "<i>(Contoh: AI & Operations Workflow Optimization Specialist)</i>",
+            parse_mode="HTML"
+        )
+
+    elif code == "cp_edit_resume":
+        user_state[user_id]["step"] = "CP_EDIT_RESUME"
+        await bot.send_message(
+            user_id,
+            "📄 <b>Input / Update Link Resume PDF</b>\n\n"
+            "Ketik atau paste link PDF resume/portofolio publikmu di sini (misal link Google Drive/Dropbox/PDF):\n"
+            "<i>(Contoh: https://cvats.boontrack.com/ebook-interview-boontrack.pdf)</i>\n\n"
+            "<i>Ketik '-' jika ingin menyembunyikan tombol download resume dari website.</i>",
             parse_mode="HTML"
         )
 
@@ -1375,6 +1391,32 @@ async def handle_message(message: types.Message):
         )
         await message.reply(
             f"✅ <b>Posisi website berhasil diperbarui ke:</b> {text}\n\n"
+            f"👉 <i>Cek di:</i> https://{slug}.cv.boontrack.com",
+            reply_markup=kbd_done,
+            parse_mode="HTML"
+        )
+        return
+
+    if current_step == "CP_EDIT_RESUME":
+        if text.strip() == "-" or text.lower() == "kosong":
+            user_data["resume_url"] = ""
+            status_resume = "Disembunyikan"
+        else:
+            user_data["resume_url"] = text
+            status_resume = text
+            
+        user_state[user_id]["step"] = 0
+        
+        await save_dropoff(user_id, TOTAL_STEPS, user_data)
+        await update_cloudflare_kv(slug, user_data)
+        
+        kbd_done = InlineKeyboardMarkup(row_width=1)
+        kbd_done.add(
+            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.cv.boontrack.com"),
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+        )
+        await message.reply(
+            f"✅ <b>Link Resume PDF berhasil diperbarui:</b> {status_resume}\n\n"
             f"👉 <i>Cek di:</i> https://{slug}.cv.boontrack.com",
             reply_markup=kbd_done,
             parse_mode="HTML"
