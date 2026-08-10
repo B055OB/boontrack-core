@@ -534,7 +534,7 @@ def ai_career_chat_response(user_query, user_context=None):
     - DILARANG melakukan jualan produk secara langsung.
     """
 
-    # 1. PRIORITY 1: DEEPSEEK VIA OPENROUTER (Paling Stabil & Pintar B.Indo)
+    # 1. PRIORITY 1: DEEPSEEK / ALTERNATIVE VIA OPENROUTER
     if OPENROUTER_API_KEY:
         try:
             headers = {
@@ -542,7 +542,7 @@ def ai_career_chat_response(user_query, user_context=None):
                 "Content-Type": "application/json"
             }
             payload = {
-                "model": "deepseek/deepseek-chat:free",
+                "model": "deepseek/deepseek-r1:free",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.4
             }
@@ -552,7 +552,7 @@ def ai_career_chat_response(user_query, user_context=None):
                 if reply:
                     return reply
         except Exception as e:
-            print(f"[Career AI Error] OpenRouter DeepSeek failed: {e}")
+            print(f"[Career AI Error] OpenRouter failed: {e}")
 
     # 2. PRIORITY 2: GEMINI 2.5 FLASH
     if ai_client:
