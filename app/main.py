@@ -13,7 +13,6 @@ from aiogram import Bot, Dispatcher, executor, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from docx import Document
 from docx.shared import Pt, RGBColor, Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from google import genai
@@ -48,6 +47,14 @@ user_state = {}
 
 TOTAL_STEPS = 9
 REQUIRED_REFERRALS = 5
+
+# LIST FRASA CLOSING / PENUTUP PERCAKAPAN
+CLOSING_WORDS = [
+    "lanjut lagi", "nanti lanjut", "ntar lanjut", "okey", "oke deh", "okedeh",
+    "bye", "dada", "dadah", "sampai jumpa", "sampe jumpa", "udah dulu", "udah ya",
+    "siap makasih", "baik terima kasih", "sip makasih", "oke makasih", "ok makasih",
+    "nanti aja", "ntar aja", "besok lagi", "ya makasih", "ok terima kasih", "makasih ya"
+]
 
 def get_progress_bar(step):
     return f"📍 <b>Langkah {step} dari {TOTAL_STEPS}</b>\n━━━━━━━━━━"
@@ -393,9 +400,6 @@ def _match_and_complete_donation_sync(amount):
 async def match_and_complete_donation(amount):
     return await asyncio.to_thread(_match_and_complete_donation_sync, amount)
 
-# ---------------------------------------------------------
-# HELPER MENDAPATKAN SLUG USER
-# ---------------------------------------------------------
 def get_user_slug(user_data, default_name):
     custom_slug = user_data.get("custom_slug", "").strip().lower()
     if custom_slug:
@@ -405,9 +409,6 @@ def get_user_slug(user_data, default_name):
     clean_name = re.sub(r'[^a-z0-9]', '', str(raw_name).lower().replace(" ", ""))
     return clean_name or "user"
 
-# ---------------------------------------------------------
-# CLOUDFLARE KV HELPER
-# ---------------------------------------------------------
 async def update_cloudflare_kv(slug: str, user_data: dict) -> bool:
     if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_KV_NAMESPACE_ID or not CLOUDFLARE_ACCOUNT_ID:
         print("[KV Alert] Credentials Cloudflare belum lengkap di .env")
@@ -503,115 +504,57 @@ def get_question_text(step, target_lang="ID", status_kerja="Berpengalaman"):
         }
     return questions.get(step, "")
 
-def ai_translate_text(text, target_lang="ID"):
-    if not text or target_lang not in ["EN", "HYBRID"]:
-        return text
-    prompt_text = f"Translate the following job title, education, or skill string to professional English concisely. Return ONLY the translation, no explanation:\n\n{text}"
-    if ai_client:
-        try:
-            res = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt_text)
-            if res and res.text:
-                return res.text.strip()
-        except Exception:
-            pass
-    return text
-
-def ai_generate_summary(position, status_kerja, target_lang="ID"):
-    is_en = target_lang in ["EN", "HYBRID"]
-    is_fresh = "fresh" in str(status_kerja).lower()
-    
-    if is_en:
-        if is_fresh:
-            return f"Motivated graduate aspiring for {position or 'entry-level'} roles. Equipped with strong foundational knowledge, high adaptability, and a commitment to contributing effectively to organizational success."
-        else:
-            return f"Dedicated professional with experience in {position or 'operational roles'}. Proven track record of executing core responsibilities efficiently and delivering quality results."
-    else:
-        if is_fresh:
-            return f"Lulusan yang memiliki ketertarikan kuat pada bidang {position or 'operasional'}. Memiliki landasan akademis yang baik, cepat beradaptasi, serta berkomitmen memberikan kontribusi kerja terbaik bagi perusahaan."
-        else:
-            return f"Profesional berpengalaman di bidang {position or 'operasional'} yang terbiasa bekerja secara terstruktur, teliti, serta berdedikasi dalam mencapai target operasional tim."
-
-def ai_rewrite_achievement(text, target_lang="ID"):
-    is_en = target_lang in ["EN", "HYBRID"]
-    
-    if is_en:
-        prompt_text = (
-            f"Translate and convert the following work/organization experience into 2-4 professional, "
-            f"ATS-friendly action bullet points in Full English (using '•' symbol).\n"
-            f"STRICT RULE: Do NOT leave any Indonesian words. Translate everything to English.\n"
-            f"DO NOT invent facts, numbers, or achievements not present in the input.\n\n"
-            f"Input Text: {text}"
-        )
-    else:
-        prompt_text = (
-            f"Ubah deskripsi tugas/pengalaman kerja/organisasi berikut menjadi 2-4 poin bullet point (menggunakan simbol •) "
-            f"dalam Bahasa Indonesia profesional standar HR yang mudah dibaca sistem rekrutmen modern.\n"
-            f"ATURAN MUTLAK: DILARANG MENGARANG FAKTA, ANGKA, ATAU PENGETAHUAN YANG TIDAK ADA DALAM INPUT USER.\n\n"
-            f"Input Pengalaman: {text}"
-        )
-
-    if ai_client:
-        try:
-            response = ai_client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=prompt_text
-            )
-            if response and response.text:
-                return response.text.strip()
-        except Exception as e:
-            print(f"[Fallback Alert] Gemini Error: {e}. Beralih ke Groq...")
-
-    if GROQ_API_KEY:
-        try:
-            headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-            payload = {"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt_text}], "temperature": 0.3}
-            res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=4)
-            if res.status_code == 200:
-                return res.json()['choices'][0]['message']['content'].strip()
-        except Exception as e:
-            print(f"[Fallback Alert] Groq Error: {e}")
-
-    lines = [line.strip().lstrip("-*• ") for line in text.split("\n") if line.strip()]
-    return "\n".join([f"• {line}" for line in lines])
-
+# --- HIGH QUALITY DEEPSEEK CAREER COMPANION ENGINE ---
 def ai_career_chat_response(user_query, user_context=None):
     pos = user_context.get("target_position", "dunia kerja") if user_context else "dunia kerja"
     status = user_context.get("status_kerja", "Pencari Kerja") if user_context else "Pencari Kerja"
     
-    q_clean = user_query.strip().lower()
-    
-    closing_words = [
-        "lanjut lagi", "nanti lanjut", "ntar lanjut", "okey", "oke deh", "okedeh",
-        "bye", "dada", "dadah", "sampai jumpa", "sampe jumpa", "udah dulu",
-        "siap makasih", "baik terima kasih", "sip makasih", "oke makasih", "ok makasih"
-    ]
-    if any(word in q_clean for word in closing_words):
-        return "Siap, sama-sama! Sampai jumpa lagi, sukses terus ya! 😊"
-
-    thanks_words = ["terima kasih", "terimakasih", "makasih", "msh", "thanks", "thx", "thank you", "matur nuwun", "nuhun"]
-    if any(word in q_clean for word in thanks_words):
-        return "Sama-sama! Semoga bermanfaat dan sukses terus kariernya ya! 😊"
-        
-    greeting_words = ["halo", "hai", "hi", "pagi", "siang", "sore", "malam", "halo bot"]
-    if q_clean in greeting_words:
-        return "Halo juga! Ada yang bisa saya bantu seputar persiapan kerja atau CV kamu hari ini? 😊"
-
     prompt = f"""
-    Kamu adalah BoonTrack Career Assistant, teman diskusi karier yang suportif, ramah, dan solutif.
+    Kamu adalah BoonTrack Career Companion, konsultan karir profesional, ramah, realistis, dan solutif.
     
     Konteks Pengguna:
-    - Target Posisi: {pos}
+    - Target Posisi/Minat: {pos}
     - Status: {status}
     
-    Pertanyaan/Pesan Pengguna:
+    Pertanyaan Pengguna:
     "{user_query}"
     
-    Tugasmu:
-    Jawab pertanyaan pengguna secara spesifik sesuai apa yang ditanyakan.
-    Jawab ringkas, praktis, dan memotivasi (Maksimal 60 kata).
-    Gunakan Bahasa Indonesia yang santai dan ramah. Jangan mengulang ucapan pengguna.
-    """
+    TUGAS UTAMA:
+    Berikan saran karir kontekstual dan mendalam. Jangan memberikan jawaban umum/generik.
+    Hubungkan pengalaman atau situasi pengguna dengan posisi yang dituju secara konkret.
     
+    Format Respon (Gunakan Bahasa Indonesia ramah & terstruktur):
+    1. Beri validasi/dukungan singkat (Contoh: "Bisa banget 👍" atau "Ini langkah yang sangat masuk akal!").
+    2. Bedah keterhubungan peran (Keahlian yang SANGAT NYAMBUNG vs Skill yang HARUS DITAMBAH dalam bentuk poin ringkas).
+    3. Hubungkan langsung ke langkah praktis penulisan CV.
+    
+    Aturan Penulisan:
+    - Panjang maksimal 120 kata.
+    - DILARANG mengulang pertanyaan pengguna.
+    - DILARANG melakukan jualan produk secara langsung.
+    """
+
+    # 1. PRIORITY 1: DEEPSEEK VIA OPENROUTER (Paling Stabil & Pintar B.Indo)
+    if OPENROUTER_API_KEY:
+        try:
+            headers = {
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": "deepseek/deepseek-chat:free",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.4
+            }
+            res = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers, timeout=6)
+            if res.status_code == 200:
+                reply = res.json()['choices'][0]['message']['content'].strip()
+                if reply:
+                    return reply
+        except Exception as e:
+            print(f"[Career AI Error] OpenRouter DeepSeek failed: {e}")
+
+    # 2. PRIORITY 2: GEMINI 2.5 FLASH
     if ai_client:
         try:
             res = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
@@ -620,6 +563,7 @@ def ai_career_chat_response(user_query, user_context=None):
         except Exception as e:
             print(f"[Career AI Error] Gemini failed: {e}")
 
+    # 3. PRIORITY 3: GROQ LLAMA
     if GROQ_API_KEY:
         try:
             headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
@@ -634,24 +578,11 @@ def ai_career_chat_response(user_query, user_context=None):
         except Exception as e:
             print(f"[Career AI Error] Groq failed: {e}")
 
-    if OPENROUTER_API_KEY:
-        try:
-            headers = {
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": "meta-llama/llama-3.1-8b-instruct:free",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.4
-            }
-            res = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers, timeout=5)
-            if res.status_code == 200:
-                return res.json()['choices'][0]['message']['content'].strip()
-        except Exception as e:
-            print(f"[Career AI Error] OpenRouter failed: {e}")
-            
-    return f"Sistem AI kami saat ini sedang mengalami lonjakan trafik. Tapi tenang, progres CV kamu tetap tersimpan aman di BoonTrack! Ada hal lain yang ingin kamu cek dari menu di bawah? 😊"
+    # HUMANIZED FALLBACK (Internal Error Hidden From User)
+    return (
+        "Aku menangkap poin pertanyakanmu! Kondisi ini sebenarnya cukup sering dihadapi banyak pencari kerja.\n\n"
+        "Coba ceritakan sedikit lagi detail situasi atau latar belakangmu saat ini, supaya aku bisa bantu bedah langkah terbaik untuk CV kamu! 😊"
+    )
 
 def create_cv_docx(user_id, data):
     doc = Document()
@@ -783,9 +714,9 @@ async def get_career_home_keyboard(user_id: int):
     kbd.add(InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"))
     
     if is_paid:
-        kbd.add(InlineKeyboardButton("🌐 Kelola / Edit Career Page Saya", callback_data="cp_manage"))
+        kbd.add(InlineKeyboardButton("🌐 Kelola Career Page Saya", callback_data="cp_manage"))
     else:
-        kbd.add(InlineKeyboardButton("🚀 Aktifkan Website Career Page (Rp10.000)", callback_data="don_10000"))
+        kbd.add(InlineKeyboardButton("🌐 Buat Career Page Profesional (Rp10.000)", callback_data="don_10000"))
         
     kbd.add(
         InlineKeyboardButton("📚 Ebook & Program Digital", callback_data="home_digital_products"),
@@ -797,7 +728,7 @@ async def get_career_home_keyboard(user_id: int):
 def get_donation_options_keyboard():
     kbd = InlineKeyboardMarkup(row_width=1)
     kbd.add(
-        InlineKeyboardButton("🚀 Aktifkan Website Career Page (Rp10.000)", callback_data="don_10000"),
+        InlineKeyboardButton("🌐 Buat Career Page Profesional (Rp10.000)", callback_data="don_10000"),
         InlineKeyboardButton("📣 Gratis via Invite 5 Teman (Referral)", callback_data="home_check_ref"),
         InlineKeyboardButton("⏩ Nanti Dulu / Cukup CV Word", callback_data="home_back_main")
     )
@@ -835,6 +766,7 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         except Exception:
             pass
 
+        # 1. VALUE BEFORE TAKE: TIPS PENGERJAAN
         value_text = (
             "💡 <b>Tips Penting Sebelum Melamar:</b>\n\n"
             "1. <b>Subjek Email Jelas:</b> Gunakan format <code>[Posisi] - [Nama Kamu]</code> (Contoh: <i>Admin Operasional - Rayi Gemilang</i>)\n"
@@ -844,29 +776,35 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         )
         await bot.send_message(user_id, value_text, parse_mode="HTML")
 
+        # 2. CAREER INSIGHT & NATURAL NEXT STEP
         is_paid = await check_user_paid(user_id)
         slug = get_user_slug(user_data, message.from_user.first_name)
+
+        insight_text = (
+            f"📊 <b>Career Insight untuk Posisi {position}:</b>\n\n"
+            f"Berdasarkan data profilmu, kekuatan utamamu ada pada keahlian operasional & komunikasi. "
+            f"Rekruter di bidang ini akan sangat menyukai portofolio interaktif yang bisa diakses langsung via link bio/LinkedIn.\n\n"
+            f"Tampilkan CV, pengalaman, skill & portofolio kamu dalam satu halaman web profesional yang siap dibagikan ke rekruter."
+        )
 
         if is_paid:
             kbd_paid = InlineKeyboardMarkup(row_width=1)
             kbd_paid.add(
-                InlineKeyboardButton("🌐 Kelola / Edit Career Page Saya", callback_data="cp_manage"),
+                InlineKeyboardButton("🌐 Kelola Career Page Saya", callback_data="cp_manage"),
                 InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="home_back_main")
             )
             monetize_text = (
-                f"🌐 <b>Website Career Page Kamu Sudah Aktif!</b>\n\n"
-                f"👉 <i>Link Website Live:</i> https://{slug}.boontrack.com\n\n"
-                f"Akses kelola website kamu sudah aktif seumur hidup. Kamu bisa memperbarui foto, posisi, atau mengimpor data CV terbaru kapan saja melalui menu di bawah ini! 🚀"
+                f"{insight_text}\n\n"
+                f"👉 <i>Link Website Live Kamu:</i> https://{slug}.boontrack.com\n"
+                f"Kamu bisa memperbarui foto, posisi, atau mengimpor data CV terbaru kapan saja!"
             )
             await bot.send_message(user_id, monetize_text, reply_markup=kbd_paid, parse_mode="HTML")
         else:
             monetize_text = (
-                f"🌐 <b>Ingin Punya Website Career Page Personal Seperti Ini?</b>\n"
-                f"👉 <i>Lihat Contoh Live:</i> https://rayigemilang.boontrack.com\n\n"
-                f"Dengan website ini, rekruter cukup klik link di bio LinkedIn/WA kamu untuk melihat profil, pengalaman, dan portofolio interaktifmu secara profesional!\n\n"
-                f"☕ <b>Cara Mengaktifkan Career Page Kamu:</b>\n"
-                f"1. <b>Traktir Kopi Rp10.000</b> untuk dukung biaya server BoonTrack.\n"
-                f"2. <b>Ajak 5 Teman</b> menyusun CV di BoonTrack via link referral unikmu <i>(Gratis!)</i>."
+                f"{insight_text}\n\n"
+                f"🌐 <b>Buat Career Page Profesional</b>\n"
+                f"Contoh Live: <code>{slug}.boontrack.com</code>\n"
+                f"<i>(Sekali aktivasi seumur hidup — Rp10.000)</i>"
             )
             await bot.send_message(user_id, monetize_text, reply_markup=get_donation_options_keyboard(), parse_mode="HTML")
 
@@ -920,8 +858,8 @@ async def send_welcome(message: types.Message):
             user_state[user_id] = {"step": 0, "data": saved_data, "meta": meta_data}
             home_msg = (
                 f"Halo lagi, <b>{user_name}</b>! 👋\n\n"
-                "🎁 <b>Kalau kamu mau lanjut, ada beberapa pilihan yang mungkin berguna buat kariermu:</b>\n\n"
-                "👇 <i>Pilih yang ingin kamu lihat:</i>"
+                "Ada yang bisa saya bantu untuk persiapan kariermu hari ini?\n\n"
+                "👇 <i>Pilih opsi di bawah:</i>"
             )
             kbd = await get_career_home_keyboard(user_id)
             await message.reply(home_msg, reply_markup=kbd, parse_mode="HTML")
@@ -980,6 +918,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "Teman")
     slug = get_user_slug(user_data, callback_query.from_user.first_name)
 
+    # REVISI TEXT FORMAT BAYAR DARI DRAFT CTO
     if code in ["don_5000", "don_10000", "don_25000"]:
         base_amt = 5000 if code == "don_5000" else (10000 if code == "don_10000" else 25000)
         unique_code = random.randint(100, 999)
@@ -988,13 +927,18 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         await create_donation_session(user_id, base_amt, unique_code, total_amt)
         
         don_msg = (
-            f"☕ <b>Sip! Terima kasih banyak atas dukungannya, {user_name}!</b>\n\n"
-            f"Agar sistem kami mengenali donasimu secara otomatis tanpa perlu kirim bukti transfer, "
-            f"mohon transfer dengan nominal presisi berikut:\n\n"
-            f"👉 <b><code>{total_amt}</code></b> 👈 <i>(Tekan/salin angka ini)</i>\n"
-            f"<i>(Aktivasi Career Page Rp{base_amt:,} + Kode Verifikasi Rp{unique_code})</i>\n\n"
-            f"👇 <b>Bayar via QRIS di bawah:</b>\n"
-            f"<i>Sistem akan otomatis memverifikasi begitu transaksi masuk.</i>"
+            f"☕ <b>Aktivasi Career Page Kamu</b>\n\n"
+            f"Terima kasih sudah memilih BoonTrack! 🙏\n"
+            f"Untuk mengaktifkan Career Page profesional kamu, cukup berikan dukungan mulai dari Rp{base_amt:,}.\n\n"
+            f"Agar sistem bisa mengenali pembayaranmu secara otomatis, tidak perlu kirim bukti transfer.\n\n"
+            f"👉 <b>Transfer tepat: <code>Rp{total_amt:,}</code></b>\n"
+            f"<i>(Rp{base_amt:,} dukungan + kode verifikasi Rp{unique_code})</i>\n\n"
+            f"📌 <b>Cara bayar:</b>\n"
+            f"1. Scan QRIS di atas\n"
+            f"2. Masukkan nominal <b>Rp{total_amt:,}</b>\n"
+            f"3. Selesaikan pembayaran\n\n"
+            f"🤖 <i>Setelah pembayaran terdeteksi, sistem akan otomatis memproses aktivasi Career Page kamu.</i>\n"
+            f"✨ <i>Tidak perlu kirim screenshot/bukti transfer. Tinggal tunggu konfirmasi dari BoonTrack.</i>"
         )
         
         possible_qris_paths = [QRIS_IMAGE_PATH, "/app/qris.jpg", "qris.jpg"]
@@ -1165,7 +1109,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         await bot.send_message(
             user_id,
             f"Siap, {user_name}! Akses pembuatan Career Page kamu sudah tersimpan aman.\n"
-            f"Kapan saja kamu siap melengkapi datanya, tinggal klik menu <b>'🌐 Kelola / Edit Career Page Saya'</b> di Menu Utama! 👍",
+            f"Kapan saja kamu siap melengkapi datanya, tinggal klik menu <b>'🌐 Kelola Career Page Saya'</b> di Menu Utama! 👍",
             reply_markup=kbd,
             parse_mode="HTML"
         )
@@ -1304,7 +1248,9 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         )
         await bot.send_message(user_id, ref_msg, reply_markup=kbd, parse_mode="HTML")
 
+    # MODUS TANYA SEPUTAR DUNIA KERJA (LOCK CAREER COMPANION STATE)
     elif code == "home_career_qa":
+        user_state[user_id]["step"] = "CAREER_QA"
         qa_msg = (
             "💬 <b>Tanya Seputar Dunia Kerja</b>\n\n"
             "Kamu bisa tanyakan apa saja tentang persiapan kerja, tips interview, negosiasi gaji, atau kualifikasi posisi impianmu.\n\n"
@@ -1465,7 +1411,40 @@ async def handle_message(message: types.Message):
     user_data = user_state[user_id].get("data", {})
     slug = get_user_slug(user_data, message.from_user.first_name)
 
-    # --- 1. EDIT SLUG / SUBDOMAIN WEBSITE ---
+    # --- 1. CLOSING INTENT INTERCEPTION (ELEGAN, POLITE & NO SPAM MENU) ---
+    if any(word in text.lower() for word in CLOSING_WORDS):
+        if isinstance(current_step, int) and current_step > 0:
+            await save_dropoff(user_id, current_step, user_data)
+        
+        user_state[user_id]["step"] = 0
+        closing_replies = [
+            "Siap! Kapan pun kamu mau lanjut atau diskusi lagi, tinggal chat aku di sini ya. Semoga urusanmu lancar hari ini! 🚀",
+            "Sama-sama! Semoga CV dan saran karirnya membantu. Semangat terus ya! 😊",
+            "Sip, terima kasih kembali! Sukres terus untuk persiapan karirmu! 👍"
+        ]
+        await message.reply(random.choice(closing_replies), parse_mode="HTML")
+        return
+
+    # --- 2. CAREER COMPANION OBROLAN MODE (MODE 2 — NO SPAMMY MENU) ---
+    if current_step == 0 or current_step == "CAREER_QA":
+        await track_event(user_id, "career_ai_query", meta={"query": text})
+        
+        # Kirim sinyal typing
+        await bot.send_chat_action(chat_id=user_id, action="typing")
+        
+        ai_reply = await asyncio.to_thread(ai_career_chat_response, text, user_data)
+        
+        # UI/UX RINGKAS 2 TOMBOL
+        kbd_chat = InlineKeyboardMarkup(row_width=2)
+        kbd_chat.add(
+            InlineKeyboardButton("💬 Tanya Lagi", callback_data="home_career_qa"),
+            InlineKeyboardButton("🔙 Menu Utama", callback_data="home_back_main")
+        )
+        
+        await message.reply(ai_reply, reply_markup=kbd_chat, parse_mode="HTML")
+        return
+
+    # --- 3. EDIT SLUG / SUBDOMAIN WEBSITE ---
     if current_step == "CP_EDIT_SLUG":
         clean_slug = re.sub(r'[^a-z0-9-]', '', text.lower())
         if not clean_slug:
@@ -1490,7 +1469,7 @@ async def handle_message(message: types.Message):
         )
         return
 
-    # --- 2. EDIT POSISI ---
+    # --- 4. EDIT POSISI ---
     if current_step == "CP_EDIT_POSISI":
         user_data["target_position"] = text
         user_state[user_id]["step"] = 0
@@ -1510,7 +1489,7 @@ async def handle_message(message: types.Message):
         )
         return
 
-    # --- 3. EDIT RINGKASAN/BIO ---
+    # --- 5. EDIT RINGKASAN/BIO ---
     if current_step == "CP_EDIT_SUMMARY":
         user_data["ringkasan_web"] = text
         user_state[user_id]["step"] = 0
@@ -1530,7 +1509,7 @@ async def handle_message(message: types.Message):
         )
         return
 
-    # --- 4. EDIT PENGALAMAN ---
+    # --- 6. EDIT PENGALAMAN ---
     if current_step == "CP_EDIT_EXP":
         user_data["pengalaman_web"] = text
         user_state[user_id]["step"] = 0
@@ -1550,7 +1529,7 @@ async def handle_message(message: types.Message):
         )
         return
 
-    # --- 5. EDIT SKILLS ---
+    # --- 7. EDIT SKILLS ---
     if current_step == "CP_EDIT_SKILLS":
         user_data["keahlian_web"] = text
         user_state[user_id]["step"] = 0
@@ -1570,7 +1549,7 @@ async def handle_message(message: types.Message):
         )
         return
 
-    # --- 6. EDIT RESUME LINK ---
+    # --- 8. EDIT RESUME LINK ---
     if current_step == "CP_EDIT_RESUME":
         if text.strip() == "-" or text.lower() == "kosong":
             user_data["resume_url"] = ""
@@ -1596,21 +1575,7 @@ async def handle_message(message: types.Message):
         )
         return
 
-    # --- 7. ONBOARDING & CHAT AI CAREER ---
-    if current_step == 0:
-        await track_event(user_id, "career_ai_query", meta={"query": text})
-        ai_reply = await asyncio.to_thread(ai_career_chat_response, text, user_data)
-        kbd = await get_career_home_keyboard(user_id)
-        
-        await message.reply(
-            f"{ai_reply}\n\n"
-            f"🎁 <b>Kalau kamu mau lanjut, ada beberapa pilihan yang mungkin berguna buat kariermu:</b>\n"
-            f"👇 <i>Pilih yang ingin kamu lihat:</i>",
-            reply_markup=kbd,
-            parse_mode="HTML"
-        )
-        return
-
+    # --- 9. ONBOARDING & LANGUAGE SELECT ---
     if current_step == "ONBOARDING_NAMA":
         user_data["nama_panggilan"] = text
         user_state[user_id]["step"] = "ONBOARDING_STATUS"
@@ -1630,44 +1595,6 @@ async def handle_message(message: types.Message):
         user_state[user_id]["step"] = "SELECT_LANGUAGE"
         await save_dropoff(user_id, 0, user_data)
         
-        prompt_insight = f"""
-        Pengguna melamar posisi: "{text}".
-        
-        Tugasmu:
-        1. Jelaskan secara singkat peran/tugas utama dari posisi "{text}".
-        2. Tuliskan 2-3 kualifikasi, karakter, atau kemampuan spesifik yang PALING DISUKAI dan dinilai oleh recruiter untuk posisi ini (misal: ketelitian, kerapian, komunikasi, kejujuran, atau keahlian teknis tertentu).
-        
-        Aturan Penulisan:
-        - Tulis dalam 1-2 kalimat yang ringkas dan menyatu.
-        - Maksimal 30 kata.
-        - Gunakan Bahasa Indonesia ramah dan profesional.
-        - DILARANG menggunakan bullet point atau tanda bintang (*).
-        - DILARANG membahas posisi selain "{text}".
-        """
-
-        insight_text = ""
-
-        if ai_client:
-            try:
-                res = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt_insight)
-                if res and res.text:
-                    insight_text = res.text.strip()
-            except Exception as e:
-                print(f"[Fallback Alert] Gemini Error on Insight: {e}")
-
-        if not insight_text and GROQ_API_KEY:
-            try:
-                headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-                payload = {"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt_insight}], "temperature": 0.3}
-                res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=3)
-                if res.status_code == 200:
-                    insight_text = res.json()['choices'][0]['message']['content'].strip()
-            except Exception as e:
-                print(f"[Fallback Alert] Groq Error on Insight: {e}")
-
-        if not insight_text:
-            insight_text = f"Untuk posisi {text}, recruiter biasanya sangat menghargai kedisiplinan, kerapian, serta tanggung jawab kerja yang baik."
-
         kbd_lang = InlineKeyboardMarkup(row_width=1)
         kbd_lang.add(
             InlineKeyboardButton("🌐 CV English (Ngobrol B. Indonesia)", callback_data="lang_hybrid"),
@@ -1677,8 +1604,7 @@ async def handle_message(message: types.Message):
         
         msg_insight = (
             f"Oke, <b>{text}</b> 👍\n\n"
-            f"💡 <b>Sedikit insight untuk kamu:</b>\n{insight_text}\n\n"
-            "Nah, berdasarkan itu saya bisa bantu susun CV yang menonjolkan keahlian tersebut.\n\n"
+            "Berdasarkan posisi tersebut, kita akan susun CV yang menonjolkan kualifikasi yang paling dinilai rekruter.\n\n"
             "Sebelum kita lanjut, CV kamu ingin dibuat dalam bahasa apa?"
         )
         await message.reply(msg_insight, reply_markup=kbd_lang, parse_mode="HTML")
@@ -1688,7 +1614,7 @@ async def handle_message(message: types.Message):
         await message.reply("Silakan <b>pilih salah satu bahasa di atas</b> ya 👆", parse_mode="HTML")
         return
 
-    # --- 8. LANGKAH PENGISIAN CV (ANGKA) ---
+    # --- 10. TASK MODE: PENGISIAN CV LANGKAH BERTAHAP (1-9) ---
     if isinstance(current_step, int) and current_step > 0:
         target_lang = user_data.get("target_lang", "ID")
         status_kerja = user_data.get("status_kerja", "Berpengalaman")
