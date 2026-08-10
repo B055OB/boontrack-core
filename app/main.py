@@ -702,6 +702,7 @@ def get_career_home_keyboard():
     kbd = InlineKeyboardMarkup(row_width=1)
     kbd.add(
         InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"),
+        InlineKeyboardButton("🌐 Kelola / Edit Career Page Saya", callback_data="cp_manage"),
         InlineKeyboardButton("📚 Ebook & Program Digital", callback_data="home_digital_products"),
         InlineKeyboardButton("🎁 Cek Referral Saya", callback_data="home_check_ref"),
         InlineKeyboardButton("💼 Tanya Seputar Dunia Kerja", callback_data="home_career_qa")
@@ -856,7 +857,8 @@ async def send_welcome(message: types.Message):
     "skip_optional", "resume_flow", "restart_flow",
     "home_create_cv", "home_check_ref", "home_career_qa",
     "home_digital_products", "buy_test_cv_template", "buy_ebook_interview", "home_back_main",
-    "don_5000", "don_10000", "don_25000"
+    "don_5000", "don_10000", "don_25000",
+    "cp_build_now", "cp_build_later", "cp_manage", "cp_upload_photo", "cp_choose_theme", "cp_deploy_live"
 ])
 async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
@@ -892,6 +894,64 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             await bot.send_photo(chat_id=user_id, photo=InputFile(found_qris), caption=don_msg, parse_mode="HTML")
         else:
             await bot.send_message(user_id, don_msg, parse_mode="HTML")
+
+    elif code in ["cp_build_now", "cp_manage"]:
+        pos = user_data.get("target_position", "Profesional")
+        email = user_data.get("2", "Belum Diisi")
+        exp = user_data.get("3", "Belum Diisi")
+        
+        kbd_setup = InlineKeyboardMarkup(row_width=1)
+        kbd_setup.add(
+            InlineKeyboardButton("📸 Upload / Ganti Foto Profil", callback_data="cp_upload_photo"),
+            InlineKeyboardButton("🎨 Pilih Tema Warna Website", callback_data="cp_choose_theme"),
+            InlineKeyboardButton("⚡ Gunakan Data CV (Langsung Terbitkan)", callback_data="cp_deploy_live"),
+            InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="home_back_main")
+        )
+        
+        summary_msg = (
+            f"🔍 <b>Konfirmasi Data Career Page Kamu:</b>\n\n"
+            f"• <b>Nama:</b> {user_name}\n"
+            f"• <b>Posisi Target:</b> {pos}\n"
+            f"• <b>Email:</b> {email}\n"
+            f"• <b>Pengalaman:</b> {exp}\n"
+            f"• <b>Foto Profil:</b> <i>(Belum Ada)</i>\n"
+            f"• <b>Tema Warna:</b> <i>Modern Blue (Default)</i>\n\n"
+            f"💡 <i>Lengkapi dulu Foto Profil & Tema Warna di bawah agar websitemu makin keren!</i>"
+        )
+        await bot.send_message(user_id, summary_msg, reply_markup=kbd_setup, parse_mode="HTML")
+
+    elif code == "cp_build_later":
+        await bot.send_message(
+            user_id,
+            f"Siap, {user_name}! Akses pembuatan Career Page kamu sudah tersimpan aman.\n"
+            f"Kapan saja kamu siap melengkapi datanya, tinggal klik menu <b>'🌐 Kelola / Edit Career Page Saya'</b> di Menu Utama! 👍",
+            reply_markup=get_career_home_keyboard(),
+            parse_mode="HTML"
+        )
+
+    elif code == "cp_upload_photo":
+        await bot.send_message(user_id, "📸 <b>Kirimkan foto profil terbaikmu ke chat ini ya!</b>\n<i>(Disarankan foto formal/semi-formal setengah badan)</i>", parse_mode="HTML")
+
+    elif code == "cp_choose_theme":
+        kbd_theme = InlineKeyboardMarkup(row_width=2)
+        kbd_theme.add(
+            InlineKeyboardButton("💙 Modern Blue", callback_data="theme_blue"),
+            InlineKeyboardButton("🖤 Dark Minimalist", callback_data="theme_dark"),
+            InlineKeyboardButton("💚 Emerald Green", callback_data="theme_emerald"),
+            InlineKeyboardButton("💜 Elegant Purple", callback_data="theme_purple")
+        )
+        await bot.send_message(user_id, "🎨 <b>Pilih tema warna favoritmu untuk Career Page:</b>", reply_markup=kbd_theme, parse_mode="HTML")
+
+    elif code == "cp_deploy_live":
+        slug = user_name.lower().replace(" ", "")
+        await bot.send_message(
+            user_id,
+            f"🎉 <b>SELAMAT! Career Page Kamu Resmi Aktif!</b>\n\n"
+            f"👉 <i>Akses di:</i> https://{slug}.cv.boontrack.com\n\n"
+            f"Sudah bisa kamu cantumkan di bio LinkedIn/WhatsApp kamu sekarang! 🚀",
+            reply_markup=get_career_home_keyboard(),
+            parse_mode="HTML"
+        )
 
     elif code == "home_digital_products":
         kbd_products = InlineKeyboardMarkup(row_width=1)
@@ -1310,14 +1370,20 @@ async def dana_webhook_handler(request):
 
                 donor_id = donation["telegram_id"]
                 
+                kbd_cp_choice = InlineKeyboardMarkup(row_width=1)
+                kbd_cp_choice.add(
+                    InlineKeyboardButton("✍️ Lengkapi Data & Foto Website", callback_data="cp_build_now"),
+                    InlineKeyboardButton("⏳ Nanti Saja (Kembali ke Menu Utama)", callback_data="cp_build_later")
+                )
+                
                 don_thanks = (
                     f"🎉 <b>PEMBAYARAN CAREER PAGE TERKONFIRMASI!</b>\n\n"
-                    f"Terima kasih banyak atas dukunganmu sebesar <b>Rp{incoming_amount:,}</b>! 🙏\n\n"
-                    f"🌐 <b>Website Career Page kamu sedang dalam proses aktivasi.</b>\n"
-                    f"Tim kami sedang menyiapkan domain personal milikmu. Kamu akan menerima notifikasi dan link websitemu begitu siap digunakan untuk melamar kerja! 🚀\n\n"
-                    f"Sukses terus untuk kariermu ya! ❤️"
+                    f"Terima kasih banyak atas dukunganmu sebesar <b>Rp{incoming_amount:,}</b>! Kebaikanmu secara otomatis ikut menjaga project BoonTrack agar tetap gratis bagi seluruh pencari kerja. 🙏\n\n"
+                    f"🌐 <b>Akses Website Career Page Personal Kamu Resmi Aktif!</b>\n"
+                    f"Tanpa pusing biaya domain, server, dan kodingan—semua fasilitas ini <b>100% siap kamu gunakan seumur hidup</b>.\n\n"
+                    f"💬 <i>Nah, agar websitemu tampil estetik dan profesional di mata rekruter, yuk kita lengkapi dulu data dan tampilannya sekarang!</i>"
                 )
-                await bot.send_message(chat_id=donor_id, text=don_thanks, parse_mode="HTML")
+                await bot.send_message(chat_id=donor_id, text=don_thanks, reply_markup=kbd_cp_choice, parse_mode="HTML")
                 return web.json_response({"status": "success_donation", "donation_id": donation["donation_id"]}, status=200)
 
         return web.json_response({"status": "no_matching_transaction"}, status=200)
