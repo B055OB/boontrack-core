@@ -177,6 +177,12 @@ def _save_dropoff_sync(user_id, step, data):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        
+        # Konversi string step onboarding ke representasi integer aman untuk DB
+        step_val = 0
+        if isinstance(step, int):
+            step_val = step
+            
         cur.execute("""
             INSERT INTO user_progress (user_id, last_step, data, updated_at)
             VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
@@ -184,7 +190,7 @@ def _save_dropoff_sync(user_id, step, data):
                 last_step = EXCLUDED.last_step,
                 data = EXCLUDED.data,
                 updated_at = CURRENT_TIMESTAMP;
-        """, (user_id, step, json.dumps(data)))
+        """, (user_id, step_val, json.dumps(data)))
         conn.commit()
         cur.close()
         conn.close()
@@ -866,7 +872,9 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     
     await bot.edit_message_reply_markup(user_id, callback_query.message.message_id, reply_markup=None)
     if user_id not in user_state:
-        user_state[user_id] = {"step": 0, "data": {}}
+        progress, _ = await get_user_history(user_id)
+        saved_data = progress.get("data", {}) if progress else {}
+        user_state[user_id] = {"step": 0, "data": saved_data}
         
     user_data = user_state[user_id].get("data", {})
     user_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "Teman")
@@ -1077,6 +1085,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     elif code in ["status_fresh", "status_exp"]:
         user_data["status_kerja"] = "Fresh Graduate" if code == "status_fresh" else "Berpengalaman"
         user_state[user_id]["step"] = "ONBOARDING_POSISI"
+        await save_dropoff(user_id, 0, user_data)
         
         if code == "status_fresh":
             reassurance = (
@@ -1209,6 +1218,7 @@ async def handle_message(message: types.Message):
     if current_step == "ONBOARDING_NAMA":
         user_data["nama_panggilan"] = text
         user_state[user_id]["step"] = "ONBOARDING_STATUS"
+        await save_dropoff(user_id, 0, user_data)
         
         kbd_status = InlineKeyboardMarkup(row_width=1)
         kbd_status.add(
@@ -1222,6 +1232,7 @@ async def handle_message(message: types.Message):
     if current_step == "ONBOARDING_POSISI":
         user_data["target_position"] = text
         user_state[user_id]["step"] = "SELECT_LANGUAGE"
+        await save_dropoff(user_id, 0, user_data)
         
         prompt_insight = f"""
         Pengguna melamar posisi: "{text}".
