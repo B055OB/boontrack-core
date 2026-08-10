@@ -933,7 +933,7 @@ async def send_welcome(message: types.Message):
     "status_fresh", "status_exp", "lang_id", "lang_en", "lang_hybrid", 
     "skip_optional", "resume_flow", "restart_flow",
     "home_create_cv", "home_check_ref", "home_career_qa",
-    "home_digital_products", "buy_test_cv_template", "buy_ebook_interview", "home_back_main",
+    "home_digital_products", "buy_ebook_interview", "home_back_main",
     "don_5000", "don_10000", "don_25000",
     "cp_build_now", "cp_build_later", "cp_manage", "cp_upload_photo", "cp_choose_theme", 
     "cp_edit_data", "cp_import_cv", "cp_confirm_import", "cp_deploy_live",
@@ -1116,49 +1116,19 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     elif code == "home_digital_products":
         kbd_products = InlineKeyboardMarkup(row_width=1)
         kbd_products.add(
-            InlineKeyboardButton("📄 Template CV ATS-Friendly (Rp1.000 - Tes Live)", callback_data="buy_test_cv_template"),
             InlineKeyboardButton("📘 Ebook Panduan Lolos Interview & Gaji (Rp49.000)", callback_data="buy_ebook_interview"),
             InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="home_back_main")
         )
         msg_catalog = (
             "🚀 <b>PROGRAM & PRODUK DIGITAL KARIR</b>\n\n"
             "Tingkatkan peluang dipanggil dan lolos kerja dengan panduan eksklusif dari BoonTrack:\n\n"
-            "📄 <b>Template CV Profesional ATS-Friendly (Mode Tes Live)</b>\n"
-            "• Template Word (.docx) siap pakai yang lolos scan HRIS\n"
-            "• <i>Produk khusus pengujian live transfer Rp1.000!</i>\n\n"
             "📖 <b>Ebook Panduan Lolos Interview & Negosiasi Gaji</b>\n"
             "• Rangkuman pertanyaan jebakan HR + cara jawabnya\n"
             "• Template surat lamaran & email melamar kerja\n"
             "• Strategi negosiasi gaji untuk Fresh Graduate & Exp\n\n"
-            "👇 <i>Pilih produk di bawah untuk membeli secara otomatis:</i>"
+            "👇 <i>Klik tombol di bawah untuk membeli secara otomatis:</i>"
         )
         await bot.send_message(user_id, msg_catalog, reply_markup=kbd_products, parse_mode="HTML")
-
-    elif code == "buy_test_cv_template":
-        base_price = 1000
-        unique_code = random.randint(100, 500)
-        total_amount = base_price + unique_code
-        
-        await create_order(user_id, "Template CV ATS (Tes)", base_price, unique_code, total_amount)
-        
-        msg_checkout = (
-            f"🛒 <b>CHECKOUT TEST: Template CV ATS-Friendly</b>\n\n"
-            f"💵 Harga Normal: <s>Rp25.000</s>\n"
-            f"🎉 <b>Total Transfer (Mode Tes Live Rp1.xxx):</b>\n"
-            f"<code>{total_amount}</code> 👈 <i>(Tekan/salin angka ini)</i>\n\n"
-            f"👇 <b>Cara Pembayaran Tes:</b>\n"
-            f"1. Scan QRIS di atas atau transfer via DANA Bisnis.\n"
-            f"2. Masukkan nominal <b>PRESISI <code>{total_amount}</code></b> (sampai 3 digit terakhir).\n"
-            f"3. Dalam 1-3 detik setelah transfer, file Template CV otomatis terkirim di sini! 🚀\n\n"
-            f"⏳ <i>Berlaku selama 15 menit.</i>"
-        )
-        
-        possible_qris_paths = [QRIS_IMAGE_PATH, "/app/qris.jpg", "qris.jpg"]
-        found_qris = next((p for p in possible_qris_paths if os.path.exists(p)), None)
-        if found_qris:
-            await bot.send_photo(chat_id=user_id, photo=InputFile(found_qris), caption=msg_checkout, parse_mode="HTML")
-        else:
-            await bot.send_message(user_id, msg_checkout, parse_mode="HTML")
 
     elif code == "buy_ebook_interview":
         base_price = 50000
