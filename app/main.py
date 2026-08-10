@@ -1393,6 +1393,7 @@ async def handle_message(message: types.Message):
     user_name = user_data.get("nama_panggilan", message.from_user.first_name or "Teman")
     slug = user_name.lower().replace(" ", "")
 
+    # --- 1. PRIORITAS UTAMA: EDIT POSISI CAREER PAGE ---
     if current_step == "CP_EDIT_POSISI":
         user_data["target_position"] = text
         user_state[user_id]["step"] = 0
@@ -1413,6 +1414,7 @@ async def handle_message(message: types.Message):
         )
         return
 
+    # --- 2. PRIORITAS UTAMA: EDIT RESUME PDF CAREER PAGE ---
     if current_step == "CP_EDIT_RESUME":
         if text.strip() == "-" or text.lower() == "kosong":
             user_data["resume_url"] = ""
@@ -1439,6 +1441,7 @@ async def handle_message(message: types.Message):
         )
         return
 
+    # --- 3. ONBOARDING & CHAT AI CAREER ---
     if current_step == 0:
         await track_event(user_id, "career_ai_query", meta={"query": text})
         ai_reply = await asyncio.to_thread(ai_career_chat_response, text, user_data)
@@ -1530,6 +1533,7 @@ async def handle_message(message: types.Message):
         await message.reply("Silakan <b>pilih salah satu bahasa di atas</b> ya 👆", parse_mode="HTML")
         return
 
+    # --- 4. LANGKAH PENGISIAN CV (ANGKA) ---
     if isinstance(current_step, int) and current_step > 0:
         target_lang = user_data.get("target_lang", "ID")
         status_kerja = user_data.get("status_kerja", "Berpengalaman")
