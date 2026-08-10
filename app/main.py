@@ -847,14 +847,14 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
             )
             monetize_text = (
                 f"🌐 <b>Website Career Page Kamu Sudah Aktif!</b>\n\n"
-                f"👉 <i>Link Website Live:</i> https://{user_slug}.cv.boontrack.com\n\n"
+                f"👉 <i>Link Website Live:</i> https://{user_slug}.boontrack.com\n\n"
                 f"Akses kelola website kamu sudah aktif seumur hidup. Kamu bisa memperbarui foto, posisi, atau mengimpor data CV terbaru kapan saja melalui menu di bawah ini! 🚀"
             )
             await bot.send_message(user_id, monetize_text, reply_markup=kbd_paid, parse_mode="HTML")
         else:
             monetize_text = (
                 f"🌐 <b>Ingin Punya Website Career Page Personal Seperti Ini?</b>\n"
-                f"👉 <i>Lihat Contoh Live:</i> https://rayigemilang.cv.boontrack.com\n\n"
+                f"👉 <i>Lihat Contoh Live:</i> https://rayigemilang.boontrack.com\n\n"
                 f"Dengan website ini, rekruter cukup klik link di bio LinkedIn/WA kamu untuk melihat profil, pengalaman, dan portofolio interaktifmu secara profesional!\n\n"
                 f"☕ <b>Cara Mengaktifkan Career Page Kamu:</b>\n"
                 f"1. <b>Traktir Kopi Rp10.000</b> untuk dukung biaya server BoonTrack.\n"
@@ -1074,14 +1074,14 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         await update_cloudflare_kv(slug, user_data)
         kbd_done = InlineKeyboardMarkup(row_width=1)
         kbd_done.add(
-            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.cv.boontrack.com"),
+            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
             InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
         )
         await bot.send_message(
             user_id,
             f"✅ <b>Data CV Berhasil Diimpor & Disinkronkan!</b>\n\n"
             f"Tampilan web kamu sudah terbarui secara realtime di:\n"
-            f"👉 https://{slug}.cv.boontrack.com",
+            f"👉 https://{slug}.boontrack.com",
             reply_markup=kbd_done,
             parse_mode="HTML"
         )
@@ -1127,7 +1127,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             user_id,
             f"🎨 <b>Tema berhasil diubah ke {selected_theme.capitalize()}!</b>\n\n"
             f"Cek perubahannya secara langsung di:\n"
-            f"👉 https://{slug}.cv.boontrack.com",
+            f"👉 https://{slug}.boontrack.com",
             parse_mode="HTML"
         )
 
@@ -1137,7 +1137,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         if is_success:
             msg = (
                 f"🎉 <b>SELAMAT! Website Career Page Kamu Resmi Aktif!</b>\n\n"
-                f"👉 <b>Link Web Live:</b> https://{slug}.cv.boontrack.com\n\n"
+                f"👉 <b>Link Web Live:</b> https://{slug}.boontrack.com\n\n"
                 f"Website ini sudah siap kamu pajang di bio LinkedIn atau WhatsApp kamu! 🚀"
             )
         else:
@@ -1224,7 +1224,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             "🎁 <b>REFERRAL & BONUS PORTFOLIO WEBSITE</b>\n\n"
             f"📊 <b>Progress Referral Kamu: {total_refs} / {REQUIRED_REFERRALS}</b>\n\n"
             f"Ajak {REQUIRED_REFERRALS} temanmu membuat CV di BoonTrack, dan kami akan buatkan **Website Portfolio Personal Gratis**!\n"
-            "<i>Contoh Live:</i> https://rayigemilang.cv.boontrack.com\n\n"
+            "<i>Contoh Live:</i> https://rayigemilang.boontrack.com\n\n"
             f"👇 Bagikan link referral-mu ke teman:\n"
             f"<code>{user_ref_link}</code>"
         )
@@ -1359,12 +1359,12 @@ async def handle_photo(message: types.Message):
         
         kbd_done = InlineKeyboardMarkup(row_width=1)
         kbd_done.add(
-            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.cv.boontrack.com"),
+            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
             InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
         )
         await message.reply(
             "📸 <b>Foto profil berhasil diupload & diperbarui di website!</b>\n\n"
-            f"👉 <i>Cek hasilnya di:</i> https://{slug}.cv.boontrack.com",
+            f"👉 <i>Cek hasilnya di:</i> https://{slug}.boontrack.com",
             reply_markup=kbd_done,
             parse_mode="HTML"
         )
@@ -1403,12 +1403,12 @@ async def handle_message(message: types.Message):
         
         kbd_done = InlineKeyboardMarkup(row_width=1)
         kbd_done.add(
-            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.cv.boontrack.com"),
+            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
             InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
         )
         await message.reply(
             f"✅ <b>Posisi website berhasil diperbarui ke:</b> {text}\n\n"
-            f"👉 <i>Cek di:</i> https://{slug}.cv.boontrack.com",
+            f"👉 <i>Cek di:</i> https://{slug}.boontrack.com",
             reply_markup=kbd_done,
             parse_mode="HTML"
         )
@@ -1430,12 +1430,12 @@ async def handle_message(message: types.Message):
         
         kbd_done = InlineKeyboardMarkup(row_width=1)
         kbd_done.add(
-            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.cv.boontrack.com"),
+            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
             InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
         )
         await message.reply(
             f"✅ <b>Link Resume PDF berhasil diperbarui:</b> {status_resume}\n\n"
-            f"👉 <i>Cek di:</i> https://{slug}.cv.boontrack.com",
+            f"👉 <i>Cek di:</i> https://{slug}.boontrack.com",
             reply_markup=kbd_done,
             parse_mode="HTML"
         )
