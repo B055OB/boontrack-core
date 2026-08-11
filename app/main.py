@@ -124,14 +124,6 @@ async def handle_cv_review_process(user_id: int, target_position: str, cv_text: 
     
     return format_telegram_review_response(final_output, target_position)
 
-if __name__ == '__main__':
-    import asyncio
-    from aiohttp import web
-
-    # Menjalankan server aiohttp utama (bot telegram + webhook)
-    port = int(os.getenv("PORT", 8080))
-    web.run_app(app, host='0.0.0.0', port=port)
-
 # --- ENVIRONMENT CONFIGURATION ---
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
