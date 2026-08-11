@@ -23,8 +23,8 @@ class AnalyticsService:
             # 1. Total Users dari tabel users
             users_res = self.supabase.table("users").select("id", count="exact").execute()
             
-            # 2. CV Generated dari tabel cvs
-            cv_res = self.supabase.table("cvs").select("id", count="exact").execute()
+            # 2. CV Generated dari tabel cv_documents (sesuai nama tabel asli di Supabase)
+            cv_res = self.supabase.table("cv_documents").select("id", count="exact").execute()
             
             # 3. CV Reviewed dari tabel cv_reviews
             cv_rev_res = self.supabase.table("cv_reviews").select("id", count="exact").execute()
@@ -35,8 +35,8 @@ class AnalyticsService:
             paid_users_count = len(donation_res.data) if donation_res.data else 0
             total_rev = sum(row.get("total_amount", 0) for row in donation_res.data) if donation_res.data else 0
 
-            # 5. Career Page (Pending donations / funnel stages)
-            career_res = self.supabase.table("donation_sessions").select("id", count="exact").eq("status", "pending").execute()
+            # 5. Career Page / Proses dari user_progress atau donation_sessions pending
+            career_res = self.supabase.table("user_progress").select("id", count="exact").execute()
 
             return {
                 "total_users": users_res.count or 0,
@@ -61,8 +61,7 @@ class AnalyticsService:
 
     async def get_traffic_sources(self) -> dict:
         """
-        Mengambil breakdown traffic source (UTM) dari tabel users di Supabase,
-        menghitung total masing-masing source secara dinamis.
+        Mengambil breakdown traffic source (UTM) dari tabel users di Supabase.
         """
         if not self.supabase:
             return {}
