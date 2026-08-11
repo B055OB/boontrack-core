@@ -1798,11 +1798,14 @@ async def on_startup(dp):
     asyncio.create_task(start_web_server())
 
 if __name__ == '__main__':
+    bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+
     print("========================================")
     print("[BOOT] BoonTrack Telegram Bot STARTING")
-    print(f"[BOOT] PID: {os.getpid()}")
-    print(f"[BOOT] HOSTNAME: {os.getenv('HOSTNAME', 'unknown')}")
-    print(f"[BOOT] PORT: {os.getenv('PORT', 'unknown')}")
+    print(f"[BOOT] PID          : {os.getpid()}")
+    print(f"[BOOT] HOSTNAME     : {os.getenv('HOSTNAME', 'unknown')}")
+    print(f"[BOOT] PORT         : {os.getenv('PORT', 'unknown')}")
+    print(f"[BOOT] TOKEN STATUS : {'TERBACA OK' if bot_token else 'KOSONG / UNDEFINED'}")
     print("========================================")
 
     loop = asyncio.new_event_loop()
