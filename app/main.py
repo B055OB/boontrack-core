@@ -354,6 +354,50 @@ def _create_order_sync(telegram_id, product_name, base_price, unique_code, total
 async def create_order(telegram_id, product_name, base_price, unique_code, total_amount):
     return await asyncio.to_thread(_create_order_sync, telegram_id, product_name, base_price, unique_code, total_amount)
 
+# --- HELPER FUNCTIONS AI CV GENERATOR WITH SAFE FALLBACKS ---
+def ai_generate_summary(position, status_kerja, target_lang):
+    try:
+        if ai_client:
+            res = ai_client.models.generate_content(
+                model='gemini-2.5-flash', 
+                contents=f"Buatkan ringkasan profesional singkat untuk posisi {position}"
+            )
+            if res and res.text:
+                return res.text.strip()
+    except Exception as e:
+        print(f"[AI Summary Fallback]: {e}")
+    return f"Profesional yang berdedikasi dan berorientasi pada hasil dengan fokus pada bidang {position}. Memiliki kemampuan komunikasi yang baik serta siap memberikan kontribusi positif."
+
+def ai_translate_text(text, target_lang):
+    if not text or target_lang == "ID":
+        return text
+    try:
+        if ai_client:
+            res = ai_client.models.generate_content(
+                model='gemini-2.5-flash', 
+                contents=f"Translate this professional CV text to English: {text}"
+            )
+            if res and res.text:
+                return res.text.strip()
+    except Exception as e:
+        print(f"[AI Translate Fallback]: {e}")
+    return text
+
+def ai_rewrite_achievement(ach_raw, target_lang):
+    if not ach_raw:
+        return ""
+    try:
+        if ai_client:
+            res = ai_client.models.generate_content(
+                model='gemini-2.5-flash', 
+                contents=f"Buatkan 2-3 poin bullet achievement profesional untuk: {ach_raw}"
+            )
+            if res and res.text:
+                return res.text.strip()
+    except Exception as e:
+        print(f"[AI Achievement Fallback]: {e}")
+    return ach_raw
+
 def _match_and_complete_order_sync(amount):
     try:
         conn = get_db_connection()
