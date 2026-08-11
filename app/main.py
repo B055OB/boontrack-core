@@ -17,6 +17,10 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from google import genai
 from aiohttp import web
+
+# ==========================================
+# 1. ENGINE & DATABASE INITIALIZATION
+# ==========================================
 class CVReviewEngine:
     def __init__(self):
         pass
@@ -49,12 +53,10 @@ class CVReviewEngine:
         except Exception:
             return {"status": "fallback", "metrics": {"cv_quality": 70, "job_match": 70, "evidence_strength": 70}, "recommendations": [{"impact": "Tinggi", "area": "System Note", "action": "Sistem menggunakan kalkulasi standar. Harap periksa kembali format CV."}], "overall_score": 70}
 
-# Inisialisasi engine secara global
 cv_engine = CVReviewEngine()
-
 load_dotenv()
 
-# --- CONFIGURATION ---
+# --- ENVIRONMENT CONFIGURATION ---
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 POSTGRES_DB = os.getenv("POSTGRES_DB")
@@ -65,46 +67,24 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
-
-def call_github_models(prompt: str) -> str:
-    if not GITHUB_TOKEN:
-        return None
-    try:
-        url = "https://models.inference.ai.azure.com/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {GITHUB_TOKEN}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "messages": [{"role": "user", "content": prompt}],
-            "model": "gpt-4o-mini",
-            "temperature": 0.5,
-            "max_tokens": 150
-        }
-        res = requests.post(url, json=payload, headers=headers, timeout=4)
-        if res.status_code == 200:
-            return res.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        print(f"[GitHub Models Error]: {e}")
-    return None
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 QRIS_IMAGE_PATH = "assets/qris.jpg"
+
+# File ID Telegram Ebook untuk Direct Document Delivery
+EBOOK_FILE_ID = os.getenv("EBOOK_FILE_ID", "YOUR_TELEGRAM_EBOOK_FILE_ID")
 
 CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
 CLOUDFLARE_KV_NAMESPACE_ID = os.getenv("CLOUDFLARE_KV_NAMESPACE_ID", "")
 CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "")
 
 ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
 user_state = {}
-
 TOTAL_STEPS = 9
 REQUIRED_REFERRALS = 5
 
-# LIST FRASA CLOSING / PENUTUP PERCAKAPAN
 CLOSING_WORDS = [
     "lanjut lagi", "nanti lanjut", "ntar lanjut", "okey", "oke deh", "okedeh",
     "bye", "dada", "dadah", "sampai jumpa", "sampe jumpa", "udah dulu", "udah ya",
@@ -138,7 +118,6 @@ def _init_db_sync():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
-    
     cur.execute("""
         CREATE TABLE IF NOT EXISTS analytics (
             id SERIAL PRIMARY KEY,
@@ -148,7 +127,6 @@ def _init_db_sync():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS cv_documents (
             id SERIAL PRIMARY KEY,
@@ -159,7 +137,6 @@ def _init_db_sync():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_progress (
             user_id BIGINT PRIMARY KEY,
@@ -168,7 +145,6 @@ def _init_db_sync():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS product_orders (
             id SERIAL PRIMARY KEY,
@@ -183,7 +159,6 @@ def _init_db_sync():
             expires_at TIMESTAMP
         );
     """)
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS donation_sessions (
             id SERIAL PRIMARY KEY,
@@ -197,7 +172,6 @@ def _init_db_sync():
             expires_at TIMESTAMP
         );
     """)
-    
     conn.commit()
     cur.close()
     conn.close()
@@ -245,11 +219,7 @@ def _save_dropoff_sync(user_id, step, data):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        
-        step_val = 0
-        if isinstance(step, int):
-            step_val = step
-            
+        step_val = step if isinstance(step, int) else 0
         cur.execute("""
             INSERT INTO user_progress (user_id, last_step, data, updated_at)
             VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
@@ -271,13 +241,10 @@ def _get_user_history_sync(user_id):
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        
         cur.execute("SELECT last_step, data FROM user_progress WHERE user_id = %s", (user_id,))
         progress = cur.fetchone()
-        
         cur.execute("SELECT version, position, data, created_at FROM cv_documents WHERE user_id = %s ORDER BY id DESC LIMIT 1", (user_id,))
         last_cv = cur.fetchone()
-        
         cur.close()
         conn.close()
         return progress, last_cv
@@ -295,7 +262,6 @@ def _save_cv_version_sync(user_id, position, data):
         cur.execute("SELECT COUNT(*) FROM cv_documents WHERE user_id = %s", (user_id,))
         count = cur.fetchone()[0]
         version = count + 1
-        
         cur.execute("""
             INSERT INTO cv_documents (user_id, version, position, data)
             VALUES (%s, %s, %s, %s)
@@ -348,13 +314,34 @@ def _check_user_paid_sync(user_id):
 async def check_user_paid(user_id):
     return await asyncio.to_thread(_check_user_paid_sync, user_id)
 
+# --- REVISI: CHECK SLUG AVAILABILITY IN DATABASE ---
+def _check_slug_available_sync(slug, user_id):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT user_id, data FROM user_progress WHERE user_id != %s", (user_id,))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        for r_id, r_data in rows:
+            if isinstance(r_data, dict):
+                custom = r_data.get("custom_slug", "").strip().lower()
+                if custom == slug:
+                    return False
+        return True
+    except Exception as e:
+        print(f"Check Slug Error: {e}")
+        return True
+
+async def check_slug_available(slug, user_id):
+    return await asyncio.to_thread(_check_slug_available_sync, slug, user_id)
+
 def _create_order_sync(telegram_id, product_name, base_price, unique_code, total_amount):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         order_id = f"ORD-{int(datetime.now().timestamp())}"
         expires_at = datetime.now() + timedelta(minutes=15)
-        
         cur.execute("""
             INSERT INTO product_orders (order_id, telegram_id, product_name, base_price, unique_code, total_amount, expires_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -364,7 +351,6 @@ def _create_order_sync(telegram_id, product_name, base_price, unique_code, total
                 expires_at = EXCLUDED.expires_at,
                 status = 'PENDING';
         """, (order_id, telegram_id, product_name, base_price, unique_code, total_amount, expires_at))
-        
         conn.commit()
         cur.close()
         conn.close()
@@ -375,6 +361,78 @@ def _create_order_sync(telegram_id, product_name, base_price, unique_code, total
 
 async def create_order(telegram_id, product_name, base_price, unique_code, total_amount):
     return await asyncio.to_thread(_create_order_sync, telegram_id, product_name, base_price, unique_code, total_amount)
+
+def _match_and_complete_order_sync(amount):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT * FROM product_orders 
+            WHERE total_amount = %s AND expires_at > CURRENT_TIMESTAMP
+            LIMIT 1;
+        """, (amount,))
+        order = cur.fetchone()
+        if order and order.get("status") == "PENDING":
+            cur.execute("UPDATE product_orders SET status = 'PAID' WHERE id = %s;", (order["id"],))
+            conn.commit()
+        cur.close()
+        conn.close()
+        return order
+    except Exception as e:
+        print(f"Match Order Error: {e}")
+        return None
+
+async def match_and_complete_order(amount):
+    return await asyncio.to_thread(_match_and_complete_order_sync, amount)
+
+def _create_donation_session_sync(telegram_id, base_amount, unique_code, total_amount):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        donation_id = f"DON-{int(datetime.now().timestamp())}"
+        expires_at = datetime.now() + timedelta(minutes=15)
+        cur.execute("""
+            INSERT INTO donation_sessions (donation_id, telegram_id, base_amount, unique_code, total_amount, expires_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (total_amount) DO UPDATE SET
+                telegram_id = EXCLUDED.telegram_id,
+                base_amount = EXCLUDED.base_amount,
+                expires_at = EXCLUDED.expires_at,
+                status = 'PENDING';
+        """, (donation_id, telegram_id, base_amount, unique_code, total_amount, expires_at))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return donation_id
+    except Exception as e:
+        print(f"Create Donation Error: {e}")
+        return None
+
+async def create_donation_session(telegram_id, base_amount, unique_code, total_amount):
+    return await asyncio.to_thread(_create_donation_session_sync, telegram_id, base_amount, unique_code, total_amount)
+
+def _match_and_complete_donation_sync(amount):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT * FROM donation_sessions 
+            WHERE total_amount = %s AND expires_at > CURRENT_TIMESTAMP
+            LIMIT 1;
+        """, (amount,))
+        donation = cur.fetchone()
+        if donation and donation.get("status") == "PENDING":
+            cur.execute("UPDATE donation_sessions SET status = 'VERIFIED' WHERE id = %s;", (donation["id"],))
+            conn.commit()
+        cur.close()
+        conn.close()
+        return donation
+    except Exception as e:
+        print(f"Match Donation Error: {e}")
+        return None
+
+async def match_and_complete_donation(amount):
+    return await asyncio.to_thread(_match_and_complete_donation_sync, amount)
 
 # --- HELPER FUNCTIONS AI CV GENERATOR WITH SAFE FALLBACKS ---
 def ai_generate_summary(position, status_kerja, target_lang):
@@ -420,91 +478,10 @@ def ai_rewrite_achievement(ach_raw, target_lang):
         print(f"[AI Achievement Fallback]: {e}")
     return ach_raw
 
-def _match_and_complete_order_sync(amount):
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        cur.execute("""
-            SELECT * FROM product_orders 
-            WHERE total_amount = %s AND expires_at > CURRENT_TIMESTAMP
-            LIMIT 1;
-        """, (amount,))
-        order = cur.fetchone()
-        
-        if order and order.get("status") == "PENDING":
-            cur.execute("UPDATE product_orders SET status = 'PAID' WHERE id = %s;", (order["id"],))
-            conn.commit()
-            
-        cur.close()
-        conn.close()
-        return order
-    except Exception as e:
-        print(f"Match Order Error: {e}")
-        return None
-
-async def match_and_complete_order(amount):
-    return await asyncio.to_thread(_match_and_complete_order_sync, amount)
-
-def _create_donation_session_sync(telegram_id, base_amount, unique_code, total_amount):
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        donation_id = f"DON-{int(datetime.now().timestamp())}"
-        expires_at = datetime.now() + timedelta(minutes=15)
-        
-        cur.execute("""
-            INSERT INTO donation_sessions (donation_id, telegram_id, base_amount, unique_code, total_amount, expires_at)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (total_amount) DO UPDATE SET
-                telegram_id = EXCLUDED.telegram_id,
-                base_amount = EXCLUDED.base_amount,
-                expires_at = EXCLUDED.expires_at,
-                status = 'PENDING';
-        """, (donation_id, telegram_id, base_amount, unique_code, total_amount, expires_at))
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-        return donation_id
-    except Exception as e:
-        print(f"Create Donation Error: {e}")
-        return None
-
-async def create_donation_session(telegram_id, base_amount, unique_code, total_amount):
-    return await asyncio.to_thread(_create_donation_session_sync, telegram_id, base_amount, unique_code, total_amount)
-
-def _match_and_complete_donation_sync(amount):
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        cur.execute("""
-            SELECT * FROM donation_sessions 
-            WHERE total_amount = %s AND expires_at > CURRENT_TIMESTAMP
-            LIMIT 1;
-        """, (amount,))
-        donation = cur.fetchone()
-        
-        if donation and donation.get("status") == "PENDING":
-            cur.execute("UPDATE donation_sessions SET status = 'VERIFIED' WHERE id = %s;", (donation["id"],))
-            conn.commit()
-            
-        cur.close()
-        conn.close()
-        return donation
-    except Exception as e:
-        print(f"Match Donation Error: {e}")
-        return None
-
-async def match_and_complete_donation(amount):
-    return await asyncio.to_thread(_match_and_complete_donation_sync, amount)
-
 def get_user_slug(user_data, default_name):
     custom_slug = user_data.get("custom_slug", "").strip().lower()
     if custom_slug:
         return re.sub(r'[^a-z0-9-]', '', custom_slug)
-    
     raw_name = user_data.get("nama_panggilan", default_name or "user")
     clean_name = re.sub(r'[^a-z0-9]', '', str(raw_name).lower().replace(" ", ""))
     return clean_name or "user"
@@ -515,7 +492,6 @@ async def update_cloudflare_kv(slug: str, user_data: dict) -> bool:
         return False
         
     url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces/{CLOUDFLARE_KV_NAMESPACE_ID}/values/{slug.lower()}"
-    
     payload = {
         "nama": user_data.get("nama_panggilan", user_data.get("1", "Pelamar")),
         "posisi": user_data.get("target_position", "AI & Operations Workflow Optimization Specialist"),
@@ -529,12 +505,10 @@ async def update_cloudflare_kv(slug: str, user_data: dict) -> bool:
         "resume_url": user_data.get("resume_url", ""),
         "theme": user_data.get("theme", "happy")
     }
-    
     headers = {
         "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
         "Content-Type": "application/json"
     }
-    
     try:
         res = await asyncio.to_thread(requests.put, url, json=payload, headers=headers, timeout=5)
         print(f"[KV Sync Status] Status: {res.status_code} untuk slug: {slug.lower()}")
@@ -604,66 +578,41 @@ def get_question_text(step, target_lang="ID", status_kerja="Berpengalaman"):
         }
     return questions.get(step, "")
 
-# --- HIGH QUALITY DEEPSEEK CAREER COMPANION ENGINE ---
+# --- FIX: AI CAREER COMPANION (PRIORITAS UTAMA GEMINI 2.5 FLASH) ---
 def ai_career_chat_response(user_query, user_context=None):
     pos = user_context.get("target_position", "dunia kerja") if user_context else "dunia kerja"
-    status = user_context.get("status_kerja", "Pencari Kerja") if user_context else "Pencari Kerja"
     
     prompt = f"""
-    Kamu adalah BoonTrack Career Companion, konsultan karir profesional, ramah, realistis, dan solutif.
+    Kamu adalah BoonTrack Career Companion, pakar HR & konsultan karir profesional di Indonesia.
     
     Konteks Pengguna:
     - Target Posisi/Minat: {pos}
-    - Status: {status}
     
     Pertanyaan Pengguna:
     "{user_query}"
     
     TUGAS UTAMA:
-    Berikan saran karir kontekstual dan mendalam. Jangan memberikan jawaban umum/generik.
-    Hubungkan pengalaman atau situasi pengguna dengan posisi yang dituju secara konkret.
+    Jawab pertanyaan pengguna secara realistis, informatif, dan langsung pada inti pertanyaan (misal: gaji, kualifikasi, tips interview, nama-nama posisi termahal/terbaik).
+    DILARANG keras memaksa pengguna menceritakan CV jika pertanyaan bersifat umum.
     
-    Format Respon (Gunakan Bahasa Indonesia ramah & terstruktur):
-    1. Beri validasi/dukungan singkat (Contoh: "Bisa banget 👍" atau "Ini langkah yang sangat masuk akal!").
-    2. Bedah keterhubungan peran (Keahlian yang SANGAT NYAMBUNG vs Skill yang HARUS DITAMBAH dalam bentuk poin ringkas).
-    3. Hubungkan langsung ke langkah praktis penulisan CV.
-    
-    Aturan Penulisan:
-    - Panjang maksimal 120 kata.
-    - DILARANG mengulang pertanyaan pengguna.
-    - DILARANG melakukan jualan produk secara langsung.
+    ATURAN JAWABAN:
+    1. Berikan jawaban direct, spesifik, dan sebutkan contoh konkret jika ditanya posisi/gaji.
+    2. Gunakan Bahasa Indonesia yang ramah, profesional, dan ringkas (maksimal 130 kata).
     """
 
-    # 1. PRIORITY 1: DEEPSEEK / ALTERNATIVE VIA OPENROUTER
-    if OPENROUTER_API_KEY:
-        try:
-            headers = {
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": "deepseek/deepseek-r1:free",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.4
-            }
-            res = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers, timeout=6)
-            if res.status_code == 200:
-                reply = res.json()['choices'][0]['message']['content'].strip()
-                if reply:
-                    return reply
-        except Exception as e:
-            print(f"[Career AI Error] OpenRouter failed: {e}")
-
-    # 2. PRIORITY 2: GEMINI 2.5 FLASH
+    # 1. PRIORITY UTAMA: Gemini 2.5 Flash (Sangat Stabil, Cerdas, & Paham Konteks ID)
     if ai_client:
         try:
-            res = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            res = ai_client.models.generate_content(
+                model='gemini-2.5-flash', 
+                contents=prompt
+            )
             if res and res.text:
                 return res.text.strip()
         except Exception as e:
-            print(f"[Career AI Error] Gemini failed: {e}")
+            print(f"[Gemini AI Error]: {e}")
 
-    # 3. PRIORITY 3: GROQ LLAMA
+    # 2. CADANGAN 1: Groq Llama 3.1 (Super Cepat)
     if GROQ_API_KEY:
         try:
             headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
@@ -676,13 +625,47 @@ def ai_career_chat_response(user_query, user_context=None):
             if res.status_code == 200:
                 return res.json()['choices'][0]['message']['content'].strip()
         except Exception as e:
+            print(f"[Groq AI Error]: {e}")
+
+    # 3. CADANGAN 2: OpenRouter DeepSeek
+    if OPENROUTER_API_KEY:
+        try:
+            headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
+            payload = {
+                "model": "deepseek/deepseek-r1:free",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.4
+            }
+            res = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers, timeout=5)
+            if res.status_code == 200:
+                reply = res.json()['choices'][0]['message']['content'].strip()
+                if reply:
+                    return reply
+        except Exception as e:
+            print(f"[OpenRouter AI Error]: {e}")
+
+    # Fallback Teks Jelas
+    return "Saat ini sistem AI kami sedang dipadatkan. Boleh tolong ulangi pertanyaanmu secara spesifik? Misal: 'Berapa rata-rata gaji posisi Admin di Bandung?'"
+
+    if ai_client:
+        try:
+            res = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            if res and res.text:
+                return res.text.strip()
+        except Exception as e:
+            print(f"[Career AI Error] Gemini failed: {e}")
+
+    if GROQ_API_KEY:
+        try:
+            headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+            payload = {"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "temperature": 0.4}
+            res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=4)
+            if res.status_code == 200:
+                return res.json()['choices'][0]['message']['content'].strip()
+        except Exception as e:
             print(f"[Career AI Error] Groq failed: {e}")
 
-    # HUMANIZED FALLBACK (Internal Error Hidden From User)
-    return (
-        "Aku menangkap poin pertanyakanmu! Kondisi ini sebenarnya cukup sering dihadapi banyak pencari kerja.\n\n"
-        "Coba ceritakan sedikit lagi detail situasi atau latar belakangmu saat ini, supaya aku bisa bantu bedah langkah terbaik untuk CV kamu! 😊"
-    )
+    return "Aku menangkap poin pertanyaanmu! Untuk bidang tersebut, fokus utamanya ada pada keahlian spesifik dan bukti portofolio kerja. Ada bagian tertentu yang ingin kita bahas lebih detail? 😊"
 
 def create_cv_docx(user_id, data):
     doc = Document()
@@ -758,7 +741,6 @@ def create_cv_docx(user_id, data):
         for job_title in raw_jobs:
             if not job_title:
                 continue
-            
             translated_title = ai_translate_text(job_title, target_lang) if is_en else job_title
             
             p_job = doc.add_paragraph()
@@ -809,7 +791,6 @@ def create_cv_docx(user_id, data):
 
 async def get_career_home_keyboard(user_id: int):
     is_paid = await check_user_paid(user_id)
-
     kbd = InlineKeyboardMarkup(row_width=1)
     kbd.add(InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"))
     
@@ -866,7 +847,6 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         except Exception:
             pass
 
-        # ESEKUSI CV REVIEW ENGINE (DETERMINISTIK & ANTI-FRAGILE)
         review_result = cv_engine.process_review(user_data)
         metrics = review_result["metrics"]
         recommendations = review_result["recommendations"]
@@ -878,7 +858,6 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
             f"• <b>Job Match:</b> {metrics['job_match']}/100\n"
             f"• <b>Evidence Strength:</b> {metrics['evidence_strength']}/100\n\n"
         )
-        
         if recommendations:
             review_text += "💡 <b>Rekomendasi Perbaikan Utamamu:</b>\n"
             for rec in recommendations:
@@ -886,7 +865,6 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
 
         await bot.send_message(user_id, review_text, parse_mode="HTML")
 
-        # 1. VALUE BEFORE TAKE: TIPS PENGERJAAN
         value_text = (
             "💡 <b>Tips Penting Sebelum Melamar:</b>\n\n"
             "1. <b>Subjek Email Jelas:</b> Gunakan format <code>[Posisi] - [Nama Kamu]</code> (Contoh: <i>Admin Operasional - Rayi Gemilang</i>)\n"
@@ -896,7 +874,6 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         )
         await bot.send_message(user_id, value_text, parse_mode="HTML")
 
-        # 2. CAREER INSIGHT & NATURAL NEXT STEP
         is_paid = await check_user_paid(user_id)
         slug = get_user_slug(user_data, message.from_user.first_name)
 
@@ -966,7 +943,6 @@ async def send_welcome(message: types.Message):
         meta_data = {"utm_source": args}
 
     await track_event(user_id, "start", meta=meta_data)
-    
     progress, last_cv = await get_user_history(user_id)
     saved_data = progress.get("data", {}) if progress else {}
     user_name = saved_data.get("nama_panggilan") or message.from_user.first_name or "Teman"
@@ -1018,7 +994,7 @@ async def send_welcome(message: types.Message):
     "skip_optional", "resume_flow", "restart_flow",
     "home_create_cv", "home_check_ref", "home_career_qa",
     "home_digital_products", "buy_ebook_interview", "home_back_main",
-    "don_5000", "don_10000", "don_25000",
+    "don_5000", "don_10000", "don_25000", "cancel_checkout",
     "cp_build_now", "cp_build_later", "cp_manage", "cp_upload_photo", "cp_edit_resume", "cp_choose_theme", 
     "cp_edit_data", "cp_import_cv", "cp_confirm_import", "cp_deploy_live", "cp_edit_slug",
     "cp_edit_posisi_btn", "cp_edit_summary_btn", "cp_edit_exp_btn", "cp_edit_skills_btn",
@@ -1038,7 +1014,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "Teman")
     slug = get_user_slug(user_data, callback_query.from_user.first_name)
 
-    # REVISI TEXT FORMAT BAYAR DARI DRAFT CTO
+    # --- REVISI: PAYMENT QRIS + TOMBOL BAYAR NANTI & BATAL (POIN 7 CTO) ---
     if code in ["don_5000", "don_10000", "don_25000"]:
         base_amt = 5000 if code == "don_5000" else (10000 if code == "don_10000" else 25000)
         unique_code = random.randint(100, 999)
@@ -1049,24 +1025,33 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         don_msg = (
             f"☕ <b>Aktivasi Career Page Kamu</b>\n\n"
             f"Terima kasih sudah memilih BoonTrack! 🙏\n"
-            f"Untuk mengaktifkan Career Page profesional kamu, cukup berikan dukungan mulai dari Rp{base_amt:,}.\n\n"
-            f"Agar sistem bisa mengenali pembayaranmu secara otomatis, tidak perlu kirim bukti transfer.\n\n"
+            f"Untuk mengaktifkan Career Page profesional kamu, cukup berikan dukungan Rp{base_amt:,}.\n\n"
             f"👉 <b>Transfer tepat: <code>Rp{total_amt:,}</code></b>\n"
             f"<i>(Rp{base_amt:,} dukungan + kode verifikasi Rp{unique_code})</i>\n\n"
             f"📌 <b>Cara bayar:</b>\n"
             f"1. Scan QRIS di atas\n"
             f"2. Masukkan nominal <b>Rp{total_amt:,}</b>\n"
             f"3. Selesaikan pembayaran\n\n"
-            f"🤖 <i>Setelah pembayaran terdeteksi, sistem akan otomatis memproses aktivasi Career Page kamu.</i>\n"
-            f"✨ <i>Tidak perlu kirim screenshot/bukti transfer. Tinggal tunggu konfirmasi dari BoonTrack.</i>"
+            f"⏳ <i>Nominal unik ini berlaku selama 15 menit. Sistem otomatis mendeteksi tanpa kirim bukti.</i>"
         )
         
+        kbd_qris = InlineKeyboardMarkup(row_width=1)
+        kbd_qris.add(
+            InlineKeyboardButton("⏳ Bayar Nanti (Kembali ke Menu Utama)", callback_data="home_back_main"),
+            InlineKeyboardButton("❌ Batalkan Transaksi", callback_data="cancel_checkout")
+        )
+
         possible_qris_paths = [QRIS_IMAGE_PATH, "/app/qris.jpg", "qris.jpg"]
         found_qris = next((p for p in possible_qris_paths if os.path.exists(p)), None)
         if found_qris:
-            await bot.send_photo(chat_id=user_id, photo=InputFile(found_qris), caption=don_msg, parse_mode="HTML")
+            await bot.send_photo(chat_id=user_id, photo=InputFile(found_qris), caption=don_msg, reply_markup=kbd_qris, parse_mode="HTML")
         else:
-            await bot.send_message(user_id, don_msg, parse_mode="HTML")
+            await bot.send_message(user_id, don_msg, reply_markup=kbd_qris, parse_mode="HTML")
+
+    elif code == "cancel_checkout":
+        user_state[user_id]["step"] = 0
+        kbd = await get_career_home_keyboard(user_id)
+        await bot.send_message(user_id, "❌ <b>Transaksi dibatalkan.</b> Kembali ke menu utama:", reply_markup=kbd, parse_mode="HTML")
 
     elif code in ["cp_build_now", "cp_manage"]:
         is_paid = await check_user_paid(user_id)
@@ -1129,60 +1114,33 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             InlineKeyboardButton("🛠️ Edit Keahlian / Skill Grid", callback_data="cp_edit_skills_btn"),
             InlineKeyboardButton("🔙 Batal / Kembali ke Menu Career Page", callback_data="cp_manage")
         )
-        await bot.send_message(
-            user_id,
-            "✏️ <b>Pilih Bagian yang Ingin Kamu Isi atau Edit:</b>",
-            reply_markup=kbd_sections,
-            parse_mode="HTML"
-        )
+        await bot.send_message(user_id, "✏️ <b>Pilih Bagian yang Ingin Kamu Isi atau Edit:</b>", reply_markup=kbd_sections, parse_mode="HTML")
 
     elif code == "cp_edit_posisi_btn":
         user_state[user_id]["step"] = "CP_EDIT_POSISI"
-        await bot.send_message(
-            user_id,
-            "💼 <b>Edit Posisi / Headline Website</b>\n\n"
-            "Ketik judul posisi impianmu:\n"
-            "<i>(Contoh: AI & Operations Workflow Optimization Specialist)</i>",
-            parse_mode="HTML"
-        )
+        await bot.send_message(user_id, "💼 <b>Edit Posisi / Headline Website</b>\n\nKetik judul posisi impianmu:\n<i>(Contoh: AI & Operations Workflow Optimization Specialist)</i>", parse_mode="HTML")
 
     elif code == "cp_edit_summary_btn":
         user_state[user_id]["step"] = "CP_EDIT_SUMMARY"
-        await bot.send_message(
-            user_id,
-            "📝 <b>Edit Ringkasan Profil / Bio Website</b>\n\n"
-            "Ketik deskripsi singkat tentang dirimu (1-3 kalimat):\n"
-            "<i>(Contoh: Membantu tim operasional memangkas waktu kerja manual dengan otomatisasi sistem)</i>",
-            parse_mode="HTML"
-        )
+        await bot.send_message(user_id, "📝 <b>Edit Ringkasan Profil / Bio Website</b>\n\nKetik deskripsi singkat tentang dirimu (1-3 kalimat):\n<i>(Contoh: Membantu tim operasional memangkas waktu kerja manual dengan otomatisasi sistem)</i>", parse_mode="HTML")
 
     elif code == "cp_edit_exp_btn":
         user_state[user_id]["step"] = "CP_EDIT_EXP"
-        await bot.send_message(
-            user_id,
-            "🏢 <b>Edit Pengalaman Kerja / Proyek Website</b>\n\n"
-            "Ketik detail pengalaman kerja atau portofolio utamamu:\n"
-            "<i>(Contoh: Manager HRD di PT ABC (2022-Sekarang) - Memimpin tim 10 orang & merekrut 50+ karyawan)</i>",
-            parse_mode="HTML"
-        )
+        await bot.send_message(user_id, "🏢 <b>Edit Pengalaman Kerja / Proyek Website</b>\n\nKetik detail pengalaman kerja atau portofolio utamamu:\n<i>(Contoh: Manager HRD di PT ABC (2022-Sekarang) - Memimpin tim 10 orang & merekrut 50+ karyawan)</i>", parse_mode="HTML")
 
     elif code == "cp_edit_skills_btn":
         user_state[user_id]["step"] = "CP_EDIT_SKILLS"
-        await bot.send_message(
-            user_id,
-            "🛠️ <b>Edit Keahlian / Skill Website</b>\n\n"
-            "Ketik skill utama dipisahkan dengan koma:\n"
-            "<i>(Contoh: Python, OpenAI API, Cloudflare Workers, SQL, Recruitment)</i>",
-            parse_mode="HTML"
-        )
+        await bot.send_message(user_id, "🛠️ <b>Edit Keahlian / Skill Website</b>\n\nKetik skill utama dipisahkan dengan koma:\n<i>(Contoh: Python, OpenAI API, Cloudflare Workers, SQL, Recruitment)</i>", parse_mode="HTML")
 
+    # --- REVISI: GUIDELINE GOOGLE DRIVE LINK (POIN 3 CTO) ---
     elif code == "cp_edit_resume":
         user_state[user_id]["step"] = "CP_EDIT_RESUME"
         await bot.send_message(
             user_id,
             "📄 <b>Input / Update Link Resume PDF</b>\n\n"
-            "Ketik atau paste link PDF resume/portofolio publikmu di sini:\n"
-            "<i>(Contoh: https://cvats.boontrack.com/ebook-interview-boontrack.pdf)</i>\n\n"
+            "Ketik atau paste link Google Drive / tautan publik PDF resume kamu di sini:\n"
+            "<i>(Pastikan akses link Google Drive sudah diset ke 'Anyone with link' / 'Siapa saja yang memiliki link')</i>\n\n"
+            "<b>Contoh:</b> <code>https://drive.google.com/file/d/1A2b3C.../view?usp=sharing</code>\n\n"
             "<i>Ketik '-' jika ingin menyembunyikan tombol download resume.</i>",
             parse_mode="HTML"
         )
@@ -1213,7 +1171,8 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         kbd_done = InlineKeyboardMarkup(row_width=1)
         kbd_done.add(
             InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
-            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage"),
+            InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
         )
         await bot.send_message(
             user_id,
@@ -1236,12 +1195,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
 
     elif code == "cp_upload_photo":
         user_state[user_id]["step"] = "WAITING_PHOTO"
-        await bot.send_message(
-            user_id, 
-            "📸 <b>Kirimkan foto profil terbaikmu ke chat ini ya!</b>\n"
-            "<i>(Disarankan foto formal/semi-formal setengah badan)</i>", 
-            parse_mode="HTML"
-        )
+        await bot.send_message(user_id, "📸 <b>Kirimkan foto profil terbaikmu ke chat ini ya!</b>\n<i>(Disarankan foto formal/semi-formal setengah badan)</i>", parse_mode="HTML")
 
     elif code == "cp_choose_theme":
         kbd_theme = InlineKeyboardMarkup(row_width=2)
@@ -1261,17 +1215,24 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         await save_dropoff(user_id, TOTAL_STEPS, user_data)
         await update_cloudflare_kv(slug, user_data)
         
+        # --- REVISI: TOMBOL NAVIGASI JALAN PULANG LENGKAP (POIN 5 CTO) ---
+        kbd_done = InlineKeyboardMarkup(row_width=1)
+        kbd_done.add(
+            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage"),
+            InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
+        )
         await bot.send_message(
             user_id,
             f"🎨 <b>Tema berhasil diubah ke {selected_theme.capitalize()}!</b>\n\n"
             f"Cek perubahannya secara langsung di:\n"
             f"👉 https://{slug}.boontrack.com",
+            reply_markup=kbd_done,
             parse_mode="HTML"
         )
 
     elif code == "cp_deploy_live":
         is_success = await update_cloudflare_kv(slug, user_data)
-        
         if is_success:
             msg = (
                 f"🎉 <b>SELAMAT! Website Career Page Kamu Resmi Aktif!</b>\n\n"
@@ -1281,7 +1242,12 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         else:
             msg = "⚠️ Terjadi masalah sinkronisasi server KV. Pastikan konfigurasi `.env` sudah sesuai."
 
-        await bot.send_message(user_id, msg, parse_mode="HTML")
+        kbd_done = InlineKeyboardMarkup(row_width=1)
+        kbd_done.add(
+            InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+        )
+        await bot.send_message(user_id, msg, reply_markup=kbd_done, parse_mode="HTML")
 
     elif code == "home_digital_products":
         kbd_products = InlineKeyboardMarkup(row_width=1)
@@ -1319,12 +1285,18 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             f"⏳ <i>Nominal unik ini berlaku selama 15 menit.</i>"
         )
         
+        kbd_qris = InlineKeyboardMarkup(row_width=1)
+        kbd_qris.add(
+            InlineKeyboardButton("⏳ Bayar Nanti (Kembali ke Menu Utama)", callback_data="home_back_main"),
+            InlineKeyboardButton("❌ Batalkan Transaksi", callback_data="cancel_checkout")
+        )
+
         possible_qris_paths = [QRIS_IMAGE_PATH, "/app/qris.jpg", "qris.jpg"]
         found_qris = next((p for p in possible_qris_paths if os.path.exists(p)), None)
         if found_qris:
-            await bot.send_photo(chat_id=user_id, photo=InputFile(found_qris), caption=msg_checkout, parse_mode="HTML")
+            await bot.send_photo(chat_id=user_id, photo=InputFile(found_qris), caption=msg_checkout, reply_markup=kbd_qris, parse_mode="HTML")
         else:
-            await bot.send_message(user_id, msg_checkout, parse_mode="HTML")
+            await bot.send_message(user_id, msg_checkout, reply_markup=kbd_qris, parse_mode="HTML")
 
     elif code in ["home_back_main", "restart_flow"]:
         user_state[user_id] = {"step": 0, "data": {}}
@@ -1334,22 +1306,13 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     elif code == "home_create_cv":
         old_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "")
         new_data = {"nama_panggilan": old_name} if old_name else {}
-        
         user_state[user_id] = {"step": "ONBOARDING_NAMA", "data": new_data}
         await save_dropoff(user_id, 0, new_data)
         
         if old_name:
-            msg_restart = (
-                f"Sip, {old_name}! Kita susun versi CV baru ya. 👍\n\n"
-                f"Kamu mau tetap pakai nama panggilan <b>{old_name}</b> atau mau ganti nama baru?\n"
-                f"<i>(Ketik langsung nama panggilanmu di bawah untuk melanjutkan)</i>"
-            )
+            msg_restart = f"Sip, {old_name}! Kita susun versi CV baru ya. 👍\n\nKamu mau tetap pakai nama panggilan <b>{old_name}</b> atau mau ganti nama baru?\n<i>(Ketik langsung nama panggilanmu di bawah untuk melanjutkan)</i>"
         else:
-            msg_restart = (
-                "Sip! Kita susun versi CV baru ya. 👍\n\n"
-                "Boleh kenalan dulu?\n"
-                "<b>Ini dengan siapa?</b>"
-            )
+            msg_restart = "Sip! Kita susun versi CV baru ya. 👍\n\nBoleh kenalan dulu?\n<b>Ini dengan siapa?</b>"
         await bot.send_message(user_id, msg_restart, parse_mode="HTML")
 
     elif code == "home_check_ref":
@@ -1368,14 +1331,9 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         )
         await bot.send_message(user_id, ref_msg, reply_markup=kbd, parse_mode="HTML")
 
-    # MODUS TANYA SEPUTAR DUNIA KERJA (LOCK CAREER COMPANION STATE)
     elif code == "home_career_qa":
         user_state[user_id]["step"] = "CAREER_QA"
-        qa_msg = (
-            "💬 <b>Tanya Seputar Dunia Kerja</b>\n\n"
-            "Kamu bisa tanyakan apa saja tentang persiapan kerja, tips interview, negosiasi gaji, atau kualifikasi posisi impianmu.\n\n"
-            "<i>Ketik saja pertanyaanmu langsung di obrolan ini ya!</i> 👇"
-        )
+        qa_msg = "💬 <b>Tanya Seputar Dunia Kerja</b>\n\nKamu bisa tanyakan apa saja tentang persiapan kerja, tips interview, negosiasi gaji, atau kualifikasi posisi impianmu.\n\n<i>Ketik saja pertanyaanmu langsung di obrolan ini ya!</i> 👇"
         await bot.send_message(user_id, qa_msg, parse_mode="HTML")
 
     elif code in ["status_fresh", "status_exp"]:
@@ -1383,59 +1341,27 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         user_state[user_id]["step"] = "ONBOARDING_POSISI"
         await save_dropoff(user_id, 0, user_data)
         
-        if code == "status_fresh":
-            reassurance = (
-                f"Oke, {user_name}! Berarti kita punya strategi khusus untuk Fresh Graduate 👍\n"
-                "Nanti kita fokus menonjolkan pendidikan, project, organisasi, dan skill utama kamu.\n\n"
-                "🎯 <b>Kamu saat ini ingin melamar posisi apa?</b>\n"
-                "<i>(Contoh: Admin, Marketing, Software Engineer, Customer Service, Kasir)</i>"
-            )
-        else:
-            reassurance = (
-                f"Sip, {user_name} 👍\n"
-                "Kita akan fokus menggali pengalaman dan pencapaian terbaikmu agar CV-nya makin menjual di mata HR.\n\n"
-                "🎯 <b>Kamu saat ini ingin melamar posisi apa?</b>\n"
-                "<i>(Contoh: Marketing Executive, Admin Operational, Barista, Graphic Designer)</i>"
-            )
+        reassurance = f"Oke, {user_name}! Berarti kita punya strategi khusus untuk Fresh Graduate 👍\nNanti kita fokus menonjolkan pendidikan, project, organisasi, dan skill utama kamu.\n\n🎯 <b>Kamu saat ini ingin melamar posisi apa?</b>\n<i>(Contoh: Admin, Marketing, Software Engineer, Customer Service)</i>" if code == "status_fresh" else f"Sip, {user_name} 👍\nKita akan fokus menggali pengalaman dan pencapaian terbaikmu agar CV-nya makin menjual di mata HR.\n\n🎯 <b>Kamu saat ini ingin melamar posisi apa?</b>\n<i>(Contoh: Marketing Executive, Admin Operational, Graphic Designer)</i>"
         await bot.send_message(user_id, reassurance, parse_mode="HTML")
 
     elif code in ["lang_id", "lang_en", "lang_hybrid"]:
         target_lang = "ID" if code == "lang_id" else ("EN" if code == "lang_en" else "HYBRID")
         user_data["target_lang"] = target_lang
         
-        if code == "lang_hybrid":
-            msg_lang = (
-                "Sip! Pilihan cerdas 🌐\n"
-                "CV kamu akan dibuat dalam <b>English profesional</b>, tapi selama pengisian kamu <b>bebas cerita dalam Bahasa Indonesia</b>.\n"
-                "Nanti saya bantu terjemahkan dan rapikan menjadi bahasa CV yang profesional! 😊"
-            )
-        elif code == "lang_en":
-            msg_lang = (
-                "Great! We will conduct our conversation and build your CV in <b>English</b> 🇬🇧\n"
-                "Take your time, I am here to help you refine your details into professional CV statements! 😊"
-            )
-        else:
-            msg_lang = (
-                "Siap! Percakapan dan CV kamu akan dibuat dalam <b>Bahasa Indonesia</b> 🇮🇩"
-            )
-        
+        msg_lang = "Siap! Percakapan dan CV kamu akan dibuat dalam <b>Bahasa Indonesia</b> 🇮🇩" if code == "lang_id" else ("Great! We will conduct our conversation and build your CV in <b>English</b> 🇬🇧" if code == "lang_en" else "Sip! Pilihan cerdas 🌐\nCV kamu akan dibuat dalam <b>English profesional</b>, tapi selama pengisian kamu <b>bebas cerita dalam Bahasa Indonesia</b>.\nNanti saya bantu terjemahkan dan rapikan! 😊")
         await bot.send_message(user_id, msg_lang, parse_mode="HTML")
         
         user_state[user_id]["step"] = 1
         await save_dropoff(user_id, 1, user_data)
         
-        reassurance_msg = (
-            "Sip, kita mulai pelan-pelan ya 😊\n"
-            "🔒 <i>Data kamu digunakan untuk membantu membuat dan menyimpan progres CV-mu. Kami tidak meminta data yang tidak diperlukan untuk proses ini.</i>\n\n"
-            "Kalau ada informasi yang belum kamu punya, beberapa bagian nanti bisa dilewati. "
-            "Cerita saja seperti ngobrol biasa. Nanti saya yang bantu merapikannya."
-        )
+        reassurance_msg = "Sip, kita mulai pelan-pelan ya 😊\n🔒 <i>Data kamu digunakan untuk membantu membuat dan menyimpan progres CV-mu. Kami tidak meminta data yang tidak diperlukan untuk proses ini.</i>\n\nKalau ada informasi yang belum kamu punya, beberapa bagian nanti bisa dilewati. Cerita saja seperti ngobrol biasa."
         await bot.send_message(user_id, reassurance_msg, parse_mode="HTML")
         
         status_kerja = user_data.get("status_kerja", "Berpengalaman")
         first_q = f"{get_progress_bar(1)}\n{get_question_text(1, target_lang, status_kerja)}"
         await bot.send_message(user_id, first_q, parse_mode="HTML")
 
+    # --- JANGAN SAMPAI HILANG: TOMBOL LEWATI (STEPS 4, 7, 8, 9) ---
     elif code == "skip_optional":
         current_step = user_state[user_id].get("step", 1)
         if isinstance(current_step, int):
@@ -1492,14 +1418,14 @@ async def handle_photo(message: types.Message):
         user_state[user_id]["step"] = 0
         
         slug = get_user_slug(user_data, message.from_user.first_name)
-        
         await save_dropoff(user_id, TOTAL_STEPS, user_data)
         await update_cloudflare_kv(slug, user_data)
         
         kbd_done = InlineKeyboardMarkup(row_width=1)
         kbd_done.add(
             InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
-            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage"),
+            InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
         )
         await message.reply(
             "📸 <b>Foto profil berhasil diupload & diperbarui di website!</b>\n\n"
@@ -1531,46 +1457,44 @@ async def handle_message(message: types.Message):
     user_data = user_state[user_id].get("data", {})
     slug = get_user_slug(user_data, message.from_user.first_name)
 
-    # --- 1. CLOSING INTENT INTERCEPTION (ELEGAN, POLITE & NO SPAM MENU) ---
     if any(word in text.lower() for word in CLOSING_WORDS):
         if isinstance(current_step, int) and current_step > 0:
             await save_dropoff(user_id, current_step, user_data)
-        
         user_state[user_id]["step"] = 0
         closing_replies = [
             "Siap! Kapan pun kamu mau lanjut atau diskusi lagi, tinggal chat aku di sini ya. Semoga urusanmu lancar hari ini! 🚀",
             "Sama-sama! Semoga CV dan saran karirnya membantu. Semangat terus ya! 😊",
-            "Sip, terima kasih kembali! Sukres terus untuk persiapan karirmu! 👍"
+            "Sip, terima kasih kembali! Sukses terus untuk persiapan karirmu! 👍"
         ]
         await message.reply(random.choice(closing_replies), parse_mode="HTML")
         return
 
-    # --- 2. CAREER COMPANION OBROLAN MODE (MODE 2 — NO SPAMMY MENU) ---
     if current_step == 0 or current_step == "CAREER_QA":
         await track_event(user_id, "career_ai_query", meta={"query": text})
-        
-        # Kirim sinyal typing
         await bot.send_chat_action(chat_id=user_id, action="typing")
         
         ai_reply = await asyncio.to_thread(ai_career_chat_response, text, user_data)
         
-        # UI/UX RINGKAS 2 TOMBOL
         kbd_chat = InlineKeyboardMarkup(row_width=2)
         kbd_chat.add(
             InlineKeyboardButton("💬 Tanya Lagi", callback_data="home_career_qa"),
-            InlineKeyboardButton("🔙 Menu Utama", callback_data="home_back_main")
+            InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
         )
-        
         await message.reply(ai_reply, reply_markup=kbd_chat, parse_mode="HTML")
         return
 
-    # --- 3. EDIT SLUG / SUBDOMAIN WEBSITE ---
+    # --- REVISI: EDIT SLUG + VALIDASI DUPLIKASI (POIN 3 CTO) ---
     if current_step == "CP_EDIT_SLUG":
         clean_slug = re.sub(r'[^a-z0-9-]', '', text.lower())
-        if not clean_slug:
-            await message.reply("⚠️ Nama subdomain hanya boleh mengandung huruf, angka, dan tanda hubung (-). Silakan coba lagi!")
+        if not clean_slug or len(clean_slug) < 3:
+            await message.reply("⚠️ Nama subdomain minimal 3 karakter, hanya huruf, angka, dan (-). Silakan coba lagi!")
             return
             
+        is_available = await check_slug_available(clean_slug, user_id)
+        if not is_available:
+            await message.reply(f"❌ Subdomain <code>{clean_slug}.boontrack.com</code> sudah digunakan orang lain. Silakan coba nama lain!", parse_mode="HTML")
+            return
+
         user_data["custom_slug"] = clean_slug
         user_state[user_id]["step"] = 0
         await save_dropoff(user_id, TOTAL_STEPS, user_data)
@@ -1579,7 +1503,8 @@ async def handle_message(message: types.Message):
         kbd_done = InlineKeyboardMarkup(row_width=1)
         kbd_done.add(
             InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{clean_slug}.boontrack.com"),
-            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage"),
+            InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
         )
         await message.reply(
             f"✅ <b>Subdomain website berhasil diubah ke:</b>\n"
@@ -1589,7 +1514,6 @@ async def handle_message(message: types.Message):
         )
         return
 
-    # --- 4. EDIT POSISI ---
     if current_step == "CP_EDIT_POSISI":
         user_data["target_position"] = text
         user_state[user_id]["step"] = 0
@@ -1599,17 +1523,12 @@ async def handle_message(message: types.Message):
         kbd_done = InlineKeyboardMarkup(row_width=1)
         kbd_done.add(
             InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
-            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage"),
+            InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
         )
-        await message.reply(
-            f"✅ <b>Posisi berhasil diperbarui ke:</b> {text}\n\n"
-            f"👉 <i>Cek di:</i> https://{slug}.boontrack.com",
-            reply_markup=kbd_done,
-            parse_mode="HTML"
-        )
+        await message.reply(f"✅ <b>Posisi berhasil diperbarui ke:</b> {text}\n\n👉 <i>Cek di:</i> https://{slug}.boontrack.com", reply_markup=kbd_done, parse_mode="HTML")
         return
 
-    # --- 5. EDIT RINGKASAN/BIO ---
     if current_step == "CP_EDIT_SUMMARY":
         user_data["ringkasan_web"] = text
         user_state[user_id]["step"] = 0
@@ -1619,17 +1538,12 @@ async def handle_message(message: types.Message):
         kbd_done = InlineKeyboardMarkup(row_width=1)
         kbd_done.add(
             InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
-            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage"),
+            InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
         )
-        await message.reply(
-            f"✅ <b>Ringkasan Profil berhasil diperbarui!</b>\n\n"
-            f"👉 <i>Cek di:</i> https://{slug}.boontrack.com",
-            reply_markup=kbd_done,
-            parse_mode="HTML"
-        )
+        await message.reply(f"✅ <b>Ringkasan Profil berhasil diperbarui!</b>\n\n👉 <i>Cek di:</i> https://{slug}.boontrack.com", reply_markup=kbd_done, parse_mode="HTML")
         return
 
-    # --- 6. EDIT PENGALAMAN ---
     if current_step == "CP_EDIT_EXP":
         user_data["pengalaman_web"] = text
         user_state[user_id]["step"] = 0
@@ -1639,17 +1553,12 @@ async def handle_message(message: types.Message):
         kbd_done = InlineKeyboardMarkup(row_width=1)
         kbd_done.add(
             InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
-            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage"),
+            InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
         )
-        await message.reply(
-            f"✅ <b>Pengalaman Kerja berhasil diperbarui!</b>\n\n"
-            f"👉 <i>Cek di:</i> https://{slug}.boontrack.com",
-            reply_markup=kbd_done,
-            parse_mode="HTML"
-        )
+        await message.reply(f"✅ <b>Pengalaman Kerja berhasil diperbarui!</b>\n\n👉 <i>Cek di:</i> https://{slug}.boontrack.com", reply_markup=kbd_done, parse_mode="HTML")
         return
 
-    # --- 7. EDIT SKILLS ---
     if current_step == "CP_EDIT_SKILLS":
         user_data["keahlian_web"] = text
         user_state[user_id]["step"] = 0
@@ -1659,17 +1568,12 @@ async def handle_message(message: types.Message):
         kbd_done = InlineKeyboardMarkup(row_width=1)
         kbd_done.add(
             InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
-            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage"),
+            InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
         )
-        await message.reply(
-            f"✅ <b>Keahlian/Skill berhasil diperbarui!</b>\n\n"
-            f"👉 <i>Cek di:</i> https://{slug}.boontrack.com",
-            reply_markup=kbd_done,
-            parse_mode="HTML"
-        )
+        await message.reply(f"✅ <b>Keahlian/Skill berhasil diperbarui!</b>\n\n👉 <i>Cek di:</i> https://{slug}.boontrack.com", reply_markup=kbd_done, parse_mode="HTML")
         return
 
-    # --- 8. EDIT RESUME LINK ---
     if current_step == "CP_EDIT_RESUME":
         if text.strip() == "-" or text.lower() == "kosong":
             user_data["resume_url"] = ""
@@ -1685,17 +1589,12 @@ async def handle_message(message: types.Message):
         kbd_done = InlineKeyboardMarkup(row_width=1)
         kbd_done.add(
             InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
-            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage")
+            InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage"),
+            InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
         )
-        await message.reply(
-            f"✅ <b>Link Resume PDF berhasil diperbarui:</b> {status_resume}\n\n"
-            f"👉 <i>Cek di:</i> https://{slug}.boontrack.com",
-            reply_markup=kbd_done,
-            parse_mode="HTML"
-        )
+        await message.reply(f"✅ <b>Link Resume PDF berhasil diperbarui:</b> {status_resume}\n\n👉 <i>Cek di:</i> https://{slug}.boontrack.com", reply_markup=kbd_done, parse_mode="HTML")
         return
 
-    # --- 9. ONBOARDING & LANGUAGE SELECT ---
     if current_step == "ONBOARDING_NAMA":
         user_data["nama_panggilan"] = text
         user_state[user_id]["step"] = "ONBOARDING_STATUS"
@@ -1721,12 +1620,7 @@ async def handle_message(message: types.Message):
             InlineKeyboardButton("🇮🇩 CV Bahasa Indonesia", callback_data="lang_id"),
             InlineKeyboardButton("🇬🇧 Full English", callback_data="lang_en")
         )
-        
-        msg_insight = (
-            f"Oke, <b>{text}</b> 👍\n\n"
-            "Berdasarkan posisi tersebut, kita akan susun CV yang menonjolkan kualifikasi yang paling dinilai rekruter.\n\n"
-            "Sebelum kita lanjut, CV kamu ingin dibuat dalam bahasa apa?"
-        )
+        msg_insight = f"Oke, <b>{text}</b> 👍\n\nBerdasarkan posisi tersebut, kita akan susun CV yang menonjolkan kualifikasi yang paling dinilai rekruter.\n\nSebelum kita lanjut, CV kamu ingin dibuat dalam bahasa apa?"
         await message.reply(msg_insight, reply_markup=kbd_lang, parse_mode="HTML")
         return
 
@@ -1734,7 +1628,7 @@ async def handle_message(message: types.Message):
         await message.reply("Silakan <b>pilih salah satu bahasa di atas</b> ya 👆", parse_mode="HTML")
         return
 
-    # --- 10. TASK MODE: PENGISIAN CV LANGKAH BERTAHAP (1-9) ---
+    # TASK MODE: PENGISIAN CV LANGKAH BERTAHAP (1-9)
     if isinstance(current_step, int) and current_step > 0:
         target_lang = user_data.get("target_lang", "ID")
         status_kerja = user_data.get("status_kerja", "Berpengalaman")
@@ -1742,24 +1636,14 @@ async def handle_message(message: types.Message):
         if current_step == 2:
             email_clean = text.strip().lower()
             if not re.match(r"^[^@]+@[^@]+\.[^@]+$", email_clean):
-                await message.reply(
-                    "⚠️ <b>Format email belum sesuai.</b>\n"
-                    "Mohon masukkan email yang valid (contoh: <code>nama@gmail.com</code>).",
-                    parse_mode="HTML"
-                )
+                await message.reply("⚠️ <b>Format email belum sesuai.</b>\nMohon masukkan email yang valid (contoh: <code>nama@gmail.com</code>).", parse_mode="HTML")
                 return
 
         if current_step == 7:
             phone_digits = re.sub(r"\D", "", text)
             if len(phone_digits) < 10 or len(phone_digits) > 14:
                 kbd_skip = InlineKeyboardMarkup().add(InlineKeyboardButton("⏩ Lewati Langkah Ini", callback_data="skip_optional"))
-                await message.reply(
-                    "⚠️ <b>Nomor HP/WhatsApp tidak valid.</b>\n"
-                    "Nomor HP harus terdiri dari <b>10 sampai 14 digit</b> (contoh: <code>081234567890</code>).\n\n"
-                    "Silakan ketik ulang atau klik tombol di bawah untuk melewati:",
-                    reply_markup=kbd_skip,
-                    parse_mode="HTML"
-                )
+                await message.reply("⚠️ <b>Nomor HP/WhatsApp tidak valid.</b>\nNomor HP harus terdiri dari <b>10 sampai 14 digit</b> (contoh: <code>081234567890</code>).\n\nSilakan ketik ulang atau klik tombol di bawah untuk melewati:", reply_markup=kbd_skip, parse_mode="HTML")
                 return
             text = phone_digits
 
@@ -1783,6 +1667,7 @@ async def handle_message(message: types.Message):
         else:
             await process_and_send_cv(message, user_id, user_data)
 
+# --- REVISI: DANA WEBHOOK DENGAN DIRECT FILE DELIVERY (POIN 8 CTO) ---
 async def dana_webhook_handler(request):
     try:
         data = await request.json()
@@ -1807,13 +1692,25 @@ async def dana_webhook_handler(request):
                 buyer_id = order["telegram_id"]
                 product = order["product_name"]
                 
-                success_msg = (
-                    f"Sip, pembayaran sebesar <b>Rp{incoming_amount:,}</b> untuk <b>{product}</b> sudah masuk ya! Terima kasih banyak. 🙏\n\n"
-                    f"Ini link akses produkmu:\n"
-                    f"👉 https://cvats.boontrack.com/ebook-interview-boontrack.pdf\n\n"
-                    f"Semoga materinya membantu dan lancar terus urusan karirnya!"
+                # Direct Document Delivery via Telegram Bot
+                caption_text = (
+                    f"🎉 <b>Pembayaran Terkonfirmasi! (Rp{incoming_amount:,})</b>\n\n"
+                    f"Terima kasih telah membeli **{product}**.\n"
+                    f"File E-book kamu terlampir langsung di bawah ini. Selamat membaca dan sukses terus!"
                 )
-                await bot.send_message(chat_id=buyer_id, text=success_msg, parse_mode="HTML")
+                try:
+                    await bot.send_document(
+                        chat_id=buyer_id,
+                        document=EBOOK_FILE_ID,
+                        caption=caption_text,
+                        protect_content=True,
+                        parse_mode="HTML"
+                    )
+                except Exception as doc_err:
+                    print(f"[Document Send Error]: {doc_err}")
+                    fallback_msg = f"{caption_text}\n\n👉 Link Akses Alternative: https://cvats.boontrack.com/ebook-interview-boontrack.pdf"
+                    await bot.send_message(chat_id=buyer_id, text=fallback_msg, parse_mode="HTML")
+
                 return web.json_response({"status": "success_order", "order_id": order["order_id"]}, status=200)
 
             donation = await match_and_complete_donation(incoming_amount)
@@ -1823,7 +1720,6 @@ async def dana_webhook_handler(request):
                     return web.json_response({"status": "already_verified"}, status=200)
 
                 donor_id = donation["telegram_id"]
-                
                 kbd_cp_choice = InlineKeyboardMarkup(row_width=1)
                 kbd_cp_choice.add(
                     InlineKeyboardButton("✍️ Lengkapi Data & Foto Website", callback_data="cp_build_now"),
@@ -1835,7 +1731,7 @@ async def dana_webhook_handler(request):
                     f"Terima kasih banyak atas dukunganmu sebesar <b>Rp{incoming_amount:,}</b>! Kebaikanmu secara otomatis ikut menjaga project BoonTrack agar tetap gratis bagi seluruh pencari kerja. 🙏\n\n"
                     f"🌐 <b>Akses Website Career Page Personal Kamu Resmi Aktif!</b>\n"
                     f"Tanpa pusing biaya domain, server, dan kodingan—semua fasilitas ini <b>100% siap kamu gunakan seumur hidup</b>.\n\n"
-                    f"💬 <i>Nah, agar websitemu tampil estetik dan profesional di mata rekruter, yuk kita lengkapi dulu data dan tampilannya sekarang!</i>"
+                    f"💬 <i>Yuk, kita lengkapi dulu data dan tampilannya sekarang!</i>"
                 )
                 await bot.send_message(chat_id=donor_id, text=don_thanks, reply_markup=kbd_cp_choice, parse_mode="HTML")
                 return web.json_response({"status": "success_donation", "donation_id": donation["donation_id"]}, status=200)
