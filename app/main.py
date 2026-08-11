@@ -577,7 +577,7 @@ def get_question_text(step, target_lang="ID", status_kerja="Berpengalaman"):
         }
     return questions.get(step, "")
 
-# --- AI CAREER COMPANION (PRIORITAS UTAMA GEMINI 2.5 FLASH) ---
+# --- AI CAREER COMPANION (DIRECT REST & FALLBACK MULTI-PROVIDER) ---
 def ai_career_chat_response(user_query, user_context=None):
     pos = user_context.get("target_position", "dunia kerja") if user_context else "dunia kerja"
     
@@ -599,17 +599,19 @@ def ai_career_chat_response(user_query, user_context=None):
     2. Gunakan Bahasa Indonesia yang ramah, profesional, dan ringkas (maksimal 130 kata).
     """
 
-    # 1. PRIORITY UTAMA: Gemini 2.5 Flash
-    if ai_client:
+    # 1. PRIORITY UTAMA: Gemini 2.5 Flash via REST Endpoint
+    if GEMINI_API_KEY:
         try:
-            res = ai_client.models.generate_content(
-                model='gemini-2.5-flash', 
-                contents=prompt
-            )
-            if res and res.text:
-                return res.text.strip()
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+            payload = {"contents": [{"parts": [{"text": prompt}]}]}
+            res = requests.post(url, json=payload, timeout=8)
+            if res.status_code == 200:
+                data = res.json()
+                text = data['candidates'][0]['content']['parts'][0]['text']
+                if text:
+                    return text.strip()
         except Exception as e:
-            print(f"[Gemini AI Error]: {e}")
+            print(f"[Gemini REST Error]: {e}")
 
     # 2. CADANGAN 1: Groq Llama 3.1
     if GROQ_API_KEY:
@@ -620,7 +622,7 @@ def ai_career_chat_response(user_query, user_context=None):
                 "messages": [{"role": "user", "content": prompt}], 
                 "temperature": 0.4
             }
-            res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=4)
+            res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=8)
             if res.status_code == 200:
                 return res.json()['choices'][0]['message']['content'].strip()
         except Exception as e:
@@ -635,7 +637,7 @@ def ai_career_chat_response(user_query, user_context=None):
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.4
             }
-            res = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers, timeout=5)
+            res = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers, timeout=8)
             if res.status_code == 200:
                 reply = res.json()['choices'][0]['message']['content'].strip()
                 if reply:
@@ -1431,20 +1433,20 @@ async def handle_message(message: types.Message):
     user_data = user_state[user_id].get("data", {})
     slug = get_user_slug(user_data, message.from_user.first_name)
 
-    if any(word in text.lower() for word in CLOSING_WORDS):
-        if isinstance(current_step, int) and current_step > 0:
-            await save_dropoff(user_id, current_step, user_data)
-        user_state[user_id]["step"] = 0
-        closing_replies = [
-            "Siap! Kapan pun kamu mau lanjut atau diskusi lagi, tinggal chat aku di sini ya. Semoga urusanmu lancar hari ini! 🚀",
-            "Sama-sama! Semoga CV dan saran karirnya membantu. Semangat terus ya! 😊",
-            "Sip, terima kasih kembali! Sukses terus untuk persiapan karirmu! 👍"
-        ]
-        await message.reply(random.choice(closing_replies), parse_mode="HTML")
-        return
+    # ==========================================
+    # PRIORITAS 1: ROUTING UTAMA KE AI COMPANION
+    # ==========================================
+    if current_step == "CAREER_QA" or current_step == 0:
+        if any(word in text.lower() for word in CLOSING_WORDS):
+            user_state[user_id]["step"] = 0
+            closing_replies = [
+                "Siap! Kapan pun kamu mau lanjut atau diskusi lagi, tinggal chat aku di sini ya. Semoga urusanmu lancar hari ini! 🚀",
+                "Sama-sama! Semoga CV dan saran karirnya membantu. Semangat terus ya! 😊",
+                "Sip, terima kasih kembali! Sukses terus untuk persiapan karirmu! 👍"
+            ]
+            await message.reply(random.choice(closing_replies), parse_mode="HTML")
+            return
 
-    # DIRECT AI ROUTE UNTUK MENU CAREER QA / CHAT BEBAS
-    if current_step == 0 or current_step == "CAREER_QA":
         await track_event(user_id, "career_ai_query", meta={"query": text})
         await bot.send_chat_action(chat_id=user_id, action="typing")
         
@@ -1458,6 +1460,9 @@ async def handle_message(message: types.Message):
         await message.reply(ai_reply, reply_markup=kbd_chat, parse_mode="HTML")
         return
 
+    # ==========================================
+    # PRIORITAS 2: EDIT CAREER PAGE & FORM CV
+    # ==========================================
     if current_step == "CP_EDIT_SLUG":
         clean_slug = re.sub(r'[^a-z0-9-]', '', text.lower())
         if not clean_slug or len(clean_slug) < 3:
