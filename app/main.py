@@ -1473,37 +1473,39 @@ async def cancel_handler(message: types.Message):
 @dp.message_handler()
 async def handle_message(message: types.Message):
     user_id = message.from_user.id
-    text = message.text.strip()
+    text = (message.text or "").strip()
+
+    current_step = user_state.get(user_id, {}).get('step', 0)
+
+    print(
+        f"[DEBUG HANDLER] Pesan Masuk | "
+        f"User: {user_id} | "
+        f"Text: {text} | "
+        f"Current Step: {current_step}"
+    )
 
     if user_id not in user_state:
         progress, _ = await get_user_history(user_id)
         if progress and progress.get("last_step", 0) > 0:
-            user_state[user_id] = {"step": progress["last_step"], "data": progress.get("data", {})}
+            user_state[user_id] = {"step": progress["last_step"], "data": {}}
         else:
             user_state[user_id] = {"step": 0, "data": {}}
 
-    current_step = user_state[user_id].get("step", 0)
-    user_data = user_state[user_id].get("data", {})
-    slug = get_user_slug(user_data, message.from_user.first_name)
-
-    # ==========================================
     # PRIORITAS 1: ROUTING UTAMA KE AI COMPANION
-    # ==========================================
     if current_step == "CAREER_QA" or current_step == 0:
         if any(word in text.lower() for word in CLOSING_WORDS):
             user_state[user_id]["step"] = 0
-            closing_replies = [
-                "Siap! Kapan pun kamu mau lanjut atau diskusi lagi, tinggal chat aku di sini ya. Semoga urusanmu lancar hari ini! 🚀",
-                "Sama-sama! Semoga CV dan saran karirnya membantu. Semangat terus ya! 😊",
-                "Sip, terima kasih kembali! Sukses terus untuk persiapan karirmu! 👍"
-            ]
-            await message.reply(random.choice(closing_replies), parse_mode="HTML")
+            await message.reply("Siap! Kapan pun mau tanya lagi tinggal chat di sini ya. Sukses terus! 🚀", parse_mode="HTML")
             return
 
         await track_event(user_id, "career_ai_query", meta={"query": text})
         await bot.send_chat_action(chat_id=user_id, action="typing")
         
+        user_data = user_state.get(user_id, {}).get("data", {})
+        
+        print("[DEBUG HANDLER] Akan memanggil ai_career_chat_response()")
         ai_reply = await ai_career_chat_response(text, user_data)
+        print("[DEBUG HANDLER] ai_career_chat_response() selesai")
         
         kbd_chat = InlineKeyboardMarkup(row_width=2)
         kbd_chat.add(
