@@ -5,24 +5,22 @@ psycopg2-binary>=2.9.6
 alembic>=1.11.0
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
-aiogram==2.25.2
 
-# SDK Resmi Terbaru Google AI & Drive
+# SDK Google AI & Drive
 google-genai>=0.1.0
 google-api-python-client>=2.100.0
 google-auth>=2.23.0
 google-auth-httplib2>=0.1.1
 
-# Database Client Supabase
+# Database Client
 supabase>=2.0.0
 
-# Network & Utilities
+# Network & Telegram Bot
+aiogram==2.25.2
 aiohttp==3.8.6
 httpx>=0.24.0
 python-dotenv>=1.0.0
-
-# Telegram Bot
 python-telegram-bot>=20.0
 
-# Pembuat Dokumen Word
+# Document Generator
 python-docx
