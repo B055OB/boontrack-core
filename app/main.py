@@ -17,6 +17,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from google import genai
 from aiohttp import web
+import os
 import aiohttp
 # ==========================================
 # 1. ENGINE & DATABASE INITIALIZATION
@@ -579,6 +580,18 @@ def get_question_text(step, target_lang="ID", status_kerja="Berpengalaman"):
 
 # --- AI CAREER COMPANION (DIRECT REST & FALLBACK MULTI-PROVIDER) ---
 async def ai_career_chat_response(user_query, user_context=None):
+    # Fetch ENV Variables
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+    GITHUB_TOKEN = os.getenv("GITHUB_TOKEN") or os.getenv("GITHUB_API_KEY")
+
+    # 1. DEBUG LOGGING ENV LOADED
+    print(f"[DEBUG AI] GEMINI_KEY Loaded: {bool(GEMINI_API_KEY)} (Len: {len(GEMINI_API_KEY) if GEMINI_API_KEY else 0})")
+    print(f"[DEBUG AI] GROQ_KEY Loaded: {bool(GROQ_API_KEY)} (Len: {len(GROQ_API_KEY) if GROQ_API_KEY else 0})")
+    print(f"[DEBUG AI] OPENROUTER_KEY Loaded: {bool(OPENROUTER_API_KEY)} (Len: {len(OPENROUTER_API_KEY) if OPENROUTER_API_KEY else 0})")
+    print(f"[DEBUG AI] GITHUB_TOKEN Loaded: {bool(GITHUB_TOKEN)} (Len: {len(GITHUB_TOKEN) if GITHUB_TOKEN else 0})")
+
     pos = user_context.get("target_position", "dunia kerja") if user_context else "dunia kerja"
     
     prompt = f"""
@@ -599,24 +612,51 @@ async def ai_career_chat_response(user_query, user_context=None):
     2. Gunakan Bahasa Indonesia yang ramah, profesional, dan ringkas (maksimal 130 kata).
     """
 
-    timeout = aiohttp.ClientTimeout(total=8)
+    timeout = aiohttp.ClientTimeout(total=10)
     
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        # 1. PRIORITY UTAMA: Gemini 2.5 Flash via REST Endpoint
+        # 1. PRIORITY 1: Gemini 2.5 Flash via REST Endpoint
         if GEMINI_API_KEY:
             try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
                 payload = {"contents": [{"parts": [{"text": prompt}]}]}
                 async with session.post(url, json=payload) as res:
+                    print(f"[DEBUG Gemini] Status Code: {res.status}")
                     if res.status == 200:
                         data = await res.json()
                         text = data['candidates'][0]['content']['parts'][0]['text']
                         if text:
                             return text.strip()
+                    else:
+                        err_text = await res.text()
+                        print(f"[DEBUG Gemini Error Body]: {err_text}")
             except Exception as e:
-                print(f"[Gemini Async Error]: {e}")
+                print(f"[Gemini Async Error Exception]: {type(e).__name__}: {str(e)}")
 
-        # 2. CADANGAN 1: Groq Llama 3.1
+        # 2. PRIORITY 2: GitHub Models (GPT-4o)
+        if GITHUB_TOKEN:
+            try:
+                headers = {
+                    "Authorization": f"Bearer {GITHUB_TOKEN}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.4
+                }
+                async with session.post("https://models.inference.ai.azure.com/chat/completions", json=payload, headers=headers) as res:
+                    print(f"[DEBUG GitHub AI] Status Code: {res.status}")
+                    if res.status == 200:
+                        data = await res.json()
+                        return data['choices'][0]['message']['content'].strip()
+                    else:
+                        err_text = await res.text()
+                        print(f"[DEBUG GitHub AI Error Body]: {err_text}")
+            except Exception as e:
+                print(f"[GitHub AI Async Error Exception]: {type(e).__name__}: {str(e)}")
+
+        # 3. PRIORITY 3: Groq Llama 3.1
         if GROQ_API_KEY:
             try:
                 headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
@@ -626,13 +666,17 @@ async def ai_career_chat_response(user_query, user_context=None):
                     "temperature": 0.4
                 }
                 async with session.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers) as res:
+                    print(f"[DEBUG Groq] Status Code: {res.status}")
                     if res.status == 200:
                         data = await res.json()
                         return data['choices'][0]['message']['content'].strip()
+                    else:
+                        err_text = await res.text()
+                        print(f"[DEBUG Groq Error Body]: {err_text}")
             except Exception as e:
-                print(f"[Groq Async Error]: {e}")
+                print(f"[Groq Async Error Exception]: {type(e).__name__}: {str(e)}")
 
-        # 3. CADANGAN 2: OpenRouter DeepSeek
+        # 4. PRIORITY 4: OpenRouter DeepSeek
         if OPENROUTER_API_KEY:
             try:
                 headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
@@ -642,15 +686,19 @@ async def ai_career_chat_response(user_query, user_context=None):
                     "temperature": 0.4
                 }
                 async with session.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers) as res:
+                    print(f"[DEBUG OpenRouter] Status Code: {res.status}")
                     if res.status == 200:
                         data = await res.json()
                         reply = data['choices'][0]['message']['content'].strip()
                         if reply:
                             return reply
+                    else:
+                        err_text = await res.text()
+                        print(f"[DEBUG OpenRouter Error Body]: {err_text}")
             except Exception as e:
-                print(f"[OpenRouter Async Error]: {e}")
+                print(f"[OpenRouter Async Error Exception]: {type(e).__name__}: {str(e)}")
 
-    return "Saat ini sistem AI kami sedang dipadatkan v2. Boleh tolong ulangi pertanyaanmu secara spesifik? Misal: 'Berapa rata-rata gaji posisi Admin di Bandung?'"
+    return "Saat ini sistem AI dipadatkan v3. Boleh tolong ulangi pertanyaanmu secara spesifik? Misal: 'Berapa rata-rata gaji posisi Admin di Bandung?'"
 
 def create_cv_docx(user_id, data):
     doc = Document()
