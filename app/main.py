@@ -17,7 +17,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from google import genai
 from aiohttp import web
-
+import aiohttp
 # ==========================================
 # 1. ENGINE & DATABASE INITIALIZATION
 # ==========================================
@@ -578,7 +578,7 @@ def get_question_text(step, target_lang="ID", status_kerja="Berpengalaman"):
     return questions.get(step, "")
 
 # --- AI CAREER COMPANION (DIRECT REST & FALLBACK MULTI-PROVIDER) ---
-def ai_career_chat_response(user_query, user_context=None):
+async def ai_career_chat_response(user_query, user_context=None):
     pos = user_context.get("target_position", "dunia kerja") if user_context else "dunia kerja"
     
     prompt = f"""
@@ -599,53 +599,58 @@ def ai_career_chat_response(user_query, user_context=None):
     2. Gunakan Bahasa Indonesia yang ramah, profesional, dan ringkas (maksimal 130 kata).
     """
 
-    # 1. PRIORITY UTAMA: Gemini 2.5 Flash via REST Endpoint
-    if GEMINI_API_KEY:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-            payload = {"contents": [{"parts": [{"text": prompt}]}]}
-            res = requests.post(url, json=payload, timeout=8)
-            if res.status_code == 200:
-                data = res.json()
-                text = data['candidates'][0]['content']['parts'][0]['text']
-                if text:
-                    return text.strip()
-        except Exception as e:
-            print(f"[Gemini REST Error]: {e}")
+    timeout = aiohttp.ClientTimeout(total=8)
+    
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        # 1. PRIORITY UTAMA: Gemini 2.5 Flash via REST Endpoint
+        if GEMINI_API_KEY:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+                payload = {"contents": [{"parts": [{"text": prompt}]}]}
+                async with session.post(url, json=payload) as res:
+                    if res.status == 200:
+                        data = await res.json()
+                        text = data['candidates'][0]['content']['parts'][0]['text']
+                        if text:
+                            return text.strip()
+            except Exception as e:
+                print(f"[Gemini Async Error]: {e}")
 
-    # 2. CADANGAN 1: Groq Llama 3.1
-    if GROQ_API_KEY:
-        try:
-            headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-            payload = {
-                "model": "llama-3.1-8b-instant", 
-                "messages": [{"role": "user", "content": prompt}], 
-                "temperature": 0.4
-            }
-            res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=8)
-            if res.status_code == 200:
-                return res.json()['choices'][0]['message']['content'].strip()
-        except Exception as e:
-            print(f"[Groq AI Error]: {e}")
+        # 2. CADANGAN 1: Groq Llama 3.1
+        if GROQ_API_KEY:
+            try:
+                headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+                payload = {
+                    "model": "llama-3.1-8b-instant", 
+                    "messages": [{"role": "user", "content": prompt}], 
+                    "temperature": 0.4
+                }
+                async with session.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers) as res:
+                    if res.status == 200:
+                        data = await res.json()
+                        return data['choices'][0]['message']['content'].strip()
+            except Exception as e:
+                print(f"[Groq Async Error]: {e}")
 
-    # 3. CADANGAN 2: OpenRouter DeepSeek
-    if OPENROUTER_API_KEY:
-        try:
-            headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-            payload = {
-                "model": "deepseek/deepseek-r1:free",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.4
-            }
-            res = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers, timeout=8)
-            if res.status_code == 200:
-                reply = res.json()['choices'][0]['message']['content'].strip()
-                if reply:
-                    return reply
-        except Exception as e:
-            print(f"[OpenRouter AI Error]: {e}")
+        # 3. CADANGAN 2: OpenRouter DeepSeek
+        if OPENROUTER_API_KEY:
+            try:
+                headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
+                payload = {
+                    "model": "deepseek/deepseek-r1:free",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.4
+                }
+                async with session.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers) as res:
+                    if res.status == 200:
+                        data = await res.json()
+                        reply = data['choices'][0]['message']['content'].strip()
+                        if reply:
+                            return reply
+            except Exception as e:
+                print(f"[OpenRouter Async Error]: {e}")
 
-    return "Saat ini sistem AI kami sedang dipadatkan. Boleh tolong ulangi pertanyaanmu secara spesifik? Misal: 'Berapa rata-rata gaji posisi Admin di Bandung?'"
+    return "Saat ini sistem AI kami sedang dipadatkan v2. Boleh tolong ulangi pertanyaanmu secara spesifik? Misal: 'Berapa rata-rata gaji posisi Admin di Bandung?'"
 
 def create_cv_docx(user_id, data):
     doc = Document()
@@ -1450,7 +1455,7 @@ async def handle_message(message: types.Message):
         await track_event(user_id, "career_ai_query", meta={"query": text})
         await bot.send_chat_action(chat_id=user_id, action="typing")
         
-        ai_reply = await asyncio.to_thread(ai_career_chat_response, text, user_data)
+        ai_reply = await ai_career_chat_response(text, user_data)
         
         kbd_chat = InlineKeyboardMarkup(row_width=2)
         kbd_chat.add(
