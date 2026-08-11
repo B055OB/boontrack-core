@@ -20,16 +20,31 @@ class AnalyticsService:
             }
 
         try:
+            # 1. Total Users dari tabel users
             users_res = self.supabase.table("users").select("id", count="exact").execute()
+            
+            # 2. CV Generated dari tabel cvs
             cv_res = self.supabase.table("cvs").select("id", count="exact").execute()
             
+            # 3. CV Reviewed dari tabel cv_reviews
+            cv_rev_res = self.supabase.table("cv_reviews").select("id", count="exact").execute()
+            
+            # 4. Paid Users & Total Revenue dari donation_sessions (status VERIFIED)
+            donation_res = self.supabase.table("donation_sessions").select("total_amount").eq("status", "VERIFIED").execute()
+            
+            paid_users_count = len(donation_res.data) if donation_res.data else 0
+            total_rev = sum(row.get("total_amount", 0) for row in donation_res.data) if donation_res.data else 0
+
+            # 5. Career Page (Pending donations / funnel stages)
+            career_res = self.supabase.table("donation_sessions").select("id", count="exact").eq("status", "pending").execute()
+
             return {
                 "total_users": users_res.count or 0,
                 "cv_generated": cv_res.count or 0,
-                "cv_reviewed": 0,
-                "career_page_created": 0,
-                "paid_users": 0,
-                "total_revenue": 0,
+                "cv_reviewed": cv_rev_res.count or 0,
+                "career_page_created": career_res.count or 0,
+                "paid_users": paid_users_count,
+                "total_revenue": total_rev,
                 "active_referrals": 0
             }
         except Exception as e:
@@ -46,7 +61,8 @@ class AnalyticsService:
 
     async def get_traffic_sources(self) -> dict:
         """
-        Mengambil breakdown traffic source (UTM) dari tabel users di Supabase.
+        Mengambil breakdown traffic source (UTM) dari tabel users di Supabase,
+        menghitung total masing-masing source secara dinamis.
         """
         if not self.supabase:
             return {}
@@ -58,7 +74,8 @@ class AnalyticsService:
             if response.data:
                 for row in response.data:
                     src = row.get("utm_source") or "direct"
-                    sources[src] = sources.get(src, 0) + 1
+                    src_cleaned = str(src).strip().lower()
+                    sources[src_cleaned] = sources.get(src_cleaned, 0) + 1
             return sources
         except Exception as e:
             print(f"[UTM FETCH ERROR] {e}")
@@ -66,8 +83,7 @@ class AnalyticsService:
 
     async def save_user_utm(self, user_id: int, payload_str: str):
         """
-        Memecah string payload dari Telegram start (misal: 'facebook-cpc-promo1-none')
-        dan menyimpannya ke 4 kolom UTM di Supabase.
+        Memecah string payload dari Telegram start dan menyimpannya ke kolom UTM di Supabase.
         """
         if not self.supabase or not payload_str:
             return
@@ -79,7 +95,6 @@ class AnalyticsService:
             utm_campaign = parts[2] if len(parts) > 2 and parts[2] else "none"
             utm_content = parts[3] if len(parts) > 3 and parts[3] else "none"
 
-            # Upsert/Update data UTM user di tabel users
             self.supabase.table("users").upsert({
                 "telegram_id": user_id,
                 "utm_source": utm_source,
