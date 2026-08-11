@@ -14,3 +14,5 @@ COPY . .
 
 # Konversi semua file python dan shell script ke LF
 RUN find . -type f \( -name "*.py" -o -name "*.sh" -o -name "*.yml" \) -exec dos2unix {} +
+
+CMD ["python", "main.py"]
