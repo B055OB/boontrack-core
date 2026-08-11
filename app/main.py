@@ -17,6 +17,40 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from google import genai
 from aiohttp import web
+class CVReviewEngine:
+    def __init__(self):
+        pass
+
+    def calculate_deterministic_metrics(self, raw_data: dict) -> dict:
+        quality = int(raw_data.get("quality_score", 75))
+        match = int(raw_data.get("match_score", 70))
+        evidence = int(raw_data.get("evidence_score", 65))
+        return {
+            "cv_quality": max(0, min(100, quality)),
+            "job_match": max(0, min(100, match)),
+            "evidence_strength": max(0, min(100, evidence))
+        }
+
+    def detect_weaknesses(self, metrics: dict) -> list:
+        recommendations = []
+        if metrics["cv_quality"] < 80:
+            recommendations.append({"impact": "Tinggi", "area": "CV Quality", "action": "Tambahkan metrik pencapaian terukur (angka/persentase) pada deskripsi pengalaman kerja."})
+        if metrics["job_match"] < 75:
+            recommendations.append({"impact": "Sedang", "area": "Job Match", "action": "Sisipkan lebih banyak kata kunci (keywords) yang relevan dengan posisi target."})
+        if metrics["evidence_strength"] < 70:
+            recommendations.append({"impact": "Rendah", "area": "Evidence Strength", "action": "Sertakan tautan portofolio, proyek GitHub, atau bukti sertifikasi pendukung."})
+        return recommendations
+
+    def process_review(self, user_data: dict) -> dict:
+        try:
+            metrics = self.calculate_deterministic_metrics(user_data)
+            weaknesses = self.detect_weaknesses(metrics)
+            return {"status": "success", "metrics": metrics, "recommendations": weaknesses, "overall_score": round((metrics["cv_quality"] + metrics["job_match"] + metrics["evidence_strength"]) / 3)}
+        except Exception:
+            return {"status": "fallback", "metrics": {"cv_quality": 70, "job_match": 70, "evidence_strength": 70}, "recommendations": [{"impact": "Tinggi", "area": "System Note", "action": "Sistem menggunakan kalkulasi standar. Harap periksa kembali format CV."}], "overall_score": 70}
+
+# Inisialisasi engine secara global
+cv_engine = CVReviewEngine()
 
 load_dotenv()
 
@@ -765,6 +799,26 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
             await bot.delete_message(chat_id=user_id, message_id=processing_msg.message_id)
         except Exception:
             pass
+
+        # ESEKUSI CV REVIEW ENGINE (DETERMINISTIK & ANTI-FRAGILE)
+        review_result = cv_engine.process_review(user_data)
+        metrics = review_result["metrics"]
+        recommendations = review_result["recommendations"]
+
+        review_text = (
+            f"📊 <b>Analisis Hasil Review CV Kamu:</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>CV Quality:</b> {metrics['cv_quality']}/100\n"
+            f"• <b>Job Match:</b> {metrics['job_match']}/100\n"
+            f"• <b>Evidence Strength:</b> {metrics['evidence_strength']}/100\n\n"
+        )
+        
+        if recommendations:
+            review_text += "💡 <b>Rekomendasi Perbaikan Utamamu:</b>\n"
+            for rec in recommendations:
+                review_text += f"• [{rec['impact']}] {rec['action']}\n"
+
+        await bot.send_message(user_id, review_text, parse_mode="HTML")
 
         # 1. VALUE BEFORE TAKE: TIPS PENGERJAAN
         value_text = (
