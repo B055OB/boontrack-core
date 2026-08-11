@@ -314,7 +314,6 @@ def _check_user_paid_sync(user_id):
 async def check_user_paid(user_id):
     return await asyncio.to_thread(_check_user_paid_sync, user_id)
 
-# --- REVISI: CHECK SLUG AVAILABILITY IN DATABASE ---
 def _check_slug_available_sync(slug, user_id):
     try:
         conn = get_db_connection()
@@ -578,7 +577,7 @@ def get_question_text(step, target_lang="ID", status_kerja="Berpengalaman"):
         }
     return questions.get(step, "")
 
-# --- FIX: AI CAREER COMPANION (PRIORITAS UTAMA GEMINI 2.5 FLASH) ---
+# --- AI CAREER COMPANION (PRIORITAS UTAMA GEMINI 2.5 FLASH) ---
 def ai_career_chat_response(user_query, user_context=None):
     pos = user_context.get("target_position", "dunia kerja") if user_context else "dunia kerja"
     
@@ -600,7 +599,7 @@ def ai_career_chat_response(user_query, user_context=None):
     2. Gunakan Bahasa Indonesia yang ramah, profesional, dan ringkas (maksimal 130 kata).
     """
 
-    # 1. PRIORITY UTAMA: Gemini 2.5 Flash (Sangat Stabil, Cerdas, & Paham Konteks ID)
+    # 1. PRIORITY UTAMA: Gemini 2.5 Flash
     if ai_client:
         try:
             res = ai_client.models.generate_content(
@@ -612,7 +611,7 @@ def ai_career_chat_response(user_query, user_context=None):
         except Exception as e:
             print(f"[Gemini AI Error]: {e}")
 
-    # 2. CADANGAN 1: Groq Llama 3.1 (Super Cepat)
+    # 2. CADANGAN 1: Groq Llama 3.1
     if GROQ_API_KEY:
         try:
             headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
@@ -644,28 +643,7 @@ def ai_career_chat_response(user_query, user_context=None):
         except Exception as e:
             print(f"[OpenRouter AI Error]: {e}")
 
-    # Fallback Teks Jelas
     return "Saat ini sistem AI kami sedang dipadatkan. Boleh tolong ulangi pertanyaanmu secara spesifik? Misal: 'Berapa rata-rata gaji posisi Admin di Bandung?'"
-
-    if ai_client:
-        try:
-            res = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-            if res and res.text:
-                return res.text.strip()
-        except Exception as e:
-            print(f"[Career AI Error] Gemini failed: {e}")
-
-    if GROQ_API_KEY:
-        try:
-            headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-            payload = {"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "temperature": 0.4}
-            res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=4)
-            if res.status_code == 200:
-                return res.json()['choices'][0]['message']['content'].strip()
-        except Exception as e:
-            print(f"[Career AI Error] Groq failed: {e}")
-
-    return "Aku menangkap poin pertanyaanmu! Untuk bidang tersebut, fokus utamanya ada pada keahlian spesifik dan bukti portofolio kerja. Ada bagian tertentu yang ingin kita bahas lebih detail? 😊"
 
 def create_cv_docx(user_id, data):
     doc = Document()
@@ -1014,7 +992,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "Teman")
     slug = get_user_slug(user_data, callback_query.from_user.first_name)
 
-    # --- REVISI: PAYMENT QRIS + TOMBOL BAYAR NANTI & BATAL (POIN 7 CTO) ---
     if code in ["don_5000", "don_10000", "don_25000"]:
         base_amt = 5000 if code == "don_5000" else (10000 if code == "don_10000" else 25000)
         unique_code = random.randint(100, 999)
@@ -1132,7 +1109,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         user_state[user_id]["step"] = "CP_EDIT_SKILLS"
         await bot.send_message(user_id, "🛠️ <b>Edit Keahlian / Skill Website</b>\n\nKetik skill utama dipisahkan dengan koma:\n<i>(Contoh: Python, OpenAI API, Cloudflare Workers, SQL, Recruitment)</i>", parse_mode="HTML")
 
-    # --- REVISI: GUIDELINE GOOGLE DRIVE LINK (POIN 3 CTO) ---
     elif code == "cp_edit_resume":
         user_state[user_id]["step"] = "CP_EDIT_RESUME"
         await bot.send_message(
@@ -1215,7 +1191,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         await save_dropoff(user_id, TOTAL_STEPS, user_data)
         await update_cloudflare_kv(slug, user_data)
         
-        # --- REVISI: TOMBOL NAVIGASI JALAN PULANG LENGKAP (POIN 5 CTO) ---
         kbd_done = InlineKeyboardMarkup(row_width=1)
         kbd_done.add(
             InlineKeyboardButton("🌐 Buka Website Live", url=f"https://{slug}.boontrack.com"),
@@ -1361,7 +1336,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         first_q = f"{get_progress_bar(1)}\n{get_question_text(1, target_lang, status_kerja)}"
         await bot.send_message(user_id, first_q, parse_mode="HTML")
 
-    # --- JANGAN SAMPAI HILANG: TOMBOL LEWATI (STEPS 4, 7, 8, 9) ---
     elif code == "skip_optional":
         current_step = user_state[user_id].get("step", 1)
         if isinstance(current_step, int):
@@ -1469,6 +1443,7 @@ async def handle_message(message: types.Message):
         await message.reply(random.choice(closing_replies), parse_mode="HTML")
         return
 
+    # DIRECT AI ROUTE UNTUK MENU CAREER QA / CHAT BEBAS
     if current_step == 0 or current_step == "CAREER_QA":
         await track_event(user_id, "career_ai_query", meta={"query": text})
         await bot.send_chat_action(chat_id=user_id, action="typing")
@@ -1483,7 +1458,6 @@ async def handle_message(message: types.Message):
         await message.reply(ai_reply, reply_markup=kbd_chat, parse_mode="HTML")
         return
 
-    # --- REVISI: EDIT SLUG + VALIDASI DUPLIKASI (POIN 3 CTO) ---
     if current_step == "CP_EDIT_SLUG":
         clean_slug = re.sub(r'[^a-z0-9-]', '', text.lower())
         if not clean_slug or len(clean_slug) < 3:
@@ -1667,7 +1641,7 @@ async def handle_message(message: types.Message):
         else:
             await process_and_send_cv(message, user_id, user_data)
 
-# --- REVISI: DANA WEBHOOK DENGAN DIRECT FILE DELIVERY (POIN 8 CTO) ---
+# --- DANA WEBHOOK DENGAN DIRECT FILE DELIVERY ---
 async def dana_webhook_handler(request):
     try:
         data = await request.json()
@@ -1692,7 +1666,6 @@ async def dana_webhook_handler(request):
                 buyer_id = order["telegram_id"]
                 product = order["product_name"]
                 
-                # Direct Document Delivery via Telegram Bot
                 caption_text = (
                     f"🎉 <b>Pembayaran Terkonfirmasi! (Rp{incoming_amount:,})</b>\n\n"
                     f"Terima kasih telah membeli **{product}**.\n"
