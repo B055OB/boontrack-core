@@ -1798,7 +1798,22 @@ async def on_startup(dp):
     asyncio.create_task(start_web_server())
 
 if __name__ == '__main__':
+    print("========================================")
+    print("[BOOT] BoonTrack Telegram Bot STARTING")
+    print(f"[BOOT] PID: {os.getpid()}")
+    print(f"[BOOT] HOSTNAME: {os.getenv('HOSTNAME', 'unknown')}")
+    print(f"[BOOT] PORT: {os.getenv('PORT', 'unknown')}")
+    print("========================================")
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+
+    print("[BOOT] Initializing database...")
     loop.run_until_complete(init_db())
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+
+    print("[BOOT] Starting Telegram polling...")
+    executor.start_polling(
+        dp,
+        skip_updates=True,
+        on_startup=on_startup
+    )
