@@ -64,7 +64,29 @@ POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 
+def call_github_models(prompt: str) -> str:
+    if not GITHUB_TOKEN:
+        return None
+    try:
+        url = "https://models.inference.ai.azure.com/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "messages": [{"role": "user", "content": prompt}],
+            "model": "gpt-4o-mini",
+            "temperature": 0.5,
+            "max_tokens": 150
+        }
+        res = requests.post(url, json=payload, headers=headers, timeout=4)
+        if res.status_code == 200:
+            return res.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print(f"[GitHub Models Error]: {e}")
+    return None
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 QRIS_IMAGE_PATH = "assets/qris.jpg"
 
