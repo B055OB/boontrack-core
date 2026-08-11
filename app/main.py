@@ -124,12 +124,13 @@ async def handle_cv_review_process(user_id: int, target_position: str, cv_text: 
     
     return format_telegram_review_response(final_output, target_position)
 
-# Import instance Flask dari app/app.py
-from app.app import app
+if __name__ == '__main__':
+    import asyncio
+    from aiohttp import web
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    # Menjalankan server aiohttp utama (bot telegram + webhook)
+    port = int(os.getenv("PORT", 8080))
+    web.run_app(app, host='0.0.0.0', port=port)
 
 # --- ENVIRONMENT CONFIGURATION ---
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
