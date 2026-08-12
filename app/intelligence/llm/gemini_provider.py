@@ -1,6 +1,7 @@
 import os
 import time
 import logging
+import asyncio
 from google import genai
 from google.genai import types
 from app.intelligence.canonical import LLMResponse
@@ -30,7 +31,7 @@ class GeminiProvider(BaseLLMProvider):
                 text="Maaf, konfigurasi API Key Gemini belum diatur di server.",
                 finish_reason="error",
                 provider="gemini",
-                ,
+                model="gemini-1.5-flash",
             )
 
         start_time = time.time()
@@ -41,8 +42,9 @@ class GeminiProvider(BaseLLMProvider):
                 system_instruction=system_prompt if system_prompt else None,
             )
 
-            # Memanggil endpoint dengan nama model resmi SDK google-genai
-            response = self.client.models.generate_content(
+            # Memanggil endpoint SDK dalam thread pool agar non-blocking
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
                 model="gemini-1.5-flash", 
                 contents=prompt, 
                 config=config

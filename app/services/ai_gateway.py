@@ -19,7 +19,7 @@ SYSTEM_PROMPT_DEFAULT = (
 )
 
 # SAKELAR TEST: Set True jika ingin tes respon dummy tanpa panggil API AI external
-MOCK_MODE = True
+MOCK_MODE = False
 
 
 class GeminiGoalDetector(BaseGoalDetector):
