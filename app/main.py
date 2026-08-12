@@ -17,7 +17,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from google import genai
 from aiohttp import web
-
+from app.repositories.session_repository import SessionRepository  # Sesuaikan nama class repo kamu
 # Import Service & Brain Engine Baru
 from app.services.ai_gateway import AIGateway
 from app.services.brain_engine import BrainEngine
@@ -85,6 +85,8 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
 # --- INITIALIZE AI GATEWAY & BRAIN ENGINE ---
+# --- INITIALIZE REPO, AI GATEWAY & BRAIN ENGINE ---
+session_repo = SessionRepository()  # Create instance session_repo dulu
 ai_gateway = AIGateway()
 brain_engine = BrainEngine(session_repo=session_repo, ai_gateway=ai_gateway)
 
