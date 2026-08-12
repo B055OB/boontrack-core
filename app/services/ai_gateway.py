@@ -18,6 +18,9 @@ SYSTEM_PROMPT_DEFAULT = (
     "Jawab singkat, jelas, dan dalam Bahasa Indonesia yang natural."
 )
 
+# SAKELAR TEST: Set True jika ingin tes respon dummy tanpa panggil API AI external
+MOCK_MODE = False
+
 
 class GeminiGoalDetector(BaseGoalDetector):
     def __init__(self, api_key: str = None):
@@ -47,7 +50,7 @@ class GeminiGoalDetector(BaseGoalDetector):
             "confidence": 0.95,
             "reasoning": f"Deteksi via Goal Detector {PROMPT_VERSION}",
             "provider": "gemini",
-            "model": "gemini-2.5-flash",
+            "model": "gemini-1.5-flash",
             "prompt_version": PROMPT_VERSION,
         }
 
@@ -56,8 +59,6 @@ class AIGateway:
     """
     Gateway untuk konsultasi karir bebas (general query).
     Coba provider berurutan: Gemini -> Groq -> OpenRouter.
-    Semua kegagalan di-log dengan jelas (bukan silent fail) supaya
-    gampang di-debug lewat Render Logs.
     """
 
     def __init__(self, primary_provider: str = "gemini"):
@@ -67,13 +68,12 @@ class AIGateway:
         self.groq_api_key = os.getenv("GROQ_API_KEY", "")
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "")
 
-        # Log status key saat startup -- supaya ketauan dari awal
-        # kalau ada key yang kosong/hilang, bukan nunggu request gagal dulu.
         logger.info(
-            "AIGateway init | gemini_key=%s groq_key=%s openrouter_key=%s",
+            "AIGateway init | gemini_key=%s groq_key=%s openrouter_key=%s | MockMode=%s",
             bool(self.gemini_api_key),
             bool(self.groq_api_key),
             bool(self.openrouter_api_key),
+            MOCK_MODE,
         )
 
     async def detect_goal_and_intent(
@@ -89,11 +89,15 @@ class AIGateway:
     ) -> Optional[str]:
         """
         Entry point utama yang dipanggil BrainEngine untuk general query.
-        Return string jawaban AI, atau None kalau SEMUA provider gagal
-        (BrainEngine yang handle fallback statis-nya).
         """
+        # TEST MOCK MODE: Jalur tes tanpa panggil API luar sama sekali
+        if MOCK_MODE:
+            logger.info("AIGateway running in MOCK_MODE")
+            return f"🤖 [MOCK RESPON]: Halo! Pesan kamu '{user_message}' berhasil diproses oleh AIGateway Railway. Jalur sistem bot 100% lancar!"
+
         context = context or {}
 
+        # Urutan Fallback Provider: Gemini -> Groq -> OpenRouter
         providers = [
             ("gemini", self._call_gemini),
             ("groq", self._call_groq),
@@ -113,8 +117,6 @@ class AIGateway:
                         "Provider=%s returned empty result, trying next", name
                     )
                 except Exception as e:
-                    # WAJIB di-log detail -- ini yang tadi hilang di versi lama,
-                    # bikin kamu gak pernah tau kenapa selalu jatuh ke fallback.
                     logger.error(
                         "Provider=%s FAILED | %s: %s",
                         name,
@@ -136,13 +138,16 @@ class AIGateway:
         if not self.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY kosong / tidak ter-set")
 
+        # Menggunakan nama model resmi resmi: gemini-1.5-flash
         url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-2.5-flash:generateContent?key={self.gemini_api_key}"
+            f"gemini-1.5-flash:generateContent?key={self.gemini_api_key}"
         )
+        
+        # Format payload yang kompatibel untuk Gemini REST API
+        full_text = f"{system_prompt}\n\nUser Question: {user_message}"
         payload = {
-            "contents": [{"parts": [{"text": user_message}]}],
-            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "contents": [{"parts": [{"text": full_text}]}],
             "generationConfig": {"temperature": 0.7, "maxOutputTokens": 512},
         }
 
@@ -171,8 +176,10 @@ class AIGateway:
             "Authorization": f"Bearer {self.groq_api_key}",
             "Content-Type": "application/json",
         }
+        
+        # Menggunakan model Groq aktif: llama-3.3-70b-versatile atau llama-3.1-8b-instant
         payload = {
-            "model": "llama-3.1-8b-instant",
+            "model": "llama-3.3-70b-versatile",
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
@@ -207,7 +214,7 @@ class AIGateway:
             "Content-Type": "application/json",
         }
         payload = {
-            "model": "deepseek/deepseek-chat:free",
+            "model": "google/gemini-flash-1.5",
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},

@@ -43,7 +43,7 @@ class GeminiProvider(BaseLLMProvider):
 
             # Memanggil endpoint dengan nama model resmi SDK google-genai
             response = self.client.models.generate_content(
-                model="gemini-2.5-flash", 
+                model="gemini-1.5-flash", 
                 contents=prompt, 
                 config=config
             )
@@ -60,7 +60,7 @@ class GeminiProvider(BaseLLMProvider):
                 finish_reason="stop",
                 latency_ms=round(latency, 2),
                 provider="gemini",
-                model="gemini-2.5-flash",
+                model="gemini-1.5-flash",
                 token_usage={
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
@@ -74,5 +74,5 @@ class GeminiProvider(BaseLLMProvider):
                 text=f"Maaf, kendala koneksi AI: {str(e)}",
                 finish_reason="error",
                 provider="gemini",
-                model="gemini-2.5-flash",
+                model="gemini-1.5-flash",
             )

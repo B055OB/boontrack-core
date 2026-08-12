@@ -448,7 +448,7 @@ def ai_generate_summary(position, status_kerja, target_lang):
     try:
         if ai_client:
             res = ai_client.models.generate_content(
-                model='gemini-2.5-flash', 
+                model='gemini-1.5-flash', 
                 contents=f"Buatkan ringkasan profesional singkat untuk posisi {position}"
             )
             if res and res.text:
@@ -463,7 +463,7 @@ def ai_translate_text(text, target_lang):
     try:
         if ai_client:
             res = ai_client.models.generate_content(
-                model='gemini-2.5-flash', 
+                model='gemini-1.5-flash', 
                 contents=f"Translate this professional CV text to English: {text}"
             )
             if res and res.text:
@@ -478,7 +478,7 @@ def ai_rewrite_achievement(ach_raw, target_lang):
     try:
         if ai_client:
             res = ai_client.models.generate_content(
-                model='gemini-2.5-flash', 
+                model='gemini-1.5-flash', 
                 contents=f"Buatkan 2-3 poin bullet achievement profesional untuk: {ach_raw}"
             )
             if res and res.text:
