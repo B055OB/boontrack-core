@@ -5,6 +5,7 @@ import re
 import random
 import requests
 import tempfile
+import uuid
 import aiohttp
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -181,6 +182,23 @@ def _init_db_sync():
             status VARCHAR(20) DEFAULT 'PENDING',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             expires_at TIMESTAMP
+        );
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS click_logs (
+            id SERIAL PRIMARY KEY,
+            click_id VARCHAR(100) UNIQUE,
+            source VARCHAR(50),
+            utm_source VARCHAR(50),
+            utm_medium VARCHAR(50),
+            utm_campaign VARCHAR(100),
+            utm_content VARCHAR(100),
+            utm_term VARCHAR(100),
+            telegram_user_id BIGINT,
+            event_name VARCHAR(50) DEFAULT 'page_view',
+            ip_address VARCHAR(50),
+            user_agent TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
     conn.commit()
@@ -919,6 +937,25 @@ async def send_welcome(message: types.Message):
     meta_data = {}
     if args.startswith("ref_"):
         meta_data = {"utm_source": "referral", "referrer_id": args.replace("ref_", "")}
+    elif args.startswith("CLK-"):
+        meta_data = {"utm_source": "click_logs", "click_id": args}
+        # Connection ke Click Logs Attribution
+        def _link_user_attribution():
+            try:
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute("""
+                    UPDATE click_logs 
+                    SET telegram_user_id = %s, event_name = 'start_bot'
+                    WHERE click_id = %s
+                """, (user_id, args))
+                conn.commit()
+                cur.close()
+                conn.close()
+            except Exception as e:
+                print(f"[Attribution Error] {e}")
+
+        await asyncio.to_thread(_link_user_attribution)
     else:
         meta_data = {"utm_source": args}
 
@@ -1682,7 +1719,43 @@ async def handle_message(message: types.Message):
         else:
             await process_and_send_cv(message, user_id, user_data)
 
-# --- DANA WEBHOOK DENGAN DIRECT FILE DELIVERY ---
+# --- WEB TRACKER & DANA WEBHOOK HANDLERS ---
+async def tracker_handler(request):
+    """Custom Analytics Tracker - Generates Click ID & Captures Full UTMs"""
+    try:
+        source = request.match_info.get('source', 'direct')
+        utm_source = request.query.get('utm_source', source)
+        utm_medium = request.query.get('utm_medium', 'organic')
+        utm_campaign = request.query.get('utm_campaign', 'general')
+        utm_content = request.query.get('utm_content', '')
+        utm_term = request.query.get('utm_term', '')
+        
+        ip = request.headers.get('CF-Connecting-IP') or request.remote
+        user_agent = request.headers.get('User-Agent', '')
+        
+        click_id = f"CLK-{int(datetime.now().timestamp())}-{uuid.uuid4().hex[:6]}"
+
+        def _log_click():
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO click_logs 
+                (click_id, source, utm_source, utm_medium, utm_campaign, utm_content, utm_term, event_name, ip_address, user_agent)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'click_link', %s, %s)
+            """, (click_id, source, utm_source, utm_medium, utm_campaign, utm_content, utm_term, ip, user_agent))
+            conn.commit()
+            cur.close()
+            conn.close()
+
+        await asyncio.to_thread(_log_click)
+
+        target_bot_url = f"https://t.me/boontrackbot?start={click_id}"
+        return web.HTTPFound(location=target_bot_url)
+
+    except Exception as e:
+        print(f"[Tracker Error] {e}")
+        return web.HTTPFound(location="https://t.me/boontrackbot")
+
 async def dana_webhook_handler(request):
     try:
         data = await request.json()
@@ -1770,6 +1843,7 @@ async def start_web_server():
     app = web.Application()
     app.router.add_get('/', health_check_handler)
     app.router.add_get('/health', health_check_handler)
+    app.router.add_get('/t/{source}', tracker_handler)
     app.router.add_post('/webhook/dana', dana_webhook_handler)
     
     port = int(os.getenv("PORT", 10000))
