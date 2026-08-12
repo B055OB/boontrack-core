@@ -86,7 +86,7 @@ dp = Dispatcher(bot)
 
 # --- INITIALIZE AI GATEWAY & BRAIN ENGINE ---
 ai_gateway = AIGateway()
-brain_engine = BrainEngine(ai_gateway=ai_gateway)
+brain_engine = BrainEngine(session_repo=session_repo, ai_gateway=ai_gateway)
 
 user_state = {}
 TOTAL_STEPS = 9
