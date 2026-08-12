@@ -1,27 +1,31 @@
 from app.models.session import ConversationState
-from app.services.goal_detector import RuleBasedGoalDetector  # <-- Pakai nama class yang benar
-
+from app.services.goal_detector import RuleBasedGoalDetector
+from app.engines.intent_engine import intent_engine, IntentType
 
 class BrainEngine:
 
     def __init__(self, session_repo, ai_gateway=None):
         self.session_repo = session_repo
         self.ai_gateway = ai_gateway
-        # Inisialisasi RuleBasedGoalDetector
         self.goal_detector = RuleBasedGoalDetector()
 
     async def handle_message(
-        self, user_id: str, channel: str, text: str
+        self, user_id: str, channel: str, text: str, is_owner: bool = False
     ) -> dict:
         # 1. Load atau Create Session User
         session = await self.session_repo.get_or_create(user_id, channel)
         clean_text = text.strip()
 
-        # 2. Jika user sedang di pertengahan Flow (bukan START), teruskan sesuai State
+        # 2. Deteksi Intent Lewat IntentEngine (Traffic Controller)
+        intent_res = await intent_engine.detect_intent(clean_text, is_owner=is_owner)
+        intent = intent_res.get("intent")
+        print(f"[BRAIN] detected_intent={intent} via {intent_res.get('method')}")
+
+        # 3. Jika user sedang di pertengahan Flow (bukan START), teruskan sesuai State
         if session.state != ConversationState.START.value:
             return await self._process_state_flow(session, clean_text)
 
-        # 3. Deteksi Goal/Intent Baru
+        # 4. Routing Berdasarkan Intent / Goal
         detected_res = await self.goal_detector.detect(clean_text)
         detected_goal = (
             detected_res.get("goal")
@@ -30,7 +34,8 @@ class BrainEngine:
         )
         print(f"[BRAIN] detected_goal={detected_goal}")
 
-        if detected_goal == "GET_JOB" or detected_goal == "CREATE_CV":
+        # Flow Buat CV (Trigger dari Intent CV_CREATION atau Goal)
+        if intent == IntentType.CV_CREATION or detected_goal in ["GET_JOB", "CREATE_CV"]:
             session.state = ConversationState.CREATE_CV_NAME.value
             session.goal = "CREATE_CV"
             await self.session_repo.save(session)
@@ -44,6 +49,7 @@ class BrainEngine:
                 )
             }
 
+        # Flow Support / Venting
         elif detected_goal == "CAREER_SUPPORT":
             session.state = ConversationState.VENT_MODE.value
             await self.session_repo.save(session)
@@ -56,13 +62,22 @@ class BrainEngine:
                 )
             }
 
-        # 4. Goal None / General Conversation -> Teruskan ke AI Gateway
-        print("[BRAIN] routing to AI gateway for general query")
+        # 5. Intent CASUAL -> Respon Cepat atau Prompt Ringkas
+        elif intent == IntentType.CASUAL:
+            # Tetap teruskan ke AI Gateway dengan konteks intent casual (hemat token)
+            pass
+
+        # 6. General Query / Career Query -> Teruskan ke AI Gateway
+        print("[BRAIN] routing to AI gateway")
 
         if self.ai_gateway:
             try:
+                # Sisipkan metadata intent ke konteks AI
+                context = session.context_json or {}
+                context["intent"] = intent
+
                 ai_response = await self.ai_gateway.generate(
-                    user_message=clean_text, context=session.context_json or {}
+                    user_message=clean_text, context=context
                 )
 
                 print(f"[BRAIN] AI gateway response received: {bool(ai_response)}")
