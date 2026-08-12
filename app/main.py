@@ -616,7 +616,8 @@ async def ai_career_chat_response(user_query, user_context=None):
         print(f"[AI GATEWAY DIRECT ERROR]: {type(e).__name__}: {e}")
 
     # 3. Jika MOCK_MODE = True di ai_gateway, atau semua provider mati:
-    return f"🤖 [MOCK RESPON]: Halo! Pesan kamu '{user_query}' berhasil diterima sistem bot. (Mode Pengujian Aktif)"
+    return f"Maaf, staf kami yang menjawab untuk kebutuhan karir sedang tidak di tempat. Mungkin bisa coba lagi nanti ya 🙏"
+
 
 def create_cv_docx(user_id, data):
     doc = Document()
