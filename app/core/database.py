@@ -5,6 +5,9 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from aiogram import types
 from app.core.config import settings
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
 
 def get_db_connection():
     return psycopg2.connect(
