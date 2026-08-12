@@ -487,15 +487,28 @@ def ai_rewrite_achievement(ach_raw, target_lang):
         print(f"[AI Achievement Fallback]: {e}")
     return ach_raw
 
-def get_user_slug(user_data, default_name):
+def get_user_slug(user_data: dict, default_name: str = "") -> str | None:
+    # 1. Jika user menetapkan custom slug secara manual
     custom_slug = user_data.get("custom_slug", "").strip().lower()
     if custom_slug:
         return re.sub(r'[^a-z0-9-]', '', custom_slug)
+    
+    # 2. CEK STATUS: Jika Career Page BELUM aktif/dibayar, JANGAN buat slug (kembalikan None)
+    if user_data.get("cp_status") != "active":
+        return None
+
+    # 3. Fallback hanya untuk user yang SUDAH beli / aktif (cp_status == 'active')
     raw_name = user_data.get("nama_panggilan", default_name or "user")
     clean_name = re.sub(r'[^a-z0-9]', '', str(raw_name).lower().replace(" ", ""))
     return clean_name or "user"
 
-async def update_cloudflare_kv(slug: str, user_data: dict) -> bool:
+
+async def update_cloudflare_kv(slug: str | None, user_data: dict) -> bool:
+    # CEK PENGAMAN: Jika slug None atau kosong, batalkan eksekusi ke Cloudflare
+    if not slug:
+        print("[KV Info] Slug bernilai None/kosong (user belum mengaktifkan Career Page). Skip update KV.")
+        return False
+
     if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_KV_NAMESPACE_ID or not CLOUDFLARE_ACCOUNT_ID:
         print("[KV Alert] Credentials Cloudflare belum lengkap di .env")
         return False
@@ -853,7 +866,7 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
             monetize_text = (
                 f"{insight_text}\n\n"
                 f"🌐 <b>Buat Career Page Profesional</b>\n"
-                f"Contoh Live: <code>{slug}.boontrack.com</code>\n"
+                f"Contoh Live: <code>rayigemilang.boontrack.com</code>\n"
                 f"<i>(Sekali aktivasi seumur hidup — Rp10.000)</i>"
             )
             await bot.send_message(user_id, monetize_text, reply_markup=get_donation_options_keyboard(), parse_mode="HTML")
