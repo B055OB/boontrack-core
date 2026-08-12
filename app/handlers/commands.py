@@ -1,6 +1,7 @@
 from aiogram import types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from app.core.database import save_user, track_event, get_user_history, save_dropoff
+from app.handlers.admin_handler import admin_handler
 
 TOTAL_STEPS = 10
 
@@ -30,8 +31,20 @@ def get_progress_bar(step: int) -> str:
 
 async def send_welcome(message: types.Message, user_state: dict):
     user_id = message.from_user.id
-    
-    text_parts = message.text.split()
+    text = message.text.strip()
+
+    # ----------------------------------------------------
+    # 🚨 ADMIN COMMAND INTERCEPT (Sprint C)
+    # ----------------------------------------------------
+    if text.startswith("/analytics") or text.startswith("/admin"):
+        response_text = await admin_handler.handle_admin_command(user_id, text)
+        await message.reply(response_text, parse_mode="Markdown")
+        return
+
+    # ----------------------------------------------------
+    # ALUR UTAMA /START & PARSING UTM
+    # ----------------------------------------------------
+    text_parts = text.split()
     args = text_parts[1] if len(text_parts) > 1 else "direct"
 
     # 1. PARSING FULL UTM & REFERRAL FIRST
