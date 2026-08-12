@@ -5,6 +5,7 @@ import re
 import random
 import requests
 import tempfile
+import aiohttp
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import psycopg2
@@ -324,27 +325,6 @@ def _check_user_paid_sync(user_id):
 async def check_user_paid(user_id):
     return await asyncio.to_thread(_check_user_paid_sync, user_id)
 
-def _check_slug_available_sync(slug, user_id):
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT user_id, data FROM user_progress WHERE user_id != %s", (user_id,))
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        for r_id, r_data in rows:
-            if isinstance(r_data, dict):
-                custom = r_data.get("custom_slug", "").strip().lower()
-                if custom == slug:
-                    return False
-        return True
-    except Exception as e:
-        print(f"Check Slug Error: {e}")
-        return True
-
-async def check_slug_available(slug, user_id):
-    return await asyncio.to_thread(_check_slug_available_sync, slug, user_id)
-
 def _create_order_sync(telegram_id, product_name, base_price, unique_code, total_amount):
     try:
         conn = get_db_connection()
@@ -443,6 +423,94 @@ def _match_and_complete_donation_sync(amount):
 async def match_and_complete_donation(amount):
     return await asyncio.to_thread(_match_and_complete_donation_sync, amount)
 
+# --- HELPER FUNCTIONS CLOUDFLARE KV & SLUG UNIK ---
+async def check_kv_key_exists(slug: str) -> bool:
+    """Mengecek apakah slug sudah terdaftar di Cloudflare KV."""
+    if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_KV_NAMESPACE_ID or not CLOUDFLARE_ACCOUNT_ID:
+        return False
+
+    url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces/{CLOUDFLARE_KV_NAMESPACE_ID}/values/{slug.lower()}"
+    headers = {"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}"}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as resp:
+                return resp.status == 200
+    except Exception as e:
+        print(f"[KV Check Error] {e}")
+        return False
+
+
+async def generate_unique_slug(user_data: dict) -> str:
+    """Menghasilkan slug unik (contoh: rini -> rini1 -> rini2) jika nama sudah terpakai."""
+    custom_slug = user_data.get("custom_slug", "").strip().lower()
+    if custom_slug:
+        base_slug = re.sub(r'[^a-z0-9-]', '', custom_slug)
+    else:
+        raw_name = user_data.get("nama_panggilan", user_data.get("1", "user"))
+        base_slug = re.sub(r'[^a-z0-9]', '', str(raw_name).lower().replace(" ", "")) or "user"
+
+    slug = base_slug
+    counter = 1
+
+    while await check_kv_key_exists(slug):
+        slug = f"{base_slug}{counter}"
+        counter += 1
+
+    return slug
+
+
+def get_user_slug(user_data: dict, default_name: str = "") -> str | None:
+    custom_slug = user_data.get("custom_slug", "").strip().lower()
+    if custom_slug:
+        return re.sub(r'[^a-z0-9-]', '', custom_slug)
+    
+    if user_data.get("slug"):
+        return user_data.get("slug")
+
+    if user_data.get("cp_status") != "active":
+        return None
+
+    raw_name = user_data.get("nama_panggilan", default_name or "user")
+    clean_name = re.sub(r'[^a-z0-9]', '', str(raw_name).lower().replace(" ", ""))
+    return clean_name or "user"
+
+
+async def update_cloudflare_kv(slug: str | None, user_data: dict) -> bool:
+    if not slug:
+        print("[KV Info] Slug bernilai None/kosong (user belum mengaktifkan Career Page). Skip update KV.")
+        return False
+
+    if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_KV_NAMESPACE_ID or not CLOUDFLARE_ACCOUNT_ID:
+        print("[KV Alert] Credentials Cloudflare belum lengkap di .env")
+        return False
+        
+    url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces/{CLOUDFLARE_KV_NAMESPACE_ID}/values/{slug.lower()}"
+    payload = {
+        "nama": user_data.get("nama_panggilan", user_data.get("1", "Pelamar")),
+        "posisi": user_data.get("target_position", "AI & Operations Workflow Optimization Specialist"),
+        "email": user_data.get("2", ""),
+        "telepon": user_data.get("7", ""),
+        "ringkasan": user_data.get("ringkasan_web", user_data.get("3", "")),
+        "pengalaman": user_data.get("pengalaman_web", user_data.get("3", "")),
+        "pendidikan": user_data.get("5", ""),
+        "keahlian": user_data.get("keahlian_web", user_data.get("6", "")),
+        "foto": user_data.get("foto_url", ""),
+        "resume_url": user_data.get("resume_url", ""),
+        "theme": user_data.get("theme", "happy")
+    }
+    headers = {
+        "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    try:
+        res = await asyncio.to_thread(requests.put, url, json=payload, headers=headers, timeout=5)
+        print(f"[KV Sync Status] Status: {res.status_code} untuk slug: {slug.lower()}")
+        return res.status_code == 200
+    except Exception as e:
+        print(f"[KV Sync Error] Gagal update Cloudflare KV: {e}")
+        return False
+
 # --- HELPER FUNCTIONS AI CV GENERATOR WITH SAFE FALLBACKS ---
 def ai_generate_summary(position, status_kerja, target_lang):
     try:
@@ -486,58 +554,6 @@ def ai_rewrite_achievement(ach_raw, target_lang):
     except Exception as e:
         print(f"[AI Achievement Fallback]: {e}")
     return ach_raw
-
-def get_user_slug(user_data: dict, default_name: str = "") -> str | None:
-    # 1. Jika user menetapkan custom slug secara manual
-    custom_slug = user_data.get("custom_slug", "").strip().lower()
-    if custom_slug:
-        return re.sub(r'[^a-z0-9-]', '', custom_slug)
-    
-    # 2. CEK STATUS: Jika Career Page BELUM aktif/dibayar, JANGAN buat slug (kembalikan None)
-    if user_data.get("cp_status") != "active":
-        return None
-
-    # 3. Fallback hanya untuk user yang SUDAH beli / aktif (cp_status == 'active')
-    raw_name = user_data.get("nama_panggilan", default_name or "user")
-    clean_name = re.sub(r'[^a-z0-9]', '', str(raw_name).lower().replace(" ", ""))
-    return clean_name or "user"
-
-
-async def update_cloudflare_kv(slug: str | None, user_data: dict) -> bool:
-    # CEK PENGAMAN: Jika slug None atau kosong, batalkan eksekusi ke Cloudflare
-    if not slug:
-        print("[KV Info] Slug bernilai None/kosong (user belum mengaktifkan Career Page). Skip update KV.")
-        return False
-
-    if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_KV_NAMESPACE_ID or not CLOUDFLARE_ACCOUNT_ID:
-        print("[KV Alert] Credentials Cloudflare belum lengkap di .env")
-        return False
-        
-    url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces/{CLOUDFLARE_KV_NAMESPACE_ID}/values/{slug.lower()}"
-    payload = {
-        "nama": user_data.get("nama_panggilan", user_data.get("1", "Pelamar")),
-        "posisi": user_data.get("target_position", "AI & Operations Workflow Optimization Specialist"),
-        "email": user_data.get("2", ""),
-        "telepon": user_data.get("7", ""),
-        "ringkasan": user_data.get("ringkasan_web", user_data.get("3", "")),
-        "pengalaman": user_data.get("pengalaman_web", user_data.get("3", "")),
-        "pendidikan": user_data.get("5", ""),
-        "keahlian": user_data.get("keahlian_web", user_data.get("6", "")),
-        "foto": user_data.get("foto_url", ""),
-        "resume_url": user_data.get("resume_url", ""),
-        "theme": user_data.get("theme", "happy")
-    }
-    headers = {
-        "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    try:
-        res = await asyncio.to_thread(requests.put, url, json=payload, headers=headers, timeout=5)
-        print(f"[KV Sync Status] Status: {res.status_code} untuk slug: {slug.lower()}")
-        return res.status_code == 200
-    except Exception as e:
-        print(f"[KV Sync Error] Gagal update Cloudflare KV: {e}")
-        return False
 
 def clean_val(val):
     if not val:
@@ -600,14 +616,9 @@ def get_question_text(step, target_lang="ID", status_kerja="Berpengalaman"):
         }
     return questions.get(step, "")
 
-# --- AI CAREER COMPANION VIA BRAIN ENGINE & AI GATEWAY (UPDATED) ---
+# --- AI CAREER COMPANION VIA BRAIN ENGINE & AI GATEWAY ---
 async def ai_career_chat_response(user_query, user_context=None):
-    """
-    Reroute ke BrainEngine & AIGateway
-    """
     user_context = user_context or {}
-    
-    # 1. Coba lewat BrainEngine
     try:
         response = await brain_engine.handle_message(
             user_message=user_query,
@@ -618,7 +629,6 @@ async def ai_career_chat_response(user_query, user_context=None):
     except Exception as e:
         print(f"[BRAIN ENGINE ERROR]: {type(e).__name__}: {e}")
 
-    # 2. Direct Fallback lewat AIGateway
     try:
         response = await ai_gateway.generate(
             user_message=user_query,
@@ -629,7 +639,6 @@ async def ai_career_chat_response(user_query, user_context=None):
     except Exception as e:
         print(f"[AI GATEWAY DIRECT ERROR]: {type(e).__name__}: {e}")
 
-    # 3. Jika MOCK_MODE = True di ai_gateway, atau semua provider mati:
     return f"Maaf, staf kami yang menjawab untuk kebutuhan karir sedang tidak di tempat. Mungkin bisa coba lagi nanti ya 🙏"
 
 
@@ -898,6 +907,7 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
 async def handle_admin_commands(message: types.Message):
     response = await admin_handler.handle_admin_command(message.from_user.id, message.text)
     await message.reply(response, parse_mode="Markdown")
+
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
     user_id = message.from_user.id
@@ -960,15 +970,15 @@ async def send_welcome(message: types.Message):
     await message.reply(msg_1, parse_mode="HTML")
 
 @dp.callback_query_handler(lambda c: c.data in [
-    "status_fresh", "status_exp", "lang_id", "lang_en", "lang_hybrid", 
+    "status_fresh", "status_exp", "lang_id", "lang_en", "lang_jp",
     "skip_optional", "resume_flow", "restart_flow",
     "home_create_cv", "home_check_ref", "home_career_qa",
     "home_digital_products", "buy_ebook_interview", "home_back_main",
     "don_5000", "don_10000", "don_25000", "cancel_checkout",
-    "cp_build_now", "cp_build_later", "cp_manage", "cp_upload_photo", "cp_edit_resume", "cp_choose_theme", 
-    "cp_edit_data", "cp_import_cv", "cp_confirm_import", "cp_deploy_live", "cp_edit_slug",
-    "cp_edit_posisi_btn", "cp_edit_summary_btn", "cp_edit_exp_btn", "cp_edit_skills_btn",
-    "theme_happy", "theme_blue", "theme_dark", "theme_emerald", "theme_purple"
+    "cp_build_now", "cp_build_later", "cp_manage", "cp_upload_cv",
+    "cp_edit_data", "cp_import_cv", "cp_confirm_import", "cp_change_slug_start",
+    "cp_confirm_default_slug", "cp_edit_posisi_btn", "cp_edit_summary_btn", 
+    "cp_edit_exp", "theme_happy", "theme_blue", "theme_dark", "theme_emerald"
 ])
 async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
@@ -1032,39 +1042,55 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             await bot.send_message(user_id, don_msg, reply_markup=get_donation_options_keyboard(), parse_mode="HTML")
             return
 
-        pos = user_data.get("target_position", "AI & Operations Workflow Optimization Specialist")
-        email = user_data.get("2", "Belum Diisi")
-        exp = user_data.get("pengalaman_web", user_data.get("3", "Belum Diisi"))
-        resume_link = user_data.get("resume_url", "Belum Ada (Sembunyi)")
-        
-        kbd_setup = InlineKeyboardMarkup(row_width=1)
-        kbd_setup.add(
-            InlineKeyboardButton("🔗 Ubah Subdomain / Slug Website", callback_data="cp_edit_slug"),
-            InlineKeyboardButton("✏️ Pilih Bagian yang Ingin Diisi / Diedit", callback_data="cp_edit_data"),
-            InlineKeyboardButton("🔄 Impor Semua Data dari Draf CV", callback_data="cp_import_cv"),
-            InlineKeyboardButton("📸 Upload / Ganti Foto Profil", callback_data="cp_upload_photo"),
-            InlineKeyboardButton("📄 Upload / Input Link Resume PDF", callback_data="cp_edit_resume"),
-            InlineKeyboardButton("🎨 Pilih Tema Warna Website", callback_data="cp_choose_theme"),
-            InlineKeyboardButton("🚀 Terbitkan Website Sekarang (Live)", callback_data="cp_deploy_live"),
-            InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="home_back_main")
+        user_data["cp_status"] = "active"
+        default_slug = await generate_unique_slug(user_data)
+        user_data["temp_slug"] = default_slug
+        user_state[user_id]["data"] = user_data
+
+        kbd_post = InlineKeyboardMarkup(row_width=1)
+        kbd_post.add(
+            InlineKeyboardButton(f"✅ Pakai {default_slug}.boontrack.com", callback_data="cp_confirm_default_slug"),
+            InlineKeyboardButton("✏️ Ketik Nama Custom Sendiri", callback_data="cp_change_slug_start")
         )
-        
-        summary_msg = (
-            f"🔍 <b>Konfirmasi Data Career Page Kamu:</b>\n\n"
-            f"🌐 <b>Link Website Kamu:</b> https://{slug}.boontrack.com\n"
-            f"• <b>Nama Panggilan:</b> {user_name}\n"
-            f"• <b>Posisi Target:</b> {pos}\n"
-            f"• <b>Email:</b> {email}\n"
-            f"• <b>Pengalaman:</b> {exp}\n"
-            f"• <b>Link Resume PDF:</b> <i>{resume_link}</i>\n"
-            f"• <b>Foto Profil:</b> <i>(Belum Ada / Standard)</i>\n"
-            f"• <b>Tema Warna:</b> <i>{user_data.get('theme', 'happy').capitalize()}</i>\n\n"
-            f"💡 <i>Atur atau edit data kamu via tombol di bawah ini!</i>"
+
+        await bot.send_message(
+            user_id,
+            "🎉 <b>Akses Career Page Aktif!</b>\n\n"
+            "Mari tentukan nama link subdomain untuk Career Page milikmu:\n\n"
+            f"<b>Rekomendasi Subdomain:</b>\n"
+            f"👉 <code>{default_slug}.boontrack.com</code>\n\n"
+            "Apakah kamu mau memakai nama rekomendasi di atas, atau ingin mengetik nama custom sendiri?",
+            reply_markup=kbd_post,
+            parse_mode="HTML"
         )
-        await bot.send_message(user_id, summary_msg, reply_markup=kbd_setup, parse_mode="HTML")
+
+    elif code == "cp_confirm_default_slug":
+        user_data = user_state[user_id].get("data", {})
+        final_slug = user_data.get("temp_slug") or await generate_unique_slug(user_data)
+        user_data["slug"] = final_slug
+        user_state[user_id]["data"] = user_data
+
+        await update_cloudflare_kv(final_slug, user_data)
+
+        await bot.send_message(
+            user_id,
+            f"✅ <b>Career Page Berhasil Diterbitkan!</b>\n\n"
+            f"🌐 Link portofolio kamu: https://{final_slug}.boontrack.com",
+            parse_mode="HTML"
+        )
+
+    elif code == "cp_change_slug_start":
+        user_state[user_id]["step"] = "CP_INPUT_CUSTOM_SLUG"
+        await bot.send_message(
+            user_id,
+            "✏️ <b>Ketik nama subdomain (slug) baru yang kamu inginkan:</b>\n\n"
+            "<i>Contoh: ketik <code>alldy-pro</code> untuk mendapatkan link https://alldy-pro.boontrack.com</i>\n"
+            "<i>(Hanya huruf, angka, dan tanda hubung [-])</i>",
+            parse_mode="HTML"
+        )
 
     elif code == "cp_edit_slug":
-        user_state[user_id]["step"] = "CP_EDIT_SLUG"
+        user_state[user_id]["step"] = "CP_INPUT_CUSTOM_SLUG"
         await bot.send_message(
             user_id,
             f"🔗 <b>Ubah Subdomain / Slug Website Kamu</b>\n\n"
@@ -1455,19 +1481,34 @@ async def handle_message(message: types.Message):
     # ==========================================
     # PRIORITAS 2: EDIT CAREER PAGE & FORM CV
     # ==========================================
-    if current_step == "CP_EDIT_SLUG":
+    user_data = user_state.get(user_id, {}).get("data", {})
+    slug = get_user_slug(user_data, message.from_user.first_name)
+
+    if current_step == "CP_INPUT_CUSTOM_SLUG":
         clean_slug = re.sub(r'[^a-z0-9-]', '', text.lower())
         if not clean_slug or len(clean_slug) < 3:
             await message.reply("⚠️ Nama subdomain minimal 3 karakter, hanya huruf, angka, dan (-). Silakan coba lagi!")
             return
             
-        is_available = await check_slug_available(clean_slug, user_id)
-        if not is_available:
-            await message.reply(f"❌ Subdomain <code>{clean_slug}.boontrack.com</code> sudah digunakan orang lain. Silakan coba nama lain!", parse_mode="HTML")
+        if await check_kv_key_exists(clean_slug):
+            saran_1 = f"{clean_slug}-pro"
+            saran_2 = f"{clean_slug}1"
+            await message.reply(
+                f"❌ <b>Subdomain Tidak Tersedia!</b>\n\n"
+                f"Subdomain <code>{clean_slug}.boontrack.com</code> sudah terdaftar oleh pengguna lain.\n\n"
+                f"💡 <b>Saran Subdomain Alternatif:</b>\n"
+                f"• <code>{saran_1}</code>\n"
+                f"• <code>{saran_2}</code>\n\n"
+                f"Silakan ketik nama subdomain/slug lain yang ingin kamu gunakan:",
+                parse_mode="HTML"
+            )
             return
 
         user_data["custom_slug"] = clean_slug
+        user_data["slug"] = clean_slug
+        user_state[user_id]["data"] = user_data
         user_state[user_id]["step"] = 0
+
         await save_dropoff(user_id, TOTAL_STEPS, user_data)
         await update_cloudflare_kv(clean_slug, user_data)
         
@@ -1478,7 +1519,7 @@ async def handle_message(message: types.Message):
             InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
         )
         await message.reply(
-            f"✅ <b>Subdomain website berhasil diubah ke:</b>\n"
+            f"✅ <b>Subdomain website berhasil disimpan ke:</b>\n"
             f"👉 <b>https://{clean_slug}.boontrack.com</b>",
             reply_markup=kbd_done,
             parse_mode="HTML"
@@ -1545,9 +1586,6 @@ async def handle_message(message: types.Message):
         await message.reply(f"✅ <b>Keahlian/Skill berhasil diperbarui!</b>\n\n👉 <i>Cek di:</i> https://{slug}.boontrack.com", reply_markup=kbd_done, parse_mode="HTML")
         return
 
-    # Inisialisasi user_data sejajar dengan blok if
-    user_data = user_state.get(user_id, {}).get("data", {})
-
     if current_step == "CP_EDIT_RESUME":
         if text.strip() == "-" or text.lower() == "kosong":
             user_data["resume_url"] = ""
@@ -1556,7 +1594,6 @@ async def handle_message(message: types.Message):
             user_data["resume_url"] = text
             status_resume = text
 
-        # Pastikan data tersimpan kembali ke state
         if user_id in user_state:
             user_state[user_id]["data"] = user_data
             user_state[user_id]["step"] = 0
@@ -1570,7 +1607,6 @@ async def handle_message(message: types.Message):
                 InlineKeyboardButton("🔙 Kembali ke Menu Career Page", callback_data="cp_manage"),
                 InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
             )
-            # Pesan balasan agar tidak error menggantung
             await message.reply(f"✅ <b>Resume berhasil diperbarui!</b>\n\n👉 <i>Cek di:</i> https://{slug}.boontrack.com", reply_markup=kbd_done, parse_mode="HTML")
             return
 
@@ -1698,20 +1734,28 @@ async def dana_webhook_handler(request):
                     return web.json_response({"status": "already_verified"}, status=200)
 
                 donor_id = donation["telegram_id"]
-                kbd_cp_choice = InlineKeyboardMarkup(row_width=1)
-                kbd_cp_choice.add(
-                    InlineKeyboardButton("✍️ Lengkapi Data & Foto Website", callback_data="cp_build_now"),
-                    InlineKeyboardButton("⏳ Nanti Saja (Kembali ke Menu Utama)", callback_data="cp_build_later")
+                user_data = user_state.get(donor_id, {}).get("data", {})
+                user_data["cp_status"] = "active"
+                
+                default_slug = await generate_unique_slug(user_data)
+                user_data["temp_slug"] = default_slug
+                user_state[donor_id]["data"] = user_data
+
+                kbd_post = InlineKeyboardMarkup(row_width=1)
+                kbd_post.add(
+                    InlineKeyboardButton(f"✅ Pakai {default_slug}.boontrack.com", callback_data="cp_confirm_default_slug"),
+                    InlineKeyboardButton("✏️ Ketik Nama Custom Sendiri", callback_data="cp_change_slug_start")
                 )
                 
                 don_thanks = (
                     f"🎉 <b>PEMBAYARAN CAREER PAGE TERKONFIRMASI!</b>\n\n"
-                    f"Terima kasih banyak atas dukunganmu sebesar <b>Rp{incoming_amount:,}</b>! Kebaikanmu secara otomatis ikut menjaga project BoonTrack agar tetap gratis bagi seluruh pencari kerja. 🙏\n\n"
-                    f"🌐 <b>Akses Website Career Page Personal Kamu Resmi Aktif!</b>\n"
-                    f"Tanpa pusing biaya domain, server, dan kodingan—semua fasilitas ini <b>100% siap kamu gunakan seumur hidup</b>.\n\n"
-                    f"💬 <i>Yuk, kita lengkapi dulu data dan tampilannya sekarang!</i>"
+                    f"Terima kasih atas dukunganmu sebesar <b>Rp{incoming_amount:,}</b>! 🙏\n\n"
+                    f"Sekarang, silakan tentukan nama link subdomain untuk Career Page milikmu:\n\n"
+                    f"<b>Rekomendasi Subdomain:</b>\n"
+                    f"👉 <code>{default_slug}.boontrack.com</code>\n\n"
+                    f"Apakah kamu mau memakai nama rekomendasi di atas, atau ingin mengetik nama custom sendiri?"
                 )
-                await bot.send_message(chat_id=donor_id, text=don_thanks, reply_markup=kbd_cp_choice, parse_mode="HTML")
+                await bot.send_message(chat_id=donor_id, text=don_thanks, reply_markup=kbd_post, parse_mode="HTML")
                 return web.json_response({"status": "success_donation", "donation_id": donation["donation_id"]}, status=200)
 
         return web.json_response({"status": "no_matching_transaction"}, status=200)
