@@ -20,7 +20,6 @@ class AnalyticsService:
             }
 
         try:
-            # Query hitung jumlah record dari masing-masing tabel Supabase
             users_res = self.supabase.table("users").select("id", count="exact").execute()
             cv_res = self.supabase.table("cvs").select("id", count="exact").execute()
             
@@ -53,17 +52,43 @@ class AnalyticsService:
             return {}
 
         try:
-            # Mengambil kolom utm_source dari tabel users (atau sesuaikan dengan tabel utm_logs kamu)
             response = self.supabase.table("users").select("utm_source").execute()
             
             sources = {}
             if response.data:
                 for row in response.data:
-                    src = row.get("utm_source") or "Direct / Organic"
+                    src = row.get("utm_source") or "direct"
                     sources[src] = sources.get(src, 0) + 1
             return sources
         except Exception as e:
             print(f"[UTM FETCH ERROR] {e}")
             return {}
+
+    async def save_user_utm(self, user_id: int, payload_str: str):
+        """
+        Memecah string payload dari Telegram start (misal: 'facebook-cpc-promo1-none')
+        dan menyimpannya ke 4 kolom UTM di Supabase.
+        """
+        if not self.supabase or not payload_str:
+            return
+
+        try:
+            parts = payload_str.split('-')
+            utm_source = parts[0] if len(parts) > 0 and parts[0] else "direct"
+            utm_medium = parts[1] if len(parts) > 1 and parts[1] else "none"
+            utm_campaign = parts[2] if len(parts) > 2 and parts[2] else "none"
+            utm_content = parts[3] if len(parts) > 3 and parts[3] else "none"
+
+            # Upsert/Update data UTM user di tabel users
+            self.supabase.table("users").upsert({
+                "telegram_id": user_id,
+                "utm_source": utm_source,
+                "utm_medium": utm_medium,
+                "utm_campaign": utm_campaign,
+                "utm_content": utm_content
+            }, on_conflict="telegram_id").execute()
+
+        except Exception as e:
+            print(f"[UTM SAVE ERROR] {e}")
 
 analytics_service = AnalyticsService()
