@@ -1,5 +1,5 @@
 from app.models.session import ConversationState
-from app.services.goal_detector import GeminiGoalDetector, Goal
+from app.services.goal_detector import RuleBasedGoalDetector  # <-- Pakai nama class yang benar
 
 
 class BrainEngine:
@@ -7,8 +7,8 @@ class BrainEngine:
     def __init__(self, session_repo, ai_gateway=None):
         self.session_repo = session_repo
         self.ai_gateway = ai_gateway
-        # Menggunakan GeminiGoalDetector sesuai class yang di-import
-        self.goal_detector = GeminiGoalDetector()
+        # Inisialisasi RuleBasedGoalDetector
+        self.goal_detector = RuleBasedGoalDetector()
 
     async def handle_message(
         self, user_id: str, channel: str, text: str
@@ -23,10 +23,14 @@ class BrainEngine:
 
         # 3. Deteksi Goal/Intent Baru
         detected_res = await self.goal_detector.detect(clean_text)
-        detected_goal = detected_res.get("goal") if isinstance(detected_res, dict) else detected_res
+        detected_goal = (
+            detected_res.get("goal")
+            if isinstance(detected_res, dict)
+            else detected_res
+        )
         print(f"[BRAIN] detected_goal={detected_goal}")
 
-        if detected_goal == Goal.CREATE_CV or detected_goal == "GET_JOB":
+        if detected_goal == "GET_JOB" or detected_goal == "CREATE_CV":
             session.state = ConversationState.CREATE_CV_NAME.value
             session.goal = "CREATE_CV"
             await self.session_repo.save(session)
@@ -71,7 +75,7 @@ class BrainEngine:
             except Exception as e:
                 print(f"[BRAIN][AI ERROR] {type(e).__name__}: {e}")
 
-        # Fallback Statis (Jika AI Gateway gagal / bernilai None)
+        # Fallback Statis
         return {
             "text": (
                 "Saya siap bantu kamu sampai dapat kerja! Pilih langkah pertama kamu:\n\n"
@@ -113,7 +117,6 @@ class BrainEngine:
                 )
             }
 
-        # Fallback jika state belum terdefinisi di state flow
         return {
             "text": "Terima kasih infonya. Mari kita lanjutkan prosesnya!"
         }
