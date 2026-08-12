@@ -47,7 +47,7 @@ class GeminiGoalDetector(BaseGoalDetector):
             "confidence": 0.95,
             "reasoning": f"Deteksi via Goal Detector {PROMPT_VERSION}",
             "provider": "gemini",
-            "model": "gemini-1.5-flash",
+            "model": "gemini-2.5-flash",
             "prompt_version": PROMPT_VERSION,
         }
 
