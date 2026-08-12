@@ -1532,15 +1532,22 @@ async def handle_message(message: types.Message):
         await message.reply(f"✅ <b>Keahlian/Skill berhasil diperbarui!</b>\n\n👉 <i>Cek di:</i> https://{slug}.boontrack.com", reply_markup=kbd_done, parse_mode="HTML")
         return
 
-    if current_step == "CP_EDIT_RESUME":
-        if text.strip() == "-" or text.lower() == "kosong":
-            user_data["resume_url"] = ""
-            status_resume = "Disembunyikan"
-        else:
-            user_data["resume_url"] = text
-            status_resume = text
-            
+    # Inisialisasi user_data sebelum dipanggil agar tidak UnboundLocalError
+user_data = user_state.get(user_id, {}).get("data", {})
+
+if current_step == "CP_EDIT_RESUME":
+    if text.strip() == "-" or text.lower() == "kosong":
+        user_data["resume_url"] = ""
+        status_resume = "Disembunyikan"
+    else:
+        user_data["resume_url"] = text
+        status_resume = text
+
+    # Pastikan data tersimpan kembali ke state
+    if user_id in user_state:
+        user_state[user_id]["data"] = user_data
         user_state[user_id]["step"] = 0
+        
         await save_dropoff(user_id, TOTAL_STEPS, user_data)
         await update_cloudflare_kv(slug, user_data)
         
