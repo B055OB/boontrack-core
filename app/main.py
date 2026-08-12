@@ -17,7 +17,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from google import genai
 from aiohttp import web
-from app.repositories.session_repository import SessionRepository  # Sesuaikan nama class repo kamu
+from app.repositories.session_repository import SessionRepository
 # Import Service & Brain Engine Baru
 from app.services.ai_gateway import AIGateway
 from app.services.brain_engine import BrainEngine
@@ -85,9 +85,8 @@ ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
-# --- INITIALIZE AI GATEWAY & BRAIN ENGINE ---
 # --- INITIALIZE REPO, AI GATEWAY & BRAIN ENGINE ---
-session_repo = SessionRepository()  # Create instance session_repo dulu
+session_repo = SessionRepository()
 ai_gateway = AIGateway()
 brain_engine = BrainEngine(session_repo=session_repo, ai_gateway=ai_gateway)
 
@@ -587,22 +586,37 @@ def get_question_text(step, target_lang="ID", status_kerja="Berpengalaman"):
         }
     return questions.get(step, "")
 
-# --- AI CAREER COMPANION VIA BRAIN ENGINE & AI GATEWAY ---
+# --- AI CAREER COMPANION VIA BRAIN ENGINE & AI GATEWAY (UPDATED) ---
 async def ai_career_chat_response(user_query, user_context=None):
     """
-    Reroute ke BrainEngine & AIGateway (3-layer fallback: Gemini -> Groq -> OpenRouter)
+    Reroute ke BrainEngine & AIGateway
     """
+    user_context = user_context or {}
+    
+    # 1. Coba lewat BrainEngine
     try:
         response = await brain_engine.handle_message(
             user_message=user_query,
-            context=user_context or {}
+            context=user_context
         )
         if response:
             return response
     except Exception as e:
         print(f"[BRAIN ENGINE ERROR]: {type(e).__name__}: {e}")
 
-    return "Saat ini sistem AI dipadatkan v3. Boleh tolong ulangi pertanyaanmu secara spesifik? Misal: 'Berapa rata-rata gaji posisi Admin di Bandung?'"
+    # 2. Direct Fallback lewat AIGateway
+    try:
+        response = await ai_gateway.generate(
+            user_message=user_query,
+            context=user_context
+        )
+        if response:
+            return response
+    except Exception as e:
+        print(f"[AI GATEWAY DIRECT ERROR]: {type(e).__name__}: {e}")
+
+    # 3. Jika MOCK_MODE = True di ai_gateway, atau semua provider mati:
+    return f"🤖 [MOCK RESPON]: Halo! Pesan kamu '{user_query}' berhasil diterima sistem bot. (Mode Pengujian Aktif)"
 
 def create_cv_docx(user_id, data):
     doc = Document()
