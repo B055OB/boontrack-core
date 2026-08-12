@@ -24,3 +24,6 @@ python-telegram-bot>=20.0
 
 # Document Generator
 python-docx
+
+# Web Framework
+flask
