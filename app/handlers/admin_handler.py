@@ -1,4 +1,5 @@
 from app.utils.admin_check import is_owner
+from app.services.analytics_service import analytics_service
 
 class AdminHandler:
     """
@@ -13,16 +14,19 @@ class AdminHandler:
         clean_cmd = command_text.strip().lower()
 
         if clean_cmd in ["/analytics", "/admin"]:
+            # Ambil data real-time dari Supabase
+            metrics = await analytics_service.get_realtime_metrics()
+
             return (
                 "📊 **BoonTrack Real-time Metrics (Sprint C)**\n\n"
-                "• **Total Users:** 0\n"
-                "• **CV Generated:** 0\n"
-                "• **CV Reviewed:** 0\n"
-                "• **Career Page Created:** 0\n"
-                "• **Paid Users:** 0\n"
-                "• **Total Revenue:** Rp0\n"
-                "• **Active Referrals:** 0\n\n"
-                "⚙️ *Sistem whitelisting owner aktif 100%.*"
+                f"• **Total Users:** {metrics['total_users']}\n"
+                f"• **CV Generated:** {metrics['cv_generated']}\n"
+                f"• **CV Reviewed:** {metrics['cv_reviewed']}\n"
+                f"• **Career Page Created:** {metrics['career_page_created']}\n"
+                f"• **Paid Users:** {metrics['paid_users']}\n"
+                f"• **Total Revenue:** Rp{metrics['total_revenue']:,}\n"
+                f"• **Active Referrals:** {metrics['active_referrals']}\n\n"
+                "⚙️ *Sistem whitelisting owner & query Supabase aktif 100%.*"
             )
 
         return "❓ Command admin tidak dikenali. Gunakan `/analytics`."
