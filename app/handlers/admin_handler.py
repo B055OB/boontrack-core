@@ -14,18 +14,29 @@ class AdminHandler:
         clean_cmd = command_text.strip().lower()
 
         if clean_cmd in ["/analytics", "/admin"]:
-            # Ambil data real-time dari Supabase
+            # Ambil data real-time & breakdown UTM dari analytics_service
             metrics = await analytics_service.get_realtime_metrics()
+            traffic_sources = await analytics_service.get_traffic_sources()
+
+            # Format teks breakdown UTM
+            utm_text = ""
+            if traffic_sources:
+                for src, count in traffic_sources.items():
+                    utm_text += f"• `{src}`: {count} user\n"
+            else:
+                utm_text = "• belum ada data traffic\n"
 
             return (
                 "📊 **BoonTrack Real-time Metrics (Sprint C)**\n\n"
-                f"• **Total Users:** {metrics['total_users']}\n"
-                f"• **CV Generated:** {metrics['cv_generated']}\n"
-                f"• **CV Reviewed:** {metrics['cv_reviewed']}\n"
-                f"• **Career Page Created:** {metrics['career_page_created']}\n"
-                f"• **Paid Users:** {metrics['paid_users']}\n"
-                f"• **Total Revenue:** Rp{metrics['total_revenue']:,}\n"
-                f"• **Active Referrals:** {metrics['active_referrals']}\n\n"
+                f"• **Total Users:** {metrics.get('total_users', 0)}\n"
+                f"• **CV Generated:** {metrics.get('cv_generated', 0)}\n"
+                f"• **CV Reviewed:** {metrics.get('cv_reviewed', 0)}\n"
+                f"• **Career Page Created:** {metrics.get('career_page_created', 0)}\n"
+                f"• **Paid Users:** {metrics.get('paid_users', 0)}\n"
+                f"• **Total Revenue:** Rp{metrics.get('total_revenue', 0):,}\n"
+                f"• **Active Referrals:** {metrics.get('active_referrals', 0)}\n\n"
+                "🌐 **Top Traffic Sources (UTM):**\n"
+                f"{utm_text}\n"
                 "⚙️ *Sistem whitelisting owner & query Supabase aktif 100%.*"
             )
 
