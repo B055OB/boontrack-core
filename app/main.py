@@ -21,6 +21,7 @@ from app.repositories.session_repository import SessionRepository
 # Import Service & Brain Engine Baru
 from app.services.ai_gateway import AIGateway
 from app.services.brain_engine import BrainEngine
+from app.handlers.admin_handler import admin_handler
 
 
 # ==========================================
@@ -879,7 +880,11 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         print(f"Error Generate CV Flow: {e}")
         await message.reply("❌ Terjadi kendala teknis. Silakan tekan /start untuk coba lagi!", parse_mode="HTML")
 
-# COMMAND HANDLERS
+# COMMAND 
+@dp.message_handler(commands=['analytics', 'admin'])
+async def handle_admin_commands(message: types.Message):
+    response = await admin_handler.handle_admin_command(message.from_user.id, message.text)
+    await message.reply(response, parse_mode="Markdown")
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
     user_id = message.from_user.id
