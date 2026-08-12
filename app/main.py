@@ -17,8 +17,11 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from google import genai
 from aiohttp import web
-import os
-import aiohttp
+
+# Import Service & Brain Engine Baru
+from app.services.ai_gateway import AIGateway
+from app.services.brain_engine import BrainEngine
+
 # ==========================================
 # 1. ENGINE & DATABASE INITIALIZATION
 # ==========================================
@@ -71,7 +74,6 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 QRIS_IMAGE_PATH = "assets/qris.jpg"
 
-# File ID Telegram Ebook untuk Direct Document Delivery
 EBOOK_FILE_ID = os.getenv("EBOOK_FILE_ID", "YOUR_TELEGRAM_EBOOK_FILE_ID")
 
 CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
@@ -81,6 +83,10 @@ CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "")
 ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
+
+# --- INITIALIZE AI GATEWAY & BRAIN ENGINE ---
+ai_gateway = AIGateway()
+brain_engine = BrainEngine(ai_gateway=ai_gateway)
 
 user_state = {}
 TOTAL_STEPS = 9
@@ -578,125 +584,20 @@ def get_question_text(step, target_lang="ID", status_kerja="Berpengalaman"):
         }
     return questions.get(step, "")
 
-# --- AI CAREER COMPANION (DIRECT REST & FALLBACK MULTI-PROVIDER) ---
+# --- AI CAREER COMPANION VIA BRAIN ENGINE & AI GATEWAY ---
 async def ai_career_chat_response(user_query, user_context=None):
-    # Fetch ENV Variables
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-    GITHUB_TOKEN = os.getenv("GITHUB_TOKEN") or os.getenv("GITHUB_API_KEY")
-
-    # 1. DEBUG LOGGING ENV LOADED
-    print(f"[DEBUG AI] GEMINI_KEY Loaded: {bool(GEMINI_API_KEY)} (Len: {len(GEMINI_API_KEY) if GEMINI_API_KEY else 0})")
-    print(f"[DEBUG AI] GROQ_KEY Loaded: {bool(GROQ_API_KEY)} (Len: {len(GROQ_API_KEY) if GROQ_API_KEY else 0})")
-    print(f"[DEBUG AI] OPENROUTER_KEY Loaded: {bool(OPENROUTER_API_KEY)} (Len: {len(OPENROUTER_API_KEY) if OPENROUTER_API_KEY else 0})")
-    print(f"[DEBUG AI] GITHUB_TOKEN Loaded: {bool(GITHUB_TOKEN)} (Len: {len(GITHUB_TOKEN) if GITHUB_TOKEN else 0})")
-
-    pos = user_context.get("target_position", "dunia kerja") if user_context else "dunia kerja"
-    
-    prompt = f"""
-    Kamu adalah BoonTrack Career Companion, pakar HR & konsultan karir profesional di Indonesia.
-    
-    Konteks Pengguna:
-    - Target Posisi/Minat: {pos}
-    
-    Pertanyaan Pengguna:
-    "{user_query}"
-    
-    TUGAS UTAMA:
-    Jawab pertanyaan pengguna secara realistis, informatif, dan langsung pada inti pertanyaan (misal: gaji, kualifikasi, tips interview, nama-nama posisi termahal/terbaik).
-    DILARANG keras memaksa pengguna menceritakan CV jika pertanyaan bersifat umum.
-    
-    ATURAN JAWABAN:
-    1. Berikan jawaban direct, spesifik, dan sebutkan contoh konkret jika ditanya posisi/gaji.
-    2. Gunakan Bahasa Indonesia yang ramah, profesional, dan ringkas (maksimal 130 kata).
     """
-
-    timeout = aiohttp.ClientTimeout(total=10)
-    
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        # 1. PRIORITY 1: Gemini 2.5 Flash via REST Endpoint
-        if GEMINI_API_KEY:
-            try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-                payload = {"contents": [{"parts": [{"text": prompt}]}]}
-                async with session.post(url, json=payload) as res:
-                    print(f"[DEBUG Gemini] Status Code: {res.status}")
-                    if res.status == 200:
-                        data = await res.json()
-                        text = data['candidates'][0]['content']['parts'][0]['text']
-                        if text:
-                            return text.strip()
-                    else:
-                        err_text = await res.text()
-                        print(f"[DEBUG Gemini Error Body]: {err_text}")
-            except Exception as e:
-                print(f"[Gemini Async Error Exception]: {type(e).__name__}: {str(e)}")
-
-        # 2. PRIORITY 2: GitHub Models (GPT-4o)
-        if GITHUB_TOKEN:
-            try:
-                headers = {
-                    "Authorization": f"Bearer {GITHUB_TOKEN}",
-                    "Content-Type": "application/json"
-                }
-                payload = {
-                    "model": "gpt-4o",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.4
-                }
-                async with session.post("https://models.inference.ai.azure.com/chat/completions", json=payload, headers=headers) as res:
-                    print(f"[DEBUG GitHub AI] Status Code: {res.status}")
-                    if res.status == 200:
-                        data = await res.json()
-                        return data['choices'][0]['message']['content'].strip()
-                    else:
-                        err_text = await res.text()
-                        print(f"[DEBUG GitHub AI Error Body]: {err_text}")
-            except Exception as e:
-                print(f"[GitHub AI Async Error Exception]: {type(e).__name__}: {str(e)}")
-
-        # 3. PRIORITY 3: Groq Llama 3.1
-        if GROQ_API_KEY:
-            try:
-                headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-                payload = {
-                    "model": "llama-3.1-8b-instant", 
-                    "messages": [{"role": "user", "content": prompt}], 
-                    "temperature": 0.4
-                }
-                async with session.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers) as res:
-                    print(f"[DEBUG Groq] Status Code: {res.status}")
-                    if res.status == 200:
-                        data = await res.json()
-                        return data['choices'][0]['message']['content'].strip()
-                    else:
-                        err_text = await res.text()
-                        print(f"[DEBUG Groq Error Body]: {err_text}")
-            except Exception as e:
-                print(f"[Groq Async Error Exception]: {type(e).__name__}: {str(e)}")
-
-        # 4. PRIORITY 4: OpenRouter DeepSeek
-        if OPENROUTER_API_KEY:
-            try:
-                headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-                payload = {
-                    "model": "deepseek/deepseek-r1:free",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.4
-                }
-                async with session.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers) as res:
-                    print(f"[DEBUG OpenRouter] Status Code: {res.status}")
-                    if res.status == 200:
-                        data = await res.json()
-                        reply = data['choices'][0]['message']['content'].strip()
-                        if reply:
-                            return reply
-                    else:
-                        err_text = await res.text()
-                        print(f"[DEBUG OpenRouter Error Body]: {err_text}")
-            except Exception as e:
-                print(f"[OpenRouter Async Error Exception]: {type(e).__name__}: {str(e)}")
+    Reroute ke BrainEngine & AIGateway (3-layer fallback: Gemini -> Groq -> OpenRouter)
+    """
+    try:
+        response = await brain_engine.handle_message(
+            user_message=user_query,
+            context=user_context or {}
+        )
+        if response:
+            return response
+    except Exception as e:
+        print(f"[BRAIN ENGINE ERROR]: {type(e).__name__}: {e}")
 
     return "Saat ini sistem AI dipadatkan v3. Boleh tolong ulangi pertanyaanmu secara spesifik? Misal: 'Berapa rata-rata gaji posisi Admin di Bandung?'"
 
