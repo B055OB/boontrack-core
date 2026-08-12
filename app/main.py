@@ -1699,6 +1699,8 @@ async def start_web_server():
         await site.start()
 
 async def on_startup(dp):
+    await bot.delete_webhook(drop_pending_updates=True)
+    print("[BOOT] Webhook cleared & pending updates dropped.")
     asyncio.create_task(start_web_server())
 
 if __name__ == '__main__':
