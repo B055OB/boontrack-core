@@ -1,14 +1,6 @@
 from fastapi import APIRouter, Query, Request
 import logging
 
-try:
-    from app.services.supabase_client import supabase
-except ImportError:
-    try:
-        from app.core.database import supabase
-    except ImportError:
-        supabase = None
-
 router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
 logger = logging.getLogger(__name__)
 
@@ -27,9 +19,16 @@ async def track_click(channel: str = Query("direct"), request: Request = None):
             "source": "web_landing_page"
         }
         
-        if supabase:
-            # Insert baris data baru ke tabel click_logs
+        # Safe Lazy Import di dalam fungsi
+        try:
+            from app.services.supabase_client import supabase
             supabase.table("click_logs").insert(data).execute()
+        except Exception as db_err:
+            try:
+                from app.core.database import supabase
+                supabase.table("click_logs").insert(data).execute()
+            except Exception as db_err2:
+                logger.error(f"[DB INSERT ERROR] {db_err2}")
             
         logger.info(f"[TRACK CLICK SUCCESS] Channel: {clean_channel}")
         return {
