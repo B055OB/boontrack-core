@@ -4,7 +4,7 @@ from app.routes.analytics_route import analytics_bp
 
 app = Flask(__name__)
 
-# Register Blueprint Webhook & Analytics
+# Register Blueprint Webhook Payment & Analytics Funnel
 app.register_blueprint(payment_bp)
 app.register_blueprint(analytics_bp)
 

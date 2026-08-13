@@ -30,19 +30,9 @@ from app.handlers.admin_handler import admin_handler
 ai_gateway = AIGateway()
 
 # Import CV Review Engine & Service Baru
+
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
-
-## Daftarkan ke instance Flask asli di dalam modul
-from app.routes.analytics_route import analytics_bp
-
-# Coba daftarkan ke instance Flask (biasanya nama_module.app atau app_instance)
-try:
-    app.register_blueprint(analytics_bp)
-except AttributeError:
-    # Jika 'app' adalah nama module, panggil instance Flask di dalamnya:
-    from app import app as flask_app
-    flask_app.register_blueprint(analytics_bp)
 
 # ==========================================
 # 1. INITIALIZATION & FORMATTER
@@ -60,7 +50,7 @@ def format_telegram_review_response(data: dict, target_position: str) -> dict:
     msg += f"💪 Evidence Strength : <b>{scores.get('evidence_strength', 0)}/100</b>\n"
     msg += f"───────────────\n"
     msg += f"📈 <b>Overall Score   : {data.get('overall_score', 0)}/100</b>\n\n"
-    
+  
     if data.get("strengths"):
         msg += "<b>💪 Kekuatan Utama:</b>\n"
         for s in data["strengths"]:
@@ -131,7 +121,12 @@ async def handle_cv_review_process(user_id: int, target_position: str, cv_text: 
     
     return format_telegram_review_response(final_output, target_position)
 
+# Import instance Flask dari app/app.py
+from app.app import app
 
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
+    
 # --- ENVIRONMENT CONFIGURATION ---
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
