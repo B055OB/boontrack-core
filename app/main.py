@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import os
 import asyncio
 import json
@@ -122,11 +125,11 @@ async def handle_cv_review_process(user_id: int, target_position: str, cv_text: 
     return format_telegram_review_response(final_output, target_position)
 
 # Import instance Flask dari app/app.py
-from app.app import app
+from app import app
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-    
+
 # --- ENVIRONMENT CONFIGURATION ---
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
