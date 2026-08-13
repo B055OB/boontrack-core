@@ -1064,7 +1064,7 @@ async def send_welcome(message: types.Message):
     await message.reply(msg_1, parse_mode="HTML")
 
 @dp.callback_query_handler(lambda c: c.data in [
-    "status_fresh", "status_exp", "lang_id", "lang_en", "lang_jp",
+    "status_fresh", "status_exp", "lang_id", "lang_en", "lang_hybrid", "lang_jp",
     "skip_optional", "resume_flow", "restart_flow",
     "home_create_cv", "trigger_cv_review", "home_check_ref", "home_career_qa",
     "home_digital_products", "buy_ebook_interview", "home_back_main",
