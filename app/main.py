@@ -1839,12 +1839,45 @@ async def dana_webhook_handler(request):
 async def health_check_handler(request):
     return web.json_response({"status": "healthy", "message": "Render is awake!"}, status=200)
 
+# --- BISA DISISIPKAN DI SEKITAR BARIS 1765 ---
+
+async def funnel_report_handler(request):
+    """Endpoint JSON Laporan Funnel untuk Google Sheets CFO"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        query = """
+            SELECT 
+                LOWER(c.source) as channel,
+                COUNT(DISTINCT c.click_id) as total_klik,
+                COUNT(DISTINCT CASE WHEN c.telegram_user_id IS NOT NULL THEN c.telegram_user_id END) as masuk_telegram,
+                COUNT(DISTINCT CASE WHEN a.event = 'resume_generated' THEN a.user_id END) as selesai_cv,
+                COUNT(DISTINCT CASE WHEN p.status = 'PAID' THEN p.telegram_id END) as purchase
+            FROM click_logs c
+            LEFT JOIN analytics a ON c.telegram_user_id = a.user_id
+            LEFT JOIN product_orders p ON c.telegram_user_id = p.telegram_id
+            GROUP BY LOWER(c.source);
+        """
+        cur.execute(query)
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        return web.json_response({"status": "success", "data": rows})
+    except Exception as e:
+        return web.json_response({"status": "error", "message": str(e)}, status=500)
+
+
 async def start_web_server():
     app = web.Application()
     app.router.add_get('/', health_check_handler)
     app.router.add_get('/health', health_check_handler)
     app.router.add_get('/t/{source}', tracker_handler)
     app.router.add_post('/webhook/dana', dana_webhook_handler)
+    
+    # TAMBAHKAN ROUTE INI DI DALAM start_web_server() (sekitar baris 1775)
+    app.router.add_get('/api/analytics/funnel', funnel_report_handler)
     
     port = int(os.getenv("PORT", 10000))
     runner = web.AppRunner(app)
