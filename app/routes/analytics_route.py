@@ -5,19 +5,40 @@ import threading
 analytics_bp = Blueprint('analytics', __name__, url_prefix='/api/analytics')
 logger = logging.getLogger(__name__)
 
+def get_supabase_client():
+    """
+    Helper function untuk menemukan instance Supabase secara otomatis
+    tanpa memicu ImportError crash.
+    """
+    # Try 1: dari app.services.supabase_client
+    try:
+        from app.services.supabase_client import supabase
+        if supabase: return supabase
+    except Exception:
+        pass
+
+    # Try 2: dari app.core.database (cari semua atribut yang ada)
+    try:
+        import app.core.database as db_mod
+        for attr in ['supabase', 'supabase_client', 'client', 'db']:
+            if hasattr(db_mod, attr):
+                return getattr(db_mod, attr)
+    except Exception:
+        pass
+
+    return None
+
 def _async_insert_click(data):
     """
     Fungsi eksekusi di latar belakang agar server tidak hang/timeout.
     """
     try:
-        try:
-            from app.services.supabase_client import supabase
-        except ImportError:
-            from app.core.database import supabase
-            
-        if supabase:
-            supabase.table("click_logs").insert(data).execute()
+        client = get_supabase_client()
+        if client:
+            client.table("click_logs").insert(data).execute()
             logger.info(f"[DB INSERT SUCCESS] Channel: {data.get('channel')}")
+        else:
+            logger.error("[DB INSERT ERROR] Supabase client tidak ditemukan.")
     except Exception as err:
         logger.error(f"[DB INSERT ASYNC ERROR] {err}")
 
@@ -34,10 +55,8 @@ def track_click():
         "source": "web_landing_page"
     }
     
-    # Jalankan insert database di background thread (Non-blocking)
     threading.Thread(target=_async_insert_click, args=(data,), daemon=True).start()
     
-    # Langsung kembalikan respon instan tanpa menunggu DB
     return jsonify({
         "status": "success",
         "message": f"Click tracked for channel: {channel}"
@@ -49,18 +68,13 @@ def get_funnel_summary():
     Endpoint untuk menyuplai ringkasan agregat per channel ke Google Sheet CFO.
     """
     try:
-        # Ambil instance supabase dari mana saja yang tersedia
-        supabase = None
-        try:
-            from app.services.supabase_client import supabase
-        except ImportError:
-            try:
-                from app.core.database import supabase
-            except ImportError:
-                from app.core.database import supabase_client as supabase
+        supabase = get_supabase_client()
         
         if not supabase:
-            return jsonify({"status": "error", "message": "Supabase client tidak ditemukan"}), 500
+            return jsonify({
+                "status": "error", 
+                "message": "Supabase client tidak ditemukan di app.services atau app.core.database"
+            }), 500
 
         # Ambil data dari Supabase
         response = supabase.table("click_logs").select("*").execute()
