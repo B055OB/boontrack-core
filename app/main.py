@@ -33,11 +33,16 @@ ai_gateway = AIGateway()
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 
-# Import blueprint di bagian atas main.py:
+## Daftarkan ke instance Flask asli di dalam modul
 from app.routes.analytics_route import analytics_bp
 
-# Daftarkan blueprint ke objek app Flask kamu (sekitar baris 37):
-app.register_blueprint(analytics_bp)
+# Coba daftarkan ke instance Flask (biasanya nama_module.app atau app_instance)
+try:
+    app.register_blueprint(analytics_bp)
+except AttributeError:
+    # Jika 'app' adalah nama module, panggil instance Flask di dalamnya:
+    from app import app as flask_app
+    flask_app.register_blueprint(analytics_bp)
 
 # ==========================================
 # 1. INITIALIZATION & FORMATTER
