@@ -42,3 +42,45 @@ def track_click():
         "status": "success",
         "message": f"Click tracked for channel: {channel}"
     }), 200
+
+@analytics_bp.route('/funnel', methods=['GET'])
+def get_funnel_summary():
+    """
+    Endpoint untuk menyuplai ringkasan agregat per channel ke Google Sheet CFO.
+    """
+    try:
+        try:
+            from app.services.supabase_client import supabase
+        except ImportError:
+            from app.core.database import supabase
+        
+        if not supabase:
+            return jsonify({"status": "error", "message": "Supabase client not initialized"}), 500
+
+        # Ambil data dari Supabase
+        response = supabase.table("click_logs").select("*").execute()
+        raw_data = response.data if response.data else []
+        
+        # Agregasi data berdasarkan channel
+        summary = {}
+        for row in raw_data:
+            ch = str(row.get("channel", "unknown")).lower().strip()
+            if ch not in summary:
+                summary[ch] = {
+                    "channel": ch,
+                    "total_klik": 0,
+                    "masuk_telegram": 0,
+                    "selesai_cv": 0,
+                    "purchase": 0
+                }
+            
+            summary[ch]["total_klik"] += 1
+            if row.get("entered_telegram"): summary[ch]["masuk_telegram"] += 1
+            if row.get("cv_completed"): summary[ch]["selesai_cv"] += 1
+            if row.get("purchased"): summary[ch]["purchase"] += 1
+            
+        return jsonify(list(summary.values())), 200
+
+    except Exception as e:
+        logger.error(f"Error fetching funnel data: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
