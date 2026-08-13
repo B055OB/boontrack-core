@@ -17,7 +17,6 @@ from docx import Document
 from docx.shared import Pt, RGBColor, Inches
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from google import genai
 from aiohttp import web
 from app.repositories.session_repository import SessionRepository
 
@@ -25,6 +24,9 @@ from app.repositories.session_repository import SessionRepository
 from app.services.ai_gateway import AIGateway
 from app.services.brain_engine import BrainEngine
 from app.handlers.admin_handler import admin_handler
+
+# Inisialisasi AI Gateway terpusat
+ai_gateway = AIGateway()
 
 # Import CV Review Engine & Service Baru
 from app.engines.cv_review_engine import cv_review_engine
@@ -614,7 +616,7 @@ def ai_generate_summary(position, status_kerja, target_lang):
     try:
         if ai_client:
             res = ai_client.models.generate_content(
-                model='gemini-2.0-flash', 
+                model='gemini-3.6-flash', 
                 contents=f"Buatkan ringkasan profesional singkat untuk posisi {position}"
             )
             if res and res.text:
@@ -629,7 +631,7 @@ def ai_translate_text(text, target_lang):
     try:
         if ai_client:
             res = ai_client.models.generate_content(
-                model='gemini-2.0-flash', 
+                model='gemini-3.6-flash', 
                 contents=f"Translate this professional CV text to English: {text}"
             )
             if res and res.text:
@@ -644,7 +646,7 @@ def ai_rewrite_achievement(ach_raw, target_lang):
     try:
         if ai_client:
             res = ai_client.models.generate_content(
-                model='gemini-2.0-flash', 
+                model='gemini-3.6-flash', 
                 contents=f"Buatkan 2-3 poin bullet achievement profesional untuk: {ach_raw}"
             )
             if res and res.text:

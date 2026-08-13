@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import uuid
+import time
 import psycopg2
 from typing import Dict, Any, Optional, Tuple
 
@@ -24,6 +25,7 @@ MOCK_MODE = False
 class GeminiGoalDetector(BaseGoalDetector):
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
+        self.model_name = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 
     async def detect(self, query: str, request_id: str = None) -> Dict[str, Any]:
         req_id = request_id or f"req-{uuid.uuid4().hex[:8]}"
@@ -49,29 +51,35 @@ class GeminiGoalDetector(BaseGoalDetector):
             "confidence": 0.95,
             "reasoning": f"Deteksi via Goal Detector {PROMPT_VERSION}",
             "provider": "gemini",
-            "model": "gemini-2.0-flash",
+            "model": self.model_name,
             "prompt_version": PROMPT_VERSION,
         }
 
 
 class AIGateway:
     """
-    AI Gateway dengan metering usage, deteksi rate limit 429, 
-    logging ke ai_usage_logs, dan failover otomatis (Gemini -> Groq -> OpenRouter).
+    AI Gateway dengan metering usage, deteksi rate limit 429,
+    logging ke ai_usage_logs, Model Health Check Logging, 
+    dan dynamic failover terpusat via ENV (Gemini -> Groq -> OpenRouter).
     """
 
     def __init__(self, primary_provider: str = "gemini"):
         self.gemini_detector = GeminiGoalDetector()
+
+        # CENTRALIZED CONFIG FROM ENV (ZERO HARDCODE)
+        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+        self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        self.openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct")
 
         self.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
         self.groq_api_key = os.getenv("GROQ_API_KEY", "")
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "")
 
         logger.info(
-            "AIGateway init | gemini_key=%s groq_key=%s openrouter_key=%s | MockMode=%s",
-            bool(self.gemini_api_key),
-            bool(self.groq_api_key),
-            bool(self.openrouter_api_key),
+            "AIGateway init | GeminiModel=%s GroqModel=%s OpenRouterModel=%s | MockMode=%s",
+            self.gemini_model,
+            self.groq_model,
+            self.openrouter_model,
             MOCK_MODE,
         )
 
@@ -83,6 +91,20 @@ class AIGateway:
             user=os.getenv("POSTGRES_USER"),
             password=os.getenv("POSTGRES_PASSWORD")
         )
+
+    def _log_health(self, provider: str, model: str, status: str, latency: float, fallback: str = "NO", error_msg: str = ""):
+        """Observability Log untuk CTO & Internal Monitoring"""
+        log_str = (
+            f"\n[AI LOG]\n"
+            f"  Provider  : {provider}\n"
+            f"  Model     : {model}\n"
+            f"  Status    : {status}\n"
+            f"  Latency   : {latency:.2f}s\n"
+            f"  Fallback  : {fallback}"
+        )
+        if error_msg:
+            log_str += f"\n  Reason    : {error_msg[:300]}"
+        print(log_str)
 
     def _log_usage(
         self,
@@ -127,32 +149,38 @@ class AIGateway:
     ) -> Optional[str]:
         if MOCK_MODE:
             logger.info("AIGateway running in MOCK_MODE")
-            return f"🤖 [MOCK RESPON]: Halo! Pesan kamu '{user_message}' berhasil diproses oleh AIGateway Railway. Jalur sistem bot 100% lancar!"
+            return f"🤖 [MOCK RESPON]: Halo! Pesan kamu '{user_message}' berhasil diproses oleh AIGateway Railway."
 
         context = context or {}
         user_id = context.get("user_id")
         feature = context.get("feature", "general")
 
         providers = [
-            ("Gemini", self._call_gemini),
-            ("Groq", self._call_groq),
-            ("OpenRouter", self._call_openrouter),
+            ("Gemini", self.gemini_model, self._call_gemini),
+            ("Groq", self.groq_model, self._call_groq),
+            ("OpenRouter", self.openrouter_model, self._call_openrouter),
         ]
 
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=15)
         ) as session:
-            for name, fn in providers:
+            for idx, (name, model, fn) in enumerate(providers):
+                start_time = time.time()
                 try:
                     result, p_tokens, c_tokens = await fn(session, user_message, context, system_prompt)
+                    latency = time.time() - start_time
                     if result:
-                        logger.info("AI response OK via provider=%s", name)
+                        fallback_info = "NO" if idx == 0 else f"YES (Used {name})"
+                        self._log_health(name, model, "SUCCESS", latency, fallback=fallback_info)
                         self._log_usage(user_id, name, feature, p_tokens, c_tokens, 200, False)
                         return result
                 except Exception as e:
+                    latency = time.time() - start_time
                     err_str = str(e)
                     status_code = 429 if ("429" in err_str or "quota" in err_str.lower() or "limit" in err_str.lower()) else 500
-                    logger.warning("Provider=%s FAILED (HTTP %d) | %s", name, status_code, err_str)
+                    next_provider = providers[idx + 1][0] if idx + 1 < len(providers) else "NONE (EXHAUSTED)"
+                    
+                    self._log_health(name, model, "FAILED", latency, fallback=f"YES ({next_provider})", error_msg=err_str)
                     self._log_usage(user_id, name, feature, 0, 0, status_code, True, err_str)
                     continue
 
@@ -169,9 +197,10 @@ class AIGateway:
         if not self.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY kosong / tidak ter-set")
 
+        # Menggunakan Endpoint API Stable v1 & Dynamic Model dari ENV
         url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-2.0-flash:generateContent?key={self.gemini_api_key}"
+            "https://generativelanguage.googleapis.com/v1/models/"
+            f"{self.gemini_model}:generateContent?key={self.gemini_api_key}"
         )
         
         full_text = f"{system_prompt}\n\nUser Question: {user_message}"
@@ -211,7 +240,7 @@ class AIGateway:
         }
         
         payload = {
-            "model": "llama-3.3-70b-versatile",
+            "model": self.groq_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
@@ -250,7 +279,7 @@ class AIGateway:
             "Content-Type": "application/json",
         }
         payload = {
-            "model": "google/gemini-flash-1.5",
+            "model": self.openrouter_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
