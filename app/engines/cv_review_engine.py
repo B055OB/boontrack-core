@@ -1,4 +1,5 @@
 import re
+import json
 from typing import Dict, Any, List, Optional
 
 class CVReviewEngine:
@@ -37,8 +38,23 @@ class CVReviewEngine:
         # 3. Hitung Job Match Score (Max: 100)
         job_match = self._calc_job_match(clean_text, target_position, user_skills)
 
-        # Ringkasan Fakta Backend (Python Facts)
+        # Hitung Overall Score (Bobot Rata-rata)
+        overall_score = int((cv_quality * 0.35) + (job_match * 0.35) + (evidence_strength * 0.30))
+
+        # Tentukan Confidence Level
+        word_count = len(clean_text.split())
+        if word_count < 50 or cv_quality < 35:
+            confidence_level = "LOW"
+            confidence_reason = "Informasi CV masih minim sehingga hasil analisis belum maksimal."
+        elif cv_quality < 70:
+            confidence_level = "MEDIUM"
+            confidence_reason = "Informasi CV lumayan lengkap, namun rincian angka & achievement masih bisa ditingkatkan."
+        else:
+            confidence_level = "HIGH"
+            confidence_reason = "Data CV sangat lengkap untuk dianalisis komprehensif."
+
         return {
+            "overall_score": overall_score,
             "scores": {
                 "cv_quality": cv_quality,
                 "job_match": job_match,
@@ -49,6 +65,10 @@ class CVReviewEngine:
                 "action_verb_count": sum(1 for verb in self.action_verbs if verb in clean_text),
                 "has_email": bool(re.search(r'[\w\.-]+@[\w\.-]+\.\w+', clean_text)),
                 "has_phone": bool(re.search(r'(\+62|62|08)[0-9]{8,12}', clean_text))
+            },
+            "confidence": {
+                "level": confidence_level,
+                "reason": confidence_reason
             }
         }
 
@@ -118,6 +138,65 @@ class CVReviewEngine:
             score += min(matched_skills * 10, 30)
 
         return min(score, 100)
+
+    def build_llm_prompt(self, det_data: Dict[str, Any], cv_text: str, target_position: str, is_paid: bool = False) -> str:
+        """Sistem Prompt Anti-Halusinasi untuk LLM Career Analyst"""
+        tier = "DEEP_REVIEW" if is_paid else "BASIC_REVIEW"
+        
+        return f"""
+Kamu adalah Senior Career Analyst di BoonTrack.
+Tugasmu: Jelaskan hasil analisis deterministik backend berikut secara profesional, jujur, dan berdaya guna tinggi.
+
+TARGET POSISI: {target_position}
+TIER ANALYSIS: {tier}
+
+SKOR DETERMINISTIK DARI BACKEND (JANGAN DIUBAH ANGKANYA):
+{json.dumps(det_data, indent=2)}
+
+TEKS CV USER:
+{cv_text[:2000]}
+
+ATURAN ANTI-HALUSINASI (WAJIB):
+1. DILARANG MENGUBAH ATAU MEMBUAT ANGKA SKOR BARU. Gunakan skor dari backend!
+2. DILARANG menyuruh user menambahkan skill yang TIDAK ADA di CV seolah-olah mereka sudah memilikinya. Jika ada skill gap, kategorikan sebagai "Hal yang perlu dipelajari/dikuasai terlebih dahulu".
+3. DILARANG mengarang angka pencapaian.
+4. Action Plan WAJIB dikelompokkan berdasarkan prioritas: HIGH (merah/paling krusial), MEDIUM (kuning), LOW (hijau).
+
+OUTPUT WAJIB FORMAT JSON MURNI DENGAN SCHEMA INI:
+{{
+  "strengths": ["poin 1", "poin 2"],
+  "weaknesses": ["poin 1", "poin 2"],
+  "keyword_gaps": ["gap 1"],
+  "skill_gaps": ["skill gap 1"],
+  "evidence_gaps": ["evidence gap 1"],
+  "action_plan": [
+    {{
+      "priority": "HIGH",
+      "section": "Experience",
+      "problem": "Penjelasan masalah",
+      "recommendation": "Saran perbaikan konkret"
+    }}
+  ]
+}}
+"""
+
+    def apply_access_control(self, full_result: Dict[str, Any], is_paid: bool) -> Dict[str, Any]:
+        """Membatasi output jika user masih status FREE (Basic Review)"""
+        if is_paid:
+            full_result['tier'] = 'DEEP'
+            return full_result
+        
+        # Jika FREE / BASIC, batasi kedalaman insight
+        return {
+            "tier": "BASIC",
+            "overall_score": full_result.get("overall_score"),
+            "scores": full_result.get("scores"),
+            "strengths": full_result.get("strengths", [])[:2],
+            "weaknesses": full_result.get("weaknesses", [])[:2],
+            "confidence": full_result.get("confidence"),
+            "is_locked": True,
+            "upgrade_cta": "Buka Career Page untuk unlock Keyword Gap, Skill Gap, dan Detailed Action Plan!"
+        }
 
 # Singleton instance
 cv_review_engine = CVReviewEngine()

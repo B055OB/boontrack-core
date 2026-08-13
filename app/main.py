@@ -20,49 +20,87 @@ from docx.oxml.ns import qn
 from google import genai
 from aiohttp import web
 from app.repositories.session_repository import SessionRepository
+
 # Import Service & Brain Engine Baru
 from app.services.ai_gateway import AIGateway
 from app.services.brain_engine import BrainEngine
 from app.handlers.admin_handler import admin_handler
 
+# Import CV Review Engine & Service Baru
+from app.engines.cv_review_engine import cv_review_engine
+from app.services.cv_review_service import cv_review_service
+
 
 # ==========================================
-# 1. ENGINE & DATABASE INITIALIZATION
+# 1. INITIALIZATION & FORMATTER
 # ==========================================
-class CVReviewEngine:
-    def __init__(self):
-        pass
-
-    def calculate_deterministic_metrics(self, raw_data: dict) -> dict:
-        quality = int(raw_data.get("quality_score", 75))
-        match = int(raw_data.get("match_score", 70))
-        evidence = int(raw_data.get("evidence_score", 65))
-        return {
-            "cv_quality": max(0, min(100, quality)),
-            "job_match": max(0, min(100, match)),
-            "evidence_strength": max(0, min(100, evidence))
-        }
-
-    def detect_weaknesses(self, metrics: dict) -> list:
-        recommendations = []
-        if metrics["cv_quality"] < 80:
-            recommendations.append({"impact": "Tinggi", "area": "CV Quality", "action": "Tambahkan metrik pencapaian terukur (angka/persentase) pada deskripsi pengalaman kerja."})
-        if metrics["job_match"] < 75:
-            recommendations.append({"impact": "Sedang", "area": "Job Match", "action": "Sisipkan lebih banyak kata kunci (keywords) yang relevan dengan posisi target."})
-        if metrics["evidence_strength"] < 70:
-            recommendations.append({"impact": "Rendah", "area": "Evidence Strength", "action": "Sertakan tautan portofolio, proyek GitHub, atau bukti sertifikasi pendukung."})
-        return recommendations
-
-    def process_review(self, user_data: dict) -> dict:
-        try:
-            metrics = self.calculate_deterministic_metrics(user_data)
-            weaknesses = self.detect_weaknesses(metrics)
-            return {"status": "success", "metrics": metrics, "recommendations": weaknesses, "overall_score": round((metrics["cv_quality"] + metrics["job_match"] + metrics["evidence_strength"]) / 3)}
-        except Exception:
-            return {"status": "fallback", "metrics": {"cv_quality": 70, "job_match": 70, "evidence_strength": 70}, "recommendations": [{"impact": "Tinggi", "area": "System Note", "action": "Sistem menggunakan kalkulasi standar. Harap periksa kembali format CV."}], "overall_score": 70}
-
-cv_engine = CVReviewEngine()
 load_dotenv()
+
+def format_telegram_review_response(data: dict, target_position: str) -> str:
+    scores = data.get("scores", {})
+    confidence = data.get("confidence", {})
+    
+    msg = f"📊 <b>CV REVIEW DIAGNOSIS</b>\n"
+    msg += f"🎯 Target: <b>{target_position}</b>\n\n"
+    msg += f"📄 CV Quality        : <b>{scores.get('cv_quality', 0)}/100</b>\n"
+    msg += f"🎯 Job Match         : <b>{scores.get('job_match', 0)}/100</b>\n"
+    msg += f"💪 Evidence Strength : <b>{scores.get('evidence_strength', 0)}/100</b>\n"
+    msg += f"───────────────\n"
+    msg += f"📈 <b>Overall Score   : {data.get('overall_score', 0)}/100</b>\n\n"
+    
+    if data.get("strengths"):
+        msg += "<b>💪 Kekuatan Utama:</b>\n"
+        for s in data["strengths"]:
+            msg += f"• {s}\n"
+        msg += "\n"
+        
+    if data.get("weaknesses"):
+        msg += "<b>⚠️ Celah Perbaikan:</b>\n"
+        for w in data["weaknesses"]:
+            msg += f"• {w}\n"
+        msg += "\n"
+        
+    if data.get("action_plan"):
+        msg += "<b>🎯 Prioritas Action Plan:</b>\n"
+        for act in data["action_plan"][:3]:
+            icon = "🔴" if act.get("priority") == "HIGH" else ("🟡" if act.get("priority") == "MEDIUM" else "🟢")
+            msg += f"{icon} <b>{act.get('section')}</b>: {act.get('recommendation')}\n"
+        msg += "\n"
+
+    msg += f"🔍 <i>Confidence: {confidence.get('level', 'MEDIUM')} ({confidence.get('reason', '')})</i>\n"
+    
+    if data.get("is_locked"):
+        msg += f"\n🔒 <i>{data.get('upgrade_cta')}</i>"
+        
+    return msg
+
+
+async def handle_cv_review_process(user_id: int, target_position: str, cv_text: str, is_paid: bool = False):
+    det_result = cv_review_engine.evaluate_cv(cv_text, target_position)
+    prompt = cv_review_engine.build_llm_prompt(det_result, cv_text, target_position, is_paid)
+    
+    try:
+        llm_raw_response = await ai_gateway.generate(prompt)
+        llm_json = json.loads(llm_raw_response)
+        det_result.update(llm_json)
+    except Exception as e:
+        print(f"[CV Review Engine] LLM Error / Timeout: {e}")
+
+    final_output = cv_review_engine.apply_access_control(det_result, is_paid)
+    
+    await cv_review_service.save_review(
+        user_id=user_id,
+        target_position=target_position,
+        overall_score=final_output.get("overall_score", 0),
+        quality_score=det_result["scores"]["cv_quality"],
+        job_match_score=det_result["scores"]["job_match"],
+        evidence_score=det_result["scores"]["evidence_strength"],
+        review_json=final_output,
+        confidence_level=det_result["confidence"]["level"]
+    )
+    
+    return format_telegram_review_response(final_output, target_position)
+
 
 # --- ENVIRONMENT CONFIGURATION ---
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
@@ -199,6 +237,21 @@ def _init_db_sync():
             ip_address VARCHAR(50),
             user_agent TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS cv_reviews (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            target_position VARCHAR(255) NOT NULL,
+            cv_version INT DEFAULT 1,
+            overall_score INT NOT NULL,
+            quality_score INT NOT NULL,
+            job_match_score INT NOT NULL,
+            evidence_score INT NOT NULL,
+            review_json JSONB NOT NULL,
+            confidence_level VARCHAR(20) NOT NULL,
+            created_at TIMESTAMP WITH TIMEZONE DEFAULT CURRENT_TIMESTAMP
         );
     """)
     conn.commit()
@@ -443,7 +496,6 @@ async def match_and_complete_donation(amount):
 
 # --- HELPER FUNCTIONS CLOUDFLARE KV & SLUG UNIK ---
 async def check_kv_key_exists(slug: str) -> bool:
-    """Mengecek apakah slug sudah terdaftar di Cloudflare KV."""
     if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_KV_NAMESPACE_ID or not CLOUDFLARE_ACCOUNT_ID:
         return False
 
@@ -458,9 +510,7 @@ async def check_kv_key_exists(slug: str) -> bool:
         print(f"[KV Check Error] {e}")
         return False
 
-
 async def generate_unique_slug(user_data: dict) -> str:
-    """Menghasilkan slug unik (contoh: rini -> rini1 -> rini2) jika nama sudah terpakai."""
     custom_slug = user_data.get("custom_slug", "").strip().lower()
     if custom_slug:
         base_slug = re.sub(r'[^a-z0-9-]', '', custom_slug)
@@ -477,7 +527,6 @@ async def generate_unique_slug(user_data: dict) -> str:
 
     return slug
 
-
 def get_user_slug(user_data: dict, default_name: str = "") -> str | None:
     custom_slug = user_data.get("custom_slug", "").strip().lower()
     if custom_slug:
@@ -492,7 +541,6 @@ def get_user_slug(user_data: dict, default_name: str = "") -> str | None:
     raw_name = user_data.get("nama_panggilan", default_name or "user")
     clean_name = re.sub(r'[^a-z0-9]', '', str(raw_name).lower().replace(" ", ""))
     return clean_name or "user"
-
 
 async def update_cloudflare_kv(slug: str | None, user_data: dict) -> bool:
     if not slug:
@@ -785,7 +833,10 @@ def create_cv_docx(user_id, data):
 async def get_career_home_keyboard(user_id: int):
     is_paid = await check_user_paid(user_id)
     kbd = InlineKeyboardMarkup(row_width=1)
-    kbd.add(InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"))
+    kbd.add(
+        InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"),
+        InlineKeyboardButton("🔍 Review CV Saya", callback_data="trigger_cv_review")
+    )
     
     if is_paid:
         kbd.add(InlineKeyboardButton("🌐 Kelola Career Page Saya", callback_data="cp_manage"))
@@ -840,23 +891,12 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         except Exception:
             pass
 
-        review_result = cv_engine.process_review(user_data)
-        metrics = review_result["metrics"]
-        recommendations = review_result["recommendations"]
+        # Jalankan CV Review Engine Deterministik
+        cv_text_summary = f"{user_data.get('3', '')} {user_data.get('4', '')} {user_data.get('6', '')}"
+        is_paid = await check_user_paid(user_id)
+        review_response = await handle_cv_review_process(user_id, position, cv_text_summary, is_paid)
 
-        review_text = (
-            f"📊 <b>Analisis Hasil Review CV Kamu:</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>CV Quality:</b> {metrics['cv_quality']}/100\n"
-            f"• <b>Job Match:</b> {metrics['job_match']}/100\n"
-            f"• <b>Evidence Strength:</b> {metrics['evidence_strength']}/100\n\n"
-        )
-        if recommendations:
-            review_text += "💡 <b>Rekomendasi Perbaikan Utamamu:</b>\n"
-            for rec in recommendations:
-                review_text += f"• [{rec['impact']}] {rec['action']}\n"
-
-        await bot.send_message(user_id, review_text, parse_mode="HTML")
+        await bot.send_message(user_id, review_response, parse_mode="HTML")
 
         value_text = (
             "💡 <b>Tips Penting Sebelum Melamar:</b>\n\n"
@@ -867,7 +907,6 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         )
         await bot.send_message(user_id, value_text, parse_mode="HTML")
 
-        is_paid = await check_user_paid(user_id)
         slug = get_user_slug(user_data, message.from_user.first_name)
 
         insight_text = (
@@ -939,7 +978,6 @@ async def send_welcome(message: types.Message):
         meta_data = {"utm_source": "referral", "referrer_id": args.replace("ref_", "")}
     elif args.startswith("CLK-"):
         meta_data = {"utm_source": "click_logs", "click_id": args}
-        # Connection ke Click Logs Attribution
         def _link_user_attribution():
             try:
                 conn = get_db_connection()
@@ -1009,7 +1047,7 @@ async def send_welcome(message: types.Message):
 @dp.callback_query_handler(lambda c: c.data in [
     "status_fresh", "status_exp", "lang_id", "lang_en", "lang_jp",
     "skip_optional", "resume_flow", "restart_flow",
-    "home_create_cv", "home_check_ref", "home_career_qa",
+    "home_create_cv", "trigger_cv_review", "home_check_ref", "home_career_qa",
     "home_digital_products", "buy_ebook_interview", "home_back_main",
     "don_5000", "don_10000", "don_25000", "cancel_checkout",
     "cp_build_now", "cp_build_later", "cp_manage", "cp_upload_cv",
@@ -1031,7 +1069,24 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "Teman")
     slug = get_user_slug(user_data, callback_query.from_user.first_name)
 
-    if code in ["don_5000", "don_10000", "don_25000"]:
+    if code == "trigger_cv_review":
+        position = user_data.get("target_position", "General Position")
+        cv_text_summary = f"{user_data.get('3', '')} {user_data.get('4', '')} {user_data.get('6', '')}"
+        
+        if not cv_text_summary.strip():
+            await bot.send_message(
+                user_id,
+                "⚠️ <b>Kamu belum mengisi data CV di BoonTrack.</b>\n\nSilakan klik tombol 📝 <b>Buat / Edit CV Baru</b> terlebih dahulu!",
+                parse_mode="HTML"
+            )
+            return
+
+        is_paid = await check_user_paid(user_id)
+        await bot.send_message(user_id, "🔍 <b>Menganalisis kualitas CV kamu...</b>", parse_mode="HTML")
+        review_response = await handle_cv_review_process(user_id, position, cv_text_summary, is_paid)
+        await bot.send_message(user_id, review_response, parse_mode="HTML")
+
+    elif code in ["don_5000", "don_10000", "don_25000"]:
         base_amt = 5000 if code == "don_5000" else (10000 if code == "don_10000" else 25000)
         unique_code = random.randint(100, 999)
         total_amt = base_amt + unique_code
@@ -1515,9 +1570,7 @@ async def handle_message(message: types.Message):
         await message.reply(ai_reply, reply_markup=kbd_chat, parse_mode="HTML")
         return
 
-    # ==========================================
     # PRIORITAS 2: EDIT CAREER PAGE & FORM CV
-    # ==========================================
     user_data = user_state.get(user_id, {}).get("data", {})
     slug = get_user_slug(user_data, message.from_user.first_name)
 
@@ -1626,10 +1679,8 @@ async def handle_message(message: types.Message):
     if current_step == "CP_EDIT_RESUME":
         if text.strip() == "-" or text.lower() == "kosong":
             user_data["resume_url"] = ""
-            status_resume = "Disembunyikan"
         else:
             user_data["resume_url"] = text
-            status_resume = text
 
         if user_id in user_state:
             user_state[user_id]["data"] = user_data
@@ -1721,7 +1772,6 @@ async def handle_message(message: types.Message):
 
 # --- WEB TRACKER & DANA WEBHOOK HANDLERS ---
 async def tracker_handler(request):
-    """Custom Analytics Tracker - Generates Click ID & Captures Full UTMs"""
     try:
         source = request.match_info.get('source', 'direct')
         utm_source = request.query.get('utm_source', source)
@@ -1774,7 +1824,6 @@ async def dana_webhook_handler(request):
             order = await match_and_complete_order(incoming_amount)
             if order:
                 if order.get("status") == "PAID":
-                    print(f"[Webhook Ignored] Order {order['order_id']} sudah berstatus PAID sebelumnya.")
                     return web.json_response({"status": "already_fulfilled"}, status=200)
 
                 buyer_id = order["telegram_id"]
@@ -1803,7 +1852,6 @@ async def dana_webhook_handler(request):
             donation = await match_and_complete_donation(incoming_amount)
             if donation:
                 if donation.get("status") == "VERIFIED":
-                    print(f"[Webhook Ignored] Donation {donation['donation_id']} sudah VERIFIED sebelumnya.")
                     return web.json_response({"status": "already_verified"}, status=200)
 
                 donor_id = donation["telegram_id"]
@@ -1839,10 +1887,7 @@ async def dana_webhook_handler(request):
 async def health_check_handler(request):
     return web.json_response({"status": "healthy", "message": "Render is awake!"}, status=200)
 
-# --- BISA DISISIPKAN DI SEKITAR BARIS 1765 ---
-
 async def funnel_report_handler(request):
-    """Endpoint JSON Laporan Funnel untuk Google Sheets CFO"""
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -1868,15 +1913,12 @@ async def funnel_report_handler(request):
     except Exception as e:
         return web.json_response({"status": "error", "message": str(e)}, status=500)
 
-
 async def start_web_server():
     app = web.Application()
     app.router.add_get('/', health_check_handler)
     app.router.add_get('/health', health_check_handler)
     app.router.add_get('/t/{source}', tracker_handler)
     app.router.add_post('/webhook/dana', dana_webhook_handler)
-    
-    # TAMBAHKAN ROUTE INI DI DALAM start_web_server() (sekitar baris 1775)
     app.router.add_get('/api/analytics/funnel', funnel_report_handler)
     
     port = int(os.getenv("PORT", 10000))
