@@ -897,7 +897,15 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         is_paid = await check_user_paid(user_id)
         review_response = await handle_cv_review_process(user_id, position, cv_text_summary, is_paid)
 
-        await bot.send_message(user_id, review_response, parse_mode="HTML")
+        if isinstance(review_response, dict):
+            await bot.send_message(
+                chat_id=user_id,
+                text=review_response.get("text"),
+                reply_markup=review_response.get("reply_markup"),
+                parse_mode=review_response.get("parse_mode", "HTML")
+            )
+        else:
+            await bot.send_message(user_id, review_response, parse_mode="HTML")
 
         value_text = (
             "💡 <b>Tips Penting Sebelum Melamar:</b>\n\n"
@@ -1085,7 +1093,16 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         is_paid = await check_user_paid(user_id)
         await bot.send_message(user_id, "🔍 <b>Menganalisis kualitas CV kamu...</b>", parse_mode="HTML")
         review_response = await handle_cv_review_process(user_id, position, cv_text_summary, is_paid)
-        await bot.send_message(user_id, review_response, parse_mode="HTML")
+        
+        if isinstance(review_response, dict):
+            await bot.send_message(
+                chat_id=user_id,
+                text=review_response.get("text"),
+                reply_markup=review_response.get("reply_markup"),
+                parse_mode=review_response.get("parse_mode", "HTML")
+            )
+        else:
+            await bot.send_message(user_id, review_response, parse_mode="HTML")
 
     elif code in ["don_5000", "don_10000", "don_25000"]:
         base_amt = 5000 if code == "don_5000" else (10000 if code == "don_10000" else 25000)
