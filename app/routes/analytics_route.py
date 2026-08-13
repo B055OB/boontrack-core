@@ -49,13 +49,18 @@ def get_funnel_summary():
     Endpoint untuk menyuplai ringkasan agregat per channel ke Google Sheet CFO.
     """
     try:
+        # Ambil instance supabase dari mana saja yang tersedia
+        supabase = None
         try:
             from app.services.supabase_client import supabase
         except ImportError:
-            from app.core.database import supabase
+            try:
+                from app.core.database import supabase
+            except ImportError:
+                from app.core.database import supabase_client as supabase
         
         if not supabase:
-            return jsonify({"status": "error", "message": "Supabase client not initialized"}), 500
+            return jsonify({"status": "error", "message": "Supabase client tidak ditemukan"}), 500
 
         # Ambil data dari Supabase
         response = supabase.table("click_logs").select("*").execute()
