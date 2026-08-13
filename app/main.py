@@ -33,8 +33,11 @@ ai_gateway = AIGateway()
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 
-from app.routes.analytics_route import router as analytics_router
-app.include_router(analytics_router)
+# Import blueprint di bagian atas main.py:
+from app.routes.analytics_route import analytics_bp
+
+# Daftarkan blueprint ke objek app Flask kamu (sekitar baris 37):
+app.register_blueprint(analytics_bp)
 
 # ==========================================
 # 1. INITIALIZATION & FORMATTER
