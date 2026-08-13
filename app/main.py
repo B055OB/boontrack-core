@@ -3,6 +3,7 @@ import asyncio
 import json
 import re
 import random
+from flask import app
 import requests
 import tempfile
 import uuid
@@ -32,6 +33,8 @@ ai_gateway = AIGateway()
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 
+from app.routes.analytics_route import router as analytics_router
+app.include_router(analytics_router)
 
 # ==========================================
 # 1. INITIALIZATION & FORMATTER
