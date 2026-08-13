@@ -49,6 +49,23 @@ class BrainEngine:
                 )
             }
 
+        # Flow Career Page (Trigger dari Intent CAREER_PAGE dengan Tombol Interaktif)
+        elif intent == IntentType.CAREER_PAGE:
+            return {
+                "text": (
+                    "🌟 <b>Punya Career Page Profesional Sendiri!</b>\n\n"
+                    "Tampilkan ringkasan CV, portofolio, dan keahlianmu dalam satu halaman web siap bagi ke recruiter.\n\n"
+                    "Silakan klik tombol di bawah untuk melanjutkan:"
+                ),
+                "reply_markup": {
+                    "inline_keyboard": [
+                        [{"text": "🚀 Buat Career Page Saya (Rp10.000)", "callback_data": "cp_build_now"}],
+                        [{"text": "🏠 Kembali ke Menu Utama", "callback_data": "home_back_main"}]
+                    ]
+                },
+                "parse_mode": "HTML"
+            }
+
         # Flow Support / Venting
         elif detected_goal == "CAREER_SUPPORT":
             session.state = ConversationState.VENT_MODE.value

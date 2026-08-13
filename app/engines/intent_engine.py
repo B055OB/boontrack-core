@@ -40,7 +40,7 @@ class IntentEngine:
                 r"^/review_cv"
             ],
             IntentType.CAREER_PAGE: [
-                r"\b(career page|portofolio|link karier|halaman karier|web karier|situs saya)\b"
+                r"\b(career page|portofolio|link karier|halaman karier|web karier|situs saya|order career page|beli career page|buat career page|web pribadi|halaman karir)\b"
             ],
             IntentType.CASUAL: [
                 r"^(halo|hai|hi|p|ping|pagi|siang|malam|sore|tes|test|assalamu[']?alaikum|selamat|terima kasih|thanks|makasih|ok|okay|siap)$",
@@ -79,7 +79,6 @@ class IntentEngine:
                     }
 
         # 3. Heuristic / Default Fallback
-        # Jika panjang pesan sangat pendek dan tidak masuk kategori lain
         if len(clean_msg.split()) <= 2:
             return {
                 "intent": IntentType.CASUAL,
