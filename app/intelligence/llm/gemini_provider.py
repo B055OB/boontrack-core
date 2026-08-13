@@ -31,7 +31,7 @@ class GeminiProvider(BaseLLMProvider):
                 text="Maaf, konfigurasi API Key Gemini belum diatur di server.",
                 finish_reason="error",
                 provider="gemini",
-                model="gemini-1.5-flash",
+                model="gemini-2.0-flash",
             )
 
         start_time = time.time()
@@ -45,7 +45,7 @@ class GeminiProvider(BaseLLMProvider):
             # Memanggil endpoint SDK dalam thread pool agar non-blocking
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
-                model="gemini-1.5-flash", 
+                model="gemini-2.0-flash", 
                 contents=prompt, 
                 config=config
             )
@@ -62,7 +62,7 @@ class GeminiProvider(BaseLLMProvider):
                 finish_reason="stop",
                 latency_ms=round(latency, 2),
                 provider="gemini",
-                model="gemini-1.5-flash",
+                model="gemini-2.0-flash",
                 token_usage={
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
@@ -76,5 +76,5 @@ class GeminiProvider(BaseLLMProvider):
                 text=f"Maaf, kendala koneksi AI: {str(e)}",
                 finish_reason="error",
                 provider="gemini",
-                model="gemini-1.5-flash",
+                model="gemini-2.0-flash",
             )

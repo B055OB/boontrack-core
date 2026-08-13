@@ -22,7 +22,7 @@ def ai_rewrite_achievement(text: str) -> str:
     # 1. Coba Gemini API
     if settings.GEMINI_API_KEY:
         try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-2.0-flash')
             response = model.generate_content(prompt_text)
             if response and response.text:
                 return response.text.strip()

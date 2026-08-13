@@ -49,7 +49,7 @@ class GeminiGoalDetector(BaseGoalDetector):
             "confidence": 0.95,
             "reasoning": f"Deteksi via Goal Detector {PROMPT_VERSION}",
             "provider": "gemini",
-            "model": "gemini-1.5-flash",
+            "model": "gemini-2.0-flash",
             "prompt_version": PROMPT_VERSION,
         }
 
@@ -171,7 +171,7 @@ class AIGateway:
 
         url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-1.5-flash:generateContent?key={self.gemini_api_key}"
+            f"gemini-2.0-flash:generateContent?key={self.gemini_api_key}"
         )
         
         full_text = f"{system_prompt}\n\nUser Question: {user_message}"
