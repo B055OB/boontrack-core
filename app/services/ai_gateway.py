@@ -14,12 +14,24 @@ logger = logging.getLogger("ai_gateway")
 PROMPT_VERSION = "goal_detector_v1"
 
 SYSTEM_PROMPT_DEFAULT = (
-    "Kamu adalah BoonTrack, asisten karir yang hangat, empatik, dan suportif. "
-    "Bantu user dengan pertanyaan seputar CV, interview, dan strategi karir. "
-    "Jawab singkat, jelas, dan dalam Bahasa Indonesia yang natural."
+    "Kamu adalah BoonTrack, asisten karir yang hangat, empatik, dan sangat informatif. "
+    "Jawab pertanyaan user tentang CV, interview, gaji/UMR, dan strategi karir secara langsung (to the point), "
+    "berikan estimasi angka jika ditanya nominal gaji/UMR, dan gunakan Bahasa Indonesia yang natural tanpa "
+    "menyertakan tag format internal atau debug."
 )
 
 MOCK_MODE = False
+
+
+def _clean_response(text: str) -> str:
+    """Membersihkan tag debug atau instruksi format internal dari output AI."""
+    if not text:
+        return ""
+    lines = [
+        line for line in text.split("\n") 
+        if not line.strip().startswith(("*Lang", "*Leng", "*Format:"))
+    ]
+    return "\n".join(lines).strip()
 
 
 class GeminiGoalDetector(BaseGoalDetector):
@@ -162,7 +174,7 @@ class AIGateway:
         ]
 
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=15)
+            timeout=aiohttp.ClientTimeout(total=20)
         ) as session:
             for idx, (name, model, fn) in enumerate(providers):
                 start_time = time.time()
@@ -206,7 +218,7 @@ class AIGateway:
         full_text = f"{system_prompt}\n\nUser Question: {user_message}"
         payload = {
             "contents": [{"parts": [{"text": full_text}]}],
-            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 512},
+            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2048},
         }
 
         async with session.post(url, json=payload) as resp:
@@ -216,6 +228,7 @@ class AIGateway:
             data = json.loads(body)
             try:
                 res_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                res_text = _clean_response(res_text)
                 usage_meta = data.get("usageMetadata", {})
                 p_tokens = usage_meta.get("promptTokenCount", len(full_text) // 4)
                 c_tokens = usage_meta.get("candidatesTokenCount", len(res_text) // 4)
@@ -246,7 +259,7 @@ class AIGateway:
                 {"role": "user", "content": user_message},
             ],
             "temperature": 0.7,
-            "max_tokens": 512,
+            "max_tokens": 2048,
         }
 
         async with session.post(url, headers=headers, json=payload) as resp:
@@ -256,6 +269,7 @@ class AIGateway:
             data = json.loads(body)
             try:
                 res_text = data["choices"][0]["message"]["content"].strip()
+                res_text = _clean_response(res_text)
                 usage = data.get("usage", {})
                 p_tokens = usage.get("prompt_tokens", 0)
                 c_tokens = usage.get("completion_tokens", 0)
@@ -285,7 +299,7 @@ class AIGateway:
                 {"role": "user", "content": user_message},
             ],
             "temperature": 0.7,
-            "max_tokens": 512,
+            "max_tokens": 2048,
         }
 
         async with session.post(url, headers=headers, json=payload) as resp:
@@ -295,6 +309,7 @@ class AIGateway:
             data = json.loads(body)
             try:
                 res_text = data["choices"][0]["message"]["content"].strip()
+                res_text = _clean_response(res_text)
                 usage = data.get("usage", {})
                 p_tokens = usage.get("prompt_tokens", 0)
                 c_tokens = usage.get("completion_tokens", 0)
