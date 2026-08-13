@@ -195,7 +195,7 @@ OUTPUT WAJIB FORMAT JSON MURNI DENGAN SCHEMA INI:
             "weaknesses": full_result.get("weaknesses", [])[:2],
             "confidence": full_result.get("confidence"),
             "is_locked": True,
-            "upgrade_cta": "Buka Career Page untuk unlock Keyword Gap, Skill Gap, dan Detailed Action Plan!"
+            "upgrade_cta": "🔒 <b>Buka Career Page untuk unlock Keyword Gap, Skill Gap, dan Detailed Action Plan!</b>"
         }
 
 # Singleton instance

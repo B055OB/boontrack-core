@@ -36,7 +36,7 @@ from app.services.cv_review_service import cv_review_service
 # ==========================================
 load_dotenv()
 
-def format_telegram_review_response(data: dict, target_position: str) -> str:
+def format_telegram_review_response(data: dict, target_position: str) -> dict:
     scores = data.get("scores", {})
     confidence = data.get("confidence", {})
     
@@ -69,41 +69,23 @@ def format_telegram_review_response(data: dict, target_position: str) -> str:
 
     msg += f"🔍 <i>Confidence: {confidence.get('level', 'MEDIUM')} ({confidence.get('reason', '')})</i>\n"
     
+    # Inisialisasi return value
+    response = {
+        "text": msg,
+        "parse_mode": "HTML"
+    }
+
     if data.get("is_locked"):
         msg += f"\n🔒 <i>{data.get('upgrade_cta')}</i>"
+        response["text"] = msg
+        response["reply_markup"] = {
+            "inline_keyboard": [
+                [{"text": "🚀 Buat Career Page Saya (Rp10.000)", "callback_data": "cp_build_now"}],
+                [{"text": "🏠 Kembali ke Menu Utama", "callback_data": "home_back_main"}]
+            ]
+        }
         
-    return msg
-
-
-async def handle_cv_review_process(user_id: int, target_position: str, cv_text: str, is_paid: bool = False):
-    det_result = cv_review_engine.evaluate_cv(cv_text, target_position)
-    prompt = cv_review_engine.build_llm_prompt(det_result, cv_text, target_position, is_paid)
-    
-    try:
-        llm_raw_response = await ai_gateway.generate(
-            user_message=prompt,
-            context={"user_id": user_id, "feature": "cv_review"}
-        )
-        if llm_raw_response:
-            llm_json = json.loads(llm_raw_response)
-            det_result.update(llm_json)
-    except Exception as e:
-        print(f"[CV Review Engine] LLM Error / Timeout: {e}")
-
-    final_output = cv_review_engine.apply_access_control(det_result, is_paid)
-    
-    await cv_review_service.save_review(
-        user_id=user_id,
-        target_position=target_position,
-        overall_score=final_output.get("overall_score", 0),
-        quality_score=det_result["scores"]["cv_quality"],
-        job_match_score=det_result["scores"]["job_match"],
-        evidence_score=det_result["scores"]["evidence_strength"],
-        review_json=final_output,
-        confidence_level=det_result["confidence"]["level"]
-    )
-    
-    return format_telegram_review_response(final_output, target_position)
+    return response
 
 
 # --- ENVIRONMENT CONFIGURATION ---
