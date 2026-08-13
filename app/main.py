@@ -251,7 +251,7 @@ def _init_db_sync():
             evidence_score INT NOT NULL,
             review_json JSONB NOT NULL,
             confidence_level VARCHAR(20) NOT NULL,
-            created_at TIMESTAMP WITH TIMEZONE DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
     """)
     conn.commit()
