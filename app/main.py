@@ -80,9 +80,13 @@ async def handle_cv_review_process(user_id: int, target_position: str, cv_text: 
     prompt = cv_review_engine.build_llm_prompt(det_result, cv_text, target_position, is_paid)
     
     try:
-        llm_raw_response = await ai_gateway.generate(prompt)
-        llm_json = json.loads(llm_raw_response)
-        det_result.update(llm_json)
+        llm_raw_response = await ai_gateway.generate(
+            user_message=prompt,
+            context={"user_id": user_id, "feature": "cv_review"}
+        )
+        if llm_raw_response:
+            llm_json = json.loads(llm_raw_response)
+            det_result.update(llm_json)
     except Exception as e:
         print(f"[CV Review Engine] LLM Error / Timeout: {e}")
 
@@ -251,6 +255,21 @@ def _init_db_sync():
             evidence_score INT NOT NULL,
             review_json JSONB NOT NULL,
             confidence_level VARCHAR(20) NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ai_usage_logs (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            provider VARCHAR(50) NOT NULL,
+            feature VARCHAR(50) DEFAULT 'general',
+            prompt_tokens INT DEFAULT 0,
+            completion_tokens INT DEFAULT 0,
+            total_tokens INT DEFAULT 0,
+            status_code INT DEFAULT 200,
+            is_error BOOLEAN DEFAULT FALSE,
+            error_message TEXT,
             created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
     """)

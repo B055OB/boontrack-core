@@ -2,10 +2,10 @@ import os
 import json
 import logging
 import uuid
-from typing import Dict, Any, Optional
+import psycopg2
+from typing import Dict, Any, Optional, Tuple
 
 import aiohttp
-
 from app.services.goal_detector import BaseGoalDetector
 
 logger = logging.getLogger("ai_gateway")
@@ -18,7 +18,6 @@ SYSTEM_PROMPT_DEFAULT = (
     "Jawab singkat, jelas, dan dalam Bahasa Indonesia yang natural."
 )
 
-# SAKELAR TEST: Set True jika ingin tes respon dummy tanpa panggil API AI external
 MOCK_MODE = False
 
 
@@ -57,8 +56,8 @@ class GeminiGoalDetector(BaseGoalDetector):
 
 class AIGateway:
     """
-    Gateway untuk konsultasi karir bebas (general query).
-    Coba provider berurutan: Gemini -> Groq -> OpenRouter.
+    AI Gateway dengan metering usage, deteksi rate limit 429, 
+    logging ke ai_usage_logs, dan failover otomatis (Gemini -> Groq -> OpenRouter).
     """
 
     def __init__(self, primary_provider: str = "gemini"):
@@ -76,6 +75,45 @@ class AIGateway:
             MOCK_MODE,
         )
 
+    def _get_db_conn(self):
+        return psycopg2.connect(
+            host=os.getenv("POSTGRES_HOST", "postgres"),
+            port=os.getenv("POSTGRES_PORT", "5432"),
+            dbname=os.getenv("POSTGRES_DB"),
+            user=os.getenv("POSTGRES_USER"),
+            password=os.getenv("POSTGRES_PASSWORD")
+        )
+
+    def _log_usage(
+        self,
+        user_id: Optional[int],
+        provider: str,
+        feature: str,
+        p_tokens: int,
+        c_tokens: int,
+        status_code: int = 200,
+        is_error: bool = False,
+        error_msg: str = ""
+    ):
+        """Mencatat penggunaan token & status HTTP secara real-time ke DB PostgreSQL."""
+        try:
+            conn = self._get_db_conn()
+            cur = conn.cursor()
+            query = """
+                INSERT INTO ai_usage_logs 
+                (user_id, provider, feature, prompt_tokens, completion_tokens, total_tokens, status_code, is_error, error_message)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
+            """
+            cur.execute(query, (
+                user_id, provider, feature, p_tokens, c_tokens,
+                p_tokens + c_tokens, status_code, is_error, error_msg[:500]
+            ))
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            logger.error("Gagal mencatat AI Usage Log: %s", str(e))
+
     async def detect_goal_and_intent(
         self, query: str, request_id: str = None
     ) -> Dict[str, Any]:
@@ -87,21 +125,18 @@ class AIGateway:
         context: Optional[Dict[str, Any]] = None,
         system_prompt: str = SYSTEM_PROMPT_DEFAULT,
     ) -> Optional[str]:
-        """
-        Entry point utama yang dipanggil BrainEngine untuk general query.
-        """
-        # TEST MOCK MODE: Jalur tes tanpa panggil API luar sama sekali
         if MOCK_MODE:
             logger.info("AIGateway running in MOCK_MODE")
             return f"🤖 [MOCK RESPON]: Halo! Pesan kamu '{user_message}' berhasil diproses oleh AIGateway Railway. Jalur sistem bot 100% lancar!"
 
         context = context or {}
+        user_id = context.get("user_id")
+        feature = context.get("feature", "general")
 
-        # Urutan Fallback Provider: Gemini -> Groq -> OpenRouter
         providers = [
-            ("gemini", self._call_gemini),
-            ("groq", self._call_groq),
-            ("openrouter", self._call_openrouter),
+            ("Gemini", self._call_gemini),
+            ("Groq", self._call_groq),
+            ("OpenRouter", self._call_openrouter),
         ]
 
         async with aiohttp.ClientSession(
@@ -109,20 +144,16 @@ class AIGateway:
         ) as session:
             for name, fn in providers:
                 try:
-                    result = await fn(session, user_message, context, system_prompt)
+                    result, p_tokens, c_tokens = await fn(session, user_message, context, system_prompt)
                     if result:
                         logger.info("AI response OK via provider=%s", name)
+                        self._log_usage(user_id, name, feature, p_tokens, c_tokens, 200, False)
                         return result
-                    logger.warning(
-                        "Provider=%s returned empty result, trying next", name
-                    )
                 except Exception as e:
-                    logger.error(
-                        "Provider=%s FAILED | %s: %s",
-                        name,
-                        type(e).__name__,
-                        str(e),
-                    )
+                    err_str = str(e)
+                    status_code = 429 if ("429" in err_str or "quota" in err_str.lower() or "limit" in err_str.lower()) else 500
+                    logger.warning("Provider=%s FAILED (HTTP %d) | %s", name, status_code, err_str)
+                    self._log_usage(user_id, name, feature, 0, 0, status_code, True, err_str)
                     continue
 
         logger.error("ALL AI providers failed for message: %r", user_message[:80])
@@ -134,17 +165,15 @@ class AIGateway:
         user_message: str,
         context: Dict[str, Any],
         system_prompt: str,
-    ) -> Optional[str]:
+    ) -> Tuple[str, int, int]:
         if not self.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY kosong / tidak ter-set")
 
-        # Menggunakan nama model resmi resmi: gemini-1.5-flash
         url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
             f"gemini-1.5-flash:generateContent?key={self.gemini_api_key}"
         )
         
-        # Format payload yang kompatibel untuk Gemini REST API
         full_text = f"{system_prompt}\n\nUser Question: {user_message}"
         payload = {
             "contents": [{"parts": [{"text": full_text}]}],
@@ -152,12 +181,16 @@ class AIGateway:
         }
 
         async with session.post(url, json=payload) as resp:
+            body = await resp.text()
             if resp.status != 200:
-                body = await resp.text()
                 raise RuntimeError(f"HTTP {resp.status}: {body[:300]}")
-            data = await resp.json()
+            data = json.loads(body)
             try:
-                return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                res_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                usage_meta = data.get("usageMetadata", {})
+                p_tokens = usage_meta.get("promptTokenCount", len(full_text) // 4)
+                c_tokens = usage_meta.get("candidatesTokenCount", len(res_text) // 4)
+                return res_text, p_tokens, c_tokens
             except (KeyError, IndexError) as e:
                 raise RuntimeError(f"Unexpected Gemini response shape: {data}") from e
 
@@ -167,7 +200,7 @@ class AIGateway:
         user_message: str,
         context: Dict[str, Any],
         system_prompt: str,
-    ) -> Optional[str]:
+    ) -> Tuple[str, int, int]:
         if not self.groq_api_key:
             raise RuntimeError("GROQ_API_KEY kosong / tidak ter-set")
 
@@ -177,7 +210,6 @@ class AIGateway:
             "Content-Type": "application/json",
         }
         
-        # Menggunakan model Groq aktif: llama-3.3-70b-versatile atau llama-3.1-8b-instant
         payload = {
             "model": "llama-3.3-70b-versatile",
             "messages": [
@@ -189,12 +221,16 @@ class AIGateway:
         }
 
         async with session.post(url, headers=headers, json=payload) as resp:
+            body = await resp.text()
             if resp.status != 200:
-                body = await resp.text()
                 raise RuntimeError(f"HTTP {resp.status}: {body[:300]}")
-            data = await resp.json()
+            data = json.loads(body)
             try:
-                return data["choices"][0]["message"]["content"].strip()
+                res_text = data["choices"][0]["message"]["content"].strip()
+                usage = data.get("usage", {})
+                p_tokens = usage.get("prompt_tokens", 0)
+                c_tokens = usage.get("completion_tokens", 0)
+                return res_text, p_tokens, c_tokens
             except (KeyError, IndexError) as e:
                 raise RuntimeError(f"Unexpected Groq response shape: {data}") from e
 
@@ -204,7 +240,7 @@ class AIGateway:
         user_message: str,
         context: Dict[str, Any],
         system_prompt: str,
-    ) -> Optional[str]:
+    ) -> Tuple[str, int, int]:
         if not self.openrouter_api_key:
             raise RuntimeError("OPENROUTER_API_KEY kosong / tidak ter-set")
 
@@ -224,13 +260,15 @@ class AIGateway:
         }
 
         async with session.post(url, headers=headers, json=payload) as resp:
+            body = await resp.text()
             if resp.status != 200:
-                body = await resp.text()
                 raise RuntimeError(f"HTTP {resp.status}: {body[:300]}")
-            data = await resp.json()
+            data = json.loads(body)
             try:
-                return data["choices"][0]["message"]["content"].strip()
+                res_text = data["choices"][0]["message"]["content"].strip()
+                usage = data.get("usage", {})
+                p_tokens = usage.get("prompt_tokens", 0)
+                c_tokens = usage.get("completion_tokens", 0)
+                return res_text, p_tokens, c_tokens
             except (KeyError, IndexError) as e:
-                raise RuntimeError(
-                    f"Unexpected OpenRouter response shape: {data}"
-                ) from e
+                raise RuntimeError(f"Unexpected OpenRouter response shape: {data}") from e
