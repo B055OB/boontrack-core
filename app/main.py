@@ -1402,10 +1402,16 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         else:
             await bot.send_message(user_id, msg_checkout, reply_markup=kbd_qris, parse_mode="HTML")
 
-    elif code in ["home_back_main", "restart_flow"]:
-        user_state[user_id] = {"step": 0, "data": {}}
+    elif code == "home_back_main":
+        current_data = user_state.get(user_id, {}).get("data", {})
+        user_state[user_id] = {"step": 0, "data": current_data}
         kbd = await get_career_home_keyboard(user_id)
         await bot.send_message(user_id, "👋 <b>Kembali ke Menu Utama:</b>", reply_markup=kbd, parse_mode="HTML")
+
+    elif code == "restart_flow":
+        user_state[user_id] = {"step": 0, "data": {}}
+        kbd = await get_career_home_keyboard(user_id)
+        await bot.send_message(user_id, "👋 <b>Menu Utama (Data Reset):</b>", reply_markup=kbd, parse_mode="HTML")
 
     elif code == "home_create_cv":
         old_name = user_data.get("nama_panggilan", callback_query.from_user.first_name or "")
