@@ -1,3 +1,4 @@
+import re
 from app.models.session import ConversationState
 from app.services.goal_detector import RuleBasedGoalDetector
 from app.engines.intent_engine import intent_engine, IntentType
@@ -15,17 +16,46 @@ class BrainEngine:
         # 1. Load atau Create Session User
         session = await self.session_repo.get_or_create(user_id, channel)
         clean_text = text.strip()
+        lower_text = clean_text.lower()
+
+        # 1b. RESET STATE FILTER: Jika user minta batal / balik menu / nanya hal umum berformat pertanyaan
+        is_question = any(q in lower_text for q in ["bagaimana", "gimana", "apa", "berapa", "kenapa", "mengapa", "cara", "?"])
+        if any(kw in lower_text for kw in ["batal", "cancel", "menu utama", "kembali"]) or (is_question and session.state != ConversationState.START.value):
+            session.state = ConversationState.START.value
+            await self.session_repo.save(session)
+            print(f"[BRAIN] Session state reset to START for user {user_id}")
 
         # 2. Deteksi Intent Lewat IntentEngine (Traffic Controller)
         intent_res = await intent_engine.detect_intent(clean_text, is_owner=is_owner)
         intent = intent_res.get("intent")
         print(f"[BRAIN] detected_intent={intent} via {intent_res.get('method')}")
 
-        # 3. Jika user sedang di pertengahan Flow (bukan START), teruskan sesuai State
-        if session.state != ConversationState.START.value:
+        # 3. Jika user sedang di pertengahan Flow pembuatan CV (Dan BUKAN bertanya hal umum)
+        if session.state != ConversationState.START.value and not is_question:
             return await self._process_state_flow(session, clean_text)
 
-        # 4. Routing Berdasarkan Intent / Goal
+        # 4. PRE-ROUTING: PERTANYAAN UMUM / DIPLOMATIK -> LANGSUNG KE AI GATEWAY!
+        # Jangan biarkan Goal Detector membajak pertanyaan umum yang ada kata "kerja"
+        if is_question or intent in [IntentType.CASUAL, IntentType.GENERAL_QUERY]:
+            print("[BRAIN] Direct routing question/casual to AI Gateway")
+            if self.ai_gateway:
+                try:
+                    context = session.context_json or {}
+                    context["intent"] = intent
+                    context["user_id"] = user_id
+
+                    ai_response = await self.ai_gateway.generate(
+                        user_message=clean_text, context=context
+                    )
+
+                    if ai_response:
+                        if isinstance(ai_response, str):
+                            return {"text": ai_response}
+                        return ai_response
+                except Exception as e:
+                    print(f"[BRAIN][AI ERROR] {type(e).__name__}: {e}")
+
+        # 5. Routing Berdasarkan Intent Khusus / Goal
         detected_res = await self.goal_detector.detect(clean_text)
         detected_goal = (
             detected_res.get("goal")
@@ -34,8 +64,8 @@ class BrainEngine:
         )
         print(f"[BRAIN] detected_goal={detected_goal}")
 
-        # Flow Buat CV (Trigger dari Intent CV_CREATION atau Goal)
-        if intent == IntentType.CV_CREATION or detected_goal in ["GET_JOB", "CREATE_CV"]:
+        # Flow Buat CV (HANYA Trigger jika Intent BENAR-BENAR CV_CREATION atau perintah spesifik)
+        if intent == IntentType.CV_CREATION or detected_goal == "CREATE_CV":
             session.state = ConversationState.CREATE_CV_NAME.value
             session.goal = "CREATE_CV"
             await self.session_repo.save(session)
@@ -49,7 +79,7 @@ class BrainEngine:
                 )
             }
 
-        # Flow Career Page (Trigger dari Intent CAREER_PAGE dengan Tombol Interaktif)
+        # Flow Career Page
         elif intent == IntentType.CAREER_PAGE:
             return {
                 "text": (
@@ -79,35 +109,23 @@ class BrainEngine:
                 )
             }
 
-        # 5. Intent CASUAL -> Respon Cepat atau Prompt Ringkas
-        elif intent == IntentType.CASUAL:
-            # Tetap teruskan ke AI Gateway dengan konteks intent casual (hemat token)
-            pass
-
-        # 6. General Query / Career Query -> Teruskan ke AI Gateway
-        print("[BRAIN] routing to AI gateway")
-
+        # 6. Fallback General Query -> Teruskan ke AI Gateway jika belum ter-handle
+        print("[BRAIN] Routing fallback to AI Gateway")
         if self.ai_gateway:
             try:
-                # Sisipkan metadata intent ke konteks AI
                 context = session.context_json or {}
-                context["intent"] = intent
-
+                context["user_id"] = user_id
                 ai_response = await self.ai_gateway.generate(
                     user_message=clean_text, context=context
                 )
-
-                print(f"[BRAIN] AI gateway response received: {bool(ai_response)}")
-
                 if ai_response:
                     if isinstance(ai_response, str):
                         return {"text": ai_response}
                     return ai_response
-
             except Exception as e:
                 print(f"[BRAIN][AI ERROR] {type(e).__name__}: {e}")
 
-        # Fallback Statis
+        # Fallback Statis Jika AI Gateway Mati Total
         return {
             "text": (
                 "Saya siap bantu kamu sampai dapat kerja! Pilih langkah pertama kamu:\n\n"
