@@ -24,6 +24,8 @@ from docx.oxml.ns import qn
 from aiohttp import web
 from app.repositories.session_repository import SessionRepository
 
+from app.services.analytics_service import analytics_service
+
 # Import Service & Brain Engine Baru
 from app.services.ai_gateway import AIGateway
 from app.services.brain_engine import BrainEngine
@@ -1040,6 +1042,7 @@ async def send_welcome(message: types.Message):
         await asyncio.to_thread(_link_user_attribution)
     else:
         meta_data = {"utm_source": args}
+        await analytics_service.save_user_utm(user_id, args)
 
     await track_event(user_id, "start", meta=meta_data)
     progress, last_cv = await get_user_history(user_id)
