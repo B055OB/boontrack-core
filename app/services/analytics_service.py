@@ -184,8 +184,6 @@ class AnalyticsService:
         # --------------------------------------------------------
         # 6. ACTIVE REFERRALS
         # --------------------------------------------------------
-        # Belum ada sumber referral yang tervalidasi dari schema
-        # yang kita lihat.
         metrics["active_referrals"] = 0
 
         print(
@@ -207,15 +205,6 @@ class AnalyticsService:
     async def get_traffic_sources(self) -> dict:
         """
         Mengambil breakdown UTM dari click_logs.
-
-        Schema click_logs yang terlihat:
-        - utm_source
-        - utm_medium
-        - utm_campaign
-        - utm_content
-        - utm_term
-        - event_name
-        - telegram_user_id
         """
 
         if not self.supabase:
@@ -269,12 +258,7 @@ class AnalyticsService:
         payload_str: str
     ):
         """
-        Menyimpan UTM dari Telegram start payload.
-
-        CATATAN:
-        UTM sekarang diarahkan ke click_logs,
-        bukan users, karena schema yang kita lihat
-        menunjukkan field UTM berada di click_logs.
+        Menyimpan UTM dari Telegram start payload ke click_logs.
         """
 
         if not self.supabase:
@@ -330,6 +314,70 @@ class AnalyticsService:
 
         except Exception as e:
             print(f"[UTM SAVE ERROR] {e}")
+
+    # ============================================================
+    # CONTENT ATTRIBUTION FUNNEL MVP (NEW)
+    # ============================================================
+
+    async def get_content_funnel_metrics(self) -> list:
+        """
+        Mengambil performa funnel berdasarkan utm_campaign dan utm_content
+        dari tabel click_logs.
+        """
+        if not self.supabase:
+            return []
+
+        try:
+            response = (
+                self.supabase
+                .table("click_logs")
+                .select("utm_campaign, utm_content, event_name, telegram_user_id")
+                .execute()
+            )
+
+            rows = response.data or []
+            funnel_data = {}
+
+            for row in rows:
+                campaign = row.get("utm_campaign") or "direct"
+                content = row.get("utm_content") or "general"
+                key = (campaign, content)
+
+                if key not in funnel_data:
+                    funnel_data[key] = {
+                        "campaign": campaign,
+                        "content": content,
+                        "clicks": 0,
+                        "bot_starts": 0,
+                        "unique_users": set()
+                    }
+
+                event = row.get("event_name")
+                tg_user = row.get("telegram_user_id")
+
+                if event == "page_view" or not event:
+                    funnel_data[key]["clicks"] += 1
+
+                if tg_user or event == "telegram_start":
+                    funnel_data[key]["bot_starts"] += 1
+                    if tg_user:
+                        funnel_data[key]["unique_users"].add(tg_user)
+
+            result_list = []
+            for key, data in funnel_data.items():
+                result_list.append({
+                    "campaign": data["campaign"],
+                    "content": data["content"],
+                    "clicks": data["clicks"],
+                    "bot_starts": data["bot_starts"],
+                    "unique_users": len(data["unique_users"])
+                })
+
+            return result_list
+
+        except Exception as e:
+            print(f"[CONTENT FUNNEL ERROR] {e}")
+            return []
 
 
 # ================================================================
