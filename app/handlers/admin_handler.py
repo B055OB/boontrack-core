@@ -79,16 +79,30 @@ class AdminHandler:
         clean_cmd = command_text.strip().lower()
 
         if clean_cmd in ["/analytics", "/admin"]:
-            # 1. Metrics Bisnis Realtime & Traffic Sources
+            # 1. Metrics Bisnis Realtime, Traffic Sources, & Content Attribution
             metrics = await analytics_service.get_realtime_metrics()
             traffic_sources = await analytics_service.get_traffic_sources()
+            funnel_data = await analytics_service.get_content_funnel_metrics()
 
+            # Format Traffic Sources (UTM Agregat)
             utm_text = ""
             if traffic_sources:
                 for src, count in traffic_sources.items():
                     utm_text += f"• `{src}`: {count} user\n"
             else:
                 utm_text = "• belum ada data traffic\n"
+
+            # Format Content & Buzzer Funnel
+            funnel_text = ""
+            if funnel_data:
+                for item in funnel_data:
+                    funnel_text += (
+                        f"• `{item['content']}` ({item['campaign']}): "
+                        f"{item['clicks']} clicks ➔ {item['bot_starts']} starts "
+                        f"({item.get('conversion_rate', 0):.1f}%)\n"
+                    )
+            else:
+                funnel_text = "• belum ada data atribusi buzzer/konten\n"
 
             # 2. Metrics Usage AI Realtime Hari Ini
             ai_data = self._get_ai_usage_today()
@@ -104,6 +118,8 @@ class AdminHandler:
                 f"• **Active Referrals:** {metrics.get('active_referrals', 0)}\n\n"
                 "🌐 **Top Traffic Sources (UTM):**\n"
                 f"{utm_text}\n"
+                "🎯 **Content & Buzzer Attribution:**\n"
+                f"{funnel_text}\n"
                 "🤖 **AI USAGE TODAY**\n\n"
                 f"**Gemini**\nRequests: {ai_data['Gemini']['req']} | Tokens: {ai_data['Gemini']['tokens']:,}\n\n"
                 f"**Groq**\nRequests: {ai_data['Groq']['req']} | Tokens: {ai_data['Groq']['tokens']:,}\n\n"

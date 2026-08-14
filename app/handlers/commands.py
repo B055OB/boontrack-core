@@ -2,10 +2,11 @@ from aiogram import types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from app.core.database import save_user, track_event, get_user_history, save_dropoff
 from app.handlers.admin_handler import admin_handler
+from app.services.analytics_service import analytics_service
 
 TOTAL_STEPS = 10
 
-# INISIALISASI GLOBAL STATE DI SINI AGAR TIDAK LUPA
+# INISIALISASI GLOBAL STATE
 user_state = {}
 
 CV_QUESTIONS = {
@@ -55,16 +56,22 @@ async def send_welcome(message: types.Message):
             "referrer_id": args.replace("ref_", "")
         }
     else:
-        payload = args.split("__")
-        source_val = payload[0] if len(payload) > 0 else "direct"
+        # Menangani pemisah underscore (__) maupun hyphen (-)
+        clean_args = args.replace("__", "-")
+        payload = clean_args.split("-")
+        source_val = payload[0] if len(payload) > 0 and payload[0] else "direct"
+        
         meta_data = {
             "first_source": source_val,
             "latest_source": source_val,
             "utm_source": source_val,
             "utm_medium": payload[1] if len(payload) > 1 else "none",
             "utm_campaign": payload[2] if len(payload) > 2 else "none",
-            "utm_content": payload[3] if len(payload) > 3 else "none"
+            "utm_content": payload[3] if len(payload) > 3 else "none",
+            "utm_term": payload[4] if len(payload) > 4 else "none"
         }
+        # Simpan log atribusi langsung ke Supabase click_logs
+        await analytics_service.save_user_utm(user_id, clean_args)
 
     await save_user(message.from_user, meta=meta_data)
     await track_event(user_id, "start", meta=meta_data)
@@ -143,10 +150,8 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery, bot):
             parse_mode="HTML"
         )
     elif code == "trigger_cv_review":
-        # Ambil ringkasan teks dari data step 7, 8, atau 10
         cv_text_summary = f"{user_data.get('7', '')} {user_data.get('8', '')} {user_data.get('10', '')}"
         
-        # Fallback cadangan: cek juga ke database jika memori runtime kosong
         if not cv_text_summary.strip():
             progress, _ = await get_user_history(user_id)
             if progress and progress.get("data"):
