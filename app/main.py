@@ -1895,20 +1895,32 @@ async def handle_web_chat_http(request):
         }, headers=cors_headers)
 
     # 3. Panggil AI Companion BrainEngine / Gateway
+    # 3. Panggil AI Companion dengan instruksi jawaban singkat
     try:
+        web_context_prompt = (
+            f"[Instruksi Khusus Web Chat: Berikan respons yang SANGAT SINGKAT, padat, dan to-the-point "
+            f"(maksimal 2-3 kalimat pendek). Berikan 1 poin insight kunci tanpa bertele-tele.]\n\n"
+            f"Pesan User: {user_msg}"
+        )
+
         ai_reply = await ai_career_chat_response(
-            user_query=user_msg,
+            user_query=web_context_prompt,
             user_context={"session_id": session_id, "source": "web_chat"}
         )
     except Exception as e:
         print(f"[WEB CHAT AI ERROR] {e}")
-        ai_reply = "Halo! Saya siap bantu arah kariermu. Ceritakan fokus atau kendala utama yang sedang kamu hadapi saat ini?"
+        ai_reply = "Saya siap bantu carikan solusinya! Boleh ceritakan posisi apa yang ingin kamu lamar saat ini?"
 
     WEB_SESSION_COUNTS[session_id] = current_count + 1
+    updated_count = WEB_SESSION_COUNTS[session_id]
+
+    # Tambahkan kalimat ajakan ke Telegram di akhir chat untuk jawaban ke-2 atau ke-3
+    if updated_count in [2, 3]:
+        ai_reply += "\n\n👉 <i>Untuk pembahasan lebih lengkap dan panduan detailnya, silakan lanjut di Telegram ya!</i>"
 
     # 4. Dynamic CTA
     cta_data = None
-    if WEB_SESSION_COUNTS[session_id] >= 3:
+    if updated_count >= 3:
         cta_data = {
             "type": "telegram",
             "label": "🚀 Lanjutkan Konsultasi Penuh di Telegram",
@@ -1918,7 +1930,7 @@ async def handle_web_chat_http(request):
     return web.json_response({
         "status": "success",
         "reply": ai_reply,
-        "messages_used": WEB_SESSION_COUNTS[session_id],
+        "messages_used": updated_count,
         "messages_limit": MAX_WEB_MESSAGES,
         "cta": cta_data
     }, headers=cors_headers)
