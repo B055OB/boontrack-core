@@ -78,7 +78,7 @@ class AIGateway:
     def __init__(self, primary_provider: str = "gemini"):
         self.gemini_detector = GeminiGoalDetector()
 
-        # CENTRALIZED CONFIG FROM ENV (ZERO HARDCODE)
+        # CENTRALIZED CONFIG FROM ENV (Default tetap gemini-3.6-flash)
         self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
         self.openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct")
@@ -174,7 +174,7 @@ class AIGateway:
         ]
 
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=20)
+            timeout=aiohttp.ClientTimeout(total=25)
         ) as session:
             for idx, (name, model, fn) in enumerate(providers):
                 start_time = time.time()
@@ -209,16 +209,19 @@ class AIGateway:
         if not self.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY kosong / tidak ter-set")
 
-        # Menggunakan Endpoint API Stable v1 & Dynamic Model dari ENV
+        # Endpoint v1beta untuk Gemini 3.6 Flash
         url = (
-            "https://generativelanguage.googleapis.com/v1/models/"
+            "https://generativelanguage.googleapis.com/v1beta/models/"
             f"{self.gemini_model}:generateContent?key={self.gemini_api_key}"
         )
         
         full_text = f"{system_prompt}\n\nUser Question: {user_message}"
         payload = {
             "contents": [{"parts": [{"text": full_text}]}],
-            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2048},
+            "generationConfig": {
+                "temperature": 0.7, 
+                "maxOutputTokens": 4096
+            },
         }
 
         async with session.post(url, json=payload) as resp:
@@ -259,7 +262,7 @@ class AIGateway:
                 {"role": "user", "content": user_message},
             ],
             "temperature": 0.7,
-            "max_tokens": 2048,
+            "max_tokens": 4096,
         }
 
         async with session.post(url, headers=headers, json=payload) as resp:
@@ -299,7 +302,7 @@ class AIGateway:
                 {"role": "user", "content": user_message},
             ],
             "temperature": 0.7,
-            "max_tokens": 2048,
+            "max_tokens": 4096,
         }
 
         async with session.post(url, headers=headers, json=payload) as resp:
