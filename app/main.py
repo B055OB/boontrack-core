@@ -1151,16 +1151,26 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         await create_donation_session(user_id, base_amt, unique_code, total_amt)
         
         don_msg = (
-            f"☕ <b>Aktivasi Career Page Kamu</b>\n\n"
-            f"Terima kasih sudah memilih BoonTrack! 🙏\n"
-            f"Untuk mengaktifkan Career Page profesional kamu, cukup berikan dukungan Rp{base_amt:,}.\n\n"
-            f"👉 <b>Transfer tepat: <code>Rp{total_amt:,}</code></b>\n"
-            f"<i>(Rp{base_amt:,} dukungan + kode verifikasi Rp{unique_code})</i>\n\n"
-            f"📌 <b>Cara bayar:</b>\n"
-            f"1. Scan QRIS di atas\n"
-            f"2. Masukkan nominal <b>Rp{total_amt:,}</b>\n"
-            f"3. Selesaikan pembayaran\n\n"
-            f"⏳ <i>Nominal unik ini berlaku selama 15 menit. Sistem otomatis mendeteksi tanpa kirim bukti.</i>"
+            f"🎉 <b>Terima kasih telah memilih BoonTrack!</b>\n\n"
+            f"Tinggal satu langkah lagi untuk mengaktifkan <b>Career Page Profesional</b> milikmu dan tampil lebih menonjol di mata HRD/Klien.\n\n"
+            f"🌐 <b>Contoh Tampilan Career Page:</b>\n"
+            f"Lihat preview tampilan Career Page yang akan kamu dapatkan di sini:\n"
+            f"👉 https://rayigemilang.boontrack.com\n\n"
+            f"<i>✨ Format modern, recruiter-friendly, responsif di HP/laptop, dan <b>aktif seumur hidup (sekali bayar tanpa biaya langganan)</b>.</i>\n\n"
+            f"💳 <b>Rincian Pembayaran:</b>\n"
+            f"• <b>Item:</b> Aktivasi Career Page Personal (Lifetime Access)\n"
+            f"• <b>Transfer Tepat:</b> <code>Rp{total_amt:,}</code> <i>(Wajib transfer sesuai hingga 3 digit terakhir)</i>\n"
+            f"• <b>Rincian:</b> Rp{base_amt:,} + kode verifikasi Rp{unique_code}\n"
+            f"• <b>Masa Aktif Web:</b> <b>Aktif Seumur Hidup</b>\n"
+            f"• <b>Batas Waktu Bayar:</b> 15 Menit\n\n"
+            f"📱 <b>Panduan Bayar via QRIS (Jika Pakai 1 HP):</b>\n"
+            f"1. <b>Simpan QR:</b> <b>Screenshot layar ini</b> atau unduh gambar QRIS di atas.\n"
+            f"2. <b>Buka E-Wallet / Mobile Banking:</b> (BCA, Mandiri, BRI, DANA, GoPay, OVO, ShopeePay, dll).\n"
+            f"3. <b>Pilih Menu QRIS / Scan:</b> Buka scanner QRIS di aplikasimu.\n"
+            f"4. <b>Upload dari Galeri:</b> Klik ikon galeri/foto di menu scanner.\n"
+            f"5. <b>Pilih Screenshot QR:</b> Masukkan gambar QR tadi & pastikan nominalnya tepat <b>Rp{total_amt:,}</b>.\n"
+            f"6. Selesaikan pembayaran.\n\n"
+            f"⏳ <i>Sistem otomatis memverifikasi pembayaran tanpa perlu kirim bukti transfer. Setelah terdeteksi, bot akan langsung mengirimkan pilihan link subdomain personalmu!</i>"
         )
         
         kbd_qris = InlineKeyboardMarkup(row_width=1)
