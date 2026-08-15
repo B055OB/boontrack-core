@@ -46,14 +46,20 @@ def _clean_response(text: str) -> str:
 
         line_stripped = line.strip()
 
-        if line_stripped.startswith("### "):
-            header_content = line_stripped[4:].strip()
-            line = f"*{header_content}*"
-        elif line_stripped.startswith("## "):
-            header_content = line_stripped[3:].strip()
-            line = f"*{header_content}*"
-        elif line_stripped.startswith("# "):
-            header_content = line_stripped[2:].strip()
+        # PENTING: konversi bullet list ("* item" atau "- item") jadi "• item"
+        # SEBELUM proses apapun yang menyentuh tanda bintang. Kalau tidak,
+        # bintang bullet ikut kehitung sebagai calon bold, bikin total
+        # jumlah bintang jadi ganjil -> safety net di bawah malah membuang
+        # SEMUA bintang termasuk bold yang sudah benar (ini penyebab bug
+        # "bold gak muncul" yang baru terjadi).
+        bullet_match = re.match(r"^([*\-])\s+(.*)", line_stripped)
+        if bullet_match:
+            line_stripped = f"• {bullet_match.group(2)}"
+            line = line[: len(line) - len(line.strip())] + line_stripped  # pertahankan indentasi asli
+
+        header_match = re.match(r"^#{1,6}\s+(.*)", line_stripped)
+        if header_match:
+            header_content = header_match.group(1).strip()
             line = f"*{header_content}*"
 
         cleaned_lines.append(line)
