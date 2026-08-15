@@ -101,7 +101,7 @@ class AIGateway:
         self.gemini_detector = GeminiGoalDetector()
 
         self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
-        self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        self.groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
         self.openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct")
 
         self.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
@@ -198,7 +198,7 @@ class AIGateway:
             ("OpenRouter", self.openrouter_model, self._call_openrouter),
         ]
 
-        provider_timeout = aiohttp.ClientTimeout(total=3.5)
+        provider_timeout = aiohttp.ClientTimeout(total=10.0)
         gateway_start_time = time.time()
         trace_logs = []
 
