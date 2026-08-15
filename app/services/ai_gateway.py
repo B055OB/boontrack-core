@@ -27,9 +27,8 @@ MOCK_MODE = False
 
 def _clean_response(text: str) -> str:
     """
-    Membersihkan tag debug internal dan mengonversi Markdown gaya GFM
-    (**bold**, ### heading, dst) menjadi format yang kompatibel dengan 
-    Telegram legacy Markdown parse_mode (*bold*).
+    Sanitasi output AI agar aman dari crash parsing Telegram.
+    Membersihkan markdown liar dan merapikan list/header.
     """
     if not text:
         return ""
@@ -39,30 +38,26 @@ def _clean_response(text: str) -> str:
         if line.strip().startswith(("*Lang", "*Leng", "*Format:")):
             continue
 
-        line_stripped = line.strip()
+        line_str = line.strip()
 
-        # Konversi bullet list ("* item" atau "- item") menjadi "• item"
-        bullet_match = re.match(r"^([*\-])\s+(.*)", line_stripped)
-        if bullet_match:
-            line_stripped = f"• {bullet_match.group(2)}"
-            line = line[: len(line) - len(line.strip())] + line_stripped
-
-        header_match = re.match(r"^#{1,6}\s+(.*)", line_stripped)
+        # Konversi heading ### atau ## menjadi baris kapital bersih
+        header_match = re.match(r"^#{1,6}\s+(.*)", line_str)
         if header_match:
-            header_content = header_match.group(1).strip()
-            line = f"*{header_content}*"
+            line_str = header_match.group(1).strip()
 
-        cleaned_lines.append(line)
+        # Konversi bullet list (* item / - item) menjadi • item
+        bullet_match = re.match(r"^([*\-])\s+(.*)", line_str)
+        if bullet_match:
+            line_str = f"• {bullet_match.group(2)}"
+
+        cleaned_lines.append(line_str)
 
     result = "\n".join(cleaned_lines).strip()
 
-    # Ubah **bold** (GFM) -> *bold* (Telegram)
-    result = re.sub(r"\*\*(.+?)\*\*", r"*\1*", result)
-
-    # Safety net jika jumlah asterisk ganjil
-    if result.count("*") % 2 != 0:
-        logger.warning("Odd number of '*' detected after cleaning, stripping all asterisks as safety fallback")
-        result = result.replace("*", "")
+    # Bersihkan sisa tanda bintang ganda (**) dan bintang tunggal (*) yang bikin error parsing
+    result = re.sub(r"\*\*([^*]+)\*\*", r"\1", result)
+    result = re.sub(r"\*([^*]+)\*", r"\1", result)
+    result = result.replace("*", "")
 
     return result
 
