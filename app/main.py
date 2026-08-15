@@ -2059,6 +2059,7 @@ async def start_web_server():
     app.router.add_post('/webhook/dana', dana_webhook_handler)
     app.router.add_get('/api/analytics/funnel', funnel_report_handler)
     app.router.add_post('/api/web-chat', handle_web_chat_http)
+    app.router.add_options('/api/web-chat', handle_web_chat_http)
     
     port = int(os.getenv("PORT", 10000))
     runner = web.AppRunner(app)
