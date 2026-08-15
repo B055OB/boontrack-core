@@ -198,30 +198,46 @@ class AIGateway:
             ("OpenRouter", self.openrouter_model, self._call_openrouter),
         ]
 
-        # Fast timeout per provider (maksimal 3.5 detik per provider)
         provider_timeout = aiohttp.ClientTimeout(total=3.5)
+        gateway_start_time = time.time()
+        trace_logs = []
 
         async with aiohttp.ClientSession(timeout=provider_timeout) as session:
             for idx, (name, model, fn) in enumerate(providers):
-                start_time = time.time()
+                p_start = time.time()
                 try:
                     result, p_tokens, c_tokens = await fn(session, user_message, context, system_prompt)
-                    latency = time.time() - start_time
-                    if result:
-                        fallback_info = "NO" if idx == 0 else f"YES (Used {name})"
-                        self._log_health(name, model, "SUCCESS", latency, fallback=fallback_info)
-                        self._log_usage(user_id, name, feature, p_tokens, c_tokens, 200, False)
-                        return result
+                    p_lat_ms = (time.time() - p_start) * 1000
+                    total_ai_ms = (time.time() - gateway_start_time) * 1000
+
+                    trace_logs.append(f"• {name} ({model}): {p_lat_ms:.1f}ms -> SUCCESS")
+                    
+                    # Cetak Trace Rinci Sesuai Format CTO
+                    print(
+                        f"\n[AI TRACE] User: {user_id} | Total AI: {total_ai_ms:.1f}ms\n" +
+                        "\n".join(trace_logs),
+                        flush=True
+                    )
+
+                    fallback_info = "NO" if idx == 0 else f"YES (Used {name})"
+                    self._log_health(name, model, "SUCCESS", p_lat_ms / 1000, fallback=fallback_info)
+                    self._log_usage(user_id, name, feature, p_tokens, c_tokens, 200, False)
+                    return result
+
                 except Exception as e:
-                    latency = time.time() - start_time
+                    p_lat_ms = (time.time() - p_start) * 1000
                     err_str = str(e)
+                    err_type = "TIMEOUT" if "Timeout" in err_str or "timed out" in err_str else "ERROR"
+                    trace_logs.append(f"• {name} ({model}): {p_lat_ms:.1f}ms -> {err_type} ({err_str[:60]})")
+
                     status_code = 429 if ("429" in err_str or "quota" in err_str.lower() or "limit" in err_str.lower()) else 500
-                    next_provider = providers[idx + 1][0] if idx + 1 < len(providers) else "NONE (EXHAUSTED)"
-                    self._log_health(name, model, "FAILED", latency, fallback=f"YES ({next_provider})", error_msg=err_str)
+                    next_provider = providers[idx + 1][0] if idx + 1 < len(providers) else "NONE"
+                    self._log_health(name, model, "FAILED", p_lat_ms / 1000, fallback=f"YES ({next_provider})", error_msg=err_str)
                     self._log_usage(user_id, name, feature, 0, 0, status_code, True, err_str)
                     continue
 
-        logger.error("ALL AI providers failed for message: %r", user_message[:80])
+        total_ai_ms = (time.time() - gateway_start_time) * 1000
+        print(f"\n[AI TRACE EXHAUSTED] Total AI: {total_ai_ms:.1f}ms\n" + "\n".join(trace_logs), flush=True)
         return None
 
     async def _call_gemini(self, session, user_message, context, system_prompt) -> Tuple[str, int, int]:
