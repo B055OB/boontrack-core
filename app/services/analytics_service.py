@@ -86,24 +86,22 @@ class AnalyticsService:
 
         # 5. Paid Users + Total Revenue
         try:
-            # Query status VERIFIED, verified, PAID, atau success
             response = (
                 self.supabase
                 .table("donation_sessions")
-                .select("user_id, total_amount, amount, base_amt, status")
+                .select("telegram_id, total_amount, base_amount, status")
                 .in_("status", ["VERIFIED", "verified", "PAID", "paid", "success", "SUCCESS"])
                 .execute()
             )
             rows = response.data or []
             
-            # Count Distinct Paid Users
-            unique_paid_users = {r.get("user_id") for r in rows if r.get("user_id")}
+            # Count Distinct Paid Users via telegram_id
+            unique_paid_users = {r.get("telegram_id") for r in rows if r.get("telegram_id")}
             metrics["paid_users"] = len(unique_paid_users) if unique_paid_users else len(rows)
 
             total_revenue = 0
             for row in rows:
-                # Cek total_amount, jika kosong cek amount atau base_amt
-                amount = row.get("total_amount") or row.get("amount") or row.get("base_amt") or 0
+                amount = row.get("total_amount") or row.get("base_amount") or 0
                 try:
                     total_revenue += float(amount or 0)
                 except (TypeError, ValueError):
