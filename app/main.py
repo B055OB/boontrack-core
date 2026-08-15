@@ -1610,9 +1610,13 @@ async def handle_message(message: types.Message):
 
     # PRIORITAS 1: ROUTING UTAMA KE AI COMPANION (QA / Chat Umum)
     if current_step == "CAREER_QA" or current_step == 0:
-        if any(word in text.lower() for word in CLOSING_WORDS):
+        # Cek closing words hanya jika kalimatnya sangat pendek (maksimal 3 kata)
+        words_count = len(text.strip().split())
+        is_explicit_closing = any(re.search(rf"\b{re.escape(w)}\b", text.lower()) for w in CLOSING_WORDS)
+        
+        if is_explicit_closing and words_count <= 3:
             user_state[user_id]["step"] = 0
-            await message.reply("Siap! Kapan pun mau tanya lagi tinggal chat di sini ya. Sukses terus! 🚀", parse_mode="HTML")
+            await message.reply("Siap! Kapan pun mau tanya lagi tinggal chat di sini.", reply_markup=types.ReplyKeyboardRemove())
             return
 
         # Background task agar non-blocking
