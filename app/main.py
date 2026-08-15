@@ -1871,18 +1871,44 @@ async def tracker_handler(request):
 async def dana_webhook_handler(request):
     try:
         data = await request.json()
-        source = data.get("source", "")
-        message = data.get("message", "")
+        print(f"[DANA RAW INCOMING]: {data}")
+
+        # Ambil identitas source / aplikasi dari berbagai kemungkinan key forwarder
+        source = str(
+            data.get("source", "") 
+            or data.get("app", "") 
+            or data.get("package_name", "") 
+            or data.get("title", "") 
+            or data.get("sender", "")
+        ).lower()
+
+        # Ambil isi teks pesan dari berbagai kemungkinan key forwarder
+        message = str(
+            data.get("message", "") 
+            or data.get("text", "") 
+            or data.get("content", "") 
+            or data.get("notification", "") 
+            or data.get("body", "")
+        )
+
+        full_payload_str = (source + " " + message).lower()
+
+        # Validasi apakah payload mengandung kata kunci DANA
+        if "dana" not in full_payload_str:
+            print(f"[DANA IGNORED] Not DANA related payload: {full_payload_str}")
+            return web.json_response({"status": "ignored", "reason": "not_dana"}, status=200)
+
+        # Bersihkan pemisah ribuan dan standarkan format nominal
+        clean_text = message.replace(".", "").replace(",", "").replace("Rp", "Rp ").replace("rp", "Rp ")
         
-        if "dana" not in source.lower():
-            return web.json_response({"status": "ignored"}, status=400)
-            
-        clean_text = message.replace(".", "").replace(",", "")
-        match = re.search(r"Rp\s*(\d+)", clean_text, re.IGNORECASE)
-        
+        # Ekstrak angka nominal (mencakup pola Rp 10218 atau angka transaksi 4-8 digit)
+        match = re.search(r"Rp\s*(\d+)", clean_text, re.IGNORECASE) or re.search(r"(\d{4,8})", clean_text)
+
         if match:
             incoming_amount = int(match.group(1))
-            
+            print(f"[DANA MATCHED AMOUNT]: Rp{incoming_amount:,}")
+
+            # 1. Cek Order E-book
             order = await match_and_complete_order(incoming_amount)
             if order:
                 if order.get("status") == "PAID":
@@ -1890,10 +1916,10 @@ async def dana_webhook_handler(request):
 
                 buyer_id = order["telegram_id"]
                 product = order["product_name"]
-                
+
                 caption_text = (
                     f"🎉 <b>Pembayaran Terkonfirmasi! (Rp{incoming_amount:,})</b>\n\n"
-                    f"Terima kasih telah membeli **{product}**.\n"
+                    f"Terima kasih telah membeli <b>{product}</b>.\n"
                     f"File E-book kamu terlampir langsung di bawah ini. Selamat membaca dan sukses terus!"
                 )
                 try:
@@ -1911,15 +1937,20 @@ async def dana_webhook_handler(request):
 
                 return web.json_response({"status": "success_order", "order_id": order["order_id"]}, status=200)
 
+            # 2. Cek Donasi / Aktivasi Career Page
             donation = await match_and_complete_donation(incoming_amount)
             if donation:
                 if donation.get("status") == "VERIFIED":
                     return web.json_response({"status": "already_verified"}, status=200)
 
                 donor_id = donation["telegram_id"]
-                user_data = user_state.get(donor_id, {}).get("data", {})
-                user_data["cp_status"] = "active"
                 
+                if donor_id not in user_state:
+                    user_state[donor_id] = {"data": {}}
+                    
+                user_data = user_state[donor_id].setdefault("data", {})
+                user_data["cp_status"] = "active"
+
                 default_slug = await generate_unique_slug(user_data)
                 user_data["temp_slug"] = default_slug
                 user_state[donor_id]["data"] = user_data
@@ -1929,7 +1960,7 @@ async def dana_webhook_handler(request):
                     InlineKeyboardButton(f"✅ Pakai {default_slug}.boontrack.com", callback_data="cp_confirm_default_slug"),
                     InlineKeyboardButton("✏️ Ketik Nama Custom Sendiri", callback_data="cp_change_slug_start")
                 )
-                
+
                 don_thanks = (
                     f"🎉 <b>PEMBAYARAN CAREER PAGE TERKONFIRMASI!</b>\n\n"
                     f"Terima kasih atas dukunganmu sebesar <b>Rp{incoming_amount:,}</b>! 🙏\n\n"
@@ -1941,10 +1972,15 @@ async def dana_webhook_handler(request):
                 await bot.send_message(chat_id=donor_id, text=don_thanks, reply_markup=kbd_post, parse_mode="HTML")
                 return web.json_response({"status": "success_donation", "donation_id": donation["donation_id"]}, status=200)
 
-        return web.json_response({"status": "no_matching_transaction"}, status=200)
+            print(f"[DANA WARNING] Nominal Rp{incoming_amount:,} tidak cocok dengan order/donasi pending manapun.")
+            return web.json_response({"status": "no_matching_transaction", "amount": incoming_amount}, status=200)
+
+        print(f"[DANA PARSE ERROR] Gagal mengekstrak nominal dari teks: {message}")
+        return web.json_response({"status": "failed_parsing", "message": message}, status=200)
+
     except Exception as e:
-        print(f"Webhook Exception: {e}")
-        return web.json_response({"status": "error"}, status=500)
+        print(f"[Webhook Exception]: {e}")
+        return web.json_response({"status": "error", "detail": str(e)}, status=500)
 
 async def health_check_handler(request):
     return web.json_response({"status": "healthy", "message": "Render is awake!"}, status=200)
