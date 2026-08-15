@@ -24,14 +24,31 @@ MOCK_MODE = False
 
 
 def _clean_response(text: str) -> str:
-    """Membersihkan tag debug atau instruksi format internal dari output AI."""
+    """
+    Membersihkan tag debug internal dan menormalkan format Markdown
+    agar kompatibel dengan rendering gelembung chat Telegram.
+    """
     if not text:
         return ""
-    lines = [
-        line for line in text.split("\n") 
-        if not line.strip().startswith(("*Lang", "*Leng", "*Format:"))
-    ]
-    return "\n".join(lines).strip()
+    
+    cleaned_lines = []
+    for line in text.split("\n"):
+        # Abaikan baris debug prompt internal
+        if line.strip().startswith(("*Lang", "*Leng", "*Format:")):
+            continue
+        
+        # Konversi format heading markdown (### / ##) menjadi bold text telegram
+        line_stripped = line.strip()
+        if line_stripped.startswith("### "):
+            header_content = line_stripped[4:].strip()
+            line = f"**{header_content}**"
+        elif line_stripped.startswith("## "):
+            header_content = line_stripped[3:].strip()
+            line = f"**{header_content}**"
+            
+        cleaned_lines.append(line)
+        
+    return "\n".join(cleaned_lines).strip()
 
 
 class GeminiGoalDetector(BaseGoalDetector):
@@ -209,7 +226,7 @@ class AIGateway:
         if not self.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY kosong / tidak ter-set")
 
-        # Endpoint v1beta untuk Gemini 3.6 Flash
+        # Endpoint v1beta untuk kompatibilitas penuh seri Gemini 3.6 Flash
         url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
             f"{self.gemini_model}:generateContent?key={self.gemini_api_key}"
