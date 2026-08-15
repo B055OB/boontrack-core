@@ -509,7 +509,7 @@ def _create_donation_session_sync(telegram_id, base_amount, unique_code, total_a
 async def create_donation_session(telegram_id, base_amount, unique_code, total_amount):
     return await asyncio.to_thread(_create_donation_session_sync, telegram_id, base_amount, unique_code, total_amount)
 
-ddef _match_and_complete_donation_sync(amount):
+def _match_and_complete_donation_sync(amount):
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
