@@ -1,20 +1,19 @@
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import os
 import asyncio
 import json
 import re
 import random
-from flask import app
-import requests
 import tempfile
 import uuid
 import aiohttp
 from datetime import datetime, timedelta
+from typing import Optional, Dict
 from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from pydantic import BaseModel, Field
 from aiogram import Bot, Dispatcher, executor, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from docx import Document
@@ -22,24 +21,14 @@ from docx.shared import Pt, RGBColor, Inches
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from aiohttp import web
+
 from app.repositories.session_repository import SessionRepository
-
 from app.services.analytics_service import analytics_service
-
-# Import Service & Brain Engine Baru
 from app.services.ai_gateway import AIGateway
 from app.services.brain_engine import BrainEngine
 from app.handlers.admin_handler import admin_handler
-
-# Inisialisasi AI Gateway terpusat
-ai_gateway = AIGateway()
-
-# Import CV Review Engine & Service Baru
-
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
-from pydantic import BaseModel, Field
-from typing import Optional, Dict
 
 # --- WEB CHAT MVP SCHEMA & STATE ---
 class WebChatRequest(BaseModel):
@@ -89,7 +78,6 @@ def format_telegram_review_response(data: dict, target_position: str) -> dict:
 
     msg += f"🔍 <i>Confidence: {confidence.get('level', 'MEDIUM')} ({confidence.get('reason', '')})</i>\n"
     
-    # Inisialisasi return value
     response = {
         "text": msg,
         "parse_mode": "HTML"
@@ -621,57 +609,15 @@ async def update_cloudflare_kv(slug: str | None, user_data: dict) -> bool:
         "Content-Type": "application/json"
     }
     try:
-        res = await asyncio.to_thread(requests.put, url, json=payload, headers=headers, timeout=5)
-        print(f"[KV Sync Status] Status: {res.status_code} untuk slug: {slug.lower()}")
-        return res.status_code == 200
+        async with aiohttp.ClientSession() as session:
+            async with session.put(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                print(f"[KV Sync Status] Status: {resp.status} untuk slug: {slug.lower()}")
+                return resp.status == 200
     except Exception as e:
         print(f"[KV Sync Error] Gagal update Cloudflare KV: {e}")
         return False
 
-# --- HELPER FUNCTIONS AI CV GENERATOR WITH SAFE FALLBACKS ---
-def ai_generate_summary(position, status_kerja, target_lang):
-    try:
-        if ai_client:
-            res = ai_client.models.generate_content(
-                model='gemini-3.6-flash', 
-                contents=f"Buatkan ringkasan profesional singkat untuk posisi {position}"
-            )
-            if res and res.text:
-                return res.text.strip()
-    except Exception as e:
-        print(f"[AI Summary Fallback]: {e}")
-    return f"Profesional yang berdedikasi dan berorientasi pada hasil dengan fokus pada bidang {position}. Memiliki kemampuan komunikasi yang baik serta siap memberikan kontribusi positif."
-
-def ai_translate_text(text, target_lang):
-    if not text or target_lang == "ID":
-        return text
-    try:
-        if ai_client:
-            res = ai_client.models.generate_content(
-                model='gemini-3.6-flash', 
-                contents=f"Translate this professional CV text to English: {text}"
-            )
-            if res and res.text:
-                return res.text.strip()
-    except Exception as e:
-        print(f"[AI Translate Fallback]: {e}")
-    return text
-
-def ai_rewrite_achievement(ach_raw, target_lang):
-    if not ach_raw:
-        return ""
-    try:
-        if ai_client:
-            res = ai_client.models.generate_content(
-                model='gemini-3.6-flash', 
-                contents=f"Buatkan 2-3 poin bullet achievement profesional untuk: {ach_raw}"
-            )
-            if res and res.text:
-                return res.text.strip()
-    except Exception as e:
-        print(f"[AI Achievement Fallback]: {e}")
-    return ach_raw
-
+# --- HELPER FUNCTIONS AI CV GENERATOR ---
 def clean_val(val):
     if not val:
         return ""
@@ -756,8 +702,7 @@ async def ai_career_chat_response(user_query, user_context=None):
     except Exception as e:
         print(f"[AI GATEWAY DIRECT ERROR]: {type(e).__name__}: {e}")
 
-    return f"Maaf, staf kami yang menjawab untuk kebutuhan karir sedang tidak di tempat. Mungkin bisa coba lagi nanti ya 🙏"
-
+    return "Maaf, staf kami yang menjawab untuk kebutuhan karir sedang tidak di tempat. Mungkin bisa coba lagi nanti ya 🙏"
 
 def create_cv_docx(user_id, data):
     doc = Document()
@@ -814,8 +759,8 @@ def create_cv_docx(user_id, data):
         h._p.get_or_add_pPr().append(pBdr)
 
     add_section_header("PROFESSIONAL SUMMARY" if is_en else "RINGKASAN PROFESIONAL")
-    position_text = clean_val(data.get("target_position", ""))
-    summary_text = ai_generate_summary(position_text, status_kerja, target_lang)
+    position_text = clean_val(data.get("target_position", "Profesional"))
+    summary_text = f"Profesional yang berdedikasi dan berorientasi pada hasil dengan fokus pada bidang {position_text}. Memiliki kemampuan komunikasi yang baik serta siap memberikan kontribusi positif."
     p_sum = doc.add_paragraph(summary_text)
     p_sum.paragraph_format.space_after = Pt(8)
     for r in p_sum.runs:
@@ -833,19 +778,17 @@ def create_cv_docx(user_id, data):
         for job_title in raw_jobs:
             if not job_title:
                 continue
-            translated_title = ai_translate_text(job_title, target_lang) if is_en else job_title
             
             p_job = doc.add_paragraph()
             p_job.paragraph_format.space_before = Pt(6)
             p_job.paragraph_format.space_after = Pt(2)
-            r_job = p_job.add_run(translated_title)
+            r_job = p_job.add_run(job_title)
             r_job.font.name = 'Calibri'
             r_job.font.size = Pt(10.5)
             r_job.font.bold = True
 
             if ach_raw:
-                ach_formatted = ai_rewrite_achievement(ach_raw, target_lang)
-                for bullet in ach_formatted.split("\n"):
+                for bullet in ach_raw.split("\n"):
                     b_text = bullet.strip().lstrip("-*• ")
                     if b_text:
                         p_b = doc.add_paragraph(style='List Bullet')
@@ -857,8 +800,7 @@ def create_cv_docx(user_id, data):
     edu = clean_val(data.get("5", ""))
     if edu:
         add_section_header("EDUCATION" if is_en else "PENDIDIKAN")
-        translated_edu = ai_translate_text(edu, target_lang) if is_en else edu
-        p_edu = doc.add_paragraph(translated_edu)
+        p_edu = doc.add_paragraph(edu)
         p_edu.paragraph_format.space_after = Pt(8)
         for r in p_edu.runs:
             r.font.name = 'Calibri'
@@ -942,7 +884,7 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         except Exception:
             pass
 
-        # Jalankan CV Review Engine Deterministik
+        # Jalankan CV Review Engine
         cv_text_summary = f"{user_data.get('3', '')} {user_data.get('4', '')} {user_data.get('6', '')}"
         is_paid = await check_user_paid(user_id)
         review_response = await handle_cv_review_process(user_id, position, cv_text_summary, is_paid)
@@ -1891,7 +1833,7 @@ async def tracker_handler(request):
         print(f"[Tracker Error] {e}")
         return web.HTTPFound(location="https://t.me/boontrackbot")
 
-    async def handle_web_chat_http(request):
+async def handle_web_chat_http(request):
     try:
         data = await request.json()
     except Exception:
@@ -1916,6 +1858,7 @@ async def tracker_handler(request):
                 cur.execute("""
                     INSERT INTO click_logs (click_id, utm_source, utm_medium, utm_campaign, utm_content, created_at)
                     VALUES (%s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT (click_id) DO NOTHING
                 """, (
                     click_id or session_id,
                     utm_data.get("utm_source", "web_direct"),
@@ -1930,7 +1873,7 @@ async def tracker_handler(request):
         except Exception as e:
             print(f"[WEB CHAT UTM LOG ERROR] {e}")
 
-    # 2. Limit Kuota Percakapan Gratis (5-10 pesan)
+    # 2. Limit Kuota Percakapan Gratis
     if current_count >= MAX_WEB_MESSAGES:
         return web.json_response({
             "status": "limit_reached",
@@ -1938,19 +1881,15 @@ async def tracker_handler(request):
             "cta": {
                 "type": "telegram",
                 "label": "🚀 Lanjutkan di Telegram",
-                "url": f"https://t.me/boontrackbot?start={click_id or session_id}"
+                "url": f"https://t.me/BoonTrackBot?start={click_id or session_id}"
             }
         })
 
-    # 3. Panggil BrainEngine / AIGateway Existing
+    # 3. Panggil AI Companion BrainEngine / Gateway
     try:
-        system_context = (
-            "Kamu adalah BoonTrack Career Companion. Berikan saran karier yang ringkas, "
-            "empatik, solutif, dan to-the-point maksimal 2-3 paragraf pendek."
-        )
-        ai_reply = await ai_gateway.generate(
-            prompt=user_msg,
-            system_prompt=system_context
+        ai_reply = await ai_career_chat_response(
+            user_query=user_msg,
+            user_context={"session_id": session_id, "source": "web_chat"}
         )
     except Exception as e:
         print(f"[WEB CHAT AI ERROR] {e}")
@@ -1964,75 +1903,7 @@ async def tracker_handler(request):
         cta_data = {
             "type": "telegram",
             "label": "🚀 Lanjutkan Konsultasi Penuh di Telegram",
-            "url": f"https://t.me/boontrackbot?start={click_id or session_id}"
-        }
-
-    return web.json_response({
-        "status": "success",
-        "reply": ai_reply,
-        "messages_used": WEB_SESSION_COUNTS[session_id],
-        "messages_limit": MAX_WEB_MESSAGES,
-        "cta": cta_data
-    })
-
-    # 1. Log Attribution jika ada UTM (hanya pada pesan pertama)
-    if utm_data and current_count == 0:
-        try:
-            def _log_utm():
-                conn = get_db_connection()
-                cur = conn.cursor()
-                cur.execute("""
-                    INSERT INTO click_logs (click_id, utm_source, utm_medium, utm_campaign, utm_content, created_at)
-                    VALUES (%s, %s, %s, %s, %s, NOW())
-                """, (
-                    click_id or session_id,
-                    utm_data.get("utm_source", "web_direct"),
-                    utm_data.get("utm_medium", "web_chat"),
-                    utm_data.get("utm_campaign", "none"),
-                    utm_data.get("utm_content", "none")
-                ))
-                conn.commit()
-                cur.close()
-                conn.close()
-            await asyncio.to_thread(_log_utm)
-        except Exception as e:
-            print(f"[WEB CHAT UTM LOG ERROR] {e}")
-
-    # 2. Limit Kuota Percakapan Gratis (5-10 pesan)
-    if current_count >= MAX_WEB_MESSAGES:
-        return web.json_response({
-            "status": "limit_reached",
-            "reply": "Kamu sudah mencapai batas konsultasi awal gratis di web. Mau lanjutkan konsultasi mendalam dan review CV lengkap?",
-            "cta": {
-                "type": "telegram",
-                "label": "🚀 Lanjutkan di Telegram",
-                "url": f"https://t.me/boontrackbot?start={click_id or session_id}"
-            }
-        })
-
-    # 3. Panggil BrainEngine / AIGateway Existing
-    try:
-        system_context = (
-            "Kamu adalah BoonTrack Career Companion. Berikan saran karier yang ringkas, "
-            "empatik, solutif, dan to-the-point maksimal 2-3 paragraf pendek."
-        )
-        ai_reply = await ai_gateway.generate(
-            prompt=user_msg,
-            system_prompt=system_context
-        )
-    except Exception as e:
-        print(f"[WEB CHAT AI ERROR] {e}")
-        ai_reply = "Halo! Saya siap bantu arah kariermu. Ceritakan fokus atau kendala utama yang sedang kamu hadapi saat ini?"
-
-    WEB_SESSION_COUNTS[session_id] = current_count + 1
-
-    # 4. Dynamic CTA
-    cta_data = None
-    if WEB_SESSION_COUNTS[session_id] >= 3:
-        cta_data = {
-            "type": "telegram",
-            "label": "🚀 Lanjutkan Konsultasi Penuh di Telegram",
-            "url": f"https://t.me/boontrackbot?start={click_id or session_id}"
+            "url": f"https://t.me/BoonTrackBot?start={click_id or session_id}"
         }
 
     return web.json_response({
@@ -2048,7 +1919,6 @@ async def dana_webhook_handler(request):
         data = await request.json()
         print(f"[DANA RAW INCOMING]: {data}")
 
-        # Ambil identitas source / aplikasi dari berbagai kemungkinan key forwarder
         source = str(
             data.get("source", "") 
             or data.get("app", "") 
@@ -2057,7 +1927,6 @@ async def dana_webhook_handler(request):
             or data.get("sender", "")
         ).lower()
 
-        # Ambil isi teks pesan dari berbagai kemungkinan key forwarder
         message = str(
             data.get("message", "") 
             or data.get("text", "") 
@@ -2068,15 +1937,11 @@ async def dana_webhook_handler(request):
 
         full_payload_str = (source + " " + message).lower()
 
-        # Validasi apakah payload mengandung kata kunci DANA
         if "dana" not in full_payload_str:
             print(f"[DANA IGNORED] Not DANA related payload: {full_payload_str}")
             return web.json_response({"status": "ignored", "reason": "not_dana"}, status=200)
 
-        # Bersihkan pemisah ribuan dan standarkan format nominal
         clean_text = message.replace(".", "").replace(",", "").replace("Rp", "Rp ").replace("rp", "Rp ")
-        
-        # Ekstrak angka nominal (mencakup pola Rp 10218 atau angka transaksi 4-8 digit)
         match = re.search(r"Rp\s*(\d+)", clean_text, re.IGNORECASE) or re.search(r"(\d{4,8})", clean_text)
 
         if match:
