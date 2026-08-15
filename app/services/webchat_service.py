@@ -22,7 +22,7 @@ class WebChatService:
         history = self._get_history(session_id)
         history.append({"role": "user", "content": message})
 
-        # Panggil BrainEngine menggunakan handle_message native tanpa merusak flow live
+        # Panggil BrainEngine
         engine_response = await self.brain.handle_message(
             user_id=session_id,
             channel="webchat",
@@ -34,23 +34,21 @@ class WebChatService:
             }
         )
 
-        # Handle return value (baik berupa string maupun dict)
+        # Handle return value secara fleksibel
         if isinstance(engine_response, dict):
-            raw_reply = engine_response.get("text") or engine_response.get("reply") or str(engine_response)
+            raw_reply = engine_response.get("text") or engine_response.get("reply") or engine_response.get("intent") or str(engine_response)
         else:
             raw_reply = str(engine_response)
 
-        # Fallback spesifik untuk widget B2B agar tidak bentrok dengan intent karir
-        if raw_reply in ["GENERAL_QUERY", "START", "FALLBACK"]:
+        # Fallback fleksibel untuk intent mentah
+        if any(keyword in raw_reply.upper() for keyword in ["QUERY", "START", "FALLBACK", "GENERAL"]):
             reply = "Terima kasih atas pertanyaannya! BoonTrack Group siap membantu kebutuhan otomatisasi AI dan software kustom untuk bisnis Anda. Ada spesifikasi atau alur kerja khusus yang ingin kita diskusikan?"
-        elif "CAREER_QUERY" in raw_reply:
-            reply = "BoonTrack Group menyediakan solusi otomatisasi dan software kustom untuk korporasi dan bisnis. Apakah Anda ingin mendiskusikan integrasi sistem atau otomatisasi operasional untuk perusahaan Anda?"
         else:
             reply = raw_reply
 
         history.append({"role": "assistant", "content": reply})
 
-        # Trigger kualifikasi lead jika percakapan mencapai kedalaman tertentu
+        # Trigger kualifikasi lead
         is_qualified = False
         if len(history) >= 6:
             lead_data = await self.lead_service.extract_lead_from_history(history)
