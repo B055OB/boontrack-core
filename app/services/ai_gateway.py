@@ -133,7 +133,7 @@ class AIGateway:
         )
         if error_msg:
             log_str += f"\n  Reason    : {error_msg[:300]}"
-        print(log_str)
+        print(log_str, flush=True)
 
     def _insert_db_sync(
         self,
@@ -198,7 +198,10 @@ class AIGateway:
             ("OpenRouter", self.openrouter_model, self._call_openrouter),
         ]
 
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=25)) as session:
+        # Fast timeout per provider (maksimal 3.5 detik per provider)
+        provider_timeout = aiohttp.ClientTimeout(total=3.5)
+
+        async with aiohttp.ClientSession(timeout=provider_timeout) as session:
             for idx, (name, model, fn) in enumerate(providers):
                 start_time = time.time()
                 try:

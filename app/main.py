@@ -46,6 +46,35 @@ MAX_WEB_MESSAGES = 7
 # ==========================================
 load_dotenv()
 
+# HELPER: CHUNKED MESSAGE UNTUK TELEGRAM (ANTI LIMIT 4096 KARAKTER)
+async def send_chunked_message(chat_id: int, text: str, reply_markup=None, parse_mode="HTML"):
+    MAX_CHUNK = 3800
+    clean_text = (text or "").strip()
+    
+    if len(clean_text) <= MAX_CHUNK:
+        await bot.send_message(chat_id, clean_text, reply_markup=reply_markup, parse_mode=parse_mode)
+        return
+
+    # Pecah berdasarkan paragraf
+    lines = clean_text.split("\n")
+    chunks = []
+    current_chunk = ""
+
+    for line in lines:
+        if len(current_chunk) + len(line) + 1 > MAX_CHUNK:
+            chunks.append(current_chunk.strip())
+            current_chunk = line + "\n"
+        else:
+            current_chunk += line + "\n"
+
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+
+    for idx, chunk in enumerate(chunks):
+        is_last = (idx == len(chunks) - 1)
+        k_markup = reply_markup if is_last else None
+        await bot.send_message(chat_id, chunk, reply_markup=k_markup, parse_mode=parse_mode)
+
 def format_telegram_review_response(data: dict, target_position: str) -> dict:
     scores = data.get("scores", {})
     confidence = data.get("confidence", {})
@@ -109,7 +138,7 @@ async def handle_cv_review_process(user_id: int, target_position: str, cv_text: 
             llm_json = json.loads(llm_raw_response)
             det_result.update(llm_json)
     except Exception as e:
-        print(f"[CV Review Engine] LLM Error / Timeout: {e}")
+        print(f"[CV Review Engine] LLM Error / Timeout: {e}", flush=True)
 
     final_output = cv_review_engine.apply_access_control(det_result, is_paid)
     
@@ -309,7 +338,7 @@ def _track_event_sync(user_id, event, meta=None):
         cur.close()
         conn.close()
     except Exception as e:
-        print(f"Analytics DB Error: {e}")
+        print(f"Analytics DB Error: {e}", flush=True)
 
 async def track_event(user_id, event, meta=None):
     await asyncio.to_thread(_track_event_sync, user_id, event, meta)
@@ -330,7 +359,7 @@ def _save_user_sync(user: types.User):
         cur.close()
         conn.close()
     except Exception as e:
-        print(f"Save User DB Error: {e}")
+        print(f"Save User DB Error: {e}", flush=True)
 
 async def save_user(user: types.User):
     await asyncio.to_thread(_save_user_sync, user)
@@ -352,7 +381,7 @@ def _save_dropoff_sync(user_id, step, data):
         cur.close()
         conn.close()
     except Exception as e:
-        print(f"Dropoff DB Error: {e}")
+        print(f"Dropoff DB Error: {e}", flush=True)
 
 async def save_dropoff(user_id, step, data):
     await asyncio.to_thread(_save_dropoff_sync, user_id, step, data)
@@ -369,7 +398,7 @@ def _get_user_history_sync(user_id):
         conn.close()
         return progress, last_cv
     except Exception as e:
-        print(f"Get User History Error: {e}")
+        print(f"Get User History Error: {e}", flush=True)
         return None, None
 
 async def get_user_history(user_id):
@@ -390,7 +419,7 @@ def _save_cv_version_sync(user_id, position, data):
         cur.close()
         conn.close()
     except Exception as e:
-        print(f"Save CV Version Error: {e}")
+        print(f"Save CV Version Error: {e}", flush=True)
 
 async def save_cv_version(user_id, position, data):
     await asyncio.to_thread(_save_cv_version_sync, user_id, position, data)
@@ -409,7 +438,7 @@ def _count_referrals_sync(referrer_id):
         conn.close()
         return count
     except Exception as e:
-        print(f"Count Referrals Error: {e}")
+        print(f"Count Referrals Error: {e}", flush=True)
         return 0
 
 async def count_referrals(referrer_id):
@@ -428,7 +457,7 @@ def _check_user_paid_sync(user_id):
         conn.close()
         return bool(res)
     except Exception as e:
-        print(f"Check User Paid Error: {e}")
+        print(f"Check User Paid Error: {e}", flush=True)
         return False
 
 async def check_user_paid(user_id):
@@ -454,7 +483,7 @@ def _create_order_sync(telegram_id, product_name, base_price, unique_code, total
         conn.close()
         return order_id
     except Exception as e:
-        print(f"Create Order Error: {e}")
+        print(f"Create Order Error: {e}", flush=True)
         return None
 
 async def create_order(telegram_id, product_name, base_price, unique_code, total_amount):
@@ -477,7 +506,7 @@ def _match_and_complete_order_sync(amount):
         conn.close()
         return order
     except Exception as e:
-        print(f"Match Order Error: {e}")
+        print(f"Match Order Error: {e}", flush=True)
         return None
 
 async def match_and_complete_order(amount):
@@ -503,7 +532,7 @@ def _create_donation_session_sync(telegram_id, base_amount, unique_code, total_a
         conn.close()
         return donation_id
     except Exception as e:
-        print(f"Create Donation Error: {e}")
+        print(f"Create Donation Error: {e}", flush=True)
         return None
 
 async def create_donation_session(telegram_id, base_amount, unique_code, total_amount):
@@ -527,7 +556,7 @@ def _match_and_complete_donation_sync(amount):
         conn.close()
         return donation
     except Exception as e:
-        print(f"Match Donation Error: {e}")
+        print(f"Match Donation Error: {e}", flush=True)
         return None
 
 async def match_and_complete_donation(amount):
@@ -546,7 +575,7 @@ async def check_kv_key_exists(slug: str) -> bool:
             async with session.get(url, headers=headers) as resp:
                 return resp.status == 200
     except Exception as e:
-        print(f"[KV Check Error] {e}")
+        print(f"[KV Check Error] {e}", flush=True)
         return False
 
 async def generate_unique_slug(user_data: dict) -> str:
@@ -583,11 +612,11 @@ def get_user_slug(user_data: dict, default_name: str = "") -> str | None:
 
 async def update_cloudflare_kv(slug: str | None, user_data: dict) -> bool:
     if not slug:
-        print("[KV Info] Slug bernilai None/kosong (user belum mengaktifkan Career Page). Skip update KV.")
+        print("[KV Info] Slug bernilai None/kosong. Skip update KV.", flush=True)
         return False
 
     if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_KV_NAMESPACE_ID or not CLOUDFLARE_ACCOUNT_ID:
-        print("[KV Alert] Credentials Cloudflare belum lengkap di .env")
+        print("[KV Alert] Credentials Cloudflare belum lengkap di .env", flush=True)
         return False
         
     url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces/{CLOUDFLARE_KV_NAMESPACE_ID}/values/{slug.lower()}"
@@ -611,10 +640,10 @@ async def update_cloudflare_kv(slug: str | None, user_data: dict) -> bool:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.put(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                print(f"[KV Sync Status] Status: {resp.status} untuk slug: {slug.lower()}")
+                print(f"[KV Sync Status] Status: {resp.status} untuk slug: {slug.lower()}", flush=True)
                 return resp.status == 200
     except Exception as e:
-        print(f"[KV Sync Error] Gagal update Cloudflare KV: {e}")
+        print(f"[KV Sync Error] Gagal update Cloudflare KV: {e}", flush=True)
         return False
 
 # --- HELPER FUNCTIONS AI CV GENERATOR ---
@@ -688,9 +717,11 @@ async def ai_career_chat_response(user_query, user_context=None):
             context=user_context
         )
         if response:
-            return response
+            if isinstance(response, dict):
+                return response.get("text", "")
+            return str(response)
     except Exception as e:
-        print(f"[BRAIN ENGINE ERROR]: {type(e).__name__}: {e}")
+        print(f"[BRAIN ENGINE ERROR]: {type(e).__name__}: {e}", flush=True)
 
     try:
         response = await ai_gateway.generate(
@@ -700,7 +731,7 @@ async def ai_career_chat_response(user_query, user_context=None):
         if response:
             return response
     except Exception as e:
-        print(f"[AI GATEWAY DIRECT ERROR]: {type(e).__name__}: {e}")
+        print(f"[AI GATEWAY DIRECT ERROR]: {type(e).__name__}: {e}", flush=True)
 
     return "Maaf, staf kami yang menjawab untuk kebutuhan karir sedang tidak di tempat. Mungkin bisa coba lagi nanti ya 🙏"
 
@@ -890,14 +921,14 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         review_response = await handle_cv_review_process(user_id, position, cv_text_summary, is_paid)
 
         if isinstance(review_response, dict):
-            await bot.send_message(
+            await send_chunked_message(
                 chat_id=user_id,
-                text=review_response.get("text"),
+                text=review_response.get("text", ""),
                 reply_markup=review_response.get("reply_markup"),
                 parse_mode=review_response.get("parse_mode", "HTML")
             )
         else:
-            await bot.send_message(user_id, review_response, parse_mode="HTML")
+            await send_chunked_message(user_id, review_response, parse_mode="HTML")
 
         value_text = (
             "💡 <b>Tips Penting Sebelum Melamar:</b>\n\n"
@@ -906,7 +937,7 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
             "3. <b>Pencapaian Terukur:</b> Cantumkan angka atau pencapaian konkret saat wawancara nanti.\n\n"
             "CV ini sudah bisa kamu edit kapan saja di Word jika ada bagian yang ingin kamu sesuaikan kembali. 🚀"
         )
-        await bot.send_message(user_id, value_text, parse_mode="HTML")
+        await send_chunked_message(user_id, value_text, parse_mode="HTML")
 
         slug = get_user_slug(user_data, message.from_user.first_name)
 
@@ -928,7 +959,7 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
                 f"👉 <i>Link Website Live Kamu:</i> https://{slug}.boontrack.com\n"
                 f"Kamu bisa memperbarui foto, posisi, atau mengimpor data CV terbaru kapan saja!"
             )
-            await bot.send_message(user_id, monetize_text, reply_markup=kbd_paid, parse_mode="HTML")
+            await send_chunked_message(user_id, monetize_text, reply_markup=kbd_paid, parse_mode="HTML")
         else:
             monetize_text = (
                 f"{insight_text}\n\n"
@@ -936,7 +967,7 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
                 f"Contoh Live: <code>rayigemilang.boontrack.com</code>\n"
                 f"<i>(Sekali aktivasi seumur hidup — Rp10.000)</i>"
             )
-            await bot.send_message(user_id, monetize_text, reply_markup=get_donation_options_keyboard(), parse_mode="HTML")
+            await send_chunked_message(user_id, monetize_text, reply_markup=get_donation_options_keyboard(), parse_mode="HTML")
 
         if os.path.exists(file_path):
             os.remove(file_path)
@@ -954,10 +985,10 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
                 try:
                     await bot.send_message(chat_id=int(referrer_id), text=reward_text, parse_mode="HTML")
                 except Exception as e:
-                    print(f"Error send referral reward: {e}")
+                    print(f"Error send referral reward: {e}", flush=True)
 
     except Exception as e:
-        print(f"Error Generate CV Flow: {e}")
+        print(f"Error Generate CV Flow: {e}", flush=True)
         await message.reply("❌ Terjadi kendala teknis. Silakan tekan /start untuk coba lagi!", parse_mode="HTML")
 
 # COMMAND 
@@ -992,7 +1023,7 @@ async def send_welcome(message: types.Message):
                 cur.close()
                 conn.close()
             except Exception as e:
-                print(f"[Attribution Error] {e}")
+                print(f"[Attribution Error] {e}", flush=True)
 
         asyncio.create_task(asyncio.to_thread(_link_user_attribution))
     else:
@@ -1088,14 +1119,14 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         review_response = await handle_cv_review_process(user_id, position, cv_text_summary, is_paid)
         
         if isinstance(review_response, dict):
-            await bot.send_message(
+            await send_chunked_message(
                 chat_id=user_id,
-                text=review_response.get("text"),
+                text=review_response.get("text", ""),
                 reply_markup=review_response.get("reply_markup"),
                 parse_mode=review_response.get("parse_mode", "HTML")
             )
         else:
-            await bot.send_message(user_id, review_response, parse_mode="HTML")
+            await send_chunked_message(user_id, review_response, parse_mode="HTML")
 
     elif code in ["don_5000", "don_10000", "don_25000"]:
         base_amt = 5000 if code == "don_5000" else (10000 if code == "don_10000" else 25000)
@@ -1106,25 +1137,12 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         
         don_msg = (
             f"🎉 <b>Terima kasih telah memilih BoonTrack!</b>\n\n"
-            f"Tinggal satu langkah lagi untuk mengaktifkan <b>Career Page Profesional</b> milikmu dan tampil lebih menonjol di mata HRD/Klien.\n\n"
-            f"🌐 <b>Contoh Tampilan Career Page:</b>\n"
-            f"Lihat preview tampilan Career Page yang akan kamu dapatkan di sini:\n"
-            f"👉 https://rayigemilang.boontrack.com\n\n"
-            f"<i>✨ Format modern, recruiter-friendly, responsif di HP/laptop, dan <b>aktif seumur hidup (sekali bayar tanpa biaya langganan)</b>.</i>\n\n"
+            f"Tinggal satu langkah lagi untuk mengaktifkan <b>Career Page Profesional</b> milikmu:\n\n"
             f"💳 <b>Rincian Pembayaran:</b>\n"
-            f"• <b>Item:</b> Aktivasi Career Page Personal (Lifetime Access)\n"
-            f"• <b>Transfer Tepat:</b> <code>Rp{total_amt:,}</code> <i>(Wajib transfer sesuai hingga 3 digit terakhir)</i>\n"
-            f"• <b>Rincian:</b> Rp{base_amt:,} + kode verifikasi Rp{unique_code}\n"
-            f"• <b>Masa Aktif Web:</b> <b>Aktif Seumur Hidup</b>\n"
+            f"• <b>Item:</b> Aktivasi Career Page (Lifetime Access)\n"
+            f"• <b>Transfer Tepat:</b> <code>Rp{total_amt:,}</code> <i>(Wajib sama hingga 3 digit terakhir)</i>\n"
             f"• <b>Batas Waktu Bayar:</b> 15 Menit\n\n"
-            f"📱 <b>Panduan Bayar via QRIS (Jika Pakai 1 HP):</b>\n"
-            f"1. <b>Simpan QR:</b> <b>Screenshot layar ini</b> atau unduh gambar QRIS di atas.\n"
-            f"2. <b>Buka E-Wallet / Mobile Banking:</b> (BCA, Mandiri, BRI, DANA, GoPay, OVO, ShopeePay, dll).\n"
-            f"3. <b>Pilih Menu QRIS / Scan:</b> Buka scanner QRIS di aplikasimu.\n"
-            f"4. <b>Upload dari Galeri:</b> Klik ikon galeri/foto di menu scanner.\n"
-            f"5. <b>Pilih Screenshot QR:</b> Masukkan gambar QR tadi & pastikan nominalnya tepat <b>Rp{total_amt:,}</b>.\n"
-            f"6. Selesaikan pembayaran.\n\n"
-            f"⏳ <i>Sistem otomatis memverifikasi pembayaran tanpa perlu kirim bukti transfer. Setelah terdeteksi, bot akan langsung mengirimkan pilihan link subdomain personalmu!</i>"
+            f"📱 <b>Panduan Bayar:</b> Scan QRIS di atas melalui m-banking atau e-wallet (BCA, Mandiri, DANA, GoPay, OVO, dll). Sistem otomatis verifikasi secara instan! 🚀"
         )
         
         kbd_qris = InlineKeyboardMarkup(row_width=1)
@@ -1208,7 +1226,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             user_id,
             f"🔗 <b>Ubah Subdomain / Slug Website Kamu</b>\n\n"
             f"Subdomain kamu saat ini: <code>{slug}</code> (https://{slug}.boontrack.com)\n\n"
-            f"Ketik nama subdomain kustom baru yang kamu inginkan (hanya huruf, angka, dan tanda hubung):\n"
+            f"Ketik nama subdomain kustom baru yang kamu inginkan:\n"
             f"<i>(Contoh: ratuhrd, ratu-official, rayigemilang)</i>",
             parse_mode="HTML"
         )
@@ -1246,7 +1264,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             user_id,
             "📄 <b>Input / Update Link Resume PDF</b>\n\n"
             "Ketik atau paste link Google Drive / tautan publik PDF resume kamu di sini:\n"
-            "<i>(Pastikan akses link Google Drive sudah diset ke 'Anyone with link' / 'Siapa saja yang memiliki link')</i>\n\n"
             "<b>Contoh:</b> <code>https://drive.google.com/file/d/1A2b3C.../view?usp=sharing</code>\n\n"
             "<i>Ketik '-' jika ingin menyembunyikan tombol download resume.</i>",
             parse_mode="HTML"
@@ -1564,7 +1581,8 @@ async def handle_message(message: types.Message):
         f"[DEBUG HANDLER] Pesan Masuk | "
         f"User: {user_id} | "
         f"Text: {text} | "
-        f"Current Step: {current_step}"
+        f"Current Step: {current_step}",
+        flush=True
     )
 
     t_db_start = time.perf_counter()
@@ -1583,7 +1601,7 @@ async def handle_message(message: types.Message):
             await message.reply("Siap! Kapan pun mau tanya lagi tinggal chat di sini ya. Sukses terus! 🚀", parse_mode="HTML")
             return
 
-        # QUICK WIN: Analytics non-blocking background task
+        # Background task agar non-blocking
         asyncio.create_task(track_event(user_id, "career_ai_query", meta={"query": text}))
         await bot.send_chat_action(chat_id=user_id, action="typing")
         
@@ -1600,7 +1618,7 @@ async def handle_message(message: types.Message):
         )
         
         t_send_start = time.perf_counter()
-        await message.reply(ai_reply, reply_markup=kbd_chat, parse_mode="HTML")
+        await send_chunked_message(user_id, ai_reply, reply_markup=kbd_chat, parse_mode="HTML")
         t_send_end = time.perf_counter()
 
         # LOGGING PROFILING
@@ -1614,7 +1632,8 @@ async def handle_message(message: types.Message):
             f"DB: {db_ms:.1f}ms | "
             f"AI Call: {ai_ms:.1f}ms | "
             f"Telegram Send: {send_ms:.1f}ms | "
-            f"TOTAL: {total_ms:.1f}ms"
+            f"TOTAL: {total_ms:.1f}ms",
+            flush=True
         )
         return
 
@@ -1851,7 +1870,7 @@ async def tracker_handler(request):
         return web.HTTPFound(location=target_bot_url)
 
     except Exception as e:
-        print(f"[Tracker Error] {e}")
+        print(f"[Tracker Error] {e}", flush=True)
         return web.HTTPFound(location="https://t.me/boontrackbot")
 
 async def handle_web_chat_http(request):
@@ -1900,7 +1919,7 @@ async def handle_web_chat_http(request):
                 cur.close()
                 conn.close()
             except Exception as e:
-                print(f"[WEB CHAT UTM LOG ERROR] {e}")
+                print(f"[WEB CHAT UTM LOG ERROR] {e}", flush=True)
 
         asyncio.create_task(asyncio.to_thread(_log_utm))
 
@@ -1929,7 +1948,7 @@ async def handle_web_chat_http(request):
             user_context={"session_id": session_id, "source": "web_chat"}
         )
     except Exception as e:
-        print(f"[WEB CHAT AI ERROR] {e}")
+        print(f"[WEB CHAT AI ERROR] {e}", flush=True)
         ai_reply = "Saya siap bantu carikan solusinya! Boleh ceritakan posisi apa yang ingin kamu lamar saat ini?"
 
     WEB_SESSION_COUNTS[session_id] = current_count + 1
@@ -1958,7 +1977,7 @@ async def handle_web_chat_http(request):
 async def dana_webhook_handler(request):
     try:
         data = await request.json()
-        print(f"[DANA RAW INCOMING]: {data}")
+        print(f"[DANA RAW INCOMING]: {data}", flush=True)
 
         source = str(
             data.get("source", "") 
@@ -1979,7 +1998,7 @@ async def dana_webhook_handler(request):
         full_payload_str = (source + " " + message).lower()
 
         if "dana" not in full_payload_str:
-            print(f"[DANA IGNORED] Not DANA related payload: {full_payload_str}")
+            print(f"[DANA IGNORED] Not DANA related payload: {full_payload_str}", flush=True)
             return web.json_response({"status": "ignored", "reason": "not_dana"}, status=200)
 
         clean_text = message.replace(".", "").replace(",", "").replace("Rp", "Rp ").replace("rp", "Rp ")
@@ -1987,7 +2006,7 @@ async def dana_webhook_handler(request):
 
         if match:
             incoming_amount = int(match.group(1))
-            print(f"[DANA MATCHED AMOUNT]: Rp{incoming_amount:,}")
+            print(f"[DANA MATCHED AMOUNT]: Rp{incoming_amount:,}", flush=True)
 
             # 1. Cek Order E-book
             order = await match_and_complete_order(incoming_amount)
@@ -2012,7 +2031,7 @@ async def dana_webhook_handler(request):
                         parse_mode="HTML"
                     )
                 except Exception as doc_err:
-                    print(f"[Document Send Error]: {doc_err}")
+                    print(f"[Document Send Error]: {doc_err}", flush=True)
                     fallback_msg = f"{caption_text}\n\n👉 Link Akses Alternative: https://cvats.boontrack.com/ebook-interview-boontrack.pdf"
                     await bot.send_message(chat_id=buyer_id, text=fallback_msg, parse_mode="HTML")
 
@@ -2053,14 +2072,14 @@ async def dana_webhook_handler(request):
                 await bot.send_message(chat_id=donor_id, text=don_thanks, reply_markup=kbd_post, parse_mode="HTML")
                 return web.json_response({"status": "success_donation", "donation_id": donation["donation_id"]}, status=200)
 
-            print(f"[DANA WARNING] Nominal Rp{incoming_amount:,} tidak cocok dengan order/donasi pending manapun.")
+            print(f"[DANA WARNING] Nominal Rp{incoming_amount:,} tidak cocok dengan order/donasi pending manapun.", flush=True)
             return web.json_response({"status": "no_matching_transaction", "amount": incoming_amount}, status=200)
 
-        print(f"[DANA PARSE ERROR] Gagal mengekstrak nominal dari teks: {message}")
+        print(f"[DANA PARSE ERROR] Gagal mengekstrak nominal dari teks: {message}", flush=True)
         return web.json_response({"status": "failed_parsing", "message": message}, status=200)
 
     except Exception as e:
-        print(f"[Webhook Exception]: {e}")
+        print(f"[Webhook Exception]: {e}", flush=True)
         return web.json_response({"status": "error", "detail": str(e)}, status=500)
 
 async def health_check_handler(request):
@@ -2115,27 +2134,27 @@ async def start_web_server():
 
 async def on_startup(dp):
     await bot.delete_webhook(drop_pending_updates=True)
-    print("[BOOT] Webhook cleared & pending updates dropped.")
+    print("[BOOT] Webhook cleared & pending updates dropped.", flush=True)
     asyncio.create_task(start_web_server())
 
 if __name__ == '__main__':
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
 
-    print("========================================")
-    print("[BOOT] BoonTrack Telegram Bot STARTING")
-    print(f"[BOOT] PID          : {os.getpid()}")
-    print(f"[BOOT] HOSTNAME     : {os.getenv('HOSTNAME', 'unknown')}")
-    print(f"[BOOT] PORT         : {os.getenv('PORT', 'unknown')}")
-    print(f"[BOOT] TOKEN STATUS : {'TERBACA OK' if bot_token else 'KOSONG / UNDEFINED'}")
-    print("========================================")
+    print("========================================", flush=True)
+    print("[BOOT] BoonTrack Telegram Bot STARTING", flush=True)
+    print(f"[BOOT] PID          : {os.getpid()}", flush=True)
+    print(f"[BOOT] HOSTNAME     : {os.getenv('HOSTNAME', 'unknown')}", flush=True)
+    print(f"[BOOT] PORT         : {os.getenv('PORT', 'unknown')}", flush=True)
+    print(f"[BOOT] TOKEN STATUS : {'TERBACA OK' if bot_token else 'KOSONG / UNDEFINED'}", flush=True)
+    print("========================================", flush=True)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    print("[BOOT] Initializing database...")
+    print("[BOOT] Initializing database...", flush=True)
     loop.run_until_complete(init_db())
 
-    print("[BOOT] Starting Telegram polling...")
+    print("[BOOT] Starting Telegram polling...", flush=True)
     executor.start_polling(
         dp,
         skip_updates=True,
