@@ -38,6 +38,18 @@ ai_gateway = AIGateway()
 
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
+from pydantic import BaseModel, Field
+from typing import Optional, Dict
+
+# --- WEB CHAT MVP SCHEMA & STATE ---
+class WebChatRequest(BaseModel):
+    session_id: str = Field(..., max_length=64)
+    message: str = Field(..., max_length=500)
+    utm_data: Optional[Dict[str, str]] = None
+    click_id: Optional[str] = None
+
+WEB_SESSION_COUNTS: Dict[str, int] = {}
+MAX_WEB_MESSAGES = 7
 
 # ==========================================
 # 1. INITIALIZATION & FORMATTER
@@ -1879,6 +1891,158 @@ async def tracker_handler(request):
         print(f"[Tracker Error] {e}")
         return web.HTTPFound(location="https://t.me/boontrackbot")
 
+    async def handle_web_chat_http(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"status": "error", "message": "Invalid JSON"}, status=400)
+
+    session_id = str(data.get("session_id", "")).strip()
+    user_msg = str(data.get("message", "")).strip()
+    utm_data = data.get("utm_data") or {}
+    click_id = data.get("click_id")
+
+    if not user_msg:
+        return web.json_response({"status": "error", "message": "Pesan tidak boleh kosong"}, status=400)
+
+    current_count = WEB_SESSION_COUNTS.get(session_id, 0)
+
+    # 1. Log Attribution jika ada UTM (hanya pada pesan pertama)
+    if utm_data and current_count == 0:
+        try:
+            def _log_utm():
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO click_logs (click_id, utm_source, utm_medium, utm_campaign, utm_content, created_at)
+                    VALUES (%s, %s, %s, %s, %s, NOW())
+                """, (
+                    click_id or session_id,
+                    utm_data.get("utm_source", "web_direct"),
+                    utm_data.get("utm_medium", "web_chat"),
+                    utm_data.get("utm_campaign", "none"),
+                    utm_data.get("utm_content", "none")
+                ))
+                conn.commit()
+                cur.close()
+                conn.close()
+            await asyncio.to_thread(_log_utm)
+        except Exception as e:
+            print(f"[WEB CHAT UTM LOG ERROR] {e}")
+
+    # 2. Limit Kuota Percakapan Gratis (5-10 pesan)
+    if current_count >= MAX_WEB_MESSAGES:
+        return web.json_response({
+            "status": "limit_reached",
+            "reply": "Kamu sudah mencapai batas konsultasi awal gratis di web. Mau lanjutkan konsultasi mendalam dan review CV lengkap?",
+            "cta": {
+                "type": "telegram",
+                "label": "🚀 Lanjutkan di Telegram",
+                "url": f"https://t.me/boontrackbot?start={click_id or session_id}"
+            }
+        })
+
+    # 3. Panggil BrainEngine / AIGateway Existing
+    try:
+        system_context = (
+            "Kamu adalah BoonTrack Career Companion. Berikan saran karier yang ringkas, "
+            "empatik, solutif, dan to-the-point maksimal 2-3 paragraf pendek."
+        )
+        ai_reply = await ai_gateway.generate(
+            prompt=user_msg,
+            system_prompt=system_context
+        )
+    except Exception as e:
+        print(f"[WEB CHAT AI ERROR] {e}")
+        ai_reply = "Halo! Saya siap bantu arah kariermu. Ceritakan fokus atau kendala utama yang sedang kamu hadapi saat ini?"
+
+    WEB_SESSION_COUNTS[session_id] = current_count + 1
+
+    # 4. Dynamic CTA
+    cta_data = None
+    if WEB_SESSION_COUNTS[session_id] >= 3:
+        cta_data = {
+            "type": "telegram",
+            "label": "🚀 Lanjutkan Konsultasi Penuh di Telegram",
+            "url": f"https://t.me/boontrackbot?start={click_id or session_id}"
+        }
+
+    return web.json_response({
+        "status": "success",
+        "reply": ai_reply,
+        "messages_used": WEB_SESSION_COUNTS[session_id],
+        "messages_limit": MAX_WEB_MESSAGES,
+        "cta": cta_data
+    })
+
+    # 1. Log Attribution jika ada UTM (hanya pada pesan pertama)
+    if utm_data and current_count == 0:
+        try:
+            def _log_utm():
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO click_logs (click_id, utm_source, utm_medium, utm_campaign, utm_content, created_at)
+                    VALUES (%s, %s, %s, %s, %s, NOW())
+                """, (
+                    click_id or session_id,
+                    utm_data.get("utm_source", "web_direct"),
+                    utm_data.get("utm_medium", "web_chat"),
+                    utm_data.get("utm_campaign", "none"),
+                    utm_data.get("utm_content", "none")
+                ))
+                conn.commit()
+                cur.close()
+                conn.close()
+            await asyncio.to_thread(_log_utm)
+        except Exception as e:
+            print(f"[WEB CHAT UTM LOG ERROR] {e}")
+
+    # 2. Limit Kuota Percakapan Gratis (5-10 pesan)
+    if current_count >= MAX_WEB_MESSAGES:
+        return web.json_response({
+            "status": "limit_reached",
+            "reply": "Kamu sudah mencapai batas konsultasi awal gratis di web. Mau lanjutkan konsultasi mendalam dan review CV lengkap?",
+            "cta": {
+                "type": "telegram",
+                "label": "🚀 Lanjutkan di Telegram",
+                "url": f"https://t.me/boontrackbot?start={click_id or session_id}"
+            }
+        })
+
+    # 3. Panggil BrainEngine / AIGateway Existing
+    try:
+        system_context = (
+            "Kamu adalah BoonTrack Career Companion. Berikan saran karier yang ringkas, "
+            "empatik, solutif, dan to-the-point maksimal 2-3 paragraf pendek."
+        )
+        ai_reply = await ai_gateway.generate(
+            prompt=user_msg,
+            system_prompt=system_context
+        )
+    except Exception as e:
+        print(f"[WEB CHAT AI ERROR] {e}")
+        ai_reply = "Halo! Saya siap bantu arah kariermu. Ceritakan fokus atau kendala utama yang sedang kamu hadapi saat ini?"
+
+    WEB_SESSION_COUNTS[session_id] = current_count + 1
+
+    # 4. Dynamic CTA
+    cta_data = None
+    if WEB_SESSION_COUNTS[session_id] >= 3:
+        cta_data = {
+            "type": "telegram",
+            "label": "🚀 Lanjutkan Konsultasi Penuh di Telegram",
+            "url": f"https://t.me/boontrackbot?start={click_id or session_id}"
+        }
+
+    return web.json_response({
+        "status": "success",
+        "reply": ai_reply,
+        "messages_used": WEB_SESSION_COUNTS[session_id],
+        "messages_limit": MAX_WEB_MESSAGES,
+        "cta": cta_data
+    })
+
 async def dana_webhook_handler(request):
     try:
         data = await request.json()
@@ -2029,6 +2193,7 @@ async def start_web_server():
     app.router.add_get('/t/{source}', tracker_handler)
     app.router.add_post('/webhook/dana', dana_webhook_handler)
     app.router.add_get('/api/analytics/funnel', funnel_report_handler)
+    app.router.add_post('/api/web-chat', handle_web_chat_http)
     
     port = int(os.getenv("PORT", 10000))
     runner = web.AppRunner(app)
