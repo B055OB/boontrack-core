@@ -3,6 +3,7 @@ import json
 import logging
 import uuid
 import time
+import re
 import psycopg2
 from typing import Dict, Any, Optional, Tuple
 
@@ -25,30 +26,50 @@ MOCK_MODE = False
 
 def _clean_response(text: str) -> str:
     """
-    Membersihkan tag debug internal dan menormalkan format Markdown
-    agar kompatibel dengan rendering gelembung chat Telegram.
+    Membersihkan tag debug internal dan mengonversi Markdown gaya GFM
+    (**bold**, ### heading, dst -- yang lazim dihasilkan LLM) menjadi
+    format yang KOMPATIBEL dengan Telegram legacy Markdown parse_mode,
+    yang HANYA mengenali *bold* (satu bintang), bukan **bold** (dua bintang).
+
+    Kalau tidak dikonversi, Telegram gagal parse entity-nya dan
+    mengembalikan error "can't parse entities" -- yang biasanya berujung
+    pesan terkirim mentah dengan tanda bintang kelihatan semua (persis
+    bug yang muncul di screenshot).
     """
     if not text:
         return ""
-    
+
     cleaned_lines = []
     for line in text.split("\n"):
-        # Abaikan baris debug prompt internal
         if line.strip().startswith(("*Lang", "*Leng", "*Format:")):
             continue
-        
-        # Konversi format heading markdown (### / ##) menjadi bold text telegram
+
         line_stripped = line.strip()
+
         if line_stripped.startswith("### "):
             header_content = line_stripped[4:].strip()
-            line = f"**{header_content}**"
+            line = f"*{header_content}*"
         elif line_stripped.startswith("## "):
             header_content = line_stripped[3:].strip()
-            line = f"**{header_content}**"
-            
+            line = f"*{header_content}*"
+        elif line_stripped.startswith("# "):
+            header_content = line_stripped[2:].strip()
+            line = f"*{header_content}*"
+
         cleaned_lines.append(line)
-        
-    return "\n".join(cleaned_lines).strip()
+
+    result = "\n".join(cleaned_lines).strip()
+
+    # INI FIX UTAMANYA: ubah **bold** (GFM/dua bintang) -> *bold* (Telegram/satu bintang)
+    result = re.sub(r"\*\*(.+?)\*\*", r"*\1*", result)
+
+    # Safety net: kalau jumlah asterisk masih ganjil (unmatched), buang
+    # semua asterisk daripada bikin Telegram gagal parse & pesan gak terkirim.
+    if result.count("*") % 2 != 0:
+        logger.warning("Odd number of '*' detected after cleaning, stripping all asterisks as safety fallback")
+        result = result.replace("*", "")
+
+    return result
 
 
 class GeminiGoalDetector(BaseGoalDetector):
@@ -86,16 +107,9 @@ class GeminiGoalDetector(BaseGoalDetector):
 
 
 class AIGateway:
-    """
-    AI Gateway dengan metering usage, deteksi rate limit 429,
-    logging ke ai_usage_logs, Model Health Check Logging, 
-    dan dynamic failover terpusat via ENV (Gemini -> Groq -> OpenRouter).
-    """
-
     def __init__(self, primary_provider: str = "gemini"):
         self.gemini_detector = GeminiGoalDetector()
 
-        # CENTRALIZED CONFIG FROM ENV (Default tetap gemini-3.6-flash)
         self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
         self.openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct")
@@ -106,10 +120,7 @@ class AIGateway:
 
         logger.info(
             "AIGateway init | GeminiModel=%s GroqModel=%s OpenRouterModel=%s | MockMode=%s",
-            self.gemini_model,
-            self.groq_model,
-            self.openrouter_model,
-            MOCK_MODE,
+            self.gemini_model, self.groq_model, self.openrouter_model, MOCK_MODE,
         )
 
     def _get_db_conn(self):
@@ -122,7 +133,6 @@ class AIGateway:
         )
 
     def _log_health(self, provider: str, model: str, status: str, latency: float, fallback: str = "NO", error_msg: str = ""):
-        """Observability Log untuk CTO & Internal Monitoring"""
         log_str = (
             f"\n[AI LOG]\n"
             f"  Provider  : {provider}\n"
@@ -135,23 +145,12 @@ class AIGateway:
             log_str += f"\n  Reason    : {error_msg[:300]}"
         print(log_str)
 
-    def _log_usage(
-        self,
-        user_id: Optional[int],
-        provider: str,
-        feature: str,
-        p_tokens: int,
-        c_tokens: int,
-        status_code: int = 200,
-        is_error: bool = False,
-        error_msg: str = ""
-    ):
-        """Mencatat penggunaan token & status HTTP secara real-time ke DB PostgreSQL."""
+    def _log_usage(self, user_id, provider, feature, p_tokens, c_tokens, status_code=200, is_error=False, error_msg=""):
         try:
             conn = self._get_db_conn()
             cur = conn.cursor()
             query = """
-                INSERT INTO ai_usage_logs 
+                INSERT INTO ai_usage_logs
                 (user_id, provider, feature, prompt_tokens, completion_tokens, total_tokens, status_code, is_error, error_message)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
             """
@@ -165,9 +164,7 @@ class AIGateway:
         except Exception as e:
             logger.error("Gagal mencatat AI Usage Log: %s", str(e))
 
-    async def detect_goal_and_intent(
-        self, query: str, request_id: str = None
-    ) -> Dict[str, Any]:
+    async def detect_goal_and_intent(self, query: str, request_id: str = None) -> Dict[str, Any]:
         return await self.gemini_detector.detect(query, request_id)
 
     async def generate(
@@ -190,9 +187,7 @@ class AIGateway:
             ("OpenRouter", self.openrouter_model, self._call_openrouter),
         ]
 
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=25)
-        ) as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=25)) as session:
             for idx, (name, model, fn) in enumerate(providers):
                 start_time = time.time()
                 try:
@@ -208,7 +203,6 @@ class AIGateway:
                     err_str = str(e)
                     status_code = 429 if ("429" in err_str or "quota" in err_str.lower() or "limit" in err_str.lower()) else 500
                     next_provider = providers[idx + 1][0] if idx + 1 < len(providers) else "NONE (EXHAUSTED)"
-                    
                     self._log_health(name, model, "FAILED", latency, fallback=f"YES ({next_provider})", error_msg=err_str)
                     self._log_usage(user_id, name, feature, 0, 0, status_code, True, err_str)
                     continue
@@ -216,29 +210,18 @@ class AIGateway:
         logger.error("ALL AI providers failed for message: %r", user_message[:80])
         return None
 
-    async def _call_gemini(
-        self,
-        session: aiohttp.ClientSession,
-        user_message: str,
-        context: Dict[str, Any],
-        system_prompt: str,
-    ) -> Tuple[str, int, int]:
+    async def _call_gemini(self, session, user_message, context, system_prompt) -> Tuple[str, int, int]:
         if not self.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY kosong / tidak ter-set")
 
-        # Endpoint v1beta untuk kompatibilitas penuh seri Gemini 3.6 Flash
         url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
             f"{self.gemini_model}:generateContent?key={self.gemini_api_key}"
         )
-        
         full_text = f"{system_prompt}\n\nUser Question: {user_message}"
         payload = {
             "contents": [{"parts": [{"text": full_text}]}],
-            "generationConfig": {
-                "temperature": 0.7, 
-                "maxOutputTokens": 4096
-            },
+            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 4096},
         }
 
         async with session.post(url, json=payload) as resp:
@@ -256,22 +239,12 @@ class AIGateway:
             except (KeyError, IndexError) as e:
                 raise RuntimeError(f"Unexpected Gemini response shape: {data}") from e
 
-    async def _call_groq(
-        self,
-        session: aiohttp.ClientSession,
-        user_message: str,
-        context: Dict[str, Any],
-        system_prompt: str,
-    ) -> Tuple[str, int, int]:
+    async def _call_groq(self, session, user_message, context, system_prompt) -> Tuple[str, int, int]:
         if not self.groq_api_key:
             raise RuntimeError("GROQ_API_KEY kosong / tidak ter-set")
 
         url = "https://api.groq.com/openai/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.groq_api_key}",
-            "Content-Type": "application/json",
-        }
-        
+        headers = {"Authorization": f"Bearer {self.groq_api_key}", "Content-Type": "application/json"}
         payload = {
             "model": self.groq_model,
             "messages": [
@@ -291,27 +264,16 @@ class AIGateway:
                 res_text = data["choices"][0]["message"]["content"].strip()
                 res_text = _clean_response(res_text)
                 usage = data.get("usage", {})
-                p_tokens = usage.get("prompt_tokens", 0)
-                c_tokens = usage.get("completion_tokens", 0)
-                return res_text, p_tokens, c_tokens
+                return res_text, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
             except (KeyError, IndexError) as e:
                 raise RuntimeError(f"Unexpected Groq response shape: {data}") from e
 
-    async def _call_openrouter(
-        self,
-        session: aiohttp.ClientSession,
-        user_message: str,
-        context: Dict[str, Any],
-        system_prompt: str,
-    ) -> Tuple[str, int, int]:
+    async def _call_openrouter(self, session, user_message, context, system_prompt) -> Tuple[str, int, int]:
         if not self.openrouter_api_key:
             raise RuntimeError("OPENROUTER_API_KEY kosong / tidak ter-set")
 
         url = "https://openrouter.ai/api/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.openrouter_api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Authorization": f"Bearer {self.openrouter_api_key}", "Content-Type": "application/json"}
         payload = {
             "model": self.openrouter_model,
             "messages": [
@@ -331,8 +293,6 @@ class AIGateway:
                 res_text = data["choices"][0]["message"]["content"].strip()
                 res_text = _clean_response(res_text)
                 usage = data.get("usage", {})
-                p_tokens = usage.get("prompt_tokens", 0)
-                c_tokens = usage.get("completion_tokens", 0)
-                return res_text, p_tokens, c_tokens
+                return res_text, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
             except (KeyError, IndexError) as e:
                 raise RuntimeError(f"Unexpected OpenRouter response shape: {data}") from e
