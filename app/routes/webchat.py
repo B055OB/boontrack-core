@@ -4,7 +4,7 @@ from app.services.webchat_service import WebChatService
 from app.services.brain_engine import BrainEngine
 from app.services.lead_service import LeadService
 from app.services.ai_gateway import AIGateway
-from app.repo.session_repo import SessionRepository
+from app.repositories.session_repository import SessionRepository
 
 router = APIRouter(prefix="/api/webchat", tags=["WebChat B2B"])
 
