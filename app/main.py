@@ -7,6 +7,7 @@ import re
 import random
 import tempfile
 import uuid
+import time
 import aiohttp
 from datetime import datetime, timedelta
 from typing import Optional, Dict
@@ -664,7 +665,7 @@ def get_question_text(step, target_lang="ID", status_kerja="Berpengalaman"):
             ),
             4: (
                 "🏆 <b>Ada project, organisasi, lomba, magang, atau pencapaian yang pernah kamu lakukan?</b>\n"
-                "<i>Ceritakan santai saja. Misalnya: 'Pernah bikin website untuk tugas kuliah' atau 'Aktif panitia kampus'.\n"
+                "<i>Ceritakan santai saja. Misalnya: 'Pernah bikin website untuk target kuliah' atau 'Aktif panitia kampus'.\n"
                 "Kalau belum ada juga tidak masalah, tinggal tekan tombol Lewati 😊</i>"
                 if is_fresh else
                 "🏆 <b>Apa saja tugas utama atau pencapaianmu di pekerjaan tersebut?</b>\n"
@@ -865,7 +866,7 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         file_path = await asyncio.to_thread(create_cv_docx, user_id, user_data)
         position = clean_val(user_data.get("target_position", "General"))
         await save_cv_version(user_id, position, user_data)
-        await track_event(user_id, "resume_generated", meta={"position": position})
+        asyncio.create_task(track_event(user_id, "resume_generated", meta={"position": position}))
 
         document = InputFile(file_path)
         user_name = user_data.get("nama_panggilan", message.from_user.first_name or "Teman")
@@ -883,6 +884,7 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         except Exception:
             pass
 
+        # CV Review Engine
         cv_text_summary = f"{user_data.get('3', '')} {user_data.get('4', '')} {user_data.get('6', '')}"
         is_paid = await check_user_paid(user_id)
         review_response = await handle_cv_review_process(user_id, position, cv_text_summary, is_paid)
@@ -992,12 +994,12 @@ async def send_welcome(message: types.Message):
             except Exception as e:
                 print(f"[Attribution Error] {e}")
 
-        await asyncio.to_thread(_link_user_attribution)
+        asyncio.create_task(asyncio.to_thread(_link_user_attribution))
     else:
         meta_data = {"utm_source": args}
-        await analytics_service.save_user_utm(user_id, args)
+        asyncio.create_task(analytics_service.save_user_utm(user_id, args))
 
-    await track_event(user_id, "start", meta=meta_data)
+    asyncio.create_task(track_event(user_id, "start", meta=meta_data))
     progress, last_cv = await get_user_history(user_id)
     saved_data = progress.get("data", {}) if progress else {}
     user_name = saved_data.get("nama_panggilan") or message.from_user.first_name or "Teman"
@@ -1552,6 +1554,7 @@ async def cancel_handler(message: types.Message):
 
 @dp.message_handler()
 async def handle_message(message: types.Message):
+    t0 = time.perf_counter()
     user_id = message.from_user.id
     text = (message.text or "").strip()
 
@@ -1564,35 +1567,55 @@ async def handle_message(message: types.Message):
         f"Current Step: {current_step}"
     )
 
+    t_db_start = time.perf_counter()
     if user_id not in user_state:
         progress, _ = await get_user_history(user_id)
         if progress and progress.get("last_step", 0) > 0:
             user_state[user_id] = {"step": progress["last_step"], "data": {}}
         else:
             user_state[user_id] = {"step": 0, "data": {}}
+    t_db_end = time.perf_counter()
 
-    # PRIORITAS 1: ROUTING UTAMA KE AI COMPANION
+    # PRIORITAS 1: ROUTING UTAMA KE AI COMPANION (QA / Chat Umum)
     if current_step == "CAREER_QA" or current_step == 0:
         if any(word in text.lower() for word in CLOSING_WORDS):
             user_state[user_id]["step"] = 0
             await message.reply("Siap! Kapan pun mau tanya lagi tinggal chat di sini ya. Sukses terus! 🚀", parse_mode="HTML")
             return
 
-        await track_event(user_id, "career_ai_query", meta={"query": text})
+        # QUICK WIN: Analytics non-blocking background task
+        asyncio.create_task(track_event(user_id, "career_ai_query", meta={"query": text}))
         await bot.send_chat_action(chat_id=user_id, action="typing")
         
         user_data = user_state.get(user_id, {}).get("data", {})
         
-        print("[DEBUG HANDLER] Akan memanggil ai_career_chat_response()")
+        t_ai_start = time.perf_counter()
         ai_reply = await ai_career_chat_response(text, user_data)
-        print("[DEBUG HANDLER] ai_career_chat_response() selesai")
+        t_ai_end = time.perf_counter()
         
         kbd_chat = InlineKeyboardMarkup(row_width=2)
         kbd_chat.add(
             InlineKeyboardButton("💬 Tanya Lagi", callback_data="home_career_qa"),
             InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
         )
+        
+        t_send_start = time.perf_counter()
         await message.reply(ai_reply, reply_markup=kbd_chat, parse_mode="HTML")
+        t_send_end = time.perf_counter()
+
+        # LOGGING PROFILING
+        db_ms = (t_db_end - t_db_start) * 1000
+        ai_ms = (t_ai_end - t_ai_start) * 1000
+        send_ms = (t_send_end - t_send_start) * 1000
+        total_ms = (t_send_end - t0) * 1000
+
+        print(
+            f"[PERF] User: {user_id} | "
+            f"DB: {db_ms:.1f}ms | "
+            f"AI Call: {ai_ms:.1f}ms | "
+            f"Telegram Send: {send_ms:.1f}ms | "
+            f"TOTAL: {total_ms:.1f}ms"
+        )
         return
 
     # PRIORITAS 2: EDIT CAREER PAGE & FORM CV
@@ -1776,7 +1799,7 @@ async def handle_message(message: types.Message):
             text = phone_digits
 
         user_data[str(current_step)] = text
-        await track_event(user_id, f"step_{current_step}_completed")
+        asyncio.create_task(track_event(user_id, f"step_{current_step}_completed"))
 
         if current_step < TOTAL_STEPS:
             next_step = current_step + 1
@@ -1822,7 +1845,7 @@ async def tracker_handler(request):
             cur.close()
             conn.close()
 
-        await asyncio.to_thread(_log_click)
+        asyncio.create_task(asyncio.to_thread(_log_click))
 
         target_bot_url = f"https://t.me/boontrackbot?start={click_id}"
         return web.HTTPFound(location=target_bot_url)
@@ -1856,10 +1879,10 @@ async def handle_web_chat_http(request):
 
     current_count = WEB_SESSION_COUNTS.get(session_id, 0)
 
-    # 1. Log Attribution jika ada UTM (hanya pada pesan pertama)
+    # 1. Log Attribution jika ada UTM (Non-blocking)
     if utm_data and current_count == 0:
-        try:
-            def _log_utm():
+        def _log_utm():
+            try:
                 conn = get_db_connection()
                 cur = conn.cursor()
                 cur.execute("""
@@ -1876,9 +1899,10 @@ async def handle_web_chat_http(request):
                 conn.commit()
                 cur.close()
                 conn.close()
-            await asyncio.to_thread(_log_utm)
-        except Exception as e:
-            print(f"[WEB CHAT UTM LOG ERROR] {e}")
+            except Exception as e:
+                print(f"[WEB CHAT UTM LOG ERROR] {e}")
+
+        asyncio.create_task(asyncio.to_thread(_log_utm))
 
     # 2. Limit Kuota Percakapan Gratis
     if current_count >= MAX_WEB_MESSAGES:
