@@ -95,7 +95,6 @@ def format_telegram_review_response(data: dict, target_position: str) -> dict:
         
     return response
 
-
 async def handle_cv_review_process(user_id: int, target_position: str, cv_text: str, is_paid: bool = False):
     det_result = cv_review_engine.evaluate_cv(cv_text, target_position)
     prompt = cv_review_engine.build_llm_prompt(det_result, cv_text, target_position, is_paid)
@@ -884,7 +883,6 @@ async def process_and_send_cv(message: types.Message, user_id: int, user_data: d
         except Exception:
             pass
 
-        # Jalankan CV Review Engine
         cv_text_summary = f"{user_data.get('3', '')} {user_data.get('4', '')} {user_data.get('6', '')}"
         is_paid = await check_user_paid(user_id)
         review_response = await handle_cv_review_process(user_id, position, cv_text_summary, is_paid)
@@ -1894,8 +1892,7 @@ async def handle_web_chat_http(request):
             }
         }, headers=cors_headers)
 
-    # 3. Panggil AI Companion BrainEngine / Gateway
-    # 3. Panggil AI Companion dengan instruksi jawaban singkat
+    # 3. Panggil AI Companion dengan instruksi respons singkat
     try:
         web_context_prompt = (
             f"[Instruksi Khusus Web Chat: Berikan respons yang SANGAT SINGKAT, padat, dan to-the-point "
@@ -1914,7 +1911,6 @@ async def handle_web_chat_http(request):
     WEB_SESSION_COUNTS[session_id] = current_count + 1
     updated_count = WEB_SESSION_COUNTS[session_id]
 
-    # Tambahkan kalimat ajakan ke Telegram di akhir chat untuk jawaban ke-2 atau ke-3
     if updated_count in [2, 3]:
         ai_reply += "\n\n👉 <i>Untuk pembahasan lebih lengkap dan panduan detailnya, silakan lanjut di Telegram ya!</i>"
 
