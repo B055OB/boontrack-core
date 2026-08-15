@@ -22,9 +22,18 @@ async def handle_business_webchat(payload: WebChatRequest):
             session_id=payload.session_id,
             message=payload.message
         )
+        
+        raw_reply = result["reply"]
+        
+        # Lapisan pengaman terakhir di router untuk mencegat intent mentah
+        if any(keyword in str(raw_reply).upper() for keyword in ["QUERY", "START", "FALLBACK", "GENERAL"]):
+            reply = "Terima kasih atas pertanyaannya! BoonTrack Group siap membantu kebutuhan otomatisasi AI dan software kustom untuk bisnis Anda. Ada spesifikasi atau alur kerja khusus yang ingin kita diskusikan?"
+        else:
+            reply = raw_reply
+
         return WebChatResponse(
             session_id=payload.session_id,
-            reply=result["reply"],
+            reply=reply,
             is_lead_qualified=result["is_lead_qualified"]
         )
     except Exception as e:
