@@ -27,3 +27,5 @@ python-docx
 
 # Web Framework
 flask
+
+email-validator
