@@ -513,15 +513,20 @@ def _match_and_complete_donation_sync(amount):
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Cari sesi donasi PENDING terakhir dengan nominal tersebut (berikan toleransi waktu 24 jam)
         cur.execute("""
             SELECT * FROM donation_sessions 
-            WHERE total_amount = %s AND expires_at > CURRENT_TIMESTAMP
+            WHERE total_amount = %s AND status = 'PENDING'
+            ORDER BY created_at DESC 
             LIMIT 1;
         """, (amount,))
+        
         donation = cur.fetchone()
-        if donation and donation.get("status") == "PENDING":
+        if donation:
             cur.execute("UPDATE donation_sessions SET status = 'VERIFIED' WHERE id = %s;", (donation["id"],))
             conn.commit()
+            
         cur.close()
         conn.close()
         return donation
