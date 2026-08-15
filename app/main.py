@@ -1625,15 +1625,17 @@ async def handle_message(message: types.Message):
         ai_reply = await ai_career_chat_response(text, user_data)
         t_ai_end = time.perf_counter()
         
-        kbd_chat = InlineKeyboardMarkup(row_width=2)
+        kbd_chat = InlineKeyboardMarkup(row_width=1)
         kbd_chat.add(
-            InlineKeyboardButton("💬 Tanya Lagi", callback_data="home_career_qa"),
             InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
         )
         
         t_send_start = time.perf_counter()
         await send_chunked_message(user_id, ai_reply, reply_markup=kbd_chat, parse_mode="HTML")
         t_send_end = time.perf_counter()
+
+        # Kunci state agar sesi chat mengalir terus secara otomatis
+        user_state[user_id]["step"] = "CAREER_QA"
 
         # LOGGING PROFILING
         db_ms = (t_db_end - t_db_start) * 1000
