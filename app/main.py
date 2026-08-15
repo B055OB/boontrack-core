@@ -30,6 +30,7 @@ from app.services.brain_engine import BrainEngine
 from app.handlers.admin_handler import admin_handler
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
+from app.routes.webchat import router as webchat_router
 
 # --- WEB CHAT MVP SCHEMA & STATE ---
 class WebChatRequest(BaseModel):
@@ -2131,6 +2132,37 @@ async def funnel_report_handler(request):
     except Exception as e:
         return web.json_response({"status": "error", "message": str(e)}, status=500)
 
+from app.services.webchat_service import WebChatService
+from app.services.lead_service import LeadService
+from app.services.ai_gateway import AIGateway
+
+# Inisialisasi Service Khusus B2B
+_b2b_ai_gateway = AIGateway()
+_b2b_lead_service = LeadService(ai_gateway=_b2b_ai_gateway)
+_b2b_webchat_service = WebChatService(brain_engine=brain_engine, lead_service=_b2b_lead_service)
+
+async def handle_b2b_webchat_http(request):
+    try:
+        data = await request.json()
+        session_id = data.get("session_id", "default_session")
+        message = data.get("message", "")
+
+        if not message:
+            return web.json_response({"error": "Message cannot be empty"}, status=400)
+
+        result = await _b2b_webchat_service.process_business_chat(
+            session_id=session_id,
+            message=message
+        )
+        return web.json_response({
+            "status": "success",
+            "session_id": session_id,
+            "reply": result["reply"],
+            "is_lead_qualified": result["is_lead_qualified"]
+        })
+    except Exception as e:
+        return web.json_response({"status": "error", "message": str(e)}, status=500)
+    
 async def start_web_server():
     app = web.Application()
     app.router.add_get('/', health_check_handler)
@@ -2140,6 +2172,8 @@ async def start_web_server():
     app.router.add_get('/api/analytics/funnel', funnel_report_handler)
     app.router.add_post('/api/web-chat', handle_web_chat_http)
     app.router.add_options('/api/web-chat', handle_web_chat_http)
+    app.router.add_post('/api/webchat/business', handle_b2b_webchat_http)
+    app.router.add_options('/api/webchat/business', handle_web_chat_http)
     
     port = int(os.getenv("PORT", 10000))
     runner = web.AppRunner(app)
