@@ -4,6 +4,7 @@ import logging
 import uuid
 import time
 import re
+import asyncio
 import psycopg2
 from typing import Dict, Any, Optional, Tuple
 
@@ -27,14 +28,8 @@ MOCK_MODE = False
 def _clean_response(text: str) -> str:
     """
     Membersihkan tag debug internal dan mengonversi Markdown gaya GFM
-    (**bold**, ### heading, dst -- yang lazim dihasilkan LLM) menjadi
-    format yang KOMPATIBEL dengan Telegram legacy Markdown parse_mode,
-    yang HANYA mengenali *bold* (satu bintang), bukan **bold** (dua bintang).
-
-    Kalau tidak dikonversi, Telegram gagal parse entity-nya dan
-    mengembalikan error "can't parse entities" -- yang biasanya berujung
-    pesan terkirim mentah dengan tanda bintang kelihatan semua (persis
-    bug yang muncul di screenshot).
+    (**bold**, ### heading, dst) menjadi format yang kompatibel dengan 
+    Telegram legacy Markdown parse_mode (*bold*).
     """
     if not text:
         return ""
@@ -46,16 +41,11 @@ def _clean_response(text: str) -> str:
 
         line_stripped = line.strip()
 
-        # PENTING: konversi bullet list ("* item" atau "- item") jadi "• item"
-        # SEBELUM proses apapun yang menyentuh tanda bintang. Kalau tidak,
-        # bintang bullet ikut kehitung sebagai calon bold, bikin total
-        # jumlah bintang jadi ganjil -> safety net di bawah malah membuang
-        # SEMUA bintang termasuk bold yang sudah benar (ini penyebab bug
-        # "bold gak muncul" yang baru terjadi).
+        # Konversi bullet list ("* item" atau "- item") menjadi "• item"
         bullet_match = re.match(r"^([*\-])\s+(.*)", line_stripped)
         if bullet_match:
             line_stripped = f"• {bullet_match.group(2)}"
-            line = line[: len(line) - len(line.strip())] + line_stripped  # pertahankan indentasi asli
+            line = line[: len(line) - len(line.strip())] + line_stripped
 
         header_match = re.match(r"^#{1,6}\s+(.*)", line_stripped)
         if header_match:
@@ -66,11 +56,10 @@ def _clean_response(text: str) -> str:
 
     result = "\n".join(cleaned_lines).strip()
 
-    # INI FIX UTAMANYA: ubah **bold** (GFM/dua bintang) -> *bold* (Telegram/satu bintang)
+    # Ubah **bold** (GFM) -> *bold* (Telegram)
     result = re.sub(r"\*\*(.+?)\*\*", r"*\1*", result)
 
-    # Safety net: kalau jumlah asterisk masih ganjil (unmatched), buang
-    # semua asterisk daripada bikin Telegram gagal parse & pesan gak terkirim.
+    # Safety net jika jumlah asterisk ganjil
     if result.count("*") % 2 != 0:
         logger.warning("Odd number of '*' detected after cleaning, stripping all asterisks as safety fallback")
         result = result.replace("*", "")
@@ -151,7 +140,17 @@ class AIGateway:
             log_str += f"\n  Reason    : {error_msg[:300]}"
         print(log_str)
 
-    def _log_usage(self, user_id, provider, feature, p_tokens, c_tokens, status_code=200, is_error=False, error_msg=""):
+    def _insert_db_sync(
+        self,
+        user_id: Optional[int],
+        provider: str,
+        feature: str,
+        p_tokens: int,
+        c_tokens: int,
+        status_code: int,
+        is_error: bool,
+        error_msg: str
+    ):
         try:
             conn = self._get_db_conn()
             cur = conn.cursor()
@@ -169,6 +168,17 @@ class AIGateway:
             conn.close()
         except Exception as e:
             logger.error("Gagal mencatat AI Usage Log: %s", str(e))
+
+    def _log_usage(self, user_id, provider, feature, p_tokens, c_tokens, status_code=200, is_error=False, error_msg=""):
+        """Menjalankan logging database di background thread (Non-Blocking) agar response instan"""
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(asyncio.to_thread(
+                self._insert_db_sync,
+                user_id, provider, feature, p_tokens, c_tokens, status_code, is_error, error_msg
+            ))
+        except RuntimeError:
+            self._insert_db_sync(user_id, provider, feature, p_tokens, c_tokens, status_code, is_error, error_msg)
 
     async def detect_goal_and_intent(self, query: str, request_id: str = None) -> Dict[str, Any]:
         return await self.gemini_detector.detect(query, request_id)
