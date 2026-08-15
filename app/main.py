@@ -1834,10 +1834,19 @@ async def tracker_handler(request):
         return web.HTTPFound(location="https://t.me/boontrackbot")
 
 async def handle_web_chat_http(request):
+    cors_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+    }
+
+    if request.method == "OPTIONS":
+        return web.Response(status=200, headers=cors_headers)
+
     try:
         data = await request.json()
     except Exception:
-        return web.json_response({"status": "error", "message": "Invalid JSON"}, status=400)
+        return web.json_response({"status": "error", "message": "Invalid JSON"}, status=400, headers=cors_headers)
 
     session_id = str(data.get("session_id", "")).strip()
     user_msg = str(data.get("message", "")).strip()
@@ -1845,7 +1854,7 @@ async def handle_web_chat_http(request):
     click_id = data.get("click_id")
 
     if not user_msg:
-        return web.json_response({"status": "error", "message": "Pesan tidak boleh kosong"}, status=400)
+        return web.json_response({"status": "error", "message": "Pesan tidak boleh kosong"}, status=400, headers=cors_headers)
 
     current_count = WEB_SESSION_COUNTS.get(session_id, 0)
 
@@ -1883,7 +1892,7 @@ async def handle_web_chat_http(request):
                 "label": "🚀 Lanjutkan di Telegram",
                 "url": f"https://t.me/BoonTrackBot?start={click_id or session_id}"
             }
-        })
+        }, headers=cors_headers)
 
     # 3. Panggil AI Companion BrainEngine / Gateway
     try:
@@ -1912,7 +1921,7 @@ async def handle_web_chat_http(request):
         "messages_used": WEB_SESSION_COUNTS[session_id],
         "messages_limit": MAX_WEB_MESSAGES,
         "cta": cta_data
-    })
+    }, headers=cors_headers)
 
 async def dana_webhook_handler(request):
     try:
