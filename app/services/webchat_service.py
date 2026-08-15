@@ -40,9 +40,11 @@ class WebChatService:
         else:
             raw_reply = str(engine_response)
 
-        # Fallback jika engine mengembalikan kode intent mentah seperti GENERAL_QUERY
+        # Fallback spesifik untuk widget B2B agar tidak bentrok dengan intent karir
         if raw_reply in ["GENERAL_QUERY", "START", "FALLBACK"]:
             reply = "Terima kasih atas pertanyaannya! BoonTrack Group siap membantu kebutuhan otomatisasi AI dan software kustom untuk bisnis Anda. Ada spesifikasi atau alur kerja khusus yang ingin kita diskusikan?"
+        elif "CAREER_QUERY" in raw_reply:
+            reply = "BoonTrack Group menyediakan solusi otomatisasi dan software kustom untuk korporasi dan bisnis. Apakah Anda ingin mendiskusikan integrasi sistem atau otomatisasi operasional untuk perusahaan Anda?"
         else:
             reply = raw_reply
 
