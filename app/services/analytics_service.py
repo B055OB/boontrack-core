@@ -86,11 +86,12 @@ class AnalyticsService:
 
         # 5. Paid Users + Total Revenue
         try:
+            # Query status VERIFIED, verified, PAID, atau success
             response = (
                 self.supabase
                 .table("donation_sessions")
-                .select("user_id, total_amount")
-                .eq("status", "VERIFIED")
+                .select("user_id, total_amount, amount, base_amt, status")
+                .in_("status", ["VERIFIED", "verified", "PAID", "paid", "success", "SUCCESS"])
                 .execute()
             )
             rows = response.data or []
@@ -101,7 +102,8 @@ class AnalyticsService:
 
             total_revenue = 0
             for row in rows:
-                amount = row.get("total_amount", 0)
+                # Cek total_amount, jika kosong cek amount atau base_amt
+                amount = row.get("total_amount") or row.get("amount") or row.get("base_amt") or 0
                 try:
                     total_revenue += float(amount or 0)
                 except (TypeError, ValueError):
