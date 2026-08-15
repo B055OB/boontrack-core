@@ -2,11 +2,13 @@ from pathlib import Path
 from typing import Dict, List, Any
 from app.services.brain_engine import BrainEngine
 from app.services.lead_service import LeadService
+from app.services.ai_gateway import AIGateway
 
 class WebChatService:
     def __init__(self, brain_engine: BrainEngine, lead_service: LeadService):
         self.brain = brain_engine
         self.lead_service = lead_service
+        self.ai_gateway = AIGateway()
         self._session_memory: Dict[str, List[Dict[str, str]]] = {}
         
         # Load business persona prompt
@@ -25,39 +27,19 @@ class WebChatService:
         history = self._get_history(session_id)
         history.append({"role": "user", "content": message})
 
-        # Susun pesan percakapan khusus persona B2B
-        messages_payload = [{"role": "system", "content": self.business_prompt}]
-        for h in history[-8:]:  # Batasi konteks 8 pesan terakhir
-            messages_payload.append({"role": h["role"], "content": h["content"]})
+        # Susun riwayat percakapan singkat untuk konteks LLM
+        formatted_history = "\n".join([f"{h['role'].upper()}: {h['content']}" for h in history[-6:]])
+        user_prompt_with_history = f"Riwayat Chat:\n{formatted_history}\n\nJawab pesan terakhir user di atas sesuai persona bisnismu."
 
-        reply = ""
-        # 1. Prioritaskan jalur direct LLM via AIGateway agar tidak tercampur router Telegram/Karir
-        if hasattr(self.brain, "ai_gateway") and hasattr(self.brain.ai_gateway, "generate_chat_completion"):
-            try:
-                reply = await self.brain.ai_gateway.generate_chat_completion(messages_payload)
-            except Exception:
-                reply = ""
+        # Panggil langsung AIGateway dengan System Prompt B2B murni
+        reply = await self.ai_gateway.generate(
+            user_message=user_prompt_with_history,
+            context={"user_id": session_id, "feature": "b2b_webchat"},
+            system_prompt=self.business_prompt
+        )
 
-        # 2. Fallback via brain handle_message jika direct gateway belum merespons
         if not reply:
-            engine_response = await self.brain.handle_message(
-                user_id=session_id,
-                channel="webchat",
-                text=message,
-                context={
-                    "persona": "BUSINESS",
-                    "system_prompt_override": self.business_prompt,
-                    "history": history
-                }
-            )
-            if isinstance(engine_response, dict):
-                reply = engine_response.get("text") or engine_response.get("reply") or str(engine_response)
-            else:
-                reply = str(engine_response)
-
-        # Filter jika engine masih mengembalikan template karir / intent mentah
-        if any(bad_word in reply for bad_word in ["Bikin CV", "Latihan Interview", "GENERAL_QUERY", "START"]):
-            reply = "Tentu saja bisa! BoonTrack menyediakan solusi AI Sales Agent dan otomatisasi CS langsung di WhatsApp untuk onlineshop Anda, dengan keunggulan 0% komisi transaksi. Boleh tahu saat ini penjualannya lebih banyak via WhatsApp atau marketplace, dan kendala apa yang paling sering dialami tim admin Anda?"
+            reply = "Terima kasih atas pertanyaannya! BoonTrack Group siap membantu kebutuhan otomatisasi AI dan software kustom untuk bisnis Anda. Ada spesifikasi atau alur kerja khusus yang ingin kita diskusikan?"
 
         history.append({"role": "assistant", "content": reply})
 
