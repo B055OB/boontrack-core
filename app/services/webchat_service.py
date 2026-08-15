@@ -36,9 +36,15 @@ class WebChatService:
 
         # Handle return value (baik berupa string maupun dict)
         if isinstance(engine_response, dict):
-            reply = engine_response.get("text") or engine_response.get("reply") or str(engine_response)
+            raw_reply = engine_response.get("text") or engine_response.get("reply") or str(engine_response)
         else:
-            reply = str(engine_response)
+            raw_reply = str(engine_response)
+
+        # Fallback jika engine mengembalikan kode intent mentah seperti GENERAL_QUERY
+        if raw_reply in ["GENERAL_QUERY", "START", "FALLBACK"]:
+            reply = "Terima kasih atas pertanyaannya! BoonTrack Group siap membantu kebutuhan otomatisasi AI dan software kustom untuk bisnis Anda. Ada spesifikasi atau alur kerja khusus yang ingin kita diskusikan?"
+        else:
+            reply = raw_reply
 
         history.append({"role": "assistant", "content": reply})
 
