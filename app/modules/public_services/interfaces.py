@@ -14,17 +14,6 @@ class KnowledgeProvider(ABC):
         pass
 
 
-class ChannelProvider(ABC):
-    """Interface normalisasi adapter channel (WebChat, WhatsApp, Telegram)."""
-    @abstractmethod
-    def parse_inbound(self, raw_payload: Dict[str, Any]) -> StandardMessagePayload:
-        pass
-
-    @abstractmethod
-    async def send_outbound(self, target_identifier: str, text: str) -> bool:
-        pass
-
-
 class EscalationProvider(ABC):
     """Interface penanganan eskalasi tiket ke petugas/admin kelurahan."""
     @abstractmethod
@@ -38,6 +27,6 @@ class PublicServiceProvider(ABC):
     """Interface orchestrator alur percakapan publik."""
     @abstractmethod
     async def process_user_query(
-        self, payload: StandardMessagePayload
-    ) -> Dict[str, Any]:
+        self, payload: StandardMessagePayload, conversation_history: Optional[List[Dict[str, str]]] = None
+    ) -> Any:
         pass

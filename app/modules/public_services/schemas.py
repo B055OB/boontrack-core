@@ -1,30 +1,35 @@
-from datetime import datetime
-from typing import List, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional
+from app.modules.public_services.schemas import PublicServiceContext, StandardMessagePayload
 
 
-class StandardMessagePayload(BaseModel):
-    """Payload internal standar dari WebChat/WhatsApp/Telegram."""
-    channel: str = Field(..., description="Channel: webchat, whatsapp, telegram")
-    user_id: str = Field(..., description="ID/Nomor telepon pengguna")
-    session_id: str = Field(..., description="UUID sesi percakapan")
-    message: str = Field(..., min_length=1, description="Pesan pertanyaan warga")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+class KnowledgeProvider(ABC):
+    """Interface untuk retrieval data layanan/persyaratan (dummy/local/vector DB)."""
 
-    model_config = ConfigDict(from_attributes=True)
+    @abstractmethod
+    async def get_service_by_slug(self, slug: str) -> Optional[Dict[str, Any]]:
+        pass
 
-
-class PublicServiceContext(BaseModel):
-    service_slug: Optional[str] = None
-    service_name: Optional[str] = None
-    known_requirements: List[str] = Field(default_factory=list)
-    is_escalated: bool = False
-    escalation_reason: Optional[str] = None
+    @abstractmethod
+    async def search_relevant_services(self, query: str) -> List[Dict[str, Any]]:
+        pass
 
 
-class PublicServiceResponse(BaseModel):
-    reply: str
-    status: str
-    session_id: str
-    service_slug: Optional[str] = None
-    escalation_triggered: bool = False
+class EscalationProvider(ABC):
+    """Interface penanganan eskalasi tiket ke petugas/admin kelurahan."""
+
+    @abstractmethod
+    async def trigger_escalation(
+        self, conversation_id: int, reason: str, context: PublicServiceContext
+    ) -> int:
+        pass
+
+
+class PublicServiceProvider(ABC):
+    """Interface orchestrator alur percakapan publik."""
+
+    @abstractmethod
+    async def process_user_query(
+        self, payload: StandardMessagePayload, conversation_history: Optional[List[Dict[str, str]]] = None
+    ) -> Any:
+        pass

@@ -1,33 +1,44 @@
 from typing import Any, Dict, List, Optional
 from app.modules.public_services.interfaces import KnowledgeProvider
 
-
 DUMMY_KNOWLEDGE_BASE: Dict[str, Dict[str, Any]] = {
-    "surat-keterangan-usaha": {
-        "name": "Surat Keterangan Usaha (SKU / NIB)",
-        "slug": "surat-keterangan-usaha",
-        "description": "Surat keterangan legalitas usaha mikro/kecil dari kelurahan.",
+    "sku": {
+        "slug": "sku",
+        "name": "Surat Keterangan Usaha (SKU)",
+        "description": "Surat keterangan resmi dari kelurahan untuk keperluan izin usaha, perbankan, atau pinjaman modal.",
         "requirements": [
-            "Fotokopi KTP Pemilik Usaha",
-            "Fotokopi Kartu Keluarga (KK)",
             "Surat Pengantar RT/RW setempat",
-            "Foto lokasi / kegiatan usaha",
-            "Bukti lunas PBB tahun berjalan"
+            "Fotokopi KTP Pemohon (wajib KTP setempat/domisili)",
+            "Fotokopi Kartu Keluarga (KK)",
+            "Foto bukti kegiatan usaha / tempat usaha di lokasi",
+            "Surat pernyataan usaha bermaterai 10.000 (disediakan di kelurahan jika belum bawa)"
         ],
-        "process_description": "Bawa berkas ke loket -> Verifikasi petugas -> Cetak dan tanda tangan Lurah.",
-        "estimated_time": "1 hari kerja (Gratis)"
+        "cost": "Gratis (Rp 0)",
+        "processing_time": "15 - 30 Menit di Loket Pelayanan Kelurahan"
     },
-    "surat-keterangan-domisili": {
-        "name": "Surat Keterangan Domisili Warga",
-        "slug": "surat-keterangan-domisili",
-        "description": "Surat bukti tempat tinggal bagi warga domisili atau kebutuhan administratif.",
+    "domisili": {
+        "slug": "domisili",
+        "name": "Surat Keterangan Domisili Warga / Lembaga",
+        "description": "Surat bukti tempat tinggal atau kedudukan badan hukum/yayasan.",
         "requirements": [
-            "Fotokopi KTP & KK Asli",
             "Surat Pengantar RT/RW",
-            "Surat pernyataan domisili bermaterai Rp10.000"
+            "KTP & KK Pemohon (Asli & Fotokopi)",
+            "Surat Bukti Kepemilikan Rumah / Perjanjian Sewa Kontrak"
         ],
-        "process_description": "Verifikasi dokumen di loket kelurahan.",
-        "estimated_time": "15 - 30 menit (Gratis)"
+        "cost": "Gratis (Rp 0)",
+        "processing_time": "15 - 30 Menit"
+    },
+    "sktm": {
+        "slug": "sktm",
+        "name": "Surat Keterangan Tidak Mampu (SKTM)",
+        "description": "Surat keterangan untuk keperluan beasiswa, keringanan biaya RS, atau bantuan sosial.",
+        "requirements": [
+            "Surat Pengantar RT/RW dengan catatan kondisi ekonomi",
+            "Fotokopi KTP dan KK",
+            "Foto rumah tampak depan dan ruang tamu"
+        ],
+        "cost": "Gratis (Rp 0)",
+        "processing_time": "1x24 Jam Kerja"
     }
 }
 
@@ -44,6 +55,8 @@ class LocalKnowledgeProvider(KnowledgeProvider):
                 query_lower in service["name"].lower()
                 or query_lower in service["description"].lower()
                 or any(query_lower in req.lower() for req in service["requirements"])
+                or service["slug"] in query_lower
             ):
                 results.append(service)
-        return results
+
+        return results if results else list(DUMMY_KNOWLEDGE_BASE.values())

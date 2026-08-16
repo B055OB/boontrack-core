@@ -1,5 +1,5 @@
 import logging
-from app.modules.public_service.interfaces import EscalationProvider
+from app.modules.public_services.interfaces import EscalationProvider
 from app.modules.public_services.schemas import PublicServiceContext
 
 logger = logging.getLogger(__name__)
@@ -10,7 +10,6 @@ class LocalEscalationProvider(EscalationProvider):
         self, conversation_id: int, reason: str, context: PublicServiceContext
     ) -> int:
         logger.warning(
-            f"🚨 [ESCALATION TRIGGERED] Conv ID: {conversation_id} | Reason: {reason} | Service: {context.service_slug}"
+            f"🚨 [PUBLIC SERVICE ESCALATION] Conv ID: {conversation_id} | Service: {context.service_slug} | Reason: {reason}"
         )
-        # Di tahap prototype, logging dan flagging status sudah memenuhi DoD
         return 1
