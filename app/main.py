@@ -2215,17 +2215,13 @@ async def start_web_server():
     app.router.add_post('/api/b2b-webchat', handle_b2b_webchat_http)
 
     # Endpoint WhatsApp Webhook (Meta Cloud API)
+    from app.modules.public_services.whatsapp import whatsapp_webhook_get, whatsapp_webhook_post
     app.router.add_get('/webhook/whatsapp', whatsapp_webhook_get)
     app.router.add_post('/webhook/whatsapp', whatsapp_webhook_post)
+    app.router.add_get('/api/public_services/webhook/whatsapp', whatsapp_webhook_get)
+    app.router.add_post('/api/public_services/webhook/whatsapp', whatsapp_webhook_post)
 
-    # Endpoint Public Service (Safe Registration & Isolated)
-    try:
-        from app.modules.public_services.router import register_public_service_routes
-        register_public_service_routes(app)
-        logger.info("✅ Public Services module registered successfully.")
-    except Exception as e:
-        logger.error(f"⚠️ Failed to load Public Services module: {e}", exc_info=True)
-
+    
     port = int(os.getenv("PORT", 8080))
     runner = web.AppRunner(app)
     await runner.setup()
