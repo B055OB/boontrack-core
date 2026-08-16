@@ -20,7 +20,7 @@ async def handle_public_service_chat(request: web.Request) -> web.Response:
         ai_gateway = request.app.get("ai_gateway")
         if not ai_gateway:
             # Fallback jika ai_gateway diakses via instance core global
-            from app.core.ai_gateway import ai_gateway as core_gateway
+            from app.services.ai_gateway import ai_gateway as core_gateway
             ai_gateway = core_gateway
 
         engine = PublicServiceEngine(
