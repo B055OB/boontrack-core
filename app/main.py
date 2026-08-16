@@ -31,7 +31,6 @@ from app.handlers.admin_handler import admin_handler
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 from app.routes.webchat import router as webchat_router
-from app.modules.public_services.router import register_public_service_routes
 
 # --- WEB CHAT MVP SCHEMA & STATE ---
 class WebChatRequest(BaseModel):
@@ -2211,8 +2210,13 @@ async def start_web_server():
     app.router.add_post('/api/webchat/business', handle_b2b_webchat_http)
     app.router.add_post('/api/b2b-webchat', handle_b2b_webchat_http)
 
-    # Endpoint Public Service (Layanan Publik / Kelurahan)
-    register_public_service_routes(app)
+    # Endpoint Public Service (Safe Registration & Isolated)
+    try:
+        from app.modules.public_services.router import register_public_service_routes
+        register_public_service_routes(app)
+        logger.info("✅ Public Services module registered successfully.")
+    except Exception as e:
+        logger.error(f"⚠️ Failed to load Public Services module: {e}", exc_info=True)
 
     port = int(os.getenv("PORT", 10000))
     runner = web.AppRunner(app)
