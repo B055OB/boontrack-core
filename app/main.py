@@ -1975,8 +1975,12 @@ async def handle_web_chat_http(request):
     WEB_SESSION_COUNTS[session_id] = current_count + 1
     updated_count = WEB_SESSION_COUNTS[session_id]
 
-    if updated_count in [2, 3]:
-        ai_reply += "\n\n👉 <i>Untuk pembahasan lebih lengkap dan panduan detailnya, silakan lanjut di Telegram ya!</i>"
+    # Deteksi jika user bertanya tentang Telegram
+        user_msg_lower = (user_msg if 'user_msg' in locals() else "").lower()
+        if "telegram" in user_msg_lower or "link" in user_msg_lower:
+            ai_reply = "Kamu bisa langsung lanjut konsultasi penuh dan pembuatan CV di bot resmi kami di https://t.me/boontrackbot atau klik tombol hijau di bawah ya!"
+        elif updated_count in [2, 3]:
+            ai_reply += "\n\n👉 *Untuk pembahasan lebih lengkap dan panduan detailnya, silakan lanjut di Telegram ya!*"
 
     # 4. Dynamic CTA
     cta_data = None
