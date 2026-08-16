@@ -31,6 +31,7 @@ from app.handlers.admin_handler import admin_handler
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 from app.routes.webchat import router as webchat_router
+from app.modules.public_service.router import register_public_service_routes
 
 # --- WEB CHAT MVP SCHEMA & STATE ---
 class WebChatRequest(BaseModel):
@@ -2209,6 +2210,9 @@ async def start_web_server():
     # Endpoint B2B Business (Support variasi path)
     app.router.add_post('/api/webchat/business', handle_b2b_webchat_http)
     app.router.add_post('/api/b2b-webchat', handle_b2b_webchat_http)
+
+    # Endpoint Public Service (Layanan Publik / Kelurahan)
+    register_public_service_routes(app)
 
     port = int(os.getenv("PORT", 10000))
     runner = web.AppRunner(app)
