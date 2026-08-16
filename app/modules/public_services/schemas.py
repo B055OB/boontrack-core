@@ -1,35 +1,26 @@
-from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
-from app.modules.public_services.schemas import PublicServiceContext, StandardMessagePayload
+from pydantic import BaseModel, Field
 
 
-class KnowledgeProvider(ABC):
-    """Interface untuk retrieval data layanan/persyaratan (dummy/local/vector DB)."""
-
-    @abstractmethod
-    async def get_service_by_slug(self, slug: str) -> Optional[Dict[str, Any]]:
-        pass
-
-    @abstractmethod
-    async def search_relevant_services(self, query: str) -> List[Dict[str, Any]]:
-        pass
+class StandardMessagePayload(BaseModel):
+    channel: str = Field(default="webchat", description="Channel asal: webchat, whatsapp, telegram")
+    user_id: str = Field(..., description="Identifier unik warga / sender")
+    session_id: str = Field(..., description="Session ID obrolan")
+    message: str = Field(..., max_length=1000, description="Pesan / pertanyaan warga")
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 
-class EscalationProvider(ABC):
-    """Interface penanganan eskalasi tiket ke petugas/admin kelurahan."""
-
-    @abstractmethod
-    async def trigger_escalation(
-        self, conversation_id: int, reason: str, context: PublicServiceContext
-    ) -> int:
-        pass
+class PublicServiceContext(BaseModel):
+    service_slug: Optional[str] = None
+    is_escalated: bool = False
+    escalation_reason: Optional[str] = None
+    extracted_data: Dict[str, Any] = Field(default_factory=dict)
 
 
-class PublicServiceProvider(ABC):
-    """Interface orchestrator alur percakapan publik."""
-
-    @abstractmethod
-    async def process_user_query(
-        self, payload: StandardMessagePayload, conversation_history: Optional[List[Dict[str, str]]] = None
-    ) -> Any:
-        pass
+class PublicServiceResponse(BaseModel):
+    reply: str
+    status: str = "ACTIVE"
+    session_id: str
+    service_slug: Optional[str] = None
+    escalation_triggered: bool = False
+    metadata: Optional[Dict[str, Any]] = None

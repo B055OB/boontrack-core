@@ -12,7 +12,7 @@ async def handle_public_service_chat(request: web.Request) -> web.Response:
     try:
         body = await request.json()
         payload = StandardMessagePayload(**body)
-        
+
         ai_gateway = request.app.get("ai_gateway")
         if not ai_gateway:
             from app.services.ai_gateway import ai_gateway as core_gateway
