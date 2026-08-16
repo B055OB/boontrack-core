@@ -2,97 +2,107 @@ import os
 import logging
 import aiohttp
 from aiohttp import web
+from app.modules.public_services.service import public_service_service
 
 logger = logging.getLogger(__name__)
 
-# Kredensial Meta WhatsApp Terbaru
-WHATSAPP_TOKEN = os.getenv(
-    "WHATSAPP_TOKEN",
-    "EAANbiVgBfGQBSDXN31YNxZC2I9Q1E2XjDXeJWDLETKOMaTAf4GmXkGfTUhslPqCmFdPelCDWvH7dUJx9Y1vQZAabTKYKKC96cefCic7aKFJYK9zCOZA2WE8LpoMYLVLHUMaBhwYX9ToX0GnZAhtlYVLuNNKVFJRPZASx4zBh81EmA0iJ3gXX388IzYeMIZBQhP9ma2oHXgbpj74PmxlkZCBZBkn8tBTZBvQ2XZBt4GXg2FU20mQrRPvea65jrm2PwyesgbZA1Qn4jHHm9lyULElJl4wZCTskFkGrJWQZD"
-)
+# Konfigurasi Meta Graph API via Environment Variable
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "1306479742542083")
-VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "boontrack_wa_secure_2026")
+VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", os.getenv("VERIFY_TOKEN", "boontrack_verify_secret"))
 
 
-async def whatsapp_webhook_get(request: web.Request) -> web.Response:
-    """Verifikasi handshake awal dari Meta Webhook."""
-    mode = request.query.get("hub.mode")
-    token = request.query.get("hub.verify_token")
-    challenge = request.query.get("hub.challenge")
+async def send_whatsapp_message(to_number: str, message_text: str):
+    """
+    Mengirim pesan balasan ke user via Meta Graph API Outbound endpoint.
+    """
+    if not WHATSAPP_TOKEN:
+        logger.error("[WHATSAPP OUTBOUND] WHATSAPP_TOKEN belum diset di Environment Variables!")
+        return None
 
-    if mode == "subscribe" and token == VERIFY_TOKEN:
-        print("=== META WEBHOOK CHALLENGE VERIFIED ===", flush=True)
-        return web.Response(text=challenge, status=200)
-
-    print(f"=== VERIFICATION FAILED: Token {token} != {VERIFY_TOKEN} ===", flush=True)
-    return web.Response(text="Verification failed", status=403)
-
-
-async def whatsapp_webhook_post(request: web.Request) -> web.Response:
-    """Menerima pesan masuk dari warga via WhatsApp dan mengirimkan balasan AI."""
-    try:
-        data = await request.json()
-        print(f"=== WEBHOOK RECEIVED DATA: {data} ===", flush=True)
-
-        entry = data.get("entry", [])[0]
-        changes = entry.get("changes", [])[0]
-        value = changes.get("value", {})
-        messages = value.get("messages", [])
-
-        if messages:
-            msg = messages[0]
-            from_number = msg.get("from")
-            
-            if msg.get("type") == "text":
-                user_text = msg.get("text", {}).get("body", "").strip()
-                print(f"=== PESAN WA DARI {from_number}: {user_text} ===", flush=True)
-
-                # Default fallback response
-                reply_text = (
-                    "Halo! Layanan AI Kelurahan Kebon Melati siap membantu.\n\n"
-                    "Untuk pembuatan Kartu Keluarga (KK) Baru / KTP / Surat Pengantar:\n"
-                    "1. Surat Pengantar RT/RW setempat\n"
-                    "2. Buku Nikah / Akta Perkawinan (jika ada)\n"
-                    "3. KTP & KK lama / Surat Keterangan Pindah\n"
-                    "4. Formulir F-1.01 dari loket pelayanan Kelurahan\n\n"
-                    "Ada pertanyaan atau dokumen lain yang ingin Anda urus?"
-                )
-
-                # Coba proses lewat Service AI jika tersedia
-                try:
-                    from app.modules.public_services.service import PublicServiceService
-                    svc = PublicServiceService()
-                    res = await svc.handle_query(user_text)
-                    if res:
-                        reply_text = res
-                except Exception as inner_err:
-                    print(f"=== SERVICE QUERY FALLBACK: {inner_err} ===", flush=True)
-
-                # Kirim balasan ke WhatsApp pengirim
-                await send_whatsapp_message(to_number=from_number, text=reply_text)
-
-    except Exception as e:
-        print(f"=== WEBHOOK ERROR: {e} ===", flush=True)
-
-    return web.Response(text="EVENT_RECEIVED", status=200)
-
-
-async def send_whatsapp_message(to_number: str, text: str):
-    """Mengirim pesan teks ke WhatsApp pengguna melalui Meta Graph API."""
-    url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
+    url = f"[https://graph.facebook.com/v26.0/](https://graph.facebook.com/v26.0/){PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
         "Content-Type": "application/json"
     }
     payload = {
         "messaging_product": "whatsapp",
-        "recipient_type": "individual",
         "to": str(to_number),
         "type": "text",
-        "text": {"body": text}
+        "text": {
+            "body": message_text
+        }
     }
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=payload) as resp:
-            resp_text = await resp.text()
-            print(f"=== META API STATUS: {resp.status} | BODY: {resp_text} ===", flush=True)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers) as resp:
+                resp_text = await resp.text()
+                logger.info(f"[WHATSAPP OUTBOUND] Status: {resp.status} | Response: {resp_text}")
+                return resp.status
+    except Exception as e:
+        logger.error(f"[WHATSAPP OUTBOUND ERROR] Gagal mengirim pesan ke {to_number}: {e}", exc_info=True)
+        return None
+
+
+async def whatsapp_webhook_get(request: web.Request) -> web.Response:
+    """
+    Verifikasi Webhook dari Meta (Hub Verification GET).
+    """
+    params = request.query
+    mode = params.get("hub.mode")
+    token = params.get("hub.verify_token")
+    challenge = params.get("hub.challenge")
+
+    if mode == "subscribe" and token == VERIFY_TOKEN:
+        logger.info("[WHATSAPP WEBHOOK] Webhook successfully verified by Meta!")
+        return web.Response(text=challenge, status=200)
+
+    logger.warning(f"[WHATSAPP WEBHOOK] Verification failed! Token mismatch. Received: {token}")
+    return web.Response(text="Forbidden", status=403)
+
+
+async def whatsapp_webhook_post(request: web.Request) -> web.Response:
+    """
+    Menangani pesan masuk (Incoming Webhook Payload) dari pengguna.
+    """
+    try:
+        data = await request.json()
+        logger.info(f"[WHATSAPP INCOMING] Payload: {data}")
+
+        # Parsing Payload Meta
+        entries = data.get("entry", [])
+        for entry in entries:
+            changes = entry.get("changes", [])
+            for change in changes:
+                value = change.get("value", {})
+                messages = value.get("messages", [])
+
+                for msg in messages:
+                    msg_type = msg.get("type")
+                    from_number = msg.get("from")
+
+                    if msg_type == "text" and from_number:
+                        user_text = msg.get("text", {}).get("body", "")
+                        logger.info(f"[WHATSAPP MSG] Dari: {from_number} | Teks: {user_text}")
+
+                        # Proses lewat Public Service Engine Adapter
+                        reply_text = await public_service_service.handle_query(
+                            user_text=user_text,
+                            user_id=str(from_number),
+                            session_id=f"whatsapp:{from_number}",
+                            channel="whatsapp"
+                        )
+
+                        # Kirim Balasan ke WhatsApp User
+                        await send_whatsapp_message(
+                            to_number=from_number,
+                            message_text=reply_text
+                        )
+
+        # Selalu return 200 OK ke Meta agar webhook tidak dianggap timeout/gagal
+        return web.Response(text="EVENT_RECEIVED", status=200)
+
+    except Exception as e:
+        logger.error(f"[WHATSAPP WEBHOOK ERROR] Error saat memproses pesan: {e}", exc_info=True)
+        return web.Response(text="INTERNAL_ERROR", status=200)
