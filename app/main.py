@@ -16,6 +16,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, Field
 from aiogram import Bot, Dispatcher, executor, types
+from aiogram.utils.exceptions import ConflictError
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from docx import Document
 from docx.shared import Pt, RGBColor, Inches
@@ -2218,23 +2219,18 @@ async def start_web_server():
     except Exception as e:
         logger.error(f"⚠️ Failed to load Public Services module: {e}", exc_info=True)
 
-    port = int(os.getenv("PORT", 10000))
+    port = int(os.getenv("PORT", 8080))
     runner = web.AppRunner(app)
     await runner.setup()
     
-    try:
-        site = web.TCPSite(runner, '0.0.0.0', port)
-        await site.start()
-    except OSError:
-        site = web.TCPSite(runner, '0.0.0.0', port + 1)
-        await site.start()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"[BOOT] Web server listening on port {port}", flush=True)
 
-async def on_startup(dp):
-    await bot.delete_webhook(drop_pending_updates=True)
-    print("[BOOT] Webhook cleared & pending updates dropped.", flush=True)
-    asyncio.create_task(start_web_server())
 
 if __name__ == '__main__':
+    from aiogram.utils.exceptions import ConflictError
+
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
 
     print("========================================", flush=True)
@@ -2251,9 +2247,21 @@ if __name__ == '__main__':
     print("[BOOT] Initializing database...", flush=True)
     loop.run_until_complete(init_db())
 
+    # 1. Start Web Server TERLEBIH DAHULU agar Railway langsung 200 OK
+    print("[BOOT] Starting Web Server...", flush=True)
+    loop.run_until_complete(start_web_server())
+
+    # 2. Start Telegram Polling dengan proteksi try-except agar tidak membunuh web server
     print("[BOOT] Starting Telegram polling...", flush=True)
-    executor.start_polling(
-        dp,
-        skip_updates=True,
-        on_startup=on_startup
-    )
+    try:
+        executor.start_polling(
+            dp,
+            skip_updates=True,
+            loop=loop
+        )
+    except ConflictError:
+        print("[WARNING] Telegram Conflict detected! Another instance is running. Keeping Web Server ALIVE...", flush=True)
+        loop.run_forever()
+    except Exception as e:
+        print(f"[ERROR] Polling crashed: {e}. Keeping Web Server ALIVE...", flush=True)
+        loop.run_forever()
