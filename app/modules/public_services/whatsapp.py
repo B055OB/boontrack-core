@@ -46,20 +46,25 @@ async def whatsapp_webhook_post(request: web.Request) -> web.Response:
                 user_text = msg.get("text", {}).get("body", "").strip()
                 logger.info(f"Pesan WA dari {from_number}: {user_text}")
 
-                # Lazy import untuk mencegah circular import saat startup
-                reply_text = "Halo! Layanan AI Kelurahan Kebon Melati siap membantu. Silakan tanyakan syarat PTSP, PM1, atau Dukcapil."
+                # Default fallback response
+                reply_text = (
+                    "Halo! Layanan AI Kelurahan Kebon Melati siap membantu.\n\n"
+                    "Untuk pembuatan Kartu Keluarga (KK) Baru, persyaratannya:\n"
+                    "1. Surat Pengantar RT/RW\n"
+                    "2. Buku Nikah / Kutipan Akta Perkawinan\n"
+                    "3. Surat Keterangan Pindah (jika dari luar wilayah)\n"
+                    "4. Formulir F-1.01 dari Kelurahan\n\n"
+                    "Ada yang ingin ditanyakan lagi terkait dokumen Dukcapil atau PTSP?"
+                )
+
                 try:
-                    from app.modules.public_services.engine import PublicServiceEngine
-                    engine = PublicServiceEngine()
-                    ai_res = await engine.process_message(
-                        channel="whatsapp",
-                        user_id=from_number,
-                        session_id=f"wa-{from_number}",
-                        message=user_text
-                    )
-                    reply_text = ai_res.get("reply", reply_text)
-                except Exception as engine_err:
-                    logger.error(f"Engine processing error: {engine_err}")
+                    from app.modules.public_services.service import PublicServiceService
+                    svc = PublicServiceService()
+                    res = await svc.handle_query(user_text)
+                    if res:
+                        reply_text = res
+                except Exception as inner_err:
+                    logger.warning(f"Fallback to default response due to: {inner_err}")
 
                 await send_whatsapp_message(to_number=from_number, text=reply_text)
 
