@@ -34,6 +34,7 @@ from app.handlers.admin_handler import admin_handler
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 from app.routes.webchat import router as webchat_router
+from app.modules.public_services.whatsapp import whatsapp_webhook_get, whatsapp_webhook_post
 
 # --- WEB CHAT MVP SCHEMA & STATE ---
 class WebChatRequest(BaseModel):
@@ -2212,6 +2213,10 @@ async def start_web_server():
     # Endpoint B2B Business (Support variasi path)
     app.router.add_post('/api/webchat/business', handle_b2b_webchat_http)
     app.router.add_post('/api/b2b-webchat', handle_b2b_webchat_http)
+
+    # Endpoint WhatsApp Webhook (Meta Cloud API)
+    app.router.add_get('/webhook/whatsapp', whatsapp_webhook_get)
+    app.router.add_post('/webhook/whatsapp', whatsapp_webhook_post)
 
     # Endpoint Public Service (Safe Registration & Isolated)
     try:
