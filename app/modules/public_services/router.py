@@ -3,9 +3,11 @@ from app.modules.public_services.knowledge import LocalKnowledgeProvider
 from app.modules.public_services.escalation import LocalEscalationProvider
 from app.modules.public_services.service import PublicServiceEngine
 from app.modules.public_services.schemas import StandardMessagePayload
+from app.services.ai_gateway import AIGateway
 
 knowledge_provider = LocalKnowledgeProvider()
 escalation_provider = LocalEscalationProvider()
+fallback_ai_gateway = AIGateway()
 
 
 async def handle_public_service_chat(request: web.Request) -> web.Response:
@@ -13,10 +15,7 @@ async def handle_public_service_chat(request: web.Request) -> web.Response:
         body = await request.json()
         payload = StandardMessagePayload(**body)
 
-        ai_gateway = request.app.get("ai_gateway")
-        if not ai_gateway:
-            from app.services.ai_gateway import ai_gateway as core_gateway
-            ai_gateway = core_gateway
+        ai_gateway = request.app.get("ai_gateway") or fallback_ai_gateway
 
         engine = PublicServiceEngine(
             knowledge_provider=knowledge_provider,

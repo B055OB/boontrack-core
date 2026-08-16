@@ -23,12 +23,12 @@ PANDUAN KETAT ANTI-HALUSINASI:
 2. DILARANG MENGARANG atau menambahkan syarat/biaya di luar data resmi.
 3. Jika informasi TIDAK DITEMUKAN dalam data atau warga menanyakan kasus khusus/sengketa/kebijakan pejabat, JANGAN mengarang jawaban. Set 'is_escalated' menjadi true dan beri alasan yang jelas agar diteruskan ke petugas kelurahan.
 4. Format output WAJIB JSON murni tanpa markdown wrapper:
-{{
+{
   "reply": "Jawaban sopan dan jelas untuk warga (gunakan bullet point untuk syarat jika ada)",
   "identified_service_slug": "slug_layanan_jika_terdeteksi_atau_null",
   "is_escalated": false,
   "escalation_reason": null
-}}
+}
 """
 
 
@@ -51,17 +51,19 @@ class PublicServiceEngine(PublicServiceProvider):
 
         system_instruction = f"{PUBLIC_SERVICE_SYSTEM_PROMPT}\n\n[DATA LAYANAN RESMI]:\n{knowledge_context}"
 
-        messages = [{"role": "system", "content": system_instruction}]
-        if conversation_history:
-            messages.extend(conversation_history[-5:])
-        messages.append({"role": "user", "content": payload.message})
-
         try:
-            raw_ai_reply = await self.ai_gateway.generate_chat_completion(messages=messages)
+            # Gunakan method .generate() bawaan AIGateway
+            raw_ai_reply = await self.ai_gateway.generate(
+                user_message=payload.message,
+                context={"user_id": payload.user_id, "feature": "public_service"},
+                system_prompt=system_instruction
+            )
 
-            cleaned_json_str = str(raw_ai_reply).strip()
+            cleaned_json_str = str(raw_ai_reply or "").strip()
             if cleaned_json_str.startswith("```json"):
                 cleaned_json_str = cleaned_json_str[7:]
+            elif cleaned_json_str.startswith("```"):
+                cleaned_json_str = cleaned_json_str[3:]
             if cleaned_json_str.endswith("```"):
                 cleaned_json_str = cleaned_json_str[:-3]
 
