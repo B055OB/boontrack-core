@@ -20,7 +20,9 @@ async def send_whatsapp_message(to_number: str, message_text: str):
         logger.error("[WHATSAPP OUTBOUND] WHATSAPP_TOKEN belum diset di Environment Variables!")
         return None
 
-    url = f"[https://graph.facebook.com/v26.0/](https://graph.facebook.com/v26.0/){PHONE_NUMBER_ID}/messages"
+    phone_id = os.getenv("PHONE_NUMBER_ID") or "1306479742542083"
+    url = f"https://graph.facebook.com/v26.0/{phone_id}/messages"
+
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
         "Content-Type": "application/json"
