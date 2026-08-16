@@ -2250,21 +2250,28 @@ if __name__ == '__main__':
     print("[BOOT] Initializing database...", flush=True)
     loop.run_until_complete(init_db())
 
-    # 1. Start Web Server TERLEBIH DAHULU agar Railway langsung 200 OK
+    # 1. Start Web Server di Main Loop
     print("[BOOT] Starting Web Server...", flush=True)
-    loop.run_until_complete(start_web_server())
+    loop.create_task(start_web_server())
 
-    # 2. Start Telegram Polling dengan proteksi try-except agar tidak membunuh web server
-    print("[BOOT] Starting Telegram polling...", flush=True)
+    # 2. Start Telegram Polling di Thread Terpisah (Agar tidak mematikan Web Server WhatsApp)
+    def telegram_polling_worker():
+        print("[TELEGRAM] Polling worker starting...", flush=True)
+        try:
+            executor.start_polling(dp, skip_updates=True)
+        except Exception as e:
+            print(f"[TELEGRAM] ⚠️ Polling stopped ({e}). Web Server WhatsApp TETAP AKTIF.", flush=True)
+
+    import threading
+    t_thread = threading.Thread(target=telegram_polling_worker, name="telegram-worker", daemon=True)
+    t_thread.start()
+    print("[BOOT] Telegram thread running. Web Server running permanently.", flush=True)
+
+    # 3. Kunci Main Loop agar Web Server jalan terus
     try:
-        executor.start_polling(
-            dp,
-            skip_updates=True,
-            loop=loop
-        )
-    except ConflictError:
-        print("[WARNING] Telegram Conflict detected! Another instance is running. Keeping Web Server ALIVE...", flush=True)
         loop.run_forever()
-    except Exception as e:
-        print(f"[ERROR] Polling crashed: {e}. Keeping Web Server ALIVE...", flush=True)
-        loop.run_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        loop.stop()
+        loop.close()
