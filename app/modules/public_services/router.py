@@ -5,10 +5,16 @@ from app.modules.public_services.whatsapp import whatsapp_webhook_get, whatsapp_
 logger = logging.getLogger(__name__)
 
 def register_public_service_routes(app: web.Application):
-    """Mendaftarkan route public services dan WhatsApp webhook."""
+    """Mendaftarkan route WhatsApp webhook."""
     try:
+        # Route utama sesuai konfigurasi Meta
+        app.router.add_get('/webhook/whatsapp', whatsapp_webhook_get)
+        app.router.add_post('/webhook/whatsapp', whatsapp_webhook_post)
+        
+        # Route alternatif
         app.router.add_get('/api/public_services/webhook/whatsapp', whatsapp_webhook_get)
         app.router.add_post('/api/public_services/webhook/whatsapp', whatsapp_webhook_post)
-        logger.info("Public Services WhatsApp routes registered.")
+        
+        logger.info("WhatsApp webhook routes registered successfully.")
     except Exception as e:
-        logger.warning(f"Public service routes note: {e}")
+        logger.warning(f"Error registering WhatsApp routes: {e}")
