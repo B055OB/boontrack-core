@@ -9,6 +9,8 @@ import tempfile
 import uuid
 import time
 import aiohttp
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta
 from typing import Optional, Dict
 from dotenv import load_dotenv
