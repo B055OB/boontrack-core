@@ -1,12 +1,12 @@
 import json
 import logging
 from typing import Any, Dict, List, Optional
-from app.modules.public_service.interfaces import (
+from app.modules.public_services.interfaces import (
     EscalationProvider,
     KnowledgeProvider,
     PublicServiceProvider,
 )
-from app.modules.public_service.schemas import (
+from app.modules.public_services.schemas import (
     PublicServiceContext,
     PublicServiceResponse,
     StandardMessagePayload,

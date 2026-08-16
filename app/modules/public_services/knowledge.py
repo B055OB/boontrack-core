@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional
-from app.modules.public_service.interfaces import KnowledgeProvider
+from app.modules.public_services.interfaces import KnowledgeProvider
 
 
 DUMMY_KNOWLEDGE_BASE: Dict[str, Dict[str, Any]] = {

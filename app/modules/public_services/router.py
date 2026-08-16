@@ -1,8 +1,8 @@
 from aiohttp import web
-from app.modules.public_service.knowledge import LocalKnowledgeProvider
-from app.modules.public_service.escalation import LocalEscalationProvider
-from app.modules.public_service.service import PublicServiceEngine
-from app.modules.public_service.schemas import StandardMessagePayload
+from app.modules.public_services.knowledge import LocalKnowledgeProvider
+from app.modules.public_services.escalation import LocalEscalationProvider
+from app.modules.public_services.service import PublicServiceEngine
+from app.modules.public_services.schemas import StandardMessagePayload
 
 # Inisialisasi dependensi
 knowledge_provider = LocalKnowledgeProvider()

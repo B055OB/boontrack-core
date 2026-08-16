@@ -31,7 +31,7 @@ from app.handlers.admin_handler import admin_handler
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 from app.routes.webchat import router as webchat_router
-from app.modules.public_service.router import register_public_service_routes
+from app.modules.public_services.router import register_public_service_routes
 
 # --- WEB CHAT MVP SCHEMA & STATE ---
 class WebChatRequest(BaseModel):

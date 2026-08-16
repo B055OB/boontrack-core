@@ -1,6 +1,6 @@
 import logging
 from app.modules.public_service.interfaces import EscalationProvider
-from app.modules.public_service.schemas import PublicServiceContext
+from app.modules.public_services.schemas import PublicServiceContext
 
 logger = logging.getLogger(__name__)
 

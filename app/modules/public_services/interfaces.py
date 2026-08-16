@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
-from app.modules.public_service.schemas import PublicServiceContext, StandardMessagePayload
+from app.modules.public_services.schemas import PublicServiceContext, StandardMessagePayload
 
 
 class KnowledgeProvider(ABC):
