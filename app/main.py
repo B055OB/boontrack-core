@@ -35,7 +35,6 @@ from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 from app.routes.webchat import router as webchat_router
 from app.modules.public_services.whatsapp import whatsapp_webhook_get, whatsapp_webhook_post
-from app.modules.public_services.webchat import handle_public_service_webchat_http
 
 # --- WEB CHAT MVP SCHEMA & STATE ---
 class WebChatRequest(BaseModel):
@@ -2215,10 +2214,10 @@ async def start_web_server():
     app.router.add_post('/api/webchat/business', handle_b2b_webchat_http)
     app.router.add_post('/api/b2b-webchat', handle_b2b_webchat_http)
 
-    # Endpoint Webchat Pelayanan Publik (Mendukung format strip & underscore)
-    app.router.add_post('/api/public-service/chat', handle_public_service_webchat_http)
-    app.router.add_post('/api/public_service/chat', handle_public_service_webchat_http)
-    app.router.add_post('/api/public_services/webchat', handle_public_service_webchat_http)
+    # Endpoint Webchat Pelayanan Publik (Mengarahkan ke handler webchat utama)
+    app.router.add_post('/api/public-service/chat', handle_web_chat_http)
+    app.router.add_post('/api/public_service/chat', handle_web_chat_http)
+    app.router.add_post('/api/public_services/chat', handle_web_chat_http)
 
     # Endpoint WhatsApp Webhook (Meta Cloud API)
     from app.modules.public_services.whatsapp import whatsapp_webhook_get, whatsapp_webhook_post
