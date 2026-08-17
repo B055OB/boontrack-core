@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from app.modules.public_services.interfaces import (
@@ -26,6 +27,44 @@ from app.services.ai_gateway import AIGateway
 
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# UTILITIES: SAFE AI JSON PARSER
+# ============================================================
+
+def safe_parse_ai_json(raw_text: str) -> dict:
+    """
+    Parser robust untuk membersihkan markdown fence, leading/trailing teks,
+    dan fallback cerdas jika LLM mengembalikan plain text.
+    """
+    if not raw_text or not raw_text.strip():
+        return {}
+
+    cleaned = str(raw_text).strip()
+
+    # 1. Bersihkan formatting markdown code fence
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"\s*```$", "", cleaned, flags=re.MULTILINE).strip()
+
+    # 2. Ekstrak payload JSON pertama jika ada teks intro dari LLM
+    json_match = re.search(r"(\{.*\}|\[.*\])", cleaned, re.DOTALL)
+    if json_match:
+        cleaned = json_match.group(1).strip()
+
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict):
+            return parsed
+        return {"reply": str(parsed), "is_escalated": False}
+    except Exception:
+        # Fallback jika model menjawab dalam format plain text
+        return {
+            "reply": raw_text.strip(),
+            "identified_service_slug": None,
+            "is_escalated": False,
+            "escalation_reason": None,
+        }
 
 
 # ============================================================
@@ -175,7 +214,7 @@ class PublicServiceEngine(PublicServiceProvider):
         )
 
         # ----------------------------------------------------
-        # AI GENERATION
+        # AI GENERATION & SAFE PARSING
         # ----------------------------------------------------
 
         try:
@@ -189,23 +228,16 @@ class PublicServiceEngine(PublicServiceProvider):
                 system_prompt=system_instruction,
             )
 
-            cleaned_json_str = str(
-                raw_ai_reply or ""
-            ).strip()
+            parsed_result = safe_parse_ai_json(raw_ai_reply)
 
-            # Remove markdown JSON fence
-            if cleaned_json_str.startswith("```json"):
-                cleaned_json_str = cleaned_json_str[7:]
-
-            elif cleaned_json_str.startswith("```"):
-                cleaned_json_str = cleaned_json_str[3:]
-
-            if cleaned_json_str.endswith("```"):
-                cleaned_json_str = cleaned_json_str[:-3]
-
-            parsed_result = json.loads(
-                cleaned_json_str.strip()
-            )
+            # Jika safe parser mengembalikan dict kosong
+            if not parsed_result:
+                parsed_result = {
+                    "reply": str(raw_ai_reply or "Layanan berhasil diproses."),
+                    "identified_service_slug": None,
+                    "is_escalated": False,
+                    "escalation_reason": None,
+                }
 
         except Exception as e:
 
