@@ -25,6 +25,7 @@ from docx.shared import Pt, RGBColor, Inches
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from aiohttp import web
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from app.repositories.session_repository import SessionRepository
 from app.services.analytics_service import analytics_service
@@ -46,6 +47,18 @@ from app.reader.router import (
     refresh_token_handler,
     revoke_device_handler,
 )
+
+# ============================================================
+# ASYNC DATABASE ENGINE & SESSION FACTORY
+# ============================================================
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+engine = create_async_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
+async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 # --- WEB CHAT MVP SCHEMA & STATE ---
 class WebChatRequest(BaseModel):
