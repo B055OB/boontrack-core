@@ -2254,18 +2254,17 @@ if __name__ == '__main__':
     print("[BOOT] Starting Web Server...", flush=True)
     loop.create_task(start_web_server())
 
-    # 2. Start Telegram Polling di Thread Terpisah (Agar tidak mematikan Web Server WhatsApp)
-    def telegram_polling_worker():
+    # 2. Start Telegram Polling langsung di loop yang sama
+    async def start_telegram_polling():
         print("[TELEGRAM] Polling worker starting...", flush=True)
         try:
-            executor.start_polling(dp, skip_updates=True)
+            await bot.delete_webhook(drop_pending_updates=True)
+            await dp.start_polling(reset_webhook=True)
         except Exception as e:
-            print(f"[TELEGRAM] ⚠️ Polling stopped ({e}). Web Server WhatsApp TETAP AKTIF.", flush=True)
+            print(f"[TELEGRAM] ⚠️ Polling stopped ({e}). Web Server TETAP AKTIF.", flush=True)
 
-    import threading
-    t_thread = threading.Thread(target=telegram_polling_worker, name="telegram-worker", daemon=True)
-    t_thread.start()
-    print("[BOOT] Telegram thread running. Web Server running permanently.", flush=True)
+    loop.create_task(start_telegram_polling())
+    print("[BOOT] Telegram & Web Server running concurrently in main loop.", flush=True)
 
     # 3. Kunci Main Loop agar Web Server jalan terus
     try:
