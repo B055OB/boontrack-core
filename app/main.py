@@ -36,6 +36,17 @@ from app.services.cv_review_service import cv_review_service
 from app.routes.webchat import router as webchat_router
 from app.modules.public_services.router import register_public_service_routes
 
+# ============================================================
+# B2B MULTI-TENANT ROUTERS & HANDLERS
+# ============================================================
+from app.telegram.router import register_telegram_routes
+from app.whatsapp.router import register_whatsapp_routes
+from app.reader.router import (
+    pair_device_handler,
+    refresh_token_handler,
+    revoke_device_handler,
+)
+
 # --- WEB CHAT MVP SCHEMA & STATE ---
 class WebChatRequest(BaseModel):
     session_id: str = Field(..., max_length=64)
@@ -2216,6 +2227,27 @@ async def start_web_server():
 
     # Registrasi Seluruh Route Public Services (Webchat & WhatsApp)
     register_public_service_routes(app)
+
+    # Registrasi Seluruh Route Multi-Tenant B2B & Device Auth Engine
+    register_telegram_routes(app, async_session)
+    register_whatsapp_routes(app, async_session)
+
+    # Device Lifecycle Endpoints (Android BoonTrack Reader)
+    async def _wrap_pair(req):
+        async with async_session() as session:
+            return await pair_device_handler(req, session)
+
+    async def _wrap_refresh(req):
+        async with async_session() as session:
+            return await refresh_token_handler(req, session)
+
+    async def _wrap_revoke(req):
+        async with async_session() as session:
+            return await revoke_device_handler(req, session)
+
+    app.router.add_post("/api/v1/devices/pair", _wrap_pair)
+    app.router.add_post("/api/v1/devices/refresh", _wrap_refresh)
+    app.router.add_post("/api/v1/devices/revoke", _wrap_revoke)
 
     port = int(os.getenv("PORT", 8080))
     runner = web.AppRunner(app)
