@@ -34,7 +34,7 @@ from app.handlers.admin_handler import admin_handler
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 from app.routes.webchat import router as webchat_router
-from app.modules.public_services.whatsapp import whatsapp_webhook_get, whatsapp_webhook_post
+from app.modules.public_services.router import register_public_service_routes
 
 # --- WEB CHAT MVP SCHEMA & STATE ---
 class WebChatRequest(BaseModel):
@@ -2214,19 +2214,9 @@ async def start_web_server():
     app.router.add_post('/api/webchat/business', handle_b2b_webchat_http)
     app.router.add_post('/api/b2b-webchat', handle_b2b_webchat_http)
 
-    # Endpoint Webchat Pelayanan Publik (Mengarahkan ke handler webchat utama)
-    app.router.add_post('/api/public-service/chat', handle_web_chat_http)
-    app.router.add_post('/api/public_service/chat', handle_web_chat_http)
-    app.router.add_post('/api/public_services/chat', handle_web_chat_http)
+    # Registrasi Seluruh Route Public Services (Webchat & WhatsApp)
+    register_public_service_routes(app)
 
-    # Endpoint WhatsApp Webhook (Meta Cloud API)
-    from app.modules.public_services.whatsapp import whatsapp_webhook_get, whatsapp_webhook_post
-    app.router.add_get('/webhook/whatsapp', whatsapp_webhook_get)
-    app.router.add_post('/webhook/whatsapp', whatsapp_webhook_post)
-    app.router.add_get('/api/public_services/webhook/whatsapp', whatsapp_webhook_get)
-    app.router.add_post('/api/public_services/webhook/whatsapp', whatsapp_webhook_post)
-
-    
     port = int(os.getenv("PORT", 8080))
     runner = web.AppRunner(app)
     await runner.setup()
