@@ -36,6 +36,7 @@ from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 from app.routes.webchat import router as webchat_router
 from app.modules.public_services.router import register_public_service_routes
+from app.modules.commerce.router import commerce_routes
 
 # ============================================================
 # B2B MULTI-TENANT ROUTERS & HANDLERS
@@ -2229,6 +2230,7 @@ async def start_web_server():
     app.router.add_get('/health', health_check_handler)
     app.router.add_get('/source', tracker_handler)
     app.router.add_post('/webhook/dana', dana_webhook_handler)
+    app.add_routes(commerce_routes)
     
     # Endpoint Karir (Support variasi dengan strip & tanpa strip)
     app.router.add_post('/api/webchat', handle_web_chat_http)
