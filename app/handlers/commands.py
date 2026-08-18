@@ -8,13 +8,10 @@ from app.services.analytics_service import analytics_service
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 
-TOTAL_STEPS = 10
-
 # INISIALISASI GLOBAL STATE
 user_state = {}
 
-TOTAL_STEPS = len(CV_QUESTIONS)
-
+# 1. DAFTAR PERTANYAAN CV MULTI-BAHASA & SMART-SKIP
 CV_QUESTIONS = {
     1: (
         "Sebelum kita mulai, CV kamu ingin dibuat dalam bahasa apa?\n\n"
@@ -67,6 +64,9 @@ CV_QUESTIONS = {
         "💡 *Rekomendasi:* Langsung ketik *-* saja agar **AI BoonTrack yang merangkumkan profil profesional terbaik** untukmu!"
     )
 }
+
+# 2. TOTAL LANGKAH OTOMATIS DARI PANJANG DICTIONARY
+TOTAL_STEPS = len(CV_QUESTIONS)
 
 def get_progress_bar(step: int) -> str:
     return f"📍 <b>Langkah {step} dari {TOTAL_STEPS}</b>\n━━━━━━━━━━"
@@ -196,7 +196,6 @@ async def render_free_cv_review(user_id: int, bot, cv_text: str, target_position
     # 5. Format Tampilan Pesan Diagnosis
     b = filtered_data.get("breakdown_scores", {})
 
-    # Pemetaan fleksibel skor kategori
     ats_score = b.get("ats_compatibility") or b.get("quality") or 70
     format_score = b.get("format_relevance") or b.get("structure") or b.get("keyword") or 75
     exp_score = b.get("experience_impact") or b.get("experience") or b.get("evidence") or 80
