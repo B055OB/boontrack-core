@@ -1099,10 +1099,54 @@ async def send_welcome(message: types.Message):
     )
     await message.reply(msg_1, parse_mode="HTML")
 
+@dp.callback_query_handler(lambda c: c.data == "trigger_cv_review")
+async def handle_trigger_cv_review(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    
+    try:
+        await callback_query.answer()
+    except Exception:
+        pass
+        
+    try:
+        await callback_query.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    if user_id not in user_state:
+        user_state[user_id] = {"step": 0, "data": {}}
+
+    user_data = user_state.get(user_id, {}).get("data", {})
+    cv_text_summary = " ".join([str(v) for k, v in user_data.items() if str(v).strip()]).strip()
+    position = str(user_data.get("target_position") or user_data.get(6) or user_data.get("6") or "General Professional")
+
+    if cv_text_summary and len(cv_text_summary) > 20:
+        from app.handlers.commands import render_free_cv_review
+        await render_free_cv_review(user_id, bot, cv_text_summary, target_position=position)
+        return
+
+    # Set state untuk input teks CV
+    user_state[user_id]["step"] = "WAITING_CV_INPUT"
+
+    kbd_review = types.InlineKeyboardMarkup(row_width=1)
+    kbd_review.add(
+        types.InlineKeyboardButton("📝 Buat CV Baru via Bot", callback_data="home_create_cv"),
+        types.InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
+    )
+    msg_prompt = (
+        "🔍 <b>DIAGNOSIS & REVIEW CV GRATIS (ATS COMPLIANT)</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Silakan kirimkan CV kamu untuk dianalisis oleh AI:\n\n"
+        "✍️ <b>Ketik / Paste ringkasan CV atau pengalaman kerjamu</b> langsung ke chat ini sekarang.\n\n"
+        "<i>Atau klik tombol di bawah jika ingin membuat CV baru standar ATS dari awal:</i>"
+    )
+    await bot.send_message(user_id, msg_prompt, reply_markup=kbd_review, parse_mode="HTML")
+    return
+
 @dp.callback_query_handler(lambda c: c.data in [
     "status_fresh", "status_exp", "lang_id", "lang_en", "lang_hybrid", "lang_jp",
     "skip_optional", "resume_flow", "restart_flow",
-    "home_create_cv", "trigger_cv_review", "home_check_ref", "home_career_qa",
+    "home_create_cv", "home_check_ref", "home_career_qa",
     "home_digital_products", "buy_ebook_interview", "home_back_main",
     "don_5000", "don_10000", "don_25000", "cancel_checkout",
     "cp_build_now", "cp_build_later", "cp_manage", "cp_upload_cv",
