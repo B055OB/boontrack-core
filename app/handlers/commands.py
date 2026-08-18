@@ -38,8 +38,9 @@ def get_progress_bar(step: int) -> str:
     return f"📍 <b>Langkah {step} dari {TOTAL_STEPS}</b>\n━━━━━━━━━━"
 
 async def send_welcome(message: types.Message):
-    user_id = message.from_user.id
-    text = message.text.strip()
+    user_id = message.chat.id
+    first_name = message.chat.first_name or "Teman"
+    text = (message.text or "").strip()
 
     if text.startswith("/analytics") or text.startswith("/admin"):
         response_text = await admin_handler.handle_admin_command(user_id, text)
@@ -75,22 +76,25 @@ async def send_welcome(message: types.Message):
         }
         await analytics_service.save_user_utm(user_id, clean_args)
 
-    await save_user(message.from_user, meta=meta_data)
+    if message.from_user:
+        await save_user(message.from_user, meta=meta_data)
     await track_event(user_id, "start", meta=meta_data)
     
     progress, last_cv = await get_user_history(user_id)
-    first_name = message.from_user.first_name or "Teman"
 
     saved_data = progress.get("data", {}) if progress else {}
     if user_id not in user_state:
         user_state[user_id] = {"step": progress.get("last_step", 0) if progress else 0, "data": saved_data}
 
-    # Tampilkan Menu Utama Interaktif
+    # Tampilkan Menu Utama Interaktif Lengkap (6 Tombol)
     kbd = InlineKeyboardMarkup(row_width=1)
     kbd.add(
-        InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="restart_flow"),
+        InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"),
         InlineKeyboardButton("🔍 Review CV Saya", callback_data="trigger_cv_review"),
-        InlineKeyboardButton("🚀 Buat Career Page Profesional", callback_data="open_career_pricing")
+        InlineKeyboardButton("🌐 Buat Career Page Profesional (Rp10.000)", callback_data="home_career_page"),
+        InlineKeyboardButton("📚 Ebook & Program Digital", callback_data="home_digital_products"),
+        InlineKeyboardButton("🎁 Cek Referral Saya", callback_data="home_check_ref"),
+        InlineKeyboardButton("💬 Tanya Seputar Dunia Kerja", callback_data="home_career_qa")
     )
 
     if progress and 1 < progress.get("last_step", 0) < TOTAL_STEPS:
@@ -105,7 +109,7 @@ async def send_welcome(message: types.Message):
         kbd_resume.add(InlineKeyboardButton("🔍 Review CV Saya", callback_data="trigger_cv_review"))
         
         await message.reply(
-            f"Halo lagi, {first_name}! 👋\n\n"
+            f"Halo lagi, <b>{first_name}</b>! 👋\n\n"
             f"Kemarin kita sempat membuat CV sampai di <b>Langkah {last_step} dari {TOTAL_STEPS}</b>.\n\n"
             "Pilih opsi di bawah untuk melanjutkan atau review CV:",
             reply_markup=kbd_resume,
@@ -114,7 +118,7 @@ async def send_welcome(message: types.Message):
         return
 
     greeting = (
-        f"Halo, {first_name}! 👋\n\n"
+        f"Halo, <b>{first_name}</b>! 👋\n\n"
         "<b>Selamat datang di BoonTrack Karir!</b>\n"
         "Asisten karir cerdas untuk pembuatan CV ATS-friendly dan diagnosa kualitas CV secara profesional.\n\n"
         "Silakan pilih layanan yang kamu butuhkan:"
@@ -136,7 +140,7 @@ async def render_free_cv_review(user_id: int, bot, cv_text: str, target_position
     # 1. Analisis skor dengan CV Review Engine
     eval_result = cv_review_engine.evaluate_cv(cv_text, target_position=target_position)
     
-    # 2. Filter Entitlement (Free Tier: Score + Breakdown + 3-5 Findings)
+    # 2. Filter Entitlement (Free Tier: Score + Breakdown + Findings)
     filtered_data = cv_review_service.filter_entitlement_response(eval_result, is_premium=False)
     
     # 3. Simpan ke database
@@ -157,7 +161,8 @@ async def render_free_cv_review(user_id: int, bot, cv_text: str, target_position
 
     # 5. Format Tampilan Pesan Diagnosis
     b = filtered_data.get("breakdown_scores", {})
-    findings_list = "\n".join([f"• {f}" for f in filtered_data.get("findings", [])])
+    findings = filtered_data.get("findings", [])
+    findings_list = "\n".join([f"• {f}" for f in findings]) if findings else "• Struktur CV terbaca dengan format dasar yang baik."
 
     review_msg = (
         "📊 <b>HASIL DIAGNOSIS SKOR CV KAMU</b>\n"
@@ -171,3 +176,11 @@ async def render_free_cv_review(user_id: int, bot, cv_text: str, target_position
         f"{findings_list}\n\n"
         "<i>Gunakan panduan di atas untuk mengoptimalkan CV kamu agar lolos screening HRD & ATS.</i>"
     )
+
+    kbd_result = InlineKeyboardMarkup(row_width=1)
+    kbd_result.add(
+        InlineKeyboardButton("📝 Perbaiki & Buat CV ATS Baru", callback_data="home_create_cv"),
+        InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
+    )
+
+    await bot.send_message(user_id, review_msg, reply_markup=kbd_result, parse_mode="HTML")
