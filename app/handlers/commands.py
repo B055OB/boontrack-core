@@ -187,7 +187,7 @@ async def render_free_cv_review(user_id: int, bot, cv_text: str, target_position
 
     kbd_result = InlineKeyboardMarkup(row_width=1)
     kbd_result.add(
-        InlineKeyboardButton("🚀 Order Career Page (Rp10.000)", callback_data="home_career_page"),
+        InlineKeyboardButton("🚀 Order Career Page (Rp10.000)", callback_data="don_10000"),
         InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
     )
 
