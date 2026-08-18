@@ -1134,18 +1134,20 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             await render_free_cv_review(user_id, bot, cv_text_summary, target_position=position)
             return
         else:
+            # Set state agar pesan berikutnya diproses sebagai input CV
+            user_state[user_id]["step"] = "WAITING_CV_INPUT"
+            
             kbd_review = types.InlineKeyboardMarkup(row_width=1)
             kbd_review.add(
                 types.InlineKeyboardButton("📝 Buat CV Baru via Bot", callback_data="home_create_cv"),
-                types.InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
+                types.InlineKeyboardButton("🏠 Batal / Menu Utama", callback_data="home_back_main")
             )
             msg_prompt = (
                 "🔍 <b>DIAGNOSIS & REVIEW CV GRATIS (ATS COMPLIANT)</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "Silakan kirimkan CV kamu untuk dianalisis oleh sistem:\n\n"
-                "📄 <b>Upload Dokumen:</b> Kirim file CV kamu (format <b>PDF</b> atau <b>DOCX/Word</b>).\n"
-                "✍️ <b>Atau Salin Teks:</b> Langsung <i>paste</i> ringkasan pengalaman dan keahlianmu ke chat ini.\n\n"
-                "<i>Belum punya CV sama sekali? Klik tombol di bawah untuk membuat dari awal:</i>"
+                "Silakan kirimkan CV kamu untuk dianalisis oleh AI:\n\n"
+                "✍️ <b>Ketik / Paste ringkasan CV atau pengalamanmu</b> langsung ke chat ini sekarang.\n\n"
+                "<i>Atau jika ingin membuat CV baru dari nol, klik tombol di bawah:</i>"
             )
             await bot.send_message(user_id, msg_prompt, reply_markup=kbd_review, parse_mode="HTML")
             return
@@ -1630,6 +1632,16 @@ async def handle_message(message: types.Message):
         else:
             user_state[user_id] = {"step": 0, "data": {}}
     t_db_end = time.perf_counter()
+
+    # PRIORITAS 1: ROUTING UTAMA KE AI COMPANION (QA / Chat Umum)
+    # PRIORITAS REVIEW CV INSTAN (DARI PASTE TEKS)
+    if current_step == "WAITING_CV_INPUT":
+        user_state[user_id]["step"] = 0
+        from app.handlers.commands import render_free_cv_review
+        user_data = user_state.get(user_id, {}).get("data", {})
+        position = user_data.get("target_position", "General Professional")
+        await render_free_cv_review(user_id, bot, text, target_position=position)
+        return
 
     # PRIORITAS 1: ROUTING UTAMA KE AI COMPANION (QA / Chat Umum)
     if current_step == "CAREER_QA" or current_step == 0:
