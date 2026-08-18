@@ -1135,20 +1135,18 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     if code == "trigger_cv_review":
         from app.handlers.commands import render_free_cv_review
         
-        # Ambil ringkasan teks CV dari berbagai kemungkinan key step (1-10 atau field nama)
-        position = user_data.get("target_position") or user_data.get(6) or user_data.get("6", "General Professional")
+        # Ambil ringkasan teks CV dari memory / DB
+        position = str(user_data.get("target_position") or user_data.get(6) or user_data.get("6") or "General Professional")
         cv_text_summary = " ".join([str(v) for k, v in user_data.items() if str(v).strip()]).strip()
         
         if cv_text_summary and len(cv_text_summary) > 20:
-            # Jika user sudah punya data CV -> Eksekusi diagnosis ATS gratis
             await render_free_cv_review(user_id, bot, cv_text_summary, target_position=position)
             return
         else:
-            # Jika belum ada data -> Berikan opsi upload/paste teks CV langsung
-            kbd_review = InlineKeyboardMarkup(row_width=1)
+            kbd_review = types.InlineKeyboardMarkup(row_width=1)
             kbd_review.add(
-                InlineKeyboardButton("📝 Buat CV Baru Dulu", callback_data="home_create_cv"),
-                InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
+                types.InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"),
+                types.InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
             )
             msg_prompt = (
                 "🔍 <b>DIAGNOSIS & REVIEW CV GRATIS</b>\n"
@@ -1159,20 +1157,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             )
             await bot.send_message(user_id, msg_prompt, reply_markup=kbd_review, parse_mode="HTML")
             return
-
-        is_paid = await check_user_paid(user_id)
-        await bot.send_message(user_id, "🔍 <b>Menganalisis kualitas CV kamu...</b>", parse_mode="HTML")
-        review_response = await handle_cv_review_process(user_id, position, cv_text_summary, is_paid)
-        
-        if isinstance(review_response, dict):
-            await send_chunked_message(
-                chat_id=user_id,
-                text=review_response.get("text", ""),
-                reply_markup=review_response.get("reply_markup"),
-                parse_mode=review_response.get("parse_mode", "HTML")
-            )
-        else:
-            await send_chunked_message(user_id, review_response, parse_mode="HTML")
+    
 
     elif code in ["don_5000", "don_10000", "don_25000"]:
         base_amt = 5000 if code == "don_5000" else (10000 if code == "don_10000" else 25000)
