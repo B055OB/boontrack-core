@@ -1133,15 +1133,31 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     slug = get_user_slug(user_data, callback_query.from_user.first_name)
 
     if code == "trigger_cv_review":
-        position = user_data.get("target_position", "General Position")
-        cv_text_summary = f"{user_data.get('3', '')} {user_data.get('4', '')} {user_data.get('6', '')}"
+        from app.handlers.commands import render_free_cv_review
         
-        if not cv_text_summary.strip():
-            await bot.send_message(
-                user_id,
-                "⚠️ <b>Kamu belum mengisi data CV di BoonTrack.</b>\n\nSilakan klik tombol 📝 <b>Buat / Edit CV Baru</b> terlebih dahulu!",
-                parse_mode="HTML"
+        # Ambil ringkasan teks CV dari berbagai kemungkinan key step (1-10 atau field nama)
+        position = user_data.get("target_position") or user_data.get(6) or user_data.get("6", "General Professional")
+        cv_text_summary = " ".join([str(v) for k, v in user_data.items() if str(v).strip()]).strip()
+        
+        if cv_text_summary and len(cv_text_summary) > 20:
+            # Jika user sudah punya data CV -> Eksekusi diagnosis ATS gratis
+            await render_free_cv_review(user_id, bot, cv_text_summary, target_position=position)
+            return
+        else:
+            # Jika belum ada data -> Berikan opsi upload/paste teks CV langsung
+            kbd_review = InlineKeyboardMarkup(row_width=1)
+            kbd_review.add(
+                InlineKeyboardButton("📝 Buat CV Baru Dulu", callback_data="home_create_cv"),
+                InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
             )
+            msg_prompt = (
+                "🔍 <b>DIAGNOSIS & REVIEW CV GRATIS</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Kamu belum memiliki riwayat CV yang tersimpan di bot.\n\n"
+                "👉 <b>Cara Instan:</b> Silakan <b>Ketik / Paste ringkasan teks CV kamu</b> langsung ke chat ini.\n\n"
+                "Atau klik tombol di bawah untuk membuat CV standar ATS dari awal:"
+            )
+            await bot.send_message(user_id, msg_prompt, reply_markup=kbd_review, parse_mode="HTML")
             return
 
         is_paid = await check_user_paid(user_id)
