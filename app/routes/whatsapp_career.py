@@ -5,17 +5,21 @@ from aiohttp import web
 from app.services.whatsapp_service import send_whatsapp_text
 from app.constants.messages import GREETING_MENU_MSG, CV_HANDOFF_MSG, MENU_INVALID_MSG
 from app.services.cv_state_engine import process_unified_cv_step, GLOBAL_USER_STATES
+from app.services.ai_service import ai_gateway
 
 logger = logging.getLogger(__name__)
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN") or os.getenv("META_WA_VERIFY_TOKEN", "boontrack_wa_secret_token")
 
 async def verify_webhook(request: web.Request) -> web.Response:
+    """Handshake Verifikasi Webhook Meta (GET)"""
     params = request.rel_url.query
     if params.get("hub.mode") == "subscribe" and params.get("hub.verify_token") == VERIFY_TOKEN:
+        logger.info("[WhatsApp] Webhook verified by Meta.")
         return web.Response(text=params.get("hub.challenge") or "", status=200)
     return web.Response(text="Verification failed", status=403)
 
 async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
+    """Menerima dan memproses pesan masuk dari WhatsApp (POST)"""
     try:
         data = await request.json()
     except Exception:
@@ -47,7 +51,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     user_text_clean = user_text.lower()
 
     # 1. Reset / Panggil Menu Utama
-    if user_text_clean in ["menu", "halo", "hi", "mulai", "start", "bantuan"]:
+    if user_text_clean in ["menu", "halo", "hi", "mulai", "start", "bantuan", "batal"]:
         GLOBAL_USER_STATES[sender_wa_id] = {"step": 0, "mode": "menu", "data": {}}
         await send_whatsapp_text(sender_wa_id, GREETING_MENU_MSG)
         return web.Response(text="EVENT_RECEIVED", status=200)
@@ -63,13 +67,13 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     current_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
     current_mode = current_session.get("mode", "menu")
 
-    # 3. Pengecekan Alur Aktif Buat CV (State > 0)
+    # 3. Pengecekan Alur Aktif Buat CV (State Step > 0)
     if current_session.get("step", 0) > 0:
         result = await process_unified_cv_step(sender_wa_id, user_text, platform="whatsapp")
         await send_whatsapp_text(sender_wa_id, result["reply_text"])
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 4. Routing Menu Pilihan
+    # 4. Navigasi Pilihan Menu (1, 2, 3)
     if user_text_clean == "1" or "buat cv" in user_text_clean:
         current_session["mode"] = "builder"
         result = await process_unified_cv_step(sender_wa_id, user_text, platform="whatsapp")
@@ -79,31 +83,56 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         current_session["mode"] = "review"
         await send_whatsapp_text(
             sender_wa_id,
-            "Silakan paste isi draf CV kamu di sini untuk dianalisis skor ATS dan perbaikannya. 🔍"
+            "Silakan ketik atau paste teks ringkasan pengalaman kerja / draf CV kamu di sini untuk diperiksa skor ATS-nya. 🔍"
         )
 
     elif user_text_clean == "3" or "konsultasi" in user_text_clean:
         current_session["mode"] = "consultation"
         await send_whatsapp_text(
             sender_wa_id,
-            "Sesi Konsultasi Karir aktif 💼.\n\nSilakan tanyakan apa saja seputar persiapan kerja, interview, maupun karir luar negeri. Ketik *Menu* jika ingin kembali ke opsi awal."
+            "Sesi Konsultasi Karir aktif 💼.\n\nSilakan tanyakan apa saja seputar persiapan kerja, interview, nego gaji, atau karir internasional. Ketik *Menu* untuk kembali ke opsi awal."
         )
 
-    # 5. Handle input berdasarkan Mode yang sedang aktif
+    # 5. Routing Pesan Aktif Berdasarkan Mode
     elif current_mode == "consultation":
-        # Sesi tanya jawab AI
-        await send_whatsapp_text(
-            sender_wa_id,
-            f"Terima kasih atas pertanyaannya! 💡\n\nUntuk persiapan berkarir (seperti ke Jepang), jalur utamanya meliputi program Specified Skilled Worker (SSW/Tokutei Ginou), magang (Gino Jisshuusei), atau Engineering Visa (butuh ijazah D3/S1 linier & sertifikat JLPT minimal N4/N3).\n\nAda spesifikasi bidang pekerjaan yang ingin kamu tuju?"
+        # Kirim prompt langsung ke AIGateway
+        ai_reply = await ai_gateway.generate(
+            user_message=user_text,
+            context={"user_id": sender_wa_id, "feature": "career_consultation"}
         )
+        
+        if not ai_reply:
+            ai_reply = "Mohon maaf, sistem konsultasi sedang padat. Silakan coba tanyakan kembali beberapa saat lagi."
+            
+        await send_whatsapp_text(sender_wa_id, ai_reply)
 
     elif current_mode == "review":
-        await send_whatsapp_text(
-            sender_wa_id,
-            "🔍 *Menganalisis draf CV kamu...*\n\nSkor ATS dan rekomendasi kata kunci sedang disiapkan oleh AI."
+        review_prompt = (
+            "Lakukan review singkat dan berikan analisis skor ATS (skala 1-100) serta 2-3 saran perbaikan "
+            f"untuk teks CV berikut:\n\n{user_text}"
         )
+        ai_reply = await ai_gateway.generate(
+            user_message=review_prompt,
+            context={"user_id": sender_wa_id, "feature": "cv_review"}
+        )
+        if not ai_reply:
+            ai_reply = "Format teks CV telah diterima. Rekomendasi perbaikan sedang dianalisis."
+            
+        await send_whatsapp_text(sender_wa_id, ai_reply)
 
     else:
+        # Jika bukan di dalam mode khusus dan teks berbentuk pertanyaan umum -> Arahkan otomatis ke AI Gateway
+        is_question = any(q in user_text_clean for q in ["bagaimana", "gimana", "apa", "berapa", "kenapa", "mengapa", "cara", "?"])
+        if is_question:
+            current_session["mode"] = "consultation"
+            ai_reply = await ai_gateway.generate(
+                user_message=user_text,
+                context={"user_id": sender_wa_id, "feature": "general_career_chat"}
+            )
+            if ai_reply:
+                await send_whatsapp_text(sender_wa_id, ai_reply)
+                return web.Response(text="EVENT_RECEIVED", status=200)
+
         await send_whatsapp_text(sender_wa_id, MENU_INVALID_MSG)
 
     return web.Response(text="EVENT_RECEIVED", status=200)
