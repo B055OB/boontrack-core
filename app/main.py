@@ -885,22 +885,26 @@ def create_cv_docx(user_id, data):
     return file_path
 
 async def get_career_home_keyboard(user_id: int):
-    is_paid = await check_user_paid(user_id)
-    kbd = InlineKeyboardMarkup(row_width=1)
+    try:
+        is_paid = await check_user_paid(user_id)
+    except Exception:
+        is_paid = False
+
+    kbd = types.InlineKeyboardMarkup(row_width=1)
     kbd.add(
-        InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"),
-        InlineKeyboardButton("🔍 Review CV Saya", callback_data="trigger_cv_review")
+        types.InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"),
+        types.InlineKeyboardButton("🔍 Review CV Saya", callback_data="trigger_cv_review")
     )
     
     if is_paid:
-        kbd.add(InlineKeyboardButton("🌐 Kelola Career Page Saya", callback_data="cp_manage"))
+        kbd.add(types.InlineKeyboardButton("🌐 Kelola Career Page Saya", callback_data="cp_manage"))
     else:
-        kbd.add(InlineKeyboardButton("🌐 Buat Career Page Profesional (Rp10.000)", callback_data="don_10000"))
+        kbd.add(types.InlineKeyboardButton("🌐 Buat Career Page Profesional (Rp10.000)", callback_data="don_10000"))
         
     kbd.add(
-        InlineKeyboardButton("📚 Ebook & Program Digital", callback_data="home_digital_products"),
-        InlineKeyboardButton("🎁 Cek Referral Saya", callback_data="home_check_ref"),
-        InlineKeyboardButton("💼 Tanya Seputar Dunia Kerja", callback_data="home_career_qa")
+        types.InlineKeyboardButton("📚 Ebook & Program Digital", callback_data="home_digital_products"),
+        types.InlineKeyboardButton("🎁 Cek Referral Saya", callback_data="home_check_ref"),
+        types.InlineKeyboardButton("💼 Tanya Seputar Dunia Kerja", callback_data="home_career_qa")
     )
     return kbd
 
