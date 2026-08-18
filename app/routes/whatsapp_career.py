@@ -70,7 +70,8 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     # 3. Pengecekan Alur Aktif Buat CV (State Step > 0)
     if current_session.get("step", 0) > 0:
         result = await process_unified_cv_step(sender_wa_id, user_text, platform="whatsapp")
-        await send_whatsapp_text(sender_wa_id, result["reply_text"])
+        for msg in result.get("messages", [result["reply_text"]]):
+            await send_whatsapp_text(sender_wa_id, msg)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
     # 4. Navigasi Pilihan Menu (1, 2, 3)

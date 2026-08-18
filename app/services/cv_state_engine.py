@@ -12,13 +12,9 @@ def format_text_for_whatsapp(text: str) -> str:
     """Mengubah format HTML Telegram menjadi Markdown WhatsApp yang rapi"""
     if not text:
         return ""
-    # Ubah <b> atau <strong> menjadi *bold*
     text = re.sub(r"</?(b|strong)>", "*", text)
-    # Ubah <i> atau <em> menjadi _italic_
     text = re.sub(r"</?(i|em)>", "_", text)
-    # Ubah <code> menjadi ```code```
     text = re.sub(r"</?code>", "```", text)
-    # Hapus tag HTML sisa lainnya jika ada
     text = re.sub(r"<[^>]+>", "", text)
     return text.strip()
 
@@ -46,6 +42,7 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
         )
         return {
             "reply_text": intro_text,
+            "messages": [intro_text],
             "file_path": None,
             "is_completed": False
         }
@@ -73,15 +70,18 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
         q_raw = CV_QUESTIONS.get(next_step, "")
         q_formatted = format_text_for_whatsapp(q_raw)
         
+        reply_msg = f"📝 *Langkah {next_step}/{TOTAL_STEPS}*\n\n{q_formatted}"
         return {
-            "reply_text": f"📝 *Langkah {next_step}/{TOTAL_STEPS}*\n\n{q_formatted}",
+            "reply_text": reply_msg,
+            "messages": [reply_msg],
             "file_path": None,
             "is_completed": False
         }
 
-    # Step Terakhir Selesai -> Generate Ringkasan
+    # Step 10 Selesai -> Generate & Kirim Penawaran Lengkap
     session["step"] = 0
     
+    # 1. Simpan versi ke DB
     try:
         from app.core.database import save_dropoff, save_cv_version, track_event
         await save_dropoff(str(user_id), TOTAL_STEPS, user_data)
@@ -91,14 +91,37 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
     except Exception:
         pass
 
-    completion_text = (
-        "🎉 *Data Pembuatan CV Selesai Dihimpun!*\n\n"
-        "Profil dan riwayat karir kamu telah tersimpan rapi di sistem BoonTrack.\n\n"
-        "Ketik *2* untuk melakukan Review Skor ATS, atau ketik *Menu* untuk opsi layanan lainnya."
+    # 2. Generate File Docx
+    file_path = None
+    try:
+        import app.services.docx_service as docx_srv
+        if hasattr(docx_srv, "generate_cv_docx"):
+            file_path = await docx_srv.generate_cv_docx(user_id, user_data)
+    except Exception as e:
+        logger.error(f"[CV Generate File] {e}")
+
+    # 3. Kumpulan Pesan Akhir Funnel
+    msg_1 = (
+        "📄 *CV ATS-Friendly Kamu Berhasil Dibuat!*\n\n"
+        "Data riwayat karir dan profilmu sudah selesai diproses dan dirapikan oleh sistem BoonTrack. 🚀"
+    )
+
+    msg_2 = (
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🎁 *BONUS: WEBSITE CAREER PAGE & PORTOFOLIO GRATIS!*\n\n"
+        "Mau dibuatkan *Website Portfolio Personal* otomatis siap pakai untuk melamar kerja (contoh: _namamu.boontrack.com_)?\n\n"
+        "Cukup bagikan layanan BoonTrack ke 3 teman pencari kerja. Ketik *Career Page* untuk informasi klaim selengkapnya! 🌐"
+    )
+
+    msg_3 = (
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "BoonTrack dikembangkan secara mandiri untuk membantu pencari kerja di Indonesia.\n\n"
+        "Ketik *2* jika ingin mengecek skor ATS & optimasi kata kunci, atau ketik *Menu* untuk opsi layanan lainnya. ☕"
     )
 
     return {
-        "reply_text": completion_text,
-        "file_path": None,
+        "reply_text": msg_1,
+        "messages": [msg_1, msg_2, msg_3],
+        "file_path": file_path,
         "is_completed": True
     }
