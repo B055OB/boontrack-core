@@ -4,6 +4,7 @@ import json
 import logging
 from aiohttp import web
 from app.services.whatsapp_service import send_whatsapp_text
+from app.constants.messages import GREETING_MENU_MSG, CV_HANDOFF_MSG, MENU_INVALID_MSG
 
 logger = logging.getLogger(__name__)
 
@@ -53,32 +54,45 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     if msg_type != "text":
         await send_whatsapp_text(
             sender_wa_id,
-            "Halo! Saat ini bot membaca teks pesan dan format ID review CV dari WebChat. Ada yang bisa kami bantu?"
+            "Halo! Saat ini bot hanya dapat memproses pesan teks. Ketik *Menu* untuk melihat opsi layanan."
         )
         return web.Response(text="EVENT_RECEIVED", status=200)
 
     user_text = msg_obj.get("text", {}).get("body", "").strip()
+    user_text_clean = user_text.lower()
 
     # 3. Hand-off Continuity dari WebChat (Deteksi Review ID)
     match = re.search(r"ID:\s*([A-Za-z0-9_\-]+)", user_text, re.IGNORECASE)
     if match:
         cv_identifier = match.group(1).strip()
-        welcome_text = (
-            f"Halo! 👋 Selamat datang di BoonTrack Career Assistant.\n\n"
-            f"Data evaluasi CV kamu dengan ID: <b>{cv_identifier}</b> berhasil tersambung.\n\n"
-            f"Berdasarkan analisis awal, ada beberapa poin perbaikan pada struktur metrik dan kata kunci ATS agar lolos seleksi awal HRD.\n\n"
-            f"Mau kita bahas rekomendasi dan contoh perbaikannya sekarang?"
-        )
+        welcome_text = CV_HANDOFF_MSG.format(id=cv_identifier)
         await send_whatsapp_text(sender_wa_id, welcome_text)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 4. Fallback Default Response
-    reply_text = (
-        "Halo! Terima kasih sudah menghubungi BoonTrack Assistant. 🚀\n\n"
-        "Kamu bisa mengecek skor ATS, optimasi CV, dan mengaktifkan Website Career Page profesional langsung dari sini.\n\n"
-        "Ketik posisi/role impian yang sedang kamu incar untuk memulai konsultasi!"
-    )
-    await send_whatsapp_text(sender_wa_id, reply_text)
+    # 4. Routing Menu Interaktif & Pilihan Layanan
+    if user_text_clean in ["menu", "halo", "hi", "mulai", "start", "bantuan"]:
+        await send_whatsapp_text(sender_wa_id, GREETING_MENU_MSG)
+
+    elif user_text_clean == "1" or "buat cv" in user_text_clean:
+        await send_whatsapp_text(
+            sender_wa_id,
+            "Siap! Mari kita buat CV ATS baru secara bertahap. 📝\n\nSiapa nama lengkapmu?"
+        )
+
+    elif user_text_clean == "2" or "review cv" in user_text_clean:
+        await send_whatsapp_text(
+            sender_wa_id,
+            "Silakan kirimkan ringkasan pengalaman kerja, deskripsi profil, atau paste teks CV kamu di sini untuk dianalisis skor ATS-nya. 🔍"
+        )
+
+    elif user_text_clean == "3" or "konsultasi" in user_text_clean:
+        await send_whatsapp_text(
+            sender_wa_id,
+            "Sesi Konsultasi Karir aktif 💼.\n\nAda pertanyaan atau kendala seputar interview kerja, negosiasi gaji, atau transisi karir yang ingin dibahas?"
+        )
+
+    else:
+        await send_whatsapp_text(sender_wa_id, MENU_INVALID_MSG)
 
     return web.Response(text="EVENT_RECEIVED", status=200)
 
