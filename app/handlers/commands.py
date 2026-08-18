@@ -91,7 +91,7 @@ async def send_welcome(message: types.Message):
     kbd.add(
         InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"),
         InlineKeyboardButton("🔍 Review CV Saya", callback_data="trigger_cv_review"),
-        InlineKeyboardButton("🌐 Buat Career Page Profesional (Rp10.000)", callback_data="home_career_page"),
+        InlineKeyboardButton("🌐 Buat Career Page Profesional (Rp10.000)", callback_data="don_10000"),
         InlineKeyboardButton("📚 Ebook & Program Digital", callback_data="home_digital_products"),
         InlineKeyboardButton("🎁 Cek Referral Saya", callback_data="home_check_ref"),
         InlineKeyboardButton("💬 Tanya Seputar Dunia Kerja", callback_data="home_career_qa")
@@ -181,13 +181,14 @@ async def render_free_cv_review(user_id: int, bot, cv_text: str, target_position
         "💡 <b>Poin Evaluasi AI:</b>\n"
         f"{findings_list}\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🔥 <b>MAU CV REKOMENDASI AI & PORTOFOLIO INTERAKTIF?</b>\n"
-        "<b>Buka fitur CV rekomendasi terbaik dan Career Page Profesional kamu sekarang untuk meningkatkan peluang dipanggil interview!</b>"
+        "🔥 <b>Bikin HRD Langsung Lirik Lamaranmu!</b>\n"
+        "Dapatkan <b>CV Rekomendasi AI + Career Page</b>. Order Rp10rb atau ajak 5 teman untuk akses <b>GRATIS</b>! ✨"
     )
 
     kbd_result = InlineKeyboardMarkup(row_width=1)
     kbd_result.add(
         InlineKeyboardButton("🚀 Order Career Page (Rp10.000)", callback_data="don_10000"),
+        InlineKeyboardButton("📣 Gratis via Invite 5 Teman (Referral)", callback_data="home_check_ref"),
         InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
     )
 
