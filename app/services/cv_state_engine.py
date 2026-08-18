@@ -128,11 +128,14 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
 
     file_path = None
     try:
-        import app.services.docx_service as docx_srv
-        if hasattr(docx_srv, "generate_cv_docx"):
-            file_path = await docx_srv.generate_cv_docx(user_id, user_data)
+        from app.services.cv_generator_service import cv_generator_service
+        file_path = await cv_generator_service.polish_and_build_cv(
+            user_id=str(user_id), 
+            raw_data=user_data, 
+            lang_mode=session.get("lang", "id")
+        )
     except Exception as e:
-        logger.error(f"[CV Generate File] {e}")
+        logger.error(f"[CV Polisher] {e}")
 
     msg_1 = (
         "📄 *CV ATS-Friendly Kamu Berhasil Dibuat!*\n\n"
