@@ -38,7 +38,7 @@ from app.routes.webchat import router as webchat_router
 from app.modules.public_services.router import register_public_service_routes
 from app.modules.commerce.router import commerce_routes
 from app.handlers.career_page_flow import register_career_page_handlers, start_career_page_claim
-
+from app.routes.whatsapp_career import register_whatsapp_career_routes
 # ============================================================
 # B2B MULTI-TENANT ROUTERS & HANDLERS
 # ============================================================
@@ -2410,6 +2410,8 @@ async def start_web_server():
     # Registrasi Seluruh Route Multi-Tenant B2B & Device Auth Engine
     register_telegram_routes(app, async_session)
     register_whatsapp_routes(app, async_session)
+
+    register_whatsapp_career_routes(app)
 
     # Device Lifecycle Endpoints (Android BoonTrack Reader)
     async def _wrap_pair(req):
