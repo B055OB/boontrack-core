@@ -162,6 +162,12 @@ async def render_free_cv_review(user_id: int, bot, cv_text: str, target_position
     review_msg = (
         "📊 <b>HASIL DIAGNOSIS SKOR CV KAMU</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎯 <b>Overall Score: {filtered_data.get('overall_score', 0)} / 100</b>\n\n"
-        "<b>Breakdown Kategori:</b>\n"
-        f"• ATS Compatibility : <b>{b.get('ats_compatibility',
+        f"🎯 <b>Overall Score:</b> {filtered_data.get('overall_score', 0)} / 100\n\n"
+        "📌 <b>Breakdown Kategori:</b>\n"
+        f"• ATS Compatibility: <b>{b.get('ats_compatibility', 0)}/100</b>\n"
+        f"• Relevansi Format: <b>{b.get('format_relevance', 0)}/100</b>\n"
+        f"• Kualitas Pengalaman: <b>{b.get('experience_impact', 0)}/100</b>\n\n"
+        "💡 <b>Poin Evaluasi AI:</b>\n"
+        f"{findings_list}\n\n"
+        "<i>Gunakan panduan di atas untuk mengoptimalkan CV kamu agar lolos screening HRD & ATS.</i>"
+    )
