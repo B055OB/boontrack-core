@@ -1631,7 +1631,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
 # ============================================================
 # HANDLER UPLOAD FILE DOKUMEN CV (.DOCX, .PDF, .TXT)
 # ============================================================
-@dp.message_handler(content_types=['document'])
 async def handle_document_upload(message: types.Message):
     user_id = message.from_user.id
     doc = message.document
@@ -1648,20 +1647,19 @@ async def handle_document_upload(message: types.Message):
     wait_msg = await message.reply("⏳ <b>Sedang membaca dan menganalisis dokumen CV kamu...</b>", parse_mode="HTML")
 
     try:
-        import os
-        import tempfile
+        import io
         from docx import Document
 
-        file_info = await bot.get_file(doc.file_id)
-        temp_dir = tempfile.gettempdir()
-        file_path = os.path.join(temp_dir, f"cv_upload_{user_id}_{doc.file_name}")
-        await bot.download_file(file_info.file_path, destination=file_path)
+        # Download file langsung ke memory buffer
+        file_bytes = io.BytesIO()
+        await doc.download(destination_file=file_bytes)
+        file_bytes.seek(0)
 
         extracted_text = ""
 
         # Ekstraksi DOCX
         if file_name.endswith('.docx'):
-            word_doc = Document(file_path)
+            word_doc = Document(file_bytes)
             full_text = []
             for para in word_doc.paragraphs:
                 if para.text.strip():
@@ -1675,18 +1673,42 @@ async def handle_document_upload(message: types.Message):
 
         # Ekstraksi TXT
         elif file_name.endswith('.txt'):
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                extracted_text = f.read()
+            extracted_text = file_bytes.read().decode('utf-8', errors='ignore')
 
         # Ekstraksi PDF
         elif file_name.endswith('.pdf'):
             try:
                 import pypdf
-                reader = pypdf.PdfReader(file_path)
+                reader = pypdf.PdfReader(file_bytes)
                 full_text = [page.extract_text() for page in reader.pages if page.extract_text()]
                 extracted_text = "\n".join(full_text)
             except Exception:
                 extracted_text = ""
+
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=wait_msg.message_id)
+        except Exception:
+            pass
+
+        if not extracted_text or len(extracted_text.strip()) < 30:
+            await message.reply(
+                "⚠️ Teks di dalam dokumen tidak terbaca atau terlalu pendek (mungkin format gambar/scan).\n"
+                "Silakan kirim file DOCX teks biasa atau salin langsung teks CV kamu ke chat ini.",
+                parse_mode="HTML"
+            )
+            return
+
+        # Eksekusi Review ATS Engine
+        user_data = user_state.get(user_id, {}).get("data", {})
+        position = str(user_data.get("target_position") or "General Professional")
+        
+        from app.handlers.commands import render_free_cv_review
+        user_state[user_id]["step"] = 0
+        await render_free_cv_review(user_id, bot, extracted_text, target_position=position)
+
+    except Exception as e:
+        print(f"[Document Extraction Error]: {e}", flush=True)
+        await message.reply("❌ Terjadi kendala saat membaca file. Silakan coba lagi atau paste teks CV kamu langsung.", parse_mode="HTML")
 
         # Hapus temporary file
         if os.path.exists(file_path):
