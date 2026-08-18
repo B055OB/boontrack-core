@@ -1114,8 +1114,22 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     code = callback_query.data
     
-    await bot.edit_message_reply_markup(user_id, callback_query.message.message_id, reply_markup=None)
+    # 1. Selalu jawab callback agar icon loading di tombol Telegram berhenti
+    try:
+        await callback_query.answer()
+    except Exception:
+        pass
+
+    # 2. Hilangkan markup lama dengan aman (abaikan jika sudah terhapus)
+    try:
+        await callback_query.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
     if user_id not in user_state:
+        progress, _ = await get_user_history(user_id)
+        saved_data = progress.get("data", {}) if progress else {}
+        user_state[user_id] = {"step": 0, "data": saved_data}
         progress, _ = await get_user_history(user_id)
         saved_data = progress.get("data", {}) if progress else {}
         user_state[user_id] = {"step": 0, "data": saved_data}
