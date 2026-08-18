@@ -1153,7 +1153,7 @@ async def handle_trigger_cv_review(callback_query: types.CallbackQuery):
     "cp_confirm_default_slug", "cp_edit_posisi_btn", "cp_edit_summary_btn", 
     "cp_edit_exp", "theme_happy", "theme_blue", "theme_dark", "theme_emerald"
 ])
-async def handle_callback_navigation(callback_query: types.CallbackQuery):
+aasync def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     code = callback_query.data
     
@@ -1163,16 +1163,20 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     except Exception:
         pass
 
-    # 2. Hilangkan markup lama dengan aman (abaikan jika sudah terhapus)
+    # 2. Navigasi Kembali ke Menu Utama
+    if code in ["home_back_main", "main_menu", "back_to_main"]:
+        user_state[user_id] = {"step": 0, "data": {}}
+        from app.handlers.commands import send_welcome
+        await send_welcome(callback_query.message)
+        return
+
+    # 3. Hilangkan markup lama dengan aman (abaikan jika sudah terhapus)
     try:
         await callback_query.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
 
     if user_id not in user_state:
-        progress, _ = await get_user_history(user_id)
-        saved_data = progress.get("data", {}) if progress else {}
-        user_state[user_id] = {"step": 0, "data": saved_data}
         progress, _ = await get_user_history(user_id)
         saved_data = progress.get("data", {}) if progress else {}
         user_state[user_id] = {"step": 0, "data": saved_data}
@@ -1200,13 +1204,13 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
                 types.InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
             )
             msg_prompt = (
-            "🔍 <b>DIAGNOSIS & REVIEW CV GRATIS (ATS COMPLIANT)</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Silakan kirimkan CV kamu untuk dianalisis dan dinilai oleh AI:\n\n"
-            "📁 <b>Upload File:</b> Kirim file CV dalam format <b>Word (.docx)</b>, <b>PDF (.pdf)</b>, atau <b>.txt</b>\n"
-            "✍️ <b>Ketik / Paste:</b> Atau salin ringkasan teks CV langsung ke chat ini.\n\n"
-            "<i>Mau buat CV ATS baru dari nol? Klik tombol di bawah:</i>"
-        )
+                "🔍 <b>DIAGNOSIS & REVIEW CV GRATIS (ATS COMPLIANT)</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Silakan kirimkan CV kamu untuk dianalisis dan dinilai oleh AI:\n\n"
+                "📁 <b>Upload File:</b> Kirim file CV dalam format <b>Word (.docx)</b>, <b>PDF (.pdf)</b>, atau <b>.txt</b>\n"
+                "✍️ <b>Ketik / Paste:</b> Atau salin ringkasan teks CV langsung ke chat ini.\n\n"
+                "<i>Mau buat CV ATS baru dari nol? Klik tombol di bawah:</i>"
+            )
             await bot.send_message(user_id, msg_prompt, reply_markup=kbd_review, parse_mode="HTML")
             return
     
@@ -1631,6 +1635,7 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
 # ============================================================
 # HANDLER UPLOAD FILE DOKUMEN CV (.DOCX, .PDF, .TXT)
 # ============================================================
+@dp.message_handler(content_types=['document'])
 async def handle_document_upload(message: types.Message):
     user_id = message.from_user.id
     doc = message.document
@@ -1639,18 +1644,19 @@ async def handle_document_upload(message: types.Message):
     if not (file_name.endswith('.docx') or file_name.endswith('.pdf') or file_name.endswith('.txt')):
         await message.reply(
             "⚠️ Format file belum didukung.\n"
-            "Silakan upload dokumen CV dalam format <b>Word (.docx)</b>, <b>PDF (.pdf)</b>, atau <b>Teks (.txt)</b>.",
+            "Silakan kirim dokumen CV dalam format <b>Word (.docx)</b>, <b>PDF (.pdf)</b>, atau <b>Teks (.txt)</b>.",
             parse_mode="HTML"
         )
         return
 
-    wait_msg = await message.reply("⏳ <b>Sedang membaca dan menganalisis dokumen CV kamu...</b>", parse_mode="HTML")
+    # Notifikasi awal agar user tahu proses sedang berjalan
+    wait_msg = await message.reply("⏳ <b>Dokumen diterima! Sedang membaca dan mengekstrak CV...</b>", parse_mode="HTML")
 
     try:
         import io
         from docx import Document
 
-        # Download file langsung ke memory buffer
+        # Download langsung ke memory buffer
         file_bytes = io.BytesIO()
         await doc.download(destination_file=file_bytes)
         file_bytes.seek(0)
@@ -1685,18 +1691,26 @@ async def handle_document_upload(message: types.Message):
             except Exception:
                 extracted_text = ""
 
-        try:
-            await bot.delete_message(chat_id=user_id, message_id=wait_msg.message_id)
-        except Exception:
-            pass
-
         if not extracted_text or len(extracted_text.strip()) < 30:
-            await message.reply(
+            await bot.edit_message_text(
                 "⚠️ Teks di dalam dokumen tidak terbaca atau terlalu pendek (mungkin format gambar/scan).\n"
-                "Silakan kirim file DOCX teks biasa atau salin langsung teks CV kamu ke chat ini.",
+                "Silakan kirim file DOCX teks atau salin langsung teks CV kamu ke chat ini.",
+                chat_id=user_id,
+                message_id=wait_msg.message_id,
                 parse_mode="HTML"
             )
             return
+
+        # Update status saat AI mulai evaluasi
+        try:
+            await bot.edit_message_text(
+                "🤖 <b>AI sedang menganalisis skor ATS & detail perbaikan CV kamu...</b>",
+                chat_id=user_id,
+                message_id=wait_msg.message_id,
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
 
         # Eksekusi Review ATS Engine
         user_data = user_state.get(user_id, {}).get("data", {})
@@ -1706,38 +1720,23 @@ async def handle_document_upload(message: types.Message):
         user_state[user_id]["step"] = 0
         await render_free_cv_review(user_id, bot, extracted_text, target_position=position)
 
-    except Exception as e:
-        print(f"[Document Extraction Error]: {e}", flush=True)
-        await message.reply("❌ Terjadi kendala saat membaca file. Silakan coba lagi atau paste teks CV kamu langsung.", parse_mode="HTML")
-
-        # Hapus temporary file
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
+        # Hapus loading setelah hasil review selesai terkirim
         try:
             await bot.delete_message(chat_id=user_id, message_id=wait_msg.message_id)
         except Exception:
             pass
 
-        if not extracted_text or len(extracted_text.strip()) < 30:
-            await message.reply(
-                "⚠️ Teks di dalam dokumen tidak terbaca atau terlalu pendek.\n"
-                "Silakan kirim file DOCX teks biasa atau salin langsung teks CV kamu ke chat ini.",
-                parse_mode="HTML"
-            )
-            return
-
-        # Eksekusi Review ATS Engine
-        user_data = user_state.get(user_id, {}).get("data", {})
-        position = str(user_data.get("target_position") or "General Professional")
-        
-        from app.handlers.commands import render_free_cv_review
-        user_state[user_id]["step"] = 0
-        await render_free_cv_review(user_id, bot, extracted_text, target_position=position)
-
     except Exception as e:
         print(f"[Document Extraction Error]: {e}", flush=True)
-        await message.reply("❌ Terjadi kendala saat membaca file. Silakan coba lagi atau paste teks CV kamu langsung.", parse_mode="HTML")
+        try:
+            await bot.edit_message_text(
+                "❌ Terjadi kendala saat membaca file. Silakan coba lagi atau paste teks CV kamu langsung.",
+                chat_id=user_id,
+                message_id=wait_msg.message_id,
+                parse_mode="HTML"
+            )
+        except Exception:
+            await message.reply("❌ Terjadi kendala saat membaca file. Silakan coba lagi atau paste teks CV kamu langsung.", parse_mode="HTML")
 
 @dp.message_handler(content_types=['photo'])
 async def handle_photo(message: types.Message):
