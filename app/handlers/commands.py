@@ -13,25 +13,59 @@ TOTAL_STEPS = 10
 # INISIALISASI GLOBAL STATE
 user_state = {}
 
+TOTAL_STEPS = len(CV_QUESTIONS)
+
 CV_QUESTIONS = {
-    1: "👤 Siapa nama lengkapmu?",
-    2: "📧 Email aktif yang bisa dihubungi recruiter?",
-    3: "📱 Nomor WhatsApp / HP aktif? <i>(contoh: 081234567890)</i>",
-    4: "📍 Di kota mana kamu berdomisili saat ini?",
-    5: "🔗 Link akun LinkedIn kamu? <i>(Ketik '-' jika tidak ada)</i>",
-    6: "🎯 Posisi/pekerjaan apa yang ingin kamu lamar?",
-    7: (
-        "💼 <b>Pengalaman kerja terakhirmu?</b>\n\n"
-        "Tuliskan nama posisi, tempat kerja, dan tahunnya.\n"
-        "Jika ada lebih dari 1 pekerjaan, pisahkan dengan <b>pindah baris (Enter)</b>, tanda <b>garis tegak ('|')</b>, atau <b>koma (',')</b>.\n\n"
-        "<i>Contoh:</i>\n"
-        "Kasir — Toko Makmur (2020 - 2022)\n"
-        "Staff Admin — PT ABC (2022 - 2024)\n\n"
-        "<i>(Ketik '-' jika fresh graduate)</i>"
+    1: (
+        "Sebelum kita mulai, CV kamu ingin dibuat dalam bahasa apa?\n\n"
+        "1️⃣ *CV English (Ngobrol B. Indonesia)*\n"
+        "2️⃣ *CV Bahasa Indonesia*\n"
+        "3️⃣ *Full English*\n\n"
+        "_(Ketik angka 1, 2, atau 3)_"
     ),
-    8: "🏆 Ceritakan tugas atau pencapaian utamamu di pekerjaan tersebut. <i>(Tulis santai saja, nanti saya bantu rapikan menjadi poin-poin profesional)</i>",
-    9: "🎓 Pendidikan terakhirmu? <i>(contoh: S1 Manajemen, Universitas Terbuka, 2023)</i>",
-    10: "🛠️ Apa saja skill atau keahlian utamamu? <i>(contoh: Microsoft Excel, Pelayanan Pelanggan, Kasir)</i>"
+    2: (
+        "Siapa **nama lengkap** yang ingin kamu tampilkan di CV?\n\n"
+        "_(Contoh: Rayi Gemilang)_"
+    ),
+    3: (
+        "Nomor kontak aktif yang bisa dihubungi HRD:\n\n"
+        "💡 *Tips:* Ketik *'pakai wa'* jika ingin memakai nomor WhatsApp ini otomatis, "
+        "tulis nomor lain, atau ketik *-* jika ingin dilewati."
+    ),
+    4: (
+        "Alamat **email aktif** kamu?\n\n"
+        "_(Ketik email atau ketik *-* jika ingin diisi nanti saat edit manual)_"
+    ),
+    5: (
+        "**Kota domisili** saat ini?\n\n"
+        "_(Contoh: Bandung / Jakarta Selatan / ketik *-* untuk lewati)_"
+    ),
+    6: (
+        "**Posisi atau bidang pekerjaan** yang sedang kamu incar?\n\n"
+        "_(Contoh: Admin Sales, Digital Marketer, Barista, Staff Gudang)_"
+    ),
+    7: (
+        "Tuliskan **pengalaman kerja terakhirmu** (Posisi, Perusahaan, & Tahun):\n\n"
+        "💡 *Tips:* Jika Fresh Graduate / belum ada pengalaman resmi, ketik *-* "
+        "atau tulis pengalaman magang / organisasi kampus."
+    ),
+    8: (
+        "**Pendidikan terakhirmu** (Jurusan, Sekolah/Kampus, Tahun Lulus)?\n\n"
+        "_(Contoh: SMA Negeri 5 Bandung 2020 atau S1 Manajemen Unpad 2023 / ketik *-*)_"
+    ),
+    9: (
+        "Sebutkan 2–4 **keahlian utama (skills)** yang kamu miliki:\n\n"
+        "💡 *Contoh:* Microsoft Excel, Negosiasi Penjualan, Canva, Layanan Pelanggan "
+        "_(Ketik *-* jika ingin AI memilihkan otomatis berdasarkan posisimu)_"
+    ),
+    10: (
+        "Punya **link LinkedIn / Portofolio / Sertifikat** pendukung?\n\n"
+        "_(Opsional: Tulis link/namanya, atau langsung ketik *-* untuk dilewati)_"
+    ),
+    11: (
+        "Punya deskripsi singkat tentang dirimu?\n\n"
+        "💡 *Rekomendasi:* Langsung ketik *-* saja agar **AI BoonTrack yang merangkumkan profil profesional terbaik** untukmu!"
+    )
 }
 
 def get_progress_bar(step: int) -> str:
