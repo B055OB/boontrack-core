@@ -1142,18 +1142,8 @@ async def handle_trigger_cv_review(callback_query: types.CallbackQuery):
     await callback_query.message.answer(msg_prompt, reply_markup=kbd_review, parse_mode="HTML")
     return
 
-@dp.callback_query_handler(lambda c: c.data in [
-    "status_fresh", "status_exp", "lang_id", "lang_en", "lang_hybrid", "lang_jp",
-    "skip_optional", "resume_flow", "restart_flow",
-    "home_create_cv", "home_check_ref", "home_career_qa",
-    "home_digital_products", "buy_ebook_interview", "home_back_main",
-    "don_5000", "don_10000", "don_25000", "cancel_checkout",
-    "cp_build_now", "cp_build_later", "cp_manage", "cp_upload_cv",
-    "cp_edit_data", "cp_import_cv", "cp_confirm_import", "cp_change_slug_start",
-    "cp_confirm_default_slug", "cp_edit_posisi_btn", "cp_edit_summary_btn", 
-    "cp_edit_exp", "theme_happy", "theme_blue", "theme_dark", "theme_emerald"
-])
-aasync def handle_callback_navigation(callback_query: types.CallbackQuery):
+@dp.callback_query_handler(lambda c: True)
+async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     code = callback_query.data
     
