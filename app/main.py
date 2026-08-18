@@ -1107,11 +1107,6 @@ async def handle_trigger_cv_review(callback_query: types.CallbackQuery):
         await callback_query.answer()
     except Exception:
         pass
-        
-    try:
-        await callback_query.message.edit_reply_markup(reply_markup=None)
-    except Exception:
-        pass
 
     if user_id not in user_state:
         user_state[user_id] = {"step": 0, "data": {}}
@@ -1120,12 +1115,13 @@ async def handle_trigger_cv_review(callback_query: types.CallbackQuery):
     cv_text_summary = " ".join([str(v) for k, v in user_data.items() if str(v).strip()]).strip()
     position = str(user_data.get("target_position") or user_data.get(6) or user_data.get("6") or "General Professional")
 
+    # Jika user sudah punya riwayat isi CV di bot, langsung generate review
     if cv_text_summary and len(cv_text_summary) > 20:
         from app.handlers.commands import render_free_cv_review
         await render_free_cv_review(user_id, bot, cv_text_summary, target_position=position)
         return
 
-    # Set state untuk input teks CV
+    # Set state untuk input teks/data CV baru
     user_state[user_id]["step"] = "WAITING_CV_INPUT"
 
     kbd_review = types.InlineKeyboardMarkup(row_width=1)
@@ -1136,11 +1132,13 @@ async def handle_trigger_cv_review(callback_query: types.CallbackQuery):
     msg_prompt = (
         "🔍 <b>DIAGNOSIS & REVIEW CV GRATIS (ATS COMPLIANT)</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Silakan kirimkan CV kamu untuk dianalisis oleh AI:\n\n"
+        "Silakan kirimkan data CV kamu untuk dianalisis oleh AI:\n\n"
         "✍️ <b>Ketik / Paste ringkasan CV atau pengalaman kerjamu</b> langsung ke chat ini sekarang.\n\n"
-        "<i>Atau klik tombol di bawah jika ingin membuat CV baru standar ATS dari awal:</i>"
+        "<i>Atau klik tombol di bawah jika ingin menyusun CV baru standar ATS dari awal:</i>"
     )
-    await bot.send_message(user_id, msg_prompt, reply_markup=kbd_review, parse_mode="HTML")
+    
+    # Gunakan direct message answer agar langsung render di thread chat yang sama
+    await callback_query.message.answer(msg_prompt, reply_markup=kbd_review, parse_mode="HTML")
     return
 
 @dp.callback_query_handler(lambda c: c.data in [
