@@ -1,27 +1,106 @@
 import os
-import requests
+import json
+import logging
+import httpx
 
-ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
-API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
-KV_NAMESPACE_ID = os.getenv("CLOUDFLARE_KV_NAMESPACE_ID")
-BASE_DOMAIN = os.getenv("BASE_DOMAIN", "boontrack.com")
+logger = logging.getLogger(__name__)
 
-async def deploy_landing_page_kv(subdomain_name: str, html_content: str) -> str:
-    key_name = subdomain_name.lower().strip().replace(" ", "-")
-    url = f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/storage/kv/namespaces/{KV_NAMESPACE_ID}/values/{key_name}"
+CF_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
+CF_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "")
+CF_KV_NAMESPACE_ID = (
+    os.getenv("CLOUDFLARE_KV_NAMESPACE_ID") 
+    or os.getenv("CLOUDFLARE_KV_NAMESPACE") 
+    or ""
+)
 
-    headers = {
-        "Authorization": f"Bearer {API_TOKEN}",
-        "Content-Type": "text/html; charset=utf-8"
-    }
+HEADERS = {
+    "Authorization": f"Bearer {CF_API_TOKEN}",
+    "Content-Type": "application/json"
+}
+
+RESERVED_SLUGS = {
+    "www", "cv", "boontrack", "boontrack-router", "admin", 
+    "api", "app", "dashboard", "auth", "login", "register", "default"
+}
+
+async def is_slug_available(slug: str, current_user_id: int = None) -> tuple[bool, str]:
+    """
+    Cek ketersediaan slug ke Cloudflare KV.
+    """
+    clean_slug = slug.strip().lower()
+
+    if clean_slug in RESERVED_SLUGS:
+        return False, "Nama tersebut merupakan domain sistem bawaan. Coba nama lain ya kak! 😊"
+
+    if not (CF_ACCOUNT_ID and CF_API_TOKEN and CF_KV_NAMESPACE_ID):
+        logger.warning("Cloudflare KV credentials not fully set, bypassing availability check.")
+        return True, "OK"
+
+    url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/storage/kv/namespaces/{CF_KV_NAMESPACE_ID}/values/{clean_slug}"
 
     try:
-        response = requests.put(url, headers=headers, data=html_content.encode('utf-8'))
-        if response.status_code == 200:
-            return f"https://{key_name}.{BASE_DOMAIN}"
-        else:
-            print(f"Error KV Upload: {response.text}")
-            return None
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.get(url, headers=HEADERS)
+            if res.status_code == 404:
+                return True, "OK"
+            
+            if res.status_code == 200:
+                try:
+                    data = res.json()
+                except Exception:
+                    data = json.loads(res.text)
+
+                if str(data.get("user_id")) == str(current_user_id):
+                    return True, "OK"
+                    
+                return False, "Waduh, nama domain ini sudah dipakai orang lain kak. Coba variasi nama lain ya! 🙏"
+            
+            return True, "OK"
     except Exception as e:
-        print(f"Exception KV Upload: {e}")
-        return None
+        logger.exception(f"Error checking slug availability: {e}")
+        return True, "OK"
+
+async def sync_profile_to_cloudflare_kv(slug: str, profile_data: dict) -> bool:
+    """
+    Kirim payload JSON profil ke Cloudflare Workers KV.
+    """
+    if not (CF_ACCOUNT_ID and CF_API_TOKEN and CF_KV_NAMESPACE_ID):
+        logger.error("Cloudflare KV credentials missing in Railway environment variables.")
+        return False
+
+    clean_slug = (slug or "default").strip().lower()
+    url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/storage/kv/namespaces/{CF_KV_NAMESPACE_ID}/values/{clean_slug}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.put(
+                url, 
+                headers=HEADERS, 
+                content=json.dumps(profile_data, ensure_ascii=False)
+            )
+            if res.status_code in [200, 201]:
+                logger.info(f"Successfully synced career page KV for slug: {clean_slug}")
+                return True
+            else:
+                logger.error(f"Cloudflare KV Sync Failed. Status: {res.status_code}, Body: {res.text}")
+                return False
+    except Exception as e:
+        logger.exception(f"Exception during Cloudflare KV sync: {e}")
+        return False
+
+async def get_profile_from_cloudflare_kv(slug: str) -> dict:
+    """
+    Ambil data profil dari KV.
+    """
+    clean_slug = (slug or "").strip().lower()
+    url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/storage/kv/namespaces/{CF_KV_NAMESPACE_ID}/values/{clean_slug}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.get(url, headers=HEADERS)
+            if res.status_code == 200:
+                return res.json()
+            return {}
+    except Exception as e:
+        logger.exception(f"Exception fetching profile from KV: {e}")
+        return {}

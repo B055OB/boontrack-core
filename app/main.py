@@ -37,6 +37,7 @@ from app.services.cv_review_service import cv_review_service
 from app.routes.webchat import router as webchat_router
 from app.modules.public_services.router import register_public_service_routes
 from app.modules.commerce.router import commerce_routes
+from app.handlers.career_page_flow import register_career_page_handlers, start_career_page_claim
 
 # ============================================================
 # B2B MULTI-TENANT ROUTERS & HANDLERS
@@ -2438,7 +2439,11 @@ async def start_web_server():
 
 if __name__ == '__main__':
     from aiogram.utils.exceptions import ConflictError
-
+    
+    # Daftarkan handler Career Page di sini
+    register_career_page_handlers(dp)
+    
+    # ... baris executor.start_polling(dp, ...) bawaan kamu ...
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
 
     print("========================================", flush=True)
