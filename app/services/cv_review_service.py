@@ -77,4 +77,52 @@ class CVReviewService:
             print(f"[CVReviewService Error] save_review: {e}")
             return None
 
+    @classmethod
+    def filter_entitlement_response(cls, full_review: Dict[str, Any], is_premium: bool = False) -> Dict[str, Any]:
+        """
+        Backend-Side Entitlement Filtering (Security P0).
+        - Free User: Hanya menerima overall_score, breakdown_scores, dan 3-5 findings.
+        - Premium User: Menerima findings + recommendations lengkap + actionable examples.
+        """
+        # Parsing nested breakdown atau root scores dengan fallback aman
+        breakdown = full_review.get("breakdown_scores", {})
+        ats_comp = breakdown.get("ats_compatibility", full_review.get("ats_compatibility", full_review.get("quality_score", 0)))
+        exp_score = breakdown.get("experience", full_review.get("experience", full_review.get("evidence_score", 0)))
+        ach_score = breakdown.get("achievement", full_review.get("achievement", 0))
+        kw_score = breakdown.get("keyword", full_review.get("keyword", full_review.get("job_match_score", 0)))
+        str_score = breakdown.get("structure", full_review.get("structure", 0))
+
+        raw_findings = full_review.get("findings", [])
+        if not raw_findings and "top_problems" in full_review:
+            raw_findings = full_review.get("top_problems", [])
+
+        # Filter response dasar
+        base_data: Dict[str, Any] = {
+            "status": "success",
+            "is_premium": is_premium,
+            "overall_score": full_review.get("overall_score", 0),
+            "breakdown_scores": {
+                "ats_compatibility": ats_comp,
+                "experience": exp_score,
+                "achievement": ach_score,
+                "keyword": kw_score,
+                "structure": str_score
+            },
+            "findings": raw_findings[:5]  # Batasi 3-5 temuan masalah untuk Free User
+        }
+
+        if is_premium:
+            base_data["recommendations"] = full_review.get("recommendations", [])
+            base_data["actionable_examples"] = full_review.get("actionable_examples", [])
+        else:
+            # Data rekomendasi diisolasi di backend dan TIDAK dikirim ke frontend
+            all_recs = full_review.get("recommendations", [])
+            base_data["locked_preview"] = {
+                "total_recommendations_locked": len(all_recs) if all_recs else 3,
+                "cta_text": "🚀 PERBAIKI CV SAYA",
+                "cta_link": "/career#pricing"
+            }
+
+        return base_data
+
 cv_review_service = CVReviewService()

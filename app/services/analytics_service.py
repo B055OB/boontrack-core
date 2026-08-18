@@ -1,4 +1,5 @@
 import os
+from typing import Optional, Dict, Any
 from supabase import create_client, Client
 
 
@@ -13,6 +14,53 @@ class AnalyticsService:
         else:
             self.supabase = None
             print("[ANALYTICS] WARNING: SUPABASE_URL / SUPABASE_KEY missing")
+
+    # ============================================================
+    # FUNNEL & ATTRIBUTION TRACKING (P0 ACQUISITION FUNNEL)
+    # ============================================================
+
+    async def log_funnel_event(
+        self,
+        event_name: str,
+        user_id: Optional[Any] = None,
+        utm_params: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        Mencatat event funnel akuisisi:
+        - cv_review_started
+        - cv_uploaded
+        - cv_review_completed
+        - cv_review_result_viewed
+        - premium_cta_clicked
+        - career_page_opened
+        - payment_started
+        - payment_completed
+        """
+        if not self.supabase:
+            print(f"[ANALYTICS FUNNEL LOCAL] {event_name} - User: {user_id} - Metadata: {metadata}")
+            return False
+
+        try:
+            utm = utm_params or {}
+            meta = metadata or {}
+            
+            payload = {
+                "event_name": event_name,
+                "telegram_user_id": str(user_id) if user_id else None,
+                "utm_source": utm.get("utm_source") or meta.get("utm_source", "direct"),
+                "utm_medium": utm.get("utm_medium") or meta.get("utm_medium", "none"),
+                "utm_campaign": utm.get("utm_campaign") or meta.get("utm_campaign", "none"),
+                "utm_content": utm.get("utm_content") or meta.get("utm_content", "none"),
+                "utm_term": utm.get("utm_term") or meta.get("utm_term", "none"),
+            }
+
+            self.supabase.table("click_logs").insert(payload).execute()
+            print(f"[FUNNEL LOGGED] {event_name} for user {user_id}")
+            return True
+        except Exception as e:
+            print(f"[FUNNEL LOG ERROR] {event_name}: {e}")
+            return False
 
     # ============================================================
     # REALTIME METRICS
@@ -147,7 +195,7 @@ class AnalyticsService:
             return {}
 
     # ============================================================
-    # CONTENT & BUZZER ATTRIBUTION FUNNEL (NEW)
+    # CONTENT & BUZZER ATTRIBUTION FUNNEL
     # ============================================================
 
     async def get_content_funnel_metrics(self) -> list:
@@ -215,7 +263,7 @@ class AnalyticsService:
             return []
 
     # ============================================================
-    # AI USAGE TODAY (NEW)
+    # AI USAGE TODAY
     # ============================================================
 
     async def get_ai_usage_today(self) -> dict:
@@ -283,7 +331,7 @@ class AnalyticsService:
             utm_term = parts[4] if len(parts) > 4 and parts[4] else "none"
 
             self.supabase.table("click_logs").insert({
-                "telegram_user_id": user_id,
+                "telegram_user_id": str(user_id),
                 "utm_source": utm_source,
                 "utm_medium": utm_medium,
                 "utm_campaign": utm_campaign,
