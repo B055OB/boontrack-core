@@ -174,8 +174,18 @@ async def render_free_cv_review(user_id: int, bot, cv_text: str, target_position
         f"• Kualitas Pengalaman: <b>{b.get('experience_impact', 0)}/100</b>\n\n"
         "💡 <b>Poin Evaluasi AI:</b>\n"
         f"{findings_list}\n\n"
-        "<i>Gunakan panduan di atas untuk mengoptimalkan CV kamu agar lolos screening HRD & ATS.</i>"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🔥 <b>MAU CV REKOMENDASI AI & PORTOFOLIO INTERAKTIF?</b>\n"
+        "<b>Buka fitur CV rekomendasi terbaik dan Career Page Profesional kamu sekarang untuk meningkatkan peluang dipanggil interview!</b>"
     )
+
+    kbd_result = InlineKeyboardMarkup(row_width=1)
+    kbd_result.add(
+        InlineKeyboardButton("🚀 Order Career Page (Rp10.000)", callback_data="home_career_page"),
+        InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
+    )
+
+    await bot.send_message(user_id, review_msg, reply_markup=kbd_result, parse_mode="HTML")
 
     kbd_result = InlineKeyboardMarkup(row_width=1)
     kbd_result.add(
