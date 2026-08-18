@@ -884,24 +884,12 @@ def create_cv_docx(user_id, data):
     doc.save(file_path)
     return file_path
 
-async def get_career_home_keyboard(user_id: int):
-    try:
-        is_paid = await check_user_paid(user_id)
-    except Exception:
-        is_paid = False
-
+def get_career_home_keyboard():
     kbd = types.InlineKeyboardMarkup(row_width=1)
     kbd.add(
         types.InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"),
-        types.InlineKeyboardButton("🔍 Review CV Saya", callback_data="trigger_cv_review")
-    )
-    
-    if is_paid:
-        kbd.add(types.InlineKeyboardButton("🌐 Kelola Career Page Saya", callback_data="cp_manage"))
-    else:
-        kbd.add(types.InlineKeyboardButton("🌐 Buat Career Page Profesional (Rp10.000)", callback_data="don_10000"))
-        
-    kbd.add(
+        types.InlineKeyboardButton("🔍 Review CV Saya", callback_data="trigger_cv_review"),
+        types.InlineKeyboardButton("🌐 Buat Career Page Profesional (Rp10.000)", callback_data="don_10000"),
         types.InlineKeyboardButton("📚 Ebook & Program Digital", callback_data="home_digital_products"),
         types.InlineKeyboardButton("🎁 Cek Referral Saya", callback_data="home_check_ref"),
         types.InlineKeyboardButton("💼 Tanya Seputar Dunia Kerja", callback_data="home_career_qa")
@@ -1079,7 +1067,7 @@ async def send_welcome(message: types.Message):
                 "Ada yang bisa saya bantu untuk persiapan kariermu hari ini?\n\n"
                 "👇 <i>Pilih opsi di bawah:</i>"
             )
-            kbd = await get_career_home_keyboard(user_id)
+            kbd = get_career_home_keyboard()
             await message.reply(home_msg, reply_markup=kbd, parse_mode="HTML")
             return
 
