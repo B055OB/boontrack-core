@@ -1127,7 +1127,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     if code == "trigger_cv_review":
         from app.handlers.commands import render_free_cv_review
         
-        # Ambil ringkasan teks CV dari memory / DB
         position = str(user_data.get("target_position") or user_data.get(6) or user_data.get("6") or "General Professional")
         cv_text_summary = " ".join([str(v) for k, v in user_data.items() if str(v).strip()]).strip()
         
@@ -1137,15 +1136,16 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
         else:
             kbd_review = types.InlineKeyboardMarkup(row_width=1)
             kbd_review.add(
-                types.InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"),
+                types.InlineKeyboardButton("📝 Buat CV Baru via Bot", callback_data="home_create_cv"),
                 types.InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
             )
             msg_prompt = (
-                "🔍 <b>DIAGNOSIS & REVIEW CV GRATIS</b>\n"
+                "🔍 <b>DIAGNOSIS & REVIEW CV GRATIS (ATS COMPLIANT)</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "Kamu belum memiliki riwayat CV yang tersimpan di bot.\n\n"
-                "👉 <b>Cara Instan:</b> Silakan <b>Ketik / Paste ringkasan teks CV kamu</b> langsung ke chat ini.\n\n"
-                "Atau klik tombol di bawah untuk membuat CV standar ATS dari awal:"
+                "Silakan kirimkan CV kamu untuk dianalisis oleh sistem:\n\n"
+                "📄 <b>Upload Dokumen:</b> Kirim file CV kamu (format <b>PDF</b> atau <b>DOCX/Word</b>).\n"
+                "✍️ <b>Atau Salin Teks:</b> Langsung <i>paste</i> ringkasan pengalaman dan keahlianmu ke chat ini.\n\n"
+                "<i>Belum punya CV sama sekali? Klik tombol di bawah untuk membuat dari awal:</i>"
             )
             await bot.send_message(user_id, msg_prompt, reply_markup=kbd_review, parse_mode="HTML")
             return
