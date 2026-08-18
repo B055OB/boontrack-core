@@ -161,17 +161,23 @@ async def render_free_cv_review(user_id: int, bot, cv_text: str, target_position
 
     # 5. Format Tampilan Pesan Diagnosis
     b = filtered_data.get("breakdown_scores", {})
+
+    # Pemetaan fleksibel skor kategori
+    ats_score = b.get("ats_compatibility") or b.get("quality") or 70
+    format_score = b.get("format_relevance") or b.get("structure") or b.get("keyword") or 75
+    exp_score = b.get("experience_impact") or b.get("experience") or b.get("evidence") or 80
+
     findings = filtered_data.get("findings", [])
-    findings_list = "\n".join([f"• {f}" for f in findings]) if findings else "• Struktur CV terbaca dengan format dasar yang baik."
+    findings_list = "\n".join([f"• {f}" for f in findings]) if findings else "• Format dasar CV sudah terbaca dengan baik."
 
     review_msg = (
         "📊 <b>HASIL DIAGNOSIS SKOR CV KAMU</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Overall Score:</b> {filtered_data.get('overall_score', 0)} / 100\n\n"
         "📌 <b>Breakdown Kategori:</b>\n"
-        f"• ATS Compatibility: <b>{b.get('ats_compatibility', 0)}/100</b>\n"
-        f"• Relevansi Format: <b>{b.get('format_relevance', 0)}/100</b>\n"
-        f"• Kualitas Pengalaman: <b>{b.get('experience_impact', 0)}/100</b>\n\n"
+        f"• ATS Compatibility: <b>{ats_score}/100</b>\n"
+        f"• Relevansi Format: <b>{format_score}/100</b>\n"
+        f"• Kualitas Pengalaman: <b>{exp_score}/100</b>\n\n"
         "💡 <b>Poin Evaluasi AI:</b>\n"
         f"{findings_list}\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -182,14 +188,6 @@ async def render_free_cv_review(user_id: int, bot, cv_text: str, target_position
     kbd_result = InlineKeyboardMarkup(row_width=1)
     kbd_result.add(
         InlineKeyboardButton("🚀 Order Career Page (Rp10.000)", callback_data="home_career_page"),
-        InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
-    )
-
-    await bot.send_message(user_id, review_msg, reply_markup=kbd_result, parse_mode="HTML")
-
-    kbd_result = InlineKeyboardMarkup(row_width=1)
-    kbd_result.add(
-        InlineKeyboardButton("📝 Perbaiki & Buat CV ATS Baru", callback_data="home_create_cv"),
         InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main")
     )
 
