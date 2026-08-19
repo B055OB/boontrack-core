@@ -5,7 +5,7 @@ import logging
 from typing import Tuple
 from aiohttp import web
 from app.services.whatsapp_service import send_whatsapp_text, send_whatsapp_image
-from app.constants.messages import GREETING_MENU_MSG, CV_HANDOFF_MSG, MENU_INVALID_MSG
+from app.constants.messages import GREETING_MENU_MSG, MENU_INVALID_MSG
 from app.services.cv_state_engine import process_unified_cv_step, GLOBAL_USER_STATES
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
@@ -15,10 +15,10 @@ from app.services.document_parser_service import download_whatsapp_media, extrac
 
 logger = logging.getLogger(__name__)
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN") or os.getenv("META_WA_VERIFY_TOKEN", "boontrack_wa_secret_token")
-QRIS_IMAGE_PATH = os.getenv("QRIS_IMAGE_PATH", "qris.jpg")
+
 
 def generate_payment_message(user_id: str, base_amt: int = 10000) -> Tuple[int, str]:
-    """Menghasilkan nominal unik 3 digit dan copywriting pembayaran bersih tanpa batas waktu/konfirmasi manual."""
+    """Menghasilkan nominal unik 3 digit dan format pesan instruksi pembayaran QRIS bersih."""
     unique_code = random.randint(100, 999)
     total_amt = base_amt + unique_code
 
@@ -38,23 +38,25 @@ def generate_payment_message(user_id: str, base_amt: int = 10000) -> Tuple[int, 
         "1. *Simpan QR:* *Screenshot gambar QRIS di atas* atau simpan ke galeri.\n"
         "2. *Buka E-Wallet / Mobile Banking:* (BCA, Mandiri, BRI, DANA, GoPay, OVO, ShopeePay, dll).\n"
         "3. *Pilih Menu QRIS / Scan:* Buka scanner QRIS di aplikasimu.\n"
-        "4. *Upload dari Galeri:* Klik ikon foto/galeri pada scanner dan pilih gambar QR tadi.\n"
+        "4. *Upload dari Galeri:* Klik ikon galeri pada scanner & pilih gambar QR tadi.\n"
         f"5. *Input Nominal PRESISI:* Pastikan nominal tepat *Rp{total_amt:,}*.\n"
         "6. Selesaikan pembayaran.\n\n"
         "⏳ _Sistem otomatis memverifikasi pembayaran secara real-time melalui BoonTrack Reader. Begitu dana masuk, bot akan langsung mengirimkan link Career Page aktif milikmu!_"
     )
     return total_amt, msg
 
+
 async def send_qris_checkout_flow(sender_wa_id: str, base_amt: int = 10000):
-    """Kirim gambar QRIS di root folder bersama caption instruksi bayar."""
+    """Mencari file QRIS dan mengirimkannya via Meta API."""
     total_amt, msg_caption = generate_payment_message(sender_wa_id, base_amt)
 
-    # Deteksi letak file QRIS di root folder atau app/
     possible_qris_paths = [
+        "assets/qris.jpg",
         "qris.jpg",
+        "/app/assets/qris.jpg",
         "/app/qris.jpg",
         "app/qris.jpg",
-        QRIS_IMAGE_PATH,
+        os.path.join(os.getcwd(), "assets", "qris.jpg"),
         os.path.join(os.getcwd(), "qris.jpg")
     ]
     found_qris = next((p for p in possible_qris_paths if os.path.exists(p)), None)
@@ -66,14 +68,15 @@ async def send_qris_checkout_flow(sender_wa_id: str, base_amt: int = 10000):
         except Exception as e:
             logger.error(f"[WA Send QRIS Image Error] {e}")
 
-    # Fallback teks jika upload media bermasalah
     await send_whatsapp_text(sender_wa_id, msg_caption)
+
 
 async def verify_webhook(request: web.Request) -> web.Response:
     params = request.rel_url.query
     if params.get("hub.mode") == "subscribe" and params.get("hub.verify_token") == VERIFY_TOKEN:
         return web.Response(text=params.get("hub.challenge") or "", status=200)
     return web.Response(text="Verification failed", status=403)
+
 
 async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     try:
@@ -97,7 +100,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     sender_wa_id = msg_obj.get("from")
     msg_type = msg_obj.get("type")
 
-    # --- 1. HANDLING UPLOAD DOKUMEN CV (PDF / DOCX) ---
+    # --- 1. HANDLING DOKUMEN CV (.PDF / .DOCX) ---
     if msg_type == "document":
         doc_info = msg_obj.get("document", {})
         media_id = doc_info.get("id")
@@ -110,14 +113,14 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             extracted_text = extract_text_from_bytes(file_bytes, filename)
 
             if not extracted_text or len(extracted_text) < 50:
-                await send_whatsapp_text(sender_wa_id, "⚠️ Teks di dalam dokumen tidak terbaca atau terlalu pendek. Pastikan dokumen berupa PDF/DOCX teks asli (bukan hasil scan/foto).")
+                await send_whatsapp_text(sender_wa_id, "⚠️ Teks di dalam dokumen tidak terbaca atau terlalu pendek. Pastikan dokumen berupa PDF/DOCX teks asli (bukan hasil scan gambar).")
                 return web.Response(text="EVENT_RECEIVED", status=200)
 
             eval_result = cv_review_engine.evaluate_cv(extracted_text, target_position="General Professional")
             filtered_data = cv_review_service.filter_entitlement_response(eval_result, is_premium=False)
 
             await cv_review_service.save_review(
-                user_id=int(sender_wa_id),
+                user_id=int(re.sub(r"\D", "", str(sender_wa_id))),
                 target_position="General Professional",
                 overall_score=filtered_data.get("overall_score", 0),
                 quality_score=filtered_data.get("breakdown_scores", {}).get("ats_compatibility", 0),
@@ -156,7 +159,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
 
         except Exception as e:
             logger.error(f"[Upload Document Error] {e}")
-            await send_whatsapp_text(sender_wa_id, "⚠️ Terjadi kendala saat memproses file dokumen. Silakan coba kirim ulang atau tempel teks CV kamu langsung.")
+            await send_whatsapp_text(sender_wa_id, "⚠️ Terjadi kendala saat memproses file dokumen. Silakan kirim ulang atau tempel teks CV langsung.")
 
         return web.Response(text="EVENT_RECEIVED", status=200)
 
@@ -178,7 +181,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         await send_whatsapp_text(sender_wa_id, GREETING_MENU_MSG)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # Tracking Referral
+    # Tracking Referral Link
     if "ref_" in user_text_clean:
         ref_match = re.search(r"ref_(\d+)", user_text_clean)
         if ref_match:
@@ -189,7 +192,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     current_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
     current_mode = current_session.get("mode", "menu")
 
-    # Step Wizard Pembuatan CV (1-10)
+    # Wizard Pembuatan CV (Step 1-10)
     if current_session.get("step", 0) > 0:
         result = await process_unified_cv_step(sender_wa_id, user_text, platform="whatsapp")
         for msg in result.get("messages", [result["reply_text"]]):
@@ -199,7 +202,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             current_session["mode"] = "post_cv"
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # --- KONDISI A: MENU UTAMA (mode: "menu") ---
+    # Menu Utama
     if current_mode == "menu":
         if user_text_clean in ["1", "buat cv", "bikin cv"] or "buat cv" in user_text_clean:
             current_session["mode"] = "builder"
@@ -225,7 +228,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, intro_consult)
             return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # --- KONDISI B: PASCA BUAT/REVIEW CV (mode: "post_cv") ---
+    # Pasca Buat / Review CV (Opsi Pembelian)
     if current_mode == "post_cv":
         if user_text_clean in ["1", "order", "beli", "order career page"] or "order" in user_text_clean:
             await send_qris_checkout_flow(sender_wa_id, base_amt=10000)
@@ -248,7 +251,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, ref_msg)
             return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # Mode Analisis Review CV Teks
+    # Mode Review CV Teks Mentah
     if current_mode == "review":
         await send_whatsapp_text(sender_wa_id, "⏳ *Sedang menganalisis struktur & skor ATS CV kamu...*")
         try:
@@ -256,7 +259,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             filtered_data = cv_review_service.filter_entitlement_response(eval_result, is_premium=False)
 
             await cv_review_service.save_review(
-                user_id=int(sender_wa_id),
+                user_id=int(re.sub(r"\D", "", str(sender_wa_id))),
                 target_position="General Professional",
                 overall_score=filtered_data.get("overall_score", 0),
                 quality_score=filtered_data.get("breakdown_scores", {}).get("ats_compatibility", 0),
@@ -297,7 +300,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, "⚠️ Gagal menganalisis CV. Pastikan teks CV cukup lengkap lalu coba lagi.")
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # Fallback AI Konsultasi Karir
+    # Fallback AI Karir
     ai_reply = await ai_gateway.generate(user_message=user_text, context={"user_id": sender_wa_id, "feature": "career_consultation"})
     if ai_reply:
         await send_whatsapp_text(sender_wa_id, ai_reply)
@@ -305,6 +308,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         await send_whatsapp_text(sender_wa_id, MENU_INVALID_MSG)
 
     return web.Response(text="EVENT_RECEIVED", status=200)
+
 
 def register_whatsapp_career_routes(app: web.Application):
     app.router.add_get("/api/whatsapp/webhook", verify_webhook)
