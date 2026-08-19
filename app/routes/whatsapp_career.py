@@ -13,6 +13,20 @@ from app.core.database import track_event, count_referrals
 logger = logging.getLogger(__name__)
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN") or os.getenv("META_WA_VERIFY_TOKEN", "boontrack_wa_secret_token")
 
+PAYMENT_OFFER_MSG_TEMPLATE = (
+    "💼 *AKTIVASI CAREER PAGE PORTOFOLIO PROFESIONAL*\n\n"
+    "Tingkatkan peluang panggilan interview dengan domain portofolio live pribadi kamu!\n\n"
+    "💳 *Biaya:* Rp10.000 (Sekali bayar / Akses Penuh)\n"
+    "✨ *Fitur yang didapat:*\n"
+    "• Custom Subdomain Web Portofolio (contoh: _namamu.boontrack.com_)\n"
+    "• Tombol Download CV Instan (.docx / PDF)\n"
+    "• Showroom Proyek & Pengalaman Kerja Interaktif\n"
+    "• Integrasi Langsung ke Kontak WhatsApp & LinkedIn\n\n"
+    "Silakan selesaikan pembayaran melalui link resmi berikut:\n"
+    "👉 https://boontrack.com/pay/{user_id}\n\n"
+    "_Setelah pembayaran terkonfirmasi via QRIS/DANA/Transfer, Career Page kamu otomatis langsung aktif live!_"
+)
+
 async def verify_webhook(request: web.Request) -> web.Response:
     params = request.rel_url.query
     if params.get("hub.mode") == "subscribe" and params.get("hub.verify_token") == VERIFY_TOKEN:
@@ -53,7 +67,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         await send_whatsapp_text(sender_wa_id, GREETING_MENU_MSG)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 2. Tracking Referral Link
+    # 2. Tracking Referral Link Masuk
     if "ref_" in user_text_clean:
         ref_match = re.search(r"ref_(\d+)", user_text_clean)
         if ref_match:
@@ -61,7 +75,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             if referrer_phone != sender_wa_id:
                 await track_event(sender_wa_id, "referral_signup", meta={"referrer_id": referrer_phone})
 
-    # 3. Mode Review CV Masuk dari Link
+    # 3. Mode Review CV Masuk dari Link Tautan
     if "mau review cv" in user_text_clean or "review cv" in user_text_clean:
         GLOBAL_USER_STATES[sender_wa_id] = {"step": 0, "mode": "review", "data": {}}
         intro_review = (
@@ -80,27 +94,27 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         for msg in result.get("messages", [result["reply_text"]]):
             await send_whatsapp_text(sender_wa_id, msg)
         
-        # Setelah CV selesai, set mode ke post_cv agar angka 1 tidak memicu buat CV lagi
         if result.get("is_completed"):
             current_session["mode"] = "post_cv"
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 5. Opsi Menu 1 saat Berada di Halaman Pasca Buat CV (Order Career Page)
-    if current_mode == "post_cv" and (user_text_clean == "1" or "order" in user_text_clean or "beli" in user_text_clean):
-        order_msg = (
-            "💼 *AKTIVASI CAREER PAGE PORTOFOLIO PROFESIONAL*\n\n"
-            "Tingkatkan peluang panggilan interview dengan domain portofolio live pribadi kamu!\n\n"
-            "💳 *Biaya:* Rp10.000 (Sekali bayar / Lifetime)\n"
-            "✨ *Fitur:* Custom URL Bio, Download CV PDF/DOCX instan, Portofolio Project, Integrasi Kontak WA & LinkedIn.\n\n"
-            "Silakan lakukan pembayaran melalui link pembayaran resmi berikut:\n"
-            f"👉 https://boontrack.com/pay/{sender_wa_id}\n\n"
-            "_Setelah pembayaran sukses via QRIS/DANA/Transfer, Career Page kamu otomatis langsung aktif live!_"
-        )
+    # 5. INTENT EXPLICIT: Order / Beli Career Page (Prioritas Tinggi)
+    if (
+        "order career" in user_text_clean
+        or "order page" in user_text_clean
+        or "beli career" in user_text_clean
+        or "bayar" in user_text_clean
+        or "qris" in user_text_clean
+        or "10000" in user_text_clean
+        or "10.000" in user_text_clean
+        or (current_mode == "post_cv" and user_text_clean in ["1", "order", "beli"])
+    ):
+        order_msg = PAYMENT_OFFER_MSG_TEMPLATE.format(user_id=sender_wa_id)
         await send_whatsapp_text(sender_wa_id, order_msg)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 6. Opsi Menu 2 (Referral Free Career Page)
-    if user_text_clean in ["2", "referral", "cek referral", "gratis"]:
+    # 6. INTENT EXPLICIT: Program Referral / Gratis 5 Teman
+    if user_text_clean in ["2", "referral", "cek referral", "gratis", "ajak teman"] or "referral" in user_text_clean:
         try:
             invited_count = await count_referrals(sender_wa_id)
         except Exception:
@@ -117,7 +131,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         await send_whatsapp_text(sender_wa_id, ref_msg)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 7. Opsi Menu 3 (Edit Bagian CV)
+    # 7. Edit Bagian CV
     if current_mode == "post_cv" and (user_text_clean == "3" or "edit" in user_text_clean):
         current_session["mode"] = "builder"
         current_session["step"] = 1
@@ -129,19 +143,19 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         await send_whatsapp_text(sender_wa_id, edit_msg)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 8. Trigger Buat CV dari Menu Utama
-    if user_text_clean == "1" or "buat cv" in user_text_clean:
+    # 8. Trigger Buat CV dari Menu
+    if user_text_clean in ["1", "buat cv", "bikin cv", "buat cv baru"] or "buat cv" in user_text_clean:
         current_session["mode"] = "builder"
         result = await process_unified_cv_step(sender_wa_id, user_text, platform="whatsapp")
         await send_whatsapp_text(sender_wa_id, result["reply_text"])
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 9. Mode Review CV
+    # 9. Mode Analisis Review CV
     if current_mode == "review":
         await send_whatsapp_text(sender_wa_id, "⏳ *Sedang menganalisis struktur & skor ATS CV kamu...*")
         try:
-            eval_result = cv_review_engine.evaluate_cv(user_text, target_position="General Professional")[cite: 2]
-            filtered_data = cv_review_service.filter_entitlement_response(eval_result, is_premium=False)[cite: 1]
+            eval_result = cv_review_engine.evaluate_cv(user_text, target_position="General Professional")
+            filtered_data = cv_review_service.filter_entitlement_response(eval_result, is_premium=False)
 
             await cv_review_service.save_review(
                 user_id=int(sender_wa_id),
@@ -152,10 +166,10 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
                 evidence_score=filtered_data.get("breakdown_scores", {}).get("experience", 0),
                 review_json=filtered_data,
                 confidence_level=eval_result.get("confidence", {}).get("level", "MEDIUM")
-            )[cite: 1]
+            )
 
-            b = filtered_data.get("breakdown_scores", {})[cite: 1]
-            findings = filtered_data.get("findings", [])[cite: 1]
+            b = filtered_data.get("breakdown_scores", {})
+            findings = filtered_data.get("findings", [])
             findings_list = "\n".join([f"• {f}" for f in findings]) if findings else "• Format dasar CV sudah terbaca dengan baik."
 
             review_msg = (
@@ -185,7 +199,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, "⚠️ Gagal menganalisis CV. Pastikan teks CV cukup lengkap lalu coba lagi.")
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 10. AI Konsultasi Karir Otomatis
+    # 10. AI Konsultasi Karir Otomatis (Fallback Umum)
     ai_reply = await ai_gateway.generate(user_message=user_text, context={"user_id": sender_wa_id, "feature": "career_consultation"})
     if ai_reply:
         await send_whatsapp_text(sender_wa_id, ai_reply)
