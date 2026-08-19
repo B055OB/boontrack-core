@@ -16,10 +16,20 @@ logger = logging.getLogger("ai_gateway")
 PROMPT_VERSION = "goal_detector_v1"
 
 SYSTEM_PROMPT_DEFAULT = (
-    "Kamu adalah BoonTrack, asisten karir yang hangat, empatik, dan sangat informatif. "
-    "Jawab pertanyaan user tentang CV, interview, gaji/UMR, dan strategi karir secara langsung (to the point), "
-    "berikan estimasi angka jika ditanya nominal gaji/UMR, dan gunakan Bahasa Indonesia yang natural tanpa "
-    "menyertakan tag format internal atau debug."
+    "Kamu adalah BoonTrack, asisten karir & rekrutmen profesional yang hangat, empatik, dan to-the-point.\n\n"
+    "Pedoman Menjawab:\n"
+    "1. Jawab pertanyaan user seputar pembuatan CV, persiapan interview, estimasi gaji/UMR, dan strategi karir secara langsung dan praktis.\n"
+    "2. Gunakan Bahasa Indonesia yang natural, profesional, dan mudah dipahami.\n"
+    "3. JANGAN PERNAH menyertakan penawaran jasa pembuatan website agensi berharga jutaan rupiah.\n\n"
+    "Instruksi Khusus untuk Career Page / Portofolio Web:\n"
+    "Jika user bertanya tentang pengaruh, fungsi, atau manfaat memiliki Career Page / Portofolio Online:\n"
+    "- Jelaskan secara ringkas 2-3 alasan kenapa rekruter menyukainya (misal: verifikasi bukti nyata project/hasil kerja, memberi kesan pro & tech-savvy, rekruter bisa langsung download CV/kontak WA dalam 1 klik).\n"
+    "- Tutup jawaban secara natural dengan mengarahkan user untuk aktivasi Career Page BoonTrack melalui pesan penutup berikut:\n\n"
+    "Mau punya Career Page profesional aktif (contoh: namamu.boontrack.com)?\n"
+    "Pilih opsi untuk memulai:\n"
+    "1. Order Career Page (Rp10.000)\n"
+    "2. Ajak 5 Teman (Gratis via Referral)\n"
+    "_Ketik angka 1 atau 2 untuk memilih._"
 )
 
 MOCK_MODE = False
@@ -27,7 +37,7 @@ MOCK_MODE = False
 
 def _clean_response(text: str) -> str:
     """
-    Sanitasi output AI agar aman dari crash parsing Telegram.
+    Sanitasi output AI agar aman dari crash parsing Telegram & format rapi di WhatsApp.
     Membersihkan markdown liar dan merapikan list/header.
     """
     if not text:
@@ -54,10 +64,8 @@ def _clean_response(text: str) -> str:
 
     result = "\n".join(cleaned_lines).strip()
 
-    # Bersihkan sisa tanda bintang ganda (**) dan bintang tunggal (*) yang bikin error parsing
-    result = re.sub(r"\*\*([^*]+)\*\*", r"\1", result)
-    result = re.sub(r"\*([^*]+)\*", r"\1", result)
-    result = result.replace("*", "")
+    # Bersihkan sisa tag markdown tebal berlebih jika ada
+    result = re.sub(r"\*\*([^*]+)\*\*", r"*\1*", result)
 
     return result
 
@@ -65,7 +73,7 @@ def _clean_response(text: str) -> str:
 class GeminiGoalDetector(BaseGoalDetector):
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
-        self.model_name = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+        self.model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
     async def detect(self, query: str, request_id: str = None) -> Dict[str, Any]:
         req_id = request_id or f"req-{uuid.uuid4().hex[:8]}"
@@ -100,8 +108,8 @@ class AIGateway:
     def __init__(self, primary_provider: str = "gemini"):
         self.gemini_detector = GeminiGoalDetector()
 
-        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
-        self.groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
         self.openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct")
 
         self.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
@@ -212,7 +220,6 @@ class AIGateway:
 
                     trace_logs.append(f"• {name} ({model}): {p_lat_ms:.1f}ms -> SUCCESS")
                     
-                    # Cetak Trace Rinci Sesuai Format CTO
                     print(
                         f"\n[AI TRACE] User: {user_id} | Total AI: {total_ai_ms:.1f}ms\n" +
                         "\n".join(trace_logs),
