@@ -1,8 +1,10 @@
 import re
 import os
+import random
 import logging
+from typing import Tuple
 from aiohttp import web
-from app.services.whatsapp_service import send_whatsapp_text
+from app.services.whatsapp_service import send_whatsapp_text, send_whatsapp_image
 from app.constants.messages import GREETING_MENU_MSG, CV_HANDOFF_MSG, MENU_INVALID_MSG
 from app.services.cv_state_engine import process_unified_cv_step, GLOBAL_USER_STATES
 from app.engines.cv_review_engine import cv_review_engine
@@ -13,20 +15,59 @@ from app.services.document_parser_service import download_whatsapp_media, extrac
 
 logger = logging.getLogger(__name__)
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN") or os.getenv("META_WA_VERIFY_TOKEN", "boontrack_wa_secret_token")
+QRIS_IMAGE_PATH = os.getenv("QRIS_IMAGE_PATH", "qris.jpg")
 
-PAYMENT_OFFER_MSG_TEMPLATE = (
-    "💼 *AKTIVASI CAREER PAGE PORTOFOLIO PROFESIONAL*\n\n"
-    "Tingkatkan peluang panggilan interview dengan domain portofolio live pribadi kamu!\n\n"
-    "💳 *Biaya:* Rp10.000 (Sekali bayar / Akses Penuh)\n"
-    "✨ *Fitur yang didapat:*\n"
-    "• Custom Subdomain Web Portofolio (contoh: _namamu.boontrack.com_)\n"
-    "• Tombol Download CV Instan (.docx / PDF)\n"
-    "• Showroom Proyek & Pengalaman Kerja Interaktif\n"
-    "• Integrasi Langsung ke Kontak WhatsApp & LinkedIn\n\n"
-    "Silakan selesaikan pembayaran melalui link resmi berikut:\n"
-    "👉 https://boontrack.com/pay/{user_id}\n\n"
-    "_Setelah pembayaran terkonfirmasi via QRIS/DANA/Transfer, Career Page kamu otomatis langsung aktif live!_"
-)
+def generate_payment_message(user_id: str, base_amt: int = 10000) -> Tuple[int, str]:
+    """Menghasilkan nominal unik 3 digit dan copywriting pembayaran bersih tanpa batas waktu/konfirmasi manual."""
+    unique_code = random.randint(100, 999)
+    total_amt = base_amt + unique_code
+
+    msg = (
+        "🎉 *Terima kasih telah memilih BoonTrack!*\n\n"
+        "Tinggal satu langkah lagi untuk mengaktifkan *Career Page Profesional* milikmu dan tampil lebih menonjol di mata HRD/Klien.\n\n"
+        "🌐 *Contoh Tampilan Career Page:*\n"
+        "Lihat preview tampilan Career Page yang akan kamu dapatkan di sini:\n"
+        "👉 https://rayigemilang.boontrack.com\n\n"
+        "_✨ Format modern, recruiter-friendly, responsif di HP/laptop, dan *aktif seumur hidup (sekali bayar tanpa biaya langganan)*._\n\n"
+        "💳 *Rincian Pembayaran:*\n"
+        "• *Item:* Aktivasi Career Page Personal (Lifetime Access)\n"
+        f"• *Transfer Tepat:* `Rp{total_amt:,}` _(Wajib transfer sesuai hingga 3 digit terakhir)_\n"
+        f"• *Rincian:* Rp{base_amt:,} + kode verifikasi Rp{unique_code}\n"
+        "• *Masa Aktif Web:* *Aktif Seumur Hidup*\n\n"
+        "📱 *Panduan Bayar via QRIS (Jika Pakai 1 HP):*\n"
+        "1. *Simpan QR:* *Screenshot gambar QRIS di atas* atau simpan ke galeri.\n"
+        "2. *Buka E-Wallet / Mobile Banking:* (BCA, Mandiri, BRI, DANA, GoPay, OVO, ShopeePay, dll).\n"
+        "3. *Pilih Menu QRIS / Scan:* Buka scanner QRIS di aplikasimu.\n"
+        "4. *Upload dari Galeri:* Klik ikon foto/galeri pada scanner dan pilih gambar QR tadi.\n"
+        f"5. *Input Nominal PRESISI:* Pastikan nominal tepat *Rp{total_amt:,}*.\n"
+        "6. Selesaikan pembayaran.\n\n"
+        "⏳ _Sistem otomatis memverifikasi pembayaran secara real-time melalui BoonTrack Reader. Begitu dana masuk, bot akan langsung mengirimkan link Career Page aktif milikmu!_"
+    )
+    return total_amt, msg
+
+async def send_qris_checkout_flow(sender_wa_id: str, base_amt: int = 10000):
+    """Kirim gambar QRIS di root folder bersama caption instruksi bayar."""
+    total_amt, msg_caption = generate_payment_message(sender_wa_id, base_amt)
+
+    # Deteksi letak file QRIS di root folder atau app/
+    possible_qris_paths = [
+        "qris.jpg",
+        "/app/qris.jpg",
+        "app/qris.jpg",
+        QRIS_IMAGE_PATH,
+        os.path.join(os.getcwd(), "qris.jpg")
+    ]
+    found_qris = next((p for p in possible_qris_paths if os.path.exists(p)), None)
+
+    if found_qris:
+        try:
+            await send_whatsapp_image(sender_wa_id, image_path=found_qris, caption=msg_caption)
+            return
+        except Exception as e:
+            logger.error(f"[WA Send QRIS Image Error] {e}")
+
+    # Fallback teks jika upload media bermasalah
+    await send_whatsapp_text(sender_wa_id, msg_caption)
 
 async def verify_webhook(request: web.Request) -> web.Response:
     params = request.rel_url.query
@@ -69,7 +110,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             extracted_text = extract_text_from_bytes(file_bytes, filename)
 
             if not extracted_text or len(extracted_text) < 50:
-                await send_whatsapp_text(sender_wa_id, "⚠️ Teks di dalam dokumen tidak terbaca atau terlalu pendek. Pastikan dokumen berupa PDF/DOCX teks (bukan hasil scan gambar).")
+                await send_whatsapp_text(sender_wa_id, "⚠️ Teks di dalam dokumen tidak terbaca atau terlalu pendek. Pastikan dokumen berupa PDF/DOCX teks asli (bukan hasil scan/foto).")
                 return web.Response(text="EVENT_RECEIVED", status=200)
 
             eval_result = cv_review_engine.evaluate_cv(extracted_text, target_position="General Professional")
@@ -99,7 +140,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
                 f"• ATS Compatibility: *{b.get('ats_compatibility', 70)}%*\n"
                 f"• Relevansi Format: *{b.get('structure', 75)}%*\n"
                 f"• Kualitas Pengalaman: *{b.get('experience', 80)}%*\n\n"
-                "💡 *Poin Evaluasi AI:*\n"
+                "💡 *Catatan Standar Screening HRD:*\n"
                 f"{findings_list}\n\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "🔥 *Bikin HRD Langsung Lirik Lamaranmu!*\n\n"
@@ -131,7 +172,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     if (
         "menu" in user_text_clean
         or user_text_clean in ["halo", "hi", "mulai", "start", "bantuan", "batal"]
-        or (GLOBAL_USER_STATES.get(sender_wa_id, {}).get("mode") == "post_cv" and user_text_clean in ["4", "menu utama"])
+        or (GLOBAL_USER_STATES.get(sender_wa_id, {}).get("mode") == "post_cv" and user_text_clean in ["3", "menu utama"])
     ):
         GLOBAL_USER_STATES[sender_wa_id] = {"step": 0, "mode": "menu", "data": {}}
         await send_whatsapp_text(sender_wa_id, GREETING_MENU_MSG)
@@ -187,8 +228,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     # --- KONDISI B: PASCA BUAT/REVIEW CV (mode: "post_cv") ---
     if current_mode == "post_cv":
         if user_text_clean in ["1", "order", "beli", "order career page"] or "order" in user_text_clean:
-            order_msg = PAYMENT_OFFER_MSG_TEMPLATE.format(user_id=sender_wa_id)
-            await send_whatsapp_text(sender_wa_id, order_msg)
+            await send_qris_checkout_flow(sender_wa_id, base_amt=10000)
             return web.Response(text="EVENT_RECEIVED", status=200)
 
         if user_text_clean in ["2", "referral", "gratis", "ajak teman"] or "referral" in user_text_clean:
@@ -206,17 +246,6 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
                 "Jika sudah mencapai 5 teman, Career Page profesional senilai Rp10.000 otomatis aktif gratis untukmu!"
             )
             await send_whatsapp_text(sender_wa_id, ref_msg)
-            return web.Response(text="EVENT_RECEIVED", status=200)
-
-        if user_text_clean in ["3", "edit", "edit cv"]:
-            current_session["mode"] = "builder"
-            current_session["step"] = 1
-            edit_msg = (
-                "🔄 *Perbarui Bagian CV*\n\n"
-                "Mari kita perbarui data CV kamu dari awal. Data draft sebelumnya akan disesuaikan kembali.\n\n"
-                "📝 *Langkah 1/10*\nSiapa nama lengkapmu?"
-            )
-            await send_whatsapp_text(sender_wa_id, edit_msg)
             return web.Response(text="EVENT_RECEIVED", status=200)
 
     # Mode Analisis Review CV Teks
@@ -250,11 +279,11 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
                 f"• ATS Compatibility: *{b.get('ats_compatibility', 70)}%*\n"
                 f"• Relevansi Format: *{b.get('structure', 75)}%*\n"
                 f"• Kualitas Pengalaman: *{b.get('experience', 80)}%*\n\n"
-                "💡 *Poin Evaluasi AI:*\n"
+                "💡 *Catatan Standar Screening HRD:*\n"
                 f"{findings_list}\n\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "🔥 *Bikin HRD Langsung Lirik Lamaranmu!*\n\n"
-                "Dapatkan *CV Rekomendasi AI + Career Page Profesional*.\n\n"
+                "Dapatkan *Career Page Portofolio Online Pribadi*.\n\n"
                 "Pilih opsi selanjutnya:\n"
                 "1️⃣ *Order Career Page (Rp10.000)*\n"
                 "2️⃣ *Ajak 5 Teman (Gratis)*\n"

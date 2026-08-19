@@ -1,129 +1,209 @@
 import os
-import httpx
+import io
+import mimetypes
 import logging
 from typing import Optional, Dict, Any
+import httpx
 
 logger = logging.getLogger(__name__)
 
-# Membaca environment variables dari Railway
-PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID") or os.getenv("META_WA_PHONE_NUMBER_ID", "")
-ACCESS_TOKEN = os.getenv("WHATSAPP_TOKEN") or os.getenv("META_WA_ACCESS_TOKEN", "")
-GRAPH_API_URL = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages" if PHONE_NUMBER_ID else ""
-MEDIA_API_URL = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/media" if PHONE_NUMBER_ID else ""
+# Konfigurasi Kredensial Meta WhatsApp Cloud API
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN") or os.getenv("META_WA_TOKEN", "")
+PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("META_PHONE_NUMBER_ID", "")
+META_GRAPH_VERSION = os.getenv("META_GRAPH_VERSION", "v19.0")
+BASE_URL = f"https://graph.facebook.com/{META_GRAPH_VERSION}"
 
-HEADERS = {
-    "Authorization": f"Bearer {ACCESS_TOKEN}",
-    "Content-Type": "application/json"
-}
 
-async def send_whatsapp_text(to_number: str, message_text: str) -> bool:
-    """Mengirim pesan teks ke WhatsApp pengguna via Meta Cloud API."""
-    if not PHONE_NUMBER_ID or not ACCESS_TOKEN:
-        logger.error("[WhatsApp] Credentials PHONE_NUMBER_ID atau WHATSAPP_TOKEN belum diatur.")
-        return False
+def _get_auth_headers() -> Dict[str, str]:
+    """Helper untuk authorization header Meta API."""
+    return {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}"
+    }
 
+
+async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False) -> Optional[Dict[str, Any]]:
+    """
+    Mengirim pesan teks standar ke user WhatsApp via Meta Graph API.
+    """
+    if not WHATSAPP_TOKEN or not PHONE_NUMBER_ID:
+        logger.error("[WhatsApp Service] Missing WHATSAPP_TOKEN or PHONE_NUMBER_ID")
+        return None
+
+    url = f"{BASE_URL}/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        **_get_auth_headers(),
+        "Content-Type": "application/json"
+    }
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
-        "to": to_number,
+        "to": to_phone,
         "type": "text",
         "text": {
-            "preview_url": True,
-            "body": message_text
+            "preview_url": preview_url,
+            "body": text
         }
     }
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(GRAPH_API_URL, headers=HEADERS, json=payload)
-            if response.status_code == 200:
-                logger.info(f"[WhatsApp] Berhasil kirim pesan ke {to_number}")
-                return True
-            logger.error(f"[WhatsApp Send Error] {response.status_code}: {response.text}")
-            return False
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            if response.status_code != 200:
+                logger.error(f"[WhatsApp Service] send_text failed: {response.status_code} - {response.text}")
+                return None
+            return response.json()
     except Exception as e:
-        logger.error(f"[WhatsApp Exception] Gagal kirim pesan ke {to_number}: {e}")
-        return False
+        logger.error(f"[WhatsApp Service] Exception in send_whatsapp_text: {e}")
+        return None
 
 
-async def send_whatsapp_document(
-    to_number: str,
-    file_path_or_url: str,
-    filename: str = "CV_ATS_BoonTrack.docx",
-    caption: str = ""
-) -> bool:
-    """Mengirim file dokumen (.docx / .pdf) via URL publik atau upload path lokal."""
-    if not PHONE_NUMBER_ID or not ACCESS_TOKEN:
-        logger.error("[WhatsApp] Credentials PHONE_NUMBER_ID atau WHATSAPP_TOKEN belum diatur.")
-        return False
+async def upload_whatsapp_media(file_bytes: bytes, filename: str, mime_type: str) -> Optional[str]:
+    """
+    Mengunggah file biner ke Meta Cloud API untuk mendapatkan media_id.
+    """
+    if not WHATSAPP_TOKEN or not PHONE_NUMBER_ID:
+        logger.error("[WhatsApp Service] Missing WHATSAPP_TOKEN or PHONE_NUMBER_ID for media upload")
+        return None
 
-    # 1. JIKA FILE BERUPA URL PUBLIK (Supabase Storage / CDN)
-    if file_path_or_url.startswith("http://") or file_path_or_url.startswith("https://"):
+    url = f"{BASE_URL}/{PHONE_NUMBER_ID}/media"
+    headers = _get_auth_headers()
+
+    try:
+        files = {
+            "file": (filename, file_bytes, mime_type)
+        }
+        data = {
+            "messaging_product": "whatsapp",
+            "type": mime_type
+        }
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            response = await client.post(url, headers=headers, data=data, files=files)
+            if response.status_code != 200:
+                logger.error(f"[WhatsApp Service] upload_media failed: {response.status_code} - {response.text}")
+                return None
+            res_data = response.json()
+            return res_data.get("id")
+    except Exception as e:
+        logger.error(f"[WhatsApp Service] Exception in upload_whatsapp_media: {e}")
+        return None
+
+
+async def send_whatsapp_image(to_phone: str, image_path: str, caption: str = "") -> Optional[Dict[str, Any]]:
+    """
+    Membaca file gambar lokal (misal: assets/qris.jpg), mengunggah ke Meta, 
+    dan mengirimkannya sebagai pesan gambar ber-caption.
+    """
+    if not os.path.exists(image_path):
+        logger.error(f"[WhatsApp Service] Image path not found: {image_path}")
+        return await send_whatsapp_text(to_phone, caption)
+
+    try:
+        with open(image_path, "rb") as f:
+            img_bytes = f.read()
+
+        filename = os.path.basename(image_path)
+        mime_type, _ = mimetypes.guess_type(image_path)
+        mime_type = mime_type or "image/jpeg"
+
+        media_id = await upload_whatsapp_media(img_bytes, filename, mime_type)
+        if not media_id:
+            logger.warning("[WhatsApp Service] Media ID upload failed, falling back to text")
+            return await send_whatsapp_text(to_phone, caption)
+
+        url = f"{BASE_URL}/{PHONE_NUMBER_ID}/messages"
+        headers = {
+            **_get_auth_headers(),
+            "Content-Type": "application/json"
+        }
         payload = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
-            "to": to_number,
-            "type": "document",
-            "document": {
-                "link": file_path_or_url,
-                "filename": filename,
+            "to": to_phone,
+            "type": "image",
+            "image": {
+                "id": media_id,
                 "caption": caption
             }
         }
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(GRAPH_API_URL, headers=HEADERS, json=payload)
-                if response.status_code == 200:
-                    logger.info(f"[WhatsApp] Berhasil kirim dokumen URL ke {to_number}")
-                    return True
-                logger.error(f"[WhatsApp Doc URL Error] {response.status_code}: {response.text}")
-                return False
-        except Exception as e:
-            logger.error(f"[WhatsApp Doc URL Exception] {e}")
-            return False
-
-    # 2. JIKA FILE DARI PATH LOKAL SERVER (Upload binary ke Meta Media Endpoint)
-    try:
-        if not os.path.exists(file_path_or_url):
-            logger.error(f"[WhatsApp] File lokal tidak ditemukan: {file_path_or_url}")
-            return False
-
-        upload_headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
-        mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            with open(file_path_or_url, "rb") as f:
-                files = {"file": (filename, f, mime_type)}
-                data = {
-                    "messaging_product": "whatsapp",
-                    "type": mime_type
-                }
-                upload_res = await client.post(MEDIA_API_URL, headers=upload_headers, data=data, files=files)
-
-            if upload_res.status_code != 200:
-                logger.error(f"[WhatsApp Upload Media Error] {upload_res.status_code}: {upload_res.text}")
-                return False
-
-            media_id = upload_res.json().get("id")
-
-            payload = {
-                "messaging_product": "whatsapp",
-                "recipient_type": "individual",
-                "to": to_number,
-                "type": "document",
-                "document": {
-                    "id": media_id,
-                    "filename": filename,
-                    "caption": caption
-                }
-            }
-            send_res = await client.post(GRAPH_API_URL, headers=HEADERS, json=payload)
-            if send_res.status_code == 200:
-                logger.info(f"[WhatsApp] Berhasil kirim dokumen lokal ke {to_number}")
-                return True
-            logger.error(f"[WhatsApp Send Media ID Error] {send_res.status_code}: {send_res.text}")
-            return False
-
+            response = await client.post(url, headers=headers, json=payload)
+            if response.status_code != 200:
+                logger.error(f"[WhatsApp Service] send_image failed: {response.status_code} - {response.text}")
+                return await send_whatsapp_text(to_phone, caption)
+            return response.json()
     except Exception as e:
-        logger.error(f"[WhatsApp Doc Local Exception] Gagal upload & kirim file: {e}")
-        return False
+        logger.error(f"[WhatsApp Service] Exception in send_whatsapp_image: {e}")
+        return await send_whatsapp_text(to_phone, caption)
+
+
+async def send_whatsapp_document(to_phone: str, file_bytes: bytes, filename: str, caption: str = "") -> Optional[Dict[str, Any]]:
+    """
+    Mengirim file dokumen (.pdf / .docx) langsung ke user WhatsApp.
+    """
+    mime_type, _ = mimetypes.guess_type(filename)
+    mime_type = mime_type or "application/octet-stream"
+
+    media_id = await upload_whatsapp_media(file_bytes, filename, mime_type)
+    if not media_id:
+        logger.error("[WhatsApp Service] Failed to upload document media ID")
+        return None
+
+    url = f"{BASE_URL}/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        **_get_auth_headers(),
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to_phone,
+        "type": "document",
+        "document": {
+            "id": media_id,
+            "filename": filename,
+            "caption": caption
+        }
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            if response.status_code != 200:
+                logger.error(f"[WhatsApp Service] send_document failed: {response.status_code} - {response.text}")
+                return None
+            return response.json()
+    except Exception as e:
+        logger.error(f"[WhatsApp Service] Exception in send_whatsapp_document: {e}")
+        return None
+
+
+async def download_whatsapp_media_by_id(media_id: str) -> Optional[bytes]:
+    """
+    Mengunduh file bytes dari webhook attachment user berdasarkan media_id.
+    """
+    if not WHATSAPP_TOKEN:
+        logger.error("[WhatsApp Service] Missing WHATSAPP_TOKEN for media download")
+        return None
+
+    headers = _get_auth_headers()
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            # 1. Dapatkan URL unduh media
+            meta_res = await client.get(f"{BASE_URL}/{media_id}", headers=headers)
+            if meta_res.status_code != 200:
+                logger.error(f"[WhatsApp Service] Failed to retrieve media URL: {meta_res.status_code}")
+                return None
+            
+            download_url = meta_res.json().get("url")
+            if not download_url:
+                return None
+
+            # 2. Download file byte aktual
+            file_res = await client.get(download_url, headers=headers)
+            if file_res.status_code == 200:
+                return file_res.content
+            return None
+    except Exception as e:
+        logger.error(f"[WhatsApp Service] Exception in download_whatsapp_media_by_id: {e}")
+        return None
