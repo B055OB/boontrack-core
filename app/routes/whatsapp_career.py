@@ -10,7 +10,7 @@ from app.services.cv_state_engine import process_unified_cv_step, GLOBAL_USER_ST
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 from app.services.ai_service import ai_gateway
-from app.core.database import track_event, count_referrals, get_user_cv_data
+from app.core.database import track_event, count_referrals
 from app.services.document_parser_service import download_whatsapp_media, extract_text_from_bytes
 
 logger = logging.getLogger(__name__)
@@ -22,20 +22,9 @@ async def get_whatsapp_dynamic_home_menu(sender_wa_id: str) -> str:
     Menghasilkan menu beranda dinamis yang menyapa nama panggilan user jika sudah pernah membuat CV,
     serta menampilkan menu lanjutan (Career Page & Cek Referral) identik dengan bot Telegram.
     """
-    # 1. Cek data di cache memori dulu, jika kosong cek database
     user_session = GLOBAL_USER_STATES.get(sender_wa_id, {})
     user_data = user_session.get("data", {})
     nama_panggilan = user_data.get("nama_panggilan") or user_data.get("nama_lengkap")
-
-    if not nama_panggilan:
-        try:
-            numeric_user_id = int(re.sub(r"\D", "", str(sender_wa_id)))
-            db_data = await get_user_cv_data(numeric_user_id)
-            if db_data:
-                nama_panggilan = db_data.get("nama_panggilan") or db_data.get("nama_lengkap")
-                user_session.setdefault("data", {}).update(db_data)
-        except Exception as e:
-            logger.warning(f"[Dynamic Home Menu] DB fetch notice: {e}")
 
     # A. Tampilan Menu Jika User Sudah Punya Data CV (Returning User)
     if nama_panggilan:
@@ -164,16 +153,20 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             eval_result = cv_review_engine.evaluate_cv(extracted_text, target_position="General Professional")
             filtered_data = cv_review_service.filter_entitlement_response(eval_result, is_premium=False)
 
-            await cv_review_service.save_review(
-                user_id=int(re.sub(r"\D", "", str(sender_wa_id))),
-                target_position="General Professional",
-                overall_score=filtered_data.get("overall_score", 0),
-                quality_score=filtered_data.get("breakdown_scores", {}).get("ats_compatibility", 0),
-                job_match_score=filtered_data.get("breakdown_scores", {}).get("keyword", 0),
-                evidence_score=filtered_data.get("breakdown_scores", {}).get("experience", 0),
-                review_json=filtered_data,
-                confidence_level=eval_result.get("confidence", {}).get("level", "MEDIUM")
-            )
+            try:
+                numeric_user_id = int(re.sub(r"\D", "", str(sender_wa_id)))
+                await cv_review_service.save_review(
+                    user_id=numeric_user_id,
+                    target_position="General Professional",
+                    overall_score=filtered_data.get("overall_score", 0),
+                    quality_score=filtered_data.get("breakdown_scores", {}).get("ats_compatibility", 0),
+                    job_match_score=filtered_data.get("breakdown_scores", {}).get("keyword", 0),
+                    evidence_score=filtered_data.get("breakdown_scores", {}).get("experience", 0),
+                    review_json=filtered_data,
+                    confidence_level=eval_result.get("confidence", {}).get("level", "MEDIUM")
+                )
+            except Exception as dbe:
+                logger.error(f"[DB Save Review Error] {dbe}")
 
             b = filtered_data.get("breakdown_scores", {})
             findings = filtered_data.get("findings", [])
@@ -199,7 +192,6 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
                 "3️⃣ *Menu Utama*\n\n"
                 "_Ketik angka 1, 2, atau 3 untuk memilih._"
             )
-            # Simpan state post_cv agar flow order/referral aktif
             GLOBAL_USER_STATES.setdefault(sender_wa_id, {})["step"] = 0
             GLOBAL_USER_STATES[sender_wa_id]["mode"] = "post_cv"
             await send_whatsapp_text(sender_wa_id, review_msg)
@@ -347,16 +339,20 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             eval_result = cv_review_engine.evaluate_cv(user_text, target_position="General Professional")
             filtered_data = cv_review_service.filter_entitlement_response(eval_result, is_premium=False)
 
-            await cv_review_service.save_review(
-                user_id=int(re.sub(r"\D", "", str(sender_wa_id))),
-                target_position="General Professional",
-                overall_score=filtered_data.get("overall_score", 0),
-                quality_score=filtered_data.get("breakdown_scores", {}).get("ats_compatibility", 0),
-                job_match_score=filtered_data.get("breakdown_scores", {}).get("keyword", 0),
-                evidence_score=filtered_data.get("breakdown_scores", {}).get("experience", 0),
-                review_json=filtered_data,
-                confidence_level=eval_result.get("confidence", {}).get("level", "MEDIUM")
-            )
+            try:
+                numeric_user_id = int(re.sub(r"\D", "", str(sender_wa_id)))
+                await cv_review_service.save_review(
+                    user_id=numeric_user_id,
+                    target_position="General Professional",
+                    overall_score=filtered_data.get("overall_score", 0),
+                    quality_score=filtered_data.get("breakdown_scores", {}).get("ats_compatibility", 0),
+                    job_match_score=filtered_data.get("breakdown_scores", {}).get("keyword", 0),
+                    evidence_score=filtered_data.get("breakdown_scores", {}).get("experience", 0),
+                    review_json=filtered_data,
+                    confidence_level=eval_result.get("confidence", {}).get("level", "MEDIUM")
+                )
+            except Exception as dbe:
+                logger.error(f"[DB Save Review Error] {dbe}")
 
             b = filtered_data.get("breakdown_scores", {})
             findings = filtered_data.get("findings", [])
