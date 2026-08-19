@@ -17,15 +17,20 @@ logger = logging.getLogger(__name__)
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN") or os.getenv("META_WA_VERIFY_TOKEN", "boontrack_wa_secret_token")
 
 
-def get_whatsapp_full_menu(sender_wa_id: str) -> str:
-    """Menghasilkan menu utama 5 layanan BoonTrack dengan sapaan nama."""
+def get_user_display_name(sender_wa_id: str) -> str:
+    """Mengambil nama pengguna dari session atau data CV."""
     user_session = GLOBAL_USER_STATES.get(sender_wa_id, {})
     user_data = user_session.get("data", {})
-    nama = user_data.get("nama_panggilan") or user_data.get("nama_lengkap")
-    greeting_name = f", *{nama}*" if nama else ""
+    return user_data.get("nama_panggilan") or user_data.get("nama_lengkap") or ""
+
+
+def get_whatsapp_full_menu(sender_wa_id: str) -> str:
+    """Menghasilkan menu utama 5 layanan BoonTrack dengan sapaan nama pengguna."""
+    nama = get_user_display_name(sender_wa_id)
+    greeting = f", *{nama}*" if nama else ""
 
     return (
-        f"Halo{greeting_name}! 👋 Selamat datang di *BoonTrack Career Assistant*.\n\n"
+        f"Halo{greeting}! 👋 Selamat datang di *BoonTrack Career Assistant*.\n\n"
         "Saya siap membantu perjalanan karirmu agar lebih optimal dan dilirik HRD:\n\n"
         "1️⃣ *Buat CV ATS Baru* (Panduan step-by-step dari awal)\n"
         "2️⃣ *Review & Cek Skor ATS CV* (Upload PDF/DOCX atau kirim teks)\n"
@@ -36,15 +41,27 @@ def get_whatsapp_full_menu(sender_wa_id: str) -> str:
     )
 
 
-def generate_payment_message(sender_wa_id: str, base_amt: int = 10000) -> Tuple[int, str]:
-    """Format checkout Career Page dengan sapaan nama dan 3 digit nominal unik."""
-    user_session = GLOBAL_USER_STATES.get(sender_wa_id, {})
-    user_data = user_session.get("data", {})
-    nama = user_data.get("nama_panggilan") or user_data.get("nama_lengkap")
+def get_or_create_user_payment(sender_wa_id: str, base_amt: int = 10000) -> Tuple[int, str]:
+    """
+    Mengambil invoice aktif yang konsisten untuk user dengan sapaan nama yang presisi.
+    """
+    user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
+    nama = get_user_display_name(sender_wa_id)
     greeting = f", *{nama}*" if nama else ""
 
-    unique_code = random.randint(100, 999)
-    total_amt = base_amt + unique_code
+    # Ambil invoice aktif jika sudah pernah dibuat
+    payment_info = user_session.get("active_payment")
+    if payment_info and isinstance(payment_info, dict):
+        total_amt = payment_info.get("total_amt", base_amt + 416)
+        unique_code = payment_info.get("unique_code", 416)
+    else:
+        unique_code = random.randint(100, 999)
+        total_amt = base_amt + unique_code
+        user_session["active_payment"] = {
+            "total_amt": total_amt,
+            "unique_code": unique_code,
+            "base_amt": base_amt
+        }
 
     msg = (
         f"🎉 *Terima kasih telah memilih BoonTrack{greeting}!*\n\n"
@@ -71,8 +88,8 @@ def generate_payment_message(sender_wa_id: str, base_amt: int = 10000) -> Tuple[
 
 
 async def send_qris_checkout_flow(sender_wa_id: str, base_amt: int = 10000):
-    """Mengirim 1 kali pesan gambar QRIS dengan caption (mencegah duplikasi)."""
-    total_amt, msg_caption = generate_payment_message(sender_wa_id, base_amt)
+    """Mengirim gambar QRIS tunggal dengan rincian pembayaran ber-caption nama."""
+    total_amt, msg_caption = get_or_create_user_payment(sender_wa_id, base_amt)
 
     possible_qris_paths = [
         "assets/qris.jpg",
@@ -88,11 +105,10 @@ async def send_qris_checkout_flow(sender_wa_id: str, base_amt: int = 10000):
     if found_qris:
         try:
             await send_whatsapp_image(sender_wa_id, image_path=found_qris, caption=msg_caption)
-            return  # Kunci agar tidak mengirim pesan teks dobel
+            return
         except Exception as e:
             logger.error(f"[WA Send QRIS Image Error] {e}")
 
-    # Fallback teks hanya jika file gambar tidak ditemukan
     await send_whatsapp_text(sender_wa_id, msg_caption)
 
 
@@ -126,16 +142,17 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     sender_wa_id = msg_obj.get("from")
     msg_type = msg_obj.get("type")
 
-    # Ambil Profil Nama dari Meta Contact jika tersedia
-    contacts = value_data.get("contacts", [])
-    profile_name = ""
-    if contacts and isinstance(contacts, list):
-        profile_name = contacts[0].get("profile", {}).get("name", "").strip()
-
+    # Inisialisasi session user
     user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
-    if profile_name and not user_session.get("data", {}).get("nama_panggilan"):
-        user_session.setdefault("data", {})["nama_panggilan"] = profile_name
-        user_session["data"]["nama_lengkap"] = profile_name
+    user_data = user_session.setdefault("data", {})
+
+    # Ekstraksi Nama Profil WhatsApp dari kontak Meta Webhook
+    contacts = value_data.get("contacts", [])
+    if contacts and isinstance(contacts, list) and len(contacts) > 0:
+        raw_profile_name = contacts[0].get("profile", {}).get("name", "").strip()
+        if raw_profile_name and not user_data.get("nama_panggilan"):
+            user_data["nama_panggilan"] = raw_profile_name
+            user_data["nama_lengkap"] = raw_profile_name
 
     # =========================================================================
     # 1. HANDLING DOKUMEN CV (.PDF / .DOCX)
@@ -144,10 +161,12 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         doc_info = msg_obj.get("document", {})
         media_id = doc_info.get("id")
         filename = doc_info.get("filename", "document.pdf")
+        nama = get_user_display_name(sender_wa_id)
+        sapaan = f", *{nama}*" if nama else ""
 
         await send_whatsapp_text(
             sender_wa_id,
-            f"📥 Menerima dokumen *{filename}*. Sedang menganalisis struktur & skor ATS CV kamu... ⏳"
+            f"📥 Menerima dokumen *{filename}*{sapaan}. Sedang menganalisis struktur & skor ATS CV kamu... ⏳"
         )
 
         try:
@@ -184,7 +203,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             findings_list = "\n".join([f"• {f}" for f in findings]) if findings else "• Format dasar CV sudah terbaca dengan baik."
 
             review_msg = (
-                "📊 *HASIL DIAGNOSIS SKOR DOKUMEN CV KAMU*\n"
+                f"📊 *HASIL DIAGNOSIS SKOR DOKUMEN CV{sapaan.upper()}*\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"📄 *File:* {filename}\n"
                 f"📈 *Overall Score:* *{filtered_data.get('overall_score', 0)} / 100*\n\n"
@@ -231,10 +250,27 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     user_text = msg_obj.get("text", {}).get("body", "").strip()
     user_text_clean = user_text.lower().strip()
 
+    # Tracking Referral
+    if "ref_" in user_text_clean:
+        ref_match = re.search(r"ref_(\d+)", user_text_clean)
+        if ref_match:
+            referrer_phone = ref_match.group(1)
+            if referrer_phone != sender_wa_id:
+                try:
+                    await track_event(sender_wa_id, "referral_signup", meta={"referrer_id": referrer_phone})
+                except Exception as dbe:
+                    logger.debug(f"[Referral Track Error] {dbe}")
+
     # Reset ke Menu Utama
     if user_text_clean in ["menu", "halo", "hi", "mulai", "start", "bantuan", "batal", "home", "/menu", "/start"]:
         current_data = user_session.get("data", {})
-        GLOBAL_USER_STATES[sender_wa_id] = {"step": 0, "mode": "menu", "data": current_data}
+        saved_payment = user_session.get("active_payment")
+        GLOBAL_USER_STATES[sender_wa_id] = {
+            "step": 0,
+            "mode": "menu",
+            "data": current_data,
+            "active_payment": saved_payment
+        }
         await send_whatsapp_text(sender_wa_id, get_whatsapp_full_menu(sender_wa_id))
         return web.Response(text="EVENT_RECEIVED", status=200)
 
@@ -280,7 +316,13 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
 
         if user_text_clean in ["3", "menu utama"]:
             current_data = user_session.get("data", {})
-            GLOBAL_USER_STATES[sender_wa_id] = {"step": 0, "mode": "menu", "data": current_data}
+            saved_payment = user_session.get("active_payment")
+            GLOBAL_USER_STATES[sender_wa_id] = {
+                "step": 0,
+                "mode": "menu",
+                "data": current_data,
+                "active_payment": saved_payment
+            }
             await send_whatsapp_text(sender_wa_id, get_whatsapp_full_menu(sender_wa_id))
             return web.Response(text="EVENT_RECEIVED", status=200)
 
@@ -303,7 +345,9 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             )
             return web.Response(text="EVENT_RECEIVED", status=200)
 
-        await send_whatsapp_text(sender_wa_id, "⏳ *Sedang menganalisis struktur & skor ATS CV kamu...*")
+        nama = get_user_display_name(sender_wa_id)
+        sapaan = f", *{nama}*" if nama else ""
+        await send_whatsapp_text(sender_wa_id, f"⏳ *Sedang menganalisis struktur & skor ATS CV kamu{sapaan}...*")
         try:
             eval_result = cv_review_engine.evaluate_cv(user_text, target_position="General Professional")
             filtered_data = cv_review_service.filter_entitlement_response(eval_result, is_premium=False)
@@ -313,7 +357,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             findings_list = "\n".join([f"• {f}" for f in findings]) if findings else "• Format dasar CV sudah terbaca."
 
             review_msg = (
-                "📊 *HASIL DIAGNOSIS SKOR CV KAMU*\n"
+                f"📊 *HASIL DIAGNOSIS SKOR CV{sapaan.upper()}*\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"🎯 *Target Role:* General Professional\n"
                 f"📈 *Overall Score:* *{filtered_data.get('overall_score', 0)} / 100*\n\n"
@@ -375,8 +419,10 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         # Opsi 2: Review CV
         if user_text_clean in ["2", "review cv", "review & optimasi cv", "cek ats", "2️⃣"]:
             user_session["mode"] = "review"
+            nama = get_user_display_name(sender_wa_id)
+            sapaan = f", *{nama}*" if nama else ""
             intro_review = (
-                "Halo! Mari kita bedah skor dan kualitas ATS CV kamu. 📊✨\n\n"
+                f"Halo{sapaan}! Mari kita bedah skor dan kualitas ATS CV kamu. 📊✨\n\n"
                 "Kamu bisa langsung *kirim file dokumen CV (.pdf / .docx)* ke chat ini, atau *salin-tempel (copy-paste) teks CV kamu* sekarang ya."
             )
             await send_whatsapp_text(sender_wa_id, intro_review)
@@ -406,10 +452,12 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         # Opsi 5: Konsultasi Karir
         if user_text_clean in ["5", "konsultasi", "konsultasi karir", "5️⃣"]:
             user_session["mode"] = "consultation"
+            nama = get_user_display_name(sender_wa_id)
+            sapaan = f" *{nama}*" if nama else ""
             await send_whatsapp_text(
                 sender_wa_id,
-                "💼 *Konsultasi Karir & Dunia Kerja Bersama BoonTrack AI*\n\n"
-                "Silakan tanyakan apa saja seputar persiapan interview, negosiasi gaji/UMR, tips CV, atau strategi karir impianmu!"
+                f"💼 *Konsultasi Karir & Dunia Kerja Bersama BoonTrack AI*\n\n"
+                f"Halo{sapaan}! Silakan tanyakan apa saja seputar persiapan interview, negosiasi gaji/UMR, tips CV, atau strategi karir impianmu!"
             )
             return web.Response(text="EVENT_RECEIVED", status=200)
 
