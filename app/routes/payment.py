@@ -1,7 +1,7 @@
 import re
 import logging
 from aiohttp import web
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from app.services.whatsapp_service import send_whatsapp_text
 from app.services.cv_state_engine import GLOBAL_USER_STATES
 from app.core.database import track_event
@@ -10,10 +10,9 @@ logger = logging.getLogger(__name__)
 
 
 def extract_amount_from_text(text: str) -> int:
-    """Ekstraksi nominal angka dari format notifikasi DANA."""
+    """Ekstraksi nominal angka dari berbagai pola teks notifikasi transfer DANA."""
     if not text:
         return 0
-    # Mencocokkan 'Rp 10.416' / 'Rp10.416' / '10.416' / 'Rp 10416'
     match = re.search(r"(?:rp\.?|idr)?\s*([\d\.,]+)", text, re.IGNORECASE)
     if match:
         clean_digit = re.sub(r"\D", "", match.group(1))
@@ -21,8 +20,11 @@ def extract_amount_from_text(text: str) -> int:
     return 0
 
 
-async def notify_payment_success(user_id: str, amount: int, platform: str = "whatsapp"):
-    """Mengirim pesan konfirmasi aktivasi Career Page otomatis."""
+async def notify_payment_success_universal(user_id: str, amount: int, platform: str = "whatsapp"):
+    """
+    Mengirimkan notifikasi aktivasi Career Page secara otomatis
+    baik untuk pengguna Telegram maupun WhatsApp.
+    """
     user_session = GLOBAL_USER_STATES.get(user_id, {})
     user_data = user_session.get("data", {})
     nama = user_data.get("nama_panggilan") or user_data.get("nama_lengkap") or ""
@@ -36,36 +38,43 @@ async def notify_payment_success(user_id: str, amount: int, platform: str = "wha
         f"👉 {career_page_url}\n\n"
         "✨ *Fitur yang aktif:*\n"
         "• Link halaman portofolio personal responsif\n"
-        "• Direct contact button menuju WhatsApp kamu\n"
+        "• Direct contact button menuju kontakmu\n"
         "• Badge verifikasi ATS-Friendly\n\n"
         "_Ketik *Menu* untuk opsi lainnya._"
     )
 
-    if platform == "whatsapp" or str(user_id).startswith("62") or len(str(user_id)) > 10:
-        await send_whatsapp_text(str(user_id), success_msg)
+    # Routing otomatis: Cek apakah ID berasal dari WhatsApp atau Telegram
+    is_wa_number = str(user_id).startswith("62") or len(str(user_id)) >= 11 or platform == "whatsapp"
+
+    if is_wa_number:
+        try:
+            await send_whatsapp_text(str(user_id), success_msg)
+            logger.info(f"[PAYMENT NOTIFY] WhatsApp sent to {user_id}")
+        except Exception as e:
+            logger.error(f"[Payment WhatsApp Notify Error] {e}")
     else:
         try:
+            # Kirim ke Telegram jika user bertransaksi lewat Telegram Bot
             from app.services.telegram_service import send_telegram_message
             await send_telegram_message(int(user_id), success_msg.replace("*", "**"))
+            logger.info(f"[PAYMENT NOTIFY] Telegram sent to {user_id}")
         except Exception as te:
-            logger.debug(f"[Telegram Notify Fallback] {te}")
+            logger.error(f"[Payment Telegram Notify Error] {te}")
 
 
 async def handle_dana_webhook(request: web.Request) -> web.Response:
-    """Handler endpoint webhook notifikasi DANA reader."""
+    """Handler endpoint webhook notifikasi mutasi DANA (Telegram & WA)."""
     try:
         data: Dict[str, Any] = await request.json()
     except Exception:
         try:
-            post_data = await request.post()
-            data = dict(post_data)
+            data = dict(await request.post())
         except Exception:
             data = {}
 
-    text = data.get("notification_text", "") or data.get("raw_text", "") or data.get("text", "")
-    
-    # Ambil nominal dari amount langsung atau dari text notifikasi
+    text = data.get("notification_text") or data.get("raw_text") or data.get("text") or data.get("keterangan") or ""
     raw_amount = data.get("amount") or data.get("nominal") or 0
+
     if raw_amount:
         try:
             amount = int(re.sub(r"\D", "", str(raw_amount)))
@@ -74,13 +83,12 @@ async def handle_dana_webhook(request: web.Request) -> web.Response:
     else:
         amount = extract_amount_from_text(text)
 
-    logger.info(f"\n[NOTIF INCOMING]: {text}")
-    logger.info(f"[PARSED AMOUNT]: {amount}\n")
+    logger.info(f"[DANA WEBHOOK] Incoming Text: '{text}' | Amount: {amount}")
 
     if amount <= 0:
-        return web.json_response({"status": "failed", "message": "Nominal tidak terbaca", "amount_detected": 0}, status=400)
+        return web.json_response({"status": "failed", "reason": "invalid_amount", "amount_detected": 0}, status=400)
 
-    # Verifikasi dan pencocokan ke session invoice user
+    # Cari user aktif (baik sesi Telegram maupun sesi WhatsApp)
     matched_user_id = None
     matched_platform = "whatsapp"
 
@@ -95,14 +103,14 @@ async def handle_dana_webhook(request: web.Request) -> web.Response:
 
     if matched_user_id:
         try:
-            await notify_payment_success(matched_user_id, amount, platform=matched_platform)
+            await notify_payment_success_universal(matched_user_id, amount, platform=matched_platform)
             GLOBAL_USER_STATES[matched_user_id]["is_premium"] = True
             GLOBAL_USER_STATES[matched_user_id]["active_payment"] = None
 
             await track_event(
                 matched_user_id,
                 "payment_success",
-                meta={"amount": amount, "method": "DANA_NOTIF", "raw_text": text}
+                meta={"amount": amount, "method": "DANA_QRIS", "text": text, "platform": matched_platform}
             )
         except Exception as e:
             logger.error(f"[Payment Process Error] {e}")
@@ -113,7 +121,7 @@ async def handle_dana_webhook(request: web.Request) -> web.Response:
 
 
 def register_payment_routes(app: web.Application):
-    """Mendaftarkan seluruh variasi path endpoint webhook DANA."""
+    """Mendaftarkan seluruh endpoint pembayaran."""
     app.router.add_post("/webhook/dana", handle_dana_webhook)
     app.router.add_post("/api/webhook/dana", handle_dana_webhook)
     app.router.add_post("/api/payments/webhook", handle_dana_webhook)
