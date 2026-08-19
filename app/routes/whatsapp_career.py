@@ -16,30 +16,59 @@ from app.services.document_parser_service import download_whatsapp_media, extrac
 logger = logging.getLogger(__name__)
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN") or os.getenv("META_WA_VERIFY_TOKEN", "boontrack_wa_secret_token")
 
+# Penyimpanan sederhana di runtime untuk menandai user yang sudah aktif/punya CV
+COMPLETED_WA_USERS = set()
+
+
+async def generate_career_advice(user_message: str, sender_id: str) -> str:
+    """Helper untuk memanggil AI Gateway dengan fallback prompt langsung."""
+    try:
+        reply = await ai_gateway.generate(
+            user_message=user_message,
+            context={"user_id": sender_id, "feature": "career_consultation"}
+        )
+        if reply and len(reply.strip()) > 5:
+            return reply
+    except Exception as e:
+        logger.error(f"[AI Consultation Gateway Error] {e}")
+
+    # Fallback response cerdas jika AI Gateway timeout/limit
+    return (
+        "💡 *Tips Karir & Strategi Sukses BoonTrack:*\n\n"
+        "1. *Tunjukkan Impact Nyata:* Catat pencapaian terukur (angka, efisiensi waktu, omzet) selama kamu bekerja.\n"
+        "2. *Komunikasi Proaktif dengan Atasan:* Jadwalkan sesi 1-on-1 review performa, sampaikan target dan kontribusimu secara jelas.\n"
+        "3. *Tingkatkan Skill & Visibilitas:* Ambil inisiatif dalam proyek lintas tim dan buat portofolio online/Career Page agar reputasi profesionalmu terdokumentasi.\n\n"
+        "_Ketik pertanyaan lanjutan atau ketik *Menu* untuk kembali._"
+    )
+
 
 async def get_whatsapp_dynamic_home_menu(sender_wa_id: str) -> str:
-    """Menghasilkan menu dinamis berdasarkan histori user di memori atau database."""
+    """Menghasilkan menu beranda dinamis."""
     user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
     user_data = user_session.get("data", {})
     nama_panggilan = user_data.get("nama_panggilan") or user_data.get("nama_lengkap")
 
-    if not nama_panggilan:
+    is_returning = (
+        bool(nama_panggilan)
+        or user_data.get("has_completed_cv", False)
+        or (sender_wa_id in COMPLETED_WA_USERS)
+    )
+
+    if not is_returning:
         try:
             numeric_user_id = int(re.sub(r"\D", "", str(sender_wa_id)))
             recent_reviews = await cv_review_service.get_user_reviews(numeric_user_id)
             if recent_reviews and len(recent_reviews) > 0:
-                nama_panggilan = user_data.get("nama_panggilan") or "Kak"
-                user_session["data"]["has_completed_cv"] = True
+                is_returning = True
+                COMPLETED_WA_USERS.add(sender_wa_id)
         except Exception as e:
-            logger.warning(f"[Dynamic Menu Notice] {e}")
+            logger.debug(f"[Dynamic Menu Check] {e}")
 
-    has_history = bool(nama_panggilan or user_session.get("data", {}).get("has_completed_cv"))
-
-    # A. Returning / Alumni User
-    if has_history:
-        greeting_target = f", *{nama_panggilan}*" if (nama_panggilan and nama_panggilan != "Kak") else ""
+    # A. Returning User (Alumni / Pernah Pakai Fitur)
+    if is_returning:
+        greeting_name = f", *{nama_panggilan}*" if (nama_panggilan and nama_panggilan != "Kak") else ""
         return (
-            f"Halo{greeting_target}! 👋 Selamat datang kembali di *BoonTrack*.\n\n"
+            f"Halo{greeting_name}! 👋 Selamat datang kembali di *BoonTrack*.\n\n"
             f"Ada yang mau dibahas atau dioptimasi lagi? Silakan pilih menu di bawah ya:\n\n"
             f"1️⃣ *Buat / Perbarui Versi CV ATS*\n"
             f"2️⃣ *Review & Cek Skor ATS CV*\n"
@@ -142,20 +171,20 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     sender_wa_id = msg_obj.get("from")
     msg_type = msg_obj.get("type")
 
-    # --- 1. DOKUMEN CV (PDF / DOCX) ---
+    # --- 1. HANDLING DOKUMEN CV (.PDF / .DOCX) ---
     if msg_type == "document":
         doc_info = msg_obj.get("document", {})
         media_id = doc_info.get("id")
         filename = doc_info.get("filename", "document.pdf")
 
-        await send_whatsapp_text(sender_wa_id, f"📥 Menerima dokumen *{filename}*. Sedang mengekstrak dan menganalisis skor ATS CV kamu... ⏳")
+        await send_whatsapp_text(sender_wa_id, f"📥 Menerima dokumen *{filename}*. Sedang menganalisis skor ATS CV kamu... ⏳")
 
         try:
             file_bytes = await download_whatsapp_media(media_id)
             extracted_text = extract_text_from_bytes(file_bytes, filename)
 
             if not extracted_text or len(extracted_text) < 50:
-                await send_whatsapp_text(sender_wa_id, "⚠️ Teks di dalam dokumen tidak terbaca atau terlalu pendek. Pastikan dokumen berupa PDF/DOCX teks asli.")
+                await send_whatsapp_text(sender_wa_id, "⚠️ Teks di dalam dokumen tidak terbaca. Pastikan dokumen berupa PDF/DOCX teks asli.")
                 return web.Response(text="EVENT_RECEIVED", status=200)
 
             eval_result = cv_review_engine.evaluate_cv(extracted_text, target_position="General Professional")
@@ -176,6 +205,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             except Exception as dbe:
                 logger.error(f"[DB Save Review Error] {dbe}")
 
+            COMPLETED_WA_USERS.add(sender_wa_id)
             b = filtered_data.get("breakdown_scores", {})
             findings = filtered_data.get("findings", [])
             findings_list = "\n".join([f"• {f}" for f in findings]) if findings else "• Format dasar CV sudah terbaca dengan baik."
@@ -212,7 +242,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
 
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # --- 2. TEKS ---
+    # --- 2. HANDLING PESAN TEKS ---
     if msg_type != "text":
         await send_whatsapp_text(sender_wa_id, "Halo! Kirim pesan teks atau unggah file dokumen CV (.pdf / .docx). Ketik *Menu* untuk bantuan.")
         return web.Response(text="EVENT_RECEIVED", status=200)
@@ -241,6 +271,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             current_session["mode"] = "post_cv"
             current_session["step"] = 0
             current_session.setdefault("data", {})["has_completed_cv"] = True
+            COMPLETED_WA_USERS.add(sender_wa_id)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
     # --- PRIORITAS 1: POST_CV STATE (Checkout / Referral / Kembali) ---
@@ -272,16 +303,12 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, dynamic_home)
             return web.Response(text="EVENT_RECEIVED", status=200)
 
-        # Pertanyaan bebas langsung dijawab oleh AI
-        ai_reply = await ai_gateway.generate(
-            user_message=user_text,
-            context={"user_id": sender_wa_id, "feature": "career_consultation"}
-        )
-        if ai_reply:
-            await send_whatsapp_text(sender_wa_id, ai_reply)
-            return web.Response(text="EVENT_RECEIVED", status=200)
+        # Jika bertanya bebas saat di layar post_cv
+        ai_reply = await generate_career_advice(user_text, sender_wa_id)
+        await send_whatsapp_text(sender_wa_id, ai_reply)
+        return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # --- PRIORITAS 2: MODE REVIEW CV INPUT TEKS (Hanya jika teks > 40 karakter atau berformat CV) ---
+    # --- PRIORITAS 2: MODE REVIEW CV INPUT TEKS ---
     if current_mode == "review":
         if len(user_text.split()) < 6:
             await send_whatsapp_text(sender_wa_id, "⚠️ Teks CV terlalu singkat. Silakan tempel (paste) seluruh teks CV kamu atau kirim file dokumen (.pdf / .docx).")
@@ -307,6 +334,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             except Exception as dbe:
                 logger.error(f"[DB Save Review Error] {dbe}")
 
+            COMPLETED_WA_USERS.add(sender_wa_id)
             b = filtered_data.get("breakdown_scores", {})
             findings = filtered_data.get("findings", [])
             findings_list = "\n".join([f"• {f}" for f in findings]) if findings else "• Format dasar CV sudah terbaca."
@@ -340,28 +368,23 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, "⚠️ Gagal menganalisis CV. Pastikan teks CV lengkap lalu coba lagi.")
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # --- PRIORITAS 3: MODE KONSULTASI KARIR ---
+    # --- PRIORITAS 3: MODE KONSULTASI KARIR (Tanya Bebas Langsung Dijawab AI) ---
     if current_mode == "consultation":
-        ai_reply = await ai_gateway.generate(
-            user_message=user_text,
-            context={"user_id": sender_wa_id, "feature": "career_consultation"}
-        )
-        if ai_reply:
-            await send_whatsapp_text(sender_wa_id, ai_reply)
-        else:
-            await send_whatsapp_text(sender_wa_id, "Maaf, silakan ulangi pertanyaanmu atau ketik *Menu*.")
+        ai_reply = await generate_career_advice(user_text, sender_wa_id)
+        await send_whatsapp_text(sender_wa_id, ai_reply)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # --- PRIORITAS 4: MENU UTAMA (Pilihan Eksak) ---
+    # --- PRIORITAS 4: MENU UTAMA DINAMIS ---
     if current_mode == "menu":
-        has_history = bool(
-            current_session.get("data", {}).get("nama_panggilan") 
-            or current_session.get("data", {}).get("nama_lengkap")
-            or current_session.get("data", {}).get("has_completed_cv")
+        is_returning = (
+            bool(current_session.get("data", {}).get("nama_panggilan"))
+            or bool(current_session.get("data", {}).get("nama_lengkap"))
+            or current_session.get("data", {}).get("has_completed_cv", False)
+            or (sender_wa_id in COMPLETED_WA_USERS)
         )
 
         # Opsi 1: Buat CV
-        if user_text_clean in ["1", "buat cv", "bikin cv", "buat cv ats baru", "1. buat cv ats baru", "1️⃣"]:
+        if user_text_clean in ["1", "buat cv", "bikin cv", "buat cv ats baru", "1️⃣"]:
             current_session["mode"] = "builder"
             result = await process_unified_cv_step(sender_wa_id, user_text, platform="whatsapp")
             await send_whatsapp_text(sender_wa_id, result["reply_text"])
@@ -377,9 +400,9 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, intro_review)
             return web.Response(text="EVENT_RECEIVED", status=200)
 
-        # Menu Returning User (3 = Career Page, 4 = Referral, 5 = Konsultasi)
-        if has_history:
-            if user_text_clean in ["3", "order", "order career page", "career page", "aktivasi", "3️⃣"]:
+        # Pilihan Jika Returning User
+        if is_returning:
+            if user_text_clean in ["3", "order", "career page", "aktivasi", "3️⃣"]:
                 await send_qris_checkout_flow(sender_wa_id, base_amt=10000)
                 return web.Response(text="EVENT_RECEIVED", status=200)
 
@@ -404,19 +427,15 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
                 return web.Response(text="EVENT_RECEIVED", status=200)
 
         else:
-            # Menu New User (3 = Konsultasi)
+            # Pilihan Jika New User
             if user_text_clean in ["3", "konsultasi", "konsultasi dunia kerja", "3️⃣"]:
                 current_session["mode"] = "consultation"
                 await send_whatsapp_text(sender_wa_id, "💼 *Konsultasi Karir & Dunia Kerja*\n\nSilakan tanyakan apa saja seputar persiapan interview, tips CV, atau negosiasi gaji!")
                 return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # Fallback Obrolan Bebas (AI menjawab langsung pertanyaan umum tanpa memicu menu)
-    ai_reply = await ai_gateway.generate(user_message=user_text, context={"user_id": sender_wa_id, "feature": "career_consultation"})
-    if ai_reply:
-        await send_whatsapp_text(sender_wa_id, ai_reply)
-    else:
-        await send_whatsapp_text(sender_wa_id, MENU_INVALID_MSG)
-
+    # Fallback Obrolan Bebas
+    ai_reply = await generate_career_advice(user_text, sender_wa_id)
+    await send_whatsapp_text(sender_wa_id, ai_reply)
     return web.Response(text="EVENT_RECEIVED", status=200)
 
 
