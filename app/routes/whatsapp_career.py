@@ -9,6 +9,7 @@ from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 from app.services.ai_service import ai_gateway
 from app.core.database import track_event, count_referrals
+from app.services.document_parser_service import download_whatsapp_media, extract_text_from_bytes
 
 logger = logging.getLogger(__name__)
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN") or os.getenv("META_WA_VERIFY_TOKEN", "boontrack_wa_secret_token")
@@ -53,9 +54,75 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
 
     msg_obj = messages[0]
     sender_wa_id = msg_obj.get("from")
+    msg_type = msg_obj.get("type")
 
-    if msg_obj.get("type") != "text":
-        await send_whatsapp_text(sender_wa_id, "Halo! Bot saat ini hanya menerima pesan teks. Ketik *Menu* untuk bantuan.")
+    # --- FITUR 1: HANDLING UPLOAD DOKUMEN CV (PDF / DOCX) ---
+    if msg_type == "document":
+        doc_info = msg_obj.get("document", {})
+        media_id = doc_info.get("id")
+        filename = doc_info.get("filename", "document.pdf")
+
+        await send_whatsapp_text(sender_wa_id, f"📥 Menerima dokumen *{filename}*. Sedang mengekstrak dan menganalisis skor ATS CV kamu... ⏳")
+
+        try:
+            file_bytes = await download_whatsapp_media(media_id)
+            extracted_text = extract_text_from_bytes(file_bytes, filename)
+
+            if not extracted_text or len(extracted_text) < 50:
+                await send_whatsapp_text(sender_wa_id, "⚠️ Teks di dalam dokumen tidak terbaca atau terlalu pendek. Pastikan dokumen berupa PDF/DOCX teks (bukan hasil scan/gambar).")
+                return web.Response(text="EVENT_RECEIVED", status=200)
+
+            # Jalankan evaluasi review CV
+            eval_result = cv_review_engine.evaluate_cv(extracted_text, target_position="General Professional")[cite: 2]
+            filtered_data = cv_review_service.filter_entitlement_response(eval_result, is_premium=False)[cite: 1]
+
+            await cv_review_service.save_review(
+                user_id=int(sender_wa_id),
+                target_position="General Professional",
+                overall_score=filtered_data.get("overall_score", 0),
+                quality_score=filtered_data.get("breakdown_scores", {}).get("ats_compatibility", 0),
+                job_match_score=filtered_data.get("breakdown_scores", {}).get("keyword", 0),
+                evidence_score=filtered_data.get("breakdown_scores", {}).get("experience", 0),
+                review_json=filtered_data,
+                confidence_level=eval_result.get("confidence", {}).get("level", "MEDIUM")
+            )[cite: 1]
+
+            b = filtered_data.get("breakdown_scores", {})[cite: 1]
+            findings = filtered_data.get("findings", [])[cite: 1]
+            findings_list = "\n".join([f"• {f}" for f in findings]) if findings else "• Format dasar CV sudah terbaca dengan baik."
+
+            review_msg = (
+                "📊 *HASIL DIAGNOSIS SKOR DOKUMEN CV KAMU*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📄 *File:* {filename}\n"
+                f"📈 *Overall Score:* *{filtered_data.get('overall_score', 0)} / 100*\n\n"
+                "📌 *Breakdown Kategori:*\n"
+                f"• ATS Compatibility: *{b.get('ats_compatibility', 70)}%*\n"
+                f"• Relevansi Format: *{b.get('structure', 75)}%*\n"
+                f"• Kualitas Pengalaman: *{b.get('experience', 80)}%*\n\n"
+                "💡 *Poin Evaluasi AI:*\n"
+                f"{findings_list}\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "🔥 *Bikin HRD Langsung Lirik Lamaranmu!*\n\n"
+                "Dapatkan *Career Page Portofolio Online Pribadi*.\n\n"
+                "Pilih opsi selanjutnya:\n"
+                "1️⃣ *Order Career Page (Rp10.000)*\n"
+                "2️⃣ *Ajak 5 Teman (Gratis)*\n"
+                "3️⃣ *Menu Utama*\n\n"
+                "_Ketik angka 1, 2, atau 3 untuk memilih._"
+            )
+            GLOBAL_USER_STATES[sender_wa_id] = {"step": 0, "mode": "post_cv", "data": {}}
+            await send_whatsapp_text(sender_wa_id, review_msg)
+
+        except Exception as e:
+            logger.error(f"[Upload Document Error] {e}")
+            await send_whatsapp_text(sender_wa_id, "⚠️ Terjadi kendala saat memproses file dokumen. Silakan coba kirim ulang atau tempelkan isi teks CV kamu langsung.")
+
+        return web.Response(text="EVENT_RECEIVED", status=200)
+
+    # --- FITUR 2: HANDLING PESAN TEKS BIASA ---
+    if msg_type != "text":
+        await send_whatsapp_text(sender_wa_id, "Halo! Kirim pesan teks atau unggah file dokumen CV (.pdf / .docx). Ketik *Menu* untuk bantuan.")
         return web.Response(text="EVENT_RECEIVED", status=200)
 
     user_text = msg_obj.get("text", {}).get("body", "").strip()
@@ -75,12 +142,12 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             if referrer_phone != sender_wa_id:
                 await track_event(sender_wa_id, "referral_signup", meta={"referrer_id": referrer_phone})
 
-    # 3. Mode Review CV Masuk dari Link Tautan
+    # 3. Mode Review CV Masuk dari Link Tautan / Perintah
     if "mau review cv" in user_text_clean or "review cv" in user_text_clean:
         GLOBAL_USER_STATES[sender_wa_id] = {"step": 0, "mode": "review", "data": {}}
         intro_review = (
             "Halo! Siap, mari kita bedah skor dan kualitas ATS CV kamu. 📊✨\n\n"
-            "Silakan *salin dan tempel (copy-paste) seluruh isi teks CV kamu* langsung ke chat ini ya."
+            "Kamu bisa langsung *kirim file CV (PDF / DOCX)* ke chat ini, atau *salin-tempel (copy-paste) teks CV kamu* sekarang ya."
         )
         await send_whatsapp_text(sender_wa_id, intro_review)
         return web.Response(text="EVENT_RECEIVED", status=200)
@@ -150,12 +217,12 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         await send_whatsapp_text(sender_wa_id, result["reply_text"])
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 9. Mode Analisis Review CV
+    # 9. Mode Analisis Review CV Teks Mentah
     if current_mode == "review":
         await send_whatsapp_text(sender_wa_id, "⏳ *Sedang menganalisis struktur & skor ATS CV kamu...*")
         try:
-            eval_result = cv_review_engine.evaluate_cv(user_text, target_position="General Professional")
-            filtered_data = cv_review_service.filter_entitlement_response(eval_result, is_premium=False)
+            eval_result = cv_review_engine.evaluate_cv(user_text, target_position="General Professional")[cite: 2]
+            filtered_data = cv_review_service.filter_entitlement_response(eval_result, is_premium=False)[cite: 1]
 
             await cv_review_service.save_review(
                 user_id=int(sender_wa_id),
@@ -166,10 +233,10 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
                 evidence_score=filtered_data.get("breakdown_scores", {}).get("experience", 0),
                 review_json=filtered_data,
                 confidence_level=eval_result.get("confidence", {}).get("level", "MEDIUM")
-            )
+            )[cite: 1]
 
-            b = filtered_data.get("breakdown_scores", {})
-            findings = filtered_data.get("findings", [])
+            b = filtered_data.get("breakdown_scores", {})[cite: 1]
+            findings = filtered_data.get("findings", [])[cite: 1]
             findings_list = "\n".join([f"• {f}" for f in findings]) if findings else "• Format dasar CV sudah terbaca dengan baik."
 
             review_msg = (
