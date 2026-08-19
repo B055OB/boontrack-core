@@ -1,4 +1,5 @@
 import logging
+from typing import Dict, Any
 from app.services.ai_gateway import AIGateway
 
 logger = logging.getLogger("ai_service")
@@ -44,12 +45,10 @@ async def ai_rewrite_achievement(text: str) -> str:
         f"Input Pengalaman: {text}"
     )
 
-    # 1. Panggil AI Gateway (Semua pemanggilan API terpusat di sini)
     response = await ai_gateway.generate(prompt_text)
     if response:
         return response
 
-    # 2. Fallback Terakhir ke Aturan Lokal (Regex & Keyword Match) jika seluruh Provider AI Exhausted/Error
     logger.warning("Seluruh provider AI di AIGateway gagal. Menggunakan Fallback Aturan Lokal.")
     clean = text.lower()
     
@@ -74,3 +73,29 @@ async def ai_rewrite_achievement(text: str) -> str:
                 "• Berkontribusi aktif dalam mendukung tercapainya efisiensi target operasional tim."
             )
         return formatted
+
+
+async def enhance_resume_data(user_data: Dict[Any, Any]) -> Dict[str, Any]:
+    """Meningkatkan dan memformat ringkasan serta pengalaman kerja mentah menggunakan AI."""
+    enhanced = dict(user_data)
+    
+    # 1. Target Posisi
+    pos = str(user_data.get(5) or user_data.get("position") or "General Professional").strip()
+    enhanced["position"] = pos
+
+    # 2. Polish Summary
+    raw_summary = str(user_data.get(10) or user_data.get("summary") or "").strip()
+    if not raw_summary or raw_summary in ["-", "skip", "belum ada"]:
+        enhanced[10] = await ai_generate_summary(pos)
+        enhanced["summary"] = enhanced[10]
+    else:
+        enhanced["summary"] = raw_summary
+
+    # 3. Polish Pengalaman Kerja
+    raw_exp = str(user_data.get(6) or user_data.get("experience") or "").strip()
+    if raw_exp and raw_exp not in ["-", "skip", "belum ada"]:
+        enhanced["achievements"] = await ai_rewrite_achievement(raw_exp)
+    else:
+        enhanced["achievements"] = ""
+
+    return enhanced

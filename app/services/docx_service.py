@@ -63,7 +63,6 @@ def create_cv_docx(user_id: int, data: dict) -> str:
         run.font.bold = True
         run.font.color.rgb = RGBColor(0x1F, 0x4E, 0x78)
         
-        # Garis bawah header XML
         pBdr = OxmlElement('w:pBdr')
         bottom = OxmlElement('w:bottom')
         bottom.set(qn('w:val'), 'single')
@@ -74,13 +73,9 @@ def create_cv_docx(user_id: int, data: dict) -> str:
         h._p.get_or_add_pPr().append(pBdr)
 
     # Section 1: Professional Summary
-    summary_raw = clean_val(data.get("step_6", ""))
-    if summary_raw:
+    summary_text = clean_val(data.get("step_6", ""))
+    if summary_text:
         add_section_header("PROFESSIONAL SUMMARY")
-        try:
-            summary_text = ai_generate_summary(summary_raw)
-        except Exception:
-            summary_text = summary_raw
         p_sum = doc.add_paragraph(summary_text)
         p_sum.paragraph_format.space_after = Pt(8)
         for r in p_sum.runs:
@@ -108,11 +103,7 @@ def create_cv_docx(user_id: int, data: dict) -> str:
             r_job.font.bold = True
 
             if ach_raw:
-                try:
-                    ach_formatted = ai_rewrite_achievement(ach_raw)
-                except Exception:
-                    ach_formatted = ach_raw
-                for bullet in ach_formatted.split("\n"):
+                for bullet in ach_raw.split("\n"):
                     b_text = bullet.strip().lstrip("-*• ")
                     if b_text:
                         p_b = doc.add_paragraph(style='List Bullet')
@@ -149,18 +140,28 @@ def create_cv_docx(user_id: int, data: dict) -> str:
     return file_path
 
 async def generate_cv_docx(user_id, data: dict) -> str:
-    """Wrapper async untuk sinkronisasi format key database/AI ke format create_cv_docx."""
+    """Wrapper async terpadu untuk merender dokumen Word CV."""
     clean_id = "".join(filter(str.isdigit, str(user_id))) or "1"
     
+    summary_val = data.get("summary") or data.get(10) or data.get("step_6", "")
+    if not clean_val(summary_val):
+        pos_title = data.get("position") or data.get(5) or "General Professional"
+        summary_val = await ai_generate_summary(str(pos_title))
+
+    ach_val = data.get("achievements") or data.get("step_8", "")
+    exp_val = data.get("experience") or data.get(6) or data.get("step_7", "")
+    if not clean_val(ach_val) and clean_val(exp_val):
+        ach_val = await ai_rewrite_achievement(str(exp_val))
+
     normalized_data = {
         "step_1": data.get("name") or data.get(1) or data.get("step_1", "NAMA LENGKAP"),
         "step_2": data.get("email") or data.get(3) or data.get("step_2", ""),
         "step_3": data.get("phone") or data.get(2) or data.get("step_3", ""),
         "step_4": data.get("city") or data.get(4) or data.get("step_4", ""),
         "step_5": data.get("linkedin") or data.get(9) or data.get("step_5", ""),
-        "step_6": data.get("summary") or data.get(10) or data.get("step_6", ""),
-        "step_7": data.get("experience") or data.get(6) or data.get("step_7", ""),
-        "step_8": data.get("achievements") or data.get("step_8", ""),
+        "step_6": summary_val,
+        "step_7": exp_val,
+        "step_8": ach_val,
         "step_9": data.get("education") or data.get(7) or data.get("step_9", ""),
         "step_10": data.get("skills") or data.get(8) or data.get("step_10", "")
     }
