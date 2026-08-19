@@ -18,15 +18,11 @@ VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN") or os.getenv("META_WA_VERIFY_T
 
 
 async def get_whatsapp_dynamic_home_menu(sender_wa_id: str) -> str:
-    """
-    Menghasilkan menu beranda dinamis yang menyapa nama panggilan user jika sudah pernah membuat CV,
-    serta menampilkan menu lanjutan (Career Page & Cek Referral) identik dengan bot Telegram.
-    """
+    """Menghasilkan menu dinamis berdasarkan sesi user."""
     user_session = GLOBAL_USER_STATES.get(sender_wa_id, {})
     user_data = user_session.get("data", {})
     nama_panggilan = user_data.get("nama_panggilan") or user_data.get("nama_lengkap")
 
-    # A. Tampilan Menu Jika User Sudah Punya Data CV (Returning User)
     if nama_panggilan:
         return (
             f"Halo, *{nama_panggilan}*! 👋 Selamat datang kembali di *BoonTrack*.\n\n"
@@ -39,7 +35,6 @@ async def get_whatsapp_dynamic_home_menu(sender_wa_id: str) -> str:
             f"_Ketik angka 1, 2, 3, 4, atau 5 untuk memilih._"
         )
 
-    # B. Tampilan Menu Standar (New User)
     return (
         "Halo! 👋 Selamat datang di *BoonTrack Career Assistant*.\n\n"
         "Saya siap membantu perjalanan karirmu agar lebih optimal dan dilirik HRD.\n\n"
@@ -52,7 +47,6 @@ async def get_whatsapp_dynamic_home_menu(sender_wa_id: str) -> str:
 
 
 def generate_payment_message(user_id: str, base_amt: int = 10000) -> Tuple[int, str]:
-    """Menghasilkan nominal unik 3 digit dan format pesan instruksi pembayaran QRIS bersih."""
     unique_code = random.randint(100, 999)
     total_amt = base_amt + unique_code
 
@@ -81,7 +75,6 @@ def generate_payment_message(user_id: str, base_amt: int = 10000) -> Tuple[int, 
 
 
 async def send_qris_checkout_flow(sender_wa_id: str, base_amt: int = 10000):
-    """Mencari file QRIS dan mengirimkannya via Meta API."""
     total_amt, msg_caption = generate_payment_message(sender_wa_id, base_amt)
 
     possible_qris_paths = [
@@ -243,6 +236,21 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             current_session["mode"] = "post_cv"
         return web.Response(text="EVENT_RECEIVED", status=200)
 
+    # Mode Konsultasi Karir Berkelanjutan
+    if current_mode == "consultation":
+        ai_reply = await ai_gateway.generate(
+            user_message=user_text,
+            context={"user_id": sender_wa_id, "feature": "career_consultation"}
+        )
+        if ai_reply:
+            await send_whatsapp_text(sender_wa_id, ai_reply)
+        else:
+            await send_whatsapp_text(
+                sender_wa_id,
+                "Maaf, saat ini AI sedang memproses banyak permintaan. Silakan ajukan pertanyaan lagi atau ketik *Menu*."
+            )
+        return web.Response(text="EVENT_RECEIVED", status=200)
+
     # --- KONDISI A: MENU UTAMA DINAMIS (mode: "menu") ---
     if current_mode == "menu":
         has_cv_data = bool(current_session.get("data", {}).get("nama_panggilan") or current_session.get("data", {}).get("nama_lengkap"))
@@ -386,13 +394,8 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, "⚠️ Gagal menganalisis CV. Pastikan teks CV cukup lengkap lalu coba lagi.")
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # Fallback AI Karir
-    ai_reply = await ai_gateway.generate(user_message=user_text, context={"user_id": sender_wa_id, "feature": "career_consultation"})
-    if ai_reply:
-        await send_whatsapp_text(sender_wa_id, ai_reply)
-    else:
-        await send_whatsapp_text(sender_wa_id, MENU_INVALID_MSG)
-
+    # Fallback Default
+    await send_whatsapp_text(sender_wa_id, MENU_INVALID_MSG)
     return web.Response(text="EVENT_RECEIVED", status=200)
 
 
