@@ -1,5 +1,7 @@
 import sys
 import os
+
+from flask import app
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import asyncio
 import json
@@ -39,6 +41,8 @@ from app.modules.public_services.router import register_public_service_routes
 from app.modules.commerce.router import commerce_routes
 from app.handlers.career_page_flow import register_career_page_handlers, start_career_page_claim
 from app.routes.whatsapp_career import register_whatsapp_career_routes
+from app.routes.payment import register_payment_routes
+
 # ============================================================
 # B2B MULTI-TENANT ROUTERS & HANDLERS
 # ============================================================
@@ -2412,6 +2416,7 @@ async def start_web_server():
     register_whatsapp_routes(app, async_session)
 
     register_whatsapp_career_routes(app)
+    register_payment_routes(app)
 
     # Device Lifecycle Endpoints (Android BoonTrack Reader)
     async def _wrap_pair(req):
