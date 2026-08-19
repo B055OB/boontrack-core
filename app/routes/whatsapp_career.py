@@ -53,7 +53,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         await send_whatsapp_text(sender_wa_id, GREETING_MENU_MSG)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 2. Tracking Referral
+    # 2. Tracking Referral Link
     if "ref_" in user_text_clean:
         ref_match = re.search(r"ref_(\d+)", user_text_clean)
         if ref_match:
@@ -61,7 +61,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             if referrer_phone != sender_wa_id:
                 await track_event(sender_wa_id, "referral_signup", meta={"referrer_id": referrer_phone})
 
-    # 3. Mode Review CV dari Referral Link
+    # 3. Mode Review CV Masuk
     if "mau review cv" in user_text_clean or "review cv" in user_text_clean:
         GLOBAL_USER_STATES[sender_wa_id] = {"step": 0, "mode": "review", "data": {}}
         intro_review = (
@@ -81,19 +81,19 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, msg)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 5. Opsi Menu 2 -> Tampilkan Info Referral & Counter (X/5)
+    # 5. Opsi Menu 2 -> Tampilkan Info Referral & Counter Bersih
     if user_text_clean in ["2", "referral", "cek referral", "gratis"]:
         try:
-            invited_count = await count_referrals(sender_wa_id)[cite: 5]
+            invited_count = await count_referrals(sender_wa_id)
         except Exception:
             invited_count = 0
 
         ref_link = f"[https://boontrack.com/ref/](https://boontrack.com/ref/){sender_wa_id}"
         ref_msg = (
             "🎁 *PROGRAM CAREER PAGE GRATIS VIA REFERRAL*\n\n"
-            f"Silakan share link berikut ke teman-temanmu. Semangat ya! 🚀\n\n"
+            "Silakan share link berikut ke teman-temanmu. Semangat ya! 🚀\n\n"
             f"📊 *Status Referral Kamu:* *({invited_count}/5)* teman bergabung\n"
-            f"🔗 *Link Referral Kamu:* 👉 {ref_link}\n\n"
+            f"🔗 *Link Referral Kamu:* {ref_link}\n\n"
             "Jika sudah mencapai 5 teman, Career Page profesional senilai Rp10.000 otomatis aktif gratis untukmu!"
         )
         await send_whatsapp_text(sender_wa_id, ref_msg)
@@ -155,7 +155,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, "⚠️ Gagal menganalisis CV. Pastikan teks CV cukup lengkap lalu coba lagi.")
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 8. Pesan lainnya -> Tanya Jawab AI Karir
+    # 8. AI Karir Konsultasi
     ai_reply = await ai_gateway.generate(user_message=user_text, context={"user_id": sender_wa_id, "feature": "career_consultation"})
     if ai_reply:
         await send_whatsapp_text(sender_wa_id, ai_reply)

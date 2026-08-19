@@ -120,13 +120,13 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
 
     file_path = None
     try:
-        enhanced_data = await enhance_resume_data(user_data)[cite: 5]
-        file_path = await generate_cv_docx(user_id, enhanced_data)[cite: 5]
+        enhanced_data = await enhance_resume_data(user_data)
+        file_path = await generate_cv_docx(user_id, enhanced_data)
         
         position = enhanced_data.get("position", user_data.get(5, "General"))
-        await save_cv_version(str(user_id), position, enhanced_data)[cite: 5]
+        await save_cv_version(str(user_id), position, enhanced_data)
         await save_dropoff(str(user_id), 0, {})
-        await track_event(str(user_id), "resume_generated", meta={"position": position})[cite: 5]
+        await track_event(str(user_id), "resume_generated", meta={"position": position})
     except Exception as e:
         logger.error(f"[CV Generate Error] {e}")
 
@@ -149,7 +149,7 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
         "Dapatkan *CV Rekomendasi AI + Career Page Profesional*.\n"
         "Order Rp10.000 atau ajak 5 teman untuk akses *GRATIS*! ✨\n\n"
         "🌐 *Contoh Tampilan Career Page:*\n"
-        "👉 [https://rayigemilang.boontrack.com](https://rayigemilang.boontrack.com)\n\n"
+        "[https://rayigemilang.boontrack.com](https://rayigemilang.boontrack.com)\n\n"
         "Pilih opsi selanjutnya:\n"
         "1️⃣ *Order Career Page (Rp10.000)*\n"
         "2️⃣ *Gratis via Invite Teman (Referral)*\n"
