@@ -3,6 +3,8 @@ import re
 import logging
 from app.handlers.commands import CV_QUESTIONS, TOTAL_STEPS
 from app.core.database import get_user_history, save_dropoff, save_cv_version, track_event
+from app.services.docx_service import generate_cv_docx
+from app.services.ai_service import enhance_resume_data
 from app.services.whatsapp_service import send_whatsapp_document, send_whatsapp_text
 
 logger = logging.getLogger(__name__)
@@ -28,7 +30,6 @@ def format_text_for_whatsapp(text: str) -> str:
     return text.strip()
 
 async def process_unified_cv_step(user_id: str, text_input: str, platform: str = "whatsapp") -> dict:
-    # 1. Pulihkan State dari Database jika memory kosong
     if user_id not in GLOBAL_USER_STATES:
         db_progress = None
         try:
@@ -39,7 +40,6 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
         if db_progress and 0 < db_progress.get("last_step", 0) < TOTAL_STEPS:
             raw_db_data = db_progress.get("data", {})
             restored_data = {int(k): v for k, v in raw_db_data.items() if str(k).isdigit()}
-            
             GLOBAL_USER_STATES[user_id] = {
                 "step": db_progress["last_step"],
                 "sub_step": "steps",
@@ -54,39 +54,25 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
     user_data = session.setdefault("data", {})
     sub_step = session.get("sub_step", "init")
 
-    # 2. Tangani User Lanjutan
     if session.get("resumed"):
         session["resumed"] = False
         last_step = session["step"]
         q_formatted = format_text_for_whatsapp(CV_QUESTIONS.get(last_step, ""))
-        
         resume_msg = (
             f"👋 *Draft CV Kamu Ditemukan!*\n\n"
-            f"Kita lanjutkan dari *Langkah {last_step}/{TOTAL_STEPS}* yang terakhir kamu isi ya. Semua data sebelumnya tersimpan aman. 💾\n\n"
+            f"Kita lanjutkan dari *Langkah {last_step}/{TOTAL_STEPS}* yang terakhir kamu isi ya. 💾\n\n"
             f"{q_formatted}"
         )
-        return {
-            "reply_text": resume_msg,
-            "messages": [resume_msg],
-            "file_path": None,
-            "is_completed": False
-        }
+        return {"reply_text": resume_msg, "messages": [resume_msg], "file_path": None, "is_completed": False}
 
-    # 3. Inisiasi Pilihan Bahasa
     if session.get("step", 0) == 0 and sub_step == "init":
         session["sub_step"] = "choose_lang"
         intro_text = (
             "Baik! Untuk pembuatan CV ATS, saya akan bantu pandu langkah demi langkah secara bertahap sampai selesai. 🚀\n\n"
             f"{LANGUAGE_OPTIONS_TEXT}"
         )
-        return {
-            "reply_text": intro_text,
-            "messages": [intro_text],
-            "file_path": None,
-            "is_completed": False
-        }
+        return {"reply_text": intro_text, "messages": [intro_text], "file_path": None, "is_completed": False}
 
-    # 4. Tangkap Pilihan Bahasa -> Masuk Langkah 1
     if sub_step == "choose_lang":
         clean_input = text_input.strip()
         lang_map = {"1": "en_id", "2": "id", "3": "en"}
@@ -97,20 +83,9 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
 
         lang_label = "CV English" if selected_lang == "en_id" else ("CV Bahasa Indonesia" if selected_lang == "id" else "Full English")
         q_formatted = format_text_for_whatsapp(CV_QUESTIONS.get(1, "Siapa nama lengkapmu?"))
-        
-        reply_text = (
-            f"✅ Bahasa terpilih: *{lang_label}*\n\n"
-            f"📝 *Langkah 1/{TOTAL_STEPS}*\n"
-            f"{q_formatted}"
-        )
-        return {
-            "reply_text": reply_text,
-            "messages": [reply_text],
-            "file_path": None,
-            "is_completed": False
-        }
+        reply_text = f"✅ Bahasa terpilih: *{lang_label}*\n\n📝 *Langkah 1/{TOTAL_STEPS}*\n{q_formatted}"
+        return {"reply_text": reply_text, "messages": [reply_text], "file_path": None, "is_completed": False}
 
-    # 5. Simpan Jawaban Step Aktif & Simpan Permanen ke DB
     current_step = session.get("step", 1)
     cleaned_val = text_input.strip()
 
@@ -127,11 +102,9 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
     except Exception as e:
         logger.error(f"[DB Auto-Save Error] {e}")
 
-    # 6. Lanjut ke Langkah Berikutnya
     if current_step < TOTAL_STEPS:
         next_step = current_step + 1
         session["step"] = next_step
-        
         try:
             await save_dropoff(str(user_id), next_step, user_data)
         except Exception:
@@ -139,41 +112,28 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
 
         q_formatted = format_text_for_whatsapp(CV_QUESTIONS.get(next_step, ""))
         reply_msg = f"📝 *Langkah {next_step}/{TOTAL_STEPS}*\n\n{q_formatted}"
-        return {
-            "reply_text": reply_msg,
-            "messages": [reply_msg],
-            "file_path": None,
-            "is_completed": False
-        }
+        return {"reply_text": reply_msg, "messages": [reply_msg], "file_path": None, "is_completed": False}
 
-    # 7. Selesai Semua Langkah -> Render Dokumen & Kirim via WhatsApp API
+    # Step Selesai -> Generate Dokumen Word (.docx)
     session["step"] = 0
     session["sub_step"] = "init"
 
-    try:
-        position = user_data.get(5, "General Professional")
-        await save_cv_version(str(user_id), position, user_data)
-        await save_dropoff(str(user_id), 0, {})
-        await track_event(str(user_id), "resume_generated", meta={"position": position, "lang": session.get("lang")})
-    except Exception:
-        pass
-
     file_path = None
     try:
-        from app.services.cv_generator_service import cv_generator_service
-        file_path = await cv_generator_service.polish_and_build_cv(
-            user_id=str(user_id), 
-            raw_data=user_data, 
-            lang_mode=session.get("lang", "id")
-        )
+        enhanced_data = await enhance_resume_data(user_data)[cite: 5]
+        file_path = await generate_cv_docx(user_id, enhanced_data)[cite: 5]
+        
+        position = enhanced_data.get("position", user_data.get(5, "General"))
+        await save_cv_version(str(user_id), position, enhanced_data)[cite: 5]
+        await save_dropoff(str(user_id), 0, {})
+        await track_event(str(user_id), "resume_generated", meta={"position": position})[cite: 5]
     except Exception as e:
-        logger.error(f"[CV Polisher] {e}")
+        logger.error(f"[CV Generate Error] {e}")
 
     user_name = user_data.get(1, "BoonTrack_User")
     clean_filename = f"CV_{re.sub(r'[^a-zA-Z0-9]', '_', user_name)}.docx"
 
-    # Kirim Dokumen .docx via WhatsApp API
-    if file_path and platform == "whatsapp":
+    if file_path and platform == "whatsapp" and os.path.exists(file_path):
         await send_whatsapp_document(
             to_number=str(user_id),
             file_path_or_url=file_path,
@@ -181,7 +141,6 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
             caption="📄 Ini dokumen CV ATS-Friendly kamu!"
         )
 
-    # Format Penutup Persis Telegram
     msg_closing = (
         "🎉 *Dokumen CV ATS-Friendly kamu berhasil dibuat!*\n\n"
         "File dokumen (*.docx*) sudah dikirimkan di atas dan siap digunakan untuk melamar kerja. 📄✨\n\n"
@@ -193,15 +152,10 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
         "👉 [https://rayigemilang.boontrack.com](https://rayigemilang.boontrack.com)\n\n"
         "Pilih opsi selanjutnya:\n"
         "1️⃣ *Order Career Page (Rp10.000)*\n"
-        f"2️⃣ *Gratis via Invite Teman (Referral)* 👉 [https://boontrack.com/ref/](https://boontrack.com/ref/){user_id}\n"
+        "2️⃣ *Gratis via Invite Teman (Referral)*\n"
         "3️⃣ *Edit Bagian CV*\n"
         "4️⃣ *Menu Utama*\n\n"
-        "Ketik angka *1*, *2*, *3*, atau *4* untuk memilih."
+        "_Ketik angka 1, 2, 3, atau 4 untuk memilih._"
     )
 
-    return {
-        "reply_text": msg_closing,
-        "messages": [msg_closing],
-        "file_path": file_path,
-        "is_completed": True
-    }
+    return {"reply_text": msg_closing, "messages": [msg_closing], "file_path": file_path, "is_completed": True}
