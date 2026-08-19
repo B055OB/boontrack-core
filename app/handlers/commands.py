@@ -8,64 +8,55 @@ from app.services.analytics_service import analytics_service
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 
-# INISIALISASI GLOBAL STATE
 user_state = {}
 
-# 1. DAFTAR PERTANYAAN CV MULTI-BAHASA & SMART-SKIP
+# 10 Langkah Murni Data CV (Bahasa ditangani saat inisiasi)
 CV_QUESTIONS = {
     1: (
-        "Sebelum kita mulai, CV kamu ingin dibuat dalam bahasa apa?\n\n"
-        "1️⃣ *CV English (Ngobrol B. Indonesia)*\n"
-        "2️⃣ *CV Bahasa Indonesia*\n"
-        "3️⃣ *Full English*\n\n"
-        "_(Ketik angka 1, 2, atau 3)_"
-    ),
-    2: (
-        "Siapa **nama lengkap** yang ingin kamu tampilkan di CV?\n\n"
+        "Siapa *nama lengkap* yang ingin kamu tampilkan di CV?\n\n"
         "_(Contoh: Rayi Gemilang)_"
     ),
-    3: (
+    2: (
         "Nomor kontak aktif yang bisa dihubungi HRD:\n\n"
-        "💡 *Tips:* Ketik *'pakai wa'* jika ingin memakai nomor WhatsApp ini otomatis, "
+        "💡 *Tips:* Ketik *pakai wa* jika ingin memakai nomor WhatsApp ini otomatis, "
         "tulis nomor lain, atau ketik *-* jika ingin dilewati."
     ),
-    4: (
-        "Alamat **email aktif** kamu?\n\n"
+    3: (
+        "Alamat *email aktif* kamu?\n\n"
         "_(Ketik email atau ketik *-* jika ingin diisi nanti saat edit manual)_"
     ),
-    5: (
-        "**Kota domisili** saat ini?\n\n"
+    4: (
+        "*Kota domisili* saat ini?\n\n"
         "_(Contoh: Bandung / Jakarta Selatan / ketik *-* untuk lewati)_"
     ),
+    5: (
+        "*Posisi atau bidang pekerjaan* yang sedang kamu incar?\n\n"
+        "_(Contoh: Chief Executive Officer / Digital Marketer / Admin Sales)_"
+    ),
     6: (
-        "**Posisi atau bidang pekerjaan** yang sedang kamu incar?\n\n"
-        "_(Contoh: Admin Sales, Digital Marketer, Barista, Staff Gudang)_"
+        "Tuliskan *pengalaman kerjamu* (Posisi, Perusahaan, & Tahun):\n\n"
+        "_(Contoh: Akuntan Publik Deloitte 2002-2005, atau sebutkan lebih dari 1 pengalaman)_\n\n"
+        "💡 *Tips:* Jika Fresh Graduate / belum ada pengalaman resmi, ketik *-* atau tulis pengalaman magang / organisasi kampus."
     ),
     7: (
-        "Tuliskan **pengalaman kerja terakhirmu** (Posisi, Perusahaan, & Tahun):\n\n"
-        "💡 *Tips:* Jika Fresh Graduate / belum ada pengalaman resmi, ketik *-* "
-        "atau tulis pengalaman magang / organisasi kampus."
-    ),
-    8: (
-        "**Pendidikan terakhirmu** (Jurusan, Sekolah/Kampus, Tahun Lulus)?\n\n"
+        "*Pendidikan terakhirmu* (Jurusan, Sekolah/Kampus, Tahun Lulus)?\n\n"
         "_(Contoh: SMA Negeri 5 Bandung 2020 atau S1 Manajemen Unpad 2023 / ketik *-*)_"
     ),
+    8: (
+        "Sebutkan 2–4 *keahlian utama (skills)* yang kamu miliki:\n\n"
+        "💡 *Contoh:* Growth Hacking, Digital Marketing, Product Strategy\n"
+        "_(Ketik *-* jika ingin AI merekomendasikan otomatis sesuai posisimu)_"
+    ),
     9: (
-        "Sebutkan 2–4 **keahlian utama (skills)** yang kamu miliki:\n\n"
-        "💡 *Contoh:* Microsoft Excel, Negosiasi Penjualan, Canva, Layanan Pelanggan "
-        "_(Ketik *-* jika ingin AI memilihkan otomatis berdasarkan posisimu)_"
+        "Punya tautan *LinkedIn / Portofolio / Sertifikasi* pendukung?\n\n"
+        "_(Ketik tautan profilmu, atau langsung ketik *-* untuk dilewati)_"
     ),
     10: (
-        "Punya **link LinkedIn / Portofolio / Sertifikat** pendukung?\n\n"
-        "_(Opsional: Tulis link/namanya, atau langsung ketik *-* untuk dilewati)_"
-    ),
-    11: (
         "Punya deskripsi singkat tentang dirimu?\n\n"
-        "💡 *Rekomendasi:* Langsung ketik *-* saja agar **AI BoonTrack yang merangkumkan profil profesional terbaik** untukmu!"
+        "💡 *Rekomendasi:* Langsung ketik *-* saja agar *AI BoonTrack merangkumkan ringkasan profesional terbaik* untukmu!"
     )
 }
 
-# 2. TOTAL LANGKAH OTOMATIS DARI PANJANG DICTIONARY
 TOTAL_STEPS = len(CV_QUESTIONS)
 
 def get_progress_bar(step: int) -> str:
@@ -166,18 +157,11 @@ async def cancel_handler(message: types.Message):
     await message.reply("❌ <b>Proses pembuatan CV dibatalkan.</b>", parse_mode="HTML")
 
 async def render_free_cv_review(user_id: int, bot, cv_text: str, target_position: str = "General Professional"):
-    """
-    Eksekusi Review Deterministic + Backend Entitlement Filter (Security P0)
-    """
     await bot.send_message(user_id, "⏳ <b>Sedang menganalisis struktur & skor ATS CV kamu...</b>", parse_mode="HTML")
     
-    # 1. Analisis skor dengan CV Review Engine
     eval_result = cv_review_engine.evaluate_cv(cv_text, target_position=target_position)
-    
-    # 2. Filter Entitlement (Free Tier: Score + Breakdown + Findings)
     filtered_data = cv_review_service.filter_entitlement_response(eval_result, is_premium=False)
     
-    # 3. Simpan ke database
     await cv_review_service.save_review(
         user_id=user_id,
         target_position=target_position,
@@ -189,13 +173,10 @@ async def render_free_cv_review(user_id: int, bot, cv_text: str, target_position
         confidence_level=eval_result.get("confidence", {}).get("level", "MEDIUM")
     )
 
-    # 4. Tracking Event Funnel
     await analytics_service.log_funnel_event("cv_review_completed", user_id=user_id)
     await analytics_service.log_funnel_event("cv_review_result_viewed", user_id=user_id)
 
-    # 5. Format Tampilan Pesan Diagnosis
     b = filtered_data.get("breakdown_scores", {})
-
     ats_score = b.get("ats_compatibility") or b.get("quality") or 70
     format_score = b.get("format_relevance") or b.get("structure") or b.get("keyword") or 75
     exp_score = b.get("experience_impact") or b.get("experience") or b.get("evidence") or 80

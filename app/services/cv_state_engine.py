@@ -3,6 +3,7 @@ import re
 import logging
 from app.handlers.commands import CV_QUESTIONS, TOTAL_STEPS
 from app.core.database import get_user_history, save_dropoff, save_cv_version, track_event
+from app.services.whatsapp_service import send_whatsapp_document, send_whatsapp_text
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ def format_text_for_whatsapp(text: str) -> str:
     return text.strip()
 
 async def process_unified_cv_step(user_id: str, text_input: str, platform: str = "whatsapp") -> dict:
-    # 1. Pulihkan State dari Database jika memori kosong (Anti-Hilang saat Server Restart)
+    # 1. Pulihkan State dari Database jika memory kosong
     if user_id not in GLOBAL_USER_STATES:
         db_progress = None
         try:
@@ -35,8 +36,7 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
         except Exception as e:
             logger.error(f"[DB Resume Fetch Error] {e}")
 
-        if db_progress and db_progress.get("last_step", 0) > 0 and db_progress.get("last_step", 0) < TOTAL_STEPS:
-            # Konversi key string dari JSON DB ke integer
+        if db_progress and 0 < db_progress.get("last_step", 0) < TOTAL_STEPS:
             raw_db_data = db_progress.get("data", {})
             restored_data = {int(k): v for k, v in raw_db_data.items() if str(k).isdigit()}
             
@@ -54,7 +54,7 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
     user_data = session.setdefault("data", {})
     sub_step = session.get("sub_step", "init")
 
-    # 2. Tangani User yang Datanya Berhasil Dipulihkan (Auto-Resume Hook)
+    # 2. Tangani User Lanjutan
     if session.get("resumed"):
         session["resumed"] = False
         last_step = session["step"]
@@ -62,7 +62,7 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
         
         resume_msg = (
             f"👋 *Draft CV Kamu Ditemukan!*\n\n"
-            f"Kita lanjutkan dari *Langkah {last_step}/{TOTAL_STEPS}* yang terakhir kamu isi ya. Semua data sebelumnya sudah tersimpan aman. 💾\n\n"
+            f"Kita lanjutkan dari *Langkah {last_step}/{TOTAL_STEPS}* yang terakhir kamu isi ya. Semua data sebelumnya tersimpan aman. 💾\n\n"
             f"{q_formatted}"
         )
         return {
@@ -121,7 +121,6 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
 
     user_data[current_step] = cleaned_val
 
-    # Auto-Save Permanen setiap user submit pesan
     try:
         await save_dropoff(str(user_id), current_step, user_data)
         await track_event(str(user_id), f"step_{current_step}_completed")
@@ -147,14 +146,14 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
             "is_completed": False
         }
 
-    # 7. Selesai Semua Langkah -> Poles dengan AI & Render Dokumen
+    # 7. Selesai Semua Langkah -> Render Dokumen & Kirim via WhatsApp API
     session["step"] = 0
     session["sub_step"] = "init"
 
     try:
         position = user_data.get(5, "General Professional")
         await save_cv_version(str(user_id), position, user_data)
-        await save_dropoff(str(user_id), 0, {}) # Reset status dropoff karena sudah beres
+        await save_dropoff(str(user_id), 0, {})
         await track_event(str(user_id), "resume_generated", meta={"position": position, "lang": session.get("lang")})
     except Exception:
         pass
@@ -170,25 +169,39 @@ async def process_unified_cv_step(user_id: str, text_input: str, platform: str =
     except Exception as e:
         logger.error(f"[CV Polisher] {e}")
 
-    msg_1 = (
-        "📄 *CV ATS-Friendly Kamu Berhasil Dibuat!*\n\n"
-        "Data riwayat karir dan profilmu sudah selesai dipoles dan dirapikan oleh AI BoonTrack. 🚀"
-    )
-    msg_2 = (
-        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🎁 *BONUS: WEBSITE CAREER PAGE & PORTOFOLIO GRATIS!*\n\n"
-        "Mau dibuatkan *Website Portfolio Personal* otomatis siap pakai untuk melamar kerja (contoh: _namamu.boontrack.com_)?\n\n"
-        "Cukup bagikan layanan BoonTrack ke 3 teman pencari kerja. Ketik *Career Page* untuk informasi klaim selengkapnya! 🌐"
-    )
-    msg_3 = (
-        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "BoonTrack dikembangkan secara mandiri untuk membantu pencari kerja di Indonesia.\n\n"
-        "Ketik *2* jika ingin mengecek skor ATS & optimasi kata kunci, atau ketik *Menu* untuk opsi layanan lainnya. ☕"
+    user_name = user_data.get(1, "BoonTrack_User")
+    clean_filename = f"CV_{re.sub(r'[^a-zA-Z0-9]', '_', user_name)}.docx"
+
+    # Kirim Dokumen .docx via WhatsApp API
+    if file_path and platform == "whatsapp":
+        await send_whatsapp_document(
+            to_number=str(user_id),
+            file_path_or_url=file_path,
+            filename=clean_filename,
+            caption="📄 Ini dokumen CV ATS-Friendly kamu!"
+        )
+
+    # Format Penutup Persis Telegram
+    msg_closing = (
+        "🎉 *Dokumen CV ATS-Friendly kamu berhasil dibuat!*\n\n"
+        "File dokumen (*.docx*) sudah dikirimkan di atas dan siap digunakan untuk melamar kerja. 📄✨\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🔥 *Bikin HRD Langsung Lirik Lamaranmu!*\n\n"
+        "Dapatkan *CV Rekomendasi AI + Career Page Profesional*.\n"
+        "Order Rp10.000 atau ajak 5 teman untuk akses *GRATIS*! ✨\n\n"
+        "🌐 *Contoh Tampilan Career Page:*\n"
+        "👉 [https://rayigemilang.boontrack.com](https://rayigemilang.boontrack.com)\n\n"
+        "Pilih opsi selanjutnya:\n"
+        "1️⃣ *Order Career Page (Rp10.000)*\n"
+        f"2️⃣ *Gratis via Invite Teman (Referral)* 👉 [https://boontrack.com/ref/](https://boontrack.com/ref/){user_id}\n"
+        "3️⃣ *Edit Bagian CV*\n"
+        "4️⃣ *Menu Utama*\n\n"
+        "Ketik angka *1*, *2*, *3*, atau *4* untuk memilih."
     )
 
     return {
-        "reply_text": msg_1,
-        "messages": [msg_1, msg_2, msg_3],
+        "reply_text": msg_closing,
+        "messages": [msg_closing],
         "file_path": file_path,
         "is_completed": True
     }
