@@ -10,9 +10,10 @@ logger = logging.getLogger(__name__)
 
 
 def extract_amount_from_text(text: str) -> int:
-    """Ekstraksi nominal angka dari berbagai pola teks notifikasi transfer DANA."""
+    """Ekstraksi nominal angka dari format notifikasi DANA Android / SMS."""
     if not text:
         return 0
+    # Tangkap pola nominal seperti Rp 10.523, Rp. 10523, IDR 10,523, atau angka langsung
     match = re.search(r"(?:rp\.?|idr)?\s*([\d\.,]+)", text, re.IGNORECASE)
     if match:
         clean_digit = re.sub(r"\D", "", match.group(1))
@@ -21,11 +22,8 @@ def extract_amount_from_text(text: str) -> int:
 
 
 async def notify_payment_success_universal(user_id: str, amount: int, platform: str = "whatsapp"):
-    """
-    Mengirimkan notifikasi aktivasi Career Page secara otomatis
-    baik untuk pengguna Telegram maupun WhatsApp.
-    """
-    user_session = GLOBAL_USER_STATES.get(user_id, {})
+    """Mengirim notifikasi aktivasi Career Page ke Telegram atau WhatsApp."""
+    user_session = GLOBAL_USER_STATES.get(str(user_id), {})
     user_data = user_session.get("data", {})
     nama = user_data.get("nama_panggilan") or user_data.get("nama_lengkap") or ""
     sapaan = f", *{nama}*" if nama else ""
@@ -38,32 +36,30 @@ async def notify_payment_success_universal(user_id: str, amount: int, platform: 
         f"👉 {career_page_url}\n\n"
         "✨ *Fitur yang aktif:*\n"
         "• Link halaman portofolio personal responsif\n"
-        "• Direct contact button menuju kontakmu\n"
+        "• Direct contact button menuju WhatsApp/kontakmu\n"
         "• Badge verifikasi ATS-Friendly\n\n"
-        "_Ketik *Menu* untuk opsi lainnya._"
+        "_Ketik *Menu* untuk kembali ke menu utama._"
     )
 
-    # Routing otomatis: Cek apakah ID berasal dari WhatsApp atau Telegram
-    is_wa_number = str(user_id).startswith("62") or len(str(user_id)) >= 11 or platform == "whatsapp"
+    is_wa = str(user_id).startswith("62") or len(str(user_id)) >= 11 or platform == "whatsapp"
 
-    if is_wa_number:
+    if is_wa:
         try:
             await send_whatsapp_text(str(user_id), success_msg)
-            logger.info(f"[PAYMENT NOTIFY] WhatsApp sent to {user_id}")
+            logger.info(f"[PAYMENT NOTIFY] WhatsApp success sent to {user_id}")
         except Exception as e:
             logger.error(f"[Payment WhatsApp Notify Error] {e}")
     else:
         try:
-            # Kirim ke Telegram jika user bertransaksi lewat Telegram Bot
             from app.services.telegram_service import send_telegram_message
             await send_telegram_message(int(user_id), success_msg.replace("*", "**"))
-            logger.info(f"[PAYMENT NOTIFY] Telegram sent to {user_id}")
+            logger.info(f"[PAYMENT NOTIFY] Telegram success sent to {user_id}")
         except Exception as te:
             logger.error(f"[Payment Telegram Notify Error] {te}")
 
 
 async def handle_dana_webhook(request: web.Request) -> web.Response:
-    """Handler endpoint webhook notifikasi mutasi DANA (Telegram & WA)."""
+    """Handler endpoint webhook mutasi DANA (Mendukung Payload Reader & Custom Test)."""
     try:
         data: Dict[str, Any] = await request.json()
     except Exception:
@@ -83,23 +79,27 @@ async def handle_dana_webhook(request: web.Request) -> web.Response:
     else:
         amount = extract_amount_from_text(text)
 
-    logger.info(f"[DANA WEBHOOK] Incoming Text: '{text}' | Amount: {amount}")
+    logger.info(f"[DANA WEBHOOK RECEIVED] Amount: {amount} | Raw Text: '{text}'")
 
     if amount <= 0:
-        return web.json_response({"status": "failed", "reason": "invalid_amount", "amount_detected": 0}, status=400)
+        return web.json_response({"status": "ignored", "reason": "invalid_amount", "amount_detected": 0}, status=200)
 
-    # Cari user aktif (baik sesi Telegram maupun sesi WhatsApp)
+    # 1. Matching terhadap Active Session di Memori (WhatsApp / Telegram)
     matched_user_id = None
     matched_platform = "whatsapp"
 
     for uid, session in list(GLOBAL_USER_STATES.items()):
         payment_info = session.get("active_payment", {})
-        expected_amt = payment_info.get("total_amt")
+        expected_amt = payment_info.get("total_amt") or payment_info.get("amount")
 
-        if expected_amt and int(expected_amt) == amount:
-            matched_user_id = uid
-            matched_platform = session.get("platform", "whatsapp")
-            break
+        if expected_amt:
+            try:
+                if int(re.sub(r"\D", "", str(expected_amt))) == amount:
+                    matched_user_id = str(uid)
+                    matched_platform = session.get("platform", "whatsapp")
+                    break
+            except Exception:
+                continue
 
     if matched_user_id:
         try:
@@ -113,16 +113,28 @@ async def handle_dana_webhook(request: web.Request) -> web.Response:
                 meta={"amount": amount, "method": "DANA_QRIS", "text": text, "platform": matched_platform}
             )
         except Exception as e:
-            logger.error(f"[Payment Process Error] {e}")
+            logger.error(f"[Payment Trigger Error] {e}")
 
-        return web.json_response({"status": "success", "amount_detected": amount, "user_matched": matched_user_id}, status=200)
+        return web.json_response({
+            "status": "success",
+            "message": "Payment verified and career page activated",
+            "amount_detected": amount,
+            "user_matched": matched_user_id,
+            "platform": matched_platform
+        }, status=200)
 
-    return web.json_response({"status": "success", "amount_detected": amount, "matched": False}, status=200)
+    # Jika tidak ada invoice pending yang cocok
+    return web.json_response({
+        "status": "success",
+        "amount_detected": amount,
+        "matched": False,
+        "note": "No active pending session for this exact amount"
+    }, status=200)
 
 
 def register_payment_routes(app: web.Application):
-    """Mendaftarkan seluruh endpoint pembayaran."""
+    """Mendaftarkan endpoint pembayaran DANA universal."""
     app.router.add_post("/webhook/dana", handle_dana_webhook)
     app.router.add_post("/api/webhook/dana", handle_dana_webhook)
     app.router.add_post("/api/payments/webhook", handle_dana_webhook)
-    app.router.add_get("/webhook/dana", lambda r: web.json_response({"status": "running"}))
+    app.router.add_get("/webhook/dana", lambda r: web.json_response({"status": "running", "gateway": "DANA QRIS"}))
