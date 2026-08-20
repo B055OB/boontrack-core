@@ -25,16 +25,24 @@ def get_user_display_name(sender_wa_id: str) -> str:
 
 
 def get_whatsapp_full_menu(sender_wa_id: str) -> str:
-    """Menghasilkan menu utama 5 layanan BoonTrack dengan sapaan nama pengguna."""
+    """Menghasilkan menu utama dinamis sesuai status pembayaran pengguna."""
     nama = get_user_display_name(sender_wa_id)
     greeting = f", *{nama}*" if nama else ""
+    user_session = GLOBAL_USER_STATES.get(str(sender_wa_id), {})
+    is_premium = user_session.get("is_premium", False)
+
+    # Dynamic Menu 3 sesuai status pembayaran
+    if is_premium:
+        career_menu_text = "3️⃣ *Perbarui / Lihat Career Page Aktif (Premium)* 🌐"
+    else:
+        career_menu_text = "3️⃣ *Aktivasi Career Page Pribadi (Rp10.000)*"
 
     return (
         f"Halo{greeting}! 👋 Selamat datang di *BoonTrack Career Assistant*.\n\n"
         "Saya siap membantu perjalanan karirmu agar lebih optimal dan dilirik HRD:\n\n"
         "1️⃣ *Buat CV ATS Baru* (Panduan step-by-step dari awal)\n"
         "2️⃣ *Review & Cek Skor ATS CV* (Upload PDF/DOCX atau kirim teks)\n"
-        "3️⃣ *Aktivasi Career Page Pribadi (Rp10.000)*\n"
+        f"{career_menu_text}\n"
         "4️⃣ *Cek Status Referral & Hadiah Gratis*\n"
         "5️⃣ *Konsultasi Karir & Tanya Jawab HRD*\n\n"
         "_Ketik angka 1, 2, 3, 4, atau 5 untuk memilih._"
@@ -281,11 +289,13 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     if user_text_clean in ["menu", "halo", "hi", "mulai", "start", "bantuan", "batal", "home", "/menu", "/start"]:
         current_data = user_session.get("data", {})
         saved_payment = user_session.get("active_payment")
+        saved_premium = user_session.get("is_premium", False)
         GLOBAL_USER_STATES[sender_wa_id] = {
             "step": 0,
             "mode": "menu",
             "data": current_data,
-            "active_payment": saved_payment
+            "active_payment": saved_payment,
+            "is_premium": saved_premium
         }
         await send_whatsapp_text(sender_wa_id, get_whatsapp_full_menu(sender_wa_id))
         return web.Response(text="EVENT_RECEIVED", status=200)
@@ -328,7 +338,20 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     # =========================================================================
     if current_mode == "post_cv":
         if user_text_clean in ["1", "order", "beli", "order career page"]:
-            await send_career_page_summary_step1(sender_wa_id, base_amt=10000)
+            is_premium = user_session.get("is_premium", False)
+            if is_premium:
+                nama = get_user_display_name(sender_wa_id)
+                sapaan = f", *{nama}*" if nama else ""
+                career_url = f"https://boontrack.com/p/{sender_wa_id}"
+                await send_whatsapp_text(
+                    sender_wa_id,
+                    f"🌟 *CAREER PAGE PRIBADI AKTIF{sapaan.upper()}* 🌟\n\n"
+                    f"Career Page kamu sudah aktif seumur hidup!\n"
+                    f"🔗 *Akses Web Kamu:* {career_url}\n\n"
+                    "_Data di website akan langsung terupdate jika kamu memperbarui CV._"
+                )
+            else:
+                await send_career_page_summary_step1(sender_wa_id, base_amt=10000)
             return web.Response(text="EVENT_RECEIVED", status=200)
 
         if user_text_clean in ["2", "referral", "gratis", "ajak teman"]:
@@ -350,11 +373,13 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         if user_text_clean in ["3", "menu utama"]:
             current_data = user_session.get("data", {})
             saved_payment = user_session.get("active_payment")
+            saved_premium = user_session.get("is_premium", False)
             GLOBAL_USER_STATES[sender_wa_id] = {
                 "step": 0,
                 "mode": "menu",
                 "data": current_data,
-                "active_payment": saved_payment
+                "active_payment": saved_payment,
+                "is_premium": saved_premium
             }
             await send_whatsapp_text(sender_wa_id, get_whatsapp_full_menu(sender_wa_id))
             return web.Response(text="EVENT_RECEIVED", status=200)
@@ -461,9 +486,23 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, intro_review)
             return web.Response(text="EVENT_RECEIVED", status=200)
 
-        # Opsi 3: Aktivasi Career Page (Rp10.000) -> Menjalankan Alur Langkah 1
-        if user_text_clean in ["3", "order", "career page", "aktivasi", "3️⃣"]:
-            await send_career_page_summary_step1(sender_wa_id, base_amt=10000)
+        # Opsi 3: Career Page (Aktivasi Baru atau Akses Web Aktif)
+        if user_text_clean in ["3", "order", "career page", "aktivasi", "perbarui", "3️⃣"]:
+            is_premium = user_session.get("is_premium", False)
+            if is_premium:
+                nama = get_user_display_name(sender_wa_id)
+                sapaan = f", *{nama}*" if nama else ""
+                career_url = f"https://boontrack.com/p/{sender_wa_id}"
+                premium_info_msg = (
+                    f"🌟 *CAREER PAGE PRIBADI AKTIF{sapaan.upper()}* 🌟\n\n"
+                    f"Career Page kamu sudah aktif seumur hidup!\n"
+                    f"🔗 *Akses Web Kamu:* {career_url}\n\n"
+                    "📌 *Ingin memperbarui data di Career Page?*\n"
+                    "Cukup pilih menu *1 (Buat/Update CV)* atau kirimkan update CV terbarumu, data di halaman web kamu akan langsung tersinkronisasi otomatis."
+                )
+                await send_whatsapp_text(sender_wa_id, premium_info_msg)
+            else:
+                await send_career_page_summary_step1(sender_wa_id, base_amt=10000)
             return web.Response(text="EVENT_RECEIVED", status=200)
 
         # Opsi 4: Referral Hadiah Gratis
