@@ -13,7 +13,7 @@ class GroqProvider(BaseLLMProvider):
     def __init__(self):
         self.api_key = os.getenv("GROQ_API_KEY", "").strip()
         self.api_url = "https://api.groq.com/openai/v1/chat/completions"
-        self.model = "llama-3.3-70b-versatile"
+        self.model = "llama-3.1-8b-instant"
 
     async def generate(
         self, prompt: str, system_prompt: str = "", temperature: float = 0.2
