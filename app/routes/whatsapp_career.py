@@ -41,15 +41,10 @@ def get_whatsapp_full_menu(sender_wa_id: str) -> str:
     )
 
 
-def get_or_create_user_payment(sender_wa_id: str, base_amt: int = 10000) -> Tuple[int, str]:
-    """
-    Mengambil invoice aktif yang konsisten untuk user dengan sapaan nama yang presisi.
-    """
+def get_or_create_user_payment(sender_wa_id: str, base_amt: int = 10000) -> Tuple[int, int]:
+    """Mengambil atau membuat tagihan nominal unik di session user."""
     user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
-    nama = get_user_display_name(sender_wa_id)
-    greeting = f", *{nama}*" if nama else ""
-
-    # Ambil invoice aktif jika sudah pernah dibuat
+    
     payment_info = user_session.get("active_payment")
     if payment_info and isinstance(payment_info, dict):
         total_amt = payment_info.get("total_amt", base_amt + 416)
@@ -60,36 +55,57 @@ def get_or_create_user_payment(sender_wa_id: str, base_amt: int = 10000) -> Tupl
         user_session["active_payment"] = {
             "total_amt": total_amt,
             "unique_code": unique_code,
-            "base_amt": base_amt
+            "base_amt": base_amt,
+            "status": "pending"
         }
+    user_session["platform"] = "whatsapp"
+    return total_amt, unique_code
 
-    msg = (
-        f"🎉 *Terima kasih telah memilih BoonTrack{greeting}!*\n\n"
+
+async def send_career_page_summary_step1(sender_wa_id: str, base_amt: int = 10000):
+    """Langkah 1: Mengirim rincian penawaran, preview URL, dan opsi konfirmasi bayar."""
+    total_amt, unique_code = get_or_create_user_payment(sender_wa_id, base_amt)
+    nama = get_user_display_name(sender_wa_id)
+    sapaan = f", *{nama}*" if nama else "!"
+
+    offer_msg = (
+        f"🎉 *Terima kasih telah memilih BoonTrack{sapaan}*\n\n"
         "Tinggal satu langkah lagi untuk mengaktifkan *Career Page Profesional* milikmu dan tampil lebih menonjol di mata HRD/Klien.\n\n"
         "🌐 *Contoh Tampilan Career Page:*\n"
         "Lihat preview tampilan Career Page yang akan kamu dapatkan di sini:\n"
         "👉 https://rayigemilang.boontrack.com\n\n"
-        "_✨ Format modern, recruiter-friendly, responsif di HP/laptop, dan *aktif seumur hidup (sekali bayar tanpa biaya langganan)*._\n\n"
+        "✨ _Format modern, recruiter-friendly, responsif di HP/laptop, dan *aktif seumur hidup (sekali bayar tanpa biaya langganan)*._\n\n"
         "💳 *Rincian Pembayaran:*\n"
         "• *Item:* Aktivasi Career Page Personal (Lifetime Access)\n"
         f"• *Transfer Tepat:* `Rp{total_amt:,}` _(Wajib transfer sesuai hingga 3 digit terakhir)_\n"
         f"• *Rincian:* Rp{base_amt:,} + kode verifikasi Rp{unique_code}\n"
         "• *Masa Aktif Web:* *Aktif Seumur Hidup*\n\n"
-        "📱 *Panduan Bayar via QRIS (Jika Pakai 1 HP):*\n"
-        "1. *Simpan QR:* *Screenshot gambar QRIS di atas* atau simpan ke galeri.\n"
-        "2. *Buka E-Wallet / Mobile Banking:* (BCA, Mandiri, BRI, DANA, GoPay, OVO, ShopeePay, dll).\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Silakan pilih opsi berikut:\n"
+        "1️⃣ *Mau Bayar Sekarang (Via QRIS)*\n"
+        "2️⃣ *Nanti Dulu / Kembali ke Menu*\n\n"
+        "_Ketik angka *1* untuk melihat QRIS atau *2* untuk batal._"
+    )
+
+    user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {})
+    user_session["mode"] = "waiting_qris_confirmation"
+    await send_whatsapp_text(sender_wa_id, offer_msg)
+
+
+async def send_qris_media_with_guide_step2(sender_wa_id: str, base_amt: int = 10000):
+    """Langkah 2: Mengirim QRIS image beserta instruksi bayar dalam SATU pesan (caption)."""
+    total_amt, unique_code = get_or_create_user_payment(sender_wa_id, base_amt)
+
+    caption_text = (
+        f"📱 *PANDUAN BAYAR VIA QRIS (TOTAL: Rp{total_amt:,})*\n\n"
+        "1. *Simpan QR:* Screenshot gambar QRIS di atas atau simpan ke galeri HP.\n"
+        "2. *Buka E-Wallet / M-Banking:* (BCA, Mandiri, BRI, DANA, GoPay, OVO, ShopeePay, dll).\n"
         "3. *Pilih Menu QRIS / Scan:* Buka scanner QRIS di aplikasimu.\n"
-        "4. *Upload dari Galeri:* Klik ikon galeri pada scanner & pilih gambar QR tadi.\n"
+        "4. *Upload dari Galeri:* Klik ikon galeri pada scanner & pilih gambar QR ini.\n"
         f"5. *Input Nominal PRESISI:* Pastikan nominal tepat *Rp{total_amt:,}*.\n"
         "6. Selesaikan pembayaran.\n\n"
         "⏳ _Sistem otomatis memverifikasi pembayaran secara real-time melalui BoonTrack Reader. Begitu dana masuk, bot akan langsung mengirimkan link Career Page aktif milikmu!_"
     )
-    return total_amt, msg
-
-
-async def send_qris_checkout_flow(sender_wa_id: str, base_amt: int = 10000):
-    """Mengirim gambar QRIS tunggal dengan rincian pembayaran ber-caption nama."""
-    total_amt, msg_caption = get_or_create_user_payment(sender_wa_id, base_amt)
 
     possible_qris_paths = [
         "assets/qris.jpg",
@@ -104,12 +120,12 @@ async def send_qris_checkout_flow(sender_wa_id: str, base_amt: int = 10000):
 
     if found_qris:
         try:
-            await send_whatsapp_image(sender_wa_id, image_path=found_qris, caption=msg_caption)
+            await send_whatsapp_image(sender_wa_id, image_path=found_qris, caption=caption_text)
             return
         except Exception as e:
             logger.error(f"[WA Send QRIS Image Error] {e}")
 
-    await send_whatsapp_text(sender_wa_id, msg_caption)
+    await send_whatsapp_text(sender_wa_id, caption_text)
 
 
 async def verify_webhook(request: web.Request) -> web.Response:
@@ -146,7 +162,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
     user_data = user_session.setdefault("data", {})
 
-    # Ekstraksi Nama Profil WhatsApp dari kontak Meta Webhook
+    # Ekstraksi Nama Profil WhatsApp
     contacts = value_data.get("contacts", [])
     if contacts and isinstance(contacts, list) and len(contacts) > 0:
         raw_profile_name = contacts[0].get("profile", {}).get("name", "").strip()
@@ -277,7 +293,24 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     current_mode = user_session.get("mode", "menu")
 
     # =========================================================================
-    # 3. WIZARD STEP CV BUILDER (Step 1 s/d 10)
+    # 3. HANDLING STATE MENUNGGU KONFIRMASI QRIS (LANGKAH 2 DARI CAREER PAGE)
+    # =========================================================================
+    if current_mode == "waiting_qris_confirmation":
+        if user_text_clean in ["1", "bayar", "qris", "bayar sekarang", "mau bayar"]:
+            await send_qris_media_with_guide_step2(sender_wa_id, base_amt=10000)
+            user_session["mode"] = "post_cv"
+            return web.Response(text="EVENT_RECEIVED", status=200)
+
+        if user_text_clean in ["2", "nanti", "nanti dulu", "batal"]:
+            user_session["mode"] = "menu"
+            await send_whatsapp_text(
+                sender_wa_id,
+                "Siap! Jika sewaktu-waktu ingin mengaktifkan Career Page, cukup ketik *Menu* dan pilih opsi 3 ya. 🙌"
+            )
+            return web.Response(text="EVENT_RECEIVED", status=200)
+
+    # =========================================================================
+    # 4. WIZARD STEP CV BUILDER (Step 1 s/d 10)
     # =========================================================================
     if user_session.get("step", 0) > 0:
         result = await process_unified_cv_step(sender_wa_id, user_text, platform="whatsapp")
@@ -291,11 +324,11 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         return web.Response(text="EVENT_RECEIVED", status=200)
 
     # =========================================================================
-    # 4. POST_CV STATE (Setelah Review atau Pembuatan CV)
+    # 5. POST_CV STATE (Setelah Review atau Pembuatan CV)
     # =========================================================================
     if current_mode == "post_cv":
         if user_text_clean in ["1", "order", "beli", "order career page"]:
-            await send_qris_checkout_flow(sender_wa_id, base_amt=10000)
+            await send_career_page_summary_step1(sender_wa_id, base_amt=10000)
             return web.Response(text="EVENT_RECEIVED", status=200)
 
         if user_text_clean in ["2", "referral", "gratis", "ajak teman"]:
@@ -335,7 +368,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             return web.Response(text="EVENT_RECEIVED", status=200)
 
     # =========================================================================
-    # 5. MODE REVIEW CV DARI TEKS MANUAL
+    # 6. MODE REVIEW CV DARI TEKS MANUAL
     # =========================================================================
     if current_mode == "review":
         if len(user_text.split()) < 6:
@@ -389,7 +422,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         return web.Response(text="EVENT_RECEIVED", status=200)
 
     # =========================================================================
-    # 6. MODE KONSULTASI KARIR
+    # 7. MODE KONSULTASI KARIR
     # =========================================================================
     if current_mode == "consultation":
         ai_reply = await ai_gateway.generate(
@@ -406,7 +439,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         return web.Response(text="EVENT_RECEIVED", status=200)
 
     # =========================================================================
-    # 7. MENU UTAMA (5 PILIHAN UTAMA)
+    # 8. MENU UTAMA (5 PILIHAN UTAMA)
     # =========================================================================
     if current_mode == "menu":
         # Opsi 1: Buat CV
@@ -428,9 +461,9 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, intro_review)
             return web.Response(text="EVENT_RECEIVED", status=200)
 
-        # Opsi 3: Aktivasi Career Page (Rp10.000)
+        # Opsi 3: Aktivasi Career Page (Rp10.000) -> Menjalankan Alur Langkah 1
         if user_text_clean in ["3", "order", "career page", "aktivasi", "3️⃣"]:
-            await send_qris_checkout_flow(sender_wa_id, base_amt=10000)
+            await send_career_page_summary_step1(sender_wa_id, base_amt=10000)
             return web.Response(text="EVENT_RECEIVED", status=200)
 
         # Opsi 4: Referral Hadiah Gratis
@@ -462,7 +495,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             return web.Response(text="EVENT_RECEIVED", status=200)
 
     # =========================================================================
-    # 8. FALLBACK OBROLAN BEBAS
+    # 9. FALLBACK OBROLAN BEBAS
     # =========================================================================
     ai_reply = await ai_gateway.generate(
         user_message=user_text,
