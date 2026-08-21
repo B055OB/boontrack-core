@@ -1,3 +1,4 @@
+import os
 import re
 import logging
 from aiohttp import web
@@ -18,6 +19,24 @@ def extract_amount_from_text(text: str) -> int:
         clean_digit = re.sub(r"\D", "", match.group(1))
         return int(clean_digit) if clean_digit else 0
     return 0
+
+
+async def serve_qris_asset(request: web.Request) -> web.Response:
+    """Endpoint penyedia file fisik gambar QRIS dari folder assets."""
+    possible_paths = [
+        os.path.join(os.getcwd(), "assets", "qris_dana.jpg"),
+        os.path.join(os.getcwd(), "assets", "qris_dana.png"),
+        os.path.join(os.getcwd(), "assets", "qris.png"),
+        os.path.join(os.getcwd(), "assets", "qris.jpg"),
+    ]
+    
+    for path in possible_paths:
+        if os.path.exists(path):
+            content_type = "image/jpeg" if path.endswith((".jpg", ".jpeg")) else "image/png"
+            with open(path, "rb") as f:
+                return web.Response(body=f.read(), content_type=content_type)
+                
+    return web.Response(text="QRIS image not found", status=404)
 
 
 async def notify_payment_success_universal(user_id: str, amount: int, platform: str = "whatsapp"):
@@ -80,6 +99,7 @@ async def handle_dana_webhook(request: web.Request) -> web.Response:
 
     text = data.get("notification_text") or data.get("raw_text") or data.get("text") or data.get("keterangan") or ""
     raw_amount = data.get("amount") or data.get("nominal") or 0
+    direct_phone = data.get("user_phone") or data.get("phone") or ""
 
     if raw_amount:
         try:
@@ -89,34 +109,39 @@ async def handle_dana_webhook(request: web.Request) -> web.Response:
     else:
         amount = extract_amount_from_text(text)
 
-    logger.info(f"[DANA WEBHOOK RECEIVED] Amount: {amount} | Raw Text: '{text}'")
+    logger.info(f"[DANA WEBHOOK RECEIVED] Amount: {amount} | Raw Text: '{text}' | Direct Phone: '{direct_phone}'")
 
     if amount <= 0:
         return web.json_response({"status": "ignored", "reason": "invalid_amount", "amount_detected": 0}, status=200)
 
-    # 1. Matching terhadap Active Session di Memori
+    # 1. Matching terhadap Active Session di Memori atau Direct Phone Test
     matched_user_id = None
     matched_platform = "whatsapp"
 
-    for uid, session in list(GLOBAL_USER_STATES.items()):
-        mode = session.get("mode")
-        payment_info = session.get("active_payment", {})
-        expected_amt = payment_info.get("total_amt") or payment_info.get("amount")
+    if direct_phone:
+        matched_user_id = str(direct_phone)
+    else:
+        for uid, session in list(GLOBAL_USER_STATES.items()):
+            mode = session.get("mode")
+            payment_info = session.get("active_payment", {})
+            expected_amt = payment_info.get("total_amt") or payment_info.get("amount") if payment_info else None
 
-        # Cek matching: via state awaiting_rewrite_payment (Rp25k) ATAU via expected nominal
-        if (mode == "awaiting_rewrite_payment" and amount == 25000) or (
-            expected_amt and int(re.sub(r"\D", "", str(expected_amt))) == amount
-        ):
-            matched_user_id = str(uid)
-            matched_platform = session.get("platform", "whatsapp")
-            break
+            # Cek matching: via state awaiting_rewrite_payment (Rp25k) ATAU via expected nominal
+            if (mode == "awaiting_rewrite_payment" and amount == 25000) or (
+                expected_amt and int(re.sub(r"\D", "", str(expected_amt))) == amount
+            ):
+                matched_user_id = str(uid)
+                matched_platform = session.get("platform", "whatsapp")
+                break
 
     if matched_user_id:
         try:
             await notify_payment_success_universal(matched_user_id, amount, platform=matched_platform)
-            GLOBAL_USER_STATES[matched_user_id]["is_premium"] = True
-            GLOBAL_USER_STATES[matched_user_id]["active_payment"] = None
-            GLOBAL_USER_STATES[matched_user_id]["mode"] = "post_cv"
+            
+            if matched_user_id in GLOBAL_USER_STATES:
+                GLOBAL_USER_STATES[matched_user_id]["is_premium"] = True
+                GLOBAL_USER_STATES[matched_user_id]["active_payment"] = None
+                GLOBAL_USER_STATES[matched_user_id]["mode"] = "post_cv"
 
             # Track event payment success
             await track_event(
@@ -149,8 +174,13 @@ async def handle_dana_webhook(request: web.Request) -> web.Response:
 
 
 def register_payment_routes(app: web.Application):
-    """Mendaftarkan endpoint pembayaran DANA universal."""
+    """Mendaftarkan endpoint pembayaran DANA & QRIS Asset universal."""
+    # Endpoint asset gambar QRIS publik
+    app.router.add_get("/assets/qris.png", serve_qris_asset)
+    app.router.add_get("/assets/qris.jpg", serve_qris_asset)
+
+    # Endpoint webhook mutasi pembayaran
     app.router.add_post("/webhook/dana", handle_dana_webhook)
     app.router.add_post("/api/webhook/dana", handle_dana_webhook)
     app.router.add_post("/api/payments/webhook", handle_dana_webhook)
-    app.router.add_get("/webhook/dana", lambda r: web.json_response({"status": "running", "gateway": "DANA QRIS"}))
+    app.router.add_get("/webhook/dana", lambda r: web.json_response({"status": "running", "gateway": "BoonTrack QRIS"}))

@@ -27,6 +27,7 @@ def get_user_display_name(sender_wa_id: str) -> str:
 
 
 async def send_whatsapp_menu_buttons(sender_wa_id: str):
+    """Mengirim pesan menu utama dalam bentuk Interactive Buttons."""
     nama = get_user_display_name(sender_wa_id)
     greeting = f", *{nama}*" if nama else ""
 
@@ -221,16 +222,16 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             "📱 *PEMBAYARAN PREMIUM CV REWRITE*\n\n"
             f"🏷️ *Nominal Transfer:* *Rp{exact_amount:,}*\n"
             f"_(Termasuk kode unik verifikasi: *{unique_code}*)_\n\n"
-            "1. Scan *QRIS BoonTrack diatas* menggunakan DANA, GoPay, OVO, ShopeePay, BCA, Mandiri, BRI, dll.\n"
+            "1. Scan *QRIS diatas* menggunakan BCA, Mandiri, BRI, BNI, GoPay, OVO, DANA, ShopeePay, dll.\n"
             f"2. Masukkan nominal presisi *Rp{exact_amount:,}* agar sistem memverifikasi otomatis dalam 5 detik.\n"
             "3. Setelah transfer berhasil, AI akan langsung menyusun ulang CV Anda ke standar HR Senior!"
         )
 
         asset_candidates = [
-            os.path.join(os.getcwd(), "assets", "qris_dana.jpg"),
-            os.path.join(os.getcwd(), "assets", "qris_dana.png"),
             os.path.join(os.getcwd(), "assets", "qris.png"),
             os.path.join(os.getcwd(), "assets", "qris.jpg"),
+            os.path.join(os.getcwd(), "assets", "qris_dana.jpg"),
+            os.path.join(os.getcwd(), "assets", "qris_dana.png"),
         ]
         found_file = next((p for p in asset_candidates if os.path.exists(p)), None)
 
