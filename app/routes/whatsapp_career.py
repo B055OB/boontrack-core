@@ -229,11 +229,15 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         caption_text = (
             "📱 *INVOICE PEMBAYARAN PREMIUM CV REWRITE*\n"
             f"🧾 *No. Invoice:* `{invoice_id}`\n\n"
-            f"🏷️ *TOTAL TRANSFER:* *Rp{exact_amount:,}*\n"
-            f"_(Wajib sertakan 3 digit kode unik: *{unique_code}*)_\n\n"
-            "1. Scan *QRIS BoonTrack diatas* menggunakan BCA, Mandiri, BRI, BNI, DANA, GoPay, OVO, ShopeePay.\n"
-            f"2. Masukkan nominal presisi *Rp{exact_amount:,}*.\n"
-            "3. Sistem rekonsiliasi kami akan mendeteksi otomatis & langsung memproses pesanan Anda!"
+            f"🏷️ *TOTAL TRANSFER:* `{exact_amount}`\n"
+            f"*(Rp{exact_amount:,} - Sudah termasuk 3 digit kode unik: {unique_code})*\n\n"
+            "📌 *Panduan Pembayaran QRIS:*\n"
+            "1. *Simpan / Screenshot* gambar QRIS di atas ke galeri HP kamu.\n"
+            "2. Buka aplikasi m-Banking (*BCA, Mandiri, BRI, BNI*) atau e-Wallet (*GoPay, OVO, DANA, ShopeePay*).\n"
+            "3. Pilih menu *Scan QRIS* ➔ ketuk *ikon Galeri / Unggah Gambar* ➔ pilih gambar QRIS tadi.\n"
+            f"4. Masukkan nominal persis: `{exact_amount}`\n\n"
+            f"⚠️ *PENTING:* Silakan *salin (copy)* angka `{exact_amount}` di atas agar jumlah transfer tepat. "
+            "Sistem verifikasi otomatis *tidak akan dapat memproses pesanan Anda* jika nominal yang dimasukkan berbeda."
         )
 
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
