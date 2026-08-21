@@ -1,6 +1,7 @@
 import re
 import os
 import io
+import random
 import asyncio
 import logging
 from typing import Tuple, Optional
@@ -14,7 +15,6 @@ from app.services.ai_service import ai_gateway
 from app.core.database import track_event
 from app.services.document_parser_service import download_whatsapp_media, extract_text_from_bytes
 from app.services.qris_engine import generate_dynamic_qris_payload, render_qris_image
-from app.services.pricing_service import get_career_product
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -188,41 +188,32 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         await send_whatsapp_text(sender_wa_id, get_whatsapp_full_menu(sender_wa_id))
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 3. TRIGGER REWRITE (QRIS BOONTRACK DIATAS)
+    # 3. TRIGGER REWRITE (DYNAMIC QRIS TERKUNCI + 3 DIGIT UNIK)
     if user_text_clean in ["rewrite", "perbaiki", "mau rewrite", "ambil rewrite"]:
         await track_event(sender_wa_id, "rewrite_clicked")
+
+        # Buat nominal presisi dengan 3 digit unik (contoh: 25.147)
+        unique_suffix = random.randint(101, 899)
+        locked_nominal = 25000 + unique_suffix
+
         user_session["mode"] = "awaiting_rewrite_payment"
-        user_session["active_payment"] = {"amount": 25000, "product": "career-rewrite-25k"}
+        user_session["active_payment"] = {"amount": locked_nominal, "product": "career-rewrite-25k"}
 
         caption_text = (
             "📱 *PEMBAYARAN PREMIUM CV REWRITE*\n\n"
-            "🏷️ *Nominal:* Rp25.000\n\n"
-            "1. Scan *QRIS BoonTrack diatas* melalui aplikasi E-Wallet (GoPay, OVO, DANA, ShopeePay) atau Mobile Banking (BCA, Mandiri, BRI, BNI, dll).\n"
-            "2. Masukkan/pastikan nominal pembayaran Rp25.000.\n"
-            "3. Setelah pembayaran berhasil, AI akan otomatis mendeteksi dan langsung memproses CV ATS versi terbaik Anda!"
+            f"🏷️ *Nominal:* Rp{locked_nominal:,} *(Terkunci Otomatis)*\n\n"
+            "1. Scan *QRIS BoonTrack diatas* menggunakan DANA, GoPay, OVO, ShopeePay, BCA, Mandiri, BRI, dll.\n"
+            f"2. Nominal sudah otomatis terkunci presisi *Rp{locked_nominal:,}* tanpa perlu input manual.\n"
+            "3. Setelah pembayaran berhasil, AI akan langsung menyusun ulang CV Anda ke standar HR Senior!"
         )
 
-        asset_candidates = [
-            os.path.join(os.getcwd(), "assets", "qris_dana.jpg"),
-            os.path.join(os.getcwd(), "assets", "qris_dana.png"),
-            os.path.join(os.getcwd(), "assets", "qris.png"),
-            os.path.join(os.getcwd(), "assets", "qris.jpg"),
-        ]
-        found_file = next((p for p in asset_candidates if os.path.exists(p)), None)
+        # Generate string QRIS Dinamis dan Image Bytes
+        raw_static_qris = getattr(settings, "DANA_STATIC_QRIS", "") or os.getenv("DANA_STATIC_QRIS", "")
+        dynamic_payload = generate_dynamic_qris_payload(raw_static_qris, locked_nominal)
+        qr_bytes_io = render_qris_image(dynamic_payload)
 
-        sent = False
-        if found_file:
-            sent = await send_whatsapp_image(sender_wa_id, image_path=found_file, caption=caption_text)
-
-        if not sent:
-            try:
-                raw_static_qris = getattr(settings, "DANA_STATIC_QRIS", "") or os.getenv("DANA_STATIC_QRIS", "")
-                dynamic_payload = generate_dynamic_qris_payload(raw_static_qris, 25000) if raw_static_qris else "00020101021226670016ID.CO.BOONTRACK.WWW01189360000000000000005204581253033605405250005802ID5916BOONTRACK_CAREER6007BANDUNG6304"
-                img_io = render_qris_image(dynamic_payload)
-                sent = await send_whatsapp_image(sender_wa_id, image_path=img_io.getvalue(), caption=caption_text)
-            except Exception as ge:
-                logger.error(f"[QR Gen Error] {ge}")
-
+        # Kirim gambar QRIS Dinamis langsung ke WhatsApp
+        sent = await send_whatsapp_image(sender_wa_id, image_path=qr_bytes_io.getvalue(), caption=caption_text)
         if not sent:
             await send_whatsapp_text(sender_wa_id, caption_text)
 
@@ -230,9 +221,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
 
     current_mode = user_session.get("mode", "menu")
 
-    # =========================================================================
-    # 4. CV BUILDER WIZARD (Menangani input saat mode builder atau step > 0)
-    # =========================================================================
+    # 4. CV BUILDER WIZARD
     if current_mode == "builder" or user_session.get("step", 0) > 0:
         result = await process_unified_cv_step(sender_wa_id, user_text, platform="whatsapp")
         messages_to_send = result.get("messages", [])
@@ -275,7 +264,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, "⚠️ Gagal menganalisis teks CV.")
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 6. MENU UTAMA (Pilihan 1 atau 2)
+    # 6. MENU UTAMA
     if current_mode == "menu":
         if user_text_clean in ["1", "review cv", "review & optimasi cv", "cek ats", "1️⃣"]:
             user_session["mode"] = "review"
@@ -287,7 +276,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
 
         if user_text_clean in ["2", "buat cv", "bikin cv", "bikin cv dasar", "2️⃣"]:
             user_session["mode"] = "builder"
-            user_session["step"] = 0  # Inisialisasi awal step builder
+            user_session["step"] = 0
             result = await process_unified_cv_step(sender_wa_id, "", platform="whatsapp")
             await send_whatsapp_text(sender_wa_id, result["reply_text"])
             return web.Response(text="EVENT_RECEIVED", status=200)
