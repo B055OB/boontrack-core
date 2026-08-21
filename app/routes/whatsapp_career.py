@@ -13,7 +13,9 @@ from app.services.cv_review_service import cv_review_service
 from app.services.ai_service import ai_gateway
 from app.core.database import track_event
 from app.services.document_parser_service import download_whatsapp_media, extract_text_from_bytes
+from app.services.qris_engine import generate_dynamic_qris_payload, render_qris_image
 from app.services.pricing_service import get_career_product
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN") or os.getenv("META_WA_VERIFY_TOKEN", "boontrack_wa_secret_token")
@@ -200,9 +202,27 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             "3. Setelah pembayaran berhasil, AI akan otomatis mendeteksi dan langsung memproses CV ATS versi terbaik Anda!"
         )
 
-        qris_image_url = "https://boontrack-core-production.up.railway.app/assets/qris.png"
+        asset_candidates = [
+            os.path.join(os.getcwd(), "assets", "qris_dana.jpg"),
+            os.path.join(os.getcwd(), "assets", "qris_dana.png"),
+            os.path.join(os.getcwd(), "assets", "qris.png"),
+            os.path.join(os.getcwd(), "assets", "qris.jpg"),
+        ]
+        found_file = next((p for p in asset_candidates if os.path.exists(p)), None)
 
-        sent = await send_whatsapp_image(sender_wa_id, image_path=qris_image_url, caption=caption_text)
+        sent = False
+        if found_file:
+            sent = await send_whatsapp_image(sender_wa_id, image_path=found_file, caption=caption_text)
+
+        if not sent:
+            try:
+                raw_static_qris = getattr(settings, "DANA_STATIC_QRIS", "") or os.getenv("DANA_STATIC_QRIS", "")
+                dynamic_payload = generate_dynamic_qris_payload(raw_static_qris, 25000) if raw_static_qris else "00020101021226670016ID.CO.BOONTRACK.WWW01189360000000000000005204581253033605405250005802ID5916BOONTRACK_CAREER6007BANDUNG6304"
+                img_io = render_qris_image(dynamic_payload)
+                sent = await send_whatsapp_image(sender_wa_id, image_path=img_io.getvalue(), caption=caption_text)
+            except Exception as ge:
+                logger.error(f"[QR Gen Error] {ge}")
+
         if not sent:
             await send_whatsapp_text(sender_wa_id, caption_text)
 
@@ -210,10 +230,16 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
 
     current_mode = user_session.get("mode", "menu")
 
-    # 4. CV BUILDER WIZARD
-    if user_session.get("step", 0) > 0:
+    # =========================================================================
+    # 4. CV BUILDER WIZARD (Menangani input saat mode builder atau step > 0)
+    # =========================================================================
+    if current_mode == "builder" or user_session.get("step", 0) > 0:
         result = await process_unified_cv_step(sender_wa_id, user_text, platform="whatsapp")
-        for msg in result.get("messages", [result["reply_text"]]):
+        messages_to_send = result.get("messages", [])
+        if not messages_to_send and result.get("reply_text"):
+            messages_to_send = [result["reply_text"]]
+
+        for msg in messages_to_send:
             await send_whatsapp_text(sender_wa_id, msg)
 
         if result.get("is_completed"):
@@ -249,7 +275,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, "⚠️ Gagal menganalisis teks CV.")
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 6. MENU UTAMA
+    # 6. MENU UTAMA (Pilihan 1 atau 2)
     if current_mode == "menu":
         if user_text_clean in ["1", "review cv", "review & optimasi cv", "cek ats", "1️⃣"]:
             user_session["mode"] = "review"
@@ -261,10 +287,12 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
 
         if user_text_clean in ["2", "buat cv", "bikin cv", "bikin cv dasar", "2️⃣"]:
             user_session["mode"] = "builder"
-            result = await process_unified_cv_step(sender_wa_id, user_text, platform="whatsapp")
+            user_session["step"] = 0  # Inisialisasi awal step builder
+            result = await process_unified_cv_step(sender_wa_id, "", platform="whatsapp")
             await send_whatsapp_text(sender_wa_id, result["reply_text"])
             return web.Response(text="EVENT_RECEIVED", status=200)
 
+    # 7. FALLBACK AI
     ai_reply = await ai_gateway.generate(
         user_message=user_text,
         context={"user_id": sender_wa_id, "feature": "career_consultation"}
