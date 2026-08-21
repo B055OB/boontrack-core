@@ -192,7 +192,6 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     if user_text_clean in ["rewrite", "perbaiki", "mau rewrite", "ambil rewrite"]:
         await track_event(sender_wa_id, "rewrite_clicked")
 
-        # Buat nominal presisi dengan 3 digit unik (contoh: 25.147)
         unique_suffix = random.randint(101, 899)
         locked_nominal = 25000 + unique_suffix
 
@@ -207,16 +206,12 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             "3. Setelah pembayaran berhasil, AI akan langsung menyusun ulang CV Anda ke standar HR Senior!"
         )
 
-        # Generate string QRIS Dinamis dan Image Bytes
         raw_static_qris = getattr(settings, "DANA_STATIC_QRIS", "") or os.getenv("DANA_STATIC_QRIS", "")
         dynamic_payload = generate_dynamic_qris_payload(raw_static_qris, locked_nominal)
         qr_bytes_io = render_qris_image(dynamic_payload)
 
-        # Kirim gambar QRIS Dinamis langsung ke WhatsApp
-        sent = await send_whatsapp_image(sender_wa_id, image_path=qr_bytes_io.getvalue(), caption=caption_text)
-        if not sent:
-            await send_whatsapp_text(sender_wa_id, caption_text)
-
+        # Mengirim gambar Dynamic QRIS langsung dari memory bytes
+        await send_whatsapp_image(sender_wa_id, image_path_or_bytes=qr_bytes_io.getvalue(), caption=caption_text)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
     current_mode = user_session.get("mode", "menu")
