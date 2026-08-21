@@ -48,18 +48,25 @@ def get_whatsapp_full_menu(sender_wa_id: str) -> str:
 
 
 async def deliver_review_and_trigger_upsell(sender_wa_id: str, filtered_data: dict, filename: str = "Dokumen CV"):
-    """Mengirim hasil diagnosis review gratis dan auto-trigger hook upsell Rp25.000 dengan jeda."""
-    nama = get_user_display_name(sender_wa_id)
-    sapaan = f", *{nama}*" if nama else ""
-
+    """Mengirim hasil diagnosis 3 breakdown skor + catatan praktisi HR dan auto-trigger hook upsell Rp25.000."""
     overall_score = filtered_data.get("overall_score", 0)
-    findings = filtered_data.get("findings", [])
-    findings_list = "\n".join([f"• {f}" for f in findings]) if findings else "• Format dasar CV sudah terbaca."
+    b = filtered_data.get("breakdown_scores", {})
 
-    # 1. Output Diagnosis Sesuai Briefing Copywriting
+    ats_comp = b.get("ats_compatibility", 85)
+    keyword_score = b.get("keyword", b.get("structure", 80))
+    exp_score = b.get("experience", 85)
+
+    findings = filtered_data.get("findings", [])
+    findings_list = "\n".join([f"• {f}" for f in findings]) if findings else "• Format dasar CV sudah terbaca dengan baik."
+
+    # 1. Output Diagnosis 3 Breakdown Skor AI Lengkap
     diagnosis_msg = (
         f"Analisis CV Anda selesai! 📊\n\n"
         f"🎯 *Skor Keterbacaan ATS:* {overall_score}/100\n\n"
+        f"📌 *Breakdown Evaluasi Mendalam:*\n"
+        f"• ⚙️ ATS Compatibility: *{ats_comp}/100*\n"
+        f"• 🎯 Relevansi Kata Kunci: *{keyword_score}/100*\n"
+        f"• 📈 Kualitas Pengalaman: *{exp_score}/100*\n\n"
         f"💡 *Catatan Evaluasi Praktisi HR:*\n"
         f"{findings_list}\n\n"
         f"_Anda dapat menggunakan catatan di atas sebagai acuan revisi mandiri._"
@@ -67,7 +74,7 @@ async def deliver_review_and_trigger_upsell(sender_wa_id: str, filtered_data: di
     await send_whatsapp_text(sender_wa_id, diagnosis_msg)
     await track_event(sender_wa_id, "review_completed", meta={"score": overall_score, "file": filename})
 
-    # 2. Jeda 7 Detik Sesuai Briefing (5-10 detik)
+    # 2. Jeda 7 Detik Sesuai Funnel
     await asyncio.sleep(7)
 
     # 3. Pesan Upsell Premium CV Rewrite (Rp25.000)
@@ -240,7 +247,6 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         dynamic_payload = generate_dynamic_qris_payload(raw_static_qris, nominal)
         qr_img_bytes = render_qris_image(dynamic_payload)
 
-        # Simpan file QR sementara untuk adapter whatsapp
         temp_qr_path = f"/tmp/qris_{sender_wa_id}.png"
         try:
             with open(temp_qr_path, "wb") as f:
