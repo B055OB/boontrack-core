@@ -1,6 +1,7 @@
 import re
 import os
 import io
+import random
 import asyncio
 import logging
 from typing import Tuple, Optional
@@ -13,7 +14,7 @@ from app.services.cv_review_service import cv_review_service
 from app.services.ai_service import ai_gateway
 from app.core.database import track_event
 from app.services.document_parser_service import download_whatsapp_media, extract_text_from_bytes
-from app.services.qris_engine import inject_dynamic_amount_bca, render_qris_image
+from app.services.reconciliation_service import generate_unique_payment_intent
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,6 @@ def get_user_display_name(sender_wa_id: str) -> str:
 
 
 async def send_whatsapp_menu_buttons(sender_wa_id: str):
-    """Mengirim pesan menu utama dalam bentuk Interactive Buttons."""
     nama = get_user_display_name(sender_wa_id)
     greeting = f", *{nama}*" if nama else ""
 
@@ -208,27 +208,51 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         await send_whatsapp_menu_buttons(sender_wa_id)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 3. TRIGGER REWRITE (Uji Coba Nominal Terkunci)
+    # 3. TRIGGER REWRITE (QRIS ASLI + KODE UNIK SMART RECONCILIATION)
     if button_id == "btn_rewrite" or user_text_clean in ["rewrite", "perbaiki", "mau rewrite", "ambil rewrite", "🚀 ambil rewrite"]:
         await track_event(sender_wa_id, "rewrite_clicked")
 
-        exact_amount = 25000
-        user_session["mode"] = "awaiting_rewrite_payment"
-        user_session["active_payment"] = {"amount": exact_amount, "product": "career-rewrite-25k"}
-
-        caption_text = (
-            "📱 *PEMBAYARAN PREMIUM CV REWRITE*\n\n"
-            "🏷️ *Nominal:* Rp25.000 *(Uji Coba Terkunci Otomatis)*\n\n"
-            "1. Scan *QRIS diatas* pakai BCA Mobile / myBCA / GoPay / DANA / OVO / ShopeePay.\n"
-            "2. Cek apakah nominal Rp25.000 langsung terkunci otomatis di layar konfirmasi Anda.\n"
-            "3. Setelah berhasil, sistem akan memproses versi CV terbaik Anda!"
+        intent = generate_unique_payment_intent(
+            tenant_id="boontrack_career",
+            base_amount=25000,
+            product_id="premium_cv_rewrite",
+            user_id=sender_wa_id
         )
 
-        bca_base_payload = "00020101021126590014ID.CO.BCA.WWW01189360001400147816300208102214735204581253033605802ID5915UWINFLY BANDUNG6007BANDUNG6304"
-        locked_payload = inject_dynamic_amount_bca(bca_base_payload, exact_amount)
-        qr_bytes = render_qris_image(locked_payload)
+        exact_amount = intent["total_amount"]
+        unique_code = intent["unique_code"]
+        invoice_id = intent["invoice_id"]
 
-        await send_whatsapp_image(sender_wa_id, image_path_or_bytes=qr_bytes.getvalue(), caption=caption_text)
+        user_session["mode"] = "awaiting_rewrite_payment"
+        user_session["active_invoice"] = invoice_id
+
+        caption_text = (
+            "📱 *INVOICE PEMBAYARAN PREMIUM CV REWRITE*\n"
+            f"🧾 *No. Invoice:* `{invoice_id}`\n\n"
+            f"🏷️ *TOTAL TRANSFER:* *Rp{exact_amount:,}*\n"
+            f"_(Wajib sertakan 3 digit kode unik: *{unique_code}*)_\n\n"
+            "1. Scan *QRIS BoonTrack diatas* menggunakan BCA, Mandiri, BRI, BNI, DANA, GoPay, OVO, ShopeePay.\n"
+            f"2. Masukkan nominal presisi *Rp{exact_amount:,}*.\n"
+            "3. Sistem rekonsiliasi kami akan mendeteksi otomatis & langsung memproses pesanan Anda!"
+        )
+
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        asset_candidates = [
+            os.path.join(base_dir, "assets", "qris.png"),
+            os.path.join(base_dir, "assets", "qris.jpg"),
+            os.path.join(base_dir, "assets", "qris_boontrack.png"),
+            os.path.join(base_dir, "assets", "qris_dana.jpg"),
+            os.path.join(base_dir, "assets", "qris_dana.png"),
+            os.path.join(os.getcwd(), "assets", "qris.png"),
+            os.path.join(os.getcwd(), "assets", "qris.jpg"),
+        ]
+        found_file = next((p for p in asset_candidates if os.path.exists(p)), None)
+
+        if found_file:
+            await send_whatsapp_image(sender_wa_id, image_path_or_bytes=found_file, caption=caption_text)
+        else:
+            await send_whatsapp_text(sender_wa_id, caption_text)
+
         return web.Response(text="EVENT_RECEIVED", status=200)
 
     current_mode = user_session.get("mode", "menu")
