@@ -14,7 +14,6 @@ from app.services.cv_review_service import cv_review_service
 from app.services.ai_service import ai_gateway
 from app.core.database import track_event
 from app.services.document_parser_service import download_whatsapp_media, extract_text_from_bytes
-from app.services.qris_engine import generate_dynamic_qris_payload, render_qris_image
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -28,7 +27,6 @@ def get_user_display_name(sender_wa_id: str) -> str:
 
 
 async def send_whatsapp_menu_buttons(sender_wa_id: str):
-    """Mengirim pesan menu utama dalam bentuk Interactive Buttons."""
     nama = get_user_display_name(sender_wa_id)
     greeting = f", *{nama}*" if nama else ""
 
@@ -181,7 +179,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
 
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 2. EKSTRAKSI TEKS / TOMBOL INTERAKTIF
+    # 2. EKSTRAKSI TEKS & TOMBOL INTERAKTIF
     user_text = ""
     button_id = ""
 
@@ -209,29 +207,38 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         await send_whatsapp_menu_buttons(sender_wa_id)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 3. TRIGGER REWRITE (DYNAMIC QRIS TERKUNCI + 3 DIGIT UNIK)
+    # 3. TRIGGER REWRITE (QRIS ASLI + KODE UNIK VERIFIKASI)
     if button_id == "btn_rewrite" or user_text_clean in ["rewrite", "perbaiki", "mau rewrite", "ambil rewrite", "🚀 ambil rewrite"]:
         await track_event(sender_wa_id, "rewrite_clicked")
 
-        unique_suffix = random.randint(101, 899)
-        locked_nominal = 25000 + unique_suffix
+        unique_code = random.randint(101, 899)
+        exact_amount = 25000 + unique_code
 
         user_session["mode"] = "awaiting_rewrite_payment"
-        user_session["active_payment"] = {"amount": locked_nominal, "product": "career-rewrite-25k"}
+        user_session["active_payment"] = {"amount": exact_amount, "product": "career-rewrite-25k"}
 
         caption_text = (
             "📱 *PEMBAYARAN PREMIUM CV REWRITE*\n\n"
-            f"🏷️ *Nominal:* Rp{locked_nominal:,} *(Terkunci Otomatis)*\n\n"
+            f"🏷️ *Nominal Transfer:* *Rp{exact_amount:,}*\n"
+            f"_(Termasuk kode unik verifikasi: *{unique_code}*)_\n\n"
             "1. Scan *QRIS BoonTrack diatas* menggunakan DANA, GoPay, OVO, ShopeePay, BCA, Mandiri, BRI, dll.\n"
-            f"2. Nominal sudah otomatis terkunci presisi *Rp{locked_nominal:,}* tanpa perlu input manual.\n"
-            "3. Setelah pembayaran berhasil, AI akan otomatis mendeteksi dan langsung memproses CV ATS versi terbaik Anda!"
+            f"2. Masukkan nominal presisi *Rp{exact_amount:,}* agar sistem memverifikasi otomatis dalam 5 detik.\n"
+            "3. Setelah transfer berhasil, AI akan langsung menyusun ulang CV Anda ke standar HR Senior!"
         )
 
-        raw_static_qris = getattr(settings, "DANA_STATIC_QRIS", "") or os.getenv("DANA_STATIC_QRIS", "")
-        dynamic_payload = generate_dynamic_qris_payload(raw_static_qris, locked_nominal)
-        qr_bytes_io = render_qris_image(dynamic_payload)
+        asset_candidates = [
+            os.path.join(os.getcwd(), "assets", "qris_dana.jpg"),
+            os.path.join(os.getcwd(), "assets", "qris_dana.png"),
+            os.path.join(os.getcwd(), "assets", "qris.png"),
+            os.path.join(os.getcwd(), "assets", "qris.jpg"),
+        ]
+        found_file = next((p for p in asset_candidates if os.path.exists(p)), None)
 
-        await send_whatsapp_image(sender_wa_id, image_path_or_bytes=qr_bytes_io.getvalue(), caption=caption_text)
+        if found_file:
+            await send_whatsapp_image(sender_wa_id, image_path_or_bytes=found_file, caption=caption_text)
+        else:
+            await send_whatsapp_text(sender_wa_id, caption_text)
+
         return web.Response(text="EVENT_RECEIVED", status=200)
 
     current_mode = user_session.get("mode", "menu")
@@ -250,7 +257,6 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         user_session["step"] = 0
         result = await process_unified_cv_step(sender_wa_id, "", platform="whatsapp")
         
-        # Kirim Tombol Bahasa
         lang_buttons = [
             {"id": "lang_en_id", "title": "EN (B. Indo)"},
             {"id": "lang_id", "title": "B. Indonesia"},
