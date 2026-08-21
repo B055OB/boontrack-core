@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import Tuple, Optional
 from aiohttp import web
-from app.services.whatsapp_service import send_whatsapp_text, send_whatsapp_image
+from app.services.whatsapp_service import send_whatsapp_text, send_whatsapp_image, send_whatsapp_buttons
 from app.constants.messages import MENU_INVALID_MSG
 from app.services.cv_state_engine import process_unified_cv_step, GLOBAL_USER_STATES
 from app.engines.cv_review_engine import cv_review_engine
@@ -27,20 +27,28 @@ def get_user_display_name(sender_wa_id: str) -> str:
     return user_data.get("nama_panggilan") or user_data.get("nama_lengkap") or ""
 
 
-def get_whatsapp_full_menu(sender_wa_id: str) -> str:
+async def send_whatsapp_menu_buttons(sender_wa_id: str):
+    """Mengirim pesan menu utama dalam bentuk Interactive Buttons."""
     nama = get_user_display_name(sender_wa_id)
     greeting = f", *{nama}*" if nama else ""
 
-    return (
+    body = (
         f"Halo{greeting}! Selamat datang di *BoonTrack Career*. 💼\n\n"
-        "Sistem kami disusun dengan pendekatan ATS-friendly dan metodologi review "
-        "yang dikembangkan bersama masukan profesional HR.\n\n"
-        "Kode promo spesial Anda aktif hari ini. Silakan pilih layanan *GRATIS* Anda:\n\n"
-        "🔍 *1. Review CV*\n"
-        "_(Sistem membedah CV lama Anda, mengecek keterbacaan ATS, dan memberi catatan evaluasi)_\n\n"
-        "📝 *2. Bikin CV Dasar*\n"
-        "_(Sistem menyusun data Anda ke format template standar yang rapi, bersih, dan ramah ATS)_\n\n"
-        "Balas *1* atau *2* untuk memulai."
+        "Layanan kami dikembangkan dengan pendekatan ATS-friendly dan masukan HR Senior.\n\n"
+        "Silakan pilih menu gratis Anda di bawah ini:"
+    )
+
+    buttons = [
+        {"id": "btn_review", "title": "🔍 Review CV"},
+        {"id": "btn_builder", "title": "📝 Bikin CV Dasar"}
+    ]
+
+    await send_whatsapp_buttons(
+        to_phone=sender_wa_id,
+        body_text=body,
+        buttons=buttons,
+        header_text="BOONTRACK CAREER",
+        footer_text="Pilih salah satu tombol di atas"
     )
 
 
@@ -74,14 +82,21 @@ async def deliver_review_and_trigger_upsell(sender_wa_id: str, filtered_data: di
     upsell_msg = (
         "Ingin melihat versi terbaik dari potensi profesional Anda? 🚀\n\n"
         "Gunakan layanan: *Premium CV Rewrite (Standar HR Senior)*.\n\n"
-        "Disusun dengan pendekatan ATS-friendly dan metodologi review yang dikembangkan "
-        "bersama masukan profesional HR. Sistem akan merombak total deskripsi pengalaman Anda "
-        "mengikuti struktur, diksi, dan gaya bahasa rekrutmen level tinggi.\n\n"
-        "Jadikan CV ini sebagai benchmark & motivasi untuk melihat potensi maksimal profil karier Anda.\n\n"
-        "🏷️ *Investasi:* Rp25.000\n\n"
-        "Balas *REWRITE* untuk memproses versi terbaik CV Anda."
+        "Sistem akan merombak total deskripsi pengalaman Anda mengikuti struktur, diksi, dan gaya rekrutmen level tinggi.\n\n"
+        "🏷️ *Investasi:* Rp25.000"
     )
-    await send_whatsapp_text(sender_wa_id, upsell_msg)
+
+    upsell_buttons = [
+        {"id": "btn_rewrite", "title": "🚀 Ambil Rewrite"},
+        {"id": "btn_menu", "title": "🏠 Menu Utama"}
+    ]
+
+    await send_whatsapp_buttons(
+        to_phone=sender_wa_id,
+        body_text=upsell_msg,
+        buttons=upsell_buttons,
+        footer_text="Pilih tombol untuk melanjutkan"
+    )
     await track_event(sender_wa_id, "rewrite_offer_shown")
 
 
@@ -166,30 +181,36 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
 
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 2. HANDLING TEKS
-    if msg_type != "text":
-        await send_whatsapp_text(
-            sender_wa_id,
-            "Halo! Kirim pesan teks atau unggah file dokumen CV (.pdf / .docx). Ketik *Menu* untuk bantuan."
-        )
+    # 2. EKSTRAKSI TEKS / TOMBOL INTERAKTIF
+    user_text = ""
+    button_id = ""
+
+    if msg_type == "text":
+        user_text = msg_obj.get("text", {}).get("body", "").strip()
+    elif msg_type == "interactive":
+        interactive_data = msg_obj.get("interactive", {})
+        if interactive_data.get("type") == "button_reply":
+            button_id = interactive_data.get("button_reply", {}).get("id", "")
+            user_text = interactive_data.get("button_reply", {}).get("title", "")
+    else:
+        await send_whatsapp_menu_buttons(sender_wa_id)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    user_text = msg_obj.get("text", {}).get("body", "").strip()
     user_text_clean = user_text.lower().strip()
 
     # Reset / Entry
-    if user_text_clean in ["menu", "halo", "hi", "mulai", "start", "bantuan", "batal", "home", "/menu", "/start"]:
+    if button_id == "btn_menu" or user_text_clean in ["menu", "halo", "hi", "mulai", "start", "bantuan", "batal", "home", "/menu", "/start"]:
         current_data = user_session.get("data", {})
         GLOBAL_USER_STATES[sender_wa_id] = {
             "step": 0,
             "mode": "menu",
             "data": current_data
         }
-        await send_whatsapp_text(sender_wa_id, get_whatsapp_full_menu(sender_wa_id))
+        await send_whatsapp_menu_buttons(sender_wa_id)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
     # 3. TRIGGER REWRITE (DYNAMIC QRIS TERKUNCI + 3 DIGIT UNIK)
-    if user_text_clean in ["rewrite", "perbaiki", "mau rewrite", "ambil rewrite"]:
+    if button_id == "btn_rewrite" or user_text_clean in ["rewrite", "perbaiki", "mau rewrite", "ambil rewrite", "🚀 ambil rewrite"]:
         await track_event(sender_wa_id, "rewrite_clicked")
 
         unique_suffix = random.randint(101, 899)
@@ -203,20 +224,54 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             f"🏷️ *Nominal:* Rp{locked_nominal:,} *(Terkunci Otomatis)*\n\n"
             "1. Scan *QRIS BoonTrack diatas* menggunakan DANA, GoPay, OVO, ShopeePay, BCA, Mandiri, BRI, dll.\n"
             f"2. Nominal sudah otomatis terkunci presisi *Rp{locked_nominal:,}* tanpa perlu input manual.\n"
-            "3. Setelah pembayaran berhasil, AI akan langsung menyusun ulang CV Anda ke standar HR Senior!"
+            "3. Setelah pembayaran berhasil, AI akan otomatis mendeteksi dan langsung memproses CV ATS versi terbaik Anda!"
         )
 
         raw_static_qris = getattr(settings, "DANA_STATIC_QRIS", "") or os.getenv("DANA_STATIC_QRIS", "")
         dynamic_payload = generate_dynamic_qris_payload(raw_static_qris, locked_nominal)
         qr_bytes_io = render_qris_image(dynamic_payload)
 
-        # Mengirim gambar Dynamic QRIS langsung dari memory bytes
         await send_whatsapp_image(sender_wa_id, image_path_or_bytes=qr_bytes_io.getvalue(), caption=caption_text)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
     current_mode = user_session.get("mode", "menu")
 
-    # 4. CV BUILDER WIZARD
+    # 4. HANDLE BUTTON PILIHAN MENU UTAMA
+    if button_id == "btn_review" or (current_mode == "menu" and user_text_clean in ["1", "review cv", "🔍 review cv"]):
+        user_session["mode"] = "review"
+        intro_review = (
+            "Silakan kirimkan dokumen CV Anda (*format PDF/DOCX*) atau *salin-tempel (copy-paste) teks riwayat CV* Anda langsung di chat ini untuk kami bedah secara gratis."
+        )
+        await send_whatsapp_text(sender_wa_id, intro_review)
+        return web.Response(text="EVENT_RECEIVED", status=200)
+
+    if button_id == "btn_builder" or (current_mode == "menu" and user_text_clean in ["2", "bikin cv", "📝 bikin cv dasar"]):
+        user_session["mode"] = "builder"
+        user_session["step"] = 0
+        result = await process_unified_cv_step(sender_wa_id, "", platform="whatsapp")
+        
+        # Kirim Tombol Bahasa
+        lang_buttons = [
+            {"id": "lang_en_id", "title": "EN (B. Indo)"},
+            {"id": "lang_id", "title": "B. Indonesia"},
+            {"id": "lang_en", "title": "Full English"}
+        ]
+        await send_whatsapp_buttons(
+            to_phone=sender_wa_id,
+            body_text=result["reply_text"],
+            buttons=lang_buttons,
+            footer_text="Klik pilihan bahasa di atas"
+        )
+        return web.Response(text="EVENT_RECEIVED", status=200)
+
+    # 5. HANDLE PILIHAN BAHASA VIA BUTTON
+    if button_id.startswith("lang_"):
+        lang_choice = "1" if button_id == "lang_en_id" else ("2" if button_id == "lang_id" else "3")
+        result = await process_unified_cv_step(sender_wa_id, lang_choice, platform="whatsapp")
+        await send_whatsapp_text(sender_wa_id, result["reply_text"])
+        return web.Response(text="EVENT_RECEIVED", status=200)
+
+    # 6. CV BUILDER WIZARD (Step 2 - 10)
     if current_mode == "builder" or user_session.get("step", 0) > 0:
         result = await process_unified_cv_step(sender_wa_id, user_text, platform="whatsapp")
         messages_to_send = result.get("messages", [])
@@ -232,7 +287,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             user_session.setdefault("data", {})["has_completed_cv"] = True
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 5. REVIEW DARI TEKS MANUAL
+    # 7. REVIEW DARI TEKS MANUAL
     if current_mode == "review":
         if len(user_text.split()) < 6:
             await send_whatsapp_text(
@@ -259,24 +314,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, "⚠️ Gagal menganalisis teks CV.")
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # 6. MENU UTAMA
-    if current_mode == "menu":
-        if user_text_clean in ["1", "review cv", "review & optimasi cv", "cek ats", "1️⃣"]:
-            user_session["mode"] = "review"
-            intro_review = (
-                "Silakan kirimkan dokumen CV Anda (*format PDF/DOCX*) atau *salin-tempel (copy-paste) teks riwayat CV* Anda langsung di chat ini untuk kami bedah secara gratis."
-            )
-            await send_whatsapp_text(sender_wa_id, intro_review)
-            return web.Response(text="EVENT_RECEIVED", status=200)
-
-        if user_text_clean in ["2", "buat cv", "bikin cv", "bikin cv dasar", "2️⃣"]:
-            user_session["mode"] = "builder"
-            user_session["step"] = 0
-            result = await process_unified_cv_step(sender_wa_id, "", platform="whatsapp")
-            await send_whatsapp_text(sender_wa_id, result["reply_text"])
-            return web.Response(text="EVENT_RECEIVED", status=200)
-
-    # 7. FALLBACK AI
+    # 8. FALLBACK AI
     ai_reply = await ai_gateway.generate(
         user_message=user_text,
         context={"user_id": sender_wa_id, "feature": "career_consultation"}
@@ -284,7 +322,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     if ai_reply:
         await send_whatsapp_text(sender_wa_id, ai_reply)
     else:
-        await send_whatsapp_text(sender_wa_id, MENU_INVALID_MSG)
+        await send_whatsapp_menu_buttons(sender_wa_id)
 
     return web.Response(text="EVENT_RECEIVED", status=200)
 
