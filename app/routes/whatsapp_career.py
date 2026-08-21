@@ -1,7 +1,6 @@
 import re
 import os
 import io
-import urllib.parse
 import asyncio
 import logging
 from typing import Tuple, Optional
@@ -14,9 +13,7 @@ from app.services.cv_review_service import cv_review_service
 from app.services.ai_service import ai_gateway
 from app.core.database import track_event
 from app.services.document_parser_service import download_whatsapp_media, extract_text_from_bytes
-from app.services.qris_engine import generate_dynamic_qris_payload
 from app.services.pricing_service import get_career_product
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN") or os.getenv("META_WA_VERIFY_TOKEN", "boontrack_wa_secret_token")
@@ -195,32 +192,18 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         user_session["mode"] = "awaiting_rewrite_payment"
         user_session["active_payment"] = {"amount": 25000, "product": "career-rewrite-25k"}
 
-        raw_static_qris = getattr(settings, "DANA_STATIC_QRIS", "") or os.getenv("DANA_STATIC_QRIS", "")
-
         caption_text = (
             "📱 *PEMBAYARAN PREMIUM CV REWRITE*\n\n"
-            "🏷️ *Nominal:* Rp25.000 *(Terkunci Presisi)*\n\n"
+            "🏷️ *Nominal:* Rp25.000\n\n"
             "1. Scan *QRIS BoonTrack diatas* melalui aplikasi E-Wallet (GoPay, OVO, DANA, ShopeePay) atau Mobile Banking (BCA, Mandiri, BRI, BNI, dll).\n"
-            "2. Nominal sudah otomatis terkunci presisi Rp25.000 tanpa perlu input manual.\n"
-            "3. Setelah transfer berhasil, sistem akan otomatis mendeteksi dan langsung memproses CV ATS versi terbaik Anda!"
+            "2. Masukkan/pastikan nominal pembayaran Rp25.000.\n"
+            "3. Setelah pembayaran berhasil, AI akan otomatis mendeteksi dan langsung memproses CV ATS versi terbaik Anda!"
         )
 
-        # Generate Dynamic Payload & Hosted QR URL
-        if raw_static_qris:
-            try:
-                dynamic_payload = generate_dynamic_qris_payload(raw_static_qris, 25000)
-            except Exception:
-                dynamic_payload = raw_static_qris
-        else:
-            # Fallback string payload standar
-            dynamic_payload = f"00020101021226670016ID.CO.BOONTRACK.WWW01189360000000000000005204581253033605405250005802ID5916BOONTRACK_CAREER6007BANDUNG6304"
+        qris_image_url = "https://boontrack-core-production.up.railway.app/assets/qris.png"
 
-        encoded_qr_data = urllib.parse.quote(dynamic_payload)
-        qr_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&data={encoded_qr_data}"
-
-        # Kirim Image via Public Direct URL ke WhatsApp API
-        success = await send_whatsapp_image(sender_wa_id, image_path=qr_image_url, caption=caption_text)
-        if not success:
+        sent = await send_whatsapp_image(sender_wa_id, image_path=qris_image_url, caption=caption_text)
+        if not sent:
             await send_whatsapp_text(sender_wa_id, caption_text)
 
         return web.Response(text="EVENT_RECEIVED", status=200)
