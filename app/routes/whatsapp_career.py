@@ -2,7 +2,6 @@ import re
 import os
 import io
 import asyncio
-import random
 import logging
 from typing import Tuple, Optional
 from aiohttp import web
@@ -12,7 +11,7 @@ from app.services.cv_state_engine import process_unified_cv_step, GLOBAL_USER_ST
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 from app.services.ai_service import ai_gateway
-from app.core.database import track_event, count_referrals
+from app.core.database import track_event
 from app.services.document_parser_service import download_whatsapp_media, extract_text_from_bytes
 from app.services.qris_engine import generate_dynamic_qris_payload, render_qris_image
 from app.services.pricing_service import get_career_product
@@ -23,14 +22,12 @@ VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN") or os.getenv("META_WA_VERIFY_T
 
 
 def get_user_display_name(sender_wa_id: str) -> str:
-    """Mengambil nama pengguna dari session atau data CV."""
     user_session = GLOBAL_USER_STATES.get(sender_wa_id, {})
     user_data = user_session.get("data", {})
     return user_data.get("nama_panggilan") or user_data.get("nama_lengkap") or ""
 
 
 def get_whatsapp_full_menu(sender_wa_id: str) -> str:
-    """Menghasilkan pesan pembuka ramah & anti-overclaim sesuai arahan briefing."""
     nama = get_user_display_name(sender_wa_id)
     greeting = f", *{nama}*" if nama else ""
 
@@ -48,7 +45,6 @@ def get_whatsapp_full_menu(sender_wa_id: str) -> str:
 
 
 async def deliver_review_and_trigger_upsell(sender_wa_id: str, filtered_data: dict, filename: str = "Dokumen CV"):
-    """Mengirim hasil diagnosis 3 breakdown skor + catatan praktisi HR dan auto-trigger hook upsell Rp25.000."""
     overall_score = filtered_data.get("overall_score", 0)
     b = filtered_data.get("breakdown_scores", {})
 
@@ -59,7 +55,6 @@ async def deliver_review_and_trigger_upsell(sender_wa_id: str, filtered_data: di
     findings = filtered_data.get("findings", [])
     findings_list = "\n".join([f"• {f}" for f in findings]) if findings else "• Format dasar CV sudah terbaca dengan baik."
 
-    # 1. Output Diagnosis 3 Breakdown Skor AI Lengkap
     diagnosis_msg = (
         f"Analisis CV Anda selesai! 📊\n\n"
         f"🎯 *Skor Keterbacaan ATS:* {overall_score}/100\n\n"
@@ -74,10 +69,8 @@ async def deliver_review_and_trigger_upsell(sender_wa_id: str, filtered_data: di
     await send_whatsapp_text(sender_wa_id, diagnosis_msg)
     await track_event(sender_wa_id, "review_completed", meta={"score": overall_score, "file": filename})
 
-    # 2. Jeda 7 Detik Sesuai Funnel
     await asyncio.sleep(7)
 
-    # 3. Pesan Upsell Premium CV Rewrite (Rp25.000)
     upsell_msg = (
         "Ingin melihat versi terbaik dari potensi profesional Anda? 🚀\n\n"
         "Gunakan layanan: *Premium CV Rewrite (Standar HR Senior)*.\n\n"
@@ -122,11 +115,9 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     sender_wa_id = msg_obj.get("from")
     msg_type = msg_obj.get("type")
 
-    # Inisialisasi session user
     user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
     user_data = user_session.setdefault("data", {})
 
-    # Ekstraksi Nama Profil WhatsApp
     contacts = value_data.get("contacts", [])
     if contacts and isinstance(contacts, list) and len(contacts) > 0:
         raw_profile_name = contacts[0].get("profile", {}).get("name", "").strip()
@@ -134,9 +125,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             user_data["nama_panggilan"] = raw_profile_name
             user_data["nama_lengkap"] = raw_profile_name
 
-    # =========================================================================
-    # 1. HANDLING DOKUMEN CV (.PDF / .DOCX)
-    # =========================================================================
+    # 1. HANDLING DOKUMEN CV
     if msg_type == "document":
         doc_info = msg_obj.get("document", {})
         media_id = doc_info.get("id")
@@ -158,32 +147,14 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
                 )
                 return web.Response(text="EVENT_RECEIVED", status=200)
 
-            # Simpan parsed text untuk reuse di modul rewrite (Zero-Reinput)
             user_session["parsed_cv_text"] = extracted_text
-
             eval_result = cv_review_engine.evaluate_cv(extracted_text, target_position="General Professional")
             filtered_data = cv_review_service.filter_entitlement_response(eval_result, is_premium=False)
-
-            try:
-                numeric_user_id = int(re.sub(r"\D", "", str(sender_wa_id)))
-                await cv_review_service.save_review(
-                    user_id=numeric_user_id,
-                    target_position="General Professional",
-                    overall_score=filtered_data.get("overall_score", 0),
-                    quality_score=filtered_data.get("breakdown_scores", {}).get("ats_compatibility", 0),
-                    job_match_score=filtered_data.get("breakdown_scores", {}).get("keyword", 0),
-                    evidence_score=filtered_data.get("breakdown_scores", {}).get("experience", 0),
-                    review_json=filtered_data,
-                    confidence_level=eval_result.get("confidence", {}).get("level", "MEDIUM")
-                )
-            except Exception as dbe:
-                logger.error(f"[DB Save Review Error] {dbe}")
 
             user_session["mode"] = "post_review"
             user_session["step"] = 0
             user_session.setdefault("data", {})["has_completed_cv"] = True
 
-            # Kirim hasil review gratis + jalankan task jeda upsell
             asyncio.create_task(deliver_review_and_trigger_upsell(sender_wa_id, filtered_data, filename))
 
         except Exception as e:
@@ -195,9 +166,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
 
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # =========================================================================
-    # 2. HANDLING PESAN TEKS
-    # =========================================================================
+    # 2. HANDLING TEKS
     if msg_type != "text":
         await send_whatsapp_text(
             sender_wa_id,
@@ -208,22 +177,8 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     user_text = msg_obj.get("text", {}).get("body", "").strip()
     user_text_clean = user_text.lower().strip()
 
-    # Tracking Referral
-    if "ref_" in user_text_clean:
-        ref_match = re.search(r"ref_(\d+)", user_text_clean)
-        if ref_match:
-            referrer_phone = ref_match.group(1)
-            if referrer_phone != sender_wa_id:
-                try:
-                    await track_event(sender_wa_id, "referral_signup", meta={"referrer_id": referrer_phone})
-                except Exception as dbe:
-                    logger.debug(f"[Referral Track Error] {dbe}")
-
-    # Reset / Entry Point
+    # Reset / Entry
     if user_text_clean in ["menu", "halo", "hi", "mulai", "start", "bantuan", "batal", "home", "/menu", "/start"]:
-        await track_event(sender_wa_id, "source", meta={"source": "whatsapp_direct"})
-        await track_event(sender_wa_id, "referral_code", meta={"code": "PROMO_CAREER"})
-
         current_data = user_session.get("data", {})
         GLOBAL_USER_STATES[sender_wa_id] = {
             "step": 0,
@@ -233,68 +188,57 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         await send_whatsapp_text(sender_wa_id, get_whatsapp_full_menu(sender_wa_id))
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # =========================================================================
-    # 3. TRIGGER UPSELL REWRITE (DYNAMIC QRIS DANA Rp25.000)
-    # =========================================================================
+    # 3. TRIGGER REWRITE (QRIS ATAU INSTRUKSI BAYAR)
     if user_text_clean in ["rewrite", "perbaiki", "mau rewrite", "ambil rewrite"]:
         await track_event(sender_wa_id, "rewrite_clicked")
+        user_session["mode"] = "awaiting_rewrite_payment"
+        user_session["active_payment"] = {"amount": 25000, "product": "career-rewrite-25k"}
 
-        product = await get_career_product("career-rewrite-25k")
-        nominal = product.get("final_price", 25000)
-
-        # Generate Dynamic QRIS DANA Bisnis
-        raw_static_qris = settings.DANA_STATIC_QRIS
-        dynamic_payload = generate_dynamic_qris_payload(raw_static_qris, nominal)
-        qr_img_bytes = render_qris_image(dynamic_payload)
-
-        temp_qr_path = f"/tmp/qris_{sender_wa_id}.png"
-        try:
-            with open(temp_qr_path, "wb") as f:
-                f.write(qr_img_bytes.getvalue())
-        except Exception:
-            temp_qr_path = f"qris_{sender_wa_id}.png"
-            with open(temp_qr_path, "wb") as f:
-                f.write(qr_img_bytes.getvalue())
+        raw_static_qris = getattr(settings, "DANA_STATIC_QRIS", "") or os.getenv("DANA_STATIC_QRIS", "")
 
         caption_text = (
-            f"📱 *QRIS DANA BISNIS - PREMIUM CV REWRITE*\n\n"
-            f"🏷️ *Nominal:* Rp{nominal:,} *(Terkunci Otomatis)*\n\n"
-            "1. Scan QRIS di atas melalui aplikasi E-Wallet (DANA, GoPay, OVO, ShopeePay) atau Mobile Banking apa pun.\n"
-            "2. Nominal sudah otomatis terkunci presisi Rp25.000 tanpa perlu input manual.\n"
-            "3. Setelah transfer selesai, sistem akan otomatis mendeteksi dan langsung memproses CV ATS versi terbaik Anda!"
+            "📱 *PEMBAYARAN PREMIUM CV REWRITE*\n\n"
+            "🏷️ *Nominal:* Rp25.000\n\n"
+            "1. Lakukan pembayaran Rp25.000 melalui QRIS DANA Bisnis.\n"
+            "2. Setelah pembayaran masuk, AI akan langsung menyusun ulang CV Anda ke standar HR Senior."
         )
 
-        await track_event(sender_wa_id, "payment_created", meta={"amount": nominal, "type": "dana_qris_dynamic"})
-        user_session["mode"] = "awaiting_rewrite_payment"
+        if raw_static_qris:
+            try:
+                dynamic_payload = generate_dynamic_qris_payload(raw_static_qris, 25000)
+                qr_img_bytes = render_qris_image(dynamic_payload)
+                temp_qr_path = f"/tmp/qris_{sender_wa_id}.png"
+                with open(temp_qr_path, "wb") as f:
+                    f.write(qr_img_bytes.getvalue())
+                await send_whatsapp_image(sender_wa_id, image_path=temp_qr_path, caption=caption_text)
+                return web.Response(text="EVENT_RECEIVED", status=200)
+            except Exception as qe:
+                logger.error(f"[QRIS Render Error] {qe}")
 
-        await send_whatsapp_image(sender_wa_id, image_path=temp_qr_path, caption=caption_text)
+        # Fallback kirim text langsung
+        await send_whatsapp_text(sender_wa_id, caption_text)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
     current_mode = user_session.get("mode", "menu")
 
-    # =========================================================================
-    # 4. WIZARD STEP CV BUILDER (Step 1 s/d 10)
-    # =========================================================================
+    # 4. CV BUILDER WIZARD
     if user_session.get("step", 0) > 0:
         result = await process_unified_cv_step(sender_wa_id, user_text, platform="whatsapp")
         for msg in result.get("messages", [result["reply_text"]]):
             await send_whatsapp_text(sender_wa_id, msg)
 
         if result.get("is_completed"):
-            await track_event(sender_wa_id, "cv_basic_completed")
             user_session["mode"] = "post_cv"
             user_session["step"] = 0
             user_session.setdefault("data", {})["has_completed_cv"] = True
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # =========================================================================
-    # 5. MODE REVIEW CV DARI TEKS MANUAL (State 1: Opsi 1)
-    # =========================================================================
+    # 5. REVIEW DARI TEKS MANUAL
     if current_mode == "review":
         if len(user_text.split()) < 6:
             await send_whatsapp_text(
                 sender_wa_id,
-                "⚠️ Teks CV terlalu singkat. Silakan tempel (paste) teks CV lengkapmu atau kirimkan file dokumen (.pdf / .docx)."
+                "⚠️ Teks CV terlalu singkat. Silakan tempel teks CV lengkap atau kirim file dokumen (.pdf / .docx)."
             )
             return web.Response(text="EVENT_RECEIVED", status=200)
 
@@ -313,17 +257,11 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             asyncio.create_task(deliver_review_and_trigger_upsell(sender_wa_id, filtered_data, "Manual Text Input"))
         except Exception as e:
             logger.error(f"[WA Review Error] {e}")
-            await send_whatsapp_text(
-                sender_wa_id,
-                "⚠️ Gagal menganalisis teks CV. Pastikan konten cukup lengkap lalu coba lagi."
-            )
+            await send_whatsapp_text(sender_wa_id, "⚠️ Gagal menganalisis teks CV.")
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # =========================================================================
-    # 6. MENU UTAMA (Pilihan 1 atau 2 Sesuai Promo)
-    # =========================================================================
+    # 6. MENU UTAMA
     if current_mode == "menu":
-        # Opsi 1: Review CV Gratis
         if user_text_clean in ["1", "review cv", "review & optimasi cv", "cek ats", "1️⃣"]:
             user_session["mode"] = "review"
             intro_review = (
@@ -332,16 +270,12 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             await send_whatsapp_text(sender_wa_id, intro_review)
             return web.Response(text="EVENT_RECEIVED", status=200)
 
-        # Opsi 2: Bikin CV Dasar Gratis
         if user_text_clean in ["2", "buat cv", "bikin cv", "bikin cv dasar", "2️⃣"]:
             user_session["mode"] = "builder"
             result = await process_unified_cv_step(sender_wa_id, user_text, platform="whatsapp")
             await send_whatsapp_text(sender_wa_id, result["reply_text"])
             return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # =========================================================================
-    # 7. FALLBACK RESPONS AI
-    # =========================================================================
     ai_reply = await ai_gateway.generate(
         user_message=user_text,
         context={"user_id": sender_wa_id, "feature": "career_consultation"}
