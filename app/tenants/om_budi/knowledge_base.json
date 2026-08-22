@@ -1,43 +1,53 @@
 {
-  "tenant": "om_budi",
-  "brand_voice": "Ramah, berorientasi pada eksekusi praktis, solutif, profesional namun santai khas mentor bisnis Om Budi.",
-  "programs": [
+  "channel_name": "Om Budi Channel (OBC)",
+  "core_values": "Fokus pada pembenahan tauhid dan hubungan batin dengan Allah SWT melalui shalat tepat waktu, tilawah Al-Qur'an, amalan riyadhoh sholawat nabi, pembersihan energi batin, dan sedekah untuk menjemput pertolongan Allah atas masalah hutang, pinjol, jodoh, dan rezeki.",
+  "group_gratis_link": "https://chat.whatsapp.com/invite-obc-gratis",
+  "qris_url": "https://storage.boontrack.com/om_budi/qris-sedekah-obc.jpg",
+  "digital_products": [
     {
-      "name": "B2B Sales Mastery & Cold Outreach",
-      "tier": "VIP_MEMBER",
-      "price": 2500000,
-      "schedule": "Setiap Selasa & Kamis pukul 19.30 WIB via Zoom Private",
-      "description": "Program bimbingan intensif 6 minggu menutup deal B2B, membangun pipeline outbound, dan otomasi CRM.",
-      "benefits": [
-        "Akses rekaman & template proposal B2B",
-        "Group Discord/WhatsApp eksklusif",
-        "1-on-1 Review Pitch Deck langsung bersama Om Budi"
-      ]
+      "id": "ebook_magnet_rezeki",
+      "name": "Ebook: Rahasia Magnet Rezeki & Pola Pertolongan Allah",
+      "type": "ebook",
+      "price": 99000,
+      "format": "Ebook PDF (120 Halaman)",
+      "description": "Panduan membuka frekuensi rezeki dari arah tak terduga, membongkar sumbatan rezeki, dan formula menjemput keajaiban pertolongan Allah saat terjepit hutang.",
+      "delivery_url": "https://storage.boontrack.com/om_budi/ebook-magnet-rezeki.pdf"
     },
     {
-      "name": "Bootcamp Automasi AI untuk UKM",
-      "tier": "FREE_TIER",
-      "price": 0,
-      "schedule": "Webinar Bulanan (Sabtu akhir bulan)",
-      "description": "Sesi sharing pengenalan automasi operasional menggunakan chatbot AI dan integrasi workflow.",
-      "benefits": [
-        "E-certificate partisipasi",
-        "Akses materi rangkuman PDF"
-      ]
+      "id": "audio_terapi_batin",
+      "name": "Audio Terapi Gelombang Batin: Pembersih Jiwa & Ketenangan Hati",
+      "type": "audio",
+      "price": 149000,
+      "format": "5 Seri Audio MP3 (Relaksasi & Dzikir Subconscious)",
+      "description": "Audio afirmasi tauhid dan dzikir gelombang theta untuk mengatasi rasa cemas, panik akibat teror pinjol/hutang, insomnia, serta menata getaran batin agar kembali tenang dan pasrah kepada Allah.",
+      "delivery_url": "https://storage.boontrack.com/om_budi/audio-terapi-batin.zip"
+    },
+    {
+      "id": "bundle_riyadhoh_sholawat",
+      "name": "Bundle Kit Riyadhoh Sholawat: 40 Hari Mengetuk Pintu Langit",
+      "type": "bundle",
+      "price": 199000,
+      "format": "Ebook Panduan + Audio Bimbingan Dzikir + Lembar Mutaba'ah Harian",
+      "description": "Program bimbingan mandiri terstruktur selama 40 hari mengamalkan sholawat nabi, amalan fajar, dan adab berdoa untuk pelunasan hutang dan percepatan hajat besar.",
+      "delivery_url": "https://storage.boontrack.com/om_budi/bundle-riyadhoh-sholawat.zip"
+    },
+    {
+      "id": "video_masterclass_tauhid",
+      "name": "Video Class: Quantum Energi Tauhid & Terapi Rezeki",
+      "type": "video",
+      "price": 299000,
+      "format": "6 Modul Video Eksklusif",
+      "description": "Penjelasan mendalam mengenai sinkronisasi energi pikiran, doa, dan kepasrahan total kepada Allah agar doa tidak terhijab oleh trauma dan ketakutan masa lalu.",
+      "delivery_url": "https://portal.boontrack.com/courses/quantum-tauhid"
     }
   ],
-  "faq": [
+  "classes": [
     {
-      "question": "Bagaimana cara bergabung ke sesi mentoring VIP?",
-      "answer": "Pendaftaran VIP dibuka per batch kuota terbatas. Anda bisa memilih program 'B2B Sales Mastery' melalui link registrasi resmi atau konfirmasi pembayaran via invoice sistem."
-    },
-    {
-      "question": "Apakah materi webinar gratis ada rekamannya?",
-      "answer": "Rekaman webinar publik dibagikan khusus di channel Telegram dan portal member 24 jam setelah sesi selesai."
-    },
-    {
-      "question": "Bagaimana jika saya berhalangan hadir saat sesi live Zoom?",
-      "answer": "Seluruh sesi live mentoring terekam dan otomatis diunggah ke Dashboard Portal Member pada tab 'Class Recordings'."
+      "code": "KLS_INTENSIF",
+      "name": "Kelas Mentoring Intensif Riyadhoh & Quantum Energi",
+      "price": 500000,
+      "format": "Bimbingan Langsung Live Zoom bersama Om Budi + Grup WhatsApp Eksklusif",
+      "schedule": "Setiap Selasa & Kamis Malam"
     }
   ]
 }
