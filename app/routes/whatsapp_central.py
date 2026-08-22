@@ -13,19 +13,28 @@ VERIFY_TOKENS = [
     "boontrack_career_token"
 ]
 
+# ID Nomor Telepon Masing-Masing Tenant
 OM_BUDI_PHONE_NUMBER_ID = "1306479742542883"
-ACCESS_TOKEN = os.getenv(
+CAREER_PHONE_NUMBER_ID = "1340866379104241"
+
+# Access Tokens
+OM_BUDI_ACCESS_TOKEN = os.getenv(
     "OM_BUDI_ACCESS_TOKEN",
     "EAANbiVgBfGQBSdMsa9S6YHzq6kx9xmML1vAAw890TZBQs7DqL5Ni1BEaAJZCV8xY4ZAjPPHKrC7ZAG6xYz5RSnyFzxoqyPayoo4PlSWUvZCYF8r5XGD99yMxSvku9K7WTat7lBJ00iXqNEZCNOhI0kznId91LMAP4h6wEQThKlTxPRGroCuaXZCWK5641sc1P2udi2ETKZBZBocOnF8U6ZBo7NnC9ADdGoFiB741T3w0ywzGPh63JzIgA67CI2UUOy793zLgl92fSWyHKv7BmoSm5ZAxZAvS0f6ZCtJwZD"
 )
+CAREER_ACCESS_TOKEN = os.getenv("CAREER_ACCESS_TOKEN", OM_BUDI_ACCESS_TOKEN)
 
 
-# --- Helper Outbound WA ---
-async def send_wa_text(recipient_phone: str, text: str, phone_id: str = OM_BUDI_PHONE_NUMBER_ID):
+# --- Helper Outbound WA Dinamis ---
+async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
     clean_id = re.findall(r"\d+", str(phone_id))[0] if re.findall(r"\d+", str(phone_id)) else OM_BUDI_PHONE_NUMBER_ID
+    
+    # Pilih token sesuai tenant pengirim
+    token = CAREER_ACCESS_TOKEN if str(clean_id) == CAREER_PHONE_NUMBER_ID else OM_BUDI_ACCESS_TOKEN
+    
     url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
     headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
     payload = {
@@ -44,11 +53,13 @@ async def send_wa_text(recipient_phone: str, text: str, phone_id: str = OM_BUDI_
         logger.error(f"[CENTRAL WA] Exception sending message: {e}")
 
 
-async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: list, phone_id: str = OM_BUDI_PHONE_NUMBER_ID):
+async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: list, phone_id: str):
     clean_id = re.findall(r"\d+", str(phone_id))[0] if re.findall(r"\d+", str(phone_id)) else OM_BUDI_PHONE_NUMBER_ID
+    token = CAREER_ACCESS_TOKEN if str(clean_id) == CAREER_PHONE_NUMBER_ID else OM_BUDI_ACCESS_TOKEN
+    
     url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
     headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
     button_rows = [{"type": "reply", "reply": {"id": b["id"], "title": b["title"][:20]}} for b in buttons[:3]]
@@ -120,8 +131,17 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 button_id = btn.get("id")
                 incoming_text = btn.get("title", "")
 
-        # Dispatch ke Tenant Om Budi
-        if phone_id == OM_BUDI_PHONE_NUMBER_ID:
+        # 1. Routing ke Tenant: Career Assistant
+        if phone_id == CAREER_PHONE_NUMBER_ID:
+            try:
+                from app.tenants.career.service import career_service
+                reply = await career_service.process_message(phone=from_phone, text=incoming_text)
+                await send_wa_text(from_phone, reply, phone_id)
+            except Exception as ce:
+                logger.error(f"[CAREER SERVICE ERROR] {ce}", exc_info=True)
+
+        # 2. Routing ke Tenant: Om Budi
+        elif phone_id == OM_BUDI_PHONE_NUMBER_ID:
             from app.tenants.om_budi.service import om_budi_service
             res = await om_budi_service.handle_incoming_message(
                 phone_number=from_phone,
@@ -133,14 +153,6 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 await send_wa_buttons(from_phone, res["reply"], res["buttons"], phone_id)
             else:
                 await send_wa_text(from_phone, res.get("reply", ""), phone_id)
-        else:
-            # Fallback/Dispatch ke Tenant Career
-            try:
-                from app.services.career_service import career_service
-                reply = await career_service.process_message(from_phone, incoming_text)
-                await send_wa_text(from_phone, reply, phone_id)
-            except Exception as ce:
-                logger.warning(f"[CAREER SERVICE NOT LOADED] {ce}")
 
         return web.json_response({"status": "success"}, status=200)
 
