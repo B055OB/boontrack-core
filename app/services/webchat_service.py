@@ -16,7 +16,9 @@ class WebChatService:
         if prompt_path.exists():
             self.business_prompt = prompt_path.read_text(encoding="utf-8").strip()
         else:
-            self.business_prompt = "Kamu adalah BoonTrack Business Consultant B2B. Bantu klien mengenai otomatisasi bisnis dan software AI."
+            self.business_prompt = (
+                "You are BoonTrack Group Solution Consultant. Consult visitors on AI automation and software solutions."
+            )
 
     def _get_history(self, session_id: str) -> List[Dict[str, str]]:
         if session_id not in self._session_memory:
@@ -27,11 +29,18 @@ class WebChatService:
         history = self._get_history(session_id)
         history.append({"role": "user", "content": message})
 
-        # Susun riwayat percakapan singkat untuk konteks LLM
+        # Susun riwayat percakapan
         formatted_history = "\n".join([f"{h['role'].upper()}: {h['content']}" for h in history[-6:]])
-        user_prompt_with_history = f"Riwayat Chat:\n{formatted_history}\n\nJawab pesan terakhir user di atas sesuai persona bisnismu."
+        
+        # Gunakan prompt instruksi netral & strict language matching
+        user_prompt_with_history = (
+            f"Conversation History:\n{formatted_history}\n\n"
+            f"Latest User Message: \"{message}\"\n\n"
+            f"INSTRUCTION: Reply strictly following your persona in business_system.txt. "
+            f"If the latest message is in English, reply ONLY in English. "
+            f"If in Indonesian, reply in Indonesian."
+        )
 
-        # Panggil langsung AIGateway dengan System Prompt B2B murni
         reply = await self.ai_gateway.generate(
             user_message=user_prompt_with_history,
             context={"user_id": session_id, "feature": "b2b_webchat"},
@@ -39,7 +48,10 @@ class WebChatService:
         )
 
         if not reply:
-            reply = "Terima kasih atas pertanyaannya! BoonTrack Group siap membantu kebutuhan otomatisasi AI dan software kustom untuk bisnis Anda. Ada spesifikasi atau alur kerja khusus yang ingin kita diskusikan?"
+            reply = (
+                "Hello! Glad to assist you. May I know your name, and whether your business is currently operated "
+                "as a solopreneur, a growing team (under 10–20 members), or at an enterprise scale?"
+            )
 
         history.append({"role": "assistant", "content": reply})
 
