@@ -1,0 +1,43 @@
+{
+  "tenant": "om_budi",
+  "brand_voice": "Ramah, berorientasi pada eksekusi praktis, solutif, profesional namun santai khas mentor bisnis Om Budi.",
+  "programs": [
+    {
+      "name": "B2B Sales Mastery & Cold Outreach",
+      "tier": "VIP_MEMBER",
+      "price": 2500000,
+      "schedule": "Setiap Selasa & Kamis pukul 19.30 WIB via Zoom Private",
+      "description": "Program bimbingan intensif 6 minggu menutup deal B2B, membangun pipeline outbound, dan otomasi CRM.",
+      "benefits": [
+        "Akses rekaman & template proposal B2B",
+        "Group Discord/WhatsApp eksklusif",
+        "1-on-1 Review Pitch Deck langsung bersama Om Budi"
+      ]
+    },
+    {
+      "name": "Bootcamp Automasi AI untuk UKM",
+      "tier": "FREE_TIER",
+      "price": 0,
+      "schedule": "Webinar Bulanan (Sabtu akhir bulan)",
+      "description": "Sesi sharing pengenalan automasi operasional menggunakan chatbot AI dan integrasi workflow.",
+      "benefits": [
+        "E-certificate partisipasi",
+        "Akses materi rangkuman PDF"
+      ]
+    }
+  ],
+  "faq": [
+    {
+      "question": "Bagaimana cara bergabung ke sesi mentoring VIP?",
+      "answer": "Pendaftaran VIP dibuka per batch kuota terbatas. Anda bisa memilih program 'B2B Sales Mastery' melalui link registrasi resmi atau konfirmasi pembayaran via invoice sistem."
+    },
+    {
+      "question": "Apakah materi webinar gratis ada rekamannya?",
+      "answer": "Rekaman webinar publik dibagikan khusus di channel Telegram dan portal member 24 jam setelah sesi selesai."
+    },
+    {
+      "question": "Bagaimana jika saya berhalangan hadir saat sesi live Zoom?",
+      "answer": "Seluruh sesi live mentoring terekam dan otomatis diunggah ke Dashboard Portal Member pada tab 'Class Recordings'."
+    }
+  ]
+}

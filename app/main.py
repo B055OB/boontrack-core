@@ -43,7 +43,7 @@ from app.handlers.career_page_flow import register_career_page_handlers, start_c
 from app.routes.whatsapp_career import register_whatsapp_career_routes
 from app.routes.payment import register_payment_routes
 from app.services.whatsapp_service import log_to_supabase_messages
-
+from app.tenants.om_budi.router import register_om_budi_routes
 # ============================================================
 # B2B MULTI-TENANT ROUTERS & HANDLERS
 # ============================================================
@@ -2457,8 +2457,6 @@ async def start_web_server():
     app.router.add_get('/source', tracker_handler)
     app.router.add_post('/webhook/dana', dana_webhook_handler)
     app.add_routes(commerce_routes)
-    # Tambahkan di bawah baris 2460:
-    register_public_service_routes(app)
     
     app.router.add_post('/api/webchat', handle_web_chat_http)
     app.router.add_post('/api/web-chat', handle_web_chat_http)
@@ -2471,6 +2469,7 @@ async def start_web_server():
     register_whatsapp_routes(app, async_session)
     register_whatsapp_career_routes(app)
     register_payment_routes(app)
+    register_om_budi_routes(app)
 
     async def _wrap_pair(req):
         async with async_session() as session:
