@@ -9,7 +9,6 @@ from app.tenants.om_budi.service import om_budi_service
 logger = logging.getLogger(__name__)
 om_budi_routes = web.RouteTableDef()
 
-# Konfigurasi Token Meta
 RAW_PHONE_NUMBER_ID = os.getenv("OM_BUDI_PHONE_NUMBER_ID", "1306479742542883")
 ACCESS_TOKEN = os.getenv(
     "OM_BUDI_ACCESS_TOKEN",
@@ -17,33 +16,60 @@ ACCESS_TOKEN = os.getenv(
 )
 
 
-async def send_meta_wa_message(recipient_phone: str, message: str):
-    """Kirim pesan balik ke Meta WhatsApp Cloud API dengan sanitasi endpoint URL."""
-    # Ekstrak digit angka ID untuk mencegah URL ganda
-    digits_found = re.findall(r"\d+", str(RAW_PHONE_NUMBER_ID))
-    clean_phone_id = digits_found[0] if digits_found else "1306479742542883"
+def get_clean_phone_id() -> str:
+    digits = re.findall(r"\d+", str(RAW_PHONE_NUMBER_ID))
+    return digits[0] if digits else "1306479742542883"
 
+
+async def send_meta_raw_payload(payload: dict):
+    clean_phone_id = get_clean_phone_id()
     url = f"https://graph.facebook.com/v20.0/{clean_phone_id}/messages"
     headers = {
         "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": recipient_phone,
-        "type": "text",
-        "text": {"body": message}
-    }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=payload) as resp:
                 resp_text = await resp.text()
-                if resp.status in (200, 201):
-                    logger.info(f"[{TENANT_ID}] Reply successfully sent to {recipient_phone}")
-                else:
+                if resp.status not in (200, 201):
                     logger.error(f"[{TENANT_ID}] Meta WA Send Failed ({resp.status}): {resp_text}")
     except Exception as e:
         logger.error(f"[{TENANT_ID}] Exception sending WA: {e}")
+
+
+async def send_wa_text(recipient_phone: str, text: str):
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient_phone,
+        "type": "text",
+        "text": {"body": text}
+    }
+    await send_meta_raw_payload(payload)
+
+
+async def send_wa_interactive_buttons(recipient_phone: str, body_text: str, buttons: list):
+    """Kirim WhatsApp Quick Reply Buttons (Maksimal 3 Tombol)"""
+    button_rows = []
+    for btn in buttons[:3]:
+        button_rows.append({
+            "type": "reply",
+            "reply": {
+                "id": btn["id"],
+                "title": btn["title"][:20]  # Limit 20 karakter dari Meta
+            }
+        })
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient_phone,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": body_text},
+            "action": {"buttons": button_rows}
+        }
+    }
+    await send_meta_raw_payload(payload)
 
 
 @om_budi_routes.get(f"/api/v1/tenants/{TENANT_ID}/webhook/whatsapp")
@@ -76,22 +102,46 @@ async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
         msg_obj = messages[0]
         from_phone = msg_obj.get("from")
         msg_type = msg_obj.get("type")
+        contact_name = value.get("contacts", [{}])[0].get("profile", {}).get("name", "Bapak/Ibu")
+
+        incoming_text = ""
+        button_id = None
 
         if msg_type == "text":
-            text_body = msg_obj.get("text", {}).get("body", "")
-            contact_name = value.get("contacts", [{}])[0].get("profile", {}).get("name", "Member")
+            incoming_text = msg_obj.get("text", {}).get("body", "")
+        elif msg_type == "interactive":
+            interactive_obj = msg_obj.get("interactive", {})
+            if interactive_obj.get("type") == "button_reply":
+                button_reply = interactive_obj.get("button_reply", {})
+                button_id = button_reply.get("id")
+                incoming_text = button_reply.get("title", "")
+            elif interactive_obj.get("type") == "list_reply":
+                list_reply = interactive_obj.get("list_reply", {})
+                button_id = list_reply.get("id")
+                incoming_text = list_reply.get("title", "")
 
-            logger.info(f"[{TENANT_ID}] Incoming chat from {from_phone} ({contact_name}): {text_body}")
+        logger.info(f"[{TENANT_ID}] Chat from {from_phone} ({contact_name}): text='{incoming_text}', btn_id='{button_id}'")
 
-            res = await om_budi_service.handle_incoming_message(
-                phone_number=from_phone,
-                message_text=text_body,
-                user_name=contact_name
+        # Proses pesan di Om Budi Service
+        response_data = await om_budi_service.handle_incoming_message(
+            phone_number=from_phone,
+            message_text=incoming_text,
+            button_id=button_id,
+            user_name=contact_name
+        )
+
+        # Kirim balik respons (Bisa teks biasa atau interactive buttons)
+        if response_data.get("type") == "buttons":
+            await send_wa_interactive_buttons(
+                recipient_phone=from_phone,
+                body_text=response_data["reply"],
+                buttons=response_data["buttons"]
             )
-
-            reply_text = res.get("reply", "")
-            if reply_text:
-                await send_meta_wa_message(recipient_phone=from_phone, message=reply_text)
+        else:
+            await send_wa_text(
+                recipient_phone=from_phone,
+                text=response_data.get("reply", "")
+            )
 
         return web.json_response({"status": "success"}, status=200)
 
@@ -100,37 +150,6 @@ async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "message": str(e)}, status=500)
 
 
-@om_budi_routes.post(f"/api/v1/tenants/{TENANT_ID}/chat")
-async def om_budi_chat_api(request: web.Request) -> web.Response:
-    cors_headers = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    }
-    if request.method == "OPTIONS":
-        return web.Response(status=200, headers=cors_headers)
-
-    try:
-        body = await request.json()
-        message = body.get("message", "").strip()
-        phone = body.get("phone", "628000000000")
-        name = body.get("name", "Member")
-
-        if not message:
-            return web.json_response({"error": "Pesan wajib diisi."}, status=400, headers=cors_headers)
-
-        result = await om_budi_service.handle_incoming_message(
-            phone_number=phone,
-            message_text=message,
-            user_name=name,
-            metadata=body.get("metadata")
-        )
-
-        return web.json_response({"status": "success", "data": result}, headers=cors_headers)
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=500, headers=cors_headers)
-
-
 def register_om_budi_routes(app: web.Application):
     app.add_routes(om_budi_routes)
-    logger.info(f"[ROUTER] Tenant {TENANT_ID} routes ready.")
+    logger.info(f"[ROUTER] Tenant {TENANT_ID} interactive routes ready.")

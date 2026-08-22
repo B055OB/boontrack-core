@@ -1,53 +1,55 @@
 {
-  "channel_name": "Om Budi Channel (OBC)",
-  "core_values": "Fokus pada pembenahan tauhid dan hubungan batin dengan Allah SWT melalui shalat tepat waktu, tilawah Al-Qur'an, amalan riyadhoh sholawat nabi, pembersihan energi batin, dan sedekah untuk menjemput pertolongan Allah atas masalah hutang, pinjol, jodoh, dan rezeki.",
+  "channel_name": "Om Budi",
+  "core_values": "Membimbing jamaah/bapak-ibu yang terjebak hutang, pinjol, hajat berat, dan jodoh dengan membenahi tauhid, sholat awal waktu, istighfar, dan amalan riyadhoh sholawat nabi.",
   "group_gratis_link": "https://chat.whatsapp.com/invite-obc-gratis",
-  "qris_url": "https://storage.boontrack.com/om_budi/qris-sedekah-obc.jpg",
+  "qris_url": "https://storage.boontrack.com/om_budi/qris-om-budi.jpg",
+  "classes": [
+    {
+      "code": "KLS_ONLINE",
+      "name": "Kelas Online Pembuka Rezeki & Tauhid",
+      "price": 200000,
+      "price_label": "Rp200.000",
+      "description": "Kelas dasar pengenalan riyadhoh sholawat, pembersihan sumbatan energi rezeki, dan perbaikan sholat tepat waktu."
+    },
+    {
+      "code": "KLS_MEMBER",
+      "name": "Kelas Member Eksklusif Om Budi",
+      "price": 500000,
+      "price_label": "Rp500.000",
+      "description": "Bimbingan lanjutan riyadhoh 40 hari, konsultasi berkala, dan akses sesi Zoom Booster rutin bersama Om Budi."
+    },
+    {
+      "code": "KLS_MAGNET_REZEKI",
+      "name": "Kelas Intensif Private Magnet Rezeki",
+      "price": 1000000,
+      "price_label": "Rp1.000.000",
+      "description": "Pendampingan khusus pelunasan hutang besar, pembedahan pola pertolongan Allah, serta bimbingan spiritual mendalam."
+    }
+  ],
   "digital_products": [
     {
       "id": "ebook_magnet_rezeki",
       "name": "Ebook: Rahasia Magnet Rezeki & Pola Pertolongan Allah",
-      "type": "ebook",
       "price": 99000,
-      "format": "Ebook PDF (120 Halaman)",
-      "description": "Panduan membuka frekuensi rezeki dari arah tak terduga, membongkar sumbatan rezeki, dan formula menjemput keajaiban pertolongan Allah saat terjepit hutang.",
-      "delivery_url": "https://storage.boontrack.com/om_budi/ebook-magnet-rezeki.pdf"
+      "price_label": "Rp99.000",
+      "format": "Ebook PDF",
+      "description": "Panduan menjemput pertolongan Allah saat terhimpit hutang & membuka pintu rezeki tak terduga."
     },
     {
-      "id": "audio_terapi_batin",
-      "name": "Audio Terapi Gelombang Batin: Pembersih Jiwa & Ketenangan Hati",
-      "type": "audio",
+      "id": "audio_therapy",
+      "name": "Audio Therapy Gelombang Batin & Ketenangan Jiwa",
       "price": 149000,
-      "format": "5 Seri Audio MP3 (Relaksasi & Dzikir Subconscious)",
-      "description": "Audio afirmasi tauhid dan dzikir gelombang theta untuk mengatasi rasa cemas, panik akibat teror pinjol/hutang, insomnia, serta menata getaran batin agar kembali tenang dan pasrah kepada Allah.",
-      "delivery_url": "https://storage.boontrack.com/om_budi/audio-terapi-batin.zip"
+      "price_label": "Rp149.000",
+      "format": "5 Seri Audio MP3 Dzikir & Relaksasi Batin",
+      "description": "Membantu menenangkan hati dari rasa cemas, panik teror pinjol, dan insomnia."
     },
     {
-      "id": "bundle_riyadhoh_sholawat",
-      "name": "Bundle Kit Riyadhoh Sholawat: 40 Hari Mengetuk Pintu Langit",
-      "type": "bundle",
+      "id": "bundle_riyadhoh",
+      "name": "Bundle Kit Riyadhoh Sholawat 40 Hari",
       "price": 199000,
-      "format": "Ebook Panduan + Audio Bimbingan Dzikir + Lembar Mutaba'ah Harian",
-      "description": "Program bimbingan mandiri terstruktur selama 40 hari mengamalkan sholawat nabi, amalan fajar, dan adab berdoa untuk pelunasan hutang dan percepatan hajat besar.",
-      "delivery_url": "https://storage.boontrack.com/om_budi/bundle-riyadhoh-sholawat.zip"
-    },
-    {
-      "id": "video_masterclass_tauhid",
-      "name": "Video Class: Quantum Energi Tauhid & Terapi Rezeki",
-      "type": "video",
-      "price": 299000,
-      "format": "6 Modul Video Eksklusif",
-      "description": "Penjelasan mendalam mengenai sinkronisasi energi pikiran, doa, dan kepasrahan total kepada Allah agar doa tidak terhijab oleh trauma dan ketakutan masa lalu.",
-      "delivery_url": "https://portal.boontrack.com/courses/quantum-tauhid"
-    }
-  ],
-  "classes": [
-    {
-      "code": "KLS_INTENSIF",
-      "name": "Kelas Mentoring Intensif Riyadhoh & Quantum Energi",
-      "price": 500000,
-      "format": "Bimbingan Langsung Live Zoom bersama Om Budi + Grup WhatsApp Eksklusif",
-      "schedule": "Setiap Selasa & Kamis Malam"
+      "price_label": "Rp199.000",
+      "format": "Ebook + Audio + Lembar Amalan",
+      "description": "Panduan praktis terstruktur mendawamkan sholawat untuk pelunas hutang & hajat."
     }
   ]
 }

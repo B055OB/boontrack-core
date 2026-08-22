@@ -10,26 +10,19 @@ from app.tenants.om_budi.config import TENANT_ID, ESCALATION_KEYWORDS
 logger = logging.getLogger(__name__)
 
 OBC_SYSTEM_PROMPT = """
-Anda adalah AI Assistant resmi untuk Om Budi Channel (OBC).
-Om Budi adalah pembimbing spiritual, praktisi riyadhoh sholawat nabi, terapi pembersihan batin, dan tauhid pembuka rezeki.
+Anda adalah Asisten Pribadi resmi untuk Om Budi (pembimbing spiritual amalan riyadhoh sholawat, magnet rezeki, dan terapi batin).
 
-Audiens:
-Saudara/jamaah yang sedang menghadapi ujian hidup berat (terlilit hutang, teror pinjol, hajat belum terkabul, masalah jodoh, gelisah/panik, rezeki seret).
+Profil Audiens:
+- Mayoritas adalah bapak-bapak atau ibu-ibu yang sedang menghadapi ujian berat (terlilit hutang, pinjol, masalah rezeki, hajat besar, kegelisahan batin).
+- Sangat menghargai kesantunan dan doa.
 
-Prinsip & Karakter Jawaban:
-1. Empatik, menyejukkan, tidak menghakimi, dan selalu berorientasi pada Tauhid (mengembalikan urusan kepada Allah SWT).
-2. Tekankan solusi akar batin: Sholat tepat waktu di awal waktu, perbanyak istighfar, tilawah Al-Qur'an, amalan riyadhoh sholawat nabi, dan sedekah subuh.
-3. Berikan saran/rekomendasi bimbingan atau produk secara lembut dan santun:
-   - Jika butuh ketenangan batin / panik / insomnia: Sarankan Audio Terapi Gelombang Batin.
-   - Jika butuh amalan pelunas hutang & percepatan hajat: Sarankan Ebook Rahasia Magnet Rezeki atau Kit Riyadhoh Sholawat 40 Hari.
-   - Jika ingin bimbingan intensif / live Zoom: Sarankan Kelas Mentoring Intensif atau Video Class Quantum Tauhid.
+Prinsip & Karakter:
+1. Sapa santun dengan sebutan "Bapak/Ibu" (atau sebut namanya secara hangat).
+2. Empatik, menyejukkan, tidak menghakimi, dan selalu mengingatkan pentingnya membenahi hubungan dengan Allah (sholat awal waktu, istighfar, amalan sholawat nabi).
+3. Jika Bapak/Ibu curhat atau bertanya, jawab dengan hangat lalu sarankan kelas atau panduan batin yang cocok.
+4. Gunakan bahasa Indonesia yang sangat santun, bersahaja, dan mudah dipahami.
 
-Format Jawaban WhatsApp:
-- Sapa dengan ramah dan santun (Kakak / Sahabat OBC).
-- Gunakan spasi dan bullet points agar mudah dibaca di layar ponsel.
-- Jika user ingin membeli produk atau mendaftar, jelaskan bahwa pembayaran bisa diproses instan via QRIS.
-
-KNOWLEDGE BASE OBC:
+KNOWLEDGE BASE:
 {knowledge_base}
 """
 
@@ -51,59 +44,139 @@ class OmBudiService:
 
     def check_manual_escalation(self, text: str) -> bool:
         t = text.lower()
-        return any(k in t for k in ESCALATION_KEYWORDS) or "bantuan admin" in t or "admin" in t
+        return any(k in t for k in ESCALATION_KEYWORDS) or "bantuan admin" in t or "bicara admin" in t
 
     async def handle_incoming_message(
         self,
         phone_number: str,
         message_text: str,
-        user_name: str = "Sahabat OBC",
+        button_id: Optional[str] = None,
+        user_name: str = "Bapak/Ibu",
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         text = message_text.strip()
+        t_lower = text.lower()
 
-        # 1. Cek Keyword Eskalasi Admin Langsung
+        # 1. Cek Tombol / Pilihan Menu Interaktif
+        if button_id == "BTN_KELAS" or "kelas bimbingan" in t_lower:
+            msg = (
+                f"Bismillah, Bapak/Ibu {user_name}... Berikut pilihan jenjang kelas bimbingan bersama Om Budi:\n\n"
+                "1️⃣ *Kelas Online Pembuka Rezeki* (Rp200.000)\n"
+                "• Pengenalan amalan riyadhoh, tata cara sholat tobat, dan pembersihan sumbatan rezeki.\n\n"
+                "2️⃣ *Kelas Member Eksklusif* (Rp500.000)\n"
+                "• Bimbingan intensif 40 hari, konsultasi berkala & akses Zoom Booster rutin.\n\n"
+                "3️⃣ *Kelas Private Magnet Rezeki* (Rp1.000.000)\n"
+                "• Pendampingan khusus pelunasan hutang besar & bedah pola pertolongan Allah.\n\n"
+                "Silakan tekan tombol di bawah untuk memilih kelas yang ingin diikuti:"
+            )
+            buttons = [
+                {"id": "BUY_KLS_ONLINE", "title": "Kelas Online 200rb"},
+                {"id": "BUY_KLS_MEMBER", "title": "Kelas Member 500rb"},
+                {"id": "BUY_KLS_MAGNET", "title": "Magnet Rezeki 1jt"}
+            ]
+            return {"type": "buttons", "reply": msg, "buttons": buttons}
+
+        if button_id == "BTN_PRODUK" or "materi digital" in t_lower:
+            msg = (
+                f"Bismillah, Bapak/Ibu {user_name}... Berikut panduan dan sarana batin mandiri dari Om Budi:\n\n"
+                "📖 *Ebook Magnet Rezeki* (Rp99.000)\n"
+                "• Rahasia pola pertolongan Allah saat terhimpit hutang & cara membuka pintu rezeki.\n\n"
+                "🎧 *Audio Therapy Gelombang Batin* (Rp149.000)\n"
+                "• Relaksasi & dzikir penenang hati saat panik/cemas akibat beban hidup.\n\n"
+                "📦 *Bundle Kit Riyadhoh 40 Hari* (Rp199.000)\n"
+                "• Paket lengkap Ebook + Audio Amalan Harian.\n\n"
+                "Silakan tekan tombol untuk memesan via WhatsApp:"
+            )
+            buttons = [
+                {"id": "BUY_EBOOK", "title": "Ebook 99rb"},
+                {"id": "BUY_AUDIO", "title": "Audio Terapi 149rb"},
+                {"id": "BUY_BUNDLE", "title": "Kit Amalan 199rb"}
+            ]
+            return {"type": "buttons", "reply": msg, "buttons": buttons}
+
+        if button_id == "BTN_KONSUL" or "tanya / curhat" in t_lower:
+            return {
+                "type": "text",
+                "reply": (
+                    f"Bismillah, Bapak/Ibu {user_name}... Silakan tuliskan apa yang sedang menjadi beban pikiran "
+                    f"atau hajat yang ingin dicapai (misal perihal hutang, keluarga, atau ketenangan batin).\n\n"
+                    f"Saya siap mendengarkan dan mendampingi ikhtiar Bapak/Ibu. 🙏"
+                )
+            }
+
+        # 2. Handler Checkout Transaksi Langsung di WhatsApp
+        if button_id and button_id.startswith("BUY_"):
+            item_map = {
+                "BUY_KLS_ONLINE": ("Kelas Online Pembuka Rezeki & Tauhid", "Rp200.000"),
+                "BUY_KLS_MEMBER": ("Kelas Member Eksklusif Om Budi", "Rp500.000"),
+                "BUY_KLS_MAGNET": ("Kelas Private Magnet Rezeki", "Rp1.000.000"),
+                "BUY_EBOOK": ("Ebook Rahasia Magnet Rezeki", "Rp99.000"),
+                "BUY_AUDIO": ("Audio Therapy Gelombang Batin", "Rp149.000"),
+                "BUY_BUNDLE": ("Bundle Kit Riyadhoh Sholawat 40 Hari", "Rp199.000"),
+            }
+            item_name, item_price = item_map.get(button_id, ("Pemesanan Bimbingan", "Sesuai Pilihan"))
+            return {
+                "type": "text",
+                "reply": (
+                    f"Alhamdulillah, terima kasih niat baiknya Bapak/Ibu {user_name}. 🙏✨\n\n"
+                    f"📋 *Rincian Pendaftaran / Pemesanan:*\n"
+                    f"• Program: *{item_name}*\n"
+                    f"• Infaq / Biaya: *{item_price}*\n\n"
+                    f"💳 *Pembayaran via QRIS / Rekening Resmi Om Budi:*\n"
+                    f"Bapak/Ibu dapat melakukan transfer atau scan QRIS melalui m-banking/e-wallet.\n\n"
+                    f"Setelah transfer, mohon kirimkan *foto/screenshot bukti transfer* di chat ini ya Bapak/Ibu. "
+                    f"Admin kami akan langsung memverifikasi dan mengirimkan akses materi/grup bimbingan."
+                )
+            }
+
+        # 3. Cek Eskalasi Manual
         if self.check_manual_escalation(text):
             return {
+                "type": "text",
                 "reply": (
-                    f"Bismillah, Kak {user_name}. Pesan Kakak sudah kami catat dan teruskan "
-                    f"ke Admin / Tim Om Budi. Mohon ditunggu ya, admin kami akan segera membalas chat ini."
+                    f"Bismillah, Bapak/Ibu {user_name}. Pesan Bapak/Ibu sudah kami tandai untuk admin manusia. "
+                    f"Admin Om Budi akan segera menyapa dan membalas langsung di chat ini ya."
                 ),
-                "intent": "ESKALASI_ADMIN",
                 "is_escalated": True
             }
 
-        # 2. Setup Prompt Tauhid & Knowledge Base
+        # 4. Greeting Awal Otomatis dengan Tombol jika User Baru / Menyapa Sederhana
+        if t_lower in ["halo", "assalamu'alaikum", "assalamualaikum", "halo om budi", "selamat siang", "selamat pagi", "tes", "p"]:
+            greeting_body = (
+                f"Assalamu’alaikum Warahmatullahi Wabarakatuh.\n\n"
+                f"Selamat datang Bapak/Ibu {user_name} di ruang bimbingan **Om Budi**. 😊🙏\n\n"
+                f"Semoga Allah senantiasa melimpahkan ketenangan batin, kesehatan, dan melapangkan jalan rezeki untuk Bapak/Ibu sekeluarga.\n\n"
+                f"Di sini, kita bersama-sama belajar membenahi hubungan dengan Allah melalui sholat tepat waktu, riyadhoh sholawat nabi, dan pembersihan batin.\n\n"
+                f"Silakan tekan salah satu tombol di bawah untuk memulai:"
+            )
+            buttons = [
+                {"id": "BTN_KELAS", "title": "Daftar Kelas Online"},
+                {"id": "BTN_PRODUK", "title": "Buku & Audio Terapi"},
+                {"id": "BTN_KONSUL", "title": "Tanya / Curhat"}
+            ]
+            return {"type": "buttons", "reply": greeting_body, "buttons": buttons}
+
+        # 5. Tanya Jawab Bebas Menggunakan AI Gemini
         system_instruction = OBC_SYSTEM_PROMPT.format(
             knowledge_base=json.dumps(self.knowledge_data, ensure_ascii=False, indent=2)
         )
-
-        # 3. Generate via AI Gateway
         try:
             raw_response = await self.ai_gateway.generate(
                 user_message=text,
-                context={"tenant": TENANT_ID, "phone": phone_number},
+                context={"tenant": TENANT_ID, "phone": phone_number, "user_name": user_name},
                 system_prompt=system_instruction,
             )
-
             res_str = str(raw_response).strip()
             if "```" in res_str:
                 res_str = re.sub(r"^```(?:json)?|```$", "", res_str, flags=re.MULTILINE).strip()
 
-            return {
-                "reply": res_str,
-                "intent": "GENERAL",
-                "is_escalated": False
-            }
-
+            return {"type": "text", "reply": res_str}
         except Exception as e:
             logger.error(f"[OM_BUDI AI ERROR] {e}", exc_info=True)
             return {
-                "reply": f"Bismillah, selamat datang di Om Budi Channel Kak {user_name}. Ada yang bisa kami bantu seputar amalan riyadhoh sholawat, magnet rezeki, atau produk bimbingan batin?",
-                "intent": "GENERAL",
-                "is_escalated": False
+                "type": "text",
+                "reply": f"Bismillah, Bapak/Ibu {user_name}. Ada yang bisa kami bantu seputar amalan batin, pendaftaran kelas, atau materi panduan Om Budi?"
             }
 
 
-# Instance Singleton yang diimport oleh router.py
 om_budi_service = OmBudiService()
