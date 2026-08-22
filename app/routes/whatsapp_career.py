@@ -405,7 +405,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     current_mode = user_session.get("mode", "menu")
 
     # 5. MENU BUTTON HANDLERS
-    if button_id == "btn_review" or (current_mode == "menu" and user_text_clean in ["1", "review cv", "🔍 review cv"]):
+    if button_id == "btn_review" or "review" in user_text_clean or "bedah cv" in user_text_clean or user_text_clean in ["1", "review cv", "🔍 review cv"]:
         user_session["mode"] = "review"
         intro_review = (
             "Silakan kirimkan dokumen CV Anda (*format PDF/DOCX*) atau *salin-tempel (copy-paste) teks riwayat CV* Anda langsung di chat ini untuk kami bedah secara gratis."
