@@ -42,6 +42,7 @@ from app.modules.commerce.router import commerce_routes
 from app.handlers.career_page_flow import register_career_page_handlers, start_career_page_claim
 from app.routes.whatsapp_career import register_whatsapp_career_routes
 from app.routes.payment import register_payment_routes
+from app.services.whatsapp_service import log_to_supabase_messages
 
 # ============================================================
 # B2B MULTI-TENANT ROUTERS & HANDLERS
@@ -90,7 +91,6 @@ async def send_chunked_message(chat_id: int, text: str, reply_markup=None, parse
         await bot.send_message(chat_id, clean_text, reply_markup=reply_markup, parse_mode=parse_mode)
         return
 
-    # Pecah berdasarkan paragraf
     lines = clean_text.split("\n")
     chunks = []
     current_chunk = ""
@@ -681,7 +681,6 @@ async def update_cloudflare_kv(slug: str | None, user_data: dict) -> bool:
         print(f"[KV Sync Error] Gagal update Cloudflare KV: {e}", flush=True)
         return False
 
-# --- HELPER FUNCTIONS AI CV GENERATOR ---
 def clean_val(val):
     if not val:
         return ""
@@ -743,7 +742,6 @@ def get_question_text(step, target_lang="ID", status_kerja="Berpengalaman"):
         }
     return questions.get(step, "")
 
-# --- AI CAREER COMPANION VIA BRAIN ENGINE & AI GATEWAY ---
 async def ai_career_chat_response(user_query, user_context=None):
     user_context = user_context or {}
     try:
@@ -1027,8 +1025,19 @@ async def handle_admin_commands(message: types.Message):
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
     user_id = message.from_user.id
+    first_name = message.from_user.first_name or "Teman"
     await save_user(message.from_user)
     
+    # Log ke Supabase
+    await log_to_supabase_messages(
+        sender=f"Telegram / {first_name}",
+        text="/start",
+        tenant_id="boontrack-career",
+        channel="telegram",
+        user_id=str(user_id),
+        user_name=first_name
+    )
+
     text_parts = message.text.split()
     args = text_parts[1] if len(text_parts) > 1 else "direct"
 
@@ -1107,6 +1116,7 @@ async def send_welcome(message: types.Message):
 @dp.callback_query_handler(lambda c: c.data == "trigger_cv_review")
 async def handle_trigger_cv_review(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
+    first_name = callback_query.from_user.first_name or "Teman"
     
     try:
         await callback_query.answer()
@@ -1120,13 +1130,11 @@ async def handle_trigger_cv_review(callback_query: types.CallbackQuery):
     cv_text_summary = " ".join([str(v) for k, v in user_data.items() if str(v).strip()]).strip()
     position = str(user_data.get("target_position") or user_data.get(6) or user_data.get("6") or "General Professional")
 
-    # Jika user sudah punya riwayat isi CV di bot, langsung generate review
     if cv_text_summary and len(cv_text_summary) > 20:
         from app.handlers.commands import render_free_cv_review
         await render_free_cv_review(user_id, bot, cv_text_summary, target_position=position)
         return
 
-    # Set state untuk input teks/data CV baru
     user_state[user_id]["step"] = "WAITING_CV_INPUT"
 
     kbd_review = types.InlineKeyboardMarkup(row_width=1)
@@ -1143,7 +1151,6 @@ async def handle_trigger_cv_review(callback_query: types.CallbackQuery):
         "<i>Mau buat CV ATS baru dari nol? Klik tombol di bawah:</i>"
     )
     
-    # Gunakan direct message answer agar langsung render di thread chat yang sama
     await callback_query.message.answer(msg_prompt, reply_markup=kbd_review, parse_mode="HTML")
     return
 
@@ -1152,20 +1159,17 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     code = callback_query.data
     
-    # 1. Selalu jawab callback agar icon loading di tombol Telegram berhenti
     try:
         await callback_query.answer()
     except Exception:
         pass
 
-    # 2. Navigasi Kembali ke Menu Utama
     if code in ["home_back_main", "main_menu", "back_to_main"]:
         user_state[user_id] = {"step": 0, "data": {}}
         from app.handlers.commands import send_welcome
         await send_welcome(callback_query.message)
         return
 
-    # 3. Hilangkan markup lama dengan aman (abaikan jika sudah terhapus)
     try:
         await callback_query.message.edit_reply_markup(reply_markup=None)
     except Exception:
@@ -1190,7 +1194,6 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             await render_free_cv_review(user_id, bot, cv_text_summary, target_position=position)
             return
         else:
-            # Set state agar pesan berikutnya diproses sebagai input CV
             user_state[user_id]["step"] = "WAITING_CV_INPUT"
             
             kbd_review = types.InlineKeyboardMarkup(row_width=1)
@@ -1626,15 +1629,22 @@ async def handle_callback_navigation(callback_query: types.CallbackQuery):
             parse_mode="HTML"
         )
 
-# PHOTO HANDLER FOR CAREER PAGE
-# ============================================================
-# HANDLER UPLOAD FILE DOKUMEN CV (.DOCX, .PDF, .TXT)
-# ============================================================
 @dp.message_handler(content_types=['document'])
 async def handle_document_upload(message: types.Message):
     user_id = message.from_user.id
+    first_name = message.from_user.first_name or "Teman"
     doc = message.document
     file_name = (doc.file_name or "").lower()
+
+    # Log attachment
+    await log_to_supabase_messages(
+        sender=f"Telegram / {first_name}",
+        text=f"[Mengirim Dokumen: {file_name}]",
+        tenant_id="boontrack-career",
+        channel="telegram",
+        user_id=str(user_id),
+        user_name=first_name
+    )
 
     if not (file_name.endswith('.docx') or file_name.endswith('.pdf') or file_name.endswith('.txt')):
         await message.reply(
@@ -1644,21 +1654,18 @@ async def handle_document_upload(message: types.Message):
         )
         return
 
-    # Notifikasi awal agar user tahu proses sedang berjalan
     wait_msg = await message.reply("⏳ <b>Dokumen diterima! Sedang membaca dan mengekstrak CV...</b>", parse_mode="HTML")
 
     try:
         import io
         from docx import Document
 
-        # Download langsung ke memory buffer
         file_bytes = io.BytesIO()
         await doc.download(destination_file=file_bytes)
         file_bytes.seek(0)
 
         extracted_text = ""
 
-        # Ekstraksi DOCX
         if file_name.endswith('.docx'):
             word_doc = Document(file_bytes)
             full_text = []
@@ -1672,11 +1679,9 @@ async def handle_document_upload(message: types.Message):
                         full_text.append(" | ".join(row_data))
             extracted_text = "\n".join(full_text)
 
-        # Ekstraksi TXT
         elif file_name.endswith('.txt'):
             extracted_text = file_bytes.read().decode('utf-8', errors='ignore')
 
-        # Ekstraksi PDF
         elif file_name.endswith('.pdf'):
             try:
                 import pypdf
@@ -1696,7 +1701,6 @@ async def handle_document_upload(message: types.Message):
             )
             return
 
-        # Update status saat AI mulai evaluasi
         try:
             await bot.edit_message_text(
                 "🤖 <b>AI sedang menganalisis skor ATS & detail perbaikan CV kamu...</b>",
@@ -1707,7 +1711,6 @@ async def handle_document_upload(message: types.Message):
         except Exception:
             pass
 
-        # Eksekusi Review ATS Engine
         user_data = user_state.get(user_id, {}).get("data", {})
         position = str(user_data.get("target_position") or "General Professional")
         
@@ -1715,7 +1718,6 @@ async def handle_document_upload(message: types.Message):
         user_state[user_id]["step"] = 0
         await render_free_cv_review(user_id, bot, extracted_text, target_position=position)
 
-        # Hapus loading setelah hasil review selesai terkirim
         try:
             await bot.delete_message(chat_id=user_id, message_id=wait_msg.message_id)
         except Exception:
@@ -1736,8 +1738,18 @@ async def handle_document_upload(message: types.Message):
 @dp.message_handler(content_types=['photo'])
 async def handle_photo(message: types.Message):
     user_id = message.from_user.id
+    first_name = message.from_user.first_name or "Teman"
     current_step = user_state.get(user_id, {}).get("step")
     
+    await log_to_supabase_messages(
+        sender=f"Telegram / {first_name}",
+        text="[Mengirim Foto]",
+        tenant_id="boontrack-career",
+        channel="telegram",
+        user_id=str(user_id),
+        user_name=first_name
+    )
+
     if current_step == "WAITING_PHOTO":
         photo = message.photo[-1]
         file_info = await bot.get_file(photo.file_id)
@@ -1767,25 +1779,40 @@ async def handle_photo(message: types.Message):
 @dp.message_handler(commands=['cancel'])
 async def cancel_handler(message: types.Message):
     user_id = message.from_user.id
+    first_name = message.from_user.first_name or "Teman"
     user_state[user_id] = {"step": 0, "data": {}}
     await save_dropoff(user_id, 0, {})
+    
+    await log_to_supabase_messages(
+        sender=f"Telegram / {first_name}",
+        text="/cancel",
+        tenant_id="boontrack-career",
+        channel="telegram",
+        user_id=str(user_id),
+        user_name=first_name
+    )
+    
     await message.reply("❌ <b>Proses pembuatan CV dibatalkan.</b>\n\nKetik /start kapan saja untuk kembali ke Menu Utama!", parse_mode="HTML")
 
 @dp.message_handler()
 async def handle_message(message: types.Message):
     t0 = time.perf_counter()
     user_id = message.from_user.id
+    first_name = message.from_user.first_name or "Teman"
     text = (message.text or "").strip()
 
     current_step = user_state.get(user_id, {}).get('step', 0)
 
-    print(
-        f"[DEBUG HANDLER] Pesan Masuk | "
-        f"User: {user_id} | "
-        f"Text: {text} | "
-        f"Current Step: {current_step}",
-        flush=True
-    )
+    # 1. CATAT SEMUA CHAT USER TELEGRAM KE SUPABASE SECARA INSTAN
+    if text:
+        await log_to_supabase_messages(
+            sender=f"Telegram / {first_name}",
+            text=text,
+            tenant_id="boontrack-career",
+            channel="telegram",
+            user_id=str(user_id),
+            user_name=first_name
+        )
 
     t_db_start = time.perf_counter()
     if user_id not in user_state:
@@ -1796,8 +1823,6 @@ async def handle_message(message: types.Message):
             user_state[user_id] = {"step": 0, "data": {}}
     t_db_end = time.perf_counter()
 
-    # PRIORITAS 1: ROUTING UTAMA KE AI COMPANION (QA / Chat Umum)
-    # PRIORITAS REVIEW CV INSTAN (DARI PASTE TEKS)
     if current_step == "WAITING_CV_INPUT":
         user_state[user_id]["step"] = 0
         from app.handlers.commands import render_free_cv_review
@@ -1808,16 +1833,16 @@ async def handle_message(message: types.Message):
 
     # PRIORITAS 1: ROUTING UTAMA KE AI COMPANION (QA / Chat Umum)
     if current_step == "CAREER_QA" or current_step == 0:
-        # Cek closing words hanya jika kalimatnya sangat pendek (maksimal 3 kata)
         words_count = len(text.strip().split())
         is_explicit_closing = any(re.search(rf"\b{re.escape(w)}\b", text.lower()) for w in CLOSING_WORDS)
         
         if is_explicit_closing and words_count <= 3:
             user_state[user_id]["step"] = 0
-            await message.reply("Siap! Kapan pun mau tanya lagi tinggal chat di sini.", reply_markup=types.ReplyKeyboardRemove())
+            closing_reply = "Siap! Kapan pun mau tanya lagi tinggal chat di sini."
+            await message.reply(closing_reply, reply_markup=types.ReplyKeyboardRemove())
+            await log_to_supabase_messages("BoonTrack AI", closing_reply, tenant_id="boontrack-career", channel="telegram", user_id=str(user_id), user_name=first_name)
             return
 
-        # Background task agar non-blocking
         asyncio.create_task(track_event(user_id, "career_ai_query", meta={"query": text}))
         await bot.send_chat_action(chat_id=user_id, action="typing")
         
@@ -1836,23 +1861,17 @@ async def handle_message(message: types.Message):
         await send_chunked_message(user_id, ai_reply, reply_markup=kbd_chat, parse_mode="HTML")
         t_send_end = time.perf_counter()
 
-        # Kunci state agar sesi chat mengalir terus secara otomatis
-        user_state[user_id]["step"] = "CAREER_QA"
-
-        # LOGGING PROFILING
-        db_ms = (t_db_end - t_db_start) * 1000
-        ai_ms = (t_ai_end - t_ai_start) * 1000
-        send_ms = (t_send_end - t_send_start) * 1000
-        total_ms = (t_send_end - t0) * 1000
-
-        print(
-            f"[PERF] User: {user_id} | "
-            f"DB: {db_ms:.1f}ms | "
-            f"AI Call: {ai_ms:.1f}ms | "
-            f"Telegram Send: {send_ms:.1f}ms | "
-            f"TOTAL: {total_ms:.1f}ms",
-            flush=True
+        # CATAT RESPON AI KE SUPABASE
+        await log_to_supabase_messages(
+            sender="BoonTrack AI",
+            text=ai_reply,
+            tenant_id="boontrack-career",
+            channel="telegram",
+            user_id=str(user_id),
+            user_name=first_name
         )
+
+        user_state[user_id]["step"] = "CAREER_QA"
         return
 
     # PRIORITAS 2: EDIT CAREER PAGE & FORM CV
@@ -2047,11 +2066,9 @@ async def handle_message(message: types.Message):
             if next_step in [4, 7, 8, 9]:
                 kbd = InlineKeyboardMarkup().add(InlineKeyboardButton("⏩ Lewati Langkah Ini", callback_data="skip_optional"))
 
-            await message.reply(
-                f"{get_progress_bar(next_step)}\n{get_question_text(next_step, target_lang, status_kerja)}",
-                reply_markup=kbd,
-                parse_mode="HTML"
-            )
+            step_q = f"{get_progress_bar(next_step)}\n{get_question_text(next_step, target_lang, status_kerja)}"
+            await message.reply(step_q, reply_markup=kbd, parse_mode="HTML")
+            await log_to_supabase_messages("BoonTrack AI", step_q, tenant_id="boontrack-career", channel="telegram", user_id=str(user_id), user_name=first_name)
         else:
             await process_and_send_cv(message, user_id, user_data)
 
@@ -2114,9 +2131,18 @@ async def handle_web_chat_http(request):
     if not user_msg:
         return web.json_response({"status": "error", "message": "Pesan tidak boleh kosong"}, status=400, headers=cors_headers)
 
+    # 1. LOG PESAN USER WEBCHAT KARIR KE SUPABASE
+    await log_to_supabase_messages(
+        sender=f"Visitor / {session_id[:8]}",
+        text=user_msg,
+        tenant_id="boontrack-career",
+        channel="webchat",
+        user_id=session_id,
+        user_name=f"Web Visitor #{session_id[:5]}"
+    )
+
     current_count = WEB_SESSION_COUNTS.get(session_id, 0)
 
-    # 1. Log Attribution jika ada UTM (Non-blocking)
     if utm_data and current_count == 0:
         def _log_utm():
             try:
@@ -2141,7 +2167,6 @@ async def handle_web_chat_http(request):
 
         asyncio.create_task(asyncio.to_thread(_log_utm))
 
-    # 2. Limit Kuota Percakapan Gratis
     if current_count >= MAX_WEB_MESSAGES:
         return web.json_response({
             "status": "limit_reached",
@@ -2153,7 +2178,6 @@ async def handle_web_chat_http(request):
             }
         }, headers=cors_headers)
 
-    # 3. Panggil AI Companion dengan instruksi respons singkat
     try:
         web_context_prompt = (
             f"[Instruksi Khusus Web Chat: Berikan respons yang SANGAT SINGKAT, padat, dan to-the-point "
@@ -2172,14 +2196,22 @@ async def handle_web_chat_http(request):
     WEB_SESSION_COUNTS[session_id] = current_count + 1
     updated_count = WEB_SESSION_COUNTS[session_id]
 
-    # Deteksi jika user bertanya tentang Telegram
     user_msg_lower = (user_msg if 'user_msg' in locals() else "").lower()
     if "telegram" in user_msg_lower or "link" in user_msg_lower:
         ai_reply = "Kamu bisa langsung lanjut konsultasi penuh dan pembuatan CV di bot resmi kami di https://t.me/boontrackbot atau klik tombol hijau di bawah ya!"
     elif updated_count in [2, 3]:
         ai_reply += "\n\n👉 *Untuk pembahasan lebih lengkap dan panduan detailnya, silakan lanjut di Telegram ya!*"
 
-    # 4. Dynamic CTA
+    # 2. LOG RESPON BOT WEBCHAT KE SUPABASE
+    await log_to_supabase_messages(
+        sender="BoonTrack AI",
+        text=ai_reply,
+        tenant_id="boontrack-career",
+        channel="webchat",
+        user_id=session_id,
+        user_name=f"Web Visitor #{session_id[:5]}"
+    )
+
     cta_data = None
     if updated_count >= 3:
         cta_data = {
@@ -2230,7 +2262,6 @@ async def dana_webhook_handler(request):
             incoming_amount = int(match.group(1))
             print(f"[DANA MATCHED AMOUNT]: Rp{incoming_amount:,}", flush=True)
 
-            # 1. Cek Order E-book
             order = await match_and_complete_order(incoming_amount)
             if order:
                 if order.get("status") == "PAID":
@@ -2259,7 +2290,6 @@ async def dana_webhook_handler(request):
 
                 return web.json_response({"status": "success_order", "order_id": order["order_id"]}, status=200)
 
-            # 2. Cek Donasi / Aktivasi Career Page
             donation = await match_and_complete_donation(incoming_amount)
             if donation:
                 if donation.get("status") == "VERIFIED":
@@ -2337,11 +2367,13 @@ from app.services.webchat_service import WebChatService
 from app.services.lead_service import LeadService
 from app.services.ai_gateway import AIGateway
 
-# Inisialisasi Service Khusus B2B
 _b2b_ai_gateway = AIGateway()
 _b2b_lead_service = LeadService(ai_gateway=_b2b_ai_gateway)
 _b2b_webchat_service = WebChatService(brain_engine=brain_engine, lead_service=_b2b_lead_service)
 
+# ============================================================
+# ENDPOINT B2B WEBCHAT HOLDING (boontrack.com)
+# ============================================================
 async def handle_b2b_webchat_http(request):
     try:
         data = await request.json()
@@ -2351,20 +2383,46 @@ async def handle_b2b_webchat_http(request):
         if not message:
             return web.json_response({"error": "Message cannot be empty"}, status=400)
 
+        # 1. Log chat user holding ke Supabase
+        await log_to_supabase_messages(
+            sender=f"Visitor / {session_id[:8]}",
+            text=message,
+            tenant_id="boontrack-holding",
+            channel="webchat",
+            user_id=session_id,
+            user_name=f"Holding Visitor #{session_id[:5]}"
+        )
+
         result = await _b2b_webchat_service.process_business_chat(
             session_id=session_id,
             message=message
         )
+
+        raw_reply = result.get("reply", "")
+        if any(keyword in str(raw_reply).upper() for keyword in ["QUERY", "START", "FALLBACK", "GENERAL"]):
+            reply = "Terima kasih atas pertanyaannya! BoonTrack Group siap membantu kebutuhan otomatisasi AI dan software kustom untuk bisnis Anda. Ada spesifikasi khusus yang ingin didiskusikan?"
+        else:
+            reply = raw_reply
+
+        # 2. Log balasan AI holding ke Supabase
+        await log_to_supabase_messages(
+            sender="BoonTrack AI",
+            text=reply,
+            tenant_id="boontrack-holding",
+            channel="webchat",
+            user_id=session_id,
+            user_name=f"Holding Visitor #{session_id[:5]}"
+        )
+
         return web.json_response({
             "status": "success",
             "session_id": session_id,
-            "reply": result["reply"],
-            "is_lead_qualified": result["is_lead_qualified"]
+            "reply": reply,
+            "is_lead_qualified": result.get("is_lead_qualified", False)
         })
     except Exception as e:
         return web.json_response({"status": "error", "message": str(e)}, status=500)
     
-# Tambahkan middleware CORS untuk aiohttp
 @web.middleware
 async def cors_middleware(request, handler):
     if request.method == "OPTIONS":
@@ -2400,25 +2458,18 @@ async def start_web_server():
     app.router.add_post('/webhook/dana', dana_webhook_handler)
     app.add_routes(commerce_routes)
     
-    # Endpoint Karir (Support variasi dengan strip & tanpa strip)
     app.router.add_post('/api/webchat', handle_web_chat_http)
     app.router.add_post('/api/web-chat', handle_web_chat_http)
     
-    # Endpoint B2B Business (Support variasi path)
     app.router.add_post('/api/webchat/business', handle_b2b_webchat_http)
     app.router.add_post('/api/b2b-webchat', handle_b2b_webchat_http)
 
-    # Registrasi Seluruh Route Public Services (Webchat & WhatsApp)
     register_public_service_routes(app)
-
-    # Registrasi Seluruh Route Multi-Tenant B2B & Device Auth Engine
     register_telegram_routes(app, async_session)
     register_whatsapp_routes(app, async_session)
-
     register_whatsapp_career_routes(app)
     register_payment_routes(app)
 
-    # Device Lifecycle Endpoints (Android BoonTrack Reader)
     async def _wrap_pair(req):
         async with async_session() as session:
             return await pair_device_handler(req, session)
@@ -2447,10 +2498,8 @@ async def start_web_server():
 if __name__ == '__main__':
     from aiogram.utils.exceptions import ConflictError
     
-    # Daftarkan handler Career Page di sini
     register_career_page_handlers(dp)
     
-    # ... baris executor.start_polling(dp, ...) bawaan kamu ...
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
 
     print("========================================", flush=True)
@@ -2467,11 +2516,9 @@ if __name__ == '__main__':
     print("[BOOT] Initializing database...", flush=True)
     loop.run_until_complete(init_db())
 
-    # 1. Start Web Server di Main Loop
     print("[BOOT] Starting Web Server...", flush=True)
     loop.create_task(start_web_server())
 
-    # 2. Start Telegram Polling langsung di loop yang sama
     async def start_telegram_polling():
         print("[TELEGRAM] Polling worker starting...", flush=True)
         try:
@@ -2483,7 +2530,6 @@ if __name__ == '__main__':
     loop.create_task(start_telegram_polling())
     print("[BOOT] Telegram & Web Server running concurrently in main loop.", flush=True)
 
-    # 3. Kunci Main Loop agar Web Server jalan terus
     try:
         loop.run_forever()
     except KeyboardInterrupt:
