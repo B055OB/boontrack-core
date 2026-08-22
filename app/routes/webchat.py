@@ -10,7 +10,6 @@ from app.services.ai_service import ai_gateway
 
 router = APIRouter(prefix="/api/webchat", tags=["WebChat Multi-Channel"])
 
-# Inisialisasi Service
 _ai_gateway = AIGateway()
 _lead_service = LeadService(ai_gateway=_ai_gateway)
 _session_repo = SessionRepository()
@@ -68,7 +67,7 @@ async def handle_career_webchat(payload: WebChatRequest):
         )
 
 
-# 2. ENDPOINT WEBCHAT HOLDING / GROUP & B2B BUSINESS (boontrack.com / business)
+# 2. ENDPOINT WEBCHAT HOLDING / GROUP & B2B BUSINESS (boontrack.com)
 @router.post("/business", response_model=WebChatResponse)
 @router.post("/holding", response_model=WebChatResponse)
 @router.post("/group", response_model=WebChatResponse)
@@ -91,7 +90,7 @@ async def handle_holding_webchat(payload: WebChatRequest):
             message=payload.message
         )
         
-        raw_reply = result["reply"]
+        raw_reply = result.get("reply", "")
         
         if any(keyword in str(raw_reply).upper() for keyword in ["QUERY", "START", "FALLBACK", "GENERAL"]):
             reply = "Terima kasih atas pertanyaannya! BoonTrack Group siap membantu kebutuhan otomatisasi AI dan software kustom untuk bisnis Anda. Ada spesifikasi atau alur kerja khusus yang ingin kita diskusikan?"
@@ -111,7 +110,7 @@ async def handle_holding_webchat(payload: WebChatRequest):
         return WebChatResponse(
             session_id=payload.session_id,
             reply=reply,
-            is_lead_qualified=result["is_lead_qualified"]
+            is_lead_qualified=result.get("is_lead_qualified", False)
         )
     except Exception as e:
         raise HTTPException(

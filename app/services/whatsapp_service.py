@@ -9,7 +9,6 @@ from supabase import create_client, Client
 
 logger = logging.getLogger(__name__)
 
-# Supabase Client Initialization
 SUPABASE_URL = (
     os.getenv("SUPABASE_URL") 
     or os.getenv("NEXT_PUBLIC_SUPABASE_URL") 
@@ -43,7 +42,7 @@ async def log_to_supabase_messages(
     user_name: Optional[str] = None,
     user_id: Optional[str] = None
 ):
-    """Menyimpan pesan masuk/keluar ke Supabase messages dengan skema aman."""
+    """Menyimpan pesan masuk/keluar ke tabel Supabase public.messages."""
     try:
         supabase = get_supabase()
         if supabase and text:
@@ -63,9 +62,7 @@ async def log_to_supabase_messages(
     except Exception as e:
         logger.error(f"[Supabase Logging Error] {e}")
 
-
 def get_wa_credentials():
-    """Mengambil token dan phone number ID Meta Cloud API."""
     token = (
         os.getenv("WHATSAPP_TOKEN")
         or os.getenv("META_WA_TOKEN")
@@ -84,13 +81,10 @@ def get_wa_credentials():
     version = os.getenv("META_GRAPH_VERSION", "v21.0")
     return token.strip(), phone_id.strip(), version
 
-
 def _get_auth_headers(token: str) -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
-
 async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False, tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
-    """Mengirim pesan teks standar ke WhatsApp via Meta API dan mencatat ke Supabase."""
     token, phone_id, version = get_wa_credentials()
     if not token or not phone_id:
         logger.error(f"[WhatsApp Service] Missing credentials (token_len={len(token)}, phone_id={phone_id})")
@@ -133,9 +127,7 @@ async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False
         logger.error(f"[WhatsApp Service] Exception in send_whatsapp_text: {e}")
         return None
 
-
 async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dict[str, str]], header_text: str = "", footer_text: str = "", tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
-    """Mengirim Quick Reply Buttons (maksimal 3 tombol) via Meta API."""
     token, phone_id, version = get_wa_credentials()
     if not token or not phone_id:
         logger.error("[WhatsApp Service] Missing credentials in send_whatsapp_buttons")
@@ -197,9 +189,7 @@ async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dic
         logger.error(f"[WhatsApp Service] Exception in send_whatsapp_buttons: {e}")
         return await send_whatsapp_text(to_phone, body_text, tenant_id=tenant_id)
 
-
 async def upload_whatsapp_media(file_bytes: bytes, filename: str, mime_type: str) -> Optional[str]:
-    """Mengunggah file biner ke Meta Cloud API untuk mendapatkan media_id."""
     token, phone_id, version = get_wa_credentials()
     if not token or not phone_id:
         logger.error("[WhatsApp Service] Missing credentials for media upload")
@@ -209,13 +199,8 @@ async def upload_whatsapp_media(file_bytes: bytes, filename: str, mime_type: str
     headers = _get_auth_headers(token)
 
     try:
-        files = {
-            "file": (filename, file_bytes, mime_type)
-        }
-        data = {
-            "messaging_product": "whatsapp",
-            "type": mime_type
-        }
+        files = {"file": (filename, file_bytes, mime_type)}
+        data = {"messaging_product": "whatsapp", "type": mime_type}
         async with httpx.AsyncClient(timeout=45.0) as client:
             response = await client.post(url, headers=headers, data=data, files=files)
             if response.status_code not in (200, 201):
@@ -226,9 +211,7 @@ async def upload_whatsapp_media(file_bytes: bytes, filename: str, mime_type: str
         logger.error(f"[WhatsApp Service] Exception in upload_whatsapp_media: {e}")
         return None
 
-
 async def send_whatsapp_image(to_phone: str, image_path_or_bytes: Union[str, bytes], caption: str = "", tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
-    """Pengiriman gambar (QRIS/Attachment) via Meta API."""
     token, phone_id, version = get_wa_credentials()
     if not token or not phone_id:
         return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
@@ -248,10 +231,7 @@ async def send_whatsapp_image(to_phone: str, image_path_or_bytes: Union[str, byt
         mime_type = guessed or ("image/jpeg" if filename.endswith((".jpg", ".jpeg")) else "image/png")
     elif isinstance(image_path_or_bytes, str) and image_path_or_bytes.startswith(("http://", "https://")):
         url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
-        headers = {
-            **_get_auth_headers(token),
-            "Content-Type": "application/json"
-        }
+        headers = {**_get_auth_headers(token), "Content-Type": "application/json"}
         payload = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
@@ -277,10 +257,7 @@ async def send_whatsapp_image(to_phone: str, image_path_or_bytes: Union[str, byt
         return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
 
     url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
-    headers = {
-        **_get_auth_headers(token),
-        "Content-Type": "application/json"
-    }
+    headers = {**_get_auth_headers(token), "Content-Type": "application/json"}
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
@@ -301,9 +278,7 @@ async def send_whatsapp_image(to_phone: str, image_path_or_bytes: Union[str, byt
         logger.error(f"[WhatsApp Service] Exception in send_whatsapp_image: {e}")
         return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
 
-
 async def send_whatsapp_document(to_phone: str, file_path_or_bytes: Union[str, bytes], filename: str = "document.docx", caption: str = "", tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
-    """Mengirim dokumen (.docx / .pdf) via WhatsApp dan mencatat ke database."""
     if isinstance(file_path_or_bytes, str) and os.path.exists(file_path_or_bytes):
         with open(file_path_or_bytes, "rb") as f:
             file_bytes = f.read()
@@ -323,20 +298,13 @@ async def send_whatsapp_document(to_phone: str, file_path_or_bytes: Union[str, b
     token, phone_id, version = get_wa_credentials()
     clean_phone = str(to_phone).replace("+", "").strip()
     url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
-    headers = {
-        **_get_auth_headers(token),
-        "Content-Type": "application/json"
-    }
+    headers = {**_get_auth_headers(token), "Content-Type": "application/json"}
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": clean_phone,
         "type": "document",
-        "document": {
-            "id": media_id,
-            "filename": filename,
-            "caption": caption
-        }
+        "document": {"id": media_id, "filename": filename, "caption": caption}
     }
 
     try:
@@ -351,9 +319,7 @@ async def send_whatsapp_document(to_phone: str, file_path_or_bytes: Union[str, b
         logger.error(f"[WhatsApp Service] Exception in send_whatsapp_document: {e}")
         return None
 
-
 async def download_whatsapp_media_by_id(media_id: str) -> Optional[bytes]:
-    """Mengunduh file bytes dari media Meta Cloud API."""
     token, _, version = get_wa_credentials()
     if not token:
         return None

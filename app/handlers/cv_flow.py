@@ -20,7 +20,7 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
     first_name = message.from_user.first_name or "Teman"
     raw_input = (message.text or "").strip()
 
-    # 1. Catat setiap input teks user Telegram ke Supabase
+    # 1. Catat chat user Telegram ke Supabase
     if raw_input:
         await log_to_supabase_messages(
             sender=f"Telegram / {first_name}",
@@ -31,16 +31,15 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
             user_name=first_name
         )
 
-    # 2. Jika user berada di luar step builder (step == 0)
+    # 2. Chat bebas di luar alur step builder (step == 0)
     if user_id not in user_state or user_state[user_id].get("step", 0) == 0:
-        # Jika teks panjang (> 40 karakter) dan bukan konsultasi bebas, arahkan ke Review CV
         if len(raw_input) > 80 and any(keyword in raw_input.lower() for keyword in ["pendidikan", "pengalaman", "skills", "riwayat", "universitas", "sekolah"]):
             from app.handlers.commands import render_free_cv_review
             await analytics_service.log_funnel_event("cv_uploaded", user_id=user_id, metadata={"type": "raw_text"})
             await render_free_cv_review(user_id, bot, raw_input, target_position="General Professional")
             return
 
-        # Fallback AI Consultation untuk Telegram (seperti pertanyaan lowongan/karir bebas)
+        # Respon konsultasi AI karir Telegram
         ai_reply = await ai_gateway.generate(
             user_message=raw_input,
             context={"user_id": str(user_id), "feature": "career_consultation_tg"},
@@ -130,7 +129,6 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
             except Exception:
                 pass
 
-            # Funnel review hook & donasi
             await analytics_service.log_funnel_event(
                 event_name="cv_review_started",
                 user_id=user_id,

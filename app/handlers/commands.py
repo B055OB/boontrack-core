@@ -68,7 +68,6 @@ async def send_welcome(message: types.Message):
     first_name = message.chat.first_name or "Teman"
     text = (message.text or "").strip()
 
-    # Log chat Telegram user ke Supabase
     if text and not text.startswith("/admin") and not text.startswith("/analytics"):
         await log_to_supabase_messages(
             sender=f"Telegram / {first_name}",
@@ -171,7 +170,6 @@ async def cancel_handler(message: types.Message):
     await log_to_supabase_messages("BoonTrack AI", cancel_txt, tenant_id="boontrack-career", channel="telegram", user_id=str(user_id))
 
 async def handle_career_qa_callback(query: types.CallbackQuery):
-    """Handler tombol 'Tanya Seputar Dunia Kerja'"""
     user_id = query.from_user.id
     first_name = query.from_user.first_name or "Teman"
     user_state[user_id] = {"step": 0, "mode": "qa_chat", "data": {}}
