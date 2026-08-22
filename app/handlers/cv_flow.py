@@ -11,16 +11,29 @@ from app.services.ai_service import enhance_resume_data
 from app.services.docx_service import generate_cv_docx
 from app.services.analytics_service import analytics_service
 from app.handlers.commands import CV_QUESTIONS, TOTAL_STEPS, get_progress_bar
+from app.services.whatsapp_service import log_to_supabase_messages
 
 # Path ke gambar QRIS (Pastikan file qris.jpg/png ada di folder assets)
 QRIS_IMAGE_PATH = "assets/qris.jpg" 
 
 async def process_cv_step(message: types.Message, user_state: dict, bot):
     user_id = message.from_user.id
-    
+    first_name = message.from_user.first_name or "Teman"
+    raw_input = (message.text or "").strip()
+
+    # 1. Catat setiap jawaban / input teks user Telegram ke Supabase
+    if raw_input:
+        await log_to_supabase_messages(
+            sender=f"Telegram / {first_name}",
+            text=raw_input,
+            tenant_id="boontrack-career",
+            channel="telegram",
+            user_id=str(user_id),
+            user_name=first_name
+        )
+
     # Jika user tidak dalam alur step builder (step == 0), perlakukan pesan teks sebagai input Review CV instan
     if user_id not in user_state or user_state[user_id].get("step", 0) == 0:
-        raw_input = message.text.strip()
         if len(raw_input) > 40:
             from app.handlers.commands import render_free_cv_review
             await analytics_service.log_funnel_event("cv_uploaded", user_id=user_id, metadata={"type": "raw_text"})
@@ -31,7 +44,7 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
     user_data = user_state[user_id]["data"]
 
     # Simpan jawaban step saat ini
-    user_data[current_step] = message.text
+    user_data[current_step] = raw_input
     await track_event(user_id, f"step_{current_step}_completed")
 
     if current_step < TOTAL_STEPS:
@@ -39,9 +52,17 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
         user_state[user_id]["step"] = next_step
         await save_dropoff(user_id, next_step, user_data)
         
-        await message.reply(
-            f"{get_progress_bar(next_step)}\n{CV_QUESTIONS[next_step]}",
-            parse_mode="HTML"
+        step_reply_text = f"{get_progress_bar(next_step)}\n{CV_QUESTIONS[next_step]}"
+        await message.reply(step_reply_text, parse_mode="HTML")
+
+        # Catat pertanyaan bot ke Supabase
+        await log_to_supabase_messages(
+            sender="BoonTrack AI",
+            text=step_reply_text,
+            tenant_id="boontrack-career",
+            channel="telegram",
+            user_id=str(user_id),
+            user_name=first_name
         )
     else:
         # Step 10 Selesai -> Proses Generate CV
@@ -68,13 +89,24 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
 
             # 4. Kirimkan File Docx ke User
             document = InputFile(file_path)
+            doc_caption = "📄 <b>CV ATS-Friendly Kamu Sudah Selesai!</b>\n\nFile .docx telah dilampirkan di atas. Semoga ini menjadi langkah pertama menuju pekerjaan impianmu. 🚀"
             await bot.send_document(
                 chat_id=user_id,
                 document=document,
-                caption="📄 <b>CV ATS-Friendly Kamu Sudah Selesai!</b>\n\nFile .docx telah dilampirkan di atas. Semoga ini menjadi langkah pertama menuju pekerjaan impianmu. 🚀",
+                caption=doc_caption,
                 parse_mode="HTML"
             )
             
+            # Catat pengiriman CV selesai ke Supabase
+            await log_to_supabase_messages(
+                sender="BoonTrack AI",
+                text=doc_caption,
+                tenant_id="boontrack-career",
+                channel="telegram",
+                user_id=str(user_id),
+                user_name=first_name
+            )
+
             # Hapus pesan status tunggu
             try:
                 await bot.delete_message(chat_id=user_id, message_id=processing_msg.message_id)
@@ -109,7 +141,7 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
                 parse_mode="HTML"
             )
 
-            # --- 5. PESAN DONASI SESUAI INSTRUKSI CTO (CHAT 1) ---
+            # --- 5. PESAN DONASI (CHAT 1) ---
             donation_text = (
                 "━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "BoonTrack saat ini masih dikembangkan secara mandiri (bootstrap) tanpa investor.\n"
@@ -129,7 +161,7 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
                     caption="Dukungan donasi seikhlasnya melalui QRIS di atas. Terima kasih! 🙏"
                 )
 
-            # --- 7. PESAN PENUTUP & PROGRAM REFERRAL (WEBSITE REWARD) ---
+            # --- 7. PESAN PENUTUP & PROGRAM REFERRAL ---
             referral_link = f"https://t.me/BoonTrackBot?start=ref_{user_id}"
             
             referral_text = (

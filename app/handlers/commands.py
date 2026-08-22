@@ -7,10 +7,10 @@ from app.handlers.admin_handler import admin_handler
 from app.services.analytics_service import analytics_service
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
+from app.services.whatsapp_service import log_to_supabase_messages
 
 user_state = {}
 
-# 10 Langkah Murni Data CV (Bahasa ditangani saat inisiasi)
 CV_QUESTIONS = {
     1: (
         "Siapa *nama lengkap* yang ingin kamu tampilkan di CV?\n\n"
@@ -67,6 +67,17 @@ async def send_welcome(message: types.Message):
     first_name = message.chat.first_name or "Teman"
     text = (message.text or "").strip()
 
+    # Log chat Telegram user ke Supabase
+    if text and not text.startswith("/admin") and not text.startswith("/analytics"):
+        await log_to_supabase_messages(
+            sender=f"Telegram / {first_name}",
+            text=text,
+            tenant_id="boontrack-career",
+            channel="telegram",
+            user_id=str(user_id),
+            user_name=first_name
+        )
+
     if text.startswith("/analytics") or text.startswith("/admin"):
         response_text = await admin_handler.handle_admin_command(user_id, text)
         await message.reply(response_text, parse_mode="Markdown")
@@ -111,7 +122,6 @@ async def send_welcome(message: types.Message):
     if user_id not in user_state:
         user_state[user_id] = {"step": progress.get("last_step", 0) if progress else 0, "data": saved_data}
 
-    # Tampilkan Menu Utama Interaktif Lengkap (6 Tombol)
     kbd = InlineKeyboardMarkup(row_width=1)
     kbd.add(
         InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"),
@@ -133,13 +143,13 @@ async def send_welcome(message: types.Message):
         )
         kbd_resume.add(InlineKeyboardButton("🔍 Review CV Saya", callback_data="trigger_cv_review"))
         
-        await message.reply(
+        reply_txt = (
             f"Halo lagi, <b>{first_name}</b>! 👋\n\n"
             f"Kemarin kita sempat membuat CV sampai di <b>Langkah {last_step} dari {TOTAL_STEPS}</b>.\n\n"
-            "Pilih opsi di bawah untuk melanjutkan atau review CV:",
-            reply_markup=kbd_resume,
-            parse_mode="HTML"
+            "Pilih opsi di bawah untuk melanjutkan atau review CV:"
         )
+        await message.reply(reply_txt, reply_markup=kbd_resume, parse_mode="HTML")
+        await log_to_supabase_messages("BoonTrack AI", reply_txt, tenant_id="boontrack-career", channel="telegram", user_id=str(user_id), user_name=first_name)
         return
 
     greeting = (
@@ -149,12 +159,15 @@ async def send_welcome(message: types.Message):
         "Silakan pilih layanan yang kamu butuhkan:"
     )
     await message.reply(greeting, reply_markup=kbd, parse_mode="HTML")
+    await log_to_supabase_messages("BoonTrack AI", greeting, tenant_id="boontrack-career", channel="telegram", user_id=str(user_id), user_name=first_name)
 
 async def cancel_handler(message: types.Message):
     user_id = message.from_user.id
     user_state[user_id] = {"step": 0, "data": {}}
     await save_dropoff(user_id, 0, {})
-    await message.reply("❌ <b>Proses pembuatan CV dibatalkan.</b>", parse_mode="HTML")
+    cancel_txt = "❌ <b>Proses pembuatan CV dibatalkan.</b>"
+    await message.reply(cancel_txt, parse_mode="HTML")
+    await log_to_supabase_messages("BoonTrack AI", cancel_txt, tenant_id="boontrack-career", channel="telegram", user_id=str(user_id))
 
 async def render_free_cv_review(user_id: int, bot, cv_text: str, target_position: str = "General Professional"):
     await bot.send_message(user_id, "⏳ <b>Sedang menganalisis struktur & skor ATS CV kamu...</b>", parse_mode="HTML")
@@ -207,3 +220,4 @@ async def render_free_cv_review(user_id: int, bot, cv_text: str, target_position
     )
 
     await bot.send_message(user_id, review_msg, reply_markup=kbd_result, parse_mode="HTML")
+    await log_to_supabase_messages("BoonTrack AI", review_msg, tenant_id="boontrack-career", channel="telegram", user_id=str(user_id))

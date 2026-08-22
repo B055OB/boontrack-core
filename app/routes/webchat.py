@@ -5,6 +5,7 @@ from app.services.brain_engine import BrainEngine
 from app.services.lead_service import LeadService
 from app.services.ai_gateway import AIGateway
 from app.repositories.session_repository import SessionRepository
+from app.services.whatsapp_service import log_to_supabase_messages
 
 router = APIRouter(prefix="/api/webchat", tags=["WebChat B2B"])
 
@@ -18,6 +19,16 @@ _webchat_service = WebChatService(brain_engine=_brain_engine, lead_service=_lead
 @router.post("/business", response_model=WebChatResponse)
 async def handle_business_webchat(payload: WebChatRequest):
     try:
+        # 1. Catat chat masuk dari web visitor ke Supabase
+        await log_to_supabase_messages(
+            sender=f"Visitor / {payload.session_id[:8]}",
+            text=payload.message,
+            tenant_id="boontrack-career",
+            channel="webchat",
+            user_id=payload.session_id,
+            user_name=f"Web Visitor #{payload.session_id[:5]}"
+        )
+
         result = await _webchat_service.process_business_chat(
             session_id=payload.session_id,
             message=payload.message
@@ -30,6 +41,16 @@ async def handle_business_webchat(payload: WebChatRequest):
             reply = "Terima kasih atas pertanyaannya! BoonTrack Group siap membantu kebutuhan otomatisasi AI dan software kustom untuk bisnis Anda. Ada spesifikasi atau alur kerja khusus yang ingin kita diskusikan?"
         else:
             reply = raw_reply
+
+        # 2. Catat balasan bot webchat ke Supabase
+        await log_to_supabase_messages(
+            sender="BoonTrack AI",
+            text=reply,
+            tenant_id="boontrack-career",
+            channel="webchat",
+            user_id=payload.session_id,
+            user_name=f"Web Visitor #{payload.session_id[:5]}"
+        )
 
         return WebChatResponse(
             session_id=payload.session_id,

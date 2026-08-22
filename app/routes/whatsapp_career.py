@@ -26,7 +26,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN") or os.getenv("META_WA_VERIFY_TOKEN", "boontrack_wa_secret_token")
-CAREER_TENANT_ID = "00000000-0000-0000-0000-000000000000"
+CAREER_TENANT_ID = "boontrack-career"
 
 # Safe import OCR service agar server tetap aman berjalan
 try:
@@ -157,6 +157,8 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
             user_data["nama_panggilan"] = raw_profile_name
             user_data["nama_lengkap"] = raw_profile_name
 
+    display_name = get_user_display_name(sender_wa_id) or sender_wa_id
+
     # 1. HANDLING GAMBAR (AI OCR SCANNER UNTUK BUKTI TRANSFER)
     if msg_type == "image":
         image_info = msg_obj.get("image", {})
@@ -165,7 +167,11 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         await log_to_supabase_messages(
             sender=f"Customer / +{sender_wa_id}",
             text="[Mengirim Gambar Bukti Transfer]",
-            tenant_id=CAREER_TENANT_ID
+            tenant_id=CAREER_TENANT_ID,
+            channel="whatsapp",
+            user_phone=sender_wa_id,
+            user_name=display_name,
+            user_id=sender_wa_id
         )
 
         if user_session.get("mode") == "awaiting_rewrite_payment":
@@ -239,7 +245,11 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         await log_to_supabase_messages(
             sender=f"Customer / +{sender_wa_id}",
             text=f"[Mengirim Dokumen: {filename}]",
-            tenant_id=CAREER_TENANT_ID
+            tenant_id=CAREER_TENANT_ID,
+            channel="whatsapp",
+            user_phone=sender_wa_id,
+            user_name=display_name,
+            user_id=sender_wa_id
         )
 
         await send_whatsapp_text(
@@ -300,7 +310,11 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         await log_to_supabase_messages(
             sender=f"Customer / +{sender_wa_id}",
             text=user_text,
-            tenant_id=CAREER_TENANT_ID
+            tenant_id=CAREER_TENANT_ID,
+            channel="whatsapp",
+            user_phone=sender_wa_id,
+            user_name=display_name,
+            user_id=sender_wa_id
         )
 
     user_text_clean = user_text.lower().strip()

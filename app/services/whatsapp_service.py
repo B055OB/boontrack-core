@@ -34,17 +34,36 @@ def get_supabase() -> Optional[Client]:
             logger.error(f"[Supabase Init Error] {e}")
     return _supabase_client
 
-async def log_to_supabase_messages(sender: str, text: str, tenant_id: str = "00000000-0000-0000-0000-000000000000"):
-    """Menyimpan setiap pesan masuk/keluar ke tabel Supabase messages."""
+async def log_to_supabase_messages(
+    sender: str, 
+    text: str, 
+    tenant_id: str = "boontrack-career",
+    channel: str = "whatsapp",
+    user_phone: Optional[str] = None,
+    user_name: Optional[str] = None,
+    user_id: Optional[str] = None
+):
+    """Menyimpan setiap pesan masuk/keluar ke tabel Supabase messages lengkap dengan channel."""
     try:
         supabase = get_supabase()
         if supabase and text:
-            supabase.table("messages").insert({
-                "sender": sender,
+            normalized_tenant = "boontrack-career" if tenant_id in ["00000000-0000-0000-0000-000000000000", "boontrack-career"] else tenant_id
+            sender_type = "bot" if ("BoonTrack" in sender or "Assistant" in sender or "AI" in sender) else "user"
+            
+            clean_phone = user_phone or (sender.replace("Customer / +", "").strip() if "Customer" in sender else None)
+            
+            payload = {
+                "sender": sender_type,
                 "text": text,
-                "tenant_id": tenant_id,
+                "tenant_id": normalized_tenant,
+                "tenant_slug": normalized_tenant,
+                "channel": channel,
+                "user_phone": clean_phone,
+                "user_name": user_name or sender,
+                "user_id": user_id or clean_phone or sender,
                 "created_at": datetime.utcnow().isoformat()
-            }).execute()
+            }
+            supabase.table("messages").insert(payload).execute()
     except Exception as e:
         logger.error(f"[Supabase Logging Error] {e}")
 
@@ -74,7 +93,7 @@ def _get_auth_headers(token: str) -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False, tenant_id: str = "00000000-0000-0000-0000-000000000000") -> Optional[Dict[str, Any]]:
+async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False, tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
     """Mengirim pesan teks standar ke user WhatsApp via Meta Graph API dan mencatatnya ke Supabase."""
     token, phone_id, version = get_wa_credentials()
     if not token or not phone_id:
@@ -105,15 +124,21 @@ async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False
                 logger.error(f"[WhatsApp Service] send_text failed: {response.status_code} - {response.text}")
                 return None
             
-            # Log pesan keluar bot ke database Supabase
-            await log_to_supabase_messages("Career Assistant Bot", text, tenant_id=tenant_id)
+            # Log pesan keluar bot ke Supabase
+            await log_to_supabase_messages(
+                sender="BoonTrack AI",
+                text=text,
+                tenant_id=tenant_id,
+                channel="whatsapp",
+                user_phone=clean_phone
+            )
             return response.json()
     except Exception as e:
         logger.error(f"[WhatsApp Service] Exception in send_whatsapp_text: {e}")
         return None
 
 
-async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dict[str, str]], header_text: str = "", footer_text: str = "", tenant_id: str = "00000000-0000-0000-0000-000000000000") -> Optional[Dict[str, Any]]:
+async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dict[str, str]], header_text: str = "", footer_text: str = "", tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
     """Mengirim pesan tombol interaktif (Quick Reply Buttons) maksimal 3 tombol."""
     token, phone_id, version = get_wa_credentials()
     if not token or not phone_id:
@@ -164,7 +189,13 @@ async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dic
                 return await send_whatsapp_text(to_phone, body_text, tenant_id=tenant_id)
             
             # Log interaksi bot ke Supabase
-            await log_to_supabase_messages("Career Assistant Bot", body_text, tenant_id=tenant_id)
+            await log_to_supabase_messages(
+                sender="BoonTrack AI",
+                text=body_text,
+                tenant_id=tenant_id,
+                channel="whatsapp",
+                user_phone=clean_phone
+            )
             return response.json()
     except Exception as e:
         logger.error(f"[WhatsApp Service] Exception in send_whatsapp_buttons: {e}")
@@ -200,7 +231,7 @@ async def upload_whatsapp_media(file_bytes: bytes, filename: str, mime_type: str
         return None
 
 
-async def send_whatsapp_image(to_phone: str, image_path_or_bytes: Union[str, bytes], caption: str = "", tenant_id: str = "00000000-0000-0000-0000-000000000000") -> Optional[Dict[str, Any]]:
+async def send_whatsapp_image(to_phone: str, image_path_or_bytes: Union[str, bytes], caption: str = "", tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
     """Mendukung pengiriman gambar via file path, bytes, maupun link."""
     token, phone_id, version = get_wa_credentials()
     if not token or not phone_id:
@@ -236,7 +267,7 @@ async def send_whatsapp_image(to_phone: str, image_path_or_bytes: Union[str, byt
             async with httpx.AsyncClient(timeout=30.0) as client:
                 res = await client.post(url, headers=headers, json=payload)
                 if res.status_code in (200, 201):
-                    await log_to_supabase_messages("Career Assistant Bot", f"[Kirim Gambar QRIS] {caption}", tenant_id=tenant_id)
+                    await log_to_supabase_messages("BoonTrack AI", f"[Kirim Gambar] {caption}", tenant_id=tenant_id, channel="whatsapp", user_phone=clean_phone)
                     return res.json()
                 return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
         except Exception:
@@ -268,14 +299,14 @@ async def send_whatsapp_image(to_phone: str, image_path_or_bytes: Union[str, byt
             if response.status_code not in (200, 201):
                 return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
             
-            await log_to_supabase_messages("Career Assistant Bot", f"[Kirim Gambar] {caption}", tenant_id=tenant_id)
+            await log_to_supabase_messages("BoonTrack AI", f"[Kirim Gambar] {caption}", tenant_id=tenant_id, channel="whatsapp", user_phone=clean_phone)
             return response.json()
     except Exception as e:
         logger.error(f"[WhatsApp Service] Exception in send_whatsapp_image: {e}")
         return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
 
 
-async def send_whatsapp_document(to_phone: str, file_path_or_bytes: Union[str, bytes], filename: str = "document.docx", caption: str = "", tenant_id: str = "00000000-0000-0000-0000-000000000000") -> Optional[Dict[str, Any]]:
+async def send_whatsapp_document(to_phone: str, file_path_or_bytes: Union[str, bytes], filename: str = "document.docx", caption: str = "", tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
     """Mengirim file dokumen (.docx / .pdf) langsung ke user WhatsApp."""
     if isinstance(file_path_or_bytes, str) and os.path.exists(file_path_or_bytes):
         with open(file_path_or_bytes, "rb") as f:
@@ -318,7 +349,7 @@ async def send_whatsapp_document(to_phone: str, file_path_or_bytes: Union[str, b
             if response.status_code not in (200, 201):
                 return None
             
-            await log_to_supabase_messages("Career Assistant Bot", f"[Kirim Dokumen: {filename}] {caption}", tenant_id=tenant_id)
+            await log_to_supabase_messages("BoonTrack AI", f"[Kirim Dokumen: {filename}] {caption}", tenant_id=tenant_id, channel="whatsapp", user_phone=clean_phone)
             return response.json()
     except Exception as e:
         logger.error(f"[WhatsApp Service] Exception in send_whatsapp_document: {e}")
