@@ -2457,6 +2457,8 @@ async def start_web_server():
     app.router.add_get('/source', tracker_handler)
     app.router.add_post('/webhook/dana', dana_webhook_handler)
     app.add_routes(commerce_routes)
+    # Tambahkan di bawah baris 2460:
+    register_public_service_routes(app)
     
     app.router.add_post('/api/webchat', handle_web_chat_http)
     app.router.add_post('/api/web-chat', handle_web_chat_http)

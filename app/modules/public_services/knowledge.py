@@ -1,12 +1,16 @@
 """
-Basis Data Pengetahuan Resmi Layanan Publik Kelurahan Kebon Melati
-Kecamatan Tanah Abang, Kota Administrasi Jakarta Pusat
+Basis Data Pengetahuan Resmi Multi-Tenant Layanan Publik
+- Tenant 1: Kelurahan Kebon Melati (Jakarta Pusat)
+- Tenant 2: Balé Pananggeuhan (Setda Pemprov Jawa Barat)
 """
 
+# =========================================================================
+# TENANT: KELURAHAN KEBON MELATI (JAKARTA PUSAT)
+# =========================================================================
 SERVICES_DATABASE = {
-    # =========================================================================
+    # -------------------------------------------------------------------------
     # KATEGORI 1: PELAYANAN PTSP (IZIN & NON-IZIN)
-    # =========================================================================
+    # -------------------------------------------------------------------------
     "iptm": {
         "service_name": "Izin Penggunaan Tanah Makam (IPTM)",
         "category": "Pelayanan PTSP",
@@ -146,9 +150,9 @@ SERVICES_DATABASE = {
         ]
     },
 
-    # =========================================================================
+    # -------------------------------------------------------------------------
     # KATEGORI 2: PELAYANAN PM1 (KEWENANGAN LURAH)
-    # =========================================================================
+    # -------------------------------------------------------------------------
     "pm1_keterangan_umum": {
         "service_name": "Surat Keterangan PM1 Umum",
         "category": "Pelayanan PM1",
@@ -282,9 +286,9 @@ SERVICES_DATABASE = {
         ]
     },
 
-    # =========================================================================
+    # -------------------------------------------------------------------------
     # KATEGORI 3: PELAYANAN KEPENDUDUKAN (DUKCAPIL)
-    # =========================================================================
+    # -------------------------------------------------------------------------
     "akta_kelahiran": {
         "service_name": "Akta Kelahiran",
         "category": "Pelayanan Kependudukan (Dukcapil)",
@@ -500,11 +504,63 @@ SERVICES_DATABASE = {
 }
 
 
-class PublicServiceKnowledgeProvider:
-    """Provider antarmuka untuk mengambil data pengetahuan layanan publik."""
+# =========================================================================
+# TENANT: BALÉ PANANGGEUHAN (SETDA PEMPROV JAWA BARAT)
+# =========================================================================
+BALE_PANANGGEUHAN_DATABASE = {
+    "ktp_jabar": {
+        "service_name": "Penerbitan & Penggantian KTP-el",
+        "category": "Kependudukan",
+        "slug": "ktp-jabar",
+        "description": "Standar operasional penerbitan KTP-el baru atau penggantian fisik di wilayah Jawa Barat.",
+        "requirements": [
+            "Surat Pengantar RT/RW (khusus pemula/pembuat baru)",
+            "Fotokopi Kartu Keluarga (KK) terbaru",
+            "KTP-el lama (jika rusak atau permohonan ganti data)",
+            "Surat Keterangan Kehilangan Polsek (jika hilang)"
+        ],
+        "cost": "Gratis (Rp 0)",
+        "processing_time": "1 - 3 Hari Kerja"
+    },
+    "kk_jabar": {
+        "service_name": "Pembuatan & Pembaruan Kartu Keluarga (KK)",
+        "category": "Kependudukan",
+        "slug": "kk-jabar",
+        "description": "Pembaruan elemen data keluarga, penambahan anak, atau status pernikahan.",
+        "requirements": [
+            "Kartu Keluarga (KK) asli yang lama",
+            "Buku Nikah / Akta Cerai (bila terjadi perubahan status)",
+            "Surat Keterangan Kelahiran (bila penambahan anggota baru)",
+            "SKPWNI (jika perpindahan domisili antarkota)"
+        ],
+        "cost": "Gratis (Rp 0)",
+        "processing_time": "3 - 5 Hari Kerja"
+    },
+    "bansos_jabar": {
+        "service_name": "Pengecekan Bantuan Sosial (DTKS / PKH / BPNT)",
+        "category": "Kesejahteraan Sosial",
+        "slug": "bansos-jabar",
+        "description": "Pengecekan kepesertaan bansos terpusat DTKS di wilayah Provinsi Jawa Barat.",
+        "requirements": [
+            "Nomor Induk Kependudukan (NIK) e-KTP",
+            "Nomor Kartu Keluarga (KK)",
+            "Terdaftar aktif di sistem DTKS Kemensos"
+        ],
+        "cost": "Gratis (Rp 0)",
+        "processing_time": "Instan via Pengecekan Sistem"
+    }
+}
 
-    def __init__(self):
-        self.db = SERVICES_DATABASE
+
+class PublicServiceKnowledgeProvider:
+    """Provider antarmuka untuk mengambil data pengetahuan layanan publik multi-tenant."""
+
+    def __init__(self, tenant_id: str = "kelurahan-indra"):
+        self.tenant_id = tenant_id
+        if tenant_id == "bale-pananggeuhan":
+            self.db = BALE_PANANGGEUHAN_DATABASE
+        else:
+            self.db = SERVICES_DATABASE
 
     def get_all_services(self) -> dict:
         return self.db

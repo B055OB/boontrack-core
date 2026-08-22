@@ -1,64 +1,68 @@
+import datetime
 import json
 import logging
+import random
 import re
 from typing import Any, Dict, List, Optional
-
-from app.modules.public_services.interfaces import (
-    EscalationProvider,
-    KnowledgeProvider,
-    PublicServiceProvider,
-)
-
-from app.modules.public_services.schemas import (
-    PublicServiceContext,
-    PublicServiceResponse,
-    StandardMessagePayload,
-)
 
 from app.modules.public_services.knowledge import (
     PublicServiceKnowledgeProvider,
 )
 
-from app.modules.public_services.escalation import (
-    LocalEscalationProvider,
-)
-
-from app.services.ai_gateway import AIGateway
-
-
 logger = logging.getLogger(__name__)
 
+# In-Memory Storage Tiket Multi-Tenant
+TENANT_TICKETS_STORE: Dict[str, List[Dict[str, Any]]] = {
+    "bale-pananggeuhan": [
+        {
+            "id": "PS-20260822-1001",
+            "waktu": "2026-08-22 09:15",
+            "aduan": "Pipa air bersih bocor di Jl. Asia Afrika",
+            "kategori": "PDAM",
+            "status": "PROSES"
+        },
+        {
+            "id": "PS-20260822-1002",
+            "waktu": "2026-08-22 10:30",
+            "aduan": "Tiang listrik korsleting padam satu blok di Dago",
+            "kategori": "PLN",
+            "status": "OPEN"
+        },
+        {
+            "id": "PS-20260822-1003",
+            "waktu": "2026-08-22 11:45",
+            "aduan": "Lampu PJU dan jalan berlubang parah di Pasteur",
+            "kategori": "Bina Marga / Dishub",
+            "status": "SELESAI"
+        }
+    ],
+    "kelurahan-indra": [
+        {
+            "id": "KL-20260822-001",
+            "waktu": "2026-08-22 08:30",
+            "aduan": "Pengajuan SKU mendesak untuk syarat KUR Bank",
+            "kategori": "Loket Pelayanan",
+            "status": "PROSES"
+        }
+    ]
+}
 
-# ============================================================
-# UTILITIES: SAFE AI JSON PARSER
-# ============================================================
 
 def safe_parse_ai_json(raw_text: str) -> dict:
-    """
-    Parser robust untuk membersihkan markdown fence, leading/trailing teks,
-    dan fallback cerdas jika LLM mengembalikan plain text.
-    """
     if not raw_text or not raw_text.strip():
         return {}
-
     cleaned = str(raw_text).strip()
-
-    # 1. Bersihkan formatting markdown code fence
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.MULTILINE)
     cleaned = re.sub(r"\s*```$", "", cleaned, flags=re.MULTILINE).strip()
-
-    # 2. Ekstrak payload JSON pertama jika ada teks intro dari LLM
     json_match = re.search(r"(\{.*\}|\[.*\])", cleaned, re.DOTALL)
     if json_match:
         cleaned = json_match.group(1).strip()
-
     try:
         parsed = json.loads(cleaned)
         if isinstance(parsed, dict):
             return parsed
         return {"reply": str(parsed), "is_escalated": False}
     except Exception:
-        # Fallback jika model menjawab dalam format plain text
         return {
             "reply": raw_text.strip(),
             "identified_service_slug": None,
@@ -67,337 +71,158 @@ def safe_parse_ai_json(raw_text: str) -> dict:
         }
 
 
-# ============================================================
-# SYSTEM PROMPT
-# ============================================================
-
-PUBLIC_SERVICE_SYSTEM_PROMPT = """
-Anda adalah AI Public Service Assistant resmi untuk layanan kelurahan/kecamatan.
-
-Tugas utama:
-Memberikan informasi persyaratan administratif yang akurat, ringkas, jelas, dan mudah dipahami warga.
-
-PANDUAN KETAT ANTI-HALUSINASI:
-
-1. Hanya gunakan informasi yang tersedia pada [DATA LAYANAN RESMI].
-2. DILARANG mengarang atau menambahkan syarat/biaya di luar data resmi.
-3. Jika informasi tidak ditemukan dalam data resmi, jangan mengarang.
-4. Jika kasus membutuhkan keputusan petugas, tandai is_escalated=true.
-5. Output WAJIB JSON murni tanpa markdown wrapper.
-
-Format:
-
-{
-  "reply": "Jawaban sopan dan jelas untuk warga",
-  "identified_service_slug": "slug_layanan_atau_null",
-  "is_escalated": false,
-  "escalation_reason": null
-}
-"""
-
-
-# ============================================================
-# KNOWLEDGE ADAPTER
-# ============================================================
-
-class KnowledgeProviderAdapter(KnowledgeProvider):
-
-    def __init__(self):
-        self.provider = PublicServiceKnowledgeProvider()
-
-    async def get_service_by_slug(
-        self,
-        slug: str
-    ) -> Optional[Dict[str, Any]]:
-
-        try:
-            return self.provider.get_service_by_slug(slug)
-
-        except Exception as e:
-
-            logger.error(
-                "[KNOWLEDGE] get_service_by_slug error: %s",
-                e,
-                exc_info=True
-            )
-
-            return None
-
-    async def search_relevant_services(
-        self,
-        query: str
-    ) -> List[Dict[str, Any]]:
-
-        try:
-
-            results = self.provider.search_service(query)
-
-            if results:
-                logger.info(
-                    "[KNOWLEDGE] Found %s relevant services",
-                    len(results)
-                )
-
-                return results
-
-            # Jika pencarian langsung tidak menemukan, berikan knowledge base sebagai context
-            all_services = self.provider.get_all_services()
-
-            if isinstance(all_services, dict):
-                return list(all_services.values())
-
-            return all_services or []
-
-        except Exception as e:
-
-            logger.error(
-                "[KNOWLEDGE] Search error: %s",
-                e,
-                exc_info=True
-            )
-
-            return []
-
-
-# ============================================================
-# PUBLIC SERVICE ENGINE
-# ============================================================
-
-class PublicServiceEngine(PublicServiceProvider):
-
-    def __init__(
-        self,
-        knowledge_provider: KnowledgeProvider,
-        escalation_provider: EscalationProvider,
-        ai_gateway: Any,
-    ):
-
-        self.knowledge = knowledge_provider
-        self.escalation = escalation_provider
-        self.ai_gateway = ai_gateway
-
-    async def process_user_query(
-        self,
-        payload: StandardMessagePayload,
-        conversation_history: Optional[
-            List[Dict[str, str]]
-        ] = None,
-    ) -> PublicServiceResponse:
-
-        logger.info(
-            "[PUBLIC SERVICE] Processing | channel=%s user=%s session=%s",
-            payload.channel,
-            payload.user_id,
-            payload.session_id,
-        )
-
-        # ----------------------------------------------------
-        # KNOWLEDGE RETRIEVAL
-        # ----------------------------------------------------
-
-        relevant_services = (
-            await self.knowledge.search_relevant_services(
-                payload.message
-            )
-        )
-
-        knowledge_context = json.dumps(
-            relevant_services,
-            ensure_ascii=False,
-            indent=2,
-        )
-
-        system_instruction = (
-            f"{PUBLIC_SERVICE_SYSTEM_PROMPT}\n\n"
-            f"[DATA LAYANAN RESMI]:\n"
-            f"{knowledge_context}"
-        )
-
-        # ----------------------------------------------------
-        # AI GENERATION & SAFE PARSING
-        # ----------------------------------------------------
-
-        try:
-
-            raw_ai_reply = await self.ai_gateway.generate(
-                user_message=payload.message,
-                context={
-                    "user_id": payload.user_id,
-                    "feature": "public_service",
-                },
-                system_prompt=system_instruction,
-            )
-
-            parsed_result = safe_parse_ai_json(raw_ai_reply)
-
-            # Jika safe parser mengembalikan dict kosong
-            if not parsed_result:
-                parsed_result = {
-                    "reply": str(raw_ai_reply or "Layanan berhasil diproses."),
-                    "identified_service_slug": None,
-                    "is_escalated": False,
-                    "escalation_reason": None,
-                }
-
-        except Exception as e:
-
-            logger.error(
-                "[PUBLIC SERVICE AI ERROR] %s",
-                e,
-                exc_info=True
-            )
-
-            parsed_result = {
-                "reply": (
-                    "Mohon maaf, sistem sedang mengalami kendala teknis. "
-                    "Pertanyaan Anda akan diteruskan kepada petugas."
-                ),
-                "identified_service_slug": None,
-                "is_escalated": True,
-                "escalation_reason": (
-                    f"AI/JSON failure: {str(e)}"
-                ),
-            }
-
-        # ----------------------------------------------------
-        # ESCALATION
-        # ----------------------------------------------------
-
-        escalation_triggered = bool(
-            parsed_result.get(
-                "is_escalated",
-                False
-            )
-        )
-
-        if escalation_triggered:
-
-            ctx = PublicServiceContext(
-                service_slug=parsed_result.get(
-                    "identified_service_slug"
-                ),
-                is_escalated=True,
-                escalation_reason=parsed_result.get(
-                    "escalation_reason",
-                    "Pertanyaan membutuhkan bantuan petugas."
-                ),
-            )
-
-            try:
-
-                await self.escalation.trigger_escalation(
-                    conversation_id=0,
-                    reason=(
-                        ctx.escalation_reason
-                        or "Perlu bantuan petugas"
-                    ),
-                    context=ctx,
-                )
-
-            except Exception as e:
-
-                logger.error(
-                    "[ESCALATION ERROR] %s",
-                    e,
-                    exc_info=True
-                )
-
-        # ----------------------------------------------------
-        # RESPONSE
-        # ----------------------------------------------------
-
-        return PublicServiceResponse(
-            reply=parsed_result.get(
-                "reply",
-                "Layanan sedang diproses."
-            ),
-            status=(
-                "ESCALATED"
-                if escalation_triggered
-                else "ACTIVE"
-            ),
-            session_id=payload.session_id,
-            service_slug=parsed_result.get(
-                "identified_service_slug"
-            ),
-            escalation_triggered=escalation_triggered,
-        )
-
-
-# ============================================================
-# PUBLIC SERVICE ADAPTER (SINGLETON & INTERFACE)
-# ============================================================
-
 class PublicServiceService:
-    """
-    Compatibility Adapter untuk WhatsApp / Telegram / Web Chat.
-    """
+    @classmethod
+    def detect_jabar_category(cls, text: str) -> str:
+        t = text.lower()
+        if any(k in t for k in ["air", "pdam", "kran", "saluran", "ledeng", "pipa"]):
+            return "PDAM"
+        if any(k in t for k in ["listrik", "pln", "padam", "gardu", "korslet", "mati lampu"]):
+            return "PLN"
+        if any(k in t for k in ["jalan", "lubang", "pju", "lampu", "rambu", "dishub", "aspal"]):
+            return "Bina Marga / Dishub"
+        return "Bale Pananggeuhan (Umum)"
 
-    def __init__(
-        self,
-        ai_gateway: Optional[Any] = None,
-        knowledge_provider: Optional[KnowledgeProvider] = None,
-        escalation_provider: Optional[EscalationProvider] = None,
-    ):
+    @classmethod
+    def get_tickets(cls, tenant_id: str) -> List[Dict[str, Any]]:
+        return TENANT_TICKETS_STORE.get(tenant_id, [])
 
-        self.ai_gateway = (
-            ai_gateway
-            if ai_gateway is not None
-            else AIGateway()
-        )
+    @classmethod
+    def update_ticket_status(cls, tenant_id: str, ticket_id: str, new_status: str) -> bool:
+        tickets = TENANT_TICKETS_STORE.get(tenant_id, [])
+        for t in tickets:
+            if t["id"] == ticket_id:
+                t["status"] = new_status
+                return True
+        return False
 
-        self.knowledge_provider = (
-            knowledge_provider
-            if knowledge_provider is not None
-            else KnowledgeProviderAdapter()
-        )
-
-        self.escalation_provider = (
-            escalation_provider
-            if escalation_provider is not None
-            else LocalEscalationProvider()
-        )
-
-        self.engine = PublicServiceEngine(
-            knowledge_provider=self.knowledge_provider,
-            escalation_provider=self.escalation_provider,
-            ai_gateway=self.ai_gateway,
-        )
-
-        logger.info("[PUBLIC SERVICE] Adapter initialized")
-
+    @classmethod
     async def handle_query(
-        self,
+        cls,
         user_text: str,
         user_id: str = "0",
         session_id: Optional[str] = None,
         channel: str = "webchat",
-        conversation_history: Optional[
-            List[Dict[str, str]]
-        ] = None,
-    ) -> str:
+        tenant_id: str = "bale-pananggeuhan"
+    ) -> Dict[str, Any]:
+        text = user_text.strip()
+        text_lower = text.lower()
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        today_str = datetime.datetime.now().strftime("%Y%m%d")
 
-        if not user_text or not user_text.strip():
-            return "Silakan jelaskan layanan yang ingin Anda tanyakan."
+        # -------------------------------------------------------------
+        # 1. LOGIKA BALE PANANGGEUHAN JABAR
+        # -------------------------------------------------------------
+        if tenant_id == "bale-pananggeuhan":
+            escalation_words = ["lapor", "aduan", "rusak", "pungli", "keluhan", "jalan", "air", "listrik", "padam", "bocor", "lubang", "pju"]
+            if any(w in text_lower for w in escalation_words):
+                ticket_id = f"PS-{today_str}-{random.randint(1000, 9999)}"
+                category = cls.detect_jabar_category(text)
 
-        if not session_id:
-            session_id = f"{channel}:{user_id}"
+                new_ticket = {
+                    "id": ticket_id,
+                    "waktu": now_str,
+                    "aduan": text,
+                    "kategori": category,
+                    "status": "OPEN"
+                }
+                if "bale-pananggeuhan" not in TENANT_TICKETS_STORE:
+                    TENANT_TICKETS_STORE["bale-pananggeuhan"] = []
+                TENANT_TICKETS_STORE["bale-pananggeuhan"].insert(0, new_ticket)
 
-        payload = StandardMessagePayload(
-            channel=channel,
-            user_id=str(user_id),
-            session_id=str(session_id),
-            message=user_text.strip(),
-            metadata={},
-        )
+                msg = (
+                    f"🚨 **Laporan Berhasil Diterbitkan**\n"
+                    f"• No. Tiket : `{ticket_id}`\n"
+                    f"• Instansi  : {category}\n"
+                    f"• Status    : **OPEN** (Menunggu Tindak Lanjut)\n\n"
+                    f"Laporan Anda telah diteruskan ke Posko Balé Pananggeuhan Gedung Sate untuk segera dikoordinasikan dengan dinas terkait."
+                )
+                return {"reply": msg, "type": "ticket", "ticket": new_ticket, "is_escalated": True}
 
-        result = await self.engine.process_user_query(
-            payload=payload,
-            conversation_history=conversation_history,
-        )
+            if "ktp" in text_lower:
+                return {
+                    "reply": (
+                        "📋 **Persyaratan Pengurusan KTP-el (Jawa Barat):**\n\n"
+                        "1. Fotokopi Kartu Keluarga (KK) terbaru\n"
+                        "2. Surat Pengantar RT/RW (khusus pemula/baru)\n"
+                        "3. KTP-el lama (jika rusak atau permohonan ganti data)\n"
+                        "4. Surat Keterangan Hilang Polsek (jika hilang)\n\n"
+                        "⏱️ **Estimasi:** 1 - 3 Hari Kerja\n"
+                        "💰 **Biaya:** Gratis (Rp 0)"
+                    ),
+                    "type": "information",
+                    "ticket": None
+                }
 
-        return result.reply
+            if "kk" in text_lower or "kartu keluarga" in text_lower:
+                return {
+                    "reply": (
+                        "📋 **Persyaratan Pembaruan Kartu Keluarga (KK):**\n\n"
+                        "1. Kartu Keluarga (KK) asli yang lama\n"
+                        "2. Buku Nikah / Akta Cerai (jika ubah status)\n"
+                        "3. Surat Keterangan Lahir (jika tambah anak)\n\n"
+                        "⏱️ **Estimasi:** 3 - 5 Hari Kerja\n"
+                        "💰 **Biaya:** Gratis (Rp 0)"
+                    ),
+                    "type": "information",
+                    "ticket": None
+                }
+
+            if "bansos" in text_lower or "bantuan" in text_lower or "dtks" in text_lower:
+                return {
+                    "reply": (
+                        "📋 **Informasi Bantuan Sosial (DTKS / PKH / BPNT):**\n\n"
+                        "Pengecekan bansos Jawa Barat terpusat melalui DTKS Kemensos.\n"
+                        "• Syarat: NIK e-KTP dan No. KK yang valid.\n"
+                        "• Pendaftaran: Melalui musyawarah kelurahan/desa setempat."
+                    ),
+                    "type": "information",
+                    "ticket": None
+                }
+
+            return {
+                "reply": (
+                    "Sampurasun! Saya asisten virtual Balé Pananggeuhan Jawa Barat.\n\n"
+                    "Anda dapat menanyakan syarat dokumen kependudukan (KTP, KK, Bansos) atau melaporkan keluhan fasilitas umum (PDAM bocor, listrik PLN padam, jalan rusak/PJU)."
+                ),
+                "type": "information",
+                "ticket": None
+            }
+
+        # -------------------------------------------------------------
+        # 2. LOGIKA KELURAHAN KEBON MELATI (INDRA)
+        # -------------------------------------------------------------
+        provider = PublicServiceKnowledgeProvider(tenant_id="kelurahan-indra")
+        matched = provider.search_service(text)
+
+        if matched:
+            svc = matched[0]
+            reqs = "\n".join([f"- {r}" for r in svc.get("requirements", [])])
+            flow = "\n".join(svc.get("flow", []))
+            reply_text = (
+                f"🏛️ **{svc['service_name']}**\n"
+                f"*{svc['description']}*\n\n"
+                f"**Persyaratan Wajib:**\n{reqs}\n\n"
+                f"**Alur Pengurusan:**\n{flow}\n\n"
+                f"⏱️ **Estimasi:** {svc['processing_time']}\n"
+                f"💰 **Biaya:** {svc['cost']}"
+            )
+            return {"reply": reply_text, "type": "information", "ticket": None}
+
+        # Default Kelurahan
+        return {
+            "reply": (
+                "Halo! Selamat datang di layanan informasi Kelurahan Kebon Melati.\n\n"
+                "Silakan tanyakan syarat pengurusan dokumen warga, seperti:\n"
+                "• Surat Keterangan Usaha (SKU / NIB)\n"
+                "• Surat Pengantar Nikah (N1-N4)\n"
+                "• Akta Kelahiran / Akta Kematian\n"
+                "• Izin Tanah Makam (IPTM) / SKTM"
+            ),
+            "type": "information",
+            "ticket": None
+        }
 
 
-# Instansiasi Singleton
+# Singleton Instance
 public_service_service = PublicServiceService()
