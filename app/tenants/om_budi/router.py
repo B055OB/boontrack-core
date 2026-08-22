@@ -1,18 +1,45 @@
 import logging
+import aiohttp
 from aiohttp import web
 from app.tenants.om_budi.config import (
     TENANT_ID,
-    DEFAULT_VERIFY_TOKEN,
     WHATSAPP_PHONE_NUMBER_ID,
     WHATSAPP_ACCESS_TOKEN
 )
 from app.tenants.om_budi.service import om_budi_service
-from app.services.whatsapp_service import send_whatsapp_message
 
 logger = logging.getLogger(__name__)
 om_budi_routes = web.RouteTableDef()
 
 
+async def send_meta_wa_message(phone_number_id: str, access_token: str, recipient_phone: str, message: str):
+    """Kirim pesan balik ke Meta WhatsApp Cloud API langsung tanpa external dependency."""
+    if not phone_number_id or not access_token or not recipient_phone:
+        return
+    url = f"https://graph.facebook.com/v20.0/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient_phone,
+        "type": "text",
+        "text": {"body": message}
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                if resp.status not in (200, 201):
+                    body = await resp.text()
+                    logger.error(f"[{TENANT_ID}] Meta WA Send Failed: {resp.status} - {body}")
+    except Exception as e:
+        logger.error(f"[{TENANT_ID}] Exception sending WA: {e}")
+
+
+# -----------------------------------------------------------------------------
+# 1. META CLOUD API WEBHOOK VERIFICATION (GET)
+# -----------------------------------------------------------------------------
 @om_budi_routes.get(f"/api/v1/tenants/{TENANT_ID}/webhook/whatsapp")
 @om_budi_routes.get(f"/webhook/{TENANT_ID}/whatsapp")
 async def om_budi_webhook_verification(request: web.Request) -> web.Response:
@@ -31,6 +58,9 @@ async def om_budi_webhook_verification(request: web.Request) -> web.Response:
     return web.Response(text="Verification failed", status=403)
 
 
+# -----------------------------------------------------------------------------
+# 2. META CLOUD API INCOMING EVENTS RECEIVER (POST)
+# -----------------------------------------------------------------------------
 @om_budi_routes.post(f"/api/v1/tenants/{TENANT_ID}/webhook/whatsapp")
 @om_budi_routes.post(f"/webhook/{TENANT_ID}/whatsapp")
 async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
@@ -62,8 +92,9 @@ async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
 
             reply_text = res.get("reply", "")
 
+            # Kirim balasan menggunakan kredensial
             if WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN and reply_text:
-                await send_whatsapp_message(
+                await send_meta_wa_message(
                     phone_number_id=WHATSAPP_PHONE_NUMBER_ID,
                     access_token=WHATSAPP_ACCESS_TOKEN,
                     recipient_phone=from_phone,
@@ -77,6 +108,9 @@ async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "message": str(e)}, status=500)
 
 
+# -----------------------------------------------------------------------------
+# 3. DIRECT HTTP API TESTING ENDPOINT (POST)
+# -----------------------------------------------------------------------------
 @om_budi_routes.post(f"/api/v1/tenants/{TENANT_ID}/chat")
 async def om_budi_chat_api(request: web.Request) -> web.Response:
     cors_headers = {
@@ -110,4 +144,4 @@ async def om_budi_chat_api(request: web.Request) -> web.Response:
 
 def register_om_budi_routes(app: web.Application):
     app.add_routes(om_budi_routes)
-    logger.info(f"[ROUTER] Tenant {TENANT_ID} routes registered.")
+    logger.info(f"[ROUTER] Tenant {TENANT_ID} zero-dependency routes registered.")
