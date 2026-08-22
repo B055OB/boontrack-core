@@ -10,7 +10,8 @@ central_wa_routes = web.RouteTableDef()
 VERIFY_TOKENS = [
     "boontrack_master_verify_token_2026",
     "om_budi_secure_token_2026",
-    "boontrack_career_token"
+    "boontrack_career_token",
+    "boontrack_wa_secret_token"
 ]
 
 # ID Nomor Telepon Masing-Masing Tenant
@@ -26,12 +27,10 @@ CAREER_ACCESS_TOKEN = os.getenv("CAREER_ACCESS_TOKEN", OM_BUDI_ACCESS_TOKEN)
 
 
 # --- Helper Outbound WA Dinamis ---
-async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
+async def send_wa_text(recipient_phone: str, text: str, phone_id: str = OM_BUDI_PHONE_NUMBER_ID):
     clean_id = re.findall(r"\d+", str(phone_id))[0] if re.findall(r"\d+", str(phone_id)) else OM_BUDI_PHONE_NUMBER_ID
-    
-    # Pilih token sesuai tenant pengirim
     token = CAREER_ACCESS_TOKEN if str(clean_id) == CAREER_PHONE_NUMBER_ID else OM_BUDI_ACCESS_TOKEN
-    
+
     url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -53,10 +52,10 @@ async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
         logger.error(f"[CENTRAL WA] Exception sending message: {e}")
 
 
-async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: list, phone_id: str):
+async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: list, phone_id: str = OM_BUDI_PHONE_NUMBER_ID):
     clean_id = re.findall(r"\d+", str(phone_id))[0] if re.findall(r"\d+", str(phone_id)) else OM_BUDI_PHONE_NUMBER_ID
     token = CAREER_ACCESS_TOKEN if str(clean_id) == CAREER_PHONE_NUMBER_ID else OM_BUDI_ACCESS_TOKEN
-    
+
     url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -86,6 +85,7 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: list, p
 # --- Webhook GET: Verifikasi Meta ---
 @central_wa_routes.get("/webhook/whatsapp")
 @central_wa_routes.get("/api/v1/tenants/om_budi/webhook/whatsapp")
+@central_wa_routes.get("/api/whatsapp/webhook")
 async def verify_webhook(request: web.Request) -> web.Response:
     query = request.query
     mode = query.get("hub.mode")
@@ -102,8 +102,10 @@ async def verify_webhook(request: web.Request) -> web.Response:
 # --- Webhook POST: Dispatcher Pesan ---
 @central_wa_routes.post("/webhook/whatsapp")
 @central_wa_routes.post("/api/v1/tenants/om_budi/webhook/whatsapp")
+@central_wa_routes.post("/api/whatsapp/webhook")
 async def handle_incoming_webhook(request: web.Request) -> web.Response:
     try:
+        # Clone request JSON data
         data = await request.json()
         entry = data.get("entry", [{}])[0]
         changes = entry.get("changes", [{}])[0]
@@ -113,10 +115,17 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         if not messages:
             return web.json_response({"status": "ignored"}, status=200)
 
+        phone_id = str(value.get("metadata", {}).get("phone_number_id", OM_BUDI_PHONE_NUMBER_ID))
+
+        # 1. Routing ke Career Assistant
+        if phone_id == CAREER_PHONE_NUMBER_ID:
+            from app.routes.whatsapp_career import handle_incoming_whatsapp
+            return await handle_incoming_whatsapp(request)
+
+        # 2. Routing ke Om Budi (atau fallback default)
         msg_obj = messages[0]
         from_phone = msg_obj.get("from")
         msg_type = msg_obj.get("type")
-        phone_id = str(value.get("metadata", {}).get("phone_number_id", OM_BUDI_PHONE_NUMBER_ID))
         contact_name = value.get("contacts", [{}])[0].get("profile", {}).get("name", "Bapak/Ibu")
 
         incoming_text = ""
@@ -131,28 +140,17 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 button_id = btn.get("id")
                 incoming_text = btn.get("title", "")
 
-        # 1. Routing ke Tenant: Career Assistant
-        if phone_id == CAREER_PHONE_NUMBER_ID:
-            try:
-                from app.services.career_service import career_service
-                reply = await career_service.process_message(phone=from_phone, text=incoming_text)
-                await send_wa_text(from_phone, reply, phone_id)
-            except Exception as ce:
-                logger.error(f"[CAREER SERVICE ERROR] {ce}", exc_info=True)
-
-        # 2. Routing ke Tenant: Om Budi
-        elif phone_id == OM_BUDI_PHONE_NUMBER_ID:
-            from app.tenants.om_budi.service import om_budi_service
-            res = await om_budi_service.handle_incoming_message(
-                phone_number=from_phone,
-                message_text=incoming_text,
-                button_id=button_id,
-                user_name=contact_name
-            )
-            if res.get("type") == "buttons":
-                await send_wa_buttons(from_phone, res["reply"], res["buttons"], phone_id)
-            else:
-                await send_wa_text(from_phone, res.get("reply", ""), phone_id)
+        from app.tenants.om_budi.service import om_budi_service
+        res = await om_budi_service.handle_incoming_message(
+            phone_number=from_phone,
+            message_text=incoming_text,
+            button_id=button_id,
+            user_name=contact_name
+        )
+        if res.get("type") == "buttons":
+            await send_wa_buttons(from_phone, res["reply"], res["buttons"], phone_id)
+        else:
+            await send_wa_text(from_phone, res.get("reply", ""), phone_id)
 
         return web.json_response({"status": "success"}, status=200)
 
