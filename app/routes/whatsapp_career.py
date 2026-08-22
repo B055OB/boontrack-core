@@ -22,12 +22,19 @@ from app.services.ai_service import ai_gateway
 from app.core.database import track_event
 from app.services.document_parser_service import download_whatsapp_media, extract_text_from_bytes
 from app.services.reconciliation_service import generate_unique_payment_intent, PAYMENT_INTENTS
-from app.services.receipt_ocr_service import parse_receipt_image
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN") or os.getenv("META_WA_VERIFY_TOKEN", "boontrack_wa_secret_token")
 CAREER_TENANT_ID = "00000000-0000-0000-0000-000000000000"
+
+# Safe import OCR service agar server tetap aman berjalan
+try:
+    from app.services.receipt_ocr_service import parse_receipt_image
+except Exception as e:
+    logger.warning(f"Receipt OCR service not loaded yet: {e}")
+    async def parse_receipt_image(image_bytes: bytes):
+        return None
 
 
 def get_user_display_name(sender_wa_id: str) -> str:
@@ -288,7 +295,7 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         await send_whatsapp_menu_buttons(sender_wa_id)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # Catat pesan teks / tombol masuk ke Supabase
+    # Catat pesan customer ke Supabase
     if user_text:
         await log_to_supabase_messages(
             sender=f"Customer / +{sender_wa_id}",

@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 OCR_PROMPT = (
     "Kamu adalah AI OCR parser khusus bukti transfer bank & e-wallet Indonesia (BCA, Mandiri, BRI, BNI, DANA, GoPay, OVO, ShopeePay, LinkAja). "
@@ -41,7 +41,7 @@ def _clean_json_str(raw_text: str) -> str:
 
 
 async def _ocr_gemini_primary(image_bytes: bytes) -> Optional[Dict[str, Any]]:
-    """Membaca screenshot bukti transfer menggunakan Gemini 3.6 Flash secara langsung."""
+    """Membaca screenshot bukti transfer menggunakan Gemini Flash secara langsung."""
     if not GEMINI_API_KEY:
         logger.error("[OCR] GEMINI_API_KEY is not configured.")
         return None
@@ -101,4 +101,22 @@ async def _ocr_openrouter_fallback(image_bytes: bytes) -> Optional[Dict[str, Any
                 else:
                     err_text = await resp.text()
                     logger.error(f"[OCR OpenRouter Response Error] Status {resp.status}: {err_text}")
-    except Exception as
+                    return None
+    except Exception as e:
+        logger.error(f"[OCR OpenRouter Exception] {e}")
+        return None
+
+
+async def parse_receipt_image(image_bytes: bytes) -> Optional[Dict[str, Any]]:
+    """Fungsi utama untuk mengekstrak data struk transfer dengan fallback otomatis."""
+    # 1. Coba Primary OCR (Gemini)
+    res = await _ocr_gemini_primary(image_bytes)
+    if res and res.get("is_transfer_receipt"):
+        return res
+
+    # 2. Coba Fallback OCR (OpenRouter) jika Gemini gagal
+    res_fallback = await _ocr_openrouter_fallback(image_bytes)
+    if res_fallback:
+        return res_fallback
+
+    return res
