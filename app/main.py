@@ -44,7 +44,7 @@ from app.routes.whatsapp_career import register_whatsapp_career_routes
 from app.routes.payment import register_payment_routes
 from app.services.whatsapp_service import log_to_supabase_messages
 from app.tenants.om_budi.router import register_om_budi_routes
-from app.api.routes.whatsapp_central import register_central_whatsapp_routes
+from app.routes.whatsapp_central import register_central_whatsapp_routes
 # ============================================================
 # B2B MULTI-TENANT ROUTERS & HANDLERS
 # ============================================================

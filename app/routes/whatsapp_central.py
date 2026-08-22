@@ -1,18 +1,11 @@
 import logging
+import os
+import re
+import aiohttp
 from aiohttp import web
-
-# Import handler inbound dari masing-masing tenant/service
-from app.tenants.om_budi.router import handle_om_budi_inbound
-from app.api.routes.whatsapp_career import handle_career_inbound
 
 logger = logging.getLogger("CENTRAL_WA_ROUTER")
 central_wa_routes = web.RouteTableDef()
-
-# Mapping Phone Number ID ke Tenant
-TENANT_PHONE_MAP = {
-    "1306479742542883": "om_budi",       # Nomor Test / Om Budi
-    # "PHONE_ID_CAREER_ASLI": "career",  # Nomor Riil Career
-}
 
 VERIFY_TOKENS = [
     "boontrack_master_verify_token_2026",
@@ -20,54 +13,142 @@ VERIFY_TOKENS = [
     "boontrack_career_token"
 ]
 
+OM_BUDI_PHONE_NUMBER_ID = "1306479742542883"
+ACCESS_TOKEN = os.getenv(
+    "OM_BUDI_ACCESS_TOKEN",
+    "EAANbiVgBfGQBSdMsa9S6YHzq6kx9xmML1vAAw890TZBQs7DqL5Ni1BEaAJZCV8xY4ZAjPPHKrC7ZAG6xYz5RSnyFzxoqyPayoo4PlSWUvZCYF8r5XGD99yMxSvku9K7WTat7lBJ00iXqNEZCNOhI0kznId91LMAP4h6wEQThKlTxPRGroCuaXZCWK5641sc1P2udi2ETKZBZBocOnF8U6ZBo7NnC9ADdGoFiB741T3w0ywzGPh63JzIgA67CI2UUOy793zLgl92fSWyHKv7BmoSm5ZAxZAvS0f6ZCtJwZD"
+)
 
+
+# --- Helper Outbound WA ---
+async def send_wa_text(recipient_phone: str, text: str, phone_id: str = OM_BUDI_PHONE_NUMBER_ID):
+    clean_id = re.findall(r"\d+", str(phone_id))[0] if re.findall(r"\d+", str(phone_id)) else OM_BUDI_PHONE_NUMBER_ID
+    url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient_phone,
+        "type": "text",
+        "text": {"body": text}
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                resp_text = await resp.text()
+                if resp.status not in (200, 201):
+                    logger.error(f"[CENTRAL WA] Outbound error ({resp.status}): {resp_text}")
+    except Exception as e:
+        logger.error(f"[CENTRAL WA] Exception sending message: {e}")
+
+
+async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: list, phone_id: str = OM_BUDI_PHONE_NUMBER_ID):
+    clean_id = re.findall(r"\d+", str(phone_id))[0] if re.findall(r"\d+", str(phone_id)) else OM_BUDI_PHONE_NUMBER_ID
+    url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    button_rows = [{"type": "reply", "reply": {"id": b["id"], "title": b["title"][:20]}} for b in buttons[:3]]
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient_phone,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": body_text},
+            "action": {"buttons": button_rows}
+        }
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                resp_text = await resp.text()
+                if resp.status not in (200, 201):
+                    logger.error(f"[CENTRAL WA] Button error ({resp.status}): {resp_text}")
+    except Exception as e:
+        logger.error(f"[CENTRAL WA] Exception sending buttons: {e}")
+
+
+# --- Webhook GET: Verifikasi Meta ---
 @central_wa_routes.get("/webhook/whatsapp")
 @central_wa_routes.get("/api/v1/tenants/om_budi/webhook/whatsapp")
-async def central_webhook_verification(request: web.Request) -> web.Response:
+async def verify_webhook(request: web.Request) -> web.Response:
     query = request.query
     mode = query.get("hub.mode")
     token = query.get("hub.verify_token")
     challenge = query.get("hub.challenge")
 
     if mode == "subscribe" and token in VERIFY_TOKENS:
-        logger.info("[CENTRAL WA] Webhook verification success.")
+        logger.info(f"[CENTRAL WA] Verified with token: {token}")
         return web.Response(text=challenge or "", status=200)
 
-    logger.warning(f"[CENTRAL WA] Verification rejected for token: {token}")
     return web.Response(text="Verification failed", status=403)
 
 
+# --- Webhook POST: Dispatcher Pesan ---
 @central_wa_routes.post("/webhook/whatsapp")
 @central_wa_routes.post("/api/v1/tenants/om_budi/webhook/whatsapp")
-async def central_whatsapp_webhook(request: web.Request) -> web.Response:
+async def handle_incoming_webhook(request: web.Request) -> web.Response:
     try:
         data = await request.json()
         entry = data.get("entry", [{}])[0]
         changes = entry.get("changes", [{}])[0]
         value = changes.get("value", {})
+        messages = value.get("messages", [])
 
-        if "messages" not in value or not value["messages"]:
-            return web.json_response({"status": "ignored", "reason": "non-message event"}, status=200)
+        if not messages:
+            return web.json_response({"status": "ignored"}, status=200)
 
-        # 1. Ekstrak Phone Number ID Meta
-        phone_id = str(changes.get("metadata", {}).get("phone_number_id", ""))
+        msg_obj = messages[0]
+        from_phone = msg_obj.get("from")
+        msg_type = msg_obj.get("type")
+        phone_id = str(value.get("metadata", {}).get("phone_number_id", OM_BUDI_PHONE_NUMBER_ID))
+        contact_name = value.get("contacts", [{}])[0].get("profile", {}).get("name", "Bapak/Ibu")
 
-        # 2. Lookup Tenant
-        tenant = TENANT_PHONE_MAP.get(phone_id, "career")
+        incoming_text = ""
+        button_id = None
 
-        logger.info(f"[CENTRAL WA] Inbound phone_id: {phone_id} -> Tenant: {tenant}")
+        if msg_type == "text":
+            incoming_text = msg_obj.get("text", {}).get("body", "")
+        elif msg_type == "interactive":
+            inter = msg_obj.get("interactive", {})
+            if inter.get("type") == "button_reply":
+                btn = inter.get("button_reply", {})
+                button_id = btn.get("id")
+                incoming_text = btn.get("title", "")
 
-        # 3. Dispatch ke Service masing-masing
-        if tenant == "om_budi":
-            return await handle_om_budi_inbound(value)
+        # Dispatch ke Tenant Om Budi
+        if phone_id == OM_BUDI_PHONE_NUMBER_ID:
+            from app.tenants.om_budi.service import om_budi_service
+            res = await om_budi_service.handle_incoming_message(
+                phone_number=from_phone,
+                message_text=incoming_text,
+                button_id=button_id,
+                user_name=contact_name
+            )
+            if res.get("type") == "buttons":
+                await send_wa_buttons(from_phone, res["reply"], res["buttons"], phone_id)
+            else:
+                await send_wa_text(from_phone, res.get("reply", ""), phone_id)
         else:
-            return await handle_career_inbound(value)
+            # Fallback/Dispatch ke Tenant Career
+            try:
+                from app.services.career_service import career_service
+                reply = await career_service.process_message(from_phone, incoming_text)
+                await send_wa_text(from_phone, reply, phone_id)
+            except Exception as ce:
+                logger.warning(f"[CAREER SERVICE NOT LOADED] {ce}")
+
+        return web.json_response({"status": "success"}, status=200)
 
     except Exception as e:
         logger.error(f"[CENTRAL WA ERROR] {e}", exc_info=True)
-        return web.json_response({"error": str(e)}, status=500)
+        return web.json_response({"status": "error", "message": str(e)}, status=500)
 
 
 def register_central_whatsapp_routes(app: web.Application):
     app.add_routes(central_wa_routes)
-    logger.info("[ROUTER] Central WhatsApp Dynamic Router registered.")
+    logger.info("[ROUTER] Central WhatsApp Webhook fully registered.")
