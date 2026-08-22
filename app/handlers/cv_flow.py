@@ -7,21 +7,20 @@ from app.core.database import (
     track_event,
     count_referrals
 )
-from app.services.ai_service import enhance_resume_data
+from app.services.ai_service import enhance_resume_data, ai_gateway
 from app.services.docx_service import generate_cv_docx
 from app.services.analytics_service import analytics_service
 from app.handlers.commands import CV_QUESTIONS, TOTAL_STEPS, get_progress_bar
 from app.services.whatsapp_service import log_to_supabase_messages
 
-# Path ke gambar QRIS (Pastikan file qris.jpg/png ada di folder assets)
-QRIS_IMAGE_PATH = "assets/qris.jpg" 
+QRIS_IMAGE_PATH = "assets/qris.jpg"
 
 async def process_cv_step(message: types.Message, user_state: dict, bot):
     user_id = message.from_user.id
     first_name = message.from_user.first_name or "Teman"
     raw_input = (message.text or "").strip()
 
-    # 1. Catat setiap jawaban / input teks user Telegram ke Supabase
+    # 1. Catat setiap input teks user Telegram ke Supabase
     if raw_input:
         await log_to_supabase_messages(
             sender=f"Telegram / {first_name}",
@@ -32,18 +31,45 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
             user_name=first_name
         )
 
-    # Jika user tidak dalam alur step builder (step == 0), perlakukan pesan teks sebagai input Review CV instan
+    # 2. Jika user berada di luar step builder (step == 0)
     if user_id not in user_state or user_state[user_id].get("step", 0) == 0:
-        if len(raw_input) > 40:
+        # Jika teks panjang (> 40 karakter) dan bukan konsultasi bebas, arahkan ke Review CV
+        if len(raw_input) > 80 and any(keyword in raw_input.lower() for keyword in ["pendidikan", "pengalaman", "skills", "riwayat", "universitas", "sekolah"]):
             from app.handlers.commands import render_free_cv_review
             await analytics_service.log_funnel_event("cv_uploaded", user_id=user_id, metadata={"type": "raw_text"})
             await render_free_cv_review(user_id, bot, raw_input, target_position="General Professional")
+            return
+
+        # Fallback AI Consultation untuk Telegram (seperti pertanyaan lowongan/karir bebas)
+        ai_reply = await ai_gateway.generate(
+            user_message=raw_input,
+            context={"user_id": str(user_id), "feature": "career_consultation_tg"},
+            system_prompt="Kamu adalah BoonTrack Career Companion. Bantu user yang sedang berkonsultasi seputar dunia kerja, lowongan, karir, dan motivasi kerja secara ringkas, ramah, dan solutif."
+        )
+
+        if not ai_reply:
+            ai_reply = "Saya memahami proses mencari karir butuh perjuangan. Ada posisi atau bidang kerja tertentu yang sedang ingin kamu tuju? Saya siap membantu menyusun strategi lamarannya."
+
+        menu_kbd = InlineKeyboardMarkup(row_width=1)
+        menu_kbd.add(InlineKeyboardButton("🏠 Menu Utama", callback_data="home_back_main"))
+
+        await message.reply(ai_reply, reply_markup=menu_kbd)
+
+        # Catat balasan bot ke Supabase
+        await log_to_supabase_messages(
+            sender="BoonTrack AI",
+            text=ai_reply,
+            tenant_id="boontrack-career",
+            channel="telegram",
+            user_id=str(user_id),
+            user_name=first_name
+        )
         return
 
+    # 3. Wizard Step Builder CV
     current_step = user_state[user_id]["step"]
     user_data = user_state[user_id]["data"]
 
-    # Simpan jawaban step saat ini
     user_data[current_step] = raw_input
     await track_event(user_id, f"step_{current_step}_completed")
 
@@ -55,7 +81,6 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
         step_reply_text = f"{get_progress_bar(next_step)}\n{CV_QUESTIONS[next_step]}"
         await message.reply(step_reply_text, parse_mode="HTML")
 
-        # Catat pertanyaan bot ke Supabase
         await log_to_supabase_messages(
             sender="BoonTrack AI",
             text=step_reply_text,
@@ -65,7 +90,6 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
             user_name=first_name
         )
     else:
-        # Step 10 Selesai -> Proses Generate CV
         user_state[user_id]["step"] = 0
         await save_dropoff(user_id, TOTAL_STEPS, user_data)
         
@@ -76,18 +100,13 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
         )
 
         try:
-            # 1. Poles data dengan AI
             enhanced_data = await enhance_resume_data(user_data)
-            
-            # 2. Generate File Docx
             file_path = await generate_cv_docx(user_id, enhanced_data)
             
-            # 3. Simpan Riwayat versi CV ke DB
             position = enhanced_data.get("position", user_data.get(6, "General"))
             await save_cv_version(user_id, position, enhanced_data)
             await track_event(user_id, "resume_generated", meta={"position": position})
 
-            # 4. Kirimkan File Docx ke User
             document = InputFile(file_path)
             doc_caption = "📄 <b>CV ATS-Friendly Kamu Sudah Selesai!</b>\n\nFile .docx telah dilampirkan di atas. Semoga ini menjadi langkah pertama menuju pekerjaan impianmu. 🚀"
             await bot.send_document(
@@ -97,7 +116,6 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
                 parse_mode="HTML"
             )
             
-            # Catat pengiriman CV selesai ke Supabase
             await log_to_supabase_messages(
                 sender="BoonTrack AI",
                 text=doc_caption,
@@ -107,13 +125,12 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
                 user_name=first_name
             )
 
-            # Hapus pesan status tunggu
             try:
                 await bot.delete_message(chat_id=user_id, message_id=processing_msg.message_id)
             except Exception:
                 pass
 
-            # --- 4.1 HOOK ACQUISITION FUNNEL: FREE CV REVIEW ---
+            # Funnel review hook & donasi
             await analytics_service.log_funnel_event(
                 event_name="cv_review_started",
                 user_id=user_id,
@@ -141,18 +158,14 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
                 parse_mode="HTML"
             )
 
-            # --- 5. PESAN DONASI (CHAT 1) ---
             donation_text = (
                 "━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "BoonTrack saat ini masih dikembangkan secara mandiri (bootstrap) tanpa investor.\n"
                 "Kalau hasil CV ini menurutmu bermanfaat, kamu boleh mendukung pengembangannya melalui donasi seikhlasnya.\n"
-                "Tidak wajib.\n"
-                "Tapi setiap dukungan akan membantu kami terus membuat layanan ini tetap gratis untuk banyak pencari kerja.\n"
                 "❤️"
             )
             await bot.send_message(user_id, donation_text, parse_mode="HTML")
 
-            # --- 6. KIRIM GAMBAR QRIS (CHAT 2) ---
             if os.path.exists(QRIS_IMAGE_PATH):
                 qris_img = InputFile(QRIS_IMAGE_PATH)
                 await bot.send_photo(
@@ -161,9 +174,7 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
                     caption="Dukungan donasi seikhlasnya melalui QRIS di atas. Terima kasih! 🙏"
                 )
 
-            # --- 7. PESAN PENUTUP & PROGRAM REFERRAL ---
             referral_link = f"https://t.me/BoonTrackBot?start=ref_{user_id}"
-            
             referral_text = (
                 "━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "🎁 <b>BONUS TAMBAHAN: WEBSITE LANDING PAGE/PORTOFOLIO GRATIS!</b>\n\n"
@@ -174,15 +185,12 @@ async def process_cv_step(message: types.Message, user_state: dict, bot):
             )
             await bot.send_message(user_id, referral_text, parse_mode="HTML")
 
-            # Hapus file temporer .docx dari server setelah dikirim
             if os.path.exists(file_path):
                 os.remove(file_path)
 
-            # --- 8. CEK & KIRIM REWARD UNTUK REFERRER ---
             referrer_id = user_state.get(user_id, {}).get("meta", {}).get("referrer_id")
             if referrer_id:
                 total_refs = await count_referrals(referrer_id)
-                
                 if total_refs == 3:
                     reward_text = (
                         "🎉 <b>SELAMAT! Target 3 Referral Tercapai!</b>\n\n"

@@ -1,6 +1,6 @@
 import os
 import json
-from aiogram import types
+from aiogram import types, Dispatcher
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from app.core.database import save_user, track_event, get_user_history, save_dropoff
 from app.handlers.admin_handler import admin_handler
@@ -8,6 +8,7 @@ from app.services.analytics_service import analytics_service
 from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 from app.services.whatsapp_service import log_to_supabase_messages
+from app.services.ai_service import ai_gateway
 
 user_state = {}
 
@@ -168,6 +169,21 @@ async def cancel_handler(message: types.Message):
     cancel_txt = "❌ <b>Proses pembuatan CV dibatalkan.</b>"
     await message.reply(cancel_txt, parse_mode="HTML")
     await log_to_supabase_messages("BoonTrack AI", cancel_txt, tenant_id="boontrack-career", channel="telegram", user_id=str(user_id))
+
+async def handle_career_qa_callback(query: types.CallbackQuery):
+    """Handler tombol 'Tanya Seputar Dunia Kerja'"""
+    user_id = query.from_user.id
+    first_name = query.from_user.first_name or "Teman"
+    user_state[user_id] = {"step": 0, "mode": "qa_chat", "data": {}}
+    
+    prompt_txt = (
+        f"Halo <b>{first_name}</b>! 💬\n\n"
+        "Silakan ketik pertanyaan seputar dunia kerja, persiapan interview, tips gaji/UMR, "
+        "atau masalah karir yang ingin kamu konsultasikan langsung di bawah ini. AI BoonTrack siap membantu!"
+    )
+    await query.message.reply(prompt_txt, parse_mode="HTML")
+    await log_to_supabase_messages("BoonTrack AI", prompt_txt, tenant_id="boontrack-career", channel="telegram", user_id=str(user_id), user_name=first_name)
+    await query.answer()
 
 async def render_free_cv_review(user_id: int, bot, cv_text: str, target_position: str = "General Professional"):
     await bot.send_message(user_id, "⏳ <b>Sedang menganalisis struktur & skor ATS CV kamu...</b>", parse_mode="HTML")
