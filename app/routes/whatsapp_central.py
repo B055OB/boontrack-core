@@ -134,7 +134,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         # 1. Routing ke Tenant: Career Assistant
         if phone_id == CAREER_PHONE_NUMBER_ID:
             try:
-                from app.tenants.career.service import career_service
+                from app.services.career_service import career_service
                 reply = await career_service.process_message(phone=from_phone, text=incoming_text)
                 await send_wa_text(from_phone, reply, phone_id)
             except Exception as ce:
