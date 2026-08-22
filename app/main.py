@@ -44,6 +44,7 @@ from app.routes.whatsapp_career import register_whatsapp_career_routes
 from app.routes.payment import register_payment_routes
 from app.services.whatsapp_service import log_to_supabase_messages
 from app.tenants.om_budi.router import register_om_budi_routes
+from app.api.routes.whatsapp_central import register_central_whatsapp_routes
 # ============================================================
 # B2B MULTI-TENANT ROUTERS & HANDLERS
 # ============================================================
@@ -2467,9 +2468,8 @@ async def start_web_server():
     register_public_service_routes(app)
     register_telegram_routes(app, async_session)
     register_whatsapp_routes(app, async_session)
-    register_whatsapp_career_routes(app)
     register_payment_routes(app)
-    register_om_budi_routes(app)
+    register_central_whatsapp_routes(app)
 
     async def _wrap_pair(req):
         async with async_session() as session:
