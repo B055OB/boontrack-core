@@ -1,6 +1,11 @@
 import logging
 from aiohttp import web
-from app.tenants.om_budi.config import TENANT_ID
+from app.tenants.om_budi.config import (
+    TENANT_ID,
+    DEFAULT_VERIFY_TOKEN,
+    WHATSAPP_PHONE_NUMBER_ID,
+    WHATSAPP_ACCESS_TOKEN
+)
 from app.tenants.om_budi.service import om_budi_service
 from app.services.whatsapp_service import send_whatsapp_message
 
@@ -8,9 +13,6 @@ logger = logging.getLogger(__name__)
 om_budi_routes = web.RouteTableDef()
 
 
-# -----------------------------------------------------------------------------
-# 1. META CLOUD API WEBHOOK VERIFICATION (GET)
-# -----------------------------------------------------------------------------
 @om_budi_routes.get(f"/api/v1/tenants/{TENANT_ID}/webhook/whatsapp")
 @om_budi_routes.get(f"/webhook/{TENANT_ID}/whatsapp")
 async def om_budi_webhook_verification(request: web.Request) -> web.Response:
@@ -19,21 +21,16 @@ async def om_budi_webhook_verification(request: web.Request) -> web.Response:
     token = query.get("hub.verify_token")
     challenge = query.get("hub.challenge")
 
-    # Ambil verify token langsung dari database Supabase
-    tenant_cfg = await om_budi_service.get_tenant_config(TENANT_ID)
-    expected_token = tenant_cfg.get("whatsapp_verify_token", "om_budi_secure_token_2026")
+    expected_token = "om_budi_secure_token_2026"
 
     if mode == "subscribe" and token == expected_token:
-        logger.info(f"[{TENANT_ID}] Webhook verified successfully.")
-        return web.Response(text=challenge, status=200)
+        logger.info(f"[{TENANT_ID}] Webhook verified successfully via GET.")
+        return web.Response(text=challenge or "", status=200)
 
     logger.warning(f"[{TENANT_ID}] Webhook verification failed. Token mismatch.")
     return web.Response(text="Verification failed", status=403)
 
 
-# -----------------------------------------------------------------------------
-# 2. META CLOUD API INCOMING EVENTS RECEIVER (POST)
-# -----------------------------------------------------------------------------
 @om_budi_routes.post(f"/api/v1/tenants/{TENANT_ID}/webhook/whatsapp")
 @om_budi_routes.post(f"/webhook/{TENANT_ID}/whatsapp")
 async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
@@ -57,7 +54,6 @@ async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
 
             logger.info(f"[{TENANT_ID}] Incoming WhatsApp from {from_phone} ({contact_name}): {text_body}")
 
-            # Proses pesan via OmBudiService
             res = await om_budi_service.handle_incoming_message(
                 phone_number=from_phone,
                 message_text=text_body,
@@ -66,15 +62,10 @@ async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
 
             reply_text = res.get("reply", "")
 
-            # Ambil kredensial pengiriman dari Supabase
-            tenant_cfg = await om_budi_service.get_tenant_config(TENANT_ID)
-            phone_number_id = tenant_cfg.get("whatsapp_phone_id")
-            access_token = tenant_cfg.get("whatsapp_access_token")
-
-            if phone_number_id and access_token and reply_text:
+            if WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN and reply_text:
                 await send_whatsapp_message(
-                    phone_number_id=phone_number_id,
-                    access_token=access_token,
+                    phone_number_id=WHATSAPP_PHONE_NUMBER_ID,
+                    access_token=WHATSAPP_ACCESS_TOKEN,
                     recipient_phone=from_phone,
                     message=reply_text
                 )
@@ -86,9 +77,6 @@ async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "message": str(e)}, status=500)
 
 
-# -----------------------------------------------------------------------------
-# 3. DIRECT HTTP API TESTING ENDPOINT (POST)
-# -----------------------------------------------------------------------------
 @om_budi_routes.post(f"/api/v1/tenants/{TENANT_ID}/chat")
 async def om_budi_chat_api(request: web.Request) -> web.Response:
     cors_headers = {
@@ -122,4 +110,4 @@ async def om_budi_chat_api(request: web.Request) -> web.Response:
 
 def register_om_budi_routes(app: web.Application):
     app.add_routes(om_budi_routes)
-    logger.info(f"[ROUTER] Tenant {TENANT_ID} dynamic DB routes registered.")
+    logger.info(f"[ROUTER] Tenant {TENANT_ID} routes registered.")

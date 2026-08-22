@@ -4,7 +4,6 @@ import os
 from typing import Dict, Any, Optional
 
 from app.services.ai_gateway import AIGateway
-from app.services.supabase_client import supabase  # Shared Supabase client BoonTrack
 from app.tenants.om_budi.config import (
     TENANT_ID,
     ESCALATION_KEYWORDS,
@@ -13,7 +12,6 @@ from app.tenants.om_budi.config import (
 
 logger = logging.getLogger(__name__)
 
-# Fallback Prompt jika di DB belum diisi
 DEFAULT_SYSTEM_PROMPT = """
 Anda adalah AI Operations & Member Assistant resmi untuk Om Budi (Om Budi Community & Mentorship).
 
@@ -40,21 +38,7 @@ Instruksi Output:
 class OmBudiService:
     def __init__(self, ai_gateway: Optional[AIGateway] = None):
         self.ai_gateway = ai_gateway or AIGateway()
-
-    async def get_tenant_config(self, tenant_id: str = TENANT_ID) -> Dict[str, Any]:
-        """Ambil konfigurasi, token, dan knowledge base dinamis dari Supabase."""
-        try:
-            res = supabase.table("tenants_config").select("*").eq("tenant_id", tenant_id).eq("is_active", True).execute()
-            if res.data and len(res.data) > 0:
-                return res.data[0]
-        except Exception as e:
-            logger.error(f"[{tenant_id}] Gagal mengambil config dari Supabase: {e}")
-        
-        # Fallback local file jika DB offline
-        return {
-            "system_prompt": DEFAULT_SYSTEM_PROMPT,
-            "knowledge_base": self._load_fallback_knowledge()
-        }
+        self.knowledge_data = self._load_fallback_knowledge()
 
     def _load_fallback_knowledge(self) -> Dict[str, Any]:
         kb_path = os.path.join(os.path.dirname(__file__), "knowledge_base.json")
@@ -88,7 +72,6 @@ class OmBudiService:
         segment = self.detect_segment(phone_number, metadata)
         segment_info = MEMBER_SEGMENTS.get(segment, MEMBER_SEGMENTS["FREE_TIER"])
 
-        # 1. Rule-based Escalation Check
         if self.check_manual_escalation(text):
             escalation_msg = (
                 f"Halo Kak {user_name}! Pesan Anda telah kami tandai untuk ditindaklanjuti "
@@ -102,17 +85,11 @@ class OmBudiService:
                 "segment": segment
             }
 
-        # 2. Ambil config & prompt real-time dari Supabase
-        db_config = await self.get_tenant_config(TENANT_ID)
-        base_prompt = db_config.get("system_prompt") or DEFAULT_SYSTEM_PROMPT
-        kb_data = db_config.get("knowledge_base") or self._load_fallback_knowledge()
-
-        system_instruction = base_prompt.format(
+        system_instruction = DEFAULT_SYSTEM_PROMPT.format(
             user_segment=segment,
             user_segment_label=segment_info["label"]
-        ) + f"\n\n[KNOWLEDGE BASE OM BUDI]:\n{json.dumps(kb_data, ensure_ascii=False, indent=2)}"
+        ) + f"\n\n[KNOWLEDGE BASE OM BUDI]:\n{json.dumps(self.knowledge_data, ensure_ascii=False, indent=2)}"
 
-        # 3. AI Gateway Generation
         try:
             raw_response = await self.ai_gateway.generate(
                 user_message=text,
