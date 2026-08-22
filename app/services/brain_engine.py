@@ -24,6 +24,32 @@ class BrainEngine:
         context = context or {}
         uid = str(user_id or context.get("user_id", "default_user"))
         lower_text = clean_text.lower()
+        tenant_slug = context.get("tenant_slug", "boontrack-career")
+
+        # === 1b. VALIDASI KILL-SWITCH & PERIZINAN MULTI-CHANNEL TENANT ===
+        try:
+            from app.lib.supabaseClient import get_supabase
+            supabase = get_supabase()
+            t_res = supabase.table("tenants").select("status, enable_whatsapp, enable_telegram, enable_webchat").eq("slug", tenant_slug).maybe_single().execute()
+            
+            if t_res.data:
+                tenant_data = t_res.data
+                # Cek Kill Switch Global Tenant
+                if tenant_data.get("status") != "active":
+                    print(f"[BRAIN][KILL-SWITCH] Tenant '{tenant_slug}' nonaktif/suspended.", flush=True)
+                    return "Mohon maaf, layanan asisten bot ini sedang dinonaktifkan sementara."
+
+                # Cek Izin Channel Spesifik (WhatsApp / Telegram / Webchat)
+                ch = str(channel).lower()
+                if "whatsapp" in ch and not tenant_data.get("enable_whatsapp", True):
+                    return "Mohon maaf, integrasi WhatsApp belum diaktifkan untuk workspace ini."
+                elif "telegram" in ch and not tenant_data.get("enable_telegram", True):
+                    return "Mohon maaf, integrasi Telegram belum diaktifkan untuk workspace ini."
+                elif ("webchat" in ch or "web" in ch) and not tenant_data.get("enable_webchat", True):
+                    return "Mohon maaf, integrasi Webchat belum diaktifkan untuk workspace ini."
+        except Exception as err:
+            print(f"[BRAIN][AUTH-CHECK-ERROR] {err}", flush=True)
+        # ==================================================================
 
         # 2. Load atau Create Session User
         session = await self.session_repo.get_or_create(uid, channel)
