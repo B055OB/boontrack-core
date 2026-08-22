@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from typing import Dict, Any, Optional
 
 from app.services.ai_gateway import AIGateway
@@ -18,20 +19,13 @@ Anda adalah AI Operations & Member Assistant resmi untuk Om Budi (Om Budi Commun
 Karakter & Gaya Komunikasi:
 - Ramah, solutif, percaya diri, praktis, dan profesional khas mentor bisnis Om Budi.
 - Sapa member dengan hangat (misal: "Halo Kak!", "Semangat pagi!").
-- Berikan informasi yang presisi berdasarkan [KNOWLEDGE BASE OM BUDI].
+- Berikan informasi yang presisi seputar program, jadwal, dan produk digital Om Budi.
 
 Segmentasi Pengguna:
-- Segmen User Saat Ini: {user_segment} ({user_segment_label})
+- Segmen User: {user_segment} ({user_segment_label})
 
-Instruksi Output:
-- Jika user meminta bicara dengan CS/Admin atau komplain/refund, set "is_escalated": true.
-- Output WAJIB JSON murni:
-{{
-  "reply": "Kalimat jawaban yang siap dikirim ke WhatsApp user",
-  "intent": "INFORMASI_PROGRAM | JADWAL_SESI | FAQ | ESKALASI_ADMIN | GENERAL",
-  "is_escalated": false,
-  "escalation_reason": null
-}}
+KNOWLEDGE BASE:
+{knowledge_base}
 """
 
 
@@ -47,8 +41,8 @@ class OmBudiService:
                 with open(kb_path, "r", encoding="utf-8") as f:
                     return json.load(f)
         except Exception as e:
-            logger.error(f"[OM_BUDI] Gagal membaca local KB: {e}")
-        return {"programs": [], "faq": []}
+            logger.error(f"[OM_BUDI] Gagal membaca KB: {e}")
+        return {}
 
     def detect_segment(self, phone_number: str, metadata: Optional[Dict[str, Any]] = None) -> str:
         if metadata and metadata.get("is_vip"):
@@ -72,52 +66,63 @@ class OmBudiService:
         segment = self.detect_segment(phone_number, metadata)
         segment_info = MEMBER_SEGMENTS.get(segment, MEMBER_SEGMENTS["FREE_TIER"])
 
+        # 1. Rule-based manual escalation
         if self.check_manual_escalation(text):
-            escalation_msg = (
-                f"Halo Kak {user_name}! Pesan Anda telah kami tandai untuk ditindaklanjuti "
-                f"langsung oleh Tim Operasional Om Budi. Admin kami akan segera membalas chat ini ya."
-            )
             return {
-                "reply": escalation_msg,
+                "reply": f"Halo Kak {user_name}! Pesan Anda sudah kami teruskan ke Tim Operasional Om Budi. Admin kami akan segera membalas chat ini ya.",
                 "intent": "ESKALASI_ADMIN",
                 "is_escalated": True,
-                "escalation_reason": "User triggered manual escalation keyword",
                 "segment": segment
             }
 
+        # 2. Siapkan prompt
         system_instruction = DEFAULT_SYSTEM_PROMPT.format(
             user_segment=segment,
-            user_segment_label=segment_info["label"]
-        ) + f"\n\n[KNOWLEDGE BASE OM BUDI]:\n{json.dumps(self.knowledge_data, ensure_ascii=False, indent=2)}"
+            user_segment_label=segment_info["label"],
+            knowledge_base=json.dumps(self.knowledge_data, ensure_ascii=False, indent=2)
+        )
 
+        # 3. Generate Jawaban via AI Gateway
         try:
             raw_response = await self.ai_gateway.generate(
                 user_message=text,
-                context={
-                    "tenant": TENANT_ID,
-                    "phone": phone_number,
-                    "segment": segment
-                },
+                context={"tenant": TENANT_ID, "phone": phone_number},
                 system_prompt=system_instruction,
             )
 
-            cleaned = str(raw_response).strip()
-            if "```json" in cleaned:
-                cleaned = cleaned.split("```json")[1].split("```")[0].strip()
-            elif "```" in cleaned:
-                cleaned = cleaned.split("```")[1].split("```")[0].strip()
+            response_str = str(raw_response).strip()
 
-            parsed = json.loads(cleaned)
-            parsed["segment"] = segment
-            return parsed
+            # Bersihkan markdown code block jika model membungkusnya
+            if "```" in response_str:
+                response_str = re.sub(r"^```(?:json)?|```$", "", response_str, flags=re.MULTILINE).strip()
+
+            # Coba parsing jika model membalas format JSON
+            try:
+                parsed = json.loads(response_str)
+                if isinstance(parsed, dict) and "reply" in parsed:
+                    return {
+                        "reply": parsed.get("reply"),
+                        "intent": parsed.get("intent", "GENERAL"),
+                        "is_escalated": parsed.get("is_escalated", False),
+                        "segment": segment
+                    }
+            except Exception:
+                pass
+
+            # Fallback jika model mengembalikan teks langsung
+            return {
+                "reply": response_str,
+                "intent": "GENERAL",
+                "is_escalated": False,
+                "segment": segment
+            }
 
         except Exception as e:
             logger.error(f"[OM_BUDI AI ERROR] {e}", exc_info=True)
             return {
-                "reply": f"Halo Kak {user_name}! Terima kasih sudah menghubungi Om Budi Support. Ada yang bisa kami bantu seputar program mentorship bisnis atau produk digital?",
+                "reply": f"Halo Kak {user_name}! Ada yang bisa kami bantu seputar program kelas mentorship atau produk digital Om Budi?",
                 "intent": "GENERAL",
                 "is_escalated": False,
-                "escalation_reason": None,
                 "segment": segment
             }
 
