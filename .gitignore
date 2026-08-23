@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+.vscode/
+# Sensitive B2B / Gov Proposals
+Proposal_*.docx
+Proposal_*.pdf
+generate_proposal*.py
+# Sensitive Documents
+Proposal_*.docx
+Proposal_*.pdf
+generate_proposal*.py
