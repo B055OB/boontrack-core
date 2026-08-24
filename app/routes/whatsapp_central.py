@@ -148,8 +148,8 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         msg_type = msg_obj.get("type")
         contact_name = value.get("contacts", [{}])[0].get("profile", {}).get("name", "Bapak/Ibu")
 
-        # 6.1. Anti-Spam Rate Limiter (Maks 5 pesan / menit)[cite: 5]
-        is_allowed, retry_after = wa_rate_limiter.is_allowed(from_phone)[cite: 5]
+        # 6.1. Anti-Spam Rate Limiter (Maks 5 pesan / menit)
+        is_allowed, retry_after = wa_rate_limiter.is_allowed(from_phone)
         if not is_allowed:
             logger.warning(f"[RATE LIMIT] Pengirim {from_phone} terkena throttling.")
             await send_wa_text(
@@ -194,12 +194,10 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
         # 6.4. Dispatching Terisolasi Berdasarkan Phone Number ID
         if phone_id == CAREER_PHONE_NUMBER_ID:
-            # Tenant Career Assistant
             from app.routes.whatsapp_career import handle_incoming_whatsapp
             return await handle_incoming_whatsapp(request)
 
         elif phone_id == OM_BUDI_PHONE_NUMBER_ID:
-            # Tenant Om Budi (Produksi)
             from app.tenants.om_budi.service import om_budi_service
             res = await om_budi_service.handle_incoming_message(
                 phone_number=from_phone,
@@ -214,7 +212,6 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             return web.json_response({"status": "success", "tenant": "om_budi"}, status=200)
 
         elif phone_id == ADUAN_SANDBOX_PHONE_ID:
-            # Tenant Sandbox / Uji Coba Diskominfo (Netral)
             sandbox_reply = (
                 f"🏛️ *[BALÉ PANANGGEUHAN DISKOMINFO - UJI COBA]*\n\n"
                 f"Sampurasun, *{contact_name}*.\n"
