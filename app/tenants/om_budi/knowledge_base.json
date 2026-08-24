@@ -1,55 +1,39 @@
 {
-  "channel_name": "Om Budi",
-  "core_values": "Membimbing jamaah/bapak-ibu yang terjebak hutang, pinjol, hajat berat, dan jodoh dengan membenahi tauhid, sholat awal waktu, istighfar, dan amalan riyadhoh sholawat nabi.",
-  "group_gratis_link": "https://chat.whatsapp.com/invite-obc-gratis",
-  "qris_url": "https://storage.boontrack.com/om_budi/qris-om-budi.jpg",
-  "classes": [
+  "tenant_id": "om_budi",
+  "name": "Riyadhoh Sholawat & Quantum Energi Om Budi",
+  "version": "2026.08",
+  "faq_data": [
     {
-      "code": "KLS_ONLINE",
-      "name": "Kelas Online Pembuka Rezeki & Tauhid",
-      "price": 200000,
-      "price_label": "Rp200.000",
-      "description": "Kelas dasar pengenalan riyadhoh sholawat, pembersihan sumbatan energi rezeki, dan perbaikan sholat tepat waktu."
-    },
-    {
-      "code": "KLS_MEMBER",
-      "name": "Kelas Member Eksklusif Om Budi",
-      "price": 500000,
-      "price_label": "Rp500.000",
-      "description": "Bimbingan lanjutan riyadhoh 40 hari, konsultasi berkala, dan akses sesi Zoom Booster rutin bersama Om Budi."
-    },
-    {
-      "code": "KLS_MAGNET_REZEKI",
-      "name": "Kelas Intensif Private Magnet Rezeki",
-      "price": 1000000,
-      "price_label": "Rp1.000.000",
-      "description": "Pendampingan khusus pelunasan hutang besar, pembedahan pola pertolongan Allah, serta bimbingan spiritual mendalam."
+      "intent": "daftar_kelas_online",
+      "keywords": ["daftar", "gabung kelas", "biaya kelas", "harga kelas", "transfer", "qris", "rekening", "siap bayar", "iya siap"],
+      "answer": "MasyaAllah, Alhamdulillah Bapak/Ibu. Untuk bergabung dengan *Kelas Online Pembuka Rezeki & Tauhid* (Investasi Bimbingan: Rp200.000), silakan transfer ke rekening resmi atau scan QRIS berikut:\n\n🏦 *Bank Syariah Indonesia (BSI)*\nNo. Rekening: *7200-1122-3344*\nAtas Nama: *BoonTrack / Bimbingan Om Budi*\n\nAtau scan QRIS di atas. Setelah transfer, *kirimkan foto struk/screenshot bukti transfer* ke WhatsApp ini untuk verifikasi otomatis."
     }
   ],
-  "digital_products": [
+  "rag_knowledge_clusters": [
     {
-      "id": "ebook_magnet_rezeki",
-      "name": "Ebook: Rahasia Magnet Rezeki & Pola Pertolongan Allah",
-      "price": 99000,
-      "price_label": "Rp99.000",
-      "format": "Ebook PDF",
-      "description": "Panduan menjemput pertolongan Allah saat terhimpit hutang & membuka pintu rezeki tak terduga."
+      "cluster_id": "amalan_riyadhoh_dzikir",
+      "topic": "Amalan Riyadhoh, Sholat, dan Dzikir Harian",
+      "content": "Paket Amalan Riyadhoh Om Budi:\n1. Sholat 5 Waktu di awal waktu (wajib dipaksakan).\n2. Sholat Dhuha minimal 4 Rakaat (2 rakaat 1 salam).\n3. Sholat Taubat 2 Rakaat sebelum Tahajud.\n4. Sholat Tahajud minimal 4 Rakaat (2 rakaat 1 salam).\n5. Sholat Hajat 2 Rakaat dilanjutkan Sholat Witir 3 Rakaat.\n6. Dzikir setelah Witir: 'ROBBIGHFIRLII WA TUB 'ALAYYA INNAKA ANTAT TAWWABUR ROHIIM' sebanyak-banyaknya.\n7. Baca Al-Qur'an minimal 5 lembar per hari (waktu bebas).\n8. Sholat Fajar & Dzikir: 'SUBHANALLAH WABIHAMDIHI SUBHANALLAHIL 'ADZIMI ASTAGHFIRULLAH' 100x.\n9. Setelah Shubuh: 'Ya Hannan Ya Mannan, Ya Fattah Ya Rozzaq, Ya Ghoniyyu Ya Mughniy' 33x.\n10. Sholawat Jibril minimal 1.000x setiap hari (bisa dicicil sambil beraktivitas).\n11. Istighfar dari Ashar sampai Maghrib sebanyak-banyaknya.\n12. Untuk wanita berhalangan haid, tidak perlu sholat melainkan cukup memperbanyak dzikir dan sholawat."
     },
     {
-      "id": "audio_therapy",
-      "name": "Audio Therapy Gelombang Batin & Ketenangan Jiwa",
-      "price": 149000,
-      "price_label": "Rp149.000",
-      "format": "5 Seri Audio MP3 Dzikir & Relaksasi Batin",
-      "description": "Membantu menenangkan hati dari rasa cemas, panik teror pinjol, dan insomnia."
+      "cluster_id": "tata_cara_berdoa",
+      "topic": "Urutan dan Tata Cara Berdoa yang Mustajab",
+      "content": "Urutan Berdoa yang Wajib Dibaca Sebelum Memohon:\n1. Bismillahirrohmaanirrohiim\n2. Alhamdulillaahi Robbil 'Aalamiin\n3. Membaca Asmaul Husna: Ya Allah, Ya Rahman, Ya Rahim, Ya Ghaffar, Ya Ghafuur, Ya Tawwaab, Ya 'Afuww, Ya Haadi, Ya Hayyu, Ya Qayyuum, Ya Shamad, Ya Razzaq, Ya Fattah, Ya Baasith, Ya Salaam, Ya Ghani, Ya Mughni, Ya Muqiit, Ya Mujiib.\n4. Membaca: 'Laa ilaaha illallaah, al-malikul haqqul mubiin, Muhammadur Rasuulullaah shaadiqul wa'dil amiin'.\n5. Membaca: 'Robbighfirlii wa tub 'alayya innaka antat tawwaabur rohiim'.\n6. Membaca Sholawat: 'Allahumma sholli 'alaa sayyidinaa Muhammad wa 'alaa aali sayyidinaa Muhammad'.\n7. Mengakui dosa dengan kerendahan hati.\n8. Mengucapkan rasa syukur atas semua nikmat yang ada.\n9. Membaca Astaghfirullahal 'adzim atau Sholawat sebanyak-banyaknya baru menyampaikan hajat/proposal doa."
     },
     {
-      "id": "bundle_riyadhoh",
-      "name": "Bundle Kit Riyadhoh Sholawat 40 Hari",
-      "price": 199000,
-      "price_label": "Rp199.000",
-      "format": "Ebook + Audio + Lembar Amalan",
-      "description": "Panduan praktis terstruktur mendawamkan sholawat untuk pelunas hutang & hajat."
+      "cluster_id": "pantangan_brainwave",
+      "topic": "Panduan & Pantangan Audio Brainwave Quantum Energi",
+      "content": "Langkah Penggunaan Audio Brainwave Digital Prayers Quantum Ikhlas:\n1. Alphamatic: Posisikan diri nyaman (duduk/berbaring) selama 20-60 menit di ruangan hening. Pakaian longgar, lepas kacamata/aksesoris.\n2. Afirmasi: Setelah 5 menit tenang, bisikkan afirmasi tujuan hidup di dalam hati.\n3. Visualisasi: Bayangkan harapan seolah sudah nyata secara holografis (visual, warna, suhu, suara, aroma, rasa).\n4. Syukur & Ikhlas: Ucapkan Alhamdulillahirabbil'alamin dan pasrahkan segalanya kepada Allah.\n\nPANTANGAN KERAS BRAINWAVE:\n- TIDAK BOLEH didengarkan sambil menyetir motor/mobil (ada efek kantuk).\n- TIDAK BOLEH sambil mengoperasikan mesin berat.\n- TIDAK BOLEH untuk anak di bawah usia 10-16 tahun.\n- TIDAK BOLEH untuk penderita epilepsi/ayan.\n- TIDAK BOLEH bagi pengguna alat pacu jantung.\n- Konsultasi dokter bagi wanita hamil atau dalam perawatan medis."
+    },
+    {
+      "cluster_id": "quantum_mindset_vibrasi",
+      "topic": "Quantum Energi, Vibrasi Rasa, & Rezeki",
+      "content": "Prinsip Quantum Energi Om Budi:\n1. Rezeki seperti air keran: keran lancar = lancar rezeki, keran seret = ada sumbatan dosa/pikiran negatif. Fokus mohon ampunan Allah.\n2. Pikiran kita seperti proyektor: Fokus yang dipikirkan dengan rasa akan menjadi realitas. Pikiran negatif/mengeluh/takut akan menarik masalah yang sama. Energi tinggi (bahagia, bersyukur, senyum, ikhlas, suka berbagi) menarik keajaiban rezeki tanpa disangka.\n3. Wajib senyum setiap mau tidur dan bangun pagi minimal 10 detik.\n4. Detox sebelum tidur: Doakan minimal 5 orang setiap hari dengan doa yang sama dengan hajat kita, serta maafkan semua orang yang pernah menyakiti kita secara tulus."
+    },
+    {
+      "cluster_id": "jurnal_proposal_doa",
+      "topic": "Jurnal Syukur, Jurnal Doa, dan Proposal Doa",
+      "content": "Praktik Penulisan Hajat:\n1. Jurnal Syukur: Tulis minimal 3 rasa syukur setiap malam sebelum tidur dengan fokus pada apa yang sudah ada.\n2. Jurnal Doa: Tulis doa minimal 10 malam sebelum tidur menggunakan format kalimat afirmasi: 'Rasanya lebih enak ya kalau... (sebutkan impian/omset/kendaraan)'.\n3. Proposal Doa: Tulis nominal hajat (misal: pelunasan amanah hutang / rumah) sertakan gambaran imajinasi penuh rasa terima kasih dan kebahagiaan.\n4. Sedekah Percepatan: Setiap dapat rezeki langsung sisihkan sedekah untuk orang tua, anak yatim, dhuafa dengan niat pembuka lunasnya hutang dan derasnya rezeki harta."
     }
   ]
 }

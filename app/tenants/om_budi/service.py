@@ -1,50 +1,88 @@
 import json
 import logging
 import os
-import re
+import aiohttp
 from typing import Dict, Any, Optional
 
-from app.services.ai_gateway import AIGateway
-from app.tenants.om_budi.config import TENANT_ID, ESCALATION_KEYWORDS
+logger = logging.getLogger("OM_BUDI_SERVICE")
 
-logger = logging.getLogger(__name__)
+KB_PATH = os.path.join(os.path.dirname(__file__), "knowledge_base.json")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-OBC_SYSTEM_PROMPT = """
-Anda adalah Asisten Pribadi resmi untuk Om Budi (pembimbing spiritual amalan riyadhoh sholawat, magnet rezeki, dan terapi batin).
-
-Profil Audiens:
-- Mayoritas adalah bapak-bapak atau ibu-ibu yang sedang menghadapi ujian berat (terlilit hutang, pinjol, masalah rezeki, hajat besar, kegelisahan batin).
-- Sangat menghargai kesantunan dan doa.
-
-Prinsip & Karakter:
-1. Sapa santun dengan sebutan "Bapak/Ibu" (atau sebut namanya secara hangat).
-2. Empatik, menyejukkan, tidak menghakimi, dan selalu mengingatkan pentingnya membenahi hubungan dengan Allah (sholat awal waktu, istighfar, amalan sholawat nabi).
-3. Jika Bapak/Ibu curhat atau bertanya, jawab dengan hangat lalu sarankan kelas atau panduan batin yang cocok.
-4. Gunakan bahasa Indonesia yang sangat santun, bersahaja, dan mudah dipahami.
-
-KNOWLEDGE BASE:
-{knowledge_base}
-"""
+USER_STATES: Dict[str, str] = {}
 
 
 class OmBudiService:
-    def __init__(self, ai_gateway: Optional[AIGateway] = None):
-        self.ai_gateway = ai_gateway or AIGateway()
-        self.knowledge_data = self._load_fallback_knowledge()
+    def __init__(self):
+        self.kb = self._load_knowledge_base()
 
-    def _load_fallback_knowledge(self) -> Dict[str, Any]:
-        kb_path = os.path.join(os.path.dirname(__file__), "knowledge_base.json")
+    def _load_knowledge_base(self) -> Dict[str, Any]:
         try:
-            if os.path.exists(kb_path):
-                with open(kb_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
+            with open(KB_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
         except Exception as e:
-            logger.error(f"[OM_BUDI] Gagal membaca KB: {e}")
-        return {}
+            logger.error(f"[KB LOAD ERROR] {e}")
+            return {"faq_data": [], "rag_knowledge_clusters": []}
 
-    def check_manual_escalation(self, text: str) -> bool:
-        t = text.lower()
-        return any(k in t for k in ESCALATION_KEYWORDS) or "bantuan admin" in t or "bicara admin" in t
+    def _retrieve_relevant_chunks(self, query: str) -> str:
+        """Pencarian chunk materi RAG berdasarkan relevansi topik."""
+        query_words = set(query.lower().split())
+        matched_chunks = []
+        for cluster in self.kb.get("rag_knowledge_clusters", []):
+            content = cluster.get("content", "")
+            topic = cluster.get("topic", "")
+            match_score = sum(1 for w in query_words if w in content.lower() or w in topic.lower())
+            if match_score > 0:
+                matched_chunks.append((match_score, content))
+
+        matched_chunks.sort(key=lambda x: x[0], reverse=True)
+        top_chunks = [c[1] for c in matched_chunks[:3]]
+        return "\n\n---\n\n".join(top_chunks) if top_chunks else ""
+
+    async def _generate_rag_response(self, user_name: str, message: str, context_chunks: str) -> str:
+        """Memanggil LLM dengan System Prompt & Guardrails Asisten Om Budi."""
+        if not GEMINI_API_KEY:
+            return (
+                f"Alhamdulillah Bapak/Ibu *{user_name}*, terima kasih telah menghubungi Bimbingan Om Budi. "
+                "Mari kita dawamkan sholat awal waktu dan sholawat jibril agar Allah mudahkan urusan kita."
+            )
+
+        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        system_instruction = (
+            "Anda adalah Asisten AI Resmi Om Budi (Alumni Bimbingan Riyadhoh Sholawat & Quantum Energi). "
+            "PANDUAN MENJAWAB:\n"
+            "1. Persona: Islami, hangat, santun, menyejukkan, penuh empati, dan optimis.\n"
+            "2. Panjang Jawaban: Ringkas maksimal 2 paragraf pendek.\n"
+            "3. Sumber Jawaban: Utamakan konteks materi RAG yang disediakan.\n"
+            "4. Guardrail / Fallback: Jika pertanyaan sama sekali di luar modul/materi bimbingan, jawab santun: "
+            "'Untuk pertanyaan di luar modul ini, yuk kita bahas bersama di sesi Zoom Booster berikutnya ya Kak. Tetap istiqomah!'\n"
+            "5. Jangan pernah mengarang fatwa agama."
+        )
+
+        user_content = f"Nama Jamaah: {user_name}\n\nKonteks Modul Riyadhoh:\n{context_chunks}\n\nPertanyaan Jamaah: {message}"
+
+        payload = {
+            "contents": [{"parts": [{"text": user_content}]}],
+            "systemInstruction": {"parts": [{"text": system_instruction}]},
+            "generationConfig": {
+                "maxOutputTokens": 300,
+                "temperature": 0.3
+            }
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(endpoint, json=payload, timeout=20) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        except Exception as e:
+            logger.error(f"[LLM GEN ERROR] {e}")
+
+        return (
+            f"Alhamdulillah Bapak/Ibu {user_name}, tetap istiqomah dalam ikhtiar langit bersama Om Budi. "
+            "Perbaiki sholat di awal waktu dan perbanyak sholawat jibril."
+        )
 
     async def handle_incoming_message(
         self,
@@ -52,131 +90,77 @@ class OmBudiService:
         message_text: str,
         button_id: Optional[str] = None,
         user_name: str = "Bapak/Ibu",
-        metadata: Optional[Dict[str, Any]] = None,
+        image_bytes: Optional[bytes] = None,
+        image_mime: str = "image/jpeg"
     ) -> Dict[str, Any]:
-        text = message_text.strip()
-        t_lower = text.lower()
+        """Entry point pengolahan pesan Om Budi."""
+        state = USER_STATES.get(phone_number, "IDLE")
 
-        # 1. Cek Tombol / Pilihan Menu Interaktif
-        if button_id == "BTN_KELAS" or "kelas bimbingan" in t_lower:
-            msg = (
-                f"Bismillah, Bapak/Ibu {user_name}... Berikut pilihan jenjang kelas bimbingan bersama Om Budi:\n\n"
-                "1️⃣ *Kelas Online Pembuka Rezeki* (Rp200.000)\n"
-                "• Pengenalan amalan riyadhoh, tata cara sholat tobat, dan pembersihan sumbatan rezeki.\n\n"
-                "2️⃣ *Kelas Member Eksklusif* (Rp500.000)\n"
-                "• Bimbingan intensif 40 hari, konsultasi berkala & akses Zoom Booster rutin.\n\n"
-                "3️⃣ *Kelas Private Magnet Rezeki* (Rp1.000.000)\n"
-                "• Pendampingan khusus pelunasan hutang besar & bedah pola pertolongan Allah.\n\n"
-                "Silakan tekan tombol di bawah untuk memilih kelas yang ingin diikuti:"
-            )
-            buttons = [
-                {"id": "BUY_KLS_ONLINE", "title": "Kelas Online 200rb"},
-                {"id": "BUY_KLS_MEMBER", "title": "Kelas Member 500rb"},
-                {"id": "BUY_KLS_MAGNET", "title": "Magnet Rezeki 1jt"}
-            ]
-            return {"type": "buttons", "reply": msg, "buttons": buttons}
+        # 1. Alur OCR Penerimaan Bukti Transfer (Multimodal)
+        if image_bytes:
+            from app.services.receipt_ocr_service import analyze_receipt_image
+            ocr_res = await analyze_receipt_image(image_bytes, image_mime)
 
-        if button_id == "BTN_PRODUK" or "materi digital" in t_lower:
-            msg = (
-                f"Bismillah, Bapak/Ibu {user_name}... Berikut panduan dan sarana batin mandiri dari Om Budi:\n\n"
-                "📖 *Ebook Magnet Rezeki* (Rp99.000)\n"
-                "• Rahasia pola pertolongan Allah saat terhimpit hutang & cara membuka pintu rezeki.\n\n"
-                "🎧 *Audio Therapy Gelombang Batin* (Rp149.000)\n"
-                "• Relaksasi & dzikir penenang hati saat panik/cemas akibat beban hidup.\n\n"
-                "📦 *Bundle Kit Riyadhoh 40 Hari* (Rp199.000)\n"
-                "• Paket lengkap Ebook + Audio Amalan Harian.\n\n"
-                "Silakan tekan tombol untuk memesan via WhatsApp:"
-            )
-            buttons = [
-                {"id": "BUY_EBOOK", "title": "Ebook 99rb"},
-                {"id": "BUY_AUDIO", "title": "Audio Terapi 149rb"},
-                {"id": "BUY_BUNDLE", "title": "Kit Amalan 199rb"}
-            ]
-            return {"type": "buttons", "reply": msg, "buttons": buttons}
-
-        if button_id == "BTN_KONSUL" or "tanya / curhat" in t_lower:
-            return {
-                "type": "text",
-                "reply": (
-                    f"Bismillah, Bapak/Ibu {user_name}... Silakan tuliskan apa yang sedang menjadi beban pikiran "
-                    f"atau hajat yang ingin dicapai (misal perihal hutang, keluarga, atau ketenangan batin).\n\n"
-                    f"Saya siap mendengarkan dan mendampingi ikhtiar Bapak/Ibu. 🙏"
+            if ocr_res.get("is_valid_receipt"):
+                nominal = ocr_res.get("nominal", 0)
+                ref_no = ocr_res.get("reference_no_rrn", "-")
+                USER_STATES[phone_number] = "IDLE"
+                reply = (
+                    f"Alhamdulillah wa Syukurillah, Bapak/Ibu *{user_name}*! 🤲\n\n"
+                    f"Bukti transfer/infaq sebesar *Rp{nominal:,}* (Ref: `{ref_no}`) telah berhasil diverifikasi oleh sistem.\n\n"
+                    "Selamat bergabung di *Kelas Bimbingan Riyadhoh Sholawat & Quantum Energi Om Budi*. "
+                    "Admin kami akan segera mengirimkan tautan akses materi dan jadwal Zoom Booster."
                 )
-            }
+                return {"type": "text", "reply": reply}
+            else:
+                return {
+                    "type": "text",
+                    "reply": "Gambar yang dikirim belum terdeteksi sebagai bukti transfer yang valid. Mohon pastikan nominal, tanggal, dan nomor referensi transaksi terlihat jelas ya Bapak/Ibu."
+                }
 
-        # 2. Handler Checkout Transaksi Langsung di WhatsApp
-        if button_id and button_id.startswith("BUY_"):
-            item_map = {
-                "BUY_KLS_ONLINE": ("Kelas Online Pembuka Rezeki & Tauhid", "Rp200.000"),
-                "BUY_KLS_MEMBER": ("Kelas Member Eksklusif Om Budi", "Rp500.000"),
-                "BUY_KLS_MAGNET": ("Kelas Private Magnet Rezeki", "Rp1.000.000"),
-                "BUY_EBOOK": ("Ebook Rahasia Magnet Rezeki", "Rp99.000"),
-                "BUY_AUDIO": ("Audio Therapy Gelombang Batin", "Rp149.000"),
-                "BUY_BUNDLE": ("Bundle Kit Riyadhoh Sholawat 40 Hari", "Rp199.000"),
-            }
-            item_name, item_price = item_map.get(button_id, ("Pemesanan Bimbingan", "Sesuai Pilihan"))
-            return {
-                "type": "text",
-                "reply": (
-                    f"Alhamdulillah, terima kasih niat baiknya Bapak/Ibu {user_name}. 🙏✨\n\n"
-                    f"📋 *Rincian Pendaftaran / Pemesanan:*\n"
-                    f"• Program: *{item_name}*\n"
-                    f"• Infaq / Biaya: *{item_price}*\n\n"
-                    f"💳 *Pembayaran via QRIS / Rekening Resmi Om Budi:*\n"
-                    f"Bapak/Ibu dapat melakukan transfer atau scan QRIS melalui m-banking/e-wallet.\n\n"
-                    f"Setelah transfer, mohon kirimkan *foto/screenshot bukti transfer* di chat ini ya Bapak/Ibu. "
-                    f"Admin kami akan langsung memverifikasi dan mengirimkan akses materi/grup bimbingan."
-                )
-            }
+        clean_text = (message_text or "").strip().lower()
 
-        # 3. Cek Eskalasi Manual
-        if self.check_manual_escalation(text):
-            return {
-                "type": "text",
-                "reply": (
-                    f"Bismillah, Bapak/Ibu {user_name}. Pesan Bapak/Ibu sudah kami tandai untuk admin manusia. "
-                    f"Admin Om Budi akan segera menyapa dan membalas langsung di chat ini ya."
-                ),
-                "is_escalated": True
-            }
-
-        # 4. Greeting Awal Otomatis dengan Tombol jika User Baru / Menyapa Sederhana
-        if t_lower in ["halo", "assalamu'alaikum", "assalamualaikum", "halo om budi", "selamat siang", "selamat pagi", "tes", "p"]:
-            greeting_body = (
-                f"Assalamu’alaikum Warahmatullahi Wabarakatuh.\n\n"
-                f"Selamat datang Bapak/Ibu {user_name} di ruang bimbingan **Om Budi**. 😊🙏\n\n"
-                f"Semoga Allah senantiasa melimpahkan ketenangan batin, kesehatan, dan melapangkan jalan rezeki untuk Bapak/Ibu sekeluarga.\n\n"
-                f"Di sini, kita bersama-sama belajar membenahi hubungan dengan Allah melalui sholat tepat waktu, riyadhoh sholawat nabi, dan pembersihan batin.\n\n"
-                f"Silakan tekan salah satu tombol di bawah untuk memulai:"
+        # 2. Interaksi Tombol / Niat Pendaftaran
+        if button_id == "btn_daftar_kelas" or any(k in clean_text for k in ["daftar kelas", "mau gabung", "biaya kelas", "harga kelas", "rekening", "qris", "cara bayar"]):
+            USER_STATES[phone_number] = "WAITING_PAYMENT"
+            reply = (
+                f"MasyaAllah, Alhamdulillah Bapak/Ibu *{user_name}*.\n\n"
+                "Untuk bergabung dengan *Kelas Online Pembuka Rezeki & Tauhid* (Investasi Bimbingan: Rp200.000), silakan transfer ke rekening resmi bimbingan:\n\n"
+                "🏦 *Bank Syariah Indonesia (BSI)*\n"
+                "No. Rekening: *7200-1122-3344*\n"
+                "Atas Nama: *BoonTrack / Bimbingan Om Budi*\n\n"
+                "Setelah transfer, *kirimkan foto struk/screenshot bukti transfer* langsung ke nomor WhatsApp ini untuk verifikasi otomatis."
             )
-            buttons = [
-                {"id": "BTN_KELAS", "title": "Daftar Kelas Online"},
-                {"id": "BTN_PRODUK", "title": "Buku & Audio Terapi"},
-                {"id": "BTN_KONSUL", "title": "Tanya / Curhat"}
-            ]
-            return {"type": "buttons", "reply": greeting_body, "buttons": buttons}
+            return {"type": "text", "reply": reply}
 
-        # 5. Tanya Jawab Bebas Menggunakan AI Gemini
-        system_instruction = OBC_SYSTEM_PROMPT.format(
-            knowledge_base=json.dumps(self.knowledge_data, ensure_ascii=False, indent=2)
-        )
-        try:
-            raw_response = await self.ai_gateway.generate(
-                user_message=text,
-                context={"tenant": TENANT_ID, "phone": phone_number, "user_name": user_name},
-                system_prompt=system_instruction,
+        if button_id == "btn_tanya_curhat":
+            USER_STATES[phone_number] = "IDLE"
+            reply = (
+                f"Bismillah, Bapak/Ibu *{user_name}*... Silakan tuliskan apa yang sedang menjadi beban pikiran, "
+                "hajat besar, atau ujian amanah yang dihadapi. Saya siap mendengarkan dan mendampingi ikhtiar Bapak/Ibu."
             )
-            res_str = str(raw_response).strip()
-            if "```" in res_str:
-                res_str = re.sub(r"^```(?:json)?|```$", "", res_str, flags=re.MULTILINE).strip()
+            return {"type": "text", "reply": reply}
 
-            return {"type": "text", "reply": res_str}
-        except Exception as e:
-            logger.error(f"[OM_BUDI AI ERROR] {e}", exc_info=True)
-            return {
-                "type": "text",
-                "reply": f"Bismillah, Bapak/Ibu {user_name}. Ada yang bisa kami bantu seputar amalan batin, pendaftaran kelas, atau materi panduan Om Budi?"
-            }
+        # 3. Tangani Jawaban Kesiapan Transfer ("iya siap", "siap", "oke")
+        if state == "WAITING_PAYMENT" and any(k in clean_text for k in ["siap", "iya", "oke", "mau bayar", "transfer", "sudah"]):
+            reply = (
+                f"Alhamdulillah, terima kasih atas kesiapan dan niat tulus Bapak/Ibu *{user_name}*.\n\n"
+                "Silakan transfer ke *Bank Syariah Indonesia (BSI) 7200-1122-3344* a.n *BoonTrack / Bimbingan Om Budi* "
+                "sebesar *Rp200.000*.\n\n"
+                "Setelah transaksi selesai, silakan *kirimkan foto/tangkapan layar bukti transfer* ke chat ini ya."
+            )
+            return {"type": "text", "reply": reply}
+
+        # 4. RAG Retrieval & LLM Generation
+        rag_context = self._retrieve_relevant_chunks(clean_text)
+        if not rag_context:
+            rag_context = (
+                "Prinsip Utama: Sholat awal waktu, sholawat jibril 1000x, istighfar, senyum sebelum tidur & bangun pagi, "
+                "jurnal syukur, proposal doa, hindari mengeluh/berprasangka buruk."
+            )
+
+        ai_reply = await self._generate_rag_response(user_name, message_text, rag_context)
+        return {"type": "text", "reply": ai_reply}
 
 
 om_budi_service = OmBudiService()
