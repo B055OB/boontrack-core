@@ -8,7 +8,7 @@ class LocalKnowledgeMatcher:
         self.rules = rules
 
     def _normalize(self, text: str) -> str:
-        return re.sub(r"[^\w\s]", "", (text or "").lower()).strip()
+        return re.sub(r"[^\w\s]", " ", (text or "").lower()).strip()
 
     def _tokenize(self, text: str) -> set:
         return {w for w in self._normalize(text).split() if len(w) > 2}
@@ -30,32 +30,35 @@ class LocalKnowledgeMatcher:
 
             # 1. Exact Match (Score = 1.0)
             for phrase in exact_phrases:
-                if self._normalize(phrase) == raw_query:
+                if self._normalize(phrase) in raw_query or raw_query in self._normalize(phrase):
                     return MatchConfidence.HIGH, 1.0, rule.get("answer"), rule.get("intent")
 
-            # 2. Substring & Token Overlap
-            rule_tokens = set()
-            exact_substr_count = 0
+            # 2. Substring Keyword Presence (Cek kata kunci spesifik)
+            matched_kw_count = 0
             for kw in keywords:
                 norm_kw = self._normalize(kw)
-                if norm_kw in raw_query:
-                    exact_substr_count += 1
+                if norm_kw and norm_kw in raw_query:
+                    matched_kw_count += 1
+
+            # 3. Token Overlap
+            rule_tokens = set()
+            for kw in keywords:
                 rule_tokens.update(self._tokenize(kw))
 
-            if not rule_tokens:
-                continue
-
             common_tokens = query_tokens.intersection(rule_tokens)
-            token_ratio = len(common_tokens) / len(rule_tokens)
-            
-            # 3. Fuzzy Match
-            fuzzy_ratio = max([difflib.SequenceMatcher(None, kw, raw_query).ratio() for kw in keywords] or [0.0])
-            score = (token_ratio * 0.4) + (fuzzy_ratio * 0.3) + min(0.3, exact_substr_count * 0.15)
+            token_score = (len(common_tokens) / max(1, len(query_tokens))) if query_tokens else 0.0
 
-            # 4. Boost
-            boost_hits = sum(1 for b in boost_words if self._normalize(b) in raw_query)
-            if boost_hits > 0:
-                score += min(0.15, boost_hits * 0.08)
+            # 4. Hitung Skor Gabungan
+            score = 0.0
+            if matched_kw_count > 0:
+                score += 0.65 + min(0.25, matched_kw_count * 0.10)
+            score += token_score * 0.15
+
+            # 5. Cek Boost
+            for b in boost_words:
+                if self._normalize(b) in raw_query:
+                    score += 0.10
+                    break
 
             final_score = min(1.0, score)
             if final_score > best_score:

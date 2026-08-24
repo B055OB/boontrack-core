@@ -140,14 +140,22 @@ class OmBudiService:
         if button_id == "btn_upload_struk":
             return {"type": "text", "reply": "📸 *Kirim Bukti Transfer*\n\nSilakan lampirkan dan kirimkan foto struk transfer / screenshot m-banking Anda sekarang ya 🙏😊."}
 
-        # 5. Tanya Jawab Bebas -> Tier 4 Local Matcher First
+        # 5. Tanya Jawab Bebas -> Cek Tier 4 Matcher Lokal Dulu
         conf, score, answer, intent = self.matcher.find_match(message_text)
         if conf == MatchConfidence.HIGH and answer:
             return {"type": "buttons", "reply": answer, "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
         elif conf == MatchConfidence.MEDIUM and answer:
-            return {"type": "buttons", "reply": f"{answer}\n\n_Catatan: Jika ada yang ingin ditanyakan lebih lanjut, kabari ya {user_name} 😊🙏._", "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
+            return {"type": "buttons", "reply": answer, "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
 
-        # 6. Fallback jika tidak match
-        return {"type": "buttons", "reply": self.fallback_msg, "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
+        # 6. Jika Tidak Cocok di Lokal -> Alihkan ke AI Gateway (Gemini/Groq -> Fallback Statis)
+        from app.core.ai.gateway import ai_gateway
+        gw_res = await ai_gateway.process_faq_query(
+            tenant_id="om_budi",
+            query=message_text,
+            rules=self.rules,
+            fallback_msg=self.fallback_msg,
+            user_name=user_name
+        )
+        return {"type": "buttons", "reply": gw_res["reply"], "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
 
 om_budi_service = OmBudiService()
