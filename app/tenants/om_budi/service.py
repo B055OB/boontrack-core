@@ -156,6 +156,32 @@ class OmBudiService:
             fallback_msg=self.fallback_msg,
             user_name=user_name
         )
-        return {"type": "buttons", "reply": gw_res["reply"], "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
+        return {"type": "buttons", "reply": gw_res["reply"], "buttons": [{# 5. Tanya Jawab Bebas -> Cek Tier 4 Matcher Lokal Dulu
+        try:
+            conf, score, answer, intent = self.matcher.find_match(message_text)
+            if conf == MatchConfidence.HIGH and answer:
+                return {"type": "buttons", "reply": answer, "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
+            elif conf == MatchConfidence.MEDIUM and answer:
+                return {"type": "buttons", "reply": answer, "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
+        except Exception as e:
+            logger.error(f"[MATCHER ERROR] {e}")
+
+        # 6. Jika Tidak Match di Lokal -> Alihkan ke AI Gateway
+        try:
+            from app.core.ai.gateway import ai_gateway
+            gw_res = await ai_gateway.process_faq_query(
+                tenant_id="om_budi",
+                query=message_text,
+                rules=self.rules,
+                fallback_msg=self.fallback_msg,
+                user_name=user_name
+            )
+            if gw_res and gw_res.get("reply"):
+                return {"type": "buttons", "reply": gw_res["reply"], "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
+        except Exception as e:
+            logger.error(f"[GATEWAY ERROR] {e}")
+
+        # 7. Guaranteed Fallback (Anti-Hening)
+        return {"type": "buttons", "reply": self.fallback_msg, "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
 
 om_budi_service = OmBudiService()
