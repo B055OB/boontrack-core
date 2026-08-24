@@ -2,6 +2,9 @@ import time
 from collections import defaultdict
 from typing import Tuple
 
+# Hanya tenant pelayanan publik/Diskominfo yang dikenakan batasan rate limit
+PUBLIC_SERVICE_TENANTS = {"diskominfo", "pelayanan_publik", "layanan_warga"}
+
 
 class WhatsAppRateLimiter:
     """In-memory sliding window rate limiter per nomor telepon."""
@@ -10,11 +13,15 @@ class WhatsAppRateLimiter:
         self.window_seconds = window_seconds
         self.history = defaultdict(list)
 
-    def is_allowed(self, phone_number: str) -> Tuple[bool, int]:
+    def is_allowed(self, phone_number: str, tenant_id: str = "om_budi", is_button: bool = False) -> Tuple[bool, int]:
         """
         Cek batas request nomor HP.
-        Returns: (allowed: bool, retry_after_seconds: int)
+        Tenant non-publik (seperti om_budi, career, commerce) atau klik tombol interaktif otomatis lolos (bypass).
         """
+        # Bypass penuh jika bukan pelayanan publik atau berupa interaksi tombol
+        if tenant_id not in PUBLIC_SERVICE_TENANTS or is_button:
+            return True, 0
+
         now = time.time()
         timestamps = self.history[phone_number]
 
@@ -30,5 +37,5 @@ class WhatsAppRateLimiter:
         return True, 0
 
 
-# Singleton global
+# Singleton instance
 wa_rate_limiter = WhatsAppRateLimiter(max_requests=5, window_seconds=60)
