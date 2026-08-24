@@ -3,8 +3,7 @@
 from app.core.security.encryption import (
     encrypt_pii,
     decrypt_pii,
-    generate_blind_index,
-    get_tenant_cipher
+    generate_blind_index
 )
 from app.core.security.masking import (
     mask_pii_string,
@@ -28,7 +27,6 @@ def decrypt_bot_token(encrypted_token: str, tenant_id: str = "default") -> str:
     try:
         return decrypt_pii(tenant_id, encrypted_token)
     except Exception:
-        # Fallback jika token masih berupa plain string
         return encrypted_token
 
 
@@ -36,7 +34,6 @@ __all__ = [
     "encrypt_pii",
     "decrypt_pii",
     "generate_blind_index",
-    "get_tenant_cipher",
     "mask_pii_string",
     "mask_payload_dict",
     "ZeroPIILogFilter",
