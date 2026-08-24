@@ -4,7 +4,14 @@ import re
 import aiohttp
 from aiohttp import web
 
+# Security & Compliance Layers
+from app.core.security.rate_limiter import wa_rate_limiter
+from app.core.security.masking import ZeroPIILogFilter
+
 logger = logging.getLogger("CENTRAL_WA_ROUTER")
+if not any(isinstance(f, ZeroPIILogFilter) for f in logger.filters):
+    logger.addFilter(ZeroPIILogFilter())
+
 central_wa_routes = web.RouteTableDef()
 
 VERIFY_TOKENS = [
@@ -24,6 +31,9 @@ OM_BUDI_ACCESS_TOKEN = os.getenv(
     "EAANbiVgBfGQBSdMsa9S6YHzq6kx9xmML1vAAw890TZBQs7DqL5Ni1BEaAJZCV8xY4ZAjPPHKrC7ZAG6xYz5RSnyFzxoqyPayoo4PlSWUvZCYF8r5XGD99yMxSvku9K7WTat7lBJ00iXqNEZCNOhI0kznId91LMAP4h6wEQThKlTxPRGroCuaXZCWK5641sc1P2udi2ETKZBZBocOnF8U6ZBo7NnC9ADdGoFiB741T3w0ywzGPh63JzIgA67CI2UUOy793zLgl92fSWyHKv7BmoSm5ZAxZAvS0f6ZCtJwZD"
 )
 CAREER_ACCESS_TOKEN = os.getenv("CAREER_ACCESS_TOKEN", OM_BUDI_ACCESS_TOKEN)
+
+# Aturan Validasi Media
+ALLOWED_IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/jpg"]
 
 
 # --- Helper Outbound WA Dinamis ---
@@ -105,7 +115,6 @@ async def verify_webhook(request: web.Request) -> web.Response:
 @central_wa_routes.post("/api/whatsapp/webhook")
 async def handle_incoming_webhook(request: web.Request) -> web.Response:
     try:
-        # Clone request JSON data
         data = await request.json()
         entry = data.get("entry", [{}])[0]
         changes = entry.get("changes", [{}])[0]
@@ -115,19 +124,37 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         if not messages:
             return web.json_response({"status": "ignored"}, status=200)
 
+        msg_obj = messages[0]
+        from_phone = msg_obj.get("from")
+        msg_type = msg_obj.get("type")
         phone_id = str(value.get("metadata", {}).get("phone_number_id", OM_BUDI_PHONE_NUMBER_ID))
 
-        # 1. Routing ke Career Assistant
+        # 1. Anti-Spam Rate Limiter (Maks 5 request / menit per nomor pengirim)
+        is_allowed, retry_after = wa_rate_limiter.is_allowed(from_phone)
+        if not is_allowed:
+            logger.warning(f"[RATE LIMIT] Pengirim {from_phone} terkena throttling.")
+            await send_wa_text(
+                recipient_phone=from_phone,
+                text=f"Pesan Anda terkirim terlalu cepat. Silakan tunggu {retry_after} detik sebelum mencoba lagi.",
+                phone_id=phone_id
+            )
+            return web.json_response({"status": "rate_limited"}, status=429)
+
+        # 2. Routing Khusus Career Assistant
         if phone_id == CAREER_PHONE_NUMBER_ID:
             from app.routes.whatsapp_career import handle_incoming_whatsapp
             return await handle_incoming_whatsapp(request)
 
-        # 2. Routing ke Om Budi (atau fallback default)
-        msg_obj = messages[0]
-        from_phone = msg_obj.get("from")
-        msg_type = msg_obj.get("type")
-        contact_name = value.get("contacts", [{}])[0].get("profile", {}).get("name", "Bapak/Ibu")
+        # 3. Media / Attachment Filter untuk Tenant Layanan & Pengaduan
+        if msg_type in ["document", "video", "audio"]:
+            await send_wa_text(
+                recipient_phone=from_phone,
+                text="Format berkas tidak diizinkan. Silakan lampirkan gambar/foto berformat JPG atau PNG maksimal 5MB.",
+                phone_id=phone_id
+            )
+            return web.json_response({"status": "unsupported_media"}, status=200)
 
+        contact_name = value.get("contacts", [{}])[0].get("profile", {}).get("name", "Bapak/Ibu")
         incoming_text = ""
         button_id = None
 
@@ -139,7 +166,19 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 btn = inter.get("button_reply", {})
                 button_id = btn.get("id")
                 incoming_text = btn.get("title", "")
+        elif msg_type == "image":
+            image_data = msg_obj.get("image", {})
+            mime_type = image_data.get("mime_type", "")
+            if mime_type not in ALLOWED_IMAGE_MIME_TYPES:
+                await send_wa_text(
+                    recipient_phone=from_phone,
+                    text="Lampiran gambar wajib berformat JPG atau PNG.",
+                    phone_id=phone_id
+                )
+                return web.json_response({"status": "invalid_media_type"}, status=200)
+            incoming_text = image_data.get("caption", "[FOTO_TERLAMPIR]")
 
+        # 4. Dispatch ke Tenant Om Budi
         from app.tenants.om_budi.service import om_budi_service
         res = await om_budi_service.handle_incoming_message(
             phone_number=from_phone,
