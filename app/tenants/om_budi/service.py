@@ -144,12 +144,12 @@ class OmBudiService:
                     "kelapangan rezeki, serta melunaskan segala amanah hutang Bapak/Ibu sekeluarga. Aamiin ya Rabbal 'Alamin.\n\n"
                     "Tautan Group Khusus Zoom Booster (setiap Rabu malam) akan segera kami kirimkan ke nomor ini."
                 )
-                return {"type": "buttons", "reply": reply, "buttons": [{"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
+                return {"type": "buttons", "reply": reply, "buttons": [{"id": "btn_menu_utama", "title": "↩️ Kembali"}]}
             else:
                 return {
                     "type": "buttons",
                     "reply": "Gambar belum terdeteksi sebagai bukti transfer yang valid. Pastikan nominal, tanggal, dan nomor rekening tujuan (Budi Yulianto) terlihat jelas ya.",
-                    "buttons": [{"id": "btn_cara_sedekah", "title": "Kirim Ulang Bukti"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]
+                    "buttons": [{"id": "btn_cara_sedekah", "title": "Kirim Ulang Bukti"}, {"id": "btn_menu_utama", "title": "↩️ Kembali"}]
                 }
 
         # 2. Reset / Menu Utama (3 Tombol Cepat)
@@ -195,21 +195,27 @@ class OmBudiService:
             }
 
         if button_id == "btn_sub_1_a":
-            return {"type": "buttons", "reply": "📝 *Cara Mengikuti Zoom Booster*\n\n1. Pastikan aplikasi Zoom sudah terpasang di HP/Laptop.\n2. Masuk melalui tautan resmi 10-15 menit sebelum dimulai.\n3. Gunakan nama asli di akun Zoom agar mudah disapa oleh Om Budi.", "buttons": [{"id": "menu_zoom_booster", "title": "Kembali ke Zoom"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
+            return {"type": "buttons", "reply": "📝 *Cara Mengikuti Zoom Booster*\n\n1. Pastikan aplikasi Zoom sudah terpasang di HP/Laptop.\n2. Masuk melalui tautan resmi 10-15 menit sebelum dimulai.\n3. Gunakan nama asli di akun Zoom agar mudah disapa oleh Om Budi.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
+        
         if button_id == "btn_sub_1_b":
-            return {"type": "buttons", "reply": "🗓️ *Jadwal Zoom Booster*\n\nSesi rutin diadakan setiap hari **Rabu malam** pukul 20.00 WIB. Pengingat tautan akan dikirimkan di grup khusus 1 jam sebelum acara dimulai.", "buttons": [{"id": "menu_zoom_booster", "title": "Kembali ke Zoom"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
+            return {"type": "buttons", "reply": "🗓️ *Jadwal Zoom Booster*\n\nSesi rutin diadakan setiap hari **Rabu malam** pukul 20.00 WIB. Pengingat tautan akan dikirimkan di grup khusus 1 jam sebelum acara dimulai.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
+        
         if button_id == "btn_sub_1_c":
-            return {"type": "buttons", "reply": "✨ *Tentang Zoom Booster*\n\nSesi penguatan vibrasi energi, bedah sumbatan rezeki, konsultasi langsung persoalan amanah/hutang, serta bimbingan riyadhoh sholawat berjamaah bersama Om Budi.", "buttons": [{"id": "menu_zoom_booster", "title": "Kembali ke Zoom"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
+            return {"type": "buttons", "reply": "✨ *Tentang Zoom Booster*\n\nSesi penguatan vibrasi energi, bedah sumbatan rezeki, konsultasi langsung persoalan amanah/hutang, serta bimbingan riyadhoh sholawat berjamaah bersama Om Budi.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
+        
         if button_id == "btn_sub_1_d":
-            return {"type": "buttons", "reply": "👥 *Peserta yang Bisa Mengikuti*\n\nSeluruh alumni terdaftar dan jamaah yang mendukung program Zoom Booster & Orang Tua Asuh.", "buttons": [{"id": "menu_zoom_booster", "title": "Kembali ke Zoom"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
+            return {"type": "buttons", "reply": "👥 *Peserta yang Bisa Mengikuti*\n\nSeluruh alumni terdaftar dan jamaah yang mendukung program Zoom Booster & Orang Tua Asuh.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
+        
         if button_id == "btn_sub_1_e":
-            return {"type": "buttons", "reply": "🔗 *Link & Cara Masuk Zoom*\n\nLink Ruang Pertemuan:\n👉 *https://zoom.us/j/boontrack-ombudi*\nPasscode: *SHOLAWAT*\n\n_Buka tautan di atas saat jam acara dimulai._", "buttons": [{"id": "menu_zoom_booster", "title": "Kembali ke Zoom"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
+            return {"type": "buttons", "reply": "🔗 *Link & Cara Masuk Zoom*\n\nLink Ruang Pertemuan:\n👉 *https://zoom.us/j/boontrack-ombudi*\nPasscode: *SHOLAWAT*\n\n_Buka tautan di atas saat jam acara dimulai._", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
+        
         if button_id == "btn_sub_1_f":
-            return {"type": "buttons", "reply": "📹 *Materi & Rekaman Zoom*\n\nRekaman video sesi sebelumnya diunggah maksimal 1x24 jam ke Portal Alumni / Google Drive.", "buttons": [{"id": "menu_zoom_booster", "title": "Kembali ke Zoom"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
+            return {"type": "buttons", "reply": "📹 *Materi & Rekaman Zoom*\n\nRekaman video sesi sebelumnya diunggah maksimal 1x24 jam ke Portal Alumni / Google Drive.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
+        
         if button_id == "btn_sub_1_g":
-            return {"type": "buttons", "reply": "🤝 *Jika Tidak Bisa Hadir Live*\n\nTidak perlu khawatir, Bapak/Ibu tetap bisa menyimak siaran ulang rekaman dan tetap mendawamkan amalan riyadhoh secara mandiri.", "buttons": [{"id": "menu_zoom_booster", "title": "Kembali ke Zoom"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
+            return {"type": "buttons", "reply": "🤝 *Jika Tidak Bisa Hadir Live*\n\nTidak perlu khawatir, Bapak/Ibu tetap bisa menyimak siaran ulang rekaman dan tetap mendawamkan amalan riyadhoh secara mandiri.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
 
-        # 4. Sub-Menu: Sedekah Berjamaah (Langsung 2 Tombol Cepat Tanpa List Menu)
+        # 4. Sub-Menu: Sedekah Berjamaah
         if button_id == "menu_sedekah_berjamaah" or clean_text == "sedekah":
             USER_STATES[phone_number] = "IN_SEDEKAH_MENU"
             return {
@@ -218,7 +224,7 @@ class OmBudiService:
                 "buttons": [
                     {"id": "btn_penjelasan_sedekah", "title": "Penjelasan Sedekah"},
                     {"id": "btn_cara_sedekah", "title": "Cara Ikut Sedekah"},
-                    {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}
+                    {"id": "btn_menu_utama", "title": "↩️ Kembali"}
                 ]
             }
 
@@ -238,7 +244,7 @@ class OmBudiService:
                 "reply": penjelasan_text,
                 "buttons": [
                     {"id": "btn_cara_sedekah", "title": "Cara Ikut Sedekah"},
-                    {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}
+                    {"id": "btn_menu_utama", "title": "↩️ Kembali"}
                 ]
             }
 
@@ -249,7 +255,7 @@ class OmBudiService:
                 "reply": REKENING_TEMPLATE,
                 "buttons": [
                     {"id": "btn_upload_struk", "title": "Kirim Bukti Transfer"},
-                    {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}
+                    {"id": "btn_menu_utama", "title": "↩️ Kembali"}
                 ]
             }
 
@@ -260,18 +266,19 @@ class OmBudiService:
         # 5. Sub-Menu: Tanya Admin
         if button_id == "menu_tanya_admin" or "tanya admin" in clean_text or "hubungi admin" in clean_text:
             USER_STATES[phone_number] = "HUMAN_HANDOVER"
+            logger.info(f"[HANDOVER] Pengguna {phone_number} dialihkan ke antrean CS Human Admin.")
             handover_reply = (
                 f"💬 *[BANTUAN TIM ADMIN OM BUDI]*\n\n"
                 f"Pertanyaan Bapak/Ibu *{user_name}* telah diteruskan ke antrean Tim Admin kami.\n\n"
                 "Silakan ketikkan detail pertanyaan atau kendala Bapak/Ibu di bawah ini. Tim kami akan segera merespons."
             )
-            return {"type": "buttons", "reply": handover_reply, "buttons": [{"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
+            return {"type": "buttons", "reply": handover_reply, "buttons": [{"id": "btn_menu_utama", "title": "↩️ Kembali"}]}
 
         if state == "HUMAN_HANDOVER":
             return {
                 "type": "buttons",
                 "reply": f"Pesan Bapak/Ibu: *\"{message_text}\"* telah dicatat di sistem admin. Mohon ditunggu ya.",
-                "buttons": [{"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]
+                "buttons": [{"id": "btn_menu_utama", "title": "↩️ Kembali"}]
             }
 
         # 6. RAG Knowledge Base
@@ -283,7 +290,7 @@ class OmBudiService:
             )
 
         ai_reply = await self._generate_rag_response(user_name, message_text, rag_context)
-        return {"type": "buttons", "reply": ai_reply, "buttons": [{"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
+        return {"type": "buttons", "reply": ai_reply, "buttons": [{"id": "btn_menu_utama", "title": "↩️ Kembali"}]}
 
 
 om_budi_service = OmBudiService()
