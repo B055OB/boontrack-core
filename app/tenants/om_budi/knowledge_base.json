@@ -3,44 +3,212 @@
   "name": "Om Budi Channel",
   "rules": [
     {
-      "id": "rule_hutang",
-      "intent": "konsultasi_hutang",
-      "exact_phrases": ["saya mau lunas hutang", "cara lunas hutang om budi"],
-      "keywords": ["hutang", "utang", "pinjol", "tagihan", "belum lunas", "lunas hutang", "sumbatan rezeki"],
-      "confidence_boost": ["sudah riyadhoh", "belum ada hasil", "belum lunas", "kapan lunas", "ikhtiar"],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊. Memahami perasaan lelah saat amanah hutang belum tuntas adalah hal yang wajar, mari kita selaraskan ikhtiar langitnya:\n\n1. *Hindari Vibrasi Ketergesaan*: Saat beribadah dengan fokus 'harus cepat lunas', batin memancarkan sinyal kepanikan. Ubah niat beramal untuk mencari ridho Allah SWT.\n2. *Pembersihan Batin*: Ikhlaskan dan maafkan pihak mana pun yang pernah mengganjal di hati.\n3. *Pasrah Total (Zero Mind)*: Tugas kita ikhtiar maksimal, ketetapan waktu penyelesaian adalah hak mutlak Allah SWT.\n\nTetap husnudzon ya 😊. Hal ini juga bisa kita bedah energinya bersama di sesi Zoom Booster Rabu malam 🙏."
+      "id": "rule_curhat_hutang_terpuruk",
+      "intent": "konsultasi_hutang_terpuruk",
+      "exact_phrases": [
+        "saya mau lunas hutang",
+        "cara lunas hutang om budi",
+        "hidup saya hancur karena hutang",
+        "capek terlilit hutang"
+      ],
+      "keywords": [
+        "hutang",
+        "utang",
+        "pinjol",
+        "tagihan",
+        "terlilit",
+        "belum lunas",
+        "beban hutang",
+        "putus asa",
+        "dikejar penagih"
+      ],
+      "confidence_boost": [
+        "sudah riyadhoh",
+        "belum ada hasil",
+        "kapan lunas",
+        "kenapa belum lunas",
+        "lelah"
+      ],
+      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊. Memahami perasaan lelah, gelisah, dan sesaknya dada saat amanah hutang belum tuntas adalah hal yang manusiawi. Namun ingatlah, hutang bukan sekadar angka, melainkan guru kehidupan yang mendidik kita untuk sabar, jujur, dan memperbaiki diri.\n\nDalam buku *Jalan Sunyi Orang Berhutang*, ada beberapa kunci batin agar pertolongan Allah segera hadir:\n1. *Stop Mengeluh*: Mengeluh tidak melunasi hutang, justru menguras energi dan menutup pintu rezeki.\n2. *Selaraskan Hati, Pikiran, dan Lisan*: Mulut ingin lunas, maka pikiran dan hati juga harus bersih dari rasa cemas, prasangka buruk, dan keinginan pamer.\n3. *Pasrah Total & Jangan Buru-Buru*: Jangan menuntut proses instan. Tugas kita adalah ikhtiar maksimal dan bertaubat, sedangkan waktu penyelesaian mutlak hak Allah SWT.\n\nTenangkan hati sejenak ya 😊. Mari kita bedah dan kuatkan energinya bersama di sesi Zoom Booster Rabu malam 🙏."
+    },
+    {
+      "id": "rule_langkah_nyata_hutang",
+      "intent": "langkah_keluar_hutang",
+      "exact_phrases": [
+        "langkah nyata keluar dari hutang",
+        "tahapan bebas hutang",
+        "cara praktis lunas hutang"
+      ],
+      "keywords": [
+        "langkah nyata",
+        "cara keluar hutang",
+        "tahapan lunas",
+        "solusi hutang",
+        "ikhtiar bumi langit"
+      ],
+      "confidence_boost": [
+        "langkah",
+        "tahap",
+        "bagaimana caranya",
+        "konkret"
+      ],
+      "answer": "Bismillah 🙏😊, berikut *7 Langkah Nyata Bebas dari Hutang* sesuai bimbingan Om Budi:\n\n1. *Stop Mengeluh*: Setiap kali ingin mengeluh, langsung ganti dengan istighfar, sholawat, atau doa.\n2. *Jujur kepada Pemberi Hutang*: Jangan mengobral janji palsu tanggal bayar jika belum yakin mampu, karena ingkar janji adalah dosa.\n3. *Catat Semua Pengeluaran*: Tulis detail arus uang masuk dan keluar sekecil apa pun.\n4. *Bedakan Kebutuhan dan Keinginan*: Tahan diri dari belanja konsumtif dan ubah gaya hidup.\n5. *Perbanyak Istighfar & Sholawat*: Khususnya Sholawat Jibril 1.000x untuk pembersih energi negatif dan penenang jiwa.\n6. *Seimbangkan Ikhtiar Bumi & Langit*: Kerja nyata sungguh-sungguh diiringi doa khusyuk di sepertiga malam.\n7. *Sabar Menjalani Proses*: Nikmati proses pendidikan dari Allah tanpa tergesa-gesa 🤲."
+    },
+    {
+      "id": "rule_bahaya_janji_palsu",
+      "intent": "edukasi_janji_hutang",
+      "exact_phrases": [
+        "cara menghadapi penagih hutang",
+        "hukum janji bayar hutang"
+      ],
+      "keywords": [
+        "janji palsu",
+        "menghadapi penagih",
+        "janji bayar",
+        "ingkar janji",
+        "dosa bohong",
+        "dikejar debt collector"
+      ],
+      "confidence_boost": [
+        "minggu depan bayar",
+        "takut ditagih",
+        "bohong"
+      ],
+      "answer": "Bismillah Bapak/Ibu 🙏😊, salah satu jebakan orang berhutang adalah mudah mengobral janji manis demi menenangkan penagih (misal: *'minggu depan pasti saya bayar'*), padahal hatinya ragu.\n\nIngatlah nasihat Om Budi:\n• Janji yang diingkari melahirkan *dosa dusta*, sehingga beban hutang bertumpuk dengan dosa.\n• Bersikaplah jujur dan rendah hati: katakan dengan sopan bahwa Anda sedang sungguh-sungguh berikhtiar dan memohon kesabaran serta doanya.\n• Kata-kata jujur jauh lebih selamat dan mendatangkan keberkahan daripada menumpuk janji palsu ya 😊🙏."
+    },
+    {
+      "id": "rule_bahaya_mengeluh_boros",
+      "intent": "mindset_gaya_hidup_boros",
+      "exact_phrases": [
+        "kenapa rezeki seret",
+        "kenapa hutang makin banyak"
+      ],
+      "keywords": [
+        "mengeluh",
+        "boros",
+        "gaya hidup",
+        "konsumtif",
+        "rezeki seret",
+        "hidup susah",
+        "kenapa selalu apes"
+      ],
+      "confidence_boost": [
+        "seret",
+        "boros",
+        "kafe",
+        "belanja"
+      ],
+      "answer": "Bismillah 🙏😊, dalam buku *Jalan Sunyi Orang Berhutang*, ada 2 musuh utama yang menyumbat aliran rezeki:\n\n1. *Kebiasaan Mengeluh*: Mengeluh di hadapan manusia sama saja mengeluhkan takdir Allah. Hati yang penuh keluhan akan malas berikhtiar dan membuat orang lain enggan menolong.\n2. *Gaya Hidup Boros*: Mengaku ingin bebas hutang tetapi uang masih habis untuk hal konsumtif dan gengsi. Perubahan gaya hidup adalah syarat mutlak jika ingin ditolong Allah SWT.\n\nGanti keluhan dengan syukur dan pangkas keinginan yang bukan kebutuhan pokok ya Bapak/Ibu 😊🙏."
+    },
+    {
+      "id": "rule_dhuha",
+      "intent": "sholat_dhuha",
+      "exact_phrases": [
+        "berapa rakaat dhuha",
+        "waktu sholat dhuha"
+      ],
+      "keywords": [
+        "dhuha",
+        "rakaat dhuha",
+        "waktu dhuha",
+        "tata cara dhuha"
+      ],
+      "confidence_boost": [
+        "berapa rakaat",
+        "jam berapa",
+        "niat"
+      ],
+      "answer": "Bismillah 🙏😊, Sholat Dhuha pembuka pintu rezeki dianjurkan minimal **4 Rakaat** (dikerjakan 2 rakaat salam, lalu 2 rakaat salam).\n\nWaktu terbaik adalah saat matahari mulai naik hangat (sekitar pukul 08.00 - 11.00 WIB). Niatkan semata-mata menghidupkan rasa syukur dan memohon kelapangan rezeki halal yang berkah 🤲."
+    },
+    {
+      "id": "rule_sholawat",
+      "intent": "sholawat_jibril",
+      "exact_phrases": [
+        "amalan sholawat jibril",
+        "bacaan sholawat jibril"
+      ],
+      "keywords": [
+        "sholawat",
+        "jibril",
+        "1000x",
+        "shallallahu ala muhammad",
+        "amalan sholawat"
+      ],
+      "confidence_boost": [
+        "berapa kali",
+        "waktu baca",
+        "cara dawam"
+      ],
+      "answer": "Bismillah 🙏😊, amalan utama bimbingan adalah mendawamkan *Sholawat Jibril* (*'Shallallahu 'Ala Muhammad'*) minimal **1.000x setiap hari** secara istiqomah.\n\nAmalan ini berfungsi membersihkan energi negatif batin, menenangkan jiwa, dan membuka jalan rezeki dari arah tak terduga 🤲."
     },
     {
       "id": "rule_brainwave",
       "intent": "pantangan_brainwave",
-      "exact_phrases": ["pantangan audio brainwave", "aturan dengar brainwave"],
-      "keywords": ["brainwave", "audio", "gelombang otak", "pantangan audio", "efek samping audio"],
-      "confidence_boost": ["pantangan", "bahaya", "aturan mendengarkan", "cara dengar"],
+      "exact_phrases": [
+        "pantangan audio brainwave",
+        "aturan dengar brainwave"
+      ],
+      "keywords": [
+        "brainwave",
+        "audio",
+        "gelombang otak",
+        "pantangan audio",
+        "efek samping audio"
+      ],
+      "confidence_boost": [
+        "pantangan",
+        "bahaya",
+        "aturan mendengarkan",
+        "cara dengar"
+      ],
       "answer": "Bismillah 🙏😊, panduan & pantangan mendengarkan audio terapi Brainwave Quantum Energi:\n\n1. *Gunakan Earphone/Headset*: Dengarkan dengan volume sedang dan rileks.\n2. *Dilarang Saat Menyetir/Mengoperasikan Mesin*: Audio memicu gelombang Alfa/Theta yang membuat tubuh sangat relaks dan mengantuk.\n3. *Waktu Terbaik*: Sebelum tidur malam atau setelah Sholat Tahajjud dalam keadaan berserah diri kepada Allah SWT."
     },
     {
       "id": "rule_proposal_doa",
       "intent": "panduan_proposal_doa",
-      "exact_phrases": ["apa itu proposal doa", "cara buat proposal doa"],
-      "keywords": ["proposal doa", "bikin doa", "cara nulis doa", "contoh proposal", "format doa"],
-      "confidence_boost": ["langkah", "urutan", "struktur", "hajat"],
+      "exact_phrases": [
+        "apa itu proposal doa",
+        "cara buat proposal doa"
+      ],
+      "keywords": [
+        "proposal doa",
+        "bikin doa",
+        "cara nulis doa",
+        "contoh proposal",
+        "format doa"
+      ],
+      "confidence_boost": [
+        "langkah",
+        "urutan",
+        "struktur",
+        "hajat"
+      ],
       "answer": "Bismillah 🙏😊, urutan penulisan *Proposal Doa* sesuai panduan Om Budi:\n\n1. Awali pujian kepada Allah dengan Asmaul Husna (Ya Razzaq, Ya Fattah, Ya Mujib).\n2. Bersholawat kepada Nabi Muhammad SAW.\n3. Istighfar mengakui kelemahan dan dosa diri.\n4. Tuliskan hajat secara spesifik, detail, dan sertakan alasan niat kebaikannya.\n5. Pasrah total (tawakal) atas apa pun ketetapan terbaik dari Allah SWT 🤲."
     },
     {
-      "id": "rule_dhuha",
-      "intent": "sholat_dhuha",
-      "exact_phrases": ["berapa rakaat dhuha", "waktu sholat dhuha"],
-      "keywords": ["dhuha", "rakaat dhuha", "waktu dhuha", "tata cara dhuha"],
-      "confidence_boost": ["berapa rakaat", "jam berapa", "niat"],
-      "answer": "Bismillah 🙏😊, Sholat Dhuha pembuka rezeki dianjurkan minimal **4 Rakaat** (dikerjakan 2 rakaat salam, lalu 2 rakaat salam).\n\nWaktu terbaik adalah sekitar pukul 08.00 - 11.00 WIB. Niatkan menghidupkan rasa syukur dan memohon kelapangan rezeki yang berkah 🤲."
-    },
-    {
-      "id": "rule_sholawat",
-      "intent": "sholawat_jibril",
-      "exact_phrases": ["amalan sholawat jibril", "bacaan sholawat jibril"],
-      "keywords": ["sholawat", "jibril", "1000x", "shallallahu ala muhammad", "amalan sholawat"],
-      "confidence_boost": ["berapa kali", "waktu baca", "cara dawam"],
-      "answer": "Bismillah 🙏😊, amalan utama bimbingan adalah mendawamkan *Sholawat Jibril* (*'Shallallahu 'Ala Muhammad'*) minimal **1.000x setiap hari** secara istiqomah untuk membersihkan energi negatif batin dan membuka jalan rezeki tak terduga 🤲."
+      "id": "rule_ikut_zoom",
+      "intent": "cara_ikut_zoom",
+      "exact_phrases": [
+        "saya ingin ikut zoom booster",
+        "cara ikut zoom booster",
+        "mau ikut zoom booster",
+        "daftar zoom booster"
+      ],
+      "keywords": [
+        "ikut zoom",
+        "gabung zoom",
+        "daftar zoom",
+        "masuk zoom",
+        "zoom booster"
+      ],
+      "confidence_boost": [
+        "cara",
+        "ikut",
+        "link",
+        "jadwal",
+        "daftar"
+      ],
+      "answer": "Bismillah 🙏😊, untuk mengikuti sesi *Zoom Booster Bersama Om Budi*, berikut panduannya:\n\n1. *Jadwal Live*: Setiap hari **Rabu malam** pukul **20.00 WIB**.\n2. *Tautan Ruang Pertemuan*:\n👉 Link: *https://zoom.us/j/boontrack-ombudi*\n👉 Passcode: *SHOLAWAT*\n3. *Peserta*: Terbuka untuk seluruh alumni & jamaah yang mendukung program sedekah dakwah/orang tua asuh.\n\nPastikan aplikasi Zoom sudah terpasang di HP/Laptop dan masuk 10-15 menit sebelum acara dimulai ya Bapak/Ibu 😊🙏."
     }
   ]
 }
