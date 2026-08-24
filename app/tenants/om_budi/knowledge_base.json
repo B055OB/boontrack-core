@@ -1,39 +1,46 @@
 {
   "tenant_id": "om_budi",
-  "name": "Riyadhoh Sholawat & Quantum Energi Om Budi",
-  "version": "2026.08",
-  "faq_data": [
+  "name": "Om Budi Channel",
+  "rules": [
     {
-      "intent": "daftar_kelas_online",
-      "keywords": ["daftar", "gabung kelas", "biaya kelas", "harga kelas", "transfer", "qris", "rekening", "siap bayar", "iya siap"],
-      "answer": "MasyaAllah, Alhamdulillah Bapak/Ibu. Untuk bergabung dengan *Kelas Online Pembuka Rezeki & Tauhid* (Investasi Bimbingan: Rp200.000), silakan transfer ke rekening resmi atau scan QRIS berikut:\n\n🏦 *Bank Syariah Indonesia (BSI)*\nNo. Rekening: *7200-1122-3344*\nAtas Nama: *BoonTrack / Bimbingan Om Budi*\n\nAtau scan QRIS di atas. Setelah transfer, *kirimkan foto struk/screenshot bukti transfer* ke WhatsApp ini untuk verifikasi otomatis."
-    }
-  ],
-  "rag_knowledge_clusters": [
-    {
-      "cluster_id": "amalan_riyadhoh_dzikir",
-      "topic": "Amalan Riyadhoh, Sholat, dan Dzikir Harian",
-      "content": "Paket Amalan Riyadhoh Om Budi:\n1. Sholat 5 Waktu di awal waktu (wajib dipaksakan).\n2. Sholat Dhuha minimal 4 Rakaat (2 rakaat 1 salam).\n3. Sholat Taubat 2 Rakaat sebelum Tahajud.\n4. Sholat Tahajud minimal 4 Rakaat (2 rakaat 1 salam).\n5. Sholat Hajat 2 Rakaat dilanjutkan Sholat Witir 3 Rakaat.\n6. Dzikir setelah Witir: 'ROBBIGHFIRLII WA TUB 'ALAYYA INNAKA ANTAT TAWWABUR ROHIIM' sebanyak-banyaknya.\n7. Baca Al-Qur'an minimal 5 lembar per hari (waktu bebas).\n8. Sholat Fajar & Dzikir: 'SUBHANALLAH WABIHAMDIHI SUBHANALLAHIL 'ADZIMI ASTAGHFIRULLAH' 100x.\n9. Setelah Shubuh: 'Ya Hannan Ya Mannan, Ya Fattah Ya Rozzaq, Ya Ghoniyyu Ya Mughniy' 33x.\n10. Sholawat Jibril minimal 1.000x setiap hari (bisa dicicil sambil beraktivitas).\n11. Istighfar dari Ashar sampai Maghrib sebanyak-banyaknya.\n12. Untuk wanita berhalangan haid, tidak perlu sholat melainkan cukup memperbanyak dzikir dan sholawat."
+      "id": "rule_hutang",
+      "intent": "konsultasi_hutang",
+      "exact_phrases": ["saya mau lunas hutang", "cara lunas hutang om budi"],
+      "keywords": ["hutang", "utang", "pinjol", "tagihan", "belum lunas", "lunas hutang", "sumbatan rezeki"],
+      "confidence_boost": ["sudah riyadhoh", "belum ada hasil", "belum lunas", "kapan lunas", "ikhtiar"],
+      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊. Memahami perasaan lelah saat amanah hutang belum tuntas adalah hal yang wajar, mari kita selaraskan ikhtiar langitnya:\n\n1. *Hindari Vibrasi Ketergesaan*: Saat beribadah dengan fokus 'harus cepat lunas', batin memancarkan sinyal kepanikan. Ubah niat beramal untuk mencari ridho Allah SWT.\n2. *Pembersihan Batin*: Ikhlaskan dan maafkan pihak mana pun yang pernah mengganjal di hati.\n3. *Pasrah Total (Zero Mind)*: Tugas kita ikhtiar maksimal, ketetapan waktu penyelesaian adalah hak mutlak Allah SWT.\n\nTetap husnudzon ya 😊. Hal ini juga bisa kita bedah energinya bersama di sesi Zoom Booster Rabu malam 🙏."
     },
     {
-      "cluster_id": "tata_cara_berdoa",
-      "topic": "Urutan dan Tata Cara Berdoa yang Mustajab",
-      "content": "Urutan Berdoa yang Wajib Dibaca Sebelum Memohon:\n1. Bismillahirrohmaanirrohiim\n2. Alhamdulillaahi Robbil 'Aalamiin\n3. Membaca Asmaul Husna: Ya Allah, Ya Rahman, Ya Rahim, Ya Ghaffar, Ya Ghafuur, Ya Tawwaab, Ya 'Afuww, Ya Haadi, Ya Hayyu, Ya Qayyuum, Ya Shamad, Ya Razzaq, Ya Fattah, Ya Baasith, Ya Salaam, Ya Ghani, Ya Mughni, Ya Muqiit, Ya Mujiib.\n4. Membaca: 'Laa ilaaha illallaah, al-malikul haqqul mubiin, Muhammadur Rasuulullaah shaadiqul wa'dil amiin'.\n5. Membaca: 'Robbighfirlii wa tub 'alayya innaka antat tawwaabur rohiim'.\n6. Membaca Sholawat: 'Allahumma sholli 'alaa sayyidinaa Muhammad wa 'alaa aali sayyidinaa Muhammad'.\n7. Mengakui dosa dengan kerendahan hati.\n8. Mengucapkan rasa syukur atas semua nikmat yang ada.\n9. Membaca Astaghfirullahal 'adzim atau Sholawat sebanyak-banyaknya baru menyampaikan hajat/proposal doa."
+      "id": "rule_brainwave",
+      "intent": "pantangan_brainwave",
+      "exact_phrases": ["pantangan audio brainwave", "aturan dengar brainwave"],
+      "keywords": ["brainwave", "audio", "gelombang otak", "pantangan audio", "efek samping audio"],
+      "confidence_boost": ["pantangan", "bahaya", "aturan mendengarkan", "cara dengar"],
+      "answer": "Bismillah 🙏😊, panduan & pantangan mendengarkan audio terapi Brainwave Quantum Energi:\n\n1. *Gunakan Earphone/Headset*: Dengarkan dengan volume sedang dan rileks.\n2. *Dilarang Saat Menyetir/Mengoperasikan Mesin*: Audio memicu gelombang Alfa/Theta yang membuat tubuh sangat relaks dan mengantuk.\n3. *Waktu Terbaik*: Sebelum tidur malam atau setelah Sholat Tahajjud dalam keadaan berserah diri kepada Allah SWT."
     },
     {
-      "cluster_id": "pantangan_brainwave",
-      "topic": "Panduan & Pantangan Audio Brainwave Quantum Energi",
-      "content": "Langkah Penggunaan Audio Brainwave Digital Prayers Quantum Ikhlas:\n1. Alphamatic: Posisikan diri nyaman (duduk/berbaring) selama 20-60 menit di ruangan hening. Pakaian longgar, lepas kacamata/aksesoris.\n2. Afirmasi: Setelah 5 menit tenang, bisikkan afirmasi tujuan hidup di dalam hati.\n3. Visualisasi: Bayangkan harapan seolah sudah nyata secara holografis (visual, warna, suhu, suara, aroma, rasa).\n4. Syukur & Ikhlas: Ucapkan Alhamdulillahirabbil'alamin dan pasrahkan segalanya kepada Allah.\n\nPANTANGAN KERAS BRAINWAVE:\n- TIDAK BOLEH didengarkan sambil menyetir motor/mobil (ada efek kantuk).\n- TIDAK BOLEH sambil mengoperasikan mesin berat.\n- TIDAK BOLEH untuk anak di bawah usia 10-16 tahun.\n- TIDAK BOLEH untuk penderita epilepsi/ayan.\n- TIDAK BOLEH bagi pengguna alat pacu jantung.\n- Konsultasi dokter bagi wanita hamil atau dalam perawatan medis."
+      "id": "rule_proposal_doa",
+      "intent": "panduan_proposal_doa",
+      "exact_phrases": ["apa itu proposal doa", "cara buat proposal doa"],
+      "keywords": ["proposal doa", "bikin doa", "cara nulis doa", "contoh proposal", "format doa"],
+      "confidence_boost": ["langkah", "urutan", "struktur", "hajat"],
+      "answer": "Bismillah 🙏😊, urutan penulisan *Proposal Doa* sesuai panduan Om Budi:\n\n1. Awali pujian kepada Allah dengan Asmaul Husna (Ya Razzaq, Ya Fattah, Ya Mujib).\n2. Bersholawat kepada Nabi Muhammad SAW.\n3. Istighfar mengakui kelemahan dan dosa diri.\n4. Tuliskan hajat secara spesifik, detail, dan sertakan alasan niat kebaikannya.\n5. Pasrah total (tawakal) atas apa pun ketetapan terbaik dari Allah SWT 🤲."
     },
     {
-      "cluster_id": "quantum_mindset_vibrasi",
-      "topic": "Quantum Energi, Vibrasi Rasa, & Rezeki",
-      "content": "Prinsip Quantum Energi Om Budi:\n1. Rezeki seperti air keran: keran lancar = lancar rezeki, keran seret = ada sumbatan dosa/pikiran negatif. Fokus mohon ampunan Allah.\n2. Pikiran kita seperti proyektor: Fokus yang dipikirkan dengan rasa akan menjadi realitas. Pikiran negatif/mengeluh/takut akan menarik masalah yang sama. Energi tinggi (bahagia, bersyukur, senyum, ikhlas, suka berbagi) menarik keajaiban rezeki tanpa disangka.\n3. Wajib senyum setiap mau tidur dan bangun pagi minimal 10 detik.\n4. Detox sebelum tidur: Doakan minimal 5 orang setiap hari dengan doa yang sama dengan hajat kita, serta maafkan semua orang yang pernah menyakiti kita secara tulus."
+      "id": "rule_dhuha",
+      "intent": "sholat_dhuha",
+      "exact_phrases": ["berapa rakaat dhuha", "waktu sholat dhuha"],
+      "keywords": ["dhuha", "rakaat dhuha", "waktu dhuha", "tata cara dhuha"],
+      "confidence_boost": ["berapa rakaat", "jam berapa", "niat"],
+      "answer": "Bismillah 🙏😊, Sholat Dhuha pembuka rezeki dianjurkan minimal **4 Rakaat** (dikerjakan 2 rakaat salam, lalu 2 rakaat salam).\n\nWaktu terbaik adalah sekitar pukul 08.00 - 11.00 WIB. Niatkan menghidupkan rasa syukur dan memohon kelapangan rezeki yang berkah 🤲."
     },
     {
-      "cluster_id": "jurnal_proposal_doa",
-      "topic": "Jurnal Syukur, Jurnal Doa, dan Proposal Doa",
-      "content": "Praktik Penulisan Hajat:\n1. Jurnal Syukur: Tulis minimal 3 rasa syukur setiap malam sebelum tidur dengan fokus pada apa yang sudah ada.\n2. Jurnal Doa: Tulis doa minimal 10 malam sebelum tidur menggunakan format kalimat afirmasi: 'Rasanya lebih enak ya kalau... (sebutkan impian/omset/kendaraan)'.\n3. Proposal Doa: Tulis nominal hajat (misal: pelunasan amanah hutang / rumah) sertakan gambaran imajinasi penuh rasa terima kasih dan kebahagiaan.\n4. Sedekah Percepatan: Setiap dapat rezeki langsung sisihkan sedekah untuk orang tua, anak yatim, dhuafa dengan niat pembuka lunasnya hutang dan derasnya rezeki harta."
+      "id": "rule_sholawat",
+      "intent": "sholawat_jibril",
+      "exact_phrases": ["amalan sholawat jibril", "bacaan sholawat jibril"],
+      "keywords": ["sholawat", "jibril", "1000x", "shallallahu ala muhammad", "amalan sholawat"],
+      "confidence_boost": ["berapa kali", "waktu baca", "cara dawam"],
+      "answer": "Bismillah 🙏😊, amalan utama bimbingan adalah mendawamkan *Sholawat Jibril* (*'Shallallahu 'Ala Muhammad'*) minimal **1.000x setiap hari** secara istiqomah untuk membersihkan energi negatif batin dan membuka jalan rezeki tak terduga 🤲."
     }
   ]
 }
