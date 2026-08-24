@@ -11,7 +11,6 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY", ""))
 
 USER_STATES: Dict[str, str] = {}
 
-# Template Resmi Rekening Penyaluran Om Budi Channel
 REKENING_TEMPLATE = (
     "PROGRAM SEDEKAH BERJAMAAH & ORANG TUA ASUH\n"
     "Bersama Om Budi Channel\n\n"
@@ -56,13 +55,7 @@ class OmBudiService:
             logger.error(f"[KB LOAD ERROR] {e}")
             return {"faq_data": [], "rag_knowledge_clusters": []}
 
-    def clear_session(self, phone_number: str):
-        """Reset session cache nomor user."""
-        if phone_number in USER_STATES:
-            del USER_STATES[phone_number]
-
     def _retrieve_relevant_chunks(self, query: str) -> str:
-        """Pencarian materi RAG berdasarkan topik kluster PDF."""
         query_words = set(query.lower().split())
         matched_chunks = []
         for cluster in self.kb.get("rag_knowledge_clusters", []):
@@ -77,7 +70,6 @@ class OmBudiService:
         return "\n\n---\n\n".join(top_chunks) if top_chunks else ""
 
     async def _generate_rag_response(self, user_name: str, message: str, context_chunks: str) -> str:
-        """Memanggil LLM dengan System Prompt & Guardrails Ringkas."""
         if not GEMINI_API_KEY:
             return (
                 f"Assalamu'alaikum Warahmatullahi Wabarakatuh Kak *{user_name}*.\n\n"
@@ -107,7 +99,7 @@ class OmBudiService:
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(endpoint, json=payload, timeout=20) as resp:
+                async with session.post(endpoint, json=payload, timeout=15) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         return data["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -131,13 +123,10 @@ class OmBudiService:
         image_bytes: Optional[bytes] = None,
         image_mime: str = "image/jpeg"
     ) -> Dict[str, Any]:
-        """Entry point pengelolaan pesan multi-menu & multimodal OCR."""
         state = USER_STATES.get(phone_number, "IDLE")
         clean_text = (message_text or "").strip().lower()
 
-        # =========================================================================
-        # 1. OCR Multimodal: Handler Bukti Transfer / Struk QRIS BSI & Mandiri
-        # =========================================================================
+        # 1. OCR Bukti Transfer
         if image_bytes:
             from app.services.receipt_ocr_service import analyze_receipt_image
             ocr_res = await analyze_receipt_image(image_bytes, image_mime)
@@ -155,32 +144,15 @@ class OmBudiService:
                     "kelapangan rezeki, serta melunaskan segala amanah hutang Bapak/Ibu sekeluarga. Aamiin ya Rabbal 'Alamin.\n\n"
                     "Tautan Group Khusus Zoom Booster (setiap Rabu malam) akan segera kami kirimkan ke nomor ini."
                 )
-                buttons = [{"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]
-                return {"type": "buttons", "reply": reply, "buttons": buttons}
+                return {"type": "buttons", "reply": reply, "buttons": [{"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
             else:
-                buttons = [
-                    {"id": "btn_sub_2_b", "title": "Kirim Ulang Bukti"},
-                    {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}
-                ]
                 return {
                     "type": "buttons",
                     "reply": "Gambar belum terdeteksi sebagai bukti transfer yang valid. Pastikan nominal, tanggal, dan nomor rekening tujuan (Budi Yulianto) terlihat jelas ya.",
-                    "buttons": buttons
+                    "buttons": [{"id": "btn_cara_sedekah", "title": "Kirim Ulang Bukti"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]
                 }
 
-        # Konfirmasi teks spesifik dari jamaah
-        if "sudah ikut sedekah" in clean_text or "sudah ikut program orang tua asuh" in clean_text:
-            USER_STATES[phone_number] = "WAITING_RECEIPT"
-            reply_doa = (
-                f"Alhamdulillah wa Jazakumullahu Khairan Katsiran Bapak/Ibu *{user_name}* 🙏\n\n"
-                "Semoga Allah melimpahkan keberkahan, kesehatan, kelapangan rezeki, serta kemudahan dalam setiap urusan Bapak/Ibu sekeluarga. Aamiin ya Rabbal 'Alamin.\n\n"
-                "Mohon lampirkan dan *kirimkan foto bukti transfer* ke chat ini ya agar tim admin langsung mendata dan memberikan akses Group Khusus Zoom Booster."
-            )
-            return {"type": "text", "reply": reply_doa}
-
-        # =========================================================================
-        # RESET / MENU UTAMA (3 TOMBOL INTERAKTIF)
-        # =========================================================================
+        # 2. Reset / Menu Utama (3 Tombol Cepat)
         if button_id == "btn_menu_utama" or clean_text in ["menu", "start", "halo", "hai", "assalamu'alaikum", "assalamualaikum", "p"]:
             USER_STATES[phone_number] = "IDLE"
             menu_text = (
@@ -188,20 +160,17 @@ class OmBudiService:
                 "Selamat datang di Portal Bimbingan *Om Budi Channel*\n\n"
                 "Silakan pilih menu utama di bawah ini:"
             )
-            main_buttons = [
-                {"id": "menu_zoom_booster", "title": "🚀 Zoom Booster"},
-                {"id": "menu_sedekah_berjamaah", "title": "🤲 Sedekah"},
-                {"id": "menu_tanya_admin", "title": "💬 Tanya Admin"}
-            ]
             return {
                 "type": "buttons",
                 "reply": menu_text,
-                "buttons": main_buttons
+                "buttons": [
+                    {"id": "menu_zoom_booster", "title": "🚀 Zoom Booster"},
+                    {"id": "menu_sedekah_berjamaah", "title": "🤲 Sedekah"},
+                    {"id": "menu_tanya_admin", "title": "💬 Tanya Admin"}
+                ]
             }
 
-        # =========================================================================
-        # 2. SUB-MENU: ZOOM BOOSTER
-        # =========================================================================
+        # 3. Sub-Menu: Zoom Booster
         if button_id == "menu_zoom_booster":
             USER_STATES[phone_number] = "IN_ZOOM_MENU"
             sections = [
@@ -227,48 +196,33 @@ class OmBudiService:
 
         if button_id == "btn_sub_1_a":
             return {"type": "buttons", "reply": "📝 *Cara Mengikuti Zoom Booster*\n\n1. Pastikan aplikasi Zoom sudah terpasang di HP/Laptop.\n2. Masuk melalui tautan resmi 10-15 menit sebelum dimulai.\n3. Gunakan nama asli di akun Zoom agar mudah disapa oleh Om Budi.", "buttons": [{"id": "menu_zoom_booster", "title": "Kembali ke Zoom"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
-
         if button_id == "btn_sub_1_b":
             return {"type": "buttons", "reply": "🗓️ *Jadwal Zoom Booster*\n\nSesi rutin diadakan setiap hari **Rabu malam** pukul 20.00 WIB. Pengingat tautan akan dikirimkan di grup khusus 1 jam sebelum acara dimulai.", "buttons": [{"id": "menu_zoom_booster", "title": "Kembali ke Zoom"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
-
         if button_id == "btn_sub_1_c":
             return {"type": "buttons", "reply": "✨ *Tentang Zoom Booster*\n\nSesi penguatan vibrasi energi, bedah sumbatan rezeki, konsultasi langsung persoalan amanah/hutang, serta bimbingan riyadhoh sholawat berjamaah bersama Om Budi.", "buttons": [{"id": "menu_zoom_booster", "title": "Kembali ke Zoom"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
-
         if button_id == "btn_sub_1_d":
             return {"type": "buttons", "reply": "👥 *Peserta yang Bisa Mengikuti*\n\nSeluruh alumni terdaftar dan jamaah yang mendukung program Zoom Booster & Orang Tua Asuh.", "buttons": [{"id": "menu_zoom_booster", "title": "Kembali ke Zoom"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
-
         if button_id == "btn_sub_1_e":
             return {"type": "buttons", "reply": "🔗 *Link & Cara Masuk Zoom*\n\nLink Ruang Pertemuan:\n👉 *https://zoom.us/j/boontrack-ombudi*\nPasscode: *SHOLAWAT*\n\n_Buka tautan di atas saat jam acara dimulai._", "buttons": [{"id": "menu_zoom_booster", "title": "Kembali ke Zoom"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
-
         if button_id == "btn_sub_1_f":
             return {"type": "buttons", "reply": "📹 *Materi & Rekaman Zoom*\n\nRekaman video sesi sebelumnya diunggah maksimal 1x24 jam ke Portal Alumni / Google Drive.", "buttons": [{"id": "menu_zoom_booster", "title": "Kembali ke Zoom"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
-
         if button_id == "btn_sub_1_g":
             return {"type": "buttons", "reply": "🤝 *Jika Tidak Bisa Hadir Live*\n\nTidak perlu khawatir, Bapak/Ibu tetap bisa menyimak siaran ulang rekaman dan tetap mendawamkan amalan riyadhoh secara mandiri.", "buttons": [{"id": "menu_zoom_booster", "title": "Kembali ke Zoom"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
 
-        # =========================================================================
-        # 3. SUB-MENU: SEDEKAH BERJAMAAH (HANYA PENJELASAN & CARA IKUT)
-        # =========================================================================
-        if button_id == "menu_sedekah_berjamaah":
+        # 4. Sub-Menu: Sedekah Berjamaah (Langsung 2 Tombol Cepat Tanpa List Menu)
+        if button_id == "menu_sedekah_berjamaah" or clean_text == "sedekah":
             USER_STATES[phone_number] = "IN_SEDEKAH_MENU"
-            sections = [
-                {
-                    "title": "Program Sedekah Berjamaah",
-                    "rows": [
-                        {"id": "btn_sub_2_a", "title": "Penjelasan Sedekah", "description": "Tujuan dan alokasi dana kebaikan"},
-                        {"id": "btn_sub_2_b", "title": "Cara Ikut Sedekah", "description": "Alur transfer & rekening resmi"}
-                    ]
-                }
-            ]
             return {
-                "type": "list",
-                "reply": "🤲 *[PROGRAM SEDEKAH BERJAMAAH]*\n\nSilakan pilih menu informasi di bawah ini:",
-                "button_text": "Pilih Menu",
-                "sections": sections
+                "type": "buttons",
+                "reply": "🤲 *[PROGRAM SEDEKAH BERJAMAAH]*\n\nSilakan pilih informasi yang ingin Bapak/Ibu lihat:",
+                "buttons": [
+                    {"id": "btn_penjelasan_sedekah", "title": "Penjelasan Sedekah"},
+                    {"id": "btn_cara_sedekah", "title": "Cara Ikut Sedekah"},
+                    {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}
+                ]
             }
 
-        # 3.a. Penjelasan Sedekah Berjamaah
-        if button_id == "btn_sub_2_a":
+        if button_id == "btn_penjelasan_sedekah":
             penjelasan_text = (
                 "🤲 *Penjelasan Sedekah Berjamaah & Orang Tua Asuh*\n\n"
                 "Gerakan ini merupakan program ikhtiar langit bersama *Om Budi Channel* untuk mendukung kelangsungan dakwah, majelis ilmu, dan berbagai program kebaikan melalui Program Zoom Booster.\n\n"
@@ -279,34 +233,33 @@ class OmBudiService:
                 "✅ Wakaf Al-Qur'an (event tertentu)\n"
                 "✅ Operasional Zoom, Internet, dan Sarana Pendukung Dakwah"
             )
-            buttons = [
-                {"id": "btn_sub_2_b", "title": "Cara Ikut Sedekah"},
-                {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}
-            ]
-            return {"type": "buttons", "reply": penjelasan_text, "buttons": buttons}
+            return {
+                "type": "buttons",
+                "reply": penjelasan_text,
+                "buttons": [
+                    {"id": "btn_cara_sedekah", "title": "Cara Ikut Sedekah"},
+                    {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}
+                ]
+            }
 
-        # 3.b. Cara Ikut Sedekah Berjamaah (Langsung menampilkan detail rekening & konfirmasi)
-        if button_id in ["btn_sub_2_b", "btn_sub_2_d"] or any(k in clean_text for k in ["rekening", "nomor rekening", "qris", "bsi", "mandiri", "transfer", "infaq", "bayar kelas"]):
+        if button_id == "btn_cara_sedekah" or any(k in clean_text for k in ["rekening", "nomor rekening", "qris", "bsi", "mandiri", "transfer", "infaq"]):
             USER_STATES[phone_number] = "WAITING_RECEIPT"
             return {
                 "type": "buttons",
                 "reply": REKENING_TEMPLATE,
                 "buttons": [
-                    {"id": "btn_sub_upload", "title": "Kirim Bukti Transfer"},
+                    {"id": "btn_upload_struk", "title": "Kirim Bukti Transfer"},
                     {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}
                 ]
             }
 
-        if button_id == "btn_sub_upload":
+        if button_id == "btn_upload_struk":
             USER_STATES[phone_number] = "WAITING_RECEIPT"
             return {"type": "text", "reply": "📸 *Kirim Bukti Transfer*\n\nSilakan lampirkan dan kirimkan foto struk transfer / screenshot m-banking Anda sekarang. AI akan memverifikasi transaksi secara otomatis."}
 
-        # =========================================================================
-        # 4. SUB-MENU: TANYA ADMIN (HUMAN HANDOVER)
-        # =========================================================================
+        # 5. Sub-Menu: Tanya Admin
         if button_id == "menu_tanya_admin" or "tanya admin" in clean_text or "hubungi admin" in clean_text:
             USER_STATES[phone_number] = "HUMAN_HANDOVER"
-            logger.info(f"[HANDOVER] Pengguna {phone_number} dialihkan ke antrean CS Human Admin.")
             handover_reply = (
                 f"💬 *[BANTUAN TIM ADMIN OM BUDI]*\n\n"
                 f"Pertanyaan Bapak/Ibu *{user_name}* telah diteruskan ke antrean Tim Admin kami.\n\n"
@@ -321,9 +274,7 @@ class OmBudiService:
                 "buttons": [{"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]
             }
 
-        # =========================================================================
-        # 5. RAG KNOWLEDGE BASE (TANYA JAWAB BEBAS PDF 2026)
-        # =========================================================================
+        # 6. RAG Knowledge Base
         rag_context = self._retrieve_relevant_chunks(clean_text)
         if not rag_context:
             rag_context = (
@@ -332,8 +283,7 @@ class OmBudiService:
             )
 
         ai_reply = await self._generate_rag_response(user_name, message_text, rag_context)
-        buttons = [{"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]
-        return {"type": "buttons", "reply": ai_reply, "buttons": buttons}
+        return {"type": "buttons", "reply": ai_reply, "buttons": [{"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
 
 
 om_budi_service = OmBudiService()
