@@ -41,6 +41,39 @@ REKENING_TEMPLATE = (
     "Om Budi Channel 🙏"
 )
 
+# Knowledge Base Internal Fallback (Jawaban Proporsional & Terstruktur)
+KNOWLEDGE_RULES = {
+    "proposal doa": (
+        "Bismillah, perihal *Proposal Doa* dalam ikhtiar Riyadhoh Om Budi, ini adalah metode menuliskan hajat secara spesifik dan penuh adab di hadapan Allah SWT.\n\n"
+        "Berikut urutan penyusunannya:\n"
+        "1. Awali dengan memuji Allah melalui Asmaul Husna (seperti Ya Mujib, Ya Razzaq, Ya Fattah).\n"
+        "2. Baca Sholawat Nabi sebagai pembuka doa.\n"
+        "3. Lakukan pengakuan dosa dan kelemahan diri dengan istighfar.\n"
+        "4. Tuliskan hajat secara jelas, detail, dan sertakan niat baik penggunaannya.\n"
+        "5. Akhiri dengan kepasrahan total (tawakal) atas ketetapan terbaik-Nya.\n\n"
+        "Semoga Allah mengijabah setiap butir hajat yang Bapak/Ibu ikhtiarkan."
+    ),
+    "mindset": (
+        "Bismillah, membangun *Mindset Doa yang Mudah Terkabul* berakar pada penyelarasan energi batin dan ketauhidan kepada Allah SWT.\n\n"
+        "Poin penting yang perlu dijaga:\n"
+        "1. *Husnudzon & Yakin 100%*: Percaya penuh tanpa ragu bahwa Allah Maha Mendengar dan pasti mengabulkan doa pada waktu yang tepat.\n"
+        "2. *Pembersihan Batin*: Lepaskan rasa dendam, amarah, dan keluh kesah dengan memaafkan semua orang secara tulus.\n"
+        "3. *Vibrasi Syukur*: Fokus mensyukuri apa yang sudah ada saat ini agar menarik energi kelimpahan.\n"
+        "4. *Fokus Solusi*: Jangan memelihara rasa cemas atau takut, melainkan fokus pada kemahabesaran pertolongan Allah.\n\n"
+        "Tetap jaga kebersihan hati dan optimisme dalam berikhtiar langit."
+    ),
+    "dhuha": (
+        "Bismillah, untuk amalan *Sholat Dhuha Pembuka Rezeki* dalam panduan bimbingan Om Budi, dianjurkan melaksanakannya minimal **4 Rakaat** (dikerjakan dengan 2 rakaat salam, lalu 2 rakaat salam).\n\n"
+        "Waktu pelaksanaannya adalah sekitar pukul 08.00 hingga 11.00 WIB. Niatkan ibadah ini semata-mata untuk mendekatkan diri kepada Allah, menghidupkan rasa syukur, dan membuka pintu keberkahan rezeki halal dari segala arah.\n\n"
+        "Semoga amalan dhuha Bapak/Ibu senantiasa istiqomah dan membawa ketenangan hidup."
+    ),
+    "sholawat": (
+        "Bismillah, amalan utama dalam bimbingan ini adalah mendawamkan *Sholawat Jibril* (*'Shallallahu 'Ala Muhammad'*) minimal **1.000x setiap hari** secara konsisten.\n\n"
+        "Amalan ini berfungsi sebagai wasilah membersihkan energi negatif dalam diri, menenangkan pikiran, serta menarik pertolongan dan kelapangan rezeki dari arah yang tidak disangka-sangka.\n\n"
+        "Dawamkan dengan hati yang hadir dan penuh cinta kepada Rasulullah SAW."
+    )
+}
+
 
 class OmBudiService:
     def __init__(self):
@@ -72,46 +105,45 @@ class OmBudiService:
         gemini_key = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY", "")).strip()
         groq_key = os.getenv("GROQ_API_KEY", "").strip()
 
-        combined_prompt = f"""Anda adalah Asisten AI Resmi Om Budi Channel (Bimbingan Materi Kelas Online, Riyadhoh Sholawat, & Quantum Energi).
+        combined_prompt = f"""Anda adalah Asisten AI Resmi Bimbingan Om Budi Channel (Riyadhoh Sholawat & Quantum Energi).
 
-PANDUAN MENJAWAB:
-1. Persona: Islami, ramah, sejuk, santun, hangat, dan menenangkan batin. Sapa jamaah dengan sebutan Bapak/Ibu *{user_name}*.
-2. Sumber Pengetahuan: Jawab pertanyaan berdasarkan Modul Materi Kelas Online Om Budi di bawah. Berikan penjelasan yang jelas, terstruktur, dan to-the-point (maksimal 2-3 paragraf).
-3. Jika ditanya tentang amalan (seperti Sholat Dhuha, Tahajjud, Sholawat Jibril 1000x, Istighfar, Proposal Doa, atau Brainwave), jelaskan tata cara dan keutamaannya secara praktis.
-4. Fallback: Jika pertanyaan sama sekali tidak terkait materi ikhtiar bimbingan, arahkan untuk dibahas bersama di sesi Zoom Booster hari Rabu malam.
+ATURAN PANJANG & FORMAT JAWABAN (WAJIB DIIKUTI):
+1. Panjang Jawaban: Proporsional sedang (2 sampai 3 paragraf pendek, sekitar 100 - 150 kata).
+2. Jangan terlalu singkat (jangan hanya 1-2 kalimat).
+3. Jangan terlalu panjang (jangan membuat dinding teks panjang).
+4. Struktur Jawaban:
+   - Paragraf 1: Sambutan Islami yang santun, sejuk, dan langsung menjawab inti pertanyaan.
+   - Paragraf 2: Poin-poin praktis amalan/langkahnya (maksimal 3-4 butir poin ringkas).
+   - Paragraf 3: Kalimat penutup berisi doa penguat dan motivasi ikhtiar.
+5. Sapa jamaah secara ramah (Bapak/Ibu atau Kakak {user_name}).
+6. Jika pertanyaan sama sekali di luar materi ikhtiar bimbingan, arahkan untuk dibahas bersama pada sesi Zoom Booster hari Rabu malam.
 
-[MODUL KNOWLEDGE BASE OM BUDI]:
+[SUMBER MATERI RIYADHOH OM BUDI]:
 {context_chunks}
 
 [PERTANYAAN JAMAAH]:
 {message}"""
 
-        # 1. Panggilan REST API Gemini Flash
+        # 1. Panggilan Gemini Flash REST API
         if gemini_key:
-            # Fallback nama model untuk fleksibilitas API
-            models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
-            for model_name in models_to_try:
-                endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
-                payload = {
-                    "contents": [{"parts": [{"text": combined_prompt}]}],
-                    "generationConfig": {
-                        "maxOutputTokens": 400,
-                        "temperature": 0.2
-                    }
+            endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+            payload = {
+                "contents": [{"parts": [{"text": combined_prompt}]}],
+                "generationConfig": {
+                    "maxOutputTokens": 400,
+                    "temperature": 0.3
                 }
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.post(endpoint, json=payload, timeout=15) as resp:
-                            if resp.status == 200:
-                                data = await resp.json()
-                                return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                            else:
-                                err_t = await resp.text()
-                                logger.warning(f"[GEMINI {model_name} ERROR] Status {resp.status}: {err_t}")
-                except Exception as e:
-                    logger.warning(f"[GEMINI {model_name} EXCEPTION] {e}")
+            }
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(endpoint, json=payload, timeout=15) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            except Exception as e:
+                logger.error(f"[GEMINI RAG EXCEPTION] {e}")
 
-        # 2. Fallback Groq LLaMA-3.1
+        # 2. Panggilan Cadangan Groq LLaMA-3.1
         if groq_key:
             try:
                 groq_url = "https://api.groq.com/openai/v1/chat/completions"
@@ -119,11 +151,11 @@ PANDUAN MENJAWAB:
                 groq_payload = {
                     "model": "llama-3.1-8b-instant",
                     "messages": [
-                        {"role": "system", "content": "Anda adalah Asisten AI Bimbingan Materi Om Budi Channel yang ramah dan Islami."},
+                        {"role": "system", "content": "Anda adalah Asisten AI Bimbingan Om Budi yang memberikan jawaban proporsional 2-3 paragraf sedang."},
                         {"role": "user", "content": combined_prompt}
                     ],
                     "max_tokens": 400,
-                    "temperature": 0.2
+                    "temperature": 0.3
                 }
                 async with aiohttp.ClientSession() as session:
                     async with session.post(groq_url, headers=headers, json=groq_payload, timeout=12) as g_resp:
@@ -133,17 +165,19 @@ PANDUAN MENJAWAB:
             except Exception as e:
                 logger.error(f"[GROQ RAG EXCEPTION] {e}")
 
-        # 3. Jawaban Kontekstual Langsung Jika Koneksi API Mengalami Kendala
-        q_lower = message.lower()
-        if "dhuha" in q_lower:
-            return (
-                f"Bismillah Bapak/Ibu *{user_name}*, dalam materi bimbingan Om Budi, amalan Sholat Dhuha sangat dianjurkan dilaksanakan minimal **4 Rakaat** (dikerjakan dengan 2 rakaat salam, lalu 2 rakaat salam).\n\n"
-                "Waktu terbaik adalah saat matahari mulai naik setinggi tombak (sekitar pukul 08.00 - 11.00). Niatkan dengan tulus memohon kelapangan rezeki yang halal dan keberkahan dalam setiap urusan."
-            )
+        # 3. Dynamic Knowledge Extraction Fallback
+        clean_msg = message.lower()
+        for key, answer in KNOWLEDGE_RULES.items():
+            if key in clean_msg:
+                return answer
 
         return (
-            f"Alhamdulillah Bapak/Ibu *{user_name}*, kunci utama keberkahan ikhtiar langit adalah istiqomah menjaga sholat tepat waktu di awal waktu, "
-            "mendawamkan sholawat jibril minimal 1.000x setiap hari, serta senantiasa membersihkan hati dari prasangka buruk."
+            f"Bismillah Bapak/Ibu *{user_name}*, perihal ikhtiar langit bersama Om Budi, kunci utamanya adalah menjaga keselarasan antara doa dan kebersihan batin.\n\n"
+            "Berikut panduan amalan hariannya:\n"
+            "1. Jaga sholat 5 waktu tepat pada awal waktu.\n"
+            "2. Dawamkan sholawat jibril minimal 1.000x setiap hari.\n"
+            "3. Bersihkan batin dengan memaafkan dan senantiasa bersyukur.\n\n"
+            "Semoga Allah SWT mempermudah segala urusan dan mengalirkan rezeki berkah berlimpah untuk keluarga."
         )
 
     async def handle_incoming_message(
@@ -157,7 +191,7 @@ PANDUAN MENJAWAB:
     ) -> Dict[str, Any]:
         clean_text = (message_text or "").strip().lower()
 
-        # 1. OCR Bukti Transfer
+        # 1. OCR Multimodal Bukti Transfer
         if image_bytes:
             from app.services.receipt_ocr_service import analyze_receipt_image
             ocr_res = await analyze_receipt_image(image_bytes, image_mime)
@@ -166,7 +200,6 @@ PANDUAN MENJAWAB:
                 nominal = ocr_res.get("nominal", 0)
                 ref_no = ocr_res.get("reference_no_rrn", "-")
                 merchant = ocr_res.get("bank_source", "BSI / Mandiri (Budi Yulianto)")
-                USER_STATES[phone_number] = "IDLE"
 
                 reply = (
                     f"Alhamdulillah wa Syukurillah, Bapak/Ibu *{user_name}*! 🤲\n\n"
@@ -185,7 +218,6 @@ PANDUAN MENJAWAB:
 
         # 2. Reset / Menu Utama
         if button_id == "btn_menu_utama" or clean_text in ["menu", "start", "halo", "hai", "assalamu'alaikum", "assalamualaikum", "p"]:
-            USER_STATES[phone_number] = "IDLE"
             menu_text = (
                 f"Assalamu'alaikum Warahmatullahi Wabarakatuh Bapak/Ibu *{user_name}* 🙏\n\n"
                 "Selamat datang di Portal Bimbingan *Om Budi Channel*\n\n"
@@ -203,7 +235,6 @@ PANDUAN MENJAWAB:
 
         # 3. Sub-Menu: Zoom Booster
         if button_id == "menu_zoom_booster":
-            USER_STATES[phone_number] = "IN_ZOOM_MENU"
             sections = [
                 {
                     "title": "Informasi Zoom Booster",
@@ -242,7 +273,6 @@ PANDUAN MENJAWAB:
 
         # 4. Sub-Menu: Sedekah Berjamaah
         if button_id == "menu_sedekah_berjamaah" or clean_text == "sedekah":
-            USER_STATES[phone_number] = "IN_SEDEKAH_MENU"
             return {
                 "type": "buttons",
                 "reply": "🤲 *[PROGRAM SEDEKAH BERJAMAAH]*\n\nSilakan pilih informasi yang ingin Bapak/Ibu lihat:",
@@ -274,7 +304,6 @@ PANDUAN MENJAWAB:
             }
 
         if button_id == "btn_cara_sedekah" or any(k in clean_text for k in ["rekening", "nomor rekening", "qris", "bsi", "mandiri", "transfer", "infaq"]):
-            USER_STATES[phone_number] = "WAITING_RECEIPT"
             return {
                 "type": "buttons",
                 "reply": REKENING_TEMPLATE,
@@ -285,30 +314,22 @@ PANDUAN MENJAWAB:
             }
 
         if button_id == "btn_upload_struk":
-            USER_STATES[phone_number] = "WAITING_RECEIPT"
             return {"type": "text", "reply": "📸 *Kirim Bukti Transfer*\n\nSilakan lampirkan dan kirimkan foto struk transfer / screenshot m-banking Anda sekarang. AI akan memverifikasi transaksi secara otomatis."}
 
-        # 5. Tombol Tanya Materi / Konsultasi (Membuka Pintu RAG Tanya Jawab)
-        if button_id in ["menu_tanya_materi", "menu_tanya_admin"]:
-            USER_STATES[phone_number] = "IDLE"
+        # 5. Sub-Menu: Tanya Materi
+        if button_id == "menu_tanya_materi":
             info_text = (
                 f"💬 *[TANYA JAWAB MATERI & BIMBINGAN OM BUDI]*\n\n"
-                f"Silakan ketikkan pertanyaan Bapak/Ibu *{user_name}* seputar:\n"
+                f"Silakan ketikkan pertanyaan Bapak/Ibu seputar:\n"
                 "• Tata cara & amalan Riyadhoh (Sholat Dhuha, Tahajjud, Hajat)\n"
                 "• Dawam Sholawat Jibril 1.000x & Proposal Doa\n"
-                "• Pembersihan batin & penguraian sumbatan rezeki\n\n"
+                "• Mindset doa, pembersihan batin & sumbatan rezeki\n\n"
                 "Saya siap menjawab dan mendampingi ikhtiar Bapak/Ibu."
             )
             return {"type": "buttons", "reply": info_text, "buttons": [{"id": "btn_menu_utama", "title": "↩️ Kembali"}]}
 
-        # 6. RAG Knowledge Base Engine: Menjawab Semua Pertanyaan Bebas
+        # 6. RAG Knowledge Base Retrieval & Execution
         rag_context = self._retrieve_relevant_chunks(clean_text)
-        if not rag_context:
-            rag_context = (
-                "Prinsip Utama: Sholat awal waktu, sholat dhuha 4 rakaat, tahajjud, sholawat jibril 1000x, istighfar petang, "
-                "senyum 10 detik sebelum tidur & bangun pagi, jurnal syukur, proposal doa, hindari mengeluh dan berprasangka buruk."
-            )
-
         ai_reply = await self._generate_rag_response(user_name, message_text, rag_context)
         return {"type": "buttons", "reply": ai_reply, "buttons": [{"id": "btn_menu_utama", "title": "↩️ Kembali"}]}
 
