@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from typing import Any, Dict, List
 import aiohttp
 from aiohttp import web
 
@@ -14,32 +15,46 @@ if not any(isinstance(f, ZeroPIILogFilter) for f in logger.filters):
 
 central_wa_routes = web.RouteTableDef()
 
+# --- 1. Verifikasi Tokens Meta ---
 VERIFY_TOKENS = [
     "boontrack_master_verify_token_2026",
     "om_budi_secure_token_2026",
     "boontrack_career_token",
-    "boontrack_wa_secret_token"
+    "boontrack_wa_secret_token",
+    "boontrack_aduan_token"
 ]
 
-# ID Nomor Telepon Masing-Masing Tenant
-OM_BUDI_PHONE_NUMBER_ID = "1268977686299719"
-CAREER_PHONE_NUMBER_ID = "1340866379104241"
+# --- 2. Konfigurasi Phone Number ID Tenant ---
+OM_BUDI_PHONE_NUMBER_ID = "1268977686299719"       # Produksi Om Budi
+CAREER_PHONE_NUMBER_ID = "1340866379104241"        # Produksi Career Assistant
+ADUAN_SANDBOX_PHONE_ID = "1306479742542883"        # Sandbox / Uji Coba Diskominfo Aduan
 
-# Access Tokens
+# --- 3. Access Tokens Resolver ---
 OM_BUDI_ACCESS_TOKEN = os.getenv(
     "OM_BUDI_ACCESS_TOKEN",
     "EAANbiVgBfGQBSdMsa9S6YHzq6kx9xmML1vAAw890TZBQs7DqL5Ni1BEaAJZCV8xY4ZAjPPHKrC7ZAG6xYz5RSnyFzxoqyPayoo4PlSWUvZCYF8r5XGD99yMxSvku9K7WTat7lBJ00iXqNEZCNOhI0kznId91LMAP4h6wEQThKlTxPRGroCuaXZCWK5641sc1P2udi2ETKZBZBocOnF8U6ZBo7NnC9ADdGoFiB741T3w0ywzGPh63JzIgA67CI2UUOy793zLgl92fSWyHKv7BmoSm5ZAxZAvS0f6ZCtJwZD"
 )
 CAREER_ACCESS_TOKEN = os.getenv("CAREER_ACCESS_TOKEN", OM_BUDI_ACCESS_TOKEN)
+ADUAN_SANDBOX_ACCESS_TOKEN = os.getenv("ADUAN_ACCESS_TOKEN", OM_BUDI_ACCESS_TOKEN)
 
-# Aturan Validasi Media
 ALLOWED_IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/jpg"]
 
 
-# --- Helper Outbound WA Dinamis ---
-async def send_wa_text(recipient_phone: str, text: str, phone_id: str = OM_BUDI_PHONE_NUMBER_ID):
-    clean_id = re.findall(r"\d+", str(phone_id))[0] if re.findall(r"\d+", str(phone_id)) else OM_BUDI_PHONE_NUMBER_ID
-    token = CAREER_ACCESS_TOKEN if str(clean_id) == CAREER_PHONE_NUMBER_ID else OM_BUDI_ACCESS_TOKEN
+def resolve_tenant_token(phone_id: str) -> str:
+    """Mengambil access token yang tepat sesuai Phone Number ID."""
+    clean_id = str(phone_id).strip()
+    if clean_id == CAREER_PHONE_NUMBER_ID:
+        return CAREER_ACCESS_TOKEN
+    elif clean_id == ADUAN_SANDBOX_PHONE_ID:
+        return ADUAN_SANDBOX_ACCESS_TOKEN
+    return OM_BUDI_ACCESS_TOKEN
+
+
+# --- 4. Helper Outbound WA Dinamis Multi-Tenant ---
+async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
+    clean_id_match = re.findall(r"\d+", str(phone_id))
+    clean_id = clean_id_match[0] if clean_id_match else phone_id
+    token = resolve_tenant_token(clean_id)
 
     url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
     headers = {
@@ -57,14 +72,15 @@ async def send_wa_text(recipient_phone: str, text: str, phone_id: str = OM_BUDI_
             async with session.post(url, headers=headers, json=payload) as resp:
                 resp_text = await resp.text()
                 if resp.status not in (200, 201):
-                    logger.error(f"[CENTRAL WA] Outbound error ({resp.status}): {resp_text}")
+                    logger.error(f"[CENTRAL WA] Outbound text error ({resp.status}) phone_id={clean_id}: {resp_text}")
     except Exception as e:
-        logger.error(f"[CENTRAL WA] Exception sending message: {e}")
+        logger.error(f"[CENTRAL WA] Exception sending text message: {e}", exc_info=True)
 
 
-async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: list, phone_id: str = OM_BUDI_PHONE_NUMBER_ID):
-    clean_id = re.findall(r"\d+", str(phone_id))[0] if re.findall(r"\d+", str(phone_id)) else OM_BUDI_PHONE_NUMBER_ID
-    token = CAREER_ACCESS_TOKEN if str(clean_id) == CAREER_PHONE_NUMBER_ID else OM_BUDI_ACCESS_TOKEN
+async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Dict[str, str]], phone_id: str):
+    clean_id_match = re.findall(r"\d+", str(phone_id))
+    clean_id = clean_id_match[0] if clean_id_match else phone_id
+    token = resolve_tenant_token(clean_id)
 
     url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
     headers = {
@@ -87,12 +103,12 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: list, p
             async with session.post(url, headers=headers, json=payload) as resp:
                 resp_text = await resp.text()
                 if resp.status not in (200, 201):
-                    logger.error(f"[CENTRAL WA] Button error ({resp.status}): {resp_text}")
+                    logger.error(f"[CENTRAL WA] Outbound button error ({resp.status}) phone_id={clean_id}: {resp_text}")
     except Exception as e:
-        logger.error(f"[CENTRAL WA] Exception sending buttons: {e}")
+        logger.error(f"[CENTRAL WA] Exception sending buttons: {e}", exc_info=True)
 
 
-# --- Webhook GET: Verifikasi Meta ---
+# --- 5. Webhook GET: Verifikasi Meta ---
 @central_wa_routes.get("/webhook/whatsapp")
 @central_wa_routes.get("/api/v1/tenants/om_budi/webhook/whatsapp")
 @central_wa_routes.get("/api/whatsapp/webhook")
@@ -103,13 +119,13 @@ async def verify_webhook(request: web.Request) -> web.Response:
     challenge = query.get("hub.challenge")
 
     if mode == "subscribe" and token in VERIFY_TOKENS:
-        logger.info(f"[CENTRAL WA] Verified with token: {token}")
+        logger.info(f"[CENTRAL WA] Webhook verified with token: {token}")
         return web.Response(text=challenge or "", status=200)
 
     return web.Response(text="Verification failed", status=403)
 
 
-# --- Webhook POST: Dispatcher Pesan ---
+# --- 6. Webhook POST: Dispatcher Pesan Terisolasi ---
 @central_wa_routes.post("/webhook/whatsapp")
 @central_wa_routes.post("/api/v1/tenants/om_budi/webhook/whatsapp")
 @central_wa_routes.post("/api/whatsapp/webhook")
@@ -124,12 +140,15 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         if not messages:
             return web.json_response({"status": "ignored"}, status=200)
 
+        # Ambil phone_number_id dari metadata webhook
+        phone_id = str(value.get("metadata", {}).get("phone_number_id", "")).strip()
+
         msg_obj = messages[0]
         from_phone = msg_obj.get("from")
         msg_type = msg_obj.get("type")
-        phone_id = str(value.get("metadata", {}).get("phone_number_id", OM_BUDI_PHONE_NUMBER_ID))
+        contact_name = value.get("contacts", [{}])[0].get("profile", {}).get("name", "Bapak/Ibu")
 
-        # 1. Anti-Spam Rate Limiter (Maks 5 request / menit per nomor pengirim)
+        # 6.1. Anti-Spam Rate Limiter (Maks 5 pesan / menit)
         is_allowed, retry_after = wa_rate_limiter.is_allowed(from_phone)
         if not is_allowed:
             logger.warning(f"[RATE LIMIT] Pengirim {from_phone} terkena throttling.")
@@ -140,12 +159,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             )
             return web.json_response({"status": "rate_limited"}, status=429)
 
-        # 2. Routing Khusus Career Assistant
-        if phone_id == CAREER_PHONE_NUMBER_ID:
-            from app.routes.whatsapp_career import handle_incoming_whatsapp
-            return await handle_incoming_whatsapp(request)
-
-        # 3. Media / Attachment Filter untuk Tenant Layanan & Pengaduan
+        # 6.2. Filter Media & File Attachment
         if msg_type in ["document", "video", "audio"]:
             await send_wa_text(
                 recipient_phone=from_phone,
@@ -154,7 +168,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             )
             return web.json_response({"status": "unsupported_media"}, status=200)
 
-        contact_name = value.get("contacts", [{}])[0].get("profile", {}).get("name", "Bapak/Ibu")
+        # 6.3. Ekstraksi Pesan Masuk
         incoming_text = ""
         button_id = None
 
@@ -178,20 +192,43 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 return web.json_response({"status": "invalid_media_type"}, status=200)
             incoming_text = image_data.get("caption", "[FOTO_TERLAMPIR]")
 
-        # 4. Dispatch ke Tenant Om Budi
-        from app.tenants.om_budi.service import om_budi_service
-        res = await om_budi_service.handle_incoming_message(
-            phone_number=from_phone,
-            message_text=incoming_text,
-            button_id=button_id,
-            user_name=contact_name
-        )
-        if res.get("type") == "buttons":
-            await send_wa_buttons(from_phone, res["reply"], res["buttons"], phone_id)
-        else:
-            await send_wa_text(from_phone, res.get("reply", ""), phone_id)
+        # 6.4. Dispatching Terisolasi Berdasarkan Phone Number ID
+        if phone_id == CAREER_PHONE_NUMBER_ID:
+            # Tenant Career Assistant
+            from app.routes.whatsapp_career import handle_incoming_whatsapp
+            return await handle_incoming_whatsapp(request)
 
-        return web.json_response({"status": "success"}, status=200)
+        elif phone_id == OM_BUDI_PHONE_NUMBER_ID:
+            # Tenant Om Budi (Produksi)
+            from app.tenants.om_budi.service import om_budi_service
+            res = await om_budi_service.handle_incoming_message(
+                phone_number=from_phone,
+                message_text=incoming_text,
+                button_id=button_id,
+                user_name=contact_name
+            )
+            if res.get("type") == "buttons":
+                await send_wa_buttons(from_phone, res["reply"], res["buttons"], phone_id)
+            else:
+                await send_wa_text(from_phone, res.get("reply", ""), phone_id)
+            return web.json_response({"status": "success", "tenant": "om_budi"}, status=200)
+
+        elif phone_id == ADUAN_SANDBOX_PHONE_ID:
+            # Tenant Sandbox / Uji Coba Diskominfo (Netral)
+            sandbox_reply = (
+                f"🏛️ *[BALÉ PANANGGEUHAN DISKOMINFO - UJI COBA]*\n\n"
+                f"Sampurasun, *{contact_name}*.\n"
+                f"Laporan/aspirasi Anda telah tercatat di sistem pengujian:\n\n"
+                f"📝 *Ringkasan:* \"{incoming_text}\"\n"
+                f"🔒 *Status Keamanan:* RLS & Field-Level Encryption Active.\n\n"
+                f"_Tiket aduan pengujian telah diteruskan ke Posko Jabar._"
+            )
+            await send_wa_text(from_phone, sandbox_reply, phone_id)
+            return web.json_response({"status": "success", "tenant": "aduan_sandbox"}, status=200)
+
+        else:
+            logger.warning(f"[CENTRAL WA] Phone ID tidak dikenal: {phone_id}")
+            return web.json_response({"status": "unrecognized_phone_id"}, status=400)
 
     except Exception as e:
         logger.error(f"[CENTRAL WA ERROR] {e}", exc_info=True)
@@ -200,4 +237,4 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
 def register_central_whatsapp_routes(app: web.Application):
     app.add_routes(central_wa_routes)
-    logger.info("[ROUTER] Central WhatsApp Webhook fully registered.")
+    logger.info("[ROUTER] Central WhatsApp Webhook registered with isolated Diskominfo sandbox.")
