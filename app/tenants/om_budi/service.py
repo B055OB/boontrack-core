@@ -9,6 +9,7 @@ from app.core.messaging.templates import REKENING_OM_BUDI, ZOOM_INFO_OM_BUDI
 logger = logging.getLogger("OM_BUDI_SERVICE")
 KB_PATH = os.path.join(os.path.dirname(__file__), "knowledge_base.json")
 
+
 class OmBudiService:
     def __init__(self):
         self.rules = self._load_rules()
@@ -16,7 +17,7 @@ class OmBudiService:
         self.fallback_msg = (
             "Assalamu'alaikum Warahmatullahi Wabarakatuh Bapak/Ibu 🙏😊\n\n"
             "Mohon maaf yang sebesar-besarnya, saat ini kami belum bisa menjawab pertanyaan Bapak/Ibu secara langsung 🙏.\n\n"
-            "Pesan dan pertanyaan Bapak/Ibu sudah kami tampung ke dalam catatan tim bimbingan 😊. Semoga Allah SWT senantiasa memudahkan urusan dan memberikan jalan keluar terbaik 🤲🙏.\n\n"
+            "Pesan dan pertanyaan Bapak/Ibu sudah kami tampung ke dalam catatan tim bimbingan 😊. Semoga Allah SWT senantiasa memudahkan urusan dan memberikan jalan keluar terbaik atas setiap ikhtiar Bapak/Ibu sekeluarga 🤲🙏.\n\n"
             "_Bapak/Ibu juga dapat membahas hal ini langsung pada sesi Zoom Booster bersama Om Budi setiap Rabu malam ya 😊_"
         )
 
@@ -24,7 +25,8 @@ class OmBudiService:
         try:
             with open(KB_PATH, "r", encoding="utf-8") as f:
                 return json.load(f).get("rules", [])
-        except Exception:
+        except Exception as e:
+            logger.error(f"[KB LOAD ERROR] {e}")
             return []
 
     async def handle_incoming_message(
@@ -38,7 +40,7 @@ class OmBudiService:
     ) -> Dict[str, Any]:
         clean_text = (message_text or "").strip().lower()
 
-        # 1. OCR Multimodal Verifikasi Struk (Regex Local First -> Vision Fallback)
+        # 1. OCR Multimodal Verifikasi Struk
         if image_bytes:
             from app.services.receipt_ocr_service import analyze_receipt_image
             ocr_res = await analyze_receipt_image(image_bytes, image_mime)
@@ -52,15 +54,22 @@ class OmBudiService:
                     "InsyaAllah kami doakan khusus semoga Allah SWT melimpahkan keberkahan dan kelapangan rezeki. Aamiin ya Rabbal 'Alamin 🤲.\n\n"
                     "Tautan Group Khusus Zoom Booster akan segera kami kirimkan ke nomor ini ya 😊."
                 )
-                return {"type": "buttons", "reply": reply, "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
+                return {
+                    "type": "buttons",
+                    "reply": reply,
+                    "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]
+                }
             else:
                 return {
                     "type": "buttons",
                     "reply": "Bukti transfer belum terlihat jelas 🙏. Mohon kirimkan ulang foto struk dengan nominal dan rekening tujuan yang jelas ya 😊.",
-                    "buttons": [{"id": "btn_cara_sedekah", "title": "Kirim Ulang Bukti"}, {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]
+                    "buttons": [
+                        {"id": "btn_cara_sedekah", "title": "Kirim Ulang Bukti"},
+                        {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
+                    ]
                 }
 
-        # 2. Reset / Menu Utama (Mode Template)
+        # 2. Menu Utama / Reset
         if button_id == "btn_menu_utama" or clean_text in ["menu", "start", "halo", "hai", "assalamu'alaikum", "assalamualaikum", "p"]:
             menu_text = (
                 f"Assalamu'alaikum Warahmatullahi Wabarakatuh Bapak/Ibu *{user_name}* 🙏😊\n\n"
@@ -77,7 +86,7 @@ class OmBudiService:
                 ]
             }
 
-        # 3. Sub-Menu: Zoom Booster (Mode Template)
+        # 3. Sub-Menu: Zoom Booster
         if button_id == "menu_zoom_booster":
             sections = [
                 {
@@ -93,9 +102,18 @@ class OmBudiService:
                     ]
                 }
             ]
-            return {"type": "list", "reply": "🚀 *[MENU ZOOM BOOSTER]*\n\nSilakan pilih topik informasi yang Bapak/Ibu butuhkan:", "button_text": "Pilih Informasi", "sections": sections}
+            return {
+                "type": "list",
+                "reply": "🚀 *[MENU ZOOM BOOSTER]*\n\nSilakan pilih topik informasi yang Bapak/Ibu butuhkan:",
+                "button_text": "Pilih Informasi",
+                "sections": sections
+            }
 
-        zoom_nav = [{"id": "menu_zoom_booster", "title": "📋 Topik Zoom"}, {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]
+        zoom_nav = [
+            {"id": "menu_zoom_booster", "title": "📋 Topik Zoom"},
+            {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
+        ]
+
         if button_id == "btn_sub_1_a":
             return {"type": "buttons", "reply": "📝 *Cara Mengikuti Zoom Booster*\n\n1. Pasang aplikasi Zoom di HP/Laptop.\n2. Masuk tautan 10-15 menit sebelum mulai.\n3. Gunakan nama asli agar mudah disapa Om Budi 😊.", "buttons": zoom_nav}
         if button_id == "btn_sub_1_b":
@@ -111,7 +129,7 @@ class OmBudiService:
         if button_id == "btn_sub_1_g":
             return {"type": "buttons", "reply": "🤝 *Jika Tidak Bisa Hadir Live*\n\nTidak perlu khawatir ya 😊, Bapak/Ibu tetap bisa menyimak siaran ulang rekaman dan mendawamkan amalan secara mandiri 🙏.", "buttons": zoom_nav}
 
-        # 4. Sedekah & Data Kritis (Zero Hallucination Template)
+        # 4. Sedekah & Data Kritis
         if button_id == "menu_sedekah_berjamaah" or clean_text == "sedekah":
             return {
                 "type": "buttons",
@@ -127,46 +145,38 @@ class OmBudiService:
             return {
                 "type": "buttons",
                 "reply": "🤲 *Penjelasan Sedekah Berjamaah*\n\nGerakan ikhtiar langit bersama Om Budi Channel untuk mendukung anak yatim, dakwah, dan operasional majelis ilmu 🙏😊.",
-                "buttons": [{"id": "btn_cara_sedekah", "title": "Cara Ikut Sedekah"}, {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]
+                "buttons": [
+                    {"id": "btn_cara_sedekah", "title": "Cara Ikut Sedekah"},
+                    {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
+                ]
             }
 
         if button_id == "btn_cara_sedekah" or any(k in clean_text for k in ["rekening", "nomor rekening", "qris", "bsi", "mandiri", "transfer", "infaq"]):
             return {
                 "type": "buttons",
                 "reply": REKENING_OM_BUDI,
-                "buttons": [{"id": "btn_upload_struk", "title": "Kirim Bukti Transfer"}, {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]
+                "buttons": [
+                    {"id": "btn_upload_struk", "title": "Kirim Bukti Transfer"},
+                    {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
+                ]
             }
 
         if button_id == "btn_upload_struk":
             return {"type": "text", "reply": "📸 *Kirim Bukti Transfer*\n\nSilakan lampirkan dan kirimkan foto struk transfer / screenshot m-banking Anda sekarang ya 🙏😊."}
 
-        # 5. Tanya Jawab Bebas -> Cek Tier 4 Matcher Lokal Dulu
-        conf, score, answer, intent = self.matcher.find_match(message_text)
-        if conf == MatchConfidence.HIGH and answer:
-            return {"type": "buttons", "reply": answer, "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
-        elif conf == MatchConfidence.MEDIUM and answer:
-            return {"type": "buttons", "reply": answer, "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
-
-        # 6. Jika Tidak Cocok di Lokal -> Alihkan ke AI Gateway (Gemini/Groq -> Fallback Statis)
-        from app.core.ai.gateway import ai_gateway
-        gw_res = await ai_gateway.process_faq_query(
-            tenant_id="om_budi",
-            query=message_text,
-            rules=self.rules,
-            fallback_msg=self.fallback_msg,
-            user_name=user_name
-        )
-        return {"type": "buttons", "reply": gw_res["reply"], "buttons": [{# 5. Tanya Jawab Bebas -> Cek Tier 4 Matcher Lokal Dulu
+        # 5. Tanya Jawab Bebas: Tier 4 Matcher Lokal
         try:
             conf, score, answer, intent = self.matcher.find_match(message_text)
-            if conf == MatchConfidence.HIGH and answer:
-                return {"type": "buttons", "reply": answer, "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
-            elif conf == MatchConfidence.MEDIUM and answer:
-                return {"type": "buttons", "reply": answer, "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
+            if conf in [MatchConfidence.HIGH, MatchConfidence.MEDIUM] and answer:
+                return {
+                    "type": "buttons",
+                    "reply": answer,
+                    "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]
+                }
         except Exception as e:
             logger.error(f"[MATCHER ERROR] {e}")
 
-        # 6. Jika Tidak Match di Lokal -> Alihkan ke AI Gateway
+        # 6. Fallback ke AI Gateway jika tidak match lokal
         try:
             from app.core.ai.gateway import ai_gateway
             gw_res = await ai_gateway.process_faq_query(
@@ -177,11 +187,20 @@ class OmBudiService:
                 user_name=user_name
             )
             if gw_res and gw_res.get("reply"):
-                return {"type": "buttons", "reply": gw_res["reply"], "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
+                return {
+                    "type": "buttons",
+                    "reply": gw_res["reply"],
+                    "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]
+                }
         except Exception as e:
             logger.error(f"[GATEWAY ERROR] {e}")
 
-        # 7. Guaranteed Fallback (Anti-Hening)
-        return {"type": "buttons", "reply": self.fallback_msg, "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
+        # 7. Fallback Statis Terjamin
+        return {
+            "type": "buttons",
+            "reply": self.fallback_msg,
+            "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]
+        }
+
 
 om_budi_service = OmBudiService()
