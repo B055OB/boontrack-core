@@ -71,3 +71,8 @@ async def analyze_receipt_image(image_bytes: bytes, mime_type: str = "image/jpeg
         logger.error(f"[OCR EXCEPTION] {e}", exc_info=True)
 
     return fallback_res
+
+
+# Alias untuk kompatibilitas import modul lama/baru
+async def parse_receipt_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> Dict[str, Any]:
+    return await analyze_receipt_image(image_bytes=image_bytes, mime_type=mime_type)
