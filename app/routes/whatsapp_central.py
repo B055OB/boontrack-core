@@ -164,25 +164,25 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         msg_type = msg_obj.get("type")
         contact_name = value.get("contacts", [{}])[0].get("profile", {}).get("name", "Bapak/Ibu")
 
-        # 6.1. Anti-Spam Rate Limiter (Maks 5 pesan / menit)[cite: 9]
-        is_allowed, retry_after = wa_rate_limiter.is_allowed(from_phone)[cite: 9]
+        # 6.1. Anti-Spam Rate Limiter (Maks 5 pesan / menit)
+        is_allowed, retry_after = wa_rate_limiter.is_allowed(from_phone)
         if not is_allowed:
-            logger.warning(f"[RATE LIMIT] Pengirim {from_phone} terkena throttling.")[cite: 9]
+            logger.warning(f"[RATE LIMIT] Pengirim {from_phone} terkena throttling.")
             await send_wa_text(
                 recipient_phone=from_phone,
                 text=f"Pesan Anda terkirim terlalu cepat. Silakan tunggu {retry_after} detik sebelum mencoba lagi.",
                 phone_id=phone_id
-            )[cite: 9]
-            return web.json_response({"status": "rate_limited"}, status=429)[cite: 9]
+            )
+            return web.json_response({"status": "rate_limited"}, status=429)
 
-        # 6.2. Filter Media & File Attachment[cite: 9]
-        if msg_type in ["document", "video", "audio"]:[cite: 9]
+        # 6.2. Filter Media & File Attachment
+        if msg_type in ["document", "video", "audio"]:
             await send_wa_text(
                 recipient_phone=from_phone,
                 text="Format berkas tidak diizinkan. Silakan lampirkan gambar/foto berformat JPG atau PNG maksimal 5MB.",
                 phone_id=phone_id
-            )[cite: 9]
-            return web.json_response({"status": "unsupported_media"}, status=200)[cite: 9]
+            )
+            return web.json_response({"status": "unsupported_media"}, status=200)
 
         # 6.3. Ekstraksi Pesan & Download Media Gambar jika Ada
         incoming_text = ""
@@ -190,24 +190,24 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         image_bytes: Optional[bytes] = None
         image_mime: str = "image/jpeg"
 
-        if msg_type == "text":[cite: 9]
-            incoming_text = msg_obj.get("text", {}).get("body", "")[cite: 9]
-        elif msg_type == "interactive":[cite: 9]
-            inter = msg_obj.get("interactive", {})[cite: 9]
-            if inter.get("type") == "button_reply":[cite: 9]
-                btn = inter.get("button_reply", {})[cite: 9]
-                button_id = btn.get("id")[cite: 9]
-                incoming_text = btn.get("title", "")[cite: 9]
-        elif msg_type == "image":[cite: 9]
-            image_data = msg_obj.get("image", {})[cite: 9]
-            image_mime = image_data.get("mime_type", "image/jpeg")[cite: 9]
-            if image_mime not in ALLOWED_IMAGE_MIME_TYPES:[cite: 9]
+        if msg_type == "text":
+            incoming_text = msg_obj.get("text", {}).get("body", "")
+        elif msg_type == "interactive":
+            inter = msg_obj.get("interactive", {})
+            if inter.get("type") == "button_reply":
+                btn = inter.get("button_reply", {})
+                button_id = btn.get("id")
+                incoming_text = btn.get("title", "")
+        elif msg_type == "image":
+            image_data = msg_obj.get("image", {})
+            image_mime = image_data.get("mime_type", "image/jpeg")
+            if image_mime not in ALLOWED_IMAGE_MIME_TYPES:
                 await send_wa_text(
                     recipient_phone=from_phone,
                     text="Lampiran gambar wajib berformat JPG atau PNG.",
                     phone_id=phone_id
-                )[cite: 9]
-                return web.json_response({"status": "invalid_media_type"}, status=200)[cite: 9]
+                )
+                return web.json_response({"status": "invalid_media_type"}, status=200)
 
             media_id = image_data.get("id")
             if media_id:
@@ -230,15 +230,15 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 except Exception as e:
                     logger.error(f"[MEDIA DOWNLOAD ERROR] {e}")
 
-            incoming_text = image_data.get("caption", "[FOTO_TERLAMPIR]")[cite: 9]
+            incoming_text = image_data.get("caption", "[FOTO_TERLAMPIR]")
 
-        # 6.4. Dispatching Terisolasi Berdasarkan Phone Number ID[cite: 9]
-        if phone_id == CAREER_PHONE_NUMBER_ID:[cite: 9]
-            from app.routes.whatsapp_career import handle_incoming_whatsapp[cite: 9]
-            return await handle_incoming_whatsapp(request)[cite: 9]
+        # 6.4. Dispatching Terisolasi Berdasarkan Phone Number ID
+        if phone_id == CAREER_PHONE_NUMBER_ID:
+            from app.routes.whatsapp_career import handle_incoming_whatsapp
+            return await handle_incoming_whatsapp(request)
 
-        elif phone_id == OM_BUDI_PHONE_NUMBER_ID:[cite: 9]
-            from app.tenants.om_budi.service import om_budi_service[cite: 9]
+        elif phone_id == OM_BUDI_PHONE_NUMBER_ID:
+            from app.tenants.om_budi.service import om_budi_service
             res = await om_budi_service.handle_incoming_message(
                 phone_number=from_phone,
                 message_text=incoming_text,
@@ -248,25 +248,25 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 image_mime=image_mime
             )
 
-            raw_reply = res.get("reply") if isinstance(res, dict) else str(res)[cite: 9]
-            if not raw_reply or str(raw_reply).strip().lower() in ["none", "null", ""]:[cite: 9]
+            raw_reply = res.get("reply") if isinstance(res, dict) else str(res)
+            if not raw_reply or str(raw_reply).strip().lower() in ["none", "null", ""]:
                 reply_text = (
                     f"Alhamdulillah, baik Bapak/Ibu *{contact_name}*.\n\n"
                     "Untuk pendaftaran *Kelas Online Bimbingan Om Budi*, silakan tekan tombol di bawah ini:"
-                )[cite: 9]
+                )
                 fallback_buttons = [
                     {"id": "btn_daftar_kelas", "title": "Daftar Kelas Online"},
                     {"id": "btn_tanya_curhat", "title": "Tanya / Curhat"}
-                ][cite: 9]
-                await send_wa_buttons(from_phone, reply_text, fallback_buttons, phone_id)[cite: 9]
-            elif isinstance(res, dict) and res.get("type") == "buttons":[cite: 9]
-                await send_wa_buttons(from_phone, raw_reply, res.get("buttons", []), phone_id)[cite: 9]
+                ]
+                await send_wa_buttons(from_phone, reply_text, fallback_buttons, phone_id)
+            elif isinstance(res, dict) and res.get("type") == "buttons":
+                await send_wa_buttons(from_phone, raw_reply, res.get("buttons", []), phone_id)
             else:
-                await send_wa_text(from_phone, raw_reply, phone_id)[cite: 9]
+                await send_wa_text(from_phone, raw_reply, phone_id)
 
-            return web.json_response({"status": "success", "tenant": "om_budi"}, status=200)[cite: 9]
+            return web.json_response({"status": "success", "tenant": "om_budi"}, status=200)
 
-        elif phone_id == ADUAN_SANDBOX_PHONE_ID:[cite: 9]
+        elif phone_id == ADUAN_SANDBOX_PHONE_ID:
             sandbox_reply = (
                 f"🏛️ *[BALÉ PANANGGEUHAN DISKOMINFO - UJI COBA]*\n\n"
                 f"Sampurasun, *{contact_name}*.\n"
@@ -274,19 +274,19 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 f"📝 *Ringkasan:* \"{incoming_text}\"\n"
                 f"🔒 *Status Keamanan:* RLS & Field-Level Encryption Active.\n\n"
                 f"_Tiket aduan pengujian telah diteruskan ke Posko Jabar._"
-            )[cite: 9]
-            await send_wa_text(from_phone, sandbox_reply, phone_id)[cite: 9]
-            return web.json_response({"status": "success", "tenant": "aduan_sandbox"}, status=200)[cite: 9]
+            )
+            await send_wa_text(from_phone, sandbox_reply, phone_id)
+            return web.json_response({"status": "success", "tenant": "aduan_sandbox"}, status=200)
 
         else:
-            logger.warning(f"[CENTRAL WA] Phone ID tidak dikenal: {phone_id}")[cite: 9]
-            return web.json_response({"status": "unrecognized_phone_id"}, status=400)[cite: 9]
+            logger.warning(f"[CENTRAL WA] Phone ID tidak dikenal: {phone_id}")
+            return web.json_response({"status": "unrecognized_phone_id"}, status=400)
 
     except Exception as e:
-        logger.error(f"[CENTRAL WA ERROR] {e}", exc_info=True)[cite: 9]
-        return web.json_response({"status": "error", "message": str(e)}, status=500)[cite: 9]
+        logger.error(f"[CENTRAL WA ERROR] {e}", exc_info=True)
+        return web.json_response({"status": "error", "message": str(e)}, status=500)
 
 
-def register_central_whatsapp_routes(app: web.Application):[cite: 9]
-    app.add_routes(central_wa_routes)[cite: 9]
-    logger.info("[ROUTER] Central WhatsApp Webhook registered with isolated Diskominfo sandbox.")[cite: 9]
+def register_central_whatsapp_routes(app: web.Application):
+    app.add_routes(central_wa_routes)
+    logger.info("[ROUTER] Central WhatsApp Webhook registered with isolated Diskominfo sandbox.")
