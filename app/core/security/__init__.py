@@ -15,13 +15,16 @@ from app.core.security.rate_limiter import (
     wa_rate_limiter
 )
 from app.core.security.tenant_context import (
-    set_tenant_session,
-    get_current_tenant
+    tenant_scope
+)
+from app.core.security.audit import (
+    log_data_access,
+    audited_decrypt_nik
 )
 
-# Helper kompatibilitas token dekripsi
+
 def decrypt_bot_token(encrypted_token: str, tenant_id: str = "default") -> str:
-    """Mendekripsi token bot untuk gateway Telegram/WA jika terenkripsi."""
+    """Helper kompatibilitas dekripsi token Telegram/WA gateway."""
     if not encrypted_token:
         return ""
     try:
@@ -39,7 +42,8 @@ __all__ = [
     "ZeroPIILogFilter",
     "WhatsAppRateLimiter",
     "wa_rate_limiter",
-    "set_tenant_session",
-    "get_current_tenant",
+    "tenant_scope",
+    "log_data_access",
+    "audited_decrypt_nik",
     "decrypt_bot_token",
 ]

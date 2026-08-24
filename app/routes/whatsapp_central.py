@@ -148,8 +148,8 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         msg_type = msg_obj.get("type")
         contact_name = value.get("contacts", [{}])[0].get("profile", {}).get("name", "Bapak/Ibu")
 
-        # 6.1. Anti-Spam Rate Limiter (Maks 5 pesan / menit)
-        is_allowed, retry_after = wa_rate_limiter.is_allowed(from_phone)
+        # 6.1. Anti-Spam Rate Limiter (Maks 5 pesan / menit)[cite: 5]
+        is_allowed, retry_after = wa_rate_limiter.is_allowed(from_phone)[cite: 5]
         if not is_allowed:
             logger.warning(f"[RATE LIMIT] Pengirim {from_phone} terkena throttling.")
             await send_wa_text(
