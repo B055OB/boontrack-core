@@ -77,36 +77,31 @@ class OmBudiService:
         return "\n\n---\n\n".join(top_chunks) if top_chunks else ""
 
     async def _generate_rag_response(self, user_name: str, message: str, context_chunks: str) -> str:
-        """Memanggil LLM dengan System Prompt & Guardrails Ringkas (Max 250 Tokens)."""
+        """Memanggil LLM dengan System Prompt & Guardrails Ringkas."""
         if not GEMINI_API_KEY:
             return (
-                f"Assalamu'alaikum Warahmatullahi Wabarakatuh Bapak/Ibu *{user_name}*.\n\n"
-                "Bersama Om Budi, kita berikhtiar memperbaiki hubungan dengan Allah melalui sholat tepat waktu, "
-                "riyadhoh sholawat jibril 1.000x, dan pembersihan batin agar sumbatan rezeki terurai.\n\n"
-                "Tetap istiqomah dalam ikhtiar langit ya Bapak/Ibu."
+                f"Assalamu'alaikum Warahmatullahi Wabarakatuh Kak *{user_name}*.\n\n"
+                "Ada yang bisa kami bantu perihal bimbingan riyadhoh, jadwal Zoom Booster, atau program sedekah Om Budi? "
+                "Silakan pilih menu atau tanyakan langsung ya Kak."
             )
 
         endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         system_instruction = (
             "Anda adalah Asisten AI Resmi Om Budi (Alumni Kelas Riyadhoh Sholawat & Quantum Energi).\n"
             "PANDUAN MENJAWAB:\n"
-            "1. Persona: Islami, ramah, sejuk, santun, menyejukkan, penuh empati.\n"
-            "2. Panjang Jawaban: Ringkas maksimal 2-3 paragraf pendek (to the point, batasi di bawah 250 token).\n"
-            "3. RAG Context: Berpatokan pada konteks modul PDF 'Riyadhoh Sholawat + Quantum Energi' yang disediakan.\n"
-            "4. Proaktif Sedekah: Jika user berniat/bertanya sedekah di tengah chat bebas, jangan cuma terima kasih, "
-            "wajib infokan nomor rekening BSI/Mandiri a.n Budi Yulianto dan minta bukti transfer.\n"
-            "5. Fallback Guardrail: Jika pertanyaan di luar modul PDF, jawab santun: "
-            "'Untuk pertanyaan di luar modul ini, yuk kita bahas bersama di sesi Zoom Booster berikutnya ya. Tetap istiqomah!'"
+            "1. Persona: Islami, ramah, santun, hangat, dan solutif.\n"
+            "2. Respon Pesan Santai/Canda/Tes: Jika user hanya tes pesan atau menyapa santai, balas singkat dan ramah.\n"
+            "3. Pertanyaan Modul: Jawab to-the-point maksimal 2 paragraf berdasarkan modul Riyadhoh.\n"
+            "4. Pertanyaan di luar modul: Arahkan santun ke Zoom Booster."
         )
 
-        user_content = f"Nama Jamaah: {user_name}\n\nKonteks Modul Riyadhoh:\n{context_chunks}\n\nPertanyaan Jamaah: {message}"
-
+        user_content = f"Nama Jamaah: {user_name}\n\nKonteks Modul Riyadhoh:\n{context_chunks}\n\nPesan Jamaah: {message}"
         payload = {
             "contents": [{"parts": [{"text": user_content}]}],
             "systemInstruction": {"parts": [{"text": system_instruction}]},
             "generationConfig": {
                 "maxOutputTokens": 250,
-                "temperature": 0.3
+                "temperature": 0.4
             }
         }
 
@@ -123,8 +118,8 @@ class OmBudiService:
             logger.error(f"[LLM GEN EXCEPTION] {e}")
 
         return (
-            f"Alhamdulillah Bapak/Ibu *{user_name}*, tetap istiqomah dalam ikhtiar langit bersama Om Budi. "
-            "Perbaiki sholat di awal waktu, dawamkan sholawat jibril 1.000x, dan jaga hati senantiasa berprasangka baik kepada Allah."
+            f"Bismillah, Kak *{user_name}*... Sistem aktif dan siap mendampingi. "
+            "Silakan pilih menu utama atau ketikkan hal yang ingin ditanyakan ya Kak."
         )
 
     async def handle_incoming_message(
@@ -164,7 +159,7 @@ class OmBudiService:
                 return {"type": "buttons", "reply": reply, "buttons": buttons}
             else:
                 buttons = [
-                    {"id": "btn_sub_2_e", "title": "Kirim Ulang Bukti"},
+                    {"id": "btn_sub_2_b", "title": "Kirim Ulang Bukti"},
                     {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}
                 ]
                 return {
@@ -179,7 +174,7 @@ class OmBudiService:
             reply_doa = (
                 f"Alhamdulillah wa Jazakumullahu Khairan Katsiran Bapak/Ibu *{user_name}* 🙏\n\n"
                 "Semoga Allah melimpahkan keberkahan, kesehatan, kelapangan rezeki, serta kemudahan dalam setiap urusan Bapak/Ibu sekeluarga. Aamiin ya Rabbal 'Alamin.\n\n"
-                "Mohon lampirkan dan *kirimkan foto bukti transfer* ke chat ini ya agar tim admin langsung mendata dan mengirimkan tautan Group Khusus Zoom Booster."
+                "Mohon lampirkan dan *kirimkan foto bukti transfer* ke chat ini ya agar tim admin langsung mendata dan memberikan akses Group Khusus Zoom Booster."
             )
             return {"type": "text", "reply": reply_doa}
 
@@ -252,20 +247,57 @@ class OmBudiService:
             return {"type": "buttons", "reply": "🤝 *Jika Tidak Bisa Hadir Live*\n\nTidak perlu khawatir, Bapak/Ibu tetap bisa menyimak siaran ulang rekaman dan tetap mendawamkan amalan riyadhoh secara mandiri.", "buttons": [{"id": "menu_zoom_booster", "title": "Kembali ke Zoom"}, {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}]}
 
         # =========================================================================
-        # 3. SEDEKAH BERJAMAAH & REKENING RESMI (LANGSUNG TAMPIL TEMPLATE REKENING)
+        # 3. SUB-MENU: SEDEKAH BERJAMAAH (HANYA PENJELASAN & CARA IKUT)
         # =========================================================================
-        if button_id in ["menu_sedekah_berjamaah", "btn_sub_2_d"] or any(k in clean_text for k in ["sedekah", "rekening", "nomor rekening", "qris", "bsi", "mandiri", "transfer", "infaq", "bayar kelas"]):
+        if button_id == "menu_sedekah_berjamaah":
+            USER_STATES[phone_number] = "IN_SEDEKAH_MENU"
+            sections = [
+                {
+                    "title": "Program Sedekah Berjamaah",
+                    "rows": [
+                        {"id": "btn_sub_2_a", "title": "Penjelasan Sedekah", "description": "Tujuan dan alokasi dana kebaikan"},
+                        {"id": "btn_sub_2_b", "title": "Cara Ikut Sedekah", "description": "Alur transfer & rekening resmi"}
+                    ]
+                }
+            ]
+            return {
+                "type": "list",
+                "reply": "🤲 *[PROGRAM SEDEKAH BERJAMAAH]*\n\nSilakan pilih menu informasi di bawah ini:",
+                "button_text": "Pilih Menu",
+                "sections": sections
+            }
+
+        # 3.a. Penjelasan Sedekah Berjamaah
+        if button_id == "btn_sub_2_a":
+            penjelasan_text = (
+                "🤲 *Penjelasan Sedekah Berjamaah & Orang Tua Asuh*\n\n"
+                "Gerakan ini merupakan program ikhtiar langit bersama *Om Budi Channel* untuk mendukung kelangsungan dakwah, majelis ilmu, dan berbagai program kebaikan melalui Program Zoom Booster.\n\n"
+                "Dana yang terkumpul disalurkan untuk:\n"
+                "✅ Anak Yatim Piatu & Program Orang Tua Asuh\n"
+                "✅ Fakir Miskin & Sedekah Nasi\n"
+                "✅ Guru Ngaji, Majelis Ilmu & Media Dakwah\n"
+                "✅ Wakaf Al-Qur'an (event tertentu)\n"
+                "✅ Operasional Zoom, Internet, dan Sarana Pendukung Dakwah"
+            )
+            buttons = [
+                {"id": "btn_sub_2_b", "title": "Cara Ikut Sedekah"},
+                {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}
+            ]
+            return {"type": "buttons", "reply": penjelasan_text, "buttons": buttons}
+
+        # 3.b. Cara Ikut Sedekah Berjamaah (Langsung menampilkan detail rekening & konfirmasi)
+        if button_id in ["btn_sub_2_b", "btn_sub_2_d"] or any(k in clean_text for k in ["rekening", "nomor rekening", "qris", "bsi", "mandiri", "transfer", "infaq", "bayar kelas"]):
             USER_STATES[phone_number] = "WAITING_RECEIPT"
             return {
                 "type": "buttons",
                 "reply": REKENING_TEMPLATE,
                 "buttons": [
-                    {"id": "btn_sub_2_e", "title": "Kirim Bukti Transfer"},
+                    {"id": "btn_sub_upload", "title": "Kirim Bukti Transfer"},
                     {"id": "btn_menu_utama", "title": "↩️ Menu Utama"}
                 ]
             }
 
-        if button_id == "btn_sub_2_e":
+        if button_id == "btn_sub_upload":
             USER_STATES[phone_number] = "WAITING_RECEIPT"
             return {"type": "text", "reply": "📸 *Kirim Bukti Transfer*\n\nSilakan lampirkan dan kirimkan foto struk transfer / screenshot m-banking Anda sekarang. AI akan memverifikasi transaksi secara otomatis."}
 
