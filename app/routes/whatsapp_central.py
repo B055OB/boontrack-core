@@ -64,6 +64,11 @@ async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
     clean_id = clean_id_match[0] if clean_id_match else phone_id
     token = resolve_tenant_token(clean_id)
 
+    # Validasi pencegahan pesan kosong atau None
+    clean_text = str(text).strip() if text else ""
+    if not clean_text or clean_text.lower() in ["none", "null"]:
+        clean_text = "Afwan Bapak/Ibu, pesan sedang diproses. Silakan ulangi atau pilih opsi menu yang tersedia."
+
     url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -73,7 +78,7 @@ async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
         "messaging_product": "whatsapp",
         "to": recipient_phone,
         "type": "text",
-        "text": {"body": text}
+        "text": {"body": clean_text}
     }
     try:
         async with aiohttp.ClientSession() as session:
@@ -90,6 +95,10 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Di
     clean_id = clean_id_match[0] if clean_id_match else phone_id
     token = resolve_tenant_token(clean_id)
 
+    clean_body = str(body_text).strip() if body_text else ""
+    if not clean_body or clean_body.lower() in ["none", "null"]:
+        clean_body = "Silakan pilih salah satu opsi di bawah untuk melanjutkan:"
+
     url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -102,7 +111,7 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Di
         "type": "interactive",
         "interactive": {
             "type": "button",
-            "body": {"text": body_text},
+            "body": {"text": clean_body},
             "action": {"buttons": button_rows}
         }
     }
@@ -213,10 +222,24 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 button_id=button_id,
                 user_name=contact_name
             )
-            if res.get("type") == "buttons":
-                await send_wa_buttons(from_phone, res["reply"], res["buttons"], phone_id)
+
+            # Ekstraksi dan sanitasi agar tidak pernah mengirimkan string 'None'
+            raw_reply = res.get("reply") if isinstance(res, dict) else str(res)
+            if not raw_reply or str(raw_reply).strip().lower() in ["none", "null", ""]:
+                reply_text = (
+                    f"Alhamdulillah, baik Bapak/Ibu *{contact_name}*.\n\n"
+                    "Untuk pendaftaran *Kelas Online Bimbingan Om Budi*, silakan tekan tombol di bawah ini:"
+                )
+                fallback_buttons = [
+                    {"id": "btn_daftar_kelas", "title": "Daftar Kelas Online"},
+                    {"id": "btn_tanya_curhat", "title": "Tanya / Curhat"}
+                ]
+                await send_wa_buttons(from_phone, reply_text, fallback_buttons, phone_id)
+            elif isinstance(res, dict) and res.get("type") == "buttons":
+                await send_wa_buttons(from_phone, raw_reply, res.get("buttons", []), phone_id)
             else:
-                await send_wa_text(from_phone, res.get("reply", ""), phone_id)
+                await send_wa_text(from_phone, raw_reply, phone_id)
+
             return web.json_response({"status": "success", "tenant": "om_budi"}, status=200)
 
         elif phone_id == ADUAN_SANDBOX_PHONE_ID:
