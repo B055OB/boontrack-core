@@ -7,7 +7,6 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger("OM_BUDI_SERVICE")
 
 KB_PATH = os.path.join(os.path.dirname(__file__), "knowledge_base.json")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY", ""))
 
 USER_STATES: Dict[str, str] = {}
 
@@ -70,48 +69,71 @@ class OmBudiService:
         return "\n\n---\n\n".join(top_chunks) if top_chunks else ""
 
     async def _generate_rag_response(self, user_name: str, message: str, context_chunks: str) -> str:
-        if not GEMINI_API_KEY:
-            return (
-                f"Assalamu'alaikum Warahmatullahi Wabarakatuh Kak *{user_name}*.\n\n"
-                "Ada yang bisa kami bantu perihal bimbingan riyadhoh, jadwal Zoom Booster, atau program sedekah Om Budi? "
-                "Silakan pilih menu atau tanyakan langsung ya Kak."
-            )
+        gemini_key = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY", "")).strip()
+        groq_key = os.getenv("GROQ_API_KEY", "").strip()
 
-        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-        system_instruction = (
-            "Anda adalah Asisten AI Resmi Om Budi (Alumni Kelas Riyadhoh Sholawat & Quantum Energi).\n"
-            "PANDUAN MENJAWAB:\n"
-            "1. Persona: Islami, ramah, santun, hangat, dan solutif.\n"
-            "2. Respon Pesan Santai/Canda/Tes: Jika user hanya tes pesan atau menyapa santai, balas singkat dan ramah.\n"
-            "3. Pertanyaan Modul: Jawab to-the-point maksimal 2 paragraf berdasarkan modul Riyadhoh.\n"
-            "4. Pertanyaan di luar modul: Arahkan santun ke Zoom Booster."
-        )
+        combined_prompt = f"""Anda adalah Asisten AI Resmi Om Budi (Alumni Kelas Riyadhoh Sholawat & Quantum Energi).
+PANDUAN MENJAWAB:
+1. Persona: Islami, ramah, sejuk, santun, hangat, dan menyejukkan batin. Sapa jamaah dengan sebutan Bapak/Ibu atau Kakak {user_name}.
+2. Sumber Jawaban: Wajib berpatokan pada Modul Riyadhoh Om Budi di bawah ini. Jawab to-the-point maksimal 2 paragraf pendek.
+3. Fallback: Jika pertanyaan sama sekali di luar modul, arahkan untuk dibahas pada sesi Zoom Booster Rabu malam.
 
-        user_content = f"Nama Jamaah: {user_name}\n\nKonteks Modul Riyadhoh:\n{context_chunks}\n\nPesan Jamaah: {message}"
-        payload = {
-            "contents": [{"parts": [{"text": user_content}]}],
-            "systemInstruction": {"parts": [{"text": system_instruction}]},
-            "generationConfig": {
-                "maxOutputTokens": 250,
-                "temperature": 0.4
+[MODUL RIYADHOH OM BUDI]:
+{context_chunks}
+
+[PERTANYAAN JAMAAH]:
+{message}"""
+
+        # 1. Panggilan Endpoint Gemini 3.6 Flash
+        if gemini_key:
+            endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={gemini_key}"
+            payload = {
+                "contents": [{"parts": [{"text": combined_prompt}]}],
+                "generationConfig": {
+                    "maxOutputTokens": 300,
+                    "temperature": 0.2
+                }
             }
-        }
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(endpoint, json=payload, timeout=15) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                        else:
+                            err_t = await resp.text()
+                            logger.error(f"[GEMINI 3.6 FLASH ERROR] Status {resp.status}: {err_t}")
+            except Exception as e:
+                logger.error(f"[GEMINI 3.6 FLASH EXCEPTION] {e}")
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(endpoint, json=payload, timeout=15) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                    else:
-                        err_msg = await resp.text()
-                        logger.error(f"[LLM API ERROR] Status {resp.status}: {err_msg}")
-        except Exception as e:
-            logger.error(f"[LLM GEN EXCEPTION] {e}")
+        # 2. Fallback Groq LLaMA-3.1
+        if groq_key:
+            try:
+                groq_url = "https://api.groq.com/openai/v1/chat/completions"
+                headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
+                groq_payload = {
+                    "model": "llama-3.1-8b-instant",
+                    "messages": [
+                        {"role": "system", "content": "Anda adalah Asisten AI Resmi Om Budi Channel yang ramah dan Islami."},
+                        {"role": "user", "content": combined_prompt}
+                    ],
+                    "max_tokens": 300,
+                    "temperature": 0.2
+                }
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(groq_url, headers=headers, json=groq_payload, timeout=12) as g_resp:
+                        if g_resp.status == 200:
+                            g_data = await g_resp.json()
+                            return g_data["choices"][0]["message"]["content"].strip()
+            except Exception as e:
+                logger.error(f"[GROQ RAG EXCEPTION] {e}")
+
+        # 3. Direct RAG Rule Fallback
+        if "dhuha" in message.lower():
+            return f"Bismillah Bapak/Ibu *{user_name}*, untuk amalan Sholat Dhuha dalam Riyadhoh Om Budi dianjurkan minimal **4 Rakaat** (dilakukan 2 rakaat 1 salam) untuk membuka pintu kelapangan rezeki."
 
         return (
-            f"Bismillah, Kak *{user_name}*... Sistem aktif dan siap mendampingi. "
-            "Silakan pilih menu utama atau ketikkan hal yang ingin ditanyakan ya Kak."
+            f"Alhamdulillah Bapak/Ibu *{user_name}*, mari kita istiqomahkan sholat di awal waktu dan dawamkan sholawat jibril minimal 1.000x setiap hari agar Allah mudahkan segala urusan kita."
         )
 
     async def handle_incoming_message(
@@ -152,7 +174,7 @@ class OmBudiService:
                     "buttons": [{"id": "btn_cara_sedekah", "title": "Kirim Ulang Bukti"}, {"id": "btn_menu_utama", "title": "↩️ Kembali"}]
                 }
 
-        # 2. Reset / Menu Utama (3 Tombol Cepat)
+        # 2. Reset / Menu Utama
         if button_id == "btn_menu_utama" or clean_text in ["menu", "start", "halo", "hai", "assalamu'alaikum", "assalamualaikum", "p"]:
             USER_STATES[phone_number] = "IDLE"
             menu_text = (
@@ -196,22 +218,16 @@ class OmBudiService:
 
         if button_id == "btn_sub_1_a":
             return {"type": "buttons", "reply": "📝 *Cara Mengikuti Zoom Booster*\n\n1. Pastikan aplikasi Zoom sudah terpasang di HP/Laptop.\n2. Masuk melalui tautan resmi 10-15 menit sebelum dimulai.\n3. Gunakan nama asli di akun Zoom agar mudah disapa oleh Om Budi.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
-        
         if button_id == "btn_sub_1_b":
             return {"type": "buttons", "reply": "🗓️ *Jadwal Zoom Booster*\n\nSesi rutin diadakan setiap hari **Rabu malam** pukul 20.00 WIB. Pengingat tautan akan dikirimkan di grup khusus 1 jam sebelum acara dimulai.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
-        
         if button_id == "btn_sub_1_c":
             return {"type": "buttons", "reply": "✨ *Tentang Zoom Booster*\n\nSesi penguatan vibrasi energi, bedah sumbatan rezeki, konsultasi langsung persoalan amanah/hutang, serta bimbingan riyadhoh sholawat berjamaah bersama Om Budi.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
-        
         if button_id == "btn_sub_1_d":
             return {"type": "buttons", "reply": "👥 *Peserta yang Bisa Mengikuti*\n\nSeluruh alumni terdaftar dan jamaah yang mendukung program Zoom Booster & Orang Tua Asuh.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
-        
         if button_id == "btn_sub_1_e":
             return {"type": "buttons", "reply": "🔗 *Link & Cara Masuk Zoom*\n\nLink Ruang Pertemuan:\n👉 *https://zoom.us/j/boontrack-ombudi*\nPasscode: *SHOLAWAT*\n\n_Buka tautan di atas saat jam acara dimulai._", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
-        
         if button_id == "btn_sub_1_f":
             return {"type": "buttons", "reply": "📹 *Materi & Rekaman Zoom*\n\nRekaman video sesi sebelumnya diunggah maksimal 1x24 jam ke Portal Alumni / Google Drive.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
-        
         if button_id == "btn_sub_1_g":
             return {"type": "buttons", "reply": "🤝 *Jika Tidak Bisa Hadir Live*\n\nTidak perlu khawatir, Bapak/Ibu tetap bisa menyimak siaran ulang rekaman dan tetap mendawamkan amalan riyadhoh secara mandiri.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
 
@@ -281,7 +297,7 @@ class OmBudiService:
                 "buttons": [{"id": "btn_menu_utama", "title": "↩️ Kembali"}]
             }
 
-        # 6. RAG Knowledge Base
+        # 6. RAG Knowledge Base Retrieval & Execution
         rag_context = self._retrieve_relevant_chunks(clean_text)
         if not rag_context:
             rag_context = (
