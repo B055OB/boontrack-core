@@ -41,8 +41,24 @@ REKENING_TEMPLATE = (
     "Om Budi Channel 🙏"
 )
 
-# Knowledge Base Internal Fallback (Proporsional & Mandiri saat API Limit)
+# Knowledge Base Internal Cerdas & Mendalam (Persona Om Budi)
 KNOWLEDGE_RULES = {
+    "hutang": (
+        "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu. Memahami perasaan lelah dan gelisah saat amanah hutang belum tuntas adalah hal yang wajar, namun mari kita bedah bersama sudut pandang ikhtiar langitnya.\n\n"
+        "Dalam bimbingan Om Budi, ada beberapa hal mendasar yang sering menjadi *sumbatan batin*:\n"
+        "1. *Vibrasi Ketergesaan & Ketakutan (Kejar Tayang)*: Saat kita beribadah hanya dengan fokus 'harus cepat lunas', batin kita memancarkan sinyal kekurangan dan kepanikan. Ubah niat beramal untuk mencintai Allah dan mencari ridho-Nya, bukan sekadar menuntut hasil instan.\n"
+        "2. *Pembersihan Batin dari Ganjalan*: Cek kembali apakah masih ada rasa dendam, amarah pada pihak tertentu, atau rasa mengeluh yang tersimpan. Ridho dan ikhlaskan semuanya.\n"
+        "3. *Pasrah Total (Zero Mind)*: Tugas kita adalah ikhtiar maksimal (sholat awal waktu, sholawat jibril, sedekah), sedangkan waktu dan cara penyelesaiannya adalah hak mutlak Allah.\n\n"
+        "Tetaplah berprasangka baik. Bawa kegelisahan ini ke sesi Zoom Booster Rabu malam agar bisa kita bedah energinya bersama Om Budi ya."
+    ),
+    "belum lunas": (
+        "Bismillah, Bapak/Ibu yang dirahmati Allah... Ujian waktu dalam ikhtiar langit sesungguhnya adalah proses pembersihan wadah rezeki kita sebelum Allah titipkan amanah yang lebih besar.\n\n"
+        "Evaluasi 3 hal utama dalam riyadhoh harian:\n"
+        "• Apakah saat berdzikir hati kita tenang, atau justru diliputi rasa cemas menghitung hari?\n"
+        "• Apakah hubungan dengan orang tua, pasangan, atau orang sekitar sudah saling memaafkan dan bebas dari ganjalan?\n"
+        "• Sudahkah kita membuat Proposal Doa yang jelas dan memasrahkan hasilnya 100% kepada Allah?\n\n"
+        "Jangan putus asa, pertolongan Allah sering kali hadir tepat saat batin kita benar-benar pasrah dan berhenti menuntut."
+    ),
     "materi": (
         "Bismillah, materi *Kelas Online Bimbingan Om Budi* berfokus pada perbaikan tauhid, vibrasi energi batin, dan ikhtiar langit untuk mengurai sumbatan rezeki.\n\n"
         "Materi utama bimbingan meliputi:\n"
@@ -121,43 +137,40 @@ class OmBudiService:
 
         combined_prompt = f"""Anda adalah Asisten AI Bimbingan Om Budi Channel (Riyadhoh Sholawat & Quantum Energi).
 
-ATURAN PANJANG & FORMAT JAWABAN (WAJIB DIIKUTI):
-1. Panjang Jawaban: Proporsional sedang (2 sampai 3 paragraf pendek, sekitar 100 - 150 kata).
-2. Jangan terlalu singkat (jangan hanya 1-2 kalimat).
-3. Jangan terlalu panjang (hindari membuat teks berbelit-belit).
-4. Struktur Jawaban:
-   - Paragraf 1: Sambutan Islami yang santun, sejuk, dan langsung menjawab inti pertanyaan.
-   - Paragraf 2: Poin-poin praktis amalan/langkahnya (maksimal 3-4 butir poin ringkas).
-   - Paragraf 3: Kalimat penutup berisi doa penguat dan motivasi ikhtiar.
-5. Sapa jamaah secara ramah (Bapak/Ibu atau Kakak {user_name}).
-6. Jika pertanyaan sama sekali di luar materi ikhtiar bimbingan, arahkan untuk dibahas bersama pada sesi Zoom Booster hari Rabu malam.
+ATURAN MENJAWAB (SANGAT PENTING):
+1. Persona: Islami, bijak, hangat, penuh empati, menyejukkan batin, dan membimbing ke akar masalah tauhid/energi batin.
+2. Jika user mengeluh soal hutang yang belum lunas, masalah belum selesai, atau lelah berikhtiar:
+   - Tunjukkan empati mendalam terlebih dahulu.
+   - Jelaskan konsep sumbatan rezeki (vibrasi cemas/tergesa-gesa vs vibrasi pasrah/ridho, pembersihan batin, dan adab berdoa).
+   - Berikan arahan solusi praktis dan kuatkan mental spiritualnya.
+3. Panjang Teks: Proporsional (2 sampai 3 paragraf terstruktur, sekitar 120 - 180 kata).
+4. Jangan memberikan jawaban generik 1-2 baris.
 
 [SUMBER MATERI RIYADHOH OM BUDI]:
 {context_chunks}
 
-[PERTANYAAN JAMAAH]:
+[PERTANYAAN / CURHAT JAMAAH]:
 {message}"""
 
-        # 1. Panggilan Gemini Flash REST API
+        # 1. Panggilan Gemini API (Multi-model support)
         if gemini_key:
-            endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
-            payload = {
-                "contents": [{"parts": [{"text": combined_prompt}]}],
-                "generationConfig": {
-                    "maxOutputTokens": 400,
-                    "temperature": 0.3
+            for model_name in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash"]:
+                endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
+                payload = {
+                    "contents": [{"parts": [{"text": combined_prompt}]}],
+                    "generationConfig": {
+                        "maxOutputTokens": 450,
+                        "temperature": 0.3
+                    }
                 }
-            }
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(endpoint, json=payload, timeout=15) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                        else:
-                            logger.warning(f"[GEMINI API STATUS] {resp.status}")
-            except Exception as e:
-                logger.warning(f"[GEMINI RAG EXCEPTION] {e}")
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(endpoint, json=payload, timeout=15) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                except Exception as e:
+                    logger.warning(f"[GEMINI {model_name} EXCEPTION] {e}")
 
         # 2. Panggilan Cadangan Groq LLaMA-3.1
         if groq_key:
@@ -167,10 +180,10 @@ ATURAN PANJANG & FORMAT JAWABAN (WAJIB DIIKUTI):
                 groq_payload = {
                     "model": "llama-3.1-8b-instant",
                     "messages": [
-                        {"role": "system", "content": "Anda adalah Asisten AI Bimbingan Om Budi yang memberikan jawaban proporsional 2-3 paragraf sedang."},
+                        {"role": "system", "content": "Anda adalah Asisten AI Bimbingan Om Budi yang bijak, hangat, dan memberikan jawaban mendalam 2-3 paragraf."},
                         {"role": "user", "content": combined_prompt}
                     ],
-                    "max_tokens": 400,
+                    "max_tokens": 450,
                     "temperature": 0.3
                 }
                 async with aiohttp.ClientSession() as session:
@@ -181,19 +194,20 @@ ATURAN PANJANG & FORMAT JAWABAN (WAJIB DIIKUTI):
             except Exception as e:
                 logger.warning(f"[GROQ RAG EXCEPTION] {e}")
 
-        # 3. Dynamic Knowledge Extraction Fallback jika API habis limit/offline
+        # 3. Dynamic Knowledge Rule Fallback jika LLM Offline / Limit
         clean_msg = message.lower()
+        if any(k in clean_msg for k in ["hutang", "utang", "pinjol", "tagihan", "belum lunas", "belum ada hasil", "belum terkabul"]):
+            return KNOWLEDGE_RULES["hutang"]
+        
         for key, answer in KNOWLEDGE_RULES.items():
             if key in clean_msg:
                 return answer
 
         return (
-            f"Bismillah Bapak/Ibu *{user_name}*, perihal ikhtiar langit bersama Om Budi, kunci utamanya adalah menjaga keselarasan antara doa dan kebersihan batin.\n\n"
-            "Berikut panduan amalan hariannya:\n"
-            "1. Jaga sholat 5 waktu tepat pada awal waktu.\n"
-            "2. Dawamkan sholawat jibril minimal 1.000x setiap hari.\n"
-            "3. Bersihkan batin dengan memaafkan dan senantiasa bersyukur.\n\n"
-            "Semoga Allah SWT mempermudah segala urusan dan mengalirkan rezeki berkah berlimpah untuk keluarga."
+            f"Bismillah Bapak/Ibu, setiap proses ikhtiar langit memiliki tahapan pembersihan dan kesiapan wadah batin masing-masing.\n\n"
+            "Kunci utamanya adalah tetap istiqomah menjaga sholat tepat di awal waktu, mendawamkan sholawat jibril minimal 1.000x, "
+            "serta menjaga hati tetap berprasangka baik (husnudzon) kepada Allah SWT tanpa tergesa-gesa menuntut hasil.\n\n"
+            "Semoga Allah segera mengurai segala kesulitan dan menghadirkan jalan keluar dari arah yang tak disangka-sangka."
         )
 
     async def handle_incoming_message(
@@ -272,7 +286,6 @@ ATURAN PANJANG & FORMAT JAWABAN (WAJIB DIIKUTI):
                 "sections": sections
             }
 
-        # Tombol navigasi ganda untuk sub-menu Zoom Booster (Topik Zoom & Menu Utama)
         zoom_nav_buttons = [
             {"id": "menu_zoom_booster", "title": "📋 Topik Zoom"},
             {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
