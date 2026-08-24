@@ -8,7 +8,7 @@ class TestTenantIsolationAndPII(unittest.TestCase):
     def test_encryption_and_blind_index(self):
         tenant_a = "diskominfo-bdg"
         tenant_b = "om_budi"
-        raw_nik = "3273012345670001"
+        raw_nik = "1268977686299719"
 
         # 1. Enkripsi per-tenant harus menghasilkan ciphertext berbeda
         enc_a = encrypt_pii(tenant_a, raw_nik)
