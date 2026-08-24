@@ -66,7 +66,7 @@ async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
 
     clean_text = str(text).strip() if text else ""
     if not clean_text or clean_text.lower() in ["none", "null"]:
-        clean_text = "Afwan Bapak/Ibu, pesan sedang diproses. Silakan ulangi atau pilih opsi menu yang tersedia."
+        clean_text = "Afwan Kakak, pesan sedang diproses. Silakan pilih opsi menu yang tersedia."
 
     url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
     headers = {
@@ -124,6 +124,40 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Di
         logger.error(f"[CENTRAL WA] Exception sending buttons: {e}", exc_info=True)
 
 
+async def send_wa_list_menu(recipient_phone: str, body_text: str, button_text: str, sections: List[Dict[str, Any]], phone_id: str):
+    """Mengirim Interactive List Message WhatsApp untuk menu hierarki."""
+    clean_id_match = re.findall(r"\d+", str(phone_id))
+    clean_id = clean_id_match[0] if clean_id_match else phone_id
+    token = resolve_tenant_token(clean_id)
+
+    url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient_phone,
+        "type": "interactive",
+        "interactive": {
+            "type": "list",
+            "body": {"text": body_text},
+            "action": {
+                "button": button_text[:20],
+                "sections": sections
+            }
+        }
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                resp_text = await resp.text()
+                if resp.status not in (200, 201):
+                    logger.error(f"[CENTRAL WA] Outbound list error ({resp.status}) phone_id={clean_id}: {resp_text}")
+    except Exception as e:
+        logger.error(f"[CENTRAL WA] Exception sending list menu: {e}", exc_info=True)
+
+
 # --- 5. Webhook GET: Verifikasi Meta ---
 @central_wa_routes.get("/webhook/whatsapp")
 @central_wa_routes.get("/api/v1/tenants/om_budi/webhook/whatsapp")
@@ -156,13 +190,11 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         if not messages:
             return web.json_response({"status": "ignored"}, status=200)
 
-        # Ambil phone_number_id dari metadata webhook
         phone_id = str(value.get("metadata", {}).get("phone_number_id", "")).strip()
-
         msg_obj = messages[0]
         from_phone = msg_obj.get("from")
         msg_type = msg_obj.get("type")
-        contact_name = value.get("contacts", [{}])[0].get("profile", {}).get("name", "Bapak/Ibu")
+        contact_name = value.get("contacts", [{}])[0].get("profile", {}).get("name", "Kakak")
 
         # 6.1. Anti-Spam Rate Limiter (Maks 5 pesan / menit)
         is_allowed, retry_after = wa_rate_limiter.is_allowed(from_phone)
@@ -170,12 +202,12 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             logger.warning(f"[RATE LIMIT] Pengirim {from_phone} terkena throttling.")
             await send_wa_text(
                 recipient_phone=from_phone,
-                text=f"Pesan Anda terkirim terlalu cepat. Silakan tunggu {retry_after} detik sebelum mencoba lagi.",
+                text=f"Pesan Kakak terkirim terlalu cepat. Silakan tunggu {retry_after} detik sebelum mencoba lagi.",
                 phone_id=phone_id
             )
             return web.json_response({"status": "rate_limited"}, status=429)
 
-        # 6.2. Filter Media & File Attachment
+        # 6.2. Filter Media & Dokumen Tak Didukung
         if msg_type in ["document", "video", "audio"]:
             await send_wa_text(
                 recipient_phone=from_phone,
@@ -194,10 +226,15 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             incoming_text = msg_obj.get("text", {}).get("body", "")
         elif msg_type == "interactive":
             inter = msg_obj.get("interactive", {})
-            if inter.get("type") == "button_reply":
+            inter_type = inter.get("type")
+            if inter_type == "button_reply":
                 btn = inter.get("button_reply", {})
                 button_id = btn.get("id")
                 incoming_text = btn.get("title", "")
+            elif inter_type == "list_reply":
+                item = inter.get("list_reply", {})
+                button_id = item.get("id")
+                incoming_text = item.get("title", "")
         elif msg_type == "image":
             image_data = msg_obj.get("image", {})
             image_mime = image_data.get("mime_type", "image/jpeg")
@@ -232,7 +269,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
             incoming_text = image_data.get("caption", "[FOTO_TERLAMPIR]")
 
-        # 6.4. Dispatching Terisolasi Berdasarkan Phone Number ID
+        # 6.4. Dispatching Terisolasi
         if phone_id == CAREER_PHONE_NUMBER_ID:
             from app.routes.whatsapp_career import handle_incoming_whatsapp
             return await handle_incoming_whatsapp(request)
@@ -248,21 +285,21 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 image_mime=image_mime
             )
 
-            raw_reply = res.get("reply") if isinstance(res, dict) else str(res)
-            if not raw_reply or str(raw_reply).strip().lower() in ["none", "null", ""]:
-                reply_text = (
-                    f"Alhamdulillah, baik Bapak/Ibu *{contact_name}*.\n\n"
-                    "Untuk pendaftaran *Kelas Online Bimbingan Om Budi*, silakan tekan tombol di bawah ini:"
+            res_type = res.get("type", "text")
+            reply_text = res.get("reply", "")
+
+            if res_type == "list":
+                await send_wa_list_menu(
+                    from_phone,
+                    reply_text,
+                    res.get("button_text", "Pilih Menu"),
+                    res.get("sections", []),
+                    phone_id
                 )
-                fallback_buttons = [
-                    {"id": "btn_daftar_kelas", "title": "Daftar Kelas Online"},
-                    {"id": "btn_tanya_curhat", "title": "Tanya / Curhat"}
-                ]
-                await send_wa_buttons(from_phone, reply_text, fallback_buttons, phone_id)
-            elif isinstance(res, dict) and res.get("type") == "buttons":
-                await send_wa_buttons(from_phone, raw_reply, res.get("buttons", []), phone_id)
+            elif res_type == "buttons":
+                await send_wa_buttons(from_phone, reply_text, res.get("buttons", []), phone_id)
             else:
-                await send_wa_text(from_phone, raw_reply, phone_id)
+                await send_wa_text(from_phone, reply_text, phone_id)
 
             return web.json_response({"status": "success", "tenant": "om_budi"}, status=200)
 
@@ -289,4 +326,4 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
 def register_central_whatsapp_routes(app: web.Application):
     app.add_routes(central_wa_routes)
-    logger.info("[ROUTER] Central WhatsApp Webhook registered with isolated Diskominfo sandbox.")
+    logger.info("[ROUTER] Central WhatsApp Webhook registered.")
