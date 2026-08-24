@@ -41,13 +41,23 @@ REKENING_TEMPLATE = (
     "Om Budi Channel 🙏"
 )
 
-# Knowledge Base Internal Fallback (Jawaban Proporsional & Terstruktur)
+# Knowledge Base Internal Fallback (Proporsional & Mandiri saat API Limit)
 KNOWLEDGE_RULES = {
+    "materi": (
+        "Bismillah, materi *Kelas Online Bimbingan Om Budi* berfokus pada perbaikan tauhid, vibrasi energi batin, dan ikhtiar langit untuk mengurai sumbatan rezeki.\n\n"
+        "Materi utama bimbingan meliputi:\n"
+        "1. *Fondasi Tauhid & Sholat Awal Waktu*: Memperbaiki hubungan dasar dengan Allah.\n"
+        "2. *Riyadhoh Sholawat Jibril 1.000x*: Pembersihan energi negatif dan pembuka pintu kemudahan.\n"
+        "3. *Quantum Energi & Vibrasi Syukur*: Melepaskan dendam, trauma rezeki, dan prasangka buruk.\n"
+        "4. *Penyusunan Proposal Doa*: Menyusun hajat spesifik dan terstruktur dengan adab yang benar.\n"
+        "5. *Amalan Penunjang*: Sholat Dhuha 4 rakaat, Tahajjud, dan Sedekah Berjamaah.\n\n"
+        "Semua materi dirancang praktis agar bisa langsung diamalkan dalam kehidupan sehari-hari."
+    ),
     "proposal doa": (
         "Bismillah, perihal *Proposal Doa* dalam ikhtiar Riyadhoh Om Budi, ini adalah metode menuliskan hajat secara spesifik dan penuh adab di hadapan Allah SWT.\n\n"
         "Berikut urutan penyusunannya:\n"
         "1. Awali dengan memuji Allah melalui Asmaul Husna (seperti Ya Mujib, Ya Razzaq, Ya Fattah).\n"
-        "2. Baca Sholawat Nabi sebagai pembuka doa.\n"
+        "2. Baca Sholawat Nabi sebagai pembuka dan pengantar doa.\n"
         "3. Lakukan pengakuan dosa dan kelemahan diri dengan istighfar.\n"
         "4. Tuliskan hajat secara jelas, detail, dan sertakan niat baik penggunaannya.\n"
         "5. Akhiri dengan kepasrahan total (tawakal) atas ketetapan terbaik-Nya.\n\n"
@@ -56,7 +66,7 @@ KNOWLEDGE_RULES = {
     "mindset": (
         "Bismillah, membangun *Mindset Doa yang Mudah Terkabul* berakar pada penyelarasan energi batin dan ketauhidan kepada Allah SWT.\n\n"
         "Poin penting yang perlu dijaga:\n"
-        "1. *Husnudzon & Yakin 100%*: Percaya penuh tanpa ragu bahwa Allah Maha Mendengar dan pasti mengabulkan doa pada waktu yang tepat.\n"
+        "1. *Husnudzon & Yakin 100%*: Percaya penuh tanpa ragu bahwa Allah Maha Mengabulkan doa pada waktu yang tepat.\n"
         "2. *Pembersihan Batin*: Lepaskan rasa dendam, amarah, dan keluh kesah dengan memaafkan semua orang secara tulus.\n"
         "3. *Vibrasi Syukur*: Fokus mensyukuri apa yang sudah ada saat ini agar menarik energi kelimpahan.\n"
         "4. *Fokus Solusi*: Jangan memelihara rasa cemas atau takut, melainkan fokus pada kemahabesaran pertolongan Allah.\n\n"
@@ -71,6 +81,10 @@ KNOWLEDGE_RULES = {
         "Bismillah, amalan utama dalam bimbingan ini adalah mendawamkan *Sholawat Jibril* (*'Shallallahu 'Ala Muhammad'*) minimal **1.000x setiap hari** secara konsisten.\n\n"
         "Amalan ini berfungsi sebagai wasilah membersihkan energi negatif dalam diri, menenangkan pikiran, serta menarik pertolongan dan kelapangan rezeki dari arah yang tidak disangka-sangka.\n\n"
         "Dawamkan dengan hati yang hadir dan penuh cinta kepada Rasulullah SAW."
+    ),
+    "tahajjud": (
+        "Bismillah, *Sholat Tahajjud & Hajat* merupakan puncak ikhtiar langit di sepertiga malam terakhir (sekitar pukul 02.30 - 04.00 WIB).\n\n"
+        "Dikerjakan minimal 2 rakaat Tahajjud ditambah 2 rakaat Hajat dan ditutup Witir. Manfaatkan waktu hening ini untuk membaca Proposal Doa dan bermunajat menumpahkan segala keluh kesah hanya kepada Allah SWT."
     )
 }
 
@@ -105,12 +119,12 @@ class OmBudiService:
         gemini_key = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY", "")).strip()
         groq_key = os.getenv("GROQ_API_KEY", "").strip()
 
-        combined_prompt = f"""Anda adalah Asisten AI Resmi Bimbingan Om Budi Channel (Riyadhoh Sholawat & Quantum Energi).
+        combined_prompt = f"""Anda adalah Asisten AI Bimbingan Om Budi Channel (Riyadhoh Sholawat & Quantum Energi).
 
 ATURAN PANJANG & FORMAT JAWABAN (WAJIB DIIKUTI):
 1. Panjang Jawaban: Proporsional sedang (2 sampai 3 paragraf pendek, sekitar 100 - 150 kata).
 2. Jangan terlalu singkat (jangan hanya 1-2 kalimat).
-3. Jangan terlalu panjang (jangan membuat dinding teks panjang).
+3. Jangan terlalu panjang (hindari membuat teks berbelit-belit).
 4. Struktur Jawaban:
    - Paragraf 1: Sambutan Islami yang santun, sejuk, dan langsung menjawab inti pertanyaan.
    - Paragraf 2: Poin-poin praktis amalan/langkahnya (maksimal 3-4 butir poin ringkas).
@@ -140,8 +154,10 @@ ATURAN PANJANG & FORMAT JAWABAN (WAJIB DIIKUTI):
                         if resp.status == 200:
                             data = await resp.json()
                             return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                        else:
+                            logger.warning(f"[GEMINI API STATUS] {resp.status}")
             except Exception as e:
-                logger.error(f"[GEMINI RAG EXCEPTION] {e}")
+                logger.warning(f"[GEMINI RAG EXCEPTION] {e}")
 
         # 2. Panggilan Cadangan Groq LLaMA-3.1
         if groq_key:
@@ -163,9 +179,9 @@ ATURAN PANJANG & FORMAT JAWABAN (WAJIB DIIKUTI):
                             g_data = await g_resp.json()
                             return g_data["choices"][0]["message"]["content"].strip()
             except Exception as e:
-                logger.error(f"[GROQ RAG EXCEPTION] {e}")
+                logger.warning(f"[GROQ RAG EXCEPTION] {e}")
 
-        # 3. Dynamic Knowledge Extraction Fallback
+        # 3. Dynamic Knowledge Extraction Fallback jika API habis limit/offline
         clean_msg = message.lower()
         for key, answer in KNOWLEDGE_RULES.items():
             if key in clean_msg:
@@ -208,12 +224,12 @@ ATURAN PANJANG & FORMAT JAWABAN (WAJIB DIIKUTI):
                     "kelapangan rezeki, serta melunaskan segala amanah hutang Bapak/Ibu sekeluarga. Aamiin ya Rabbal 'Alamin.\n\n"
                     "Tautan Group Khusus Zoom Booster (setiap Rabu malam) akan segera kami kirimkan ke nomor ini."
                 )
-                return {"type": "buttons", "reply": reply, "buttons": [{"id": "btn_menu_utama", "title": "↩️ Kembali"}]}
+                return {"type": "buttons", "reply": reply, "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
             else:
                 return {
                     "type": "buttons",
                     "reply": "Gambar belum terdeteksi sebagai bukti transfer yang valid. Pastikan nominal, tanggal, dan nomor rekening tujuan (Budi Yulianto) terlihat jelas ya.",
-                    "buttons": [{"id": "btn_cara_sedekah", "title": "Kirim Ulang Bukti"}, {"id": "btn_menu_utama", "title": "↩️ Kembali"}]
+                    "buttons": [{"id": "btn_cara_sedekah", "title": "Kirim Ulang Bukti"}, {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]
                 }
 
         # 2. Reset / Menu Utama
@@ -233,7 +249,7 @@ ATURAN PANJANG & FORMAT JAWABAN (WAJIB DIIKUTI):
                 ]
             }
 
-        # 3. Sub-Menu: Zoom Booster
+        # 3. Sub-Menu: Zoom Booster (List Menu)
         if button_id == "menu_zoom_booster":
             sections = [
                 {
@@ -256,20 +272,26 @@ ATURAN PANJANG & FORMAT JAWABAN (WAJIB DIIKUTI):
                 "sections": sections
             }
 
+        # Tombol navigasi ganda untuk sub-menu Zoom Booster (Topik Zoom & Menu Utama)
+        zoom_nav_buttons = [
+            {"id": "menu_zoom_booster", "title": "📋 Topik Zoom"},
+            {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
+        ]
+
         if button_id == "btn_sub_1_a":
-            return {"type": "buttons", "reply": "📝 *Cara Mengikuti Zoom Booster*\n\n1. Pastikan aplikasi Zoom sudah terpasang di HP/Laptop.\n2. Masuk melalui tautan resmi 10-15 menit sebelum dimulai.\n3. Gunakan nama asli di akun Zoom agar mudah disapa oleh Om Budi.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
+            return {"type": "buttons", "reply": "📝 *Cara Mengikuti Zoom Booster*\n\n1. Pastikan aplikasi Zoom sudah terpasang di HP/Laptop.\n2. Masuk melalui tautan resmi 10-15 menit sebelum dimulai.\n3. Gunakan nama asli di akun Zoom agar mudah disapa oleh Om Budi.", "buttons": zoom_nav_buttons}
         if button_id == "btn_sub_1_b":
-            return {"type": "buttons", "reply": "🗓️ *Jadwal Zoom Booster*\n\nSesi rutin diadakan setiap hari **Rabu malam** pukul 20.00 WIB. Pengingat tautan akan dikirimkan di grup khusus 1 jam sebelum acara dimulai.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
+            return {"type": "buttons", "reply": "🗓️ *Jadwal Zoom Booster*\n\nSesi rutin diadakan setiap hari **Rabu malam** pukul 20.00 WIB. Pengingat tautan akan dikirimkan di grup khusus 1 jam sebelum acara dimulai.", "buttons": zoom_nav_buttons}
         if button_id == "btn_sub_1_c":
-            return {"type": "buttons", "reply": "✨ *Tentang Zoom Booster*\n\nSesi penguatan vibrasi energi, bedah sumbatan rezeki, konsultasi langsung persoalan amanah/hutang, serta bimbingan riyadhoh sholawat berjamaah bersama Om Budi.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
+            return {"type": "buttons", "reply": "✨ *Tentang Zoom Booster*\n\nSesi penguatan vibrasi energi, bedah sumbatan rezeki, konsultasi langsung persoalan amanah/hutang, serta bimbingan riyadhoh sholawat berjamaah bersama Om Budi.", "buttons": zoom_nav_buttons}
         if button_id == "btn_sub_1_d":
-            return {"type": "buttons", "reply": "👥 *Peserta yang Bisa Mengikuti*\n\nSeluruh alumni terdaftar dan jamaah yang mendukung program Zoom Booster & Orang Tua Asuh.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
+            return {"type": "buttons", "reply": "👥 *Peserta yang Bisa Mengikuti*\n\nSeluruh alumni terdaftar dan jamaah yang mendukung program Zoom Booster & Orang Tua Asuh.", "buttons": zoom_nav_buttons}
         if button_id == "btn_sub_1_e":
-            return {"type": "buttons", "reply": "🔗 *Link & Cara Masuk Zoom*\n\nLink Ruang Pertemuan:\n👉 *https://zoom.us/j/boontrack-ombudi*\nPasscode: *SHOLAWAT*\n\n_Buka tautan di atas saat jam acara dimulai._", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
+            return {"type": "buttons", "reply": "🔗 *Link & Cara Masuk Zoom*\n\nLink Ruang Pertemuan:\n👉 *https://zoom.us/j/boontrack-ombudi*\nPasscode: *SHOLAWAT*\n\n_Buka tautan di atas saat jam acara dimulai._", "buttons": zoom_nav_buttons}
         if button_id == "btn_sub_1_f":
-            return {"type": "buttons", "reply": "📹 *Materi & Rekaman Zoom*\n\nRekaman video sesi sebelumnya diunggah maksimal 1x24 jam ke Portal Alumni / Google Drive.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
+            return {"type": "buttons", "reply": "📹 *Materi & Rekaman Zoom*\n\nRekaman video sesi sebelumnya diunggah maksimal 1x24 jam ke Portal Alumni / Google Drive.", "buttons": zoom_nav_buttons}
         if button_id == "btn_sub_1_g":
-            return {"type": "buttons", "reply": "🤝 *Jika Tidak Bisa Hadir Live*\n\nTidak perlu khawatir, Bapak/Ibu tetap bisa menyimak siaran ulang rekaman dan tetap mendawamkan amalan riyadhoh secara mandiri.", "buttons": [{"id": "menu_zoom_booster", "title": "↩️ Kembali"}]}
+            return {"type": "buttons", "reply": "🤝 *Jika Tidak Bisa Hadir Live*\n\nTidak perlu khawatir, Bapak/Ibu tetap bisa menyimak siaran ulang rekaman dan tetap mendawamkan amalan riyadhoh secara mandiri.", "buttons": zoom_nav_buttons}
 
         # 4. Sub-Menu: Sedekah Berjamaah
         if button_id == "menu_sedekah_berjamaah" or clean_text == "sedekah":
@@ -279,7 +301,7 @@ ATURAN PANJANG & FORMAT JAWABAN (WAJIB DIIKUTI):
                 "buttons": [
                     {"id": "btn_penjelasan_sedekah", "title": "Penjelasan Sedekah"},
                     {"id": "btn_cara_sedekah", "title": "Cara Ikut Sedekah"},
-                    {"id": "btn_menu_utama", "title": "↩️ Kembali"}
+                    {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
                 ]
             }
 
@@ -299,7 +321,7 @@ ATURAN PANJANG & FORMAT JAWABAN (WAJIB DIIKUTI):
                 "reply": penjelasan_text,
                 "buttons": [
                     {"id": "btn_cara_sedekah", "title": "Cara Ikut Sedekah"},
-                    {"id": "btn_menu_utama", "title": "↩️ Kembali"}
+                    {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
                 ]
             }
 
@@ -309,7 +331,7 @@ ATURAN PANJANG & FORMAT JAWABAN (WAJIB DIIKUTI):
                 "reply": REKENING_TEMPLATE,
                 "buttons": [
                     {"id": "btn_upload_struk", "title": "Kirim Bukti Transfer"},
-                    {"id": "btn_menu_utama", "title": "↩️ Kembali"}
+                    {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
                 ]
             }
 
@@ -321,17 +343,18 @@ ATURAN PANJANG & FORMAT JAWABAN (WAJIB DIIKUTI):
             info_text = (
                 f"💬 *[TANYA JAWAB MATERI & BIMBINGAN OM BUDI]*\n\n"
                 f"Silakan ketikkan pertanyaan Bapak/Ibu seputar:\n"
-                "• Tata cara & amalan Riyadhoh (Sholat Dhuha, Tahajjud, Hajat)\n"
+                "• Materi bimbingan kelas online & ikhtiar langit\n"
+                "• Tata cara amalan Riyadhoh (Sholat Dhuha, Tahajjud, Hajat)\n"
                 "• Dawam Sholawat Jibril 1.000x & Proposal Doa\n"
                 "• Mindset doa, pembersihan batin & sumbatan rezeki\n\n"
                 "Saya siap menjawab dan mendampingi ikhtiar Bapak/Ibu."
             )
-            return {"type": "buttons", "reply": info_text, "buttons": [{"id": "btn_menu_utama", "title": "↩️ Kembali"}]}
+            return {"type": "buttons", "reply": info_text, "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
 
         # 6. RAG Knowledge Base Retrieval & Execution
         rag_context = self._retrieve_relevant_chunks(clean_text)
         ai_reply = await self._generate_rag_response(user_name, message_text, rag_context)
-        return {"type": "buttons", "reply": ai_reply, "buttons": [{"id": "btn_menu_utama", "title": "↩️ Kembali"}]}
+        return {"type": "buttons", "reply": ai_reply, "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]}
 
 
 om_budi_service = OmBudiService()
