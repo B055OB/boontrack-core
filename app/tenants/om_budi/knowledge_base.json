@@ -199,5 +199,75 @@
       "confidence_boost": ["langkah", "cara", "hutang", "solusi"],
       "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊. Memahami perasaan lelah dan cemas saat amanah hutang belum tuntas adalah hal yang manusiawi[cite: 1].\n\nDalam buku *Jalan Sunyi Orang Berhutang*, ada beberapa kunci batin agar pertolongan Allah segera hadir[cite: 1]:\n1. *Stop Mengeluh*: Mengeluh tidak melunasi hutang, justru menguras energi dan menutup pintu rezeki[cite: 1].\n2. *Selaraskan Hati, Pikiran, dan Lisan*: Mulut ingin lunas, maka pikiran dan hati juga harus yakin pada pertolongan Allah[cite: 1].\n3. *Hadapi dengan Kejujuran*: Jangan menghindar dari penagih dan jangan mengobral janji palsu[cite: 1].\n4. *Kencangkan Ikhtiar Langit*: Dawamkan Sholawat Jibril 1.000x, Sedekah Subuh, dan Sholat Taubat/Tahajud secara konsisten 🤲[cite: 1, 4]."
     }
+    {
+      "id": "kb_audio_terapi_menarik_rezeki",
+      "intent": "audio_menarik_rezeki",
+      "exact_phrases": [
+        "minta audio terapi menarik rezeki",
+        "link audio terapi menarik rezeki",
+        "audio menarik rezeki om budi",
+        "audio terapi rezeki"
+      ],
+      "keywords": [
+        "audio terapi menarik rezeki",
+        "terapi menarik rezeki",
+        "audio menarik rezeki",
+        "terapi rezeki"
+      ],
+      "confidence_boost": [
+        "minta",
+        "link",
+        "audio",
+        "terapi",
+        "menarik rezeki"
+      ],
+      "answer": "🎧 *AUDIO TERAPI MENARIK REZEKI BY OM BUDI*\n\n🔗 *Link Download / Dengarkan*:\nhttps://drive.google.com/file/d/1zJOXiu-A-Jlh713tIvULS-tfbBBUEKLp/view?usp=drive_link\n\n📌 *Petunjuk Penggunaan*:\n• Dengarkan 2x sehari (atau semakin sering semakin baik) di tempat tenang.\n• *Pantangan*: Dilarang mendengarkan sambil menyetir kendaraan atau mengoperasikan mesin berat 🙏😊."
+    },
+    {
+      "id": "kb_audio_meditasi_syukur",
+      "intent": "audio_meditasi_syukur",
+      "exact_phrases": [
+        "minta audio meditasi syukur",
+        "link meditasi syukur",
+        "audio meditasi syukur kekayaan dan kesehatan",
+        "meditasi syukur om budi"
+      ],
+      "keywords": [
+        "meditasi syukur",
+        "kekayaan dan kesehatan",
+        "audio syukur",
+        "meditasi kekayaan"
+      ],
+      "confidence_boost": [
+        "minta",
+        "link",
+        "meditasi",
+        "syukur"
+      ],
+      "answer": "🎧 *MEDITASI SYUKUR – KEKAYAAN & KESEHATAN*\n\n🔗 *Link Download / Dengarkan*:\nhttps://drive.google.com/file/d/1yw1fVPT6mpPiqj27P0qu_yiNfrTKv4tr/view?usp=drive_link\n\n📌 *Petunjuk Penggunaan*:\n• Dengarkan 2x sehari di ruangan tenang dengan sikap pasrah dan bersyukur.\n• *Pantangan*: Dilarang mendengarkan sambil mengemudi atau menyetir kendaraan 🙏😊."
+    },
+    {
+      "id": "kb_audio_digital_prayers_quantum_ikhlas",
+      "intent": "audio_digital_prayers",
+      "exact_phrases": [
+        "minta audio digital prayers",
+        "audio digital prayers quantum ikhlas",
+        "link quantum ikhlas",
+        "audio quantum ikhlas"
+      ],
+      "keywords": [
+        "digital prayers",
+        "quantum ikhlas",
+        "audio quantum ikhlas",
+        "digital prayers ikhlas"
+      ],
+      "confidence_boost": [
+        "minta",
+        "link",
+        "digital prayers",
+        "quantum ikhlas"
+      ],
+      "answer": "🎧 *AUDIO DIGITAL PRAYERS QUANTUM IKHLAS*\n\n🔗 *Link Download / Dengarkan*:\nhttps://drive.google.com/file/d/18GjQd8SMymV8kxfvOPodvIXNxlVLbhW9/view?usp=drivesdk\n\n📌 *Petunjuk Penggunaan*:\n• Dengarkan 2x sehari sambil mempraktikkan 4 langkah: Alphamatic, Afirmasi, Visualisasi, dan Syukur.\n• *Pantangan*: Dilarang mendengarkan saat menyetir kendaraan atau beraktivitas berat 🙏😊."
+    }
   ]
 }
