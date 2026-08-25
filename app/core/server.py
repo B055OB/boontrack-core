@@ -13,6 +13,7 @@ from app.whatsapp.router import register_whatsapp_routes
 from app.routes.payment import register_payment_routes
 from app.routes.payment_webhook import register_payment_webhook_routes
 from app.tenants.om_budi.router import register_om_budi_routes
+from app.tenants.career.router import register_career_routes
 from app.routes.whatsapp_central import register_central_whatsapp_routes
 from app.reader.router import (
     pair_device_handler,
@@ -52,8 +53,9 @@ def create_web_app() -> web.Application:
     register_payment_routes(app)
     register_payment_webhook_routes(app)
 
-    # 6. Tenant Om Budi & WhatsApp Central Dispatcher
+    # 6. Tenant Om Budi, Career, & WhatsApp Central Dispatcher
     register_om_budi_routes(app)
+    register_career_routes(app)
     register_central_whatsapp_routes(app)
 
     # 7. Device Pairing & Reader Management

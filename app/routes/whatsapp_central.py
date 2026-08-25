@@ -266,7 +266,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
         # 6.5. Dispatching Terisolasi Berdasarkan Phone Number ID
         if phone_id == CAREER_PHONE_NUMBER_ID:
-            from app.routes.whatsapp_career import handle_incoming_whatsapp
+            from app.tenants.career.router import handle_incoming_whatsapp
             return await handle_incoming_whatsapp(request)
 
         elif phone_id == OM_BUDI_PHONE_NUMBER_ID:
