@@ -43,6 +43,16 @@ async def handle_reader_mutation_webhook(request: web.Request) -> web.Response:
 
     # 1. EXACT MATCH: Langsung Selesaikan Order
     if status == "EXACT_MATCH":
+        if intent.get("tenant_id") == "digicorn":
+            from app.tenants.digicorn.service import digicorn_service
+            await digicorn_service.deliver_paid_order(intent)
+            return web.json_response({
+                "status": "SUCCESS",
+                "action": "AUTO_FULFILLED_DIGICORN",
+                "invoice": invoice_id,
+                "tenant": "digicorn"
+            })
+
         success_msg = (
             f"🎉 *PEMBAYARAN TERVERIFIKASI!*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -60,6 +70,26 @@ async def handle_reader_mutation_webhook(request: web.Request) -> web.Response:
 
     # 2. NEAR MATCH (Typo Terdeteksi): Beri Tahu User Secara Halus
     elif status == "NEAR_MATCH":
+        if intent.get("tenant_id") == "digicorn":
+            from app.core.channels.telegram import send_telegram_message
+            from app.core.tenants.registry import tenant_registry
+            bot_token = tenant_registry.get_telegram_token("digicorn")
+            if bot_token:
+                await send_telegram_message(
+                    bot_token=bot_token,
+                    chat_id=user_id,
+                    text=(
+                        f"⚠️ *PEMBAYARAN DITERIMA (SELISIH NOMINAL)*\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🧾 *Invoice:* `{invoice_id}`\n"
+                        f"📌 *Tagihan:* Rp{expected_amount:,}\n"
+                        f"📥 *Nominal Diterima:* Rp{amount:,} *(Selisih Rp{diff})*\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                        "Dana sudah masuk. Admin sedang memverifikasi secara kilat untuk mengirimkan link produk Anda. Mohon tunggu 1-2 menit ya! 🙏"
+                    )
+                )
+            return web.json_response({"status": "REVIEW", "action": "NOTIFIED_USER_TELEGRAM", "invoice": invoice_id})
+
         notice_msg = (
             f"⚠️ *PEMBAYARAN DITERIMA (SELISIH NOMINAL)*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"

@@ -109,6 +109,73 @@ async def send_telegram_buttons(
     )
 
 
+async def send_telegram_photo(
+    bot_token: str,
+    chat_id: Union[int, str],
+    photo: Union[str, bytes],
+    caption: str = "",
+    reply_markup: Optional[Dict[str, Any]] = None,
+    parse_mode: str = "Markdown"
+) -> Optional[Dict[str, Any]]:
+    """Mengirim foto/gambar (QRIS struk/dokumen) ke chat Telegram."""
+    if not bot_token:
+        logger.error("[TELEGRAM CHANNEL] Bot token is missing for send_telegram_photo")
+        return None
+
+    url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+    try:
+        async with aiohttp.ClientSession() as session:
+            # 1. Local file path yang ada di filesystem
+            if isinstance(photo, str) and os.path.exists(photo):
+                with open(photo, "rb") as f:
+                    file_bytes = f.read()
+                data = aiohttp.FormData()
+                data.add_field("chat_id", str(chat_id))
+                data.add_field("photo", file_bytes, filename=os.path.basename(photo), content_type="image/jpeg")
+                if caption:
+                    data.add_field("caption", caption)
+                if parse_mode:
+                    data.add_field("parse_mode", parse_mode)
+                if reply_markup:
+                    data.add_field("reply_markup", json.dumps(reply_markup))
+
+                async with session.post(url, data=data, timeout=25) as resp:
+                    return await resp.json()
+
+            # 2. Raw bytes
+            elif isinstance(photo, bytes):
+                data = aiohttp.FormData()
+                data.add_field("chat_id", str(chat_id))
+                data.add_field("photo", photo, filename="image.jpg", content_type="image/jpeg")
+                if caption:
+                    data.add_field("caption", caption)
+                if parse_mode:
+                    data.add_field("parse_mode", parse_mode)
+                if reply_markup:
+                    data.add_field("reply_markup", json.dumps(reply_markup))
+
+                async with session.post(url, data=data, timeout=25) as resp:
+                    return await resp.json()
+
+            # 3. URL atau Telegram file_id
+            else:
+                payload = {
+                    "chat_id": chat_id,
+                    "photo": str(photo),
+                    "caption": caption,
+                    "parse_mode": parse_mode
+                }
+                if reply_markup:
+                    payload["reply_markup"] = reply_markup
+
+                async with session.post(url, json=payload, timeout=25) as resp:
+                    return await resp.json()
+    except Exception as e:
+        logger.error(f"[TELEGRAM CHANNEL] Error sending photo to chat {chat_id}: {e}")
+        return None
+
+
+
 # --- 3. Inbound Central Telegram Webhook Dispatcher ---
 @telegram_channel_routes.get("/webhook/telegram/{tenant_id}")
 @telegram_channel_routes.get("/api/v1/telegram/webhook/{tenant_id}")
@@ -205,6 +272,7 @@ async def handle_incoming_telegram_webhook(request: web.Request) -> web.Response
     # 3.3. Dispatching ke Domain Tenant Engine
     reply_text = ""
     reply_buttons = []
+    reply_photo = None
 
     if clean_tenant == "digicorn":
         from app.tenants.digicorn.service import digicorn_service
@@ -216,6 +284,7 @@ async def handle_incoming_telegram_webhook(request: web.Request) -> web.Response
         )
         reply_text = result.get("text", "")
         reply_buttons = result.get("buttons", [])
+        reply_photo = result.get("photo")
 
     elif clean_tenant in ["career", "boontrack-career"]:
         # Fallback AI consultation untuk channel Telegram Career
@@ -241,7 +310,15 @@ async def handle_incoming_telegram_webhook(request: web.Request) -> web.Response
         )
 
     # 3.4. Kirim Balasan Outbound ke Telegram
-    if reply_buttons:
+    if reply_photo:
+        await send_telegram_photo(
+            bot_token=bot_token,
+            chat_id=chat_id,
+            photo=reply_photo,
+            caption=reply_text,
+            reply_markup={"inline_keyboard": reply_buttons} if reply_buttons else None
+        )
+    elif reply_buttons:
         await send_telegram_buttons(
             bot_token=bot_token,
             chat_id=chat_id,
@@ -258,14 +335,14 @@ async def handle_incoming_telegram_webhook(request: web.Request) -> web.Response
     # 3.5. Log Outbound ke Supabase (sender='bot')
     safe_log_to_supabase_messages(
         sender="bot",
-        text=reply_text,
+        text=reply_text or (f"[Mengirim Foto QRIS]" if reply_photo else ""),
         tenant_id=clean_tenant,
         channel="telegram",
         user_phone=str(chat_id),
         user_name=user_name,
         user_id=str(user_id or chat_id),
         conversation_id=str(chat_id),
-        metadata={"buttons_count": len(reply_buttons)}
+        metadata={"buttons_count": len(reply_buttons), "has_photo": bool(reply_photo)}
     )
 
     return web.json_response({

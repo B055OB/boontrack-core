@@ -5,14 +5,73 @@ from typing import Dict, Any, Optional, List
 from app.tenants.digicorn.config import DIGICORN_CONFIG, DIGICORN_TENANT_ID
 from app.modules.commerce.catalog import CommerceCatalogService
 from app.modules.commerce.service import CommerceService
+from app.modules.commerce.delivery import DigitalDeliveryService
 from app.services.ai_service import ai_gateway
+from app.services.reconciliation_service import generate_unique_payment_intent, PAYMENT_INTENTS
 from app.core.messaging.composer import MessageComposer
+from app.core.tenants.registry import tenant_registry
+from app.core.channels.telegram import send_telegram_message
 
 logger = logging.getLogger("DIGICORN_SERVICE")
 
+QRIS_ASSET_PATH = "assets/qris.jpg"
+
 
 class DigicornService:
-    """Service pemrosesan pesan dan pencarian produk digital untuk tenant Digicorn."""
+    """Service pemrosesan pesan, katalog, dan pembayaran QRIS otomatis untuk tenant Digicorn."""
+
+    @classmethod
+    async def deliver_paid_order(cls, intent: Dict[str, Any]) -> bool:
+        """
+        Mengirimkan link akses Google Drive ke chat Telegram pembeli secara instan
+        saat mutasi pembayaran berhasil dicocokkan oleh BoonTrack Reader.
+        """
+        chat_id = intent.get("user_id")
+        product_code = intent.get("product_id")
+        invoice_id = intent.get("invoice_id")
+        total_amount = intent.get("total_amount", 5000)
+
+        if not chat_id or not product_code:
+            logger.error(f"[DIGICORN AUTO-DELIVERY] Invalid intent data for delivery: {intent}")
+            return False
+
+        try:
+            product = await CommerceCatalogService.get_product_by_code(DIGICORN_TENANT_ID, product_code)
+            delivery_payload = product.get("delivery_payload") if product else "https://drive.google.com"
+            title = product.get("title") if product else "Produk Digital"
+
+            delivery_msg = (
+                f"🎉 *PEMBAYARAN DIVERIFIKASI! (Rp{total_amount:,})* 🚀\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🧾 *Invoice:* `{invoice_id}`\n"
+                f"🏷️ *Produk:* {title}\n"
+                f"📊 *Status:* LUNAS (Verified by BoonTrack Reader)\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📥 *LINK AKSES GOOGLE DRIVE RESMI ANDA:*\n"
+                f"👉 {delivery_payload}\n\n"
+                f"💡 *Petunjuk Penggunaan:*\n"
+                f"1. Buka tautan Google Drive di atas.\n"
+                f"2. Klik tombol *Download* atau *Make a Copy*.\n"
+                f"3. Simpan di perangkat atau Google Drive pribadi Anda.\n\n"
+                f"_Terima kasih telah berbelanja di Digicorn! Sukses terus untuk bisnis & karir Anda!_ 🦄✨"
+            )
+
+            bot_token = tenant_registry.get_telegram_token(DIGICORN_TENANT_ID)
+            if bot_token:
+                await send_telegram_message(
+                    bot_token=bot_token,
+                    chat_id=chat_id,
+                    text=delivery_msg
+                )
+                logger.info(f"[DIGICORN AUTO-DELIVERY] Successfully delivered {product_code} to Telegram chat {chat_id}")
+                return True
+            else:
+                logger.error(f"[DIGICORN AUTO-DELIVERY] Bot token not found for {DIGICORN_TENANT_ID}")
+                return False
+
+        except Exception as e:
+            logger.error(f"[DIGICORN AUTO-DELIVERY] Delivery failed for {invoice_id}: {e}", exc_info=True)
+            return False
 
     @classmethod
     async def handle_message(
@@ -23,40 +82,105 @@ class DigicornService:
         user_name: str = ""
     ) -> Dict[str, Any]:
         """
-        Memproses pesan masuk Telegram/WhatsApp untuk Digicorn:
+        Memproses pesan masuk Telegram untuk Digicorn:
         1. Routing intent menu / start
         2. Pencarian katalog produk digital
-        3. Integrasi AI Gateway -> MessageComposer
-        4. Checkout & pemesanan produk
+        3. Pembuatan Invoice QRIS Otomatis dengan 3 Digit Unik
+        4. Cek status pembayaran & auto-delivery Google Drive
         """
         clean_text = (user_text or "").strip()
-        clean_text_lower = clean_text.lower()
         sapaan = f", *{user_name}*" if user_name else ""
 
         # 1. Handling Callback / Button Click
         if callback_data:
-            if callback_data.startswith("buy_"):
-                product_code = callback_data.replace("buy_", "").strip()
+            # 1.1. Pemesanan Produk -> Terbitkan QRIS + 3 Digit Unik
+            if callback_data.startswith("buy_") or callback_data.startswith("pay_"):
+                product_code = callback_data.replace("buy_", "").replace("pay_", "").strip()
                 try:
                     product = await CommerceCatalogService.get_product_by_code(DIGICORN_TENANT_ID, product_code)
                     if product:
-                        reply = (
-                            f"📦 *PEMESANAN PRODUK DIGITAL*\n"
+                        # Buat Payment Intent dengan 3 Digit Unik
+                        base_price = int(product.get("price", 5000))
+                        intent = generate_unique_payment_intent(
+                            tenant_id=DIGICORN_TENANT_ID,
+                            base_amount=base_price,
+                            product_id=product_code,
+                            user_id=str(chat_id)
+                        )
+
+                        invoice_caption = (
+                            f"🦄 *INVOICE PEMBAYARAN QRIS DIGICORN* 📦\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"🏷️ *Produk:* {product['title']}\n"
                             f"📂 *Kategori:* {product['category']}\n"
-                            f"💰 *Harga:* Rp{product['price']:,}\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                            f"Silakan lakukan pembayaran sebesar *Rp{product['price']:,}* via QRIS / Bank Transfer.\n"
-                            f"_Link akses Google Drive akan langsung dikirimkan seketika setelah pembayaran terverifikasi._"
+                            f"🧾 *Invoice ID:* `{intent['invoice_id']}`\n\n"
+                            f"💰 *TOTAL TRANSFER:* `Rp{intent['total_amount']:,}`\n"
+                            f"*(Harga: Rp{base_price:,} + 3 Digit Unik: Rp{intent['unique_code']})*\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"⚠️ *PENTING: Mohon transfer TEPAT Rp{intent['total_amount']:,} agar sistem BoonTrack Reader otomatis memverifikasi pembayaran Anda.*\n\n"
+                            f"📸 *Cara Bayar:*\n"
+                            f"1. Scan gambar QRIS di atas via GoPay, OVO, Dana, ShopeePay, BCA, Mandiri, atau Mobile Banking lainnya.\n"
+                            f"2. Masukkan nominal persis *Rp{intent['total_amount']:,}*.\n\n"
+                            f"🚀 *Setelah transfer, sistem BoonTrack Reader akan mendeteksi mutasi dan langsung mengirimkan link Google Drive secara otomatis!*"
                         )
+
                         buttons = [
-                            [{"text": "💳 Bayar Sekarang", "callback_data": f"pay_{product_code}"}],
-                            [{"text": "🔙 Kembali ke Katalog", "callback_data": "menu_catalog"}]
+                            [{"text": "🔄 Cek Status Pembayaran", "callback_data": f"check_pay_{intent['invoice_id']}"}],
+                            [{"text": "🔙 Batal / Menu Utama", "callback_data": "menu_catalog"}]
                         ]
-                        return {"text": reply, "buttons": buttons}
+
+                        return {
+                            "photo": QRIS_ASSET_PATH,
+                            "text": invoice_caption,
+                            "buttons": buttons
+                        }
                 except Exception as e:
-                    logger.warning(f"Error fetching product for callback {callback_data}: {e}")
+                    logger.warning(f"Error creating QRIS invoice for callback {callback_data}: {e}")
+
+            # 1.2. Cek Status Pembayaran
+            if callback_data.startswith("check_pay_"):
+                inv_id = callback_data.replace("check_pay_", "").strip()
+                intent = PAYMENT_INTENTS.get(inv_id)
+
+                if intent and intent.get("status") == "PAID":
+                    product = await CommerceCatalogService.get_product_by_code(DIGICORN_TENANT_ID, intent.get("product_id"))
+                    delivery_payload = product.get("delivery_payload") if product else "https://drive.google.com"
+                    title = product.get("title") if product else "Produk Digital"
+
+                    delivery_msg = (
+                        f"🎉 *PEMBAYARAN DIVERIFIKASI! TERIMA KASIH* 🚀\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🧾 *Invoice:* `{inv_id}`\n"
+                        f"🏷️ *Produk:* {title}\n"
+                        f"💰 *Nominal:* Rp{intent.get('total_amount', 5000):,}\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                        f"📥 *LINK AKSES GOOGLE DRIVE PRODUK ANDA:*\n"
+                        f"👉 {delivery_payload}\n\n"
+                        f"💡 *Petunjuk:* Buka tautan di atas dan klik _Download_ atau _Make a Copy_ untuk menyimpan file Anda.\n\n"
+                        f"_Sukses selalu untuk Anda bersama Digicorn!_ 🦄✨"
+                    )
+                    buttons = [
+                        [{"text": "📂 Belanja Produk Lain", "callback_data": "menu_catalog"}]
+                    ]
+                    return {"text": delivery_msg, "buttons": buttons}
+
+                else:
+                    exp_amount = intent.get("total_amount", 5000) if intent else 5000
+                    pending_msg = (
+                        f"⏳ *PEMBAYARAN BELUM TERDETEKSI*\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🧾 *Invoice ID:* `{inv_id}`\n"
+                        f"💰 *Nominal Transfer:* `Rp{exp_amount:,}`\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                        f"Sistem BoonTrack Reader belum menemukan mutasi masuk sebesar *Rp{exp_amount:,}*.\n\n"
+                        f"⚠️ Pastikan transfer TEPAT sesuai nominal dengan 3 digit uniknya.\n"
+                        f"Jika Anda baru saja transfer, mohon tunggu 10-30 detik lalu tekan tombol di bawah ini."
+                    )
+                    buttons = [
+                        [{"text": "🔄 Cek Status Lagi", "callback_data": f"check_pay_{inv_id}"}],
+                        [{"text": "🔙 Batal / Menu Utama", "callback_data": "menu_catalog"}]
+                    ]
+                    return {"text": pending_msg, "buttons": buttons}
 
             if callback_data == "menu_catalog":
                 clean_text = "/start"

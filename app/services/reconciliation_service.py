@@ -63,7 +63,7 @@ def generate_unique_payment_intent(tenant_id: str, base_amount: int, product_id:
     return intent_record
 
 
-async def reconcile_incoming_mutation(incoming_amount: int, raw_text: str = "", tenant_id: str = "boontrack_career") -> Tuple[str, Optional[Dict[str, Any]], int]:
+async def reconcile_incoming_mutation(incoming_amount: int, raw_text: str = "", tenant_id: Optional[str] = None) -> Tuple[str, Optional[Dict[str, Any]], int]:
     """
     Mencocokkan mutasi masuk dari reader:
     - EXACT_MATCH: nominal 100% tepat -> langsung kirim produk.
@@ -78,7 +78,7 @@ async def reconcile_incoming_mutation(incoming_amount: int, raw_text: str = "", 
     for inv_id, intent in PAYMENT_INTENTS.items():
         if intent["status"] != "PENDING" or intent["expires_at"] < now:
             continue
-        if intent["tenant_id"] != tenant_id:
+        if tenant_id and tenant_id not in ["all", ""] and intent["tenant_id"] != tenant_id:
             continue
 
         expected = intent["total_amount"]
