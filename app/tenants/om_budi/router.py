@@ -6,6 +6,8 @@ from aiohttp import web
 from app.tenants.om_budi.config import TENANT_ID
 from app.tenants.om_budi.service import om_budi_service
 
+from app.services.whatsapp_service import log_to_supabase_messages
+
 logger = logging.getLogger(__name__)
 om_budi_routes = web.RouteTableDef()
 
@@ -135,7 +137,18 @@ async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
 
         logger.info(f"[{TENANT_ID}] Chat from {from_phone} ({contact_name}): text='{incoming_text}', btn_id='{button_id}'")
 
-        # Proses pesan di Om Budi Service
+        # 1. Simpan pesan user masuk ke Supabase
+        await log_to_supabase_messages(
+            sender="user",
+            text=incoming_text or f"[{msg_type or 'button'}]",
+            tenant_id="om-budi",
+            channel="whatsapp",
+            user_phone=from_phone,
+            user_name=contact_name,
+            user_id=from_phone
+        )
+
+        # 2. Proses pesan di Om Budi Service
         response_data = await om_budi_service.handle_incoming_message(
             phone_number=from_phone,
             message_text=incoming_text,
@@ -147,7 +160,7 @@ async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
         reply_text = response_data.get("reply", "")
         buttons = response_data.get("buttons") or response_data.get("nav_buttons")
 
-        # Kirim balik respons
+        # 3. Kirim balik respons
         if res_type == "buttons" and len(reply_text) <= 1000:
             await send_wa_interactive_buttons(
                 recipient_phone=from_phone,
@@ -167,6 +180,17 @@ async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
                     body_text="👇 *Pilih menu untuk melanjutkan:*",
                     buttons=buttons
                 )
+
+        # 4. Simpan balasan bot terkirim ke Supabase
+        await log_to_supabase_messages(
+            sender="bot",
+            text=reply_text,
+            tenant_id="om-budi",
+            channel="whatsapp",
+            user_phone=from_phone,
+            user_name=contact_name,
+            user_id=from_phone
+        )
 
         return web.json_response({"status": "success"}, status=200)
 

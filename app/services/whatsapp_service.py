@@ -7,30 +7,33 @@ from typing import Optional, Dict, Any, Union, List
 import httpx
 from supabase import create_client, Client
 
-logger = logging.getLogger(__name__)
+import uuid
+from datetime import datetime, timezone
 
-SUPABASE_URL = (
-    os.getenv("SUPABASE_URL") 
-    or os.getenv("NEXT_PUBLIC_SUPABASE_URL") 
-    or "https://mpluzajlzpregmjwpjqr.supabase.co"
-)
-SUPABASE_KEY = (
-    os.getenv("SUPABASE_SERVICE_ROLE_KEY") 
-    or os.getenv("SUPABASE_KEY") 
-    or os.getenv("SUPABASE_ANON_KEY") 
-    or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY") 
-    or ""
-)
+logger = logging.getLogger(__name__)
 
 _supabase_client: Optional[Client] = None
 
 def get_supabase() -> Optional[Client]:
     global _supabase_client
-    if _supabase_client is None and SUPABASE_URL and SUPABASE_KEY:
-        try:
-            _supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        except Exception as e:
-            logger.error(f"[Supabase Init Error] {e}")
+    if _supabase_client is None:
+        supabase_url = (
+            os.getenv("SUPABASE_URL") 
+            or os.getenv("NEXT_PUBLIC_SUPABASE_URL") 
+            or "https://mpluzajlzpregmjwpjqr.supabase.co"
+        )
+        supabase_key = (
+            os.getenv("SUPABASE_SERVICE_ROLE_KEY") 
+            or os.getenv("SUPABASE_KEY") 
+            or os.getenv("SUPABASE_ANON_KEY") 
+            or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY") 
+            or ""
+        )
+        if supabase_url and supabase_key:
+            try:
+                _supabase_client = create_client(supabase_url, supabase_key)
+            except Exception as e:
+                logger.error(f"[Supabase Init Error] {e}")
     return _supabase_client
 
 async def log_to_supabase_messages(
@@ -40,23 +43,56 @@ async def log_to_supabase_messages(
     channel: str = "whatsapp",
     user_phone: Optional[str] = None,
     user_name: Optional[str] = None,
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None,
+    conversation_id: Optional[str] = None
 ):
-    """Menyimpan pesan masuk/keluar ke tabel Supabase public.messages."""
+    """Menyimpan pesan masuk/keluar ke tabel Supabase public.messages & conversations."""
     try:
         supabase = get_supabase()
         if supabase and text:
-            normalized_tenant = "boontrack-career" if tenant_id in ["00000000-0000-0000-0000-000000000000", "boontrack-career"] else tenant_id
-            clean_phone = user_phone or (sender.replace("Customer / +", "").strip() if "Customer" in sender else None)
-            resolved_uid = user_id or clean_phone or sender
+            clean_tenant = tenant_id if tenant_id not in ["00000000-0000-0000-0000-000000000000"] else "boontrack-career"
+            if clean_tenant == "om_budi":
+                clean_tenant = "om-budi"
 
+            phone = str(user_phone or user_id or "").replace("+", "").strip()
+            clean_digits = "".join(filter(str.isdigit, phone))
+            resolved_uid = clean_digits or user_id or phone or sender
+
+            # Tentukan conversation_id deterministik berbasis UUID
+            if conversation_id:
+                conv_uuid = conversation_id
+            elif clean_digits:
+                conv_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{clean_tenant}:{clean_digits}"))
+            else:
+                conv_uuid = None
+
+            now_iso = datetime.now(timezone.utc).isoformat()
+
+            # 1. Upsert ke tabel conversations bila ada nomor kontak
+            if conv_uuid and clean_digits:
+                try:
+                    supabase.table("conversations").upsert({
+                        "id": conv_uuid,
+                        "tenant_id": clean_tenant,
+                        "phone_number": clean_digits,
+                        "contact_name": user_name or f"User {clean_digits[-4:]}",
+                        "updated_at": now_iso
+                    }).execute()
+                except Exception as conv_err:
+                    logger.debug(f"[Supabase Conv Upsert Warning] {conv_err}")
+
+            # 2. Insert ke tabel messages
             payload = {
                 "sender": sender,
                 "text": text,
-                "tenant_id": normalized_tenant,
+                "tenant_id": clean_tenant,
+                "tenant_slug": clean_tenant,
                 "channel": channel,
                 "user_id": resolved_uid,
-                "created_at": datetime.utcnow().isoformat()
+                "user_phone": clean_digits or None,
+                "user_name": user_name,
+                "conversation_id": conv_uuid,
+                "created_at": now_iso
             }
             supabase.table("messages").insert(payload).execute()
     except Exception as e:

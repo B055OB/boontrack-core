@@ -8,6 +8,7 @@ from aiohttp import web
 # Security & Compliance Layers
 from app.core.security.rate_limiter import wa_rate_limiter
 from app.core.security.masking import ZeroPIILogFilter
+from app.services.whatsapp_service import log_to_supabase_messages
 
 logger = logging.getLogger("CENTRAL_WA_ROUTER")
 if not any(isinstance(f, ZeroPIILogFilter) for f in logger.filters):
@@ -285,6 +286,18 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
         elif phone_id == OM_BUDI_PHONE_NUMBER_ID:
             from app.tenants.om_budi.service import om_budi_service
+
+            # 1. Simpan pesan user masuk ke Supabase
+            await log_to_supabase_messages(
+                sender="user",
+                text=incoming_text or f"[{msg_type or 'button'}]",
+                tenant_id="om-budi",
+                channel="whatsapp",
+                user_phone=from_phone,
+                user_name=contact_name,
+                user_id=from_phone
+            )
+
             res = await om_budi_service.handle_incoming_message(
                 phone_number=from_phone,
                 message_text=incoming_text,
@@ -319,6 +332,17 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                         buttons,
                         phone_id
                     )
+
+            # 2. Simpan balasan bot ke Supabase
+            await log_to_supabase_messages(
+                sender="bot",
+                text=reply_text,
+                tenant_id="om-budi",
+                channel="whatsapp",
+                user_phone=from_phone,
+                user_name=contact_name,
+                user_id=from_phone
+            )
 
             return web.json_response({"status": "success", "tenant": "om_budi"}, status=200)
 
