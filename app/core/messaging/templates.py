@@ -76,10 +76,43 @@ PENJELASAN_SEDEKAH_OM_BUDI = (
     "Semoga menjadi amal kebaikan dan keberkahan untuk kita semua. Aamiin🙏"
 )
 
-PENDAFTARAN_KELAS_OM_BUDI = (
-    "🎓 *PENDAFTARAN KELAS ONLINE OM BUDI*\n\n"
-    "Silakan scan kode QRIS di atas melalui aplikasi M-Banking atau E-Wallet (BCA, Mandiri, BRI, BNI, GoPay, OVO, ShopeePay, DANA, dll).\n\n"
-    "📌 *Merchant:* OM BUDI CHANNEL\n"
-    "🔢 *NMID:* ID1024333398336\n\n"
-    "Setelah proses transfer berhasil, silakan kirimkan foto/screenshot bukti pembayaran ke chat ini untuk kami data. Terima kasih!"
+CARA_IKUT_SEDEKAH_OM_BUDI = (
+    "🤲 *CARA IKUT SEDEKAH BERJAMAAH*\n\n"
+    "Bapak/Ibu yang dirahmati Allah, Program Sedekah Berjamaah & Orang Tua Asuh dimulai dari minimal Rp50.000/bulan atau sesuai keikhlasan dan kemampuan masing-masing.\n\n"
+    "Silakan pilih metode pembayaran/penyaluran yang diinginkan di bawah ini:"
 )
+
+RINGKASAN_KELAS_ONLINE_OM_BUDI = (
+    "🎓 *PENDAFTARAN KELAS ONLINE OM BUDI*\n\n"
+    "Bapak/Ibu yang dirahmati Allah, mari ikhtiar bersama dalam Program Kelas Bimbingan Online Om Budi Channel untuk pembebasan amanah hutang, penataan alur rezeki, dan penguatan riyadhoh.\n\n"
+    "💰 *Investasi Kelas:* Rp100.000\n\n"
+    "Silakan pilih metode pembayaran yang diinginkan di bawah ini:"
+)
+
+PANDUAN_QRIS_OM_BUDI = (
+    "📌 *PANDUAN PEMBAYARAN QRIS*\n"
+    "Merchant: OM BUDI CHANNEL (NMID: ID1024333398336)\n\n"
+    "💡 *Jika membayar menggunakan HP yang sama:*\n"
+    "1. Screenshot / Simpan gambar QRIS di atas ke galeri HP Bapak/Ibu.\n"
+    "2. Buka aplikasi M-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, ShopeePay, DANA).\n"
+    "3. Pilih menu *QRIS / Bayar / Scan*.\n"
+    "4. Pilih ikon *Upload Gambar dari Galeri / Ambil dari Foto*.\n"
+    "5. Pilih hasil screenshot QRIS tadi dan selesaikan pembayaran.\n\n"
+    "📸 Setelah transfer berhasil, silakan kirimkan foto/screenshot bukti pembayaran ke chat ini untuk konfirmasi. Terima kasih!"
+)
+
+REKENING_KELAS_OM_BUDI = (
+    "💳 *INFORMASI TRANSFER BANK - KELAS ONLINE OM BUDI*\n\n"
+    "Bapak/Ibu, berikut rekening resmi untuk pembayaran Kelas Bimbingan Online:\n\n"
+    "💰 *Total Investasi:* Rp100.000\n\n"
+    "🏦 *Bank Syariah Indonesia (BSI)*\n"
+    "• No. Rekening: *7251759094*\n"
+    "• Atas Nama: *Budi Yulianto*\n\n"
+    "🏦 *Bank Mandiri*\n"
+    "• No. Rekening: *1320022006077*\n"
+    "• Atas Nama: *Budi Yulianto*\n\n"
+    "📲 *Konfirmasi Pembayaran:*\n"
+    "Setelah transfer berhasil, mohon kirimkan foto/screenshot struk bukti transfer ke chat ini untuk aktivasi keanggotaan. Terima kasih! 🙏😊"
+)
+
+PENDAFTARAN_KELAS_OM_BUDI = PANDUAN_QRIS_OM_BUDI

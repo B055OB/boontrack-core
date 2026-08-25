@@ -6,11 +6,15 @@ from app.core.ai.fallback.matcher import LocalKnowledgeMatcher
 from app.core.ai.fallback.confidence import MatchConfidence
 from app.core.messaging.templates import (
     REKENING_OM_BUDI,
+    REKENING_KELAS_OM_BUDI,
     ZOOM_INFO_OM_BUDI,
     AUDIO_BRAINWAVE_OM_BUDI,
     MATERI_RIYADHOH_OM_BUDI,
     PENJELASAN_SEDEKAH_OM_BUDI,
-    PENDAFTARAN_KELAS_OM_BUDI
+    PENDAFTARAN_KELAS_OM_BUDI,
+    PANDUAN_QRIS_OM_BUDI,
+    RINGKASAN_KELAS_ONLINE_OM_BUDI,
+    CARA_IKUT_SEDEKAH_OM_BUDI
 )
 
 logger = logging.getLogger("OM_BUDI_SERVICE")
@@ -212,9 +216,23 @@ class OmBudiService:
                 ]
             }
 
-        # 4. Handle Menu Baru: Daftar Kelas Online (Kirim Gambar QRIS + Caption)
+        # 4. Handle Menu Baru: Daftar Kelas Online (Investasi Rp100.000 + 2 Pilihan Pembayaran)
         if button_id in ["menu_daftar_kelas", "btn_daftar_kelas", "menu_kelas_online", "btn_kelas_online"] or any(
             k in clean_text for k in ["daftar kelas", "kelas online", "daftar kelas online", "pendaftaran kelas", "ikut kelas", "daftar bimbingan"]
+        ):
+            return {
+                "type": "buttons",
+                "reply": RINGKASAN_KELAS_ONLINE_OM_BUDI,
+                "buttons": [
+                    {"id": "btn_kelas_qris", "title": "QRIS"},
+                    {"id": "btn_kelas_bank", "title": "Transfer Bank"},
+                    {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
+                ]
+            }
+
+        # 5. Handle Pilihan Pembayaran QRIS (Panduan Screenshot & Upload Galeri)
+        if button_id in ["btn_kelas_qris", "btn_sedekah_qris", "btn_qris"] or any(
+            k == clean_text or k in clean_text.split() for k in ["qris", "bayar qris", "scan qris", "kode qris"]
         ):
             public_url = _resolve_qris_public_url()
             return {
@@ -224,17 +242,31 @@ class OmBudiService:
                 "image_path": self.qris_asset_path,
                 "image": {
                     "link": public_url,
-                    "caption": PENDAFTARAN_KELAS_OM_BUDI
+                    "caption": PANDUAN_QRIS_OM_BUDI
                 },
-                "reply": PENDAFTARAN_KELAS_OM_BUDI,
-                "caption": PENDAFTARAN_KELAS_OM_BUDI,
+                "reply": PANDUAN_QRIS_OM_BUDI,
+                "caption": PANDUAN_QRIS_OM_BUDI,
                 "buttons": [
                     {"id": "btn_upload_struk", "title": "Kirim Bukti Transfer"},
                     {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
                 ]
             }
 
-        # 5. Handle Tombol & Sub-Menu Zoom Booster
+        # 6. Handle Pilihan Pembayaran Transfer Bank (Rekening Resmi & Instruksi)
+        if button_id in ["btn_kelas_bank", "btn_sedekah_bank", "btn_transfer_bank"] or any(
+            k in clean_text for k in ["transfer bank", "no rekening", "nomor rekening", "rekening bsi", "rekening mandiri", "transfer manual"]
+        ):
+            bank_reply = REKENING_KELAS_OM_BUDI if button_id == "btn_kelas_bank" else REKENING_OM_BUDI
+            return {
+                "type": "buttons",
+                "reply": bank_reply,
+                "buttons": [
+                    {"id": "btn_upload_struk", "title": "Kirim Bukti Transfer"},
+                    {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
+                ]
+            }
+
+        # 7. Handle Tombol & Sub-Menu Zoom Booster
         if button_id == "menu_zoom_booster" or "zoom booster" in clean_text:
             sections = [
                 {
@@ -280,7 +312,7 @@ class OmBudiService:
         if button_id == "btn_sub_1_g" or "tidak bisa hadir" in clean_text:
             return {"type": "buttons", "reply": "🤝 *Jika Tidak Bisa Hadir Live*\n\nTidak perlu khawatir ya 😊, Bapak/Ibu tetap bisa menyimak siaran ulang rekaman dan mendawamkan amalan secara mandiri 🙏.", "buttons": zoom_nav}
 
-        # 6. Handle Sedekah & Info Rekening
+        # 8. Handle Sedekah & Info Pilihan Penyaluran
         if button_id == "menu_sedekah_berjamaah" or clean_text == "sedekah":
             return {
                 "type": "buttons",
@@ -302,7 +334,18 @@ class OmBudiService:
                 ]
             }
 
-        if button_id == "btn_cara_sedekah" or any(k in clean_text for k in ["cara ikut sedekah", "rekening", "nomor rekening", "qris", "bsi", "mandiri", "transfer", "infaq"]):
+        if button_id == "btn_cara_sedekah" or clean_text in ["cara ikut sedekah", "cara sedekah"]:
+            return {
+                "type": "buttons",
+                "reply": CARA_IKUT_SEDEKAH_OM_BUDI,
+                "buttons": [
+                    {"id": "btn_sedekah_qris", "title": "QRIS"},
+                    {"id": "btn_sedekah_bank", "title": "Transfer Bank"},
+                    {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
+                ]
+            }
+
+        if any(k in clean_text for k in ["rekening", "nomor rekening", "bsi", "mandiri", "transfer", "infaq"]):
             return {
                 "type": "buttons",
                 "reply": REKENING_OM_BUDI,
@@ -312,7 +355,7 @@ class OmBudiService:
                 ]
             }
 
-        if button_id == "btn_upload_struk" or "kirim bukti" in clean_text:
+        if button_id == "btn_upload_struk" or any(k in clean_text for k in ["kirim bukti", "upload struk", "bukti transfer"]):
             return {"type": "text", "reply": "📸 *Kirim Bukti Transfer*\n\nSilakan lampirkan dan kirimkan foto struk transfer / screenshot m-banking Anda sekarang ya 🙏😊."}
 
         # 7. Direct Keywords & Buttons untuk Audio & Materi

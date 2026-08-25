@@ -1,7 +1,12 @@
 import os
 import unittest
 from app.tenants.om_budi.service import om_budi_service
-from app.core.messaging.templates import PENJELASAN_SEDEKAH_OM_BUDI, PENDAFTARAN_KELAS_OM_BUDI
+from app.core.messaging.templates import (
+    PENJELASAN_SEDEKAH_OM_BUDI, 
+    PANDUAN_QRIS_OM_BUDI, 
+    RINGKASAN_KELAS_ONLINE_OM_BUDI,
+    CARA_IKUT_SEDEKAH_OM_BUDI
+)
 
 
 class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
@@ -25,6 +30,35 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Daftar Kelas Online", button_titles)
         self.assertNotIn("menu_belajar_materi", button_ids)
 
+    async def test_daftar_kelas_online_flow_summary_and_options(self):
+        """Memvalidasi menu Daftar Kelas Online menyajikan nominal Rp100.000 dan 2 pilihan pembayaran (QRIS & Bank)."""
+        test_triggers = [
+            {"button_id": "menu_daftar_kelas", "text": ""},
+            {"button_id": "btn_daftar_kelas", "text": ""},
+            {"button_id": "", "text": "daftar kelas online"},
+            {"button_id": "", "text": "kelas online"}
+        ]
+
+        for trigger in test_triggers:
+            with self.subTest(trigger=trigger):
+                res = await om_budi_service.handle_incoming_message(
+                    phone_number="081234567890",
+                    message_text=trigger["text"],
+                    button_id=trigger["button_id"]
+                )
+                self.assertEqual(res.get("type"), "buttons")
+                reply = res.get("reply", "")
+                self.assertIn("Rp100.000", reply)
+                self.assertIn("Investasi Kelas", reply)
+
+                buttons = res.get("buttons", [])
+                btn_ids = [b["id"] for b in buttons]
+                btn_titles = [b["title"] for b in buttons]
+                self.assertIn("btn_kelas_qris", btn_ids)
+                self.assertIn("btn_kelas_bank", btn_ids)
+                self.assertIn("QRIS", btn_titles)
+                self.assertIn("Transfer Bank", btn_titles)
+
     async def test_penjelasan_sedekah_exact_copy(self):
         """Memvalidasi pembaruan teks penjelasan sedekah sesuai copy resmi."""
         res = await om_budi_service.handle_incoming_message(
@@ -46,16 +80,32 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
         self.assertIn("btn_cara_sedekah", btn_ids)
         self.assertIn("btn_menu_utama", btn_ids)
 
-    async def test_daftar_kelas_online_qris_image_and_caption(self):
-        """Memvalidasi menu Daftar Kelas Online mengembalikan type image, public HTTPS URL, dan caption persis."""
+    async def test_cara_ikut_sedekah_payment_options(self):
+        """Memvalidasi menu Cara Ikut Sedekah menyediakan opsi pembayaran QRIS dan Transfer Bank."""
+        res = await om_budi_service.handle_incoming_message(
+            phone_number="081234567890",
+            message_text="",
+            button_id="btn_cara_sedekah"
+        )
+        self.assertEqual(res.get("type"), "buttons")
+        reply = res.get("reply", "")
+        self.assertIn("Rp50.000", reply)
+
+        buttons = res.get("buttons", [])
+        btn_ids = [b["id"] for b in buttons]
+        btn_titles = [b["title"] for b in buttons]
+        self.assertIn("btn_sedekah_qris", btn_ids)
+        self.assertIn("btn_sedekah_bank", btn_ids)
+        self.assertIn("QRIS", btn_titles)
+        self.assertIn("Transfer Bank", btn_titles)
+
+    async def test_qris_option_flow_and_gallery_guide(self):
+        """Memvalidasi pengiriman QRIS menyertakan Public URL HTTPS dan panduan screenshot / upload galeri HP."""
         test_triggers = [
-            {"button_id": "menu_daftar_kelas", "text": ""},
-            {"button_id": "btn_daftar_kelas", "text": ""},
-            {"button_id": "menu_kelas_online", "text": ""},
-            {"button_id": "btn_kelas_online", "text": ""},
-            {"button_id": "", "text": "daftar kelas online"},
-            {"button_id": "", "text": "kelas online"},
-            {"button_id": "", "text": "pendaftaran kelas"}
+            {"button_id": "btn_kelas_qris", "text": ""},
+            {"button_id": "btn_sedekah_qris", "text": ""},
+            {"button_id": "", "text": "qris"},
+            {"button_id": "", "text": "bayar qris"}
         ]
 
         for trigger in test_triggers:
@@ -76,46 +126,47 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(img_url.endswith("qrisombudi.png"))
                 self.assertEqual(res.get("image", {}).get("link"), img_url)
 
-                reply = res.get("reply", "")
-                self.assertIn("🎓 *PENDAFTARAN KELAS ONLINE OM BUDI*", reply)
-                self.assertIn("Silakan scan kode QRIS di atas melalui aplikasi M-Banking atau E-Wallet", reply)
-                self.assertIn("📌 *Merchant:* OM BUDI CHANNEL", reply)
-                self.assertIn("🔢 *NMID:* ID1024333398336", reply)
-                self.assertIn("Setelah proses transfer berhasil, silakan kirimkan foto/screenshot bukti pembayaran ke chat ini", reply)
+                # Validasi Teks Panduan Screenshot / Galeri
+                caption = res.get("reply", "") or res.get("caption", "")
+                self.assertIn("📌 *PANDUAN PEMBAYARAN QRIS*", caption)
+                self.assertIn("Merchant: OM BUDI CHANNEL (NMID: ID1024333398336)", caption)
+                self.assertIn("💡 *Jika membayar menggunakan HP yang sama:*", caption)
+                self.assertIn("1. Screenshot / Simpan gambar QRIS di atas ke galeri HP Bapak/Ibu.", caption)
+                self.assertIn("4. Pilih ikon *Upload Gambar dari Galeri / Ambil dari Foto*.", caption)
+                self.assertIn("5. Pilih hasil screenshot QRIS tadi dan selesaikan pembayaran.", caption)
+                self.assertIn("📸 Setelah transfer berhasil, silakan kirimkan foto/screenshot bukti pembayaran", caption)
 
                 buttons = res.get("buttons", [])
                 btn_ids = [b["id"] for b in buttons]
                 self.assertIn("btn_upload_struk", btn_ids)
                 self.assertIn("btn_menu_utama", btn_ids)
 
-    async def test_sedekah_menu_options(self):
-        """Memvalidasi menu Sedekah Berjamaah memuat opsi Penjelasan dan Cara Ikut."""
-        res = await om_budi_service.handle_incoming_message(
+    async def test_transfer_bank_option_flow(self):
+        """Memvalidasi opsi Transfer Bank menyajikan nomor rekening resmi, pemilik, dan nominal transfer."""
+        # 1. Transfer Bank untuk Kelas Online
+        res_kelas = await om_budi_service.handle_incoming_message(
             phone_number="081234567890",
             message_text="",
-            button_id="menu_sedekah_berjamaah"
+            button_id="btn_kelas_bank"
         )
-        self.assertEqual(res.get("type"), "buttons")
-        buttons = res.get("buttons", [])
-        btn_ids = [b["id"] for b in buttons]
-        self.assertIn("btn_penjelasan_sedekah", btn_ids)
-        self.assertIn("btn_cara_sedekah", btn_ids)
-        self.assertIn("btn_menu_utama", btn_ids)
+        self.assertEqual(res_kelas.get("type"), "buttons")
+        reply_kelas = res_kelas.get("reply", "")
+        self.assertIn("Rp100.000", reply_kelas)
+        self.assertIn("7251759094", reply_kelas)
+        self.assertIn("1320022006077", reply_kelas)
+        self.assertIn("Budi Yulianto", reply_kelas)
 
-    async def test_cara_ikut_sedekah_rekening(self):
-        """Memvalidasi informasi rekening dan opsi kirim bukti transfer."""
-        res = await om_budi_service.handle_incoming_message(
+        # 2. Transfer Bank untuk Sedekah
+        res_sedekah = await om_budi_service.handle_incoming_message(
             phone_number="081234567890",
             message_text="",
-            button_id="btn_cara_sedekah"
+            button_id="btn_sedekah_bank"
         )
-        self.assertEqual(res.get("type"), "buttons")
-        reply = res.get("reply", "")
-        self.assertIn("Bank Syariah Indonesia", reply)
-        self.assertIn("Bank Mandiri", reply)
-        buttons = res.get("buttons", [])
-        btn_ids = [b["id"] for b in buttons]
-        self.assertIn("btn_upload_struk", btn_ids)
+        self.assertEqual(res_sedekah.get("type"), "buttons")
+        reply_sedekah = res_sedekah.get("reply", "")
+        self.assertIn("7251759094", reply_sedekah)
+        self.assertIn("1320022006077", reply_sedekah)
+        self.assertIn("Budi Yulianto", reply_sedekah)
 
     async def test_alumni_claim_updated_menu(self):
         """Memvalidasi klaim alumni menyajikan menu baru Daftar Kelas Online."""
@@ -146,7 +197,7 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
             success = await send_wa_image(
                 recipient_phone="628123456789",
                 image_url_or_path="https://boontrack-core.up.railway.app/static/qrisombudi.png",
-                caption="🎓 *PENDAFTARAN KELAS ONLINE OM BUDI*",
+                caption=PANDUAN_QRIS_OM_BUDI,
                 phone_id="1268977686299719"
             )
             self.assertTrue(success)
@@ -155,7 +206,7 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
             payload = call_kwargs["json"]
             self.assertEqual(payload["type"], "image")
             self.assertEqual(payload["image"]["link"], "https://boontrack-core.up.railway.app/static/qrisombudi.png")
-            self.assertEqual(payload["image"]["caption"], "🎓 *PENDAFTARAN KELAS ONLINE OM BUDI*")
+            self.assertEqual(payload["image"]["caption"], PANDUAN_QRIS_OM_BUDI)
 
         # 2. Test Fallback to Text on Error
         with patch("aiohttp.ClientSession.post") as mock_post, \
@@ -168,11 +219,11 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
             success = await send_wa_image(
                 recipient_phone="628123456789",
                 image_url_or_path="app/assets/qrisombudi.png",
-                caption="🎓 *PENDAFTARAN KELAS ONLINE OM BUDI* (NMID: ID1024333398336)",
+                caption=PANDUAN_QRIS_OM_BUDI,
                 phone_id="1268977686299719"
             )
             self.assertFalse(success)
-            # Pastikan fallback text terpanggil membawa NMID dan rekening
+            # Pastikan fallback text terpanggil membawa NMID dan panduan
             mock_send_text.assert_called_once()
             called_caption = mock_send_text.call_args[0][1]
             self.assertIn("ID1024333398336", called_caption)
@@ -180,4 +231,3 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
