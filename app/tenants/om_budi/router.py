@@ -6,7 +6,11 @@ from aiohttp import web
 from app.tenants.om_budi.config import TENANT_ID
 from app.tenants.om_budi.service import om_budi_service
 
-from app.services.whatsapp_service import log_to_supabase_messages
+from app.services.whatsapp_service import (
+    log_to_supabase_messages,
+    safe_log_to_supabase_messages,
+    extract_meta_whatsapp_event
+)
 
 logger = logging.getLogger(__name__)
 om_budi_routes = web.RouteTableDef()
@@ -35,9 +39,9 @@ async def send_meta_raw_payload(payload: dict):
             async with session.post(url, headers=headers, json=payload) as resp:
                 resp_text = await resp.text()
                 if resp.status not in (200, 201):
-                    logger.error(f"[{TENANT_ID}] Meta WA Send Failed ({resp.status}): {resp_text}")
+                    logger.error(f"[{TENANT_ID}] Meta API Outbound Error ({resp.status}): {resp_text}")
     except Exception as e:
-        logger.error(f"[{TENANT_ID}] Exception sending WA: {e}")
+        logger.error(f"[{TENANT_ID}] Network exception sending Meta message: {e}", exc_info=True)
 
 
 async def send_wa_text(recipient_phone: str, text: str):
@@ -106,46 +110,33 @@ async def om_budi_webhook_verification(request: web.Request) -> web.Response:
 async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
     try:
         data = await request.json()
-        entry = data.get("entry", [{}])[0]
-        changes = entry.get("changes", [{}])[0]
-        value = changes.get("value", {})
-        messages = value.get("messages", [])
+        event = extract_meta_whatsapp_event(data)
 
-        if not messages:
+        if event["is_status"]:
+            return web.json_response({"status": "status_ignored"}, status=200)
+
+        if not event["is_message"]:
             return web.json_response({"status": "ignored"}, status=200)
 
-        msg_obj = messages[0]
-        from_phone = msg_obj.get("from")
-        msg_type = msg_obj.get("type")
-        contact_name = value.get("contacts", [{}])[0].get("profile", {}).get("name", "Bapak/Ibu")
-
-        incoming_text = ""
-        button_id = None
-
-        if msg_type == "text":
-            incoming_text = msg_obj.get("text", {}).get("body", "")
-        elif msg_type == "interactive":
-            interactive_obj = msg_obj.get("interactive", {})
-            if interactive_obj.get("type") == "button_reply":
-                button_reply = interactive_obj.get("button_reply", {})
-                button_id = button_reply.get("id")
-                incoming_text = button_reply.get("title", "")
-            elif interactive_obj.get("type") == "list_reply":
-                list_reply = interactive_obj.get("list_reply", {})
-                button_id = list_reply.get("id")
-                incoming_text = list_reply.get("title", "")
+        from_phone = event["from_phone"]
+        msg_type = event["msg_type"]
+        contact_name = event["contact_name"] or "Bapak/Ibu"
+        incoming_text = event["text"]
+        button_id = event["button_id"]
 
         logger.info(f"[{TENANT_ID}] Chat from {from_phone} ({contact_name}): text='{incoming_text}', btn_id='{button_id}'")
 
         # 1. Simpan pesan user masuk ke Supabase
-        await log_to_supabase_messages(
+        safe_log_to_supabase_messages(
             sender="user",
-            text=incoming_text or f"[{msg_type or 'button'}]",
+            text=incoming_text or f"[{msg_type}]",
             tenant_id="om-budi",
             channel="whatsapp",
             user_phone=from_phone,
             user_name=contact_name,
-            user_id=from_phone
+            user_id=from_phone,
+            conversation_id=from_phone,
+            metadata={"button_id": button_id, "msg_type": msg_type}
         )
 
         # 2. Proses pesan di Om Budi Service
@@ -182,14 +173,16 @@ async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
                 )
 
         # 4. Simpan balasan bot terkirim ke Supabase
-        await log_to_supabase_messages(
+        safe_log_to_supabase_messages(
             sender="bot",
             text=reply_text,
             tenant_id="om-budi",
             channel="whatsapp",
             user_phone=from_phone,
             user_name=contact_name,
-            user_id=from_phone
+            user_id=from_phone,
+            conversation_id=from_phone,
+            metadata={"res_type": res_type, "buttons": buttons}
         )
 
         return web.json_response({"status": "success"}, status=200)

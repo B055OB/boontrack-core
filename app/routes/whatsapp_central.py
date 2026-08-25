@@ -8,7 +8,11 @@ from aiohttp import web
 # Security & Compliance Layers
 from app.core.security.rate_limiter import wa_rate_limiter
 from app.core.security.masking import ZeroPIILogFilter
-from app.services.whatsapp_service import log_to_supabase_messages
+from app.services.whatsapp_service import (
+    log_to_supabase_messages, 
+    safe_log_to_supabase_messages,
+    extract_meta_whatsapp_event
+)
 
 logger = logging.getLogger("CENTRAL_WA_ROUTER")
 if not any(isinstance(f, ZeroPIILogFilter) for f in logger.filters):
@@ -192,21 +196,26 @@ async def verify_webhook(request: web.Request) -> web.Response:
 async def handle_incoming_webhook(request: web.Request) -> web.Response:
     try:
         data = await request.json()
-        entry = data.get("entry", [{}])[0]
-        changes = entry.get("changes", [{}])[0]
-        value = changes.get("value", {})
-        messages = value.get("messages", [])
+        event = extract_meta_whatsapp_event(data)
 
-        if not messages:
+        # 6.1. Abaikan status delivery / read receipts
+        if event["is_status"]:
+            return web.json_response({"status": "status_ignored"}, status=200)
+
+        if not event["is_message"]:
             return web.json_response({"status": "ignored"}, status=200)
 
-        phone_id = str(value.get("metadata", {}).get("phone_number_id", "")).strip()
-        msg_obj = messages[0]
-        from_phone = msg_obj.get("from")
-        msg_type = msg_obj.get("type")
-        contact_name = value.get("contacts", [{}])[0].get("profile", {}).get("name", "Kakak")
+        phone_id = event["phone_id"]
+        from_phone = event["from_phone"]
+        msg_type = event["msg_type"]
+        contact_name = event["contact_name"] or "Kakak"
+        incoming_text = event["text"]
+        button_id = event["button_id"]
+        media_id = event["media_id"]
+        image_mime = event["media_mime"] or "image/jpeg"
+        image_bytes: Optional[bytes] = None
 
-        # 6.1. Anti-Spam Rate Limiter (Maks 5 pesan / menit)
+        # 6.2. Anti-Spam Rate Limiter (Maks 5 pesan / menit)
         is_allowed, retry_after = wa_rate_limiter.is_allowed(from_phone)
         if not is_allowed:
             logger.warning(f"[RATE LIMIT] Pengirim {from_phone} terkena throttling.")
@@ -217,8 +226,8 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             )
             return web.json_response({"status": "rate_limited"}, status=429)
 
-        # 6.2. Filter Media & Dokumen Tak Didukung
-        if msg_type in ["document", "video", "audio"]:
+        # 6.3. Filter Media & Dokumen Tak Didukung di Channel Utama
+        if msg_type in ["video", "audio"]:
             await send_wa_text(
                 recipient_phone=from_phone,
                 text="Format berkas tidak diizinkan. Silakan lampirkan gambar/foto berformat JPG atau PNG maksimal 5MB.",
@@ -226,28 +235,8 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             )
             return web.json_response({"status": "unsupported_media"}, status=200)
 
-        # 6.3. Ekstraksi Pesan & Download Media Gambar jika Ada
-        incoming_text = ""
-        button_id = None
-        image_bytes: Optional[bytes] = None
-        image_mime: str = "image/jpeg"
-
-        if msg_type == "text":
-            incoming_text = msg_obj.get("text", {}).get("body", "")
-        elif msg_type == "interactive":
-            inter = msg_obj.get("interactive", {})
-            inter_type = inter.get("type")
-            if inter_type == "button_reply":
-                btn = inter.get("button_reply", {})
-                button_id = btn.get("id")
-                incoming_text = btn.get("title", "")
-            elif inter_type == "list_reply":
-                item = inter.get("list_reply", {})
-                button_id = item.get("id")
-                incoming_text = item.get("title", "")
-        elif msg_type == "image":
-            image_data = msg_obj.get("image", {})
-            image_mime = image_data.get("mime_type", "image/jpeg")
+        # 6.4. Download Media Gambar jika Ada
+        if msg_type == "image" and media_id:
             if image_mime not in ALLOWED_IMAGE_MIME_TYPES:
                 await send_wa_text(
                     recipient_phone=from_phone,
@@ -256,30 +245,26 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 )
                 return web.json_response({"status": "invalid_media_type"}, status=200)
 
-            media_id = image_data.get("id")
-            if media_id:
-                token = resolve_tenant_token(phone_id)
-                try:
-                    async with aiohttp.ClientSession() as sess:
-                        async with sess.get(
-                            f"https://graph.facebook.com/v20.0/{media_id}",
-                            headers={"Authorization": f"Bearer {token}"}
-                        ) as m_resp:
-                            if m_resp.status == 200:
-                                m_data = await m_resp.json()
-                                media_url = m_data.get("url")
-                                async with sess.get(
-                                    media_url,
-                                    headers={"Authorization": f"Bearer {token}"}
-                                ) as bin_resp:
-                                    if bin_resp.status == 200:
-                                        image_bytes = await bin_resp.read()
-                except Exception as e:
-                    logger.error(f"[MEDIA DOWNLOAD ERROR] {e}")
+            token = resolve_tenant_token(phone_id)
+            try:
+                async with aiohttp.ClientSession() as sess:
+                    async with sess.get(
+                        f"https://graph.facebook.com/v20.0/{media_id}",
+                        headers={"Authorization": f"Bearer {token}"}
+                    ) as m_resp:
+                        if m_resp.status == 200:
+                            m_data = await m_resp.json()
+                            media_url = m_data.get("url")
+                            async with sess.get(
+                                media_url,
+                                headers={"Authorization": f"Bearer {token}"}
+                            ) as bin_resp:
+                                if bin_resp.status == 200:
+                                    image_bytes = await bin_resp.read()
+            except Exception as e:
+                logger.error(f"[MEDIA DOWNLOAD ERROR] {e}")
 
-            incoming_text = image_data.get("caption", "[FOTO_TERLAMPIR]")
-
-        # 6.4. Dispatching Terisolasi
+        # 6.5. Dispatching Terisolasi Berdasarkan Phone Number ID
         if phone_id == CAREER_PHONE_NUMBER_ID:
             from app.routes.whatsapp_career import handle_incoming_whatsapp
             return await handle_incoming_whatsapp(request)
@@ -287,15 +272,21 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         elif phone_id == OM_BUDI_PHONE_NUMBER_ID:
             from app.tenants.om_budi.service import om_budi_service
 
-            # 1. Simpan pesan user masuk ke Supabase
-            await log_to_supabase_messages(
+            # 1. Simpan pesan user masuk ke Supabase secara aman non-blocking
+            safe_log_to_supabase_messages(
                 sender="user",
-                text=incoming_text or f"[{msg_type or 'button'}]",
+                text=incoming_text or f"[{msg_type}]",
                 tenant_id="om-budi",
                 channel="whatsapp",
                 user_phone=from_phone,
                 user_name=contact_name,
-                user_id=from_phone
+                user_id=from_phone,
+                conversation_id=from_phone,
+                metadata={
+                    "button_id": button_id,
+                    "phone_number_id": phone_id,
+                    "msg_type": msg_type
+                }
             )
 
             res = await om_budi_service.handle_incoming_message(
@@ -333,20 +324,39 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                         phone_id
                     )
 
-            # 2. Simpan balasan bot ke Supabase
-            await log_to_supabase_messages(
+            # 2. Simpan balasan bot ke Supabase secara aman non-blocking
+            safe_log_to_supabase_messages(
                 sender="bot",
                 text=reply_text,
                 tenant_id="om-budi",
                 channel="whatsapp",
                 user_phone=from_phone,
                 user_name=contact_name,
-                user_id=from_phone
+                user_id=from_phone,
+                conversation_id=from_phone,
+                metadata={
+                    "res_type": res_type,
+                    "phone_number_id": phone_id,
+                    "buttons": buttons
+                }
             )
 
             return web.json_response({"status": "success", "tenant": "om_budi"}, status=200)
 
         elif phone_id == ADUAN_SANDBOX_PHONE_ID:
+            # 1. Simpan pesan aduan masuk ke Supabase
+            safe_log_to_supabase_messages(
+                sender="user",
+                text=incoming_text,
+                tenant_id="aduan-sandbox",
+                channel="whatsapp",
+                user_phone=from_phone,
+                user_name=contact_name,
+                user_id=from_phone,
+                conversation_id=from_phone,
+                metadata={"phone_number_id": phone_id, "msg_type": msg_type}
+            )
+
             sandbox_reply = (
                 f"🏛️ *[BALÉ PANANGGEUHAN DISKOMINFO - UJI COBA]*\n\n"
                 f"Sampurasun, *{contact_name}*.\n"
@@ -356,6 +366,20 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 f"_Tiket aduan pengujian telah diteruskan ke Posko Jabar._"
             )
             await send_wa_text(from_phone, sandbox_reply, phone_id)
+
+            # 2. Simpan balasan bot aduan ke Supabase
+            safe_log_to_supabase_messages(
+                sender="bot",
+                text=sandbox_reply,
+                tenant_id="aduan-sandbox",
+                channel="whatsapp",
+                user_phone=from_phone,
+                user_name=contact_name,
+                user_id=from_phone,
+                conversation_id=from_phone,
+                metadata={"phone_number_id": phone_id}
+            )
+
             return web.json_response({"status": "success", "tenant": "aduan_sandbox"}, status=200)
 
         else:

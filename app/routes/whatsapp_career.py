@@ -12,7 +12,9 @@ from app.services.whatsapp_service import (
     send_whatsapp_text, 
     send_whatsapp_image, 
     send_whatsapp_buttons, 
-    log_to_supabase_messages
+    log_to_supabase_messages,
+    safe_log_to_supabase_messages,
+    extract_meta_whatsapp_event
 )
 from app.constants.messages import MENU_INVALID_MSG
 from app.services.cv_state_engine import process_unified_cv_step, GLOBAL_USER_STATES
@@ -130,48 +132,40 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
     except Exception:
         return web.Response(text="INVALID_PAYLOAD", status=400)
 
-    entry = data.get("entry", [])
-    if not entry:
+    event = extract_meta_whatsapp_event(data)
+    if event["is_status"]:
+        return web.Response(text="STATUS_IGNORED", status=200)
+
+    if not event["is_message"]:
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    changes = entry[0].get("changes", [])
-    if not changes:
-        return web.Response(text="EVENT_RECEIVED", status=200)
-
-    value_data = changes[0].get("value", {})
-    messages = value_data.get("messages", [])
-    if not messages:
-        return web.Response(text="EVENT_RECEIVED", status=200)
-
-    msg_obj = messages[0]
-    sender_wa_id = msg_obj.get("from")
-    msg_type = msg_obj.get("type")
+    sender_wa_id = event["from_phone"]
+    msg_type = event["msg_type"]
+    media_id = event["media_id"]
+    filename = event["media_filename"] or "document.pdf"
 
     user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
     user_data = user_session.setdefault("data", {})
 
-    contacts = value_data.get("contacts", [])
-    if contacts and isinstance(contacts, list) and len(contacts) > 0:
-        raw_profile_name = contacts[0].get("profile", {}).get("name", "").strip()
-        if raw_profile_name and not user_data.get("nama_panggilan"):
-            user_data["nama_panggilan"] = raw_profile_name
-            user_data["nama_lengkap"] = raw_profile_name
+    contact_name = event["contact_name"]
+    if contact_name and not user_data.get("nama_panggilan"):
+        user_data["nama_panggilan"] = contact_name
+        user_data["nama_lengkap"] = contact_name
 
-    display_name = get_user_display_name(sender_wa_id) or sender_wa_id
+    display_name = get_user_display_name(sender_wa_id) or contact_name or sender_wa_id
 
     # 1. HANDLING GAMBAR (AI OCR SCANNER UNTUK BUKTI TRANSFER)
     if msg_type == "image":
-        image_info = msg_obj.get("image", {})
-        media_id = image_info.get("id")
-
-        await log_to_supabase_messages(
-            sender=f"Customer / +{sender_wa_id}",
+        safe_log_to_supabase_messages(
+            sender="user",
             text="[Mengirim Gambar Bukti Transfer]",
             tenant_id=CAREER_TENANT_ID,
             channel="whatsapp",
             user_phone=sender_wa_id,
             user_name=display_name,
-            user_id=sender_wa_id
+            user_id=sender_wa_id,
+            conversation_id=sender_wa_id,
+            metadata={"media_id": media_id, "msg_type": "image"}
         )
 
         if user_session.get("mode") == "awaiting_rewrite_payment":
@@ -238,18 +232,16 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
 
     # 2. HANDLING DOKUMEN CV (PDF / DOCX)
     if msg_type == "document":
-        doc_info = msg_obj.get("document", {})
-        media_id = doc_info.get("id")
-        filename = doc_info.get("filename", "document.pdf")
-
-        await log_to_supabase_messages(
-            sender=f"Customer / +{sender_wa_id}",
+        safe_log_to_supabase_messages(
+            sender="user",
             text=f"[Mengirim Dokumen: {filename}]",
             tenant_id=CAREER_TENANT_ID,
             channel="whatsapp",
             user_phone=sender_wa_id,
             user_name=display_name,
-            user_id=sender_wa_id
+            user_id=sender_wa_id,
+            conversation_id=sender_wa_id,
+            metadata={"media_id": media_id, "filename": filename, "msg_type": "document"}
         )
 
         await send_whatsapp_text(
@@ -291,30 +283,25 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         return web.Response(text="EVENT_RECEIVED", status=200)
 
     # 3. EKSTRAKSI TEKS & TOMBOL INTERAKTIF
-    user_text = ""
-    button_id = ""
+    user_text = event["text"]
+    button_id = event["button_id"] or ""
 
-    if msg_type == "text":
-        user_text = msg_obj.get("text", {}).get("body", "").strip()
-    elif msg_type == "interactive":
-        interactive_data = msg_obj.get("interactive", {})
-        if interactive_data.get("type") == "button_reply":
-            button_id = interactive_data.get("button_reply", {}).get("id", "")
-            user_text = interactive_data.get("button_reply", {}).get("title", "")
-    else:
+    if not user_text and msg_type not in ["text", "interactive", "button"]:
         await send_whatsapp_menu_buttons(sender_wa_id)
         return web.Response(text="EVENT_RECEIVED", status=200)
 
-    # Catat pesan customer ke Supabase
+    # Catat pesan customer ke Supabase secara aman non-blocking
     if user_text:
-        await log_to_supabase_messages(
-            sender=f"Customer / +{sender_wa_id}",
+        safe_log_to_supabase_messages(
+            sender="user",
             text=user_text,
             tenant_id=CAREER_TENANT_ID,
             channel="whatsapp",
             user_phone=sender_wa_id,
             user_name=display_name,
-            user_id=sender_wa_id
+            user_id=sender_wa_id,
+            conversation_id=sender_wa_id,
+            metadata={"button_id": button_id, "msg_type": msg_type}
         )
 
     user_text_clean = user_text.lower().strip()
