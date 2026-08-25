@@ -1,12 +1,14 @@
 import os
+from app.core.tenants.registry import tenant_registry
 
 DIGICORN_TENANT_ID = "digicorn"
 
-# Telegram Bot Token untuk Tenant Digicorn
-DIGICORN_TELEGRAM_TOKEN = os.getenv(
-    "DIGICORN_TELEGRAM_TOKEN",
-    "8902407474:AAEewbDZ8tddpVLtRI7xowIy6nWV1cW8KNA"
-)
+def get_digicorn_telegram_token() -> str:
+    """Mendapatkan bot token Telegram Digicorn dari Config/Database Registry."""
+    return tenant_registry.get_telegram_token(DIGICORN_TENANT_ID) or ""
+
+DIGICORN_TELEGRAM_TOKEN = get_digicorn_telegram_token()
+
 
 DIGICORN_CONFIG = {
     "tenant_id": DIGICORN_TENANT_ID,
