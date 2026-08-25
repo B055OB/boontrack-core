@@ -2,30 +2,40 @@
   "tenant_id": "om_budi",
   "rules": [
     {
-      "id": "kb_program_30_hari_bebas_hutang",
-      "intent": "program_30_hari_bebas_hutang",
+      "id": "kb_proposal_doa_jurnal",
+      "intent": "panduan_proposal_doa",
       "exact_phrases": [
-        "rencana 30 hari bebas hutang itu bagaimana melakukannya",
-        "bagaimana cara melakukan rencana 30 hari bebas hutang",
-        "tahapan 30 hari bebas hutang",
-        "program 30 hari bebas hutang",
-        "modul 30 hari bebas hutang"
+        "cara nulis doa gimana",
+        "bagaimana cara membuat proposal doa",
+        "cara nulis proposal doa",
+        "cara nulis doa",
+        "contoh proposal doa",
+        "jurnal doa",
+        "cara membuat jurnal doa",
+        "tata cara berdoa om budi",
+        "tata cara nulis doa",
+        "nulis doa gimana"
       ],
       "keywords": [
-        "30 hari",
-        "rencana 30 hari",
-        "program 30 hari",
-        "bebas hutang 30 hari",
-        "30 hari bebas hutang"
+        "nulis doa",
+        "tulis doa",
+        "bikin doa",
+        "proposal doa",
+        "jurnal doa",
+        "jurnal syukur",
+        "cara nulis",
+        "tata cara berdoa"
       ],
       "confidence_boost": [
-        "30 hari",
-        "rencana",
-        "bagaimana",
-        "melakukannya",
-        "tahapan"
+        "gimana",
+        "cara",
+        "nulis",
+        "tulis",
+        "doa",
+        "proposal",
+        "contoh"
       ],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊.\n\nDalam panduan *Program 30 Hari Bebas Hutang*, ikhtiar dijalankan secara terstruktur selama 1 bulan penuh melalui 4 pilar harian:\n\n1. *Minggu 1 (Pembersihan Energi & Taubat)*: Hentikan mengeluh total, lakukan Sholat Taubat 2 rakaat di sepertiga malam, dan akui seluruh amanah tanpa lari dari penagih.\n2. *Minggu 2 (Dawam Ikhtiar Langit)*: Rutinkan Sholawat Jibril minimal 1.000x/hari, Sholat Dhuha 4 rakaat, dan Sedekah Subuh konsisten.\n3. *Minggu 3 (Proposal Doa & Visualisasi)*: Tuliskan Jurnal Syukur malam dan buat Proposal Doa pelunasan yang spesifik sebelum tidur.\n4. *Minggu 4 (Aksi Nyata & Kepasrahan)*: Tata alur cashflow harian, berikan pelayanan terbaik dalam pekerjaan/bisnis, lalu pasrahkan hasil sepenuhnya kepada Allah SWT 🤲."
+      "answer": "📝 *PANDUAN MENULIS PROPOSAL & JURNAL DOA (MODUL OM BUDI)*:\n\n1. *Jurnal Syukur*: Setiap malam sebelum tidur, tulis minimal 3–10 hal kecil yang Anda syukuri hari ini.\n2. *Jurnal Doa (Afirmasi)*: Tuliskan harapan Anda dengan formula *'Rasanya lebih enak ya kalau...'* (contoh: *'Rasanya lebih enak ya kalau amanah hutang 700 juta ini lunas'* atau *'Rasanya lebih enak ya kalau usahaku omset 100 juta'*).\n3. *Proposal Doa Lengkap*:\n- *Doaku*: Tuliskan angka / hajat spesifik Anda.\n- *Gambaran Imajinasi*: Tuliskan rasa terima kasih kepada Allah seolah-olah sudah terwujud (bayangkan perasaan lega, bahagia bersama keluarga).\n4. *Wajib*: Munculkan senyuman bahagia minimal 10 detik dan getaran rasa syukur mendalam sebelum tidur 🤲."
     },
     {
       "id": "kb_brainwave_panduan_praktek",
@@ -36,7 +46,8 @@
         "cara mendengarkan audio brainwave",
         "tahapan audio brainwave",
         "langkah mendengarkan audio quantum",
-        "link audio brainwave"
+        "link audio brainwave",
+        "minta link audio"
       ],
       "keywords": [
         "praktek audio",
@@ -155,6 +166,137 @@
         "tidak boleh"
       ],
       "answer": "⚠️ *PANTANGAN MENDENGARKAN AUDIO BRAINWAVE*:\n\n1. *DILARANG KERAS* mendengarkan sambil mengendarai/menyetir motor atau mobil (karena menimbulkan efek kantuk dan relaksasi dalam).\n2. *DILARANG* sambil mengoperasikan mesin berat.\n3. *TIDAK BOLEH* didengarkan oleh anak di bawah usia 10 tahun.\n4. *TIDAK BOLEH* bagi penderita epilepsi/ayan.\n5. *TIDAK BOLEH* bagi yang menggunakan alat pacu jantung.\n\n*Waktu Terbaik*: Dengarkan saat istirahat santai di kamar atau sebelum tidur 🤲."
+    },
+    {
+      "id": "kb_program_30_hari_bebas_hutang",
+      "intent": "program_30_hari_bebas_hutang",
+      "exact_phrases": [
+        "rencana 30 hari bebas hutang itu bagaimana melakukannya",
+        "bagaimana cara melakukan rencana 30 hari bebas hutang",
+        "tahapan 30 hari bebas hutang",
+        "program 30 hari bebas hutang",
+        "modul 30 hari bebas hutang"
+      ],
+      "keywords": [
+        "30 hari",
+        "rencana 30 hari",
+        "program 30 hari",
+        "bebas hutang 30 hari",
+        "30 hari bebas hutang",
+        "rencana 30 hari bebas hutang"
+      ],
+      "confidence_boost": [
+        "30 hari",
+        "rencana",
+        "bagaimana",
+        "melakukannya",
+        "tahapan",
+        "minggu"
+      ],
+      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊.\n\nDalam panduan *Rencana 30 Hari Bebas Hutang (Lahiriah & Praktis)* karya Om Budi, langkah nyata dibagi menjadi 4 tahapan mingguan:\n\n1. *Minggu 1 (Sadar & Rapi)*:\n- Catat semua hutang (siapa, jumlah, jatuh tempo).\n- Tentukan prioritas pelunasan & evaluasi pengeluaran (stop pos boros).\n- Mulai susun anggaran mingguan yang ketat.\n\n2. *Minggu 2 (Aksi & Gerak)*:\n- Cari penghasilan cepat: jual barang bekas tak terpakai atau buka jasa kecil.\n- Mulai lunasi hutang terkecil lebih dulu (Metode Snowball).\n- Hubungi pemberi hutang jika jatuh tempo untuk bicarakan skema cicilan/keringanan.\n\n3. *Minggu 3 (Disiplin & Tambah Kecepatan)*:\n- Tingkatkan penghasilan sampingan & libatkan keluarga agar satu visi.\n- Buat proyeksi rencana pembayaran 3 bulan ke depan.\n\n4. *Minggu 4 (Konsolidasi & Perkuat)*:\n- Evaluasi progres pelunasan dan arahkan seluruh rezeki tambahan untuk cicil hutang.\n- Kunci komitmen jangka panjang: STOP membuat hutang baru!\n\n*Tips Tiap Malam*: Tulis progress harian (uang masuk & sisa hutang) serta syukuri setiap pembayaran sekecil apa pun 🤲."
+    },
+    {
+      "id": "kb_10_langkah_praktis_lunas_hutang",
+      "intent": "10_langkah_praktis_lunas_hutang",
+      "exact_phrases": [
+        "bagaimana cara praktis agar segera lunas hutang",
+        "cara praktis lunas hutang",
+        "langkah praktis agar segera lunas hutang",
+        "10 langkah lunas hutang"
+      ],
+      "keywords": [
+        "cara praktis",
+        "agar segera lunas",
+        "10 langkah",
+        "praktis lunas hutang",
+        "materi paling sederhana"
+      ],
+      "confidence_boost": [
+        "praktis",
+        "segera",
+        "langkah",
+        "sederhana",
+        "detail"
+      ],
+      "answer": "Bismillah 🙏😊. Dalam modul *Cara Praktis Agar Segera Lunas Hutang (Materi Sederhana & Detail)* karya Om Budi, ada 10 langkah lahiriah nyata:\n\n1. *Buat Catatan Hutang Jelas*: Tulis siapa pemberinya, jumlah, & jatuh tempo agar tidak stres di kepala.\n2. *Atur Ulang Keuangan*: Minimalisir pos keinginan (nongkrong/belanja online), prioritaskan kebutuhan pokok.\n3. *Tambah Penghasilan Sampingan*: Jual barang bekas tak terpakai, buka jasa kecil, atau jadi dropshipper.\n4. *Negosiasi dengan Pemberi Hutang*: Minta keringanan bunga/denda atau cicilan kecil tapi rutin.\n5. *Gunakan Metode Snowball/Avalanche*: Lunasi dari nominal terkecil dulu untuk kemenangan psikologis.\n6. *STOP Menambah Hutang Baru*: Jangan tutup hutang dengan hutang baru.\n7. *Bangun Mindset Disiplin*: Begitu ada uang masuk langsung alokasikan untuk cicilan.\n8. *Libatkan Keluarga*: Transparan pada pasangan/anak agar saling mendukung berhemat.\n9. *Cari Jalan Rezeki Cepat*: Manfaatkan kendaraan (ojek online/delivery) atau freelance skill.\n10. *Jaga Kesehatan & Energi*: Jaga pola tidur dan makan, jangan sampai stres memicu biaya sakit baru 🤲."
+    },
+    {
+      "id": "kb_metode_snowball_avalanche",
+      "intent": "metode_pelunasan_hutang",
+      "exact_phrases": [
+        "apa itu metode snowball hutang",
+        "metode snowball atau avalanche",
+        "cara melunasi hutang banyak"
+      ],
+      "keywords": [
+        "snowball",
+        "avalanche",
+        "metode pelunasan",
+        "cara cicil hutang",
+        "prioritas bayar hutang"
+      ],
+      "confidence_boost": [
+        "metode",
+        "snowball",
+        "avalanche",
+        "strategi"
+      ],
+      "answer": "Bismillah 🙏😊. Dalam manajemen pelunasan hutang praktis Om Budi, ada dua strategi utama:\n\n1. *Metode Snowball (Direkomendasikan)*: Fokus melunasi hutang dari nominal yang paling kecil terlebih dahulu tanpa melihat bunganya. Tujuannya membangun kemenangan kecil, rasa percaya diri, dan ketenangan mental.\n2. *Metode Avalanche*: Fokus melunasi hutang dengan bunga/denda tertinggi lebih dulu untuk menekan total beban biaya bunga 🤲."
+    },
+    {
+      "id": "kb_penyebab_terjebak_hutang",
+      "intent": "penyebab_terjebak_hutang",
+      "exact_phrases": [
+        "kenapa banyak orang terjebak hutang",
+        "penyebab orang terlilit hutang",
+        "faktor penyebab hutang menumpuk"
+      ],
+      "keywords": [
+        "terjebak hutang",
+        "penyebab hutang",
+        "kenapa berhutang",
+        "gaya hidup konsumtif",
+        "tutup lubang gali lubang"
+      ],
+      "confidence_boost": [
+        "penyebab",
+        "faktor",
+        "kenapa",
+        "terjebak"
+      ],
+      "answer": "Bismillah 🙏😊. Dalam modul bimbingan Om Budi, ada 5 penyebab utama mengapa seseorang terjebak hutang:\n\n1. Pengeluaran lebih besar daripada pemasukan bulanan.\n2. Tidak memiliki catatan keuangan tertulis.\n3. Gaya hidup konsumtif (belanja keinginan tanpa perlu).\n4. Menutup hutang lama dengan membuka hutang baru (*gali lubang tutup lubang*).\n5. Kurang disiplin dan tidak transparan dalam mengatur uang 🤲."
+    },
+    {
+      "id": "kb_edukasi_dan_solusi_riba",
+      "intent": "solusi_dan_bahaya_riba",
+      "exact_phrases": [
+        "bagaimana cara keluar dari riba",
+        "solusi jika terlanjur terjebak riba",
+        "apa itu riba dan bahayanya",
+        "doa agar terhindar dari riba",
+        "jenis jenis riba"
+      ],
+      "keywords": [
+        "riba",
+        "keluar dari riba",
+        "terjebak riba",
+        "bahaya riba",
+        "pinjol",
+        "bunga bank",
+        "rentenir",
+        "riba qardh",
+        "riba nasiah",
+        "hukum riba"
+      ],
+      "confidence_boost": [
+        "riba",
+        "keluar",
+        "terjebak",
+        "bunga",
+        "pinjol",
+        "doa"
+      ],
+      "answer": "Bismillah 🙏😊. Dalam buku *Yuk Keluar Dari Riba* karya Om Budi, riba adalah tambahan dalam pinjaman/transaksi yang tidak sesuai syariat dan mendatangkan ancaman perang dari Allah & Rasul-Nya (QS. Al-Baqarah: 278-279).\n\n*Solusi Jika Terlanjur Terjebak Riba*:\n1. *Taubat Sungguh-Sungguh*: Menyesal, berhenti, dan bertekad kuat tidak membuka hutang riba baru.\n2. *Bayar Pokok, Tinggalkan Bunga*: Tunjukkan itikad baik dan negosiasikan ke pihak peminjam agar hanya mencicil hutang pokoknya.\n3. *Cari Jalan Rezeki Halal*: Tambah ikhtiar sampingan, sedekah subuh, dan hidup sederhana tanpa gengsi.\n\n*Doa Pelindung Dari Riba (HR. Tirmidzi)*:\n*'Allahummakfini bihalalika 'an haramika wa aghnini bifadhlika 'amman siwaak'* (Ya Allah, cukupkan aku dengan rezeki-Mu yang halal, jauhkan dari yang haram, dan cukupkan aku dengan karunia-Mu dari selain-Mu) 🤲."
     },
     {
       "id": "kb_definisi_riyadhoh",
@@ -243,7 +385,7 @@
       ],
       "keywords": ["kelas online", "apa saja", "diajarkan", "materi kelas", "kurikulum", "silabus"],
       "confidence_boost": ["diajarkan", "isi", "materi"],
-      "answer": "Bismillah 🙏😊, dalam **Kelas Bimbingan Online Om Budi**, materi dirancang bertahap mencakup:\n\n1. *Pondasi Batin & Hutang*: Membedah akar sumbatan rezeki dan adab kejujuran menyelesaikan amanah hutang.\n2. *Riyadhoh Langit*: Panduan Sholawat Jibril min. 1.000x, sholat sunnah fajar/dhuha/tahajud, dan sedekah subuh.\n3. *Proposal Doa & Munajat*: Teknik menulis proposal doa spesifik dan detoks batin sebelum tidur.\n4. *Audio Brainwave Quantum Energi*: Panduan terapi gelombang alpha/theta untuk rilis trauma finansial.\n5. *Sinergi & Zoom Booster*: Sesi pendampingan live berkala bersama Om Budi setiap Rabu malam 🤲."
+      "answer": "Bismillah 🙏😊, dalam **Kelas Bimbingan Online Om Budi**, materi dirancang bertahap mencakup 6 Modul Ebook Utama:\n\n1. *Pondasi Batin & Hutang*: Membedah akar sumbatan rezeki dan adab kejujuran menyelesaikan amanah hutang.\n2. *Riyadhoh Langit*: Panduan Sholawat Jibril min. 1.000x, sholat sunnah fajar/dhuha/tahajud, dan sedekah subuh.\n3. *Proposal Doa & Munajat*: Teknik menulis proposal doa spesifik dan detoks batin sebelum tidur.\n4. *Audio Brainwave Quantum Energi*: Panduan terapi gelombang alpha/theta untuk rilis trauma finansial.\n5. *Rencana Aksi Bebas Hutang*: Modul 30 Hari Bebas Hutang & 10 Langkah Praktis Pelunasan Hutang.\n6. *Edukasi Hijrah Riba*: Panduan keluar dari jerat pinjol/riba menuju rezeki berkah, serta pendampingan Zoom Booster setiap Rabu malam 🤲."
     },
     {
       "id": "kb_penagih_datang_ke_rumah",
@@ -259,17 +401,99 @@
       "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊. Menghadapi penagih yang datang memang ujian batin yang sangat berat.\n\n*Sikap yang Dianjurkan Om Budi*:\n1. *Hadapi dengan Tenang & Jujur*: Jangan bersembunyi atau menjanjikan tanggal jika belum ada dana pasti, agar tidak melahirkan janji palsu.\n2. *Sampaikan Kondisi Secara Rendah Hati*: 'Saya sungguh-sungguh berusaha ikhtiar melunasi, mohon doanya dan mohon bersabar.'\n3. *Alihkan ke Doa Langit*: Tiap kali dada terasa sesak sehabis ditagih, ambil wudhu, sujud, dan baca Sholawat Jibril 1.000x untuk menguatkan mental dan membuka jalan keluar 🤲."
     },
     {
-      "id": "kb_proposal_doa_jurnal",
-      "intent": "panduan_proposal_doa",
+      "id": "kb_tanda_pertolongan_allah",
+      "intent": "tanda_pertolongan_allah",
       "exact_phrases": [
-        "bagaimana cara membuat proposal doa",
-        "cara nulis proposal doa",
-        "contoh proposal doa",
-        "jurnal doa"
+        "apa tanda tanda pertolongan allah akan datang",
+        "tanda pertolongan allah",
+        "ciri ciri pertolongan allah mau datang",
+        "bagaimana tahu doa dikabulkan"
       ],
-      "keywords": ["proposal doa", "jurnal doa", "jurnal syukur", "menulis doa", "cara berdoa"],
-      "confidence_boost": ["proposal", "cara", "contoh", "nulis"],
-      "answer": "📝 *Panduan Proposal Doa & Jurnal Syukur (Modul Om Budi)*:\n\n1. *Jurnal Syukur*: Setiap malam sebelum tidur, tulis minimal 3-10 hal kecil yang Anda syukuri hari ini.\n2. *Jurnal Doa*: Tuliskan keinginan Anda dengan teknik *'Rasanya lebih enak ya kalau...'* (contoh: *'Rasanya lebih enak ya kalau amanah hutang 700 juta ini lunas'*).\n3. *Munculkan Rasa & Visualisasi*: Rasakan seolah-olah doa tersebut sudah terwujud, lalu ucapkan terima kasih kepada Allah dengan penuh haru dan senyuman bahagia sebelum tidur 🤲."
+      "keywords": [
+        "tanda pertolongan",
+        "pertolongan allah datang",
+        "ciri pertolongan",
+        "tanda doa diijabah"
+      ],
+      "confidence_boost": [
+        "tanda",
+        "ciri",
+        "pertolongan",
+        "akan datang",
+        "kapan"
+      ],
+      "answer": "Bismillah 🙏😊. Dalam buku *Ketika Hidup Diuji, Saatnya Kembali*, Om Budi menjelaskan 5 tanda bahwa pertolongan Allah sudah semakin dekat:\n\n1. *Hati Tiba-Tiba Tenang*: Rasa takut dan cemas berlebihan perlahan sirna, berganti kepasrahan yang nyaman.\n2. *Jalan Keluar Muncul Perlahan*: Ide-ide solusi atau kemudahan kecil mulai terbuka satu per satu.\n3. *Orang-Orang Baik Mendekat*: Dikelilingi lingkungan yang mendukung dan memudahkan urusan Anda.\n4. *Rezeki Kecil tapi Cukup & Berkah*: Merasa berkecukupan dan tidak lagi dibayangi ketakutan akan hari esok.\n5. *Doa Terasa Lebih Dekat*: Air mata menetes saat munajat dan terasa sangat akrab dengan Allah SWT 🤲."
+    },
+    {
+      "id": "kb_makna_dan_hakikat_ujian",
+      "intent": "makna_ujian_hidup",
+      "exact_phrases": [
+        "kenapa hidup penuh ujian",
+        "kenapa saya diuji begitu berat",
+        "apakah ujian itu hukuman dari allah",
+        "makna ujian hidup"
+      ],
+      "keywords": [
+        "hidup penuh ujian",
+        "diuji berat",
+        "ujian hukuman",
+        "kenapa diuji",
+        "arti ujian"
+      ],
+      "confidence_boost": [
+        "kenapa",
+        "ujian",
+        "berat",
+        "hukuman",
+        "cobaan"
+      ],
+      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊.\n\nDalam buku *Ketika Hidup Diuji, Saatnya Kembali*, Om Budi menegaskan bahwa **ujian bukanlah hukuman atau tanda Allah benci**, melainkan tanda cinta dan panggilan kasih sayang Allah agar kita 'pulang' (kembali) mendekat kepada-Nya.\n\nUjian adalah alarm pembangun jiwa agar kita berhenti sombong dan lalai, lalu menengadah dengan penuh kerendahan hati. Bagi yang mau memperbaiki diri, ujian justru menjadi jalan pintas terbukanya pintu kemuliaan dan keberkahan hidup 🤲."
+    },
+    {
+      "id": "kb_langkah_menjaga_istiqomah",
+      "intent": "menjaga_istiqomah",
+      "exact_phrases": [
+        "bagaimana cara menjaga istiqomah",
+        "agar konsisten ibadah",
+        "cara istiqomah riyadhoh",
+        "mengatasi malas ibadah"
+      ],
+      "keywords": [
+        "istiqomah",
+        "konsisten",
+        "malas ibadah",
+        "menjaga istiqomah",
+        "hambatan riyadhoh"
+      ],
+      "confidence_boost": [
+        "istiqomah",
+        "konsisten",
+        "cara",
+        "tips"
+      ],
+      "answer": "Bismillah 🙏😊. Agar tetap istiqomah dalam bimbingan riyadhoh dan perbaikan diri (sesuai buku *Ketika Hidup Diuji, Saatnya Kembali*):\n\n1. *Bangun Rutinitas Harian*: Buat jadwal amalan tetap (misal: Sholawat Jibril saat senggang, Dhuha pagi, Tahajud malam).\n2. *Mulai dari yang Ringan*: Lebih baik amal kecil tapi konsisten setiap hari daripada niat besar tapi langsung berhenti.\n3. *Jaga Lingkungan*: Masuk dan berinteraksi di lingkungan majelis ilmu / komunitas positif agar tidak mudah goyah.\n4. *Jangan Menuntut Hasil Instan*: Nikmati proses pembersihan batin dan ingatlah bahwa kematian bisa datang sewaktu-waktu 🤲."
+    },
+    {
+      "id": "kb_kiat_khusus_om_budi",
+      "intent": "kiat_khusus_om_budi",
+      "exact_phrases": [
+        "apa kiat khusus dari om budi",
+        "nasihat om budi saat terpuruk",
+        "pesan om budi untuk yang sedang diuji"
+      ],
+      "keywords": [
+        "kiat khusus",
+        "nasihat om budi",
+        "pesan om budi",
+        "saat terpuruk"
+      ],
+      "confidence_boost": [
+        "kiat",
+        "nasihat",
+        "pesan",
+        "om budi"
+      ],
+      "answer": "Bismillah 🙏😊. Kiat dan pesan kunci dari Om Budi bagi kita yang sedang berjuang:\n\n• *Jangan Tunda Taubat*: Jangan tunggu kaya atau selesai masalah baru kembali ke Allah.\n• *Mulai dari Hal Sederhana*: Sholat 5 waktu tepat waktu, istighfar 100x, dan sedekah harian walau Rp1.000.\n• *Perbanyak Sholawat*: Sholawat adalah lentera energi yang melipatgandakan doa dan membuka jalan keluar.\n• *Yakin pada Janji Allah*: Tidak ada doa yang sia-sia, semuanya tersimpan rapi dan akan diijabah pada waktu yang paling indah 🤲."
     },
     {
       "id": "kb_sholat_dhuha_rakaat",
@@ -293,1809 +517,7 @@
       ],
       "keywords": ["keluar hutang", "cara melunasi hutang", "langkah lunas"],
       "confidence_boost": ["langkah", "cara", "hutang", "solusi"],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊. Memahami perasaan lelah dan cemas saat amanah hutang belum tuntas adalah hal yang manusiawi.\n\nDalam buku *Jalan Sunyi Orang Berhutang*, ada beberapa kunci batin agar pertolongan Allah segera hadir:\n1. *Stop Mengeluh*: Mengeluh tidak melunasi hutang, justru menguras energi dan menutup pintu rezeki.\n2. *Selaraskan Hati, Pikiran, dan Lisan*: Mulut ingin lunas, maka pikiran dan hati juga harus yakin pada pertolongan Allah.\n3. *Hadapi dengan Kejujuran*: Jangan menghindar dari penagih dan jangan mengobral janji palsu.\n4. *Kencangkan Ikhtiar Langit*: Dawamkan Sholawat Jibril 1.000x, Sedekah Subuh, dan Sholat Taubat/Tahajud secara konsisten 🤲."
-    }
-    {
-  "tenant_id": "om_budi",
-  "rules": [
-    {
-      "id": "kb_tanda_pertolongan_allah",
-      "intent": "tanda_pertolongan_allah",
-      "exact_phrases": [
-        "apa tanda tanda pertolongan allah akan datang",
-        "tanda pertolongan allah",
-        "ciri ciri pertolongan allah mau datang",
-        "bagaimana tahu doa dikabulkan"
-      ],
-      "keywords": [
-        "tanda pertolongan",
-        "pertolongan allah datang",
-        "ciri pertolongan",
-        "tanda doa diijabah"
-      ],
-      "confidence_boost": [
-        "tanda",
-        "ciri",
-        "pertolongan",
-        "akan datang",
-        "kapan"
-      ],
-      "answer": "Bismillah 🙏😊. Dalam buku *Ketika Hidup Diuji, Saatnya Kembali*, Om Budi menjelaskan 5 tanda bahwa pertolongan Allah sudah semakin dekat:\n\n1. *Hati Tiba-Tiba Tenang*: Rasa takut dan cemas berlebihan perlahan sirna, berganti kepasrahan yang nyaman.\n2. *Jalan Keluar Muncul Perlahan*: Ide-ide solusi atau kemudahan kecil mulai terbuka satu per satu.\n3. *Orang-Orang Baik Mendekat*: Dikelilingi lingkungan yang mendukung dan memudahkan urusan Anda.\n4. *Rezeki Kecil tapi Cukup & Berkah*: Merasa berkecukupan dan tidak lagi dibayangi ketakutan akan hari esok.\n5. *Doa Terasa Lebih Dekat*: Air mata menetes saat munajat dan terasa sangat akrab dengan Allah SWT 🤲."
-    },
-    {
-      "id": "kb_makna_dan_hakikat_ujian",
-      "intent": "makna_ujian_hidup",
-      "exact_phrases": [
-        "kenapa hidup penuh ujian",
-        "kenapa saya diuji begitu berat",
-        "apakah ujian itu hukuman dari allah",
-        "makna ujian hidup"
-      ],
-      "keywords": [
-        "hidup penuh ujian",
-        "diuji berat",
-        "ujian hukuman",
-        "kenapa diuji",
-        "arti ujian"
-      ],
-      "confidence_boost": [
-        "kenapa",
-        "ujian",
-        "berat",
-        "hukuman",
-        "cobaan"
-      ],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊.\n\nDalam buku *Ketika Hidup Diuji, Saatnya Kembali*, Om Budi menegaskan bahwa **ujian bukanlah hukuman atau tanda Allah benci**, melainkan tanda cinta dan panggilan kasih sayang Allah agar kita 'pulang' (kembali) mendekat kepada-Nya.\n\nUjian adalah alarm pembangun jiwa agar kita berhenti sombong dan lalai, lalu menengadah dengan penuh kerendahan hati. Bagi yang mau memperbaiki diri, ujian justru menjadi jalan pintas terbukanya pintu kemuliaan dan keberkahan hidup 🤲."
-    },
-    {
-      "id": "kb_langkah_menjaga_istiqomah",
-      "intent": "menjaga_istiqomah",
-      "exact_phrases": [
-        "bagaimana cara menjaga istiqomah",
-        "agar konsisten ibadah",
-        "cara istiqomah riyadhoh",
-        "mengatasi malas ibadah"
-      ],
-      "keywords": [
-        "istiqomah",
-        "konsisten",
-        "malas ibadah",
-        "menjaga istiqomah",
-        "hambatan riyadhoh"
-      ],
-      "confidence_boost": [
-        "istiqomah",
-        "konsisten",
-        "cara",
-        "tips"
-      ],
-      "answer": "Bismillah 🙏😊. Agar tetap istiqomah dalam bimbingan riyadhoh dan perbaikan diri (sesuai buku *Ketika Hidup Diuji, Saatnya Kembali*):\n\n1. *Bangun Rutinitas Harian*: Buat jadwal amalan tetap (misal: Sholawat Jibril saat senggang, Dhuha pagi, Tahajud malam).\n2. *Mulai dari yang Ringan*: Lebih baik amal kecil tapi konsisten setiap hari daripada niat besar tapi langsung berhenti.\n3. *Jaga Lingkungan*: Masuk dan berinteraksi di lingkungan majelis ilmu / komunitas positif agar tidak mudah goyah.\n4. *Jangan Menuntut Hasil Instan*: Nikmati proses pembersihan batin dan ingatlah bahwa kematian bisa datang sewaktu-waktu 🤲."
-    },
-    {
-      "id": "kb_kiat_khusus_om_budi",
-      "intent": "kiat_khusus_om_budi",
-      "exact_phrases": [
-        "apa kiat khusus dari om budi",
-        "nasihat om budi saat terpuruk",
-        "pesan om budi untuk yang sedang diuji"
-      ],
-      "keywords": [
-        "kiat khusus",
-        "nasihat om budi",
-        "pesan om budi",
-        "saat terpuruk"
-      ],
-      "confidence_boost": [
-        "kiat",
-        "nasihat",
-        "pesan",
-        "om budi"
-      ],
-      "answer": "Bismillah 🙏😊. Kiat dan pesan kunci dari Om Budi bagi kita yang sedang berjuang:\n\n• *Jangan Tunda Taubat*: Jangan tunggu kaya atau selesai masalah baru kembali ke Allah.\n• *Mulai dari Hal Sederhana*: Sholat 5 waktu tepat waktu, istighfar 100x, dan sedekah harian walau Rp1.000.\n• *Perbanyak Sholawat*: Sholawat adalah lentera energi yang melipatgandakan doa dan membuka jalan keluar.\n• *Yakin pada Janji Allah*: Tidak ada doa yang sia-sia, semuanya tersimpan rapi dan akan diijabah pada waktu yang paling indah 🤲."
-    },
-    {
-      "id": "kb_program_30_hari_bebas_hutang",
-      "intent": "program_30_hari_bebas_hutang",
-      "exact_phrases": [
-        "rencana 30 hari bebas hutang itu bagaimana melakukannya",
-        "bagaimana cara melakukan rencana 30 hari bebas hutang",
-        "tahapan 30 hari bebas hutang",
-        "program 30 hari bebas hutang",
-        "modul 30 hari bebas hutang"
-      ],
-      "keywords": [
-        "30 hari",
-        "rencana 30 hari",
-        "program 30 hari",
-        "bebas hutang 30 hari",
-        "30 hari bebas hutang"
-      ],
-      "confidence_boost": [
-        "30 hari",
-        "rencana",
-        "bagaimana",
-        "melakukannya",
-        "tahapan"
-      ],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊.\n\nDalam panduan *Program 30 Hari Bebas Hutang*, ikhtiar dijalankan secara terstruktur selama 1 bulan penuh melalui 4 pilar harian:\n\n1. *Minggu 1 (Pembersihan Energi & Taubat)*: Hentikan mengeluh total, lakukan Sholat Taubat 2 rakaat di sepertiga malam, dan akui seluruh amanah tanpa lari dari penagih.\n2. *Minggu 2 (Dawam Ikhtiar Langit)*: Rutinkan Sholawat Jibril minimal 1.000x/hari, Sholat Dhuha 4 rakaat, dan Sedekah Subuh konsisten.\n3. *Minggu 3 (Proposal Doa & Visualisasi)*: Tuliskan Jurnal Syukur malam dan buat Proposal Doa pelunasan yang spesifik sebelum tidur.\n4. *Minggu 4 (Aksi Nyata & Kepasrahan)*: Tata alur cashflow harian, berikan pelayanan terbaik dalam pekerjaan/bisnis, lalu pasrahkan hasil sepenuhnya kepada Allah SWT 🤲."
-    },
-    {
-      "id": "kb_brainwave_panduan_praktek",
-      "intent": "panduan_praktek_audio_brainwave",
-      "exact_phrases": [
-        "untuk audio brainwave quantum energi saya ingin praktekan apa saja hal2 yang harus dilakukan",
-        "bagaimana cara praktek audio brainwave",
-        "cara mendengarkan audio brainwave",
-        "tahapan audio brainwave",
-        "langkah mendengarkan audio quantum",
-        "link audio brainwave"
-      ],
-      "keywords": [
-        "praktek audio",
-        "praktekan",
-        "cara mendengarkan",
-        "tahapan audio",
-        "hal yang harus dilakukan",
-        "langkah audio",
-        "link audio",
-        "alphamatic",
-        "mendengarkan audio"
-      ],
-      "confidence_boost": [
-        "praktekan",
-        "praktek",
-        "harus dilakukan",
-        "cara",
-        "langkah",
-        "tahapan",
-        "link"
-      ],
-      "answer": "🎧 *PANDUAN PRAKTEK AUDIO BRAINWAVE QUANTUM ENERGI* 🤲\n\n*4 Langkah Utama (Alphamatic - Afirmasi - Visualisasi - Syukur)*:\n\n1. *Alphamatic (Persiapan)*:\n- Posisikan diri duduk santai atau berbaring di tempat tenang tanpa gangguan (20–60 menit).\n- Kenakan pakaian longgar, lepas kacamata/aksesoris agar tubuh rileks sepenuhnya.\n- Putar audio via headphone atau speaker terbuka dengan sikap ikhlas dan pasrah.\n\n2. *Afirmasi*:\n- Setelah ±5 menit merasa tenang, bisikkan niat atau doa hajat di dalam hati secara perlahan.\n\n3. *Visualisasi*:\n- Bayangkan impian/hajat Anda seolah-olah sudah terwujud secara nyata (visualkan warna, suasana, dan perasaan bahagia).\n\n4. *Syukur & Pasrah*:\n- Ucapkan rasa syukur yang mendalam (*'Alhamdulillahirabbil'alamin'*), lalu serahkan seluruh hasilnya kepada Allah SWT.\n\n---\n🔗 *Link Akses Audio Bimbingan* (Dengarkan 2x sehari):\n• *Digital Prayers Quantum Ikhlas*:\nhttps://drive.google.com/file/d/18GjQd8SMymV8kxfvOPodvIXNxlVLbhW9/view?usp=drivesdk\n• *Meditasi Syukur (Kekayaan & Kesehatan)*:\nhttps://drive.google.com/file/d/1yw1fVPT6mpPiqj27P0qu_yiNfrTKv4tr/view?usp=drive_link\n• *Audio Terapi Menarik Rezeki*:\nhttps://drive.google.com/file/d/1zJOXiu-A-Jlh713tIvULS-tfbBBUEKLp/view?usp=drive_link\n\n*(Catatan: Dilarang mendengarkan saat menyetir atau mengoperasikan mesin)* 🙏😊"
-    },
-    {
-      "id": "kb_audio_terapi_menarik_rezeki",
-      "intent": "audio_menarik_rezeki",
-      "exact_phrases": [
-        "minta audio terapi menarik rezeki",
-        "link audio terapi menarik rezeki",
-        "audio menarik rezeki om budi",
-        "audio terapi rezeki"
-      ],
-      "keywords": [
-        "audio terapi menarik rezeki",
-        "terapi menarik rezeki",
-        "audio menarik rezeki",
-        "terapi rezeki"
-      ],
-      "confidence_boost": [
-        "minta",
-        "link",
-        "audio",
-        "terapi",
-        "menarik rezeki"
-      ],
-      "answer": "🎧 *AUDIO TERAPI MENARIK REZEKI BY OM BUDI*\n\n🔗 *Link Download / Dengarkan*:\nhttps://drive.google.com/file/d/1zJOXiu-A-Jlh713tIvULS-tfbBBUEKLp/view?usp=drive_link\n\n📌 *Petunjuk Penggunaan*:\n• Dengarkan 2x sehari (atau semakin sering semakin baik) di tempat tenang.\n• *Pantangan*: Dilarang mendengarkan sambil menyetir kendaraan atau mengoperasikan mesin berat 🙏😊."
-    },
-    {
-      "id": "kb_audio_meditasi_syukur",
-      "intent": "audio_meditasi_syukur",
-      "exact_phrases": [
-        "minta audio meditasi syukur",
-        "link meditasi syukur",
-        "audio meditasi syukur kekayaan dan kesehatan",
-        "meditasi syukur om budi"
-      ],
-      "keywords": [
-        "meditasi syukur",
-        "kekayaan dan kesehatan",
-        "audio syukur",
-        "meditasi kekayaan"
-      ],
-      "confidence_boost": [
-        "minta",
-        "link",
-        "meditasi",
-        "syukur"
-      ],
-      "answer": "🎧 *MEDITASI SYUKUR – KEKAYAAN & KESEHATAN*\n\n🔗 *Link Download / Dengarkan*:\nhttps://drive.google.com/file/d/1yw1fVPT6mpPiqj27P0qu_yiNfrTKv4tr/view?usp=drive_link\n\n📌 *Petunjuk Penggunaan*:\n• Dengarkan 2x sehari di ruangan tenang dengan sikap pasrah dan bersyukur.\n• *Pantangan*: Dilarang mendengarkan sambil mengemudi atau menyetir kendaraan 🙏😊."
-    },
-    {
-      "id": "kb_audio_digital_prayers_quantum_ikhlas",
-      "intent": "audio_digital_prayers",
-      "exact_phrases": [
-        "minta audio digital prayers",
-        "audio digital prayers quantum ikhlas",
-        "link quantum ikhlas",
-        "audio quantum ikhlas"
-      ],
-      "keywords": [
-        "digital prayers",
-        "quantum ikhlas",
-        "audio quantum ikhlas",
-        "digital prayers ikhlas"
-      ],
-      "confidence_boost": [
-        "minta",
-        "link",
-        "digital prayers",
-        "quantum ikhlas"
-      ],
-      "answer": "🎧 *AUDIO DIGITAL PRAYERS QUANTUM IKHLAS*\n\n🔗 *Link Download / Dengarkan*:\nhttps://drive.google.com/file/d/18GjQd8SMymV8kxfvOPodvIXNxlVLbhW9/view?usp=drivesdk\n\n📌 *Petunjuk Penggunaan*:\n• Dengarkan 2x sehari sambil mempraktikkan 4 langkah: Alphamatic, Afirmasi, Visualisasi, dan Syukur.\n• *Pantangan*: Dilarang mendengarkan saat menyetir kendaraan atau beraktivitas berat 🙏😊."
-    },
-    {
-      "id": "kb_brainwave_pantangan",
-      "intent": "pantangan_audio_brainwave",
-      "exact_phrases": [
-        "apa saja pantangan audio brainwave",
-        "pantangan mendengarkan audio",
-        "aturan larangan audio brainwave",
-        "siapa yang tidak boleh dengar audio"
-      ],
-      "keywords": [
-        "pantangan",
-        "larangan",
-        "dilarang",
-        "tidak boleh",
-        "bahaya audio",
-        "epilepsi",
-        "pacu jantung"
-      ],
-      "confidence_boost": [
-        "pantangan",
-        "larangan",
-        "dilarang",
-        "tidak boleh"
-      ],
-      "answer": "⚠️ *PANTANGAN MENDENGARKAN AUDIO BRAINWAVE*:\n\n1. *DILARANG KERAS* mendengarkan sambil mengendarai/menyetir motor atau mobil (karena menimbulkan efek kantuk dan relaksasi dalam).\n2. *DILARANG* sambil mengoperasikan mesin berat.\n3. *TIDAK BOLEH* didengarkan oleh anak di bawah usia 10 tahun.\n4. *TIDAK BOLEH* bagi penderita epilepsi/ayan.\n5. *TIDAK BOLEH* bagi yang menggunakan alat pacu jantung.\n\n*Waktu Terbaik*: Dengarkan saat istirahat santai di kamar atau sebelum tidur 🤲."
-    },
-    {
-      "id": "kb_definisi_riyadhoh",
-      "intent": "definisi_riyadhoh",
-      "exact_phrases": [
-        "apa itu riyadhoh",
-        "pengertian riyadhoh",
-        "maksud dari riyadhoh",
-        "arti riyadhoh"
-      ],
-      "keywords": ["riyadhoh", "riyadoh", "riyadhah", "latihan spiritual", "arti riyadhoh"],
-      "confidence_boost": ["apa", "maksud", "pengertian", "definisi"],
-      "answer": "Bismillah 🙏😊, secara bahasa *Riyadhoh* berarti latihan atau penggemblengan diri.\n\nDalam bimbingan Om Budi, **Riyadhoh** adalah ikhtiar spiritual terstruktur (melatih batin dan raga) untuk mendekatkan diri kepada Allah SWT, membersihkan sumbatan energi negatif, dan menyelaraskan getaran hati agar siap menerima pertolongan dan kelapangan rezeki 🤲[cite: 1].\n\n*Pilar Utama Riyadhoh Harian*:\n1. Sholawat Jibril min. 1.000x[cite: 1].\n2. Sholat Sunnah (Dhuha min 4 rakaat, Tahajud min 4 rakaat, Taubat, Hajat, Witir)[cite: 1].\n3. Sedekah Subuh & pembersihan batin (merilis dendam/keluhan)[cite: 1].\n4. Penulisan Jurnal Syukur & Proposal Doa[cite: 1]."
-    },
-    {
-      "id": "kb_durasi_riyadhoh",
-      "intent": "durasi_riyadhoh",
-      "exact_phrases": [
-        "kalau riyadhoh bagusnya berapa hari dijalani",
-        "berapa hari riyadhoh",
-        "durasi riyadhoh berapa lama",
-        "berapa lama riyadhoh dilakukan"
-      ],
-      "keywords": ["berapa hari", "durasi", "berapa lama", "hari dijalani", "waktu riyadhoh"],
-      "confidence_boost": ["hari", "lama", "durasi", "bagusnya"],
-      "answer": "Bismillah 🙏😊. Untuk pembentukan getaran energi dan kebiasaan baru, riyadhoh dianjurkan didawamkan minimal **40 hari berturut-turut tanpa putus** 🤲.\n\nNamun hakikatnya, jadikan amalan ini sebagai **gaya hidup sehari-hari**. Istiqomah pada amalan kecil setiap hari jauh lebih dahsyat dampaknya daripada amalan besar yang hanya dilakukan sesekali[cite: 1]. Man jadda wajada, siapa yang bersungguh-sungguh pasti berhasil[cite: 1]!"
-    },
-    {
-      "id": "kb_tahajud_waktu_tata_cara",
-      "intent": "tahajud_detail",
-      "exact_phrases": [
-        "tahajud bagus nya dari jam berapa",
-        "tahajud jam berapa",
-        "waktu sholat tahajud",
-        "tata cara tahajud om budi"
-      ],
-      "keywords": ["tahajud", "tahajjud", "jam berapa", "waktu tahajud", "sepertiga malam"],
-      "confidence_boost": ["jam", "waktu", "kapan", "bagus"],
-      "answer": "Bismillah 🙏😊. Waktu terbaik untuk melaksanakan Sholat Tahajud adalah pada **sepertiga malam terakhir**, yaitu sekitar **pukul 02.00 hingga sebelum masuk waktu Subuh**.\n\n*Urutan Amalan Malam dalam Modul Riyadhoh Om Budi*:\n1. Sholat Taubat 2 Rakaat[cite: 1].\n2. Sholat Tahajud minimal 4 Rakaat (2 rakaat 1 salam)[cite: 1].\n3. Sholat Hajat 2 Rakaat[cite: 1].\n4. Sholat Witir 3 Rakaat[cite: 1].\n5. Setelah Witir, baca wirid: *'Robbighfirli wa tub 'alayya innaka antat tawwabur rohim'* sebanyak-banyaknya 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_sholawat_4444_dan_jibril",
-      "intent": "sholawat_detail",
-      "exact_phrases": [
-        "dari ajaran om budi kenapa harus mengucapkan shalawat nabi 4444x",
-        "kenapa sholawat 4444x",
-        "berapa kali baca sholawat",
-        "sholawat jibril berapa kali"
-      ],
-      "keywords": ["4444", "4444x", "shalawat", "sholawat", "sholawat jibril", "nariyah", "1000x"],
-      "confidence_boost": ["kenapa", "harus", "baca", "jumlah"],
-      "answer": "Bismillah 🙏😊. Dalam bimbingan Om Budi:\n\n1. **Sholawat Jibril**: Diamalkan minimal **1.000x setiap hari** (lebih banyak lebih baik, bisa dicicil sambil beraktivitas) sebagai penarik aliran rezeki harian[cite: 1].\n2. **Sholawat 4.444x (seperti Sholawat Nariyah)**: Merupakan amalan mujarrab dari para ulama untuk hajat yang sangat besar/mendesak agar Allah membukakan jalan keluar dan melipatgandakan vibrasi doa kita 🤲."
-    },
-    {
-      "id": "kb_hajat_belum_terkabul",
-      "intent": "hajat_belum_terkabul",
-      "exact_phrases": [
-        "kenapa hajat saya belum dikabulkan",
-        "doa belum terkabul",
-        "kenapa doa belum dijawab",
-        "hajat belum terwujud"
-      ],
-      "keywords": ["hajat", "belum dikabulkan", "belum terkabul", "doa belum dijawab", "tersumbat"],
-      "confidence_boost": ["kenapa", "mengapa", "belum", "terkabul"],
-      "answer": "Bismillah 🙏😊. Dalam modul Quantum Energi, jika hajat belum terkabul atau hutang belum lunas, perhatikan hal-hal berikut:\n\n1. **Cek Sumbatan Dosa**: Fokus cari ampunan Allah (Istighfar & Sholat Taubat) karena dosa adalah penyumbat utama keran rezeki[cite: 1].\n2. **Hentikan Komplain**: Terima takdir Allah saat ini, nikmati, syukuri, dan jalani tanpa protes[cite: 1].\n3. **Lepaskan Kemelekatan (*Attachment*)**: Berdoa dengan yakin[cite: 1], lalu pasrahkan total (tawakal)[cite: 1]. Rasa gelisah atau meragukan waktu terkabulnya doa justru memancarkan frekuensi rendah yang menunda pertolongan 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_kenapa_harus_bersyukur",
-      "intent": "alasan_bersyukur",
-      "exact_phrases": [
-        "kenapa bersyukur itu harus padahal masalah saja belum beres",
-        "mengapa harus bersyukur saat susah",
-        "kenapa harus bersyukur"
-      ],
-      "keywords": ["bersyukur", "masalah belum beres", "kenapa bersyukur", "saat susah", "vibrasi syukur"],
-      "confidence_boost": ["kenapa", "harus", "masalah", "belum beres"],
-      "answer": "Bismillah 🙏😊. Pikiran dan rasa kita bekerja seperti **proyektor**: apa yang sering kita rasakan, itulah realitas yang terbentuk[cite: 1].\n\n* Jika kita fokus pada masalah dan kekurangan, energi yang dipancarkan berat/gelap, sehingga menarik kesulitan yang sama[cite: 1].\n* Jika kita bersyukur atas apa yang masih ada (napas, kesehatan, keluarga), getaran batin naik ke **Energi Tinggi (Abundance)**[cite: 1].\nSesuai janji Allah di QS. Ibrahim: 7, rasa syukur itulah yang menjadi kunci pembuka pintu tambahan nikmat dan solusi dari arah yang tak disangka-sangka 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_kurikulum_kelas_online",
-      "intent": "silabus_kelas_online",
-      "exact_phrases": [
-        "kelas online itu apa saja yang diajarkan",
-        "apa saja materi kelas online",
-        "isi kelas online om budi"
-      ],
-      "keywords": ["kelas online", "apa saja", "diajarkan", "materi kelas", "kurikulum", "silabus"],
-      "confidence_boost": ["diajarkan", "isi", "materi"],
-      "answer": "Bismillah 🙏😊, dalam **Kelas Bimbingan Online Om Budi**, materi dirancang bertahap mencakup:\n\n1. *Pondasi Batin & Hutang*: Membedah akar sumbatan rezeki dan adab kejujuran menyelesaikan amanah hutang[cite: 1].\n2. *Riyadhoh Langit*: Panduan Sholawat Jibril min. 1.000x, sholat sunnah fajar/dhuha/tahajud, dan sedekah subuh[cite: 1].\n3. *Proposal Doa & Munajat*: Teknik menulis proposal doa spesifik dan detoks batin sebelum tidur[cite: 1].\n4. *Audio Brainwave Quantum Energi*: Panduan terapi gelombang alpha/theta untuk rilis trauma finansial[cite: 1].\n5. *Sinergi & Zoom Booster*: Sesi pendampingan live berkala bersama Om Budi setiap Rabu malam 🤲."
-    },
-    {
-      "id": "kb_penagih_datang_ke_rumah",
-      "intent": "menghadapi_penagih",
-      "exact_phrases": [
-        "bagaimana tidak mengeluh ini yang nagih tidak berhenti ada saja yang datang ke rumah",
-        "cara menghadapi penagih hutang",
-        "yang nagih datang ke rumah",
-        "dikejar penagih hutang"
-      ],
-      "keywords": ["penagih", "nagih", "datang ke rumah", "debt collector", "tidak berhenti", "dikejar hutang"],
-      "confidence_boost": ["rumah", "tidak berhenti", "mengeluh"],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊. Menghadapi penagih yang datang memang ujian batin yang sangat berat.\n\n*Sikap yang Dianjurkan Om Budi*:\n1. *Hadapi dengan Tenang & Jujur*: Jangan bersembunyi atau menjanjikan tanggal jika belum ada dana pasti, agar tidak melahirkan janji palsu.\n2. *Sampaikan Kondisi Secara Rendah Hati*: 'Saya sungguh-sungguh berusaha ikhtiar melunasi, mohon doanya dan mohon bersabar.'\n3. *Alihkan ke Doa Langit*: Tiap kali dada terasa sesak sehabis ditagih, ambil wudhu, sujud, dan baca Sholawat Jibril 1.000x untuk menguatkan mental dan membuka jalan keluar 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_proposal_doa_jurnal",
-      "intent": "panduan_proposal_doa",
-      "exact_phrases": [
-        "bagaimana cara membuat proposal doa",
-        "cara nulis proposal doa",
-        "contoh proposal doa",
-        "jurnal doa"
-      ],
-      "keywords": ["proposal doa", "jurnal doa", "jurnal syukur", "menulis doa", "cara berdoa"],
-      "confidence_boost": ["proposal", "cara", "contoh", "nulis"],
-      "answer": "📝 *Panduan Proposal Doa & Jurnal Syukur (Modul Om Budi)*[cite: 1]:\n\n1. *Jurnal Syukur*: Setiap malam sebelum tidur, tulis minimal 3-10 hal kecil yang Anda syukuri hari ini[cite: 1].\n2. *Jurnal Doa*: Tuliskan keinginan Anda dengan teknik *'Rasanya lebih enak ya kalau...'* (contoh: *'Rasanya lebih enak ya kalau amanah hutang 700 juta ini lunas'*)[cite: 1].\n3. *Munculkan Rasa & Visualisasi*: Rasakan seolah-olah doa tersebut sudah terwujud, lalu ucapkan terima kasih kepada Allah dengan penuh haru dan senyuman bahagia sebelum tidur 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_sholat_dhuha_rakaat",
-      "intent": "dhuha_detail",
-      "exact_phrases": [
-        "berapa rakaat sholat dhuha",
-        "sholat dhuha berapa rakaat",
-        "tata cara dhuha"
-      ],
-      "keywords": ["dhuha", "rakaat", "berapa rakaat", "sholat dhuha"],
-      "confidence_boost": ["rakaat", "dhuha", "berapa"],
-      "answer": "Bismillah 🙏😊. Dalam bimbingan Riyadhoh Om Budi, **Sholat Dhuha dikerjakan minimal 4 rakaat** (dikerjakan 2 rakaat 1 salam sebanyak 2 kali) 🤲[cite: 1].\n\nDianjurkan dilaksanakan secara istiqomah setiap pagi untuk menarik keberkahan dan kelapangan rezeki[cite: 1]."
-    },
-    {
-      "id": "kb_langkah_keluar_hutang",
-      "intent": "solusi_hutang",
-      "exact_phrases": [
-        "langkah keluar hutang",
-        "cara melunasi hutang",
-        "bagaimana cara bebas hutang"
-      ],
-      "keywords": ["keluar hutang", "cara melunasi hutang", "langkah lunas"],
-      "confidence_boost": ["langkah", "cara", "hutang", "solusi"],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊. Memahami perasaan lelah dan cemas saat amanah hutang belum tuntas adalah hal yang manusiawi.\n\nDalam bimbingan Om Budi, ada beberapa kunci batin agar pertolongan Allah segera hadir:\n1. *Stop Mengeluh*: Mengeluh tidak melunasi hutang, justru menguras energi dan menutup pintu rezeki.\n2. *Selaraskan Hati, Pikiran, dan Lisan*: Mulut ingin lunas, maka pikiran dan hati juga harus yakin pada pertolongan Allah.\n3. *Hadapi dengan Kejujuran*: Jangan menghindar dari penagih dan jangan mengobral janji palsu.\n4. *Kencangkan Ikhtiar Langit*: Dawamkan Sholawat Jibril 1.000x, Sedekah Subuh, dan Sholat Taubat/Tahajud secara konsisten 🤲[cite: 1]."
+      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊. Memahami perasaan lelah dan cemas saat amanah hutang belum tuntas adalah hal yang manusiawi.\n\nDalam bimbingan Om Budi, ada beberapa kunci batin agar pertolongan Allah segera hadir:\n1. *Stop Mengeluh*: Mengeluh tidak melunasi hutang, justru menguras energi dan menutup pintu rezeki.\n2. *Selaraskan Hati, Pikiran, dan Lisan*: Mulut ingin lunas, maka pikiran dan hati juga harus yakin pada pertolongan Allah.\n3. *Hadapi dengan Kejujuran*: Jangan menghindar dari penagih dan jangan mengobral janji palsu.\n4. *Kencangkan Ikhtiar Langit*: Dawamkan Sholawat Jibril 1.000x, Sedekah Subuh, dan Sholat Taubat/Tahajud secara konsisten 🤲."
     }
   ]
-    }
-    {
-  "tenant_id": "om_budi",
-  "rules": [
-    {
-      "id": "kb_program_30_hari_bebas_hutang",
-      "intent": "program_30_hari_bebas_hutang",
-      "exact_phrases": [
-        "rencana 30 hari bebas hutang itu bagaimana melakukannya",
-        "bagaimana cara melakukan rencana 30 hari bebas hutang",
-        "tahapan 30 hari bebas hutang",
-        "program 30 hari bebas hutang",
-        "modul 30 hari bebas hutang"
-      ],
-      "keywords": [
-        "30 hari",
-        "rencana 30 hari",
-        "program 30 hari",
-        "bebas hutang 30 hari",
-        "30 hari bebas hutang",
-        "rencana 30 hari bebas hutang"
-      ],
-      "confidence_boost": [
-        "30 hari",
-        "rencana",
-        "bagaimana",
-        "melakukannya",
-        "tahapan",
-        "minggu"
-      ],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊.\n\nDalam panduan *Rencana 30 Hari Bebas Hutang (Lahiriah & Praktis)* karya Om Budi, langkah nyata dibagi menjadi 4 tahapan mingguan:\n\n1. *Minggu 1 (Sadar & Rapi)*:\n- Catat semua hutang (siapa, jumlah, jatuh tempo).\n- Tentukan prioritas pelunasan & evaluasi pengeluaran (stop pos boros).\n- Mulai susun anggaran mingguan yang ketat.\n\n2. *Minggu 2 (Aksi & Gerak)*:\n- Cari penghasilan cepat: jual barang bekas tak terpakai atau buka jasa kecil.\n- Mulai lunasi hutang terkecil lebih dulu (Metode Snowball).\n- Hubungi pemberi hutang jika jatuh tempo untuk bicarakan skema cicilan/keringanan.\n\n3. *Minggu 3 (Disiplin & Tambah Kecepatan)*:\n- Tingkatkan penghasilan sampingan & libatkan keluarga agar satu visi.\n- Buat proyeksi rencana pembayaran 3 bulan ke depan.\n\n4. *Minggu 4 (Konsolidasi & Perkuat)*:\n- Evaluasi progres pelunasan dan arahkan seluruh rezeki tambahan untuk cicil hutang.\n- Kunci komitmen jangka panjang: STOP membuat hutang baru!\n\n*Tips Tiap Malam*: Tulis progress harian (uang masuk & sisa hutang) serta syukuri setiap pembayaran sekecil apa pun 🤲."
-    },
-    {
-      "id": "kb_penyebab_terjebak_hutang",
-      "intent": "penyebab_terjebak_hutang",
-      "exact_phrases": [
-        "kenapa banyak orang terjebak hutang",
-        "penyebab orang terlilit hutang",
-        "faktor penyebab hutang menumpuk"
-      ],
-      "keywords": [
-        "terjebak hutang",
-        "penyebab hutang",
-        "kenapa berhutang",
-        "gaya hidup konsumtif",
-        "tutup lubang gali lubang"
-      ],
-      "confidence_boost": [
-        "penyebab",
-        "faktor",
-        "kenapa",
-        "terjebak"
-      ],
-      "answer": "Bismillah 🙏😊. Dalam modul *Rencana 30 Hari Bebas Hutang*, ada 5 penyebab utama mengapa seseorang terjebak hutang:\n\n1. Pengeluaran lebih besar daripada pemasukan bulanan.\n2. Tidak memiliki pencatatan keuangan yang rapi.\n3. Gaya hidup konsumtif (membeli barang keinginan, bukan kebutuhan).\n4. Kebiasaan menutup hutang lama dengan membuka hutang baru (*gali lubang tutup lubang*).\n5. Kurangnya disiplin diri dalam mengelola uang yang masuk 🤲."
-    },
-    {
-      "id": "kb_metode_snowball_avalanche",
-      "intent": "metode_pelunasan_hutang",
-      "exact_phrases": [
-        "apa itu metode snowball hutang",
-        "metode snowball atau avalanche",
-        "cara melunasi hutang banyak"
-      ],
-      "keywords": [
-        "snowball",
-        "avalanche",
-        "metode pelunasan",
-        "cara cicil hutang",
-        "prioritas bayar hutang"
-      ],
-      "confidence_boost": [
-        "metode",
-        "snowball",
-        "avalanche",
-        "strategi"
-      ],
-      "answer": "Bismillah 🙏😊. Dalam manajemen pelunasan hutang praktis Om Budi, ada dua strategi utama:\n\n1. *Metode Snowball (Direkomendasikan)*: Fokus melunasi hutang dari nominal yang paling kecil terlebih dahulu tanpa melihat bunganya. Tujuannya membangun kemenangan kecil, rasa percaya diri, dan ketenangan mental.\n2. *Metode Avalanche*: Fokus melunasi hutang dengan bunga/denda tertinggi lebih dulu untuk menekan total beban biaya bunga 🤲."
-    },
-    {
-      "id": "kb_tanda_pertolongan_allah",
-      "intent": "tanda_pertolongan_allah",
-      "exact_phrases": [
-        "apa tanda tanda pertolongan allah akan datang",
-        "tanda pertolongan allah",
-        "ciri ciri pertolongan allah mau datang",
-        "bagaimana tahu doa dikabulkan"
-      ],
-      "keywords": [
-        "tanda pertolongan",
-        "pertolongan allah datang",
-        "ciri pertolongan",
-        "tanda doa diijabah"
-      ],
-      "confidence_boost": [
-        "tanda",
-        "ciri",
-        "pertolongan",
-        "akan datang",
-        "kapan"
-      ],
-      "answer": "Bismillah 🙏😊. Dalam buku *Ketika Hidup Diuji, Saatnya Kembali*, Om Budi menjelaskan 5 tanda bahwa pertolongan Allah sudah semakin dekat:\n\n1. *Hati Tiba-Tiba Tenang*: Rasa takut dan cemas berlebihan perlahan sirna, berganti kepasrahan yang nyaman.\n2. *Jalan Keluar Muncul Perlahan*: Ide-ide solusi atau kemudahan kecil mulai terbuka satu per satu.\n3. *Orang-Orang Baik Mendekat*: Dikelilingi lingkungan yang mendukung dan memudahkan urusan Anda.\n4. *Rezeki Kecil tapi Cukup & Berkah*: Merasa berkecukupan dan tidak lagi dibayangi ketakutan akan hari esok.\n5. *Doa Terasa Lebih Dekat*: Air mata menetes saat munajat dan terasa sangat akrab dengan Allah SWT 🤲."
-    },
-    {
-      "id": "kb_makna_dan_hakikat_ujian",
-      "intent": "makna_ujian_hidup",
-      "exact_phrases": [
-        "kenapa hidup penuh ujian",
-        "kenapa saya diuji begitu berat",
-        "apakah ujian itu hukuman dari allah",
-        "makna ujian hidup"
-      ],
-      "keywords": [
-        "hidup penuh ujian",
-        "diuji berat",
-        "ujian hukuman",
-        "kenapa diuji",
-        "arti ujian"
-      ],
-      "confidence_boost": [
-        "kenapa",
-        "ujian",
-        "berat",
-        "hukuman",
-        "cobaan"
-      ],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊.\n\nDalam buku *Ketika Hidup Diuji, Saatnya Kembali*, Om Budi menegaskan bahwa **ujian bukanlah hukuman atau tanda Allah benci**, melainkan tanda cinta dan panggilan kasih sayang Allah agar kita 'pulang' (kembali) mendekat kepada-Nya.\n\nUjian adalah alarm pembangun jiwa agar kita berhenti sombong dan lalai, lalu menengadah dengan penuh kerendahan hati. Bagi yang mau memperbaiki diri, ujian justru menjadi jalan pintas terbukanya pintu kemuliaan dan keberkahan hidup 🤲."
-    },
-    {
-      "id": "kb_langkah_menjaga_istiqomah",
-      "intent": "menjaga_istiqomah",
-      "exact_phrases": [
-        "bagaimana cara menjaga istiqomah",
-        "agar konsisten ibadah",
-        "cara istiqomah riyadhoh",
-        "mengatasi malas ibadah"
-      ],
-      "keywords": [
-        "istiqomah",
-        "konsisten",
-        "malas ibadah",
-        "menjaga istiqomah",
-        "hambatan riyadhoh"
-      ],
-      "confidence_boost": [
-        "istiqomah",
-        "konsisten",
-        "cara",
-        "tips"
-      ],
-      "answer": "Bismillah 🙏😊. Agar tetap istiqomah dalam bimbingan riyadhoh dan perbaikan diri (sesuai buku *Ketika Hidup Diuji, Saatnya Kembali*):\n\n1. *Bangun Rutinitas Harian*: Buat jadwal amalan tetap (misal: Sholawat Jibril saat senggang, Dhuha pagi, Tahajud malam).\n2. *Mulai dari yang Ringan*: Lebih baik amal kecil tapi konsisten setiap hari daripada niat besar tapi langsung berhenti.\n3. *Jaga Lingkungan*: Masuk dan berinteraksi di lingkungan majelis ilmu / komunitas positif agar tidak mudah goyah.\n4. *Jangan Menuntut Hasil Instan*: Nikmati proses pembersihan batin dan ingatlah bahwa kematian bisa datang sewaktu-waktu 🤲."
-    },
-    {
-      "id": "kb_kiat_khusus_om_budi",
-      "intent": "kiat_khusus_om_budi",
-      "exact_phrases": [
-        "apa kiat khusus dari om budi",
-        "nasihat om budi saat terpuruk",
-        "pesan om budi untuk yang sedang diuji"
-      ],
-      "keywords": [
-        "kiat khusus",
-        "nasihat om budi",
-        "pesan om budi",
-        "saat terpuruk"
-      ],
-      "confidence_boost": [
-        "kiat",
-        "nasihat",
-        "pesan",
-        "om budi"
-      ],
-      "answer": "Bismillah 🙏😊. Kiat dan pesan kunci dari Om Budi bagi kita yang sedang berjuang:\n\n• *Jangan Tunda Taubat*: Jangan tunggu kaya atau selesai masalah baru kembali ke Allah.\n• *Mulai dari Hal Sederhana*: Sholat 5 waktu tepat waktu, istighfar 100x, dan sedekah harian walau Rp1.000.\n• *Perbanyak Sholawat*: Sholawat adalah lentera energi yang melipatgandakan doa dan membuka jalan keluar.\n• *Yakin pada Janji Allah*: Tidak ada doa yang sia-sia, semuanya tersimpan rapi dan akan diijabah pada waktu yang paling indah 🤲."
-    },
-    {
-      "id": "kb_brainwave_panduan_praktek",
-      "intent": "panduan_praktek_audio_brainwave",
-      "exact_phrases": [
-        "untuk audio brainwave quantum energi saya ingin praktekan apa saja hal2 yang harus dilakukan",
-        "bagaimana cara praktek audio brainwave",
-        "cara mendengarkan audio brainwave",
-        "tahapan audio brainwave",
-        "langkah mendengarkan audio quantum",
-        "link audio brainwave"
-      ],
-      "keywords": [
-        "praktek audio",
-        "praktekan",
-        "cara mendengarkan",
-        "tahapan audio",
-        "hal yang harus dilakukan",
-        "langkah audio",
-        "link audio",
-        "alphamatic",
-        "mendengarkan audio"
-      ],
-      "confidence_boost": [
-        "praktekan",
-        "praktek",
-        "harus dilakukan",
-        "cara",
-        "langkah",
-        "tahapan",
-        "link"
-      ],
-      "answer": "🎧 *PANDUAN PRAKTEK AUDIO BRAINWAVE QUANTUM ENERGI* 🤲\n\n*4 Langkah Utama (Alphamatic - Afirmasi - Visualisasi - Syukur)*:\n\n1. *Alphamatic (Persiapan)*:\n- Posisikan diri duduk santai atau berbaring di tempat tenang tanpa gangguan (20–60 menit).\n- Kenakan pakaian longgar, lepas kacamata/aksesoris agar tubuh rileks sepenuhnya.\n- Putar audio via headphone atau speaker terbuka dengan sikap ikhlas dan pasrah.\n\n2. *Afirmasi*:\n- Setelah ±5 menit merasa tenang, bisikkan niat atau doa hajat di dalam hati secara perlahan.\n\n3. *Visualisasi*:\n- Bayangkan impian/hajat Anda seolah-olah sudah terwujud secara nyata (visualkan warna, suasana, dan perasaan bahagia).\n\n4. *Syukur & Pasrah*:\n- Ucapkan rasa syukur yang mendalam (*'Alhamdulillahirabbil'alamin'*), lalu serahkan seluruh hasilnya kepada Allah SWT.\n\n---\n🔗 *Link Akses Audio Bimbingan* (Dengarkan 2x sehari):\n• *Digital Prayers Quantum Ikhlas*:\nhttps://drive.google.com/file/d/18GjQd8SMymV8kxfvOPodvIXNxlVLbhW9/view?usp=drivesdk\n• *Meditasi Syukur (Kekayaan & Kesehatan)*:\nhttps://drive.google.com/file/d/1yw1fVPT6mpPiqj27P0qu_yiNfrTKv4tr/view?usp=drive_link\n• *Audio Terapi Menarik Rezeki*:\nhttps://drive.google.com/file/d/1zJOXiu-A-Jlh713tIvULS-tfbBBUEKLp/view?usp=drive_link\n\n*(Catatan: Dilarang mendengarkan saat menyetir atau mengoperasikan mesin)* 🙏😊"
-    },
-    {
-      "id": "kb_audio_terapi_menarik_rezeki",
-      "intent": "audio_menarik_rezeki",
-      "exact_phrases": [
-        "minta audio terapi menarik rezeki",
-        "link audio terapi menarik rezeki",
-        "audio menarik rezeki om budi",
-        "audio terapi rezeki"
-      ],
-      "keywords": [
-        "audio terapi menarik rezeki",
-        "terapi menarik rezeki",
-        "audio menarik rezeki",
-        "terapi rezeki"
-      ],
-      "confidence_boost": [
-        "minta",
-        "link",
-        "audio",
-        "terapi",
-        "menarik rezeki"
-      ],
-      "answer": "🎧 *AUDIO TERAPI MENARIK REZEKI BY OM BUDI*\n\n🔗 *Link Download / Dengarkan*:\nhttps://drive.google.com/file/d/1zJOXiu-A-Jlh713tIvULS-tfbBBUEKLp/view?usp=drive_link\n\n📌 *Petunjuk Penggunaan*:\n• Dengarkan 2x sehari (atau semakin sering semakin baik) di tempat tenang.\n• *Pantangan*: Dilarang mendengarkan sambil menyetir kendaraan atau mengoperasikan mesin berat 🙏😊."
-    },
-    {
-      "id": "kb_audio_meditasi_syukur",
-      "intent": "audio_meditasi_syukur",
-      "exact_phrases": [
-        "minta audio meditasi syukur",
-        "link meditasi syukur",
-        "audio meditasi syukur kekayaan dan kesehatan",
-        "meditasi syukur om budi"
-      ],
-      "keywords": [
-        "meditasi syukur",
-        "kekayaan dan kesehatan",
-        "audio syukur",
-        "meditasi kekayaan"
-      ],
-      "confidence_boost": [
-        "minta",
-        "link",
-        "meditasi",
-        "syukur"
-      ],
-      "answer": "🎧 *MEDITASI SYUKUR – KEKAYAAN & KESEHATAN*\n\n🔗 *Link Download / Dengarkan*:\nhttps://drive.google.com/file/d/1yw1fVPT6mpPiqj27P0qu_yiNfrTKv4tr/view?usp=drive_link\n\n📌 *Petunjuk Penggunaan*:\n• Dengarkan 2x sehari di ruangan tenang dengan sikap pasrah dan bersyukur.\n• *Pantangan*: Dilarang mendengarkan sambil mengemudi atau menyetir kendaraan 🙏😊."
-    },
-    {
-      "id": "kb_audio_digital_prayers_quantum_ikhlas",
-      "intent": "audio_digital_prayers",
-      "exact_phrases": [
-        "minta audio digital prayers",
-        "audio digital prayers quantum ikhlas",
-        "link quantum ikhlas",
-        "audio quantum ikhlas"
-      ],
-      "keywords": [
-        "digital prayers",
-        "quantum ikhlas",
-        "audio quantum ikhlas",
-        "digital prayers ikhlas"
-      ],
-      "confidence_boost": [
-        "minta",
-        "link",
-        "digital prayers",
-        "quantum ikhlas"
-      ],
-      "answer": "🎧 *AUDIO DIGITAL PRAYERS QUANTUM IKHLAS*\n\n🔗 *Link Download / Dengarkan*:\nhttps://drive.google.com/file/d/18GjQd8SMymV8kxfvOPodvIXNxlVLbhW9/view?usp=drivesdk\n\n📌 *Petunjuk Penggunaan*:\n• Dengarkan 2x sehari sambil mempraktikkan 4 langkah: Alphamatic, Afirmasi, Visualisasi, dan Syukur.\n• *Pantangan*: Dilarang mendengarkan saat menyetir kendaraan atau beraktivitas berat 🙏😊."
-    },
-    {
-      "id": "kb_brainwave_pantangan",
-      "intent": "pantangan_audio_brainwave",
-      "exact_phrases": [
-        "apa saja pantangan audio brainwave",
-        "pantangan mendengarkan audio",
-        "aturan larangan audio brainwave",
-        "siapa yang tidak boleh dengar audio"
-      ],
-      "keywords": [
-        "pantangan",
-        "larangan",
-        "dilarang",
-        "tidak boleh",
-        "bahaya audio",
-        "epilepsi",
-        "pacu jantung"
-      ],
-      "confidence_boost": [
-        "pantangan",
-        "larangan",
-        "dilarang",
-        "tidak boleh"
-      ],
-      "answer": "⚠️ *PANTANGAN MENDENGARKAN AUDIO BRAINWAVE*:\n\n1. *DILARANG KERAS* mendengarkan sambil mengendarai/menyetir motor atau mobil (karena menimbulkan efek kantuk dan relaksasi dalam).\n2. *DILARANG* sambil mengoperasikan mesin berat.\n3. *TIDAK BOLEH* didengarkan oleh anak di bawah usia 10 tahun.\n4. *TIDAK BOLEH* bagi penderita epilepsi/ayan.\n5. *TIDAK BOLEH* bagi yang menggunakan alat pacu jantung.\n\n*Waktu Terbaik*: Dengarkan saat istirahat santai di kamar atau sebelum tidur 🤲."
-    },
-    {
-      "id": "kb_definisi_riyadhoh",
-      "intent": "definisi_riyadhoh",
-      "exact_phrases": [
-        "apa itu riyadhoh",
-        "pengertian riyadhoh",
-        "maksud dari riyadhoh",
-        "arti riyadhoh"
-      ],
-      "keywords": ["riyadhoh", "riyadoh", "riyadhah", "latihan spiritual", "arti riyadhoh"],
-      "confidence_boost": ["apa", "maksud", "pengertian", "definisi"],
-      "answer": "Bismillah 🙏😊, secara bahasa *Riyadhoh* berarti latihan atau penggemblengan diri.\n\nDalam bimbingan Om Budi, **Riyadhoh** adalah ikhtiar spiritual terstruktur (melatih batin dan raga) untuk mendekatkan diri kepada Allah SWT, membersihkan sumbatan energi negatif, dan menyelaraskan getaran hati agar siap menerima pertolongan dan kelapangan rezeki 🤲[cite: 1].\n\n*Pilar Utama Riyadhoh Harian*:\n1. Sholawat Jibril min. 1.000x[cite: 1].\n2. Sholat Sunnah (Dhuha min 4 rakaat, Tahajud min 4 rakaat, Taubat, Hajat, Witir)[cite: 1].\n3. Sedekah Subuh & pembersihan batin (merilis dendam/keluhan)[cite: 1].\n4. Penulisan Jurnal Syukur & Proposal Doa[cite: 1]."
-    },
-    {
-      "id": "kb_durasi_riyadhoh",
-      "intent": "durasi_riyadhoh",
-      "exact_phrases": [
-        "kalau riyadhoh bagusnya berapa hari dijalani",
-        "berapa hari riyadhoh",
-        "durasi riyadhoh berapa lama",
-        "berapa lama riyadhoh dilakukan"
-      ],
-      "keywords": ["berapa hari", "durasi", "berapa lama", "hari dijalani", "waktu riyadhoh"],
-      "confidence_boost": ["hari", "lama", "durasi", "bagusnya"],
-      "answer": "Bismillah 🙏😊. Untuk pembentukan getaran energi dan kebiasaan baru, riyadhoh dianjurkan didawamkan minimal **40 hari berturut-turut tanpa putus** 🤲.\n\nNamun hakikatnya, jadikan amalan ini sebagai **gaya hidup sehari-hari**. Istiqomah pada amalan kecil setiap hari jauh lebih dahsyat dampaknya daripada amalan besar yang hanya dilakukan sesekali[cite: 1]. Man jadda wajada, siapa yang bersungguh-sungguh pasti berhasil[cite: 1]!"
-    },
-    {
-      "id": "kb_tahajud_waktu_tata_cara",
-      "intent": "tahajud_detail",
-      "exact_phrases": [
-        "tahajud bagus nya dari jam berapa",
-        "tahajud jam berapa",
-        "waktu sholat tahajud",
-        "tata cara tahajud om budi"
-      ],
-      "keywords": ["tahajud", "tahajjud", "jam berapa", "waktu tahajud", "sepertiga malam"],
-      "confidence_boost": ["jam", "waktu", "kapan", "bagus"],
-      "answer": "Bismillah 🙏😊. Waktu terbaik untuk melaksanakan Sholat Tahajud adalah pada **sepertiga malam terakhir**, yaitu sekitar **pukul 02.00 hingga sebelum masuk waktu Subuh**.\n\n*Urutan Amalan Malam dalam Modul Riyadhoh Om Budi*:\n1. Sholat Taubat 2 Rakaat[cite: 1].\n2. Sholat Tahajud minimal 4 Rakaat (2 rakaat 1 salam)[cite: 1].\n3. Sholat Hajat 2 Rakaat[cite: 1].\n4. Sholat Witir 3 Rakaat[cite: 1].\n5. Setelah Witir, baca wirid: *'Robbighfirli wa tub 'alayya innaka antat tawwabur rohim'* sebanyak-banyaknya 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_sholawat_4444_dan_jibril",
-      "intent": "sholawat_detail",
-      "exact_phrases": [
-        "dari ajaran om budi kenapa harus mengucapkan shalawat nabi 4444x",
-        "kenapa sholawat 4444x",
-        "berapa kali baca sholawat",
-        "sholawat jibril berapa kali"
-      ],
-      "keywords": ["4444", "4444x", "shalawat", "sholawat", "sholawat jibril", "nariyah", "1000x"],
-      "confidence_boost": ["kenapa", "harus", "baca", "jumlah"],
-      "answer": "Bismillah 🙏😊. Dalam bimbingan Om Budi:\n\n1. **Sholawat Jibril**: Diamalkan minimal **1.000x setiap hari** (lebih banyak lebih baik, bisa dicicil sambil beraktivitas) sebagai penarik aliran rezeki harian[cite: 1].\n2. **Sholawat 4.444x (seperti Sholawat Nariyah)**: Merupakan amalan mujarrab dari para ulama untuk hajat yang sangat besar/mendesak agar Allah membukakan jalan keluar dan melipatgandakan vibrasi doa kita 🤲."
-    },
-    {
-      "id": "kb_hajat_belum_terkabul",
-      "intent": "hajat_belum_terkabul",
-      "exact_phrases": [
-        "kenapa hajat saya belum dikabulkan",
-        "doa belum terkabul",
-        "kenapa doa belum dijawab",
-        "hajat belum terwujud"
-      ],
-      "keywords": ["hajat", "belum dikabulkan", "belum terkabul", "doa belum dijawab", "tersumbat"],
-      "confidence_boost": ["kenapa", "mengapa", "belum", "terkabul"],
-      "answer": "Bismillah 🙏😊. Dalam modul Quantum Energi, jika hajat belum terkabul atau hutang belum lunas, perhatikan hal-hal berikut:\n\n1. **Cek Sumbatan Dosa**: Fokus cari ampunan Allah (Istighfar & Sholat Taubat) karena dosa adalah penyumbat utama keran rezeki[cite: 1].\n2. **Hentikan Komplain**: Terima takdir Allah saat ini, nikmati, syukuri, dan jalani tanpa protes[cite: 1].\n3. **Lepaskan Kemelekatan (*Attachment*)**: Berdoa dengan yakin[cite: 1], lalu pasrahkan total (tawakal)[cite: 1]. Rasa gelisah atau meragukan waktu terkabulnya doa justru memancarkan frekuensi rendah yang menunda pertolongan 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_kenapa_harus_bersyukur",
-      "intent": "alasan_bersyukur",
-      "exact_phrases": [
-        "kenapa bersyukur itu harus padahal masalah saja belum beres",
-        "mengapa harus bersyukur saat susah",
-        "kenapa harus bersyukur"
-      ],
-      "keywords": ["bersyukur", "masalah belum beres", "kenapa bersyukur", "saat susah", "vibrasi syukur"],
-      "confidence_boost": ["kenapa", "harus", "masalah", "belum beres"],
-      "answer": "Bismillah 🙏😊. Pikiran dan rasa kita bekerja seperti **proyektor**: apa yang sering kita rasakan, itulah realitas yang terbentuk[cite: 1].\n\n* Jika kita fokus pada masalah dan kekurangan, energi yang dipancarkan berat/gelap, sehingga menarik kesulitan yang sama[cite: 1].\n* Jika kita bersyukur atas apa yang masih ada (napas, kesehatan, keluarga), getaran batin naik ke **Energi Tinggi (Abundance)**[cite: 1].\nSesuai janji Allah di QS. Ibrahim: 7, rasa syukur itulah yang menjadi kunci pembuka pintu tambahan nikmat dan solusi dari arah yang tak disangka-sangka 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_kurikulum_kelas_online",
-      "intent": "silabus_kelas_online",
-      "exact_phrases": [
-        "kelas online itu apa saja yang diajarkan",
-        "apa saja materi kelas online",
-        "isi kelas online om budi"
-      ],
-      "keywords": ["kelas online", "apa saja", "diajarkan", "materi kelas", "kurikulum", "silabus"],
-      "confidence_boost": ["diajarkan", "isi", "materi"],
-      "answer": "Bismillah 🙏😊, dalam **Kelas Bimbingan Online Om Budi**, materi dirancang bertahap mencakup:\n\n1. *Pondasi Batin & Hutang*: Membedah akar sumbatan rezeki dan adab kejujuran menyelesaikan amanah hutang[cite: 1].\n2. *Riyadhoh Langit*: Panduan Sholawat Jibril min. 1.000x, sholat sunnah fajar/dhuha/tahajud, dan sedekah subuh[cite: 1].\n3. *Proposal Doa & Munajat*: Teknik menulis proposal doa spesifik dan detoks batin sebelum tidur[cite: 1].\n4. *Audio Brainwave Quantum Energi*: Panduan terapi gelombang alpha/theta untuk rilis trauma finansial[cite: 1].\n5. *Sinergi & Zoom Booster*: Sesi pendampingan live berkala bersama Om Budi setiap Rabu malam 🤲."
-    },
-    {
-      "id": "kb_penagih_datang_ke_rumah",
-      "intent": "menghadapi_penagih",
-      "exact_phrases": [
-        "bagaimana tidak mengeluh ini yang nagih tidak berhenti ada saja yang datang ke rumah",
-        "cara menghadapi penagih hutang",
-        "yang nagih datang ke rumah",
-        "dikejar penagih hutang"
-      ],
-      "keywords": ["penagih", "nagih", "datang ke rumah", "debt collector", "tidak berhenti", "dikejar hutang"],
-      "confidence_boost": ["rumah", "tidak berhenti", "mengeluh"],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊. Menghadapi penagih yang datang memang ujian batin yang sangat berat.\n\n*Sikap yang Dianjurkan Om Budi*:\n1. *Hadapi dengan Tenang & Jujur*: Jangan bersembunyi atau menjanjikan tanggal jika belum ada dana pasti, agar tidak melahirkan janji palsu.\n2. *Sampaikan Kondisi Secara Rendah Hati*: 'Saya sungguh-sungguh berusaha ikhtiar melunasi, mohon doanya dan mohon bersabar.'\n3. *Alihkan ke Doa Langit*: Tiap kali dada terasa sesak sehabis ditagih, ambil wudhu, sujud, dan baca Sholawat Jibril 1.000x untuk menguatkan mental dan membuka jalan keluar 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_proposal_doa_jurnal",
-      "intent": "panduan_proposal_doa",
-      "exact_phrases": [
-        "bagaimana cara membuat proposal doa",
-        "cara nulis proposal doa",
-        "contoh proposal doa",
-        "jurnal doa"
-      ],
-      "keywords": ["proposal doa", "jurnal doa", "jurnal syukur", "menulis doa", "cara berdoa"],
-      "confidence_boost": ["proposal", "cara", "contoh", "nulis"],
-      "answer": "📝 *Panduan Proposal Doa & Jurnal Syukur (Modul Om Budi)*[cite: 1]:\n\n1. *Jurnal Syukur*: Setiap malam sebelum tidur, tulis minimal 3-10 hal kecil yang Anda syukuri hari ini[cite: 1].\n2. *Jurnal Doa*: Tuliskan keinginan Anda dengan teknik *'Rasanya lebih enak ya kalau...'* (contoh: *'Rasanya lebih enak ya kalau amanah hutang 700 juta ini lunas'*)[cite: 1].\n3. *Munculkan Rasa & Visualisasi*: Rasakan seolah-olah doa tersebut sudah terwujud, lalu ucapkan terima kasih kepada Allah dengan penuh haru dan senyuman bahagia sebelum tidur 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_sholat_dhuha_rakaat",
-      "intent": "dhuha_detail",
-      "exact_phrases": [
-        "berapa rakaat sholat dhuha",
-        "sholat dhuha berapa rakaat",
-        "tata cara dhuha"
-      ],
-      "keywords": ["dhuha", "rakaat", "berapa rakaat", "sholat dhuha"],
-      "confidence_boost": ["rakaat", "dhuha", "berapa"],
-      "answer": "Bismillah 🙏😊. Dalam bimbingan Riyadhoh Om Budi, **Sholat Dhuha dikerjakan minimal 4 rakaat** (dikerjakan 2 rakaat 1 salam sebanyak 2 kali) 🤲[cite: 1].\n\nDianjurkan dilaksanakan secara istiqomah setiap pagi untuk menarik keberkahan dan kelapangan rezeki[cite: 1]."
-    },
-    {
-      "id": "kb_langkah_keluar_hutang",
-      "intent": "solusi_hutang",
-      "exact_phrases": [
-        "langkah keluar hutang",
-        "cara melunasi hutang",
-        "bagaimana cara bebas hutang"
-      ],
-      "keywords": ["keluar hutang", "cara melunasi hutang", "langkah lunas"],
-      "confidence_boost": ["langkah", "cara", "hutang", "solusi"],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊. Memahami perasaan lelah dan cemas saat amanah hutang belum tuntas adalah hal yang manusiawi.\n\nDalam bimbingan Om Budi, ada beberapa kunci batin agar pertolongan Allah segera hadir:\n1. *Stop Mengeluh*: Mengeluh tidak melunasi hutang, justru menguras energi dan menutup pintu rezeki.\n2. *Selaraskan Hati, Pikiran, dan Lisan*: Mulut ingin lunas, maka pikiran dan hati juga harus yakin pada pertolongan Allah.\n3. *Hadapi dengan Kejujuran*: Jangan menghindar dari penagih dan jangan mengobral janji palsu.\n4. *Kencangkan Ikhtiar Langit*: Dawamkan Sholawat Jibril 1.000x, Sedekah Subuh, dan Sholat Taubat/Tahajud secara konsisten 🤲[cite: 1]."
-    }
-  ]
-    }
-    {
-  "tenant_id": "om_budi",
-  "rules": [
-    {
-      "id": "kb_10_langkah_praktis_lunas_hutang",
-      "intent": "10_langkah_praktis_lunas_hutang",
-      "exact_phrases": [
-        "bagaimana cara praktis agar segera lunas hutang",
-        "cara praktis lunas hutang",
-        "langkah praktis agar segera lunas hutang",
-        "10 langkah lunas hutang"
-      ],
-      "keywords": [
-        "cara praktis",
-        "agar segera lunas",
-        "10 langkah",
-        "praktis lunas hutang",
-        "materi paling sederhana"
-      ],
-      "confidence_boost": [
-        "praktis",
-        "segera",
-        "langkah",
-        "sederhana",
-        "detail"
-      ],
-      "answer": "Bismillah 🙏😊. Dalam modul *Cara Praktis Agar Segera Lunas Hutang (Materi Sederhana & Detail)* karya Om Budi, ada 10 langkah lahiriah nyata yang harus dijalankan:\n\n1. *Buat Catatan Hutang Jelas*: Tulis siapa pemberinya, jumlah, & jatuh tempo agar tidak menambah stres di kepala.\n2. *Atur Ulang Keuangan*: Minimalisir pos keinginan (nongkrong/belanja online), prioritaskan kebutuhan pokok.\n3. *Tambah Penghasilan Sampingan*: Jual barang bekas tak terpakai, buka jasa/skill kecil, atau reseller/dropship tanpa modal.\n4. *Negosiasi dengan Pemberi Hutang*: Tunjukkan itikad baik, minta keringanan bunga/denda atau cicilan kecil rutin.\n5. *Gunakan Metode Snowball/Avalanche*: Lunasi dari nominal terkecil dulu untuk semangat psikologis.\n6. *STOP Menambah Hutang Baru*: Jangan tutup hutang dengan hutang baru.\n7. *Bangun Mindset Disiplin*: Begitu ada uang masuk langsung alokasikan untuk cicilan.\n8. *Libatkan Keluarga*: Transparan pada pasangan/anak agar saling mendukung berhemat.\n9. *Cari Jalan Rezeki Cepat*: Manfaatkan kendaraan (ojek online/delivery) atau freelance skill.\n10. *Jaga Kesehatan & Energi*: Pola tidur dan makan sehat dijaga, karena stres memicu penyakit dan menambah biaya 🤲."
-    },
-    {
-      "id": "kb_program_30_hari_bebas_hutang",
-      "intent": "program_30_hari_bebas_hutang",
-      "exact_phrases": [
-        "rencana 30 hari bebas hutang itu bagaimana melakukannya",
-        "bagaimana cara melakukan rencana 30 hari bebas hutang",
-        "tahapan 30 hari bebas hutang",
-        "program 30 hari bebas hutang",
-        "modul 30 hari bebas hutang"
-      ],
-      "keywords": [
-        "30 hari",
-        "rencana 30 hari",
-        "program 30 hari",
-        "bebas hutang 30 hari",
-        "30 hari bebas hutang",
-        "rencana 30 hari bebas hutang"
-      ],
-      "confidence_boost": [
-        "30 hari",
-        "rencana",
-        "bagaimana",
-        "melakukannya",
-        "tahapan",
-        "minggu"
-      ],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊.\n\nDalam panduan *Rencana 30 Hari Bebas Hutang (Lahiriah & Praktis)* karya Om Budi, langkah nyata dibagi menjadi 4 tahapan mingguan:\n\n1. *Minggu 1 (Sadar & Rapi)*:\n- Catat semua hutang (siapa, jumlah, jatuh tempo).\n- Tentukan prioritas pelunasan & evaluasi pengeluaran (stop pos boros).\n- Mulai susun anggaran mingguan yang ketat.\n\n2. *Minggu 2 (Aksi & Gerak)*:\n- Cari penghasilan cepat: jual barang bekas tak terpakai atau buka jasa kecil.\n- Mulai lunasi hutang terkecil lebih dulu (Metode Snowball).\n- Hubungi pemberi hutang jika jatuh tempo untuk bicarakan skema cicilan/keringanan.\n\n3. *Minggu 3 (Disiplin & Tambah Kecepatan)*:\n- Tingkatkan penghasilan sampingan & libatkan keluarga agar satu visi.\n- Buat proyeksi rencana pembayaran 3 bulan ke depan.\n\n4. *Minggu 4 (Konsolidasi & Perkuat)*:\n- Evaluasi progres pelunasan dan arahkan seluruh rezeki tambahan untuk cicil hutang.\n- Kunci komitmen jangka panjang: STOP membuat hutang baru!\n\n*Tips Tiap Malam*: Tulis progress harian (uang masuk & sisa hutang) serta syukuri setiap pembayaran sekecil apa pun 🤲."
-    },
-    {
-      "id": "kb_metode_snowball_avalanche",
-      "intent": "metode_pelunasan_hutang",
-      "exact_phrases": [
-        "apa itu metode snowball hutang",
-        "metode snowball atau avalanche",
-        "cara melunasi hutang banyak"
-      ],
-      "keywords": [
-        "snowball",
-        "avalanche",
-        "metode pelunasan",
-        "cara cicil hutang",
-        "prioritas bayar hutang"
-      ],
-      "confidence_boost": [
-        "metode",
-        "snowball",
-        "avalanche",
-        "strategi"
-      ],
-      "answer": "Bismillah 🙏😊. Dalam manajemen pelunasan hutang praktis Om Budi, ada dua strategi utama:\n\n1. *Metode Snowball (Direkomendasikan)*: Fokus melunasi hutang dari nominal yang paling kecil terlebih dahulu tanpa melihat bunganya. Tujuannya membangun kemenangan kecil, rasa percaya diri, dan ketenangan mental.\n2. *Metode Avalanche*: Fokus melunasi hutang dengan bunga/denda tertinggi lebih dulu untuk menekan total beban biaya bunga 🤲."
-    },
-    {
-      "id": "kb_penyebab_terjebak_hutang",
-      "intent": "penyebab_terjebak_hutang",
-      "exact_phrases": [
-        "kenapa banyak orang terjebak hutang",
-        "penyebab orang terlilit hutang",
-        "faktor penyebab hutang menumpuk"
-      ],
-      "keywords": [
-        "terjebak hutang",
-        "penyebab hutang",
-        "kenapa berhutang",
-        "gaya hidup konsumtif",
-        "tutup lubang gali lubang"
-      ],
-      "confidence_boost": [
-        "penyebab",
-        "faktor",
-        "kenapa",
-        "terjebak"
-      ],
-      "answer": "Bismillah 🙏😊. Dalam modul bimbingan Om Budi, ada 5 penyebab utama mengapa seseorang terjebak hutang:\n\n1. Pengeluaran lebih besar daripada pemasukan bulanan.\n2. Tidak memiliki catatan keuangan tertulis.\n3. Gaya hidup konsumtif (belanja keinginan tanpa perlu).\n4. Menutup hutang lama dengan membuka hutang baru (*gali lubang tutup lubang*).\n5. Kurang disiplin dan tidak transparan dalam mengatur uang 🤲."
-    },
-    {
-      "id": "kb_tanda_pertolongan_allah",
-      "intent": "tanda_pertolongan_allah",
-      "exact_phrases": [
-        "apa tanda tanda pertolongan allah akan datang",
-        "tanda pertolongan allah",
-        "ciri ciri pertolongan allah mau datang",
-        "bagaimana tahu doa dikabulkan"
-      ],
-      "keywords": [
-        "tanda pertolongan",
-        "pertolongan allah datang",
-        "ciri pertolongan",
-        "tanda doa diijabah"
-      ],
-      "confidence_boost": [
-        "tanda",
-        "ciri",
-        "pertolongan",
-        "akan datang",
-        "kapan"
-      ],
-      "answer": "Bismillah 🙏😊. Dalam buku *Ketika Hidup Diuji, Saatnya Kembali*, Om Budi menjelaskan 5 tanda bahwa pertolongan Allah sudah semakin dekat:\n\n1. *Hati Tiba-Tiba Tenang*: Rasa takut dan cemas berlebihan perlahan sirna, berganti kepasrahan yang nyaman.\n2. *Jalan Keluar Muncul Perlahan*: Ide-ide solusi atau kemudahan kecil mulai terbuka satu per satu.\n3. *Orang-Orang Baik Mendekat*: Dikelilingi lingkungan yang mendukung dan memudahkan urusan Anda.\n4. *Rezeki Kecil tapi Cukup & Berkah*: Merasa berkecukupan dan tidak lagi dibayangi ketakutan akan hari esok.\n5. *Doa Terasa Lebih Dekat*: Air mata menetes saat munajat dan terasa sangat akrab dengan Allah SWT 🤲."
-    },
-    {
-      "id": "kb_makna_dan_hakikat_ujian",
-      "intent": "makna_ujian_hidup",
-      "exact_phrases": [
-        "kenapa hidup penuh ujian",
-        "kenapa saya diuji begitu berat",
-        "apakah ujian itu hukuman dari allah",
-        "makna ujian hidup"
-      ],
-      "keywords": [
-        "hidup penuh ujian",
-        "diuji berat",
-        "ujian hukuman",
-        "kenapa diuji",
-        "arti ujian"
-      ],
-      "confidence_boost": [
-        "kenapa",
-        "ujian",
-        "berat",
-        "hukuman",
-        "cobaan"
-      ],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊.\n\nDalam buku *Ketika Hidup Diuji, Saatnya Kembali*, Om Budi menegaskan bahwa **ujian bukanlah hukuman atau tanda Allah benci**, melainkan tanda cinta dan panggilan kasih sayang Allah agar kita 'pulang' (kembali) mendekat kepada-Nya.\n\nUjian adalah alarm pembangun jiwa agar kita berhenti sombong dan lalai, lalu menengadah dengan penuh kerendahan hati. Bagi yang mau memperbaiki diri, ujian justru menjadi jalan pintas terbukanya pintu kemuliaan dan keberkahan hidup 🤲."
-    },
-    {
-      "id": "kb_langkah_menjaga_istiqomah",
-      "intent": "menjaga_istiqomah",
-      "exact_phrases": [
-        "bagaimana cara menjaga istiqomah",
-        "agar konsisten ibadah",
-        "cara istiqomah riyadhoh",
-        "mengatasi malas ibadah"
-      ],
-      "keywords": [
-        "istiqomah",
-        "konsisten",
-        "malas ibadah",
-        "menjaga istiqomah",
-        "hambatan riyadhoh"
-      ],
-      "confidence_boost": [
-        "istiqomah",
-        "konsisten",
-        "cara",
-        "tips"
-      ],
-      "answer": "Bismillah 🙏😊. Agar tetap istiqomah dalam bimbingan riyadhoh dan perbaikan diri (sesuai buku *Ketika Hidup Diuji, Saatnya Kembali*):\n\n1. *Bangun Rutinitas Harian*: Buat jadwal amalan tetap (misal: Sholawat Jibril saat senggang, Dhuha pagi, Tahajud malam).\n2. *Mulai dari yang Ringan*: Lebih baik amal kecil tapi konsisten setiap hari daripada niat besar tapi langsung berhenti.\n3. *Jaga Lingkungan*: Masuk dan berinteraksi di lingkungan majelis ilmu / komunitas positif agar tidak mudah goyah.\n4. *Jangan Menuntut Hasil Instan*: Nikmati proses pembersihan batin dan ingatlah bahwa kematian bisa datang sewaktu-waktu 🤲."
-    },
-    {
-      "id": "kb_kiat_khusus_om_budi",
-      "intent": "kiat_khusus_om_budi",
-      "exact_phrases": [
-        "apa kiat khusus dari om budi",
-        "nasihat om budi saat terpuruk",
-        "pesan om budi untuk yang sedang diuji"
-      ],
-      "keywords": [
-        "kiat khusus",
-        "nasihat om budi",
-        "pesan om budi",
-        "saat terpuruk"
-      ],
-      "confidence_boost": [
-        "kiat",
-        "nasihat",
-        "pesan",
-        "om budi"
-      ],
-      "answer": "Bismillah 🙏😊. Kiat dan pesan kunci dari Om Budi bagi kita yang sedang berjuang:\n\n• *Jangan Tunda Taubat*: Jangan tunggu kaya atau selesai masalah baru kembali ke Allah.\n• *Mulai dari Hal Sederhana*: Sholat 5 waktu tepat waktu, istighfar 100x, dan sedekah harian walau Rp1.000.\n• *Perbanyak Sholawat*: Sholawat adalah lentera energi yang melipatgandakan doa dan membuka jalan keluar.\n• *Yakin pada Janji Allah*: Tidak ada doa yang sia-sia, semuanya tersimpan rapi dan akan diijabah pada waktu yang paling indah 🤲."
-    },
-    {
-      "id": "kb_brainwave_panduan_praktek",
-      "intent": "panduan_praktek_audio_brainwave",
-      "exact_phrases": [
-        "untuk audio brainwave quantum energi saya ingin praktekan apa saja hal2 yang harus dilakukan",
-        "bagaimana cara praktek audio brainwave",
-        "cara mendengarkan audio brainwave",
-        "tahapan audio brainwave",
-        "langkah mendengarkan audio quantum",
-        "link audio brainwave"
-      ],
-      "keywords": [
-        "praktek audio",
-        "praktekan",
-        "cara mendengarkan",
-        "tahapan audio",
-        "hal yang harus dilakukan",
-        "langkah audio",
-        "link audio",
-        "alphamatic",
-        "mendengarkan audio"
-      ],
-      "confidence_boost": [
-        "praktekan",
-        "praktek",
-        "harus dilakukan",
-        "cara",
-        "langkah",
-        "tahapan",
-        "link"
-      ],
-      "answer": "🎧 *PANDUAN PRAKTEK AUDIO BRAINWAVE QUANTUM ENERGI* 🤲\n\n*4 Langkah Utama (Alphamatic - Afirmasi - Visualisasi - Syukur)*:\n\n1. *Alphamatic (Persiapan)*:\n- Posisikan diri duduk santai atau berbaring di tempat tenang tanpa gangguan (20–60 menit).\n- Kenakan pakaian longgar, lepas kacamata/aksesoris agar tubuh rileks sepenuhnya.\n- Putar audio via headphone atau speaker terbuka dengan sikap ikhlas dan pasrah.\n\n2. *Afirmasi*:\n- Setelah ±5 menit merasa tenang, bisikkan niat atau doa hajat di dalam hati secara perlahan.\n\n3. *Visualisasi*:\n- Bayangkan impian/hajat Anda seolah-olah sudah terwujud secara nyata (visualkan warna, suasana, dan perasaan bahagia).\n\n4. *Syukur & Pasrah*:\n- Ucapkan rasa syukur yang mendalam (*'Alhamdulillahirabbil'alamin'*), lalu serahkan seluruh hasilnya kepada Allah SWT.\n\n---\n🔗 *Link Akses Audio Bimbingan* (Dengarkan 2x sehari):\n• *Digital Prayers Quantum Ikhlas*:\nhttps://drive.google.com/file/d/18GjQd8SMymV8kxfvOPodvIXNxlVLbhW9/view?usp=drivesdk\n• *Meditasi Syukur (Kekayaan & Kesehatan)*:\nhttps://drive.google.com/file/d/1yw1fVPT6mpPiqj27P0qu_yiNfrTKv4tr/view?usp=drive_link\n• *Audio Terapi Menarik Rezeki*:\nhttps://drive.google.com/file/d/1zJOXiu-A-Jlh713tIvULS-tfbBBUEKLp/view?usp=drive_link\n\n*(Catatan: Dilarang mendengarkan saat menyetir atau mengoperasikan mesin)* 🙏😊"
-    },
-    {
-      "id": "kb_audio_terapi_menarik_rezeki",
-      "intent": "audio_menarik_rezeki",
-      "exact_phrases": [
-        "minta audio terapi menarik rezeki",
-        "link audio terapi menarik rezeki",
-        "audio menarik rezeki om budi",
-        "audio terapi rezeki"
-      ],
-      "keywords": [
-        "audio terapi menarik rezeki",
-        "terapi menarik rezeki",
-        "audio menarik rezeki",
-        "terapi rezeki"
-      ],
-      "confidence_boost": [
-        "minta",
-        "link",
-        "audio",
-        "terapi",
-        "menarik rezeki"
-      ],
-      "answer": "🎧 *AUDIO TERAPI MENARIK REZEKI BY OM BUDI*\n\n🔗 *Link Download / Dengarkan*:\nhttps://drive.google.com/file/d/1zJOXiu-A-Jlh713tIvULS-tfbBBUEKLp/view?usp=drive_link\n\n📌 *Petunjuk Penggunaan*:\n• Dengarkan 2x sehari (atau semakin sering semakin baik) di tempat tenang.\n• *Pantangan*: Dilarang mendengarkan sambil menyetir kendaraan atau mengoperasikan mesin berat 🙏😊."
-    },
-    {
-      "id": "kb_audio_meditasi_syukur",
-      "intent": "audio_meditasi_syukur",
-      "exact_phrases": [
-        "minta audio meditasi syukur",
-        "link meditasi syukur",
-        "audio meditasi syukur kekayaan dan kesehatan",
-        "meditasi syukur om budi"
-      ],
-      "keywords": [
-        "meditasi syukur",
-        "kekayaan dan kesehatan",
-        "audio syukur",
-        "meditasi kekayaan"
-      ],
-      "confidence_boost": [
-        "minta",
-        "link",
-        "meditasi",
-        "syukur"
-      ],
-      "answer": "🎧 *MEDITASI SYUKUR – KEKAYAAN & KESEHATAN*\n\n🔗 *Link Download / Dengarkan*:\nhttps://drive.google.com/file/d/1yw1fVPT6mpPiqj27P0qu_yiNfrTKv4tr/view?usp=drive_link\n\n📌 *Petunjuk Penggunaan*:\n• Dengarkan 2x sehari di ruangan tenang dengan sikap pasrah dan bersyukur.\n• *Pantangan*: Dilarang mendengarkan sambil mengemudi atau menyetir kendaraan 🙏😊."
-    },
-    {
-      "id": "kb_audio_digital_prayers_quantum_ikhlas",
-      "intent": "audio_digital_prayers",
-      "exact_phrases": [
-        "minta audio digital prayers",
-        "audio digital prayers quantum ikhlas",
-        "link quantum ikhlas",
-        "audio quantum ikhlas"
-      ],
-      "keywords": [
-        "digital prayers",
-        "quantum ikhlas",
-        "audio quantum ikhlas",
-        "digital prayers ikhlas"
-      ],
-      "confidence_boost": [
-        "minta",
-        "link",
-        "digital prayers",
-        "quantum ikhlas"
-      ],
-      "answer": "🎧 *AUDIO DIGITAL PRAYERS QUANTUM IKHLAS*\n\n🔗 *Link Download / Dengarkan*:\nhttps://drive.google.com/file/d/18GjQd8SMymV8kxfvOPodvIXNxlVLbhW9/view?usp=drivesdk\n\n📌 *Petunjuk Penggunaan*:\n• Dengarkan 2x sehari sambil mempraktikkan 4 langkah: Alphamatic, Afirmasi, Visualisasi, dan Syukur.\n• *Pantangan*: Dilarang mendengarkan saat menyetir kendaraan atau beraktivitas berat 🙏😊."
-    },
-    {
-      "id": "kb_brainwave_pantangan",
-      "intent": "pantangan_audio_brainwave",
-      "exact_phrases": [
-        "apa saja pantangan audio brainwave",
-        "pantangan mendengarkan audio",
-        "aturan larangan audio brainwave",
-        "siapa yang tidak boleh dengar audio"
-      ],
-      "keywords": [
-        "pantangan",
-        "larangan",
-        "dilarang",
-        "tidak boleh",
-        "bahaya audio",
-        "epilepsi",
-        "pacu jantung"
-      ],
-      "confidence_boost": [
-        "pantangan",
-        "larangan",
-        "dilarang",
-        "tidak boleh"
-      ],
-      "answer": "⚠️ *PANTANGAN MENDENGARKAN AUDIO BRAINWAVE*:\n\n1. *DILARANG KERAS* mendengarkan sambil mengendarai/menyetir motor atau mobil (karena menimbulkan efek kantuk dan relaksasi dalam).\n2. *DILARANG* sambil mengoperasikan mesin berat.\n3. *TIDAK BOLEH* didengarkan oleh anak di bawah usia 10 tahun.\n4. *TIDAK BOLEH* bagi penderita epilepsi/ayan.\n5. *TIDAK BOLEH* bagi yang menggunakan alat pacu jantung.\n\n*Waktu Terbaik*: Dengarkan saat istirahat santai di kamar atau sebelum tidur 🤲."
-    },
-    {
-      "id": "kb_definisi_riyadhoh",
-      "intent": "definisi_riyadhoh",
-      "exact_phrases": [
-        "apa itu riyadhoh",
-        "pengertian riyadhoh",
-        "maksud dari riyadhoh",
-        "arti riyadhoh"
-      ],
-      "keywords": ["riyadhoh", "riyadoh", "riyadhah", "latihan spiritual", "arti riyadhoh"],
-      "confidence_boost": ["apa", "maksud", "pengertian", "definisi"],
-      "answer": "Bismillah 🙏😊, secara bahasa *Riyadhoh* berarti latihan atau penggemblengan diri[cite: 1].\n\nDalam bimbingan Om Budi, **Riyadhoh** adalah ikhtiar spiritual terstruktur (melatih batin dan raga) untuk mendekatkan diri kepada Allah SWT, membersihkan sumbatan energi negatif, dan menyelaraskan getaran hati agar siap menerima pertolongan dan kelapangan rezeki 🤲[cite: 1].\n\n*Pilar Utama Riyadhoh Harian*:\n1. Sholawat Jibril min. 1.000x[cite: 1].\n2. Sholat Sunnah (Dhuha min 4 rakaat, Tahajud min 4 rakaat, Taubat, Hajat, Witir)[cite: 1].\n3. Sedekah Subuh & pembersihan batin (merilis dendam/keluhan)[cite: 1].\n4. Penulisan Jurnal Syukur & Proposal Doa[cite: 1]."
-    },
-    {
-      "id": "kb_durasi_riyadhoh",
-      "intent": "durasi_riyadhoh",
-      "exact_phrases": [
-        "kalau riyadhoh bagusnya berapa hari dijalani",
-        "berapa hari riyadhoh",
-        "durasi riyadhoh berapa lama",
-        "berapa lama riyadhoh dilakukan"
-      ],
-      "keywords": ["berapa hari", "durasi", "berapa lama", "hari dijalani", "waktu riyadhoh"],
-      "confidence_boost": ["hari", "lama", "durasi", "bagusnya"],
-      "answer": "Bismillah 🙏😊. Untuk pembentukan getaran energi dan kebiasaan baru, riyadhoh dianjurkan didawamkan minimal **40 hari berturut-turut tanpa putus** 🤲.\n\nNamun hakikatnya, jadikan amalan ini sebagai **gaya hidup sehari-hari**. Istiqomah pada amalan kecil setiap hari jauh lebih dahsyat dampaknya daripada amalan besar yang hanya dilakukan sesekali[cite: 1]. Man jadda wajada, siapa yang bersungguh-sungguh pasti berhasil[cite: 1]!"
-    },
-    {
-      "id": "kb_tahajud_waktu_tata_cara",
-      "intent": "tahajud_detail",
-      "exact_phrases": [
-        "tahajud bagus nya dari jam berapa",
-        "tahajud jam berapa",
-        "waktu sholat tahajud",
-        "tata cara tahajud om budi"
-      ],
-      "keywords": ["tahajud", "tahajjud", "jam berapa", "waktu tahajud", "sepertiga malam"],
-      "confidence_boost": ["jam", "waktu", "kapan", "bagus"],
-      "answer": "Bismillah 🙏😊. Waktu terbaik untuk melaksanakan Sholat Tahajud adalah pada **sepertiga malam terakhir**, yaitu sekitar **pukul 02.00 hingga sebelum masuk waktu Subuh**.\n\n*Urutan Amalan Malam dalam Modul Riyadhoh Om Budi*:\n1. Sholat Taubat 2 Rakaat[cite: 1].\n2. Sholat Tahajud minimal 4 Rakaat (2 rakaat 1 salam)[cite: 1].\n3. Sholat Hajat 2 Rakaat[cite: 1].\n4. Sholat Witir 3 Rakaat[cite: 1].\n5. Setelah Witir, baca wirid: *'Robbighfirli wa tub 'alayya innaka antat tawwabur rohim'* sebanyak-banyaknya 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_sholawat_4444_dan_jibril",
-      "intent": "sholawat_detail",
-      "exact_phrases": [
-        "dari ajaran om budi kenapa harus mengucapkan shalawat nabi 4444x",
-        "kenapa sholawat 4444x",
-        "berapa kali baca sholawat",
-        "sholawat jibril berapa kali"
-      ],
-      "keywords": ["4444", "4444x", "shalawat", "sholawat", "sholawat jibril", "nariyah", "1000x"],
-      "confidence_boost": ["kenapa", "harus", "baca", "jumlah"],
-      "answer": "Bismillah 🙏😊. Dalam bimbingan Om Budi:\n\n1. **Sholawat Jibril**: Diamalkan minimal **1.000x setiap hari** (lebih banyak lebih baik, bisa dicicil sambil beraktivitas) sebagai penarik aliran rezeki harian[cite: 1].\n2. **Sholawat 4.444x (seperti Sholawat Nariyah)**: Merupakan amalan mujarrab dari para ulama untuk hajat yang sangat besar/mendesak agar Allah membukakan jalan keluar dan melipatgandakan vibrasi doa kita 🤲."
-    },
-    {
-      "id": "kb_hajat_belum_terkabul",
-      "intent": "hajat_belum_terkabul",
-      "exact_phrases": [
-        "kenapa hajat saya belum dikabulkan",
-        "doa belum terkabul",
-        "kenapa doa belum dijawab",
-        "hajat belum terwujud"
-      ],
-      "keywords": ["hajat", "belum dikabulkan", "belum terkabul", "doa belum dijawab", "tersumbat"],
-      "confidence_boost": ["kenapa", "mengapa", "belum", "terkabul"],
-      "answer": "Bismillah 🙏😊. Dalam modul Quantum Energi, jika hajat belum terkabul atau hutang belum lunas, perhatikan hal-hal berikut:\n\n1. **Cek Sumbatan Dosa**: Fokus cari ampunan Allah (Istighfar & Sholat Taubat) karena dosa adalah penyumbat utama keran rezeki[cite: 1].\n2. **Hentikan Komplain**: Terima takdir Allah saat ini, nikmati, syukuri, dan jalani tanpa protes[cite: 1].\n3. **Lepaskan Kemelekatan (*Attachment*)**: Berdoa dengan yakin[cite: 1], lalu pasrahkan total (tawakal)[cite: 1]. Rasa gelisah atau meragukan waktu terkabulnya doa justru memancarkan frekuensi rendah yang menunda pertolongan 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_kenapa_harus_bersyukur",
-      "intent": "alasan_bersyukur",
-      "exact_phrases": [
-        "kenapa bersyukur itu harus padahal masalah saja belum beres",
-        "mengapa harus bersyukur saat susah",
-        "kenapa harus bersyukur"
-      ],
-      "keywords": ["bersyukur", "masalah belum beres", "kenapa bersyukur", "saat susah", "vibrasi syukur"],
-      "confidence_boost": ["kenapa", "harus", "masalah", "belum beres"],
-      "answer": "Bismillah 🙏😊. Pikiran dan rasa kita bekerja seperti **proyektor**: apa yang sering kita rasakan, itulah realitas yang terbentuk[cite: 1].\n\n* Jika kita fokus pada masalah dan kekurangan, energi yang dipancarkan berat/gelap, sehingga menarik kesulitan yang sama[cite: 1].\n* Jika kita bersyukur atas apa yang masih ada (napas, kesehatan, keluarga), getaran batin naik ke **Energi Tinggi (Abundance)**[cite: 1].\nSesuai janji Allah di QS. Ibrahim: 7, rasa syukur itulah yang menjadi kunci pembuka pintu tambahan nikmat dan solusi dari arah yang tak disangka-sangka 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_kurikulum_kelas_online",
-      "intent": "silabus_kelas_online",
-      "exact_phrases": [
-        "kelas online itu apa saja yang diajarkan",
-        "apa saja materi kelas online",
-        "isi kelas online om budi"
-      ],
-      "keywords": ["kelas online", "apa saja", "diajarkan", "materi kelas", "kurikulum", "silabus"],
-      "confidence_boost": ["diajarkan", "isi", "materi"],
-      "answer": "Bismillah 🙏😊, dalam **Kelas Bimbingan Online Om Budi**, materi dirancang bertahap mencakup 5 Ebook Modul Inti:\n\n1. *Pondasi Batin & Hutang*: Membedah akar sumbatan rezeki dan adab kejujuran menyelesaikan amanah hutang.\n2. *Riyadhoh Langit*: Panduan Sholawat Jibril min. 1.000x, sholat sunnah fajar/dhuha/tahajud, dan sedekah subuh[cite: 1].\n3. *Proposal Doa & Munajat*: Teknik menulis proposal doa spesifik dan detoks batin sebelum tidur[cite: 1].\n4. *Audio Brainwave Quantum Energi*: Panduan terapi gelombang alpha/theta untuk rilis trauma finansial[cite: 1].\n5. *Rencana Aksi Lahiriah*: Modul 30 Hari Bebas Hutang & 10 Langkah Praktis Pelunasan Hutang[cite: 3, 4] serta live Zoom Booster rutin setiap Rabu malam 🤲."
-    },
-    {
-      "id": "kb_penagih_datang_ke_rumah",
-      "intent": "menghadapi_penagih",
-      "exact_phrases": [
-        "bagaimana tidak mengeluh ini yang nagih tidak berhenti ada saja yang datang ke rumah",
-        "cara menghadapi penagih hutang",
-        "yang nagih datang ke rumah",
-        "dikejar penagih hutang"
-      ],
-      "keywords": ["penagih", "nagih", "datang ke rumah", "debt collector", "tidak berhenti", "dikejar hutang"],
-      "confidence_boost": ["rumah", "tidak berhenti", "mengeluh"],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊. Menghadapi penagih yang datang memang ujian batin yang sangat berat.\n\n*Sikap yang Dianjurkan Om Budi*:\n1. *Hadapi dengan Tenang & Jujur*: Jangan bersembunyi atau menjanjikan tanggal jika belum ada dana pasti, agar tidak melahirkan janji palsu.\n2. *Sampaikan Kondisi Secara Rendah Hati*: 'Saya sungguh-sungguh berusaha ikhtiar melunasi, mohon doanya dan mohon bersabar.'\n3. *Alihkan ke Doa Langit*: Tiap kali dada terasa sesak sehabis ditagih, ambil wudhu, sujud, dan baca Sholawat Jibril 1.000x untuk menguatkan mental dan membuka jalan keluar 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_proposal_doa_jurnal",
-      "intent": "panduan_proposal_doa",
-      "exact_phrases": [
-        "bagaimana cara membuat proposal doa",
-        "cara nulis proposal doa",
-        "contoh proposal doa",
-        "jurnal doa"
-      ],
-      "keywords": ["proposal doa", "jurnal doa", "jurnal syukur", "menulis doa", "cara berdoa"],
-      "confidence_boost": ["proposal", "cara", "contoh", "nulis"],
-      "answer": "📝 *Panduan Proposal Doa & Jurnal Syukur (Modul Om Budi)*[cite: 1]:\n\n1. *Jurnal Syukur*: Setiap malam sebelum tidur, tulis minimal 3-10 hal kecil yang Anda syukuri hari ini[cite: 1].\n2. *Jurnal Doa*: Tuliskan keinginan Anda dengan teknik *'Rasanya lebih enak ya kalau...'* (contoh: *'Rasanya lebih enak ya kalau amanah hutang 700 juta ini lunas'*)[cite: 1].\n3. *Munculkan Rasa & Visualisasi*: Rasakan seolah-olah doa tersebut sudah terwujud, lalu ucapkan terima kasih kepada Allah dengan penuh haru dan senyuman bahagia sebelum tidur 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_sholat_dhuha_rakaat",
-      "intent": "dhuha_detail",
-      "exact_phrases": [
-        "berapa rakaat sholat dhuha",
-        "sholat dhuha berapa rakaat",
-        "tata cara dhuha"
-      ],
-      "keywords": ["dhuha", "rakaat", "berapa rakaat", "sholat dhuha"],
-      "confidence_boost": ["rakaat", "dhuha", "berapa"],
-      "answer": "Bismillah 🙏😊. Dalam bimbingan Riyadhoh Om Budi, **Sholat Dhuha dikerjakan minimal 4 rakaat** (dikerjakan 2 rakaat 1 salam sebanyak 2 kali) 🤲[cite: 1].\n\nDianjurkan dilaksanakan secara istiqomah setiap pagi untuk menarik keberkahan dan kelapangan rezeki[cite: 1]."
-    },
-    {
-      "id": "kb_langkah_keluar_hutang",
-      "intent": "solusi_hutang",
-      "exact_phrases": [
-        "langkah keluar hutang",
-        "cara melunasi hutang",
-        "bagaimana cara bebas hutang"
-      ],
-      "keywords": ["keluar hutang", "cara melunasi hutang", "langkah lunas"],
-      "confidence_boost": ["langkah", "cara", "hutang", "solusi"],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊. Memahami perasaan lelah dan cemas saat amanah hutang belum tuntas adalah hal yang manusiawi.\n\nDalam bimbingan Om Budi, ada beberapa kunci batin agar pertolongan Allah segera hadir:\n1. *Stop Mengeluh*: Mengeluh tidak melunasi hutang, justru menguras energi dan menutup pintu rezeki.\n2. *Selaraskan Hati, Pikiran, dan Lisan*: Mulut ingin lunas, maka pikiran dan hati juga harus yakin pada pertolongan Allah.\n3. *Hadapi dengan Kejujuran*: Jangan menghindar dari penagih dan jangan mengobral janji palsu.\n4. *Kencangkan Ikhtiar Langit*: Dawamkan Sholawat Jibril 1.000x, Sedekah Subuh, dan Sholat Taubat/Tahajud secara konsisten 🤲[cite: 1]."
-    }
-  ]
-    }
-    {
-  "tenant_id": "om_budi",
-  "rules": [
-    {
-      "id": "kb_edukasi_dan_solusi_riba",
-      "intent": "solusi_dan_bahaya_riba",
-      "exact_phrases": [
-        "bagaimana cara keluar dari riba",
-        "solusi jika terlanjur terjebak riba",
-        "apa itu riba dan bahayanya",
-        "doa agar terhindar dari riba",
-        "jenis jenis riba"
-      ],
-      "keywords": [
-        "riba",
-        "keluar dari riba",
-        "terjebak riba",
-        "bahaya riba",
-        "pinjol",
-        "bunga bank",
-        "rentenir",
-        "riba qardh",
-        "riba nasiah",
-        "hukum riba"
-      ],
-      "confidence_boost": [
-        "riba",
-        "keluar",
-        "terjebak",
-        "bunga",
-        "pinjol",
-        "doa"
-      ],
-      "answer": "Bismillah 🙏😊. Dalam buku *Yuk Keluar Dari Riba* karya Om Budi, riba adalah tambahan dalam pinjaman/transaksi yang tidak sesuai syariat dan mendatangkan ancaman perang dari Allah & Rasul-Nya (QS. Al-Baqarah: 278-279).\n\n*Solusi Jika Terlanjur Terjebak Riba*:\n1. *Taubat Sungguh-Sungguh*: Menyesal, berhenti, dan bertekad kuat tidak membuka hutang riba baru.\n2. *Bayar Pokok, Tinggalkan Bunga*: Tunjukkan itikad baik dan negosiasikan ke pihak peminjam agar hanya mencicil hutang pokoknya.\n3. *Cari Jalan Rezeki Halal*: Tambah ikhtiar sampingan, sedekah subuh, dan hidup sederhana tanpa gengsi.\n\n*Doa Pelindung Dari Riba (HR. Tirmidzi)*:\n*'Allahummakfini bihalalika 'an haramika wa aghnini bifadhlika 'amman siwaak'* (Ya Allah, cukupkan aku dengan rezeki-Mu yang halal, jauhkan dari yang haram, dan cukupkan aku dengan karunia-Mu dari selain-Mu) 🤲."
-    },
-    {
-      "id": "kb_10_langkah_praktis_lunas_hutang",
-      "intent": "10_langkah_praktis_lunas_hutang",
-      "exact_phrases": [
-        "bagaimana cara praktis agar segera lunas hutang",
-        "cara praktis lunas hutang",
-        "langkah praktis agar segera lunas hutang",
-        "10 langkah lunas hutang"
-      ],
-      "keywords": [
-        "cara praktis",
-        "agar segera lunas",
-        "10 langkah",
-        "praktis lunas hutang",
-        "materi paling sederhana"
-      ],
-      "confidence_boost": [
-        "praktis",
-        "segera",
-        "langkah",
-        "sederhana",
-        "detail"
-      ],
-      "answer": "Bismillah 🙏😊. Dalam modul *Cara Praktis Agar Segera Lunas Hutang (Materi Sederhana & Detail)* karya Om Budi, ada 10 langkah lahiriah nyata:\n\n1. *Buat Catatan Hutang Jelas*: Tulis siapa pemberinya, jumlah, & jatuh tempo agar tidak stres di kepala.\n2. *Atur Ulang Keuangan*: Minimalisir pos keinginan (nongkrong/belanja online), prioritaskan kebutuhan pokok.\n3. *Tambah Penghasilan Sampingan*: Jual barang bekas tak terpakai, buka jasa kecil, atau jadi dropshipper.\n4. *Negosiasi dengan Pemberi Hutang*: Minta keringanan bunga/denda atau cicilan kecil tapi rutin.\n5. *Gunakan Metode Snowball/Avalanche*: Lunasi dari nominal terkecil dulu untuk kemenangan psikologis.\n6. *STOP Menambah Hutang Baru*: Jangan tutup hutang dengan hutang baru.\n7. *Bangun Mindset Disiplin*: Begitu ada uang masuk langsung alokasikan untuk cicilan.\n8. *Libatkan Keluarga*: Transparan pada pasangan/anak agar saling mendukung berhemat.\n9. *Cari Jalan Rezeki Cepat*: Manfaatkan kendaraan (ojek online/delivery) atau freelance skill.\n10. *Jaga Kesehatan & Energi*: Jaga pola tidur dan makan, jangan sampai stres memicu biaya sakit baru 🤲."
-    },
-    {
-      "id": "kb_program_30_hari_bebas_hutang",
-      "intent": "program_30_hari_bebas_hutang",
-      "exact_phrases": [
-        "rencana 30 hari bebas hutang itu bagaimana melakukannya",
-        "bagaimana cara melakukan rencana 30 hari bebas hutang",
-        "tahapan 30 hari bebas hutang",
-        "program 30 hari bebas hutang",
-        "modul 30 hari bebas hutang"
-      ],
-      "keywords": [
-        "30 hari",
-        "rencana 30 hari",
-        "program 30 hari",
-        "bebas hutang 30 hari",
-        "30 hari bebas hutang",
-        "rencana 30 hari bebas hutang"
-      ],
-      "confidence_boost": [
-        "30 hari",
-        "rencana",
-        "bagaimana",
-        "melakukannya",
-        "tahapan",
-        "minggu"
-      ],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊.\n\nDalam panduan *Rencana 30 Hari Bebas Hutang (Lahiriah & Praktis)* karya Om Budi, langkah nyata dibagi menjadi 4 tahapan mingguan:\n\n1. *Minggu 1 (Sadar & Rapi)*:\n- Catat semua hutang (siapa, jumlah, jatuh tempo).\n- Tentukan prioritas pelunasan & evaluasi pengeluaran (stop pos boros).\n- Mulai susun anggaran mingguan yang ketat.\n\n2. *Minggu 2 (Aksi & Gerak)*:\n- Cari penghasilan cepat: jual barang bekas tak terpakai atau buka jasa kecil.\n- Mulai lunasi hutang terkecil lebih dulu (Metode Snowball).\n- Hubungi pemberi hutang jika jatuh tempo untuk bicarakan skema cicilan/keringanan.\n\n3. *Minggu 3 (Disiplin & Tambah Kecepatan)*:\n- Tingkatkan penghasilan sampingan & libatkan keluarga agar satu visi.\n- Buat proyeksi rencana pembayaran 3 bulan ke depan.\n\n4. *Minggu 4 (Konsolidasi & Perkuat)*:\n- Evaluasi progres pelunasan dan arahkan seluruh rezeki tambahan untuk cicil hutang.\n- Kunci komitmen jangka panjang: STOP membuat hutang baru!\n\n*Tips Tiap Malam*: Tulis progress harian (uang masuk & sisa hutang) serta syukuri setiap pembayaran sekecil apa pun 🤲."
-    },
-    {
-      "id": "kb_metode_snowball_avalanche",
-      "intent": "metode_pelunasan_hutang",
-      "exact_phrases": [
-        "apa itu metode snowball hutang",
-        "metode snowball atau avalanche",
-        "cara melunasi hutang banyak"
-      ],
-      "keywords": [
-        "snowball",
-        "avalanche",
-        "metode pelunasan",
-        "cara cicil hutang",
-        "prioritas bayar hutang"
-      ],
-      "confidence_boost": [
-        "metode",
-        "snowball",
-        "avalanche",
-        "strategi"
-      ],
-      "answer": "Bismillah 🙏😊. Dalam manajemen pelunasan hutang praktis Om Budi, ada dua strategi utama:\n\n1. *Metode Snowball (Direkomendasikan)*: Fokus melunasi hutang dari nominal yang paling kecil terlebih dahulu tanpa melihat bunganya. Tujuannya membangun kemenangan kecil, rasa percaya diri, dan ketenangan mental.\n2. *Metode Avalanche*: Fokus melunasi hutang dengan bunga/denda tertinggi lebih dulu untuk menekan total beban biaya bunga 🤲."
-    },
-    {
-      "id": "kb_penyebab_terjebak_hutang",
-      "intent": "penyebab_terjebak_hutang",
-      "exact_phrases": [
-        "kenapa banyak orang terjebak hutang",
-        "penyebab orang terlilit hutang",
-        "faktor penyebab hutang menumpuk"
-      ],
-      "keywords": [
-        "terjebak hutang",
-        "penyebab hutang",
-        "kenapa berhutang",
-        "gaya hidup konsumtif",
-        "tutup lubang gali lubang"
-      ],
-      "confidence_boost": [
-        "penyebab",
-        "faktor",
-        "kenapa",
-        "terjebak"
-      ],
-      "answer": "Bismillah 🙏😊. Dalam modul bimbingan Om Budi, ada 5 penyebab utama mengapa seseorang terjebak hutang:\n\n1. Pengeluaran lebih besar daripada pemasukan bulanan.\n2. Tidak memiliki catatan keuangan tertulis.\n3. Gaya hidup konsumtif (belanja keinginan tanpa perlu).\n4. Menutup hutang lama dengan membuka hutang baru (*gali lubang tutup lubang*).\n5. Kurang disiplin dan tidak transparan dalam mengatur uang 🤲."
-    },
-    {
-      "id": "kb_tanda_pertolongan_allah",
-      "intent": "tanda_pertolongan_allah",
-      "exact_phrases": [
-        "apa tanda tanda pertolongan allah akan datang",
-        "tanda pertolongan allah",
-        "ciri ciri pertolongan allah mau datang",
-        "bagaimana tahu doa dikabulkan"
-      ],
-      "keywords": [
-        "tanda pertolongan",
-        "pertolongan allah datang",
-        "ciri pertolongan",
-        "tanda doa diijabah"
-      ],
-      "confidence_boost": [
-        "tanda",
-        "ciri",
-        "pertolongan",
-        "akan datang",
-        "kapan"
-      ],
-      "answer": "Bismillah 🙏😊. Dalam buku *Ketika Hidup Diuji, Saatnya Kembali*, Om Budi menjelaskan 5 tanda bahwa pertolongan Allah sudah semakin dekat:\n\n1. *Hati Tiba-Tiba Tenang*: Rasa takut dan cemas berlebihan perlahan sirna, berganti kepasrahan yang nyaman.\n2. *Jalan Keluar Muncul Perlahan*: Ide-ide solusi atau kemudahan kecil mulai terbuka satu per satu.\n3. *Orang-Orang Baik Mendekat*: Dikelilingi lingkungan yang mendukung dan memudahkan urusan Anda.\n4. *Rezeki Kecil tapi Cukup & Berkah*: Merasa berkecukupan dan tidak lagi dibayangi ketakutan akan hari esok.\n5. *Doa Terasa Lebih Dekat*: Air mata menetes saat munajat dan terasa sangat akrab dengan Allah SWT 🤲."
-    },
-    {
-      "id": "kb_makna_dan_hakikat_ujian",
-      "intent": "makna_ujian_hidup",
-      "exact_phrases": [
-        "kenapa hidup penuh ujian",
-        "kenapa saya diuji begitu berat",
-        "apakah ujian itu hukuman dari allah",
-        "makna ujian hidup"
-      ],
-      "keywords": [
-        "hidup penuh ujian",
-        "diuji berat",
-        "ujian hukuman",
-        "kenapa diuji",
-        "arti ujian"
-      ],
-      "confidence_boost": [
-        "kenapa",
-        "ujian",
-        "berat",
-        "hukuman",
-        "cobaan"
-      ],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊.\n\nDalam buku *Ketika Hidup Diuji, Saatnya Kembali*, Om Budi menegaskan bahwa **ujian bukanlah hukuman atau tanda Allah benci**, melainkan tanda cinta dan panggilan kasih sayang Allah agar kita 'pulang' (kembali) mendekat kepada-Nya.\n\nUjian adalah alarm pembangun jiwa agar kita berhenti sombong dan lalai, lalu menengadah dengan penuh kerendahan hati. Bagi yang mau memperbaiki diri, ujian justru menjadi jalan pintas terbukanya pintu kemuliaan dan keberkahan hidup 🤲."
-    },
-    {
-      "id": "kb_langkah_menjaga_istiqomah",
-      "intent": "menjaga_istiqomah",
-      "exact_phrases": [
-        "bagaimana cara menjaga istiqomah",
-        "agar konsisten ibadah",
-        "cara istiqomah riyadhoh",
-        "mengatasi malas ibadah"
-      ],
-      "keywords": [
-        "istiqomah",
-        "konsisten",
-        "malas ibadah",
-        "menjaga istiqomah",
-        "hambatan riyadhoh"
-      ],
-      "confidence_boost": [
-        "istiqomah",
-        "konsisten",
-        "cara",
-        "tips"
-      ],
-      "answer": "Bismillah 🙏😊. Agar tetap istiqomah dalam bimbingan riyadhoh dan perbaikan diri (sesuai buku *Ketika Hidup Diuji, Saatnya Kembali*):\n\n1. *Bangun Rutinitas Harian*: Buat jadwal amalan tetap (misal: Sholawat Jibril saat senggang, Dhuha pagi, Tahajud malam).\n2. *Mulai dari yang Ringan*: Lebih baik amal kecil tapi konsisten setiap hari daripada niat besar tapi langsung berhenti.\n3. *Jaga Lingkungan*: Masuk dan berinteraksi di lingkungan majelis ilmu / komunitas positif agar tidak mudah goyah.\n4. *Jangan Menuntut Hasil Instan*: Nikmati proses pembersihan batin dan ingatlah bahwa kematian bisa datang sewaktu-waktu 🤲."
-    },
-    {
-      "id": "kb_kiat_khusus_om_budi",
-      "intent": "kiat_khusus_om_budi",
-      "exact_phrases": [
-        "apa kiat khusus dari om budi",
-        "nasihat om budi saat terpuruk",
-        "pesan om budi untuk yang sedang diuji"
-      ],
-      "keywords": [
-        "kiat khusus",
-        "nasihat om budi",
-        "pesan om budi",
-        "saat terpuruk"
-      ],
-      "confidence_boost": [
-        "kiat",
-        "nasihat",
-        "pesan",
-        "om budi"
-      ],
-      "answer": "Bismillah 🙏😊. Kiat dan pesan kunci dari Om Budi bagi kita yang sedang berjuang:\n\n• *Jangan Tunda Taubat*: Jangan tunggu kaya atau selesai masalah baru kembali ke Allah.\n• *Mulai dari Hal Sederhana*: Sholat 5 waktu tepat waktu, istighfar 100x, dan sedekah harian walau Rp1.000.\n• *Perbanyak Sholawat*: Sholawat adalah lentera energi yang melipatgandakan doa dan membuka jalan keluar.\n• *Yakin pada Janji Allah*: Tidak ada doa yang sia-sia, semuanya tersimpan rapi dan akan diijabah pada waktu yang paling indah 🤲."
-    },
-    {
-      "id": "kb_brainwave_panduan_praktek",
-      "intent": "panduan_praktek_audio_brainwave",
-      "exact_phrases": [
-        "untuk audio brainwave quantum energi saya ingin praktekan apa saja hal2 yang harus dilakukan",
-        "bagaimana cara praktek audio brainwave",
-        "cara mendengarkan audio brainwave",
-        "tahapan audio brainwave",
-        "langkah mendengarkan audio quantum",
-        "link audio brainwave"
-      ],
-      "keywords": [
-        "praktek audio",
-        "praktekan",
-        "cara mendengarkan",
-        "tahapan audio",
-        "hal yang harus dilakukan",
-        "langkah audio",
-        "link audio",
-        "alphamatic",
-        "mendengarkan audio"
-      ],
-      "confidence_boost": [
-        "praktekan",
-        "praktek",
-        "harus dilakukan",
-        "cara",
-        "langkah",
-        "tahapan",
-        "link"
-      ],
-      "answer": "🎧 *PANDUAN PRAKTEK AUDIO BRAINWAVE QUANTUM ENERGI* 🤲\n\n*4 Langkah Utama (Alphamatic - Afirmasi - Visualisasi - Syukur)*:\n\n1. *Alphamatic (Persiapan)*:\n- Posisikan diri duduk santai atau berbaring di tempat tenang tanpa gangguan (20–60 menit).\n- Kenakan pakaian longgar, lepas kacamata/aksesoris agar tubuh rileks sepenuhnya.\n- Putar audio via headphone atau speaker terbuka dengan sikap ikhlas dan pasrah.\n\n2. *Afirmasi*:\n- Setelah ±5 menit merasa tenang, bisikkan niat atau doa hajat di dalam hati secara perlahan.\n\n3. *Visualisasi*:\n- Bayangkan impian/hajat Anda seolah-olah sudah terwujud secara nyata (visualkan warna, suasana, dan perasaan bahagia).\n\n4. *Syukur & Pasrah*:\n- Ucapkan rasa syukur yang mendalam (*'Alhamdulillahirabbil'alamin'*), lalu serahkan seluruh hasilnya kepada Allah SWT.\n\n---\n🔗 *Link Akses Audio Bimbingan* (Dengarkan 2x sehari):\n• *Digital Prayers Quantum Ikhlas*:\nhttps://drive.google.com/file/d/18GjQd8SMymV8kxfvOPodvIXNxlVLbhW9/view?usp=drivesdk\n• *Meditasi Syukur (Kekayaan & Kesehatan)*:\nhttps://drive.google.com/file/d/1yw1fVPT6mpPiqj27P0qu_yiNfrTKv4tr/view?usp=drive_link\n• *Audio Terapi Menarik Rezeki*:\nhttps://drive.google.com/file/d/1zJOXiu-A-Jlh713tIvULS-tfbBBUEKLp/view?usp=drive_link\n\n*(Catatan: Dilarang mendengarkan saat menyetir atau mengoperasikan mesin)* 🙏😊"
-    },
-    {
-      "id": "kb_audio_terapi_menarik_rezeki",
-      "intent": "audio_menarik_rezeki",
-      "exact_phrases": [
-        "minta audio terapi menarik rezeki",
-        "link audio terapi menarik rezeki",
-        "audio menarik rezeki om budi",
-        "audio terapi rezeki"
-      ],
-      "keywords": [
-        "audio terapi menarik rezeki",
-        "terapi menarik rezeki",
-        "audio menarik rezeki",
-        "terapi rezeki"
-      ],
-      "confidence_boost": [
-        "minta",
-        "link",
-        "audio",
-        "terapi",
-        "menarik rezeki"
-      ],
-      "answer": "🎧 *AUDIO TERAPI MENARIK REZEKI BY OM BUDI*\n\n🔗 *Link Download / Dengarkan*:\nhttps://drive.google.com/file/d/1zJOXiu-A-Jlh713tIvULS-tfbBBUEKLp/view?usp=drive_link\n\n📌 *Petunjuk Penggunaan*:\n• Dengarkan 2x sehari (atau semakin sering semakin baik) di tempat tenang.\n• *Pantangan*: Dilarang mendengarkan sambil menyetir kendaraan atau mengoperasikan mesin berat 🙏😊."
-    },
-    {
-      "id": "kb_audio_meditasi_syukur",
-      "intent": "audio_meditasi_syukur",
-      "exact_phrases": [
-        "minta audio meditasi syukur",
-        "link meditasi syukur",
-        "audio meditasi syukur kekayaan dan kesehatan",
-        "meditasi syukur om budi"
-      ],
-      "keywords": [
-        "meditasi syukur",
-        "kekayaan dan kesehatan",
-        "audio syukur",
-        "meditasi kekayaan"
-      ],
-      "confidence_boost": [
-        "minta",
-        "link",
-        "meditasi",
-        "syukur"
-      ],
-      "answer": "🎧 *MEDITASI SYUKUR – KEKAYAAN & KESEHATAN*\n\n🔗 *Link Download / Dengarkan*:\nhttps://drive.google.com/file/d/1yw1fVPT6mpPiqj27P0qu_yiNfrTKv4tr/view?usp=drive_link\n\n📌 *Petunjuk Penggunaan*:\n• Dengarkan 2x sehari di ruangan tenang dengan sikap pasrah dan bersyukur.\n• *Pantangan*: Dilarang mendengarkan sambil mengemudi atau menyetir kendaraan 🙏😊."
-    },
-    {
-      "id": "kb_audio_digital_prayers_quantum_ikhlas",
-      "intent": "audio_digital_prayers",
-      "exact_phrases": [
-        "minta audio digital prayers",
-        "audio digital prayers quantum ikhlas",
-        "link quantum ikhlas",
-        "audio quantum ikhlas"
-      ],
-      "keywords": [
-        "digital prayers",
-        "quantum ikhlas",
-        "audio quantum ikhlas",
-        "digital prayers ikhlas"
-      ],
-      "confidence_boost": [
-        "minta",
-        "link",
-        "digital prayers",
-        "quantum ikhlas"
-      ],
-      "answer": "🎧 *AUDIO DIGITAL PRAYERS QUANTUM IKHLAS*\n\n🔗 *Link Download / Dengarkan*:\nhttps://drive.google.com/file/d/18GjQd8SMymV8kxfvOPodvIXNxlVLbhW9/view?usp=drivesdk\n\n📌 *Petunjuk Penggunaan*:\n• Dengarkan 2x sehari sambil mempraktikkan 4 langkah: Alphamatic, Afirmasi, Visualisasi, dan Syukur.\n• *Pantangan*: Dilarang mendengarkan saat menyetir kendaraan atau beraktivitas berat 🙏😊."
-    },
-    {
-      "id": "kb_brainwave_pantangan",
-      "intent": "pantangan_audio_brainwave",
-      "exact_phrases": [
-        "apa saja pantangan audio brainwave",
-        "pantangan mendengarkan audio",
-        "aturan larangan audio brainwave",
-        "siapa yang tidak boleh dengar audio"
-      ],
-      "keywords": [
-        "pantangan",
-        "larangan",
-        "dilarang",
-        "tidak boleh",
-        "bahaya audio",
-        "epilepsi",
-        "pacu jantung"
-      ],
-      "confidence_boost": [
-        "pantangan",
-        "larangan",
-        "dilarang",
-        "tidak boleh"
-      ],
-      "answer": "⚠️ *PANTANGAN MENDENGARKAN AUDIO BRAINWAVE*:\n\n1. *DILARANG KERAS* mendengarkan sambil mengendarai/menyetir motor atau mobil (karena menimbulkan efek kantuk dan relaksasi dalam).\n2. *DILARANG* sambil mengoperasikan mesin berat.\n3. *TIDAK BOLEH* didengarkan oleh anak di bawah usia 10 tahun.\n4. *TIDAK BOLEH* bagi penderita epilepsi/ayan.\n5. *TIDAK BOLEH* bagi yang menggunakan alat pacu jantung.\n\n*Waktu Terbaik*: Dengarkan saat istirahat santai di kamar atau sebelum tidur 🤲."
-    },
-    {
-      "id": "kb_definisi_riyadhoh",
-      "intent": "definisi_riyadhoh",
-      "exact_phrases": [
-        "apa itu riyadhoh",
-        "pengertian riyadhoh",
-        "maksud dari riyadhoh",
-        "arti riyadhoh"
-      ],
-      "keywords": ["riyadhoh", "riyadoh", "riyadhah", "latihan spiritual", "arti riyadhoh"],
-      "confidence_boost": ["apa", "maksud", "pengertian", "definisi"],
-      "answer": "Bismillah 🙏😊, secara bahasa *Riyadhoh* berarti latihan atau penggemblengan diri[cite: 1].\n\nDalam bimbingan Om Budi, **Riyadhoh** adalah ikhtiar spiritual terstruktur (melatih batin dan raga) untuk mendekatkan diri kepada Allah SWT, membersihkan sumbatan energi negatif, dan menyelaraskan getaran hati agar siap menerima pertolongan dan kelapangan rezeki 🤲[cite: 1].\n\n*Pilar Utama Riyadhoh Harian*:\n1. Sholawat Jibril min. 1.000x[cite: 1].\n2. Sholat Sunnah (Dhuha min 4 rakaat, Tahajud min 4 rakaat, Taubat, Hajat, Witir)[cite: 1].\n3. Sedekah Subuh & pembersihan batin (merilis dendam/keluhan)[cite: 1].\n4. Penulisan Jurnal Syukur & Proposal Doa[cite: 1]."
-    },
-    {
-      "id": "kb_durasi_riyadhoh",
-      "intent": "durasi_riyadhoh",
-      "exact_phrases": [
-        "kalau riyadhoh bagusnya berapa hari dijalani",
-        "berapa hari riyadhoh",
-        "durasi riyadhoh berapa lama",
-        "berapa lama riyadhoh dilakukan"
-      ],
-      "keywords": ["berapa hari", "durasi", "berapa lama", "hari dijalani", "waktu riyadhoh"],
-      "confidence_boost": ["hari", "lama", "durasi", "bagusnya"],
-      "answer": "Bismillah 🙏😊. Untuk pembentukan getaran energi dan kebiasaan baru, riyadhoh dianjurkan didawamkan minimal **40 hari berturut-turut tanpa putus** 🤲.\n\nNamun hakikatnya, jadikan amalan ini sebagai **gaya hidup sehari-hari**. Istiqomah pada amalan kecil setiap hari jauh lebih dahsyat dampaknya daripada amalan besar yang hanya dilakukan sesekali[cite: 1]. Man jadda wajada, siapa yang bersungguh-sungguh pasti berhasil[cite: 1]!"
-    },
-    {
-      "id": "kb_tahajud_waktu_tata_cara",
-      "intent": "tahajud_detail",
-      "exact_phrases": [
-        "tahajud bagus nya dari jam berapa",
-        "tahajud jam berapa",
-        "waktu sholat tahajud",
-        "tata cara tahajud om budi"
-      ],
-      "keywords": ["tahajud", "tahajjud", "jam berapa", "waktu tahajud", "sepertiga malam"],
-      "confidence_boost": ["jam", "waktu", "kapan", "bagus"],
-      "answer": "Bismillah 🙏😊. Waktu terbaik untuk melaksanakan Sholat Tahajud adalah pada **sepertiga malam terakhir**, yaitu sekitar **pukul 02.00 hingga sebelum masuk waktu Subuh**.\n\n*Urutan Amalan Malam dalam Modul Riyadhoh Om Budi*:\n1. Sholat Taubat 2 Rakaat[cite: 1].\n2. Sholat Tahajud minimal 4 Rakaat (2 rakaat 1 salam)[cite: 1].\n3. Sholat Hajat 2 Rakaat[cite: 1].\n4. Sholat Witir 3 Rakaat[cite: 1].\n5. Setelah Witir, baca wirid: *'Robbighfirli wa tub 'alayya innaka antat tawwabur rohim'* sebanyak-banyaknya 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_sholawat_4444_dan_jibril",
-      "intent": "sholawat_detail",
-      "exact_phrases": [
-        "dari ajaran om budi kenapa harus mengucapkan shalawat nabi 4444x",
-        "kenapa sholawat 4444x",
-        "berapa kali baca sholawat",
-        "sholawat jibril berapa kali"
-      ],
-      "keywords": ["4444", "4444x", "shalawat", "sholawat", "sholawat jibril", "nariyah", "1000x"],
-      "confidence_boost": ["kenapa", "harus", "baca", "jumlah"],
-      "answer": "Bismillah 🙏😊. Dalam bimbingan Om Budi:\n\n1. **Sholawat Jibril**: Diamalkan minimal **1.000x setiap hari** (lebih banyak lebih baik, bisa dicicil sambil beraktivitas) sebagai penarik aliran rezeki harian[cite: 1].\n2. **Sholawat 4.444x (seperti Sholawat Nariyah)**: Merupakan amalan mujarrab dari para ulama untuk hajat yang sangat besar/mendesak agar Allah membukakan jalan keluar dan melipatgandakan vibrasi doa kita 🤲."
-    },
-    {
-      "id": "kb_hajat_belum_terkabul",
-      "intent": "hajat_belum_terkabul",
-      "exact_phrases": [
-        "kenapa hajat saya belum dikabulkan",
-        "doa belum terkabul",
-        "kenapa doa belum dijawab",
-        "hajat belum terwujud"
-      ],
-      "keywords": ["hajat", "belum dikabulkan", "belum terkabul", "doa belum dijawab", "tersumbat"],
-      "confidence_boost": ["kenapa", "mengapa", "belum", "terkabul"],
-      "answer": "Bismillah 🙏😊. Dalam modul Quantum Energi, jika hajat belum terkabul atau hutang belum lunas, perhatikan hal-hal berikut:\n\n1. **Cek Sumbatan Dosa**: Fokus cari ampunan Allah (Istighfar & Sholat Taubat) karena dosa adalah penyumbat utama keran rezeki[cite: 1].\n2. **Hentikan Komplain**: Terima takdir Allah saat ini, nikmati, syukuri, dan jalani tanpa protes[cite: 1].\n3. **Lepaskan Kemelekatan (*Attachment*)**: Berdoa dengan yakin[cite: 1], lalu pasrahkan total (tawakal)[cite: 1]. Rasa gelisah atau meragukan waktu terkabulnya doa justru memancarkan frekuensi rendah yang menunda pertolongan 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_kenapa_harus_bersyukur",
-      "intent": "alasan_bersyukur",
-      "exact_phrases": [
-        "kenapa bersyukur itu harus padahal masalah saja belum beres",
-        "mengapa harus bersyukur saat susah",
-        "kenapa harus bersyukur"
-      ],
-      "keywords": ["bersyukur", "masalah belum beres", "kenapa bersyukur", "saat susah", "vibrasi syukur"],
-      "confidence_boost": ["kenapa", "harus", "masalah", "belum beres"],
-      "answer": "Bismillah 🙏😊. Pikiran dan rasa kita bekerja seperti **proyektor**: apa yang sering kita rasakan, itulah realitas yang terbentuk[cite: 1].\n\n* Jika kita fokus pada masalah dan kekurangan, energi yang dipancarkan berat/gelap, sehingga menarik kesulitan yang sama[cite: 1].\n* Jika kita bersyukur atas apa yang masih ada (napas, kesehatan, keluarga), getaran batin naik ke **Energi Tinggi (Abundance)**[cite: 1].\nSesuai janji Allah di QS. Ibrahim: 7, rasa syukur itulah yang menjadi kunci pembuka pintu tambahan nikmat dan solusi dari arah yang tak disangka-sangka 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_kurikulum_kelas_online",
-      "intent": "silabus_kelas_online",
-      "exact_phrases": [
-        "kelas online itu apa saja yang diajarkan",
-        "apa saja materi kelas online",
-        "isi kelas online om budi"
-      ],
-      "keywords": ["kelas online", "apa saja", "diajarkan", "materi kelas", "kurikulum", "silabus"],
-      "confidence_boost": ["diajarkan", "isi", "materi"],
-      "answer": "Bismillah 🙏😊, dalam **Kelas Bimbingan Online Om Budi**, materi dirancang bertahap mencakup 6 Modul Ebook Utama:\n\n1. *Pondasi Batin & Hutang*: Membedah akar sumbatan rezeki dan adab kejujuran menyelesaikan amanah hutang.\n2. *Riyadhoh Langit*: Panduan Sholawat Jibril min. 1.000x, sholat sunnah fajar/dhuha/tahajud, dan sedekah subuh[cite: 1].\n3. *Proposal Doa & Munajat*: Teknik menulis proposal doa spesifik dan detoks batin sebelum tidur[cite: 1].\n4. *Audio Brainwave Quantum Energi*: Panduan terapi gelombang alpha/theta untuk rilis trauma finansial[cite: 1].\n5. *Rencana Aksi Bebas Hutang*: Modul 30 Hari Bebas Hutang & 10 Langkah Praktis Pelunasan Hutang[cite: 3, 4].\n6. *Edukasi Hijrah Riba*: Panduan keluar dari jerat pinjol/riba menuju rezeki berkah[cite: 5], serta pendampingan Zoom Booster setiap Rabu malam 🤲."
-    },
-    {
-      "id": "kb_penagih_datang_ke_rumah",
-      "intent": "menghadapi_penagih",
-      "exact_phrases": [
-        "bagaimana tidak mengeluh ini yang nagih tidak berhenti ada saja yang datang ke rumah",
-        "cara menghadapi penagih hutang",
-        "yang nagih datang ke rumah",
-        "dikejar penagih hutang"
-      ],
-      "keywords": ["penagih", "nagih", "datang ke rumah", "debt collector", "tidak berhenti", "dikejar hutang"],
-      "confidence_boost": ["rumah", "tidak berhenti", "mengeluh"],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊. Menghadapi penagih yang datang memang ujian batin yang sangat berat.\n\n*Sikap yang Dianjurkan Om Budi*:\n1. *Hadapi dengan Tenang & Jujur*: Jangan bersembunyi atau menjanjikan tanggal jika belum ada dana pasti, agar tidak melahirkan janji palsu.\n2. *Sampaikan Kondisi Secara Rendah Hati*: 'Saya sungguh-sungguh berusaha ikhtiar melunasi, mohon doanya dan mohon bersabar.'\n3. *Alihkan ke Doa Langit*: Tiap kali dada terasa sesak sehabis ditagih, ambil wudhu, sujud, dan baca Sholawat Jibril 1.000x untuk menguatkan mental dan membuka jalan keluar 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_proposal_doa_jurnal",
-      "intent": "panduan_proposal_doa",
-      "exact_phrases": [
-        "bagaimana cara membuat proposal doa",
-        "cara nulis proposal doa",
-        "contoh proposal doa",
-        "jurnal doa"
-      ],
-      "keywords": ["proposal doa", "jurnal doa", "jurnal syukur", "menulis doa", "cara berdoa"],
-      "confidence_boost": ["proposal", "cara", "contoh", "nulis"],
-      "answer": "📝 *Panduan Proposal Doa & Jurnal Syukur (Modul Om Budi)*[cite: 1]:\n\n1. *Jurnal Syukur*: Setiap malam sebelum tidur, tulis minimal 3-10 hal kecil yang Anda syukuri hari ini[cite: 1].\n2. *Jurnal Doa*: Tuliskan keinginan Anda dengan teknik *'Rasanya lebih enak ya kalau...'* (contoh: *'Rasanya lebih enak ya kalau amanah hutang 700 juta ini lunas'*)[cite: 1].\n3. *Munculkan Rasa & Visualisasi*: Rasakan seolah-olah doa tersebut sudah terwujud, lalu ucapkan terima kasih kepada Allah dengan penuh haru dan senyuman bahagia sebelum tidur 🤲[cite: 1]."
-    },
-    {
-      "id": "kb_sholat_dhuha_rakaat",
-      "intent": "dhuha_detail",
-      "exact_phrases": [
-        "berapa rakaat sholat dhuha",
-        "sholat dhuha berapa rakaat",
-        "tata cara dhuha"
-      ],
-      "keywords": ["dhuha", "rakaat", "berapa rakaat", "sholat dhuha"],
-      "confidence_boost": ["rakaat", "dhuha", "berapa"],
-      "answer": "Bismillah 🙏😊. Dalam bimbingan Riyadhoh Om Budi, **Sholat Dhuha dikerjakan minimal 4 rakaat** (dikerjakan 2 rakaat 1 salam sebanyak 2 kali) 🤲[cite: 1].\n\nDianjurkan dilaksanakan secara istiqomah setiap pagi untuk menarik keberkahan dan kelapangan rezeki[cite: 1]."
-    },
-    {
-      "id": "kb_langkah_keluar_hutang",
-      "intent": "solusi_hutang",
-      "exact_phrases": [
-        "langkah keluar hutang",
-        "cara melunasi hutang",
-        "bagaimana cara bebas hutang"
-      ],
-      "keywords": ["keluar hutang", "cara melunasi hutang", "langkah lunas"],
-      "confidence_boost": ["langkah", "cara", "hutang", "solusi"],
-      "answer": "Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊. Memahami perasaan lelah dan cemas saat amanah hutang belum tuntas adalah hal yang manusiawi.\n\nDalam bimbingan Om Budi, ada beberapa kunci batin agar pertolongan Allah segera hadir:\n1. *Stop Mengeluh*: Mengeluh tidak melunasi hutang, justru menguras energi dan menutup pintu rezeki.\n2. *Selaraskan Hati, Pikiran, dan Lisan*: Mulut ingin lunas, maka pikiran dan hati juga harus yakin pada pertolongan Allah.\n3. *Hadapi dengan Kejujuran*: Jangan menghindar dari penagih dan jangan mengobral janji palsu.\n4. *Kencangkan Ikhtiar Langit*: Dawamkan Sholawat Jibril 1.000x, Sedekah Subuh, dan Sholat Taubat/Tahajud secara konsisten 🤲[cite: 1]."
-    }
-  ]
-  }    
- ]
 }
