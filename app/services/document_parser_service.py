@@ -43,3 +43,5 @@ def extract_text_from_bytes(file_bytes: bytes, filename: str) -> str:
         logger.error(f"[Document Parser Error] {e}")
 
     return extracted_text.strip()
+
+parse_cv_document = extract_text_from_bytes

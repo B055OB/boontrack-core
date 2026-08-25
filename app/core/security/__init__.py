@@ -3,16 +3,16 @@ import os
 import logging
 from app.core.security.rate_limiter import wa_rate_limiter, WhatsAppRateLimiter
 from app.core.security.masking import mask_pii_string, mask_payload_dict, ZeroPIILogFilter
+from app.core.security.encryption import encrypt_pii, decrypt_pii, generate_blind_index
 
 logger = logging.getLogger("SECURITY_CORE")
 
-# 1. Fallback Universal Token Encryption / Decryption
+# 1. Universal Token Encryption / Decryption
 def encrypt_bot_token(token: str) -> str:
     if not token:
         return ""
     try:
-        from app.core.security.encryption import encrypt_string
-        return encrypt_string(token)
+        return encrypt_pii("telegram_tokens", token)
     except Exception:
         return base64.b64encode(token.encode("utf-8")).decode("utf-8")
 
@@ -20,8 +20,7 @@ def decrypt_bot_token(encrypted_token: str) -> str:
     if not encrypted_token:
         return ""
     try:
-        from app.core.security.encryption import decrypt_string
-        return decrypt_string(encrypted_token)
+        return decrypt_pii("telegram_tokens", encrypted_token)
     except Exception:
         try:
             return base64.b64decode(encrypted_token.encode("utf-8")).decode("utf-8")
@@ -43,5 +42,8 @@ __all__ = [
     "encrypt_bot_token",
     "decrypt_bot_token",
     "encrypt_string",
-    "decrypt_string"
+    "decrypt_string",
+    "encrypt_pii",
+    "decrypt_pii",
+    "generate_blind_index"
 ]

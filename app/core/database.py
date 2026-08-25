@@ -1,13 +1,13 @@
 import os
 import json
 import asyncio
+from datetime import datetime, timedelta
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from aiogram import types
 from app.core.config import settings
 from sqlalchemy.ext.declarative import declarative_base
 
-# Deklarasi Base wajib ada untuk SQLAlchemy Models
 Base = declarative_base()
 
 def get_db_connection():
@@ -73,7 +73,38 @@ def _init_db_sync():
         );
     """)
     
-    # 5. Tabel click_logs (Analytics Tracking)
+    # 5. Tabel product_orders
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS product_orders (
+            id SERIAL PRIMARY KEY,
+            order_id VARCHAR(50) UNIQUE,
+            telegram_id BIGINT,
+            product_name VARCHAR(100),
+            base_price INT,
+            unique_code INT,
+            total_amount INT UNIQUE,
+            status VARCHAR(20) DEFAULT 'PENDING',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP
+        );
+    """)
+
+    # 6. Tabel donation_sessions
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS donation_sessions (
+            id SERIAL PRIMARY KEY,
+            donation_id VARCHAR(50) UNIQUE,
+            telegram_id BIGINT,
+            base_amount INT,
+            unique_code INT,
+            total_amount INT UNIQUE,
+            status VARCHAR(20) DEFAULT 'PENDING',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP
+        );
+    """)
+
+    # 7. Tabel click_logs (Analytics Tracking)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS click_logs (
             id SERIAL PRIMARY KEY,
@@ -89,6 +120,40 @@ def _init_db_sync():
             ip_address VARCHAR(50),
             user_agent TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    # 8. Tabel cv_reviews
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS cv_reviews (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            target_position VARCHAR(255) NOT NULL,
+            cv_version INT DEFAULT 1,
+            overall_score INT NOT NULL,
+            quality_score INT NOT NULL,
+            job_match_score INT NOT NULL,
+            evidence_score INT NOT NULL,
+            review_json JSONB NOT NULL,
+            confidence_level VARCHAR(20) NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    # 9. Tabel ai_usage_logs
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ai_usage_logs (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            provider VARCHAR(50) NOT NULL,
+            feature VARCHAR(50) DEFAULT 'general',
+            prompt_tokens INT DEFAULT 0,
+            completion_tokens INT DEFAULT 0,
+            total_tokens INT DEFAULT 0,
+            status_code INT DEFAULT 200,
+            is_error BOOLEAN DEFAULT FALSE,
+            error_message TEXT,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
     """)
     
@@ -239,3 +304,123 @@ def _count_referrals_sync(referrer_id: str) -> int:
 
 async def count_referrals(referrer_id: str) -> int:
     return await asyncio.to_thread(_count_referrals_sync, referrer_id)
+
+# --- Order & Donation Helpers ---
+
+def _check_user_paid_sync(user_id):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM donation_sessions WHERE telegram_id = %s AND status = 'VERIFIED' LIMIT 1;",
+            (user_id,)
+        )
+        res = cur.fetchone()
+        cur.close()
+        conn.close()
+        return bool(res)
+    except Exception as e:
+        print(f"Check User Paid Error: {e}", flush=True)
+        return False
+
+async def check_user_paid(user_id):
+    return await asyncio.to_thread(_check_user_paid_sync, user_id)
+
+def _create_order_sync(telegram_id, product_name, base_price, unique_code, total_amount):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        order_id = f"ORD-{int(datetime.now().timestamp())}"
+        expires_at = datetime.now() + timedelta(minutes=15)
+        cur.execute("""
+            INSERT INTO product_orders (order_id, telegram_id, product_name, base_price, unique_code, total_amount, expires_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (total_amount) DO UPDATE SET
+                telegram_id = EXCLUDED.telegram_id,
+                product_name = EXCLUDED.product_name,
+                expires_at = EXCLUDED.expires_at,
+                status = 'PENDING';
+        """, (order_id, telegram_id, product_name, base_price, unique_code, total_amount, expires_at))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return order_id
+    except Exception as e:
+        print(f"Create Order Error: {e}", flush=True)
+        return None
+
+async def create_order(telegram_id, product_name, base_price, unique_code, total_amount):
+    return await asyncio.to_thread(_create_order_sync, telegram_id, product_name, base_price, unique_code, total_amount)
+
+def _match_and_complete_order_sync(amount):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT * FROM product_orders 
+            WHERE total_amount = %s AND expires_at > CURRENT_TIMESTAMP
+            LIMIT 1;
+        """, (amount,))
+        order = cur.fetchone()
+        if order and order.get("status") == "PENDING":
+            cur.execute("UPDATE product_orders SET status = 'PAID' WHERE id = %s;", (order["id"],))
+            conn.commit()
+        cur.close()
+        conn.close()
+        return order
+    except Exception as e:
+        print(f"Match Order Error: {e}", flush=True)
+        return None
+
+async def match_and_complete_order(amount):
+    return await asyncio.to_thread(_match_and_complete_order_sync, amount)
+
+def _create_donation_session_sync(telegram_id, base_amount, unique_code, total_amount):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        donation_id = f"DON-{int(datetime.now().timestamp())}"
+        expires_at = datetime.now() + timedelta(minutes=15)
+        cur.execute("""
+            INSERT INTO donation_sessions (donation_id, telegram_id, base_amount, unique_code, total_amount, expires_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (total_amount) DO UPDATE SET
+                telegram_id = EXCLUDED.telegram_id,
+                base_amount = EXCLUDED.base_amount,
+                expires_at = EXCLUDED.expires_at,
+                status = 'PENDING';
+        """, (donation_id, telegram_id, base_amount, unique_code, total_amount, expires_at))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return donation_id
+    except Exception as e:
+        print(f"Create Donation Error: {e}", flush=True)
+        return None
+
+async def create_donation_session(telegram_id, base_amount, unique_code, total_amount):
+    return await asyncio.to_thread(_create_donation_session_sync, telegram_id, base_amount, unique_code, total_amount)
+
+def _match_and_complete_donation_sync(amount):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT * FROM donation_sessions 
+            WHERE total_amount = %s AND status = 'PENDING'
+            ORDER BY created_at DESC 
+            LIMIT 1;
+        """, (amount,))
+        donation = cur.fetchone()
+        if donation:
+            cur.execute("UPDATE donation_sessions SET status = 'VERIFIED' WHERE id = %s;", (donation["id"],))
+            conn.commit()
+        cur.close()
+        conn.close()
+        return donation
+    except Exception as e:
+        print(f"Match Donation Error: {e}", flush=True)
+        return None
+
+async def match_and_complete_donation(amount):
+    return await asyncio.to_thread(_match_and_complete_donation_sync, amount)

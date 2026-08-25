@@ -28,9 +28,10 @@ class BrainEngine:
 
         # === 1b. VALIDASI KILL-SWITCH & PERIZINAN MULTI-CHANNEL TENANT ===
         try:
-            from app.lib.supabaseClient import get_supabase
+            from app.services.whatsapp_service import get_supabase
             supabase = get_supabase()
-            t_res = supabase.table("tenants").select("status, enable_whatsapp, enable_telegram, enable_webchat").eq("slug", tenant_slug).maybe_single().execute()
+            if supabase:
+                t_res = supabase.table("tenants").select("status, enable_whatsapp, enable_telegram, enable_webchat").eq("slug", tenant_slug).maybe_single().execute()
             
             if t_res.data:
                 tenant_data = t_res.data

@@ -18,10 +18,60 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
+import re
+import aiohttp
+
 RESERVED_SLUGS = {
     "www", "cv", "boontrack", "boontrack-router", "admin", 
     "api", "app", "dashboard", "auth", "login", "register", "default"
 }
+
+async def check_kv_key_exists(slug: str) -> bool:
+    if not CF_API_TOKEN or not CF_KV_NAMESPACE_ID or not CF_ACCOUNT_ID:
+        return False
+
+    url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/storage/kv/namespaces/{CF_KV_NAMESPACE_ID}/values/{slug.lower()}"
+    headers = {"Authorization": f"Bearer {CF_API_TOKEN}"}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as resp:
+                return resp.status == 200
+    except Exception as e:
+        logger.error(f"[KV Check Error] {e}")
+        return False
+
+async def generate_unique_slug(user_data: dict) -> str:
+    custom_slug = user_data.get("custom_slug", "").strip().lower()
+    if custom_slug:
+        base_slug = re.sub(r'[^a-z0-9-]', '', custom_slug)
+    else:
+        raw_name = user_data.get("nama_panggilan", user_data.get("1", "user"))
+        base_slug = re.sub(r'[^a-z0-9]', '', str(raw_name).lower().replace(" ", "")) or "user"
+
+    slug = base_slug
+    counter = 1
+
+    while await check_kv_key_exists(slug):
+        slug = f"{base_slug}{counter}"
+        counter += 1
+
+    return slug
+
+def get_user_slug(user_data: dict, default_name: str = "") -> str | None:
+    custom_slug = user_data.get("custom_slug", "").strip().lower()
+    if custom_slug:
+        return re.sub(r'[^a-z0-9-]', '', custom_slug)
+    
+    if user_data.get("slug"):
+        return user_data.get("slug")
+
+    if user_data.get("cp_status") != "active":
+        return None
+
+    raw_name = user_data.get("nama_panggilan", default_name or "user")
+    clean_name = re.sub(r'[^a-z0-9]', '', str(raw_name).lower().replace(" ", ""))
+    return clean_name or "user"
 
 async def is_slug_available(slug: str, current_user_id: int = None) -> tuple[bool, str]:
     """

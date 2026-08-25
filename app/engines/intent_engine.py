@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 class IntentType(str, Enum):
     CASUAL = "CASUAL"
     CAREER_QUERY = "CAREER_QUERY"
+    GENERAL_QUERY = "GENERAL_QUERY"
     CV_REVIEW = "CV_REVIEW"
     CV_CREATION = "CV_CREATION"
     CAREER_PAGE = "CAREER_PAGE"

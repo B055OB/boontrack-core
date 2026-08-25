@@ -80,9 +80,13 @@ async def notify_payment_success_universal(user_id: str, amount: int, platform: 
             logger.error(f"[Payment WhatsApp Notify Error] {e}")
     else:
         try:
-            from app.services.telegram_service import send_telegram_message
-            await send_telegram_message(int(user_id), success_msg.replace("*", "**"))
-            logger.info(f"[PAYMENT NOTIFY] Telegram success sent to {user_id}")
+            bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+            if bot_token:
+                async with aiohttp.ClientSession() as session:
+                    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                    payload = {"chat_id": int(user_id), "text": success_msg.replace("*", "")}
+                    await session.post(url, json=payload)
+                logger.info(f"[PAYMENT NOTIFY] Telegram success sent to {user_id}")
         except Exception as te:
             logger.error(f"[Payment Telegram Notify Error] {te}")
 
@@ -180,7 +184,7 @@ def register_payment_routes(app: web.Application):
     app.router.add_get("/assets/qris.jpg", serve_qris_asset)
 
     # Endpoint webhook mutasi pembayaran
-    app.router.add_post("/webhook/dana", handle_dana_webhook)
-    app.router.add_post("/api/webhook/dana", handle_dana_webhook)
     app.router.add_post("/api/payments/webhook", handle_dana_webhook)
-    app.router.add_get("/webhook/dana", lambda r: web.json_response({"status": "running", "gateway": "BoonTrack QRIS"}))
+    async def _dana_health(r):
+        return web.json_response({"status": "running", "gateway": "BoonTrack QRIS"})
+    app.router.add_get("/webhook/dana", _dana_health)

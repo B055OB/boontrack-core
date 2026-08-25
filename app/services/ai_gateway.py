@@ -155,6 +155,13 @@ class AIGateway:
         error_msg: str
     ):
         try:
+            clean_user_id = None
+            if user_id is not None:
+                try:
+                    clean_user_id = int(user_id)
+                except (ValueError, TypeError):
+                    clean_user_id = None
+
             conn = self._get_db_conn()
             cur = conn.cursor()
             query = """
@@ -163,7 +170,7 @@ class AIGateway:
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
             """
             cur.execute(query, (
-                user_id, provider, feature, p_tokens, c_tokens,
+                clean_user_id, provider, feature, p_tokens, c_tokens,
                 p_tokens + c_tokens, status_code, is_error, error_msg[:500]
             ))
             conn.commit()
@@ -333,3 +340,6 @@ class AIGateway:
                 return res_text, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
             except (KeyError, IndexError) as e:
                 raise RuntimeError(f"Unexpected OpenRouter response shape: {data}") from e
+
+
+ai_gateway = AIGateway()
