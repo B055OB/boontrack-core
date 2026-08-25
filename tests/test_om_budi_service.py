@@ -182,6 +182,61 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
         self.assertIn("menu_zoom_booster", btn_ids)
         self.assertIn("menu_sedekah_berjamaah", btn_ids)
 
+    async def test_zoom_booster_options_limited_to_4_core_items(self):
+        """Memvalidasi pilihan informasi Zoom Booster dibatasi persis pada 4 opsi utama dan tombol navigasi."""
+        # 1. Validasi List Menu Opsi Zoom Booster
+        res = await om_budi_service.handle_incoming_message(
+            phone_number="081234567890",
+            message_text="",
+            button_id="menu_zoom_booster"
+        )
+        self.assertEqual(res.get("type"), "list")
+        sections = res.get("sections", [])
+        self.assertEqual(len(sections), 1)
+        rows = sections[0].get("rows", [])
+        self.assertEqual(len(rows), 4)
+
+        row_ids = [r["id"] for r in rows]
+        row_titles = [r["title"] for r in rows]
+
+        self.assertEqual(row_ids, ["btn_sub_1_a", "btn_sub_1_b", "btn_sub_1_c", "btn_sub_1_d"])
+        self.assertIn("Cara Mengikuti", row_titles)
+        self.assertIn("Jadwal Zoom", row_titles)
+        self.assertIn("Tentang Zoom Booster", row_titles)
+        self.assertIn("Peserta yang Bisa Ikut", row_titles)
+
+        # Pastikan opsi di luar 4 ini tidak ada
+        for disabled_id in ["btn_sub_1_e", "btn_sub_1_f", "btn_sub_1_g", "btn_sub_1_h"]:
+            self.assertNotIn(disabled_id, row_ids)
+
+        # 2. Validasi Setiap Handler Mengembalikan Teks & Tombol Navigasi
+        test_options = [
+            ("btn_sub_1_a", "Cara Mengikuti Zoom Booster"),
+            ("btn_sub_1_b", "Jadwal Zoom Booster"),
+            ("btn_sub_1_c", "Tentang Zoom Booster"),
+            ("btn_sub_1_d", "Peserta yang Bisa Mengikuti")
+        ]
+
+        for btn_id, keyword in test_options:
+            with self.subTest(btn_id=btn_id):
+                opt_res = await om_budi_service.handle_incoming_message(
+                    phone_number="081234567890",
+                    message_text="",
+                    button_id=btn_id
+                )
+                self.assertEqual(opt_res.get("type"), "buttons")
+                reply = opt_res.get("reply", "")
+                self.assertIn(keyword, reply)
+
+                buttons = opt_res.get("buttons", [])
+                btn_ids = [b["id"] for b in buttons]
+                btn_titles = [b["title"] for b in buttons]
+
+                self.assertIn("menu_zoom_booster", btn_ids)
+                self.assertIn("btn_menu_utama", btn_ids)
+                self.assertTrue(any("pilih" in t.lower() or "info" in t.lower() or "topik" in t.lower() for t in btn_titles))
+                self.assertTrue(any("menu utama" in t.lower() for t in btn_titles))
+
     async def test_send_wa_image_payload_structure_and_fallback(self):
         """Memvalidasi fungsi send_wa_image membentuk payload link HTTPS Meta API dan fallback ke text jika gagal."""
         from unittest.mock import patch, MagicMock, AsyncMock
@@ -231,3 +286,4 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

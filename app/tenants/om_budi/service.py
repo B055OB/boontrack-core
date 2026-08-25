@@ -266,7 +266,7 @@ class OmBudiService:
                 ]
             }
 
-        # 7. Handle Tombol & Sub-Menu Zoom Booster
+        # 7. Handle Tombol & Sub-Menu Zoom Booster (4 Opsi Utama)
         if button_id == "menu_zoom_booster" or "zoom booster" in clean_text:
             sections = [
                 {
@@ -275,11 +275,7 @@ class OmBudiService:
                         {"id": "btn_sub_1_a", "title": "Cara Mengikuti", "description": "Langkah bergabung ke sesi live"},
                         {"id": "btn_sub_1_b", "title": "Jadwal Zoom", "description": "Waktu & tanggal pelaksanaan"},
                         {"id": "btn_sub_1_c", "title": "Tentang Zoom Booster", "description": "Penjelasan materi & bedah energi"},
-                        {"id": "btn_sub_1_d", "title": "Peserta yang Bisa Ikut", "description": "Kriteria peserta jamaah"},
-                        {"id": "btn_sub_1_e", "title": "Link Masuk Zoom", "description": "Tautan resmi ruang pertemuan"},
-                        {"id": "btn_sub_1_f", "title": "Materi & Rekaman Zoom", "description": "Akses video siaran ulang"},
-                        {"id": "btn_sub_1_h", "title": "🎧 Audio Brainwave", "description": "Link download 3 audio riyadhoh"},
-                        {"id": "btn_sub_1_g", "title": "Tidak Bisa Hadir Live", "description": "Solusi jika berhalangan hadir"}
+                        {"id": "btn_sub_1_d", "title": "Peserta yang Bisa Ikut", "description": "Kriteria peserta jamaah"}
                     ]
                 }
             ]
@@ -291,26 +287,34 @@ class OmBudiService:
             }
 
         zoom_nav = [
-            {"id": "menu_zoom_booster", "title": "📋 Topik Zoom"},
+            {"id": "menu_zoom_booster", "title": "Pilih Info Lain"},
             {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
         ]
 
         if button_id == "btn_sub_1_a" or "cara mengikuti" in clean_text:
-            return {"type": "buttons", "reply": "📝 *Cara Mengikuti Zoom Booster*\n\n1. Pasang aplikasi Zoom di HP/Laptop.\n2. Masuk tautan 10-15 menit sebelum mulai.\n3. Gunakan nama asli agar mudah disapa Om Budi 😊.", "buttons": zoom_nav}
+            return {
+                "type": "buttons",
+                "reply": "📝 *Cara Mengikuti Zoom Booster*\n\n1. Pasang aplikasi Zoom Cloud Meetings di HP atau Laptop.\n2. Masuk melalui tautan Zoom resmi yang dibagikan 10-15 menit sebelum acara dimulai.\n3. Gunakan nama asli akun Zoom agar mudah disapa oleh Om Budi 😊.",
+                "buttons": zoom_nav
+            }
         if button_id == "btn_sub_1_b" or "jadwal zoom" in clean_text:
-            return {"type": "buttons", "reply": "🗓️ *Jadwal Zoom Booster*\n\nSesi rutin diadakan setiap hari **Rabu malam** pukul 20.00 WIB 🙏.", "buttons": zoom_nav}
+            return {
+                "type": "buttons",
+                "reply": "🗓️ *Jadwal Zoom Booster*\n\nSesi rutin bimbingan diadakan setiap hari **Rabu malam** pukul **20.00 WIB** secara live online 🙏.",
+                "buttons": zoom_nav
+            }
         if button_id == "btn_sub_1_c" or "tentang zoom" in clean_text:
-            return {"type": "buttons", "reply": "✨ *Tentang Zoom Booster*\n\nSesi penguatan vibrasi energi, bedah sumbatan rezeki, konsultasi langsung, serta bimbingan riyadhoh sholawat bersama Om Budi 😊.", "buttons": zoom_nav}
+            return {
+                "type": "buttons",
+                "reply": "✨ *Tentang Zoom Booster*\n\nSesi khusus penguatan vibrasi energi, bedah sumbatan rezeki, konsultasi langsung, serta bimbingan riyadhoh sholawat bersama Om Budi 😊.",
+                "buttons": zoom_nav
+            }
         if button_id == "btn_sub_1_d" or "peserta" in clean_text:
-            return {"type": "buttons", "reply": "👥 *Peserta yang Bisa Mengikuti*\n\nSeluruh alumni terdaftar dan jamaah yang mendukung program Zoom Booster & Orang Tua Asuh 🙏.", "buttons": zoom_nav}
-        if button_id == "btn_sub_1_e" or "link masuk zoom" in clean_text or "link zoom" in clean_text:
-            return {"type": "buttons", "reply": ZOOM_INFO_OM_BUDI, "buttons": zoom_nav}
-        if button_id == "btn_sub_1_h":
-            return {"type": "text", "reply": AUDIO_BRAINWAVE_OM_BUDI, "buttons": zoom_nav}
-        if button_id == "btn_sub_1_f" or "materi & rekaman" in clean_text:
-            return {"type": "buttons", "reply": "📹 *Materi & Rekaman Zoom*\n\nRekaman video sesi sebelumnya diunggah maksimal 1x24 jam ke Portal Alumni 😊.", "buttons": zoom_nav}
-        if button_id == "btn_sub_1_g" or "tidak bisa hadir" in clean_text:
-            return {"type": "buttons", "reply": "🤝 *Jika Tidak Bisa Hadir Live*\n\nTidak perlu khawatir ya 😊, Bapak/Ibu tetap bisa menyimak siaran ulang rekaman dan mendawamkan amalan secara mandiri 🙏.", "buttons": zoom_nav}
+            return {
+                "type": "buttons",
+                "reply": "👥 *Peserta yang Bisa Mengikuti*\n\nProgram ini terbuka untuk seluruh alumni terdaftar dan jamaah yang mendukung program Zoom Booster & Orang Tua Asuh 🙏.",
+                "buttons": zoom_nav
+            }
 
         # 8. Handle Sedekah & Info Pilihan Penyaluran
         if button_id == "menu_sedekah_berjamaah" or clean_text == "sedekah":
