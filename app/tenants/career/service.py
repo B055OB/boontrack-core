@@ -31,6 +31,7 @@ from app.services.whatsapp_service import (
     send_whatsapp_text,
     send_whatsapp_image,
     send_whatsapp_buttons,
+    send_whatsapp_document,
     safe_log_to_supabase_messages
 )
 from app.services.cv_state_engine import process_unified_cv_step, GLOBAL_USER_STATES
@@ -38,6 +39,7 @@ from app.engines.cv_review_engine import cv_review_engine
 from app.services.cv_review_service import cv_review_service
 from app.services.ai_service import ai_gateway
 from app.core.database import track_event
+from app.services.analytics_service import analytics_service
 from app.services.document_parser_service import download_whatsapp_media, extract_text_from_bytes
 from app.services.reconciliation_service import generate_unique_payment_intent, PAYMENT_INTENTS
 
@@ -124,6 +126,21 @@ class CareerService:
         await send_whatsapp_text(sender_wa_id, diagnosis_msg, tenant_id=TENANT_ID)
         await track_event(sender_wa_id, "review_completed", meta={"score": overall_score, "file": filename})
 
+        # 🎯 2. Funnel Metric: career_cv_review_submitted
+        user_session = GLOBAL_USER_STATES.get(sender_wa_id, {})
+        await analytics_service.log_funnel_event(
+            event_name="career_cv_review_submitted",
+            user_id=sender_wa_id,
+            tenant_id=TENANT_ID,
+            utm_source=user_session.get("utm_source", "direct"),
+            metadata={
+                "sender_wa_id": sender_wa_id,
+                "score": overall_score,
+                "filename": filename,
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+
         # Jika sudah premium, jangan kirim upsell pembayaran lagi, langsung tawarkan menu pro
         if self.is_user_premium(sender_wa_id):
             await asyncio.sleep(2)
@@ -195,6 +212,21 @@ class CareerService:
                     user_session["is_premium_paid"] = True
                     user_session["tier"] = "premium_unlocked"
                     user_session["mode"] = "menu"
+
+                    # 🎯 3. Funnel Metric: career_premium_hr_converted
+                    await analytics_service.log_funnel_event(
+                        event_name="career_premium_hr_converted",
+                        user_id=sender_wa_id,
+                        tenant_id=TENANT_ID,
+                        utm_source=user_session.get("utm_source", "direct"),
+                        metadata={
+                            "sender_wa_id": sender_wa_id,
+                            "amount": amount,
+                            "invoice_id": active_invoice,
+                            "verification_method": "ocr_receipt",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    )
 
                     success_msg = (
                         f"🎉 *BUKTI TRANSFER TERVERIFIKASI!*\n"
@@ -652,9 +684,36 @@ class CareerService:
                 await send_whatsapp_text(sender_wa_id, msg, tenant_id=TENANT_ID)
 
             if result.get("is_completed"):
+                file_path = result.get("file_path")
+                if file_path and os.path.exists(file_path):
+                    try:
+                        doc_caption = "📄 *File CV Dasar (.docx)* telah berhasil di-generate."
+                        await send_whatsapp_document(
+                            to_phone=sender_wa_id,
+                            file_path_or_bytes=file_path,
+                            filename=os.path.basename(file_path),
+                            caption=doc_caption,
+                            tenant_id=TENANT_ID
+                        )
+                    except Exception as doc_err:
+                        logger.warning(f"Error sending docx file to WA: {doc_err}")
+
                 user_session["mode"] = "post_cv"
                 user_session["step"] = 0
                 user_session.setdefault("data", {})["has_completed_cv"] = True
+
+                # 🎯 1. Funnel Metric: career_cv_build_completed
+                await analytics_service.log_funnel_event(
+                    event_name="career_cv_build_completed",
+                    user_id=sender_wa_id,
+                    tenant_id=TENANT_ID,
+                    utm_source=user_session.get("utm_source", "direct"),
+                    metadata={
+                        "sender_wa_id": sender_wa_id,
+                        "file_path": file_path,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
             return
 
         # 12. Review via Manual Text Input

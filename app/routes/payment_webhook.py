@@ -65,6 +65,25 @@ async def handle_reader_mutation_webhook(request: web.Request) -> web.Response:
 
         if user_id in GLOBAL_USER_STATES:
             GLOBAL_USER_STATES[user_id]["is_premium_paid"] = True
+            GLOBAL_USER_STATES[user_id]["tier"] = "premium_unlocked"
+
+        # 🎯 Funnel Metric: career_premium_hr_converted
+        try:
+            from app.services.analytics_service import analytics_service
+            await analytics_service.log_funnel_event(
+                event_name="career_premium_hr_converted",
+                user_id=user_id,
+                tenant_id="boontrack-career",
+                utm_source="mutation_reader",
+                metadata={
+                    "sender_wa_id": user_id,
+                    "amount": amount,
+                    "invoice_id": invoice_id,
+                    "verification_method": "reader_mutation"
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Error logging career_premium_hr_converted from reader: {e}")
 
         return web.json_response({"status": "SUCCESS", "action": "AUTO_FULFILLED", "invoice": invoice_id})
 

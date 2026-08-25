@@ -329,6 +329,111 @@ class TestCareerModular(AioHTTPTestCase):
         mock_ai_generate.assert_called_once()
         self.assertEqual(GLOBAL_USER_STATES["62899998888"]["mode"], "menu")
 
+    @unittest_run_loop
+    @patch("app.tenants.career.service.analytics_service.log_funnel_event")
+    @patch("app.tenants.career.service.send_whatsapp_text")
+    @patch("app.tenants.career.service.send_whatsapp_buttons")
+    @patch("app.tenants.career.service.track_event")
+    async def test_funnel_event_career_cv_review_submitted(self, mock_track, mock_send_btns, mock_send_text, mock_log_funnel):
+        """Memvalidasi logging funnel event: career_cv_review_submitted saat hasil review CV selesai."""
+        mock_log_funnel.return_value = True
+        mock_send_text.return_value = {"status": "success"}
+        mock_send_btns.return_value = {"status": "success"}
+
+        review_data = {
+            "overall_score": 88,
+            "breakdown_scores": {"ats": 90, "formatting": 85},
+            "findings": ["Pengalaman kerja sangat solid"]
+        }
+
+        await career_service.deliver_review_and_trigger_upsell(
+            sender_wa_id="62811122233",
+            filtered_data=review_data,
+            filename="curriculum_vitae.pdf"
+        )
+
+        mock_log_funnel.assert_called_once()
+        call_kwargs = mock_log_funnel.call_args[1]
+        self.assertEqual(call_kwargs["event_name"], "career_cv_review_submitted")
+        self.assertEqual(call_kwargs["user_id"], "62811122233")
+        self.assertEqual(call_kwargs["tenant_id"], "boontrack-career")
+        self.assertEqual(call_kwargs["metadata"]["score"], 88)
+        self.assertEqual(call_kwargs["metadata"]["filename"], "curriculum_vitae.pdf")
+
+    @unittest_run_loop
+    @patch("app.tenants.career.service.analytics_service.log_funnel_event")
+    @patch("app.tenants.career.service.parse_receipt_image")
+    @patch("app.tenants.career.service.download_whatsapp_media")
+    @patch("app.tenants.career.service.send_whatsapp_text")
+    @patch("app.tenants.career.service.send_whatsapp_buttons")
+    @patch("app.tenants.career.service.safe_log_to_supabase_messages")
+    async def test_funnel_event_career_premium_hr_converted(self, mock_log_msg, mock_send_btns, mock_send_text, mock_download, mock_ocr, mock_log_funnel):
+        """Memvalidasi logging funnel event: career_premium_hr_converted saat struk terverifikasi via OCR."""
+        mock_log_funnel.return_value = True
+        mock_download.return_value = b"fake_image_bytes"
+        mock_ocr.return_value = {
+            "is_valid_receipt": True,
+            "is_transfer_receipt": True,
+            "amount": 25350,
+            "nominal": 25350
+        }
+
+        GLOBAL_USER_STATES["62877788899"] = {
+            "mode": "awaiting_rewrite_payment",
+            "active_invoice": "BT-9901-350"
+        }
+
+        await career_service.handle_image(
+            sender_wa_id="62877788899",
+            display_name="Kandidat Pro",
+            media_id="media_struk_999"
+        )
+
+        mock_log_funnel.assert_called_once()
+        call_kwargs = mock_log_funnel.call_args[1]
+        self.assertEqual(call_kwargs["event_name"], "career_premium_hr_converted")
+        self.assertEqual(call_kwargs["user_id"], "62877788899")
+        self.assertEqual(call_kwargs["tenant_id"], "boontrack-career")
+        self.assertEqual(call_kwargs["metadata"]["amount"], 25350)
+        self.assertEqual(call_kwargs["metadata"]["invoice_id"], "BT-9901-350")
+        self.assertTrue(GLOBAL_USER_STATES["62877788899"]["is_premium_paid"])
+
+    @unittest_run_loop
+    @patch("app.tenants.career.service.analytics_service.log_funnel_event")
+    @patch("app.tenants.career.service.process_unified_cv_step")
+    @patch("app.tenants.career.service.send_whatsapp_text")
+    @patch("app.tenants.career.service.send_whatsapp_document")
+    @patch("app.tenants.career.service.safe_log_to_supabase_messages")
+    async def test_funnel_event_career_cv_build_completed(self, mock_log_msg, mock_send_doc, mock_send_text, mock_cv_step, mock_log_funnel):
+        """Memvalidasi logging funnel event: career_cv_build_completed saat wizard CV selesai."""
+        mock_log_funnel.return_value = True
+        mock_cv_step.return_value = {
+            "reply_text": "CV Dasar Anda selesai!",
+            "messages": ["CV Dasar Anda selesai!"],
+            "file_path": None,
+            "is_completed": True
+        }
+
+        GLOBAL_USER_STATES["62833344455"] = {
+            "mode": "builder",
+            "step": 8,
+            "data": {}
+        }
+
+        await career_service.handle_text_or_button(
+            sender_wa_id="62833344455",
+            display_name="User Builder",
+            user_text="Selesai",
+            button_id=""
+        )
+
+        mock_log_funnel.assert_called_once()
+        call_kwargs = mock_log_funnel.call_args[1]
+        self.assertEqual(call_kwargs["event_name"], "career_cv_build_completed")
+        self.assertEqual(call_kwargs["user_id"], "62833344455")
+        self.assertEqual(call_kwargs["tenant_id"], "boontrack-career")
+        self.assertEqual(GLOBAL_USER_STATES["62833344455"]["mode"], "post_cv")
+
     def test_legacy_wrapper_exports(self):
         self.assertEqual(handle_incoming_whatsapp, legacy_handle_incoming)
         self.assertEqual(verify_webhook, legacy_verify_webhook)
@@ -336,4 +441,5 @@ class TestCareerModular(AioHTTPTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

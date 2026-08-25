@@ -23,44 +23,107 @@ class AnalyticsService:
         self,
         event_name: str,
         user_id: Optional[Any] = None,
+        tenant_id: str = "boontrack-career",
+        utm_source: Optional[str] = None,
         utm_params: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
         """
-        Mencatat event funnel akuisisi:
-        - cv_review_started
-        - cv_uploaded
-        - cv_review_completed
-        - cv_review_result_viewed
-        - premium_cta_clicked
-        - career_page_opened
-        - payment_started
-        - payment_completed
+        Mencatat event funnel akuisisi & konversi multi-tenant:
+        - career_cv_build_completed
+        - career_cv_review_submitted
+        - career_premium_hr_converted
+        - dsb.
         """
+        from datetime import datetime, timezone
+        from app.core.database import track_event
+
+        sender_id = str(user_id or (metadata or {}).get("sender_wa_id") or "")
+        source = utm_source or (utm_params or {}).get("utm_source") or (metadata or {}).get("utm_source") or "direct"
+        meta = metadata or {}
+        now_iso = meta.get("timestamp") or datetime.now(timezone.utc).isoformat()
+
+        # 1. Track ke PostgreSQL Internal
+        try:
+            if sender_id:
+                await track_event(sender_id, event_name, meta={**meta, "tenant_id": tenant_id, "utm_source": source})
+        except Exception as e:
+            print(f"[ANALYTICS DB TRACK ERROR] {event_name}: {e}")
+
+        # 2. Track ke Supabase
         if not self.supabase:
-            print(f"[ANALYTICS FUNNEL LOCAL] {event_name} - User: {user_id} - Metadata: {metadata}")
-            return False
+            print(f"[ANALYTICS FUNNEL LOCAL] [{tenant_id}] {event_name} - User: {sender_id} - Source: {source}")
+            return True
 
         try:
             utm = utm_params or {}
-            meta = metadata or {}
-            
             payload = {
                 "event_name": event_name,
-                "telegram_user_id": str(user_id) if user_id else None,
-                "utm_source": utm.get("utm_source") or meta.get("utm_source", "direct"),
+                "tenant_id": tenant_id,
+                "sender_wa_id": sender_id,
+                "telegram_user_id": sender_id,
+                "user_id": sender_id,
+                "utm_source": source,
                 "utm_medium": utm.get("utm_medium") or meta.get("utm_medium", "none"),
                 "utm_campaign": utm.get("utm_campaign") or meta.get("utm_campaign", "none"),
                 "utm_content": utm.get("utm_content") or meta.get("utm_content", "none"),
                 "utm_term": utm.get("utm_term") or meta.get("utm_term", "none"),
+                "metadata": meta,
+                "created_at": now_iso
             }
 
-            self.supabase.table("click_logs").insert(payload).execute()
-            print(f"[FUNNEL LOGGED] {event_name} for user {user_id}")
+            # Coba insert ke analytics_events terlebih dahulu, fallback ke click_logs jika skema berbeda
+            try:
+                self.supabase.table("analytics_events").insert(payload).execute()
+            except Exception:
+                # Fallback ke tabel click_logs standard
+                legacy_payload = {
+                    "event_name": event_name,
+                    "telegram_user_id": sender_id,
+                    "utm_source": source,
+                    "utm_medium": utm.get("utm_medium") or meta.get("utm_medium", "none"),
+                    "utm_campaign": utm.get("utm_campaign") or meta.get("utm_campaign", "none"),
+                    "utm_content": utm.get("utm_content") or meta.get("utm_content", "none"),
+                    "utm_term": utm.get("utm_term") or meta.get("utm_term", "none"),
+                }
+                self.supabase.table("click_logs").insert(legacy_payload).execute()
+
+            print(f"[FUNNEL LOGGED] [{tenant_id}] {event_name} for user {sender_id}")
             return True
         except Exception as e:
             print(f"[FUNNEL LOG ERROR] {event_name}: {e}")
             return False
+
+    def safe_log_funnel_event(
+        self,
+        event_name: str,
+        user_id: Optional[Any] = None,
+        tenant_id: str = "boontrack-career",
+        utm_source: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ):
+        """Fire-and-forget background logging untuk funnel event."""
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.log_funnel_event(
+                event_name=event_name,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                utm_source=utm_source,
+                metadata=metadata
+            ))
+        except RuntimeError:
+            asyncio.create_task(self.log_funnel_event(
+                event_name=event_name,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                utm_source=utm_source,
+                metadata=metadata
+            ))
+        except Exception as e:
+            print(f"[SAFE FUNNEL LOG EXCEPTION] {e}")
+
 
     # ============================================================
     # REALTIME METRICS
