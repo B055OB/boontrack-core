@@ -49,7 +49,20 @@ async def send_wa_text(recipient_phone: str, text: str):
 
 
 async def send_wa_interactive_buttons(recipient_phone: str, body_text: str, buttons: list):
-    """Kirim WhatsApp Quick Reply Buttons (Maksimal 3 Tombol)"""
+    """Kirim WhatsApp Quick Reply Buttons (Maksimal 3 Tombol).
+    Jika panjang body_text melebihi 1000 karakter (limit Meta: 1024),
+    teks akan dikirim sebagai pesan teks biasa terlebih dahulu, lalu disusul
+    pesan ringkas berisi tombol navigasi.
+    """
+    if not buttons:
+        await send_wa_text(recipient_phone, body_text)
+        return
+
+    if len(body_text) > 1000:
+        # Kirim teks konten panjang terlebih dahulu
+        await send_wa_text(recipient_phone, body_text)
+        body_text = "👇 *Silakan pilih menu navigasi di bawah ini:*"
+
     button_rows = []
     for btn in buttons[:3]:
         button_rows.append({
@@ -65,7 +78,7 @@ async def send_wa_interactive_buttons(recipient_phone: str, body_text: str, butt
         "type": "interactive",
         "interactive": {
             "type": "button",
-            "body": {"text": body_text},
+            "body": {"text": body_text[:1024]},
             "action": {"buttons": button_rows}
         }
     }
@@ -130,18 +143,30 @@ async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
             user_name=contact_name
         )
 
-        # Kirim balik respons (Bisa teks biasa atau interactive buttons)
-        if response_data.get("type") == "buttons":
+        res_type = response_data.get("type", "text")
+        reply_text = response_data.get("reply", "")
+        buttons = response_data.get("buttons") or response_data.get("nav_buttons")
+
+        # Kirim balik respons
+        if res_type == "buttons" and len(reply_text) <= 1000:
             await send_wa_interactive_buttons(
                 recipient_phone=from_phone,
-                body_text=response_data["reply"],
-                buttons=response_data["buttons"]
+                body_text=reply_text,
+                buttons=buttons or []
             )
         else:
+            # Kirim konten teks biasa (mendukung hingga 4096 karakter)
             await send_wa_text(
                 recipient_phone=from_phone,
-                text=response_data.get("reply", "")
+                text=reply_text
             )
+            # Jika ada tombol navigasi terlampir, kirim pesan kedua terpisah berisi tombol
+            if buttons:
+                await send_wa_interactive_buttons(
+                    recipient_phone=from_phone,
+                    body_text="👇 *Pilih menu untuk melanjutkan:*",
+                    buttons=buttons
+                )
 
         return web.json_response({"status": "success"}, status=200)
 

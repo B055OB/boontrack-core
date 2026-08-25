@@ -194,7 +194,7 @@ class OmBudiService:
         ]
         if button_id in ["btn_audio_brainwave", "btn_sub_1_h"] or any(k in clean_text for k in audio_keywords):
             return {
-                "type": "buttons",
+                "type": "text",
                 "reply": AUDIO_BRAINWAVE_OM_BUDI,
                 "buttons": [
                     {"id": "btn_materi_riyadhoh", "title": "📚 Materi Riyadhoh"},
@@ -210,7 +210,7 @@ class OmBudiService:
         ]
         if button_id == "btn_materi_riyadhoh" or any(k in clean_text for k in materi_keywords):
             return {
-                "type": "buttons",
+                "type": "text",
                 "reply": MATERI_RIYADHOH_OM_BUDI,
                 "buttons": [
                     {"id": "btn_audio_brainwave", "title": "🎧 Audio Brainwave"},
@@ -258,7 +258,7 @@ class OmBudiService:
         if button_id == "btn_sub_1_e" or "link masuk zoom" in clean_text or "link zoom" in clean_text:
             return {"type": "buttons", "reply": ZOOM_INFO_OM_BUDI, "buttons": zoom_nav}
         if button_id == "btn_sub_1_h":
-            return {"type": "buttons", "reply": AUDIO_BRAINWAVE_OM_BUDI, "buttons": zoom_nav}
+            return {"type": "text", "reply": AUDIO_BRAINWAVE_OM_BUDI, "buttons": zoom_nav}
         if button_id == "btn_sub_1_f" or "materi & rekaman" in clean_text:
             return {"type": "buttons", "reply": "📹 *Materi & Rekaman Zoom*\n\nRekaman video sesi sebelumnya diunggah maksimal 1x24 jam ke Portal Alumni 😊.", "buttons": zoom_nav}
         if button_id == "btn_sub_1_g" or "tidak bisa hadir" in clean_text:
@@ -304,7 +304,7 @@ class OmBudiService:
             conf, score, answer, intent = self.matcher.find_match(message_text)
             if conf in [MatchConfidence.HIGH, MatchConfidence.MEDIUM] and answer:
                 return {
-                    "type": "buttons",
+                    "type": "text",
                     "reply": answer,
                     "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]
                 }
@@ -322,7 +322,7 @@ class OmBudiService:
             )
             if ai_reply and len(ai_reply.strip()) > 10:
                 return {
-                    "type": "buttons",
+                    "type": "text",
                     "reply": ai_reply,
                     "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]
                 }

@@ -98,6 +98,15 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Di
     if not clean_body or clean_body.lower() in ["none", "null"]:
         clean_body = "Silakan pilih salah satu opsi di bawah untuk melanjutkan:"
 
+    if not buttons:
+        await send_wa_text(recipient_phone, clean_body, phone_id)
+        return
+
+    # Jika teks melebihi limit 1000 karakter Meta API, kirim teks biasa dulu lalu kirim tombol
+    if len(clean_body) > 1000:
+        await send_wa_text(recipient_phone, clean_body, phone_id)
+        clean_body = "👇 *Silakan pilih menu navigasi di bawah ini:*"
+
     url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -110,7 +119,7 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Di
         "type": "interactive",
         "interactive": {
             "type": "button",
-            "body": {"text": clean_body},
+            "body": {"text": clean_body[:1024]},
             "action": {"buttons": button_rows}
         }
     }
@@ -287,6 +296,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
             res_type = res.get("type", "text")
             reply_text = res.get("reply", "")
+            buttons = res.get("buttons") or res.get("nav_buttons")
 
             if res_type == "list":
                 await send_wa_list_menu(
@@ -296,10 +306,19 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     res.get("sections", []),
                     phone_id
                 )
-            elif res_type == "buttons":
-                await send_wa_buttons(from_phone, reply_text, res.get("buttons", []), phone_id)
+            elif res_type == "buttons" and len(reply_text) <= 1000:
+                await send_wa_buttons(from_phone, reply_text, buttons or [], phone_id)
             else:
+                # Kirim teks konten biasa (support s/d 4096 karakter)
                 await send_wa_text(from_phone, reply_text, phone_id)
+                # Jika ada tombol navigasi, kirim pesan terpisah berisi tombol
+                if buttons:
+                    await send_wa_buttons(
+                        from_phone,
+                        "👇 *Pilih menu untuk melanjutkan:*",
+                        buttons,
+                        phone_id
+                    )
 
             return web.json_response({"status": "success", "tenant": "om_budi"}, status=200)
 

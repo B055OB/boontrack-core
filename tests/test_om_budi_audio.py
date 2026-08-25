@@ -25,6 +25,7 @@ class TestOmBudiAudioAndRiyadhoh(unittest.IsolatedAsyncioTestCase):
                     user_name="Bapak Ahmad"
                 )
                 reply = res.get("reply", "")
+                self.assertEqual(res.get("type"), "text", f"Expected type 'text' for query '{q}', got '{res.get('type')}'")
                 self.assertNotIn("belum bisa menjawab", reply.lower(), f"Failed for query '{q}'")
                 self.assertIn("drive.google.com", reply, f"Google Drive link missing for query '{q}'")
                 self.assertIn("18GjQd8SMymV8kxfvOPodvIXNxlVLbhW9", reply)
@@ -35,6 +36,7 @@ class TestOmBudiAudioAndRiyadhoh(unittest.IsolatedAsyncioTestCase):
             message_text="",
             button_id="btn_audio_brainwave"
         )
+        self.assertEqual(res.get("type"), "text")
         reply = res.get("reply", "")
         self.assertIn("drive.google.com", reply)
         self.assertIn("PANTANGAN PENTING", reply)
@@ -55,6 +57,7 @@ class TestOmBudiAudioAndRiyadhoh(unittest.IsolatedAsyncioTestCase):
                     message_text=q,
                     user_name="Ibu Siti"
                 )
+                self.assertEqual(res.get("type"), "text", f"Expected type 'text' for query '{q}', got '{res.get('type')}'")
                 reply = res.get("reply", "")
                 self.assertNotIn("belum bisa menjawab", reply.lower(), f"Failed for query '{q}'")
                 self.assertIn("Sholawat Jibril", reply)
