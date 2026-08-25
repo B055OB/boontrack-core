@@ -4,7 +4,12 @@ import os
 from typing import Dict, Any, Optional
 from app.core.ai.fallback.matcher import LocalKnowledgeMatcher
 from app.core.ai.fallback.confidence import MatchConfidence
-from app.core.messaging.templates import REKENING_OM_BUDI, ZOOM_INFO_OM_BUDI
+from app.core.messaging.templates import (
+    REKENING_OM_BUDI,
+    ZOOM_INFO_OM_BUDI,
+    AUDIO_BRAINWAVE_OM_BUDI,
+    MATERI_RIYADHOH_OM_BUDI
+)
 
 logger = logging.getLogger("OM_BUDI_SERVICE")
 KB_PATH = os.path.join(os.path.dirname(__file__), "knowledge_base.json")
@@ -19,6 +24,13 @@ SYSTEM_PROMPT_OM_BUDI = (
     "4. Rencana 30 Hari Bebas Hutang (tahapan mingguan, stop hutang baru, disiplin alur uang).\n"
     "5. Sangat Sederhana Cara Praktis Lunas Hutang (10 langkah praktis lahiriah, metode snowball/avalanche, negosiasi).\n"
     "6. Yuk Keluar Dari Riba (bahaya bunga pinjol/bank, negosiasi bayar pokok, doa perlindungan).\n\n"
+    "PENTING TERKAIT AUDIO BRAINWAVE & MATERI RIYADHOH:\n"
+    "- Jika user meminta file/link download audio brainwave, meditasi syukur, terapi rezeki, atau materi riyadhoh, kamu WAJIB memberikan link download resmi Google Drive berikut:\n"
+    "  1) Digital Prayers Quantum Ikhlas: https://drive.google.com/file/d/18GjQd8SMymV8kxfvOPodvIXNxlVLbhW9/view?usp=drivesdk\n"
+    "  2) Meditasi Syukur (Kekayaan & Kesehatan): https://drive.google.com/file/d/1yw1fVPT6mpPiqj27P0qu_yiNfrTKv4tr/view?usp=drive_link\n"
+    "  3) Audio Terapi Menarik Rezeki: https://drive.google.com/file/d/1zJOXiu-A-Jlh713tIvULS-tfbBBUEKLp/view?usp=drive_link\n"
+    "- Jangan pernah menolak atau mengatakan 'belum memiliki link' untuk audio brainwave/riyadhoh.\n"
+    "- Ingatkan pantangan: Dilarang mendengarkan saat menyetir atau mengoperasikan mesin.\n\n"
     "Aturan Format Balasan:\n"
     "- Awali jawaban dengan salam dan doa hangat: 'Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊'.\n"
     "- Jawab pertanyaan secara ringkas, terstruktur (gunakan bullet/nomor jika perlu), dan kuatkan tauhid jemaah.\n"
@@ -158,14 +170,52 @@ class OmBudiService:
         # 4. Handle Tombol / Teks Tanya Materi
         if button_id == "menu_tanya_materi" or "tanya materi" in clean_text:
             return {
-                "type": "text",
+                "type": "buttons",
                 "reply": (
                     "💬 *Ruang Tanya Materi Bimbingan*\n\n"
                     "Silakan ketik langsung pertanyaan Anda seputar materi bimbingan "
                     "(contoh: *'apa itu riyadhoh'*, *'berapa hari riyadhoh'*, "
                     "*'tahajud jam berapa'*, *'pantangan audio brainwave'*, atau *'cara nulis doa gimana'*).\n\n"
-                    "Bot akan langsung menjawab seketika 😊🙏."
-                )
+                    "Atau pilih menu cepat di bawah ini untuk mengunduh audio & panduan langsung 😊🙏:"
+                ),
+                "buttons": [
+                    {"id": "btn_audio_brainwave", "title": "🎧 Audio Brainwave"},
+                    {"id": "btn_materi_riyadhoh", "title": "📚 Materi Riyadhoh"},
+                    {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
+                ]
+            }
+
+        # 4.1 Handle Direct Trigger: Audio Brainwave & File Download
+        audio_keywords = [
+            "audio", "brainwave", "link audio", "minta audio", "kirim audio",
+            "download audio", "file audio", "rekaman audio", "audio riyadhoh",
+            "audio meditasi", "quantum ikhlas", "terapi rezeki", "mp3",
+            "suara brainwave", "dengerin audio", "putar audio", "lagu brainwave"
+        ]
+        if button_id in ["btn_audio_brainwave", "btn_sub_1_h"] or any(k in clean_text for k in audio_keywords):
+            return {
+                "type": "buttons",
+                "reply": AUDIO_BRAINWAVE_OM_BUDI,
+                "buttons": [
+                    {"id": "btn_materi_riyadhoh", "title": "📚 Materi Riyadhoh"},
+                    {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
+                ]
+            }
+
+        # 4.2 Handle Direct Trigger: Materi Riyadhoh & Panduan 40 Hari
+        materi_keywords = [
+            "materi riyadhoh", "buku riyadhoh", "pdf riyadhoh", "panduan riyadhoh",
+            "modul riyadhoh", "jadwal riyadhoh", "tata cara riyadhoh", "amalan riyadhoh",
+            "download riyadhoh", "file riyadhoh"
+        ]
+        if button_id == "btn_materi_riyadhoh" or any(k in clean_text for k in materi_keywords):
+            return {
+                "type": "buttons",
+                "reply": MATERI_RIYADHOH_OM_BUDI,
+                "buttons": [
+                    {"id": "btn_audio_brainwave", "title": "🎧 Audio Brainwave"},
+                    {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
+                ]
             }
 
         # 5. Handle Tombol & Sub-Menu Zoom Booster
@@ -180,6 +230,7 @@ class OmBudiService:
                         {"id": "btn_sub_1_d", "title": "Peserta yang Bisa Ikut", "description": "Kriteria peserta jamaah"},
                         {"id": "btn_sub_1_e", "title": "Link Masuk Zoom", "description": "Tautan resmi ruang pertemuan"},
                         {"id": "btn_sub_1_f", "title": "Materi & Rekaman Zoom", "description": "Akses video siaran ulang"},
+                        {"id": "btn_sub_1_h", "title": "🎧 Audio Brainwave", "description": "Link download 3 audio riyadhoh"},
                         {"id": "btn_sub_1_g", "title": "Tidak Bisa Hadir Live", "description": "Solusi jika berhalangan hadir"}
                     ]
                 }
@@ -206,6 +257,8 @@ class OmBudiService:
             return {"type": "buttons", "reply": "👥 *Peserta yang Bisa Mengikuti*\n\nSeluruh alumni terdaftar dan jamaah yang mendukung program Zoom Booster & Orang Tua Asuh 🙏.", "buttons": zoom_nav}
         if button_id == "btn_sub_1_e" or "link masuk zoom" in clean_text or "link zoom" in clean_text:
             return {"type": "buttons", "reply": ZOOM_INFO_OM_BUDI, "buttons": zoom_nav}
+        if button_id == "btn_sub_1_h":
+            return {"type": "buttons", "reply": AUDIO_BRAINWAVE_OM_BUDI, "buttons": zoom_nav}
         if button_id == "btn_sub_1_f" or "materi & rekaman" in clean_text:
             return {"type": "buttons", "reply": "📹 *Materi & Rekaman Zoom*\n\nRekaman video sesi sebelumnya diunggah maksimal 1x24 jam ke Portal Alumni 😊.", "buttons": zoom_nav}
         if button_id == "btn_sub_1_g" or "tidak bisa hadir" in clean_text:

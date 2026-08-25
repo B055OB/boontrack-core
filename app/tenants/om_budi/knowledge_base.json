@@ -189,7 +189,20 @@
         "pantangan dengar audio brainwave",
         "efek samping audio brainwave",
         "link audio brainwave",
-        "minta link audio"
+        "minta link audio",
+        "minta audio brainwave",
+        "kirim audio brainwave",
+        "download audio brainwave",
+        "file audio om budi",
+        "link download audio",
+        "audio riyadhoh",
+        "audio meditasi syukur",
+        "audio terapi rezeki",
+        "audio digital prayers",
+        "link google drive audio",
+        "minta link download audio",
+        "audio brainwave om budi",
+        "mp3 brainwave"
       ],
       "keywords": [
         "brainwave",
@@ -197,15 +210,57 @@
         "alphamatic",
         "visualisasi",
         "pantangan audio",
-        "link audio"
+        "link audio",
+        "audio",
+        "download audio",
+        "minta audio",
+        "mp3",
+        "file audio",
+        "audio riyadhoh",
+        "meditasi syukur",
+        "terapi rezeki",
+        "digital prayers"
       ],
       "confidence_boost": [
         "audio brainwave",
         "quantum ikhlas",
         "link audio",
-        "praktek audio"
+        "praktek audio",
+        "audio",
+        "brainwave",
+        "download audio",
+        "audio riyadhoh"
       ],
-      "answer": "🎧 *PANDUAN PRAKTEK AUDIO BRAINWAVE QUANTUM ENERGI* 🤲\n\n*4 Langkah Utama (Alphamatic - Niat - Visualisasi - Syukur)*:\n1) *Alphamatic*: Duduk santai/berbaring di tempat tenang (20-60 mnt), pakaian longgar, lepas kacamata/aksesoris.\n2) *Niat*: Setelah tenang ±5 menit, bisikkan niat hajat di dalam hati secara perlahan.\n3) *Visualisasi*: Bayangkan impian sudah terwujud nyata (visualkan suasana gembira & bersyukur).\n4) *Syukur*: Ucapkan *'Alhamdulillah'*, lalu pasrahkan seluruh hasilnya kepada Allah SWT.\n\n---\n🔗 *Link Audio Bimbingan (Dengarkan 2x sehari)*:\n• *Digital Prayers Quantum Ikhlas*:\nhttps://drive.google.com/file/d/18GjQd8SMymV8kxfvOPodvIXNxlVLbhW9/view?usp=drivesdk\n• *Meditasi Syukur (Kekayaan & Kesehatan)*:\nhttps://drive.google.com/file/d/1yw1fVPT6mpPiqj27P0qu_yiNfrTKv4tr/view?usp=drive_link\n• *Audio Terapi Menarik Rezeki*:\nhttps://drive.google.com/file/d/1zJOXiu-A-Jlh713tIvULS-tfbBBUEKLp/view?usp=drive_link\n\n⚠️ *PANTANGAN*: Dilarang mendengarkan saat menyetir atau mengoperasikan mesin! Tidak untuk anak <10 tahun, penderita epilepsi, atau pengguna alat pacu jantung 🙏😊."
+      "answer": "🎧 *PANDUAN & LINK DOWNLOAD AUDIO BRAINWAVE QUANTUM ENERGI* 🤲\n\nBismillah, berikut tautan resmi download/streaming 3 Audio Bimbingan Om Budi:\n\n1️⃣ *Digital Prayers Quantum Ikhlas (Utama)*:\n👉 https://drive.google.com/file/d/18GjQd8SMymV8kxfvOPodvIXNxlVLbhW9/view?usp=drivesdk\n\n2️⃣ *Meditasi Syukur (Kekayaan & Kesehatan)*:\n👉 https://drive.google.com/file/d/1yw1fVPT6mpPiqj27P0qu_yiNfrTKv4tr/view?usp=drive_link\n\n3️⃣ *Audio Terapi Menarik Rezeki*:\n👉 https://drive.google.com/file/d/1zJOXiu-A-Jlh713tIvULS-tfbBBUEKLp/view?usp=drive_link\n\n━━━━━━━━━━━━━━━━━━\n📌 *Petunjuk Penggunaan:*\n• Dengarkan 2x sehari (pagi setelah Subuh/Dhuha dan malam sebelum tidur).\n• Gunakan *earphone/headphone* dengan volume sedang yang nyaman.\n• Duduk relaks atau berbaring di ruangan yang tenang (20–60 menit).\n• Praktikkan 4 langkah: *Alphamatic -> Niat Hajat -> Visualisasi Syukur -> Pasrah (Alhamdulillah)*.\n\n⚠️ *PANTANGAN PENTING*:\n❌ Dilarang mendengarkan saat menyetir kendaraan atau mengoperasikan mesin!\n❌ Tidak diperkenankan untuk penderita epilepsi atau pengguna alat pacu jantung.\n\nSemoga vibrasi doa dan riyadhoh Bapak/Ibu semakin selaras, tenang, dan diijabah Allah SWT 🤲🙏."
+    },
+    {
+      "id": "kb_materi_riyadhoh_download",
+      "intent": "tanya_materi_riyadhoh",
+      "exact_phrases": [
+        "materi riyadhoh",
+        "buku riyadhoh",
+        "pdf riyadhoh",
+        "panduan riyadhoh sholawat",
+        "modul riyadhoh",
+        "link materi riyadhoh",
+        "download materi riyadhoh",
+        "jadwal amalan riyadhoh 40 hari"
+      ],
+      "keywords": [
+        "materi riyadhoh",
+        "buku riyadhoh",
+        "pdf riyadhoh",
+        "modul riyadhoh",
+        "panduan riyadhoh",
+        "link materi"
+      ],
+      "confidence_boost": [
+        "materi riyadhoh",
+        "modul riyadhoh",
+        "pdf riyadhoh",
+        "panduan riyadhoh"
+      ],
+      "answer": "📚 *PANDUAN & MATERI RIYADHOH SHOLAWAT OM BUDI* 🤲\n\nBismillah, berikut ringkasan panduan Riyadhoh Jalur Langit 40 Hari:\n\n1️⃣ *Sholat Wajib 5 Waktu*: Tepat waktu & berjamaah.\n2️⃣ *Sholat Dhuha*: Minimal 4 rakaat (2 rakaat 1 salam).\n3️⃣ *Qiyamul Lail (Sepertiga Malam)*:\n   • Sholat Taubat 2 rakaat\n   • Sholat Tahajud minimal 4 rakaat\n   • Sholat Hajat 2 rakaat & Sholat Witir 3 rakaat\n   • Istighfar setelah Witir: _'Robbighfirli wa tub 'alayya innaka antat tawwabur rohim'_\n4️⃣ *Sedekah Subuh*: Rutin setiap pagi diiringi doa hajat.\n5️⃣ *Sholawat Jibril*: Minimal 1.000x setiap hari (_'Shallallahu 'ala Muhammad'_).\n6️⃣ *Asmaul Husna*: Baca 33x setelah Subuh (_'Ya Hannan Ya Mannan, Ya Fattah Ya Rozzaq, Ya Ghoniy Ya Mughni'_).\n7️⃣ *Audio Brainwave*: Dengarkan audio bimbingan relaksasi & visualisasi syukur.\n\n🔗 *Akses Audio Bimbingan:*\n• Digital Prayers Quantum Ikhlas: https://drive.google.com/file/d/18GjQd8SMymV8kxfvOPodvIXNxlVLbhW9/view?usp=drivesdk\n• Meditasi Syukur: https://drive.google.com/file/d/1yw1fVPT6mpPiqj27P0qu_yiNfrTKv4tr/view?usp=drive_link\n• Terapi Rezeki: https://drive.google.com/file/d/1zJOXiu-A-Jlh713tIvULS-tfbBBUEKLp/view?usp=drive_link\n\nSemoga istiqomah dan Allah karuniakan jalan keluar terbaik untuk segala amanah 🤲😊."
     },
     {
       "id": "kb_detox_sebelum_tidur",
