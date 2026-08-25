@@ -9,36 +9,17 @@ from aiohttp import web
 from app.services.whatsapp_service import safe_log_to_supabase_messages
 from app.services.ai_service import ai_gateway
 from app.core.messaging.composer import MessageComposer
+from app.core.tenants.registry import tenant_registry, TenantRegistry
 
 logger = logging.getLogger("CENTRAL_TELEGRAM_CHANNEL")
 
 telegram_channel_routes = web.RouteTableDef()
 
-# --- 1. Multi-Tenant Telegram Token Registry ---
-# Default tokens per tenant
-DEFAULT_TENANT_TELEGRAM_TOKENS: Dict[str, str] = {
-    "digicorn": "8902407474:AAEewbDZ8tddpVLtRI7xowIy6nWV1cW8KNA",
-    "career": os.getenv("TELEGRAM_BOT_TOKEN", ""),
-    "boontrack-career": os.getenv("TELEGRAM_BOT_TOKEN", "")
-}
-
 
 def resolve_tenant_telegram_token(tenant_id: str) -> Optional[str]:
-    """Mendapatkan bot token Telegram yang valid untuk tenant tertentu."""
-    clean_tenant = str(tenant_id or "").strip().lower().replace("_", "-")
-    
-    # 1. Cek spesifik env var: DIGICORN_TELEGRAM_TOKEN, CAREER_TELEGRAM_TOKEN, dll.
-    env_key = f"{clean_tenant.upper().replace('-', '_')}_TELEGRAM_TOKEN"
-    token_from_env = os.getenv(env_key)
-    if token_from_env and token_from_env.strip():
-        return token_from_env.strip()
+    """Mendapatkan bot token Telegram secara dinamis dari Config/Database Registry."""
+    return tenant_registry.get_telegram_token(tenant_id)
 
-    # 2. Cek registry default
-    if clean_tenant in DEFAULT_TENANT_TELEGRAM_TOKENS:
-        return DEFAULT_TENANT_TELEGRAM_TOKENS[clean_tenant]
-
-    # 3. Fallback ke TELEGRAM_BOT_TOKEN umum
-    return os.getenv("TELEGRAM_BOT_TOKEN")
 
 
 # --- 2. Outbound Telegram Universal Client ---
@@ -131,13 +112,15 @@ async def send_telegram_buttons(
 # --- 3. Inbound Central Telegram Webhook Dispatcher ---
 @telegram_channel_routes.get("/webhook/telegram/{tenant_id}")
 @telegram_channel_routes.get("/api/v1/telegram/webhook/{tenant_id}")
+@telegram_channel_routes.get("/webhook/telegram")
 async def handle_telegram_webhook_ping(request: web.Request) -> web.Response:
-    tenant_id = request.match_info.get("tenant_id", "default")
+    path_param = request.match_info.get("tenant_id", "")
+    tenant_id = tenant_registry.resolve_tenant_from_telegram(path_param=path_param) or "digicorn"
     return web.json_response({
         "status": "active",
         "channel": "telegram",
         "tenant_id": tenant_id,
-        "gateway": "BoonTrack Central Channel Architecture"
+        "gateway": "BoonTrack Config/DB-Driven Central Channel Architecture"
     })
 
 
@@ -147,14 +130,23 @@ async def handle_telegram_webhook_ping(request: web.Request) -> web.Response:
 async def handle_incoming_telegram_webhook(request: web.Request) -> web.Response:
     """
     Central Telegram Webhook Receiver:
-    1. Parse payload Telegram update
-    2. Ekstraksi chat_id, text, callback_data
-    3. Log ke Supabase (sender='user')
-    4. Dispatch ke Tenant Domain Engine (Digicorn / Career / AI Gateway)
-    5. Kirim balasan outbound dan log ke Supabase (sender='bot')
+    1. Dinamis mengenali tenant_id dari path, query token, atau secret header
+    2. Parse payload Telegram update
+    3. Ekstraksi chat_id, text, callback_data
+    4. Log ke Supabase (sender='user')
+    5. Dispatch ke Tenant Domain Engine (Digicorn / Career / AI Gateway)
+    6. Kirim balasan outbound dan log ke Supabase (sender='bot')
     """
-    tenant_id = request.match_info.get("tenant_id", "digicorn")
-    clean_tenant = tenant_id.lower().replace("_", "-")
+    path_param = request.match_info.get("tenant_id", "")
+    query_token = request.query.get("token", "")
+    secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+
+    # Resolusi Tenant ID secara dinamis dari Config Registry
+    clean_tenant = tenant_registry.resolve_tenant_from_telegram(
+        token_or_id=query_token,
+        secret_token=secret_header,
+        path_param=path_param
+    ) or "digicorn"
 
     try:
         update = await request.json()

@@ -136,6 +136,74 @@ class TestTelegramCentralChannel(AioHTTPTestCase):
         self.assertEqual(resp.status, 200)
         mock_send_msg.assert_called_once()
 
+    @unittest_run_loop
+    @patch("app.core.channels.telegram.send_telegram_buttons")
+    @patch("app.core.channels.telegram.safe_log_to_supabase_messages")
+    async def test_dynamic_tenant_resolution_via_bot_id(self, mock_log, mock_send_buttons):
+        """Memvalidasi resolusi tenant otomatis dari bot_id di path URL (e.g. /webhook/telegram/8902407474)."""
+        mock_send_buttons.return_value = {"ok": True}
+
+        payload = {
+            "update_id": 10005,
+            "message": {
+                "message_id": 5,
+                "from": {"id": 111, "first_name": "BotIdTester"},
+                "chat": {"id": 111, "type": "private"},
+                "text": "menu"
+            }
+        }
+
+        # Mengakses endpoint menggunakan bot_id prefix
+        resp = await self.client.post("/webhook/telegram/8902407474", json=payload)
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data.get("status"), "success")
+        self.assertEqual(data.get("tenant_id"), "digicorn")
+
+    @unittest_run_loop
+    @patch("app.core.channels.telegram.send_telegram_buttons")
+    @patch("app.core.channels.telegram.safe_log_to_supabase_messages")
+    async def test_dynamic_tenant_resolution_via_secret_token_header(self, mock_log, mock_send_buttons):
+        """Memvalidasi resolusi tenant otomatis dari header X-Telegram-Bot-Api-Secret-Token ke /webhook/telegram."""
+        mock_send_buttons.return_value = {"ok": True}
+
+        payload = {
+            "update_id": 10006,
+            "message": {
+                "message_id": 6,
+                "from": {"id": 222, "first_name": "SecretTester"},
+                "chat": {"id": 222, "type": "private"},
+                "text": "/start"
+            }
+        }
+
+        headers = {"X-Telegram-Bot-Api-Secret-Token": "digicorn_secret_2026"}
+        resp = await self.client.post("/webhook/telegram", json=payload, headers=headers)
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data.get("status"), "success")
+        self.assertEqual(data.get("tenant_id"), "digicorn")
+
+    def test_dynamic_runtime_tenant_registration(self):
+        """Memvalidasi pendaftaran tenant baru secara dinamis di runtime tanpa restart/env var."""
+        from app.core.tenants.registry import tenant_registry
+        
+        # Daftarkan tenant baru
+        new_tenant = tenant_registry.register_tenant(
+            tenant_id="store-xyz",
+            name="Store XYZ Creative",
+            telegram_token="99887766:ZZZ_TOKEN_TEST_KEY"
+        )
+        self.assertEqual(new_tenant["name"], "Store XYZ Creative")
+
+        # Resolusi token dan tenant ID
+        token = tenant_registry.get_telegram_token("store-xyz")
+        self.assertEqual(token, "99887766:ZZZ_TOKEN_TEST_KEY")
+
+        resolved_tid = tenant_registry.resolve_tenant_from_telegram(path_param="99887766")
+        self.assertEqual(resolved_tid, "store-xyz")
+
 
 if __name__ == "__main__":
     unittest.main()
+

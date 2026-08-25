@@ -1,0 +1,49 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2026-08-25T11:00:00Z",
+  "tenants": {
+    "digicorn": {
+      "tenant_id": "digicorn",
+      "name": "Digicorn Digital Products",
+      "is_active": true,
+      "channels": {
+        "telegram": {
+          "bot_token": "8902407474:AAEewbDZ8tddpVLtRI7xowIy6nWV1cW8KNA",
+          "bot_id": "8902407474",
+          "bot_username": "digicorn_bot",
+          "secret_token": "digicorn_secret_2026"
+        }
+      },
+      "settings": {
+        "pricing_mode": "flat",
+        "default_price": 5000,
+        "delivery_adapter": "google_drive"
+      }
+    },
+    "boontrack-career": {
+      "tenant_id": "boontrack-career",
+      "name": "BoonTrack Career Assistant",
+      "is_active": true,
+      "channels": {
+        "whatsapp": {
+          "phone_number_id": "1340866379104241"
+        },
+        "telegram": {
+          "bot_token": "",
+          "bot_id": "",
+          "bot_username": "boontrack_career_bot"
+        }
+      }
+    },
+    "om-budi": {
+      "tenant_id": "om-budi",
+      "name": "Bimbingan Riyadhoh Om Budi",
+      "is_active": true,
+      "channels": {
+        "whatsapp": {
+          "phone_number_id": "100234567890123"
+        }
+      }
+    }
+  }
+}
