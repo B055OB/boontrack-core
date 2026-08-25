@@ -142,7 +142,7 @@ class OmBudiService:
                 "reply": welcome_alumni,
                 "buttons": [
                     {"id": "menu_zoom_booster", "title": "🚀 Zoom Booster"},
-                    {"id": "menu_tanya_materi", "title": "💬 Tanya Materi"},
+                    {"id": "menu_belajar_materi", "title": "📖 Belajar Materi"},
                     {"id": "menu_sedekah_berjamaah", "title": "🤲 Sedekah"}
                 ]
             }
@@ -163,17 +163,17 @@ class OmBudiService:
                 "buttons": [
                     {"id": "menu_zoom_booster", "title": "🚀 Zoom Booster"},
                     {"id": "menu_sedekah_berjamaah", "title": "🤲 Sedekah"},
-                    {"id": "menu_tanya_materi", "title": "💬 Tanya Materi"}
+                    {"id": "menu_belajar_materi", "title": "📖 Belajar Materi"}
                 ]
             }
 
-        # 4. Handle Tombol / Teks Tanya Materi
-        if button_id == "menu_tanya_materi" or "tanya materi" in clean_text:
+        # 4. Handle Tombol / Teks Belajar Materi
+        if button_id in ["menu_belajar_materi", "menu_tanya_materi"] or any(k in clean_text for k in ["belajar materi", "bimbingan materi", "tanya materi"]):
             return {
                 "type": "buttons",
                 "reply": (
-                    "💬 *Ruang Tanya Materi Bimbingan*\n\n"
-                    "Silakan ketik langsung pertanyaan Anda seputar materi bimbingan "
+                    "📖 *Ruang Belajar & Bimbingan Materi*\n\n"
+                    "Silakan pelajari materi bimbingan atau ketik langsung pertanyaan Anda seputar materi "
                     "(contoh: *'apa itu riyadhoh'*, *'berapa hari riyadhoh'*, "
                     "*'tahajud jam berapa'*, *'pantangan audio brainwave'*, atau *'cara nulis doa gimana'*).\n\n"
                     "Atau pilih menu cepat di bawah ini untuk mengunduh audio & panduan langsung 😊🙏:"

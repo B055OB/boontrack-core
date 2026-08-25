@@ -60,5 +60,24 @@ class TestOmBudiAudioAndRiyadhoh(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("Sholawat Jibril", reply)
                 self.assertIn("drive.google.com", reply)
 
+    async def test_belajar_materi_menu(self):
+        # Test button click
+        res = await om_budi_service.handle_incoming_message(
+            phone_number="081234567890",
+            message_text="",
+            button_id="menu_belajar_materi"
+        )
+        reply = res.get("reply", "")
+        self.assertIn("Ruang Belajar & Bimbingan Materi", reply)
+
+        # Test text keyword
+        res_text = await om_budi_service.handle_incoming_message(
+            phone_number="081234567890",
+            message_text="belajar materi",
+            user_name="Bapak Rudi"
+        )
+        reply_text = res_text.get("reply", "")
+        self.assertIn("Ruang Belajar & Bimbingan Materi", reply_text)
+
 if __name__ == "__main__":
     unittest.main()
