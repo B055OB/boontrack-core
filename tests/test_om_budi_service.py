@@ -198,12 +198,14 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
 
         row_ids = [r["id"] for r in rows]
         row_titles = [r["title"] for r in rows]
+        row_descriptions = {r["id"]: r.get("description", "") for r in rows}
 
         self.assertEqual(row_ids, ["btn_sub_1_a", "btn_sub_1_b", "btn_sub_1_c", "btn_sub_1_d"])
         self.assertIn("Cara Mengikuti", row_titles)
         self.assertIn("Jadwal Zoom", row_titles)
         self.assertIn("Tentang Zoom Booster", row_titles)
-        self.assertIn("Peserta yang Bisa Ikut", row_titles)
+        self.assertIn("Peserta Zoom Rabu", row_titles)
+        self.assertEqual(row_descriptions["btn_sub_1_d"], "Kenapa Zoom tidak untuk semua?")
 
         # Pastikan opsi di luar 4 ini tidak ada
         for disabled_id in ["btn_sub_1_e", "btn_sub_1_f", "btn_sub_1_g", "btn_sub_1_h"]:
@@ -214,7 +216,7 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
             ("btn_sub_1_a", "Cara Mengikuti Zoom Booster"),
             ("btn_sub_1_b", "Jadwal Zoom Booster"),
             ("btn_sub_1_c", "Tentang Zoom Booster"),
-            ("btn_sub_1_d", "Peserta yang Bisa Mengikuti")
+            ("btn_sub_1_d", "*KENAPA ZOOM BOOSTER SETIAP RABU TIDAK UNTUK SEMUA ORANG?*")
         ]
 
         for btn_id, keyword in test_options:
@@ -227,6 +229,13 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(opt_res.get("type"), "buttons")
                 reply = opt_res.get("reply", "")
                 self.assertIn(keyword, reply)
+
+                # Validasi detail copy untuk opsi ke-4
+                if btn_id == "btn_sub_1_d":
+                    self.assertIn("kapasitas Zoom kami saat ini hanya 500 peserta", reply)
+                    self.assertIn("Wadah Sedekah Berjamaah", reply)
+                    self.assertIn("*ZOOM BOOSTER KHUSUS GROUP SEDEKAH BERJAMAAH*", reply)
+                    self.assertIn("Terima kasih atas pengertiannya 🙏", reply)
 
                 buttons = opt_res.get("buttons", [])
                 btn_ids = [b["id"] for b in buttons]

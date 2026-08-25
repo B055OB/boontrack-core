@@ -14,7 +14,8 @@ from app.core.messaging.templates import (
     PENDAFTARAN_KELAS_OM_BUDI,
     PANDUAN_QRIS_OM_BUDI,
     RINGKASAN_KELAS_ONLINE_OM_BUDI,
-    CARA_IKUT_SEDEKAH_OM_BUDI
+    CARA_IKUT_SEDEKAH_OM_BUDI,
+    PESERTA_ZOOM_INFO_OM_BUDI
 )
 
 logger = logging.getLogger("OM_BUDI_SERVICE")
@@ -275,7 +276,7 @@ class OmBudiService:
                         {"id": "btn_sub_1_a", "title": "Cara Mengikuti", "description": "Langkah bergabung ke sesi live"},
                         {"id": "btn_sub_1_b", "title": "Jadwal Zoom", "description": "Waktu & tanggal pelaksanaan"},
                         {"id": "btn_sub_1_c", "title": "Tentang Zoom Booster", "description": "Penjelasan materi & bedah energi"},
-                        {"id": "btn_sub_1_d", "title": "Peserta yang Bisa Ikut", "description": "Kriteria peserta jamaah"}
+                        {"id": "btn_sub_1_d", "title": "Peserta Zoom Rabu", "description": "Kenapa Zoom tidak untuk semua?"}
                     ]
                 }
             ]
@@ -309,10 +310,10 @@ class OmBudiService:
                 "reply": "✨ *Tentang Zoom Booster*\n\nSesi khusus penguatan vibrasi energi, bedah sumbatan rezeki, konsultasi langsung, serta bimbingan riyadhoh sholawat bersama Om Budi 😊.",
                 "buttons": zoom_nav
             }
-        if button_id == "btn_sub_1_d" or "peserta" in clean_text:
+        if button_id == "btn_sub_1_d" or any(k in clean_text for k in ["peserta", "peserta zoom", "peserta zoom rabu", "kenapa zoom"]):
             return {
                 "type": "buttons",
-                "reply": "👥 *Peserta yang Bisa Mengikuti*\n\nProgram ini terbuka untuk seluruh alumni terdaftar dan jamaah yang mendukung program Zoom Booster & Orang Tua Asuh 🙏.",
+                "reply": PESERTA_ZOOM_INFO_OM_BUDI,
                 "buttons": zoom_nav
             }
 

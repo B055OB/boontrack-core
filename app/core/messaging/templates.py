@@ -116,3 +116,14 @@ REKENING_KELAS_OM_BUDI = (
 )
 
 PENDAFTARAN_KELAS_OM_BUDI = PANDUAN_QRIS_OM_BUDI
+
+PESERTA_ZOOM_INFO_OM_BUDI = (
+    "*KENAPA ZOOM BOOSTER SETIAP RABU TIDAK UNTUK SEMUA ORANG?*\n\n"
+    "Karena anggota Group Om Budi Channel sudah puluhan ribu orang, sedangkan kapasitas Zoom kami saat ini hanya 500 peserta.\n\n"
+    "Dari hasil diskusi bersama member terdahulu, ada yang menyarankan diadakan infaq untuk ikut Zoom. Namun kami tidak menerima saran tersebut.\n\n"
+    "Sebagai gantinya, kami membuat Wadah Sedekah Berjamaah yang InsyaAllah amanah dan dikelola sesuai permintaan member.\n\n"
+    "Dari situlah lahir kajian Nongki (Nongkrong & Kajian) bersama Om Budi, yang sekarang berkembang menjadi:\n"
+    "*ZOOM BOOSTER KHUSUS GROUP SEDEKAH BERJAMAAH*\n\n"
+    "Ini sebagai bentuk apresiasi bagi yang sudah belajar berbagi, karena sedekah adalah salah satu cara menaikkan energi dan vibrasi hidup menuju kehidupan yang lebih baik.\n\n"
+    "Terima kasih atas pengertiannya 🙏"
+)
