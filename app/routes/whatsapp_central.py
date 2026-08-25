@@ -139,6 +139,56 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Di
         logger.error(f"[CENTRAL WA] Exception sending buttons: {e}", exc_info=True)
 
 
+async def send_wa_image(recipient_phone: str, image_url_or_path: str, caption: str, phone_id: str) -> bool:
+    """Mengirim pesan gambar WhatsApp ke Meta Cloud API menggunakan public URL HTTPS dengan fallback text."""
+    clean_id_match = re.findall(r"\d+", str(phone_id))
+    clean_id = clean_id_match[0] if clean_id_match else phone_id
+    token = resolve_tenant_token(clean_id)
+
+    image_url = str(image_url_or_path or "")
+    if not image_url.startswith(("http://", "https://")):
+        public_base = (
+            os.getenv("PUBLIC_BASE_URL")
+            or os.getenv("RAILWAY_STATIC_URL")
+            or os.getenv("RAILWAY_PUBLIC_DOMAIN")
+            or "https://boontrack-core.up.railway.app"
+        ).strip().rstrip("/")
+        if not public_base.startswith("http"):
+            public_base = f"https://{public_base}"
+        filename = os.path.basename(image_url) if image_url else "qrisombudi.png"
+        image_url = f"{public_base}/static/{filename}"
+
+    url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient_phone,
+        "type": "image",
+        "image": {
+            "link": image_url,
+            "caption": caption
+        }
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                resp_text = await resp.text()
+                if resp.status in (200, 201):
+                    return True
+                logger.error(f"[CENTRAL WA] Outbound image error ({resp.status}) phone_id={clean_id}: {resp_text}")
+                # Fallback ke pesan teks lengkap agar info rekening/NMID tetap sampai ke user
+                await send_wa_text(recipient_phone, caption, phone_id)
+                return False
+    except Exception as e:
+        logger.error(f"[CENTRAL WA] Exception sending image: {e}", exc_info=True)
+        await send_wa_text(recipient_phone, caption, phone_id)
+        return False
+
+
 async def send_wa_list_menu(recipient_phone: str, body_text: str, button_text: str, sections: List[Dict[str, Any]], phone_id: str):
     """Mengirim Interactive List Message WhatsApp untuk menu hierarki."""
     clean_id_match = re.findall(r"\d+", str(phone_id))
@@ -304,13 +354,19 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             buttons = res.get("buttons") or res.get("nav_buttons")
 
             if res_type == "image":
-                img_path = res.get("image_path") or res.get("image")
+                img_src = (
+                    res.get("image_url")
+                    or res.get("image_link")
+                    or (res.get("image", {}).get("link") if isinstance(res.get("image"), dict) else None)
+                    or res.get("image_path")
+                    or res.get("image")
+                )
                 caption_text = res.get("reply", "") or res.get("caption", "")
-                await send_whatsapp_image(
-                    to_phone=from_phone,
-                    image_path_or_bytes=img_path,
+                await send_wa_image(
+                    recipient_phone=from_phone,
+                    image_url_or_path=img_src,
                     caption=caption_text,
-                    tenant_id="om-budi"
+                    phone_id=phone_id
                 )
                 if buttons:
                     await send_wa_buttons(

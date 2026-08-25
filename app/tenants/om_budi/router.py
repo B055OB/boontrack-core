@@ -55,6 +55,53 @@ async def send_wa_text(recipient_phone: str, text: str):
     await send_meta_raw_payload(payload)
 
 
+async def send_wa_image(recipient_phone: str, image_source: str, caption: str):
+    """Mengirim pesan gambar ke Meta Cloud API via public HTTPS URL link dengan fallback text."""
+    image_url = str(image_source or "")
+    if not image_url.startswith(("http://", "https://")):
+        public_base = (
+            os.getenv("PUBLIC_BASE_URL")
+            or os.getenv("RAILWAY_STATIC_URL")
+            or os.getenv("RAILWAY_PUBLIC_DOMAIN")
+            or "https://boontrack-core.up.railway.app"
+        ).strip().rstrip("/")
+        if not public_base.startswith("http"):
+            public_base = f"https://{public_base}"
+        filename = os.path.basename(image_url) if image_url else "qrisombudi.png"
+        image_url = f"{public_base}/static/{filename}"
+
+    clean_phone_id = get_clean_phone_id()
+    url = f"https://graph.facebook.com/v20.0/{clean_phone_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient_phone,
+        "type": "image",
+        "image": {
+            "link": image_url,
+            "caption": caption
+        }
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                resp_text = await resp.text()
+                if resp.status in (200, 201):
+                    return True
+                logger.error(f"[{TENANT_ID}] Meta API Outbound Image Error ({resp.status}): {resp_text}")
+                # Fallback: kirim teks lengkap agar info transfer / NMID tetap diterima user
+                await send_wa_text(recipient_phone, caption)
+                return False
+    except Exception as e:
+        logger.error(f"[{TENANT_ID}] Network exception sending Meta image: {e}", exc_info=True)
+        await send_wa_text(recipient_phone, caption)
+        return False
+
+
 async def send_wa_interactive_buttons(recipient_phone: str, body_text: str, buttons: list):
     """Kirim WhatsApp Quick Reply Buttons (Maksimal 3 Tombol).
     Jika panjang body_text melebihi 1000 karakter (limit Meta: 1024),
@@ -154,13 +201,18 @@ async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
 
         # 3. Kirim balik respons
         if res_type == "image":
-            img_path = response_data.get("image_path") or response_data.get("image")
+            img_src = (
+                response_data.get("image_url")
+                or response_data.get("image_link")
+                or (response_data.get("image", {}).get("link") if isinstance(response_data.get("image"), dict) else None)
+                or response_data.get("image_path")
+                or response_data.get("image")
+            )
             caption_text = response_data.get("reply", "") or response_data.get("caption", "")
-            await send_whatsapp_image(
-                to_phone=from_phone,
-                image_path_or_bytes=img_path,
-                caption=caption_text,
-                tenant_id="om-budi"
+            await send_wa_image(
+                recipient_phone=from_phone,
+                image_source=img_src,
+                caption=caption_text
             )
             if buttons:
                 await send_wa_interactive_buttons(

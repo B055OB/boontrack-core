@@ -37,6 +37,27 @@ def _resolve_qris_asset_path() -> str:
     return "app/assets/qrisombudi.png"
 
 
+def _resolve_qris_public_url() -> str:
+    """Membentuk URL HTTPS publik dinamis untuk gambar QRIS Om Budi (Meta Cloud API compliant)."""
+    env_url = os.getenv("OM_BUDI_QRIS_URL") or os.getenv("QRIS_OM_BUDI_URL")
+    if env_url and env_url.startswith(("http://", "https://")):
+        return env_url
+
+    public_base = (
+        os.getenv("PUBLIC_BASE_URL")
+        or os.getenv("RAILWAY_STATIC_URL")
+        or os.getenv("RAILWAY_PUBLIC_DOMAIN")
+        or os.getenv("DOMAIN_URL")
+        or os.getenv("APP_URL")
+        or "https://boontrack-core.up.railway.app"
+    ).strip().rstrip("/")
+
+    if not public_base.startswith("http"):
+        public_base = f"https://{public_base}"
+
+    return f"{public_base}/static/qrisombudi.png"
+
+
 SYSTEM_PROMPT_OM_BUDI = (
     "Kamu adalah AI Admin Bimbingan Resmi Om Budi Channel.\n"
     "Tugasmu adalah menjawab pertanyaan jemaah dan alumni kelas bimbingan secara empatik, hangat, menenangkan batin, dan praktis sesuai 6 materi utama Om Budi:\n"
@@ -66,6 +87,7 @@ class OmBudiService:
         self.rules = self._load_rules()
         self.matcher = LocalKnowledgeMatcher(self.rules)
         self.qris_asset_path = _resolve_qris_asset_path()
+        self.qris_public_url = _resolve_qris_public_url()
         self.fallback_msg = (
             "Assalamu'alaikum Warahmatullahi Wabarakatuh Bapak/Ibu 🙏😊\n\n"
             "Mohon maaf yang sebesar-besarnya, saat ini kami belum bisa menjawab pertanyaan Bapak/Ibu secara langsung 🙏.\n\n"
@@ -194,9 +216,16 @@ class OmBudiService:
         if button_id in ["menu_daftar_kelas", "btn_daftar_kelas", "menu_kelas_online", "btn_kelas_online"] or any(
             k in clean_text for k in ["daftar kelas", "kelas online", "daftar kelas online", "pendaftaran kelas", "ikut kelas", "daftar bimbingan"]
         ):
+            public_url = _resolve_qris_public_url()
             return {
                 "type": "image",
+                "image_url": public_url,
+                "image_link": public_url,
                 "image_path": self.qris_asset_path,
+                "image": {
+                    "link": public_url,
+                    "caption": PENDAFTARAN_KELAS_OM_BUDI
+                },
                 "reply": PENDAFTARAN_KELAS_OM_BUDI,
                 "caption": PENDAFTARAN_KELAS_OM_BUDI,
                 "buttons": [

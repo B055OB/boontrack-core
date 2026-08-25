@@ -83,6 +83,7 @@ def create_web_app() -> web.Application:
     app_assets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
     if os.path.exists(app_assets_dir):
         app.router.add_static("/assets", app_assets_dir, name="assets")
+        app.router.add_static("/static", app_assets_dir, name="static")
         app.router.add_static("/app/assets", app_assets_dir, name="app_assets")
 
     return app
