@@ -10,6 +10,22 @@ logger = logging.getLogger("OM_BUDI_SERVICE")
 KB_PATH = os.path.join(os.path.dirname(__file__), "knowledge_base.json")
 MEMBERS_PATH = os.path.join(os.path.dirname(__file__), "alumni_members.json")
 
+SYSTEM_PROMPT_OM_BUDI = (
+    "Kamu adalah AI Admin Bimbingan Resmi Om Budi Channel.\n"
+    "Tugasmu adalah menjawab pertanyaan jemaah dan alumni kelas bimbingan secara empatik, hangat, menenangkan batin, dan praktis sesuai 6 materi utama Om Budi:\n"
+    "1. Jalan Sunyi Orang Berhutang (menghentikan keluhan, menyelaraskan rasa, jujur pada amanah).\n"
+    "2. Riyadhoh Sholawat & Quantum Energi (Sholawat Jibril 1.000x/hari, Dhuha min 4 rakaat, Tahajud/Taubat, Sedekah Subuh, 3 Audio Brainwave).\n"
+    "3. Ketika Hidup Diuji, Saatnya Kembali (ujian sebagai alarm cinta Allah, 5 tanda pertolongan dekat, istiqomah).\n"
+    "4. Rencana 30 Hari Bebas Hutang (tahapan mingguan, stop hutang baru, disiplin alur uang).\n"
+    "5. Sangat Sederhana Cara Praktis Lunas Hutang (10 langkah praktis lahiriah, metode snowball/avalanche, negosiasi).\n"
+    "6. Yuk Keluar Dari Riba (bahaya bunga pinjol/bank, negosiasi bayar pokok, doa perlindungan).\n\n"
+    "Aturan Format Balasan:\n"
+    "- Awali jawaban dengan salam dan doa hangat: 'Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊'.\n"
+    "- Jawab pertanyaan secara ringkas, terstruktur (gunakan bullet/nomor jika perlu), dan kuatkan tauhid jemaah.\n"
+    "- Jangan mengarang dalil/teori baru di luar ajaran Om Budi.\n"
+    "- Tutup balasan dengan doa kelapangan rezeki 🤲."
+)
+
 
 class OmBudiService:
     def __init__(self):
@@ -25,7 +41,8 @@ class OmBudiService:
     def _load_rules(self) -> list:
         try:
             with open(KB_PATH, "r", encoding="utf-8") as f:
-                return json.load(f).get("rules", [])
+                data = json.load(f)
+                return data.get("rules", [])
         except Exception as e:
             logger.error(f"[KB LOAD ERROR] {e}")
             return []
@@ -68,35 +85,37 @@ class OmBudiService:
 
         # 1. OCR Multimodal Verifikasi Struk Pendaftaran / Sedekah
         if image_bytes:
-            from app.services.receipt_ocr_service import analyze_receipt_image
-            ocr_res = await analyze_receipt_image(image_bytes, image_mime)
-            if ocr_res.get("is_valid_receipt"):
-                nominal = ocr_res.get("nominal", 0)
-                ref_no = ocr_res.get("reference_no_rrn", "-")
-                merchant = ocr_res.get("bank_source", "BSI / Mandiri (Budi Yulianto)")
-                
-                # Otomatis aktivasi status alumni
-                self._save_member(clean_phone)
-                
-                reply = (
-                    f"Alhamdulillah wa Syukurillah, Bapak/Ibu *{user_name}*! 🤲😊\n\n"
-                    f"Bukti transfer sebesar *Rp{nominal:,}* (Ref: `{ref_no}`) ke *{merchant}* telah terverifikasi 🙏.\n\n"
-                    "Status keanggotaan Kelas Bimbingan Anda telah *AKTIF*. Sekarang Anda memiliki akses penuh ke seluruh panduan materi, konsultasi bot, dan tautan Zoom Booster rutin 🤲."
-                )
-                return {
-                    "type": "buttons",
-                    "reply": reply,
-                    "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]
-                }
-            else:
-                return {
-                    "type": "buttons",
-                    "reply": "Bukti transfer belum terbaca jelas 🙏. Mohon kirimkan ulang foto struk dengan nominal dan rekening tujuan yang terlihat jelas ya 😊.",
-                    "buttons": [
-                        {"id": "btn_cara_sedekah", "title": "Kirim Ulang Bukti"},
-                        {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
-                    ]
-                }
+            try:
+                from app.services.receipt_ocr_service import analyze_receipt_image
+                ocr_res = await analyze_receipt_image(image_bytes, image_mime)
+                if ocr_res.get("is_valid_receipt"):
+                    nominal = ocr_res.get("nominal", 0)
+                    ref_no = ocr_res.get("reference_no_rrn", "-")
+                    merchant = ocr_res.get("bank_source", "BSI / Mandiri (Budi Yulianto)")
+                    
+                    self._save_member(clean_phone)
+                    
+                    reply = (
+                        f"Alhamdulillah wa Syukurillah, Bapak/Ibu *{user_name}*! 🤲😊\n\n"
+                        f"Bukti transfer sebesar *Rp{nominal:,}* (Ref: `{ref_no}`) ke *{merchant}* telah terverifikasi 🙏.\n\n"
+                        "Status keanggotaan Kelas Bimbingan Anda telah *AKTIF*. Sekarang Anda memiliki akses penuh ke seluruh panduan materi, riyadhoh, dan tautan Zoom Booster rutin 🤲."
+                    )
+                    return {
+                        "type": "buttons",
+                        "reply": reply,
+                        "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]
+                    }
+                else:
+                    return {
+                        "type": "buttons",
+                        "reply": "Bukti transfer belum terbaca jelas 🙏. Mohon kirimkan ulang foto struk dengan nominal dan rekening tujuan yang terlihat jelas ya 😊.",
+                        "buttons": [
+                            {"id": "btn_cara_sedekah", "title": "Kirim Ulang Bukti"},
+                            {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
+                        ]
+                    }
+            except Exception as err:
+                logger.error(f"[OCR PROCESSING ERROR] {err}")
 
         # 2. Token Aktivasi Mandiri Khusus Anggota Grup Alumni
         if "aktifkan alumni om budi" in clean_text or button_id == "btn_claim_alumni":
@@ -104,7 +123,7 @@ class OmBudiService:
             welcome_alumni = (
                 f"Alhamdulillah wa Syukurillah! Selamat datang kembali Bapak/Ibu *{user_name}* 🙏😊\n\n"
                 "Nomor Anda telah berhasil terverifikasi sebagai **Alumni Resmi Kelas Bimbingan Om Budi** 🤲.\n\n"
-                "Seluruh fitur konsultasi materi 5 modul, jadwal live, rekaman, dan link Zoom Booster kini sudah aktif sepenuhnya."
+                "Seluruh fitur konsultasi materi, panduan riyadhoh, dan link Zoom Booster kini sudah aktif sepenuhnya."
             )
             return {
                 "type": "buttons",
@@ -143,8 +162,8 @@ class OmBudiService:
                 "reply": (
                     "💬 *Ruang Tanya Materi Bimbingan*\n\n"
                     "Silakan ketik langsung pertanyaan Anda seputar materi bimbingan "
-                    "(contoh: *'berapa rakaat sholat dhuha'*, *'langkah keluar hutang'*, "
-                    "atau *'pantangan audio brainwave'*).\n\n"
+                    "(contoh: *'apa itu riyadhoh'*, *'berapa hari riyadhoh'*, "
+                    "*'tahajud jam berapa'*, *'pantangan audio brainwave'*, atau *'cara nulis doa gimana'*).\n\n"
                     "Bot akan langsung menjawab seketika 😊🙏."
                 )
             }
@@ -227,7 +246,7 @@ class OmBudiService:
         if button_id == "btn_upload_struk":
             return {"type": "text", "reply": "📸 *Kirim Bukti Transfer*\n\nSilakan lampirkan dan kirimkan foto struk transfer / screenshot m-banking Anda sekarang ya 🙏😊."}
 
-        # 7. Tanya Jawab Bebas: Tier 4 Matcher Lokal
+        # 7. Pencocokan Tier 4 Local Knowledge Base (Cepat & Akurat)
         try:
             conf, score, answer, intent = self.matcher.find_match(message_text)
             if conf in [MatchConfidence.HIGH, MatchConfidence.MEDIUM] and answer:
@@ -239,26 +258,25 @@ class OmBudiService:
         except Exception as e:
             logger.error(f"[MATCHER ERROR] {e}")
 
-        # 8. AI Gateway Fallback (Gemini / Groq)
+        # 8. Fallback AI Gateway (Memanggil AIGateway di app/services/ai_gateway.py)
         try:
-            from app.core.ai.gateway import ai_gateway
-            gw_res = await ai_gateway.process_faq_query(
-                tenant_id="om_budi",
-                query=message_text,
-                rules=self.rules,
-                fallback_msg=self.fallback_msg,
-                user_name=user_name
+            from app.services.ai_gateway import AIGateway
+            gateway = AIGateway()
+            ai_reply = await gateway.generate(
+                user_message=message_text,
+                context={"user_id": clean_phone, "feature": "om_budi_consultation"},
+                system_prompt=SYSTEM_PROMPT_OM_BUDI
             )
-            if gw_res and gw_res.get("reply"):
+            if ai_reply and len(ai_reply.strip()) > 10:
                 return {
                     "type": "buttons",
-                    "reply": gw_res["reply"],
+                    "reply": ai_reply,
                     "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]
                 }
-        except Exception as e:
-            logger.error(f"[GATEWAY ERROR] {e}")
+        except Exception as gw_err:
+            logger.error(f"[AI GATEWAY ERROR] {gw_err}")
 
-        # 9. Fallback Penampungan Statis Terjamin
+        # 9. Penampungan Pertanyaan
         return {
             "type": "buttons",
             "reply": self.fallback_msg,
