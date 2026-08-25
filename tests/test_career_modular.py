@@ -42,7 +42,7 @@ class TestCareerModular(AioHTTPTestCase):
     @unittest_run_loop
     @patch("app.tenants.career.service.send_whatsapp_buttons")
     @patch("app.tenants.career.service.safe_log_to_supabase_messages")
-    async def test_handle_incoming_menu_button(self, mock_log, mock_send_buttons):
+    async def test_handle_incoming_freemium_menu(self, mock_log, mock_send_buttons):
         mock_send_buttons.return_value = {"status": "success"}
 
         payload = {
@@ -70,13 +70,16 @@ class TestCareerModular(AioHTTPTestCase):
         resp = await self.client.post("/api/v1/tenants/boontrack-career/webhook/whatsapp", json=payload)
         self.assertEqual(resp.status, 200)
         mock_send_buttons.assert_called_once()
-        self.assertEqual(mock_send_buttons.call_args[1]["to_phone"], "62899998888")
+        self.assertEqual(mock_send_buttons.call_args[1]["header_text"], "BOONTRACK CAREER")
 
     @unittest_run_loop
-    @patch("app.tenants.career.service.send_whatsapp_text")
+    @patch("app.tenants.career.service.send_whatsapp_buttons")
     @patch("app.tenants.career.service.safe_log_to_supabase_messages")
-    async def test_handle_incoming_review_intent(self, mock_log, mock_send_text):
-        mock_send_text.return_value = {"status": "success"}
+    async def test_handle_incoming_premium_unlocked_menu(self, mock_log, mock_send_buttons):
+        mock_send_buttons.return_value = {"status": "success"}
+
+        # Set user as paid premium
+        GLOBAL_USER_STATES["62899998888"] = {"is_premium_paid": True, "data": {"nama_panggilan": "Budi"}}
 
         payload = {
             "entry": [{
@@ -87,7 +90,7 @@ class TestCareerModular(AioHTTPTestCase):
                         "messages": [{
                             "from": "62899998888",
                             "type": "text",
-                            "text": {"body": "review cv"}
+                            "text": {"body": "menu"}
                         }]
                     }
                 }]
@@ -96,8 +99,200 @@ class TestCareerModular(AioHTTPTestCase):
 
         resp = await self.client.post("/api/v1/tenants/boontrack-career/webhook/whatsapp", json=payload)
         self.assertEqual(resp.status, 200)
-        mock_send_text.assert_called_once()
-        self.assertEqual(GLOBAL_USER_STATES["62899998888"]["mode"], "review")
+        mock_send_buttons.assert_called_once()
+        self.assertIn("BOONTRACK CAREER PRO", mock_send_buttons.call_args[1]["header_text"])
+
+    @unittest_run_loop
+    @patch("app.tenants.career.service.ai_gateway.generate")
+    @patch("app.tenants.career.service.send_whatsapp_buttons")
+    @patch("app.tenants.career.service.send_whatsapp_text")
+    @patch("app.tenants.career.service.safe_log_to_supabase_messages")
+    async def test_job_matcher_ai_workflow(self, mock_log, mock_send_text, mock_send_buttons, mock_ai_generate):
+        mock_ai_generate.return_value = "🎯 *HASIL ANALISIS KECOCOKAN LOKER*\nSkor: 90%"
+
+        # 1. User clicks btn_job_match
+        payload_1 = {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": "1340866379104241"},
+                        "contacts": [{"profile": {"name": "Budi Santoso"}, "wa_id": "62899998888"}],
+                        "messages": [{
+                            "from": "62899998888",
+                            "type": "interactive",
+                            "interactive": {
+                                "type": "button_reply",
+                                "button_reply": {"id": "btn_job_match", "title": "🎯 Job Matcher AI"}
+                            }
+                        }]
+                    }
+                }]
+            }]
+        }
+        await self.client.post("/api/v1/tenants/boontrack-career/webhook/whatsapp", json=payload_1)
+        self.assertEqual(GLOBAL_USER_STATES["62899998888"]["mode"], "job_match")
+
+        # 2. User inputs job description text
+        payload_2 = {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": "1340866379104241"},
+                        "contacts": [{"profile": {"name": "Budi Santoso"}, "wa_id": "62899998888"}],
+                        "messages": [{
+                            "from": "62899998888",
+                            "type": "text",
+                            "text": {"body": "Dibutuhkan Senior Backend Engineer mahir Python FastAPI PostgreSQL Docker dan Microservices"}
+                        }]
+                    }
+                }]
+            }]
+        }
+        await self.client.post("/api/v1/tenants/boontrack-career/webhook/whatsapp", json=payload_2)
+        mock_ai_generate.assert_called_once()
+        self.assertEqual(GLOBAL_USER_STATES["62899998888"]["mode"], "menu")
+
+    @unittest_run_loop
+    @patch("app.tenants.career.service.ai_gateway.generate")
+    @patch("app.tenants.career.service.send_whatsapp_buttons")
+    @patch("app.tenants.career.service.send_whatsapp_text")
+    @patch("app.tenants.career.service.safe_log_to_supabase_messages")
+    async def test_mock_interview_multi_turn_flow(self, mock_log, mock_send_text, mock_send_buttons, mock_ai_generate):
+        mock_ai_generate.side_effect = [
+            "Evaluasi Ronda 1: Bagus",
+            "Evaluasi Ronda 2: Runtut",
+            "🏆 Rapor Akhir Kesiapan: 92/100"
+        ]
+
+        # 1. Start Mock Interview
+        payload_start = {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": "1340866379104241"},
+                        "contacts": [{"profile": {"name": "Budi Santoso"}, "wa_id": "62899998888"}],
+                        "messages": [{
+                            "from": "62899998888",
+                            "type": "interactive",
+                            "interactive": {
+                                "type": "button_reply",
+                                "button_reply": {"id": "btn_mock_interview", "title": "🎙️ Simulasi HR"}
+                            }
+                        }]
+                    }
+                }]
+            }]
+        }
+        await self.client.post("/api/v1/tenants/boontrack-career/webhook/whatsapp", json=payload_start)
+        self.assertEqual(GLOBAL_USER_STATES["62899998888"]["mode"], "mock_interview")
+        self.assertEqual(GLOBAL_USER_STATES["62899998888"]["interview_step"], 1)
+
+        # 2. Answer Ronda 1
+        payload_ans1 = {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": "1340866379104241"},
+                        "contacts": [{"profile": {"name": "Budi Santoso"}, "wa_id": "62899998888"}],
+                        "messages": [{
+                            "from": "62899998888",
+                            "type": "text",
+                            "text": {"body": "Saya berpengalaman 4 tahun membangun sistem payment gateway dan meningkatkan reliabilitas 99.9%"}
+                        }]
+                    }
+                }]
+            }]
+        }
+        await self.client.post("/api/v1/tenants/boontrack-career/webhook/whatsapp", json=payload_ans1)
+        self.assertEqual(GLOBAL_USER_STATES["62899998888"]["interview_step"], 2)
+
+        # 3. Answer Ronda 2
+        payload_ans2 = {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": "1340866379104241"},
+                        "contacts": [{"profile": {"name": "Budi Santoso"}, "wa_id": "62899998888"}],
+                        "messages": [{
+                            "from": "62899998888",
+                            "type": "text",
+                            "text": {"body": "Saat server crash di tengah flash sale, saya membagi tim dalam triage bug dan rollback hotfix dalam 10 menit."}
+                        }]
+                    }
+                }]
+            }]
+        }
+        await self.client.post("/api/v1/tenants/boontrack-career/webhook/whatsapp", json=payload_ans2)
+        self.assertEqual(GLOBAL_USER_STATES["62899998888"]["interview_step"], 3)
+
+        # 4. Answer Ronda 3 (Final)
+        payload_ans3 = {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": "1340866379104241"},
+                        "contacts": [{"profile": {"name": "Budi Santoso"}, "wa_id": "62899998888"}],
+                        "messages": [{
+                            "from": "62899998888",
+                            "type": "text",
+                            "text": {"body": "Dalam 90 hari pertama saya akan memetakan arsitektur bot dan memangkas latency response di bawah 1 detik."}
+                        }]
+                    }
+                }]
+            }]
+        }
+        await self.client.post("/api/v1/tenants/boontrack-career/webhook/whatsapp", json=payload_ans3)
+        self.assertEqual(GLOBAL_USER_STATES["62899998888"]["mode"], "menu")
+
+    @unittest_run_loop
+    @patch("app.tenants.career.service.ai_gateway.generate")
+    @patch("app.tenants.career.service.send_whatsapp_buttons")
+    @patch("app.tenants.career.service.send_whatsapp_text")
+    @patch("app.tenants.career.service.safe_log_to_supabase_messages")
+    async def test_salary_coach_workflow(self, mock_log, mock_send_text, mock_send_buttons, mock_ai_generate):
+        mock_ai_generate.return_value = "💰 *PANDUAN BENCHMARK & STRATEGI NEGOSIASI GAJI*\nMedian: 15jt"
+
+        # 1. User clicks btn_salary_coach
+        payload_start = {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": "1340866379104241"},
+                        "contacts": [{"profile": {"name": "Budi Santoso"}, "wa_id": "62899998888"}],
+                        "messages": [{
+                            "from": "62899998888",
+                            "type": "interactive",
+                            "interactive": {
+                                "type": "button_reply",
+                                "button_reply": {"id": "btn_salary_coach", "title": "💰 Negosiasi Gaji"}
+                            }
+                        }]
+                    }
+                }]
+            }]
+        }
+        await self.client.post("/api/v1/tenants/boontrack-career/webhook/whatsapp", json=payload_start)
+        self.assertEqual(GLOBAL_USER_STATES["62899998888"]["mode"], "salary_coach")
+
+        # 2. User sends offer info
+        payload_input = {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": "1340866379104241"},
+                        "contacts": [{"profile": {"name": "Budi Santoso"}, "wa_id": "62899998888"}],
+                        "messages": [{
+                            "from": "62899998888",
+                            "type": "text",
+                            "text": {"body": "Senior Backend Engineer dapat tawaran 18 juta di Jakarta"}
+                        }]
+                    }
+                }]
+            }]
+        }
+        await self.client.post("/api/v1/tenants/boontrack-career/webhook/whatsapp", json=payload_input)
+        mock_ai_generate.assert_called_once()
+        self.assertEqual(GLOBAL_USER_STATES["62899998888"]["mode"], "menu")
 
     def test_legacy_wrapper_exports(self):
         self.assertEqual(handle_incoming_whatsapp, legacy_handle_incoming)
@@ -106,3 +301,4 @@ class TestCareerModular(AioHTTPTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

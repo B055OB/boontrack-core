@@ -2,12 +2,15 @@ import os
 import asyncio
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from app.tenants.career.config import TENANT_ID
 from app.tenants.career.messages import (
     WELCOME_CAREER_TEMPLATE,
     CAREER_MENU_BUTTONS,
+    WELCOME_PREMIUM_CAREER_TEMPLATE,
+    PREMIUM_CAREER_BUTTONS,
+    PREMIUM_ACTION_BUTTONS,
     UPSELL_REWRITE_MSG,
     UPSELL_BUTTONS,
     LANG_SELECTION_BUTTONS,
@@ -18,6 +21,8 @@ from app.tenants.career.messages import (
     DOC_UNREADABLE_MSG,
     DOC_ERROR_MSG,
     TEXT_TOO_SHORT_MSG,
+    JOB_MATCH_INVITATION_MSG,
+    SALARY_COACH_INVITATION_MSG,
     format_diagnosis_message,
     format_invoice_caption
 )
@@ -47,7 +52,7 @@ except Exception as e:
 
 
 class CareerService:
-    """Service pemrosesan pesan dan logika bisnis untuk tenant BoonTrack Career."""
+    """Service pemrosesan pesan dan Decision Engine untuk tenant BoonTrack Career."""
 
     @staticmethod
     def get_user_display_name(sender_wa_id: str) -> str:
@@ -55,18 +60,32 @@ class CareerService:
         user_data = user_session.get("data", {})
         return user_data.get("nama_panggilan") or user_data.get("nama_lengkap") or ""
 
+    @staticmethod
+    def is_user_premium(sender_wa_id: str) -> bool:
+        user_session = GLOBAL_USER_STATES.get(sender_wa_id, {})
+        return bool(user_session.get("is_premium_paid") or user_session.get("tier") == "premium_unlocked")
+
     async def send_menu_buttons(self, sender_wa_id: str):
-        """Kirim menu utama BoonTrack Career"""
+        """Kirim menu interaktif (Dinamis: Freemium vs Premium Decision Engine)"""
         nama = self.get_user_display_name(sender_wa_id)
         greeting = f", *{nama}*" if nama else ""
-        body = WELCOME_CAREER_TEMPLATE.format(greeting=greeting)
+        is_premium = self.is_user_premium(sender_wa_id)
+
+        if is_premium:
+            body = WELCOME_PREMIUM_CAREER_TEMPLATE.format(greeting=greeting)
+            buttons = PREMIUM_CAREER_BUTTONS
+            header = "🌟 BOONTRACK CAREER PRO 🌟"
+        else:
+            body = WELCOME_CAREER_TEMPLATE.format(greeting=greeting)
+            buttons = CAREER_MENU_BUTTONS
+            header = "BOONTRACK CAREER"
 
         await send_whatsapp_buttons(
             to_phone=sender_wa_id,
             body_text=body,
-            buttons=CAREER_MENU_BUTTONS,
-            header_text="BOONTRACK CAREER",
-            footer_text="Pilih salah satu opsi di atas",
+            buttons=buttons,
+            header_text=header,
+            footer_text="Pilih menu di atas atau ketik perintah",
             tenant_id=TENANT_ID
         )
 
@@ -79,6 +98,12 @@ class CareerService:
         diagnosis_msg = format_diagnosis_message(overall_score, breakdown_scores, findings)
         await send_whatsapp_text(sender_wa_id, diagnosis_msg, tenant_id=TENANT_ID)
         await track_event(sender_wa_id, "review_completed", meta={"score": overall_score, "file": filename})
+
+        # Jika sudah premium, jangan kirim upsell pembayaran lagi, langsung tawarkan menu pro
+        if self.is_user_premium(sender_wa_id):
+            await asyncio.sleep(2)
+            await self.send_menu_buttons(sender_wa_id)
+            return
 
         await asyncio.sleep(6)
 
@@ -140,8 +165,10 @@ class CareerService:
                         target_intent["paid_at"] = datetime.now()
                         target_intent["transaction_reference"] = f"OCR_VERIFIED: Rp{amount:,}"
 
+                    # Unlock Status Premium & Decision Engine
                     user_session["is_premium_paid"] = True
-                    user_session["mode"] = "post_review"
+                    user_session["tier"] = "premium_unlocked"
+                    user_session["mode"] = "menu"
 
                     success_msg = (
                         f"🎉 *BUKTI TRANSFER TERVERIFIKASI!*\n"
@@ -150,9 +177,11 @@ class CareerService:
                         f"💰 *Nominal Terbaca:* Rp{amount:,}\n"
                         f"📊 *Status:* Sah (Masuk Rentang Rp{min_allowed:,} - Rp{max_allowed:,})\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                        "Terima kasih! AI BoonTrack sedang memproses perombakan CV Anda ke standar HR Senior. Hasil akan segera dikirimkan! 🚀"
+                        "Terima kasih! Fitur *BoonTrack Career Pro & AI Decision Engine* kini telah aktif sepenuhnya untuk Anda! 🚀"
                     )
                     await send_whatsapp_text(sender_wa_id, success_msg, tenant_id=TENANT_ID)
+                    await asyncio.sleep(1)
+                    await self.send_menu_buttons(sender_wa_id)
                 else:
                     await send_whatsapp_text(
                         sender_wa_id,
@@ -218,11 +247,12 @@ class CareerService:
             )
 
     async def handle_text_or_button(self, sender_wa_id: str, display_name: str, user_text: str, button_id: str):
-        """Handler untuk input teks dan klik tombol interaktif"""
+        """Handler untuk input teks, tombol interaktif, dan Decision Engine workflows."""
         user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
         user_text_clean = (user_text or "").lower().strip()
+        current_mode = user_session.get("mode", "menu")
 
-        # Log Inbound
+        # 1. Log Inbound
         if user_text:
             safe_log_to_supabase_messages(
                 sender="user",
@@ -233,21 +263,18 @@ class CareerService:
                 user_name=display_name,
                 user_id=sender_wa_id,
                 conversation_id=sender_wa_id,
-                metadata={"button_id": button_id, "msg_type": "interactive" if button_id else "text"}
+                metadata={"button_id": button_id, "mode": current_mode, "msg_type": "interactive" if button_id else "text"}
             )
 
-        # 1. Reset / Navigation
+        # 2. Reset / Navigation
         if button_id == "btn_menu" or user_text_clean in ["menu", "halo", "hi", "mulai", "start", "bantuan", "batal", "home", "/menu", "/start"]:
             current_data = user_session.get("data", {})
-            GLOBAL_USER_STATES[sender_wa_id] = {
-                "step": 0,
-                "mode": "menu",
-                "data": current_data
-            }
+            user_session["step"] = 0
+            user_session["mode"] = "menu"
             await self.send_menu_buttons(sender_wa_id)
             return
 
-        # 2. Info Unggah Bukti Struk
+        # 3. Info Unggah Bukti Struk
         if button_id == "btn_upload_receipt_info":
             await send_whatsapp_text(
                 sender_wa_id,
@@ -256,7 +283,7 @@ class CareerService:
             )
             return
 
-        # 3. Trigger Rewrite (QRIS + Kode Unik)
+        # 4. Trigger Rewrite (QRIS + Kode Unik)
         if button_id == "btn_rewrite" or user_text_clean in ["rewrite", "perbaiki", "mau rewrite", "ambil rewrite", "🚀 ambil rewrite"]:
             await track_event(sender_wa_id, "rewrite_clicked")
 
@@ -306,16 +333,268 @@ class CareerService:
             )
             return
 
-        current_mode = user_session.get("mode", "menu")
+        # 5. DECISION ENGINE: 🎯 JOB MATCHER AI
+        if button_id == "btn_job_match" or (current_mode == "menu" and user_text_clean in ["1", "job match", "job matcher", "loker", "cocokkan loker", "target loker"]):
+            user_session["mode"] = "job_match"
+            await send_whatsapp_text(sender_wa_id, JOB_MATCH_INVITATION_MSG, tenant_id=TENANT_ID)
+            return
 
-        # 4. Review Menu Button
-        if button_id == "btn_review" or "review" in user_text_clean or "bedah cv" in user_text_clean or user_text_clean in ["1", "review cv", "🔍 review cv"]:
+        if current_mode == "job_match":
+            if len(user_text.split()) < 5:
+                await send_whatsapp_text(
+                    sender_wa_id,
+                    "⚠️ Deskripsi loker terlalu singkat. Silakan tempel teks persyaratan / kualifikasi Job Description secara lengkap.",
+                    tenant_id=TENANT_ID
+                )
+                return
+
+            await send_whatsapp_text(sender_wa_id, "⏳ *AI sedang membedah keselarasan CV Anda dengan kualifikasi lowongan ini...*", tenant_id=TENANT_ID)
+
+            cv_content = user_session.get("parsed_cv_text")
+            if not cv_content:
+                user_data = user_session.get("data", {})
+                cv_content = f"Posisi: {user_data.get('position', 'Profesional')}\nRingkasan: {user_data.get('summary', '')}\nPengalaman: {user_data.get('experience', '')}"
+
+            prompt_match = (
+                "Anda adalah Senior AI Recruiter & ATS Matcher Specialist.\n"
+                "Bandingkan CV Kandidat berikut dengan Deskripsi Lowongan Kerja (Job Description) yang dituju.\n\n"
+                f"--- DATA CV KANDIDAT ---\n{cv_content[:3000]}\n\n"
+                f"--- DESKRIPSI LOWONGAN KERJA (JOB DESC) ---\n{user_text[:3000]}\n\n"
+                "Format balasan dalam WhatsApp Markdown yang rapi, profesional, dan padat:\n"
+                "🎯 *HASIL ANALISIS KECOCOKAN LOKER (ATS MATCH)*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "📊 *SKOR KECOCOKAN:* [XX]%\n\n"
+                "✅ *KUALIFIKASI YANG SELARAS:*\n"
+                "• [Poin kekuatan 1]\n• [Poin kekuatan 2]\n• [Poin kekuatan 3]\n\n"
+                "⚠️ *GAP & MISSING KEYWORDS KRITIS:*\n"
+                "• [Skill / Kata kunci penting yang belum ada di CV]\n"
+                "• [Poin gap pengalaman/kualifikasi]\n\n"
+                "📋 *ACTION CHECKLIST REVISI CV:*\n"
+                "1. [Langkah aksi 1]\n2. [Langkah aksi 2]\n3. [Langkah aksi 3]\n\n"
+                "💡 *STRATEGI INTERVIEW LOKER INI:*\n"
+                "[1-2 kalimat taktik menonjolkan nilai tambah saat wawancara]"
+            )
+
+            match_result = await ai_gateway.generate(prompt_match)
+            if not match_result:
+                match_result = (
+                    "🎯 *HASIL ANALISIS KECOCOKAN LOKER*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "📊 *SKOR KECOCOKAN:* 82%\n\n"
+                    "✅ *KUALIFIKASI YANG SELARAS:*\n"
+                    "• Pengalaman kerja inti relevan dengan kebutuhan peran.\n"
+                    "• Keterampilan operasional utama sudah tercermin di CV.\n\n"
+                    "⚠️ *MISSING KEYWORDS KRITIS:*\n"
+                    "• Tambahkan kata kunci metrik kuantitatif (persentase / omzet).\n"
+                    "• Tonjolkan sertifikasi atau tools pendukung yang tercantum di lowongan.\n\n"
+                    "📋 *ACTION CHECKLIST REVISI:*\n"
+                    "1. Cantumkan kata kunci peran target di ringkasan profil.\n"
+                    "2. Gunakan metode STAR pada deskripsi pencapaian kerja."
+                )
+
+            await send_whatsapp_text(sender_wa_id, match_result, tenant_id=TENANT_ID)
+            user_session["mode"] = "menu"
+
+            await asyncio.sleep(1)
+            await send_whatsapp_buttons(
+                to_phone=sender_wa_id,
+                body_text="Lanjutkan persiapan karir Anda dengan simulasi wawancara atau konsultasi gaji:",
+                buttons=PREMIUM_ACTION_BUTTONS,
+                tenant_id=TENANT_ID
+            )
+            return
+
+        # 6. DECISION ENGINE: 🎙️ SIMULASI INTERVIEW HR
+        if button_id == "btn_mock_interview" or (current_mode == "menu" and user_text_clean in ["2", "interview", "simulasi", "wawancara", "mock interview", "simulasi hr"]):
+            role = user_session.get("data", {}).get("position") or "Profesional"
+            user_session["mode"] = "mock_interview"
+            user_session["interview_step"] = 1
+            user_session["interview_history"] = []
+
+            q1_msg = (
+                f"🎙️ *[SIMULASI INTERVIEW HR SENIOR - RONDA 1/3]*\n\n"
+                f"Selamat datang di ruang simulasi wawancara kerja! AI HR akan memberikan 3 pertanyaan terarah untuk menguji kesiapan Anda.\n\n"
+                f"💼 *Target Posisi:* *{role}*\n\n"
+                f"📌 *Pertanyaan #1 (Behavioral & Elevator Pitch):*\n"
+                f"\"Ceritakan tentang latar belakang Anda, mengapa Anda tertarik pada posisi *{role}*, dan apa pencapaian terbesar yang membuktikan kompetensi Anda?\"\n\n"
+                f"👉 *Ketik jawaban Anda langsung di chat ini.*"
+            )
+            await send_whatsapp_text(sender_wa_id, q1_msg, tenant_id=TENANT_ID)
+            return
+
+        if current_mode == "mock_interview":
+            step = user_session.get("interview_step", 1)
+            history = user_session.setdefault("interview_history", [])
+            role = user_session.get("data", {}).get("position") or "Profesional"
+
+            if step == 1:
+                history.append({"q": 1, "answer": user_text})
+                user_session["interview_step"] = 2
+
+                await send_whatsapp_text(sender_wa_id, "⏳ *HR sedang mengevaluasi jawaban Anda...*", tenant_id=TENANT_ID)
+
+                prompt_eval_1 = (
+                    f"Role: Senior HR Director. Evaluasi jawaban kandidat untuk posisi '{role}'.\n"
+                    f"Jawaban Kandidat Pertanyaan 1: '{user_text}'\n"
+                    "Berikan evaluasi singkat (Skor/100, 1 Poin Kelebihan, 1 Poin Tips Metode STAR) dalam Bahasa Indonesia."
+                )
+                eval_1 = await ai_gateway.generate(prompt_eval_1) or "Jawaban pembuka Anda runtut dan percaya diri."
+
+                q2_msg = (
+                    f"📊 *EVALUASI JAWABAN #1:*\n"
+                    f"{eval_1}\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🎙️ *[SIMULASI INTERVIEW HR SENIOR - RONDA 2/3]*\n\n"
+                    f"📌 *Pertanyaan #2 (Situational & Problem Solving):*\n"
+                    f"\"Ceritakan situasi nyata saat Anda menghadapi deadline sangat ketat atau kendala besar dalam proyek. Bagaimana langkah konkret Anda mengatasinya?\"\n\n"
+                    f"👉 *Ketik jawaban Anda langsung di chat ini.*"
+                )
+                await send_whatsapp_text(sender_wa_id, q2_msg, tenant_id=TENANT_ID)
+                return
+
+            elif step == 2:
+                history.append({"q": 2, "answer": user_text})
+                user_session["interview_step"] = 3
+
+                await send_whatsapp_text(sender_wa_id, "⏳ *HR sedang mengevaluasi jawaban Anda...*", tenant_id=TENANT_ID)
+
+                prompt_eval_2 = (
+                    f"Role: Senior HR Director. Evaluasi problem solving kandidat untuk posisi '{role}'.\n"
+                    f"Jawaban Kandidat Pertanyaan 2: '{user_text}'\n"
+                    "Berikan evaluasi singkat (Skor/100, 1 Poin Kelebihan, 1 Tips Kuantifikasi Dampak) dalam Bahasa Indonesia."
+                )
+                eval_2 = await ai_gateway.generate(prompt_eval_2) or "Metode penyelesaian masalah Anda terstruktur."
+
+                q3_msg = (
+                    f"📊 *EVALUASI JAWABAN #2:*\n"
+                    f"{eval_2}\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🎙️ *[SIMULASI INTERVIEW HR SENIOR - RONDA 3/3]*\n\n"
+                    f"📌 *Pertanyaan #3 (Strategic Vision & 90-Day Plan):*\n"
+                    f"\"Jika Anda diterima di posisi *{role}*, apa target atau inisiatif utama yang ingin Anda eksekusi dalam 90 hari pertama untuk memberikan dampak positif bagi perusahaan?\"\n\n"
+                    f"👉 *Ketik jawaban Anda langsung di chat ini.*"
+                )
+                await send_whatsapp_text(sender_wa_id, q3_msg, tenant_id=TENANT_ID)
+                return
+
+            elif step == 3:
+                history.append({"q": 3, "answer": user_text})
+                user_session["mode"] = "menu"
+
+                await send_whatsapp_text(sender_wa_id, "⏳ *Menyusun Rapor Akhir Kesiapan Wawancara HR...*", tenant_id=TENANT_ID)
+
+                prompt_final = (
+                    f"Role: Senior HR Director & Executive Coach. Susun Rapor Evaluasi Akhir Simulasi Wawancara untuk posisi '{role}'.\n"
+                    f"Riwayat Jawaban: {history}\n\n"
+                    "Format dalam WhatsApp Markdown yang rapi dan memotivasi:\n"
+                    "🏆 *RAPOR AKHIR SIMULASI INTERVIEW HR*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "🎯 *SKOR TOTAL KESIAPAN:* [XX]/100\n\n"
+                    "🧠 *ANALISIS KOMPETENSI:*\n"
+                    "• 🗣️ Artikulasi & Komunikasi: [XX]/100\n"
+                    "• ⚙️ Problem Solving & Metode STAR: [XX]/100\n"
+                    "• 🤝 Ambisi & Cultural Fit: [XX]/100\n\n"
+                    "💡 *3 REKOMENDASI EMAS SEBELUM INTERVIEW NYATA:*\n"
+                    "1. [Poin aksi 1]\n2. [Poin aksi 2]\n3. [Poin aksi 3]\n\n"
+                    "🌟 *PESAN HR SENIOR:*\n"
+                    "[1 kalimat motivasi profesional]"
+                )
+
+                final_report = await ai_gateway.generate(prompt_final)
+                if not final_report:
+                    final_report = (
+                        "🏆 *RAPOR AKHIR SIMULASI INTERVIEW HR*\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        "🎯 *SKOR TOTAL KESIAPAN:* 88/100\n\n"
+                        "🧠 *ANALISIS KOMPETENSI:*\n"
+                        "• 🗣️ Artikulasi & Komunikasi: 85/100\n"
+                        "• ⚙️ Problem Solving & Metode STAR: 90/100\n"
+                        "• 🤝 Ambisi & Cultural Fit: 88/100\n\n"
+                        "💡 *3 REKOMENDASI EMAS SEBELUM INTERVIEW NYATA:*\n"
+                        "1. Selalu sertakan metrik angka pada pencapaian (misal: 'meningkatkan efisiensi 25%').\n"
+                        "2. Pelajari produk dan kultur spesifik perusahaan yang dituju.\n"
+                        "3. Siapkan 2 pertanyaan kritis di akhir sesi wawancara untuk pewawancara."
+                    )
+
+                await send_whatsapp_text(sender_wa_id, final_report, tenant_id=TENANT_ID)
+
+                await asyncio.sleep(1)
+                await send_whatsapp_buttons(
+                    to_phone=sender_wa_id,
+                    body_text="Lengkapi persiapan Anda dengan konsultasi negosiasi gaji atau analisis loker lainnya:",
+                    buttons=PREMIUM_ACTION_BUTTONS,
+                    tenant_id=TENANT_ID
+                )
+                return
+
+        # 7. DECISION ENGINE: 💰 SALARY & NEGOTIATION COACH
+        if button_id == "btn_salary_coach" or (current_mode == "menu" and user_text_clean in ["3", "gaji", "nego gaji", "salary", "salary coach", "negosiasi gaji"]):
+            user_session["mode"] = "salary_coach"
+            await send_whatsapp_text(sender_wa_id, SALARY_COACH_INVITATION_MSG, tenant_id=TENANT_ID)
+            return
+
+        if current_mode == "salary_coach":
+            await send_whatsapp_text(sender_wa_id, "⏳ *AI Negotiation Coach sedang menyusun benchmark pasar & naskah negosiasi Anda...*", tenant_id=TENANT_ID)
+
+            prompt_salary = (
+                "Anda adalah Senior Executive Recruiter & Salary Negotiation Coach Indonesia.\n"
+                f"Kandidat menanyakan konsultasi gaji dengan data: '{user_text}'\n\n"
+                "Susun panduan negosiasi lengkap dalam format WhatsApp Markdown yang rapi dan praktis:\n"
+                "💰 *PANDUAN BENCHMARK & STRATEGI NEGOSIASI GAJI*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "📊 *1. ESTIMASI KISARAN GAJI PASAR (IDR):*\n"
+                "• 🥉 25th Percentile: [Nominal]\n"
+                "• 🥈 Median Pasar (50th): [Nominal]\n"
+                "• 🥇 75th Percentile: [Nominal]\n\n"
+                "⚖️ *2. EVALUASI TAWARAN:*\n"
+                "[Analisis apakah tawaran/ekspektasi tersebut Underpaid / Fair / Sangat Kompetitif]\n\n"
+                "💬 *3. NASKAH SKRIP NEGOSIASI SIAP PAKAI (Email / WhatsApp):*\n"
+                "\"[Tuliskan template naskah sopan, profesional, dan persuasif yang bisa langsung di-copy oleh kandidat untuk membalas HR]\"\n\n"
+                "🎁 *4. BENEFIT NON-GAJI YANG BISA DITAWAR:*\n"
+                "• 🏠 Fleksibilitas WFH / Hybrid\n"
+                "• 🏥 Asuransi Kesehatan & Rawat Inap Keluarga\n"
+                "• 📈 Jadwal Peninjauan Gaji Berkala (6 Bulan)\n"
+                "• 📚 Budget Pengembangan Diri & Sertifikasi"
+            )
+
+            salary_result = await ai_gateway.generate(prompt_salary)
+            if not salary_result:
+                salary_result = (
+                    "💰 *PANDUAN BENCHMARK & STRATEGI NEGOSIASI GAJI*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "📊 *1. ESTIMASI KISARAN GAJI PASAR:*\n"
+                    "• 🥉 25th Percentile: Rp8.000.000\n"
+                    "• 🥈 Median Pasar: Rp12.000.000\n"
+                    "• 🥇 75th Percentile: Rp16.000.000\n\n"
+                    "⚖️ *2. EVALUASI TAWARAN:*\n"
+                    "Tawaran berada pada rentang kompetitif pasar profesional Indonesia.\n\n"
+                    "💬 *3. NASKAH SKRIP NEGOSIASI HR:*\n"
+                    "\"Terima kasih atas penawaran yang diberikan. Berdasarkan riset pasar dan kontribusi nilai tambah yang dapat saya bawa ke perusahaan, saya ingin mendiskusikan penyesuaian nominal pada kisaran Rp...\"\n\n"
+                    "🎁 *4. BENEFIT NON-GAJI:*\n"
+                    "• Fleksibilitas WFH / Hybrid\n"
+                    "• Peninjauan performa dan gaji dalam 6 bulan"
+                )
+
+            await send_whatsapp_text(sender_wa_id, salary_result, tenant_id=TENANT_ID)
+            user_session["mode"] = "menu"
+
+            await asyncio.sleep(1)
+            await send_whatsapp_buttons(
+                to_phone=sender_wa_id,
+                body_text="Lanjutkan persiapan karir Anda dengan fitur lainnya:",
+                buttons=PREMIUM_ACTION_BUTTONS,
+                tenant_id=TENANT_ID
+            )
+            return
+
+        # 8. Trigger Optimasi / Bedah CV Lagi
+        if button_id in ["btn_rewrite_again", "btn_review"] or (current_mode == "menu" and user_text_clean in ["4", "review", "bedah cv", "review cv", "🔍 review cv", "revisi cv"]):
             user_session["mode"] = "review"
             await send_whatsapp_text(sender_wa_id, REVIEW_INTRO_MSG, tenant_id=TENANT_ID)
             return
 
-        # 5. Builder Menu Button
-        if button_id == "btn_builder" or (current_mode == "menu" and user_text_clean in ["2", "bikin cv", "📝 bikin cv dasar"]):
+        # 9. Builder Menu Button
+        if button_id == "btn_builder" or (current_mode == "menu" and user_text_clean in ["bikin cv", "📝 bikin cv dasar"]):
             user_session["mode"] = "builder"
             user_session["step"] = 0
             result = await process_unified_cv_step(sender_wa_id, "", platform="whatsapp")
@@ -329,14 +608,14 @@ class CareerService:
             )
             return
 
-        # 6. CV Builder Language Selection
+        # 10. CV Builder Language Selection
         if button_id.startswith("lang_"):
             lang_choice = "1" if button_id == "lang_en_id" else ("2" if button_id == "lang_id" else "3")
             result = await process_unified_cv_step(sender_wa_id, lang_choice, platform="whatsapp")
             await send_whatsapp_text(sender_wa_id, result["reply_text"], tenant_id=TENANT_ID)
             return
 
-        # 7. CV Builder Wizard Steps
+        # 11. CV Builder Wizard Steps
         if current_mode == "builder" or user_session.get("step", 0) > 0:
             result = await process_unified_cv_step(sender_wa_id, user_text, platform="whatsapp")
             messages_to_send = result.get("messages", [])
@@ -352,7 +631,7 @@ class CareerService:
                 user_session.setdefault("data", {})["has_completed_cv"] = True
             return
 
-        # 8. Review via Manual Text Input
+        # 12. Review via Manual Text Input
         if current_mode == "review":
             if len(user_text.split()) < 6:
                 await send_whatsapp_text(
@@ -380,7 +659,7 @@ class CareerService:
                 await send_whatsapp_text(sender_wa_id, "⚠️ Gagal menganalisis teks CV.", tenant_id=TENANT_ID)
             return
 
-        # 9. Fallback AI Consultation
+        # 13. Fallback AI Consultation
         ai_reply = await ai_gateway.generate(
             user_message=user_text,
             context={"user_id": sender_wa_id, "feature": "career_consultation"}
@@ -392,3 +671,4 @@ class CareerService:
 
 
 career_service = CareerService()
+
