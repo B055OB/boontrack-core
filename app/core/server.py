@@ -15,6 +15,7 @@ from app.routes.payment_webhook import register_payment_webhook_routes
 from app.tenants.om_budi.router import register_om_budi_routes
 from app.tenants.career.router import register_career_routes
 from app.routes.whatsapp_central import register_central_whatsapp_routes
+from app.core.channels.telegram import register_central_telegram_routes
 from app.reader.router import (
     pair_device_handler,
     refresh_token_handler,
@@ -57,6 +58,9 @@ def create_web_app() -> web.Application:
     register_om_budi_routes(app)
     register_career_routes(app)
     register_central_whatsapp_routes(app)
+
+    # 7. Central Multi-Tenant Telegram Channel (Digicorn, Career, & Universal)
+    register_central_telegram_routes(app)
 
     # 7. Device Pairing & Reader Management
     async def _wrap_pair(req):
