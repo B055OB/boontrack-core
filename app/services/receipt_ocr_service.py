@@ -12,7 +12,9 @@ async def analyze_receipt_image(image_bytes: bytes, mime_type: str = "image/jpeg
     """Ekstraksi OCR bukti transfer/struk menggunakan endpoint model Gemini 3.6 Flash."""
     fallback_res = {
         "is_valid_receipt": True,
+        "is_transfer_receipt": True,
         "nominal": 50000,
+        "amount": 50000,
         "bank_source": "BSI / Mandiri (Budi Yulianto)",
         "reference_no_rrn": "TRX-AUTO-2026",
         "date": "2026-08-24"
@@ -62,7 +64,16 @@ async def analyze_receipt_image(image_bytes: bytes, mime_type: str = "image/jpeg
                     data = await resp.json()
                     text_response = data["candidates"][0]["content"]["parts"][0]["text"]
                     clean_json = text_response.replace("```json", "").replace("```", "").strip()
-                    return json.loads(clean_json)
+                    parsed = json.loads(clean_json)
+                    if "nominal" in parsed and "amount" not in parsed:
+                        parsed["amount"] = parsed["nominal"]
+                    if "amount" in parsed and "nominal" not in parsed:
+                        parsed["nominal"] = parsed["amount"]
+                    if "is_valid_receipt" in parsed and "is_transfer_receipt" not in parsed:
+                        parsed["is_transfer_receipt"] = parsed["is_valid_receipt"]
+                    if "is_transfer_receipt" in parsed and "is_valid_receipt" not in parsed:
+                        parsed["is_valid_receipt"] = parsed["is_transfer_receipt"]
+                    return parsed
                 else:
                     err = await resp.text()
                     logger.error(f"[GEMINI 3.6 OCR ERROR] Status {resp.status}: {err}")

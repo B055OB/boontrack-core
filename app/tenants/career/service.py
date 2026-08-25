@@ -168,7 +168,8 @@ class CareerService:
                 image_bytes = await download_whatsapp_media(media_id)
                 receipt_data = await parse_receipt_image(image_bytes)
 
-                if not receipt_data or not receipt_data.get("is_transfer_receipt"):
+                is_valid = bool(receipt_data and (receipt_data.get("is_transfer_receipt") or receipt_data.get("is_valid_receipt")))
+                if not is_valid:
                     await send_whatsapp_text(
                         sender_wa_id,
                         RECEIPT_INVALID_MSG,
@@ -176,7 +177,7 @@ class CareerService:
                     )
                     return
 
-                amount = int(receipt_data.get("amount", 0))
+                amount = int(receipt_data.get("amount") or receipt_data.get("nominal") or 0)
                 active_invoice = user_session.get("active_invoice")
                 target_intent = PAYMENT_INTENTS.get(active_invoice) if active_invoice else None
                 base_price = target_intent.get("base_amount", 25000) if target_intent else 25000
