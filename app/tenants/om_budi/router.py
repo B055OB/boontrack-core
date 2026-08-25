@@ -9,6 +9,7 @@ from app.tenants.om_budi.service import om_budi_service
 from app.services.whatsapp_service import (
     log_to_supabase_messages,
     safe_log_to_supabase_messages,
+    send_whatsapp_image,
     extract_meta_whatsapp_event
 )
 
@@ -152,7 +153,22 @@ async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
         buttons = response_data.get("buttons") or response_data.get("nav_buttons")
 
         # 3. Kirim balik respons
-        if res_type == "buttons" and len(reply_text) <= 1000:
+        if res_type == "image":
+            img_path = response_data.get("image_path") or response_data.get("image")
+            caption_text = response_data.get("reply", "") or response_data.get("caption", "")
+            await send_whatsapp_image(
+                to_phone=from_phone,
+                image_path_or_bytes=img_path,
+                caption=caption_text,
+                tenant_id="om-budi"
+            )
+            if buttons:
+                await send_wa_interactive_buttons(
+                    recipient_phone=from_phone,
+                    body_text="👇 *Pilih menu untuk melanjutkan:*",
+                    buttons=buttons
+                )
+        elif res_type == "buttons" and len(reply_text) <= 1000:
             await send_wa_interactive_buttons(
                 recipient_phone=from_phone,
                 body_text=reply_text,

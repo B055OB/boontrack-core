@@ -79,6 +79,12 @@ def create_web_app() -> web.Application:
     app.router.add_post("/api/v1/devices/refresh", _wrap_refresh)
     app.router.add_post("/api/v1/devices/revoke", _wrap_revoke)
 
+    # 8. Static Assets Mount
+    app_assets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
+    if os.path.exists(app_assets_dir):
+        app.router.add_static("/assets", app_assets_dir, name="assets")
+        app.router.add_static("/app/assets", app_assets_dir, name="app_assets")
+
     return app
 
 async def start_web_server(app: web.Application, port: int = 8080) -> web.AppRunner:

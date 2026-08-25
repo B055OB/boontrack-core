@@ -8,12 +8,34 @@ from app.core.messaging.templates import (
     REKENING_OM_BUDI,
     ZOOM_INFO_OM_BUDI,
     AUDIO_BRAINWAVE_OM_BUDI,
-    MATERI_RIYADHOH_OM_BUDI
+    MATERI_RIYADHOH_OM_BUDI,
+    PENJELASAN_SEDEKAH_OM_BUDI,
+    PENDAFTARAN_KELAS_OM_BUDI
 )
 
 logger = logging.getLogger("OM_BUDI_SERVICE")
 KB_PATH = os.path.join(os.path.dirname(__file__), "knowledge_base.json")
 MEMBERS_PATH = os.path.join(os.path.dirname(__file__), "alumni_members.json")
+
+
+def _resolve_qris_asset_path() -> str:
+    """Mencari path gambar QRIS Om Budi lokal yang valid."""
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    candidates = [
+        os.path.join(base_dir, "app", "assets", "qrisombudi.png"),
+        os.path.join(base_dir, "app", "assets", "qrisombudi.jpg"),
+        os.path.join(base_dir, "assets", "qrisombudi.png"),
+        os.path.join(base_dir, "assets", "qrisombudi.jpg"),
+        os.path.join(os.getcwd(), "app", "assets", "qrisombudi.png"),
+        os.path.join(os.getcwd(), "assets", "qrisombudi.png"),
+        "app/assets/qrisombudi.png",
+        "assets/qrisombudi.png",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return "app/assets/qrisombudi.png"
+
 
 SYSTEM_PROMPT_OM_BUDI = (
     "Kamu adalah AI Admin Bimbingan Resmi Om Budi Channel.\n"
@@ -43,6 +65,7 @@ class OmBudiService:
     def __init__(self):
         self.rules = self._load_rules()
         self.matcher = LocalKnowledgeMatcher(self.rules)
+        self.qris_asset_path = _resolve_qris_asset_path()
         self.fallback_msg = (
             "Assalamu'alaikum Warahmatullahi Wabarakatuh Bapak/Ibu 🙏😊\n\n"
             "Mohon maaf yang sebesar-besarnya, saat ini kami belum bisa menjawab pertanyaan Bapak/Ibu secara langsung 🙏.\n\n"
@@ -135,15 +158,15 @@ class OmBudiService:
             welcome_alumni = (
                 f"Alhamdulillah wa Syukurillah! Selamat datang kembali Bapak/Ibu *{user_name}* 🙏😊\n\n"
                 "Nomor Anda telah berhasil terverifikasi sebagai **Alumni Resmi Kelas Bimbingan Om Budi** 🤲.\n\n"
-                "Seluruh fitur konsultasi materi, panduan riyadhoh, dan link Zoom Booster kini sudah aktif sepenuhnya."
+                "Seluruh fitur konsultasi, pendaftaran kelas online, dan link Zoom Booster kini sudah aktif sepenuhnya."
             )
             return {
                 "type": "buttons",
                 "reply": welcome_alumni,
                 "buttons": [
                     {"id": "menu_zoom_booster", "title": "🚀 Zoom Booster"},
-                    {"id": "menu_belajar_materi", "title": "📖 Belajar Materi"},
-                    {"id": "menu_sedekah_berjamaah", "title": "🤲 Sedekah"}
+                    {"id": "menu_sedekah_berjamaah", "title": "🤲 Sedekah"},
+                    {"id": "menu_daftar_kelas", "title": "Daftar Kelas Online"}
                 ]
             }
 
@@ -163,57 +186,21 @@ class OmBudiService:
                 "buttons": [
                     {"id": "menu_zoom_booster", "title": "🚀 Zoom Booster"},
                     {"id": "menu_sedekah_berjamaah", "title": "🤲 Sedekah"},
-                    {"id": "menu_belajar_materi", "title": "📖 Belajar Materi"}
+                    {"id": "menu_daftar_kelas", "title": "Daftar Kelas Online"}
                 ]
             }
 
-        # 4. Handle Tombol / Teks Belajar Materi
-        if button_id in ["menu_belajar_materi", "menu_tanya_materi"] or any(k in clean_text for k in ["belajar materi", "bimbingan materi", "tanya materi"]):
+        # 4. Handle Menu Baru: Daftar Kelas Online (Kirim Gambar QRIS + Caption)
+        if button_id in ["menu_daftar_kelas", "btn_daftar_kelas", "menu_kelas_online", "btn_kelas_online"] or any(
+            k in clean_text for k in ["daftar kelas", "kelas online", "daftar kelas online", "pendaftaran kelas", "ikut kelas", "daftar bimbingan"]
+        ):
             return {
-                "type": "buttons",
-                "reply": (
-                    "📖 *Ruang Belajar & Bimbingan Materi*\n\n"
-                    "Silakan pelajari materi bimbingan atau ketik langsung pertanyaan Anda seputar materi "
-                    "(contoh: *'apa itu riyadhoh'*, *'berapa hari riyadhoh'*, "
-                    "*'tahajud jam berapa'*, *'pantangan audio brainwave'*, atau *'cara nulis doa gimana'*).\n\n"
-                    "Atau pilih menu cepat di bawah ini untuk mengunduh audio & panduan langsung 😊🙏:"
-                ),
+                "type": "image",
+                "image_path": self.qris_asset_path,
+                "reply": PENDAFTARAN_KELAS_OM_BUDI,
+                "caption": PENDAFTARAN_KELAS_OM_BUDI,
                 "buttons": [
-                    {"id": "btn_audio_brainwave", "title": "🎧 Audio Brainwave"},
-                    {"id": "btn_materi_riyadhoh", "title": "📚 Materi Riyadhoh"},
-                    {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
-                ]
-            }
-
-        # 4.1 Handle Direct Trigger: Audio Brainwave & File Download
-        audio_keywords = [
-            "audio", "brainwave", "link audio", "minta audio", "kirim audio",
-            "download audio", "file audio", "rekaman audio", "audio riyadhoh",
-            "audio meditasi", "quantum ikhlas", "terapi rezeki", "mp3",
-            "suara brainwave", "dengerin audio", "putar audio", "lagu brainwave"
-        ]
-        if button_id in ["btn_audio_brainwave", "btn_sub_1_h"] or any(k in clean_text for k in audio_keywords):
-            return {
-                "type": "text",
-                "reply": AUDIO_BRAINWAVE_OM_BUDI,
-                "buttons": [
-                    {"id": "btn_materi_riyadhoh", "title": "📚 Materi Riyadhoh"},
-                    {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
-                ]
-            }
-
-        # 4.2 Handle Direct Trigger: Materi Riyadhoh & Panduan 40 Hari
-        materi_keywords = [
-            "materi riyadhoh", "buku riyadhoh", "pdf riyadhoh", "panduan riyadhoh",
-            "modul riyadhoh", "jadwal riyadhoh", "tata cara riyadhoh", "amalan riyadhoh",
-            "download riyadhoh", "file riyadhoh"
-        ]
-        if button_id == "btn_materi_riyadhoh" or any(k in clean_text for k in materi_keywords):
-            return {
-                "type": "text",
-                "reply": MATERI_RIYADHOH_OM_BUDI,
-                "buttons": [
-                    {"id": "btn_audio_brainwave", "title": "🎧 Audio Brainwave"},
+                    {"id": "btn_upload_struk", "title": "Kirim Bukti Transfer"},
                     {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
                 ]
             }
@@ -276,17 +263,17 @@ class OmBudiService:
                 ]
             }
 
-        if button_id == "btn_penjelasan_sedekah":
+        if button_id == "btn_penjelasan_sedekah" or clean_text in ["penjelasan sedekah", "tentang sedekah"]:
             return {
                 "type": "buttons",
-                "reply": "🤲 *Penjelasan Sedekah Berjamaah*\n\nGerakan ikhtiar langit bersama Om Budi Channel untuk mendukung anak yatim, dakwah, dan operasional majelis ilmu 🙏😊.",
+                "reply": PENJELASAN_SEDEKAH_OM_BUDI,
                 "buttons": [
                     {"id": "btn_cara_sedekah", "title": "Cara Ikut Sedekah"},
                     {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
                 ]
             }
 
-        if button_id == "btn_cara_sedekah" or any(k in clean_text for k in ["rekening", "nomor rekening", "qris", "bsi", "mandiri", "transfer", "infaq"]):
+        if button_id == "btn_cara_sedekah" or any(k in clean_text for k in ["cara ikut sedekah", "rekening", "nomor rekening", "qris", "bsi", "mandiri", "transfer", "infaq"]):
             return {
                 "type": "buttons",
                 "reply": REKENING_OM_BUDI,
@@ -296,10 +283,42 @@ class OmBudiService:
                 ]
             }
 
-        if button_id == "btn_upload_struk":
+        if button_id == "btn_upload_struk" or "kirim bukti" in clean_text:
             return {"type": "text", "reply": "📸 *Kirim Bukti Transfer*\n\nSilakan lampirkan dan kirimkan foto struk transfer / screenshot m-banking Anda sekarang ya 🙏😊."}
 
-        # 7. Pencocokan Tier 4 Local Knowledge Base (Cepat & Akurat)
+        # 7. Direct Keywords & Buttons untuk Audio & Materi
+        audio_keywords = [
+            "audio", "brainwave", "link audio", "minta audio", "kirim audio",
+            "download audio", "file audio", "rekaman audio", "audio riyadhoh",
+            "audio meditasi", "quantum ikhlas", "terapi rezeki", "mp3",
+            "suara brainwave", "dengerin audio", "putar audio", "lagu brainwave"
+        ]
+        if button_id in ["btn_audio_brainwave", "btn_sub_1_h"] or any(k in clean_text for k in audio_keywords):
+            return {
+                "type": "text",
+                "reply": AUDIO_BRAINWAVE_OM_BUDI,
+                "buttons": [
+                    {"id": "menu_daftar_kelas", "title": "Daftar Kelas Online"},
+                    {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
+                ]
+            }
+
+        materi_keywords = [
+            "materi riyadhoh", "buku riyadhoh", "pdf riyadhoh", "panduan riyadhoh",
+            "modul riyadhoh", "jadwal riyadhoh", "tata cara riyadhoh", "amalan riyadhoh",
+            "download riyadhoh", "file riyadhoh"
+        ]
+        if button_id == "btn_materi_riyadhoh" or any(k in clean_text for k in materi_keywords):
+            return {
+                "type": "text",
+                "reply": MATERI_RIYADHOH_OM_BUDI,
+                "buttons": [
+                    {"id": "menu_daftar_kelas", "title": "Daftar Kelas Online"},
+                    {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
+                ]
+            }
+
+        # 8. Pencocokan Tier 4 Local Knowledge Base (Cepat & Akurat)
         try:
             conf, score, answer, intent = self.matcher.find_match(message_text)
             if conf in [MatchConfidence.HIGH, MatchConfidence.MEDIUM] and answer:
@@ -311,7 +330,7 @@ class OmBudiService:
         except Exception as e:
             logger.error(f"[MATCHER ERROR] {e}")
 
-        # 8. Fallback AI Gateway (Memanggil AIGateway di app/services/ai_gateway.py)
+        # 9. Fallback AI Gateway (Memanggil AIGateway di app/services/ai_gateway.py)
         try:
             from app.services.ai_gateway import AIGateway
             gateway = AIGateway()
@@ -329,7 +348,7 @@ class OmBudiService:
         except Exception as gw_err:
             logger.error(f"[AI GATEWAY ERROR] {gw_err}")
 
-        # 9. Penampungan Pertanyaan
+        # 10. Penampungan Pertanyaan
         return {
             "type": "buttons",
             "reply": self.fallback_msg,

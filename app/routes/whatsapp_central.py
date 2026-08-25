@@ -11,6 +11,7 @@ from app.core.security.masking import ZeroPIILogFilter
 from app.services.whatsapp_service import (
     log_to_supabase_messages, 
     safe_log_to_supabase_messages,
+    send_whatsapp_image,
     extract_meta_whatsapp_event
 )
 
@@ -302,7 +303,23 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             reply_text = res.get("reply", "")
             buttons = res.get("buttons") or res.get("nav_buttons")
 
-            if res_type == "list":
+            if res_type == "image":
+                img_path = res.get("image_path") or res.get("image")
+                caption_text = res.get("reply", "") or res.get("caption", "")
+                await send_whatsapp_image(
+                    to_phone=from_phone,
+                    image_path_or_bytes=img_path,
+                    caption=caption_text,
+                    tenant_id="om-budi"
+                )
+                if buttons:
+                    await send_wa_buttons(
+                        from_phone,
+                        "👇 *Pilih menu untuk melanjutkan:*",
+                        buttons,
+                        phone_id
+                    )
+            elif res_type == "list":
                 await send_wa_list_menu(
                     from_phone,
                     reply_text,

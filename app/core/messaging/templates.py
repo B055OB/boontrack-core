@@ -66,3 +66,20 @@ MATERI_RIYADHOH_OM_BUDI = (
     "• Terapi Rezeki: https://drive.google.com/file/d/1zJOXiu-A-Jlh713tIvULS-tfbBBUEKLp/view?usp=drive_link\n\n"
     "Semoga istiqomah dan Allah karuniakan jalan keluar terbaik untuk segala amanah 🤲😊."
 )
+
+PENJELASAN_SEDEKAH_OM_BUDI = (
+    "*SEDEKAH BERJAMAAH OM BUDI CHANNEL*\n\n"
+    "Bapak, Ibu, dan teman-teman, sedekah berjamaah adalah ajakan untuk bersama-sama berbagi sesuai kemampuan.\n\n"
+    "Tidak harus besar. Dengan hanya minimal Rp50.000 perbulan bapak ibu sudah masuk dalam Program Mulia ini. \n\n"
+    "Sedikit dari kita, jika dikumpulkan bersama, insyaAllah menjadi manfaat yang besar untuk saudara yang membutuhkan.\n\n"
+    "Yang terpenting bukan jumlahnya, tetapi keikhlasan dan niat karena Allah.\n\n"
+    "Semoga menjadi amal kebaikan dan keberkahan untuk kita semua. Aamiin🙏"
+)
+
+PENDAFTARAN_KELAS_OM_BUDI = (
+    "🎓 *PENDAFTARAN KELAS ONLINE OM BUDI*\n\n"
+    "Silakan scan kode QRIS di atas melalui aplikasi M-Banking atau E-Wallet (BCA, Mandiri, BRI, BNI, GoPay, OVO, ShopeePay, DANA, dll).\n\n"
+    "📌 *Merchant:* OM BUDI CHANNEL\n"
+    "🔢 *NMID:* ID1024333398336\n\n"
+    "Setelah proses transfer berhasil, silakan kirimkan foto/screenshot bukti pembayaran ke chat ini untuk kami data. Terima kasih!"
+)
