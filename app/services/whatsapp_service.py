@@ -38,6 +38,18 @@ def get_supabase() -> Optional[Client]:
     return _supabase_client
 
 
+def normalize_phone_number(raw_phone: Optional[str]) -> str:
+    """Menyeragamkan format nomor telepon WhatsApp ke standar internasional tanpa tanda plus (e.g. 628123456789)."""
+    if not raw_phone:
+        return ""
+    cleaned = "".join(filter(str.isdigit, str(raw_phone)))
+    if cleaned.startswith("08"):
+        cleaned = "62" + cleaned[1:]
+    elif cleaned.startswith("008"):
+        cleaned = "62" + cleaned[2:]
+    return cleaned
+
+
 async def log_to_supabase_messages(
     sender: str, 
     text: Optional[str] = None, 
@@ -80,10 +92,9 @@ async def log_to_supabase_messages(
             normalized_sender = sender
 
         # 3. Normalisasi Phone & User ID
-        phone = str(user_phone or user_id or conversation_id or "").replace("+", "").strip()
-        clean_digits = "".join(filter(str.isdigit, phone))
-        resolved_uid = clean_digits or user_id or phone or normalized_sender
-        resolved_phone = clean_digits or phone or None
+        clean_digits = normalize_phone_number(user_phone or user_id or conversation_id or "")
+        resolved_uid = clean_digits or user_id or normalized_sender
+        resolved_phone = clean_digits or None
 
         # 4. Tentukan UUID Deterministik untuk conversation_id
         if conversation_id and "-" in str(conversation_id) and len(str(conversation_id)) == 36:
@@ -108,7 +119,7 @@ async def log_to_supabase_messages(
             except Exception as conv_err:
                 logger.debug(f"[Supabase Conv Upsert Warning] {conv_err}")
 
-        # 6. Insert ke tabel messages
+        # 6. Insert ke tabel messages (sesuai schema Supabase)
         payload = {
             "sender": normalized_sender,
             "text": content,
@@ -119,7 +130,6 @@ async def log_to_supabase_messages(
             "user_phone": resolved_phone,
             "user_name": user_name,
             "conversation_id": conv_uuid,
-            "payload": metadata if isinstance(metadata, dict) else None,
             "created_at": now_iso
         }
         supabase.table("messages").insert(payload).execute()

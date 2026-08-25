@@ -311,18 +311,18 @@ class CareerService:
         current_mode = user_session.get("mode", "menu")
 
         # 1. Log Inbound
-        if user_text:
-            safe_log_to_supabase_messages(
-                sender="user",
-                text=user_text,
-                tenant_id=TENANT_ID,
-                channel="whatsapp",
-                user_phone=sender_wa_id,
-                user_name=display_name,
-                user_id=sender_wa_id,
-                conversation_id=sender_wa_id,
-                metadata={"button_id": button_id, "mode": current_mode, "msg_type": "interactive" if button_id else "text"}
-            )
+        inbound_text = user_text or (f"[Klik Tombol: {button_id}]" if button_id else "[Pesan Masuk]")
+        safe_log_to_supabase_messages(
+            sender="user",
+            text=inbound_text,
+            tenant_id=TENANT_ID,
+            channel="whatsapp",
+            user_phone=sender_wa_id,
+            user_name=display_name,
+            user_id=sender_wa_id,
+            conversation_id=sender_wa_id,
+            metadata={"button_id": button_id, "mode": current_mode, "msg_type": "interactive" if button_id else "text"}
+        )
 
         # 2. Reset / Navigation
         if button_id == "btn_menu" or user_text_clean in ["menu", "halo", "hi", "mulai", "start", "bantuan", "batal", "home", "/menu", "/start"]:
