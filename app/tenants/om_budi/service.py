@@ -15,7 +15,8 @@ from app.core.messaging.templates import (
     PANDUAN_QRIS_OM_BUDI,
     RINGKASAN_KELAS_ONLINE_OM_BUDI,
     CARA_IKUT_SEDEKAH_OM_BUDI,
-    PESERTA_ZOOM_INFO_OM_BUDI
+    PESERTA_ZOOM_INFO_OM_BUDI,
+    JADWAL_ZOOM_INFO_OM_BUDI
 )
 
 logger = logging.getLogger("OM_BUDI_SERVICE")
@@ -301,7 +302,7 @@ class OmBudiService:
         if button_id == "btn_sub_1_b" or "jadwal zoom" in clean_text:
             return {
                 "type": "buttons",
-                "reply": "🗓️ *Jadwal Zoom Booster*\n\nSesi rutin bimbingan diadakan setiap hari **Rabu malam** pukul **20.00 WIB** secara live online 🙏.",
+                "reply": JADWAL_ZOOM_INFO_OM_BUDI,
                 "buttons": zoom_nav
             }
         if button_id == "btn_sub_1_c" or "tentang zoom" in clean_text:

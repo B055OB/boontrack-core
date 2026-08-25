@@ -25,6 +25,11 @@ ZOOM_INFO_OM_BUDI = (
     "_Buka tautan di atas saat jam acara dimulai ya Bapak/Ibu 😊🙏._"
 )
 
+JADWAL_ZOOM_INFO_OM_BUDI = (
+    "Zoom Booster akan di laksanakan InSya Allah setiap hari Rabu. "
+    "Untuk informasi dan Link Zoom Booster kami berikan di group sedekah berjamaah. Terima Kasih🙏"
+)
+
 AUDIO_BRAINWAVE_OM_BUDI = (
     "🎧 *PANDUAN & LINK DOWNLOAD AUDIO BRAINWAVE QUANTUM ENERGI* 🤲\n\n"
     "Bismillah, berikut tautan resmi download/streaming 3 Audio Bimbingan Om Budi:\n\n"

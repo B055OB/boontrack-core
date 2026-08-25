@@ -214,7 +214,7 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
         # 2. Validasi Setiap Handler Mengembalikan Teks & Tombol Navigasi
         test_options = [
             ("btn_sub_1_a", "Cara Mengikuti Zoom Booster"),
-            ("btn_sub_1_b", "Jadwal Zoom Booster"),
+            ("btn_sub_1_b", "Zoom Booster akan di laksanakan InSya Allah setiap hari Rabu"),
             ("btn_sub_1_c", "Tentang Zoom Booster"),
             ("btn_sub_1_d", "*KENAPA ZOOM BOOSTER SETIAP RABU TIDAK UNTUK SEMUA ORANG?*")
         ]
@@ -230,7 +230,12 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
                 reply = opt_res.get("reply", "")
                 self.assertIn(keyword, reply)
 
-                # Validasi detail copy untuk opsi ke-4
+                # Validasi detail copy untuk opsi Jadwal Zoom
+                if btn_id == "btn_sub_1_b":
+                    self.assertIn("Untuk informasi dan Link Zoom Booster kami berikan di group sedekah berjamaah.", reply)
+                    self.assertIn("Terima Kasih🙏", reply)
+
+                # Validasi detail copy untuk opsi Peserta Zoom Rabu
                 if btn_id == "btn_sub_1_d":
                     self.assertIn("kapasitas Zoom kami saat ini hanya 500 peserta", reply)
                     self.assertIn("Wadah Sedekah Berjamaah", reply)
