@@ -103,6 +103,41 @@ class TestCareerModular(AioHTTPTestCase):
         self.assertIn("BOONTRACK CAREER PRO", mock_send_buttons.call_args[1]["header_text"])
 
     @unittest_run_loop
+    @patch("app.tenants.career.service.send_whatsapp_buttons")
+    @patch("app.tenants.career.service.safe_log_to_supabase_messages")
+    async def test_developer_whitelist_bypass(self, mock_log, mock_send_buttons):
+        mock_send_buttons.return_value = {"status": "success"}
+
+        # Whitelisted developer number (fresh state without prior payment)
+        dev_phone = "6281237450222"
+        self.assertNotIn(dev_phone, GLOBAL_USER_STATES)
+
+        payload = {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": "1340866379104241"},
+                        "contacts": [{"profile": {"name": "Developer Alldy"}, "wa_id": dev_phone}],
+                        "messages": [{
+                            "from": dev_phone,
+                            "type": "text",
+                            "text": {"body": "menu"}
+                        }]
+                    }
+                }]
+            }]
+        }
+
+        resp = await self.client.post("/api/v1/tenants/boontrack-career/webhook/whatsapp", json=payload)
+        self.assertEqual(resp.status, 200)
+        mock_send_buttons.assert_called_once()
+        
+        # Verify whitelist auto-upgraded session
+        self.assertTrue(GLOBAL_USER_STATES[dev_phone]["is_premium_paid"])
+        self.assertEqual(GLOBAL_USER_STATES[dev_phone]["tier"], "premium_unlocked")
+        self.assertIn("BOONTRACK CAREER PRO", mock_send_buttons.call_args[1]["header_text"])
+
+    @unittest_run_loop
     @patch("app.tenants.career.service.ai_gateway.generate")
     @patch("app.tenants.career.service.send_whatsapp_buttons")
     @patch("app.tenants.career.service.send_whatsapp_text")

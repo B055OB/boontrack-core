@@ -1,10 +1,11 @@
 import os
+import re
 import asyncio
 import logging
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 
-from app.tenants.career.config import TENANT_ID
+from app.tenants.career.config import TENANT_ID, CAREER_VIP_WHITELIST
 from app.tenants.career.messages import (
     WELCOME_CAREER_TEMPLATE,
     CAREER_MENU_BUTTONS,
@@ -51,6 +52,20 @@ except Exception as e:
         return None
 
 
+def is_whitelisted_career_phone(phone: str) -> bool:
+    """Mengecek apakah nomor pengirim terdaftar dalam VIP/Developer Whitelist."""
+    if not phone:
+        return False
+    clean_digits = re.sub(r"\D", "", str(phone))
+    for whitelisted in CAREER_VIP_WHITELIST:
+        whitelisted_digits = re.sub(r"\D", "", str(whitelisted))
+        if clean_digits == whitelisted_digits or (clean_digits and whitelisted_digits and clean_digits.endswith(whitelisted_digits)):
+            return True
+        if str(phone).strip() == str(whitelisted).strip():
+            return True
+    return False
+
+
 class CareerService:
     """Service pemrosesan pesan dan Decision Engine untuk tenant BoonTrack Career."""
 
@@ -62,11 +77,21 @@ class CareerService:
 
     @staticmethod
     def is_user_premium(sender_wa_id: str) -> bool:
+        if is_whitelisted_career_phone(sender_wa_id):
+            return True
         user_session = GLOBAL_USER_STATES.get(sender_wa_id, {})
         return bool(user_session.get("is_premium_paid") or user_session.get("tier") == "premium_unlocked")
 
+    def _init_user_session(self, sender_wa_id: str) -> dict:
+        user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
+        if is_whitelisted_career_phone(sender_wa_id):
+            user_session["is_premium_paid"] = True
+            user_session["tier"] = "premium_unlocked"
+        return user_session
+
     async def send_menu_buttons(self, sender_wa_id: str):
         """Kirim menu interaktif (Dinamis: Freemium vs Premium Decision Engine)"""
+        self._init_user_session(sender_wa_id)
         nama = self.get_user_display_name(sender_wa_id)
         greeting = f", *{nama}*" if nama else ""
         is_premium = self.is_user_premium(sender_wa_id)
@@ -118,7 +143,7 @@ class CareerService:
 
     async def handle_image(self, sender_wa_id: str, display_name: str, media_id: Optional[str]):
         """Handler untuk pesan gambar (OCR bukti pembayaran transfer QRIS)"""
-        user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
+        user_session = self._init_user_session(sender_wa_id)
 
         safe_log_to_supabase_messages(
             sender="user",
@@ -196,7 +221,7 @@ class CareerService:
 
     async def handle_document(self, sender_wa_id: str, display_name: str, media_id: Optional[str], filename: str):
         """Handler untuk dokumen CV (PDF / DOCX)"""
-        user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
+        user_session = self._init_user_session(sender_wa_id)
 
         safe_log_to_supabase_messages(
             sender="user",
@@ -248,7 +273,7 @@ class CareerService:
 
     async def handle_text_or_button(self, sender_wa_id: str, display_name: str, user_text: str, button_id: str):
         """Handler untuk input teks, tombol interaktif, dan Decision Engine workflows."""
-        user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
+        user_session = self._init_user_session(sender_wa_id)
         user_text_clean = (user_text or "").lower().strip()
         current_mode = user_session.get("mode", "menu")
 

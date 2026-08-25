@@ -16,3 +16,20 @@ CAREER_ACCESS_TOKEN = os.getenv(
     "CAREER_ACCESS_TOKEN",
     os.getenv("WHATSAPP_TOKEN", PERMANENT_META_TOKEN)
 )
+
+# Developer & Admin Whitelist Bypass (Auto-Unlock Career Pro & Decision Engine)
+CAREER_VIP_WHITELIST = {
+    "081237450222",
+    "6281237450222",
+    "+6281237450222",
+    "6281237450222@c.us"
+}
+
+# Tambahkan nomor dari environment variable jika dispesifikasikan
+env_whitelist = os.getenv("CAREER_VIP_WHITELIST", "")
+if env_whitelist:
+    for num in env_whitelist.split(","):
+        clean_num = num.strip()
+        if clean_num:
+            CAREER_VIP_WHITELIST.add(clean_num)
+
