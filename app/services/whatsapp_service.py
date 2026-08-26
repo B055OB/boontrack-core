@@ -598,7 +598,7 @@ async def send_whatsapp_image(
         "to": clean_phone,
         "type": "image",
         "image": {
-            "id": media_id,
+            "id": str(media_id),
             "caption": caption
         }
     }
@@ -610,6 +610,7 @@ async def send_whatsapp_image(
             print(f"[META WA SEND IMAGE RESPONSE] HTTP {response.status_code} - {response.text}", flush=True)
             if response.status_code not in (200, 201):
                 logger.error(f"[WhatsApp Service] send_whatsapp_image failed: {response.status_code} - {response.text}")
+                print(f"[META WA SEND IMAGE ERROR] HTTP {response.status_code} - {response.text}", flush=True)
                 return await send_whatsapp_text(clean_phone, caption, tenant_id=effective_tenant)
             
             res_data = response.json()
@@ -621,7 +622,7 @@ async def send_whatsapp_image(
                 user_phone=clean_phone,
                 user_id=clean_phone,
                 conversation_id=clean_phone,
-                metadata={"msg_type": "image", "caption": caption, "media_id": media_id}
+                metadata={"msg_type": "image", "caption": caption, "media_id": str(media_id)}
             )
             return res_data
     except Exception as e:

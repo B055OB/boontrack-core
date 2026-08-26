@@ -99,9 +99,14 @@ async def start_web_server(app: web.Application, port: int = 8080) -> web.AppRun
 
 async def start_telegram_polling(bot: Bot, dp: Dispatcher):
     """Menjalankan polling worker untuk bot Telegram."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token or os.getenv("ENABLE_TELEGRAM_POLLING", "true").lower() == "false":
+        print("[TELEGRAM] Telegram polling disabled / token absent.", flush=True)
+        return
+
     print("[TELEGRAM] Polling worker starting...", flush=True)
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(reset_webhook=True, relax=5, fast=False)
     except Exception as e:
-        print(f"[TELEGRAM] ⚠️ Polling stopped ({e}). Web Server TETAP AKTIF.", flush=True)
+        print(f"[TELEGRAM] Polling stopped ({e}). Web Server TETAP AKTIF.", flush=True)
