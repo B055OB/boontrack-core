@@ -27,13 +27,13 @@ LEGACY_TASK_MAPPING = {
 }
 
 # Pricing Constants (IDR - Approved by CFO & CEO)
-PRICE_POLISH_TIER_1 = 4900    # < 500 kata
-PRICE_POLISH_TIER_2 = 9900    # 500 - 2.500 kata
-PRICE_POLISH_TIER_3 = 19000   # 2.500 - 6.000 kata
-PRICE_POLISH_TIER_4 = 39000   # > 6.000 kata
+PRICE_POLISH_TIER_1 = 5000    # < 500 kata
+PRICE_POLISH_TIER_2 = 10000   # 500 - 2.500 kata
+PRICE_POLISH_TIER_3 = 20000   # 2.500 - 6.000 kata
+PRICE_POLISH_TIER_4 = 40000   # > 6.000 kata
 PRICE_POLISH_ADDON_RATE = 5000 # +Rp5.000 per 2.000 kata tambahan di atas 12.000 kata
 
-PRICE_CV_POLISH_REWRITE = 9900  # Standar HR Senior ATS Rewrite
+PRICE_CV_POLISH_REWRITE = 10000  # Standar HR Senior ATS Rewrite
 PRICE_CAREER_PRO_BUNDLE = 25000 # CV Rewrite + 3 Ronde Simulasi Interview HR STAR
 
 WORDS_PER_PAGE_STANDARD = 250
@@ -134,11 +134,11 @@ def calculate_pricing(task_type: str, word_count: int) -> Dict[str, Any]:
     """Kalkulasi tarif dinamis resmi yang disetujui CFO & CEO.
     
     1. POLISH_REPHRASE (Document Polish & Rephrase):
-       - Tier 1 (< 500 kata): Rp4.900
-       - Tier 2 (500 - 2.500 kata): Rp9.900
-       - Tier 3 (2.500 - 6.000 kata): Rp19.000
-       - Tier 4 (> 6.000 kata): Rp39.000 (+Rp5.000 per 2.000 kata jika > 12.000 kata)
-    2. CV_POLISH_REWRITE: Flat Rp9.900
+       - Tier 1 (< 500 kata): Rp5.000
+       - Tier 2 (500 - 2.500 kata): Rp10.000
+       - Tier 3 (2.500 - 6.000 kata): Rp20.000
+       - Tier 4 (> 6.000 kata): Rp40.000 (+Rp5.000 per 2.000 kata jika > 12.000 kata)
+    2. CV_POLISH_REWRITE: Flat Rp10.000
     3. CAREER_PRO_BUNDLE: Flat Rp25.000
     4. ATS_DIAGNOSTIC: Free Rp0
     """

@@ -1,5 +1,6 @@
 import logging
 from aiohttp import web
+from app.payments.matcher import extract_clean_dana_amount, match_and_fulfill_payment
 from app.services.reconciliation_service import reconcile_incoming_mutation
 from app.services.whatsapp_service import send_whatsapp_text
 from app.services.cv_state_engine import GLOBAL_USER_STATES
@@ -8,25 +9,33 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_reader_mutation_webhook(request: web.Request) -> web.Response:
-    """Webhook listener untuk menerima notifikasi mutasi transaksi dari Android Reader."""
+    """Webhook listener untuk menerima notifikasi mutasi transaksi dari Android Reader & DANA Bisnis."""
     try:
         data = await request.json()
     except Exception:
         return web.Response(text="INVALID_PAYLOAD", status=400)
 
-    amount = data.get("amount") or data.get("nominal")
-    raw_message = data.get("raw_text") or data.get("message") or ""
-    tenant_id = data.get("tenant_id", "boontrack_career")
+    raw_message = data.get("raw_text") or data.get("message") or data.get("notification_text") or ""
+    tenant_id = data.get("tenant_id", "boontrack-career")
+    direct_phone = data.get("user_phone") or data.get("phone")
+    amount = extract_clean_dana_amount(data)
 
-    if not amount:
+    if amount <= 0:
         return web.Response(text="AMOUNT_REQUIRED", status=400)
 
-    try:
-        amount = int(amount)
-    except ValueError:
-        return web.Response(text="INVALID_AMOUNT_FORMAT", status=400)
+    # 1. Jalankan Unified Payment Matcher (Exact Document Jobs & Intent Fulfillment)
+    match_res = await match_and_fulfill_payment(
+        amount=amount,
+        raw_text=raw_message,
+        tenant_id=tenant_id,
+        source="reader_webhook",
+        direct_phone=direct_phone
+    )
 
-    # Eksekusi Smart Reconciliation
+    if match_res.get("status") == "SUCCESS":
+        return web.json_response(match_res, status=200)
+
+    # 2. Fallback: Eksekusi Smart Reconciliation (Near Match & Ambiguous)
     status, intent, diff = await reconcile_incoming_mutation(
         incoming_amount=amount,
         raw_text=raw_message,

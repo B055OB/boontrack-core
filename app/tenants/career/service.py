@@ -405,7 +405,20 @@ class CareerService:
             metadata={"button_id": button_id, "mode": current_mode, "msg_type": "interactive" if button_id else "text"}
         )
 
-        # 2. Reset / Navigation
+        # 2. Admin Fallback Commands (/verify & /retry_doc)
+        if user_text_clean.startswith("/verify") or user_text_clean.startswith("verify "):
+            from app.payments.matcher import handle_admin_verify_command
+            reply_msg = await handle_admin_verify_command(user_text, tenant_id=TENANT_ID)
+            await send_whatsapp_text(sender_wa_id, reply_msg, tenant_id=TENANT_ID)
+            return
+
+        if user_text_clean.startswith("/retry_doc") or user_text_clean.startswith("retry_doc "):
+            from app.payments.matcher import handle_admin_retry_doc_command
+            reply_msg = await handle_admin_retry_doc_command(user_text, tenant_id=TENANT_ID)
+            await send_whatsapp_text(sender_wa_id, reply_msg, tenant_id=TENANT_ID)
+            return
+
+        # 3. Reset / Navigation
         if button_id == "btn_menu" or user_text_clean in ["menu", "halo", "hi", "mulai", "start", "bantuan", "batal", "home", "/menu", "/start"]:
             current_data = user_session.get("data", {})
             user_session["step"] = 0
@@ -507,13 +520,13 @@ class CareerService:
                 await send_whatsapp_text(sender_wa_id, caption_text, tenant_id=TENANT_ID)
             return
 
-        # 7. Trigger Rewrite (Single CV Rp9.900 vs Pro Bundle Rp25.000)
+        # 7. Trigger Rewrite (Single CV Rp10.000 vs Pro Bundle Rp25.000)
         if button_id in ["btn_rewrite_single", "btn_bundle_pro", "btn_rewrite"] or user_text_clean in [
             "rewrite", "perbaiki", "mau rewrite", "ambil rewrite", "🚀 ambil rewrite",
             "single cv", "pro bundle", "cv rewrite", "ambil bundle"
         ]:
             is_bundle = button_id == "btn_bundle_pro" or "bundle" in user_text_clean or "25" in user_text_clean
-            base_amount = 25000 if is_bundle else 9900
+            base_amount = 25000 if is_bundle else 10000
             prod_name = "Career Pro Bundle (CV Rewrite + 3x Interview HR)" if is_bundle else "Single CV Polish & ATS Rewrite"
             prod_id = "career_pro_bundle" if is_bundle else "single_cv_rewrite"
 

@@ -67,13 +67,13 @@ PREMIUM_ACTION_BUTTONS = [
 UPSELL_REWRITE_MSG = (
     "Ingin melihat versi terbaik dari potensi profesional Anda? 🚀\n\n"
     "Pilihan Paket Layanan Unggulan:\n"
-    "1. *Single CV Polish & ATS Rewrite*: Rp9.900\n"
+    "1. *Single CV Polish & ATS Rewrite*: Rp10.000\n"
     "2. *Career Pro Bundle (CV Rewrite + 3x Interview HR STAR)*: Rp25.000\n\n"
     "Sistem akan merombak total struktur, diksi pencapaian, dan dampak kerja CV Anda berstandar HR Senior."
 )
 
 UPSELL_BUTTONS = [
-    {"id": "btn_rewrite_single", "title": "📄 CV Rewrite (9.9k)"},
+    {"id": "btn_rewrite_single", "title": "📄 CV Rewrite (10k)"},
     {"id": "btn_bundle_pro", "title": "🌟 Pro Bundle (25k)"},
     {"id": "btn_menu", "title": "🏠 Menu Utama"}
 ]

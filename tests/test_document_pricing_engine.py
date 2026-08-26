@@ -64,41 +64,41 @@ class TestDocumentPricingEngine(unittest.IsolatedAsyncioTestCase):
     # 2. Tests for Dynamic Pricing Matrix Tiers
     # ==========================================
     def test_pricing_tier_1_under_500_words(self):
-        # Tier 1: < 500 kata -> Rp4.900
+        # Tier 1: < 500 kata -> Rp5.000
         p_350 = calculate_pricing(TASK_PARAPHRASE, 350)
         self.assertEqual(p_350["pricing_tier"], "TIER_1")
-        self.assertEqual(p_350["final_price"], 4900)
+        self.assertEqual(p_350["final_price"], 5000)
 
     def test_pricing_tier_2_between_500_and_2500_words(self):
-        # Tier 2: 500 - 2500 kata -> Rp9.900
+        # Tier 2: 500 - 2500 kata -> Rp10.000
         p_1500 = calculate_pricing(TASK_PARAPHRASE, 1500)
         self.assertEqual(p_1500["pricing_tier"], "TIER_2")
-        self.assertEqual(p_1500["final_price"], 9900)
+        self.assertEqual(p_1500["final_price"], 10000)
 
     def test_pricing_tier_3_between_2500_and_6000_words(self):
-        # Tier 3: 2500 - 6000 kata -> Rp19.000
+        # Tier 3: 2500 - 6000 kata -> Rp20.000
         p_4000 = calculate_pricing(TASK_PARAPHRASE, 4000)
         self.assertEqual(p_4000["pricing_tier"], "TIER_3")
-        self.assertEqual(p_4000["final_price"], 19000)
+        self.assertEqual(p_4000["final_price"], 20000)
 
     def test_pricing_tier_4_above_6000_words(self):
-        # Tier 4: > 6000 kata -> Rp39.000 (+Rp5.000 per 2000 kata jika > 12000 kata)
+        # Tier 4: > 6000 kata -> Rp40.000 (+Rp5.000 per 2000 kata jika > 12000 kata)
         p_8000 = calculate_pricing(TASK_PARAPHRASE, 8000)
         self.assertEqual(p_8000["pricing_tier"], "TIER_4")
-        self.assertEqual(p_8000["final_price"], 39000)
+        self.assertEqual(p_8000["final_price"], 40000)
 
-        # 14000 words -> 39000 + (1 * 5000) = 44000
+        # 14000 words -> 40000 + (1 * 5000) = 45000
         p_14000 = calculate_pricing(TASK_PARAPHRASE, 14000)
         self.assertEqual(p_14000["pricing_tier"], "TIER_4")
-        self.assertEqual(p_14000["final_price"], 44000)
+        self.assertEqual(p_14000["final_price"], 45000)
 
     def test_build_qris_invoice_payload(self):
         inv = build_qris_invoice_payload("job-abc", TASK_PARAPHRASE, 1500, "628123456789")
         self.assertEqual(inv["job_id"], "job-abc")
-        self.assertEqual(inv["amount"], 9900)
+        self.assertEqual(inv["amount"], 10000)
         self.assertEqual(inv["currency"], "IDR")
         self.assertEqual(inv["pricing_tier"], "TIER_2")
-        self.assertEqual(inv["formatted_amount"], "Rp9.900")
+        self.assertEqual(inv["formatted_amount"], "Rp10.000")
 
     # ==========================================
     # 3. Tests for MIME & Magic Bytes Validation
@@ -224,8 +224,9 @@ class TestDocumentPricingEngine(unittest.IsolatedAsyncioTestCase):
 
     @patch("app.services.document_engine.update_job_status", new_callable=AsyncMock)
     @patch("app.services.document_engine.ai_gateway.generate", new_callable=AsyncMock)
+    @patch("app.services.document_engine.send_whatsapp_document", new_callable=AsyncMock)
     @patch("app.services.document_engine.send_whatsapp_text", new_callable=AsyncMock)
-    async def test_process_document_job_async_flow(self, mock_send_wa, mock_ai_gen, mock_update_status):
+    async def test_process_document_job_async_flow(self, mock_send_wa, mock_send_doc, mock_ai_gen, mock_update_status):
         mock_ai_gen.return_value = """```json
         {
             "overall_score": 90,
@@ -251,6 +252,9 @@ class TestDocumentPricingEngine(unittest.IsolatedAsyncioTestCase):
         # Verifikasi WhatsApp notification dikirim
         mock_send_wa.assert_called_once()
         self.assertIn("Dokumen Anda Selesai Diproses", mock_send_wa.call_args[1]["text"])
+        # Verifikasi WhatsApp document attachment dikirim
+        mock_send_doc.assert_called_once()
+        self.assertEqual(mock_send_doc.call_args[1]["filename"], "CV_Hasil_Polish.docx")
 
 
 if __name__ == "__main__":

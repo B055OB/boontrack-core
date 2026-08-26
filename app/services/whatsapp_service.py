@@ -540,25 +540,89 @@ async def send_whatsapp_image(to_phone: str, image_path_or_bytes: Union[str, byt
         logger.error(f"[WhatsApp Service] Exception in send_whatsapp_image: {e}")
         return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
 
-async def send_whatsapp_document(to_phone: str, file_path_or_bytes: Union[str, bytes], filename: str = "document.docx", caption: str = "", tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
-    if isinstance(file_path_or_bytes, str) and os.path.exists(file_path_or_bytes):
-        with open(file_path_or_bytes, "rb") as f:
-            file_bytes = f.read()
-        filename = os.path.basename(file_path_or_bytes)
-    elif isinstance(file_path_or_bytes, bytes):
-        file_bytes = file_path_or_bytes
-    else:
-        return None
-
-    mime_type, _ = mimetypes.guess_type(filename)
-    mime_type = mime_type or "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-
-    media_id = await upload_whatsapp_media(file_bytes, filename, mime_type)
-    if not media_id:
-        return None
-
+async def send_whatsapp_document(
+    to_phone: str,
+    file_path_or_bytes: Union[str, bytes],
+    filename: str = "CV_Hasil_Polish.docx",
+    caption: str = "",
+    mime_type: Optional[str] = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    tenant_id: str = "boontrack-career"
+) -> Optional[Dict[str, Any]]:
+    """Mengirim file attachment dokumen (.docx / .pdf) via WhatsApp Cloud API / Media Endpoint."""
     token, phone_id, version = get_wa_credentials()
     clean_phone = str(to_phone).replace("+", "").strip()
+
+    if not token or not phone_id:
+        logger.error(f"[WhatsApp Service] Missing credentials for send_whatsapp_document (phone={clean_phone})")
+        return None
+
+    # Normalisasi MIME Type
+    if not mime_type:
+        guessed, _ = mimetypes.guess_type(filename)
+        mime_type = guessed or "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+    # 1. Penanganan jika input berupa URL HTTP / HTTPS
+    if isinstance(file_path_or_bytes, str) and file_path_or_bytes.startswith(("http://", "https://")):
+        url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
+        headers = {**_get_auth_headers(token), "Content-Type": "application/json"}
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": clean_phone,
+            "type": "document",
+            "document": {"link": file_path_or_bytes, "filename": filename, "caption": caption}
+        }
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                res = await client.post(url, headers=headers, json=payload)
+                if res.status_code in (200, 201):
+                    await log_to_supabase_messages(
+                        sender="bot",
+                        text=f"[Kirim Dokumen: {filename}] {caption}".strip(),
+                        tenant_id=tenant_id,
+                        channel="whatsapp",
+                        user_phone=clean_phone,
+                        user_id=clean_phone,
+                        conversation_id=clean_phone,
+                        metadata={"msg_type": "document", "filename": filename, "caption": caption, "url": file_path_or_bytes}
+                    )
+                    return res.json()
+                logger.error(f"[WhatsApp Service] send_whatsapp_document via URL link failed: status={res.status_code}, response={res.text}")
+        except Exception as link_err:
+            logger.warning(f"[WhatsApp Service] URL document send failed ({link_err}), attempting binary fallback...")
+
+    # 2. Penanganan jika input berupa bytes atau file path lokal
+    file_bytes: Optional[bytes] = None
+    if isinstance(file_path_or_bytes, bytes):
+        file_bytes = file_path_or_bytes
+    elif isinstance(file_path_or_bytes, str):
+        # Cek path lokal absolut / relatif
+        candidate_paths = [
+            file_path_or_bytes,
+            os.path.join(os.getcwd(), file_path_or_bytes),
+            os.path.join(os.getcwd(), "output", tenant_id, file_path_or_bytes),
+            os.path.join(os.getcwd(), "data", "r2_mock_storage", file_path_or_bytes.lstrip("/"))
+        ]
+        for p in candidate_paths:
+            if os.path.exists(p) and os.path.isfile(p):
+                try:
+                    with open(p, "rb") as f:
+                        file_bytes = f.read()
+                    break
+                except Exception as read_err:
+                    logger.error(f"[WhatsApp Service] Error reading local document file {p}: {read_err}")
+
+    if not file_bytes:
+        logger.error(f"[WhatsApp Service] No valid file bytes found for {filename} to {clean_phone}")
+        return None
+
+    # 3. Upload Media ke WhatsApp Media Endpoint
+    media_id = await upload_whatsapp_media(file_bytes, filename, mime_type)
+    if not media_id:
+        logger.error(f"[WhatsApp Service] Failed to upload media attachment for {filename} to {clean_phone}")
+        return None
+
+    # 4. Kirim Pesan Document menggunakan Media ID
     url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
     headers = {**_get_auth_headers(token), "Content-Type": "application/json"}
     payload = {
@@ -573,6 +637,7 @@ async def send_whatsapp_document(to_phone: str, file_path_or_bytes: Union[str, b
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(url, headers=headers, json=payload)
             if response.status_code not in (200, 201):
+                logger.error(f"[WhatsApp Service] send_whatsapp_document failed: status={response.status_code}, response={response.text}")
                 return None
             
             await log_to_supabase_messages(
@@ -583,7 +648,7 @@ async def send_whatsapp_document(to_phone: str, file_path_or_bytes: Union[str, b
                 user_phone=clean_phone,
                 user_id=clean_phone,
                 conversation_id=clean_phone,
-                metadata={"msg_type": "document", "filename": filename, "caption": caption}
+                metadata={"msg_type": "document", "filename": filename, "caption": caption, "media_id": media_id}
             )
             return response.json()
     except Exception as e:

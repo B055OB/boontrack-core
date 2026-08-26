@@ -143,6 +143,8 @@ async def notify_payment_success_universal(user_id: str, amount: int, platform: 
             logger.error(f"[Payment Telegram Notify Error] {te}")
 
 
+from app.payments.matcher import extract_clean_dana_amount, match_and_fulfill_payment
+
 async def handle_dana_webhook(request: web.Request) -> web.Response:
     """Handler endpoint webhook mutasi DANA (Mendukung Payload Reader & Custom Test)."""
     try:
@@ -153,22 +155,26 @@ async def handle_dana_webhook(request: web.Request) -> web.Response:
         except Exception:
             data = {}
 
-    text = data.get("notification_text") or data.get("raw_text") or data.get("text") or data.get("keterangan") or ""
-    raw_amount = data.get("amount") or data.get("nominal") or 0
+    text = data.get("notification_text") or data.get("raw_text") or data.get("text") or data.get("keterangan") or data.get("message") or ""
     direct_phone = data.get("user_phone") or data.get("phone") or ""
-
-    if raw_amount:
-        try:
-            amount = int(re.sub(r"\D", "", str(raw_amount)))
-        except Exception:
-            amount = extract_amount_from_text(text)
-    else:
-        amount = extract_amount_from_text(text)
+    amount = extract_clean_dana_amount(data)
 
     logger.info(f"[DANA WEBHOOK RECEIVED] Amount: {amount} | Raw Text: '{text}' | Direct Phone: '{direct_phone}'")
 
     if amount <= 0:
         return web.json_response({"status": "ignored", "reason": "invalid_amount", "amount_detected": 0}, status=200)
+
+    # 1. Eksekusi Unified Payment Matcher (Document Jobs & Payment Intents)
+    match_result = await match_and_fulfill_payment(
+        amount=amount,
+        raw_text=text,
+        tenant_id="boontrack-career",
+        source="dana_webhook",
+        direct_phone=direct_phone
+    )
+
+    if match_result.get("status") == "SUCCESS":
+        return web.json_response(match_result, status=200)
 
     # 1. Matching terhadap Active Session di Memori atau Direct Phone Test
     matched_user_id = None

@@ -77,40 +77,40 @@ class TestCFOApprovedEngine(unittest.IsolatedAsyncioTestCase):
     # ==========================================
     def test_polish_and_rephrase_pricing_matrix(self):
         """Validasi Matrix Tarif Resmi Document Polish & Rephrase."""
-        # Tier 1 (< 500 kata): Rp4.900
+        # Tier 1 (< 500 kata): Rp5.000
         p_tier1 = calculate_pricing(TASK_POLISH_REPHRASE, 350)
         self.assertEqual(p_tier1["pricing_tier"], "TIER_1")
-        self.assertEqual(p_tier1["final_price"], 4900)
+        self.assertEqual(p_tier1["final_price"], 5000)
 
-        # Tier 2 (500 - 2.500 kata): Rp9.900
+        # Tier 2 (500 - 2.500 kata): Rp10.000
         p_tier2 = calculate_pricing(TASK_POLISH_REPHRASE, 1200)
         self.assertEqual(p_tier2["pricing_tier"], "TIER_2")
-        self.assertEqual(p_tier2["final_price"], 9900)
+        self.assertEqual(p_tier2["final_price"], 10000)
 
-        # Tier 3 (2.500 - 6.000 kata): Rp19.000
+        # Tier 3 (2.500 - 6.000 kata): Rp20.000
         p_tier3 = calculate_pricing(TASK_POLISH_REPHRASE, 4500)
         self.assertEqual(p_tier3["pricing_tier"], "TIER_3")
-        self.assertEqual(p_tier3["final_price"], 19000)
+        self.assertEqual(p_tier3["final_price"], 20000)
 
-        # Tier 4 (> 6.000 kata s/d 12.000 kata): Rp39.000
+        # Tier 4 (> 6.000 kata s/d 12.000 kata): Rp40.000
         p_tier4 = calculate_pricing(TASK_POLISH_REPHRASE, 8000)
         self.assertEqual(p_tier4["pricing_tier"], "TIER_4")
-        self.assertEqual(p_tier4["final_price"], 39000)
+        self.assertEqual(p_tier4["final_price"], 40000)
 
         # Tier 4 Add-on (> 12.000 kata): +Rp5.000 per 2.000 kata
-        # 14.000 kata -> 39.000 + (1 * 5000) = 44.000
+        # 14.000 kata -> 40.000 + (1 * 5000) = 45.000
         p_tier4_addon1 = calculate_pricing(TASK_POLISH_REPHRASE, 14000)
-        self.assertEqual(p_tier4_addon1["final_price"], 44000)
+        self.assertEqual(p_tier4_addon1["final_price"], 45000)
 
-        # 17.000 kata -> 39.000 + (3 * 5000) = 54.000
+        # 17.000 kata -> 40.000 + (3 * 5000) = 55.000
         p_tier4_addon3 = calculate_pricing(TASK_POLISH_REPHRASE, 17000)
-        self.assertEqual(p_tier4_addon3["final_price"], 54000)
+        self.assertEqual(p_tier4_addon3["final_price"], 55000)
 
     def test_career_products_pricing(self):
         """Validasi Tarif Single CV Polish & Career Pro Bundle."""
-        # Single CV Polish & ATS Rewrite: Rp9.900
+        # Single CV Polish & ATS Rewrite: Rp10.000
         p_cv = calculate_pricing(TASK_CV_POLISH_REWRITE, 600)
-        self.assertEqual(p_cv["final_price"], 9900)
+        self.assertEqual(p_cv["final_price"], 10000)
 
         # Career Pro Bundle: Rp25.000
         p_bundle = calculate_pricing(TASK_CAREER_PRO_BUNDLE, 600)
@@ -210,7 +210,7 @@ class TestCFOApprovedEngine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res["task_type"], TASK_POLISH_REPHRASE)
         self.assertEqual(len(res["doc_hash"]), 64)
         self.assertIsNotNone(res["pricing"])
-        self.assertEqual(res["pricing"]["final_price"], 4900)
+        self.assertEqual(res["pricing"]["final_price"], 5000)
 
 
 if __name__ == "__main__":

@@ -316,15 +316,95 @@ async def process_document_job_async(
             msg_text = (
                 f"✅ *Dokumen Anda Selesai Diproses!*\n\n"
                 f"📋 *Layanan:* {task_type}\n"
-                f"📁 *File Hasil:* {clean_filename}_result.docx\n\n"
+                f"📁 *File Hasil:* CV_Hasil_Polish.docx\n\n"
                 f"Dokumen Word (.docx) berformat profesional siap diunduh.\n\n"
                 f"_{COMPLIANCE_DISCLAIMER}_"
             )
             await send_whatsapp_text(to_phone=user_phone, text=msg_text, tenant_id=tenant_id)
+            
+            # Wajib kirim file attachment dokumen (.docx) via WhatsApp Document API
+            await send_whatsapp_document(
+                to_phone=user_phone,
+                file_path_or_bytes=docx_bytes,
+                filename="CV_Hasil_Polish.docx",
+                caption="📄 *CV Hasil Polish & ATS Optimization*",
+                mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                tenant_id=tenant_id
+            )
 
     except Exception as err:
         logger.error(f"[DocumentWorker Error] Job {job_id} failed: {err}")
         await update_job_status(job_id, status="FAILED", error_message=str(err))
+
+
+async def deliver_completed_document_job(
+    job_id: str,
+    tenant_id: str = "boontrack-career",
+    user_phone: Optional[str] = None
+) -> bool:
+    """Mengirim file attachment dokumen .docx untuk job yang sudah COMPLETED/PAID ke WhatsApp user."""
+    supabase = get_supabase()
+    job_data: Optional[Dict[str, Any]] = None
+    if supabase:
+        try:
+            res = supabase.table("document_jobs").select("*").eq("id", job_id).execute()
+            if res.data and len(res.data) > 0:
+                job_data = res.data[0]
+        except Exception as e:
+            logger.error(f"[DocumentEngine] deliver_completed_document_job query error for {job_id}: {e}")
+
+    phone = user_phone or (job_data.get("user_phone") if job_data else None)
+    if not phone:
+        logger.error(f"[DocumentEngine] No target phone number for job {job_id}")
+        return False
+
+    result_key = job_data.get("result_storage_key") if job_data else None
+    if not result_key:
+        result_key = f"output/{tenant_id}/{job_id}_result.docx"
+
+    # 1. Unduh file bytes dari R2 Storage Service (mendukung mock & live)
+    file_bytes = await r2_storage_service.download_file(result_key)
+    if not file_bytes:
+        alt_key = f"output/{tenant_id}/{job_id}_result.docx"
+        file_bytes = await r2_storage_service.download_file(alt_key)
+
+    # 2. Cek local storage output buffer
+    if not file_bytes:
+        local_candidates = [
+            os.path.join(os.getcwd(), "output", tenant_id, f"{job_id}_result.docx"),
+            os.path.join(os.getcwd(), "data", "r2_mock_storage", "output", tenant_id, f"{job_id}_result.docx")
+        ]
+        for p in local_candidates:
+            if os.path.exists(p):
+                with open(p, "rb") as f:
+                    file_bytes = f.read()
+                break
+
+    if not file_bytes:
+        logger.error(f"[DocumentEngine] Failed to retrieve document bytes for job {job_id} (key: {result_key})")
+        return False
+
+    # 3. Kirim teks konfirmasi penyelesaian
+    task_name = job_data.get("task_type", "POLISH_REPHRASE") if job_data else "POLISH_REPHRASE"
+    msg_text = (
+        f"✅ *Dokumen Anda Selesai Diproses!*\n\n"
+        f"📋 *Layanan:* {task_name}\n"
+        f"📁 *File Hasil:* CV_Hasil_Polish.docx\n\n"
+        f"Dokumen Word (.docx) berformat profesional terlampir di bawah.\n\n"
+        f"_{COMPLIANCE_DISCLAIMER}_"
+    )
+    await send_whatsapp_text(to_phone=phone, text=msg_text, tenant_id=tenant_id)
+
+    # 4. Kirim file dokumen Word (.docx)
+    doc_res = await send_whatsapp_document(
+        to_phone=phone,
+        file_path_or_bytes=file_bytes,
+        filename="CV_Hasil_Polish.docx",
+        caption="📄 *CV Hasil Polish & ATS Optimization*",
+        mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        tenant_id=tenant_id
+    )
+    return bool(doc_res)
 
 
 async def intake_document_job(
