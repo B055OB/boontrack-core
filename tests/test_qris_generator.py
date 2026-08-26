@@ -18,9 +18,9 @@ from app.routes.payment import (
 )
 
 SAMPLE_STATIC_QRIS = (
-    "00020101021126630016ID.CO.SHOPEE.WWW01189360091510265640750211102656407510303UME"
-    "51440014ID.CO.QRIS.WWW0215ID10265640751030303UME5204549953033605802ID5909BoonTrack"
-    "6007BANDUNG61054026362070703A016304CA14"
+    "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI"
+    "51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI5204737253033605802ID5909BoonTrack"
+    "6012Kab. Bandung61054028663048DC1"
 )
 
 
@@ -31,7 +31,7 @@ class TestQRISGenerator(unittest.TestCase):
 
     def test_crc16_ccitt_known_vectors(self):
         """Validasi perhitungan CRC16-CCITT poly 0x1021 init 0xFFFF."""
-        # Test vector 1: Standard string "123456789" -> 0x29B1 in standard CCITT (or 4 hex chars)
+        # Test vector 1: Standard string "123456789" -> 4 hex chars
         data1 = "123456789"
         crc1 = crc16_ccitt(data1)
         self.assertEqual(len(crc1), 4)
@@ -50,14 +50,22 @@ class TestQRISGenerator(unittest.TestCase):
         dyn_payload = generate_dynamic_qris_payload(SAMPLE_STATIC_QRIS, 50000)
         self.assertEqual(crc16_ccitt(dyn_payload[:-4]), dyn_payload[-4:])
 
+    def test_generate_unique_code(self):
+        """Validasi generate kode unik 3 digit dalam rentang 100 - 999."""
+        from app.utils.qris_generator import generate_unique_code
+        for _ in range(50):
+            code = generate_unique_code(100, 999)
+            self.assertGreaterEqual(code, 100)
+            self.assertLessEqual(code, 999)
+
     def test_generate_dynamic_qris_payload_conversion(self):
-        """Validasi penyisipan Tag 54 dan rekalkulasi CRC16 tanpa mengubah Tag 01 (tetap 010211)."""
+        """Validasi penyisipan Tag 54 dan rekalkulasi CRC16 dengan mengubah Tag 01 menjadi 010212."""
         amount = 25000
         dynamic_payload = generate_dynamic_qris_payload(SAMPLE_STATIC_QRIS, amount)
 
-        # 1. Validasi Tag 01 tetap 010211
-        self.assertIn("010211", dynamic_payload)
-        self.assertNotIn("010212", dynamic_payload)
+        # 1. Validasi Tag 01 berubah menjadi 010212 (Dynamic)
+        self.assertIn("010212", dynamic_payload)
+        self.assertNotIn("010211", dynamic_payload)
 
         # 2. Validasi Tag 54 nominal (540525000)
         expected_tag54 = "540525000"
@@ -74,9 +82,9 @@ class TestQRISGenerator(unittest.TestCase):
 
     def test_generate_dynamic_qris_payload_various_amounts(self):
         """Validasi formatting Tag 54 untuk berbagai variasi nominal."""
-        # 4 digit (Rp4.900) -> 54044900
-        dyn_4900 = generate_dynamic_qris_payload(SAMPLE_STATIC_QRIS, 4900)
-        self.assertIn("540449005802ID", dyn_4900)
+        # 4 digit (Rp5.000) -> 54045000
+        dyn_5000 = generate_dynamic_qris_payload(SAMPLE_STATIC_QRIS, 5000)
+        self.assertIn("540450005802ID", dyn_5000)
 
         # 5 digit (Rp10.000) -> 540510000
         dyn_10000 = generate_dynamic_qris_payload(SAMPLE_STATIC_QRIS, 10000)
@@ -85,6 +93,32 @@ class TestQRISGenerator(unittest.TestCase):
         # 6 digit (Rp125.000) -> 5406125000
         dyn_125000 = generate_dynamic_qris_payload(SAMPLE_STATIC_QRIS, 125000)
         self.assertIn("54061250005802ID", dyn_125000)
+
+    def test_payment_service_create_qris_order_flow(self):
+        """Validasi PaymentService.create_qris_order menghasilkan dynamic QRIS dengan 3-digit kode unik."""
+        from app.services.payment_service import payment_service
+        from app.services.cv_state_engine import GLOBAL_USER_STATES
+        from app.services.reconciliation_service import PAYMENT_INTENTS
+
+        user_id = "6281299990001"
+        base_amount = 25000
+
+        order_res = payment_service.create_qris_order(user_id=user_id, base_amount=base_amount)
+
+        self.assertIsNotNone(order_res["order_id"])
+        self.assertEqual(order_res["base_amount"], 25000)
+        self.assertGreaterEqual(order_res["unique_code"], 100)
+        self.assertLessEqual(order_res["unique_code"], 999)
+        self.assertEqual(order_res["total_amount"], base_amount + order_res["unique_code"])
+        self.assertEqual(order_res["status"], "PENDING")
+
+        # Validasi PNG image buffer
+        self.assertIsInstance(order_res["qr_image_bytes"], bytes)
+        self.assertTrue(order_res["qr_image_bytes"].startswith(b"\x89PNG\r\n\x1a\n"))
+
+        # Validasi order tersimpan di in-memory intents & session
+        self.assertIn(order_res["order_id"], PAYMENT_INTENTS)
+        self.assertEqual(GLOBAL_USER_STATES[user_id]["active_payment"]["order_id"], order_res["order_id"])
 
     def test_generate_qris_image_bytes(self):
         """Validasi render QR code image ke bytes PNG."""

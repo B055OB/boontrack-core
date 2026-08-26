@@ -20,13 +20,14 @@ def generate_unique_payment_intent(tenant_id: str, base_amount: int, product_id:
 
     # Bersihkan intent expired
     for inv_id, data in list(PAYMENT_INTENTS.items()):
-        if data["status"] == "PENDING" and data["expires_at"] < now:
+        exp_time = data.get("expires_at")
+        if data.get("status") == "PENDING" and exp_time and exp_time < now:
             data["status"] = "EXPIRED"
 
     active_amounts = {
         data["total_amount"]
         for data in PAYMENT_INTENTS.values()
-        if data["status"] == "PENDING" and data["expires_at"] >= now
+        if data.get("status") == "PENDING" and data.get("expires_at", now) >= now
     }
 
     attempts = 0
