@@ -419,6 +419,34 @@ async def intake_document_job(
     # 1. Validasi Magic Bytes & Format File
     is_valid, mime_type, err_msg = validate_document_file(file_bytes, filename)
     if not is_valid:
+        # Jika file tidak valid tapi exact_price_amount tersedia (order QRIS sudah dibuat),
+        # tetap INSERT record minimal ke document_jobs agar payment matcher bisa menemukan order.
+        if exact_price_amount and exact_price_amount > 0:
+            supabase_fallback = get_supabase()
+            if supabase_fallback:
+                fallback_record = {
+                    "id": job_id,
+                    "tenant_id": tenant_id or "boontrack-career",
+                    "user_id": str(user_id or user_phone or "guest"),
+                    "user_phone": user_phone,
+                    "task_type": str(task_type).upper().strip(),
+                    "status": "WAITING_PAYMENT",
+                    "payment_status": "UNPAID",
+                    "filename": filename,
+                    "price": exact_price_amount,
+                    "price_amount": exact_price_amount,
+                    "unique_code": (exact_price_amount % 1000) if exact_price_amount >= 1000 else 0,
+                    "created_at": start_time.isoformat(),
+                    "updated_at": start_time.isoformat(),
+                }
+                try:
+                    supabase_fallback.table("document_jobs").insert(fallback_record).execute()
+                    logger.info(
+                        f"[DocumentEngine] Fallback document_jobs insert (file invalid): "
+                        f"job_id={job_id} price_amount={exact_price_amount} user={user_id}"
+                    )
+                except Exception as fb_err:
+                    logger.error(f"[DocumentEngine] Fallback insert failed: {fb_err}")
         return {
             "status": "REJECTED",
             "job_id": job_id,
@@ -478,8 +506,12 @@ async def intake_document_job(
     if supabase:
         try:
             supabase.table("document_jobs").insert(job_record).execute()
+            logger.info(
+                f"[DocumentEngine] document_jobs INSERT OK: job_id={job_id} "
+                f"price_amount={final_price} payment_status={payment_status} user={user_id}"
+            )
         except Exception as db_err:
-            logger.error(f"[DocumentEngine DB Error] Insert document_jobs failed: {db_err}")
+            logger.error(f"[DocumentEngine] CRITICAL: document_jobs INSERT FAILED: {db_err}")
 
     # 5. JANGAN PERNAH dispatch worker/delivery sebelum status PAID!
     # Hanya dispatch worker otomatis jika dokumen GRATIS (Free Trial).

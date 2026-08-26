@@ -102,9 +102,10 @@ class PaymentService:
             "created_at": now_dt.isoformat()
         }
 
-        # 8. Simpan ke database Supabase jika tabel orders tersedia
+        # 8. Simpan ke database Supabase: tabel orders (untuk log) & tabel document_jobs (untuk payment matching)
         supabase = get_supabase()
         if supabase:
+            # 8a. Upsert ke tabel orders (opsional, bisa tidak ada)
             try:
                 supabase.table("orders").upsert({
                     "id": order_id,
@@ -118,6 +119,33 @@ class PaymentService:
                 }).execute()
             except Exception as e:
                 logger.debug(f"[PAYMENT SERVICE] Supabase order upsert note: {e}")
+
+            # 8b. INSERT record WAJIB ke tabel document_jobs agar payment matcher bisa menemukan order
+            # ini dilakukan TERLEPAS dari apakah file asli dokumen tersedia / valid
+            job_db_record = {
+                "id": order_id,            # gunakan order_id sebagai job_id agar traceable
+                "tenant_id": tenant_id,
+                "user_id": user_str_id,
+                "user_phone": user_str_id,
+                "task_type": (meta or {}).get("product", "PAYMENT_ORDER"),
+                "status": "WAITING_PAYMENT",
+                "payment_status": "UNPAID",
+                "filename": (meta or {}).get("filename", "order.docx"),
+                "price": total_amount,
+                "price_amount": total_amount,      # field utama untuk payment matching
+                "unique_code": unique_code,
+                "created_at": now_dt.isoformat(),
+                "updated_at": now_dt.isoformat(),
+            }
+            try:
+                supabase.table("document_jobs").upsert(job_db_record).execute()
+                logger.info(
+                    f"[PAYMENT SERVICE] document_jobs record inserted: id={order_id} "
+                    f"price_amount={total_amount} user={user_str_id} status=UNPAID"
+                )
+            except Exception as e:
+                logger.error(f"[PAYMENT SERVICE] CRITICAL: document_jobs insert failed: {e}")
+
 
         logger.info(
             f"[PAYMENT ORDER CREATED] Order {order_id} | User {user_id} | "

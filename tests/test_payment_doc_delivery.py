@@ -539,5 +539,123 @@ class TestPaymentDocDelivery(AioHTTPTestCase):
         mock_send_text.assert_called_once_with("628123456789", caption, tenant_id="boontrack-career")
 
 
+    # ==========================================
+    # 8. document_jobs INSERT Guarantee Tests
+    # ==========================================
+    @patch("app.services.payment_service.get_supabase")
+    def test_create_dynamic_order_inserts_to_document_jobs(self, mock_get_supabase):
+        """Memvalidasi bahwa create_dynamic_order SELALU INSERT record ke document_jobs
+        dengan price_amount = total_amount dan payment_status = 'UNPAID'."""
+        from app.services.payment_service import payment_service as ps
+
+        # Setup mock Supabase client
+        mock_client = MagicMock()
+        mock_table = MagicMock()
+        mock_client.table.return_value = mock_table
+        mock_table.upsert.return_value.execute.return_value = MagicMock(data=[])
+        mock_get_supabase.return_value = mock_client
+
+        order = ps.create_dynamic_order(
+            user_id="6281237450222",
+            base_amount=25000,
+            tenant_id="boontrack-career",
+            meta={"product": "career_pro_bundle"}
+        )
+
+        # Pastikan order dibuat
+        self.assertIn("total_amount", order)
+        total_amount = order["total_amount"]
+        self.assertGreater(total_amount, 25000)  # base + unique_code
+
+        # Verifikasi document_jobs upsert dipanggil
+        table_calls = [call[0][0] for call in mock_client.table.call_args_list]
+        self.assertIn("document_jobs", table_calls, "CRITICAL: document_jobs upsert tidak dipanggil!")
+
+        # Ambil argumen upsert untuk table document_jobs
+        doc_jobs_upsert_call = None
+        for i, call in enumerate(mock_client.table.call_args_list):
+            if call[0][0] == "document_jobs":
+                doc_jobs_upsert_call = mock_table.upsert.call_args_list[i - 1]
+                break
+
+        # Verifikasi field kritis dalam record document_jobs
+        upsert_record = mock_table.upsert.call_args_list[-1][0][0]
+        self.assertEqual(upsert_record["price_amount"], total_amount)
+        self.assertEqual(upsert_record["payment_status"], "UNPAID")
+        self.assertEqual(upsert_record["status"], "WAITING_PAYMENT")
+        self.assertEqual(upsert_record["user_id"], "6281237450222")
+
+    @patch("app.services.payment_service.get_supabase")
+    def test_create_dynamic_order_single_rewrite_document_jobs_record(self, mock_get_supabase):
+        """Validasi Single CV Rewrite (10k) juga membuat record di document_jobs."""
+        from app.services.payment_service import payment_service as ps
+
+        mock_client = MagicMock()
+        mock_table = MagicMock()
+        mock_client.table.return_value = mock_table
+        mock_table.upsert.return_value.execute.return_value = MagicMock(data=[])
+        mock_get_supabase.return_value = mock_client
+
+        order = ps.create_dynamic_order(
+            user_id="628888777666",
+            base_amount=10000,
+            tenant_id="boontrack-career",
+            meta={"product": "single_cv_rewrite"}
+        )
+
+        total_amount = order["total_amount"]
+        self.assertGreater(total_amount, 10000)
+
+        table_calls = [call[0][0] for call in mock_client.table.call_args_list]
+        self.assertIn("document_jobs", table_calls, "CRITICAL: document_jobs tidak di-insert untuk single CV rewrite!")
+
+        # Verifikasi price_amount sesuai total_amount
+        upsert_record = mock_table.upsert.call_args_list[-1][0][0]
+        self.assertEqual(upsert_record["price_amount"], total_amount)
+        self.assertEqual(upsert_record["payment_status"], "UNPAID")
+
+    @patch("app.services.document_engine.get_supabase")
+    @patch("app.services.document_engine.r2_storage_service.upload_file", new_callable=AsyncMock)
+    async def test_intake_document_job_invalid_file_still_inserts_document_jobs(
+        self, mock_r2_upload, mock_get_supabase
+    ):
+        """Memvalidasi bahwa intake_document_job dengan file invalid (non-DOCX/PDF)
+        TETAP INSERT record ke document_jobs jika exact_price_amount disediakan."""
+        mock_client = MagicMock()
+        mock_table = MagicMock()
+        mock_client.table.return_value = mock_table
+        mock_table.insert.return_value.execute.return_value = MagicMock(data=[])
+        mock_get_supabase.return_value = mock_client
+
+        # Kirim plain UTF-8 text bytes (bukan DOCX/PDF) — ini yang terjadi di rewrite handler
+        plain_text_bytes = "Draft CV Budi Santoso. Software Engineer 3 tahun.".encode("utf-8")
+
+        result = await intake_document_job(
+            tenant_id="boontrack-career",
+            task_type="CV_POLISH_REWRITE",
+            filename="CV_Draft.docx",
+            file_bytes=plain_text_bytes,
+            user_id="6281237450222",
+            user_phone="6281237450222",
+            exact_price_amount=10432
+        )
+
+        # File memang invalid (REJECTED), tapi INSERT ke document_jobs HARUS tetap terjadi
+        self.assertEqual(result["status"], "REJECTED")
+
+        # Verifikasi bahwa document_jobs.insert dipanggil meski file invalid
+        table_calls = [call[0][0] for call in mock_client.table.call_args_list]
+        self.assertIn(
+            "document_jobs", table_calls,
+            "CRITICAL: document_jobs insert tidak dipanggil meski file invalid dan exact_price_amount=10432!"
+        )
+
+        # Verifikasi record yang di-insert memiliki price_amount yang tepat
+        insert_record = mock_table.insert.call_args[0][0]
+        self.assertEqual(insert_record["price_amount"], 10432)
+        self.assertEqual(insert_record["payment_status"], "UNPAID")
+        self.assertEqual(insert_record["status"], "WAITING_PAYMENT")
+
+
 if __name__ == "__main__":
     unittest.main()
