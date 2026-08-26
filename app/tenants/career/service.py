@@ -477,8 +477,10 @@ class CareerService:
             await self.send_menu_buttons(sender_wa_id)
             return
 
-        # 3. Info Unggah Bukti Struk
-        if button_id == "btn_upload_receipt_info":
+        # 3. Info Unggah Bukti Struk (Hanya sebagai opsi bantuan manual jika mutasi belum terbaca)
+        if button_id == "btn_upload_receipt_info" or user_text_clean in [
+            "struk", "bukti", "bukti transfer", "kirim struk", "bukti bayar", "upload struk", "bantuan bayar", "konfirmasi manual"
+        ]:
             await send_whatsapp_text(
                 sender_wa_id,
                 RECEIPT_UPLOAD_INFO_MSG,
@@ -566,24 +568,35 @@ class CareerService:
                 f"💰 *Total Investasi:* Rp{order['total_amount']:,}\n\n"
                 f"_{COMPLIANCE_DISCLAIMER}_"
             )
+            print(f"[CAREER PARAPHRASE] Pesan 1: Sending summary text to {sender_wa_id}...", flush=True)
             await send_whatsapp_text(sender_wa_id, summary_msg, tenant_id=TENANT_ID)
             await asyncio.sleep(1)
 
-            # Kirim matriks Dynamic QRIS hasil in-memory generator langsung ke WhatsApp
-            await send_whatsapp_image(
-                sender_wa_id,
-                image_path_or_bytes=order["qr_bytes"],
-                caption=caption_text,
-                tenant_id=TENANT_ID
+            # Generator dynamic QRIS in-memory PNG bytes
+            qr_bytes = generate_dynamic_qris_image(order["total_amount"])
+            qris_caption = (
+                f"Silakan scan QRIS di atas untuk menyelesaikan pembayaran Rp{order['total_amount']:,}. "
+                f"Sistem akan memproses naskah otomatis setelah transfer terverifikasi."
             )
+            print(f"[CAREER PARAPHRASE] Pesan 2: Sending dynamic QRIS image ({len(qr_bytes)} bytes, nominal=Rp{order['total_amount']:,}) to {sender_wa_id}...", flush=True)
+            img_res = await send_whatsapp_image(
+                to=sender_wa_id,
+                image_bytes=qr_bytes,
+                caption=qris_caption,
+                tenant="boontrack-career"
+            )
+            print(f"[CAREER PARAPHRASE] Dynamic QRIS image delivery result: {img_res}", flush=True)
             return
 
-        # 7. Trigger Rewrite (Single CV Rp10.000 vs Pro Bundle Rp25.000)
-        if button_id in ["btn_rewrite_single", "btn_bundle_pro", "btn_rewrite"] or user_text_clean in [
-            "rewrite", "perbaiki", "mau rewrite", "ambil rewrite", "🚀 ambil rewrite",
-            "single cv", "pro bundle", "cv rewrite", "ambil bundle"
-        ]:
-            is_bundle = button_id == "btn_bundle_pro" or "bundle" in user_text_clean or "25" in user_text_clean
+        # 7. Trigger Rewrite & Package Selection (Single CV Rp10.000 vs Pro Bundle Rp25.000)
+        is_bundle_btn = button_id in ["btn_bundle_pro", "btn_pro_bundle", "btn_package_pro"]
+        is_rewrite_btn = button_id in ["btn_rewrite_single", "btn_rewrite", "btn_cv_rewrite", "btn_single_rewrite", "btn_package_rewrite"]
+        
+        is_bundle_text = any(k in user_text_clean for k in ["pro bundle", "bundle pro", "bundle (25k)", "25k", "25.000", "25000", "⭐ pro bundle", "🌟 pro bundle"])
+        is_rewrite_text = any(k in user_text_clean for k in ["cv rewrite", "rewrite single", "single cv", "rewrite (10k)", "10k", "10.000", "10000", "mau rewrite", "ambil rewrite", "perbaiki"]) or user_text_clean == "rewrite"
+
+        if is_bundle_btn or is_rewrite_btn or is_bundle_text or is_rewrite_text:
+            is_bundle = is_bundle_btn or is_bundle_text or ("bundle" in user_text_clean) or ("25" in user_text_clean)
 
             # Cek apakah user memiliki kuota bundle aktif yang belum expired
             bundle_quota = user_session.get("bundle_quota", 0)
@@ -619,11 +632,13 @@ class CareerService:
                 return
 
             base_amount = 25000 if is_bundle else 10000
-            prod_name = "Career Pro Bundle (CV Rewrite + 3x Interview HR)" if is_bundle else "Single CV Polish & ATS Rewrite"
+            prod_name = "Career Pro Bundle (CV Rewrite + 3x Interview HR STAR)" if is_bundle else "Single CV Polish & ATS Rewrite"
             prod_id = "career_pro_bundle" if is_bundle else "single_cv_rewrite"
+            task_type_const = TASK_CAREER_PRO_BUNDLE if is_bundle else TASK_CV_POLISH_REWRITE
 
             await track_event(sender_wa_id, f"rewrite_{prod_id}_clicked")
 
+            # 1. Buat dynamic order QRIS dengan 3-digit kode unik
             order = payment_service.create_dynamic_order(
                 user_id=sender_wa_id,
                 base_amount=base_amount,
@@ -635,37 +650,54 @@ class CareerService:
             unique_code = order["unique_code"]
             invoice_id = order["order_id"]
 
+            # 2. Generator dynamic QRIS in-memory PNG bytes
+            qr_bytes = generate_dynamic_qris_image(exact_amount)
+
+            # 3. Registrasi Job ke Document Engine dengan Status WAITING_PAYMENT & exact price_amount
+            cv_text = user_session.get("parsed_cv_text") or user_session.get("parsed_doc_text") or "Draft CV Profile"
+            cv_bytes = cv_text.encode("utf-8")
+            await intake_document_job(
+                tenant_id=TENANT_ID,
+                task_type=task_type_const,
+                filename="CV_Draft.docx",
+                file_bytes=cv_bytes,
+                user_id=sender_wa_id,
+                user_phone=sender_wa_id,
+                exact_price_amount=exact_amount
+            )
+
             user_session["mode"] = "awaiting_rewrite_payment"
             user_session["active_invoice"] = invoice_id
 
-            caption_text = format_invoice_caption(invoice_id, exact_amount, unique_code, product_name=prod_name)
+            # Pesan 1 (Teks): Rincian paket, total nominal transfer Rp{exact_amount:,}, dan batas waktu verifikasi
+            package_detail_msg = (
+                f"📄 *INVOICE PAKET LAYANAN*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🎖️ *Paket:* {prod_name}\n"
+                f"💵 *Tarif Dasar:* Rp{base_amount:,}\n"
+                f"🔢 *Kode Unik:* {unique_code}\n"
+                f"💰 *Total Transfer:* *Rp{exact_amount:,}*\n"
+                f"⏳ *Batas Waktu Verifikasi:* 15 Menit\n\n"
+                f"⚠️ *PENTING:* Mohon transfer *tepat Rp{exact_amount:,}* (termasuk 3 digit kode unik) agar sistem memverifikasi mutasi dan memproses pesanan Anda secara otomatis.\n\n"
+                f"_{COMPLIANCE_DISCLAIMER}_"
+            )
+            print(f"[CAREER REWRITE] Pesan 1: Sending package detail text to {sender_wa_id}...", flush=True)
+            await send_whatsapp_text(sender_wa_id, package_detail_msg, tenant_id=TENANT_ID)
+            await asyncio.sleep(1)
 
-            # Generator dynamic QRIS in-memory PNG bytes
-            qr_bytes = generate_dynamic_qris_image(exact_amount)
-
-            # Kirim matriks Dynamic QRIS hasil in-memory generator langsung ke WhatsApp
-            print(f"[CAREER REWRITE] Sending dynamic QRIS image ({len(qr_bytes)} bytes, nominal=Rp{exact_amount:,}) to {sender_wa_id}...", flush=True)
+            # Pesan 2 (Image): Gambar QRIS Dinamis via send_whatsapp_image dengan caption nominal eksak
+            qris_caption = (
+                f"Silakan scan QRIS di atas untuk menyelesaikan pembayaran Rp{exact_amount:,}. "
+                f"Sistem akan memproses naskah otomatis setelah transfer terverifikasi."
+            )
+            print(f"[CAREER REWRITE] Pesan 2: Sending dynamic QRIS image ({len(qr_bytes)} bytes, nominal=Rp{exact_amount:,}) to {sender_wa_id}...", flush=True)
             img_res = await send_whatsapp_image(
                 to=sender_wa_id,
                 image_bytes=qr_bytes,
-                caption=caption_text,
+                caption=qris_caption,
                 tenant="boontrack-career"
             )
             print(f"[CAREER REWRITE] Dynamic QRIS image delivery result: {img_res}", flush=True)
-
-            await asyncio.sleep(1)
-
-            action_buttons = [
-                {"id": "btn_upload_receipt_info", "title": "📸 Kirim Bukti Struk"},
-                {"id": "btn_menu", "title": "🏠 Menu Utama"}
-            ]
-            await send_whatsapp_buttons(
-                to_phone=sender_wa_id,
-                body_text="Jika mutasi belum terdeteksi otomatis, Anda bisa mengirimkan foto screenshot bukti transfer ke chat ini.",
-                buttons=action_buttons,
-                footer_text="BoonTrack Payment Assistant",
-                tenant_id=TENANT_ID
-            )
             return
 
         # 5. DECISION ENGINE: 🎯 JOB MATCHER AI
