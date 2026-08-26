@@ -1,6 +1,7 @@
 import os
 import io
 import re
+import time
 import json
 import uuid
 import asyncio
@@ -260,6 +261,7 @@ async def process_document_job_async(
 ):
     """Background Worker untuk memproses dokumen secara asinkron (Zero-blocking)."""
     logger.info(f"[DocumentWorker] Started processing job {job_id} ({task_type})")
+    t_start = time.time()
     try:
         # 1. Update status -> PROCESSING
         await update_job_status(job_id, status="PROCESSING")
@@ -279,15 +281,16 @@ async def process_document_job_async(
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 
-        # 5. Update status -> COMPLETED & PAID
+        # 5. Update status -> COMPLETED & PAID dengan execution_time_ms
+        exec_ms = int((time.time() - t_start) * 1000)
         await update_job_status(
             job_id=job_id,
             status="COMPLETED",
             result_storage_key=result_key,
             structured_output=structured_data,
-            extra_fields={"payment_status": "PAID"}
+            extra_fields={"payment_status": "PAID", "execution_time_ms": exec_ms}
         )
-        logger.info(f"[DocumentWorker] Job {job_id} successfully completed. Result: {result_key}")
+        logger.info(f"[DocumentWorker] Job {job_id} successfully completed in {exec_ms}ms. Result: {result_key}")
 
         # 6. Notifikasi & File Delivery ke WhatsApp jika nomor tersedia
         if user_phone:
@@ -443,6 +446,7 @@ async def intake_document_job(
 
     # 4. Registrasi Job ke Supabase DB (Status: WAITING_PAYMENT untuk berbayar)
     supabase = get_supabase()
+    unique_code = (final_price % 1000) if final_price >= 1000 else 0
     job_record = {
         "id": job_id,
         "tenant_id": clean_tenant,
@@ -460,11 +464,13 @@ async def intake_document_job(
         "estimated_pages": metrics["estimated_pages"],
         "price": final_price,
         "price_amount": final_price,
+        "unique_code": unique_code,
         "pricing_tier": pricing["pricing_tier"],
         "raw_storage_key": raw_storage_key,
         "result_storage_key": None,
         "structured_output": None,
         "error_message": None,
+        "execution_time_ms": None,
         "created_at": start_time.isoformat(),
         "updated_at": start_time.isoformat()
     }
@@ -510,7 +516,9 @@ async def intake_document_job(
         "estimated_pages": metrics["estimated_pages"],
         "pricing": pricing,
         "price_amount": final_price,
+        "unique_code": unique_code,
+        "payment_status": payment_status,
         "raw_storage_key": raw_storage_key,
         "disclaimer": COMPLIANCE_DISCLAIMER,
-        "message": "Dokumen berhasil didaftarkan. Menunggu verifikasi pembayaran." if not is_free else "Dokumen sedang diproses."
+        "message": "Dokumen berhasil dianalisis. Menunggu pembayaran QRIS." if not is_free else "Dokumen dalam proses."
     }

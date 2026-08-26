@@ -217,6 +217,72 @@ class TestPaymentDocDelivery(AioHTTPTestCase):
         self.assertIn("5,083", reply)
         self.assertIn("job-5083-xyz", reply)
 
+    @patch("app.payments.matcher.get_supabase")
+    @patch("app.services.document_engine.get_supabase")
+    @patch("app.services.document_engine.r2_storage_service.download_file", new_callable=AsyncMock)
+    @patch("app.services.document_engine.send_whatsapp_document", new_callable=AsyncMock)
+    @patch("app.services.document_engine.send_whatsapp_text", new_callable=AsyncMock)
+    async def test_admin_verify_command_triggers_full_fulfillment_and_docx_delivery(
+        self,
+        mock_send_text,
+        mock_send_doc,
+        mock_r2_download,
+        mock_doc_engine_supabase,
+        mock_matcher_supabase
+    ):
+        """Memvalidasi bahwa admin mengetik /verify 5083 langsung menandai job PAID dan mengirim DOCX ke WhatsApp."""
+        job_id = "job-admin-verify-5083"
+        user_phone = "628123456789"
+        
+        mock_job_record = {
+            "id": job_id,
+            "tenant_id": "boontrack-career",
+            "user_phone": user_phone,
+            "price_amount": 5083,
+            "unique_code": 83,
+            "payment_status": "UNPAID",
+            "status": "COMPLETED",
+            "task_type": "POLISH_REPHRASE",
+            "result_storage_key": f"output/boontrack-career/{job_id}_result.docx"
+        }
+
+        mock_client = MagicMock()
+        mock_table = MagicMock()
+        mock_client.table.return_value = mock_table
+
+        query_builder = MagicMock()
+        query_builder.eq.return_value = query_builder
+        query_builder.order.return_value = query_builder
+        query_builder.limit.return_value = query_builder
+        query_builder.execute.return_value = MagicMock(data=[mock_job_record])
+
+        mock_table.select.return_value = query_builder
+        mock_table.update.return_value = query_builder
+
+        mock_matcher_supabase.return_value = mock_client
+        mock_doc_engine_supabase.return_value = mock_client
+
+        # Mock download DOCX bytes
+        fake_doc = Document()
+        fake_doc.add_paragraph("Hasil Polish & Rephrase Naskah.")
+        buf = io.BytesIO()
+        fake_doc.save(buf)
+        mock_r2_download.return_value = buf.getvalue()
+        mock_send_doc.return_value = {"messages": [{"id": "wamid.admin_verify"}]}
+
+        # Eksekusi command admin /verify 5083
+        reply = await handle_admin_verify_command("/verify 5083")
+        
+        # Validasi respon admin
+        self.assertIn("Verifikasi Manual Berhasil", reply)
+        self.assertIn("5,083", reply)
+        self.assertIn(job_id, reply)
+
+        # Validasi file terkirim ke WhatsApp user
+        mock_send_doc.assert_called_once()
+        self.assertEqual(mock_send_doc.call_args[1]["to_phone"], user_phone)
+        self.assertEqual(mock_send_doc.call_args[1]["filename"], "CV_Hasil_Polish.docx")
+
     @patch("app.services.document_engine.deliver_completed_document_job", new_callable=AsyncMock)
     async def test_admin_retry_doc_command_success(self, mock_deliver):
         """Memvalidasi eksekusi perintah admin /retry_doc <job_id>."""
