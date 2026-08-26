@@ -8,9 +8,13 @@ from typing import Dict, Any, Optional, List
 from app.tenants.career.config import TENANT_ID, CAREER_VIP_WHITELIST
 from app.tenants.career.messages import (
     WELCOME_CAREER_TEMPLATE,
+    CAREER_ENTRY_BUTTONS,
     CAREER_MENU_BUTTONS,
     WELCOME_PREMIUM_CAREER_TEMPLATE,
+    PREMIUM_CLUSTER_BUTTONS,
     PREMIUM_CAREER_BUTTONS,
+    DOCS_CLUSTER_BUTTONS,
+    COMPANION_CLUSTER_BUTTONS,
     PREMIUM_ACTION_BUTTONS,
     UPSELL_REWRITE_MSG,
     UPSELL_BUTTONS,
@@ -18,6 +22,7 @@ from app.tenants.career.messages import (
     RECEIPT_UPLOAD_INFO_MSG,
     RECEIPT_INVALID_MSG,
     REVIEW_INTRO_MSG,
+    PARAPHRASE_INTRO_MSG,
     DOC_READING_TEMPLATE,
     DOC_UNREADABLE_MSG,
     DOC_ERROR_MSG,
@@ -27,6 +32,21 @@ from app.tenants.career.messages import (
     format_diagnosis_message,
     format_invoice_caption
 )
+from app.services.pricing_engine import (
+    calculate_document_metrics,
+    calculate_pricing,
+    build_qris_invoice_payload,
+    compute_content_hash,
+    check_anti_abuse_free_trial,
+    register_free_trial_usage,
+    COMPLIANCE_DISCLAIMER,
+    OFFICIAL_PRODUCT_NAME,
+    TASK_POLISH_REPHRASE,
+    TASK_CV_POLISH_REWRITE,
+    TASK_CAREER_PRO_BUNDLE,
+    TASK_ATS_DIAGNOSTIC
+)
+from app.services.document_engine import intake_document_job
 from app.services.whatsapp_service import (
     send_whatsapp_text,
     send_whatsapp_image,
@@ -253,8 +273,9 @@ class CareerService:
                 await send_whatsapp_text(sender_wa_id, "⚠️ Terjadi kesalahan saat membaca gambar. Silakan coba unggah kembali.", tenant_id=TENANT_ID)
 
     async def handle_document(self, sender_wa_id: str, display_name: str, media_id: Optional[str], filename: str):
-        """Handler untuk dokumen CV (PDF / DOCX)"""
+        """Handler untuk dokumen CV atau naskah (PDF / DOCX)"""
         user_session = self._init_user_session(sender_wa_id)
+        current_mode = user_session.get("mode", "menu")
 
         safe_log_to_supabase_messages(
             sender="user",
@@ -278,7 +299,7 @@ class CareerService:
             file_bytes = await download_whatsapp_media(media_id)
             extracted_text = extract_text_from_bytes(file_bytes, filename)
 
-            if not extracted_text or len(extracted_text) < 50:
+            if not extracted_text or len(extracted_text) < 30:
                 await send_whatsapp_text(
                     sender_wa_id,
                     DOC_UNREADABLE_MSG,
@@ -286,6 +307,66 @@ class CareerService:
                 )
                 return
 
+            # Jika user dalam mode Polish & Rephrase
+            if current_mode == "paraphrase":
+                metrics = calculate_document_metrics(extracted_text)
+                pricing = calculate_pricing(TASK_POLISH_REPHRASE, metrics["word_count"])
+                
+                # Zero-blocking intake ke Document Engine
+                intake_res = await intake_document_job(
+                    tenant_id=TENANT_ID,
+                    task_type=TASK_POLISH_REPHRASE,
+                    filename=filename,
+                    file_bytes=file_bytes,
+                    user_id=sender_wa_id,
+                    user_phone=sender_wa_id
+                )
+
+                intent = generate_unique_payment_intent(
+                    tenant_id="boontrack_career",
+                    base_amount=pricing["final_price"],
+                    product_id="polish_rephrase",
+                    user_id=sender_wa_id
+                )
+
+                user_session["active_invoice"] = intent["invoice_id"]
+                user_session["mode"] = "awaiting_rewrite_payment"
+
+                caption_text = format_invoice_caption(
+                    intent["invoice_id"],
+                    intent["total_amount"],
+                    intent["unique_code"],
+                    product_name=f"{OFFICIAL_PRODUCT_NAME} ({pricing['tier_label']})"
+                )
+
+                base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+                asset_candidates = [
+                    os.path.join(base_dir, "assets", "qris.jpg"),
+                    os.path.join(base_dir, "assets", "qris.png"),
+                    os.path.join(os.getcwd(), "assets", "qris.jpg"),
+                ]
+                found_file = next((p for p in asset_candidates if os.path.exists(p)), None)
+
+                summary_msg = (
+                    f"📄 *DOKUMEN BERHASIL DIANALISIS*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📁 *File:* `{filename}`\n"
+                    f"📝 *Jumlah Kata:* {metrics['word_count']:,} kata\n"
+                    f"📑 *Estimasi:* {metrics['estimated_pages']} halaman\n"
+                    f"🏷️ *Kategori Tarif:* {pricing['tier_label']}\n"
+                    f"💰 *Investasi:* {pricing['formatted_price']}\n\n"
+                    f"_{COMPLIANCE_DISCLAIMER}_"
+                )
+                await send_whatsapp_text(sender_wa_id, summary_msg, tenant_id=TENANT_ID)
+                await asyncio.sleep(1)
+
+                if found_file:
+                    await send_whatsapp_image(sender_wa_id, image_path_or_bytes=found_file, caption=caption_text, tenant_id=TENANT_ID)
+                else:
+                    await send_whatsapp_text(sender_wa_id, caption_text, tenant_id=TENANT_ID)
+                return
+
+            # Default: Mode Review CV
             user_session["parsed_cv_text"] = extracted_text
             eval_result = cv_review_engine.evaluate_cv(extracted_text, target_position="General Professional")
             filtered_data = cv_review_service.filter_entitlement_response(eval_result, is_premium=False)
@@ -341,14 +422,107 @@ class CareerService:
             )
             return
 
-        # 4. Trigger Rewrite (QRIS + Kode Unik)
-        if button_id == "btn_rewrite" or user_text_clean in ["rewrite", "perbaiki", "mau rewrite", "ambil rewrite", "🚀 ambil rewrite"]:
-            await track_event(sender_wa_id, "rewrite_clicked")
+        # 4. Kluster Menu Premium: 📄 LAYANAN DOKUMEN
+        if button_id == "btn_cluster_docs" or (current_mode == "menu" and user_text_clean in ["layanan dokumen", "dokumen", "menu dokumen", "1"]):
+            await send_whatsapp_buttons(
+                to_phone=sender_wa_id,
+                body_text="📄 *KLUSTER LAYANAN DOKUMEN PROFESIONAL*\n\nSilakan pilih layanan dokumen yang Anda butuhkan di bawah ini:",
+                buttons=DOCS_CLUSTER_BUTTONS,
+                header_text="LAYANAN DOKUMEN",
+                footer_text="BoonTrack Document Hub",
+                tenant_id=TENANT_ID
+            )
+            return
+
+        # 5. Kluster Menu Premium: 🎯 CAREER COMPANION
+        if button_id == "btn_cluster_companion" or (current_mode == "menu" and user_text_clean in ["career companion", "companion", "karir", "2"]):
+            await send_whatsapp_buttons(
+                to_phone=sender_wa_id,
+                body_text="🎯 *KLUSTER CAREER COMPANION & DECISION ENGINE*\n\nSilakan pilih fitur pendamping karir Anda di bawah ini:",
+                buttons=COMPANION_CLUSTER_BUTTONS,
+                header_text="CAREER COMPANION",
+                footer_text="BoonTrack Career AI",
+                tenant_id=TENANT_ID
+            )
+            return
+
+        # 6. Mode: ✍️ DOCUMENT POLISH & REPHRASE
+        if button_id == "btn_paraphrase" or user_text_clean in ["parafrase", "polish", "rephrase", "polish & rephrase", "✍️ polish & rephrase", "paraphrase"]:
+            user_session["mode"] = "paraphrase"
+            await send_whatsapp_text(sender_wa_id, PARAPHRASE_INTRO_MSG, tenant_id=TENANT_ID)
+            return
+
+        if current_mode == "paraphrase" and user_text:
+            metrics = calculate_document_metrics(user_text)
+            if metrics["word_count"] < 8:
+                await send_whatsapp_text(
+                    sender_wa_id,
+                    TEXT_TOO_SHORT_MSG,
+                    tenant_id=TENANT_ID
+                )
+                return
+
+            pricing = calculate_pricing(TASK_POLISH_REPHRASE, metrics["word_count"])
+            intent = generate_unique_payment_intent(
+                tenant_id="boontrack_career",
+                base_amount=pricing["final_price"],
+                product_id="polish_rephrase",
+                user_id=sender_wa_id
+            )
+
+            user_session["mode"] = "awaiting_rewrite_payment"
+            user_session["active_invoice"] = intent["invoice_id"]
+            user_session["parsed_doc_text"] = user_text
+
+            caption_text = format_invoice_caption(
+                intent["invoice_id"],
+                intent["total_amount"],
+                intent["unique_code"],
+                product_name=f"{OFFICIAL_PRODUCT_NAME} ({pricing['tier_label']})"
+            )
+
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            asset_candidates = [
+                os.path.join(base_dir, "assets", "qris.jpg"),
+                os.path.join(base_dir, "assets", "qris.png"),
+                os.path.join(os.getcwd(), "assets", "qris.jpg"),
+            ]
+            found_file = next((p for p in asset_candidates if os.path.exists(p)), None)
+
+            summary_msg = (
+                f"✍️ *ANALISIS NASKAH POLISH & REPHRASE*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"📝 *Jumlah Kata:* {metrics['word_count']:,} kata\n"
+                f"📑 *Estimasi:* {metrics['estimated_pages']} halaman\n"
+                f"🏷️ *Kategori Tarif:* {pricing['tier_label']}\n"
+                f"💰 *Total Investasi:* {pricing['formatted_price']}\n\n"
+                f"_{COMPLIANCE_DISCLAIMER}_"
+            )
+            await send_whatsapp_text(sender_wa_id, summary_msg, tenant_id=TENANT_ID)
+            await asyncio.sleep(1)
+
+            if found_file:
+                await send_whatsapp_image(sender_wa_id, image_path_or_bytes=found_file, caption=caption_text, tenant_id=TENANT_ID)
+            else:
+                await send_whatsapp_text(sender_wa_id, caption_text, tenant_id=TENANT_ID)
+            return
+
+        # 7. Trigger Rewrite (Single CV Rp9.900 vs Pro Bundle Rp25.000)
+        if button_id in ["btn_rewrite_single", "btn_bundle_pro", "btn_rewrite"] or user_text_clean in [
+            "rewrite", "perbaiki", "mau rewrite", "ambil rewrite", "🚀 ambil rewrite",
+            "single cv", "pro bundle", "cv rewrite", "ambil bundle"
+        ]:
+            is_bundle = button_id == "btn_bundle_pro" or "bundle" in user_text_clean or "25" in user_text_clean
+            base_amount = 25000 if is_bundle else 9900
+            prod_name = "Career Pro Bundle (CV Rewrite + 3x Interview HR)" if is_bundle else "Single CV Polish & ATS Rewrite"
+            prod_id = "career_pro_bundle" if is_bundle else "single_cv_rewrite"
+
+            await track_event(sender_wa_id, f"rewrite_{prod_id}_clicked")
 
             intent = generate_unique_payment_intent(
                 tenant_id="boontrack_career",
-                base_amount=25000,
-                product_id="premium_cv_rewrite",
+                base_amount=base_amount,
+                product_id=prod_id,
                 user_id=sender_wa_id
             )
 
@@ -359,7 +533,7 @@ class CareerService:
             user_session["mode"] = "awaiting_rewrite_payment"
             user_session["active_invoice"] = invoice_id
 
-            caption_text = format_invoice_caption(invoice_id, exact_amount, unique_code)
+            caption_text = format_invoice_caption(invoice_id, exact_amount, unique_code, product_name=prod_name)
 
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
             asset_candidates = [
@@ -384,7 +558,7 @@ class CareerService:
             ]
             await send_whatsapp_buttons(
                 to_phone=sender_wa_id,
-                body_text="Jika ada salah transfer atau mutasi belum terdeteksi otomatis, Anda bisa mengirimkan foto screenshot bukti transfer ke chat ini.",
+                body_text="Jika mutasi belum terdeteksi otomatis, Anda bisa mengirimkan foto screenshot bukti transfer ke chat ini.",
                 buttons=action_buttons,
                 footer_text="BoonTrack Payment Assistant",
                 tenant_id=TENANT_ID
@@ -646,13 +820,13 @@ class CareerService:
             return
 
         # 8. Trigger Optimasi / Bedah CV Lagi
-        if button_id in ["btn_rewrite_again", "btn_review"] or (current_mode == "menu" and user_text_clean in ["4", "review", "bedah cv", "review cv", "🔍 review cv", "revisi cv"]):
+        if button_id in ["btn_rewrite_again", "btn_review", "btn_review_cv"] or (current_mode == "menu" and user_text_clean in ["4", "review", "bedah cv", "review cv", "🔍 review cv", "revisi cv", "bedah cv ulang"]):
             user_session["mode"] = "review"
             await send_whatsapp_text(sender_wa_id, REVIEW_INTRO_MSG, tenant_id=TENANT_ID)
             return
 
         # 9. Builder Menu Button
-        if button_id == "btn_builder" or (current_mode == "menu" and user_text_clean in ["bikin cv", "📝 bikin cv dasar"]):
+        if button_id in ["btn_builder", "btn_create_cv"] or (current_mode == "menu" and user_text_clean in ["bikin cv", "buat cv", "📝 bikin cv dasar", "📝 buat cv baru", "create cv"]):
             user_session["mode"] = "builder"
             user_session["step"] = 0
             result = await process_unified_cv_step(sender_wa_id, "", platform="whatsapp")

@@ -1,54 +1,80 @@
-"""Template pesan dan button structures untuk tenant BoonTrack Career."""
+"""Template pesan dan button structures untuk tenant BoonTrack Career & Document Services.
+Disetujui oleh CEO & CFO BoonTrack.
+"""
 
-# --- 1. FREEMIUM MENU ---
+from app.services.pricing_engine import COMPLIANCE_DISCLAIMER, OFFICIAL_PRODUCT_NAME
+
+# --- 1. FREEMIUM ENTRY MENU (3 BUTTONS) ---
 WELCOME_CAREER_TEMPLATE = (
-    "Halo{greeting}! Selamat datang di *BoonTrack Career*. 💼\n\n"
-    "Layanan kami dikembangkan dengan standar ATS dan kurasi HR Senior.\n\n"
-    "Silakan pilih menu gratis Anda di bawah ini:"
+    "Halo{greeting}! Selamat datang di *BoonTrack*. 💼✨\n\n"
+    "Layanan cerdas kami siap membantu pembuatan CV standar HR, audit ATS, serta penyempurnaan dokumen profesional.\n\n"
+    "👇 *Silakan pilih layanan yang Anda butuhkan di bawah ini:*\n\n"
+    f"_{COMPLIANCE_DISCLAIMER}_"
 )
 
-CAREER_MENU_BUTTONS = [
-    {"id": "btn_review", "title": "🔍 Review CV"},
-    {"id": "btn_builder", "title": "📝 Bikin CV Dasar"}
+# 3 Interactive Buttons for Pre-Payment / Entry Menu
+CAREER_ENTRY_BUTTONS = [
+    {"id": "btn_create_cv", "title": "📝 Buat CV Baru"},
+    {"id": "btn_review_cv", "title": "🔍 Review Bedah CV"},
+    {"id": "btn_paraphrase", "title": "✍️ Polish & Rephrase"}
 ]
 
-# --- 2. PREMIUM UNLOCKED DECISION ENGINE MENU ---
+# Legacy alias for backward compatibility
+CAREER_MENU_BUTTONS = CAREER_ENTRY_BUTTONS
+
+
+# --- 2. POST-PAYMENT / PREMIUM DASHBOARD (2 CLUSTER BUTTONS) ---
 WELCOME_PREMIUM_CAREER_TEMPLATE = (
-    "Halo{greeting}! 🎖️ *AKSES BOONTRACK CAREER PRO AKTIF*\n\n"
-    "AI Decision Engine & Career Companion siap mendampingi Anda memenangkan karir impian:\n\n"
-    "🎯 *1. Job Matcher AI* (`job match`)\n"
-    "Analisis keselarasan CV vs kualifikasi loker target & missing skills.\n\n"
-    "🎙️ *2. Simulasi Interview HR* (`interview`)\n"
-    "Latihan wawancara interaktif 3 ronde metode STAR dengan evaluasi instan.\n\n"
-    "💰 *3. Salary & Negotiation Coach* (`gaji`)\n"
-    "Benchmark gaji industri & template naskah skrip negosiasi penawaran.\n\n"
-    "🚀 *4. Optimasi / Bedah CV Lagi* (`review`)\n"
-    "Review atau regenerasi naskah CV standar HR Senior.\n\n"
-    "👇 *Pilih menu pendamping karir di bawah ini:*"
+    "Halo{greeting}! 🎖️ *AKSES BOONTRACK PRO DASHBOARD AKTIF*\n\n"
+    "Silakan pilih kluster layanan terpadu Anda:\n\n"
+    "📄 *1. Layanan Dokumen* (`layanan dokumen`)\n"
+    "Buat CV Baru, Bedah CV Ulang, dan Document Polish & Rephrase.\n\n"
+    "🎯 *2. Career Companion* (`career companion`)\n"
+    "Job Matcher AI, Simulasi Interview HR STAR, dan Negosiasi Gaji.\n\n"
+    f"_{COMPLIANCE_DISCLAIMER}_"
 )
 
-PREMIUM_CAREER_BUTTONS = [
+# 2 Cluster Buttons for Post-Payment
+PREMIUM_CLUSTER_BUTTONS = [
+    {"id": "btn_cluster_docs", "title": "📄 Layanan Dokumen"},
+    {"id": "btn_cluster_companion", "title": "🎯 Career Companion"}
+]
+
+PREMIUM_CAREER_BUTTONS = PREMIUM_CLUSTER_BUTTONS
+
+# Submenu Layanan Dokumen (Post-payment)
+DOCS_CLUSTER_BUTTONS = [
+    {"id": "btn_create_cv", "title": "📝 Buat CV Baru"},
+    {"id": "btn_review_cv", "title": "🔍 Bedah CV Ulang"},
+    {"id": "btn_paraphrase", "title": "✍️ Polish & Rephrase"}
+]
+
+# Submenu Career Companion (Post-payment)
+COMPANION_CLUSTER_BUTTONS = [
     {"id": "btn_job_match", "title": "🎯 Job Matcher AI"},
-    {"id": "btn_mock_interview", "title": "🎙️ Simulasi HR"},
+    {"id": "btn_mock_interview", "title": "🎙️ Simulasi HR STAR"},
     {"id": "btn_salary_coach", "title": "💰 Negosiasi Gaji"}
 ]
 
 PREMIUM_ACTION_BUTTONS = [
-    {"id": "btn_mock_interview", "title": "🎙️ Latihan Interview"},
-    {"id": "btn_salary_coach", "title": "💰 Cek Gaji"},
+    {"id": "btn_cluster_docs", "title": "📄 Layanan Dokumen"},
+    {"id": "btn_cluster_companion", "title": "🎯 Career Companion"},
     {"id": "btn_menu", "title": "🏠 Menu Utama"}
 ]
 
-# --- 3. UPSELL & PAYMENT ---
+
+# --- 3. UPSELL & PAYMENT TEMPLATES ---
 UPSELL_REWRITE_MSG = (
     "Ingin melihat versi terbaik dari potensi profesional Anda? 🚀\n\n"
-    "Gunakan layanan: *Premium CV Rewrite (Standar HR Senior)*.\n\n"
-    "Sistem akan merombak total struktur, diksi pencapaian, dan dampak kerja CV Anda.\n\n"
-    "🏷️ *Investasi:* Rp25.000"
+    "Pilihan Paket Layanan Unggulan:\n"
+    "1. *Single CV Polish & ATS Rewrite*: Rp9.900\n"
+    "2. *Career Pro Bundle (CV Rewrite + 3x Interview HR STAR)*: Rp25.000\n\n"
+    "Sistem akan merombak total struktur, diksi pencapaian, dan dampak kerja CV Anda berstandar HR Senior."
 )
 
 UPSELL_BUTTONS = [
-    {"id": "btn_rewrite", "title": "🚀 Ambil Rewrite"},
+    {"id": "btn_rewrite_single", "title": "📄 CV Rewrite (9.9k)"},
+    {"id": "btn_bundle_pro", "title": "🌟 Pro Bundle (25k)"},
     {"id": "btn_menu", "title": "🏠 Menu Utama"}
 ]
 
@@ -69,11 +95,19 @@ RECEIPT_INVALID_MSG = (
 )
 
 REVIEW_INTRO_MSG = (
+    "🔍 *[REVIEW & AUDIT ATS CV]*\n\n"
     "Silakan kirimkan dokumen CV Anda (*format PDF/DOCX*) atau *salin-tempel (copy-paste) teks riwayat CV* "
     "Anda langsung di chat ini untuk kami bedah secara gratis."
 )
 
-DOC_READING_TEMPLATE = "📥 Menerima dokumen *{filename}*. Sedang menganalisis struktur & skor ATS CV kamu... ⏳"
+PARAPHRASE_INTRO_MSG = (
+    f"✍️ *[{OFFICIAL_PRODUCT_NAME.upper()}]*\n\n"
+    "Silakan kirim dokumen (*format PDF/DOCX*) atau tempel naskah yang ingin Anda perbaiki struktur dan keterbacaannya.\n\n"
+    "Sistem akan menghitung jumlah kata secara otomatis dan menampilkan estimasi tarif resmi.\n\n"
+    f"_{COMPLIANCE_DISCLAIMER}_"
+)
+
+DOC_READING_TEMPLATE = "📥 Menerima dokumen *{filename}*. Sedang menganalisis struktur & menghitung metrik dokumen... ⏳"
 
 DOC_UNREADABLE_MSG = (
     "⚠️ Teks di dalam dokumen tidak dapat diekstrak. "
@@ -83,9 +117,10 @@ DOC_UNREADABLE_MSG = (
 DOC_ERROR_MSG = "⚠️ Terjadi kendala saat membaca dokumen. Silakan kirim ulang atau tempel teks CV kamu."
 
 TEXT_TOO_SHORT_MSG = (
-    "⚠️ Teks CV terlalu singkat. "
-    "Silakan tempel teks CV lengkap atau kirim file dokumen (.pdf / .docx)."
+    "⚠️ Teks terlalu singkat. "
+    "Silakan tempel naskah lengkap atau kirim file dokumen (.pdf / .docx)."
 )
+
 
 # --- 4. DECISION ENGINE INVITATION MESSAGES ---
 JOB_MATCH_INVITATION_MSG = (
@@ -118,30 +153,28 @@ def format_diagnosis_message(overall_score: int, breakdown_scores: dict, finding
     findings_list = "\n".join([f"• {f}" for f in findings]) if findings else "• Format dasar CV sudah terbaca dengan baik."
 
     return (
-        f"Analisis CV Anda selesai! 📊\n\n"
-        f"🎯 *Skor Keterbacaan ATS:* {overall_score}/100\n\n"
-        f"📌 *Breakdown Evaluasi:*\n"
-        f"• ⚙️ ATS Compatibility: *{ats_comp}/100*\n"
-        f"• 🎯 Relevansi Kata Kunci: *{keyword_score}/100*\n"
-        f"• 📈 Kualitas Pengalaman: *{exp_score}/100*\n\n"
-        f"💡 *Catatan Praktisi HR:*\n"
+        f"📊 *HASIL AUDIT & DIAGNOSTIK ATS CV*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎯 *Skor Total:* {overall_score}/100\n\n"
+        f"📈 *Rincian Skor Parameter:*\n"
+        f"• 🤖 Keterbacaan ATS: {ats_comp}/100\n"
+        f"• 🔑 Kepadatan Kata Kunci: {keyword_score}/100\n"
+        f"• 💼 Dampak & Kuantifikasi Karir: {exp_score}/100\n\n"
+        f"🔍 *Temuan & Area Optimasi:*\n"
         f"{findings_list}\n\n"
-        f"_Anda dapat menggunakan catatan di atas sebagai panduan revisi._"
+        f"_{COMPLIANCE_DISCLAIMER}_"
     )
 
 
-def format_invoice_caption(invoice_id: str, exact_amount: int, unique_code: int) -> str:
+def format_invoice_caption(invoice_id: str, exact_amount: int, unique_code: int, product_name: str = "Premium CV Rewrite") -> str:
+    formatted_amount = f"Rp{exact_amount:,}".replace(",", ".")
     return (
-        "📱 *INVOICE PEMBAYARAN PREMIUM CV REWRITE*\n"
-        f"🧾 *No. Invoice:* `{invoice_id}`\n\n"
-        f"🏷️ *TOTAL TRANSFER:* `{exact_amount}`\n"
-        f"*(Rp{exact_amount:,} - Termasuk kode unik: {unique_code})*\n\n"
-        "📌 *Panduan Pembayaran QRIS:*\n"
-        "1. *Simpan / Screenshot* gambar QRIS di atas ke galeri HP kamu.\n"
-        "2. Buka aplikasi m-Banking (*BCA, Mandiri, BRI, BNI*) atau e-Wallet (*GoPay, OVO, DANA, ShopeePay*).\n"
-        "3. Pilih menu *Scan QRIS* ➔ ketuk *ikon Galeri / Unggah Gambar* ➔ pilih gambar QRIS tadi.\n"
-        f"4. Masukkan nominal persis: `{exact_amount}`\n\n"
-        f"⚠️ *PENTING:* Silakan *salin (copy)* angka `{exact_amount}` di atas agar tepat. "
-        "Sistem verifikasi otomatis mendeteksi transaksi Anda secara instan!"
+        f"💳 *INVOICE PEMBAYARAN QRIS*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📋 *Layanan:* {product_name}\n"
+        f"🆔 *Invoice ID:* `{invoice_id}`\n"
+        f"💰 *Total Transfer:* *{formatted_amount}*\n"
+        f"🔢 *(Termasuk 3 Digit Kode Unik: {unique_code})*\n\n"
+        f"⚠️ *PENTING:* Mohon transfer *PERSIS* sampai 3 digit terakhir agar sistem reader mutasi kami dapat memverifikasi pesanan Anda secara otomatis dalam hitungan detik.\n\n"
+        f"Scan QRIS di atas melalui GoPay, OVO, DANA, BCA, Mandiri, atau m-Banking Anda."
     )
-

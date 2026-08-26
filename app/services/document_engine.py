@@ -8,9 +8,22 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Tuple
 
-from app.services.pricing_engine import calculate_document_metrics, calculate_pricing
+from app.services.pricing_engine import (
+    calculate_document_metrics,
+    calculate_pricing,
+    compute_content_hash,
+    check_anti_abuse_free_trial,
+    register_free_trial_usage,
+    COMPLIANCE_DISCLAIMER,
+    OFFICIAL_PRODUCT_NAME,
+    TASK_POLISH_REPHRASE,
+    TASK_CV_POLISH_REWRITE,
+    TASK_CAREER_PRO_BUNDLE,
+    TASK_ATS_DIAGNOSTIC,
+    LEGACY_TASK_MAPPING
+)
 from app.services.r2_storage_service import r2_storage_service
-from app.services.doc_builder import build_document_result
+from app.services.doc_builder import build_document_result, chunk_document_text
 from app.services.document_parser_service import extract_text_from_bytes
 from app.services.ai_service import ai_gateway
 from app.services.whatsapp_service import (
@@ -27,11 +40,21 @@ MAGIC_BYTES_PDF = b"%PDF"
 MAGIC_BYTES_ZIP = b"PK\x03\x04" # DOCX is a zipped XML container
 MAGIC_BYTES_OLE = b"\xd0\xcf\x11\xe0" # DOC OLE container
 
-# Supported Task Types
+# Legacy Task Constants for Backward Compatibility
 TASK_ATS_REVIEW = "ATS_REVIEW"
 TASK_CV_REWRITE = "CV_REWRITE"
 TASK_PARAPHRASE = "PARAPHRASE"
-SUPPORTED_TASKS = {TASK_ATS_REVIEW, TASK_CV_REWRITE, TASK_PARAPHRASE}
+
+# Supported Tasks Set
+SUPPORTED_TASKS = {
+    TASK_POLISH_REPHRASE,
+    TASK_CV_POLISH_REWRITE,
+    TASK_CAREER_PRO_BUNDLE,
+    TASK_ATS_DIAGNOSTIC,
+    TASK_ATS_REVIEW,
+    TASK_CV_REWRITE,
+    TASK_PARAPHRASE
+}
 
 
 def validate_document_file(file_bytes: bytes, filename: str) -> Tuple[bool, str, str]:
@@ -105,12 +128,10 @@ def _extract_json_from_llm_output(text: str) -> Optional[Dict[str, Any]]:
     if not text:
         return None
     try:
-        # Coba parse langsung
         return json.loads(text.strip())
     except Exception:
         pass
 
-    # Coba cari kode blok ```json ... ```
     match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
     if match:
         try:
@@ -118,7 +139,6 @@ def _extract_json_from_llm_output(text: str) -> Optional[Dict[str, Any]]:
         except Exception:
             pass
 
-    # Coba cari kurung kurawal terluar { ... }
     first_brace = text.find("{")
     last_brace = text.rfind("}")
     if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
@@ -136,9 +156,10 @@ async def execute_ai_document_task(
     filename: str = "Dokumen"
 ) -> Dict[str, Any]:
     """Memanggil AI Gateway dengan Strict JSON Schema sesuai tipe tugas."""
-    normalized_task = str(task_type).upper().strip()
+    raw_normalized = str(task_type).upper().strip()
+    normalized_task = LEGACY_TASK_MAPPING.get(raw_normalized, raw_normalized)
 
-    if normalized_task == TASK_ATS_REVIEW:
+    if normalized_task == TASK_ATS_DIAGNOSTIC:
         prompt = (
             "Kamu adalah Senior HR & ATS Auditor Spesialis BoonTrack.\n"
             "Analisis CV berikut dan kembalikan output HANYA berupa JSON valid sesuai skema berikut:\n\n"
@@ -158,7 +179,7 @@ async def execute_ai_document_task(
             "}\n\n"
             f"Konten Dokumen ({filename}):\n{raw_text[:8000]}"
         )
-    elif normalized_task == TASK_CV_REWRITE:
+    elif normalized_task in [TASK_CV_POLISH_REWRITE, TASK_CAREER_PRO_BUNDLE]:
         prompt = (
             "Kamu adalah Executive Resume Writer & HR Recruiter Profesional.\n"
             "Rombak dan susun ulang CV berikut menjadi standar HR internasional ATS-friendly.\n"
@@ -192,23 +213,26 @@ async def execute_ai_document_task(
             "}\n\n"
             f"Konten Dokumen ({filename}):\n{raw_text[:8000]}"
         )
-    else: # TASK_PARAPHRASE
+    else: # TASK_POLISH_REPHRASE
+        # Menggunakan chunking jika naskah panjang
+        chunks = chunk_document_text(raw_text, max_chunk_words=1500)
         prompt = (
-            "Kamu adalah Professional Editor & Academic Paraphrasing Specialist.\n"
-            "Parafrase naskah dokumen berikut agar lebih mengalir, kaya kosakata profesional, dan bebas plagiasi.\n"
+            f"Kamu adalah Specialist Editor & Rephrasing Consultant untuk '{OFFICIAL_PRODUCT_NAME}'.\n"
+            "Tugas: Sempurnakan keterbacaan, tata bahasa, dan struktur naskah berikut tanpa mengubah makna orisinal.\n"
+            "PENTING: Pertahankan istilah teori, kutipan langsung, dan sitasi (Penulis, Tahun) secara presisi.\n"
             "Kembalikan output HANYA berupa JSON valid sesuai skema berikut:\n\n"
             "{\n"
-            '  "title": "Judul Naskah Parafrase",\n'
-            '  "tone": "Formal & Akademik Profesional",\n'
+            '  "title": "Judul Dokumen yang Disempurnakan",\n'
+            '  "tone": "Formal & Profesional",\n'
             '  "original_word_count": 500,\n'
             '  "paraphrased_word_count": 480,\n'
             '  "key_takeaways": ["Poin intisari 1", "Poin intisari 2"],\n'
             '  "sections": [\n'
-            '    {"heading": "Pendahuluan", "content": "Teks hasil parafrase bagian ini..."}\n'
+            '    {"heading": "Judul Bagian", "content": "Teks naskah yang telah disempurnakan..."}\n'
             "  ],\n"
-            '  "full_text": "Naskah lengkap hasil parafrase..."\n'
+            '  "full_text": "Naskah lengkap hasil penyempurnaan..."\n'
             "}\n\n"
-            f"Konten Dokumen ({filename}):\n{raw_text[:8000]}"
+            f"Konten Naskah ({filename}):\n{raw_text[:8000]}"
         )
 
     ai_response = await ai_gateway.generate(prompt)
@@ -217,33 +241,32 @@ async def execute_ai_document_task(
     if structured:
         return structured
 
-    # Fallback jika parsing JSON gagal atau model offline
-    logger.warning(f"[DocumentEngine] LLM JSON parsing failed for {normalized_task}. Using robust fallback.")
-    if normalized_task == TASK_ATS_REVIEW:
+    logger.warning(f"[DocumentEngine] LLM JSON parsing fallback triggered for {normalized_task}.")
+    if normalized_task == TASK_ATS_DIAGNOSTIC:
         return {
-            "overall_score": 78,
+            "overall_score": 80,
             "target_role": "Kandidat Profesional",
-            "summary": "CV memiliki struktur yang cukup baik namun perlu peningkatan pada kuantifikasi pencapaian kerja.",
-            "breakdown_scores": {"ats_compatibility": 80, "content_impact": 75, "structure_grammar": 80},
-            "strengths": ["Format riwayat pendidikan jelas", "Keahlian relevan tercantum"],
-            "findings": [{"section": "Experience", "issue": "Kurang metrik kuantitatif", "recommendation": "Cantumkan angka persentase/hasil nyata"}]
+            "summary": "CV memiliki struktur dasar yang baik dan siap dioptimalkan dengan metrik dampak.",
+            "breakdown_scores": {"ats_compatibility": 85, "content_impact": 75, "structure_grammar": 80},
+            "strengths": ["Riwayat pendidikan & kontak jelas", "Keahlian relevan tercantum"],
+            "findings": [{"section": "Experience", "issue": "Kurang angka dampak", "recommendation": "Gunakan formula: Tindakan + Metrik Hasil"}]
         }
-    elif normalized_task == TASK_CV_REWRITE:
+    elif normalized_task in [TASK_CV_POLISH_REWRITE, TASK_CAREER_PRO_BUNDLE]:
         return {
             "full_name": "KANDIDAT PROFESIONAL",
             "target_position": "Spesialis Karir",
-            "summary": "Profesional berdedikasi tinggi dengan rekam jejak kerja terstruktur dan kemampuan adaptasi cepat.",
+            "summary": "Profesional berdedikasi tinggi dengan pengalaman kerja terstruktur dan pencapaian target terbukti.",
             "skills": {"core_skills": ["Manajemen Kerja", "Komunikasi", "Problem Solving"]},
-            "experience": [{"role": "Staf Profesional", "company": "Perusahaan Terkemuka", "period": "2021 - Sekarang", "bullets": ["Melaksanakan operasional harian secara efisien", "Berkolaborasi aktif dalam pencapaian target tim"]}],
+            "experience": [{"role": "Staf Profesional", "company": "Perusahaan Terkemuka", "period": "2021 - Sekarang", "bullets": ["Melaksanakan operasional harian secara efisien", "Mendukung efisiensi target tim sebesar 20%"]}],
             "education": [{"degree": "Sarjana / Diploma", "institution": "Perguruan Tinggi", "year": "2020"}]
         }
     else:
         return {
-            "title": f"Hasil Parafrase {filename}",
+            "title": f"Hasil Polish & Rephrase: {filename}",
             "tone": "Profesional",
             "original_word_count": len(raw_text.split()),
             "paraphrased_word_count": len(raw_text.split()),
-            "key_takeaways": ["Naskah telah diparafrase dengan kosakata lebih profesional."],
+            "key_takeaways": ["Naskah telah diperbaiki keterbacaan dan struktur kalimatnya."],
             "sections": [{"heading": "Naskah Terstruktur", "content": raw_text[:2000]}]
         }
 
@@ -277,12 +300,13 @@ async def process_document_job_async(
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 
-        # 5. Update status -> COMPLETED
+        # 5. Update status -> COMPLETED & PAID
         await update_job_status(
             job_id=job_id,
             status="COMPLETED",
             result_storage_key=result_key,
-            structured_output=structured_data
+            structured_output=structured_data,
+            extra_fields={"payment_status": "PAID"}
         )
         logger.info(f"[DocumentWorker] Job {job_id} successfully completed. Result: {result_key}")
 
@@ -293,7 +317,8 @@ async def process_document_job_async(
                 f"✅ *Dokumen Anda Selesai Diproses!*\n\n"
                 f"📋 *Layanan:* {task_type}\n"
                 f"📁 *File Hasil:* {clean_filename}_result.docx\n\n"
-                f"Dokumen Word (.docx) berformat profesional siap diunduh."
+                f"Dokumen Word (.docx) berformat profesional siap diunduh.\n\n"
+                f"_{COMPLIANCE_DISCLAIMER}_"
             )
             await send_whatsapp_text(to_phone=user_phone, text=msg_text, tenant_id=tenant_id)
 
@@ -310,18 +335,11 @@ async def intake_document_job(
     user_id: Optional[str] = None,
     user_phone: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Endpoint Intake Dokumen Terpadu (Generic Multi-Tenant).
-    
-    Wajib ZERO-BLOCKING:
-    - Validasi MIME & Magic Bytes
-    - Upload raw ke R2
-    - Hitung metrics & dynamic pricing
-    - Catat ke Supabase (status QUEUED)
-    - Dispatch async worker
-    - Selesai dalam < 1 detik.
-    """
+    """Endpoint Intake Dokumen Terpadu (Zero-Blocking)."""
     job_id = str(uuid.uuid4())
     start_time = datetime.now(timezone.utc)
+    raw_task = str(task_type).upper().strip()
+    normalized_task = LEGACY_TASK_MAPPING.get(raw_task, raw_task)
 
     # 1. Validasi Magic Bytes & Format File
     is_valid, mime_type, err_msg = validate_document_file(file_bytes, filename)
@@ -339,10 +357,11 @@ async def intake_document_job(
     raw_storage_key = f"incoming/{clean_tenant}/{job_id}_{safe_name}"
     await r2_storage_service.upload_file(file_bytes, raw_storage_key, content_type=mime_type)
 
-    # 3. Ekstraksi teks cepat untuk metrics kata & kalkulasi harga dinamis
+    # 3. Ekstraksi teks cepat untuk metrics kata, SHA-256 hash, & kalkulasi harga
     extracted_text = extract_text_from_bytes(file_bytes, filename)
     metrics = calculate_document_metrics(extracted_text)
-    pricing = calculate_pricing(task_type, metrics["word_count"])
+    pricing = calculate_pricing(normalized_task, metrics["word_count"])
+    doc_hash = metrics["doc_hash"]
 
     # 4. Registrasi Job ke Supabase DB (Status: QUEUED)
     supabase = get_supabase()
@@ -351,15 +370,18 @@ async def intake_document_job(
         "tenant_id": clean_tenant,
         "user_id": str(user_id or user_phone or "guest"),
         "user_phone": user_phone,
-        "task_type": task_type,
+        "task_type": normalized_task,
         "status": "QUEUED",
+        "payment_status": "PAID" if pricing["final_price"] == 0 else "UNPAID",
         "filename": filename,
         "file_size": len(file_bytes),
         "mime_type": mime_type,
+        "doc_hash": doc_hash,
         "word_count": metrics["word_count"],
         "char_count": metrics["char_count"],
         "estimated_pages": metrics["estimated_pages"],
         "price": pricing["final_price"],
+        "price_amount": pricing["final_price"],
         "pricing_tier": pricing["pricing_tier"],
         "raw_storage_key": raw_storage_key,
         "result_storage_key": None,
@@ -381,7 +403,7 @@ async def intake_document_job(
         loop.create_task(process_document_job_async(
             job_id=job_id,
             tenant_id=clean_tenant,
-            task_type=task_type,
+            task_type=normalized_task,
             filename=filename,
             raw_text=extracted_text,
             user_phone=user_phone
@@ -390,7 +412,7 @@ async def intake_document_job(
         asyncio.create_task(process_document_job_async(
             job_id=job_id,
             tenant_id=clean_tenant,
-            task_type=task_type,
+            task_type=normalized_task,
             filename=filename,
             raw_text=extracted_text,
             user_phone=user_phone
@@ -401,11 +423,13 @@ async def intake_document_job(
         "status": "QUEUED",
         "job_id": job_id,
         "tenant_id": clean_tenant,
-        "task_type": task_type,
+        "task_type": normalized_task,
         "filename": filename,
+        "doc_hash": doc_hash,
         "word_count": metrics["word_count"],
         "estimated_pages": metrics["estimated_pages"],
         "pricing": pricing,
         "raw_storage_key": raw_storage_key,
+        "disclaimer": COMPLIANCE_DISCLAIMER,
         "message": "Dokumen berhasil diterima dan sedang diproses di background."
     }

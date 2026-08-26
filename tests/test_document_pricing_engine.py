@@ -7,10 +7,10 @@ from app.services.pricing_engine import (
     calculate_document_metrics,
     calculate_pricing,
     build_qris_invoice_payload,
-    PRICE_TIER_1,
-    PRICE_TIER_2,
-    PRICE_TIER_3,
-    RATE_TIER_4_PER_1K
+    PRICE_POLISH_TIER_1,
+    PRICE_POLISH_TIER_2,
+    PRICE_POLISH_TIER_3,
+    PRICE_POLISH_ADDON_RATE
 )
 from app.services.doc_builder import (
     render_ats_review_docx,
@@ -63,58 +63,42 @@ class TestDocumentPricingEngine(unittest.IsolatedAsyncioTestCase):
     # ==========================================
     # 2. Tests for Dynamic Pricing Matrix Tiers
     # ==========================================
-    def test_pricing_tier_1_under_1000_words(self):
-        # Tier 1: ≤ 1000 words -> Rp15.000
-        p_500 = calculate_pricing(TASK_CV_REWRITE, 500)
-        self.assertEqual(p_500["pricing_tier"], "TIER_1")
-        self.assertEqual(p_500["final_price"], PRICE_TIER_1)
-        self.assertEqual(p_500["final_price"], 15000)
+    def test_pricing_tier_1_under_500_words(self):
+        # Tier 1: < 500 kata -> Rp4.900
+        p_350 = calculate_pricing(TASK_PARAPHRASE, 350)
+        self.assertEqual(p_350["pricing_tier"], "TIER_1")
+        self.assertEqual(p_350["final_price"], 4900)
 
-        p_1000 = calculate_pricing(TASK_CV_REWRITE, 1000)
-        self.assertEqual(p_1000["pricing_tier"], "TIER_1")
-        self.assertEqual(p_1000["final_price"], 15000)
+    def test_pricing_tier_2_between_500_and_2500_words(self):
+        # Tier 2: 500 - 2500 kata -> Rp9.900
+        p_1500 = calculate_pricing(TASK_PARAPHRASE, 1500)
+        self.assertEqual(p_1500["pricing_tier"], "TIER_2")
+        self.assertEqual(p_1500["final_price"], 9900)
 
-    def test_pricing_tier_2_between_1001_and_3000_words(self):
-        # Tier 2: 1001 - 3000 words -> Rp25.000
-        p_1001 = calculate_pricing(TASK_CV_REWRITE, 1001)
-        self.assertEqual(p_1001["pricing_tier"], "TIER_2")
-        self.assertEqual(p_1001["final_price"], PRICE_TIER_2)
-        self.assertEqual(p_1001["final_price"], 25000)
+    def test_pricing_tier_3_between_2500_and_6000_words(self):
+        # Tier 3: 2500 - 6000 kata -> Rp19.000
+        p_4000 = calculate_pricing(TASK_PARAPHRASE, 4000)
+        self.assertEqual(p_4000["pricing_tier"], "TIER_3")
+        self.assertEqual(p_4000["final_price"], 19000)
 
-        p_3000 = calculate_pricing(TASK_CV_REWRITE, 3000)
-        self.assertEqual(p_3000["pricing_tier"], "TIER_2")
-        self.assertEqual(p_3000["final_price"], 25000)
+    def test_pricing_tier_4_above_6000_words(self):
+        # Tier 4: > 6000 kata -> Rp39.000 (+Rp5.000 per 2000 kata jika > 12000 kata)
+        p_8000 = calculate_pricing(TASK_PARAPHRASE, 8000)
+        self.assertEqual(p_8000["pricing_tier"], "TIER_4")
+        self.assertEqual(p_8000["final_price"], 39000)
 
-    def test_pricing_tier_3_between_3001_and_5000_words(self):
-        # Tier 3: 3001 - 5000 words -> Rp40.000
-        p_3001 = calculate_pricing(TASK_CV_REWRITE, 3001)
-        self.assertEqual(p_3001["pricing_tier"], "TIER_3")
-        self.assertEqual(p_3001["final_price"], PRICE_TIER_3)
-        self.assertEqual(p_3001["final_price"], 40000)
-
-        p_5000 = calculate_pricing(TASK_CV_REWRITE, 5000)
-        self.assertEqual(p_5000["pricing_tier"], "TIER_3")
-        self.assertEqual(p_5000["final_price"], 40000)
-
-    def test_pricing_tier_4_above_5000_words(self):
-        # Tier 4: > 5000 words -> Rp40.000 + Rp7.500 per 1000 additional words
-        # 5500 words -> 40000 + (1 * 7500) = 47500
-        p_5500 = calculate_pricing(TASK_PARAPHRASE, 5500)
-        self.assertEqual(p_5500["pricing_tier"], "TIER_4")
-        self.assertEqual(p_5500["final_price"], 47500)
-
-        # 7000 words -> 40000 + (2 * 7500) = 55000
-        p_7000 = calculate_pricing(TASK_PARAPHRASE, 7000)
-        self.assertEqual(p_7000["pricing_tier"], "TIER_4")
-        self.assertEqual(p_7000["final_price"], 55000)
+        # 14000 words -> 39000 + (1 * 5000) = 44000
+        p_14000 = calculate_pricing(TASK_PARAPHRASE, 14000)
+        self.assertEqual(p_14000["pricing_tier"], "TIER_4")
+        self.assertEqual(p_14000["final_price"], 44000)
 
     def test_build_qris_invoice_payload(self):
-        inv = build_qris_invoice_payload("job-abc", TASK_CV_REWRITE, 2500, "628123456789")
+        inv = build_qris_invoice_payload("job-abc", TASK_PARAPHRASE, 1500, "628123456789")
         self.assertEqual(inv["job_id"], "job-abc")
-        self.assertEqual(inv["amount"], 25000)
+        self.assertEqual(inv["amount"], 9900)
         self.assertEqual(inv["currency"], "IDR")
         self.assertEqual(inv["pricing_tier"], "TIER_2")
-        self.assertEqual(inv["formatted_amount"], "Rp25.000")
+        self.assertEqual(inv["formatted_amount"], "Rp9.900")
 
     # ==========================================
     # 3. Tests for MIME & Magic Bytes Validation
@@ -225,15 +209,15 @@ class TestDocumentPricingEngine(unittest.IsolatedAsyncioTestCase):
 
         res = await intake_document_job(
             tenant_id="boontrack-career",
-            task_type=TASK_ATS_REVIEW,
-            filename="my_cv.docx",
+            task_type=TASK_PARAPHRASE,
+            filename="my_doc.docx",
             file_bytes=docx_bytes,
             user_id="user-123",
             user_phone="6281237450222"
         )
 
         self.assertEqual(res["status"], "QUEUED")
-        self.assertEqual(res["task_type"], TASK_ATS_REVIEW)
+        self.assertEqual(res["task_type"], "POLISH_REPHRASE")
         self.assertIsNotNone(res["job_id"])
         self.assertGreater(res["word_count"], 0)
         self.assertEqual(res["pricing"]["pricing_tier"], "TIER_1")

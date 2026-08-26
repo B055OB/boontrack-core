@@ -1,5 +1,6 @@
 import io
 import re
+import math
 import logging
 from typing import Dict, Any, List, Optional
 from docx import Document
@@ -7,6 +8,8 @@ from docx.shared import Pt, RGBColor, Inches
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+from app.services.pricing_engine import COMPLIANCE_DISCLAIMER, OFFICIAL_PRODUCT_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +20,68 @@ COLOR_DARK = RGBColor(0x22, 0x22, 0x22)       # Text Dark
 COLOR_MUTED = RGBColor(0x66, 0x66, 0x66)      # Subtext Gray
 COLOR_SUCCESS = RGBColor(0x2E, 0x7D, 0x32)    # Green (High Score)
 COLOR_WARNING = RGBColor(0xE6, 0x51, 0x00)    # Orange (Medium Score)
+
+
+def chunk_document_text(text: str, max_chunk_words: int = 1500) -> List[Dict[str, Any]]:
+    """Membagi naskah panjang per bab/paragraf dengan tetap mempertahankan kutipan, teori, & sitasi.
+    
+    Returns:
+        List of chunks with 'chunk_index', 'heading', 'text', 'word_count'.
+    """
+    if not text:
+        return []
+
+    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+    chunks: List[Dict[str, Any]] = []
+    current_paragraphs: List[str] = []
+    current_word_count = 0
+    chunk_idx = 1
+    current_heading = "Pendahuluan / Bagian Awal"
+
+    # Pattern deteksi heading bab / section (e.g. "BAB I", "1.1", "Metodologi", "A. Latar Belakang")
+    heading_pattern = re.compile(r"^(bab\s+[ivxlcdm\d]+|(\d+\.){1,3}\d*|[a-z]\.\s+|abstrak|pendahuluan|metode|pembahasan|kesimpulan|daftar pustaka)", re.IGNORECASE)
+
+    for p in paragraphs:
+        p_words = len(p.split())
+        is_heading = bool(heading_pattern.match(p)) and len(p.split()) < 12
+
+        if is_heading and current_paragraphs:
+            # Selesaikan chunk sebelumnya jika sudah cukup panjang
+            if current_word_count >= 300:
+                chunks.append({
+                    "chunk_index": chunk_idx,
+                    "heading": current_heading,
+                    "text": "\n\n".join(current_paragraphs),
+                    "word_count": current_word_count
+                })
+                chunk_idx += 1
+                current_paragraphs = []
+                current_word_count = 0
+            current_heading = p
+
+        if current_word_count + p_words > max_chunk_words and current_paragraphs:
+            chunks.append({
+                "chunk_index": chunk_idx,
+                "heading": current_heading,
+                "text": "\n\n".join(current_paragraphs),
+                "word_count": current_word_count
+            })
+            chunk_idx += 1
+            current_paragraphs = [p]
+            current_word_count = p_words
+        else:
+            current_paragraphs.append(p)
+            current_word_count += p_words
+
+    if current_paragraphs:
+        chunks.append({
+            "chunk_index": chunk_idx,
+            "heading": current_heading,
+            "text": "\n\n".join(current_paragraphs),
+            "word_count": current_word_count
+        })
+
+    return chunks
 
 
 def _set_document_margins(doc: Document, margin_inches: float = 0.75):
@@ -68,6 +133,29 @@ def _add_bullet_item(doc: Document, text: str, bold_prefix: str = ""):
     run.font.name = 'Calibri'
     run.font.size = Pt(10)
     run.font.color.rgb = COLOR_DARK
+
+
+def _add_compliance_footer(doc: Document):
+    """Menambahkan disclaimer kepatuhan resmi di bagian bawah dokumen."""
+    p_f = doc.add_paragraph()
+    p_f.paragraph_format.space_before = Pt(16)
+    p_f.paragraph_format.space_after = Pt(4)
+    
+    # Divider line
+    pBdr = OxmlElement('w:pBdr')
+    top = OxmlElement('w:top')
+    top.set(qn('w:val'), 'single')
+    top.set(qn('w:sz'), '4')
+    top.set(qn('w:space'), '4')
+    top.set(qn('w:color'), 'CCCCCC')
+    pBdr.append(top)
+    p_f._p.get_or_add_pPr().append(pBdr)
+
+    r_f = p_f.add_run(f"📌 {COMPLIANCE_DISCLAIMER}")
+    r_f.font.name = 'Calibri'
+    r_f.font.size = Pt(8.5)
+    r_f.font.italic = True
+    r_f.font.color.rgb = COLOR_MUTED
 
 
 def render_ats_review_docx(data: Dict[str, Any]) -> bytes:
@@ -136,6 +224,8 @@ def render_ats_review_docx(data: Dict[str, Any]) -> bytes:
                 _add_bullet_item(doc, full_text, bold_prefix=f"[{section}] ")
             else:
                 _add_bullet_item(doc, str(item))
+
+    _add_compliance_footer(doc)
 
     out_io = io.BytesIO()
     doc.save(out_io)
@@ -234,14 +324,12 @@ def render_cv_rewrite_docx(data: Dict[str, Any]) -> bytes:
             p_exp.paragraph_format.space_before = Pt(6)
             p_exp.paragraph_format.space_after = Pt(1)
             
-            # Role & Company
             r_role = p_exp.add_run(f"{role} — {company}" if company else role)
             r_role.font.name = 'Calibri'
             r_role.font.size = Pt(10.5)
             r_role.font.bold = True
             r_role.font.color.rgb = COLOR_PRIMARY
             
-            # Period / Location
             if period or loc:
                 p_meta = doc.add_paragraph()
                 p_meta.paragraph_format.space_after = Pt(3)
@@ -289,17 +377,19 @@ def render_cv_rewrite_docx(data: Dict[str, Any]) -> bytes:
         for c in certs:
             _add_bullet_item(doc, str(c))
 
+    _add_compliance_footer(doc)
+
     out_io = io.BytesIO()
     doc.save(out_io)
     return out_io.getvalue()
 
 
 def render_paraphrase_docx(data: Dict[str, Any]) -> bytes:
-    """Merender hasil parafrase dokumen akademik/profesional ke file Word (.docx)."""
+    """Merender hasil polish & rephrase dokumen ke file Word (.docx)."""
     doc = Document()
     _set_document_margins(doc, 0.75)
 
-    title = data.get("title") or "HASIL PARAFRASE DOKUMEN PROFESIONAL"
+    title = data.get("title") or f"{OFFICIAL_PRODUCT_NAME.upper()}"
     tone = data.get("tone") or "Profesional & Formal"
     orig_words = data.get("original_word_count", 0)
     para_words = data.get("paraphrased_word_count", 0)
@@ -317,7 +407,7 @@ def render_paraphrase_docx(data: Dict[str, Any]) -> bytes:
     # Subtitle Metadata
     p_sub = doc.add_paragraph()
     p_sub.paragraph_format.space_after = Pt(10)
-    r_sub = p_sub.add_run(f"Tone: {tone} | Kata Asli: {orig_words} -> Hasil Parafrase: {para_words}")
+    r_sub = p_sub.add_run(f"Tone: {tone} | Kata Asli: {orig_words} -> Hasil: {para_words}")
     r_sub.font.name = 'Calibri'
     r_sub.font.size = Pt(10)
     r_sub.font.color.rgb = COLOR_MUTED
@@ -336,10 +426,10 @@ def render_paraphrase_docx(data: Dict[str, Any]) -> bytes:
                 r.font.name = 'Calibri'
                 r.font.size = Pt(10)
 
-    # 3. Main Paraphrased Content (Sections / Paragraphs)
+    # 3. Main Paraphrased Content
     sections = data.get("sections") or []
     if isinstance(sections, list) and sections:
-        _add_section_header(doc, "Naskah Hasil Parafrase")
+        _add_section_header(doc, "Naskah Hasil Polish & Rephrase")
         for sec in sections:
             if isinstance(sec, dict):
                 heading = sec.get("heading") or sec.get("title") or ""
@@ -370,10 +460,9 @@ def render_paraphrase_docx(data: Dict[str, Any]) -> bytes:
                     r.font.size = Pt(10.5)
                     r.font.color.rgb = COLOR_DARK
     else:
-        # Fallback raw full_text
         full_text = data.get("full_text") or data.get("paraphrased_text") or ""
         if full_text:
-            _add_section_header(doc, "Naskah Hasil Parafrase")
+            _add_section_header(doc, "Naskah Hasil Polish & Rephrase")
             p_f = doc.add_paragraph(str(full_text))
             p_f.paragraph_format.space_after = Pt(8)
             p_f.paragraph_format.line_spacing = 1.15
@@ -381,6 +470,8 @@ def render_paraphrase_docx(data: Dict[str, Any]) -> bytes:
                 r.font.name = 'Calibri'
                 r.font.size = Pt(10.5)
                 r.font.color.rgb = COLOR_DARK
+
+    _add_compliance_footer(doc)
 
     out_io = io.BytesIO()
     doc.save(out_io)
@@ -390,12 +481,11 @@ def render_paraphrase_docx(data: Dict[str, Any]) -> bytes:
 def build_document_result(task_type: str, structured_data: Dict[str, Any]) -> bytes:
     """Dispatcher utama pembuat file Word (.docx) berdasarkan task_type."""
     normalized = str(task_type).upper().strip()
-    if normalized == "ATS_REVIEW":
+    if normalized in ["ATS_DIAGNOSTIC", "ATS_REVIEW"]:
         return render_ats_review_docx(structured_data)
-    elif normalized == "CV_REWRITE":
+    elif normalized in ["CV_POLISH_REWRITE", "CV_REWRITE", "CAREER_PRO_BUNDLE"]:
         return render_cv_rewrite_docx(structured_data)
-    elif normalized == "PARAPHRASE":
+    elif normalized in ["POLISH_REPHRASE", "PARAPHRASE"]:
         return render_paraphrase_docx(structured_data)
     else:
-        # Default to CV Rewrite
         return render_cv_rewrite_docx(structured_data)
