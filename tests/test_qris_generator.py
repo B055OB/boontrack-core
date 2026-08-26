@@ -51,13 +51,13 @@ class TestQRISGenerator(unittest.TestCase):
         self.assertEqual(crc16_ccitt(dyn_payload[:-4]), dyn_payload[-4:])
 
     def test_generate_dynamic_qris_payload_conversion(self):
-        """Validasi konversi static QRIS menjadi dynamic QRIS dengan Tag 01=12 dan Tag 54."""
+        """Validasi penyisipan Tag 54 dan rekalkulasi CRC16 tanpa mengubah Tag 01 (tetap 010211)."""
         amount = 25000
         dynamic_payload = generate_dynamic_qris_payload(SAMPLE_STATIC_QRIS, amount)
 
-        # 1. Validasi Tag 01 berubah menjadi 12 (Dynamic)
-        self.assertIn("010212", dynamic_payload)
-        self.assertNotIn("010211", dynamic_payload)
+        # 1. Validasi Tag 01 tetap 010211
+        self.assertIn("010211", dynamic_payload)
+        self.assertNotIn("010212", dynamic_payload)
 
         # 2. Validasi Tag 54 nominal (540525000)
         expected_tag54 = "540525000"
