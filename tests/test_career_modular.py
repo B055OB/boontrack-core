@@ -476,6 +476,149 @@ class TestCareerModular(AioHTTPTestCase):
         self.assertEqual(GLOBAL_USER_STATES[user_id]["mode"], "awaiting_rewrite_payment")
         self.assertIsNotNone(GLOBAL_USER_STATES[user_id].get("active_invoice"))
 
+    @patch("app.tenants.career.service.download_whatsapp_media", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.extract_text_from_bytes")
+    @patch("app.tenants.career.service.send_whatsapp_text", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.send_whatsapp_buttons", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.send_whatsapp_image", new_callable=AsyncMock)
+    async def test_cv_review_pay_per_job_upload_new_draft_resets_single_payment(
+        self,
+        mock_send_image,
+        mock_send_buttons,
+        mock_send_text,
+        mock_extract_text,
+        mock_download_media
+    ):
+        """Memvalidasi bahwa upload draft CV baru mereset status bayar single sebelumnya (Pay-Per-Job strict)."""
+        user_id = "628555666777"
+        
+        # User sebelumnya sudah pernah bayar single draft
+        GLOBAL_USER_STATES[user_id] = {
+            "mode": "menu",
+            "step": 0,
+            "is_premium_paid": True,
+            "tier": "single_draft_paid",
+            "single_paid_draft": "INV-OLD-123",
+            "data": {}
+        }
+
+        mock_download_media.return_value = b"fake_docx_bytes"
+        mock_extract_text.return_value = "Nama: Budi Santoso. Pengalaman: Software Engineer di Startup selama 3 tahun."
+
+        # User mengunggah dokumen CV baru
+        await career_service.handle_document(
+            sender_wa_id=user_id,
+            display_name="Budi Payer",
+            media_id="media_new_cv_doc",
+            filename="CV_Baru_Draft_2.docx"
+        )
+
+        # 1. Status bayar single sebelumnya HARUS di-reset (bukan gratis selamanya)
+        self.assertFalse(GLOBAL_USER_STATES[user_id].get("is_premium_paid"))
+        self.assertEqual(GLOBAL_USER_STATES[user_id].get("tier"), "free")
+        self.assertIsNone(GLOBAL_USER_STATES[user_id].get("single_paid_draft"))
+
+        # 2. Saat user meminta rewrite untuk draft baru ini, wajib buat invoice baru
+        await career_service.handle_text_or_button(
+            sender_wa_id=user_id,
+            display_name="Budi Payer",
+            user_text="",
+            button_id="btn_rewrite_single"
+        )
+
+        mock_send_image.assert_called_once()
+        self.assertEqual(GLOBAL_USER_STATES[user_id]["mode"], "awaiting_rewrite_payment")
+        new_inv = GLOBAL_USER_STATES[user_id].get("active_invoice")
+        self.assertIsNotNone(new_inv)
+        self.assertNotEqual(new_inv, "INV-OLD-123")
+
+    @patch("app.tenants.career.service.download_whatsapp_media", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.extract_text_from_bytes")
+    @patch("app.tenants.career.service.send_whatsapp_text", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.send_whatsapp_buttons", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.send_whatsapp_image", new_callable=AsyncMock)
+    async def test_cv_review_active_unexpired_bundle_quota_persists_across_uploads(
+        self,
+        mock_send_image,
+        mock_send_buttons,
+        mock_send_text,
+        mock_extract_text,
+        mock_download_media
+    ):
+        """Memvalidasi bahwa kuota bundle aktif yang belum expired dapat digunakan untuk rewrite tanpa bayar ulang."""
+        user_id = "628777888999"
+        
+        # User memiliki bundle aktif dengan kuota 3x (expired 30 hari ke depan)
+        from datetime import datetime, timedelta
+        exp_time = (datetime.now() + timedelta(days=30)).isoformat()
+        GLOBAL_USER_STATES[user_id] = {
+            "mode": "menu",
+            "step": 0,
+            "is_premium_paid": True,
+            "tier": "bundle_active",
+            "bundle_quota": 3,
+            "bundle_expires_at": exp_time,
+            "data": {}
+        }
+
+        mock_download_media.return_value = b"fake_docx_bytes"
+        mock_extract_text.return_value = "Nama: Siti Aminah. Pengalaman: Product Manager di Fintech."
+
+        # User unggah CV baru
+        await career_service.handle_document(
+            sender_wa_id=user_id,
+            display_name="Siti Bundle",
+            media_id="media_bundle_cv",
+            filename="CV_Siti_Draft.pdf"
+        )
+
+        # Status bundle tetap aktif
+        self.assertTrue(career_service.is_user_premium(user_id))
+        self.assertEqual(GLOBAL_USER_STATES[user_id].get("bundle_quota"), 3)
+
+        # Saat klik single rewrite, kuota dipotong 1 dan TIDAK membuat invoice QRIS baru
+        await career_service.handle_text_or_button(
+            sender_wa_id=user_id,
+            display_name="Siti Bundle",
+            user_text="",
+            button_id="btn_rewrite_single"
+        )
+
+        mock_send_image.assert_not_called()
+        self.assertEqual(GLOBAL_USER_STATES[user_id].get("bundle_quota"), 2)
+        mock_send_text.assert_called()
+
+    @patch("app.tenants.career.service.send_whatsapp_image", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.send_whatsapp_text", new_callable=AsyncMock)
+    async def test_polish_rephrase_is_pure_pay_per_use_every_submission_generates_invoice(
+        self,
+        mock_send_text,
+        mock_send_image
+    ):
+        """Memvalidasi bahwa Polish & Rephrase 100% pay-per-use dan selalu generate invoice baru berstatus WAITING_PAYMENT."""
+        user_id = "628111222999"
+        GLOBAL_USER_STATES[user_id] = {
+            "mode": "paraphrase",
+            "step": 0,
+            "data": {}
+        }
+
+        raw_script = "Latar belakang penelitian ini bertujuan untuk menguji hipotesis kinerja keuangan terhadap kepuasan investor." * 5
+
+        # Submisi naskah
+        await career_service.handle_text_or_button(
+            sender_wa_id=user_id,
+            display_name="Penulis Jurnal",
+            user_text=raw_script,
+            button_id=""
+        )
+
+        # Harus membuat invoice QRIS baru
+        mock_send_image.assert_called_once()
+        self.assertEqual(GLOBAL_USER_STATES[user_id]["mode"], "awaiting_rewrite_payment")
+        active_inv = GLOBAL_USER_STATES[user_id].get("active_invoice")
+        self.assertIsNotNone(active_inv)
+
     def test_legacy_wrapper_exports(self):
         self.assertEqual(handle_incoming_whatsapp, legacy_handle_incoming)
         self.assertEqual(verify_webhook, legacy_verify_webhook)

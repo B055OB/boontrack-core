@@ -252,9 +252,25 @@ async def match_and_fulfill_payment(
             }
         elif user_id:
             user_session = GLOBAL_USER_STATES.setdefault(str(user_id), {"step": 0, "mode": "menu", "data": {}})
-            user_session["is_premium_paid"] = True
-            user_session["tier"] = "premium_unlocked"
-            user_session["active_payment"] = None
+            prod = matched_intent.get("product") or matched_intent.get("product_id") or matched_intent.get("meta", {}).get("product")
+            if prod == "career_pro_bundle":
+                user_session["bundle_quota"] = 3
+                user_session["bundle_expires_at"] = (datetime.now() + timedelta(days=30)).isoformat()
+                user_session["tier"] = "bundle_active"
+                user_session["is_premium_paid"] = True
+                user_session["active_payment"] = None
+                custom_desc = "Paket *Career Pro Bundle (CV Rewrite + 3x Simulasi HR STAR)* aktif 30 hari (Kuota: 3x)."
+            elif prod == "single_cv_rewrite":
+                user_session["single_paid_draft"] = invoice_id
+                user_session["tier"] = "single_draft_paid"
+                user_session["is_premium_paid"] = True
+                user_session["active_payment"] = None
+                custom_desc = "Layanan *Single CV Polish & ATS Rewrite* untuk draft Anda telah aktif."
+            else:
+                user_session["is_premium_paid"] = True
+                user_session["tier"] = "premium_unlocked"
+                user_session["active_payment"] = None
+                custom_desc = "Layanan *BoonTrack Pro & AI CV Assistant* kini telah aktif! 🚀"
 
             success_msg = (
                 f"🎉 *PEMBAYARAN TERVERIFIKASI!*\n"
@@ -262,7 +278,7 @@ async def match_and_fulfill_payment(
                 f"🧾 *Invoice:* `{invoice_id}`\n"
                 f"💰 *Nominal Masuk:* Rp{amount:,}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                "Terima kasih! Pembayaran Anda telah kami terima. Layanan *BoonTrack Pro & AI CV Assistant* kini telah aktif! 🚀"
+                f"Terima kasih! Pembayaran Anda telah kami terima. {custom_desc}"
             )
             await send_whatsapp_text(user_id, success_msg, tenant_id=tenant_id)
 

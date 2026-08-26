@@ -103,7 +103,26 @@ class CareerService:
         if is_whitelisted_career_phone(sender_wa_id):
             return True
         user_session = GLOBAL_USER_STATES.get(sender_wa_id, {})
-        return bool(user_session.get("is_premium_paid") or user_session.get("tier") == "premium_unlocked")
+
+        # 1. Cek kuota bundle aktif yang belum expired
+        bundle_quota = user_session.get("bundle_quota", 0)
+        bundle_expiry = user_session.get("bundle_expires_at")
+        if bundle_quota > 0:
+            if bundle_expiry:
+                try:
+                    exp_dt = datetime.fromisoformat(bundle_expiry) if isinstance(bundle_expiry, str) else bundle_expiry
+                    if exp_dt > datetime.now():
+                        return True
+                except Exception:
+                    return True
+            else:
+                return True
+
+        # 2. Cek status aktif untuk draft aktif saat ini
+        if user_session.get("tier") in ["premium_unlocked", "bundle_active", "single_draft_paid"] or user_session.get("is_premium_paid"):
+            return True
+
+        return False
 
     def _init_user_session(self, sender_wa_id: str) -> dict:
         user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
@@ -162,8 +181,8 @@ class CareerService:
             }
         )
 
-        # Jika sudah premium, jangan kirim upsell pembayaran lagi, langsung tawarkan menu pro
-        if self.is_user_premium(sender_wa_id):
+        # Jika user memiliki kuota bundle aktif, tawarkan menu pro. Jika pay-per-job biasa, WAJIB tawarkan upsell rewrite!
+        if self.is_user_premium(sender_wa_id) and user_session.get("tier") == "bundle_active":
             await asyncio.sleep(2)
             await self.send_menu_buttons(sender_wa_id)
             return
@@ -366,8 +385,35 @@ class CareerService:
 
             # Default: Mode Review CV
             user_session["parsed_cv_text"] = extracted_text
+
+            # Strict Pay-Per-Job State Machine:
+            # Upload CV baru mereset status pembayaran draft sebelumnya
+            # KECUALI jika user masih memiliki kuota bundle aktif yang belum expired
+            bundle_quota = user_session.get("bundle_quota", 0)
+            bundle_expiry = user_session.get("bundle_expires_at")
+            has_active_bundle = False
+            if bundle_quota > 0:
+                if bundle_expiry:
+                    try:
+                        exp_dt = datetime.fromisoformat(bundle_expiry) if isinstance(bundle_expiry, str) else bundle_expiry
+                        if exp_dt > datetime.now():
+                            has_active_bundle = True
+                    except Exception:
+                        has_active_bundle = True
+                else:
+                    has_active_bundle = True
+
+            if not has_active_bundle and not is_whitelisted_career_phone(sender_wa_id):
+                user_session["is_premium_paid"] = False
+                user_session["tier"] = "free"
+                user_session["single_paid_draft"] = None
+                user_session["active_invoice"] = None
+
             eval_result = cv_review_engine.evaluate_cv(extracted_text, target_position="General Professional")
-            filtered_data = cv_review_service.filter_entitlement_response(eval_result, is_premium=False)
+            filtered_data = cv_review_service.filter_entitlement_response(
+                eval_result,
+                is_premium=has_active_bundle or is_whitelisted_career_phone(sender_wa_id)
+            )
 
             user_session["mode"] = "post_review"
             user_session["step"] = 0
@@ -531,6 +577,40 @@ class CareerService:
             "single cv", "pro bundle", "cv rewrite", "ambil bundle"
         ]:
             is_bundle = button_id == "btn_bundle_pro" or "bundle" in user_text_clean or "25" in user_text_clean
+
+            # Cek apakah user memiliki kuota bundle aktif yang belum expired
+            bundle_quota = user_session.get("bundle_quota", 0)
+            bundle_expiry = user_session.get("bundle_expires_at")
+            has_valid_bundle = False
+            if bundle_quota > 0:
+                if bundle_expiry:
+                    try:
+                        exp_dt = datetime.fromisoformat(bundle_expiry) if isinstance(bundle_expiry, str) else bundle_expiry
+                        if exp_dt > datetime.now():
+                            has_valid_bundle = True
+                    except Exception:
+                        has_valid_bundle = True
+                else:
+                    has_valid_bundle = True
+
+            # Jika user meminta single rewrite dan masih memiliki kuota bundle aktif
+            if has_valid_bundle and not is_bundle:
+                user_session["bundle_quota"] -= 1
+                remaining = user_session["bundle_quota"]
+                user_session["is_premium_paid"] = True
+                user_session["tier"] = "bundle_active"
+                user_session["mode"] = "menu"
+
+                quota_msg = (
+                    f"🌟 *KUOTA BUNDLE PRO DIGUNAKAN*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Draft CV Anda sedang diproses oleh AI Rewrite Engine.\n"
+                    f"Sisa Kuota Bundle Pro Anda: *{remaining} kali*.\n\n"
+                    f"Hasil optimasi ATS akan segera dikirimkan ke chat ini. ⏳"
+                )
+                await send_whatsapp_text(sender_wa_id, quota_msg, tenant_id=TENANT_ID)
+                return
+
             base_amount = 25000 if is_bundle else 10000
             prod_name = "Career Pro Bundle (CV Rewrite + 3x Interview HR)" if is_bundle else "Single CV Polish & ATS Rewrite"
             prod_id = "career_pro_bundle" if is_bundle else "single_cv_rewrite"
