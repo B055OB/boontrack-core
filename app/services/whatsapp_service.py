@@ -3,7 +3,7 @@ import io
 import mimetypes
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any, Union, List
+from typing import Optional, Dict, Any, Union, List, Tuple
 import httpx
 from supabase import create_client, Client
 
@@ -302,8 +302,8 @@ def extract_meta_whatsapp_event(data: dict) -> Dict[str, Any]:
         logger.error(f"[Extract Meta WA Event Error] {err}")
         return res
 
-def get_wa_credentials():
-    token = (
+def get_wa_credentials(tenant_id: str = "boontrack-career") -> Tuple[str, str, str]:
+    default_token = (
         os.getenv("WHATSAPP_TOKEN")
         or os.getenv("META_WA_TOKEN")
         or os.getenv("WA_TOKEN")
@@ -311,23 +311,46 @@ def get_wa_credentials():
         or os.getenv("META_ACCESS_TOKEN")
         or ""
     )
-    phone_id = (
-        os.getenv("PHONE_NUMBER_ID")
-        or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
-        or os.getenv("META_PHONE_NUMBER_ID")
-        or os.getenv("META_WA_PHONE_NUMBER_ID")
-        or ""
-    )
+    clean_tenant = str(tenant_id).lower().strip() if tenant_id else "boontrack-career"
+
+    if clean_tenant in ["boontrack-career", "career"]:
+        phone_id = (
+            os.getenv("CAREER_PHONE_NUMBER_ID")
+            or "1340866379104241"
+        )
+        token = os.getenv("CAREER_ACCESS_TOKEN") or default_token
+    elif clean_tenant in ["om-budi", "ombudi"]:
+        phone_id = (
+            os.getenv("OM_BUDI_PHONE_NUMBER_ID")
+            or "1268977686299719"
+        )
+        token = os.getenv("OM_BUDI_ACCESS_TOKEN") or default_token
+    elif clean_tenant in ["aduan", "aduan-sandbox", "sandbox"]:
+        phone_id = (
+            os.getenv("PHONE_NUMBER_ID")
+            or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+            or "1306479742542883"
+        )
+        token = os.getenv("ADUAN_ACCESS_TOKEN") or default_token
+    else:
+        phone_id = (
+            os.getenv("CAREER_PHONE_NUMBER_ID")
+            or os.getenv("PHONE_NUMBER_ID")
+            or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+            or "1340866379104241"
+        )
+        token = default_token
+
     version = os.getenv("META_GRAPH_VERSION", "v20.0")
-    return token.strip(), phone_id.strip(), version
+    return token.strip(), str(phone_id).strip(), version
 
 def _get_auth_headers(token: str) -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False, tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
-    token, phone_id, version = get_wa_credentials()
+    token, phone_id, version = get_wa_credentials(tenant_id)
     if not token or not phone_id:
-        logger.error(f"[WhatsApp Service] Missing credentials (token_len={len(token)}, phone_id={phone_id})")
+        logger.error(f"[WhatsApp Service] Missing credentials (token_len={len(token)}, phone_id={phone_id}, tenant={tenant_id})")
         return None
 
     clean_phone = str(to_phone).replace("+", "").strip()
@@ -370,7 +393,7 @@ async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False
         return None
 
 async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dict[str, str]], header_text: str = "", footer_text: str = "", tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
-    token, phone_id, version = get_wa_credentials()
+    token, phone_id, version = get_wa_credentials(tenant_id)
     if not token or not phone_id:
         logger.error("[WhatsApp Service] Missing credentials in send_whatsapp_buttons")
         return await send_whatsapp_text(to_phone, body_text, tenant_id=tenant_id)
@@ -433,11 +456,11 @@ async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dic
         logger.error(f"[WhatsApp Service] Exception in send_whatsapp_buttons: {e}", exc_info=True)
         return await send_whatsapp_text(to_phone, body_text, tenant_id=tenant_id)
 
-async def upload_media(bytes_data: bytes, mime_type: str = "image/png", filename: str = "qris.png") -> Optional[str]:
+async def upload_media(bytes_data: bytes, mime_type: str = "image/png", filename: str = "qris.png", tenant_id: str = "boontrack-career") -> Optional[str]:
     """Melakukan HTTP POST multipart ke https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/media untuk mendapatkan media_id."""
-    token, phone_id, version = get_wa_credentials()
+    token, phone_id, version = get_wa_credentials(tenant_id)
     if not token or not phone_id:
-        logger.error(f"[WhatsApp Service] Missing credentials for media upload (token_len={len(token)}, phone_id={phone_id})")
+        logger.error(f"[WhatsApp Service] Missing credentials for media upload (token_len={len(token)}, phone_id={phone_id}, tenant={tenant_id})")
         return None
 
     url = f"https://graph.facebook.com/{version}/{phone_id}/media"
@@ -454,7 +477,7 @@ async def upload_media(bytes_data: bytes, mime_type: str = "image/png", filename
             if response.status_code not in (200, 201):
                 logger.error(
                     f"[WhatsApp Service] upload_media failed: HTTP {response.status_code} - {response.text} "
-                    f"(filename={filename}, bytes_len={len(bytes_data)}, mime={mime_type})"
+                    f"(filename={filename}, bytes_len={len(bytes_data)}, mime={mime_type}, phone_id={phone_id})"
                 )
                 return None
             res_json = response.json()
@@ -462,19 +485,19 @@ async def upload_media(bytes_data: bytes, mime_type: str = "image/png", filename
             if not media_id:
                 logger.error(f"[WhatsApp Service] upload_media returned no 'id' in response: {res_json}")
                 return None
-            logger.info(f"[WhatsApp Service] upload_media success: media_id={media_id} ({filename})")
+            logger.info(f"[WhatsApp Service] upload_media success: media_id={media_id} ({filename}) on phone_id={phone_id}")
             return str(media_id)
     except Exception as e:
         logger.error(f"[WhatsApp Service] Exception in upload_media: {e}", exc_info=True)
         return None
 
-async def upload_whatsapp_media(file_bytes: bytes, filename: str, mime_type: str) -> Optional[str]:
+async def upload_whatsapp_media(file_bytes: bytes, filename: str, mime_type: str, tenant_id: str = "boontrack-career") -> Optional[str]:
     """Helper wrapper for backward compatibility with upload_whatsapp_media."""
-    return await upload_media(bytes_data=file_bytes, mime_type=mime_type, filename=filename)
+    return await upload_media(bytes_data=file_bytes, mime_type=mime_type, filename=filename, tenant_id=tenant_id)
 
 async def send_whatsapp_image(to_phone: str, image_path_or_bytes: Union[str, bytes], caption: str = "", tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
     """Mengirim pesan gambar ke WhatsApp user via Meta WhatsApp Cloud API menggunakan media_id atau URL link."""
-    token, phone_id, version = get_wa_credentials()
+    token, phone_id, version = get_wa_credentials(tenant_id)
     if not token or not phone_id:
         logger.warning("[WhatsApp Service] Missing Meta WA credentials in send_whatsapp_image, falling back to text message.")
         return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
@@ -541,7 +564,7 @@ async def send_whatsapp_image(to_phone: str, image_path_or_bytes: Union[str, byt
         return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
 
     # Upload bytes ke Meta Media Endpoint untuk mendapatkan media_id
-    media_id = await upload_media(bytes_data=img_bytes, mime_type=mime_type, filename=filename)
+    media_id = await upload_media(bytes_data=img_bytes, mime_type=mime_type, filename=filename, tenant_id=tenant_id)
     if not media_id:
         logger.error("[WhatsApp Service] Media upload failed in send_whatsapp_image, falling back to text.")
         return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
@@ -589,11 +612,11 @@ async def send_whatsapp_document(
     tenant_id: str = "boontrack-career"
 ) -> Optional[Dict[str, Any]]:
     """Mengirim file attachment dokumen (.docx / .pdf) via WhatsApp Cloud API / Media Endpoint."""
-    token, phone_id, version = get_wa_credentials()
+    token, phone_id, version = get_wa_credentials(tenant_id)
     clean_phone = str(to_phone).replace("+", "").strip()
 
     if not token or not phone_id:
-        logger.error(f"[WhatsApp Service] Missing credentials for send_whatsapp_document (phone={clean_phone})")
+        logger.error(f"[WhatsApp Service] Missing credentials for send_whatsapp_document (phone={clean_phone}, tenant={tenant_id})")
         return None
 
     # Normalisasi MIME Type
@@ -657,7 +680,7 @@ async def send_whatsapp_document(
         return None
 
     # 3. Upload Media ke WhatsApp Media Endpoint
-    media_id = await upload_whatsapp_media(file_bytes, filename, mime_type)
+    media_id = await upload_whatsapp_media(file_bytes, filename, mime_type, tenant_id=tenant_id)
     if not media_id:
         logger.error(f"[WhatsApp Service] Failed to upload media attachment for {filename} to {clean_phone}")
         return None
