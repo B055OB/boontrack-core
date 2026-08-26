@@ -298,6 +298,41 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
             self.assertIn("ID1024333398336", called_caption)
 
 
+    async def test_kirim_bukti_transfer_callback_prompt_and_session_state(self):
+        """Memvalidasi callback Kirim Bukti Transfer membalas instruksi upload bukti struk dan bukan template Sedekah."""
+        test_triggers = [
+            {"button_id": "btn_upload_struk", "text": ""},
+            {"button_id": "btn_send_proof", "text": ""},
+            {"button_id": "kirim_bukti_transfer", "text": ""},
+            {"button_id": "", "text": "kirim bukti transfer"},
+            {"button_id": "", "text": "bukti transfer"},
+            {"button_id": "", "text": "upload struk"}
+        ]
+
+        for trigger in test_triggers:
+            with self.subTest(trigger=trigger):
+                phone = "081234567890"
+                res = await om_budi_service.handle_incoming_message(
+                    phone_number=phone,
+                    message_text=trigger["text"],
+                    button_id=trigger["button_id"]
+                )
+                reply = res.get("reply", "")
+                # Pastikan instruksi upload muncul
+                self.assertIn("📸 *SILAKAN KIRIMKAN BUKTI TRANSFER*", reply)
+                self.assertIn("Silakan langsung kirimkan foto / screenshot struk bukti pembayaran", reply)
+                self.assertIn("Sistem kami akan langsung memverifikasi transaksi", reply)
+
+                # Pastikan BUKAN template panjang Sedekah
+                self.assertNotIn("*SEDEKAH BERJAMAAH OM BUDI CHANNEL*", reply)
+                self.assertNotIn("PROGRAM SEDEKAH BERJAMAAH", reply)
+                self.assertNotIn("ORANG TUA ASUH", reply)
+
+                # Pastikan status sesi tersimpan ke WAITING_PAYMENT_PROOF
+                clean_phone = "081234567890"
+                self.assertEqual(om_budi_service.user_sessions.get(clean_phone), "WAITING_PAYMENT_PROOF")
+
+
 if __name__ == "__main__":
     unittest.main()
 

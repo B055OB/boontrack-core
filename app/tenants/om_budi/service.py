@@ -367,6 +367,27 @@ class OmBudiService:
                 "buttons": zoom_nav
             }
 
+        # 7. Handle Callback / Tombol Kirim Bukti Transfer (btn_send_proof / btn_upload_struk / kirim_bukti_transfer)
+        if button_id in [
+            "btn_send_proof", "btn_upload_struk", "btn_kirim_bukti", 
+            "kirim_bukti_transfer", "btn_bukti_transfer"
+        ] or any(
+            k in clean_text for k in [
+                "kirim bukti transfer", "kirim bukti", "upload struk", 
+                "upload bukti", "bukti transfer", "upload bukti transfer", "kirim struk"
+            ]
+        ):
+            self.user_sessions[clean_phone] = "WAITING_PAYMENT_PROOF"
+            msg = (
+                "📸 *SILAKAN KIRIMKAN BUKTI TRANSFER*\n\n"
+                "Silakan langsung kirimkan foto / screenshot struk bukti pembayaran (Transfer Bank atau QRIS) ke kolom chat ini.\n\n"
+                "Sistem kami akan langsung memverifikasi transaksi Bapak/Ibu secara otomatis. Terima kasih! 🙏"
+            )
+            return {
+                "type": "text",
+                "reply": msg
+            }
+
         # 8. Handle Sedekah & Info Pilihan Penyaluran
         if button_id == "menu_sedekah_berjamaah" or clean_text == "sedekah":
             return {
@@ -400,7 +421,7 @@ class OmBudiService:
                 ]
             }
 
-        if any(k in clean_text for k in ["rekening", "nomor rekening", "bsi", "mandiri", "transfer", "infaq"]):
+        if any(k in clean_text for k in ["info rekening", "nomor rekening", "no rekening", "rekening bsi", "rekening mandiri", "transfer manual"]) or clean_text in ["rekening", "bsi", "mandiri", "infaq"]:
             return {
                 "type": "buttons",
                 "reply": REKENING_OM_BUDI,
@@ -409,9 +430,6 @@ class OmBudiService:
                     {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
                 ]
             }
-
-        if button_id == "btn_upload_struk" or any(k in clean_text for k in ["kirim bukti", "upload struk", "bukti transfer"]):
-            return {"type": "text", "reply": "📸 *Kirim Bukti Transfer*\n\nSilakan lampirkan dan kirimkan foto struk transfer / screenshot m-banking Anda sekarang ya 🙏😊."}
 
         # 7. Direct Keywords & Buttons untuk Audio & Materi
         audio_keywords = [
