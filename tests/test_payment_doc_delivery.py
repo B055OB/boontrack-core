@@ -333,7 +333,7 @@ class TestPaymentDocDelivery(AioHTTPTestCase):
         ) * 15 # ~300 kata per paragraf
         long_text = "\n\n".join([paragraph for _ in range(5)]) # ~1.500 kata
 
-        chunks = academic_rephrase_engine.chunk_document_smart(long_text, max_words_per_chunk=750)
+        chunks = academic_rephrase_engine.chunk_document_smart(long_text, max_words_per_chunk=650)
         self.assertGreaterEqual(len(chunks), 2)
 
         result = await academic_rephrase_engine.rephrase_document(long_text, filename="Tesis_Lengkap.docx")

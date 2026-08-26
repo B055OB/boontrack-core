@@ -22,8 +22,8 @@ COLOR_SUCCESS = RGBColor(0x2E, 0x7D, 0x32)    # Green (High Score)
 COLOR_WARNING = RGBColor(0xE6, 0x51, 0x00)    # Orange (Medium Score)
 
 
-def chunk_document_text(text: str, max_chunk_words: int = 1500) -> List[Dict[str, Any]]:
-    """Membagi naskah panjang per bab/paragraf dengan tetap mempertahankan kutipan, teori, & sitasi.
+def chunk_document_text(text: str, max_chunk_words: int = 650) -> List[Dict[str, Any]]:
+    """Membagi naskah panjang per sub-bab/paragraf (500-700 kata) dengan mempertahankan kutipan, teori, & sitasi.
     
     Returns:
         List of chunks with 'chunk_index', 'heading', 'text', 'word_count'.
@@ -31,7 +31,10 @@ def chunk_document_text(text: str, max_chunk_words: int = 1500) -> List[Dict[str
     if not text:
         return []
 
-    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    if len(paragraphs) == 1 and "\n" in paragraphs[0]:
+        paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+
     chunks: List[Dict[str, Any]] = []
     current_paragraphs: List[str] = []
     current_word_count = 0
@@ -39,15 +42,18 @@ def chunk_document_text(text: str, max_chunk_words: int = 1500) -> List[Dict[str
     current_heading = "Pendahuluan / Bagian Awal"
 
     # Pattern deteksi heading bab / section (e.g. "BAB I", "1.1", "Metodologi", "A. Latar Belakang")
-    heading_pattern = re.compile(r"^(bab\s+[ivxlcdm\d]+|(\d+\.){1,3}\d*|[a-z]\.\s+|abstrak|pendahuluan|metode|pembahasan|kesimpulan|daftar pustaka)", re.IGNORECASE)
+    heading_pattern = re.compile(
+        r"^(bab\s+[ivxlcdm\d]+|(\d+\.){1,3}\d*|[a-z]\.\s+|abstrak|pendahuluan|metode|tinjauan pustaka|pembahasan|kesimpulan|daftar pustaka)",
+        re.IGNORECASE
+    )
 
     for p in paragraphs:
         p_words = len(p.split())
         is_heading = bool(heading_pattern.match(p)) and len(p.split()) < 12
 
         if is_heading and current_paragraphs:
-            # Selesaikan chunk sebelumnya jika sudah cukup panjang
-            if current_word_count >= 300:
+            # Selesaikan chunk sebelumnya jika sudah cukup panjang (> 350 kata)
+            if current_word_count >= 350:
                 chunks.append({
                     "chunk_index": chunk_idx,
                     "heading": current_heading,
@@ -434,42 +440,51 @@ def render_paraphrase_docx(data: Dict[str, Any]) -> bytes:
             if isinstance(sec, dict):
                 heading = sec.get("heading") or sec.get("title") or ""
                 content = sec.get("content") or sec.get("text") or ""
-                if heading:
+                if heading and len(sections) > 1:
                     p_h = doc.add_paragraph()
-                    p_h.paragraph_format.space_before = Pt(6)
-                    p_h.paragraph_format.space_after = Pt(2)
+                    p_h.paragraph_format.space_before = Pt(8)
+                    p_h.paragraph_format.space_after = Pt(3)
                     r_h = p_h.add_run(str(heading))
                     r_h.font.name = 'Calibri'
                     r_h.font.size = Pt(11)
                     r_h.font.bold = True
                     r_h.font.color.rgb = COLOR_SECONDARY
                 if content:
-                    p_c = doc.add_paragraph(str(content))
-                    p_c.paragraph_format.space_after = Pt(6)
-                    p_c.paragraph_format.line_spacing = 1.15
-                    for r in p_c.runs:
-                        r.font.name = 'Calibri'
-                        r.font.size = Pt(10.5)
-                        r.font.color.rgb = COLOR_DARK
+                    for para in str(content).split("\n\n"):
+                        p_strip = para.strip()
+                        if p_strip:
+                            p_c = doc.add_paragraph(p_strip)
+                            p_c.paragraph_format.space_after = Pt(6)
+                            p_c.paragraph_format.line_spacing = 1.15
+                            for r in p_c.runs:
+                                r.font.name = 'Calibri'
+                                r.font.size = Pt(10.5)
+                                r.font.color.rgb = COLOR_DARK
             elif isinstance(sec, str):
-                p_c = doc.add_paragraph(sec)
-                p_c.paragraph_format.space_after = Pt(6)
-                p_c.paragraph_format.line_spacing = 1.15
-                for r in p_c.runs:
-                    r.font.name = 'Calibri'
-                    r.font.size = Pt(10.5)
-                    r.font.color.rgb = COLOR_DARK
+                for para in sec.split("\n\n"):
+                    p_strip = para.strip()
+                    if p_strip:
+                        p_c = doc.add_paragraph(p_strip)
+                        p_c.paragraph_format.space_after = Pt(6)
+                        p_c.paragraph_format.line_spacing = 1.15
+                        for r in p_c.runs:
+                            r.font.name = 'Calibri'
+                            r.font.size = Pt(10.5)
+                            r.font.color.rgb = COLOR_DARK
     else:
         full_text = data.get("full_text") or data.get("paraphrased_text") or ""
         if full_text:
             _add_section_header(doc, "Naskah Hasil Polish & Rephrase")
-            p_f = doc.add_paragraph(str(full_text))
-            p_f.paragraph_format.space_after = Pt(8)
-            p_f.paragraph_format.line_spacing = 1.15
-            for r in p_f.runs:
-                r.font.name = 'Calibri'
-                r.font.size = Pt(10.5)
-                r.font.color.rgb = COLOR_DARK
+            for para in str(full_text).split("\n\n"):
+                p_strip = para.strip()
+                if p_strip:
+                    p_f = doc.add_paragraph(p_strip)
+                    p_f.paragraph_format.space_after = Pt(6)
+                    p_f.paragraph_format.line_spacing = 1.15
+                    for r in p_f.runs:
+                        r.font.name = 'Calibri'
+                        r.font.size = Pt(10.5)
+                        r.font.color.rgb = COLOR_DARK
 
     _add_compliance_footer(doc)
 

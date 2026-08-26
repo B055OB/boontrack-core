@@ -206,6 +206,7 @@ class AIGateway:
         context = context or {}
         user_id = context.get("user_id")
         feature = context.get("feature", "general")
+        timeout_sec = float(context.get("timeout", 25.0))
 
         providers = [
             ("Gemini", self.gemini_model, self._call_gemini),
@@ -213,7 +214,7 @@ class AIGateway:
             ("OpenRouter", self.openrouter_model, self._call_openrouter),
         ]
 
-        provider_timeout = aiohttp.ClientTimeout(total=10.0)
+        provider_timeout = aiohttp.ClientTimeout(total=timeout_sec)
         gateway_start_time = time.time()
         trace_logs = []
 
