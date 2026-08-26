@@ -94,6 +94,7 @@ class OmBudiService:
         self.matcher = LocalKnowledgeMatcher(self.rules)
         self.qris_asset_path = _resolve_qris_asset_path()
         self.qris_public_url = _resolve_qris_public_url()
+        self.user_sessions: Dict[str, str] = {}
         self.fallback_msg = (
             "Assalamu'alaikum Warahmatullahi Wabarakatuh Bapak/Ibu 🙏😊\n\n"
             "Mohon maaf yang sebesar-besarnya, saat ini kami belum bisa menjawab pertanyaan Bapak/Ibu secara langsung 🙏.\n\n"
@@ -146,32 +147,68 @@ class OmBudiService:
         clean_text = (message_text or "").strip().lower()
         clean_phone = self._clean_phone(phone_number)
 
-        # 1. OCR Multimodal Verifikasi Struk Pendaftaran / Sedekah
+        # 1. OCR Multimodal Verifikasi Struk Pendaftaran / Sedekah (2 Parameter Inti)
         if image_bytes:
             try:
                 from app.services.receipt_ocr_service import analyze_receipt_image
+                from app.services.payment_verification_service import payment_verification_service
+
                 ocr_res = await analyze_receipt_image(image_bytes, image_mime)
-                if ocr_res.get("is_valid_receipt"):
-                    nominal = ocr_res.get("nominal", 0)
-                    ref_no = ocr_res.get("reference_no_rrn", "-")
-                    merchant = ocr_res.get("bank_source", "BSI / Mandiri (Budi Yulianto)")
-                    
-                    self._save_member(clean_phone)
-                    
-                    reply = (
-                        f"Alhamdulillah wa Syukurillah, Bapak/Ibu *{user_name}*! 🤲😊\n\n"
-                        f"Bukti transfer sebesar *Rp{nominal:,}* (Ref: `{ref_no}`) ke *{merchant}* telah terverifikasi 🙏.\n\n"
-                        "Status keanggotaan Kelas Bimbingan Anda telah *AKTIF*. Sekarang Anda memiliki akses penuh ke seluruh panduan materi, riyadhoh, dan tautan Zoom Booster rutin 🤲."
-                    )
+                user_session_type = self.user_sessions.get(clean_phone, "auto")
+
+                verif_res = payment_verification_service.verify_receipt_ocr_data(
+                    ocr_data=ocr_res,
+                    session_type=user_session_type
+                )
+
+                if verif_res.get("is_valid"):
+                    nominal = verif_res.get("amount", 0)
+                    ref_no = verif_res.get("reference_no", "-")
+                    merchant = verif_res.get("receiver", "BSI / Mandiri (Budi Yulianto)")
+                    session_mode = verif_res.get("session_type", "auto")
+
+                    if session_mode == "kelas_online" or nominal >= 100000:
+                        self._save_member(clean_phone)
+                        reply = (
+                            f"Alhamdulillah wa Syukurillah, Bapak/Ibu *{user_name}*! 🤲😊\n\n"
+                            f"Bukti transfer sebesar *Rp{nominal:,}* (Ref: `{ref_no}`) ke *{merchant}* telah terverifikasi 🙏.\n\n"
+                            "Status keanggotaan Kelas Bimbingan Anda telah *AKTIF*. Sekarang Anda memiliki akses penuh ke seluruh panduan materi, riyadhoh, dan tautan Zoom Booster rutin 🤲."
+                        )
+                    else:
+                        reply = (
+                            f"Alhamdulillah wa Syukurillah, Bapak/Ibu *{user_name}*! 🤲😊\n\n"
+                            f"Sedekah Berjamaah sebesar *Rp{nominal:,}* (Ref: `{ref_no}`) ke *{merchant}* telah tercatat dan diterima dengan baik 🙏.\n\n"
+                            "Semoga Allah SWT membalas kebaikan, melipatgandakan rezeki, dan memberikan keberkahan yang berlimpah untuk Bapak/Ibu sekeluarga 🤲."
+                        )
+
                     return {
                         "type": "buttons",
                         "reply": reply,
                         "buttons": [{"id": "btn_menu_utama", "title": "🏠 Menu Utama"}]
                     }
                 else:
+                    reason = verif_res.get("reason")
+                    receiver_read = verif_res.get("receiver", "")
+                    nominal_read = verif_res.get("amount", 0)
+
+                    if reason == "INVALID_RECEIVER":
+                        reply = (
+                            f"⚠️ *Bukti Pembayaran Ditolak*\n\n"
+                            f"Rekening atau QRIS tujuan yang terbaca (*{receiver_read or 'Tidak Dikenal'}*) tidak sesuai.\n\n"
+                            "Pembayaran resmi wajib ditujukan ke *OM BUDI CHANNEL* atau *Budi Yulianto* (BSI: 7251759094 / Mandiri: 1320022006077) 🙏."
+                        )
+                    elif reason == "INSUFFICIENT_AMOUNT":
+                        reply = (
+                            f"⚠️ *Nominal Belum Mencukupi*\n\n"
+                            f"Nominal transfer yang terbaca (*Rp{nominal_read:,}*) kurang dari investasi minimal pendaftaran Kelas Online (*Rp100.000*).\n\n"
+                            "Jika ini diniatkan untuk Sedekah Berjamaah, silakan pilih menu Sedekah ya Bapak/Ibu 😊."
+                        )
+                    else:
+                        reply = "Bukti transfer belum terbaca jelas 🙏. Mohon kirimkan ulang foto struk dengan nominal dan rekening tujuan yang terlihat jelas ya 😊."
+
                     return {
                         "type": "buttons",
-                        "reply": "Bukti transfer belum terbaca jelas 🙏. Mohon kirimkan ulang foto struk dengan nominal dan rekening tujuan yang terlihat jelas ya 😊.",
+                        "reply": reply,
                         "buttons": [
                             {"id": "btn_cara_sedekah", "title": "Kirim Ulang Bukti"},
                             {"id": "btn_menu_utama", "title": "🏠 Menu Utama"}
@@ -203,6 +240,7 @@ class OmBudiService:
             "menu", "start", "halo", "hai", "assalamu'alaikum", 
             "assalamualaikum", "p", "🏠 menu utama", "menu utama"
         ]:
+            self.user_sessions[clean_phone] = "auto"
             menu_text = (
                 f"Assalamu'alaikum Warahmatullahi Wabarakatuh Bapak/Ibu *{user_name}* 🙏😊\n\n"
                 "Portal Bimbingan *Om Budi Channel* siap mendampingi ikhtiar Anda.\n\n"
@@ -222,6 +260,7 @@ class OmBudiService:
         if button_id in ["menu_daftar_kelas", "btn_daftar_kelas", "menu_kelas_online", "btn_kelas_online"] or any(
             k in clean_text for k in ["daftar kelas", "kelas online", "daftar kelas online", "pendaftaran kelas", "ikut kelas", "daftar bimbingan"]
         ):
+            self.user_sessions[clean_phone] = "kelas_online"
             return {
                 "type": "buttons",
                 "reply": RINGKASAN_KELAS_ONLINE_OM_BUDI,
@@ -236,6 +275,11 @@ class OmBudiService:
         if button_id in ["btn_kelas_qris", "btn_sedekah_qris", "btn_qris"] or any(
             k == clean_text or k in clean_text.split() for k in ["qris", "bayar qris", "scan qris", "kode qris"]
         ):
+            if button_id == "btn_kelas_qris":
+                self.user_sessions[clean_phone] = "kelas_online"
+            elif button_id == "btn_sedekah_qris":
+                self.user_sessions[clean_phone] = "sedekah"
+
             public_url = _resolve_qris_public_url()
             return {
                 "type": "image",
@@ -258,6 +302,11 @@ class OmBudiService:
         if button_id in ["btn_kelas_bank", "btn_sedekah_bank", "btn_transfer_bank"] or any(
             k in clean_text for k in ["transfer bank", "no rekening", "nomor rekening", "rekening bsi", "rekening mandiri", "transfer manual"]
         ):
+            if button_id == "btn_kelas_bank":
+                self.user_sessions[clean_phone] = "kelas_online"
+            elif button_id == "btn_sedekah_bank":
+                self.user_sessions[clean_phone] = "sedekah"
+
             bank_reply = REKENING_KELAS_OM_BUDI if button_id == "btn_kelas_bank" else REKENING_OM_BUDI
             return {
                 "type": "buttons",
