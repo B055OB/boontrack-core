@@ -102,6 +102,6 @@ async def start_telegram_polling(bot: Bot, dp: Dispatcher):
     print("[TELEGRAM] Polling worker starting...", flush=True)
     try:
         await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(reset_webhook=True)
+        await dp.start_polling(reset_webhook=True, relax=5, fast=False)
     except Exception as e:
         print(f"[TELEGRAM] ⚠️ Polling stopped ({e}). Web Server TETAP AKTIF.", flush=True)

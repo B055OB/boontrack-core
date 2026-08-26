@@ -376,10 +376,8 @@ class CareerService:
                 await asyncio.sleep(1)
 
                 # Pesan 2: Gambar Dynamic QRIS lengkap dengan caption nominal
-                qris_caption = (
-                    f"Silakan scan QRIS di atas untuk menyelesaikan pembayaran Rp{total_amount:,}. "
-                    f"Sistem akan memproses naskah otomatis setelah transfer terverifikasi."
-                )
+                qr_bytes = generate_dynamic_qris_image(total_amount)
+                qris_caption = f"Silakan scan QRIS di atas untuk menyelesaikan pembayaran Rp{total_amount:,}.\n\nNaskah akan diproses otomatis setelah transfer terverifikasi."
                 print(f"[CAREER INTAKE] Pesan 2: Sending dynamic QRIS image ({len(qr_bytes)} bytes, nominal=Rp{total_amount:,}) to {sender_wa_id}...", flush=True)
                 img_res = await send_whatsapp_image(
                     to=sender_wa_id,
