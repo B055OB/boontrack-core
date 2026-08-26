@@ -226,6 +226,121 @@ class TestPaymentDocDelivery(AioHTTPTestCase):
         self.assertIn("Pengiriman Ulang Berhasil", reply)
         self.assertIn("job-5083-xyz", reply)
 
+    # ==========================================
+    # 6. Strict State Machine & Payment Lock Tests
+    # ==========================================
+    @patch("app.services.document_engine.get_supabase")
+    @patch("app.services.document_engine.r2_storage_service.upload_file", new_callable=AsyncMock)
+    @patch("app.services.document_engine.send_whatsapp_document", new_callable=AsyncMock)
+    @patch("app.services.document_engine.send_whatsapp_text", new_callable=AsyncMock)
+    async def test_intake_sets_status_waiting_payment_and_no_doc_sent_before_payment(
+        self,
+        mock_send_text,
+        mock_send_doc,
+        mock_r2_upload,
+        mock_supabase
+    ):
+        """Memvalidasi bahwa saat dokumen berbayar di-intake, statusnya WAITING_PAYMENT dan TIDAK mengirim attachment .docx."""
+        mock_client = MagicMock()
+        mock_table = MagicMock()
+        mock_client.table.return_value = mock_table
+        mock_supabase.return_value = mock_client
+
+        # Buat dokumen dummy berbayar (misal 600 kata -> Tier 2 Rp10.000 / Rp10.482)
+        fake_text = "Metodologi penelitian ini menggunakan pendekatan kuantitatif. " * 50
+        fake_doc = Document()
+        fake_doc.add_paragraph(fake_text)
+        buf = io.BytesIO()
+        fake_doc.save(buf)
+        file_bytes = buf.getvalue()
+
+        # Eksekusi intake job berbayar
+        intake_res = await intake_document_job(
+            tenant_id="boontrack-career",
+            task_type="POLISH_REPHRASE",
+            filename="Naskah_Skripsi.docx",
+            file_bytes=file_bytes,
+            user_id="628111222333",
+            user_phone="628111222333",
+            exact_price_amount=10482
+        )
+
+        # 1. Validasi Status Response adalah WAITING_PAYMENT
+        self.assertEqual(intake_res["status"], "WAITING_PAYMENT")
+        self.assertEqual(intake_res["price_amount"], 10482)
+
+        # 2. Validasi status record yang diinsert ke Supabase
+        mock_table.insert.assert_called_once()
+        inserted_record = mock_table.insert.call_args[0][0]
+        self.assertEqual(inserted_record["status"], "WAITING_PAYMENT")
+        self.assertEqual(inserted_record["payment_status"], "UNPAID")
+        self.assertEqual(inserted_record["price_amount"], 10482)
+
+        # 3. CRITICAL: JANGAN PERNAH panggil send_whatsapp_document sebelum status PAID!
+        mock_send_doc.assert_not_called()
+        mock_send_text.assert_not_called()
+
+    # ==========================================
+    # 7. Academic Rephrase Engine Tests
+    # ==========================================
+    async def test_academic_rephrase_engine_precleaning_and_citation_protection(self):
+        """Memvalidasi pembersihan artefak PDF, spasi terputus, dan proteksi sitasi akademik."""
+        from app.engines.rephrase_engine import academic_rephrase_engine
+
+        raw_dirty_text = (
+            "--- Page 1 ---\n"
+            "Peneli tian ini meman faatkan va riabel terikat guna menguji hipo tesis.\n"
+            "Hal ini sejalan dengan teori kognitif (Sugiyono, 2015) serta model [1-3].\n"
+            "Di mana model regresi yang digunakan adalah Y = a + b1X1 + e dengan signifikansi p < 0.05.\n\n"
+            "12\n\n"
+            "Halaman 1 dari 10"
+        )
+
+        # 1. Test Pre-cleaning
+        cleaned = academic_rephrase_engine.clean_academic_text(raw_dirty_text)
+        self.assertNotIn("--- Page 1 ---", cleaned)
+        self.assertNotIn("Halaman 1 dari 10", cleaned)
+        self.assertIn("variabel", cleaned)
+        self.assertIn("penelitian", cleaned)
+        self.assertIn("hipotesis", cleaned)
+
+        # 2. Test Masking & Unmasking
+        masked, mask_map = academic_rephrase_engine.mask_academic_entities(cleaned)
+        self.assertIn("__CIT_", masked)
+        self.assertIn("__FORM_", masked)
+
+        unmasked = academic_rephrase_engine.unmask_academic_entities(masked, mask_map)
+        self.assertIn("(Sugiyono, 2015)", unmasked)
+        self.assertIn("[1-3]", unmasked)
+        self.assertIn("Y = a + b1X1 + e", unmasked)
+        self.assertIn("p < 0.05", unmasked)
+
+        # 3. Test Full Rephrase
+        result = await academic_rephrase_engine.rephrase_document(raw_dirty_text, filename="Jurnal_Ilmiah.docx")
+        self.assertEqual(result["tone"], "Akademik Formal (EYD V)")
+        self.assertIn("(Sugiyono, 2015)", result["full_text"])
+        self.assertIn("Y = a + b1X1 + e", result["full_text"])
+        self.assertGreater(len(result["sections"]), 0)
+
+    async def test_academic_rephrase_engine_chunking_and_seamless_stitching(self):
+        """Memvalidasi bahwa dokumen panjang di-chunk per 600-800 kata dan dijahit secara utuh."""
+        from app.engines.rephrase_engine import academic_rephrase_engine
+
+        # Generate naskah 1.500 kata
+        paragraph = (
+            "Penerapan tata kelola sistem informasi yang efektif dan terstruktur sangat penting "
+            "bagi kelancaran operasional organisasi modern. Dengan ini manajemen dapat mengukur kinerja secara akurat. "
+        ) * 15 # ~300 kata per paragraf
+        long_text = "\n\n".join([paragraph for _ in range(5)]) # ~1.500 kata
+
+        chunks = academic_rephrase_engine.chunk_document_smart(long_text, max_words_per_chunk=750)
+        self.assertGreaterEqual(len(chunks), 2)
+
+        result = await academic_rephrase_engine.rephrase_document(long_text, filename="Tesis_Lengkap.docx")
+        self.assertEqual(len(result["sections"]), len(chunks))
+        self.assertGreaterEqual(result["paraphrased_word_count"], 1000)
+        self.assertIn("Naskah telah disempurnakan", result["key_takeaways"][0])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -172,16 +172,37 @@ async def match_and_fulfill_payment(
             user_session["is_premium_paid"] = True
             user_session["tier"] = "premium_unlocked"
 
-        # Kirim file dokumen attachment jika job sudah COMPLETED
-        from app.services.document_engine import deliver_completed_document_job
+        # Kirim file dokumen attachment jika job sudah COMPLETED atau proses & kirim jika WAITING_PAYMENT
+        from app.services.document_engine import deliver_completed_document_job, process_document_job_async
+        from app.services.r2_storage_service import r2_storage_service
+        from app.services.document_parser_service import extract_text_from_bytes
         delivery_success = False
         if user_phone:
             try:
-                delivery_success = await deliver_completed_document_job(
-                    job_id=job_id,
-                    tenant_id=tenant_id,
-                    user_phone=user_phone
-                )
+                if current_status == "COMPLETED":
+                    delivery_success = await deliver_completed_document_job(
+                        job_id=job_id,
+                        tenant_id=tenant_id,
+                        user_phone=user_phone
+                    )
+                else:
+                    # Job berstatus WAITING_PAYMENT / QUEUED -> Proses naskah & kirimkan hasil sekarang
+                    raw_key = matched_job.get("raw_storage_key")
+                    raw_text = ""
+                    if raw_key:
+                        raw_bytes = await r2_storage_service.download_file(raw_key)
+                        if raw_bytes:
+                            raw_text = extract_text_from_bytes(raw_bytes, matched_job.get("filename", "Dokumen.pdf"))
+                    
+                    await process_document_job_async(
+                        job_id=job_id,
+                        tenant_id=tenant_id,
+                        task_type=task_type,
+                        filename=matched_job.get("filename", "Dokumen.docx"),
+                        raw_text=raw_text,
+                        user_phone=user_phone
+                    )
+                    delivery_success = True
             except Exception as deliv_err:
                 logger.error(f"[PAYMENT MATCHER] Delivery error for job {job_id}: {deliv_err}")
 

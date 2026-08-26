@@ -216,7 +216,7 @@ class TestDocumentPricingEngine(unittest.IsolatedAsyncioTestCase):
             user_phone="6281237450222"
         )
 
-        self.assertEqual(res["status"], "QUEUED")
+        self.assertEqual(res["status"], "WAITING_PAYMENT")
         self.assertEqual(res["task_type"], "POLISH_REPHRASE")
         self.assertIsNotNone(res["job_id"])
         self.assertGreater(res["word_count"], 0)

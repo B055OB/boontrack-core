@@ -313,21 +313,23 @@ class CareerService:
                 metrics = calculate_document_metrics(extracted_text)
                 pricing = calculate_pricing(TASK_POLISH_REPHRASE, metrics["word_count"])
                 
-                # Zero-blocking intake ke Document Engine
+                # 1. Buat dynamic order QRIS dengan 3-digit kode unik
+                order = payment_service.create_dynamic_order(
+                    user_id=sender_wa_id,
+                    base_amount=pricing["final_price"],
+                    tenant_id=TENANT_ID,
+                    meta={"product": "polish_rephrase", "filename": filename}
+                )
+
+                # 2. Registrasi Job ke Document Engine dengan Status WAITING_PAYMENT & exact price_amount
                 intake_res = await intake_document_job(
                     tenant_id=TENANT_ID,
                     task_type=TASK_POLISH_REPHRASE,
                     filename=filename,
                     file_bytes=file_bytes,
                     user_id=sender_wa_id,
-                    user_phone=sender_wa_id
-                )
-
-                order = payment_service.create_dynamic_order(
-                    user_id=sender_wa_id,
-                    base_amount=pricing["final_price"],
-                    tenant_id=TENANT_ID,
-                    meta={"product": "polish_rephrase", "filename": filename, "job_id": intake_res.get("job_id") if intake_res else None}
+                    user_phone=sender_wa_id,
+                    exact_price_amount=order["total_amount"]
                 )
 
                 user_session["active_invoice"] = order["order_id"]

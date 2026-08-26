@@ -150,14 +150,21 @@ def _extract_json_from_llm_output(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+from app.engines.rephrase_engine import academic_rephrase_engine
+
+
 async def execute_ai_document_task(
     task_type: str,
     raw_text: str,
     filename: str = "Dokumen"
 ) -> Dict[str, Any]:
-    """Memanggil AI Gateway dengan Strict JSON Schema sesuai tipe tugas."""
+    """Memanggil AI Gateway / Academic Rephrase Engine sesuai tipe tugas."""
     raw_normalized = str(task_type).upper().strip()
     normalized_task = LEGACY_TASK_MAPPING.get(raw_normalized, raw_normalized)
+
+    # 1. TASK_POLISH_REPHRASE: Diproses penuh oleh AcademicRephraseEngine (EYD V, Chunking 600-800 kata, Proteksi Sitasi)
+    if normalized_task == TASK_POLISH_REPHRASE:
+        return await academic_rephrase_engine.rephrase_document(raw_text=raw_text, filename=filename)
 
     if normalized_task == TASK_ATS_DIAGNOSTIC:
         prompt = (
@@ -213,27 +220,8 @@ async def execute_ai_document_task(
             "}\n\n"
             f"Konten Dokumen ({filename}):\n{raw_text[:8000]}"
         )
-    else: # TASK_POLISH_REPHRASE
-        # Menggunakan chunking jika naskah panjang
-        chunks = chunk_document_text(raw_text, max_chunk_words=1500)
-        prompt = (
-            f"Kamu adalah Specialist Editor & Rephrasing Consultant untuk '{OFFICIAL_PRODUCT_NAME}'.\n"
-            "Tugas: Sempurnakan keterbacaan, tata bahasa, dan struktur naskah berikut tanpa mengubah makna orisinal.\n"
-            "PENTING: Pertahankan istilah teori, kutipan langsung, dan sitasi (Penulis, Tahun) secara presisi.\n"
-            "Kembalikan output HANYA berupa JSON valid sesuai skema berikut:\n\n"
-            "{\n"
-            '  "title": "Judul Dokumen yang Disempurnakan",\n'
-            '  "tone": "Formal & Profesional",\n'
-            '  "original_word_count": 500,\n'
-            '  "paraphrased_word_count": 480,\n'
-            '  "key_takeaways": ["Poin intisari 1", "Poin intisari 2"],\n'
-            '  "sections": [\n'
-            '    {"heading": "Judul Bagian", "content": "Teks naskah yang telah disempurnakan..."}\n'
-            "  ],\n"
-            '  "full_text": "Naskah lengkap hasil penyempurnaan..."\n'
-            "}\n\n"
-            f"Konten Naskah ({filename}):\n{raw_text[:8000]}"
-        )
+    else:
+        return await academic_rephrase_engine.rephrase_document(raw_text=raw_text, filename=filename)
 
     ai_response = await ai_gateway.generate(prompt)
     structured = _extract_json_from_llm_output(ai_response or "")
@@ -251,7 +239,7 @@ async def execute_ai_document_task(
             "strengths": ["Riwayat pendidikan & kontak jelas", "Keahlian relevan tercantum"],
             "findings": [{"section": "Experience", "issue": "Kurang angka dampak", "recommendation": "Gunakan formula: Tindakan + Metrik Hasil"}]
         }
-    elif normalized_task in [TASK_CV_POLISH_REWRITE, TASK_CAREER_PRO_BUNDLE]:
+    else:
         return {
             "full_name": "KANDIDAT PROFESIONAL",
             "target_position": "Spesialis Karir",
@@ -259,15 +247,6 @@ async def execute_ai_document_task(
             "skills": {"core_skills": ["Manajemen Kerja", "Komunikasi", "Problem Solving"]},
             "experience": [{"role": "Staf Profesional", "company": "Perusahaan Terkemuka", "period": "2021 - Sekarang", "bullets": ["Melaksanakan operasional harian secara efisien", "Mendukung efisiensi target tim sebesar 20%"]}],
             "education": [{"degree": "Sarjana / Diploma", "institution": "Perguruan Tinggi", "year": "2020"}]
-        }
-    else:
-        return {
-            "title": f"Hasil Polish & Rephrase: {filename}",
-            "tone": "Profesional",
-            "original_word_count": len(raw_text.split()),
-            "paraphrased_word_count": len(raw_text.split()),
-            "key_takeaways": ["Naskah telah diperbaiki keterbacaan dan struktur kalimatnya."],
-            "sections": [{"heading": "Naskah Terstruktur", "content": raw_text[:2000]}]
         }
 
 
@@ -413,9 +392,10 @@ async def intake_document_job(
     filename: str,
     file_bytes: bytes,
     user_id: Optional[str] = None,
-    user_phone: Optional[str] = None
+    user_phone: Optional[str] = None,
+    exact_price_amount: Optional[int] = None
 ) -> Dict[str, Any]:
-    """Endpoint Intake Dokumen Terpadu (Zero-Blocking)."""
+    """Endpoint Intake Dokumen Terpadu (Zero-Blocking & Strict Payment Lock)."""
     job_id = str(uuid.uuid4())
     start_time = datetime.now(timezone.utc)
     raw_task = str(task_type).upper().strip()
@@ -443,7 +423,13 @@ async def intake_document_job(
     pricing = calculate_pricing(normalized_task, metrics["word_count"])
     doc_hash = metrics["doc_hash"]
 
-    # 4. Registrasi Job ke Supabase DB (Status: QUEUED)
+    # Nominal harga final (mendukung exact amount dengan 3-digit kode unik dari payment order)
+    final_price = exact_price_amount if exact_price_amount is not None else pricing["final_price"]
+    is_free = (final_price == 0)
+    initial_status = "QUEUED" if is_free else "WAITING_PAYMENT"
+    payment_status = "PAID" if is_free else "UNPAID"
+
+    # 4. Registrasi Job ke Supabase DB (Status: WAITING_PAYMENT untuk berbayar)
     supabase = get_supabase()
     job_record = {
         "id": job_id,
@@ -451,8 +437,8 @@ async def intake_document_job(
         "user_id": str(user_id or user_phone or "guest"),
         "user_phone": user_phone,
         "task_type": normalized_task,
-        "status": "QUEUED",
-        "payment_status": "PAID" if pricing["final_price"] == 0 else "UNPAID",
+        "status": initial_status,
+        "payment_status": payment_status,
         "filename": filename,
         "file_size": len(file_bytes),
         "mime_type": mime_type,
@@ -460,8 +446,8 @@ async def intake_document_job(
         "word_count": metrics["word_count"],
         "char_count": metrics["char_count"],
         "estimated_pages": metrics["estimated_pages"],
-        "price": pricing["final_price"],
-        "price_amount": pricing["final_price"],
+        "price": final_price,
+        "price_amount": final_price,
         "pricing_tier": pricing["pricing_tier"],
         "raw_storage_key": raw_storage_key,
         "result_storage_key": None,
@@ -477,30 +463,32 @@ async def intake_document_job(
         except Exception as db_err:
             logger.error(f"[DocumentEngine DB Error] Insert document_jobs failed: {db_err}")
 
-    # 5. Dispatch Asynchronous Background Worker (Zero-Blocking!)
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(process_document_job_async(
-            job_id=job_id,
-            tenant_id=clean_tenant,
-            task_type=normalized_task,
-            filename=filename,
-            raw_text=extracted_text,
-            user_phone=user_phone
-        ))
-    except RuntimeError:
-        asyncio.create_task(process_document_job_async(
-            job_id=job_id,
-            tenant_id=clean_tenant,
-            task_type=normalized_task,
-            filename=filename,
-            raw_text=extracted_text,
-            user_phone=user_phone
-        ))
+    # 5. JANGAN PERNAH dispatch worker/delivery sebelum status PAID!
+    # Hanya dispatch worker otomatis jika dokumen GRATIS (Free Trial).
+    if is_free:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(process_document_job_async(
+                job_id=job_id,
+                tenant_id=clean_tenant,
+                task_type=normalized_task,
+                filename=filename,
+                raw_text=extracted_text,
+                user_phone=user_phone
+            ))
+        except RuntimeError:
+            asyncio.create_task(process_document_job_async(
+                job_id=job_id,
+                tenant_id=clean_tenant,
+                task_type=normalized_task,
+                filename=filename,
+                raw_text=extracted_text,
+                user_phone=user_phone
+            ))
 
-    # 6. Kembalikan respons instan (< 1 detik)
+    # 6. Kembalikan respons instan
     return {
-        "status": "QUEUED",
+        "status": initial_status,
         "job_id": job_id,
         "tenant_id": clean_tenant,
         "task_type": normalized_task,
@@ -509,7 +497,8 @@ async def intake_document_job(
         "word_count": metrics["word_count"],
         "estimated_pages": metrics["estimated_pages"],
         "pricing": pricing,
+        "price_amount": final_price,
         "raw_storage_key": raw_storage_key,
         "disclaimer": COMPLIANCE_DISCLAIMER,
-        "message": "Dokumen berhasil diterima dan sedang diproses di background."
+        "message": "Dokumen berhasil didaftarkan. Menunggu verifikasi pembayaran." if not is_free else "Dokumen sedang diproses."
     }
