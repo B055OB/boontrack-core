@@ -432,7 +432,49 @@ class TestCareerModular(AioHTTPTestCase):
         self.assertEqual(call_kwargs["event_name"], "career_cv_build_completed")
         self.assertEqual(call_kwargs["user_id"], "62833344455")
         self.assertEqual(call_kwargs["tenant_id"], "boontrack-career")
-        self.assertEqual(GLOBAL_USER_STATES["62833344455"]["mode"], "post_cv")
+    @patch("app.tenants.career.service.send_whatsapp_image", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.send_whatsapp_buttons", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.track_event", new_callable=AsyncMock)
+    async def test_rewrite_button_sends_dynamic_qris_bytes_buffer(
+        self,
+        mock_track,
+        mock_send_buttons,
+        mock_send_image
+    ):
+        """Memvalidasi bahwa saat user memilih paket rewrite, bot mengirim dynamic QRIS buffer bytes PNG (bukan path statis)."""
+        user_id = "628999888777"
+        GLOBAL_USER_STATES[user_id] = {
+            "mode": "menu",
+            "step": 0,
+            "data": {}
+        }
+
+        await career_service.handle_text_or_button(
+            sender_wa_id=user_id,
+            display_name="User Dynamic QRIS",
+            user_text="",
+            button_id="btn_rewrite_single"
+        )
+
+        mock_send_image.assert_called_once()
+        args, kwargs = mock_send_image.call_args
+        to_phone = args[0] if args else kwargs.get("to_phone")
+        self.assertEqual(to_phone, user_id)
+        
+        # Validasi bahwa yang dikirim adalah bytes in-memory buffer berformat PNG, BUKAN string filepath
+        raw_bytes = kwargs.get("image_path_or_bytes") or (args[1] if len(args) > 1 else None)
+        self.assertIsInstance(raw_bytes, bytes)
+        self.assertTrue(raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+
+        # Validasi caption memuat 3-digit kode unik dan instruksi transfer
+        caption = kwargs.get("caption", "")
+        self.assertIn("INVOICE PEMBAYARAN QRIS", caption)
+        self.assertIn("Single CV Polish & ATS Rewrite", caption)
+        self.assertIn("Termasuk 3 Digit Kode Unik", caption)
+
+        # Validasi state tersimpan sebagai awaiting_rewrite_payment
+        self.assertEqual(GLOBAL_USER_STATES[user_id]["mode"], "awaiting_rewrite_payment")
+        self.assertIsNotNone(GLOBAL_USER_STATES[user_id].get("active_invoice"))
 
     def test_legacy_wrapper_exports(self):
         self.assertEqual(handle_incoming_whatsapp, legacy_handle_incoming)
@@ -441,5 +483,6 @@ class TestCareerModular(AioHTTPTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

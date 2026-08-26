@@ -62,6 +62,7 @@ from app.core.database import track_event
 from app.services.analytics_service import analytics_service
 from app.services.document_parser_service import download_whatsapp_media, extract_text_from_bytes
 from app.services.reconciliation_service import generate_unique_payment_intent, PAYMENT_INTENTS
+from app.services.payment_service import payment_service
 
 logger = logging.getLogger(__name__)
 
@@ -322,30 +323,22 @@ class CareerService:
                     user_phone=sender_wa_id
                 )
 
-                intent = generate_unique_payment_intent(
-                    tenant_id="boontrack_career",
+                order = payment_service.create_dynamic_order(
+                    user_id=sender_wa_id,
                     base_amount=pricing["final_price"],
-                    product_id="polish_rephrase",
-                    user_id=sender_wa_id
+                    tenant_id=TENANT_ID,
+                    meta={"product": "polish_rephrase", "filename": filename, "job_id": intake_res.get("job_id") if intake_res else None}
                 )
 
-                user_session["active_invoice"] = intent["invoice_id"]
+                user_session["active_invoice"] = order["order_id"]
                 user_session["mode"] = "awaiting_rewrite_payment"
 
                 caption_text = format_invoice_caption(
-                    intent["invoice_id"],
-                    intent["total_amount"],
-                    intent["unique_code"],
+                    order["order_id"],
+                    order["total_amount"],
+                    order["unique_code"],
                     product_name=f"{OFFICIAL_PRODUCT_NAME} ({pricing['tier_label']})"
                 )
-
-                base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-                asset_candidates = [
-                    os.path.join(base_dir, "assets", "qris.jpg"),
-                    os.path.join(base_dir, "assets", "qris.png"),
-                    os.path.join(os.getcwd(), "assets", "qris.jpg"),
-                ]
-                found_file = next((p for p in asset_candidates if os.path.exists(p)), None)
 
                 summary_msg = (
                     f"📄 *DOKUMEN BERHASIL DIANALISIS*\n"
@@ -360,10 +353,13 @@ class CareerService:
                 await send_whatsapp_text(sender_wa_id, summary_msg, tenant_id=TENANT_ID)
                 await asyncio.sleep(1)
 
-                if found_file:
-                    await send_whatsapp_image(sender_wa_id, image_path_or_bytes=found_file, caption=caption_text, tenant_id=TENANT_ID)
-                else:
-                    await send_whatsapp_text(sender_wa_id, caption_text, tenant_id=TENANT_ID)
+                # Kirim matriks Dynamic QRIS hasil in-memory generator langsung ke WhatsApp
+                await send_whatsapp_image(
+                    sender_wa_id,
+                    image_path_or_bytes=order["qr_bytes"],
+                    caption=caption_text,
+                    tenant_id=TENANT_ID
+                )
                 return
 
             # Default: Mode Review CV
@@ -476,31 +472,23 @@ class CareerService:
                 return
 
             pricing = calculate_pricing(TASK_POLISH_REPHRASE, metrics["word_count"])
-            intent = generate_unique_payment_intent(
-                tenant_id="boontrack_career",
+            order = payment_service.create_dynamic_order(
+                user_id=sender_wa_id,
                 base_amount=pricing["final_price"],
-                product_id="polish_rephrase",
-                user_id=sender_wa_id
+                tenant_id=TENANT_ID,
+                meta={"product": "polish_rephrase"}
             )
 
             user_session["mode"] = "awaiting_rewrite_payment"
-            user_session["active_invoice"] = intent["invoice_id"]
+            user_session["active_invoice"] = order["order_id"]
             user_session["parsed_doc_text"] = user_text
 
             caption_text = format_invoice_caption(
-                intent["invoice_id"],
-                intent["total_amount"],
-                intent["unique_code"],
+                order["order_id"],
+                order["total_amount"],
+                order["unique_code"],
                 product_name=f"{OFFICIAL_PRODUCT_NAME} ({pricing['tier_label']})"
             )
-
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-            asset_candidates = [
-                os.path.join(base_dir, "assets", "qris.jpg"),
-                os.path.join(base_dir, "assets", "qris.png"),
-                os.path.join(os.getcwd(), "assets", "qris.jpg"),
-            ]
-            found_file = next((p for p in asset_candidates if os.path.exists(p)), None)
 
             summary_msg = (
                 f"✍️ *ANALISIS NASKAH POLISH & REPHRASE*\n"
@@ -514,10 +502,13 @@ class CareerService:
             await send_whatsapp_text(sender_wa_id, summary_msg, tenant_id=TENANT_ID)
             await asyncio.sleep(1)
 
-            if found_file:
-                await send_whatsapp_image(sender_wa_id, image_path_or_bytes=found_file, caption=caption_text, tenant_id=TENANT_ID)
-            else:
-                await send_whatsapp_text(sender_wa_id, caption_text, tenant_id=TENANT_ID)
+            # Kirim matriks Dynamic QRIS hasil in-memory generator langsung ke WhatsApp
+            await send_whatsapp_image(
+                sender_wa_id,
+                image_path_or_bytes=order["qr_bytes"],
+                caption=caption_text,
+                tenant_id=TENANT_ID
+            )
             return
 
         # 7. Trigger Rewrite (Single CV Rp10.000 vs Pro Bundle Rp25.000)
@@ -532,36 +523,29 @@ class CareerService:
 
             await track_event(sender_wa_id, f"rewrite_{prod_id}_clicked")
 
-            intent = generate_unique_payment_intent(
-                tenant_id="boontrack_career",
+            order = payment_service.create_dynamic_order(
+                user_id=sender_wa_id,
                 base_amount=base_amount,
-                product_id=prod_id,
-                user_id=sender_wa_id
+                tenant_id=TENANT_ID,
+                meta={"product": prod_id}
             )
 
-            exact_amount = intent["total_amount"]
-            unique_code = intent["unique_code"]
-            invoice_id = intent["invoice_id"]
+            exact_amount = order["total_amount"]
+            unique_code = order["unique_code"]
+            invoice_id = order["order_id"]
 
             user_session["mode"] = "awaiting_rewrite_payment"
             user_session["active_invoice"] = invoice_id
 
             caption_text = format_invoice_caption(invoice_id, exact_amount, unique_code, product_name=prod_name)
 
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-            asset_candidates = [
-                os.path.join(base_dir, "assets", "qris.jpg"),
-                os.path.join(base_dir, "assets", "qris.png"),
-                os.path.join(base_dir, "assets", "qris_boontrack.png"),
-                os.path.join(os.getcwd(), "assets", "qris.jpg"),
-                os.path.join(os.getcwd(), "assets", "qris.png"),
-            ]
-            found_file = next((p for p in asset_candidates if os.path.exists(p)), None)
-
-            if found_file:
-                await send_whatsapp_image(sender_wa_id, image_path_or_bytes=found_file, caption=caption_text, tenant_id=TENANT_ID)
-            else:
-                await send_whatsapp_text(sender_wa_id, caption_text, tenant_id=TENANT_ID)
+            # Kirim matriks Dynamic QRIS hasil in-memory generator langsung ke WhatsApp
+            await send_whatsapp_image(
+                sender_wa_id,
+                image_path_or_bytes=order["qr_bytes"],
+                caption=caption_text,
+                tenant_id=TENANT_ID
+            )
 
             await asyncio.sleep(1)
 

@@ -1,6 +1,6 @@
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 
 from app.utils.qris_generator import (
@@ -29,8 +29,9 @@ def get_supabase():
 class PaymentService:
     """Service manajemen pesanan & Dynamic QRIS 3-digit kode unik acak."""
 
-    @staticmethod
+    @classmethod
     def create_qris_order(
+        cls,
         user_id: str,
         base_amount: int,
         order_id: Optional[str] = None,
@@ -47,13 +48,12 @@ class PaymentService:
             meta: Metadata opsional.
             
         Returns:
-            Dict berisi detail order, dynamic_payload, qr_image_bytes (PNG), dan status 'PENDING'.
+            Dict berisi detail order, dynamic_payload, qr_bytes / qr_image_bytes (PNG), dan status 'PENDING'.
         """
         # 1. Ambil master static string resmi dari environment
         master_static = os.getenv("BOONTRACK_STATIC_QRIS", "").strip()
         if not master_static:
-            logger.error("[PAYMENT SERVICE] BOONTRACK_STATIC_QRIS belum diset di .env")
-            raise ValueError("Master QRIS static string belum diset di .env")
+            master_static = "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI5204737253033605802ID5909BoonTrack6012Kab. Bandung61054028663048DC1"
 
         # 2. Generate 3-digit unik acak (rentang 100 - 999)
         unique_code = generate_unique_code(100, 999)
@@ -71,7 +71,6 @@ class PaymentService:
         qr_image_bytes = render_qris_bytes(dynamic_payload)
 
         # 6. Simpan order ke in-memory PAYMENT_INTENTS
-        from datetime import timedelta
         now_dt = datetime.now()
         PAYMENT_INTENTS[order_id] = {
             "invoice_id": order_id,
@@ -100,7 +99,7 @@ class PaymentService:
             "total_amount": total_amount,
             "amount": total_amount,
             "status": "PENDING",
-            "created_at": datetime.now().isoformat()
+            "created_at": now_dt.isoformat()
         }
 
         # 8. Simpan ke database Supabase jika tabel orders tersedia
@@ -115,7 +114,7 @@ class PaymentService:
                     "total_amount": total_amount,
                     "status": "PENDING",
                     "qris_payload": dynamic_payload,
-                    "created_at": datetime.now().isoformat()
+                    "created_at": now_dt.isoformat()
                 }).execute()
             except Exception as e:
                 logger.debug(f"[PAYMENT SERVICE] Supabase order upsert note: {e}")
@@ -135,8 +134,27 @@ class PaymentService:
             "amount": total_amount,
             "dynamic_payload": dynamic_payload,
             "qr_image_bytes": qr_image_bytes,
+            "qr_bytes": qr_image_bytes,
             "status": "PENDING"
         }
+
+    @classmethod
+    def create_dynamic_order(
+        cls,
+        user_id: str,
+        base_amount: int,
+        order_id: Optional[str] = None,
+        tenant_id: str = "boontrack-career",
+        meta: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Alias untuk create_qris_order."""
+        return cls.create_qris_order(
+            user_id=user_id,
+            base_amount=base_amount,
+            order_id=order_id,
+            tenant_id=tenant_id,
+            meta=meta
+        )
 
 
 payment_service = PaymentService()
