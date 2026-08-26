@@ -179,11 +179,13 @@ async def match_and_fulfill_payment(
         delivery_success = False
         if user_phone:
             try:
+                matched_job["payment_status"] = "PAID"
                 if current_status == "COMPLETED":
                     delivery_success = await deliver_completed_document_job(
                         job_id=job_id,
                         tenant_id=tenant_id,
-                        user_phone=user_phone
+                        user_phone=user_phone,
+                        is_paid=True
                     )
                 else:
                     # Job berstatus WAITING_PAYMENT / QUEUED -> Proses naskah & kirimkan hasil sekarang

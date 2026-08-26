@@ -349,7 +349,7 @@ class CareerService:
                     f"📝 *Jumlah Kata:* {metrics['word_count']:,} kata\n"
                     f"📑 *Estimasi:* {metrics['estimated_pages']} halaman\n"
                     f"🏷️ *Kategori Tarif:* {pricing['tier_label']}\n"
-                    f"💰 *Investasi:* {pricing['formatted_price']}\n\n"
+                    f"💰 *Investasi:* Rp{order['total_amount']:,}\n\n"
                     f"_{COMPLIANCE_DISCLAIMER}_"
                 )
                 await send_whatsapp_text(sender_wa_id, summary_msg, tenant_id=TENANT_ID)
@@ -481,6 +481,18 @@ class CareerService:
                 meta={"product": "polish_rephrase"}
             )
 
+            # Registrasi job teks ke Document Engine dengan Status WAITING_PAYMENT & exact price_amount
+            txt_bytes = user_text.encode("utf-8")
+            intake_res = await intake_document_job(
+                tenant_id=TENANT_ID,
+                task_type=TASK_POLISH_REPHRASE,
+                filename="Naskah_Input.txt",
+                file_bytes=txt_bytes,
+                user_id=sender_wa_id,
+                user_phone=sender_wa_id,
+                exact_price_amount=order["total_amount"]
+            )
+
             user_session["mode"] = "awaiting_rewrite_payment"
             user_session["active_invoice"] = order["order_id"]
             user_session["parsed_doc_text"] = user_text
@@ -498,7 +510,7 @@ class CareerService:
                 f"📝 *Jumlah Kata:* {metrics['word_count']:,} kata\n"
                 f"📑 *Estimasi:* {metrics['estimated_pages']} halaman\n"
                 f"🏷️ *Kategori Tarif:* {pricing['tier_label']}\n"
-                f"💰 *Total Investasi:* {pricing['formatted_price']}\n\n"
+                f"💰 *Total Investasi:* Rp{order['total_amount']:,}\n\n"
                 f"_{COMPLIANCE_DISCLAIMER}_"
             )
             await send_whatsapp_text(sender_wa_id, summary_msg, tenant_id=TENANT_ID)

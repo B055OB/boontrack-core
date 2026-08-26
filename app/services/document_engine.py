@@ -319,7 +319,8 @@ async def process_document_job_async(
 async def deliver_completed_document_job(
     job_id: str,
     tenant_id: str = "boontrack-career",
-    user_phone: Optional[str] = None
+    user_phone: Optional[str] = None,
+    is_paid: bool = False
 ) -> bool:
     """Mengirim file attachment dokumen .docx untuk job yang sudah COMPLETED/PAID ke WhatsApp user."""
     supabase = get_supabase()
@@ -331,6 +332,17 @@ async def deliver_completed_document_job(
                 job_data = res.data[0]
         except Exception as e:
             logger.error(f"[DocumentEngine] deliver_completed_document_job query error for {job_id}: {e}")
+
+    # Strict Payment Lock Check
+    effective_paid = is_paid
+    if job_data:
+        payment_status = job_data.get("payment_status", "UNPAID")
+        price_amount = job_data.get("price_amount", 0) or job_data.get("price", 0)
+        if payment_status == "PAID" or price_amount == 0:
+            effective_paid = True
+        elif price_amount > 0 and not effective_paid:
+            logger.warning(f"[PAYMENT LOCK] Delivery rejected: Job {job_id} is UNPAID (payment_status: {payment_status})")
+            return False
 
     phone = user_phone or (job_data.get("user_phone") if job_data else None)
     if not phone:

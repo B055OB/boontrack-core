@@ -280,6 +280,45 @@ class TestPaymentDocDelivery(AioHTTPTestCase):
         mock_send_doc.assert_not_called()
         mock_send_text.assert_not_called()
 
+    @patch("app.services.document_engine.get_supabase")
+    @patch("app.services.document_engine.send_whatsapp_document", new_callable=AsyncMock)
+    @patch("app.services.document_engine.send_whatsapp_text", new_callable=AsyncMock)
+    async def test_unpaid_job_delivery_is_strictly_blocked(
+        self,
+        mock_send_text,
+        mock_send_doc,
+        mock_supabase
+    ):
+        """Memvalidasi bahwa pemanggilan deliver_completed_document_job pada job UNPAID langsung ditolak (Strict Payment Lock)."""
+        job_id = "job-unpaid-test-999"
+        mock_client = MagicMock()
+        mock_table = MagicMock()
+        mock_client.table.return_value = mock_table
+
+        mock_job_record = {
+            "id": job_id,
+            "tenant_id": "boontrack-career",
+            "user_phone": "62811223344",
+            "price_amount": 10482,
+            "payment_status": "UNPAID",
+            "status": "WAITING_PAYMENT",
+            "task_type": "POLISH_REPHRASE"
+        }
+
+        query_builder = MagicMock()
+        query_builder.eq.return_value = query_builder
+        query_builder.execute.return_value = MagicMock(data=[mock_job_record])
+        mock_table.select.return_value = query_builder
+        mock_supabase.return_value = mock_client
+
+        # Panggil deliver_completed_document_job
+        res = await deliver_completed_document_job(job_id=job_id, tenant_id="boontrack-career")
+        
+        # Harus mengembalikan False dan TIDAK mengirim dokumen
+        self.assertFalse(res)
+        mock_send_doc.assert_not_called()
+        mock_send_text.assert_not_called()
+
     # ==========================================
     # 7. Academic Rephrase Engine Tests
     # ==========================================
