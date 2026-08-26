@@ -458,11 +458,11 @@ class TestCareerModular(AioHTTPTestCase):
 
         mock_send_image.assert_called_once()
         args, kwargs = mock_send_image.call_args
-        to_phone = args[0] if args else kwargs.get("to_phone")
+        to_phone = (args[0] if args else None) or kwargs.get("to") or kwargs.get("to_phone")
         self.assertEqual(to_phone, user_id)
         
         # Validasi bahwa yang dikirim adalah bytes in-memory buffer berformat PNG, BUKAN string filepath
-        raw_bytes = kwargs.get("image_path_or_bytes") or (args[1] if len(args) > 1 else None)
+        raw_bytes = kwargs.get("image_bytes") or kwargs.get("image_path_or_bytes") or (args[1] if len(args) > 1 else None)
         self.assertIsInstance(raw_bytes, bytes)
         self.assertTrue(raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
 
@@ -475,6 +475,53 @@ class TestCareerModular(AioHTTPTestCase):
         # Validasi state tersimpan sebagai awaiting_rewrite_payment
         self.assertEqual(GLOBAL_USER_STATES[user_id]["mode"], "awaiting_rewrite_payment")
         self.assertIsNotNone(GLOBAL_USER_STATES[user_id].get("active_invoice"))
+
+    @patch("app.tenants.career.service.download_whatsapp_media", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.extract_text_from_bytes")
+    @patch("app.tenants.career.service.send_whatsapp_text", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.send_whatsapp_image", new_callable=AsyncMock)
+    async def test_handle_document_paraphrase_sends_two_message_sequence(
+        self,
+        mock_send_image,
+        mock_send_text,
+        mock_extract_text,
+        mock_download_media
+    ):
+        """Memvalidasi urutan pengiriman dokumen intake: Pesan 1 (Teks Analisis), Pesan 2 (Gambar Dynamic QRIS)."""
+        user_id = "6281237450222"
+        GLOBAL_USER_STATES[user_id] = {
+            "mode": "paraphrase",
+            "step": 0,
+            "data": {}
+        }
+        mock_download_media.return_value = b"fake_pdf_bytes"
+        mock_extract_text.return_value = "Bab 3 Metode Penelitian ini menguji pengaruh likuiditas terhadap profitabilitas perbankan nasional. " * 50
+
+        await career_service.handle_document(
+            sender_wa_id=user_id,
+            display_name="User Skripsi",
+            media_id="media_skripsi_123",
+            filename="BAB III WORD.pdf"
+        )
+
+        # 1. Pesan 1: Teks Analisis Dokumen terkirim
+        mock_send_text.assert_called()
+        text_calls = [call[0][1] for call in mock_send_text.call_args_list]
+        self.assertTrue(any("DOKUMEN BERHASIL DIANALISIS" in t for t in text_calls))
+
+        # 2. Pesan 2: Gambar Dynamic QRIS terkirim dengan buffer bytes PNG
+        mock_send_image.assert_called_once()
+        args, kwargs = mock_send_image.call_args
+        target_phone = (args[0] if args else None) or kwargs.get("to") or kwargs.get("to_phone")
+        self.assertEqual(target_phone, user_id)
+        
+        qr_bytes = kwargs.get("image_bytes") or kwargs.get("image_path_or_bytes")
+        self.assertIsInstance(qr_bytes, bytes)
+        self.assertTrue(qr_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+
+        caption = kwargs.get("caption", "")
+        self.assertIn("Silakan scan QRIS di atas untuk menyelesaikan pembayaran", caption)
+        self.assertEqual(GLOBAL_USER_STATES[user_id]["mode"], "awaiting_rewrite_payment")
 
     @patch("app.tenants.career.service.download_whatsapp_media", new_callable=AsyncMock)
     @patch("app.tenants.career.service.extract_text_from_bytes")

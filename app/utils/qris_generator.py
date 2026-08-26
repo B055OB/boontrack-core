@@ -62,4 +62,15 @@ def render_qris_bytes(payload: str) -> bytes:
     return buffer.getvalue()
 
 
+def generate_dynamic_qris_image(amount: int, master_static: str = "") -> bytes:
+    """Helper fungsi langsung untuk generate dynamic QRIS PNG bytes dari amount."""
+    if not master_static:
+        import os
+        master_static = os.getenv("BOONTRACK_STATIC_QRIS", "").strip()
+    if not master_static:
+        master_static = "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI5204737253033605802ID5909BoonTrack6012Kab. Bandung61054028663048DC1"
+    payload = generate_dynamic_qris_payload(master_static, int(amount))
+    return render_qris_bytes(payload)
+
+
 generate_qris_image_bytes = render_qris_bytes

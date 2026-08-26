@@ -63,6 +63,7 @@ from app.services.analytics_service import analytics_service
 from app.services.document_parser_service import download_whatsapp_media, extract_text_from_bytes
 from app.services.reconciliation_service import generate_unique_payment_intent, PAYMENT_INTENTS
 from app.services.payment_service import payment_service
+from app.utils.qris_generator import generate_dynamic_qris_image
 
 logger = logging.getLogger(__name__)
 
@@ -339,6 +340,11 @@ class CareerService:
                     tenant_id=TENANT_ID,
                     meta={"product": "polish_rephrase", "filename": filename}
                 )
+                total_amount = order["total_amount"]
+                unique_code = order["unique_code"]
+
+                # Generator dynamic QRIS in-memory PNG bytes
+                qr_bytes = generate_dynamic_qris_image(total_amount)
 
                 # 2. Registrasi Job ke Document Engine dengan Status WAITING_PAYMENT & exact price_amount
                 intake_res = await intake_document_job(
@@ -348,19 +354,13 @@ class CareerService:
                     file_bytes=file_bytes,
                     user_id=sender_wa_id,
                     user_phone=sender_wa_id,
-                    exact_price_amount=order["total_amount"]
+                    exact_price_amount=total_amount
                 )
 
                 user_session["active_invoice"] = order["order_id"]
                 user_session["mode"] = "awaiting_rewrite_payment"
 
-                caption_text = format_invoice_caption(
-                    order["order_id"],
-                    order["total_amount"],
-                    order["unique_code"],
-                    product_name=f"{OFFICIAL_PRODUCT_NAME} ({pricing['tier_label']})"
-                )
-
+                # Pesan 1: Teks Rincian Analisis Dokumen & Biaya
                 summary_msg = (
                     f"📄 *DOKUMEN BERHASIL DIANALISIS*\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -368,20 +368,24 @@ class CareerService:
                     f"📝 *Jumlah Kata:* {metrics['word_count']:,} kata\n"
                     f"📑 *Estimasi:* {metrics['estimated_pages']} halaman\n"
                     f"🏷️ *Kategori Tarif:* {pricing['tier_label']}\n"
-                    f"💰 *Investasi:* Rp{order['total_amount']:,}\n\n"
+                    f"💰 *Investasi:* Rp{total_amount:,}\n\n"
                     f"_{COMPLIANCE_DISCLAIMER}_"
                 )
-                print(f"[CAREER INTAKE] Sending summary text to {sender_wa_id}...", flush=True)
+                print(f"[CAREER INTAKE] Pesan 1: Sending summary text to {sender_wa_id}...", flush=True)
                 await send_whatsapp_text(sender_wa_id, summary_msg, tenant_id=TENANT_ID)
                 await asyncio.sleep(1)
 
-                # Kirim matriks Dynamic QRIS hasil in-memory generator langsung ke WhatsApp
-                print(f"[CAREER INTAKE] Sending dynamic QRIS image ({len(order['qr_bytes'])} bytes, nominal=Rp{order['total_amount']:,}) to {sender_wa_id}...", flush=True)
+                # Pesan 2: Gambar Dynamic QRIS lengkap dengan caption nominal
+                qris_caption = (
+                    f"Silakan scan QRIS di atas untuk menyelesaikan pembayaran Rp{total_amount:,}. "
+                    f"Sistem akan memproses naskah otomatis setelah transfer terverifikasi."
+                )
+                print(f"[CAREER INTAKE] Pesan 2: Sending dynamic QRIS image ({len(qr_bytes)} bytes, nominal=Rp{total_amount:,}) to {sender_wa_id}...", flush=True)
                 img_res = await send_whatsapp_image(
-                    sender_wa_id,
-                    image_path_or_bytes=order["qr_bytes"],
-                    caption=caption_text,
-                    tenant_id=TENANT_ID
+                    to=sender_wa_id,
+                    image_bytes=qr_bytes,
+                    caption=qris_caption,
+                    tenant="boontrack-career"
                 )
                 print(f"[CAREER INTAKE] Dynamic QRIS image delivery result: {img_res}", flush=True)
                 return
@@ -636,13 +640,16 @@ class CareerService:
 
             caption_text = format_invoice_caption(invoice_id, exact_amount, unique_code, product_name=prod_name)
 
+            # Generator dynamic QRIS in-memory PNG bytes
+            qr_bytes = generate_dynamic_qris_image(exact_amount)
+
             # Kirim matriks Dynamic QRIS hasil in-memory generator langsung ke WhatsApp
-            print(f"[CAREER REWRITE] Sending dynamic QRIS image ({len(order['qr_bytes'])} bytes, nominal=Rp{exact_amount:,}) to {sender_wa_id}...", flush=True)
+            print(f"[CAREER REWRITE] Sending dynamic QRIS image ({len(qr_bytes)} bytes, nominal=Rp{exact_amount:,}) to {sender_wa_id}...", flush=True)
             img_res = await send_whatsapp_image(
-                sender_wa_id,
-                image_path_or_bytes=order["qr_bytes"],
+                to=sender_wa_id,
+                image_bytes=qr_bytes,
                 caption=caption_text,
-                tenant_id=TENANT_ID
+                tenant="boontrack-career"
             )
             print(f"[CAREER REWRITE] Dynamic QRIS image delivery result: {img_res}", flush=True)
 
