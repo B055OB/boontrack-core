@@ -50,6 +50,7 @@ from app.services.document_engine import intake_document_job
 from app.services.whatsapp_service import (
     send_whatsapp_text,
     send_whatsapp_image,
+    send_whatsapp_image_link,
     send_whatsapp_buttons,
     send_whatsapp_document,
     safe_log_to_supabase_messages
@@ -63,7 +64,11 @@ from app.services.analytics_service import analytics_service
 from app.services.document_parser_service import download_whatsapp_media, extract_text_from_bytes
 from app.services.reconciliation_service import generate_unique_payment_intent, PAYMENT_INTENTS
 from app.services.payment_service import payment_service
-from app.utils.qris_generator import generate_dynamic_qris_image
+from app.utils.qris_generator import (
+    generate_dynamic_qris_image,
+    get_dynamic_qris_string,
+    get_quickchart_qr_url
+)
 
 logger = logging.getLogger(__name__)
 
@@ -343,8 +348,9 @@ class CareerService:
                 total_amount = order["total_amount"]
                 unique_code = order["unique_code"]
 
-                # Generator dynamic QRIS in-memory PNG bytes
-                qr_bytes = generate_dynamic_qris_image(total_amount)
+                # Generator dynamic QRIS QuickChart direct image URL
+                qris_string = get_dynamic_qris_string(total_amount)
+                qr_url = get_quickchart_qr_url(qris_string)
 
                 # 2. Registrasi Job ke Document Engine dengan Status WAITING_PAYMENT & exact price_amount
                 intake_res = await intake_document_job(
@@ -375,13 +381,12 @@ class CareerService:
                 await send_whatsapp_text(sender_wa_id, summary_msg, tenant_id=TENANT_ID)
                 await asyncio.sleep(1)
 
-                # Pesan 2: Gambar Dynamic QRIS lengkap dengan caption nominal
-                qr_bytes = generate_dynamic_qris_image(total_amount)
+                # Pesan 2: Gambar Dynamic QRIS via Direct Image URL Link (QuickChart)
                 qris_caption = f"Silakan scan QRIS di atas untuk menyelesaikan pembayaran Rp{total_amount:,}.\n\nNaskah akan diproses otomatis setelah transfer terverifikasi."
-                print(f"[CAREER INTAKE] Pesan 2: Sending dynamic QRIS image ({len(qr_bytes)} bytes, nominal=Rp{total_amount:,}) to {sender_wa_id}...", flush=True)
-                img_res = await send_whatsapp_image(
+                print(f"[CAREER INTAKE] Pesan 2: Sending dynamic QRIS image link ({qr_url}, nominal=Rp{total_amount:,}) to {sender_wa_id}...", flush=True)
+                img_res = await send_whatsapp_image_link(
                     to=sender_wa_id,
-                    image_bytes=qr_bytes,
+                    image_url=qr_url,
                     caption=qris_caption,
                     tenant="boontrack-career"
                 )
@@ -570,16 +575,17 @@ class CareerService:
             await send_whatsapp_text(sender_wa_id, summary_msg, tenant_id=TENANT_ID)
             await asyncio.sleep(1)
 
-            # Generator dynamic QRIS in-memory PNG bytes
-            qr_bytes = generate_dynamic_qris_image(order["total_amount"])
+            # Generator dynamic QRIS QuickChart direct image URL
+            qris_string = get_dynamic_qris_string(order["total_amount"])
+            qr_url = get_quickchart_qr_url(qris_string)
             qris_caption = (
                 f"Silakan scan QRIS di atas untuk menyelesaikan pembayaran Rp{order['total_amount']:,}. "
                 f"Sistem akan memproses naskah otomatis setelah transfer terverifikasi."
             )
-            print(f"[CAREER PARAPHRASE] Pesan 2: Sending dynamic QRIS image ({len(qr_bytes)} bytes, nominal=Rp{order['total_amount']:,}) to {sender_wa_id}...", flush=True)
-            img_res = await send_whatsapp_image(
+            print(f"[CAREER PARAPHRASE] Pesan 2: Sending dynamic QRIS image link ({qr_url}, nominal=Rp{order['total_amount']:,}) to {sender_wa_id}...", flush=True)
+            img_res = await send_whatsapp_image_link(
                 to=sender_wa_id,
-                image_bytes=qr_bytes,
+                image_url=qr_url,
                 caption=qris_caption,
                 tenant="boontrack-career"
             )
@@ -648,8 +654,9 @@ class CareerService:
             unique_code = order["unique_code"]
             invoice_id = order["order_id"]
 
-            # 2. Generator dynamic QRIS in-memory PNG bytes
-            qr_bytes = generate_dynamic_qris_image(exact_amount)
+            # 2. Generator dynamic QRIS QuickChart direct image URL
+            qris_string = get_dynamic_qris_string(exact_amount)
+            qr_url = get_quickchart_qr_url(qris_string)
 
             # 3. Registrasi Job ke Document Engine dengan Status WAITING_PAYMENT & exact price_amount
             cv_text = user_session.get("parsed_cv_text") or user_session.get("parsed_doc_text") or "Draft CV Profile"
@@ -683,15 +690,15 @@ class CareerService:
             await send_whatsapp_text(sender_wa_id, package_detail_msg, tenant_id=TENANT_ID)
             await asyncio.sleep(1)
 
-            # Pesan 2 (Image): Gambar QRIS Dinamis via send_whatsapp_image dengan caption nominal eksak
+            # Pesan 2 (Image): Gambar QRIS Dinamis via send_whatsapp_image_link dengan caption nominal eksak
             qris_caption = (
                 f"Silakan scan QRIS di atas untuk menyelesaikan pembayaran Rp{exact_amount:,}. "
                 f"Sistem akan memproses naskah otomatis setelah transfer terverifikasi."
             )
-            print(f"[CAREER REWRITE] Pesan 2: Sending dynamic QRIS image ({len(qr_bytes)} bytes, nominal=Rp{exact_amount:,}) to {sender_wa_id}...", flush=True)
-            img_res = await send_whatsapp_image(
+            print(f"[CAREER REWRITE] Pesan 2: Sending dynamic QRIS image link ({qr_url}, nominal=Rp{exact_amount:,}) to {sender_wa_id}...", flush=True)
+            img_res = await send_whatsapp_image_link(
                 to=sender_wa_id,
-                image_bytes=qr_bytes,
+                image_url=qr_url,
                 caption=qris_caption,
                 tenant="boontrack-career"
             )

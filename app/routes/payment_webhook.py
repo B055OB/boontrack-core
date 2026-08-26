@@ -15,12 +15,32 @@ async def handle_reader_mutation_webhook(request: web.Request) -> web.Response:
     except Exception:
         return web.Response(text="INVALID_PAYLOAD", status=400)
 
-    raw_message = data.get("raw_text") or data.get("message") or data.get("notification_text") or ""
+    # Gabungkan title + body dari payload Android Reader agar parser bisa menangkap nominalnya
+    title_field = data.get("title") or ""
+    body_field = data.get("body") or ""
+    raw_message = (
+        data.get("raw_text")
+        or data.get("message")
+        or data.get("notification_text")
+        or f"{title_field} {body_field}".strip()
+        or ""
+    )
+    # Pastikan field raw_text tersedia untuk extract_clean_dana_amount
+    if not data.get("raw_text") and raw_message:
+        data["raw_text"] = raw_message
+
     tenant_id = data.get("tenant_id", "boontrack-career")
     direct_phone = data.get("user_phone") or data.get("phone")
     amount = extract_clean_dana_amount(data)
 
+    logger.info(
+        f"[READER WEBHOOK] Received payload: title='{title_field}' body='{body_field}' "
+        f"-> raw_message='{raw_message}' -> parsed_amount=Rp{amount:,} "
+        f"tenant={tenant_id} phone={direct_phone}"
+    )
+
     if amount <= 0:
+        logger.warning(f"[READER WEBHOOK] Could not parse valid amount from payload: {data}")
         return web.Response(text="AMOUNT_REQUIRED", status=400)
 
     # 1. Jalankan Unified Payment Matcher (Exact Document Jobs & Intent Fulfillment)
@@ -29,8 +49,11 @@ async def handle_reader_mutation_webhook(request: web.Request) -> web.Response:
         raw_text=raw_message,
         tenant_id=tenant_id,
         source="reader_webhook",
-        direct_phone=direct_phone
+        direct_phone=direct_phone,
+        raw_payload=data
     )
+
+    logger.info(f"[READER WEBHOOK] Match result for Rp{amount:,}: {match_res}")
 
     if match_res.get("status") == "SUCCESS":
         return web.json_response(match_res, status=200)

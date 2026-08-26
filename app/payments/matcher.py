@@ -18,8 +18,13 @@ logger = logging.getLogger("PAYMENT_MATCHER")
 
 
 def extract_clean_dana_amount(raw_input: Union[str, dict, Any]) -> int:
-    """Mengekstrak nominal angka bersih (misal 5083 dari 'Rp5.083' atau 'Rp 5.083,00')
-    dari teks notifikasi DANA Bisnis, SMS banking, atau payload JSON reader.
+    """Mengekstrak nominal angka bersih (misal 25300 dari 'Rp25.300 diterima DANA...')
+    dari teks notifikasi DANA Bisnis, SMS banking, atau payload JSON reader Android.
+
+    Mendukung format DANA Bisnis riil:
+      - "Rp25.300 diterima DANA dari Adi Kurnia"
+      - "Rp25.300 telah dikirim ke BoonTrack"
+      - title: "Pembayaran Masuk", body: "Rp25.300 diterima DANA dari Adi Kurnia"
     """
     if not raw_input:
         return 0
@@ -35,14 +40,19 @@ def extract_clean_dana_amount(raw_input: Union[str, dict, Any]) -> int:
                     return int(clean_digits)
             except Exception:
                 pass
-        text = str(
-            raw_input.get("raw_text")
+        # Gabungkan semua field teks yang mungkin mengandung nominal
+        # Android Reader bisa mengirim title + body / notification_text / raw_text secara terpisah
+        title_text = str(raw_input.get("title") or "")
+        body_text = str(
+            raw_input.get("body")
+            or raw_input.get("raw_text")
             or raw_input.get("message")
             or raw_input.get("text")
             or raw_input.get("notification_text")
             or raw_input.get("keterangan")
             or ""
         )
+        text = f"{title_text} {body_text}".strip()
     elif isinstance(raw_input, str):
         text = raw_input
     else:
@@ -57,18 +67,32 @@ def extract_clean_dana_amount(raw_input: Union[str, dict, Any]) -> int:
     # 1. Hapus tag HTML jika ada
     clean_text = re.sub(r"<[^>]+>", " ", text)
 
-    # 2. Pola 1: Mencari format Rupiah eksplisit (Rp. 5.083, Rp5.083, IDR 5.083,00, Rp 5083)
-    match_rp = re.search(r"(?:rp\.?|idr)\s*([\d\.,]+)", clean_text, re.IGNORECASE)
-    if match_rp:
-        raw_num = match_rp.group(1).strip()
-        # Jika format mengandung sen di belakang (e.g. ,00 atau .00)
+    # 2. Pola DANA Bisnis riil: "Rp25.300 diterima DANA" / "Rp25.300 telah dikirim ke"
+    #    Regex fleksibel: Rp<spasi_opsional><angka_dengan_titik_atau_koma>
+    match_dana = re.search(
+        r"Rp\s*([\d][\d\.\,]*)(?:\s+(?:diterima|telah|masuk|dari|ke|berhasil|sukses))",
+        clean_text,
+        re.IGNORECASE
+    )
+    if match_dana:
+        raw_num = match_dana.group(1).strip().rstrip(".")
         if raw_num.endswith(",00") or raw_num.endswith(".00"):
             raw_num = raw_num[:-3]
         digits = re.sub(r"\D", "", raw_num)
         if digits:
             return int(digits)
 
-    # 3. Pola 2: Kata kunci nominal/sebesar/transfer diikuti angka
+    # 3. Pola umum Rupiah eksplisit (Rp. 5.083, Rp5.083, IDR 5.083,00, Rp 5083)
+    match_rp = re.search(r"(?:rp\.?|idr)\s*([\d\.,]+)", clean_text, re.IGNORECASE)
+    if match_rp:
+        raw_num = match_rp.group(1).strip()
+        if raw_num.endswith(",00") or raw_num.endswith(".00"):
+            raw_num = raw_num[:-3]
+        digits = re.sub(r"\D", "", raw_num)
+        if digits:
+            return int(digits)
+
+    # 4. Pola kata kunci nominal/sebesar/transfer diikuti angka
     match_kw = re.search(r"(?:sebesar|nominal|total|bayar|transfer|masuk)\s*(?:rp\.?)?\s*([\d\.,]+)", clean_text, re.IGNORECASE)
     if match_kw:
         raw_num = match_kw.group(1).strip()
@@ -78,7 +102,7 @@ def extract_clean_dana_amount(raw_input: Union[str, dict, Any]) -> int:
         if digits:
             return int(digits)
 
-    # 4. Pola 3: Angka 4 s.d. 8 digit langsung di dalam teks (misal 5083, 25000)
+    # 5. Fallback: Angka 4 s.d. 8 digit langsung di dalam teks (misal 5083, 25000)
     match_digits = re.search(r"\b(\d{4,8})\b", clean_text)
     if match_digits:
         return int(match_digits.group(1))
@@ -87,28 +111,34 @@ def extract_clean_dana_amount(raw_input: Union[str, dict, Any]) -> int:
 
 
 async def find_matching_unpaid_job(amount: int, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """Mencari job dokumen dengan exact price_amount dan payment_status == 'UNPAID' di Supabase atau in-memory."""
+    """Mencari job dokumen dengan exact price_amount dan payment_status == 'UNPAID'/'PENDING' di Supabase."""
     if amount <= 0:
         return None
 
     supabase = get_supabase()
     if supabase:
-        try:
-            query = (
-                supabase.table("document_jobs")
-                .select("*")
-                .eq("price_amount", amount)
-                .eq("payment_status", "UNPAID")
-            )
-            if tenant_id and tenant_id not in ["all", ""]:
-                query = query.eq("tenant_id", tenant_id)
-            res = query.order("created_at", desc=True).limit(1).execute()
-            if res and hasattr(res, "data") and res.data and len(res.data) > 0:
-                return res.data[0]
-        except Exception as e:
-            logger.warning(f"[PAYMENT MATCHER] Supabase search document_jobs warning: {e}")
+        for status_val in ["UNPAID", "PENDING", "WAITING_PAYMENT"]:
+            try:
+                query = (
+                    supabase.table("document_jobs")
+                    .select("*")
+                    .eq("price_amount", amount)
+                    .eq("payment_status", status_val)
+                )
+                if tenant_id and tenant_id not in ["all", ""]:
+                    query = query.eq("tenant_id", tenant_id)
+                res = query.order("created_at", desc=True).limit(1).execute()
+                if res and hasattr(res, "data") and res.data and len(res.data) > 0:
+                    job = res.data[0]
+                    logger.info(
+                        f"[PAYMENT MATCHER] Found job {job.get('id')} with status={status_val} "
+                        f"price_amount={amount} tenant={tenant_id}"
+                    )
+                    return job
+            except Exception as e:
+                logger.warning(f"[PAYMENT MATCHER] Supabase query ({status_val}) warning: {e}")
 
-    # In-memory search fallback jika database query kosong
+    logger.info(f"[PAYMENT MATCHER] No unpaid job found for amount={amount} tenant={tenant_id}")
     return None
 
 
@@ -117,15 +147,19 @@ async def match_and_fulfill_payment(
     raw_text: str = "",
     tenant_id: str = "boontrack-career",
     source: str = "dana_reader",
-    direct_phone: Optional[str] = None
+    direct_phone: Optional[str] = None,
+    raw_payload: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Mencocokkan mutasi pembayaran DANA Bisnis secara realtime:
-    1. Mencari job dokumen di document_jobs dengan price_amount == amount dan payment_status == 'UNPAID'.
+    1. Mencari job dokumen di document_jobs dengan price_amount == amount dan payment_status == 'UNPAID'/'PENDING'.
     2. Mencari Payment Intent di PAYMENT_INTENTS (misal Invoice BT-51877-183).
-    3. Mengubah status job menjadi PAID.
-    4. Mengirimkan file attachment (.docx / CV_Hasil_Polish.docx) ke WhatsApp user secara otomatis.
+    3. Mengubah status job menjadi PAID & QUEUED.
+    4. Mengirimkan file attachment (.docx) ke WhatsApp user secara otomatis.
     """
-    logger.info(f"[PAYMENT MATCHING] Processing amount Rp{amount:,} | source: {source} | direct_phone: {direct_phone}")
+    logger.info(
+        f"[PAYMENT MATCHING] Reader Webhook Received: raw_payload={raw_payload} | "
+        f"amount=Rp{amount:,} | source={source} | direct_phone={direct_phone} | tenant={tenant_id}"
+    )
 
     if amount <= 0:
         return {

@@ -432,16 +432,16 @@ class TestCareerModular(AioHTTPTestCase):
         self.assertEqual(call_kwargs["event_name"], "career_cv_build_completed")
         self.assertEqual(call_kwargs["user_id"], "62833344455")
         self.assertEqual(call_kwargs["tenant_id"], "boontrack-career")
-    @patch("app.tenants.career.service.send_whatsapp_image", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.send_whatsapp_image_link", new_callable=AsyncMock)
     @patch("app.tenants.career.service.send_whatsapp_text", new_callable=AsyncMock)
     @patch("app.tenants.career.service.track_event", new_callable=AsyncMock)
     async def test_rewrite_button_sends_dynamic_qris_bytes_buffer(
         self,
         mock_track,
         mock_send_text,
-        mock_send_image
+        mock_send_image_link
     ):
-        """Memvalidasi bahwa saat user memilih paket rewrite (10k), bot mengirim Pesan 1 (Rincian) dan Pesan 2 (Dynamic QRIS PNG)."""
+        """Memvalidasi bahwa saat user memilih paket rewrite (10k), bot mengirim Pesan 1 (Rincian) dan Pesan 2 (Dynamic QRIS via URL)."""
         user_id = "628999888777"
         GLOBAL_USER_STATES[user_id] = {
             "mode": "menu",
@@ -463,16 +463,16 @@ class TestCareerModular(AioHTTPTestCase):
         self.assertTrue(any("Single CV Polish & ATS Rewrite" in t for t in text_calls))
         self.assertTrue(any("15 Menit" in t for t in text_calls))
 
-        # 2. Pesan 2: Gambar QRIS Dinamis terkirim
-        mock_send_image.assert_called_once()
-        args, kwargs = mock_send_image.call_args
-        to_phone = (args[0] if args else None) or kwargs.get("to") or kwargs.get("to_phone")
+        # 2. Pesan 2: Gambar QRIS Dinamis via URL terkirim
+        mock_send_image_link.assert_called_once()
+        args, kwargs = mock_send_image_link.call_args
+        to_phone = (args[0] if args else None) or kwargs.get("to")
         self.assertEqual(to_phone, user_id)
-        
-        # Validasi bahwa yang dikirim adalah bytes in-memory buffer berformat PNG
-        raw_bytes = kwargs.get("image_bytes") or kwargs.get("image_path_or_bytes") or (args[1] if len(args) > 1 else None)
-        self.assertIsInstance(raw_bytes, bytes)
-        self.assertTrue(raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+
+        # Validasi image_url berupa QuickChart URL
+        image_url = kwargs.get("image_url") or (args[1] if len(args) > 1 else None)
+        self.assertIsInstance(image_url, str)
+        self.assertIn("quickchart.io", image_url)
 
         # Validasi caption memuat instruksi scan dan nominal
         caption = kwargs.get("caption", "")
@@ -482,16 +482,16 @@ class TestCareerModular(AioHTTPTestCase):
         self.assertEqual(GLOBAL_USER_STATES[user_id]["mode"], "awaiting_rewrite_payment")
         self.assertIsNotNone(GLOBAL_USER_STATES[user_id].get("active_invoice"))
 
-    @patch("app.tenants.career.service.send_whatsapp_image", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.send_whatsapp_image_link", new_callable=AsyncMock)
     @patch("app.tenants.career.service.send_whatsapp_text", new_callable=AsyncMock)
     @patch("app.tenants.career.service.track_event", new_callable=AsyncMock)
     async def test_pro_bundle_button_sends_dynamic_qris_and_invoice_details(
         self,
         mock_track,
         mock_send_text,
-        mock_send_image
+        mock_send_image_link
     ):
-        """Memvalidasi bahwa saat user klik tombol Pro Bundle (25k), bot mengirim rincian paket 25k & Dynamic QRIS."""
+        """Memvalidasi bahwa saat user klik tombol Pro Bundle (25k), bot mengirim rincian paket 25k & Dynamic QRIS via URL."""
         user_id = "628999111222"
         GLOBAL_USER_STATES[user_id] = {
             "mode": "menu",
@@ -512,27 +512,27 @@ class TestCareerModular(AioHTTPTestCase):
         self.assertTrue(any("Career Pro Bundle" in t for t in text_calls))
         self.assertTrue(any("25,000" in t or "25.000" in t for t in text_calls))
 
-        # 2. Pesan 2: Gambar QRIS Dinamis terkirim
-        mock_send_image.assert_called_once()
-        args, kwargs = mock_send_image.call_args
-        raw_bytes = kwargs.get("image_bytes") or kwargs.get("image_path_or_bytes")
-        self.assertIsInstance(raw_bytes, bytes)
-        self.assertTrue(raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+        # 2. Pesan 2: Gambar QRIS Dinamis via URL terkirim
+        mock_send_image_link.assert_called_once()
+        args, kwargs = mock_send_image_link.call_args
+        image_url = kwargs.get("image_url") or (args[1] if len(args) > 1 else None)
+        self.assertIsInstance(image_url, str)
+        self.assertIn("quickchart.io", image_url)
 
         self.assertEqual(GLOBAL_USER_STATES[user_id]["mode"], "awaiting_rewrite_payment")
 
     @patch("app.tenants.career.service.download_whatsapp_media", new_callable=AsyncMock)
     @patch("app.tenants.career.service.extract_text_from_bytes")
     @patch("app.tenants.career.service.send_whatsapp_text", new_callable=AsyncMock)
-    @patch("app.tenants.career.service.send_whatsapp_image", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.send_whatsapp_image_link", new_callable=AsyncMock)
     async def test_handle_document_paraphrase_sends_two_message_sequence(
         self,
-        mock_send_image,
+        mock_send_image_link,
         mock_send_text,
         mock_extract_text,
         mock_download_media
     ):
-        """Memvalidasi urutan pengiriman dokumen intake: Pesan 1 (Teks Analisis), Pesan 2 (Gambar Dynamic QRIS)."""
+        """Memvalidasi urutan pengiriman dokumen intake: Pesan 1 (Teks Analisis), Pesan 2 (Dynamic QRIS via URL)."""
         user_id = "6281237450222"
         GLOBAL_USER_STATES[user_id] = {
             "mode": "paraphrase",
@@ -554,15 +554,15 @@ class TestCareerModular(AioHTTPTestCase):
         text_calls = [call[0][1] for call in mock_send_text.call_args_list]
         self.assertTrue(any("DOKUMEN BERHASIL DIANALISIS" in t for t in text_calls))
 
-        # 2. Pesan 2: Gambar Dynamic QRIS terkirim dengan buffer bytes PNG
-        mock_send_image.assert_called_once()
-        args, kwargs = mock_send_image.call_args
-        target_phone = (args[0] if args else None) or kwargs.get("to") or kwargs.get("to_phone")
+        # 2. Pesan 2: Dynamic QRIS via URL terkirim
+        mock_send_image_link.assert_called_once()
+        args, kwargs = mock_send_image_link.call_args
+        target_phone = (args[0] if args else None) or kwargs.get("to")
         self.assertEqual(target_phone, user_id)
-        
-        qr_bytes = kwargs.get("image_bytes") or kwargs.get("image_path_or_bytes")
-        self.assertIsInstance(qr_bytes, bytes)
-        self.assertTrue(qr_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+
+        image_url = kwargs.get("image_url") or (args[1] if len(args) > 1 else None)
+        self.assertIsInstance(image_url, str)
+        self.assertIn("quickchart.io", image_url)
 
         caption = kwargs.get("caption", "")
         self.assertIn("Silakan scan QRIS di atas untuk menyelesaikan pembayaran", caption)
@@ -572,10 +572,10 @@ class TestCareerModular(AioHTTPTestCase):
     @patch("app.tenants.career.service.extract_text_from_bytes")
     @patch("app.tenants.career.service.send_whatsapp_text", new_callable=AsyncMock)
     @patch("app.tenants.career.service.send_whatsapp_buttons", new_callable=AsyncMock)
-    @patch("app.tenants.career.service.send_whatsapp_image", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.send_whatsapp_image_link", new_callable=AsyncMock)
     async def test_cv_review_pay_per_job_upload_new_draft_resets_single_payment(
         self,
-        mock_send_image,
+        mock_send_image_link,
         mock_send_buttons,
         mock_send_text,
         mock_extract_text,
@@ -618,7 +618,7 @@ class TestCareerModular(AioHTTPTestCase):
             button_id="btn_rewrite_single"
         )
 
-        mock_send_image.assert_called_once()
+        mock_send_image_link.assert_called_once()
         self.assertEqual(GLOBAL_USER_STATES[user_id]["mode"], "awaiting_rewrite_payment")
         new_inv = GLOBAL_USER_STATES[user_id].get("active_invoice")
         self.assertIsNotNone(new_inv)
@@ -680,12 +680,12 @@ class TestCareerModular(AioHTTPTestCase):
         self.assertEqual(GLOBAL_USER_STATES[user_id].get("bundle_quota"), 2)
         mock_send_text.assert_called()
 
-    @patch("app.tenants.career.service.send_whatsapp_image", new_callable=AsyncMock)
+    @patch("app.tenants.career.service.send_whatsapp_image_link", new_callable=AsyncMock)
     @patch("app.tenants.career.service.send_whatsapp_text", new_callable=AsyncMock)
     async def test_polish_rephrase_is_pure_pay_per_use_every_submission_generates_invoice(
         self,
         mock_send_text,
-        mock_send_image
+        mock_send_image_link
     ):
         """Memvalidasi bahwa Polish & Rephrase 100% pay-per-use dan selalu generate invoice baru berstatus WAITING_PAYMENT."""
         user_id = "628111222999"
@@ -705,8 +705,8 @@ class TestCareerModular(AioHTTPTestCase):
             button_id=""
         )
 
-        # Harus membuat invoice QRIS baru
-        mock_send_image.assert_called_once()
+        # Harus membuat invoice QRIS baru via URL
+        mock_send_image_link.assert_called_once()
         self.assertEqual(GLOBAL_USER_STATES[user_id]["mode"], "awaiting_rewrite_payment")
         active_inv = GLOBAL_USER_STATES[user_id].get("active_invoice")
         self.assertIsNotNone(active_inv)
