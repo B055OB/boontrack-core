@@ -446,6 +446,98 @@ class TestPaymentDocDelivery(AioHTTPTestCase):
         self.assertGreaterEqual(result["paraphrased_word_count"], 1000)
         self.assertIn("Naskah telah disempurnakan", result["key_takeaways"][0])
 
+    # ==========================================
+    # 8. WhatsApp Media Upload & QRIS Image Tests
+    # ==========================================
+    @patch("app.services.whatsapp_service.get_wa_credentials")
+    @patch("httpx.AsyncClient.post")
+    @patch("app.services.whatsapp_service.log_to_supabase_messages", new_callable=AsyncMock)
+    async def test_upload_media_success_and_send_whatsapp_image_with_media_id(
+        self,
+        mock_log,
+        mock_post,
+        mock_creds
+    ):
+        """Memvalidasi upload_media multipart dan pengiriman send_whatsapp_image dengan payload media_id."""
+        from app.services.whatsapp_service import upload_media, send_whatsapp_image
+
+        mock_creds.return_value = ("fake-token-xyz", "1029384756", "v20.0")
+
+        # Mock respons: upload_media -> 200 dengan id, send message -> 200 dengan wamid
+        mock_res_upload = MagicMock()
+        mock_res_upload.status_code = 200
+        mock_res_upload.json.return_value = {"id": "meta-media-id-998877"}
+
+        mock_res_send = MagicMock()
+        mock_res_send.status_code = 200
+        mock_res_send.json.return_value = {"messages": [{"id": "wamid.img.12345"}]}
+
+        mock_post.side_effect = [mock_res_upload, mock_res_send]
+
+        fake_qr_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        caption = "Total Pembayaran: Rp25.482 (Termasuk Kode Unik)"
+
+        res = await send_whatsapp_image(
+            to_phone="628123456789",
+            image_path_or_bytes=fake_qr_bytes,
+            caption=caption,
+            tenant_id="boontrack-career"
+        )
+
+        self.assertIsNotNone(res)
+        self.assertEqual(mock_post.call_count, 2)
+
+        # Cek call pertama: multipart upload_media
+        upload_call = mock_post.call_args_list[0]
+        self.assertIn("https://graph.facebook.com/v20.0/1029384756/media", upload_call[0][0])
+        self.assertEqual(upload_call[1]["data"]["messaging_product"], "whatsapp")
+        self.assertEqual(upload_call[1]["data"]["type"], "image/png")
+        self.assertIn("file", upload_call[1]["files"])
+
+        # Cek call kedua: kirim pesan image dengan media_id
+        send_call = mock_post.call_args_list[1]
+        self.assertIn("https://graph.facebook.com/v20.0/1029384756/messages", send_call[0][0])
+        payload = send_call[1]["json"]
+        self.assertEqual(payload["messaging_product"], "whatsapp")
+        self.assertEqual(payload["type"], "image")
+        self.assertEqual(payload["image"]["id"], "meta-media-id-998877")
+        self.assertEqual(payload["image"]["caption"], caption)
+
+    @patch("app.services.whatsapp_service.get_wa_credentials")
+    @patch("httpx.AsyncClient.post")
+    @patch("app.services.whatsapp_service.send_whatsapp_text", new_callable=AsyncMock)
+    async def test_send_whatsapp_image_upload_failure_fallback_to_text(
+        self,
+        mock_send_text,
+        mock_post,
+        mock_creds
+    ):
+        """Memvalidasi jika upload_media gagal, sistem fallback mengirim teks instruksi."""
+        from app.services.whatsapp_service import send_whatsapp_image
+
+        mock_creds.return_value = ("fake-token-xyz", "1029384756", "v20.0")
+
+        # Mock respons upload media gagal (HTTP 500)
+        mock_res_upload = MagicMock()
+        mock_res_upload.status_code = 500
+        mock_res_upload.text = "Internal Server Error"
+        mock_post.return_value = mock_res_upload
+
+        mock_send_text.return_value = {"messages": [{"id": "wamid.txt.fallback"}]}
+
+        fake_qr_bytes = b"bad_image_bytes"
+        caption = "Total Pembayaran: Rp25.482"
+
+        res = await send_whatsapp_image(
+            to_phone="628123456789",
+            image_path_or_bytes=fake_qr_bytes,
+            caption=caption,
+            tenant_id="boontrack-career"
+        )
+
+        self.assertIsNotNone(res)
+        mock_send_text.assert_called_once_with("628123456789", caption, tenant_id="boontrack-career")
+
 
 if __name__ == "__main__":
     unittest.main()

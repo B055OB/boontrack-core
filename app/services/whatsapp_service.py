@@ -318,7 +318,7 @@ def get_wa_credentials():
         or os.getenv("META_WA_PHONE_NUMBER_ID")
         or ""
     )
-    version = os.getenv("META_GRAPH_VERSION", "v21.0")
+    version = os.getenv("META_GRAPH_VERSION", "v20.0")
     return token.strip(), phone_id.strip(), version
 
 def _get_auth_headers(token: str) -> Dict[str, str]:
@@ -366,7 +366,7 @@ async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False
             )
             return response.json()
     except Exception as e:
-        logger.error(f"[WhatsApp Service] Exception in send_whatsapp_text: {e}")
+        logger.error(f"[WhatsApp Service] Exception in send_whatsapp_text: {e}", exc_info=True)
         return None
 
 async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dict[str, str]], header_text: str = "", footer_text: str = "", tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
@@ -430,58 +430,73 @@ async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dic
             )
             return response.json()
     except Exception as e:
-        logger.error(f"[WhatsApp Service] Exception in send_whatsapp_buttons: {e}")
+        logger.error(f"[WhatsApp Service] Exception in send_whatsapp_buttons: {e}", exc_info=True)
         return await send_whatsapp_text(to_phone, body_text, tenant_id=tenant_id)
 
-async def upload_whatsapp_media(file_bytes: bytes, filename: str, mime_type: str) -> Optional[str]:
+async def upload_media(bytes_data: bytes, mime_type: str = "image/png", filename: str = "qris.png") -> Optional[str]:
+    """Melakukan HTTP POST multipart ke https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/media untuk mendapatkan media_id."""
     token, phone_id, version = get_wa_credentials()
     if not token or not phone_id:
-        logger.error("[WhatsApp Service] Missing credentials for media upload")
+        logger.error(f"[WhatsApp Service] Missing credentials for media upload (token_len={len(token)}, phone_id={phone_id})")
         return None
 
     url = f"https://graph.facebook.com/{version}/{phone_id}/media"
-    headers = _get_auth_headers(token)
+    headers = {"Authorization": f"Bearer {token}"}
 
     try:
-        files = {"file": (filename, file_bytes, mime_type)}
-        data = {"messaging_product": "whatsapp", "type": mime_type}
+        files = {"file": (filename, bytes_data, mime_type)}
+        data = {
+            "messaging_product": "whatsapp",
+            "type": mime_type
+        }
         async with httpx.AsyncClient(timeout=45.0) as client:
             response = await client.post(url, headers=headers, data=data, files=files)
             if response.status_code not in (200, 201):
-                logger.error(f"[WhatsApp Service] upload_media failed: {response.status_code} - {response.text}")
+                logger.error(
+                    f"[WhatsApp Service] upload_media failed: HTTP {response.status_code} - {response.text} "
+                    f"(filename={filename}, bytes_len={len(bytes_data)}, mime={mime_type})"
+                )
                 return None
-            return response.json().get("id")
+            res_json = response.json()
+            media_id = res_json.get("id")
+            if not media_id:
+                logger.error(f"[WhatsApp Service] upload_media returned no 'id' in response: {res_json}")
+                return None
+            logger.info(f"[WhatsApp Service] upload_media success: media_id={media_id} ({filename})")
+            return str(media_id)
     except Exception as e:
-        logger.error(f"[WhatsApp Service] Exception in upload_whatsapp_media: {e}")
+        logger.error(f"[WhatsApp Service] Exception in upload_media: {e}", exc_info=True)
         return None
 
+async def upload_whatsapp_media(file_bytes: bytes, filename: str, mime_type: str) -> Optional[str]:
+    """Helper wrapper for backward compatibility with upload_whatsapp_media."""
+    return await upload_media(bytes_data=file_bytes, mime_type=mime_type, filename=filename)
+
 async def send_whatsapp_image(to_phone: str, image_path_or_bytes: Union[str, bytes], caption: str = "", tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
+    """Mengirim pesan gambar ke WhatsApp user via Meta WhatsApp Cloud API menggunakan media_id atau URL link."""
     token, phone_id, version = get_wa_credentials()
     if not token or not phone_id:
+        logger.warning("[WhatsApp Service] Missing Meta WA credentials in send_whatsapp_image, falling back to text message.")
         return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
 
     clean_phone = str(to_phone).replace("+", "").strip()
-    img_bytes = None
-    filename = "qris_boontrack.png"
-    mime_type = "image/png"
+    url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
 
-    if isinstance(image_path_or_bytes, bytes):
-        img_bytes = image_path_or_bytes
-    elif isinstance(image_path_or_bytes, str) and os.path.exists(image_path_or_bytes):
-        with open(image_path_or_bytes, "rb") as f:
-            img_bytes = f.read()
-        filename = os.path.basename(image_path_or_bytes)
-        guessed, _ = mimetypes.guess_type(image_path_or_bytes)
-        mime_type = guessed or ("image/jpeg" if filename.endswith((".jpg", ".jpeg")) else "image/png")
-    elif isinstance(image_path_or_bytes, str) and image_path_or_bytes.startswith(("http://", "https://")):
-        url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
-        headers = {**_get_auth_headers(token), "Content-Type": "application/json"}
+    # 1. URL publik (http/https)
+    if isinstance(image_path_or_bytes, str) and image_path_or_bytes.startswith(("http://", "https://")):
         payload = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
             "to": clean_phone,
             "type": "image",
-            "image": {"link": image_path_or_bytes, "caption": caption}
+            "image": {
+                "link": image_path_or_bytes,
+                "caption": caption
+            }
         }
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -495,36 +510,61 @@ async def send_whatsapp_image(to_phone: str, image_path_or_bytes: Union[str, byt
                         user_phone=clean_phone,
                         user_id=clean_phone,
                         conversation_id=clean_phone,
-                        metadata={"msg_type": "image", "caption": caption}
+                        metadata={"msg_type": "image", "caption": caption, "link": image_path_or_bytes}
                     )
                     return res.json()
+                logger.error(f"[WhatsApp Service] send_whatsapp_image (link) failed: {res.status_code} - {res.text}")
                 return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
-        except Exception:
+        except Exception as e:
+            logger.error(f"[WhatsApp Service] Exception in send_whatsapp_image (link): {e}", exc_info=True)
             return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
 
+    # 2. Binary bytes atau file path lokal
+    img_bytes: Optional[bytes] = None
+    filename = "qris.png"
+    mime_type = "image/png"
+
+    if isinstance(image_path_or_bytes, bytes):
+        img_bytes = image_path_or_bytes
+    elif isinstance(image_path_or_bytes, str) and os.path.exists(image_path_or_bytes):
+        try:
+            with open(image_path_or_bytes, "rb") as f:
+                img_bytes = f.read()
+            filename = os.path.basename(image_path_or_bytes)
+            guessed, _ = mimetypes.guess_type(image_path_or_bytes)
+            mime_type = guessed or ("image/jpeg" if filename.lower().endswith((".jpg", ".jpeg")) else "image/png")
+        except Exception as err:
+            logger.error(f"[WhatsApp Service] Error reading local image file {image_path_or_bytes}: {err}", exc_info=True)
+
     if not img_bytes:
+        logger.warning("[WhatsApp Service] No valid image bytes to send, falling back to text.")
         return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
 
-    media_id = await upload_whatsapp_media(img_bytes, filename, mime_type)
+    # Upload bytes ke Meta Media Endpoint untuk mendapatkan media_id
+    media_id = await upload_media(bytes_data=img_bytes, mime_type=mime_type, filename=filename)
     if not media_id:
+        logger.error("[WhatsApp Service] Media upload failed in send_whatsapp_image, falling back to text.")
         return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
 
-    url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
-    headers = {**_get_auth_headers(token), "Content-Type": "application/json"}
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": clean_phone,
         "type": "image",
-        "image": {"id": media_id, "caption": caption}
+        "image": {
+            "id": media_id,
+            "caption": caption
+        }
     }
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(url, headers=headers, json=payload)
             if response.status_code not in (200, 201):
+                logger.error(f"[WhatsApp Service] send_whatsapp_image failed: {response.status_code} - {response.text}")
                 return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
             
+            res_data = response.json()
             await log_to_supabase_messages(
                 sender="bot",
                 text=f"[Kirim Gambar] {caption}".strip(),
@@ -533,11 +573,11 @@ async def send_whatsapp_image(to_phone: str, image_path_or_bytes: Union[str, byt
                 user_phone=clean_phone,
                 user_id=clean_phone,
                 conversation_id=clean_phone,
-                metadata={"msg_type": "image", "caption": caption}
+                metadata={"msg_type": "image", "caption": caption, "media_id": media_id}
             )
-            return response.json()
+            return res_data
     except Exception as e:
-        logger.error(f"[WhatsApp Service] Exception in send_whatsapp_image: {e}")
+        logger.error(f"[WhatsApp Service] Exception in send_whatsapp_image: {e}", exc_info=True)
         return await send_whatsapp_text(to_phone, caption, tenant_id=tenant_id)
 
 async def send_whatsapp_document(
