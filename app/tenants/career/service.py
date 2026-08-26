@@ -371,16 +371,19 @@ class CareerService:
                     f"💰 *Investasi:* Rp{order['total_amount']:,}\n\n"
                     f"_{COMPLIANCE_DISCLAIMER}_"
                 )
+                print(f"[CAREER INTAKE] Sending summary text to {sender_wa_id}...", flush=True)
                 await send_whatsapp_text(sender_wa_id, summary_msg, tenant_id=TENANT_ID)
                 await asyncio.sleep(1)
 
                 # Kirim matriks Dynamic QRIS hasil in-memory generator langsung ke WhatsApp
-                await send_whatsapp_image(
+                print(f"[CAREER INTAKE] Sending dynamic QRIS image ({len(order['qr_bytes'])} bytes, nominal=Rp{order['total_amount']:,}) to {sender_wa_id}...", flush=True)
+                img_res = await send_whatsapp_image(
                     sender_wa_id,
                     image_path_or_bytes=order["qr_bytes"],
                     caption=caption_text,
                     tenant_id=TENANT_ID
                 )
+                print(f"[CAREER INTAKE] Dynamic QRIS image delivery result: {img_res}", flush=True)
                 return
 
             # Default: Mode Review CV
@@ -634,12 +637,14 @@ class CareerService:
             caption_text = format_invoice_caption(invoice_id, exact_amount, unique_code, product_name=prod_name)
 
             # Kirim matriks Dynamic QRIS hasil in-memory generator langsung ke WhatsApp
-            await send_whatsapp_image(
+            print(f"[CAREER REWRITE] Sending dynamic QRIS image ({len(order['qr_bytes'])} bytes, nominal=Rp{exact_amount:,}) to {sender_wa_id}...", flush=True)
+            img_res = await send_whatsapp_image(
                 sender_wa_id,
                 image_path_or_bytes=order["qr_bytes"],
                 caption=caption_text,
                 tenant_id=TENANT_ID
             )
+            print(f"[CAREER REWRITE] Dynamic QRIS image delivery result: {img_res}", flush=True)
 
             await asyncio.sleep(1)
 
