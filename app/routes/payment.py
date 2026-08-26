@@ -1,13 +1,43 @@
+import io
 import os
 import re
 import logging
 from aiohttp import web
 from typing import Dict, Any
+
+from fastapi import APIRouter, HTTPException, Path
+from fastapi.responses import StreamingResponse
+
 from app.services.whatsapp_service import send_whatsapp_text
 from app.services.cv_state_engine import GLOBAL_USER_STATES
 from app.core.database import track_event
+from app.utils.qris_generator import generate_dynamic_qris_payload, generate_qris_image_bytes
 
 logger = logging.getLogger(__name__)
+
+# FastAPI Router untuk Payment & QRIS Test
+payment_router = APIRouter(prefix="/api/v1/payment", tags=["Payment QRIS"])
+
+
+@payment_router.get("/qris/test/{amount}", summary="Test Dynamic QRIS Generator PNG")
+async def test_dynamic_qris_fastapi(amount: int = Path(..., description="Nominal transaksi dalam Rupiah")):
+    """Endpoint testing FastAPI untuk generate Dynamic QRIS langsung dalam format gambar PNG."""
+    static_qris = os.getenv("BOONTRACK_STATIC_QRIS", "").strip()
+    if not static_qris:
+        raise HTTPException(
+            status_code=500,
+            detail="BOONTRACK_STATIC_QRIS environment variable not set in .env"
+        )
+    try:
+        dynamic_payload = generate_dynamic_qris_payload(static_qris, amount)
+        img_bytes = generate_qris_image_bytes(dynamic_payload)
+        return StreamingResponse(io.BytesIO(img_bytes), media_type="image/png")
+    except Exception as e:
+        logger.error(f"[FastAPI Dynamic QRIS Error] {e}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Gagal generate dynamic QRIS: {str(e)}"
+        )
 
 
 def extract_amount_from_text(text: str) -> int:
@@ -37,6 +67,27 @@ async def serve_qris_asset(request: web.Request) -> web.Response:
                 return web.Response(body=f.read(), content_type=content_type)
                 
     return web.Response(text="QRIS image not found", status=404)
+
+
+async def test_dynamic_qris_aiohttp_handler(request: web.Request) -> web.Response:
+    """Endpoint aiohttp untuk testing generate Dynamic QRIS PNG."""
+    try:
+        amount_str = request.match_info.get("amount", "10000")
+        amount = int(amount_str)
+    except (ValueError, TypeError):
+        return web.Response(text="Invalid amount parameter", status=400)
+
+    static_qris = os.getenv("BOONTRACK_STATIC_QRIS", "").strip()
+    if not static_qris:
+        return web.Response(text="BOONTRACK_STATIC_QRIS environment variable not set in .env", status=500)
+
+    try:
+        dynamic_payload = generate_dynamic_qris_payload(static_qris, amount)
+        img_bytes = generate_qris_image_bytes(dynamic_payload)
+        return web.Response(body=img_bytes, content_type="image/png")
+    except Exception as e:
+        logger.error(f"[aiohttp Dynamic QRIS Error] {e}")
+        return web.Response(text=f"Failed to generate dynamic QRIS: {str(e)}", status=400)
 
 
 async def notify_payment_success_universal(user_id: str, amount: int, platform: str = "whatsapp"):
@@ -82,6 +133,7 @@ async def notify_payment_success_universal(user_id: str, amount: int, platform: 
         try:
             bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
             if bot_token:
+                import aiohttp
                 async with aiohttp.ClientSession() as session:
                     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
                     payload = {"chat_id": int(user_id), "text": success_msg.replace("*", "")}
@@ -182,6 +234,9 @@ def register_payment_routes(app: web.Application):
     # Endpoint asset gambar QRIS publik
     app.router.add_get("/assets/qris.png", serve_qris_asset)
     app.router.add_get("/assets/qris.jpg", serve_qris_asset)
+
+    # Endpoint Dynamic QRIS Test PNG
+    app.router.add_get("/api/v1/payment/qris/test/{amount}", test_dynamic_qris_aiohttp_handler)
 
     # Endpoint webhook mutasi pembayaran
     app.router.add_post("/api/payments/webhook", handle_dana_webhook)
