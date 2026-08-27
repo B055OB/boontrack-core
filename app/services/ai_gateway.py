@@ -73,7 +73,7 @@ def _clean_response(text: str) -> str:
 class GeminiGoalDetector(BaseGoalDetector):
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
-        self.model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.model_name = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 
     async def detect(self, query: str, request_id: str = None) -> Dict[str, Any]:
         req_id = request_id or f"req-{uuid.uuid4().hex[:8]}"
@@ -108,7 +108,7 @@ class AIGateway:
     def __init__(self, primary_provider: str = "gemini"):
         self.gemini_detector = GeminiGoalDetector()
 
-        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
         self.openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct")
 
