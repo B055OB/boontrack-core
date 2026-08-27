@@ -52,41 +52,45 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
 
     display_name = career_service.get_user_display_name(sender_wa_id) or contact_name or sender_wa_id
 
-    # 1. Handling Gambar (Bukti Transfer)
-    if msg_type == "image":
-        await career_service.handle_image(
+    try:
+        # 1. Handling Gambar (Bukti Transfer)
+        if msg_type == "image":
+            await career_service.handle_image(
+                sender_wa_id=sender_wa_id,
+                display_name=display_name,
+                media_id=media_id
+            )
+            return web.Response(text="EVENT_RECEIVED", status=200)
+
+        # 2. Handling Dokumen CV (PDF / DOCX)
+        if msg_type == "document":
+            await career_service.handle_document(
+                sender_wa_id=sender_wa_id,
+                display_name=display_name,
+                media_id=media_id,
+                filename=filename
+            )
+            return web.Response(text="EVENT_RECEIVED", status=200)
+
+        # 3. Handling Teks & Tombol Interaktif
+        user_text = event["text"]
+        button_id = event["button_id"] or ""
+
+        if not user_text and msg_type not in ["text", "interactive", "button"]:
+            await career_service.send_menu_buttons(sender_wa_id)
+            return web.Response(text="EVENT_RECEIVED", status=200)
+
+        await career_service.handle_text_or_button(
             sender_wa_id=sender_wa_id,
             display_name=display_name,
-            media_id=media_id
+            user_text=user_text,
+            button_id=button_id
         )
+
         return web.Response(text="EVENT_RECEIVED", status=200)
-
-    # 2. Handling Dokumen CV (PDF / DOCX)
-    if msg_type == "document":
-        await career_service.handle_document(
-            sender_wa_id=sender_wa_id,
-            display_name=display_name,
-            media_id=media_id,
-            filename=filename
-        )
-        return web.Response(text="EVENT_RECEIVED", status=200)
-
-    # 3. Handling Teks & Tombol Interaktif
-    user_text = event["text"]
-    button_id = event["button_id"] or ""
-
-    if not user_text and msg_type not in ["text", "interactive", "button"]:
-        await career_service.send_menu_buttons(sender_wa_id)
-        return web.Response(text="EVENT_RECEIVED", status=200)
-
-    await career_service.handle_text_or_button(
-        sender_wa_id=sender_wa_id,
-        display_name=display_name,
-        user_text=user_text,
-        button_id=button_id
-    )
-
-    return web.Response(text="EVENT_RECEIVED", status=200)
+    except Exception as e:
+        logger.exception(f"[CAREER WEBHOOK ISOLATION] Caught runtime error: {e}")
+        return web.Response(text="EVENT_ERROR_ISOLATED", status=200)
 
 
 def register_career_routes(app: web.Application):

@@ -256,8 +256,8 @@ async def om_budi_webhook_event_handler(request: web.Request) -> web.Response:
         return web.json_response({"status": "success"}, status=200)
 
     except Exception as e:
-        logger.error(f"[{TENANT_ID}] Webhook processing error: {e}", exc_info=True)
-        return web.json_response({"status": "error", "message": str(e)}, status=500)
+        logger.exception(f"[{TENANT_ID} WEBHOOK ISOLATION] Webhook processing error: {e}")
+        return web.json_response({"status": "error_isolated", "message": str(e)}, status=200)
 
 
 def register_om_budi_routes(app: web.Application):

@@ -6,20 +6,12 @@ from aiogram import Bot, Dispatcher
 
 from app.core.middlewares import cors_middleware
 from app.api.endpoints import register_api_routes
-from app.modules.commerce.router import commerce_routes
-from app.modules.public_services.router import register_public_service_routes
-from app.telegram.router import register_telegram_routes
-from app.whatsapp.router import register_whatsapp_routes
-from app.routes.payment import register_payment_routes
-from app.routes.payment_webhook import register_payment_webhook_routes
-from app.tenants.om_budi.router import register_om_budi_routes
-from app.tenants.career.router import register_career_routes
-from app.routes.whatsapp_central import register_central_whatsapp_routes
-from app.core.channels.telegram import register_central_telegram_routes
-from app.reader.router import (
-    pair_device_handler,
-    refresh_token_handler,
-    revoke_device_handler,
+from app.core.tenant_loader import (
+    load_dynamic_tenants,
+    TENANT_REGISTRY,
+    TENANT_STATUS,
+    get_tenant_statuses,
+    get_tenant_details,
 )
 
 logger = logging.getLogger("SERVER_CORE")
@@ -34,52 +26,17 @@ engine = create_async_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
 async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 def create_web_app() -> web.Application:
-    """Membangun instance web.Application aiohttp dengan seluruh middleware dan sub-router."""
+    """Membangun instance web.Application aiohttp dengan seluruh middleware dan sub-router terisolasi."""
     app = web.Application(middlewares=[cors_middleware])
 
-    # 1. Base API Endpoints (Health, Tracker, Webchat, DANA Webhook)
+    # 1. Base API Endpoints (Health, Tenant System Status, Tracker, Webchat, DANA Webhook)
     register_api_routes(app)
 
-    # 2. Commerce Multi-Tenant
-    app.add_routes(commerce_routes)
+    # 2. Safe Dynamic Tenant Loader (Zero Cascade Crash)
+    # Memuat seluruh tenant dan modul layanan secara dinamis dengan importlib & proteksi isolasi penuh
+    load_dynamic_tenants(app, session_factory=async_session)
 
-    # 3. Public Services Unified Router
-    register_public_service_routes(app)
-
-    # 4. Telegram & WhatsApp Gateway Webhooks
-    register_telegram_routes(app, async_session)
-    register_whatsapp_routes(app, async_session)
-
-    # 5. Payment & Reader Webhooks
-    register_payment_routes(app)
-    register_payment_webhook_routes(app)
-
-    # 6. Tenant Om Budi, Career, & WhatsApp Central Dispatcher
-    register_om_budi_routes(app)
-    register_career_routes(app)
-    register_central_whatsapp_routes(app)
-
-    # 7. Central Multi-Tenant Telegram Channel (Digicorn, Career, & Universal)
-    register_central_telegram_routes(app)
-
-    # 7. Device Pairing & Reader Management
-    async def _wrap_pair(req):
-        async with async_session() as session:
-            return await pair_device_handler(req, session)
-
-    async def _wrap_refresh(req):
-        async with async_session() as session:
-            return await refresh_token_handler(req, session)
-
-    async def _wrap_revoke(req):
-        async with async_session() as session:
-            return await revoke_device_handler(req, session)
-
-    app.router.add_post("/api/v1/devices/pair", _wrap_pair)
-    app.router.add_post("/api/v1/devices/refresh", _wrap_refresh)
-    app.router.add_post("/api/v1/devices/revoke", _wrap_revoke)
-
-    # 8. Static Assets Mount
+    # 3. Static Assets Mount
     app_assets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
     if os.path.exists(app_assets_dir):
         app.router.add_static("/assets", app_assets_dir, name="assets")

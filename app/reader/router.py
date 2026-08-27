@@ -42,3 +42,28 @@ async def refresh_token_handler(request: web.Request, session=None) -> web.Respo
 
 async def revoke_device_handler(request: web.Request, session=None) -> web.Response:
     return web.json_response({"status": "success", "message": "Device revoked successfully"})
+
+
+def register_reader_routes(app: web.Application, session_factory=None):
+    """Mendaftarkan route reader device pairing, token management, dan status."""
+    async def _wrap_pair(req):
+        if session_factory:
+            async with session_factory() as session:
+                return await pair_device_handler(req, session)
+        return await pair_device_handler(req)
+
+    async def _wrap_refresh(req):
+        if session_factory:
+            async with session_factory() as session:
+                return await refresh_token_handler(req, session)
+        return await refresh_token_handler(req)
+
+    async def _wrap_revoke(req):
+        if session_factory:
+            async with session_factory() as session:
+                return await revoke_device_handler(req, session)
+        return await revoke_device_handler(req)
+
+    app.router.add_post("/api/v1/devices/pair", _wrap_pair)
+    app.router.add_post("/api/v1/devices/refresh", _wrap_refresh)
+    app.router.add_post("/api/v1/devices/revoke", _wrap_revoke)

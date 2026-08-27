@@ -6,7 +6,29 @@ from psycopg2.extras import RealDictCursor
 from app.core.database import get_db_connection
 
 async def health_check_handler(request: web.Request) -> web.Response:
-    return web.json_response({"status": "healthy", "message": "BoonTrack Core is awake!"}, status=200)
+    from app.core.tenant_loader import get_tenant_statuses
+    return web.json_response({
+        "status": "healthy",
+        "message": "BoonTrack Core is awake!",
+        "tenants": get_tenant_statuses()
+    }, status=200)
+
+
+async def tenant_system_status_handler(request: web.Request) -> web.Response:
+    """Endpoint detail status kesehatan seluruh tenant terdaftar (GET /api/v1/system/tenants)."""
+    from app.core.tenant_loader import get_tenant_details
+    details = get_tenant_details()
+    active_count = sum(1 for t in details.values() if t.get("status") == "active")
+    degraded_count = sum(1 for t in details.values() if t.get("status") in ("degraded", "failed"))
+    overall_status = "degraded" if degraded_count > 0 else "ok"
+
+    return web.json_response({
+        "status": overall_status,
+        "total": len(details),
+        "active": active_count,
+        "degraded": degraded_count,
+        "tenants": details
+    }, status=200)
 
 async def tracker_handler(request: web.Request) -> web.Response:
     try:
