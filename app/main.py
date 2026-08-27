@@ -3,6 +3,8 @@ import os
 import asyncio
 import logging
 from dotenv import load_dotenv
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 # Setup path aplikasi
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -17,6 +19,47 @@ from app.core.bot import bot, dp
 from app.core.database import init_db
 from app.core.server import create_web_app, start_web_server, start_telegram_polling
 from app.handlers.telegram_bot_handlers import register_all_bot_handlers
+from app.routes.gym_access_routes import gym_router
+from app.routes.payment import payment_router
+from app.routes.webchat import router as webchat_router
+
+# ============================================================================
+# FastAPI Application Entrypoint (Uvicorn / ASGI compatible)
+# ============================================================================
+
+app = FastAPI(
+    title="BoonTrack Core API",
+    description="Unified Multi-Tenant Core Engine & IoT Access Control Service (Atmosfitnes Pilot)",
+    version="1.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Register Routers
+app.include_router(gym_router, prefix="/api/v1/gym")
+app.include_router(payment_router)
+app.include_router(webchat_router)
+
+
+@app.get("/", summary="Root Health Check")
+@app.get("/health", summary="Health Check")
+async def root_health_check():
+    return {
+        "status": "healthy",
+        "service": "boontrack-core",
+        "version": "1.0.0",
+    }
+
+
+# ============================================================================
+# Async Server Runner (aiohttp & Telegram bot worker)
+# ============================================================================
 
 async def start_application():
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -38,9 +81,9 @@ async def start_application():
 
     # 3. Buat dan Jalankan Web Server aiohttp
     print("[BOOT] Starting Web Server...", flush=True)
-    app = create_web_app()
+    aiohttp_app = create_web_app()
     port = int(os.getenv("PORT", 8080))
-    await start_web_server(app, port=port)
+    await start_web_server(aiohttp_app, port=port)
 
     # 4. Jalankan Background Polling Telegram
     asyncio.create_task(start_telegram_polling(bot, dp))
@@ -59,3 +102,4 @@ if __name__ == '__main__':
     finally:
         loop.stop()
         loop.close()
+

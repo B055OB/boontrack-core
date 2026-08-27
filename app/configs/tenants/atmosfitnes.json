@@ -1,0 +1,125 @@
+{
+  "identity": {
+    "tenant_id": "atmosfitnes",
+    "name": "Atmosfitnes Gym",
+    "slug": "atmosfitnes",
+    "status": "ACTIVE",
+    "description": "Smart Gym & Fitness Center dengan sistem IoT Turnstile Access Control otomatis."
+  },
+  "template_type": "GYM_TEMPLATE",
+  "persona": {
+    "system_prompt": "Kamu adalah resepsionis dan asisten AI resmi Atmosfitnes Gym yang ramah, energik, dan solutif.\n\nPedoman Komunikasi:\n1. Berikan informasi seputar fasilitas gym, jadwal kelas, harga membership, dan jam operasional (Buka setiap hari 06:00 - 22:00 WIB).\n2. Bantu member terkait panduan akses masuk gate turnstile otomatis berbasis NFC card.\n3. Berikan instruksi perpanjangan membership melalui pembayaran QRIS otomatis.\n4. Gunakan bahasa Indonesia yang ramah, memotivasi, dan profesional.",
+    "tone": "ramah, energik, memotivasi, solutif",
+    "language": "id",
+    "default_fallback_message": "Mohon maaf, sistem sedang memproses antrean pesan lain. Silakan coba sesaat lagi atau hubungi resepsionis di meja depan gym.",
+    "welcome_message": "Selamat datang di Atmosfitnes Gym! 💪 Tempat terbaik untuk mencapai target kebugaran Anda. Ada yang bisa kami bantu seputar membership atau akses gym hari ini?"
+  },
+  "menu_config": {
+    "main_menu_text": "🏋️ *Menu Layanan Atmosfitnes Gym*\n\n1. Membership Regular Bulanan (Rp250.000)\n2. Membership VIP Tahunan (Rp2.400.000)\n3. Membership Pelajar/Student Pass (Rp175.000)\n4. Cek Status Membership & Kartu NFC\n5. Info Fasilitas & Jam Operasional\n6. Bantuan CS / Resepsionis\n\n_Ketik angka 1-6 untuk memilih opsi._",
+    "keywords": {
+      "menu": "MAIN_MENU",
+      "batal": "RESET",
+      "reset": "RESET",
+      "ulang": "RESET",
+      "start": "MAIN_MENU",
+      "help": "MAIN_MENU",
+      "daftar": "MAIN_MENU",
+      "join": "MAIN_MENU"
+    },
+    "options": [
+      {
+        "id": "1",
+        "title": "Membership Regular Bulanan",
+        "description": "Akses tak terbatas selama 30 hari ke seluruh area gym dan loker.",
+        "action": "ORDER_QRIS",
+        "price_amount": 250000,
+        "payload": null
+      },
+      {
+        "id": "2",
+        "title": "Membership VIP Tahunan",
+        "description": "Akses 365 hari + bonus sesi Personal Trainer dan handuk gratis.",
+        "action": "ORDER_QRIS",
+        "price_amount": 2400000,
+        "payload": null
+      },
+      {
+        "id": "3",
+        "title": "Membership Student Pass",
+        "description": "Paket hemat khusus pelajar dan mahasiswa (kartu identitas aktif).",
+        "action": "ORDER_QRIS",
+        "price_amount": 175000,
+        "payload": null
+      },
+      {
+        "id": "4",
+        "title": "Cek Status Membership & NFC",
+        "description": "Pemeriksaan masa aktif membership dan status kartu akses turnstile.",
+        "action": "TEXT_REPLY",
+        "price_amount": 0,
+        "payload": "STATUS_INFO"
+      },
+      {
+        "id": "5",
+        "title": "Info Fasilitas & Jam Operasional",
+        "description": "Buka setiap hari pukul 06:00 - 22:00 WIB di Lantai 2 Atmos Tower.",
+        "action": "TEXT_REPLY",
+        "price_amount": 0,
+        "payload": "FACILITY_INFO"
+      },
+      {
+        "id": "6",
+        "title": "Bantuan CS / Resepsionis",
+        "description": "Hubungkan dengan staf resepsionis atau admin gym.",
+        "action": "ESCALATE",
+        "price_amount": 0,
+        "payload": null
+      }
+    ],
+    "escalation_keywords": [
+      "admin",
+      "cs",
+      "resepsionis",
+      "staff",
+      "komplain",
+      "refund",
+      "human",
+      "petugas",
+      "bicara dengan staf",
+      "trainer"
+    ],
+    "escalation_message": "Pesan Anda telah kami teruskan ke staf resepsionis Atmosfitnes. Tim kami akan segera menghubungi Anda."
+  },
+  "channel_config": {
+    "whatsapp_phone_number_id": "109876543210123",
+    "webhook_verify_token": "atmosfitnes_verify_token",
+    "credentials": {}
+  },
+  "payment_config": {
+    "provider": "DANA_DYNAMIC",
+    "static_qris_payload": "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI5204737253033605802ID5911Atmosfitnes6012Kab. Bandung61054028663048DC1",
+    "use_unique_code": true,
+    "unique_code_digits": 3,
+    "min_amount": 50000,
+    "packages": {
+      "regular_monthly": {
+        "price": 250000,
+        "name": "Membership Regular Bulanan"
+      },
+      "vip_annual": {
+        "price": 2400000,
+        "name": "Membership VIP Tahunan"
+      },
+      "student_pass": {
+        "price": 175000,
+        "name": "Student Pass Bulanan"
+      }
+    }
+  },
+  "feature_flags": {
+    "enable_cv_ats": false,
+    "enable_document_analysis": false,
+    "enable_qris": true,
+    "enable_ai_completion": true
+  }
+}
