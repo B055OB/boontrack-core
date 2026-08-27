@@ -346,18 +346,9 @@ class AcademicRephraseEngine:
         """
         # 1. Pre-cleaning & Normalisasi Naskah (scrub nomor halaman liar, spasi pecah, typo)
         cleaned_text = cls.clean_academic_text(raw_text)
-        if not cleaned_text:
-            return {
-                "title": f"Hasil Polish: {filename}",
-                "tone": "Akademik Formal (EYD V)",
-                "original_word_count": 0,
-                "paraphrased_word_count": 0,
-                "length_ratio": 1.0,
-                "anti_summarization_passed": True,
-                "key_takeaways": ["Naskah kosong."],
-                "sections": [],
-                "full_text": ""
-            }
+        if not cleaned_text or not cleaned_text.strip():
+            logger.error(f"[AcademicRephraseEngine] Teks kosong setelah normalisasi untuk {filename}")
+            raise ValueError(f"Naskah kosong: Teks untuk '{filename}' tidak dapat diproses karena tidak memuat konten teks.")
 
         orig_word_count = len(cleaned_text.split())
 
@@ -427,6 +418,8 @@ class AcademicRephraseEngine:
         clean_task = str(task_type or "").upper().strip()
         if clean_task not in SUPPORTED_TASKS:
             logger.warning(f"[AcademicRephraseEngine] Task '{task_type}' diproses dengan pipeline Polish Rephrase standar.")
+        if not raw_text or not raw_text.strip():
+            raise ValueError(f"Naskah kosong: raw_text tidak boleh kosong untuk task '{task_type}' ({filename})")
         return await cls.rephrase_document(raw_text=raw_text, filename=filename)
 
 

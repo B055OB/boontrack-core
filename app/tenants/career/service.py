@@ -16,6 +16,7 @@ from app.tenants.career.messages import (
     DOCS_CLUSTER_BUTTONS,
     COMPANION_CLUSTER_BUTTONS,
     PREMIUM_ACTION_BUTTONS,
+    DOCUMENT_MENU_BODY,
     UPSELL_REWRITE_MSG,
     UPSELL_BUTTONS,
     LANG_SELECTION_BUTTONS,
@@ -450,7 +451,7 @@ class CareerService:
         )
 
         try:
-            file_bytes = await download_whatsapp_media(media_id)
+            file_bytes = await download_whatsapp_media(media_id, tenant_id=TENANT_ID)
             extracted_text = extract_text_from_bytes(file_bytes, filename)
 
             if not extracted_text or len(extracted_text) < 30:
@@ -494,6 +495,9 @@ class CareerService:
                 user_session["active_invoice"] = order["order_id"]
                 user_session["mode"] = "awaiting_rewrite_payment"
                 user_session["awaiting_payment_at"] = datetime.now().isoformat()
+                user_session["raw_text"] = extracted_text
+                user_session["last_uploaded_filename"] = filename
+                user_session["job_id"] = intake_res.get("job_id")
 
                 # Pesan 1: Teks Rincian Analisis Dokumen & Biaya
                 summary_msg = (
@@ -654,10 +658,10 @@ class CareerService:
         if button_id == "btn_cluster_docs" or (current_mode == "menu" and user_text_clean in ["layanan dokumen", "dokumen", "menu dokumen", "1"]):
             await send_whatsapp_buttons(
                 to_phone=sender_wa_id,
-                body_text="📄 *KLUSTER LAYANAN DOKUMEN PROFESIONAL*\n\nSilakan pilih layanan dokumen yang Anda butuhkan di bawah ini:",
+                body_text=DOCUMENT_MENU_BODY,
                 buttons=DOCS_CLUSTER_BUTTONS,
-                header_text="LAYANAN DOKUMEN",
-                footer_text="BoonTrack Document Hub",
+                header_text="🎯 PUSAT DOKUMEN & KARIR",
+                footer_text="BoonTrack • Trusted by 10,000+ Jobseekers",
                 tenant_id=TENANT_ID
             )
             return

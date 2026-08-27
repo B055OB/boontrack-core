@@ -233,10 +233,34 @@ async def match_and_fulfill_payment(
                     raw_key = matched_job.get("raw_storage_key") or matched_job.get("storage_key")
                     doc_filename = matched_job.get("original_filename") or matched_job.get("filename", "Dokumen.pdf")
                     raw_text = ""
-                    if raw_key:
+
+                    # 1. Ambil dari in-memory text cache
+                    from app.services.document_engine import JOB_RAW_TEXT_CACHE
+                    if job_id in JOB_RAW_TEXT_CACHE:
+                        raw_text = JOB_RAW_TEXT_CACHE[job_id]
+                    elif str(job_id) in JOB_RAW_TEXT_CACHE:
+                        raw_text = JOB_RAW_TEXT_CACHE[str(job_id)]
+
+                    # 2. Ambil dari R2 raw text backup
+                    if not raw_text:
+                        backup_text_key = f"incoming/{tenant_id}/{job_id}_raw_text.txt"
+                        backup_bytes = await r2_storage_service.download_file(backup_text_key)
+                        if backup_bytes:
+                            try:
+                                raw_text = backup_bytes.decode("utf-8").strip()
+                            except Exception:
+                                raw_text = backup_bytes.decode("latin-1", errors="ignore").strip()
+
+                    # 3. Ambil dari R2 raw file download & ekstraksi
+                    if not raw_text and raw_key:
                         raw_bytes = await r2_storage_service.download_file(raw_key)
                         if raw_bytes:
                             raw_text = extract_text_from_bytes(raw_bytes, doc_filename)
+
+                    # 4. Ambil dari user_session jika masih ada di memori
+                    if not raw_text and user_phone:
+                        sess = GLOBAL_USER_STATES.get(user_phone, {})
+                        raw_text = sess.get("raw_text") or sess.get("parsed_cv_text") or ""
                     
                     await process_document_job_async(
                         job_id=job_id,

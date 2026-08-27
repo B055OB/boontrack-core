@@ -301,6 +301,10 @@ def format_document_caption(file_name: str) -> str:
     )
 
 
+# In-memory fast text cache across worker life-cycle
+JOB_RAW_TEXT_CACHE: Dict[str, str] = {}
+
+
 async def process_document_job_async(
     job_id: str,
     tenant_id: str,
@@ -315,6 +319,43 @@ async def process_document_job_async(
     logger.info(f"[DocumentWorker] Started processing job {job_id} ({task_type})")
     t_start = time.time()
     try:
+        # 0. Validasi & Pemulihan raw_text jika kosong
+        effective_text = str(raw_text or "").strip()
+        if not effective_text:
+            effective_text = JOB_RAW_TEXT_CACHE.get(job_id, "").strip()
+
+        if not effective_text:
+            backup_text_key = f"incoming/{tenant_id}/{job_id}_raw_text.txt"
+            backup_bytes = await r2_storage_service.download_file(backup_text_key)
+            if backup_bytes:
+                try:
+                    effective_text = backup_bytes.decode("utf-8").strip()
+                except Exception:
+                    effective_text = backup_bytes.decode("latin-1", errors="ignore").strip()
+
+        if not effective_text:
+            supabase = get_supabase()
+            if supabase:
+                try:
+                    res = supabase.table("document_jobs").select("storage_key, original_filename").eq("id", job_id).execute()
+                    if res.data and len(res.data) > 0:
+                        raw_s_key = res.data[0].get("storage_key")
+                        orig_name = res.data[0].get("original_filename") or filename
+                        if raw_s_key:
+                            raw_file_bytes = await r2_storage_service.download_file(raw_s_key)
+                            if raw_file_bytes:
+                                effective_text = extract_text_from_bytes(raw_file_bytes, orig_name).strip()
+                except Exception as rec_err:
+                    logger.error(f"[DocumentWorker] Failed to recover raw_text from DB/R2 for {job_id}: {rec_err}")
+
+        if not effective_text:
+            err_msg = f"Naskah kosong: Teks dokumen tidak dapat diekstrak atau hilang untuk job {job_id} ({filename}). Pemrosesan AI dibatalkan."
+            logger.error(f"[DocumentWorker Error] {err_msg}")
+            await update_job_status(job_id, status="FAILED", error_message="Teks dokumen kosong / gagal diekstrak")
+            raise ValueError(err_msg)
+
+        raw_text = effective_text
+
         # 1. Update status -> PROCESSING
         await update_job_status(job_id, status="PROCESSING")
 
@@ -529,6 +570,52 @@ async def intake_document_job(
 
     # 3. Ekstraksi teks cepat untuk metrics kata, SHA-256 hash, & kalkulasi harga
     extracted_text = extract_text_from_bytes(file_bytes, filename)
+    if not extracted_text or not extracted_text.strip():
+        logger.error(
+            f"[DocumentEngine] CRITICAL: Extracted text is empty for {filename} "
+            f"({len(file_bytes)} bytes). Rejecting intake."
+        )
+        if exact_price_amount and exact_price_amount > 0:
+            supabase_fallback = get_supabase()
+            if supabase_fallback:
+                fallback_record = {
+                    "id": job_id,
+                    "job_id": job_id,
+                    "tenant_id": clean_tenant,
+                    "user_id": str(user_id or user_phone or "guest"),
+                    "source_channel": "whatsapp",
+                    "original_filename": filename or "document.docx",
+                    "mime_type": mime_type,
+                    "file_size": len(file_bytes) if file_bytes else 0,
+                    "storage_key": raw_storage_key,
+                    "task_type": normalized_task,
+                    "status": "WAITING_PAYMENT",
+                    "payment_status": "UNPAID",
+                    "price_amount": exact_price_amount,
+                }
+                try:
+                    supabase_fallback.table("document_jobs").insert(fallback_record).execute()
+                except Exception as fb_err:
+                    logger.error(f"[DocumentEngine] Fallback insert failed: {fb_err}")
+        return {
+            "status": "REJECTED",
+            "job_id": job_id,
+            "error": "Teks naskah tidak dapat terbaca dari berkas dokumen (ekstraksi teks kosong). Pastikan dokumen memuat teks digital yang dapat dibaca.",
+            "is_valid": False
+        }
+
+    # Simpan ke in-memory cache & cadangkan raw text ke R2
+    JOB_RAW_TEXT_CACHE[job_id] = extracted_text
+    try:
+        raw_text_key = f"incoming/{clean_tenant}/{job_id}_raw_text.txt"
+        await r2_storage_service.upload_file(
+            file_bytes=extracted_text.encode("utf-8"),
+            storage_key=raw_text_key,
+            content_type="text/plain; charset=utf-8"
+        )
+    except Exception as txt_err:
+        logger.warning(f"[DocumentEngine] Backup raw text upload note: {txt_err}")
+
     metrics = calculate_document_metrics(extracted_text)
     pricing = calculate_pricing(normalized_task, metrics["word_count"])
     doc_hash = metrics["doc_hash"]

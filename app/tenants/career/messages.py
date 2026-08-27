@@ -14,9 +14,9 @@ WELCOME_CAREER_TEMPLATE = (
 
 # 3 Interactive Buttons for Pre-Payment / Entry Menu
 CAREER_ENTRY_BUTTONS = [
-    {"id": "btn_create_cv", "title": "📝 Buat CV Baru"},
-    {"id": "btn_review_cv", "title": "🔍 Review Bedah CV"},
-    {"id": "btn_paraphrase", "title": "✍️ Polish & Rephrase"}
+    {"id": "btn_create_cv", "title": "💼 Buat CV ATS"},
+    {"id": "btn_review_cv", "title": "🔍 Bedah CV Saya"},
+    {"id": "btn_paraphrase", "title": "✍️ Parafrase Naskah"}
 ]
 
 # Legacy alias for backward compatibility
@@ -42,11 +42,35 @@ PREMIUM_CLUSTER_BUTTONS = [
 
 PREMIUM_CAREER_BUTTONS = PREMIUM_CLUSTER_BUTTONS
 
-# Submenu Layanan Dokumen (Post-payment)
+# --- HIGH-CONVERTING DOCUMENT MENU BODY TEXT ---
+DOCUMENT_MENU_BODY = (
+    "🎯 *PUSAT OPTIMASI DOKUMEN & KARIR BOONTRACK*\n\n"
+    "90% kegagalan lamaran kerja dan revisi naskah berakar dari dokumen yang tidak terbaca sistem. "
+    "Jangan biarkan peluang Anda terlewat!\n\n"
+    "Pilih solusi dokumen yang Anda butuhkan:\n\n"
+    "1️⃣ 💼 *Buat CV ATS-Friendly*\n"
+    "Struktur rapi berstandar global dengan STAR method agar lolos screening rekruter.\n\n"
+    "2️⃣ 🔍 *Bedah & Audit CV (HR View)*\n"
+    "Cek skor ATS, deteksi red flags, dan dapatkan perbaikan konkret sebelum melamar.\n\n"
+    "3️⃣ ✍️ *Polish & Parafrase Naskah*\n"
+    "Rombak kalimat akademis (EYD V) untuk lolos Turnitin tanpa merusak sitasi & rumus.\n\n"
+    "4️⃣ 🚀 *Career Pro Bundle (All-in-One)*\n"
+    "Paket tuntas: CV Tailored + Evaluasi HR + Surat Lamaran resmi."
+)
+
+# Submenu Layanan Dokumen (Post-payment) — 3 buttons (WhatsApp max)
 DOCS_CLUSTER_BUTTONS = [
-    {"id": "btn_create_cv", "title": "📝 Buat CV Baru"},
-    {"id": "btn_review_cv", "title": "🔍 Bedah CV Ulang"},
-    {"id": "btn_paraphrase", "title": "✍️ Polish & Rephrase"}
+    {"id": "btn_create_cv", "title": "💼 Buat CV ATS"},
+    {"id": "btn_review_cv", "title": "🔍 Bedah CV Saya"},
+    {"id": "btn_paraphrase", "title": "✍️ Parafrase Naskah"}
+]
+
+# Extended 4-option document menu (used where list messages are supported)
+DOCS_CLUSTER_BUTTONS_4 = [
+    {"id": "btn_create_cv", "title": "💼 Buat CV ATS"},
+    {"id": "btn_review_cv", "title": "🔍 Bedah CV Saya"},
+    {"id": "btn_paraphrase", "title": "✍️ Parafrase Naskah"},
+    {"id": "btn_bundle_pro", "title": "🚀 Paket Karir Lengkap"}
 ]
 
 # Submenu Career Companion (Post-payment)
