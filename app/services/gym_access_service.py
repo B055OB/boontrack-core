@@ -9,11 +9,14 @@ Features:
 - Offline whitelist generation for local ESP32 caching
 - Offline event batch synchronization
 - Controller heartbeat monitoring
+- WhatsApp Renewal Notification loop with Dynamic QRIS & Unique Code
+- Instant Member Auto-Reactivation upon Renewal Payment
 """
 
 import hashlib
 import logging
-from datetime import datetime, timezone
+import urllib.parse
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Union
 from uuid import uuid4
 
@@ -30,9 +33,30 @@ from app.schemas.gym_schema import (
     GymAccessController,
     GymAccessEvent,
 )
-from app.services.whatsapp_service import get_supabase
+from app.services.whatsapp_service import (
+    get_supabase,
+    send_whatsapp_text,
+    send_whatsapp_image_link,
+)
+from app.utils.qris_generator import (
+    generate_dynamic_qris_payload,
+    generate_unique_code,
+)
+from app.services.reconciliation_service import PAYMENT_INTENTS
 
 logger = logging.getLogger("GYM_ACCESS_SERVICE")
+
+DEFAULT_ATMOSFITNES_STATIC_QRIS = (
+    "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI"
+    "51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI5204737253033605802ID5911"
+    "Atmosfitnes6012Kab. Bandung61054028663048DC1"
+)
+
+MEMBERSHIP_PACKAGE_PRICES = {
+    "REGULAR_MONTHLY": 250000,
+    "VIP_ANNUAL": 2400000,
+    "STUDENT_PASS": 175000,
+}
 
 
 class ControllerAuthenticationError(Exception):
@@ -177,7 +201,7 @@ class GymAccessService:
         return ctrl
 
     # =========================================================================
-    # Core Feature 1: Real-time Access Verification
+    # Core Feature 1: Real-time Access Verification & WhatsApp Renewal Fallback
     # =========================================================================
 
     async def verify_access(
@@ -326,7 +350,7 @@ class GymAccessService:
         # Normalize Expiry Date Timezone
         expiry_aware = member.expiry_date if member.expiry_date.tzinfo else member.expiry_date.replace(tzinfo=timezone.utc)
         if member.membership_status == MembershipStatus.EXPIRED or expiry_aware <= now:
-            logger.info(f"[GymAccess] Member '{member.name}' is EXPIRED (expiry: {expiry_aware})")
+            logger.info(f"[GymAccess] Member '{member.name}' is EXPIRED (expiry: {expiry_aware}) -> Triggering WhatsApp Renewal Loop")
             await self._log_access_event(
                 tenant_id=tenant_id,
                 controller_id=controller_id,
@@ -337,10 +361,17 @@ class GymAccessService:
                 reason=AccessReason.EXPIRED_MEMBERSHIP,
                 idempotency_key=idem_key,
             )
+
+            # Auto Trigger WhatsApp Renewal Notification & Dynamic QRIS
+            try:
+                await self.trigger_renewal_notification(tenant_id, member)
+            except Exception as ren_err:
+                logger.error(f"[GymRenewal] Error triggering renewal WA: {ren_err}", exc_info=True)
+
             return TapAccessResponse(
                 decision=AccessDecision.DENIED,
                 reason=AccessReason.EXPIRED_MEMBERSHIP,
-                message=f"Akses Ditolak: Masa aktif membership {member.name} telah berakhir.",
+                message=f"Akses Ditolak: Masa aktif membership {member.name} telah berakhir. Link QRIS perpanjangan telah dikirim ke WhatsApp Anda.",
                 member_name=member.name,
                 membership_status=MembershipStatus.EXPIRED,
                 expiry_date=member.expiry_date,
@@ -370,6 +401,179 @@ class GymAccessService:
             event_id=event.id if event else None,
             unlock_gate=True,
         )
+
+    # =========================================================================
+    # WhatsApp Renewal Loop & Dynamic QRIS Dispatcher
+    # =========================================================================
+
+    async def trigger_renewal_notification(
+        self,
+        tenant_id: str,
+        member: GymMember,
+        static_qris_payload: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generates dynamic QRIS invoice and dispatches renewal message to member's WhatsApp."""
+        if not member.phone:
+            logger.warning(f"[GymRenewal] Member '{member.name}' has no phone number")
+            return {"status": "skipped", "reason": "no_phone"}
+
+        # 1. Determine Package Base Price & Unique Code
+        base_price = MEMBERSHIP_PACKAGE_PRICES.get(member.membership_package, 250000)
+        unique_code = generate_unique_code(101, 899)
+        total_amount = base_price + unique_code
+
+        invoice_id = f"GYM-REN-{str(member.id)[:8].upper()}-{unique_code}"
+        static_qris = static_qris_payload or DEFAULT_ATMOSFITNES_STATIC_QRIS
+
+        # 2. Generate Dynamic QRIS Payload & QuickChart QR Link
+        dynamic_qris = generate_dynamic_qris_payload(static_qris, total_amount)
+        encoded_payload = urllib.parse.quote(dynamic_qris)
+        qris_image_url = f"https://quickchart.io/qr?text={encoded_payload}&size=500&ecLevel=H"
+
+        # 3. Register Payment Intent for Reconciliation
+        intent_record = {
+            "invoice_id": invoice_id,
+            "tenant_id": tenant_id,
+            "product": "gym_membership_renewal",
+            "member_id": str(member.id),
+            "user_id": str(member.phone),
+            "user_phone": str(member.phone),
+            "amount": total_amount,
+            "total_amount": total_amount,
+            "created_at": datetime.now(timezone.utc),
+            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=60),
+            "status": "PENDING",
+        }
+        PAYMENT_INTENTS[total_amount] = intent_record
+        PAYMENT_INTENTS[invoice_id] = intent_record
+
+        # 4. Format WhatsApp Message
+        exp_date_str = member.expiry_date.strftime("%d %B %Y")
+        renewal_msg = (
+            f"Halo *{member.name}*, masa aktif membership Atmosfitnes Anda telah berakhir pada *{exp_date_str}*.\n\n"
+            f"Untuk perpanjangan instan dan membuka akses gate, silakan scan QRIS berikut senilai *Rp{total_amount:,}*.\n\n"
+            f"Akses akan aktif otomatis setelah pembayaran terverifikasi."
+        )
+
+        logger.info(f"[GymRenewal] Dispatching WA renewal notice to {member.phone} (amount: Rp{total_amount:,}, inv: {invoice_id})")
+
+        # 5. Send WhatsApp Text & QRIS Image
+        await send_whatsapp_text(member.phone, renewal_msg, tenant_id=tenant_id)
+        await send_whatsapp_image_link(
+            to=member.phone,
+            image_url=qris_image_url,
+            caption=f"QRIS Perpanjangan Membership Atmosfitnes Rp{total_amount:,} (Lunas otomatis membuka gate turnstile)",
+            tenant=tenant_id,
+        )
+
+        return {
+            "status": "sent",
+            "invoice_id": invoice_id,
+            "total_amount": total_amount,
+            "member_id": str(member.id),
+            "phone": member.phone,
+            "qris_image_url": qris_image_url,
+        }
+
+    # =========================================================================
+    # Payment Callback: Instant Membership Auto-Reactivation
+    # =========================================================================
+
+    async def process_gym_membership_renewal(
+        self,
+        tenant_id: str,
+        member_id: str,
+        amount: Optional[int] = None,
+        invoice_id: Optional[str] = None,
+        days_to_add: int = 30,
+    ) -> Dict[str, Any]:
+        """Reactivates member upon payment confirmation, extends expiry date, and sends WA confirmation."""
+        now = datetime.now(timezone.utc)
+        member: Optional[GymMember] = None
+
+        # 1. Lookup Member in In-Memory
+        if tenant_id in self._members and member_id in self._members[tenant_id]:
+            member = self._members[tenant_id][member_id]
+        else:
+            # 2. Lookup in Supabase
+            supabase = get_supabase()
+            if supabase:
+                try:
+                    res = supabase.table("gym_members") \
+                        .select("*") \
+                        .eq("tenant_id", tenant_id) \
+                        .eq("id", member_id) \
+                        .limit(1) \
+                        .execute()
+                    if res.data and len(res.data) > 0:
+                        member = GymMember.model_validate(res.data[0])
+                except Exception as e:
+                    logger.warning(f"[GymReactivation] Supabase member lookup error: {e}")
+
+        if not member:
+            logger.error(f"[GymReactivation] Cannot reactivate: Member '{member_id}' not found in tenant '{tenant_id}'")
+            return {"status": "error", "message": "Member not found"}
+
+        # 3. Calculate New Expiry Date (Add days to current or now)
+        current_exp_aware = member.expiry_date if member.expiry_date.tzinfo else member.expiry_date.replace(tzinfo=timezone.utc)
+        base_calc_date = max(now, current_exp_aware)
+        new_expiry_date = base_calc_date + timedelta(days=days_to_add)
+
+        # 4. Update Member Status to ACTIVE
+        member.membership_status = MembershipStatus.ACTIVE
+        member.expiry_date = new_expiry_date
+        member.updated_at = now
+
+        # Update in-memory
+        if tenant_id not in self._members:
+            self._members[tenant_id] = {}
+        self._members[tenant_id][member_id] = member
+
+        # Persist update to Supabase
+        supabase = get_supabase()
+        if supabase:
+            try:
+                supabase.table("gym_members") \
+                    .update({
+                        "membership_status": "ACTIVE",
+                        "expiry_date": new_expiry_date.isoformat(),
+                        "updated_at": now.isoformat(),
+                    }) \
+                    .eq("tenant_id", tenant_id) \
+                    .eq("id", member_id) \
+                    .execute()
+            except Exception as e:
+                logger.warning(f"[GymReactivation] Supabase member update error: {e}")
+
+        # Mark intent as paid in memory if exists
+        if invoice_id and invoice_id in PAYMENT_INTENTS:
+            PAYMENT_INTENTS[invoice_id]["status"] = "PAID"
+
+        # 5. Send WhatsApp Confirmation Message to Member
+        if member.phone:
+            formatted_date = new_expiry_date.strftime("%d %B %Y")
+            amount_display = f"Rp{amount:,}" if amount else "Lunas"
+            confirm_msg = (
+                f"🎉 *PEMBAYARAN PERPANJANGAN BERHASIL!*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"📋 *Layanan:* Atmosfitnes Gym Membership\n"
+                f"🆔 *Invoice:* `{invoice_id or 'GYM-PAID'}`\n"
+                f"💰 *Total:* {amount_display}\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"Masa aktif membership *{member.name}* telah diperpanjang hingga *{formatted_date}*.\n\n"
+                f"🔓 Akses gate turnstile otomatis telah *AKTIF KEMBALI*. Silakan langsung tap kartu NFC Anda di gate masuk. Selamat berlatih! 💪"
+            )
+            await send_whatsapp_text(member.phone, confirm_msg, tenant_id=tenant_id)
+
+        logger.info(f"[GymReactivation] Member '{member.name}' ({member_id}) successfully reactivated until {new_expiry_date.isoformat()}")
+        return {
+            "status": "RENEWED",
+            "member_id": member_id,
+            "name": member.name,
+            "membership_status": "ACTIVE",
+            "new_expiry_date": new_expiry_date.isoformat(),
+            "unlocked": True,
+        }
 
     # =========================================================================
     # Core Feature 2: Whitelist Generation for ESP32 Offline Caching

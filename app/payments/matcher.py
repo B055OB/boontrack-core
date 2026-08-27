@@ -177,9 +177,10 @@ async def match_and_fulfill_payment(
     # 2. Cek matching ke PAYMENT_INTENTS memori
     matched_intent = None
     for inv_id, intent in list(PAYMENT_INTENTS.items()):
-        if intent.get("status") == "PENDING" and intent.get("total_amount") == amount:
+        if intent.get("status") in ("PENDING", "UNPAID") and (intent.get("total_amount") == amount or intent.get("amount") == amount):
             matched_intent = intent
             break
+
 
     # 3. Jika cocok dengan document_jobs:
     if matched_job:
@@ -308,7 +309,25 @@ async def match_and_fulfill_payment(
         logger.info(f"[PAYMENT MATCHED] Intent {invoice_id} matched for exact amount Rp{amount:,} (User: {user_id})")
 
         # Handle fulfillment sesuai produk
-        if matched_intent.get("tenant_id") == "digicorn":
+        if matched_intent.get("tenant_id") == "atmosfitnes" or matched_intent.get("product") == "gym_membership_renewal":
+            from app.services.gym_access_service import gym_access_service
+            member_id = str(matched_intent.get("member_id") or matched_intent.get("user_id") or "")
+            renewal_res = await gym_access_service.process_gym_membership_renewal(
+                tenant_id=matched_intent.get("tenant_id", "atmosfitnes"),
+                member_id=member_id,
+                amount=amount,
+                invoice_id=invoice_id
+            )
+            return {
+                "status": "SUCCESS",
+                "action": "GYM_MEMBERSHIP_RENEWED",
+                "invoice_id": invoice_id,
+                "tenant": "atmosfitnes",
+                "amount": amount,
+                "member_id": member_id,
+                "renewal_details": renewal_res
+            }
+        elif matched_intent.get("tenant_id") == "digicorn":
             from app.tenants.digicorn.service import digicorn_service
             await digicorn_service.deliver_paid_order(matched_intent)
             return {
@@ -321,6 +340,7 @@ async def match_and_fulfill_payment(
         elif user_id:
             user_session = GLOBAL_USER_STATES.setdefault(str(user_id), {"step": 0, "mode": "menu", "data": {}})
             prod = matched_intent.get("product") or matched_intent.get("product_id") or matched_intent.get("meta", {}).get("product")
+
             if prod == "career_pro_bundle":
                 user_session["bundle_quota"] = 3
                 user_session["bundle_expires_at"] = (datetime.now() + timedelta(days=30)).isoformat()
@@ -440,3 +460,8 @@ async def handle_admin_retry_doc_command(cmd_text: str, tenant_id: str = "boontr
     except Exception as e:
         logger.error(f"[Admin Retry Doc Error] {e}")
         return f"⚠️ *Terjadi Kesalahan:* {str(e)}"
+
+
+# Alias for backward compatibility & semantic naming
+match_and_process_payment = match_and_fulfill_payment
+
