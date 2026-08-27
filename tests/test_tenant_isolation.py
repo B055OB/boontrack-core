@@ -36,6 +36,15 @@ class TestTenantIsolationAndPII(unittest.TestCase):
 class TestDynamicTenantLoaderAndIsolation(unittest.IsolatedAsyncioTestCase):
     """Pengujian Unit untuk Arsitektur Isolasi Tenant Penuh & Safe Dynamic Loader."""
 
+    def setUp(self):
+        from app.core.tenant_loader import TENANT_STATUS
+        self._status_backup = dict(TENANT_STATUS)
+
+    def tearDown(self):
+        from app.core.tenant_loader import TENANT_STATUS
+        TENANT_STATUS.clear()
+        TENANT_STATUS.update(self._status_backup)
+
     async def test_dynamic_loader_status_reporting(self):
         """Verifikasi bahwa seluruh tenant utama dimuat secara dinamis dan dilaporkan pada /health serta /api/v1/system/tenants."""
         from app.core.server import create_web_app

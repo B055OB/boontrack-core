@@ -104,12 +104,16 @@ TENANT_STATUS: Dict[str, Dict[str, Any]] = {}
 def load_dynamic_tenants(
     app: web.Application,
     session_factory=None,
-    registry: Optional[Dict[str, Dict[str, Any]]] = None
+    registry: Optional[Dict[str, Dict[str, Any]]] = None,
+    reset_status: bool = False
 ) -> Dict[str, str]:
     """Memuat seluruh modul tenant secara dinamis menggunakan importlib dengan proteksi isolasi kesalahan.
     Jika suatu modul tenant gagal dimuat (ImportError, syntax, dsb.), exception ditangkap,
     dicatat di log, ditandai sebagai DEGRADED, dan proses booting berlanjut tanpa mematikan server.
     """
+    if registry is not None or reset_status:
+        TENANT_STATUS.clear()
+
     active_registry = registry if registry is not None else TENANT_REGISTRY
     statuses: Dict[str, str] = {}
 
@@ -209,6 +213,31 @@ def load_dynamic_tenants(
     return statuses
 
 
+def sanitize_error_summary(err_str: Optional[str]) -> Optional[str]:
+    """Sanitasi error string agar tidak membocorkan full stack trace, path lokal, atau token/secrets ke publik."""
+    if not err_str:
+        return None
+    
+    # Ambil baris pertama atau nama exception jika ada multiline stack trace
+    lines = [line.strip() for line in str(err_str).strip().splitlines() if line.strip()]
+    if not lines:
+        return None
+    
+    # Cari baris yang menunjukkan nama error utama (misal: 'ModuleNotFoundError:', dsb.)
+    summary = lines[0]
+    for line in reversed(lines):
+        if any(line.startswith(prefix) for prefix in ("ModuleNotFoundError:", "ImportError:", "AttributeError:", "ValueError:", "TypeError:", "RuntimeError:", "Exception:")):
+            summary = line
+            break
+    
+    # Bersihkan path lokal OS
+    import re
+    cleaned = re.sub(r"[A-Za-z]:\\[^ :'\"]+", "<internal_path>", summary)
+    cleaned = re.sub(r"/[a-zA-Z0-9_\-\.\/]+", "<internal_path>", cleaned)
+    
+    return cleaned[:200]
+
+
 def get_tenant_statuses() -> Dict[str, str]:
     """Mengembalikan ringkasan status per-tenant (misal: {'career': 'active', 'om_budi': 'active'})."""
     if not TENANT_STATUS:
@@ -216,17 +245,34 @@ def get_tenant_statuses() -> Dict[str, str]:
     return {k: v.get("status", "unknown") for k, v in TENANT_STATUS.items()}
 
 
-def get_tenant_details() -> Dict[str, Any]:
-    """Mengembalikan rincian lengkap seluruh tenant dan status runtime-nya."""
-    if not TENANT_STATUS:
-        return {
-            k: {
-                "name": v.get("name", k),
-                "status": "pending",
-                "module": v.get("module", ""),
-                "error": None,
-                "loaded_at": None,
-            }
-            for k, v in TENANT_REGISTRY.items()
+def get_tenant_details(public_safe: bool = True) -> Dict[str, Any]:
+    """Mengembalikan rincian lengkap seluruh tenant dan status runtime-nya.
+    Jika public_safe=True, stack trace dan path internal disanitasi agar tidak bocor ke publik.
+    """
+    raw_status = TENANT_STATUS or {
+        k: {
+            "name": v.get("name", k),
+            "status": "pending",
+            "module": v.get("module", ""),
+            "error": None,
+            "loaded_at": None,
         }
-    return dict(TENANT_STATUS)
+        for k, v in TENANT_REGISTRY.items()
+    }
+    
+    details: Dict[str, Any] = {}
+    for k, v in raw_status.items():
+        st = v.get("status", "unknown")
+        # Standardized health indicator: healthy, degraded, or down
+        health = "healthy" if st == "active" else ("down" if st == "disabled" else "degraded")
+        err = sanitize_error_summary(v.get("error")) if public_safe else v.get("error")
+        
+        details[k] = {
+            "name": v.get("name", k),
+            "status": st,
+            "health": health,
+            "module": v.get("module", ""),
+            "error": err,
+            "loaded_at": v.get("loaded_at"),
+        }
+    return details
