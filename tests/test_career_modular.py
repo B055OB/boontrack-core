@@ -711,6 +711,187 @@ class TestCareerModular(AioHTTPTestCase):
         active_inv = GLOBAL_USER_STATES[user_id].get("active_invoice")
         self.assertIsNotNone(active_inv)
 
+    @unittest_run_loop
+    @patch("app.tenants.career.service.get_supabase")
+    @patch("app.tenants.career.service.send_whatsapp_buttons")
+    async def test_navigation_keyword_cancels_unpaid_invoice_and_resets_to_menu(
+        self, mock_send_buttons, mock_get_supabase
+    ):
+        """Validasi bahwa keyword navigasi ('menu', 'batal', 'reset', 'ulang', 'start')
+        di state WAITING_PAYMENT otomatis membatalkan invoice UNPAID dan kembali ke menu utama."""
+        from app.services.reconciliation_service import PAYMENT_INTENTS
+        from datetime import datetime
+
+        user_id = "628129990001"
+        invoice_id = "INV-TEST-CANCEL-001"
+
+        # Mock Supabase
+        mock_client = MagicMock()
+        mock_table = MagicMock()
+        mock_client.table.return_value = mock_table
+        mock_table.update.return_value.eq.return_value.in_.return_value.execute.return_value = MagicMock(data=[{"id": "job-1"}])
+        mock_get_supabase.return_value = mock_client
+
+        # Setup state sedang menunggu pembayaran
+        GLOBAL_USER_STATES[user_id] = {
+            "mode": "awaiting_rewrite_payment",
+            "step": 0,
+            "active_invoice": invoice_id,
+            "awaiting_payment_at": datetime.now().isoformat(),
+            "data": {}
+        }
+        PAYMENT_INTENTS[invoice_id] = {
+            "invoice_id": invoice_id,
+            "user_id": user_id,
+            "status": "PENDING",
+            "total_amount": 25300
+        }
+
+        # Test dengan keyword 'batal'
+        await career_service.handle_text_or_button(
+            sender_wa_id=user_id,
+            display_name="User Batal",
+            user_text="batal",
+            button_id=""
+        )
+
+        # Verifikasi intent di memori dibatalkan
+        self.assertEqual(PAYMENT_INTENTS[invoice_id]["status"], "CANCELLED")
+        # Verifikasi state user kembali ke menu
+        self.assertEqual(GLOBAL_USER_STATES[user_id]["mode"], "menu")
+        self.assertIsNone(GLOBAL_USER_STATES[user_id]["active_invoice"])
+        # Verifikasi menu utama dikirimkan
+        mock_send_buttons.assert_called_once()
+
+    @unittest_run_loop
+    @patch("app.tenants.career.service.get_supabase")
+    @patch("app.tenants.career.service.send_whatsapp_text")
+    async def test_ttl_expiry_auto_cancels_unpaid_order(
+        self, mock_send_text, mock_get_supabase
+    ):
+        """Validasi bahwa order UNPAID yang telah melewati TTL (> 30 menit)
+        otomatis di-reset ke menu saat pesan baru masuk."""
+        from app.services.reconciliation_service import PAYMENT_INTENTS
+        from datetime import datetime, timedelta
+
+        user_id = "628129990002"
+        invoice_id = "INV-EXPIRED-30MIN"
+
+        mock_client = MagicMock()
+        mock_table = MagicMock()
+        mock_client.table.return_value = mock_table
+        mock_table.update.return_value.eq.return_value.in_.return_value.execute.return_value = MagicMock(data=[])
+        mock_get_supabase.return_value = mock_client
+
+        # Waktu dibuat 35 menit yang lalu (sudah expired)
+        created_35m_ago = datetime.now() - timedelta(minutes=35)
+        GLOBAL_USER_STATES[user_id] = {
+            "mode": "awaiting_rewrite_payment",
+            "step": 0,
+            "active_invoice": invoice_id,
+            "awaiting_payment_at": created_35m_ago.isoformat(),
+            "data": {}
+        }
+        PAYMENT_INTENTS[invoice_id] = {
+            "invoice_id": invoice_id,
+            "user_id": user_id,
+            "status": "PENDING",
+            "created_at": created_35m_ago,
+            "total_amount": 10450
+        }
+
+        # User mengirim pesan baru setelah sekian lama
+        await career_service.handle_text_or_button(
+            sender_wa_id=user_id,
+            display_name="User Lama",
+            user_text="halo bot",
+            button_id=""
+        )
+
+        # Verifikasi auto-cancelled karena expired
+        self.assertEqual(PAYMENT_INTENTS[invoice_id]["status"], "CANCELLED")
+        self.assertEqual(GLOBAL_USER_STATES[user_id]["mode"], "menu")
+
+    @unittest_run_loop
+    @patch("app.tenants.career.service.send_whatsapp_text")
+    async def test_awaiting_payment_non_nav_text_sends_polite_reminder(
+        self, mock_send_text
+    ):
+        """Validasi bahwa jika user mengirim pesan teks sembarang saat WAITING_PAYMENT,
+        bot tidak freeze/diam, melainkan mengirimkan reminder tagihan & opsi batal."""
+        from app.services.reconciliation_service import PAYMENT_INTENTS
+        from datetime import datetime
+
+        user_id = "628129990003"
+        invoice_id = "INV-REMINDER-001"
+
+        GLOBAL_USER_STATES[user_id] = {
+            "mode": "awaiting_rewrite_payment",
+            "step": 0,
+            "active_invoice": invoice_id,
+            "awaiting_payment_at": datetime.now().isoformat(),
+            "data": {}
+        }
+        PAYMENT_INTENTS[invoice_id] = {
+            "invoice_id": invoice_id,
+            "user_id": user_id,
+            "status": "PENDING",
+            "total_amount": 25300
+        }
+
+        # User kirim pesan teks bukan tombol dan bukan keyword reset
+        await career_service.handle_text_or_button(
+            sender_wa_id=user_id,
+            display_name="User Bingung",
+            user_text="sudah saya transfer ya kak",
+            button_id=""
+        )
+
+        mock_send_text.assert_called_once()
+        call_msg = mock_send_text.call_args[0][1]
+        self.assertIn("MENUNGGU PEMBAYARAN", call_msg)
+        self.assertIn("Rp25,300", call_msg)
+        self.assertIn("struk", call_msg)
+        self.assertIn("batal", call_msg)
+
+    @unittest_run_loop
+    @patch("scripts.reset_user_state.get_supabase")
+    async def test_reset_user_state_script(self, mock_get_supabase):
+        """Memvalidasi script utility scripts/reset_user_state.py dapat mereset user state secara tepat."""
+        from scripts.reset_user_state import run_reset
+        from app.services.reconciliation_service import PAYMENT_INTENTS
+        from datetime import datetime
+
+        user_id = "628129990004"
+        invoice_id = "INV-SCRIPT-001"
+
+        mock_client = MagicMock()
+        mock_table = MagicMock()
+        mock_client.table.return_value = mock_table
+        mock_table.update.return_value.eq.return_value.in_.return_value.execute.return_value = MagicMock(data=[{"id": "job-1"}])
+        mock_get_supabase.return_value = mock_client
+
+        GLOBAL_USER_STATES[user_id] = {
+            "mode": "awaiting_rewrite_payment",
+            "step": 2,
+            "active_invoice": invoice_id,
+            "awaiting_payment_at": datetime.now().isoformat(),
+            "data": {"position": "Engineer"}
+        }
+        PAYMENT_INTENTS[invoice_id] = {
+            "invoice_id": invoice_id,
+            "user_id": user_id,
+            "status": "PENDING",
+            "total_amount": 10000
+        }
+
+        res = await run_reset(user_id)
+        self.assertEqual(res["status"], "SUCCESS")
+        self.assertEqual(GLOBAL_USER_STATES[user_id]["mode"], "menu")
+        self.assertEqual(GLOBAL_USER_STATES[user_id]["step"], 0)
+        self.assertIsNone(GLOBAL_USER_STATES[user_id]["active_invoice"])
+        self.assertEqual(PAYMENT_INTENTS[invoice_id]["status"], "CANCELLED")
+
     def test_legacy_wrapper_exports(self):
         self.assertEqual(handle_incoming_whatsapp, legacy_handle_incoming)
         self.assertEqual(verify_webhook, legacy_verify_webhook)
@@ -718,6 +899,7 @@ class TestCareerModular(AioHTTPTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

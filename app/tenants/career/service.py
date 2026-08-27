@@ -2,7 +2,7 @@ import os
 import re
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List
 
 from app.tenants.career.config import TENANT_ID, CAREER_VIP_WHITELIST
@@ -53,7 +53,8 @@ from app.services.whatsapp_service import (
     send_whatsapp_image_link,
     send_whatsapp_buttons,
     send_whatsapp_document,
-    safe_log_to_supabase_messages
+    safe_log_to_supabase_messages,
+    get_supabase
 )
 from app.services.cv_state_engine import process_unified_cv_step, GLOBAL_USER_STATES
 from app.engines.cv_review_engine import cv_review_engine
@@ -95,8 +96,129 @@ def is_whitelisted_career_phone(phone: str) -> bool:
     return False
 
 
+async def cancel_user_unpaid_invoices(user_id: str, tenant_id: str = "boontrack-career") -> Dict[str, Any]:
+    """Membatalkan invoice/job UNPAID atau WAITING_PAYMENT milik user di Supabase & PAYMENT_INTENTS,
+    serta mereset state session user kembali ke IDLE/MAIN_MENU."""
+    user_str = str(user_id).strip().replace("+", "")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    cancelled_intents = []
+
+    # 1. Update in-memory PAYMENT_INTENTS
+    for inv_id, intent in list(PAYMENT_INTENTS.items()):
+        if str(intent.get("user_id")).replace("+", "") == user_str and intent.get("status") in ["PENDING", "WAITING_PAYMENT"]:
+            intent["status"] = "CANCELLED"
+            intent["cancelled_at"] = datetime.now()
+            cancelled_intents.append(inv_id)
+            logger.info(f"[RESET/CANCEL] Cancelled payment intent: {inv_id} for user {user_str}")
+
+    # 2. Update Supabase document_jobs & orders
+    cancelled_jobs = 0
+    cancelled_orders = 0
+    supabase = get_supabase()
+    if supabase:
+        try:
+            res1 = supabase.table("document_jobs").update({
+                "status": "CANCELLED",
+                "payment_status": "CANCELLED"
+            }).eq("user_id", user_str).in_("payment_status", ["UNPAID", "PENDING", "WAITING_PAYMENT"]).execute()
+            if res1 and hasattr(res1, "data") and res1.data:
+                cancelled_jobs += len(res1.data)
+        except Exception as e:
+            logger.warning(f"[RESET/CANCEL] Error updating document_jobs by user_id: {e}")
+
+        try:
+            res_orders = supabase.table("orders").update({
+                "status": "CANCELLED",
+                "updated_at": now_iso
+            }).eq("user_id", user_str).eq("status", "PENDING").execute()
+            if res_orders and hasattr(res_orders, "data") and res_orders.data:
+                cancelled_orders += len(res_orders.data)
+        except Exception as e:
+            logger.debug(f"[RESET/CANCEL] Error updating orders: {e}")
+
+    # 3. Reset session state user di GLOBAL_USER_STATES
+    user_session = GLOBAL_USER_STATES.get(user_str)
+    if user_session:
+        user_session["mode"] = "menu"
+        user_session["step"] = 0
+        user_session["active_invoice"] = None
+        user_session["active_payment"] = None
+        user_session["awaiting_payment_at"] = None
+
+    return {
+        "user_id": user_str,
+        "cancelled_intents": cancelled_intents,
+        "cancelled_jobs": cancelled_jobs,
+        "cancelled_orders": cancelled_orders,
+        "status": "SUCCESS"
+    }
+
+
+async def check_and_expire_session(sender_wa_id: str, ttl_minutes: int = 30) -> bool:
+    """Cek apakah session user yang sedang awaiting_rewrite_payment / waiting payment telah expired.
+    Jika sudah lewat TTL (default 30 menit), otomatis batalkan invoice dan reset state ke menu."""
+    user_str = str(sender_wa_id).strip().replace("+", "")
+    user_session = GLOBAL_USER_STATES.get(user_str)
+    if not user_session:
+        return False
+
+    if user_session.get("mode") != "awaiting_rewrite_payment" and not user_session.get("active_invoice"):
+        return False
+
+    active_inv = user_session.get("active_invoice")
+    awaiting_at_str = user_session.get("awaiting_payment_at")
+    created_dt = None
+
+    if awaiting_at_str:
+        try:
+            created_dt = datetime.fromisoformat(awaiting_at_str)
+        except Exception:
+            pass
+
+    if not created_dt and active_inv and active_inv in PAYMENT_INTENTS:
+        created_dt = PAYMENT_INTENTS[active_inv].get("created_at")
+
+    if not created_dt and user_session.get("active_payment"):
+        act_created = user_session["active_payment"].get("created_at")
+        if act_created:
+            try:
+                created_dt = datetime.fromisoformat(act_created)
+            except Exception:
+                pass
+
+    is_expired = False
+    now = datetime.now()
+    if created_dt:
+        if created_dt.tzinfo is not None:
+            now_tz = datetime.now(timezone.utc)
+            is_expired = (now_tz - created_dt).total_seconds() > (ttl_minutes * 60)
+        else:
+            is_expired = (now - created_dt).total_seconds() > (ttl_minutes * 60)
+    else:
+        # Fallback cek expires_at di PAYMENT_INTENTS
+        if active_inv and active_inv in PAYMENT_INTENTS:
+            expires_at = PAYMENT_INTENTS[active_inv].get("expires_at")
+            if expires_at and now > expires_at:
+                is_expired = True
+
+    if is_expired:
+        logger.info(f"[TTL EXPIRY] User {user_str} order {active_inv} expired (> {ttl_minutes}m). Auto-resetting.")
+        await cancel_user_unpaid_invoices(user_str)
+        return True
+
+    return False
+
+
 class CareerService:
     """Service pemrosesan pesan dan Decision Engine untuk tenant BoonTrack Career."""
+
+    @staticmethod
+    def cancel_unpaid_invoices_and_reset(sender_wa_id: str):
+        return cancel_user_unpaid_invoices(sender_wa_id)
+
+    @staticmethod
+    def check_and_expire_session(sender_wa_id: str, ttl_minutes: int = 30):
+        return check_and_expire_session(sender_wa_id, ttl_minutes=ttl_minutes)
 
     @staticmethod
     def get_user_display_name(sender_wa_id: str) -> str:
@@ -206,6 +328,9 @@ class CareerService:
 
     async def handle_image(self, sender_wa_id: str, display_name: str, media_id: Optional[str]):
         """Handler untuk pesan gambar (OCR bukti pembayaran transfer QRIS)"""
+        # 0. TTL / Expiry Check (> 30 menit)
+        await self.check_and_expire_session(sender_wa_id, ttl_minutes=30)
+
         user_session = self._init_user_session(sender_wa_id)
 
         safe_log_to_supabase_messages(
@@ -300,6 +425,9 @@ class CareerService:
 
     async def handle_document(self, sender_wa_id: str, display_name: str, media_id: Optional[str], filename: str):
         """Handler untuk dokumen CV atau naskah (PDF / DOCX)"""
+        # 0. TTL / Expiry Check (> 30 menit)
+        await self.check_and_expire_session(sender_wa_id, ttl_minutes=30)
+
         user_session = self._init_user_session(sender_wa_id)
         current_mode = user_session.get("mode", "menu")
 
@@ -365,6 +493,7 @@ class CareerService:
 
                 user_session["active_invoice"] = order["order_id"]
                 user_session["mode"] = "awaiting_rewrite_payment"
+                user_session["awaiting_payment_at"] = datetime.now().isoformat()
 
                 # Pesan 1: Teks Rincian Analisis Dokumen & Biaya
                 summary_msg = (
@@ -441,6 +570,9 @@ class CareerService:
 
     async def handle_text_or_button(self, sender_wa_id: str, display_name: str, user_text: str, button_id: str):
         """Handler untuk input teks, tombol interaktif, dan Decision Engine workflows."""
+        # 0. TTL / Expiry Check (> 30 menit)
+        await self.check_and_expire_session(sender_wa_id, ttl_minutes=30)
+
         user_session = self._init_user_session(sender_wa_id)
         user_text_clean = (user_text or "").lower().strip()
         current_mode = user_session.get("mode", "menu")
@@ -472,15 +604,22 @@ class CareerService:
             await send_whatsapp_text(sender_wa_id, reply_msg, tenant_id=TENANT_ID)
             return
 
-        # 3. Reset / Navigation
-        if button_id == "btn_menu" or user_text_clean in ["menu", "halo", "hi", "mulai", "start", "bantuan", "batal", "home", "/menu", "/start"]:
-            current_data = user_session.get("data", {})
-            user_session["step"] = 0
-            user_session["mode"] = "menu"
+        # 3. Reset / Navigation Keywords (Berlaku di SEMUA state termasuk WAITING_PAYMENT)
+        NAV_RESET_KEYWORDS = {
+            "menu", "batal", "reset", "ulang", "start", "cancel", "kembali",
+            "stop", "mulai", "halo", "hi", "bantuan", "home", "/menu", "/start", "/reset", "/batal", "/cancel"
+        }
+        is_nav_reset = (
+            button_id in ["btn_menu", "btn_cancel", "btn_reset", "btn_start"]
+            or user_text_clean in NAV_RESET_KEYWORDS
+            or any(user_text_clean == kw or user_text_clean.startswith(f"{kw} ") for kw in ["menu", "batal", "reset", "ulang", "start", "cancel", "kembali"])
+        )
+        if is_nav_reset:
+            await self.cancel_unpaid_invoices_and_reset(sender_wa_id)
             await self.send_menu_buttons(sender_wa_id)
             return
 
-        # 3. Info Unggah Bukti Struk (Hanya sebagai opsi bantuan manual jika mutasi belum terbaca)
+        # 4. Info Unggah Bukti Struk (Hanya sebagai opsi bantuan manual jika mutasi belum terbaca)
         if button_id == "btn_upload_receipt_info" or user_text_clean in [
             "struk", "bukti", "bukti transfer", "kirim struk", "bukti bayar", "upload struk", "bantuan bayar", "konfirmasi manual"
         ]:
@@ -489,6 +628,26 @@ class CareerService:
                 RECEIPT_UPLOAD_INFO_MSG,
                 tenant_id=TENANT_ID
             )
+            return
+
+        # 5. Guard: Jika user masih di awaiting_rewrite_payment dan mengirim pesan teks biasa
+        if current_mode == "awaiting_rewrite_payment":
+            active_inv = user_session.get("active_invoice", "")
+            active_amt = 0
+            if active_inv and active_inv in PAYMENT_INTENTS:
+                active_amt = PAYMENT_INTENTS[active_inv].get("total_amount", 0)
+            elif user_session.get("active_payment"):
+                active_amt = user_session["active_payment"].get("total_amount", 0)
+
+            amt_info = f" sebesar *Rp{active_amt:,}*" if active_amt > 0 else ""
+            remind_msg = (
+                f"⏳ *MENUNGGU PEMBAYARAN*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"Tagihan Anda{amt_info} sedang menunggu verifikasi pembayaran.\n\n"
+                f"📸 *Sudah transfer?* Silakan kirimkan *foto / screenshot struk bukti pembayaran* langsung ke chat ini.\n\n"
+                f"🔄 *Ingin membatalkan atau ganti layanan?* Ketik *menu* atau *batal* untuk kembali ke menu utama."
+            )
+            await send_whatsapp_text(sender_wa_id, remind_msg, tenant_id=TENANT_ID)
             return
 
         # 4. Kluster Menu Premium: 📄 LAYANAN DOKUMEN
@@ -554,6 +713,7 @@ class CareerService:
             user_session["mode"] = "awaiting_rewrite_payment"
             user_session["active_invoice"] = order["order_id"]
             user_session["parsed_doc_text"] = user_text
+            user_session["awaiting_payment_at"] = datetime.now().isoformat()
 
             caption_text = format_invoice_caption(
                 order["order_id"],
@@ -673,6 +833,7 @@ class CareerService:
 
             user_session["mode"] = "awaiting_rewrite_payment"
             user_session["active_invoice"] = invoice_id
+            user_session["awaiting_payment_at"] = datetime.now().isoformat()
 
             # Pesan 1 (Teks): Rincian paket, total nominal transfer Rp{exact_amount:,}, dan batas waktu verifikasi
             package_detail_msg = (

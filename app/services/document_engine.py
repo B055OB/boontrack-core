@@ -426,18 +426,18 @@ async def intake_document_job(
             if supabase_fallback:
                 fallback_record = {
                     "id": job_id,
+                    "job_id": job_id,
                     "tenant_id": tenant_id or "boontrack-career",
                     "user_id": str(user_id or user_phone or "guest"),
-                    "user_phone": user_phone,
+                    "source_channel": "whatsapp",
+                    "original_filename": filename or "document.docx",
+                    "mime_type": "application/pdf",
+                    "file_size": len(file_bytes) if file_bytes else 0,
+                    "storage_key": f"inbox/{job_id}",
                     "task_type": str(task_type).upper().strip(),
                     "status": "WAITING_PAYMENT",
                     "payment_status": "UNPAID",
-                    "filename": filename,
-                    "price": exact_price_amount,
                     "price_amount": exact_price_amount,
-                    "unique_code": (exact_price_amount % 1000) if exact_price_amount >= 1000 else 0,
-                    "created_at": start_time.isoformat(),
-                    "updated_at": start_time.isoformat(),
                 }
                 try:
                     supabase_fallback.table("document_jobs").insert(fallback_record).execute()
@@ -477,30 +477,21 @@ async def intake_document_job(
     unique_code = (final_price % 1000) if final_price >= 1000 else 0
     job_record = {
         "id": job_id,
+        "job_id": job_id,
         "tenant_id": clean_tenant,
         "user_id": str(user_id or user_phone or "guest"),
-        "user_phone": user_phone,
+        "source_channel": "whatsapp",
+        "original_filename": filename,
+        "file_size": len(file_bytes),
+        "mime_type": mime_type,
+        "word_count": metrics["word_count"],
+        "storage_key": raw_storage_key,
         "task_type": normalized_task,
         "status": initial_status,
         "payment_status": payment_status,
-        "filename": filename,
-        "file_size": len(file_bytes),
-        "mime_type": mime_type,
         "doc_hash": doc_hash,
-        "word_count": metrics["word_count"],
-        "char_count": metrics["char_count"],
-        "estimated_pages": metrics["estimated_pages"],
-        "price": final_price,
         "price_amount": final_price,
-        "unique_code": unique_code,
-        "pricing_tier": pricing["pricing_tier"],
-        "raw_storage_key": raw_storage_key,
-        "result_storage_key": None,
-        "structured_output": None,
-        "error_message": None,
-        "execution_time_ms": None,
-        "created_at": start_time.isoformat(),
-        "updated_at": start_time.isoformat()
+        "pricing_tier": pricing.get("pricing_tier"),
     }
 
     if supabase:

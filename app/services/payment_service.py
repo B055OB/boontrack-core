@@ -122,25 +122,27 @@ class PaymentService:
 
             # 8b. INSERT record WAJIB ke tabel document_jobs agar payment matcher bisa menemukan order
             # ini dilakukan TERLEPAS dari apakah file asli dokumen tersedia / valid
+            import uuid
+            job_uuid = str(uuid.uuid4())
             job_db_record = {
-                "id": order_id,            # gunakan order_id sebagai job_id agar traceable
+                "id": job_uuid,
+                "job_id": job_uuid,
                 "tenant_id": tenant_id,
                 "user_id": user_str_id,
-                "user_phone": user_str_id,
+                "source_channel": "whatsapp",
+                "original_filename": (meta or {}).get("filename", "order.docx"),
+                "mime_type": "application/pdf",
+                "file_size": 0,
+                "storage_key": f"inbox/{job_uuid}",
                 "task_type": (meta or {}).get("product", "PAYMENT_ORDER"),
                 "status": "WAITING_PAYMENT",
                 "payment_status": "UNPAID",
-                "filename": (meta or {}).get("filename", "order.docx"),
-                "price": total_amount,
                 "price_amount": total_amount,      # field utama untuk payment matching
-                "unique_code": unique_code,
-                "created_at": now_dt.isoformat(),
-                "updated_at": now_dt.isoformat(),
             }
             try:
-                supabase.table("document_jobs").upsert(job_db_record).execute()
+                supabase.table("document_jobs").insert(job_db_record).execute()
                 logger.info(
-                    f"[PAYMENT SERVICE] document_jobs record inserted: id={order_id} "
+                    f"[PAYMENT SERVICE] document_jobs record inserted: id={job_uuid} "
                     f"price_amount={total_amount} user={user_str_id} status=UNPAID"
                 )
             except Exception as e:

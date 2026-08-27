@@ -553,6 +553,7 @@ class TestPaymentDocDelivery(AioHTTPTestCase):
         mock_table = MagicMock()
         mock_client.table.return_value = mock_table
         mock_table.upsert.return_value.execute.return_value = MagicMock(data=[])
+        mock_table.insert.return_value.execute.return_value = MagicMock(data=[])
         mock_get_supabase.return_value = mock_client
 
         order = ps.create_dynamic_order(
@@ -567,23 +568,16 @@ class TestPaymentDocDelivery(AioHTTPTestCase):
         total_amount = order["total_amount"]
         self.assertGreater(total_amount, 25000)  # base + unique_code
 
-        # Verifikasi document_jobs upsert dipanggil
+        # Verifikasi document_jobs insert dipanggil
         table_calls = [call[0][0] for call in mock_client.table.call_args_list]
-        self.assertIn("document_jobs", table_calls, "CRITICAL: document_jobs upsert tidak dipanggil!")
-
-        # Ambil argumen upsert untuk table document_jobs
-        doc_jobs_upsert_call = None
-        for i, call in enumerate(mock_client.table.call_args_list):
-            if call[0][0] == "document_jobs":
-                doc_jobs_upsert_call = mock_table.upsert.call_args_list[i - 1]
-                break
+        self.assertIn("document_jobs", table_calls, "CRITICAL: document_jobs insert tidak dipanggil!")
 
         # Verifikasi field kritis dalam record document_jobs
-        upsert_record = mock_table.upsert.call_args_list[-1][0][0]
-        self.assertEqual(upsert_record["price_amount"], total_amount)
-        self.assertEqual(upsert_record["payment_status"], "UNPAID")
-        self.assertEqual(upsert_record["status"], "WAITING_PAYMENT")
-        self.assertEqual(upsert_record["user_id"], "6281237450222")
+        insert_record = mock_table.insert.call_args[0][0]
+        self.assertEqual(insert_record["price_amount"], total_amount)
+        self.assertEqual(insert_record["payment_status"], "UNPAID")
+        self.assertEqual(insert_record["status"], "WAITING_PAYMENT")
+        self.assertEqual(insert_record["user_id"], "6281237450222")
 
     @patch("app.services.payment_service.get_supabase")
     def test_create_dynamic_order_single_rewrite_document_jobs_record(self, mock_get_supabase):
@@ -594,6 +588,7 @@ class TestPaymentDocDelivery(AioHTTPTestCase):
         mock_table = MagicMock()
         mock_client.table.return_value = mock_table
         mock_table.upsert.return_value.execute.return_value = MagicMock(data=[])
+        mock_table.insert.return_value.execute.return_value = MagicMock(data=[])
         mock_get_supabase.return_value = mock_client
 
         order = ps.create_dynamic_order(
@@ -610,9 +605,9 @@ class TestPaymentDocDelivery(AioHTTPTestCase):
         self.assertIn("document_jobs", table_calls, "CRITICAL: document_jobs tidak di-insert untuk single CV rewrite!")
 
         # Verifikasi price_amount sesuai total_amount
-        upsert_record = mock_table.upsert.call_args_list[-1][0][0]
-        self.assertEqual(upsert_record["price_amount"], total_amount)
-        self.assertEqual(upsert_record["payment_status"], "UNPAID")
+        insert_record = mock_table.insert.call_args[0][0]
+        self.assertEqual(insert_record["price_amount"], total_amount)
+        self.assertEqual(insert_record["payment_status"], "UNPAID")
 
     @patch("app.services.document_engine.get_supabase")
     @patch("app.services.document_engine.r2_storage_service.upload_file", new_callable=AsyncMock)
