@@ -184,7 +184,7 @@ async def match_and_fulfill_payment(
     # 3. Jika cocok dengan document_jobs:
     if matched_job:
         job_id = matched_job["id"]
-        user_phone = matched_job.get("user_phone") or direct_phone
+        user_phone = matched_job.get("user_phone") or matched_job.get("user_id") or direct_phone
         task_type = matched_job.get("task_type", "POLISH_REPHRASE")
         current_status = matched_job.get("status", "QUEUED")
 
@@ -195,7 +195,7 @@ async def match_and_fulfill_payment(
             try:
                 supabase.table("document_jobs").update({
                     "payment_status": "PAID",
-                    "updated_at": now_iso
+                    "status": "QUEUED" if current_status in ("WAITING_PAYMENT", "PENDING") else current_status
                 }).eq("id", job_id).execute()
             except Exception as upd_err:
                 logger.error(f"[PAYMENT MATCHER] Failed to update job {job_id} to PAID: {upd_err}")
@@ -223,18 +223,19 @@ async def match_and_fulfill_payment(
                     )
                 else:
                     # Job berstatus WAITING_PAYMENT / QUEUED -> Proses naskah & kirimkan hasil sekarang
-                    raw_key = matched_job.get("raw_storage_key")
+                    raw_key = matched_job.get("raw_storage_key") or matched_job.get("storage_key")
+                    doc_filename = matched_job.get("original_filename") or matched_job.get("filename", "Dokumen.pdf")
                     raw_text = ""
                     if raw_key:
                         raw_bytes = await r2_storage_service.download_file(raw_key)
                         if raw_bytes:
-                            raw_text = extract_text_from_bytes(raw_bytes, matched_job.get("filename", "Dokumen.pdf"))
+                            raw_text = extract_text_from_bytes(raw_bytes, doc_filename)
                     
                     await process_document_job_async(
                         job_id=job_id,
                         tenant_id=tenant_id,
                         task_type=task_type,
-                        filename=matched_job.get("filename", "Dokumen.docx"),
+                        filename=doc_filename,
                         raw_text=raw_text,
                         user_phone=user_phone
                     )

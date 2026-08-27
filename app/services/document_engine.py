@@ -104,20 +104,27 @@ async def update_job_status(
         if not supabase:
             return False
 
+        valid_cols = {
+            "id", "job_id", "tenant_id", "user_id", "source_channel",
+            "original_filename", "mime_type", "file_size", "word_count",
+            "storage_key", "task_type", "status", "parser_version",
+            "ai_model", "result_storage_key", "error_code", "created_at",
+            "expires_at", "doc_hash", "price_amount", "payment_status", "pricing_tier"
+        }
         payload: Dict[str, Any] = {
             "status": status,
-            "updated_at": datetime.now(timezone.utc).isoformat()
         }
         if error_message is not None:
-            payload["error_message"] = error_message
+            payload["error_code"] = str(error_message)[:100]
         if result_storage_key is not None:
             payload["result_storage_key"] = result_storage_key
-        if structured_output is not None:
-            payload["structured_output"] = structured_output
         if extra_fields:
-            payload.update(extra_fields)
+            for k, v in extra_fields.items():
+                if k in valid_cols:
+                    payload[k] = v
 
-        supabase.table("document_jobs").update(payload).eq("id", job_id).execute()
+        safe_payload = {k: v for k, v in payload.items() if k in valid_cols}
+        supabase.table("document_jobs").update(safe_payload).eq("id", job_id).execute()
         return True
     except Exception as e:
         logger.error(f"[DocumentEngine Error] update_job_status ({job_id}): {e}")
