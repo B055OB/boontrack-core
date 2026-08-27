@@ -28,6 +28,13 @@ TENANT_CONFIG_DIR = os.getenv(
 LOADED_CONFIG_TENANTS: Dict[str, TenantConfig] = {}
 
 TENANT_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "gym": {
+        "name": "Atmosfitnes Gym Assistant",
+        "module": "app.tenants.gym.router",
+        "register_func": "register_gym_routes",
+        "description": "Smart Gym & IoT Turnstile WhatsApp Assistant",
+        "enabled": True,
+    },
     "career": {
         "name": "Career Assistant",
         "module": "app.tenants.career.router",
