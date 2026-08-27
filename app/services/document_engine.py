@@ -186,159 +186,31 @@ from app.engines.rephrase_engine import academic_rephrase_engine
 async def execute_ai_document_task(
     task_type: str,
     raw_text: str,
-    filename: str = "Dokumen"
+    filename: str = "Dokumen",
+    **kwargs
 ) -> Dict[str, Any]:
-    """Memanggil AI Gateway / Rephrase Engine sesuai 4 Layanan Inti BoonTrack."""
+    """Memanggil AI Gateway / Rephrase Engine sesuai 4 Layanan Inti BoonTrack via modular prompt strategies."""
+    from app.prompts import (
+        get_prompt_for_task,
+        get_fallback_for_task,
+        normalize_prompt_task,
+        TASK_POLISH_REPHRASE as STRATEGY_POLISH_TASK,
+        CANONICAL_PROMPT_MAP
+    )
+
     raw_normalized = str(task_type).upper().strip()
-    canonical = CANONICAL_TASK_MAP.get(raw_normalized, raw_normalized)
+    if raw_normalized not in CANONICAL_PROMPT_MAP and raw_normalized not in SUPPORTED_TASKS:
+        raise ValueError(f"Tipe task tidak didukung oleh Document Engine: '{task_type}'")
+
+    canonical = normalize_prompt_task(raw_normalized)
 
     # 3. SERVICE: "POLISH_REPHRASE"
-    # Logika: Ekstraksi naskah akademis -> sanitasi artefak PDF -> chunking & parafrase komprehensif (panjang output ~ panjang input, sitasi terlindungi).
-    if canonical == TASK_POLISH_REPHRASE:
+    # Ekstraksi naskah akademis -> sanitasi artefak PDF -> chunking & parafrase komprehensif via AcademicRephraseEngine.
+    if canonical == STRATEGY_POLISH_TASK or canonical == TASK_POLISH_REPHRASE:
         return await academic_rephrase_engine.process_task(raw_text=raw_text, filename=filename, task_type=canonical)
 
-    # 2. SERVICE: "CV_REVIEW"
-    # Logika: Ekstraksi CV pengguna -> evaluasi HR (ATS Score, Strengths, Red Flags, Actionable Fixes).
-    if canonical == TASK_CV_REVIEW:
-        prompt = (
-            "Kamu adalah Senior HR Executive & ATS Specialist Auditor BoonTrack.\n"
-            "Tugas: Analisis dan evaluasi CV pengguna berikut secara mendalam dengan standar seleksi HR profesional.\n"
-            "Wajib mencakup 4 aspek kunci:\n"
-            "1. ATS Score (Overall & parameter breakdown: kompatibilitas sistem, dampak konten, tata bahasa & struktur).\n"
-            "2. Strengths (Kekuatan & nilai jual utama profil kandidat).\n"
-            "3. Red Flags (Kekurangan kritis, inkonsistensi, atau format berisiko tinggi yang berpotensi menggugurkan seleksi).\n"
-            "4. Actionable Fixes (Rekomendasi perbaikan konkret dengan formula aksi + metrik).\n\n"
-            "Kembalikan output HANYA berupa JSON valid sesuai skema berikut:\n\n"
-            "{\n"
-            '  "overall_score": 85,\n'
-            '  "target_role": "Target Posisi / Profesi",\n'
-            '  "summary": "Ringkasan evaluasi eksekutif CV...",\n'
-            '  "breakdown_scores": {\n'
-            '    "ats_compatibility": 90,\n'
-            '    "content_impact": 80,\n'
-            '    "structure_grammar": 85,\n'
-            '    "keyword_alignment": 85\n'
-            "  },\n"
-            '  "strengths": [\n'
-            '    "Poin kelebihan dan nilai jual kuat kandidat 1",\n'
-            '    "Poin kelebihan 2"\n'
-            "  ],\n"
-            '  "red_flags": [\n'
-            '    "Catatan kritis / red flag yang berpotensi menggugurkan screening 1",\n'
-            '    "Catatan kritis 2"\n'
-            "  ],\n"
-            '  "actionable_fixes": [\n'
-            '    {"section": "Experience", "issue": "Deskripsi masalah", "fix": "Langkah perbaikan konkret berbasis metrik"},\n'
-            '    {"section": "Summary", "issue": "Terlalu umum", "fix": "Tulis ulang dengan elevator pitch berbasis value"}\n'
-            "  ]\n"
-            "}\n\n"
-            f"Konten Dokumen CV ({filename}):\n{raw_text[:8000]}"
-        )
-
-    # 4. SERVICE: "CAREER_PRO_BUNDLE"
-    # Logika: CV pengguna + Target Role -> Bundle Lengkap (CV Tailored ATS + Rekomendasi HR Profesional + Surat Lamaran/Cover Letter).
-    elif canonical == TASK_CAREER_PRO_BUNDLE:
-        prompt = (
-            "Kamu adalah Principal Career Strategist & Senior HR Recruiter BoonTrack.\n"
-            "Tugas: Susun Paket Lengkap Karir Pro (Career Pro Bundle) dari data CV pengguna dan target peran yang dituju.\n"
-            "Paket terdiri dari 3 pilar wajib:\n"
-            "1. CV Tailored ATS: Format ulang riwayat kerja menjadi bullet point aksi + metrik hasil kuantitatif (STAR method).\n"
-            "2. Rekomendasi HR Profesional: Kesiapan profil, kekuatan utama, strategi interview STAR, dan peta jalan karir.\n"
-            "3. Surat Lamaran / Cover Letter: Surat lamaran kerja formal persuasif siap pakai yang disesuaikan dengan posisi target.\n\n"
-            "Kembalikan output HANYA berupa JSON valid sesuai skema berikut:\n\n"
-            "{\n"
-            '  "full_name": "Nama Kandidat",\n'
-            '  "target_position": "Target Posisi Karir",\n'
-            '  "email": "email@example.com",\n'
-            '  "phone": "+628123456789",\n'
-            '  "location": "Jakarta, Indonesia",\n'
-            '  "linkedin": "linkedin.com/in/username",\n'
-            '  "portfolio": "github.com/username",\n'
-            '  "summary": "Ringkasan profesional ATS-tailored dengan proposisi nilai kuat...",\n'
-            '  "skills": {\n'
-            '    "technical_skills": ["Skill Teknis 1", "Skill Teknis 2"],\n'
-            '    "leadership_soft_skills": ["Problem Solving", "Komunikasi Strategis"]\n'
-            "  },\n"
-            '  "experience": [\n'
-            "    {\n"
-            '      "role": "Jabatan Pekerjaan",\n'
-            '      "company": "Nama Perusahaan",\n'
-            '      "period": "2022 - Sekarang",\n'
-            '      "location": "Jakarta",\n'
-            '      "bullets": [\n'
-            '        "Memimpin eksekusi proyek skala prioritas yang meningkatkan efisiensi proses sebesar 30%",\n'
-            '        "Merancang strategi implementasi baru yang memangkas biaya operasional tim sebesar 15%"\n'
-            "      ]\n"
-            "    }\n"
-            "  ],\n"
-            '  "education": [\n'
-            '    {"degree": "Sarjana Teknik / Manajemen", "institution": "Perguruan Tinggi", "year": "2018 - 2022"}\n'
-            "  ],\n"
-            '  "certifications": ["Sertifikasi Industri Relevan"],\n'
-            '  "hr_recommendations": {\n'
-            '    "profile_readiness": "Sangat Siap (High Competitiveness)",\n'
-            '    "key_strengths": ["Pengalaman kepemimpinan lintas fungsi", "Metrik pencapaian bisnis terbukti"],\n'
-            '    "strategic_improvements": ["Pertajam narasi pencapaian revenue", "Kuasai studi kasus metode STAR"],\n'
-            '    "interview_tips": ["Tekankan contoh konkret saat menangani krisis operasional", "Tunjukkan ROI atas inisiatif yang dipimpin"]\n'
-            "  },\n"
-            '  "cover_letter": {\n'
-            '    "date": "2026",\n'
-            '    "recipient": "Yth. Tim Rekrutmen & Hiring Manager",\n'
-            '    "subject": "Aplikasi Lamaran Pekerjaan - Target Posisi Karir",\n'
-            '    "salutation": "Dengan hormat,",\n'
-            '    "opening": "Sehubungan dengan informasi lowongan pekerjaan untuk posisi Target Posisi Karir...",\n'
-            '    "body_paragraphs": [\n'
-            '      "Selama perjalanan profesional saya, saya telah berhasil memimpin berbagai inisiatif strategis...",\n'
-            '      "Keahlian utama saya dalam optimasi proses dan kepemimpinan tim telah terbukti menghasilkan dampak terukur..."\n'
-            '    ],\n'
-            '    "closing": "Besar harapan saya untuk mendapatkan kesempatan wawancara guna mendiskusikan bagaimana kontribusi saya dapat mendukung target perusahaan.",\n'
-            '    "sign_off": "Hormat saya,\\nNama Kandidat"\n'
-            "  }\n"
-            "}\n\n"
-            f"Konten Riwayat CV ({filename}):\n{raw_text[:8000]}"
-        )
-
-    # 1. SERVICE: "CV_BUILD" / "CV_ATS"
-    # Logika: Ambil data riwayat pengguna -> format ulang ke bullet point ATS berbasis metrik -> generate file Word.
-    else:
-        prompt = (
-            "Kamu adalah Executive Resume Writer & ATS Optimization Specialist BoonTrack.\n"
-            "Tugas: Ambil dan rekonstruksi data riwayat pengguna berikut menjadi CV profesional standar internasional ATS-friendly.\n"
-            "Wajib format ulang seluruh pengalaman kerja menjadi bullet points berbobot tinggi dengan formula aksi + metrik pencapaian kuantitatif (Action Verb + Context + Quantifiable Result / STAR method).\n"
-            "Kembalikan output HANYA berupa JSON valid sesuai skema berikut:\n\n"
-            "{\n"
-            '  "full_name": "Nama Kandidat",\n'
-            '  "target_position": "Target Posisi Karir",\n'
-            '  "email": "email@example.com",\n'
-            '  "phone": "+628123456789",\n'
-            '  "location": "Jakarta, Indonesia",\n'
-            '  "linkedin": "linkedin.com/in/username",\n'
-            '  "portfolio": "github.com/username",\n'
-            '  "summary": "Professional summary 2-3 kalimat kuat dengan value proposition jelas...",\n'
-            '  "skills": {\n'
-            '    "technical_skills": ["Skill Teknis 1", "Skill Teknis 2"],\n'
-            '    "soft_skills": ["Komunikasi", "Problem Solving", "Kepemimpinan"]\n'
-            "  },\n"
-            '  "experience": [\n'
-            "    {\n"
-            '      "role": "Jabatan Pekerjaan",\n'
-            '      "company": "Nama Perusahaan",\n'
-            '      "period": "2022 - Sekarang",\n'
-            '      "location": "Jakarta",\n'
-            '      "bullets": [\n'
-            '        "Memimpin inisiatif prioritas yang menghasilkan kenaikan metrik performa sebesar 28%",\n'
-            '        "Mengoptimalkan alur operasional hingga mereduksi waktu proses sebesar 35%"\n'
-            "      ]\n"
-            "    }\n"
-            "  ],\n"
-            '  "education": [\n'
-            '    {"degree": "S1 Teknik / Manajemen", "institution": "Nama Universitas", "year": "2018 - 2022"}\n'
-            "  ],\n"
-            '  "certifications": ["Sertifikasi Profesional / Lisensi Relevan"]\n'
-            "}\n\n"
-            f"Konten Riwayat Pengguna ({filename}):\n{raw_text[:8000]}"
-        )
-
+    # Services 1, 2, 4: CV_ATS, CV_REVIEW, CAREER_PRO_BUNDLE
+    prompt = get_prompt_for_task(canonical, raw_text=raw_text, filename=filename, **kwargs)
     ai_response = await ai_gateway.generate(prompt)
     structured = _extract_json_from_llm_output(ai_response or "")
 
@@ -346,50 +218,7 @@ async def execute_ai_document_task(
         return structured
 
     logger.warning(f"[DocumentEngine] LLM JSON parsing fallback triggered for {canonical}.")
-    if canonical == TASK_CV_REVIEW:
-        return {
-            "overall_score": 80,
-            "target_role": "Kandidat Profesional",
-            "summary": "CV memiliki struktur dasar yang baik dan siap dioptimalkan dengan metrik dampak.",
-            "breakdown_scores": {"ats_compatibility": 85, "content_impact": 75, "structure_grammar": 80, "keyword_alignment": 80},
-            "strengths": ["Riwayat pendidikan & kontak jelas", "Keahlian relevan tercantum"],
-            "red_flags": ["Sebagian besar poin pengalaman kerja belum menyertakan angka metrik pencapaian kuantitatif"],
-            "actionable_fixes": [{"section": "Experience", "issue": "Kurang angka dampak", "fix": "Gunakan formula: Tindakan + Konteks + Metrik Hasil (%)"}]
-        }
-    elif canonical == TASK_CAREER_PRO_BUNDLE:
-        return {
-            "full_name": "KANDIDAT PROFESIONAL",
-            "target_position": "Spesialis Karir",
-            "summary": "Profesional berdedikasi tinggi dengan pengalaman kerja terstruktur dan pencapaian target terbukti.",
-            "skills": {"technical_skills": ["Manajemen Proyek", "Analisis Data"], "leadership_soft_skills": ["Komunikasi", "Problem Solving"]},
-            "experience": [{"role": "Staf Profesional", "company": "Perusahaan Terkemuka", "period": "2021 - Sekarang", "bullets": ["Melaksanakan operasional harian secara efisien", "Mendukung efisiensi target tim sebesar 20%"]}],
-            "education": [{"degree": "Sarjana / Diploma", "institution": "Perguruan Tinggi", "year": "2020"}],
-            "certifications": ["Pelatihan Profesional Terverifikasi"],
-            "hr_recommendations": {
-                "profile_readiness": "Kompetitif & Siap Seleksi",
-                "key_strengths": ["Komunikasi efektif", "Track record terukur"],
-                "strategic_improvements": ["Eksplorasi sertifikasi spesialisasi lanjutan"],
-                "interview_tips": ["Siapkan 2 studi kasus sukses dengan metode STAR"]
-            },
-            "cover_letter": {
-                "recipient": "Yth. Tim Rekrutmen & Hiring Manager",
-                "subject": "Aplikasi Lamaran Pekerjaan - Spesialis Karir",
-                "salutation": "Dengan hormat,",
-                "opening": "Saya menulis surat ini untuk menyampaikan ketertarikan saya pada posisi Spesialis Karir.",
-                "body_paragraphs": ["Dengan pengalaman yang saya miliki, saya yakin dapat berkontribusi positif bagi pertumbuhan perusahaan."],
-                "closing": "Terima kasih atas waktu dan pertimbangan Bapak/Ibu.",
-                "sign_off": "Hormat saya,\nKandidat Profesional"
-            }
-        }
-    else:
-        return {
-            "full_name": "KANDIDAT PROFESIONAL",
-            "target_position": "Spesialis Karir",
-            "summary": "Profesional berdedikasi tinggi dengan pengalaman kerja terstruktur dan pencapaian target terbukti.",
-            "skills": {"core_skills": ["Manajemen Kerja", "Komunikasi", "Problem Solving"]},
-            "experience": [{"role": "Staf Profesional", "company": "Perusahaan Terkemuka", "period": "2021 - Sekarang", "bullets": ["Melaksanakan operasional harian secara efisien", "Mendukung efisiensi target tim sebesar 20%"]}],
-            "education": [{"degree": "Sarjana / Diploma", "institution": "Perguruan Tinggi", "year": "2020"}]
-        }
+    return get_fallback_for_task(canonical, raw_text=raw_text)
 
 
 TASK_DISPLAY_NAMES = {
@@ -645,6 +474,13 @@ async def intake_document_job(
     job_id = str(uuid.uuid4())
     start_time = datetime.now(timezone.utc)
     raw_task = str(task_type).upper().strip()
+    if raw_task not in CANONICAL_TASK_MAP and raw_task not in SUPPORTED_TASKS:
+        return {
+            "status": "REJECTED",
+            "job_id": job_id,
+            "error": f"Tipe tugas dokumen '{task_type}' tidak didukung oleh Document Engine.",
+            "is_valid": False
+        }
     normalized_task = LEGACY_TASK_MAPPING.get(raw_task, raw_task)
 
     # 1. Validasi Magic Bytes & Format File

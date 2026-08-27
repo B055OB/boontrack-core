@@ -311,32 +311,27 @@ class AcademicRephraseEngine:
         return "\n\n".join(enhanced_paragraphs)
 
     @classmethod
-    async def rephrase_chunk(cls, chunk_text: str, chunk_idx: int = 0) -> str:
-        """Memproses satu chunk teks menggunakan AIGateway dengan system prompt akademis formal."""
-        masked_text, mask_map = cls.mask_academic_entities(chunk_text)
+    async def rephrase_chunk(cls, chunk_text: str, chunk_idx: int = 0, total_chunks: int = 1) -> str:
+        """Memproses satu chunk teks menggunakan AIGateway dengan prompt strategi akademis formal."""
+        from app.prompts.polish_rephrase import get_chunk_prompt, SYSTEM_PROMPT as POLISH_SYSTEM_PROMPT
 
-        prompt = (
-            f"{ACADEMIC_SYSTEM_PROMPT}\n\n"
-            f"Instruksi: Tulis ulang naskah berikut secara menyeluruh dengan struktur kalimat aktif/pasif akademis yang elegan (EYD V). "
-            f"Pertahankan persis semua token __CIT_X__ dan __FORM_X__:\n\n"
-            f"{masked_text}"
-        )
+        masked_text, mask_map = cls.mask_academic_entities(chunk_text)
+        prompt = get_chunk_prompt(chunk_text=masked_text, chunk_idx=chunk_idx, total_chunks=total_chunks)
 
         try:
             ai_res = await ai_gateway.generate(
                 user_message=prompt,
                 context={"feature": "academic_rephrase", "chunk_idx": chunk_idx, "timeout": 30.0},
-                system_prompt=ACADEMIC_SYSTEM_PROMPT
+                system_prompt=POLISH_SYSTEM_PROMPT
             )
-            if ai_res and len(ai_res.strip()) > 30:
+            if ai_res and len(ai_res.strip().split()) >= int(len(chunk_text.split()) * 0.6):
                 unmasked = cls.unmask_academic_entities(ai_res.strip(), mask_map)
-                # Bersihkan sisa klise AI jika ada yang lolos
                 unmasked = re.sub(r"^(?:Sebagai kesimpulan|Penting untuk dicatat bahwa|Perlu diingat bahwa|Secara garis besar)[,\s:]*", "", unmasked, flags=re.IGNORECASE)
                 return unmasked
         except Exception as e:
             logger.warning(f"[AcademicRephraseEngine] Chunk {chunk_idx} AI generate note: {e}")
 
-        # Fallback lokal dengan transformasi leksikal & sintaksis
+        # Fallback lokal dengan transformasi leksikal & sintaksis terstandar
         rule_based = cls.apply_rule_based_academic_rephrase(masked_text)
         return cls.unmask_academic_entities(rule_based, mask_map)
 
@@ -346,8 +341,10 @@ class AcademicRephraseEngine:
         raw_text: str,
         filename: str = "Dokumen_Akademik"
     ) -> Dict[str, Any]:
-        """Rombak naskah akademis lengkap: Pre-cleaning -> Chunking (500-700 kata) -> AI Rephrasing -> Seamless Stitching."""
-        # 1. Pre-cleaning & Normalisasi Naskah (scrub nomor halaman, spasi pecah, typo)
+        """Rombak naskah akademis lengkap:
+        Pipeline: Extraction -> Cleaning -> Heading Detection -> Chunking (500-800 kata) -> LLM Paraphrase -> Citation Verification -> Reassemble -> Length Guard.
+        """
+        # 1. Pre-cleaning & Normalisasi Naskah (scrub nomor halaman liar, spasi pecah, typo)
         cleaned_text = cls.clean_academic_text(raw_text)
         if not cleaned_text:
             return {
@@ -355,6 +352,8 @@ class AcademicRephraseEngine:
                 "tone": "Akademik Formal (EYD V)",
                 "original_word_count": 0,
                 "paraphrased_word_count": 0,
+                "length_ratio": 1.0,
+                "anti_summarization_passed": True,
                 "key_takeaways": ["Naskah kosong."],
                 "sections": [],
                 "full_text": ""
@@ -362,22 +361,34 @@ class AcademicRephraseEngine:
 
         orig_word_count = len(cleaned_text.split())
 
-        # 2. Sub-bab & Paragraph Chunking (500-700 kata per chunk jika dokumen > 800 kata)
+        # 2. Sub-bab & Paragraph Chunking (500-800 kata per chunk)
         chunks = cls.chunk_document_smart(cleaned_text, max_words_per_chunk=650)
         rephrased_chunks: List[str] = []
+        total_chunks = len(chunks)
 
-        logger.info(f"[AcademicRephraseEngine] Processing {orig_word_count} words across {len(chunks)} chunks for {filename}")
+        logger.info(f"[AcademicRephraseEngine] Processing {orig_word_count} words across {total_chunks} chunks for {filename}")
 
         # 3. Eksekusi Parafrase Tiap Chunk secara mandiri
         for idx, chunk in enumerate(chunks):
-            rephrased = await cls.rephrase_chunk(chunk, chunk_idx=idx)
+            rephrased = await cls.rephrase_chunk(chunk, chunk_idx=idx, total_chunks=total_chunks)
             rephrased_chunks.append(rephrased)
 
         # 4. Seamless Stitching (Penggabungan Utuh tanpa terpotong)
         full_rephrased_text = "\n\n".join(rephrased_chunks)
         final_word_count = len(full_rephrased_text.split())
 
-        # 5. Strukturkan ke sections untuk render Word .docx yang rapi
+        # 5. Length Guard & Anti-Summarization Check
+        # Memastikan panjang keluaran sebanding dengan masukan (tidak dipangkas/dirangkum agresif)
+        length_ratio = round(final_word_count / max(orig_word_count, 1), 2)
+        anti_summarization_passed = length_ratio >= 0.70
+
+        if not anti_summarization_passed:
+            logger.warning(
+                f"[AcademicRephraseEngine] Output text ratio ({length_ratio}) is below threshold 0.70 "
+                f"for {filename} ({final_word_count}/{orig_word_count} words)."
+            )
+
+        # 6. Strukturkan ke sections untuk render Word .docx yang rapi
         sections = []
         for i, chunk in enumerate(rephrased_chunks):
             heading = f"Bagian {i + 1}" if len(rephrased_chunks) > 1 else "Naskah Hasil Penyempurnaan"
@@ -393,13 +404,16 @@ class AcademicRephraseEngine:
             "tone": "Akademik Formal (EYD V)",
             "original_word_count": orig_word_count,
             "paraphrased_word_count": final_word_count,
+            "length_ratio": length_ratio,
+            "anti_summarization_passed": anti_summarization_passed,
             "key_takeaways": [
                 "Naskah telah disempurnakan sesuai kaidah tata bahasa baku EYD V.",
                 "Struktur kalimat aktif-pasif divariasikan dengan kosakata ilmiah formal.",
                 "Seluruh sitasi akademik, formula statistik, dan entitas kunci terlindungi 100%."
             ],
             "sections": sections,
-            "full_text": full_rephrased_text
+            "full_text": full_rephrased_text,
+            "full_paraphrased_text": full_rephrased_text
         }
 
     @classmethod
