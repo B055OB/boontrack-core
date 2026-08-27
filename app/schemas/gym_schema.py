@@ -17,8 +17,10 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 class MembershipStatus(str, Enum):
     ACTIVE = "ACTIVE"
+    PENDING = "PENDING"
     EXPIRED = "EXPIRED"
     SUSPENDED = "SUSPENDED"
+
 
 
 class CardStatus(str, Enum):
@@ -225,3 +227,100 @@ class TapAccessResponse(BaseModel):
     expiry_date: Optional[datetime] = None
     event_id: Optional[Union[UUID, str]] = None
     unlock_gate: bool = False
+
+
+# ============================================================================
+# 6. Gym Class Sessions & Bookings (Zumba, Yoga, HIIT)
+# ============================================================================
+
+class GymClassSessionBase(BaseModel):
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
+
+    tenant_id: str = Field(default="atmosfitnes", description="Tenant ID")
+    session_name: str = Field(..., max_length=150, description="Session / Class Name (e.g. 'Zumba Morning Party')")
+    instructor: str = Field(..., max_length=100, description="Instructor name (e.g. 'Coach Rina')")
+    schedule_time: datetime = Field(..., description="Class schedule datetime with timezone")
+    max_capacity: int = Field(default=20, ge=1, le=100, description="Maximum participant capacity")
+    booked_count: int = Field(default=0, ge=0, description="Current booked count")
+
+
+class GymClassSession(GymClassSessionBase):
+    id: Union[UUID, str] = Field(default_factory=uuid4)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def remaining_slots(self) -> int:
+        return max(0, self.max_capacity - self.booked_count)
+
+    @property
+    def is_available(self) -> bool:
+        return self.booked_count < self.max_capacity
+
+
+class GymClassBookingBase(BaseModel):
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
+
+    tenant_id: str = Field(default="atmosfitnes")
+    session_id: Union[UUID, str] = Field(..., description="Target class session ID")
+    member_id: Optional[Union[UUID, str]] = None
+    member_phone: str = Field(..., description="Member WhatsApp number")
+    member_name: str = Field(..., description="Member Name")
+    status: str = Field(default="CONFIRMED", description="Booking status: 'CONFIRMED', 'CANCELLED', 'ATTENDED'")
+
+
+class GymClassBooking(GymClassBookingBase):
+    id: Union[UUID, str] = Field(default_factory=uuid4)
+    booked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# ============================================================================
+# 7. Admin Dashboard Payloads & Responses
+# ============================================================================
+
+class PairCardRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    tenant_id: str = Field(default="atmosfitnes", description="Tenant ID")
+    uid_hash: str = Field(..., min_length=4, max_length=255, description="NFC UID Hash or raw tag string")
+
+
+class AdminMemberItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    tenant_id: str
+    name: str
+    phone: str
+    membership_package: str
+    membership_status: str
+    expiry_date: str
+    is_paired: bool = False
+    paired_card_hash: Optional[str] = None
+    created_at: str
+
+
+class AdminAccessLogItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    created_at: str
+    member_name: str
+    member_id: Optional[str] = None
+    controller_name: str
+    controller_id: str
+    event_type: str
+    decision: str
+    reason: str
+
+
+class AdminControllerItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    controller_id: str
+    name: str
+    location: Optional[str] = None
+    status: str
+    is_online: bool
+    last_seen_at: str
+

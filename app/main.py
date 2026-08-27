@@ -20,6 +20,7 @@ from app.core.database import init_db
 from app.core.server import create_web_app, start_web_server, start_telegram_polling
 from app.handlers.telegram_bot_handlers import register_all_bot_handlers
 from app.routes.gym_access_routes import gym_router
+from app.routes.gym_admin_routes import router as gym_admin_router
 from app.routes.payment import payment_router
 from app.routes.webchat import router as webchat_router
 
@@ -43,8 +44,10 @@ app.add_middleware(
 
 # Register Routers
 app.include_router(gym_router, prefix="/api/v1/gym")
+app.include_router(gym_admin_router)
 app.include_router(payment_router)
 app.include_router(webchat_router)
+
 
 
 @app.get("/", summary="Root Health Check")

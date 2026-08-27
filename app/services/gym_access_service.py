@@ -32,6 +32,11 @@ from app.schemas.gym_schema import (
     GymNfcCard,
     GymAccessController,
     GymAccessEvent,
+    GymClassSession,
+    GymClassBooking,
+    AdminMemberItem,
+    AdminAccessLogItem,
+    AdminControllerItem,
 )
 from app.services.whatsapp_service import (
     get_supabase,
@@ -53,10 +58,16 @@ DEFAULT_ATMOSFITNES_STATIC_QRIS = (
 )
 
 MEMBERSHIP_PACKAGE_PRICES = {
+    "GYM_BASIC": 150000,
+    "ZUMBA_CLASS": 200000,
+    "GYM_PREMIUM": 250000,
     "REGULAR_MONTHLY": 250000,
+    "ALL_ACCESS": 350000,
+    "PERSONAL_TRAINING": 800000,
     "VIP_ANNUAL": 2400000,
     "STUDENT_PASS": 175000,
 }
+
 
 
 class ControllerAuthenticationError(Exception):
@@ -74,6 +85,44 @@ class GymAccessService:
         self._cards: Dict[str, Dict[str, GymNfcCard]] = {}              # tenant_id -> {uid_hash: GymNfcCard}
         self._controllers: Dict[str, Dict[str, GymAccessController]] = {} # tenant_id -> {controller_id: GymAccessController}
         self._events: Dict[str, Dict[str, GymAccessEvent]] = {}         # tenant_id -> {idempotency_key: GymAccessEvent}
+        self._class_sessions: Dict[str, Dict[str, GymClassSession]] = {} # tenant_id -> {session_id: GymClassSession}
+        self._class_bookings: Dict[str, Dict[str, GymClassBooking]] = {} # tenant_id -> {booking_id: GymClassBooking}
+        self._seed_default_classes()
+
+    def _seed_default_classes(self):
+        """Seeds initial Zumba and Studio sessions for Atmosfitnes."""
+        tenant_id = "atmosfitnes"
+        now = datetime.now(timezone.utc)
+        self._class_sessions[tenant_id] = {
+            "zumba_morning": GymClassSession(
+                id="zumba_morning",
+                tenant_id=tenant_id,
+                session_name="Zumba Morning Party",
+                instructor="Coach Rina",
+                schedule_time=now + timedelta(days=1, hours=2),
+                max_capacity=15,
+                booked_count=12,
+            ),
+            "zumba_evening": GymClassSession(
+                id="zumba_evening",
+                tenant_id=tenant_id,
+                session_name="Zumba Sunset Cardio",
+                instructor="Coach Maya",
+                schedule_time=now + timedelta(days=1, hours=10),
+                max_capacity=12,
+                booked_count=4,
+            ),
+            "yoga_weekend": GymClassSession(
+                id="yoga_weekend",
+                tenant_id=tenant_id,
+                session_name="Vinyasa Yoga Flow",
+                instructor="Master Dian",
+                schedule_time=now + timedelta(days=2, hours=3),
+                max_capacity=10,
+                booked_count=10, # Full capacity demo
+            ),
+        }
+
 
     # =========================================================================
     # In-Memory Seed / Mock Helpers (For unit testing without live db)
@@ -390,6 +439,14 @@ class GymAccessService:
             idempotency_key=idem_key,
         )
 
+        # Send friendly WhatsApp check-in notification
+        if member.phone:
+            checkin_msg = f"Selamat latihan di Atmosfitnes, {member.name}! Check-in berhasil tercatat."
+            try:
+                await send_whatsapp_text(member.phone, checkin_msg, tenant_id=tenant_id)
+            except Exception as checkin_err:
+                logger.debug(f"[GymCheckIn] WA notification note: {checkin_err}")
+
         logger.info(f"[GymAccess] ACCESS ALLOWED for '{member.name}' at {controller_id}")
         return TapAccessResponse(
             decision=AccessDecision.ALLOWED,
@@ -401,6 +458,7 @@ class GymAccessService:
             event_id=event.id if event else None,
             unlock_gate=True,
         )
+
 
     # =========================================================================
     # WhatsApp Renewal Loop & Dynamic QRIS Dispatcher
@@ -553,17 +611,17 @@ class GymAccessService:
         if member.phone:
             formatted_date = new_expiry_date.strftime("%d %B %Y")
             amount_display = f"Rp{amount:,}" if amount else "Lunas"
+            pkg_name = str(member.membership_package or "Gym Membership").replace("_", " ").title()
             confirm_msg = (
-                f"🎉 *PEMBAYARAN PERPANJANGAN BERHASIL!*\n"
+                f"🎉 *PEMBAYARAN MEMBERSHIP TERVERIFIKASI!*\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"📋 *Layanan:* Atmosfitnes Gym Membership\n"
-                f"🆔 *Invoice:* `{invoice_id or 'GYM-PAID'}`\n"
-                f"💰 *Total:* {amount_display}\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"Masa aktif membership *{member.name}* telah diperpanjang hingga *{formatted_date}*.\n\n"
-                f"🔓 Akses gate turnstile otomatis telah *AKTIF KEMBALI*. Silakan langsung tap kartu NFC Anda di gate masuk. Selamat berlatih! 💪"
+                f"Pembayaran {amount_display} terverifikasi! Membership {pkg_name} aktif s.d {formatted_date}.\n\n"
+                f"Silakan tunjukkan pesan ini ke meja kasir untuk pengambilan dan aktivasi kartu akses NFC Anda.\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🔓 Akses gate turnstile otomatis telah AKTIF. Selamat berlatih di Atmosfitnes! 💪"
             )
             await send_whatsapp_text(member.phone, confirm_msg, tenant_id=tenant_id)
+
 
         logger.info(f"[GymReactivation] Member '{member.name}' ({member_id}) successfully reactivated until {new_expiry_date.isoformat()}")
         return {
@@ -818,6 +876,253 @@ class GymAccessService:
 
         return event
 
+    # =========================================================================
+    # Class Sessions & Booking Engine (Zumba, Studio)
+    # =========================================================================
+
+    def get_available_class_sessions(self, tenant_id: str) -> List[GymClassSession]:
+        """Returns list of active class sessions for a tenant."""
+        if tenant_id not in self._class_sessions:
+            return []
+        return list(self._class_sessions[tenant_id].values())
+
+    async def book_class_session(
+        self,
+        tenant_id: str,
+        session_id: str,
+        member_phone: str,
+        member_name: str,
+        member_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Validates capacity and books a class session."""
+        sessions = self._class_sessions.get(tenant_id, {})
+        session = sessions.get(session_id)
+        if not session:
+            return {
+                "status": "NOT_FOUND",
+                "message": f"Sesi kelas '{session_id}' tidak ditemukan."
+            }
+
+        if session.booked_count >= session.max_capacity:
+            return {
+                "status": "FULL",
+                "message": f"Mohon maaf, kuota untuk kelas '{session.session_name}' sudah penuh ({session.booked_count}/{session.max_capacity} peserta)."
+            }
+
+        # Increment booked count & register booking
+        session.booked_count += 1
+        booking = GymClassBooking(
+            tenant_id=tenant_id,
+            session_id=session_id,
+            member_id=member_id,
+            member_phone=member_phone,
+            member_name=member_name,
+            status="CONFIRMED"
+        )
+        if tenant_id not in self._class_bookings:
+            self._class_bookings[tenant_id] = {}
+        self._class_bookings[tenant_id][str(booking.id)] = booking
+
+        return {
+            "status": "CONFIRMED",
+            "booking_id": str(booking.id),
+            "session_name": session.session_name,
+            "instructor": session.instructor,
+            "schedule_time": session.schedule_time.isoformat(),
+            "remaining_slots": session.remaining_slots,
+            "message": f"Booking berhasil untuk {session.session_name} bersama {session.instructor}!"
+        }
+
+    # =========================================================================
+    # Admin Dashboard Backend Operations
+    # =========================================================================
+
+    async def pair_card(
+        self,
+        tenant_id: str,
+        member_id: str,
+        uid_hash: str
+    ) -> Dict[str, Any]:
+        """Pairs a new NFC card UID hash to a gym member."""
+        clean_hash = uid_hash.strip().lower()
+        now = datetime.now(timezone.utc)
+
+        # 1. Lookup Member
+        member = self._members.get(tenant_id, {}).get(member_id)
+        if not member:
+            supabase = get_supabase()
+            if supabase:
+                try:
+                    res = supabase.table("gym_members").select("*").eq("tenant_id", tenant_id).eq("id", member_id).limit(1).execute()
+                    if res.data:
+                        member = GymMember.model_validate(res.data[0])
+                except Exception as e:
+                    logger.warning(f"[GymAdmin] Member lookup note: {e}")
+
+        if not member:
+            return {"status": "error", "message": f"Member with ID '{member_id}' not found."}
+
+        # 2. Register / Update Card in Memory
+        card = self.register_nfc_card_in_memory(
+            tenant_id=tenant_id,
+            member_id=member_id,
+            uid_hash=clean_hash,
+            status=CardStatus.ACTIVE
+        )
+
+        # Persist to DB if available
+        supabase = get_supabase()
+        if supabase:
+            try:
+                supabase.table("gym_nfc_cards").upsert({
+                    "id": str(card.id),
+                    "tenant_id": tenant_id,
+                    "member_id": member_id,
+                    "uid_hash": clean_hash,
+                    "status": "ACTIVE",
+                    "created_at": now.isoformat(),
+                }, on_conflict="tenant_id,uid_hash").execute()
+            except Exception as e:
+                logger.warning(f"[GymAdmin] Supabase card upsert note: {e}")
+
+        logger.info(f"[GymAdmin] Paired NFC card '{clean_hash[:8]}...' to member '{member.name}' ({member_id})")
+        return {
+            "status": "PAIRED",
+            "member_id": member_id,
+            "member_name": member.name,
+            "uid_hash": clean_hash,
+            "card_status": "ACTIVE",
+        }
+
+    async def get_admin_members(
+        self,
+        tenant_id: str,
+        page: int = 1,
+        limit: int = 20,
+        status: Optional[str] = None,
+        package: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Returns paginated member list with NFC pairing indicator."""
+        now = datetime.now(timezone.utc)
+        members_map = self._members.get(tenant_id, {})
+        cards_map = self._cards.get(tenant_id, {})
+
+        # Inverted card lookup: member_id -> uid_hash
+        paired_map: Dict[str, str] = {}
+        for uid_h, card in cards_map.items():
+            if card.status == CardStatus.ACTIVE:
+                paired_map[str(card.member_id)] = uid_h
+
+        all_members = list(members_map.values())
+        filtered = []
+        for m in all_members:
+            if status and m.membership_status.value.upper() != status.upper():
+                continue
+            if package and m.membership_package.upper() != package.upper():
+                continue
+            filtered.append(m)
+
+        # Pagination
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        paged_members = filtered[start_idx:end_idx]
+
+        items = []
+        for m in paged_members:
+            m_id = str(m.id)
+            paired_hash = paired_map.get(m_id)
+            items.append(AdminMemberItem(
+                id=m_id,
+                tenant_id=tenant_id,
+                name=m.name,
+                phone=m.phone,
+                membership_package=m.membership_package,
+                membership_status=m.membership_status.value,
+                expiry_date=m.expiry_date.isoformat(),
+                is_paired=paired_hash is not None,
+                paired_card_hash=paired_hash,
+                created_at=m.created_at.isoformat() if hasattr(m, 'created_at') and m.created_at else now.isoformat(),
+            ))
+
+        return {
+            "total": len(filtered),
+            "page": page,
+            "limit": limit,
+            "members": [it.model_dump() for it in items],
+        }
+
+    async def get_admin_access_logs(
+        self,
+        tenant_id: str,
+        limit: int = 50
+    ) -> Dict[str, Any]:
+        """Returns recent access audit events sorted by timestamp DESC."""
+        events_map = self._events.get(tenant_id, {})
+        all_events = list(events_map.values())
+        all_events.sort(key=lambda e: e.created_at, reverse=True)
+        recent_events = all_events[:limit]
+
+        controllers_map = self._controllers.get(tenant_id, {})
+        members_map = self._members.get(tenant_id, {})
+
+        items = []
+        for ev in recent_events:
+            ctrl = controllers_map.get(ev.controller_id)
+            ctrl_name = ctrl.name if ctrl else ev.controller_id
+            m = members_map.get(str(ev.member_id)) if ev.member_id else None
+            m_name = m.name if m else ("Unknown Member" if ev.member_id else "Unregistered Card")
+
+            items.append(AdminAccessLogItem(
+                id=str(ev.id),
+                created_at=ev.created_at.isoformat(),
+                member_name=m_name,
+                member_id=str(ev.member_id) if ev.member_id else None,
+                controller_name=ctrl_name,
+                controller_id=ev.controller_id,
+                event_type=ev.event_type.value if hasattr(ev.event_type, 'value') else str(ev.event_type),
+                decision=ev.decision.value if hasattr(ev.decision, 'value') else str(ev.decision),
+                reason=ev.reason.value if hasattr(ev.reason, 'value') else str(ev.reason),
+            ))
+
+        return {
+            "total": len(items),
+            "logs": [it.model_dump() for it in items],
+        }
+
+    async def get_admin_controllers(self, tenant_id: str) -> Dict[str, Any]:
+        """Lists IoT controllers with dynamic online indicator (last_seen_at <= 60s)."""
+        now = datetime.now(timezone.utc)
+        ctrl_map = self._controllers.get(tenant_id, {})
+
+        # Ensure default controllers exist for Atmosfitnes
+        if not ctrl_map and tenant_id == "atmosfitnes":
+            self.register_controller_in_memory(tenant_id, "GATE_MAIN_01", "Pintu Utama / Lobby Turnstile", "secret_token_lobby", "Lobby Utama")
+            self.register_controller_in_memory(tenant_id, "GATE_GYM_LT1", "Turnstile Gym Lantai 1", "secret_token_lt1", "Lantai 1 Free Weights")
+            self.register_controller_in_memory(tenant_id, "GATE_ZUMBA_LT2", "Studio Zumba Lantai 2", "secret_token_zumba", "Lantai 2 Studio")
+            ctrl_map = self._controllers.get(tenant_id, {})
+
+        items = []
+        for ctrl_id, ctrl in ctrl_map.items():
+            last_seen = ctrl.last_seen_at if ctrl.last_seen_at.tzinfo else ctrl.last_seen_at.replace(tzinfo=timezone.utc)
+            delta_seconds = (now - last_seen).total_seconds()
+            is_online = delta_seconds <= 60 and ctrl.status == ControllerStatus.ONLINE
+
+            items.append(AdminControllerItem(
+                id=str(ctrl.id),
+                controller_id=ctrl.controller_id,
+                name=ctrl.name,
+                location=ctrl.location,
+                status=ctrl.status.value,
+                is_online=is_online,
+                last_seen_at=ctrl.last_seen_at.isoformat(),
+            ))
+
+        return {
+            "total": len(items),
+            "controllers": [it.model_dump() for it in items],
+        }
+
 
 # Global Singleton Instance
 gym_access_service = GymAccessService()
+

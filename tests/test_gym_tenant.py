@@ -12,6 +12,7 @@ from app.tenants.gym.config import TENANT_ID, VERIFY_TOKEN, MEMBERSHIP_PACKAGES
 from app.tenants.gym.service import gym_service, GymTenantService
 from app.tenants.gym.router import register_gym_routes
 from app.services.gym_access_service import gym_access_service
+from app.schemas.gym_schema import MembershipStatus
 
 
 class TestGymTenantService(unittest.TestCase):
@@ -26,7 +27,7 @@ class TestGymTenantService(unittest.TestCase):
     def test_handle_menu_keyword(self, mock_send_wa):
         """User sends 'menu' -> main menu sent."""
         import asyncio
-        res = asyncio.run(self.service.handle_user_message(self.user_phone, "menu", self.user_name))
+        res = asyncio.run(self.service.handle_user_message("628123456781", "menu", "User Menu"))
         self.assertEqual(res["action"], "MAIN_MENU")
         mock_send_wa.assert_called_once()
         self.assertIn("PUSAT LAYANAN & AKSES ATMOSFITNES", mock_send_wa.call_args[0][1])
@@ -34,29 +35,30 @@ class TestGymTenantService(unittest.TestCase):
     @patch("app.tenants.gym.service.send_whatsapp_text", new_callable=AsyncMock)
     @patch("app.tenants.gym.service.send_whatsapp_image_link", new_callable=AsyncMock)
     def test_handle_package_order(self, mock_send_img, mock_send_txt):
-        """User sends '1' -> generates invoice for Regular Monthly."""
+        """User sends '1' -> generates invoice for Gym Basic."""
         import asyncio
-        res = asyncio.run(self.service.handle_user_message(self.user_phone, "1", self.user_name))
+        res = asyncio.run(self.service.handle_user_message("628123456782", "1", "User Basic"))
         self.assertEqual(res["action"], "INVOICE_CREATED")
-        self.assertGreater(res["amount"], 250000)
+        self.assertGreater(res["amount"], 150000)
         mock_send_txt.assert_called_once()
         mock_send_img.assert_called_once()
         self.assertIn("INVOICE PEMBAYARAN MEMBERSHIP", mock_send_txt.call_args[0][1])
 
     @patch("app.tenants.gym.service.send_whatsapp_text", new_callable=AsyncMock)
     def test_handle_status_check(self, mock_send_wa):
-        """User sends '4' -> checks membership status."""
+        """User sends 'cek status' -> checks membership status."""
         import asyncio
+        phone_status = "628123456783"
         now = datetime.now(timezone.utc)
         gym_access_service.register_member_in_memory(
             tenant_id="atmosfitnes",
             name="Doni Pratama",
-            phone=self.user_phone,
+            phone=phone_status,
             expiry_date=now + timedelta(days=20),
-            membership_status="ACTIVE",
+            membership_status=MembershipStatus.ACTIVE,
         )
 
-        res = asyncio.run(self.service.handle_user_message(self.user_phone, "4", self.user_name))
+        res = asyncio.run(self.service.handle_user_message(phone_status, "cek status", "Doni Pratama"))
         self.assertEqual(res["action"], "STATUS_CHECK")
         self.assertTrue(res["is_valid"])
         mock_send_wa.assert_called_once()
@@ -64,9 +66,9 @@ class TestGymTenantService(unittest.TestCase):
 
     @patch("app.tenants.gym.service.send_whatsapp_text", new_callable=AsyncMock)
     def test_handle_facility_info(self, mock_send_wa):
-        """User sends '5' -> sends facility info."""
+        """User sends '8' -> sends facility info."""
         import asyncio
-        res = asyncio.run(self.service.handle_user_message(self.user_phone, "5", self.user_name))
+        res = asyncio.run(self.service.handle_user_message("628123456784", "8", "User Info"))
         self.assertEqual(res["action"], "FACILITY_INFO")
         mock_send_wa.assert_called_once()
         self.assertIn("INFORMASI FASILITAS", mock_send_wa.call_args[0][1])

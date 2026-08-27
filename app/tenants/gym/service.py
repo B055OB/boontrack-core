@@ -1,13 +1,14 @@
 """app/tenants/gym/service.py
-Conversational AI & Membership Flow Service for Atmosfitnes Gym Tenant.
+Conversational AI, Package Purchasing, and Zumba Class Booking Service for Atmosfitnes Gym.
 
 Integrates with:
-- app.services.gym_access_service (IoT gate verification & member lookup)
+- app.services.gym_access_service (IoT gate verification, class bookings, member lookup)
 - app.services.whatsapp_service (WhatsApp messaging & Supabase audit logging)
 - app.utils.qris_generator (Dynamic QRIS generation)
 """
 
 import logging
+import re
 import urllib.parse
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional
@@ -68,30 +69,44 @@ class GymTenantService:
             user_id=clean_phone,
         )
 
-        lower_text = text.lower()
+        lower_text = text.lower().strip()
 
         # 2. Navigation Keywords (Menu, Reset, Start, Help)
         if lower_text in ("menu", "start", "help", "batal", "reset", "ulang", "halo", "hi", "p"):
             return await self.send_main_menu(clean_phone, clean_name)
 
-        # 3. Numeric Menu Selections
+        # 3. Intent: Daftar Member / Beli Paket
+        if lower_text in ("daftar member", "daftar", "beli paket", "paket", "membership", "beli membership"):
+            return await self.send_packages_menu(clean_phone, clean_name)
+
+        # 4. Numeric Package Selection (1 to 5)
         if lower_text in MEMBERSHIP_PACKAGES:
             pkg = MEMBERSHIP_PACKAGES[lower_text]
             return await self.create_membership_invoice(clean_phone, clean_name, pkg)
 
-        # Option 4: Check Membership & NFC Card Status
-        if lower_text in ("4", "cek status", "status", "cek kartu", "cek membership"):
+        # 5. Intent: Booking Kelas Zumba / Jadwal Kelas
+        if lower_text in ("booking zumba", "jadwal kelas", "jadwal", "booking", "kelas", "zumba", "6"):
+            return await self.send_class_schedule(clean_phone, clean_name)
+
+        # 6. Intent: Specific Booking Command (e.g. "book 1", "book 2", "book zumba_morning")
+        booking_match = re.search(r"(?:book|booking)\s+([a-zA-Z0-9_-]+)", lower_text)
+        if booking_match:
+            session_key = booking_match.group(1).strip()
+            return await self.handle_class_booking(clean_phone, clean_name, session_key)
+
+        # 7. Intent: Cek Status Membership & Kartu NFC
+        if lower_text in ("7", "cek status", "status", "cek kartu", "cek membership", "kartu"):
             return await self.check_member_status_and_reply(clean_phone, clean_name)
 
-        # Option 5: Info Fasilitas & Jam Operasional
-        if lower_text in ("5", "fasilitas", "jam", "lokasi", "jam operasional", "alamat"):
+        # 8. Intent: Info Fasilitas & Lokasi
+        if lower_text in ("8", "fasilitas", "jam", "lokasi", "jam operasional", "alamat"):
             return await self.send_facility_info(clean_phone)
 
-        # Option 6: Escalation / CS
-        if lower_text in ("6", "admin", "cs", "resepsionis", "bantuan", "staff", "trainer", "komplain"):
+        # 9. Intent: Escalation / CS
+        if lower_text in ("9", "admin", "cs", "resepsionis", "bantuan", "staff", "trainer", "komplain"):
             return await self.send_escalation_message(clean_phone)
 
-        # 4. Fallback: AI Conversational Assistance with Gym Persona
+        # 10. Fallback: AI Conversational Assistance with Gym Persona
         return await self.handle_ai_conversation(clean_phone, text, clean_name)
 
     async def send_main_menu(self, user_phone: str, user_name: str) -> Dict[str, Any]:
@@ -99,17 +114,41 @@ class GymTenantService:
         menu_text = (
             f"🏋️ *PUSAT LAYANAN & AKSES ATMOSFITNES GYM*\n\n"
             f"Halo *{user_name}*, selamat datang di asisten resmi Atmosfitnes! 💪\n\n"
-            f"Silakan pilih opsi layanan di bawah ini:\n\n"
-            f"1️⃣ *Membership Regular Bulanan* (Rp250.000 / 30 Hari)\n"
-            f"2️⃣ *Membership VIP Tahunan* (Rp2.400.000 / 365 Hari + PT)\n"
-            f"3️⃣ *Membership Student Pass* (Rp175.000 / 30 Hari Pelajar)\n"
-            f"4️⃣ *Cek Status Membership & Kartu NFC*\n"
-            f"5️⃣ *Info Fasilitas & Jam Operasional*\n"
-            f"6️⃣ *Bantuan Staf Resepsionis / CS*\n\n"
-            f"_Ketik angka 1-6 atau tanyakan langsung pertanyaan Anda._"
+            f"Pilih opsi menu di bawah ini:\n\n"
+            f"📦 *PILIHAN PAKET MEMBERSHIP:*\n"
+            f"1️⃣ *Gym Basic* — Rp150.000 / 30 Hari\n"
+            f"2️⃣ *Zumba Class* — Rp200.000 / 8x Sesi\n"
+            f"3️⃣ *Gym Premium* — Rp250.000 / 30 Hari + Sauna\n"
+            f"4️⃣ *All Access* — Rp350.000 / 30 Hari Unlimited\n"
+            f"5️⃣ *Personal Training* — Rp800.000 / 12x Sesi PT\n\n"
+            f"🎯 *LAYANAN & STUDIO:*\n"
+            f"6️⃣ *Jadwal & Booking Kelas Zumba*\n"
+            f"7️⃣ *Cek Status Membership & Kartu NFC*\n"
+            f"8️⃣ *Info Fasilitas & Jam Operasional*\n"
+            f"9️⃣ *Bantuan Staf Resepsionis / CS*\n\n"
+            f"_Ketik angka 1-9 atau tanyakan langsung apa yang ingin Anda ketahui._"
         )
         await send_whatsapp_text(user_phone, menu_text, tenant_id=self.tenant_id)
         return {"action": "MAIN_MENU", "status": "sent"}
+
+    async def send_packages_menu(self, user_phone: str, user_name: str) -> Dict[str, Any]:
+        """Sends the dedicated packages catalog with pricing & benefits."""
+        catalog_text = (
+            f"📋 *KATALOG PAKET MEMBERSHIP ATMOSFITNES*\n\n"
+            f"1️⃣ *Gym Basic* (Rp150.000)\n"
+            f"• Akses area gym & loker reguler selama 30 hari.\n\n"
+            f"2️⃣ *Zumba Class* (Rp200.000)\n"
+            f"• Kuota 8x sesi kelas Zumba studio bersama instruktur pro.\n\n"
+            f"3️⃣ *Gym Premium* (Rp250.000)\n"
+            f"• Akses unlimited gym + sauna + loker digital 30 hari.\n\n"
+            f"4️⃣ *All Access* (Rp350.000)\n"
+            f"• Akses tanpa batas ke semua gym, kelas studio, dan fasilitas VIP.\n\n"
+            f"5️⃣ *Personal Training* (Rp800.000)\n"
+            f"• 12 sesi pendampingan 1-on-1 dengan Certified Trainer + meal plan.\n\n"
+            f"_Ketik angka *1*, *2*, *3*, *4*, atau *5* untuk langsung mendapatkan invoice QRIS pembayaran._"
+        )
+        await send_whatsapp_text(user_phone, catalog_text, tenant_id=self.tenant_id)
+        return {"action": "PACKAGES_CATALOG", "status": "sent"}
 
     async def create_membership_invoice(
         self,
@@ -127,12 +166,29 @@ class GymTenantService:
         encoded_payload = urllib.parse.quote(dynamic_qris)
         qris_image_url = f"https://quickchart.io/qr?text={encoded_payload}&size=500&ecLevel=H"
 
+        # Register or update member record in memory
+        now = datetime.now(timezone.utc)
+        member = None
+        for m in gym_access_service._members.get(self.tenant_id, {}).values():
+            if str(m.phone).replace("+", "").strip() == user_phone:
+                member = m
+                break
+        if not member:
+            member = gym_access_service.register_member_in_memory(
+                tenant_id=self.tenant_id,
+                name=user_name,
+                phone=user_phone,
+                expiry_date=now + timedelta(days=package_info.get("days", 30)),
+                membership_package=package_info["code"],
+                membership_status="PENDING",
+            )
+
         # Register Payment Intent
         PAYMENT_INTENTS[total_amount] = {
             "invoice_id": invoice_id,
             "tenant_id": self.tenant_id,
             "product": "gym_membership_renewal",
-            "member_id": user_phone,
+            "member_id": str(member.id),
             "user_id": user_phone,
             "user_phone": user_phone,
             "amount": total_amount,
@@ -161,6 +217,97 @@ class GymTenantService:
             tenant=self.tenant_id,
         )
         return {"action": "INVOICE_CREATED", "invoice_id": invoice_id, "amount": total_amount}
+
+    async def send_class_schedule(self, user_phone: str, user_name: str) -> Dict[str, Any]:
+        """Displays available Zumba and Studio class sessions with capacity."""
+        sessions = gym_access_service.get_available_class_sessions(self.tenant_id)
+        if not sessions:
+            reply = "ℹ️ Belum ada jadwal kelas studio aktif saat ini. Silakan hubungi admin resepsionis."
+            await send_whatsapp_text(user_phone, reply, tenant_id=self.tenant_id)
+            return {"action": "CLASS_SCHEDULE", "sessions_count": 0}
+
+        lines = [
+            f"💃 *JADWAL KELAS STUDIO & ZUMBA ATMOSFITNES*\n",
+            f"Halo *{user_name}*, berikut jadwal kelas yang tersedia:\n"
+        ]
+
+        idx_map = {}
+        for i, s in enumerate(sessions, start=1):
+            idx_map[str(i)] = s.id
+            sched_str = s.schedule_time.strftime("%A, %d %B - %H:%M WIB")
+            status_icon = "🟢" if s.is_available else "🔴"
+            slot_info = f"Sisa {s.remaining_slots} slot" if s.is_available else "*PENUH*"
+
+            lines.append(
+                f"{i}️⃣ *{s.session_name}*\n"
+                f"   👤 Instruktur: {s.instructor}\n"
+                f"   ⏰ Waktu: {sched_str}\n"
+                f"   {status_icon} Kapasitas: {s.booked_count}/{s.max_capacity} ({slot_info})\n"
+                f"   👉 _Ketik: *book {i}*_\n"
+            )
+
+        lines.append("\n_Ketik *book 1* atau *book 2* untuk memesan slot kelas pilihan Anda._")
+        full_text = "\n".join(lines)
+        await send_whatsapp_text(user_phone, full_text, tenant_id=self.tenant_id)
+        return {"action": "CLASS_SCHEDULE", "sessions_count": len(sessions)}
+
+    async def handle_class_booking(
+        self,
+        user_phone: str,
+        user_name: str,
+        session_key: str
+    ) -> Dict[str, Any]:
+        """Processes booking request and validates capacity."""
+        sessions = gym_access_service.get_available_class_sessions(self.tenant_id)
+
+        target_session_id = None
+        # Handle numeric choice (e.g. "1" -> first session)
+        if session_key.isdigit():
+            idx = int(session_key) - 1
+            if 0 <= idx < len(sessions):
+                target_session_id = str(sessions[idx].id)
+        else:
+            # Match by session ID
+            for s in sessions:
+                if str(s.id).lower() == session_key.lower():
+                    target_session_id = str(s.id)
+                    break
+
+        if not target_session_id:
+            reply = f"⚠️ Sesi kelas dengan kode *{session_key}* tidak ditemukan. Ketik *6* untuk melihat daftar jadwal kelas."
+            await send_whatsapp_text(user_phone, reply, tenant_id=self.tenant_id)
+            return {"action": "BOOKING_FAILED", "reason": "SESSION_NOT_FOUND"}
+
+        # Attempt booking via service layer
+        result = await gym_access_service.book_class_session(
+            tenant_id=self.tenant_id,
+            session_id=target_session_id,
+            member_phone=user_phone,
+            member_name=user_name,
+        )
+
+        if result.get("status") == "FULL":
+            reply = (
+                f"❌ *BOOKING GAGAL: KUOTA PENUH*\n\n"
+                f"{result.get('message')}\n\n"
+                f"Silakan pilih jadwal sesi lainnya dengan mengetik *6*."
+            )
+            await send_whatsapp_text(user_phone, reply, tenant_id=self.tenant_id)
+            return {"action": "BOOKING_FULL", "result": result}
+
+        # Booking confirmed!
+        reply = (
+            f"🎉 *BOOKING KELAS BERHASIL!*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"💃 *Kelas:* {result.get('session_name')}\n"
+            f"👤 *Instruktur:* {result.get('instructor')}\n"
+            f"🆔 *Kode Booking:* `{result.get('booking_id')[:8].upper()}`\n"
+            f"🎟️ *Sisa Slot Kelas:* {result.get('remaining_slots')} kursi\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Silakan datang 10 menit sebelum kelas dimulai di Lantai 2 Studio Atmosfitnes. Selamat bersenang-senang! 🔥"
+        )
+        await send_whatsapp_text(user_phone, reply, tenant_id=self.tenant_id)
+        return {"action": "BOOKING_SUCCESS", "result": result}
 
     async def check_member_status_and_reply(self, user_phone: str, user_name: str) -> Dict[str, Any]:
         """Checks membership and NFC card status for the user phone."""
@@ -192,7 +339,7 @@ class GymTenantService:
             reply = (
                 f"ℹ️ *Status Membership Belum Ditemukan*\n\n"
                 f"Nomor WhatsApp Anda (*{user_phone}*) belum terdaftar sebagai member aktif di Atmosfitnes.\n\n"
-                f"Ketik *1* untuk mendaftar Membership Regular Bulanan atau hubungi resepsionis."
+                f"Ketik *daftar member* atau *1-5* untuk memilih paket membership dan mendapatkan akses turnstile otomatis."
             )
             await send_whatsapp_text(user_phone, reply, tenant_id=self.tenant_id)
             return {"action": "STATUS_CHECK", "found": False}
@@ -253,7 +400,7 @@ class GymTenantService:
         system_prompt = (
             "Kamu adalah resepsionis dan asisten AI resmi Atmosfitnes Gym yang ramah, energik, dan solutif.\n\n"
             f"Info Gym: Lokasi di {GYM_LOCATION}, Jam Operasional: {GYM_OPERATIONAL_HOURS}.\n"
-            "Harga: Regular Bulanan Rp250.000, VIP Tahunan Rp2.400.000, Student Pass Rp175.000.\n"
+            "Harga: Gym Basic Rp150.000, Zumba Class Rp200.000, Gym Premium Rp250.000, All Access Rp350.000, Personal Training Rp800.000.\n"
             "Akses masuk menggunakan kartu NFC otomatis di gate turnstile.\n\n"
             "Jawab secara singkat (maksimal 3 paragraf), ramah, dan tawarkan panduan menu jika diperlukan."
         )
