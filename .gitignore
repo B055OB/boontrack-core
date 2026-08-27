@@ -1,14 +1,34 @@
 .env
+.env.*
+!.env.example
 __pycache__/
 *.pyc
 .vscode/
+
+# Temporary dynamic media & document artifacts
+*.png
+*.jpg
+*.jpeg
+*.docx
+*.pdf
+
+# Allow official static assets
+!app/assets/static/**
+!app/assets/*.jpg
+!app/assets/*.png
+!assets/**
+!app/assets/temp/.gitkeep
+!app/assets/static/.gitkeep
+
+# Temporary directories and test logs
+temp/
+app/assets/temp/*
+!app/assets/temp/.gitkeep
+scratch/temp/
+*.log
+
 # Sensitive B2B / Gov Proposals
 Proposal_*.docx
 Proposal_*.pdf
 generate_proposal*.py
-# Sensitive Documents
-Proposal_*.docx
-Proposal_*.pdf
-generate_proposal*.py
 data/r2_mock_storage/
-

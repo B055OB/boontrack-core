@@ -84,4 +84,36 @@ def generate_dynamic_qris_image(amount: int, master_static: str = "") -> bytes:
     return render_qris_bytes(payload)
 
 
+def save_dynamic_qris_temp_file(
+    amount: int,
+    filename: str = "",
+    master_static: str = "",
+    target_dir: str = ""
+) -> str:
+    """Menyimpan matriks QRIS ke file sementara di direktori terstandarisasi (app/assets/temp/ atau tempfile),
+    bukan di root folder project. Mengembalikan path absolut file yang tersimpan.
+    """
+    import os
+    import tempfile
+    
+    if not target_dir:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        target_dir = os.getenv("BOONTRACK_TEMP_DIR") or os.path.join(base_dir, "assets", "temp")
+    
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+    except Exception:
+        target_dir = tempfile.gettempdir()
+
+    if not filename:
+        rand_suffix = random.randint(1000, 9999)
+        filename = f"qris_{int(amount)}_{rand_suffix}.png"
+
+    file_path = os.path.join(target_dir, filename)
+    qr_bytes = generate_dynamic_qris_image(amount, master_static)
+    with open(file_path, "wb") as f:
+        f.write(qr_bytes)
+    return file_path
+
+
 generate_qris_image_bytes = render_qris_bytes
