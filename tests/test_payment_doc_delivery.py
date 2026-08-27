@@ -141,11 +141,15 @@ class TestPaymentDocDelivery(AioHTTPTestCase):
         self.assertEqual(call_kwargs["to_phone"], user_phone)
         self.assertEqual(call_kwargs["filename"], "CV_Hasil_Polish.docx")
         self.assertEqual(call_kwargs["mime_type"], "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-        self.assertIn("CV Hasil Polish", call_kwargs["caption"])
+        self.assertIn("CV_Hasil_Polish.docx", call_kwargs["caption"])
+        self.assertIn("kebijakan integritas", call_kwargs["caption"])
 
-        # Verifikasi teks konfirmasi juga terkirim
+        # Verifikasi teks konfirmasi terpadu (Pesan 1) juga terkirim
         mock_send_text.assert_called_once()
-        self.assertIn("Dokumen Anda Selesai Diproses", mock_send_text.call_args[1]["text"])
+        sent_text = mock_send_text.call_args[1]["text"]
+        self.assertIn("PEMBAYARAN TERVERIFIKASI & LUNAS", sent_text)
+        self.assertIn("Rp5,083", sent_text)
+        self.assertIn("Dokumen Anda telah selesai diproses", sent_text)
 
     # ==========================================
     # 3. Webhook Listener Route Integration Test

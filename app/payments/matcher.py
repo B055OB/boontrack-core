@@ -214,12 +214,19 @@ async def match_and_fulfill_payment(
         if user_phone:
             try:
                 matched_job["payment_status"] = "PAID"
+                invoice_id = (
+                    (matched_intent.get("invoice_id") if matched_intent else None)
+                    or matched_job.get("invoice_id")
+                    or f"INV-{str(job_id)[:8].upper()}"
+                )
                 if current_status == "COMPLETED":
                     delivery_success = await deliver_completed_document_job(
                         job_id=job_id,
                         tenant_id=tenant_id,
                         user_phone=user_phone,
-                        is_paid=True
+                        is_paid=True,
+                        amount=amount,
+                        invoice_id=invoice_id
                     )
                 else:
                     # Job berstatus WAITING_PAYMENT / QUEUED -> Proses naskah & kirimkan hasil sekarang
@@ -237,7 +244,9 @@ async def match_and_fulfill_payment(
                         task_type=task_type,
                         filename=doc_filename,
                         raw_text=raw_text,
-                        user_phone=user_phone
+                        user_phone=user_phone,
+                        amount=amount,
+                        invoice_id=invoice_id
                     )
                     delivery_success = True
             except Exception as deliv_err:

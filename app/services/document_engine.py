@@ -258,13 +258,52 @@ async def execute_ai_document_task(
         }
 
 
+TASK_DISPLAY_NAMES = {
+    "POLISH_REPHRASE": "Polish & Rephrase Dokumen",
+    "CV_POLISH_REWRITE": "CV Polish & ATS Optimization",
+    "CAREER_PRO_BUNDLE": "Career Pro Bundle (CV + Cover Letter)",
+    "ATS_DIAGNOSTIC": "ATS Diagnostic & Resume Review",
+    "ATS_REVIEW": "ATS Diagnostic & Resume Review",
+    "CV_REWRITE": "CV Polish & ATS Optimization",
+    "PARAPHRASE": "Academic / Document Paraphrase"
+}
+
+
+def format_payment_confirmation_text(
+    task_name: str,
+    invoice_id: str,
+    amount: int
+) -> str:
+    """Format pesan ringkasan status pembayaran dan notifikasi selesai."""
+    display_task = TASK_DISPLAY_NAMES.get(str(task_name).upper().strip(), task_name or "Polish & Rephrase Dokumen")
+    amt_val = amount or 0
+    return (
+        "💳 *PEMBAYARAN TERVERIFIKASI & LUNAS*\n\n"
+        f"📋 *Layanan:* {display_task}\n"
+        f"🆔 *Invoice:* `{invoice_id}`\n"
+        f"💰 *Total:* *Rp{amt_val:,}* (Lunas via DANA QRIS)\n\n"
+        "⚙️ Dokumen Anda telah selesai diproses. File hasil berformat Word (.docx) siap diunduh di bawah ini 👇"
+    )
+
+
+def format_document_caption(file_name: str) -> str:
+    """Format caption media pengiriman binary dokumen Word."""
+    clean_name = file_name or "CV_Hasil_Polish.docx"
+    return (
+        f"📄 *{clean_name}*\n"
+        "📌 _Alat ini membantu keterbacaan dan struktur naskah — penggunaannya tetap mengikuti kebijakan integritas profesional dan akademik institusi Anda._"
+    )
+
+
 async def process_document_job_async(
     job_id: str,
     tenant_id: str,
     task_type: str,
     filename: str,
     raw_text: str,
-    user_phone: Optional[str] = None
+    user_phone: Optional[str] = None,
+    amount: Optional[int] = None,
+    invoice_id: Optional[str] = None
 ):
     """Background Worker untuk memproses dokumen secara asinkron (Zero-blocking)."""
     logger.info(f"[DocumentWorker] Started processing job {job_id} ({task_type})")
@@ -294,29 +333,31 @@ async def process_document_job_async(
             job_id=job_id,
             status="COMPLETED",
             result_storage_key=result_key,
-            structured_output=structured_data,
-            extra_fields={"payment_status": "PAID", "execution_time_ms": exec_ms}
+            extra_fields={"payment_status": "PAID"}
         )
         logger.info(f"[DocumentWorker] Job {job_id} successfully completed in {exec_ms}ms. Result: {result_key}")
 
         # 6. Notifikasi & File Delivery ke WhatsApp jika nomor tersedia
         if user_phone:
-            doc_url = r2_storage_service.get_public_url(result_key)
-            msg_text = (
-                f"✅ *Dokumen Anda Selesai Diproses!*\n\n"
-                f"📋 *Layanan:* {task_type}\n"
-                f"📁 *File Hasil:* CV_Hasil_Polish.docx\n\n"
-                f"Dokumen Word (.docx) berformat profesional siap diunduh.\n\n"
-                f"_{COMPLIANCE_DISCLAIMER}_"
+            inv_id = invoice_id or f"INV-{str(job_id)[:8].upper()}"
+            amt_val = amount or 0
+            output_doc_name = "CV_Hasil_Polish.docx"
+
+            # Pesan 1: Ringkasan Status Pembayaran & Notifikasi Selesai
+            msg_text = format_payment_confirmation_text(
+                task_name=task_type,
+                invoice_id=inv_id,
+                amount=amt_val
             )
             await send_whatsapp_text(to_phone=user_phone, text=msg_text, tenant_id=tenant_id)
             
-            # Wajib kirim file attachment dokumen (.docx) via WhatsApp Document API
+            # Pesan 2: Pengiriman Binary Media API (.docx)
+            caption = format_document_caption(output_doc_name)
             await send_whatsapp_document(
                 to_phone=user_phone,
                 file_path_or_bytes=docx_bytes,
-                filename="CV_Hasil_Polish.docx",
-                caption="📄 *CV Hasil Polish & ATS Optimization*",
+                filename=output_doc_name,
+                caption=caption,
                 mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 tenant_id=tenant_id
             )
@@ -330,7 +371,9 @@ async def deliver_completed_document_job(
     job_id: str,
     tenant_id: str = "boontrack-career",
     user_phone: Optional[str] = None,
-    is_paid: bool = False
+    is_paid: bool = False,
+    amount: Optional[int] = None,
+    invoice_id: Optional[str] = None
 ) -> bool:
     """Mengirim file attachment dokumen .docx untuk job yang sudah COMPLETED/PAID ke WhatsApp user."""
     supabase = get_supabase()
@@ -385,23 +428,26 @@ async def deliver_completed_document_job(
         logger.error(f"[DocumentEngine] Failed to retrieve document bytes for job {job_id} (key: {result_key})")
         return False
 
-    # 3. Kirim teks konfirmasi penyelesaian
+    # 3. Kirim Pesan 1: Ringkasan Status Pembayaran & Notifikasi Selesai
     task_name = job_data.get("task_type", "POLISH_REPHRASE") if job_data else "POLISH_REPHRASE"
-    msg_text = (
-        f"✅ *Dokumen Anda Selesai Diproses!*\n\n"
-        f"📋 *Layanan:* {task_name}\n"
-        f"📁 *File Hasil:* CV_Hasil_Polish.docx\n\n"
-        f"Dokumen Word (.docx) berformat profesional terlampir di bawah.\n\n"
-        f"_{COMPLIANCE_DISCLAIMER}_"
+    inv_id = invoice_id or (job_data.get("invoice_id") if job_data else None) or f"INV-{str(job_id)[:8].upper()}"
+    amt_val = amount or (job_data.get("price_amount") if job_data else None) or 0
+    output_doc_name = "CV_Hasil_Polish.docx"
+
+    msg_text = format_payment_confirmation_text(
+        task_name=task_name,
+        invoice_id=inv_id,
+        amount=amt_val
     )
     await send_whatsapp_text(to_phone=phone, text=msg_text, tenant_id=tenant_id)
 
-    # 4. Kirim file dokumen Word (.docx)
+    # 4. Kirim Pesan 2: Pengiriman Binary Media API (.docx)
+    caption = format_document_caption(output_doc_name)
     doc_res = await send_whatsapp_document(
         to_phone=phone,
         file_path_or_bytes=file_bytes,
-        filename="CV_Hasil_Polish.docx",
-        caption="📄 *CV Hasil Polish & ATS Optimization*",
+        filename=output_doc_name,
+        caption=caption,
         mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         tenant_id=tenant_id
     )

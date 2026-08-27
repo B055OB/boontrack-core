@@ -251,7 +251,7 @@ class TestDocumentPricingEngine(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(mock_update_status.called)
         # Verifikasi WhatsApp notification dikirim
         mock_send_wa.assert_called_once()
-        self.assertIn("Dokumen Anda Selesai Diproses", mock_send_wa.call_args[1]["text"])
+        self.assertIn("Dokumen Anda telah selesai diproses", mock_send_wa.call_args[1]["text"])
         # Verifikasi WhatsApp document attachment dikirim
         mock_send_doc.assert_called_once()
         self.assertEqual(mock_send_doc.call_args[1]["filename"], "CV_Hasil_Polish.docx")

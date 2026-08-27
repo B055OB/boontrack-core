@@ -117,6 +117,9 @@ def main():
 
                 if resp_code in (200, 201):
                     print("    -> [OK] Webhook berhasil diterima dan diproses!")
+                    delivered = parsed_res.get("delivered") if isinstance(parsed_res, dict) else False
+                    if delivered:
+                        print("    -> [CONFIRMATION] Ringkasan invoice & binary file .docx terkirim sukses (delivered == True)!")
                     success = True
                     break
         except urllib.error.HTTPError as he:
