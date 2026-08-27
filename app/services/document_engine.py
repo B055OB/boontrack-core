@@ -286,9 +286,49 @@ def format_payment_confirmation_text(
     )
 
 
+def get_output_document_filename(task_type: str, original_filename: Optional[str] = None) -> str:
+    """Menentukan nama file output .docx secara dinamis dan relevan berdasarkan task_type.
+    
+    Aturan:
+    - Jika task_type == 'POLISH_REPHRASE' / dokumen naskah:
+      'Naskah_Hasil_Parafrase.docx' atau '{clean_base}_Hasil_Parafrase.docx'.
+    - Jika task_type == 'CV_REVIEW' / 'CV_ATS' / CV Polish:
+      'CV_Hasil_Optimasi_ATS.docx'.
+    - Jika task_type == 'CAREER_PRO_BUNDLE':
+      'Paket_Lengkap_Karir_ATS.docx'.
+    """
+    raw_task = str(task_type or "").upper().strip()
+
+    # 1. Career Pro Bundle
+    if raw_task in ("CAREER_PRO_BUNDLE", "BUNDLE_CAREER", "PRO_BUNDLE"):
+        return "Paket_Lengkap_Karir_ATS.docx"
+
+    # 2. CV ATS / CV Review / Optimasi CV
+    if any(k in raw_task for k in ("CV", "ATS", "RESUME")):
+        return "CV_Hasil_Optimasi_ATS.docx"
+
+    # 3. Dokumen Naskah / Skripsi / Parafrase
+    if raw_task in ("POLISH_REPHRASE", "PARAPHRASE", "DOCUMENT_POLISH", "POLISH"):
+        if original_filename:
+            base_name = os.path.splitext(os.path.basename(original_filename))[0]
+            clean_base = re.sub(r'[^a-zA-Z0-9_\-]', '_', base_name).strip('_')
+            generic_names = {"document", "dokumen", "file", "cv_hasil_polish", "untitled", "test", ""}
+            if clean_base and clean_base.lower() not in generic_names:
+                return f"{clean_base}_Hasil_Parafrase.docx"
+        return "Naskah_Hasil_Parafrase.docx"
+
+    # Fallback umum
+    if original_filename:
+        base_name = os.path.splitext(os.path.basename(original_filename))[0]
+        clean_base = re.sub(r'[^a-zA-Z0-9_\-]', '_', base_name).strip('_')
+        if clean_base and clean_base.lower() not in {"document", "dokumen", "file", "test", ""}:
+            return f"{clean_base}_Hasil_Polish.docx"
+    return "Dokumen_Hasil_Polish.docx"
+
+
 def format_document_caption(file_name: str) -> str:
     """Format caption media pengiriman binary dokumen Word."""
-    clean_name = file_name or "CV_Hasil_Polish.docx"
+    clean_name = file_name or "Dokumen_Hasil_Polish.docx"
     return (
         f"📄 *{clean_name}*\n"
         "📌 _Alat ini membantu keterbacaan dan struktur naskah — penggunaannya tetap mengikuti kebijakan integritas profesional dan akademik institusi Anda._"
@@ -341,7 +381,7 @@ async def process_document_job_async(
         if user_phone:
             inv_id = invoice_id or f"INV-{str(job_id)[:8].upper()}"
             amt_val = amount or 0
-            output_doc_name = "CV_Hasil_Polish.docx"
+            output_doc_name = get_output_document_filename(task_type=task_type, original_filename=filename)
 
             # Pesan 1: Ringkasan Status Pembayaran & Notifikasi Selesai
             msg_text = format_payment_confirmation_text(
@@ -432,7 +472,8 @@ async def deliver_completed_document_job(
     task_name = job_data.get("task_type", "POLISH_REPHRASE") if job_data else "POLISH_REPHRASE"
     inv_id = invoice_id or (job_data.get("invoice_id") if job_data else None) or f"INV-{str(job_id)[:8].upper()}"
     amt_val = amount or (job_data.get("price_amount") if job_data else None) or 0
-    output_doc_name = "CV_Hasil_Polish.docx"
+    orig_file = (job_data.get("original_filename") if job_data else None) or (job_data.get("filename") if job_data else None)
+    output_doc_name = get_output_document_filename(task_type=task_name, original_filename=orig_file)
 
     msg_text = format_payment_confirmation_text(
         task_name=task_name,

@@ -139,9 +139,9 @@ class TestPaymentDocDelivery(AioHTTPTestCase):
         mock_send_doc.assert_called_once()
         call_kwargs = mock_send_doc.call_args[1]
         self.assertEqual(call_kwargs["to_phone"], user_phone)
-        self.assertEqual(call_kwargs["filename"], "CV_Hasil_Polish.docx")
+        self.assertEqual(call_kwargs["filename"], "Naskah_Hasil_Parafrase.docx")
         self.assertEqual(call_kwargs["mime_type"], "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-        self.assertIn("CV_Hasil_Polish.docx", call_kwargs["caption"])
+        self.assertIn("Naskah_Hasil_Parafrase.docx", call_kwargs["caption"])
         self.assertIn("kebijakan integritas", call_kwargs["caption"])
 
         # Verifikasi teks konfirmasi terpadu (Pesan 1) juga terkirim
@@ -285,7 +285,7 @@ class TestPaymentDocDelivery(AioHTTPTestCase):
         # Validasi file terkirim ke WhatsApp user
         mock_send_doc.assert_called_once()
         self.assertEqual(mock_send_doc.call_args[1]["to_phone"], user_phone)
-        self.assertEqual(mock_send_doc.call_args[1]["filename"], "CV_Hasil_Polish.docx")
+        self.assertEqual(mock_send_doc.call_args[1]["filename"], "Naskah_Hasil_Parafrase.docx")
 
     @patch("app.services.document_engine.deliver_completed_document_job", new_callable=AsyncMock)
     async def test_admin_retry_doc_command_success(self, mock_deliver):
@@ -654,6 +654,44 @@ class TestPaymentDocDelivery(AioHTTPTestCase):
         self.assertEqual(insert_record["price_amount"], 10432)
         self.assertEqual(insert_record["payment_status"], "UNPAID")
         self.assertEqual(insert_record["status"], "WAITING_PAYMENT")
+
+    def test_dynamic_output_document_filename_by_task_type(self):
+        """Memvalidasi aturan penamaan file dinamis berdasarkan task_type."""
+        from app.services.document_engine import get_output_document_filename
+
+        # 1. POLISH_REPHRASE (Naskah skripsi / dokumen akademik)
+        self.assertEqual(
+            get_output_document_filename("POLISH_REPHRASE"),
+            "Naskah_Hasil_Parafrase.docx"
+        )
+        self.assertEqual(
+            get_output_document_filename("POLISH_REPHRASE", "BAB III WORD.pdf"),
+            "BAB_III_WORD_Hasil_Parafrase.docx"
+        )
+        self.assertEqual(
+            get_output_document_filename("PARAPHRASE", "Tesis_Bab_1.docx"),
+            "Tesis_Bab_1_Hasil_Parafrase.docx"
+        )
+
+        # 2. CV_REVIEW / CV_ATS / CV_POLISH_REWRITE
+        self.assertEqual(
+            get_output_document_filename("CV_REVIEW"),
+            "CV_Hasil_Optimasi_ATS.docx"
+        )
+        self.assertEqual(
+            get_output_document_filename("CV_ATS"),
+            "CV_Hasil_Optimasi_ATS.docx"
+        )
+        self.assertEqual(
+            get_output_document_filename("CV_POLISH_REWRITE"),
+            "CV_Hasil_Optimasi_ATS.docx"
+        )
+
+        # 3. CAREER_PRO_BUNDLE
+        self.assertEqual(
+            get_output_document_filename("CAREER_PRO_BUNDLE"),
+            "Paket_Lengkap_Karir_ATS.docx"
+        )
 
 
 if __name__ == "__main__":
