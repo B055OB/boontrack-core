@@ -1,0 +1,104 @@
+{
+  "identity": {
+    "tenant_id": "boontrack-career",
+    "name": "BoonTrack Career",
+    "slug": "career",
+    "status": "ACTIVE",
+    "description": "Platform akselerasi karir, review CV ATS, persiapan interview, dan portfolio web profesional."
+  },
+  "persona": {
+    "system_prompt": "Kamu adalah BoonTrack, asisten karir & rekrutmen profesional yang hangat, empatik, dan to-the-point.\n\nPedoman Menjawab:\n1. Jawab pertanyaan user seputar pembuatan CV, persiapan interview, estimasi gaji/UMR, dan strategi karir secara langsung dan praktis.\n2. Gunakan Bahasa Indonesia yang natural, profesional, dan mudah dipahami.\n3. JANGAN PERNAH menyertakan penawaran jasa pembuatan website agensi berharga jutaan rupiah.\n4. Arahkan user untuk mencoba optimasi CV ATS atau konsultasi persiapan wawancara.",
+    "tone": "profesional, hangat, empatik, solutif",
+    "language": "id",
+    "default_fallback_message": "Mohon maaf, saat ini sistem sedang memproses antrean pesan lain. Silakan coba sesaat lagi atau ketik 'menu' untuk opsi layanan karir.",
+    "welcome_message": "Selamat datang di BoonTrack Career Assistant! Kami siap membantu Anda menembus karir impian."
+  },
+  "menu_config": {
+    "main_menu_text": "🚀 *Menu Layanan BoonTrack Career*\n\n1. Review & Polish CV ATS (Rp10.000)\n2. Career Pro Bundle - Rewrite & Consultation (Rp25.000)\n3. Career Page / Portofolio Web (Rp39.000)\n4. Bantuan Admin / CS\n\n_Ketik angka 1-4 untuk memilih opsi._",
+    "keywords": {
+      "menu": "MAIN_MENU",
+      "batal": "RESET",
+      "reset": "RESET",
+      "ulang": "RESET",
+      "start": "MAIN_MENU",
+      "help": "MAIN_MENU"
+    },
+    "options": [
+      {
+        "id": "1",
+        "title": "Review & Polish CV ATS",
+        "description": "Scoring ATS, perbaikan keyword, dan optimasi format CV.",
+        "action": "ORDER_QRIS",
+        "price_amount": 10000,
+        "payload": null
+      },
+      {
+        "id": "2",
+        "title": "Career Pro Bundle",
+        "description": "Rewrite CV lengkap, cover letter, dan simulasi interview AI.",
+        "action": "ORDER_QRIS",
+        "price_amount": 25000,
+        "payload": null
+      },
+      {
+        "id": "3",
+        "title": "Career Page Web",
+        "description": "Website portofolio online profesional domain aktif.",
+        "action": "ORDER_QRIS",
+        "price_amount": 39000,
+        "payload": null
+      },
+      {
+        "id": "4",
+        "title": "Bantuan Admin / CS",
+        "description": "Bantuan konsultasi dengan Career Advisor.",
+        "action": "ESCALATE",
+        "price_amount": 0,
+        "payload": null
+      }
+    ],
+    "escalation_keywords": [
+      "admin",
+      "cs",
+      "komplain",
+      "refund",
+      "human",
+      "petugas",
+      "bicara dengan admin",
+      "advisor"
+    ],
+    "escalation_message": "Pesan Anda telah kami teruskan ke tim Career Consultant BoonTrack. Advisor kami akan segera menghubungi Anda."
+  },
+  "channel_config": {
+    "whatsapp_phone_number_id": "1340866379104241",
+    "webhook_verify_token": "boontrack_career_token",
+    "credentials": {}
+  },
+  "payment_config": {
+    "provider": "DANA_DYNAMIC",
+    "static_qris_payload": "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI5204737253033605802ID5909BoonTrack6012Kab. Bandung61054028663048DC1",
+    "use_unique_code": true,
+    "unique_code_digits": 3,
+    "min_amount": 10000,
+    "packages": {
+      "cv_polish": {
+        "price": 10000,
+        "name": "Review & Polish CV ATS"
+      },
+      "pro_bundle": {
+        "price": 25000,
+        "name": "Career Pro Bundle"
+      },
+      "career_page": {
+        "price": 39000,
+        "name": "Career Page Web"
+      }
+    }
+  },
+  "feature_flags": {
+    "enable_cv_ats": true,
+    "enable_document_analysis": true,
+    "enable_qris": true,
+    "enable_ai_completion": true
+  }
+}

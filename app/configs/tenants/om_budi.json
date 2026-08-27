@@ -1,0 +1,96 @@
+{
+  "identity": {
+    "tenant_id": "om_budi",
+    "name": "Om Budi Community & Mentorship",
+    "slug": "om-budi",
+    "status": "ACTIVE",
+    "description": "Komunitas bimbingan riyadhoh, mental bebas hutang, dan percepatan bisnis Om Budi."
+  },
+  "persona": {
+    "system_prompt": "Kamu adalah AI Admin Bimbingan Resmi Om Budi Channel.\nTugasmu adalah menjawab pertanyaan jemaah dan alumni kelas bimbingan secara empatik, hangat, menenangkan batin, dan praktis sesuai ajaran Om Budi:\n1. Jalan Sunyi Orang Berhutang (menghentikan keluhan, menyelaraskan rasa, jujur pada amanah).\n2. Riyadhoh Sholawat & Quantum Energi (Sholawat Jibril 1.000x/hari, Dhuha min 4 rakaat, Tahajud/Taubat, Sedekah Subuh, 3 Audio Brainwave).\n3. Ketika Hidup Diuji, Saatnya Kembali (ujian sebagai alarm cinta Allah, 5 tanda pertolongan dekat, istiqomah).\n4. Rencana 30 Hari Bebas Hutang (tahapan mingguan, stop hutang baru, disiplin alur uang).\n5. Sangat Sederhana Cara Praktis Lunas Hutang (10 langkah praktis lahiriah, metode snowball/avalanche, negosiasi).\n6. Yuk Keluar Dari Riba (bahaya bunga pinjol/bank, negosiasi bayar pokok, doa perlindungan).\n\nAturan Format Balasan:\n- Awali jawaban dengan salam dan doa hangat: 'Bismillah, peluk hangat dan doa tulus untuk Bapak/Ibu 🙏😊'.\n- Jawab pertanyaan secara ringkas, terstruktur, dan kuatkan tauhid jemaah.\n- Tutup balasan dengan doa kelapangan rezeki 🤲.",
+    "tone": "hangat, empatik, menenangkan, sarat doa",
+    "language": "id",
+    "default_fallback_message": "Assalamu'alaikum Warahmatullahi Wabarakatuh Bapak/Ibu 🙏😊\n\nMohon maaf yang sebesar-besarnya, saat ini sistem sedang memproses antrean pesan lain. Silakan coba sesaat lagi atau ketik 'menu' untuk melihat materi bimbingan.",
+    "welcome_message": "Assalamu'alaikum Warahmatullahi Wabarakatuh Bapak/Ibu 🙏😊 Selamat datang di Bimbingan Resmi Om Budi Channel."
+  },
+  "menu_config": {
+    "main_menu_text": "📋 *Menu Utama Bimbingan Om Budi*\n\n1. Audio Brainwave & Riyadhoh\n2. Sesi Kelas Online Lunas Hutang (Rp100.000)\n3. Sedekah Subuh & Zakat (Rp25.000)\n4. Bantuan Admin / CS\n\n_Ketik angka 1-4 untuk memilih opsi._",
+    "keywords": {
+      "menu": "MAIN_MENU",
+      "batal": "RESET",
+      "reset": "RESET",
+      "ulang": "RESET",
+      "start": "MAIN_MENU",
+      "help": "MAIN_MENU"
+    },
+    "options": [
+      {
+        "id": "1",
+        "title": "Audio Brainwave",
+        "description": "Download 3 Audio Terapi Brainwave & Riyadhoh resmi.",
+        "action": "OPEN_URL",
+        "price_amount": 0,
+        "payload": "https://drive.google.com/file/d/18GjQd8SMymV8kxfvOPodvIXNxlVLbhW9/view"
+      },
+      {
+        "id": "2",
+        "title": "Kelas Online Lunas Hutang",
+        "description": "Akses intensif bimbingan 30 hari lunas hutang & riyadhoh.",
+        "action": "ORDER_QRIS",
+        "price_amount": 100000,
+        "payload": null
+      },
+      {
+        "id": "3",
+        "title": "Sedekah Subuh",
+        "description": "Penyaluran sedekah subuh jemaah Om Budi.",
+        "action": "ORDER_QRIS",
+        "price_amount": 25000,
+        "payload": null
+      },
+      {
+        "id": "4",
+        "title": "Bantuan Admin / CS",
+        "description": "Hubungkan dengan customer care manusia.",
+        "action": "ESCALATE",
+        "price_amount": 0,
+        "payload": null
+      }
+    ],
+    "escalation_keywords": [
+      "admin",
+      "cs",
+      "komplain",
+      "refund",
+      "human",
+      "petugas",
+      "bicara dengan admin",
+      "hubungi om budi"
+    ],
+    "escalation_message": "Pesan Bapak/Ibu telah kami teruskan ke tim Admin Bimbingan Om Budi. Staf kami akan segera merespons secara langsung. Barakallahu fiikum 🙏"
+  },
+  "channel_config": {
+    "whatsapp_phone_number_id": "",
+    "webhook_verify_token": "om_budi_secure_token_2026",
+    "credentials": {}
+  },
+  "payment_config": {
+    "provider": "DANA_DYNAMIC",
+    "static_qris_payload": "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI5204737253033605802ID5909BoonTrack6012Kab. Bandung61054028663048DC1",
+    "use_unique_code": true,
+    "unique_code_digits": 3,
+    "min_amount": 10000,
+    "packages": {
+      "kelas_online": {
+        "price": 100000,
+        "name": "Kelas Online Lunas Hutang"
+      }
+    }
+  },
+  "feature_flags": {
+    "enable_cv_ats": false,
+    "enable_document_analysis": false,
+    "enable_qris": true,
+    "enable_ai_completion": true
+  }
+}
