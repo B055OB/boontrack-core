@@ -90,7 +90,10 @@ def get_fallback_for_task(
         return cv_ats.get_fallback_data(raw_text=raw_text)
     elif canonical == TASK_CV_REVIEW:
         return cv_review.get_fallback_data(raw_text=raw_text)
+    elif canonical == TASK_POLISH_REPHRASE:
+        return polish_rephrase.get_fallback_data(raw_text=raw_text)
     elif canonical == TASK_CAREER_PRO_BUNDLE:
         return career_pro_bundle.get_fallback_data(raw_text=raw_text)
     else:
+        logger.warning(f"[PromptStrategy] Unknown task_type '{task_type}' in get_fallback_for_task — using CV_ATS schema")
         return cv_ats.get_fallback_data(raw_text=raw_text)

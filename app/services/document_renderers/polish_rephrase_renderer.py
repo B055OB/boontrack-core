@@ -3,7 +3,8 @@ Template renderer for Academic Polish & Paraphrase (Naskah_Hasil_Parafrase.docx)
 """
 
 import io
-from typing import Dict, Any, List
+import logging
+from typing import Dict, Any, List, Union
 from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -19,9 +20,38 @@ from app.services.document_renderers.common import (
     add_compliance_footer
 )
 
+logger = logging.getLogger("DOCX_RENDERER.POLISH")
 
-def render_polish_rephrase_docx(data: Dict[str, Any]) -> bytes:
+
+def _normalize_data(data: Union[Dict[str, Any], str, None]) -> Dict[str, Any]:
+    """Normalizes renderer input: handles plain-string, dict with string values, and missing keys gracefully."""
+    if isinstance(data, str):
+        # Plain text passed directly: wrap into proper schema
+        return {
+            "title": "Naskah Hasil Parafrase Akademis",
+            "sections": [{"heading": "Naskah Hasil Penyempurnaan", "content": data}],
+            "full_text": data,
+            "full_paraphrased_text": data,
+        }
+    if not isinstance(data, dict):
+        return {}
+    # If sections contains strings instead of dicts, normalize them
+    sections = data.get("sections") or []
+    normalized_sections = []
+    for sec in sections:
+        if isinstance(sec, dict):
+            normalized_sections.append(sec)
+        elif isinstance(sec, str):
+            normalized_sections.append({"heading": "", "content": sec})
+    data = dict(data)
+    data["sections"] = normalized_sections
+    return data
+
+
+def render_polish_rephrase_docx(data: Union[Dict[str, Any], str]) -> bytes:
     """Merender hasil parafrase akademik ke file Word (.docx) berstandar karya ilmiah formal."""
+    data = _normalize_data(data)
+
     doc = Document()
     set_document_margins(doc, 1.0)  # Standard 1 inch academic margin
 
@@ -76,13 +106,22 @@ def render_polish_rephrase_docx(data: Dict[str, Any]) -> bytes:
     # 3. Isi Naskah Akademis (Sections / Full Text)
     add_section_header(doc, "Naskah Hasil Penyempurnaan (EYD V)", color_rgb=COLOR_PRIMARY)
 
+    # Determine effective body text length for diagnostic logging
+    body_char_count = sum(len(sec.get("content", "")) for sec in sections if isinstance(sec, dict))
+    if body_char_count == 0:
+        body_char_count = len(full_text)
+    logger.info(f"[PolishRephraseRenderer] Rendering polish docx with text length: {body_char_count} chars, {len(sections)} sections")
+
+    if not body_char_count:
+        logger.warning("[PolishRephraseRenderer] WARNING: Both sections and full_text are empty — output will be header-only!")
+
     if isinstance(sections, list) and sections:
         for sec in sections:
             if not isinstance(sec, dict):
                 continue
             heading = sec.get("heading")
             content = sec.get("content") or ""
-            
+
             if heading and len(sections) > 1:
                 p_h = doc.add_paragraph()
                 p_h.paragraph_format.space_before = Pt(8)
@@ -95,6 +134,9 @@ def render_polish_rephrase_docx(data: Dict[str, Any]) -> bytes:
 
             # Pecah content per paragraf
             paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
+            if not paragraphs and content.strip():
+                # Single-line content without double newlines
+                paragraphs = [content.strip()]
             for para in paragraphs:
                 p_body = doc.add_paragraph(para)
                 p_body.paragraph_format.space_before = Pt(2)
@@ -107,6 +149,8 @@ def render_polish_rephrase_docx(data: Dict[str, Any]) -> bytes:
 
     elif full_text:
         paragraphs = [p.strip() for p in full_text.split("\n\n") if p.strip()]
+        if not paragraphs and full_text.strip():
+            paragraphs = [full_text.strip()]
         for para in paragraphs:
             p_body = doc.add_paragraph(para)
             p_body.paragraph_format.space_before = Pt(2)
@@ -121,4 +165,6 @@ def render_polish_rephrase_docx(data: Dict[str, Any]) -> bytes:
 
     out_io = io.BytesIO()
     doc.save(out_io)
-    return out_io.getvalue()
+    result_bytes = out_io.getvalue()
+    logger.info(f"[PolishRephraseRenderer] Output docx size: {len(result_bytes)} bytes")
+    return result_bytes

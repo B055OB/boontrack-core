@@ -305,5 +305,140 @@ class TestDocumentEngineV1(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_send_doc.call_args[1]["filename"], "CV_ATS_Optimasi.docx")
 
 
+class TestPolishRephraseRendererPayload(unittest.TestCase):
+    """Tests validating render_document('POLISH_REPHRASE', ...) payload contract & output size."""
+
+    # --- 1000-word academic text fixture ---
+    LONG_ACADEMIC_TEXT = (
+        "Metodologi penelitian ini menggunakan pendekatan kuantitatif dengan desain survei analitik "
+        "yang melibatkan instrumen kuesioner terstruktur berbasis skala Likert 1-5. "
+        "Populasi penelitian mencakup seluruh mahasiswa aktif program studi Manajemen Bisnis "
+        "Universitas X angkatan 2021-2023 dengan jumlah keseluruhan 1.240 responden.\n\n"
+        "Teknik pengambilan sampel yang diterapkan adalah stratified random sampling guna "
+        "memastikan representasi proporsional dari seluruh angkatan yang terlibat. "
+        "Berdasarkan rumus Slovin dengan tingkat kesalahan toleransi 5%, ditetapkan sampel "
+        "minimum sebesar 304 responden. Proses distribusi kuesioner dilaksanakan secara daring "
+        "melalui platform Google Forms selama tiga minggu, menghasilkan 312 respons yang valid "
+        "dan dapat digunakan dalam analisis lebih lanjut.\n\n"
+        "Analisis data dilakukan menggunakan perangkat lunak SPSS versi 26 dan SmartPLS 3.0 "
+        "untuk pengujian model struktural (Structural Equation Modeling / SEM). "
+        "Uji validitas konstruk dilaksanakan melalui Confirmatory Factor Analysis (CFA) "
+        "dengan threshold factor loading >= 0.70 sebagaimana direkomendasikan oleh Hair et al. (2019). "
+        "Reliabilitas instrumen dikonfirmasi melalui nilai Cronbach Alpha yang berkisar antara "
+        "0.82 hingga 0.91, jauh melampaui batas minimum yang dapat diterima sebesar 0.70.\n\n"
+        "Variabel independen dalam penelitian ini adalah kualitas layanan digital (X1), "
+        "kepercayaan pengguna platform (X2), dan kemudahan penggunaan antarmuka (X3). "
+        "Variabel dependen yang diukur adalah kepuasan pelanggan (Y) dan loyalitas pengguna jangka panjang (Z). "
+        "Model struktural yang diuji memuat empat hipotesis utama yang dirumuskan berdasarkan "
+        "tinjauan literatur komprehensif terhadap 47 artikel ilmiah terindeks Scopus dan WoS.\n\n"
+        "Hasil pengujian hipotesis menunjukkan bahwa kualitas layanan digital berpengaruh "
+        "signifikan terhadap kepuasan pelanggan (β = 0.42, p < 0.001), kepercayaan pengguna "
+        "berpengaruh positif terhadap loyalitas jangka panjang (β = 0.38, p < 0.05), "
+        "dan kemudahan penggunaan antarmuka secara signifikan memediasi hubungan antara "
+        "kepercayaan dan kepuasan (β = 0.29, p < 0.01). "
+        "Secara keseluruhan, model yang diajukan mampu menjelaskan 67.3% varians dalam variabel "
+        "kepuasan pelanggan, yang mengindikasikan daya prediktif model yang memadai.\n\n"
+        "Temuan-temuan tersebut memberikan kontribusi teoretis yang bermakna bagi pengembangan "
+        "literatur Service Quality dalam konteks platform digital ekonomi kreatif di Indonesia. "
+        "Secara praktis, hasil penelitian ini merekomendasikan bahwa pengelola platform "
+        "sebaiknya memprioritaskan investasi pada penyempurnaan antarmuka pengguna dan "
+        "mekanisme pembangunan kepercayaan digital sebagai strategi retensi pelanggan yang efektif.\n\n"
+    ) * 2  # ~1050+ words
+
+    def test_render_polish_rephrase_with_sections_produces_large_docx(self):
+        """render_document('POLISH_REPHRASE', data_with_sections) menghasilkan DOCX lebih besar
+        dari dokumen kosong dan memuat konten teks naskah (verifikasi body text flow ke renderer)."""
+        sections = [{"heading": "Bagian 1", "content": self.LONG_ACADEMIC_TEXT}]
+        data = {
+            "title": "Penyempurnaan Akademis: Bab Iii Metodologi",
+            "tone": "Akademik Formal (EYD V)",
+            "original_word_count": len(self.LONG_ACADEMIC_TEXT.split()),
+            "paraphrased_word_count": len(self.LONG_ACADEMIC_TEXT.split()),
+            "key_takeaways": [
+                "Naskah telah disempurnakan sesuai kaidah EYD V.",
+                "Seluruh sitasi akademik dan formula statistik dipertahankan 100%.",
+            ],
+            "sections": sections,
+            "full_text": self.LONG_ACADEMIC_TEXT,
+            "full_paraphrased_text": self.LONG_ACADEMIC_TEXT,
+        }
+
+        # Render with body text
+        docx_bytes = render_document("POLISH_REPHRASE", data)
+        word_count = len(self.LONG_ACADEMIC_TEXT.split())
+        self.assertIsInstance(docx_bytes, bytes)
+        self.assertGreater(len(docx_bytes), 36_000,
+            f"DOCX output must be > 36kB (base docx overhead), got {len(docx_bytes)} bytes.")
+
+        # Render empty doc to measure baseline (no body text)
+        empty_data = {**data, "sections": [], "full_text": "", "full_paraphrased_text": "", "key_takeaways": []}
+        empty_docx = render_document("POLISH_REPHRASE", empty_data)
+
+        self.assertGreater(len(docx_bytes), len(empty_docx),
+            f"DOCX with {word_count} words ({len(docx_bytes)} bytes) must be larger than empty doc ({len(empty_docx)} bytes). "
+            "Body text is NOT flowing into renderer — key mismatch bug!")
+
+    def test_render_polish_rephrase_full_text_fallback_produces_large_docx(self):
+        """render_document('POLISH_REPHRASE', data) dengan sections=[] tapi full_text terpopulasi
+        menghasilkan DOCX lebih besar dari dokumen dengan full_text kosong."""
+        data_with_text = {
+            "title": "Naskah Hasil Parafrase Akademis",
+            "tone": "Akademik Formal (EYD V)",
+            "original_word_count": len(self.LONG_ACADEMIC_TEXT.split()),
+            "paraphrased_word_count": len(self.LONG_ACADEMIC_TEXT.split()),
+            "key_takeaways": [],
+            "sections": [],  # intentionally empty -> should fall back to full_text
+            "full_text": self.LONG_ACADEMIC_TEXT,
+        }
+        data_empty = {**data_with_text, "full_text": ""}
+
+        docx_full = render_document("POLISH_REPHRASE", data_with_text)
+        docx_empty = render_document("POLISH_REPHRASE", data_empty)
+
+        self.assertIsInstance(docx_full, bytes)
+        self.assertGreater(len(docx_full), 36_000, f"DOCX must be > 36kB base, got {len(docx_full)} bytes.")
+        self.assertGreater(len(docx_full), len(docx_empty),
+            f"DOCX with full_text ({len(docx_full)} bytes) must be larger than empty ({len(docx_empty)} bytes). "
+            "full_text fallback is NOT rendering body paragraphs!")
+
+    def test_render_polish_rephrase_plain_string_input_produces_large_docx(self):
+        """render_polish_rephrase_docx menerima plain string langsung dan menghasilkan
+        DOCX lebih besar dari dokumen header-only (verifikasi _normalize_data bekerja)."""
+        from app.services.document_renderers.polish_rephrase_renderer import render_polish_rephrase_docx
+        docx_with_text = render_polish_rephrase_docx(self.LONG_ACADEMIC_TEXT)
+        docx_empty = render_polish_rephrase_docx("")
+        self.assertIsInstance(docx_with_text, bytes)
+        self.assertGreater(len(docx_with_text), 36_000,
+            f"String input must produce > 36kB DOCX base, got {len(docx_with_text)} bytes.")
+        self.assertGreater(len(docx_with_text), len(docx_empty),
+            f"String-input DOCX ({len(docx_with_text)} bytes) must be larger than empty DOCX ({len(docx_empty)} bytes). "
+            "_normalize_data is not wrapping plain string into sections correctly!")
+
+    def test_get_fallback_data_polish_rephrase_returns_correct_schema(self):
+        """get_fallback_for_task('POLISH_REPHRASE', raw_text=...) mengembalikan schema sections/full_text yang benar untuk renderer."""
+        from app.prompts import get_fallback_for_task, TASK_POLISH_REPHRASE
+        fallback = get_fallback_for_task(TASK_POLISH_REPHRASE, raw_text=self.LONG_ACADEMIC_TEXT)
+
+        # Must have correct keys for polish rephrase renderer
+        self.assertIn("sections", fallback, "Fallback POLISH_REPHRASE harus memuat key 'sections'")
+        self.assertIn("full_text", fallback, "Fallback POLISH_REPHRASE harus memuat key 'full_text'")
+        self.assertIsInstance(fallback["sections"], list)
+        self.assertGreater(len(fallback["sections"]), 0, "sections tidak boleh kosong")
+        self.assertIn("content", fallback["sections"][0], "section dict harus memuat key 'content'")
+        self.assertTrue(fallback["full_text"], "full_text tidak boleh string kosong")
+
+        # Must NOT be CV schema (no full_name / target_position)
+        self.assertNotIn("full_name", fallback,
+            "CRITICAL: get_fallback_for_task(POLISH_REPHRASE) mengembalikan schema CV_ATS! Key mismatch bug!")
+        self.assertNotIn("target_position", fallback,
+            "CRITICAL: get_fallback_for_task(POLISH_REPHRASE) mengembalikan schema CV_ATS! Key mismatch bug!")
+
+        # Rendering the fallback must produce a docx larger than an empty doc
+        docx_bytes = render_document("POLISH_REPHRASE", fallback)
+        docx_empty = render_document("POLISH_REPHRASE", {"sections": [], "full_text": ""})
+        self.assertGreater(len(docx_bytes), len(docx_empty),
+            f"Rendering fallback output ({len(docx_bytes)} bytes) is not larger than empty doc ({len(docx_empty)} bytes) — body text is empty/missing!")
+
+
 if __name__ == "__main__":
     unittest.main()
