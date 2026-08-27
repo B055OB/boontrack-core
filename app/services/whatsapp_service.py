@@ -500,6 +500,66 @@ async def upload_whatsapp_media(file_bytes: bytes, filename: str, mime_type: str
     """Helper wrapper for backward compatibility with upload_whatsapp_media."""
     return await upload_media(bytes_data=file_bytes, mime_type=mime_type, filename=filename, tenant_id=tenant_id)
 
+async def send_whatsapp_image_link(
+    to: str = "",
+    image_url: str = "",
+    caption: str = "",
+    tenant: str = "boontrack-career",
+    to_phone: Optional[str] = None,
+    tenant_id: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """Mengirim pesan gambar ke WhatsApp via Direct Public Image URL Link (QuickChart / HTTPS link)."""
+    target_phone = str(to or to_phone or "").replace("+", "").strip()
+    effective_tenant = str(tenant or tenant_id or "boontrack-career").strip()
+    token, phone_id, version = get_wa_credentials(effective_tenant)
+    if not token or not phone_id:
+        logger.error(f"[WhatsApp Service] Missing credentials in send_whatsapp_image_link (tenant={effective_tenant})")
+        print(f"[WhatsApp Service ERROR] Missing credentials in send_whatsapp_image_link (tenant={effective_tenant})", flush=True)
+        return await send_whatsapp_text(target_phone, caption, tenant_id=effective_tenant)
+
+    url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": target_phone,
+        "type": "image",
+        "image": {
+            "link": image_url,
+            "caption": caption
+        }
+    }
+
+    try:
+        print(f"[META WA SEND IMAGE LINK] POST {url} to {target_phone} | url={image_url}", flush=True)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            print(f"[META WA SEND IMAGE LINK RESPONSE] HTTP {response.status_code} - {response.text}", flush=True)
+            if response.status_code not in (200, 201):
+                logger.error(f"[WhatsApp Service] send_whatsapp_image_link failed: {response.status_code} - {response.text}")
+                print(f"[META WA SEND IMAGE LINK ERROR] HTTP {response.status_code} - {response.text}", flush=True)
+                return await send_whatsapp_text(target_phone, caption, tenant_id=effective_tenant)
+
+            res_data = response.json()
+            await log_to_supabase_messages(
+                sender="bot",
+                text=f"[Kirim Gambar Link] {caption}".strip(),
+                tenant_id=effective_tenant,
+                channel="whatsapp",
+                user_phone=target_phone,
+                user_id=target_phone,
+                conversation_id=target_phone,
+                metadata={"msg_type": "image", "caption": caption, "link": image_url}
+            )
+            return res_data
+    except Exception as e:
+        logger.error(f"[WhatsApp Service] Exception in send_whatsapp_image_link: {e}", exc_info=True)
+        print(f"[META WA SEND IMAGE LINK EXCEPTION] {e}", flush=True)
+        return await send_whatsapp_text(target_phone, caption, tenant_id=effective_tenant)
+
 async def send_whatsapp_image(
     to_phone: str = "",
     image_path_or_bytes: Optional[Union[str, bytes]] = None,
@@ -514,6 +574,15 @@ async def send_whatsapp_image(
     img_data = image_bytes if image_bytes is not None else image_path_or_bytes
     effective_tenant = str(tenant or tenant_id or "boontrack-career").strip()
 
+    # Jika img_data adalah URL string publik (http/https), langsung gunakan send_whatsapp_image_link
+    if isinstance(img_data, str) and img_data.startswith(("http://", "https://")):
+        return await send_whatsapp_image_link(
+            to=target_phone,
+            image_url=img_data,
+            caption=caption,
+            tenant=effective_tenant
+        )
+
     token, phone_id, version = get_wa_credentials(effective_tenant)
     if not token or not phone_id:
         logger.warning("[WhatsApp Service] Missing Meta WA credentials in send_whatsapp_image, falling back to text message.")
@@ -526,41 +595,6 @@ async def send_whatsapp_image(
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
-
-    # 1. URL publik (http/https)
-    if isinstance(img_data, str) and img_data.startswith(("http://", "https://")):
-        payload = {
-            "messaging_product": "whatsapp",
-            "recipient_type": "individual",
-            "to": clean_phone,
-            "type": "image",
-            "image": {
-                "link": image_path_or_bytes,
-                "caption": caption
-            }
-        }
-        try:
-            print(f"[META WA SEND IMAGE (LINK)] POST {url} to {clean_phone} | link={img_data}", flush=True)
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                res = await client.post(url, headers=headers, json=payload)
-                print(f"[META WA SEND IMAGE RESPONSE] HTTP {res.status_code} - {res.text}", flush=True)
-                if res.status_code in (200, 201):
-                    await log_to_supabase_messages(
-                        sender="bot",
-                        text=f"[Kirim Gambar] {caption}".strip(),
-                        tenant_id=effective_tenant,
-                        channel="whatsapp",
-                        user_phone=clean_phone,
-                        user_id=clean_phone,
-                        conversation_id=clean_phone,
-                        metadata={"msg_type": "image", "caption": caption, "link": img_data}
-                    )
-                    return res.json()
-                logger.error(f"[WhatsApp Service] send_whatsapp_image (link) failed: {res.status_code} - {res.text}")
-                return await send_whatsapp_text(clean_phone, caption, tenant_id=effective_tenant)
-        except Exception as e:
-            logger.error(f"[WhatsApp Service] Exception in send_whatsapp_image (link): {e}", exc_info=True)
-            return await send_whatsapp_text(clean_phone, caption, tenant_id=effective_tenant)
 
     # 2. Binary bytes atau file path lokal
     img_bytes: Optional[bytes] = None
