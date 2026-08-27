@@ -673,25 +673,111 @@ class TestPaymentDocDelivery(AioHTTPTestCase):
             "Tesis_Bab_1_Hasil_Parafrase.docx"
         )
 
-        # 2. CV_REVIEW / CV_ATS / CV_POLISH_REWRITE
+        # 2. CV_BUILD / CV_ATS
         self.assertEqual(
-            get_output_document_filename("CV_REVIEW"),
-            "CV_Hasil_Optimasi_ATS.docx"
+            get_output_document_filename("CV_BUILD"),
+            "CV_ATS_Optimasi.docx"
         )
         self.assertEqual(
             get_output_document_filename("CV_ATS"),
-            "CV_Hasil_Optimasi_ATS.docx"
+            "CV_ATS_Optimasi.docx"
         )
         self.assertEqual(
             get_output_document_filename("CV_POLISH_REWRITE"),
-            "CV_Hasil_Optimasi_ATS.docx"
+            "CV_ATS_Optimasi.docx"
         )
 
-        # 3. CAREER_PRO_BUNDLE
+        # 3. CV_REVIEW / ATS_DIAGNOSTIC
+        self.assertEqual(
+            get_output_document_filename("CV_REVIEW"),
+            "Laporan_Review_CV_HR.docx"
+        )
+        self.assertEqual(
+            get_output_document_filename("ATS_DIAGNOSTIC"),
+            "Laporan_Review_CV_HR.docx"
+        )
+        self.assertEqual(
+            get_output_document_filename("ATS_REVIEW"),
+            "Laporan_Review_CV_HR.docx"
+        )
+
+        # 4. CAREER_PRO_BUNDLE
         self.assertEqual(
             get_output_document_filename("CAREER_PRO_BUNDLE"),
-            "Paket_Lengkap_Karir_ATS.docx"
+            "Paket_Lengkap_Karir_Pro.docx"
         )
+
+    def test_standardized_four_core_products_generation(self):
+        """Memvalidasi pemrosesan dan pembentukan DOCX untuk 4 Layanan Inti BoonTrack."""
+        from app.services.doc_builder import build_document_result
+        from app.services.document_engine import (
+            TASK_CV_BUILD,
+            TASK_CV_ATS,
+            TASK_CV_REVIEW,
+            TASK_POLISH_REPHRASE,
+            TASK_CAREER_PRO_BUNDLE,
+            get_output_document_filename
+        )
+
+        # 1. SERVICE: CV_BUILD / CV_ATS
+        self.assertEqual(get_output_document_filename(TASK_CV_BUILD), "CV_ATS_Optimasi.docx")
+        self.assertEqual(get_output_document_filename(TASK_CV_ATS), "CV_ATS_Optimasi.docx")
+        cv_bytes = build_document_result(TASK_CV_ATS, {
+            "full_name": "Budi Santoso",
+            "target_position": "Product Manager",
+            "summary": "Profesional berpengalaman memimpin inisiatif digital.",
+            "experience": [{"role": "PM", "company": "Tech Corp", "period": "2021-Now", "bullets": ["Meningkatkan konversi 30%"]}]
+        })
+        self.assertTrue(cv_bytes.startswith(b"PK\x03\x04"))
+
+        # 2. SERVICE: CV_REVIEW
+        self.assertEqual(get_output_document_filename(TASK_CV_REVIEW), "Laporan_Review_CV_HR.docx")
+        review_bytes = build_document_result(TASK_CV_REVIEW, {
+            "overall_score": 88,
+            "target_role": "Data Analyst",
+            "summary": "Struktur CV solid dengan rekam jejak jelas.",
+            "breakdown_scores": {"ats_compatibility": 90, "content_impact": 85},
+            "strengths": ["Pengalaman teknis relevan"],
+            "red_flags": ["Format font tidak konsisten"],
+            "actionable_fixes": [{"section": "Summary", "issue": "Terlalu umum", "fix": "Fokus pada keahlian SQL dan Python"}]
+        })
+        self.assertTrue(review_bytes.startswith(b"PK\x03\x04"))
+
+        # 3. SERVICE: POLISH_REPHRASE
+        self.assertEqual(get_output_document_filename(TASK_POLISH_REPHRASE), "Naskah_Hasil_Parafrase.docx")
+        self.assertEqual(
+            get_output_document_filename(TASK_POLISH_REPHRASE, "BAB_II_Tinjauan_Pustaka.docx"),
+            "BAB_II_Tinjauan_Pustaka_Hasil_Parafrase.docx"
+        )
+        rephrase_bytes = build_document_result(TASK_POLISH_REPHRASE, {
+            "original_filename": "Bab_I.docx",
+            "full_paraphrased_text": "Ini adalah hasil parafrase berstandar akademis yang komprehensif.",
+            "metadata": {"total_chunks": 1, "citations_count": 0}
+        })
+        self.assertTrue(rephrase_bytes.startswith(b"PK\x03\x04"))
+
+        # 4. SERVICE: CAREER_PRO_BUNDLE
+        self.assertEqual(get_output_document_filename(TASK_CAREER_PRO_BUNDLE), "Paket_Lengkap_Karir_Pro.docx")
+        bundle_bytes = build_document_result(TASK_CAREER_PRO_BUNDLE, {
+            "full_name": "Siti Rahma",
+            "target_position": "Senior HR Specialist",
+            "summary": "Spesialis HR dengan pengalaman talent acquisition.",
+            "experience": [{"role": "HR Specialist", "company": "Global Corp", "period": "2020-Now", "bullets": ["Merekrut 50+ profesional top"]}],
+            "hr_recommendations": {
+                "profile_readiness": "Sangat Kompetitif",
+                "key_strengths": ["Keahlian interview berbasis STAR"],
+                "strategic_improvements": ["Kembangkan portofolio employer branding"],
+                "interview_tips": ["Tekankan efisiensi waktu hiring"]
+            },
+            "cover_letter": {
+                "recipient": "HR Director",
+                "subject": "Aplikasi Senior HR Specialist",
+                "opening": "Dengan hormat, saya bermaksud melamar posisi...",
+                "body_paragraphs": ["Saya telah berpengalaman dalam proses rekrutmen end-to-end."],
+                "closing": "Terima kasih atas perhatian Anda."
+            }
+        })
+        self.assertTrue(bundle_bytes.startswith(b"PK\x03\x04"))
 
 
 if __name__ == "__main__":

@@ -13,17 +13,33 @@ COMPLIANCE_DISCLAIMER = (
     "mengikuti kebijakan integritas profesional dan akademik institusi Anda."
 )
 
-# Supported Task Types (Standardized)
+# Supported Task Types (Standardized 4 Core Products)
 TASK_POLISH_REPHRASE = "POLISH_REPHRASE"
-TASK_CV_POLISH_REWRITE = "CV_POLISH_REWRITE"
+TASK_CV_BUILD = "CV_BUILD"
+TASK_CV_ATS = "CV_ATS"
+TASK_CV_REVIEW = "CV_REVIEW"
 TASK_CAREER_PRO_BUNDLE = "CAREER_PRO_BUNDLE"
+
+# Legacy & Alias Constants
+TASK_CV_POLISH_REWRITE = "CV_POLISH_REWRITE"
+TASK_CV_REWRITE = "CV_REWRITE"
 TASK_ATS_DIAGNOSTIC = "ATS_DIAGNOSTIC"
+TASK_ATS_REVIEW = "ATS_REVIEW"
+TASK_PARAPHRASE = "PARAPHRASE"
 
 # Legacy mapping compatibility
 LEGACY_TASK_MAPPING = {
-    "ATS_REVIEW": TASK_ATS_DIAGNOSTIC,
-    "CV_REWRITE": TASK_CV_POLISH_REWRITE,
-    "PARAPHRASE": TASK_POLISH_REPHRASE
+    "CV_BUILD": TASK_CV_ATS,
+    "CV_ATS": TASK_CV_ATS,
+    "CV_POLISH_REWRITE": TASK_CV_ATS,
+    "CV_REWRITE": TASK_CV_ATS,
+    "CV_REVIEW": TASK_CV_REVIEW,
+    "ATS_DIAGNOSTIC": TASK_CV_REVIEW,
+    "ATS_REVIEW": TASK_CV_REVIEW,
+    "PARAPHRASE": TASK_POLISH_REPHRASE,
+    "DOCUMENT_POLISH": TASK_POLISH_REPHRASE,
+    "BUNDLE_CAREER": TASK_CAREER_PRO_BUNDLE,
+    "PRO_BUNDLE": TASK_CAREER_PRO_BUNDLE
 }
 
 # Pricing Constants (IDR - Approved by CFO & CEO)
@@ -177,21 +193,21 @@ def calculate_pricing(task_type: str, word_count: int) -> Dict[str, Any]:
                 addon_price = 0
             final_price = base_price + addon_price
 
-    elif normalized_task == TASK_CV_POLISH_REWRITE:
+    elif normalized_task in [TASK_CV_ATS, TASK_CV_BUILD, TASK_CV_POLISH_REWRITE, "CV_REWRITE"]:
         tier = "SINGLE_CV"
         tier_label = "Single CV Polish & ATS Rewrite"
         base_price = PRICE_CV_POLISH_REWRITE
         addon_price = 0
         final_price = PRICE_CV_POLISH_REWRITE
 
-    elif normalized_task == TASK_CAREER_PRO_BUNDLE:
+    elif normalized_task in [TASK_CAREER_PRO_BUNDLE, "BUNDLE_CAREER", "PRO_BUNDLE"]:
         tier = "CAREER_PRO_BUNDLE"
         tier_label = "Career Pro Bundle (CV Rewrite + 3x Interview HR)"
         base_price = PRICE_CAREER_PRO_BUNDLE
         addon_price = 0
         final_price = PRICE_CAREER_PRO_BUNDLE
 
-    elif normalized_task == TASK_ATS_DIAGNOSTIC:
+    elif normalized_task in [TASK_CV_REVIEW, TASK_ATS_DIAGNOSTIC, "ATS_REVIEW"]:
         tier = "FREE_TIER"
         tier_label = "Free Basic ATS Diagnostic"
         base_price = 0

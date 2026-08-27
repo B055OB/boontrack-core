@@ -21,6 +21,9 @@ from app.services.pricing_engine import (
     TASK_CV_POLISH_REWRITE,
     TASK_CAREER_PRO_BUNDLE,
     TASK_ATS_DIAGNOSTIC,
+    TASK_CV_BUILD,
+    TASK_CV_ATS,
+    TASK_CV_REVIEW,
     LEGACY_TASK_MAPPING
 )
 from app.services.r2_storage_service import r2_storage_service
@@ -45,17 +48,36 @@ MAGIC_BYTES_OLE = b"\xd0\xcf\x11\xe0" # DOC OLE container
 TASK_ATS_REVIEW = "ATS_REVIEW"
 TASK_CV_REWRITE = "CV_REWRITE"
 TASK_PARAPHRASE = "PARAPHRASE"
+TASK_DOCUMENT_POLISH = "DOCUMENT_POLISH"
+TASK_BUNDLE_CAREER = "BUNDLE_CAREER"
+TASK_PRO_BUNDLE = "PRO_BUNDLE"
+
+# Canonical Mapping for 4 Core Products
+CANONICAL_TASK_MAP = {
+    # Service 1: CV_BUILD / CV_ATS
+    "CV_BUILD": TASK_CV_ATS,
+    "CV_ATS": TASK_CV_ATS,
+    "CV_POLISH_REWRITE": TASK_CV_ATS,
+    "CV_REWRITE": TASK_CV_ATS,
+
+    # Service 2: CV_REVIEW
+    "CV_REVIEW": TASK_CV_REVIEW,
+    "ATS_DIAGNOSTIC": TASK_CV_REVIEW,
+    "ATS_REVIEW": TASK_CV_REVIEW,
+
+    # Service 3: POLISH_REPHRASE
+    "POLISH_REPHRASE": TASK_POLISH_REPHRASE,
+    "PARAPHRASE": TASK_POLISH_REPHRASE,
+    "DOCUMENT_POLISH": TASK_POLISH_REPHRASE,
+
+    # Service 4: CAREER_PRO_BUNDLE
+    "CAREER_PRO_BUNDLE": TASK_CAREER_PRO_BUNDLE,
+    "BUNDLE_CAREER": TASK_CAREER_PRO_BUNDLE,
+    "PRO_BUNDLE": TASK_CAREER_PRO_BUNDLE
+}
 
 # Supported Tasks Set
-SUPPORTED_TASKS = {
-    TASK_POLISH_REPHRASE,
-    TASK_CV_POLISH_REWRITE,
-    TASK_CAREER_PRO_BUNDLE,
-    TASK_ATS_DIAGNOSTIC,
-    TASK_ATS_REVIEW,
-    TASK_CV_REWRITE,
-    TASK_PARAPHRASE
-}
+SUPPORTED_TASKS = set(CANONICAL_TASK_MAP.keys()).union(set(CANONICAL_TASK_MAP.values()))
 
 
 def validate_document_file(file_bytes: bytes, filename: str) -> Tuple[bool, str, str]:
@@ -166,38 +188,63 @@ async def execute_ai_document_task(
     raw_text: str,
     filename: str = "Dokumen"
 ) -> Dict[str, Any]:
-    """Memanggil AI Gateway / Academic Rephrase Engine sesuai tipe tugas."""
+    """Memanggil AI Gateway / Rephrase Engine sesuai 4 Layanan Inti BoonTrack."""
     raw_normalized = str(task_type).upper().strip()
-    normalized_task = LEGACY_TASK_MAPPING.get(raw_normalized, raw_normalized)
+    canonical = CANONICAL_TASK_MAP.get(raw_normalized, raw_normalized)
 
-    # 1. TASK_POLISH_REPHRASE: Diproses penuh oleh AcademicRephraseEngine (EYD V, Chunking 600-800 kata, Proteksi Sitasi)
-    if normalized_task == TASK_POLISH_REPHRASE:
-        return await academic_rephrase_engine.rephrase_document(raw_text=raw_text, filename=filename)
+    # 3. SERVICE: "POLISH_REPHRASE"
+    # Logika: Ekstraksi naskah akademis -> sanitasi artefak PDF -> chunking & parafrase komprehensif (panjang output ~ panjang input, sitasi terlindungi).
+    if canonical == TASK_POLISH_REPHRASE:
+        return await academic_rephrase_engine.process_task(raw_text=raw_text, filename=filename, task_type=canonical)
 
-    if normalized_task == TASK_ATS_DIAGNOSTIC:
+    # 2. SERVICE: "CV_REVIEW"
+    # Logika: Ekstraksi CV pengguna -> evaluasi HR (ATS Score, Strengths, Red Flags, Actionable Fixes).
+    if canonical == TASK_CV_REVIEW:
         prompt = (
-            "Kamu adalah Senior HR & ATS Auditor Spesialis BoonTrack.\n"
-            "Analisis CV berikut dan kembalikan output HANYA berupa JSON valid sesuai skema berikut:\n\n"
+            "Kamu adalah Senior HR Executive & ATS Specialist Auditor BoonTrack.\n"
+            "Tugas: Analisis dan evaluasi CV pengguna berikut secara mendalam dengan standar seleksi HR profesional.\n"
+            "Wajib mencakup 4 aspek kunci:\n"
+            "1. ATS Score (Overall & parameter breakdown: kompatibilitas sistem, dampak konten, tata bahasa & struktur).\n"
+            "2. Strengths (Kekuatan & nilai jual utama profil kandidat).\n"
+            "3. Red Flags (Kekurangan kritis, inkonsistensi, atau format berisiko tinggi yang berpotensi menggugurkan seleksi).\n"
+            "4. Actionable Fixes (Rekomendasi perbaikan konkret dengan formula aksi + metrik).\n\n"
+            "Kembalikan output HANYA berupa JSON valid sesuai skema berikut:\n\n"
             "{\n"
             '  "overall_score": 85,\n'
-            '  "target_role": "Software Engineer",\n'
-            '  "summary": "Ringkasan audit CV...",\n'
+            '  "target_role": "Target Posisi / Profesi",\n'
+            '  "summary": "Ringkasan evaluasi eksekutif CV...",\n'
             '  "breakdown_scores": {\n'
             '    "ats_compatibility": 90,\n'
             '    "content_impact": 80,\n'
-            '    "structure_grammar": 85\n'
+            '    "structure_grammar": 85,\n'
+            '    "keyword_alignment": 85\n'
             "  },\n"
-            '  "strengths": ["Poin kelebihan 1", "Poin kelebihan 2"],\n'
-            '  "findings": [\n'
-            '    {"section": "Summary", "issue": "Kurang angka kuantitatif", "recommendation": "Tambahkan metrik pencapaian"}\n'
+            '  "strengths": [\n'
+            '    "Poin kelebihan dan nilai jual kuat kandidat 1",\n'
+            '    "Poin kelebihan 2"\n'
+            "  ],\n"
+            '  "red_flags": [\n'
+            '    "Catatan kritis / red flag yang berpotensi menggugurkan screening 1",\n'
+            '    "Catatan kritis 2"\n'
+            "  ],\n"
+            '  "actionable_fixes": [\n'
+            '    {"section": "Experience", "issue": "Deskripsi masalah", "fix": "Langkah perbaikan konkret berbasis metrik"},\n'
+            '    {"section": "Summary", "issue": "Terlalu umum", "fix": "Tulis ulang dengan elevator pitch berbasis value"}\n'
             "  ]\n"
             "}\n\n"
-            f"Konten Dokumen ({filename}):\n{raw_text[:8000]}"
+            f"Konten Dokumen CV ({filename}):\n{raw_text[:8000]}"
         )
-    elif normalized_task in [TASK_CV_POLISH_REWRITE, TASK_CAREER_PRO_BUNDLE]:
+
+    # 4. SERVICE: "CAREER_PRO_BUNDLE"
+    # Logika: CV pengguna + Target Role -> Bundle Lengkap (CV Tailored ATS + Rekomendasi HR Profesional + Surat Lamaran/Cover Letter).
+    elif canonical == TASK_CAREER_PRO_BUNDLE:
         prompt = (
-            "Kamu adalah Executive Resume Writer & HR Recruiter Profesional.\n"
-            "Rombak dan susun ulang CV berikut menjadi standar HR internasional ATS-friendly.\n"
+            "Kamu adalah Principal Career Strategist & Senior HR Recruiter BoonTrack.\n"
+            "Tugas: Susun Paket Lengkap Karir Pro (Career Pro Bundle) dari data CV pengguna dan target peran yang dituju.\n"
+            "Paket terdiri dari 3 pilar wajib:\n"
+            "1. CV Tailored ATS: Format ulang riwayat kerja menjadi bullet point aksi + metrik hasil kuantitatif (STAR method).\n"
+            "2. Rekomendasi HR Profesional: Kesiapan profil, kekuatan utama, strategi interview STAR, dan peta jalan karir.\n"
+            "3. Surat Lamaran / Cover Letter: Surat lamaran kerja formal persuasif siap pakai yang disesuaikan dengan posisi target.\n\n"
             "Kembalikan output HANYA berupa JSON valid sesuai skema berikut:\n\n"
             "{\n"
             '  "full_name": "Nama Kandidat",\n'
@@ -207,10 +254,10 @@ async def execute_ai_document_task(
             '  "location": "Jakarta, Indonesia",\n'
             '  "linkedin": "linkedin.com/in/username",\n'
             '  "portfolio": "github.com/username",\n'
-            '  "summary": "Professional summary 2-3 kalimat kuat...",\n'
+            '  "summary": "Ringkasan profesional ATS-tailored dengan proposisi nilai kuat...",\n'
             '  "skills": {\n'
-            '    "technical_skills": ["Skill 1", "Skill 2"],\n'
-            '    "soft_skills": ["Komunikasi", "Problem Solving"]\n'
+            '    "technical_skills": ["Skill Teknis 1", "Skill Teknis 2"],\n'
+            '    "leadership_soft_skills": ["Problem Solving", "Komunikasi Strategis"]\n'
             "  },\n"
             '  "experience": [\n'
             "    {\n"
@@ -218,18 +265,79 @@ async def execute_ai_document_task(
             '      "company": "Nama Perusahaan",\n'
             '      "period": "2022 - Sekarang",\n'
             '      "location": "Jakarta",\n'
-            '      "bullets": ["Memimpin proyek X...", "Meningkatkan efisiensi sebesar 25%..."]\n'
+            '      "bullets": [\n'
+            '        "Memimpin eksekusi proyek skala prioritas yang meningkatkan efisiensi proses sebesar 30%",\n'
+            '        "Merancang strategi implementasi baru yang memangkas biaya operasional tim sebesar 15%"\n'
+            "      ]\n"
             "    }\n"
             "  ],\n"
             '  "education": [\n'
-            '    {"degree": "S1 Teknik Informatika", "institution": "Universitas Indonesia", "year": "2018 - 2022"}\n'
+            '    {"degree": "Sarjana Teknik / Manajemen", "institution": "Perguruan Tinggi", "year": "2018 - 2022"}\n'
             "  ],\n"
-            '  "certifications": ["Sertifikasi AWS / Scrum Master"]\n'
+            '  "certifications": ["Sertifikasi Industri Relevan"],\n'
+            '  "hr_recommendations": {\n'
+            '    "profile_readiness": "Sangat Siap (High Competitiveness)",\n'
+            '    "key_strengths": ["Pengalaman kepemimpinan lintas fungsi", "Metrik pencapaian bisnis terbukti"],\n'
+            '    "strategic_improvements": ["Pertajam narasi pencapaian revenue", "Kuasai studi kasus metode STAR"],\n'
+            '    "interview_tips": ["Tekankan contoh konkret saat menangani krisis operasional", "Tunjukkan ROI atas inisiatif yang dipimpin"]\n'
+            "  },\n"
+            '  "cover_letter": {\n'
+            '    "date": "2026",\n'
+            '    "recipient": "Yth. Tim Rekrutmen & Hiring Manager",\n'
+            '    "subject": "Aplikasi Lamaran Pekerjaan - Target Posisi Karir",\n'
+            '    "salutation": "Dengan hormat,",\n'
+            '    "opening": "Sehubungan dengan informasi lowongan pekerjaan untuk posisi Target Posisi Karir...",\n'
+            '    "body_paragraphs": [\n'
+            '      "Selama perjalanan profesional saya, saya telah berhasil memimpin berbagai inisiatif strategis...",\n'
+            '      "Keahlian utama saya dalam optimasi proses dan kepemimpinan tim telah terbukti menghasilkan dampak terukur..."\n'
+            '    ],\n'
+            '    "closing": "Besar harapan saya untuk mendapatkan kesempatan wawancara guna mendiskusikan bagaimana kontribusi saya dapat mendukung target perusahaan.",\n'
+            '    "sign_off": "Hormat saya,\\nNama Kandidat"\n'
+            "  }\n"
             "}\n\n"
-            f"Konten Dokumen ({filename}):\n{raw_text[:8000]}"
+            f"Konten Riwayat CV ({filename}):\n{raw_text[:8000]}"
         )
+
+    # 1. SERVICE: "CV_BUILD" / "CV_ATS"
+    # Logika: Ambil data riwayat pengguna -> format ulang ke bullet point ATS berbasis metrik -> generate file Word.
     else:
-        return await academic_rephrase_engine.rephrase_document(raw_text=raw_text, filename=filename)
+        prompt = (
+            "Kamu adalah Executive Resume Writer & ATS Optimization Specialist BoonTrack.\n"
+            "Tugas: Ambil dan rekonstruksi data riwayat pengguna berikut menjadi CV profesional standar internasional ATS-friendly.\n"
+            "Wajib format ulang seluruh pengalaman kerja menjadi bullet points berbobot tinggi dengan formula aksi + metrik pencapaian kuantitatif (Action Verb + Context + Quantifiable Result / STAR method).\n"
+            "Kembalikan output HANYA berupa JSON valid sesuai skema berikut:\n\n"
+            "{\n"
+            '  "full_name": "Nama Kandidat",\n'
+            '  "target_position": "Target Posisi Karir",\n'
+            '  "email": "email@example.com",\n'
+            '  "phone": "+628123456789",\n'
+            '  "location": "Jakarta, Indonesia",\n'
+            '  "linkedin": "linkedin.com/in/username",\n'
+            '  "portfolio": "github.com/username",\n'
+            '  "summary": "Professional summary 2-3 kalimat kuat dengan value proposition jelas...",\n'
+            '  "skills": {\n'
+            '    "technical_skills": ["Skill Teknis 1", "Skill Teknis 2"],\n'
+            '    "soft_skills": ["Komunikasi", "Problem Solving", "Kepemimpinan"]\n'
+            "  },\n"
+            '  "experience": [\n'
+            "    {\n"
+            '      "role": "Jabatan Pekerjaan",\n'
+            '      "company": "Nama Perusahaan",\n'
+            '      "period": "2022 - Sekarang",\n'
+            '      "location": "Jakarta",\n'
+            '      "bullets": [\n'
+            '        "Memimpin inisiatif prioritas yang menghasilkan kenaikan metrik performa sebesar 28%",\n'
+            '        "Mengoptimalkan alur operasional hingga mereduksi waktu proses sebesar 35%"\n'
+            "      ]\n"
+            "    }\n"
+            "  ],\n"
+            '  "education": [\n'
+            '    {"degree": "S1 Teknik / Manajemen", "institution": "Nama Universitas", "year": "2018 - 2022"}\n'
+            "  ],\n"
+            '  "certifications": ["Sertifikasi Profesional / Lisensi Relevan"]\n'
+            "}\n\n"
+            f"Konten Riwayat Pengguna ({filename}):\n{raw_text[:8000]}"
+        )
 
     ai_response = await ai_gateway.generate(prompt)
     structured = _extract_json_from_llm_output(ai_response or "")
@@ -237,15 +345,41 @@ async def execute_ai_document_task(
     if structured:
         return structured
 
-    logger.warning(f"[DocumentEngine] LLM JSON parsing fallback triggered for {normalized_task}.")
-    if normalized_task == TASK_ATS_DIAGNOSTIC:
+    logger.warning(f"[DocumentEngine] LLM JSON parsing fallback triggered for {canonical}.")
+    if canonical == TASK_CV_REVIEW:
         return {
             "overall_score": 80,
             "target_role": "Kandidat Profesional",
             "summary": "CV memiliki struktur dasar yang baik dan siap dioptimalkan dengan metrik dampak.",
-            "breakdown_scores": {"ats_compatibility": 85, "content_impact": 75, "structure_grammar": 80},
+            "breakdown_scores": {"ats_compatibility": 85, "content_impact": 75, "structure_grammar": 80, "keyword_alignment": 80},
             "strengths": ["Riwayat pendidikan & kontak jelas", "Keahlian relevan tercantum"],
-            "findings": [{"section": "Experience", "issue": "Kurang angka dampak", "recommendation": "Gunakan formula: Tindakan + Metrik Hasil"}]
+            "red_flags": ["Sebagian besar poin pengalaman kerja belum menyertakan angka metrik pencapaian kuantitatif"],
+            "actionable_fixes": [{"section": "Experience", "issue": "Kurang angka dampak", "fix": "Gunakan formula: Tindakan + Konteks + Metrik Hasil (%)"}]
+        }
+    elif canonical == TASK_CAREER_PRO_BUNDLE:
+        return {
+            "full_name": "KANDIDAT PROFESIONAL",
+            "target_position": "Spesialis Karir",
+            "summary": "Profesional berdedikasi tinggi dengan pengalaman kerja terstruktur dan pencapaian target terbukti.",
+            "skills": {"technical_skills": ["Manajemen Proyek", "Analisis Data"], "leadership_soft_skills": ["Komunikasi", "Problem Solving"]},
+            "experience": [{"role": "Staf Profesional", "company": "Perusahaan Terkemuka", "period": "2021 - Sekarang", "bullets": ["Melaksanakan operasional harian secara efisien", "Mendukung efisiensi target tim sebesar 20%"]}],
+            "education": [{"degree": "Sarjana / Diploma", "institution": "Perguruan Tinggi", "year": "2020"}],
+            "certifications": ["Pelatihan Profesional Terverifikasi"],
+            "hr_recommendations": {
+                "profile_readiness": "Kompetitif & Siap Seleksi",
+                "key_strengths": ["Komunikasi efektif", "Track record terukur"],
+                "strategic_improvements": ["Eksplorasi sertifikasi spesialisasi lanjutan"],
+                "interview_tips": ["Siapkan 2 studi kasus sukses dengan metode STAR"]
+            },
+            "cover_letter": {
+                "recipient": "Yth. Tim Rekrutmen & Hiring Manager",
+                "subject": "Aplikasi Lamaran Pekerjaan - Spesialis Karir",
+                "salutation": "Dengan hormat,",
+                "opening": "Saya menulis surat ini untuk menyampaikan ketertarikan saya pada posisi Spesialis Karir.",
+                "body_paragraphs": ["Dengan pengalaman yang saya miliki, saya yakin dapat berkontribusi positif bagi pertumbuhan perusahaan."],
+                "closing": "Terima kasih atas waktu dan pertimbangan Bapak/Ibu.",
+                "sign_off": "Hormat saya,\nKandidat Profesional"
+            }
         }
     else:
         return {
@@ -259,13 +393,19 @@ async def execute_ai_document_task(
 
 
 TASK_DISPLAY_NAMES = {
-    "POLISH_REPHRASE": "Polish & Rephrase Dokumen",
-    "CV_POLISH_REWRITE": "CV Polish & ATS Optimization",
-    "CAREER_PRO_BUNDLE": "Career Pro Bundle (CV + Cover Letter)",
-    "ATS_DIAGNOSTIC": "ATS Diagnostic & Resume Review",
-    "ATS_REVIEW": "ATS Diagnostic & Resume Review",
-    "CV_REWRITE": "CV Polish & ATS Optimization",
-    "PARAPHRASE": "Academic / Document Paraphrase"
+    "CV_BUILD": "CV ATS & Optimasi Karir",
+    "CV_ATS": "CV ATS & Optimasi Karir",
+    "CV_POLISH_REWRITE": "CV ATS & Optimasi Karir",
+    "CV_REWRITE": "CV ATS & Optimasi Karir",
+    "CV_REVIEW": "Evaluasi & Review CV HR",
+    "ATS_DIAGNOSTIC": "Evaluasi & Review CV HR",
+    "ATS_REVIEW": "Evaluasi & Review CV HR",
+    "POLISH_REPHRASE": "Penyempurnaan & Parafrase Naskah",
+    "PARAPHRASE": "Penyempurnaan & Parafrase Naskah",
+    "DOCUMENT_POLISH": "Penyempurnaan & Parafrase Naskah",
+    "CAREER_PRO_BUNDLE": "Paket Lengkap Karir Pro (CV + Rekomendasi HR + Cover Letter)",
+    "BUNDLE_CAREER": "Paket Lengkap Karir Pro (CV + Rekomendasi HR + Cover Letter)",
+    "PRO_BUNDLE": "Paket Lengkap Karir Pro (CV + Rekomendasi HR + Cover Letter)"
 }
 
 
@@ -287,42 +427,39 @@ def format_payment_confirmation_text(
 
 
 def get_output_document_filename(task_type: str, original_filename: Optional[str] = None) -> str:
-    """Menentukan nama file output .docx secara dinamis dan relevan berdasarkan task_type.
+    """Menentukan nama file output .docx berdasarkan 4 Layanan Inti BoonTrack.
     
-    Aturan:
-    - Jika task_type == 'POLISH_REPHRASE' / dokumen naskah:
-      'Naskah_Hasil_Parafrase.docx' atau '{clean_base}_Hasil_Parafrase.docx'.
-    - Jika task_type == 'CV_REVIEW' / 'CV_ATS' / CV Polish:
-      'CV_Hasil_Optimasi_ATS.docx'.
-    - Jika task_type == 'CAREER_PRO_BUNDLE':
-      'Paket_Lengkap_Karir_ATS.docx'.
+    1. 'CV_BUILD' / 'CV_ATS' -> 'CV_ATS_Optimasi.docx'
+    2. 'CV_REVIEW' -> 'Laporan_Review_CV_HR.docx'
+    3. 'POLISH_REPHRASE' -> 'Naskah_Hasil_Parafrase.docx' (atau {clean_base}_Hasil_Parafrase.docx jika nama asli tersedia)
+    4. 'CAREER_PRO_BUNDLE' -> 'Paket_Lengkap_Karir_Pro.docx'
     """
     raw_task = str(task_type or "").upper().strip()
+    canonical = CANONICAL_TASK_MAP.get(raw_task, raw_task)
 
-    # 1. Career Pro Bundle
-    if raw_task in ("CAREER_PRO_BUNDLE", "BUNDLE_CAREER", "PRO_BUNDLE"):
-        return "Paket_Lengkap_Karir_ATS.docx"
+    # 4. SERVICE: "CAREER_PRO_BUNDLE"
+    if canonical == TASK_CAREER_PRO_BUNDLE or raw_task in ("CAREER_PRO_BUNDLE", "BUNDLE_CAREER", "PRO_BUNDLE"):
+        return "Paket_Lengkap_Karir_Pro.docx"
 
-    # 2. CV ATS / CV Review / Optimasi CV
-    if any(k in raw_task for k in ("CV", "ATS", "RESUME")):
-        return "CV_Hasil_Optimasi_ATS.docx"
+    # 2. SERVICE: "CV_REVIEW"
+    if canonical == TASK_CV_REVIEW or raw_task in ("CV_REVIEW", "ATS_DIAGNOSTIC", "ATS_REVIEW"):
+        return "Laporan_Review_CV_HR.docx"
 
-    # 3. Dokumen Naskah / Skripsi / Parafrase
-    if raw_task in ("POLISH_REPHRASE", "PARAPHRASE", "DOCUMENT_POLISH", "POLISH"):
+    # 1. SERVICE: "CV_BUILD" / "CV_ATS"
+    if canonical == TASK_CV_ATS or raw_task in ("CV_BUILD", "CV_ATS", "CV_POLISH_REWRITE", "CV_REWRITE"):
+        return "CV_ATS_Optimasi.docx"
+
+    # 3. SERVICE: "POLISH_REPHRASE"
+    if canonical == TASK_POLISH_REPHRASE or raw_task in ("POLISH_REPHRASE", "PARAPHRASE", "DOCUMENT_POLISH"):
         if original_filename:
             base_name = os.path.splitext(os.path.basename(original_filename))[0]
             clean_base = re.sub(r'[^a-zA-Z0-9_\-]', '_', base_name).strip('_')
-            generic_names = {"document", "dokumen", "file", "cv_hasil_polish", "untitled", "test", ""}
+            generic_names = {"document", "dokumen", "file", "naskah_input", "untitled", "test", ""}
             if clean_base and clean_base.lower() not in generic_names:
                 return f"{clean_base}_Hasil_Parafrase.docx"
         return "Naskah_Hasil_Parafrase.docx"
 
     # Fallback umum
-    if original_filename:
-        base_name = os.path.splitext(os.path.basename(original_filename))[0]
-        clean_base = re.sub(r'[^a-zA-Z0-9_\-]', '_', base_name).strip('_')
-        if clean_base and clean_base.lower() not in {"document", "dokumen", "file", "test", ""}:
-            return f"{clean_base}_Hasil_Polish.docx"
     return "Dokumen_Hasil_Polish.docx"
 
 

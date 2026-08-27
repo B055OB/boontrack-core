@@ -402,5 +402,25 @@ class AcademicRephraseEngine:
             "full_text": full_rephrased_text
         }
 
+    @classmethod
+    async def process_task(
+        cls,
+        raw_text: str,
+        filename: str = "Dokumen_Akademik",
+        task_type: str = "POLISH_REPHRASE"
+    ) -> Dict[str, Any]:
+        """Ekstraksi naskah akademis -> sanitasi artefak PDF -> chunking & parafrase komprehensif (panjang output ~ panjang input, sitasi terlindungi)."""
+        clean_task = str(task_type or "").upper().strip()
+        if clean_task not in SUPPORTED_TASKS:
+            logger.warning(f"[AcademicRephraseEngine] Task '{task_type}' diproses dengan pipeline Polish Rephrase standar.")
+        return await cls.rephrase_document(raw_text=raw_text, filename=filename)
+
+
+# Task Type Constants for Rephrase Engine
+TASK_POLISH_REPHRASE = "POLISH_REPHRASE"
+TASK_PARAPHRASE = "PARAPHRASE"
+OUTPUT_DOCUMENT_FILENAME = "Naskah_Hasil_Parafrase.docx"
+SUPPORTED_TASKS = {TASK_POLISH_REPHRASE, TASK_PARAPHRASE, "DOCUMENT_POLISH"}
 
 academic_rephrase_engine = AcademicRephraseEngine()
+
