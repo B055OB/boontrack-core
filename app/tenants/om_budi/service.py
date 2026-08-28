@@ -2,6 +2,8 @@ import json
 import logging
 import os
 from typing import Dict, Any, Optional
+from app.tenants.base import BaseTenantService
+from app.tenants.om_budi.config import TENANT_ID, TENANT_NAME
 from app.core.ai.fallback.matcher import LocalKnowledgeMatcher
 from app.core.ai.fallback.confidence import MatchConfidence
 from app.core.messaging.templates import (
@@ -88,8 +90,12 @@ SYSTEM_PROMPT_OM_BUDI = (
 )
 
 
-class OmBudiService:
+class OmBudiService(BaseTenantService):
+    tenant_id: str = TENANT_ID
+    tenant_name: str = TENANT_NAME
+
     def __init__(self):
+        super().__init__(tenant_id=TENANT_ID, tenant_name=TENANT_NAME)
         self.rules = self._load_rules()
         self.matcher = LocalKnowledgeMatcher(self.rules)
         self.qris_asset_path = _resolve_qris_asset_path()
@@ -133,7 +139,7 @@ class OmBudiService:
             logger.error(f"[SAVE MEMBER ERROR] {e}")
 
     def _clean_phone(self, phone: str) -> str:
-        return "".join(filter(str.isdigit, str(phone or "")))
+        return super().clean_phone(phone)
 
     async def handle_incoming_message(
         self,
@@ -142,7 +148,10 @@ class OmBudiService:
         button_id: Optional[str] = None,
         user_name: str = "Bapak/Ibu",
         image_bytes: Optional[bytes] = None,
-        image_mime: str = "image/jpeg"
+        image_mime: str = "image/jpeg",
+        media_url: Optional[str] = None,
+        media_type: Optional[str] = None,
+        **kwargs: Any
     ) -> Dict[str, Any]:
         clean_text = (message_text or "").strip().lower()
         clean_phone = self._clean_phone(phone_number)
