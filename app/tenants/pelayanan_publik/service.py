@@ -1,13 +1,15 @@
-"""app/tenants/digilife_indra/service.py
-Service layer untuk pilot B2G DigiLife Indra (Kelurahan Kebon Melati).
+"""app/tenants/pelayanan_publik/service.py
+Service layer untuk pilot B2G Pelayanan Publik (melayani pelayananpublik.boontrack.com).
 """
 
 import logging
 from typing import Dict, Any, Optional
 
 from app.tenants.base import BaseTenantService
-from app.tenants.digilife_indra.config import (
+from app.tenants.pelayanan_publik.config import (
     TENANT_ID,
+    TENANT_SLUG,
+    TENANT_DOMAIN,
     TENANT_NAME,
     OPERATIONAL_HOURS,
     LOCATION,
@@ -16,17 +18,19 @@ from app.tenants.digilife_indra.config import (
     WELCOME_MESSAGE,
 )
 
-logger = logging.getLogger("DIGILIFE_INDRA_SERVICE")
+logger = logging.getLogger("PELAYANAN_PUBLIK_SERVICE")
 
 
-class DigiLifeIndraService(BaseTenantService):
+class PelayananPublikService(BaseTenantService):
     """Service pemrosesan permohonan layanan publik dan konsultasi dokumen warga
 
-    untuk pilot B2G DigiLife Indra (Kelurahan Kebon Melati).
+    untuk pilot B2G Pelayanan Publik (melayani domain pelayananpublik.boontrack.com).
     """
 
     tenant_id: str = TENANT_ID
     tenant_name: str = TENANT_NAME
+    tenant_slug: str = TENANT_SLUG
+    tenant_domain: str = TENANT_DOMAIN
 
     def __init__(self) -> None:
         super().__init__(tenant_id=TENANT_ID, tenant_name=TENANT_NAME)
@@ -53,7 +57,7 @@ class DigiLifeIndraService(BaseTenantService):
         media_type: Optional[str] = None,
         **kwargs: Any
     ) -> Dict[str, Any]:
-        """Menangani pesan masuk dari warga untuk konsultasi layanan kelurahan."""
+        """Menangani pesan masuk dari warga untuk konsultasi layanan kependudukan/perizinan."""
         clean_text = (message_text or "").strip().lower()
         clean_phone = self.clean_phone(phone_number)
 
@@ -62,13 +66,14 @@ class DigiLifeIndraService(BaseTenantService):
         # 1. Cek Jam Operasional / Lokasi Kantor
         if any(w in clean_text for w in ["jam", "jadwal", "buka", "tutup", "lokasi", "alamat", "kantor"]):
             reply = (
-                f"🏛️ *INFORMASI KANTOR KELURAHAN KEBON MELATI*\n\n"
+                f"🏛️ *INFORMASI KANTOR LAYANAN PELAYANAN PUBLIK*\n\n"
+                f"🌐 *Domain Portal:* {TENANT_DOMAIN}\n"
                 f"📍 *Alamat:* {LOCATION}\n"
                 f"⏰ *Jam Operasional:* {OPERATIONAL_HOURS}\n"
                 f"📞 *Hotline / WhatsApp:* {HOTLINE_PHONE}\n\n"
                 f"Silakan datang pada hari & jam kerja dengan membawa berkas lengkap."
             )
-            return {"reply": reply, "type": "information", "tenant_id": TENANT_ID}
+            return {"reply": reply, "type": "information", "tenant_id": TENANT_ID, "domain": TENANT_DOMAIN}
 
         # 2. Cek Surat Keterangan Usaha (SKU / NIB)
         if any(w in clean_text for w in ["sku", "usaha", "nib", "kur", "dagang", "toko"]):
@@ -94,8 +99,13 @@ class DigiLifeIndraService(BaseTenantService):
         return {
             "reply": WELCOME_MESSAGE,
             "type": "welcome",
-            "tenant_id": TENANT_ID
+            "tenant_id": TENANT_ID,
+            "domain": TENANT_DOMAIN
         }
 
 
-digilife_indra_service = DigiLifeIndraService()
+pelayanan_publik_service = PelayananPublikService()
+
+# Backward compatibility aliases
+DigiLifeIndraService = PelayananPublikService
+digilife_indra_service = pelayanan_publik_service

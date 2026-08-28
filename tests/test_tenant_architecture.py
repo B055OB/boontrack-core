@@ -1,6 +1,6 @@
 """tests/test_tenant_architecture.py
 Unit tests for standardized multi-tenant architecture, BaseTenantService contract,
-om_budi refactoring, and B2G pilot scaffold isolation.
+om_budi refactoring, and B2G pilot scaffold isolation (pelayanan_publik & bale_pananggeuhan).
 """
 
 import os
@@ -13,11 +13,15 @@ from app.tenants.om_budi import (
     TENANT_ID as OM_BUDI_TENANT_ID,
     TENANT_NAME as OM_BUDI_TENANT_NAME,
 )
-from app.tenants.digilife_indra import (
+from app.tenants.pelayanan_publik import (
+    PelayananPublikService,
+    pelayanan_publik_service,
     DigiLifeIndraService,
     digilife_indra_service,
-    TENANT_ID as DIGILIFE_TENANT_ID,
-    TENANT_NAME as DIGILIFE_TENANT_NAME,
+    TENANT_ID as PELAYANAN_PUBLIK_TENANT_ID,
+    TENANT_SLUG as PELAYANAN_PUBLIK_SLUG,
+    TENANT_DOMAIN as PELAYANAN_PUBLIK_DOMAIN,
+    TENANT_NAME as PELAYANAN_PUBLIK_TENANT_NAME,
 )
 from app.tenants.bale_pananggeuhan import (
     BalePananggeuhanService,
@@ -42,8 +46,9 @@ class TestTenantArchitecture(unittest.IsolatedAsyncioTestCase):
         self.assertIn("career", subdirs)
         self.assertIn("gym", subdirs)
         self.assertIn("om_budi", subdirs)
-        self.assertIn("digilife_indra", subdirs)
+        self.assertIn("pelayanan_publik", subdirs)
         self.assertIn("bale_pananggeuhan", subdirs)
+        self.assertNotIn("digilife_indra", subdirs)
 
     def test_base_tenant_service_abc_contract(self):
         """Memverifikasi BaseTenantService tidak dapat diinisialisasi tanpa implementasi handle_incoming_message."""
@@ -62,22 +67,25 @@ class TestTenantArchitecture(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(info["tenant_id"], "om_budi")
         self.assertTrue(info["is_active"])
 
-    async def test_digilife_indra_service_inquiries(self):
-        """Memverifikasi modul B2G pilot DigiLife Indra (Kelurahan Kebon Melati)."""
-        self.assertIsInstance(digilife_indra_service, BaseTenantService)
-        self.assertEqual(digilife_indra_service.tenant_id, DIGILIFE_TENANT_ID)
-        self.assertEqual(digilife_indra_service.tenant_name, DIGILIFE_TENANT_NAME)
+    async def test_pelayanan_publik_service_inquiries(self):
+        """Memverifikasi modul B2G pilot Pelayanan Publik (melayani pelayananpublik.boontrack.com)."""
+        self.assertIsInstance(pelayanan_publik_service, BaseTenantService)
+        self.assertEqual(pelayanan_publik_service.tenant_id, PELAYANAN_PUBLIK_TENANT_ID)
+        self.assertEqual(pelayanan_publik_service.tenant_name, PELAYANAN_PUBLIK_TENANT_NAME)
+        self.assertEqual(PELAYANAN_PUBLIK_DOMAIN, "pelayananpublik.boontrack.com")
+        self.assertEqual(PELAYANAN_PUBLIK_SLUG, "pelayanan-publik")
 
         # 1. Welcome / Default query
-        res_welcome = await digilife_indra_service.handle_incoming_message(
+        res_welcome = await pelayanan_publik_service.handle_incoming_message(
             phone_number="081234567890",
             message_text="halo selamat pagi"
         )
         self.assertEqual(res_welcome.get("type"), "welcome")
-        self.assertIn("DIGILIFE INDRA", res_welcome.get("reply", ""))
+        self.assertIn("PELAYANAN PUBLIK", res_welcome.get("reply", ""))
+        self.assertEqual(res_welcome.get("domain"), "pelayananpublik.boontrack.com")
 
         # 2. Inquiry SKU
-        res_sku = await digilife_indra_service.handle_incoming_message(
+        res_sku = await pelayanan_publik_service.handle_incoming_message(
             phone_number="081234567890",
             message_text="syarat pengurusan sku untuk modal usaha"
         )
@@ -87,7 +95,7 @@ class TestTenantArchitecture(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Pengantar RT/RW", res_sku.get("reply", ""))
 
         # 3. Inquiry Pengantar Nikah
-        res_nikah = await digilife_indra_service.handle_incoming_message(
+        res_nikah = await pelayanan_publik_service.handle_incoming_message(
             phone_number="081234567890",
             message_text="bagaimana alur pengantar nikah n1 n4 ke kua?"
         )
@@ -95,13 +103,17 @@ class TestTenantArchitecture(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res_nikah.get("service_id"), "nikah")
         self.assertIn("Surat Pengantar Nikah", res_nikah.get("reply", ""))
 
-        # 4. Inquiry Jam Operasional
-        res_jam = await digilife_indra_service.handle_incoming_message(
+        # 4. Inquiry Jam Operasional & Portal Domain
+        res_jam = await pelayanan_publik_service.handle_incoming_message(
             phone_number="081234567890",
             message_text="jam buka kantor kelurahan kapan?"
         )
         self.assertEqual(res_jam.get("type"), "information")
-        self.assertIn("Jam Operasional", res_jam.get("reply", ""))
+        self.assertIn("pelayananpublik.boontrack.com", res_jam.get("reply", ""))
+
+        # 5. Backwards compatibility check
+        self.assertIs(digilife_indra_service, pelayanan_publik_service)
+        self.assertIs(DigiLifeIndraService, PelayananPublikService)
 
     async def test_bale_pananggeuhan_service_dispatch(self):
         """Memverifikasi modul B2G pilot Balé Pananggeuhan (Setda Pemprov Jawa Barat)."""

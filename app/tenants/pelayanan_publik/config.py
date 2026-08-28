@@ -1,18 +1,29 @@
-"""app/tenants/digilife_indra/config.py
-Konfigurasi pilot B2G DigiLife Indra (Kelurahan Kebon Melati).
+"""app/tenants/pelayanan_publik/config.py
+Konfigurasi pilot B2G Pelayanan Publik (melayani pelayananpublik.boontrack.com).
 """
 
 import os
 from typing import Dict, Any, List
 
-TENANT_ID = "digilife_indra"
-TENANT_SLUG = "digilife-indra"
-TENANT_NAME = "DigiLife Indra - Kelurahan Kebon Melati"
-DESCRIPTION = "Asisten Virtual Layanan Publik Kependudukan & Perizinan Kelurahan Kebon Melati"
+TENANT_ID = "pelayanan_publik"
+TENANT_SLUG = "pelayanan-publik"
+TENANT_DOMAIN = "pelayananpublik.boontrack.com"
+TENANT_NAME = "Pelayanan Publik - Layanan Warga & Kependudukan"
+DESCRIPTION = "Asisten Virtual Layanan Publik Kependudukan, Perizinan, & Administrasi Warga"
+
+# Alias identifiers untuk kompatibilitas pilot
+TENANT_ALIASES: List[str] = [
+    "digilife_indra",
+    "digilife-indra",
+    "kelurahan-indra",
+    "pelayanan_publik",
+    "pelayanan-publik",
+    "pelayananpublik.boontrack.com"
+]
 
 OPERATIONAL_HOURS = "Senin - Jumat, 08:00 - 16:00 WIB"
-LOCATION = "Kantor Kelurahan Kebon Melati, Jakarta Pusat"
-HOTLINE_PHONE = os.getenv("INDRA_HOTLINE_PHONE", "+62 811-2345-6789")
+LOCATION = "Kantor Layanan Terpadu Warga, Jakarta Pusat"
+HOTLINE_PHONE = os.getenv("PELAYANAN_PUBLIK_HOTLINE", os.getenv("INDRA_HOTLINE_PHONE", "+62 811-2345-6789"))
 
 # Katalog Layanan Surat Warga
 SERVICE_CATALOG: Dict[str, Dict[str, Any]] = {
@@ -88,9 +99,9 @@ SERVICE_CATALOG: Dict[str, Dict[str, Any]] = {
 }
 
 WELCOME_MESSAGE = (
-    "🏛️ *SELAMAT DATANG DI DIGILIFE INDRA*\n"
-    "_(Layanan Mandiri Warga Kelurahan Kebon Melati)_\n\n"
-    "Sampurasun / Halo Warga! Saya asisten virtual resmi kelurahan.\n"
+    "🏛️ *SELAMAT DATANG DI LAYANAN PELAYANAN PUBLIK*\n"
+    "_(Portal Layanan Mandiri Warga & Kependudukan - pelayananpublik.boontrack.com)_\n\n"
+    "Sampurasun / Halo Warga! Saya asisten virtual resmi pelayanan publik.\n"
     "Silakan tanyakan syarat dan alur dokumen kependudukan seperti:\n"
     "1. Surat Keterangan Usaha (SKU / NIB)\n"
     "2. Surat Pengantar Nikah (N1-N4)\n"
@@ -102,7 +113,9 @@ WELCOME_MESSAGE = (
 __all__ = [
     "TENANT_ID",
     "TENANT_SLUG",
+    "TENANT_DOMAIN",
     "TENANT_NAME",
+    "TENANT_ALIASES",
     "DESCRIPTION",
     "OPERATIONAL_HOURS",
     "LOCATION",
