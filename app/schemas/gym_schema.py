@@ -54,6 +54,8 @@ class AccessReason(str, Enum):
     CONTROLLER_INACTIVE = "CONTROLLER_INACTIVE"
     MEMBER_SUSPENDED = "MEMBER_SUSPENDED"
     MEMBER_NOT_FOUND = "MEMBER_NOT_FOUND"
+    COOLDOWN_ACTIVE = "COOLDOWN_ACTIVE"
+
 
 
 # ============================================================================

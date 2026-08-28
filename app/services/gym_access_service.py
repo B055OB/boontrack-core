@@ -78,8 +78,10 @@ class ControllerAuthenticationError(Exception):
 class GymAccessService:
     """Service layer managing Gym Membership, NFC Cards, and IoT Turnstile Access."""
 
-    def __init__(self, in_memory_mode: bool = False):
+    def __init__(self, in_memory_mode: bool = False, cooldown_ms: int = 500):
         self.in_memory_mode = in_memory_mode
+        self.cooldown_ms = cooldown_ms
+        self._last_tap_timestamps: Dict[str, datetime] = {}
         # In-memory storage for test mocks & fast local caching
         self._members: Dict[str, Dict[str, GymMember]] = {}           # tenant_id -> {member_id: GymMember}
         self._cards: Dict[str, Dict[str, GymNfcCard]] = {}              # tenant_id -> {uid_hash: GymNfcCard}
@@ -195,6 +197,57 @@ class GymAccessService:
         self._cards[tenant_id][clean_hash] = c
         return c
 
+    def invalidate_member_cache(self, tenant_id: str, member_id: Optional[str] = None) -> None:
+        """Invalidates in-memory cached member(s) to force re-fetch from database."""
+        if tenant_id in self._members:
+            if member_id:
+                self._members[tenant_id].pop(str(member_id), None)
+            else:
+                self._members[tenant_id].clear()
+        logger.info(f"[GymCache] Invalidated member cache for tenant='{tenant_id}', member_id='{member_id}'")
+
+    def invalidate_card_cache(self, tenant_id: str, uid_hash: Optional[str] = None) -> None:
+        """Invalidates in-memory cached card(s) to force re-fetch from database."""
+        if tenant_id in self._cards:
+            if uid_hash:
+                self._cards[tenant_id].pop(uid_hash.strip().lower(), None)
+            else:
+                self._cards[tenant_id].clear()
+        logger.info(f"[GymCache] Invalidated card cache for tenant='{tenant_id}', uid_hash='{uid_hash}'")
+
+    def invalidate_all_caches(self, tenant_id: Optional[str] = None) -> None:
+        """Flushes in-memory caches and tap cooldown timestamps."""
+        if tenant_id:
+            self._members.pop(tenant_id, None)
+            self._cards.pop(tenant_id, None)
+            self._controllers.pop(tenant_id, None)
+            keys_to_remove = [k for k in self._last_tap_timestamps if k.startswith(f"{tenant_id}:")]
+            for k in keys_to_remove:
+                self._last_tap_timestamps.pop(k, None)
+        else:
+            self._members.clear()
+            self._cards.clear()
+            self._controllers.clear()
+            self._last_tap_timestamps.clear()
+        logger.info(f"[GymCache] Flushed all caches for tenant='{tenant_id}'")
+
+    def update_member_status(
+        self,
+        tenant_id: str,
+        member_id: str,
+        status: MembershipStatus,
+        expiry_date: Optional[datetime] = None
+    ) -> Optional[GymMember]:
+        """Updates member status and expiry date in-memory and database."""
+        m = self._members.get(tenant_id, {}).get(str(member_id))
+        if m:
+            m.membership_status = status
+            if expiry_date:
+                m.expiry_date = expiry_date
+            m.updated_at = datetime.now(timezone.utc)
+            return m
+        return None
+
     # =========================================================================
     # Security Helpers
     # =========================================================================
@@ -270,9 +323,10 @@ class GymAccessService:
             logger.error(f"[GymAccess] Controller authentication failed: {auth_err}")
             raise
 
-        clean_hash = uid_hash.strip().lower()
+        clean_hash = str(uid_hash or "").strip().lower()[:128]
         now = datetime.now(timezone.utc)
-        idem_key = idempotency_key or f"tap_{tenant_id}_{clean_hash}_{int(now.timestamp() * 1000)}"
+        safe_hash_key = "".join(c for c in clean_hash[:32] if c.isalnum()) or "unknown"
+        idem_key = idempotency_key or f"tap_{tenant_id}_{safe_hash_key}_{int(now.timestamp() * 1000)}"
 
         # 2. Lookup NFC Card
         card: Optional[GymNfcCard] = None
@@ -333,6 +387,33 @@ class GymAccessService:
                 message=f"Akses Ditolak: Kartu dinonaktifkan (Status: {card.status.value}).",
                 unlock_gate=False,
             )
+
+        # Check Duplicate & Rapid Tap Cooldown (<500ms)
+        cooldown_key = f"{tenant_id}:{clean_hash}"
+        last_tap_time = self._last_tap_timestamps.get(cooldown_key)
+        if last_tap_time is not None:
+            elapsed_ms = (now - last_tap_time).total_seconds() * 1000
+            if elapsed_ms < self.cooldown_ms:
+                logger.warning(
+                    f"[GymAccess] Rapid tap cooldown throttled for card '{clean_hash[:8]}...' "
+                    f"at {controller_id} ({elapsed_ms:.1f}ms < {self.cooldown_ms}ms)"
+                )
+                await self._log_access_event(
+                    tenant_id=tenant_id,
+                    controller_id=controller_id,
+                    member_id=str(card.member_id) if card else None,
+                    card_id=str(card.id) if card else None,
+                    event_type=event_type,
+                    decision=AccessDecision.DENIED,
+                    reason=AccessReason.COOLDOWN_ACTIVE,
+                    idempotency_key=f"cooldown_{idem_key}",
+                )
+                return TapAccessResponse(
+                    decision=AccessDecision.DENIED,
+                    reason=AccessReason.COOLDOWN_ACTIVE,
+                    message=f"Akses Ditolak: Cooldown aktif (<{int(self.cooldown_ms)}ms). Mohon tunggu sejenak sebelum tap kembali.",
+                    unlock_gate=False,
+                )
 
         # 3. Lookup Member
         member: Optional[GymMember] = None
@@ -428,6 +509,7 @@ class GymAccessService:
             )
 
         # 5. ACCESS ALLOWED!
+        self._last_tap_timestamps[cooldown_key] = now
         event = await self._log_access_event(
             tenant_id=tenant_id,
             controller_id=controller_id,
@@ -440,7 +522,7 @@ class GymAccessService:
         )
 
         # Send friendly WhatsApp check-in notification
-        if member.phone:
+        if member.phone and not self.in_memory_mode:
             checkin_msg = f"Selamat latihan di Atmosfitnes, {member.name}! Check-in berhasil tercatat."
             try:
                 await send_whatsapp_text(member.phone, checkin_msg, tenant_id=tenant_id)
@@ -586,6 +668,11 @@ class GymAccessService:
         if tenant_id not in self._members:
             self._members[tenant_id] = {}
         self._members[tenant_id][member_id] = member
+
+        # Clear any tap cooldown for this tenant so member can tap in immediately
+        keys_to_remove = [k for k in self._last_tap_timestamps if k.startswith(f"{tenant_id}:")]
+        for k in keys_to_remove:
+            self._last_tap_timestamps.pop(k, None)
 
         # Persist update to Supabase
         supabase = get_supabase()
@@ -855,24 +942,25 @@ class GymAccessService:
             self._events[tenant_id] = {}
         self._events[tenant_id][idempotency_key] = event
 
-        supabase = get_supabase()
-        if supabase:
-            try:
-                payload = {
-                    "id": str(event.id),
-                    "tenant_id": tenant_id,
-                    "controller_id": controller_id,
-                    "member_id": str(member_id) if member_id else None,
-                    "card_id": str(card_id) if card_id else None,
-                    "event_type": str(event_type.value),
-                    "decision": str(decision.value),
-                    "reason": str(reason.value if hasattr(reason, 'value') else reason),
-                    "idempotency_key": idempotency_key,
-                    "created_at": event.created_at.isoformat(),
-                }
-                supabase.table("gym_access_events").insert(payload).execute()
-            except Exception as e:
-                logger.warning(f"[GymAuditLog] Supabase event insert note: {e}")
+        if not self.in_memory_mode:
+            supabase = get_supabase()
+            if supabase:
+                try:
+                    payload = {
+                        "id": str(event.id),
+                        "tenant_id": tenant_id,
+                        "controller_id": controller_id,
+                        "member_id": str(member_id) if member_id else None,
+                        "card_id": str(card_id) if card_id else None,
+                        "event_type": str(event_type.value),
+                        "decision": str(decision.value),
+                        "reason": str(reason.value if hasattr(reason, 'value') else reason),
+                        "idempotency_key": idempotency_key,
+                        "created_at": event.created_at.isoformat(),
+                    }
+                    supabase.table("gym_access_events").insert(payload).execute()
+                except Exception as e:
+                    logger.warning(f"[GymAuditLog] Supabase event insert note: {e}")
 
         return event
 

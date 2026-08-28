@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
+from app.tenants.career.config import VERIFY_TOKEN
 from app.tenants.career.service import career_service, GLOBAL_USER_STATES
 from app.tenants.career.router import verify_webhook, handle_incoming_whatsapp, register_career_routes
 from app.routes.whatsapp_career import (
@@ -26,7 +27,7 @@ class TestCareerModular(AioHTTPTestCase):
     async def test_verify_webhook_success(self):
         resp = await self.client.get(
             "/api/v1/tenants/boontrack-career/webhook/whatsapp",
-            params={"hub.mode": "subscribe", "hub.verify_token": "boontrack_career_token", "hub.challenge": "123456"}
+            params={"hub.mode": "subscribe", "hub.verify_token": VERIFY_TOKEN, "hub.challenge": "123456"}
         )
         self.assertEqual(resp.status, 200)
         self.assertEqual(await resp.text(), "123456")
