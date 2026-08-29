@@ -217,21 +217,17 @@ async def handle_whatsapp_webhook(request: Request):
     details = onboarding_service.get_tenant_details_by_slug(tenant_slug)
     store_name = details.get("tenant", {}).get("name", tenant_slug) if details else tenant_slug
 
-    # Handle New Store Connection Announcement (onboarding pattern)
-    if is_new_binding:
+    # Handle New Store Connection Announcement (onboarding pattern only)
+    if is_new_binding and _is_onboarding_msg:
         welcome_msg = details.get("persona", {}).get("welcome_message", "Ada yang bisa kami bantu?") if details else ""
-        # Use branded greeting if available, else fall back to generic
-        reply = DEMO_TENANT_GREETINGS.get(
-            tenant_slug,
-            (
-                f"🎉 *Selamat Datang di {store_name}!* 🎉\n\n"
-                f"Nomor WhatsApp Kakak (*{contact_name}*) kini resmi terhubung dengan asisten toko *{store_name}*.\n\n"
-                f"{welcome_msg}\n\n"
-                f"_Silakan ketik nama produk atau ketik *menu* untuk melihat katalog._"
-            ),
+        reply = (
+            f"🎉 *Selamat Datang di {store_name}!* 🎉\n\n"
+            f"Nomor WhatsApp Kakak (*{contact_name}*) kini resmi terhubung dengan asisten toko *{store_name}*.\n\n"
+            f"{welcome_msg}\n\n"
+            f"_Silakan ketik nama produk atau ketik *menu* untuk melihat katalog._"
         )
     else:
-        # Generate Bounded AI Commerce Response
+        # Generate Dynamic AI Engine Response for locked tenant session
         reply = await commerce_ai_engine.generate_commerce_response(
             tenant_slug=tenant_slug,
             user_message=incoming_text,
@@ -239,6 +235,15 @@ async def handle_whatsapp_webhook(request: Request):
             user_name=contact_name,
             button_id=event.get("button_id"),
         )
+        if not reply:
+            from app.services.agent_service import process_incoming_message
+            reply = await process_incoming_message(
+                tenant_slug=tenant_slug,
+                message=incoming_text,
+                user_phone=from_phone,
+                user_name=contact_name,
+                button_id=event.get("button_id"),
+            )
 
     # Send outbound WhatsApp message
     if reply and from_phone:

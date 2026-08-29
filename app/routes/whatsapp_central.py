@@ -543,16 +543,13 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 metadata={"phone_number_id": phone_id, "msg_type": msg_type}
             )
 
-            if is_new_binding:
+            if is_new_binding and _is_onboarding_msg:
                 welcome_msg = details.get("persona", {}).get("welcome_message", "") if details else ""
-                reply_text = DEMO_TENANT_GREETINGS.get(
-                    tenant_slug,
-                    (
-                        f"🎉 *Selamat Datang di {store_name}!* 🎉\n\n"
-                        f"Nomor WhatsApp Kakak (*{contact_name}*) kini resmi terhubung dengan asisten toko *{store_name}*.\n\n"
-                        f"{welcome_msg}\n\n"
-                        f"_Silakan ketik nama produk atau ketik *menu* untuk melihat katalog._"
-                    )
+                reply_text = (
+                    f"🎉 *Selamat Datang di {store_name}!* 🎉\n\n"
+                    f"Nomor WhatsApp Kakak (*{contact_name}*) kini resmi terhubung dengan asisten toko *{store_name}*.\n\n"
+                    f"{welcome_msg}\n\n"
+                    f"_Silakan ketik nama produk atau ketik *menu* untuk melihat katalog._"
                 )
             else:
                 reply_text = await commerce_ai_engine.generate_commerce_response(
@@ -562,6 +559,15 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     user_name=contact_name,
                     button_id=button_id,
                 )
+                if not reply_text:
+                    from app.services.agent_service import process_incoming_message
+                    reply_text = await process_incoming_message(
+                        tenant_slug=tenant_slug,
+                        message=incoming_text,
+                        user_phone=from_phone,
+                        user_name=contact_name,
+                        button_id=button_id,
+                    )
 
             await send_wa_text(from_phone, reply_text, phone_id)
 

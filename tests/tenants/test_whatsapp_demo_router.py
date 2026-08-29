@@ -227,6 +227,48 @@ class TestWhatsAppDemoRouter(unittest.TestCase):
         resp = self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "bagaimana cara daftar ktp?"))
         data = resp.json()
         self.assertEqual(data.get("tenant"), "bale_pananggeuhan")
+        self.assertIn("KTP", data["reply"])
+
+    def test_atmosfitnes_locked_session_returns_dynamic_gym_ai_response(self):
+        """Setelah memilih 2 (Prima Fit Gym), pesan follow-up dijawab luwes dengan info gym/zumba/QRIS oleh AI Engine."""
+        phone = "628111000032"
+        clean = normalize_phone_number(phone)
+
+        # Select option 2 -> lock to atmosfitnes
+        self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "2"))
+        self.assertEqual(user_tenant_sessions.get(clean), "atmosfitnes")
+
+        # Tanya paket bulanan gym
+        resp_pkg = self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "berapa harga paket gym bulanan?"))
+        self.assertEqual(resp_pkg.status_code, 200)
+        data_pkg = resp_pkg.json()
+        self.assertEqual(data_pkg.get("tenant"), "atmosfitnes")
+        self.assertIn("150.000", data_pkg["reply"])
+        self.assertIn("QRIS", data_pkg["reply"])
+
+        # Tanya kelas zumba
+        resp_zumba = self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "ada jadwal kelas zumba?"))
+        self.assertEqual(resp_zumba.status_code, 200)
+        data_zumba = resp_zumba.json()
+        self.assertEqual(data_zumba.get("tenant"), "atmosfitnes")
+        self.assertIn("Zumba", data_zumba["reply"])
+
+    def test_suhu_ads_locked_session_returns_dynamic_curriculum_ai_response(self):
+        """Setelah memilih 3 (Suhu Ads), pesan follow-up dijawab detail silabus dan QRIS oleh AI Engine."""
+        phone = "628111000033"
+        clean = normalize_phone_number(phone)
+
+        # Select option 3 -> lock to suhu-ads-masterclass
+        self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "3"))
+        self.assertEqual(user_tenant_sessions.get(clean), "suhu-ads-masterclass")
+
+        # Tanya silabus materi
+        resp = self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "apa saja silabus materi kursus?"))
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data.get("tenant"), "suhu-ads-masterclass")
+        self.assertIn("Pixel Meta Ads", data["reply"])
+        self.assertIn("QRIS", data["reply"])
 
     def test_reset_after_session_lock_shows_menu(self):
         """Setelah sesi terkunci ke suhu-ads-masterclass, '#reset' harus kirim menu kembali."""

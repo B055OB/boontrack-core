@@ -1,10 +1,11 @@
 """app/services/ai_engine.py
 Dynamic Commerce AI Engine & Context Injection Service.
 
-Dynamically constructs store-bounded AI system prompts for COMMERCE_TEMPLATE tenants:
+Dynamically constructs store-bounded AI system prompts for multi-tenant ecosystem:
 1. Injects Store Name, Business Vertical Category, and Tone of Voice.
 2. Injects real catalog products with accurate pricing, variants, bundling promos, and digital asset URLs.
-3. Enforces strict negative context boundaries: rejects irrelevant topics (gym schedules, civil registration, KTP, etc.).
+3. Expanded knowledge bases for vertical tenants (suhu-ads-masterclass, atmosfitnes, bale_pananggeuhan).
+4. Enforces strict context boundaries and intelligent multi-turn responses.
 """
 
 import logging
@@ -17,6 +18,7 @@ logger = logging.getLogger("COMMERCE_AI_ENGINE")
 EXPANDED_TENANT_KNOWLEDGE: Dict[str, Dict[str, Any]] = {
     "suhu-ads-masterclass": {
         "title": "Suhu Ads Masterclass 2026",
+        "vertical": "DIGITAL_PRODUCTS",
         "curriculum": [
             "Modul 1: Riset Winning Audience & Bedah Pixel Meta Ads (Event tracking, Custom & Lookalike Audience, CAPI setup)",
             "Modul 2: Struktur Campaign CBO vs ABO & Scaling Strategy (Budgeting & Ad Sets, Horizontal & Vertical Scaling)",
@@ -24,21 +26,83 @@ EXPANDED_TENANT_KNOWLEDGE: Dict[str, Dict[str, Any]] = {
             "Bonus: Template Dashboard Budgeting & Akses Grup Diskusi Eksklusif (Notion spreadsheet, private Telegram VIP)",
         ],
         "delivery_url": "https://drive.google.com/drive/folders/suhu-ads-masterclass-2026",
+    },
+    "atmosfitnes": {
+        "title": "Prima Fit Gym (Atmosfitnes)",
+        "vertical": "FITNESS & GYM",
+        "packages": [
+            "1. Gym Basic: Rp150.000 / bulan (Akses alat beban & cardio)",
+            "2. Zumba & Studio Class: Rp200.000 / bulan (Akses kelas zumba, aerobik, yoga)",
+            "3. Gym Premium: Rp250.000 / bulan (Gym + Kelas Studio + Locker)",
+            "4. All Access VIP: Rp350.000 / bulan (Unlimited Gym, Studio, Sauna, Smart Gate NFC)",
+            "5. Personal Training: Rp800.000 / 10 sesi (1-on-1 Certified Trainer)",
+        ],
+        "facilities": "Peralatan beban lengkap (Free weights, Machines, Cardio treadmill), Studio Zumba & Aerobik ber-AC, Locker room, Shower air hangat, Turnstile IoT smart access.",
+        "schedule": "Zumba Class: Selasa & Kamis 19:00 WIB, Sabtu 08:30 WIB. Gym buka: Senin - Sabtu 06:00 - 22:00 WIB, Minggu 07:00 - 20:00 WIB.",
+        "location": "Kompleks Olahraga Prima Fit, Jl. Cihampelas No. 88, Bandung",
+        "payment_info": "Pembayaran instan via Dynamic QRIS (BCA, Mandiri, BRI, BNI, DANA, GoPay, OVO, ShopeePay). QRIS dibuat otomatis dan akses turnstile langsung aktif.",
+    },
+    "bale_pananggeuhan": {
+        "title": "Balé Pananggeuhan",
+        "vertical": "PUBLIC_SERVICES",
+        "services": [
+            "1. Pengaduan Fasilitas Umum: Jalan rusak, lampu PJU padam, drainase/banjir, sampah liar.",
+            "2. Layanan Administrasi Kependudukan: Syarat KTP rusak/hilang, KK, Surat Keterangan Usaha (SKU), pengantar nikah N1-N4 ke KUA.",
+            "3. Bantuan Sosial: Cek status bansos DTKS, PKH, sembako, dan beasiswa.",
+        ],
+        "operating_hours": "Senin - Jumat: 08:00 - 16:00 WIB, Pelaporan online 24/7 via WhatsApp",
     }
 }
 
 
 class CommerceAIEngine:
-    """Universal AI Engine for Multi-Tenant Commerce with Dynamic Prompt Injection."""
+    """Universal AI Engine for Multi-Tenant Commerce & Ecosystem with Dynamic Prompt Injection."""
 
     def __init__(self, ai_service=None):
         self.ai_service = ai_service or ai_gateway
 
     def build_commerce_system_prompt(self, tenant_slug: str) -> str:
-        """Constructs a hyper-focused system prompt bounded strictly to the merchant's catalog."""
+        """Constructs a hyper-focused system prompt bounded strictly to the merchant's catalog or knowledge base."""
+        # 1. Khusus Tenant Atmosfitnes Gym
+        if tenant_slug == "atmosfitnes":
+            gym_kb = EXPANDED_TENANT_KNOWLEDGE.get("atmosfitnes", {})
+            pkgs_str = "\n".join([f"- {p}" for p in gym_kb.get("packages", [])])
+            return (
+                "Kamu adalah resepsionis dan asisten AI resmi untuk Prima Fit Gym (Atmosfitnes).\n"
+                "Tone of Voice: Ramah, energik, memotivasi, solutif, dan informatif.\n\n"
+                "INFORMASI GYM & FASILITAS:\n"
+                f"- Nama Gym: {gym_kb.get('title', 'Prima Fit Gym (Atmosfitnes)')}\n"
+                f"- Lokasi: {gym_kb.get('location')}\n"
+                f"- Jam Operasional & Jadwal: {gym_kb.get('schedule')}\n"
+                f"- Fasilitas: {gym_kb.get('facilities')}\n\n"
+                "PAKET MEMBERSHIP & KELAS RESMI:\n"
+                f"{pkgs_str}\n\n"
+                "PANDUAN PENDAFTARAN & PEMBAYARAN:\n"
+                "- Pendaftaran membership atau kelas studio dapat dilakukan langsung via chat ini.\n"
+                "- Pembayaran didukung via Dynamic QRIS (BCA, Mandiri, BRI, BNI, DANA, GoPay, OVO, ShopeePay) dengan verifikasi otomatis.\n"
+                "- Setelah pembayaran lunas, akses gate turnstile / kartu member langsung aktif.\n\n"
+                "INSTRUKSI RESPON:\n"
+                "- Jawab pertanyaan calon member atau member aktif dengan ramah dan luwes.\n"
+                "- Jelaskan detail paket, biaya bulanan, atau jadwal kelas zumba secara transparan dan tawarkan panduan pendaftaran via QRIS."
+            )
+
+        # 2. Khusus Tenant Bale Pananggeuhan
+        if tenant_slug in ("bale_pananggeuhan", "bale-pananggeuhan"):
+            bale_kb = EXPANDED_TENANT_KNOWLEDGE.get("bale_pananggeuhan", {})
+            svcs_str = "\n".join([f"- {s}" for s in bale_kb.get("services", [])])
+            return (
+                "Kamu adalah asisten resmi layanan aspirasi dan pengaduan Balé Pananggeuhan (Layanan Publik Jawa Barat).\n"
+                "Tone of Voice: Sopan, mengayomi, solutif, dan informatif.\n\n"
+                "LAYANAN DAN PENGADUAN RESMI:\n"
+                f"{svcs_str}\n"
+                f"- Jam Operasional: {bale_kb.get('operating_hours')}\n\n"
+                "PANDUAN:\n"
+                "- Bantu warga mencatat aduan fasilitas umum atau memberikan persyaratan administrasi kependudukan (KTP, SKU, N1-N4, Bansos DTKS) secara runtut dan jelas."
+            )
+
+        # 3. Dynamic Commerce Tenant Prompt
         details = onboarding_service.get_tenant_details_by_slug(tenant_slug)
         if not details:
-            # Fallback generic commerce prompt
             return (
                 f"Kamu adalah asisten resmi untuk toko online '{tenant_slug}'.\n"
                 "Jawab pertanyaan pelanggan dengan ramah, sopan, dan to-the-point seputar produk kami.\n"
@@ -54,7 +118,7 @@ class CommerceAIEngine:
         tone = persona.get("tone", "Edukatif & Expert, ramah, to-the-point")
         welcome = persona.get("welcome_message", f"Selamat datang di {store_name}!")
 
-        # 1. Format Daftar Produk Riil
+        # Format Daftar Produk Riil
         product_lines: List[str] = []
         if products:
             for idx, p in enumerate(products, 1):
@@ -64,7 +128,6 @@ class CommerceAIEngine:
                 p_type = p.get("product_type", "DIGITAL_FILE")
                 asset_ref = p.get("asset_reference", "digital_access")
 
-                # Promo bundling & digital asset delivery note
                 if "DIGITAL" in str(p_type).upper():
                     delivery_note = f"Materi digital instan: https://{tenant_slug}.boontrack.com/assets/{asset_ref}"
                     bundling_note = "Promo Bundling: Beli 2 gratis template bonus eksklusif"
@@ -100,7 +163,6 @@ class CommerceAIEngine:
                 f"- Link Akses Materi: {kb.get('delivery_url', '')}\n"
             )
 
-        # 2. Assembling System Prompt dengan Negative Context Boundaries
         prompt = (
             f"Kamu adalah asisten resmi untuk toko '{store_name}' ({vertical}).\n"
             f"Tone of Voice: {tone}.\n\n"
@@ -134,7 +196,7 @@ class CommerceAIEngine:
         btn_triggers = [
             "INFO_PRODUK", "DETAIL_PRODUK", "INFO_PAKET", "ORDER_PRODUK",
             "LIHAT_PRODUK", "INFO_CATALOG", "PRODUK_DETAIL", "INFO_SILABUS",
-            "INFO_KURIKULUM", "BUKA_MATERI"
+            "INFO_KURIKULUM", "BUKA_MATERI", "INFO_GYM", "INFO_ZUMBA"
         ]
         if clean_btn in btn_triggers or any(clean_btn.startswith(prefix) for prefix in ["INFO_", "DETAIL_"]):
             return True
@@ -143,7 +205,8 @@ class CommerceAIEngine:
             "info produk", "detail produk", "info paket", "detail paket",
             "lihat produk", "katalog produk", "informasi produk", "penjelasan produk",
             "produk apa saja", "daftar produk", "silabus", "kurikulum",
-            "modul", "materi", "belajar apa", "isi materi", "isi kursus"
+            "modul", "materi", "belajar apa", "isi materi", "isi kursus",
+            "harga paket", "daftar paket", "paket gym", "kelas zumba"
         ]
         return any(trigger in clean_text for trigger in text_triggers)
 
@@ -186,10 +249,10 @@ class CommerceAIEngine:
         button_id: Optional[str] = None,
         history: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
-        """Generates contextual AI completion using the dynamically injected commerce prompt.
+        """Generates contextual AI completion using the dynamically injected system prompt.
         
         If a quick-reply button payload or 'Info Produk' trigger is received, routes through
-        an internal LLM prompt describing the product comprehensively.
+        an internal LLM prompt describing the offerings comprehensively.
         Incorporates conversation history for multi-turn conversational context.
         """
         details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
@@ -210,7 +273,7 @@ class CommerceAIEngine:
 
         # Check if button click or product info request
         is_info_request = self.is_product_info_trigger(clean_msg, button_id)
-        if is_info_request:
+        if is_info_request and details.get("products"):
             query_to_llm = self.build_internal_product_query(details)
             logger.info(
                 f"[{tenant_slug}] Routed quick-reply button payload '{button_id or clean_msg}' to internal LLM query: {query_to_llm}"
@@ -235,13 +298,43 @@ class CommerceAIEngine:
         except Exception as e:
             logger.warning(f"[{tenant_slug}] AI generation error, falling back: {e}")
 
-        # Non-static Conversational Fallback Response:
+        # Intelligent Dynamic Fallback (Non-static):
+        clean_lower = clean_msg.lower()
+
+        # 1. Fallback Atmosfitnes
+        if tenant_slug == "atmosfitnes":
+            if any(w in clean_lower for w in ["zumba", "kelas", "jadwal", "studio", "aerobik"]):
+                return (
+                    "Halo Kakak! Di *Prima Fit Gym (Atmosfitnes)*, kami mengadakan *Kelas Zumba & Studio ber-AC*:\n"
+                    "• *Jadwal*: Selasa & Kamis pukul 19:00 WIB, Sabtu pukul 08:30 WIB\n"
+                    "• *Tarif*: Rp45.000 / sesi atau Rp200.000 / bulan (Unlimited Studio)\n\n"
+                    "Pembayaran dapat dilakukan instan via QRIS otomatis. Apakah Kakak ingin mendaftar kelas untuk sesi terdekat?"
+                )
+            return (
+                "Halo Kakak! Di *Prima Fit Gym (Atmosfitnes)*, pilihan paket membership kami:\n"
+                "• *Gym Basic*: Rp150.000/bulan (Alat beban & cardio)\n"
+                "• *Zumba & Studio*: Rp200.000/bulan (Kelas zumba & aerobik)\n"
+                "• *Gym Premium*: Rp250.000/bulan (Gym + Studio + Locker)\n"
+                "• *All Access VIP*: Rp350.000/bulan (Gym + Studio + Sauna + Smart Gate NFC)\n"
+                "• *Personal Training*: Rp800.000 (10 sesi 1-on-1)\n\n"
+                "Pembayaran dapat diproses instan via Dynamic QRIS. Paket mana yang ingin Kakak ambil?"
+            )
+
+        # 2. Fallback Bale Pananggeuhan
+        if tenant_slug in ("bale_pananggeuhan", "bale-pananggeuhan"):
+            return (
+                "Sampurasun! Di *Balé Pananggeuhan*, kami siap membantu:\n"
+                "1. Pelaporan Fasilitas Umum (Jalan rusak, lampu PJU mati, PDAM bocor, sampah)\n"
+                "2. Pengurusan Administrasi Kependudukan (Syarat KTP, KK, SKU, Surat Pengantar Nikah)\n"
+                "3. Info Bantuan Sosial (DTKS / PKH)\n\n"
+                "Silakan sampaikan detail laporan atau layanan yang Kakak butuhkan."
+            )
+
+        # 3. Fallback Suhu Ads Masterclass / Commerce
         store_name = details.get("tenant", {}).get("name", tenant_slug) if details else tenant_slug
         products = details.get("products", [])
-
-        # Check if tenant has expanded curriculum knowledge base or query asks for syllabus
         kb = EXPANDED_TENANT_KNOWLEDGE.get(tenant_slug, {})
-        asks_curriculum = any(w in clean_msg.lower() for w in ["silabus", "kurikulum", "modul", "materi", "belajar apa"]) or is_info_request
+        asks_curriculum = any(w in clean_lower for w in ["silabus", "kurikulum", "modul", "materi", "belajar apa"]) or is_info_request
 
         if kb.get("curriculum") and asks_curriculum:
             modules_formatted = "\n".join([f"• *{m}*" for m in kb["curriculum"]])
@@ -271,10 +364,9 @@ class CommerceAIEngine:
 
         return (
             f"Halo Kakak! Selamat datang di *{store_name}*. "
-            f"Ada yang bisa kami bantu seputar produk dan katalog kami hari ini?"
+            f"Ada yang bisa kami bantu seputar produk dan layanan kami hari ini?"
         )
 
 
 # Singleton
 commerce_ai_engine = CommerceAIEngine()
-
