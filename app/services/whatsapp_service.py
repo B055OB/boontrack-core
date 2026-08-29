@@ -50,6 +50,73 @@ def normalize_phone_number(raw_phone: Optional[str]) -> str:
     return cleaned
 
 
+# Session memory map linking sender phone number to dynamic tenant slug
+user_tenant_sessions: Dict[str, str] = {}
+
+
+def resolve_dynamic_tenant_for_whatsapp(
+    phone_id: str,
+    from_phone: str,
+    message_text: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, bool]:
+    """Dynamically resolves the destination tenant slug for an incoming WhatsApp message.
+    
+    1. Detects self-onboarding announcements (e.g. 'saya baru saja mendaftar toko [slug]').
+    2. Checks active sender conversation session.
+    3. For Meta sandbox (+15556769563 / 1306479742542883) without an existing session,
+       dynamically resolves to the latest active COMMERCE_TEMPLATE tenant.
+    
+    Returns:
+        Tuple[str, bool]: (resolved_slug, is_new_store_binding)
+    """
+    import re
+    clean_phone = normalize_phone_number(from_phone)
+    text = (message_text or "").strip()
+
+    # 1. Detect Onboarding Announcement pattern
+    match = re.search(
+        r"saya\s+baru\s+(?:saja\s+)?(?:mendaftar|daftar)\s+toko\s+([a-zA-Z0-9\-_]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        match = re.search(r"toko\s*:\s*([a-zA-Z0-9\-_]+)", text, re.IGNORECASE)
+
+    if match:
+        target_slug = match.group(1).lower().strip()
+        if clean_phone:
+            user_tenant_sessions[clean_phone] = target_slug
+        logger.info(f"[DYNAMIC TENANT WA] Bound sender {clean_phone} to store '{target_slug}' via onboarding message")
+        return target_slug, True
+
+    # 2. Check existing conversation session
+    if clean_phone and clean_phone in user_tenant_sessions:
+        return user_tenant_sessions[clean_phone], False
+
+    # 3. Known production phone number IDs
+    clean_phone_id = str(phone_id).strip()
+    if clean_phone_id == "1340866379104241":
+        return "boontrack-career", False
+    if clean_phone_id == "1268977686299719":
+        return "om_budi", False
+
+    # 4. Meta Sandbox / Test Numbers (+15556769563 / 15556769563 / 1306479742542883)
+    # Automatically resolve to the latest active COMMERCE_TEMPLATE tenant!
+    try:
+        from app.services.onboarding_service import onboarding_service
+        latest_slug = onboarding_service.get_latest_commerce_tenant()
+        if latest_slug:
+            if clean_phone:
+                user_tenant_sessions[clean_phone] = latest_slug
+            logger.info(f"[DYNAMIC TENANT WA] Resolved sender {clean_phone} to latest commerce tenant '{latest_slug}'")
+            return latest_slug, False
+    except Exception as e:
+        logger.warning(f"[DYNAMIC TENANT WA] Failed to query latest commerce tenant: {e}")
+
+    return "digicorn", False
+
+
 async def log_to_supabase_messages(
     sender: str, 
     text: Optional[str] = None, 

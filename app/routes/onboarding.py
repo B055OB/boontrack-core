@@ -56,3 +56,24 @@ async def onboard_tenant_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to onboard tenant: {str(e)}",
         )
+
+
+@onboarding_router.get(
+    "/{slug}",
+    summary="Get Tenant Profile, Catalog Products & Persona by Slug",
+)
+async def get_tenant_by_slug_endpoint(slug: str):
+    """Retrieves tenant profile, catalog products, payout, and AI persona config by slug.
+    
+    Used by frontend boontrack-inbox for dynamic chat & order views.
+    Returns HTTP 200 with full details.
+    Returns HTTP 404 if tenant slug is not found.
+    """
+    details = onboarding_service.get_tenant_details_by_slug(slug)
+    if not details:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tenant with slug '{slug}' not found",
+        )
+    return details
+

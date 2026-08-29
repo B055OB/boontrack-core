@@ -253,6 +253,80 @@ class OnboardingService:
         """Finds tenant record by slug."""
         return self._tenants_by_slug.get(slug)
 
+    def get_latest_commerce_tenant(self) -> Optional[str]:
+        """Returns the slug of the latest registered active COMMERCE_TEMPLATE tenant."""
+        # 1. Check in-memory reverse order
+        for slug, t_data in reversed(list(self._tenants_by_slug.items())):
+            if t_data.get("template") == "COMMERCE_TEMPLATE" and t_data.get("is_active"):
+                return slug
+
+        # 2. Check LOADED_CONFIG_TENANTS for dynamic commerce tenants
+        for slug in reversed(list(LOADED_CONFIG_TENANTS.keys())):
+            if slug in ("atmosfitnes", "career", "boontrack-career", "om_budi", "bale_pananggeuhan", "pelayanan_publik"):
+                continue
+            return slug
+
+        return "digicorn"
+
+    def get_tenant_details_by_slug(self, slug: str) -> Optional[Dict[str, Any]]:
+        """Finds full tenant profile, real products list, payout details, and persona configuration."""
+        clean_slug = slugify(slug)
+        tenant_dict = self._tenants_by_slug.get(clean_slug)
+
+        if not tenant_dict:
+            cfg = LOADED_CONFIG_TENANTS.get(clean_slug)
+            if not cfg:
+                return None
+            tenant_dict = {
+                "id": str(uuid4()),
+                "name": cfg.identity.name,
+                "slug": clean_slug,
+                "tier": "STARTER",
+                "template": "COMMERCE_TEMPLATE",
+                "vertical": "DIGITAL_PRODUCTS",
+                "onboarding_mode": "SELF_SERVICE",
+                "affiliate_ref": None,
+                "admin_email": None,
+                "admin_phone": None,
+                "is_active": True,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        t_id = tenant_dict.get("id")
+        products = []
+        if t_id and t_id in self._products_by_tenant:
+            p_data = self._products_by_tenant[t_id]
+            if isinstance(p_data, list):
+                products.extend(p_data)
+            else:
+                products.append(p_data)
+
+        payout = self._payouts_by_tenant.get(t_id, {}) if t_id else {}
+
+        cfg = LOADED_CONFIG_TENANTS.get(clean_slug)
+        if cfg:
+            persona = {
+                "system_prompt": cfg.persona.system_prompt,
+                "tone": cfg.persona.tone,
+                "welcome_message": cfg.persona.welcome_message,
+                "default_fallback_message": cfg.persona.default_fallback_message,
+            }
+        else:
+            persona = {
+                "system_prompt": f"Kamu adalah asisten resmi untuk toko {tenant_dict['name']}.",
+                "tone": "Edukatif & Expert, ramah, to-the-point",
+                "welcome_message": f"Selamat datang di {tenant_dict['name']}! Ada yang bisa kami bantu?",
+                "default_fallback_message": "Mohon maaf, layanan sedang memproses antrean pesan lain.",
+            }
+
+        return {
+            "status": "success",
+            "tenant": tenant_dict,
+            "products": products,
+            "payout": payout,
+            "persona": persona,
+        }
+
     def clear_state(self) -> None:
         """Clears in-memory state for test isolation."""
         for slug in list(self._tenants_by_slug.keys()):

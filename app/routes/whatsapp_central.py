@@ -416,12 +416,26 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
             return web.json_response({"status": "success", "tenant": "om_budi"}, status=200)
 
-        elif phone_id == ADUAN_SANDBOX_PHONE_ID:
-            # 1. Simpan pesan aduan masuk ke Supabase
+        else:
+            # 6.6. Dynamic Tenant Resolution (Meta Sandbox +15556769563 / 1306479742542883 / Custom)
+            from app.services.whatsapp_service import resolve_dynamic_tenant_for_whatsapp
+            from app.services.ai_engine import commerce_ai_engine
+            from app.services.onboarding_service import onboarding_service
+
+            tenant_slug, is_new_binding = resolve_dynamic_tenant_for_whatsapp(
+                phone_id=phone_id,
+                from_phone=from_phone,
+                message_text=incoming_text,
+            )
+
+            details = onboarding_service.get_tenant_details_by_slug(tenant_slug)
+            store_name = details.get("tenant", {}).get("name", tenant_slug) if details else tenant_slug
+
+            # Simpan pesan user ke Supabase
             safe_log_to_supabase_messages(
                 sender="user",
                 text=incoming_text,
-                tenant_id="aduan-sandbox",
+                tenant_id=tenant_slug,
                 channel="whatsapp",
                 user_phone=from_phone,
                 user_name=contact_name,
@@ -430,21 +444,29 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 metadata={"phone_number_id": phone_id, "msg_type": msg_type}
             )
 
-            sandbox_reply = (
-                f"🏛️ *[BALÉ PANANGGEUHAN DISKOMINFO - UJI COBA]*\n\n"
-                f"Sampurasun, *{contact_name}*.\n"
-                f"Laporan/aspirasi Anda telah tercatat di sistem pengujian:\n\n"
-                f"📝 *Ringkasan:* \"{incoming_text}\"\n"
-                f"🔒 *Status Keamanan:* RLS & Field-Level Encryption Active.\n\n"
-                f"_Tiket aduan pengujian telah diteruskan ke Posko Jabar._"
-            )
-            await send_wa_text(from_phone, sandbox_reply, phone_id)
+            if is_new_binding:
+                welcome_msg = details.get("persona", {}).get("welcome_message", "") if details else ""
+                reply_text = (
+                    f"🎉 *Selamat Datang di {store_name}!* 🎉\n\n"
+                    f"Nomor WhatsApp Kakak (*{contact_name}*) kini resmi terhubung dengan asisten toko *{store_name}*.\n\n"
+                    f"{welcome_msg}\n\n"
+                    f"_Silakan ketik nama produk atau ketik *menu* untuk melihat katalog._"
+                )
+            else:
+                reply_text = await commerce_ai_engine.generate_commerce_response(
+                    tenant_slug=tenant_slug,
+                    user_message=incoming_text,
+                    user_phone=from_phone,
+                    user_name=contact_name,
+                )
 
-            # 2. Simpan balasan bot aduan ke Supabase
+            await send_wa_text(from_phone, reply_text, phone_id)
+
+            # Simpan balasan bot ke Supabase
             safe_log_to_supabase_messages(
                 sender="bot",
-                text=sandbox_reply,
-                tenant_id="aduan-sandbox",
+                text=reply_text,
+                tenant_id=tenant_slug,
                 channel="whatsapp",
                 user_phone=from_phone,
                 user_name=contact_name,
@@ -453,11 +475,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 metadata={"phone_number_id": phone_id}
             )
 
-            return web.json_response({"status": "success", "tenant": "aduan_sandbox"}, status=200)
-
-        else:
-            logger.warning(f"[CENTRAL WA] Phone ID tidak dikenal: {phone_id}")
-            return web.json_response({"status": "unrecognized_phone_id"}, status=400)
+            return web.json_response({"status": "success", "tenant": tenant_slug}, status=200)
 
     except Exception as e:
         logger.error(f"[CENTRAL WA ERROR] {e}", exc_info=True)
