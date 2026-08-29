@@ -187,6 +187,7 @@ class OnboardingService:
             "tenant_id": str(tenant_id),
             "title": payload.product.title,
             "slug": prod_slug,
+            "category": getattr(payload.product, "category", None) or "Digital Course",
             "description": payload.product.description,
             "price": float(payload.product.price),
             "product_type": payload.product.product_type,
@@ -456,6 +457,7 @@ class OnboardingService:
             "tenant_id": t_id,
             "title": prod_title,
             "slug": prod_slug,
+            "category": product_data.get("category", "Digital Course"),
             "price": float(product_data.get("price", 0)),
             "promo_price": float(product_data.get("promo_price")) if product_data.get("promo_price") is not None else None,
             "description": product_data.get("description", ""),
@@ -480,6 +482,18 @@ class OnboardingService:
 
         self._products_by_tenant[t_id] = existing_products
         return new_prod
+
+    def get_tenant_products(self, slug: str) -> Optional[list]:
+        """Returns all products in tenant catalog, including category field."""
+        clean_slug = slugify(slug)
+        details = self.get_tenant_details_by_slug(clean_slug)
+        if not details:
+            return None
+        t_id = str(details["tenant"].get("id"))
+        prods = self._products_by_tenant.get(t_id, [])
+        if not isinstance(prods, list):
+            prods = [prods] if prods else []
+        return prods
 
     def clear_state(self) -> None:
         """Clears in-memory state for test isolation."""

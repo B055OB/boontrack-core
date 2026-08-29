@@ -132,7 +132,12 @@ class TestDynamicWebhookAndAIContext(unittest.TestCase):
     # =========================================================================
 
     def test_dynamic_tenant_resolution_sandbox_fallback(self):
-        """Memvalidasi pengirim baru di sandbox otomatis diarahkan ke toko COMMERCE_TEMPLATE terbaru."""
+        """Memvalidasi pengirim baru di sandbox tanpa sesi aktif menerima Demo Menu Selector.
+        
+        Perilaku baru: Pengirim baru (tanpa sesi) selalu mendapatkan menu demo
+        pilihan 1=Bale, 2=Prima Fit Gym, 3=Suhu Ads Masterclass, alih-alih
+        langsung diarahkan ke toko COMMERCE_TEMPLATE terbaru.
+        """
         unique_suffix = uuid4().hex[:6]
         latest_slug = f"butik-hijab-{unique_suffix}"
 
@@ -176,10 +181,13 @@ class TestDynamicWebhookAndAIContext(unittest.TestCase):
 
         resp = self.client.post("/api/v1/whatsapp/webhook", json=sandbox_payload)
         self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        # Pengirim baru tanpa sesi kini menerima Demo Menu Selector
+        self.assertIn(data["status"], ("menu_dispatched", "success"))
+        self.assertIn("BoonTrack", data["reply"])
         # Pastikan BUKAN hardcoded bale_pananggeuhan atau om_budi
-        self.assertEqual(resp.json()["tenant"], latest_slug)
-        self.assertNotIn("bale_pananggeuhan", resp.json()["reply"].lower())
-        self.assertNotIn("aduan", resp.json()["reply"].lower())
+        self.assertNotEqual(data.get("tenant"), "bale_pananggeuhan")
+        self.assertNotEqual(data.get("tenant"), "om_budi")
 
     # =========================================================================
     # 3. AI System Prompt Real Products & Context Injection

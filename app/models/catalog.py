@@ -33,4 +33,5 @@ class Product(Base, TenantScopedBaseMixin):
         Enum(LicenseStatus, name="license_status_enum"), default=LicenseStatus.UNVERIFIED, nullable=False
     )
     asset_reference: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True, default="Digital Course")
     is_available: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

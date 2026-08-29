@@ -53,6 +53,36 @@ def normalize_phone_number(raw_phone: Optional[str]) -> str:
 # Session memory map linking sender phone number to dynamic tenant slug
 user_tenant_sessions: Dict[str, str] = {}
 
+DEMO_MENU_TEXT = (
+    "Halo! Selamat datang di Portal Pengujian Ekosistem BoonTrack 🚀\n\n"
+    "Silakan pilih demo asisten/merchant yang ingin Anda uji coba:\n"
+    "1️⃣ Bale Pananggeuhan (Layanan Publik & Administrasi Warga)\n"
+    "2️⃣ Prima Fit Gym (Membership Fitness & Reservasi Fasilitas)\n"
+    "3️⃣ Suhu Ads Masterclass (Digital Course & Edukasi Meta Ads)\n\n"
+    "Balas dengan mengetik angka 1, 2, atau 3 (atau ketik #reset kapan saja untuk ganti toko)."
+)
+
+DEMO_TENANT_GREETINGS: Dict[str, str] = {
+    "suhu-ads-masterclass": (
+        "🎉 *Selamat Datang di Suhu Ads Masterclass!* 🚀\n\n"
+        "Halo Kakak! Anda kini terhubung dengan Asisten Resmi Suhu Ads Masterclass (Digital Course & Edukasi Meta Ads).\n"
+        "Ada yang ingin ditanyakan seputar kurikulum, materi silabus, atau pendaftaran kelas?\n\n"
+        "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
+    ),
+    "bale_pananggeuhan": (
+        "🏛️ *Sampurasun! Selamat Datang di Balé Pananggeuhan*\n\n"
+        "Layanan Aspirasi & Pengaduan Online Warga Jawa Barat.\n"
+        "Silakan sampaikan laporan fasilitas umum, aduan warga, atau pengurusan administrasi kependudukan Anda.\n\n"
+        "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
+    ),
+    "atmosfitnes": (
+        "🏋️ *Selamat Datang di Prima Fit Gym (Atmosfitnes)!*\n\n"
+        "Asisten reservasi dan keanggotaan fitness modern.\n"
+        "Ada yang bisa kami bantu seputar paket membership, jadwal kelas, atau akses fasilitas turnstile?\n\n"
+        "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
+    ),
+}
+
 
 def resolve_dynamic_tenant_for_whatsapp(
     phone_id: str,
@@ -63,9 +93,11 @@ def resolve_dynamic_tenant_for_whatsapp(
     """Dynamically resolves the destination tenant slug for an incoming WhatsApp message.
     
     1. Detects self-onboarding announcements (e.g. 'saya baru saja mendaftar toko [slug]').
-    2. Checks active sender conversation session.
-    3. For Meta sandbox (+15556769563 / 1306479742542883) without an existing session,
-       dynamically resolves to the latest active COMMERCE_TEMPLATE tenant.
+    2. Handles explicit demo reset/menu commands ('#reset', 'reset', 'menu', 'demo').
+    3. Handles demo selector options (1, 2, 3 or keywords like 'suhu ads', 'bale', 'gym').
+    4. Checks active sender conversation session.
+    5. Catches general greetings from users without an active session ('halo', 'hi', 'p', 'test').
+    6. For Meta sandbox with specific queries, resolves to the latest active COMMERCE_TEMPLATE tenant.
     
     Returns:
         Tuple[str, bool]: (resolved_slug, is_new_store_binding)
@@ -73,6 +105,7 @@ def resolve_dynamic_tenant_for_whatsapp(
     import re
     clean_phone = normalize_phone_number(from_phone)
     text = (message_text or "").strip()
+    text_lower = text.lower()
 
     # 1. Detect Onboarding Announcement pattern
     match = re.search(
@@ -90,18 +123,56 @@ def resolve_dynamic_tenant_for_whatsapp(
         logger.info(f"[DYNAMIC TENANT WA] Bound sender {clean_phone} to store '{target_slug}' via onboarding message")
         return target_slug, True
 
-    # 2. Check existing conversation session
+    # 2. Reset or Demo Menu Command (Explicit reset from any state)
+    if text_lower in ("#reset", "reset", "menu", "demo"):
+        if clean_phone:
+            user_tenant_sessions.pop(clean_phone, None)
+        logger.info(f"[DYNAMIC TENANT WA] Sender {clean_phone} triggered reset/demo menu")
+        return "__MENU__", False
+
+    # 3. Handle Menu Selection Options (1, 2, 3 or keywords)
+    # Numeric: 1=Bale Pananggeuhan, 2=Prima Fit Gym, 3=Suhu Ads Masterclass
+    option_map = {
+        "1": "bale_pananggeuhan",
+        "bale": "bale_pananggeuhan",
+        "bale pangageuhan": "bale_pananggeuhan",
+        "bale pananggeuhan": "bale_pananggeuhan",
+        "bale-pangageuhan": "bale_pananggeuhan",
+        "2": "atmosfitnes",
+        "gym": "atmosfitnes",
+        "prima fit": "atmosfitnes",
+        "prima fit gym": "atmosfitnes",
+        "prima": "atmosfitnes",
+        "atmosfitnes": "atmosfitnes",
+        "3": "suhu-ads-masterclass",
+        "suhu ads": "suhu-ads-masterclass",
+        "suhu": "suhu-ads-masterclass",
+        "suhu-ads": "suhu-ads-masterclass",
+        "suhu ads masterclass": "suhu-ads-masterclass",
+    }
+    if text_lower in option_map:
+        target_slug = option_map[text_lower]
+        if clean_phone:
+            user_tenant_sessions[clean_phone] = target_slug
+        logger.info(f"[DYNAMIC TENANT WA] Sender {clean_phone} selected option '{text_lower}' -> locked to '{target_slug}'")
+        return target_slug, True
+
+    # 4. Check existing conversation session
     if clean_phone and clean_phone in user_tenant_sessions:
         return user_tenant_sessions[clean_phone], False
 
-    # 3. Known production phone number IDs
+    # 5. Catch general greetings from users without active session ("halo", "hi", "p", "test", etc.)
+    if text_lower in ("halo", "hi", "p", "test", "tes", "hai", "start", "info"):
+        return "__MENU__", False
+
+    # 6. Known production phone number IDs
     clean_phone_id = str(phone_id).strip()
     if clean_phone_id == "1340866379104241":
         return "boontrack-career", False
     if clean_phone_id == "1268977686299719":
         return "om_budi", False
 
-    # 4. Meta Sandbox / Test Numbers (+15556769563 / 15556769563 / 1306479742542883)
+    # 7. Meta Sandbox / Test Numbers (+15556769563 / 15556769563 / 1306479742542883)
     # Automatically resolve to the latest active COMMERCE_TEMPLATE tenant!
     try:
         from app.services.onboarding_service import onboarding_service
