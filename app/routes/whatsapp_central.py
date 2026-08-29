@@ -139,13 +139,54 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Di
         logger.error(f"[CENTRAL WA] Exception sending buttons: {e}", exc_info=True)
 
 
-async def send_wa_image(recipient_phone: str, image_url_or_path: str, caption: str, phone_id: str) -> bool:
-    """Mengirim pesan gambar WhatsApp ke Meta Cloud API menggunakan public URL HTTPS dengan fallback text."""
+async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any, caption: str, phone_id: str) -> bool:
+    """Mengirim pesan gambar WhatsApp ke Meta Cloud API menggunakan media_id (upload PNG buffer bytes) atau link URL."""
     clean_id_match = re.findall(r"\d+", str(phone_id))
     clean_id = clean_id_match[0] if clean_id_match else phone_id
     token = resolve_tenant_token(clean_id)
 
-    image_url = str(image_url_or_path or "")
+    # 1. Jika image adalah PNG bytes, upload langsung ke /media endpoint untuk mendapatkan media_id
+    if isinstance(image_url_or_path_or_bytes, bytes):
+        upload_url = f"https://graph.facebook.com/v20.0/{clean_id}/media"
+        headers = {"Authorization": f"Bearer {token}"}
+        form_data = aiohttp.FormData()
+        form_data.add_field("messaging_product", "whatsapp")
+        form_data.add_field("type", "image/png")
+        form_data.add_field("file", image_url_or_path_or_bytes, filename="qris_xendit.png", content_type="image/png")
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(upload_url, headers=headers, data=form_data) as up_resp:
+                    if up_resp.status in (200, 201):
+                        up_json = await up_resp.json()
+                        media_id = up_json.get("id")
+                        if media_id:
+                            msg_url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
+                            payload = {
+                                "messaging_product": "whatsapp",
+                                "recipient_type": "individual",
+                                "to": recipient_phone,
+                                "type": "image",
+                                "image": {
+                                    "id": str(media_id),
+                                    "caption": caption
+                                }
+                            }
+                            async with session.post(msg_url, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, json=payload) as msg_resp:
+                                if msg_resp.status in (200, 201):
+                                    return True
+                                logger.error(f"[CENTRAL WA] Outbound media_id error ({msg_resp.status}): {await msg_resp.text()}")
+                    else:
+                        logger.error(f"[CENTRAL WA] Media upload error ({up_resp.status}): {await up_resp.text()}")
+        except Exception as e:
+            logger.error(f"[CENTRAL WA] Exception in multipart media upload: {e}", exc_info=True)
+
+        # Fallback to text
+        await send_wa_text(recipient_phone, caption, phone_id)
+        return False
+
+    # 2. Public URL fallback
+    image_url = str(image_url_or_path_or_bytes or "")
     if not image_url.startswith(("http://", "https://")):
         public_base = (
             os.getenv("PUBLIC_BASE_URL")
@@ -180,7 +221,7 @@ async def send_wa_image(recipient_phone: str, image_url_or_path: str, caption: s
                 if resp.status in (200, 201):
                     return True
                 logger.error(f"[CENTRAL WA] Outbound image error ({resp.status}) phone_id={clean_id}: {resp_text}")
-                # Fallback ke pesan teks lengkap agar info rekening/NMID tetap sampai ke user
+                # Fallback ke pesan teks lengkap
                 await send_wa_text(recipient_phone, caption, phone_id)
                 return False
     except Exception as e:
@@ -572,6 +613,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 await send_wa_text(from_phone, DEMO_MENU_TEXT, phone_id)
                 return web.json_response({"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}, status=200)
 
+            is_image_sent = False
             if clean_btn == "btn_view_syllabus":
                 reply_text = (
                     "📚 *SILABUS & KURIKULUM LENGKAP SUHU ADS MASTERCLASS:*\n\n"
@@ -584,11 +626,13 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 )
             elif clean_btn == "btn_buy_now" or (is_closing_buy_intent(incoming_text) and tenant_slug not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik")):
                 logger.info(f"[CENTRAL WA FAST-TRACK] Buy intent detected from {from_phone} on tenant '{tenant_slug}' -> issuing QRIS invoice")
-                reply_text, invoice = await generate_fast_track_checkout_response(
+                reply_text, invoice, qr_bytes = await generate_fast_track_checkout_response(
                     tenant_slug=tenant_slug,
                     from_phone=from_phone,
                     contact_name=contact_name,
                 )
+                if qr_bytes:
+                    is_image_sent = await send_wa_image(from_phone, qr_bytes, reply_text, phone_id)
             elif is_new_binding and _is_onboarding_msg:
                 reply_text = (
                     f"🎉 *Selamat Datang di {store_name}!* 🚀\n\n"
@@ -613,7 +657,8 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                         button_id=button_id,
                     )
 
-            await send_wa_text(from_phone, reply_text, phone_id)
+            if not is_image_sent:
+                await send_wa_text(from_phone, reply_text, phone_id)
 
             # Simpan balasan bot ke Supabase
             safe_log_to_supabase_messages(

@@ -107,12 +107,30 @@ def is_closing_buy_intent(text: str) -> bool:
     return False
 
 
+def generate_qris_image_bytes(qr_string: str) -> bytes:
+    """Renders EMVCo QRIS payload string to PNG bytes in memory."""
+    import io
+    import qrcode
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=10,
+        border=2,
+    )
+    qr.add_data(qr_string)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 async def generate_fast_track_checkout_response(
     tenant_slug: str,
     from_phone: str,
     contact_name: str = "Kakak",
-) -> Tuple[str, Dict[str, Any]]:
-    """Generates an immediate fast-track QRIS checkout invoice message for aggressive closing."""
+) -> Tuple[str, Dict[str, Any], bytes]:
+    """Generates an immediate fast-track QRIS checkout invoice message for aggressive closing with rendered PNG image bytes."""
     from app.services.onboarding_service import onboarding_service
     from app.services.xendit_service import xendit_service
 
@@ -146,25 +164,18 @@ async def generate_fast_track_checkout_response(
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
 
     external_id = invoice.get("external_id")
-    qr_code_url = invoice.get("qr_code_url")
+    qr_string = invoice.get("qr_string", "")
+    qr_bytes = generate_qris_image_bytes(qr_string) if qr_string else b""
     amount_fmt = f"Rp{amount:,.0f}"
 
-    reply_text = (
-        f"🧾 *TAGIHAN PEMBAYARAN RESMI (QRIS)* 🚀\n\n"
-        f"Halo {contact_name}! Berikut rincian pesanan Anda di *{store_name}*:\n"
+    caption = (
+        f"📄 *INVOICE PEMBAYARAN QRIS (XENDIT)*\n\n"
         f"• *Item*: {product_name}\n"
-        f"• *Total Tagihan*: *{amount_fmt}*\n"
-        f"• *No. Referensi*: `{external_id}`\n"
-        f"• *Status*: *MENUNGGU PEMBAYARAN*\n\n"
-        f"📱 *CARA PEMBAYARAN CEPAT:*\n"
-        f"1. Buka aplikasi e-Wallet (GoPay / DANA / OVO / ShopeePay) atau Mobile Banking (BCA / Mandiri / BRI / BNI / CIMB).\n"
-        f"2. Scan kode QRIS melalui link berikut:\n"
-        f"   {qr_code_url}\n\n"
-        f"⚡ *Link Pembayaran Langsung:* {qr_code_url}\n\n"
-        f"[📲 Buka & Scan QRIS]\n\n"
-        f"_Setelah pembayaran diverifikasi (otomatis dalam hitungan detik), sistem akan langsung mengirimkan konfirmasi dan akses lengkap ke WhatsApp ini!_"
+        f"• *Nominal*: *{amount_fmt}*\n"
+        f"• *Order ID*: `{external_id}`\n\n"
+        f"Silakan scan atau screenshot QRIS di atas langsung dari m-Banking atau e-Wallet Anda (BCA, Mandiri, BRI, BNI, DANA, GoPay, OVO, ShopeePay). Status akan terverifikasi otomatis."
     )
-    return reply_text, invoice
+    return caption, invoice, qr_bytes
 
 
 def resolve_dynamic_tenant_for_whatsapp(

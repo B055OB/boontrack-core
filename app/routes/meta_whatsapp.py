@@ -261,12 +261,27 @@ async def handle_whatsapp_webhook(request: Request):
             "Mau saya buatkan kode QRIS pembayarannya sekarang Kak?"
         )
     elif button_id == "btn_buy_now" or (is_closing_buy_intent(incoming_text) and tenant_slug not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik")):
-        logger.info(f"[META WA FAST-TRACK] Buy intent detected from {from_phone} on tenant '{tenant_slug}' -> issuing QRIS invoice")
-        reply, invoice = await generate_fast_track_checkout_response(
+        logger.info(f"[META WA FAST-TRACK] Buy intent detected from {from_phone} on tenant '{tenant_slug}' -> issuing native QRIS image")
+        reply, invoice, qr_bytes = await generate_fast_track_checkout_response(
             tenant_slug=tenant_slug,
             from_phone=from_phone,
             contact_name=contact_name,
         )
+        if from_phone:
+            try:
+                if qr_bytes:
+                    from app.services.whatsapp_service import send_whatsapp_image
+                    await send_whatsapp_image(
+                        to_phone=from_phone,
+                        image_path_or_bytes=qr_bytes,
+                        caption=reply,
+                        tenant_id=tenant_slug,
+                    )
+                else:
+                    await send_whatsapp_text(to_phone=from_phone, text=reply)
+            except Exception as err:
+                logger.warning(f"[META WA Image Send Warning] {err}")
+                await send_whatsapp_text(to_phone=from_phone, text=reply)
     elif is_new_binding and _is_onboarding_msg:
         reply = (
             f"🎉 *Selamat Datang di {store_name}!* 🚀\n\n"
