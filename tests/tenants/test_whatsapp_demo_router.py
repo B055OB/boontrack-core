@@ -286,10 +286,11 @@ class TestWhatsAppDemoRouter(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data.get("tenant"), "suhu-ads-masterclass")
-        self.assertIn("INVOICE PEMBAYARAN QRIS (XENDIT)", data["reply"])
-        self.assertIn("INV-SUHU-ADS", data["reply"])
-        self.assertIn("149", data["reply"])
-        self.assertIn("Silakan scan atau screenshot QRIS", data["reply"])
+        self.assertIn("Berikut Kode QRIS Pembayaran Anda", data["reply"])
+        self.assertIn("Suhu Ads Masterclass 2026", data["reply"])
+        self.assertIn("Rp149.000", data["reply"])
+        self.assertIn("15 Menit", data["reply"])
+        self.assertIn("Google Drive", data["reply"])
 
         # Verifikasi state sesi
         from app.services.whatsapp_service import user_session_states
@@ -307,8 +308,8 @@ class TestWhatsAppDemoRouter(unittest.TestCase):
         resp = self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "boleh"))
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        self.assertIn("INVOICE PEMBAYARAN QRIS (XENDIT)", data["reply"])
-        self.assertIn("149", data["reply"])
+        self.assertIn("Berikut Kode QRIS Pembayaran Anda", data["reply"])
+        self.assertIn("149.000", data["reply"])
 
     def test_button_buy_now_generates_149k_qris(self):
         """Klik tombol 'btn_buy_now' langsung men-generate tagihan QRIS Rp149.000."""
@@ -328,8 +329,8 @@ class TestWhatsAppDemoRouter(unittest.TestCase):
         resp = self.client.post("/api/v1/whatsapp/webhook", json=payload)
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        self.assertIn("INVOICE PEMBAYARAN QRIS (XENDIT)", data["reply"])
-        self.assertIn("149", data["reply"])
+        self.assertIn("Berikut Kode QRIS Pembayaran Anda", data["reply"])
+        self.assertIn("149.000", data["reply"])
 
     def test_button_view_syllabus_returns_breakdown(self):
         """Klik tombol 'btn_view_syllabus' mengembalikan silabus materi dan tawaran QRIS."""
@@ -402,9 +403,9 @@ class TestWhatsAppDemoRouter(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data.get("tenant"), "atmosfitnes")
-        self.assertIn("INVOICE PEMBAYARAN QRIS (XENDIT)", data["reply"])
-        self.assertIn("150", data["reply"])
-        self.assertIn("Silakan scan atau screenshot QRIS", data["reply"])
+        self.assertIn("Berikut Kode QRIS Pembayaran Anda", data["reply"])
+        self.assertIn("150.000", data["reply"])
+        self.assertIn("15 Menit", data["reply"])
 
     def test_reset_after_session_lock_shows_menu(self):
         """Setelah sesi terkunci ke suhu-ads-masterclass, '#reset' harus kirim menu kembali."""

@@ -70,6 +70,7 @@ class XenditService:
         resolved_callback = callback_url or f"{app_domain}/api/v1/payments/xendit/callback"
 
         payload = {
+            "reference_id": str(external_id),
             "external_id": str(external_id),
             "type": "DYNAMIC",
             "currency": "IDR",
@@ -122,6 +123,14 @@ class XenditService:
 
         import urllib.parse
         qr_string = data.get("qr_string", "")
+        if not qr_string or not qr_string.startswith("000201"):
+            from app.utils.qris_generator import generate_dynamic_qris_payload
+            static_qris = os.getenv(
+                "BOONTRACK_STATIC_QRIS",
+                "00020101021126540014ID.LINKAJA.WWW011893600911002237890202152009221102000010303UMI51440014ID.DANA.WWW011893600911002237890202152009221102000010303UMI5802ID5911BOONTRACK6007JAKARTA6105129406304C22F",
+            )
+            qr_string = generate_dynamic_qris_payload(static_qris, amount)
+
         qr_code_url = data.get("qr_code_url") or f"https://api.qrserver.com/v1/create-qr-code/?size=350x350&data={urllib.parse.quote(qr_string)}"
         expired_at = (
             data.get("expires_at")

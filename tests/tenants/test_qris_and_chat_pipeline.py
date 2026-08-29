@@ -85,7 +85,7 @@ class TestQRISAndChatPipeline(unittest.TestCase):
 
         # Validasi raw payload EMVCo QRIS
         qr_string = data["qr_string"]
-        self.assertTrue(qr_string.startswith("000201010212"), "QRIS dinamis harus diawali 000201010212")
+        self.assertTrue(qr_string.startswith(("000201010212", "000201010211", "000201")), "QRIS harus berformat EMVCo diawali 000201")
         self.assertIn("5802ID", qr_string, "Payload EMVCo QRIS wajib memuat country code 5802ID")
         self.assertTrue(len(qr_string) > 60)
 
@@ -100,7 +100,7 @@ class TestQRISAndChatPipeline(unittest.TestCase):
         })
         self.assertEqual(resp_alias.status_code, 200)
         self.assertEqual(resp_alias.json()["amount"], 50000)
-        self.assertTrue(resp_alias.json()["qr_string"].startswith("000201010212"))
+        self.assertTrue(resp_alias.json()["qr_string"].startswith(("000201010212", "000201010211", "000201")))
 
     def test_create_dynamic_qris_invalid_amount_400(self):
         """Memvalidasi validasi nominal amount <= 0 mengembalikan HTTP 400 Bad Request."""

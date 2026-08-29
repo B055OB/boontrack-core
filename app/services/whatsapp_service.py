@@ -139,12 +139,12 @@ async def generate_fast_track_checkout_response(
     store_name = details.get("tenant", {}).get("name", tenant_slug)
     products = details.get("products", [])
 
-    if tenant_slug == "atmosfitnes":
+    if tenant_slug == "suhu-ads-masterclass":
+        product_name = "Suhu Ads Masterclass 2026"
+        amount = 149000
+    elif tenant_slug == "atmosfitnes":
         product_name = "Paket Membership Prima Fit Gym"
         amount = 150000
-    elif tenant_slug == "suhu-ads-masterclass":
-        product_name = "Suhu Ads Masterclass 2026 (Akses Penuh Promo)"
-        amount = 149000
     elif products:
         p = products[0]
         product_name = p.get("title", f"Produk {store_name}")
@@ -166,14 +166,15 @@ async def generate_fast_track_checkout_response(
     external_id = invoice.get("external_id")
     qr_string = invoice.get("qr_string", "")
     qr_bytes = generate_qris_image_bytes(qr_string) if qr_string else b""
-    amount_fmt = f"Rp{amount:,.0f}"
+    amount_fmt = f"Rp{amount:,.0f}".replace(",", ".")
 
     caption = (
-        f"📄 *INVOICE PEMBAYARAN QRIS (XENDIT)*\n\n"
-        f"• *Item*: {product_name}\n"
-        f"• *Nominal*: *{amount_fmt}*\n"
-        f"• *Order ID*: `{external_id}`\n\n"
-        f"Silakan scan atau screenshot QRIS di atas langsung dari m-Banking atau e-Wallet Anda (BCA, Mandiri, BRI, BNI, DANA, GoPay, OVO, ShopeePay). Status akan terverifikasi otomatis."
+        f"Berikut Kode QRIS Pembayaran Anda 💳\n\n"
+        f"📌 Produk: {product_name}\n"
+        f"💰 Total: {amount_fmt}\n"
+        f"⏱️ Berlaku: 15 Menit\n\n"
+        f"Silakan scan QR di atas menggunakan m-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n\n"
+        f"Setelah pembayaran sukses, link akses Google Drive akan otomatis dikirimkan ke chat ini 🚀"
     )
     return caption, invoice, qr_bytes
 
