@@ -94,10 +94,14 @@ async def handle_whatsapp_webhook(request: Request):
     4. Onboarding announcement: 'saya baru saja mendaftar toko [slug]' -> bind session.
     5. Active session -> route to tenant AI engine.
     """
+    body_raw = "{}"
     try:
         data = await request.json()
+        body_raw = str(data)
     except Exception:
         return {"status": "error", "message": "Invalid JSON format"}
+
+    print(f"📥 [WHATSAPP EVENT RECEIVED] Raw: {body_raw[:600]}", flush=True)
 
     event = extract_meta_whatsapp_event(data)
 
@@ -106,6 +110,7 @@ async def handle_whatsapp_webhook(request: Request):
         return {"status": "status_ignored"}
 
     if not event.get("is_message"):
+        print(f"🔕 [WHATSAPP EVENT IGNORED] Not a message. Keys: {list(data.keys())}", flush=True)
         return {"status": "ignored"}
 
     from_phone = event.get("from_phone", "")
@@ -113,6 +118,13 @@ async def handle_whatsapp_webhook(request: Request):
     contact_name = event.get("contact_name") or "Kakak"
     clean_phone = normalize_phone_number(from_phone)
     text_lower = incoming_text.lower()
+    _button_id_raw = event.get("button_id")
+
+    print(
+        f"\ud83c\udfaf [PARSED ACTION] sender={from_phone} | msg_type={event.get('msg_type')} "
+        f"| text={incoming_text!r} | button_id={_button_id_raw!r}",
+        flush=True
+    )
 
     # Pre-check: Is this an onboarding announcement? If so, skip the menu interceptor.
     import re as _re
@@ -261,34 +273,48 @@ async def handle_whatsapp_webhook(request: Request):
             "Mau saya buatkan kode QRIS pembayarannya sekarang Kak?"
         )
     elif button_id == "btn_buy_now" or (is_closing_buy_intent(incoming_text, button_id) and tenant_slug not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik")):
+        print(f"🛒 [FAST-TRACK] Buy intent from {from_phone} on tenant='{tenant_slug}' | button_id={button_id!r} | text={incoming_text!r}", flush=True)
         logger.info(f"[META WA FAST-TRACK] Buy intent detected from {from_phone} on tenant '{tenant_slug}' (button_id={button_id}) -> issuing QRIS invoice")
+
+        print(f"🔧 [QRIS GENERATION] Calling generate_fast_track_checkout_response for tenant='{tenant_slug}' phone={from_phone}", flush=True)
         reply, invoice, qr_bytes = await generate_fast_track_checkout_response(
             tenant_slug=tenant_slug,
             from_phone=from_phone,
             contact_name=contact_name,
         )
+        print(f"🧾 [QRIS INVOICE] external_id={invoice.get('external_id')} | qr_string_len={len(invoice.get('qr_string',''))} | qr_bytes_len={len(qr_bytes) if qr_bytes else 0}", flush=True)
+
         if from_phone:
             image_sent = False
             if qr_bytes:
                 try:
                     from app.services.whatsapp_service import send_whatsapp_image
+                    print(f"📸 [MEDIA UPLOAD] Uploading {len(qr_bytes)} bytes PNG to Meta for {from_phone} tenant='{tenant_slug}'", flush=True)
                     img_resp = await send_whatsapp_image(
                         to_phone=from_phone,
                         image_path_or_bytes=qr_bytes,
                         caption=reply,
                         tenant_id=tenant_slug,
                     )
+                    print(f"📤 [META SEND RESULT] img_resp type={type(img_resp).__name__} | value={str(img_resp)[:300]}", flush=True)
                     if img_resp and not (isinstance(img_resp, dict) and img_resp.get("status") == "failed"):
                         image_sent = True
+                        print(f"✅ [MEDIA SENT] QRIS image delivered to {from_phone}", flush=True)
+                    else:
+                        print(f"⚠️ [MEDIA FAILED] img_resp indicates failure: {img_resp}", flush=True)
                 except Exception as err:
+                    print(f"❌ [MEDIA EXCEPTION] {type(err).__name__}: {err}", flush=True)
                     logger.warning(f"[META WA Image Send Warning] {err}")
                     image_sent = False
 
             # Robust Fallback: jika pengiriman gambar gagal, kirimkan detail via teks
             if not image_sent:
+                print(f"📩 [TEXT FALLBACK] Sending QRIS details as plain text to {from_phone}", flush=True)
                 try:
                     await send_whatsapp_text(to_phone=from_phone, text=reply)
+                    print(f"✅ [TEXT FALLBACK SENT] Reply delivered as text to {from_phone}", flush=True)
                 except Exception as text_err:
+                    print(f"❌ [TEXT FALLBACK ERROR] {type(text_err).__name__}: {text_err}", flush=True)
                     logger.error(f"[META WA Text Fallback Error] {text_err}")
     elif is_new_binding and _is_onboarding_msg:
         reply = (
