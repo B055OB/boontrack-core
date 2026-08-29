@@ -417,11 +417,110 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             return web.json_response({"status": "success", "tenant": "om_budi"}, status=200)
 
         else:
-            # 6.6. Dynamic Tenant Resolution (Meta Sandbox +15556769563 / 1306479742542883 / Custom)
-            from app.services.whatsapp_service import resolve_dynamic_tenant_for_whatsapp
+            # 6.6. Dynamic Tenant Resolution with Top-Level Demo Menu Interceptor
+            from app.services.whatsapp_service import (
+                resolve_dynamic_tenant_for_whatsapp,
+                user_tenant_sessions,
+                normalize_phone_number,
+                DEMO_MENU_TEXT,
+                DEMO_TENANT_GREETINGS,
+            )
             from app.services.ai_engine import commerce_ai_engine
             from app.services.onboarding_service import onboarding_service
 
+            clean_phone = normalize_phone_number(from_phone)
+            text_lower = (incoming_text or "").strip().lower()
+
+            # ---------------------------------------------------------------
+            # STEP A: Pre-check — is this an onboarding announcement? Exempt it.
+            # ---------------------------------------------------------------
+            _is_onboarding_msg = bool(
+                re.search(
+                    r"saya\s+baru\s+(?:saja\s+)?(?:mendaftar|daftar)\s+toko\s+[a-zA-Z0-9\-_]+",
+                    incoming_text or "",
+                    re.IGNORECASE,
+                )
+                or re.search(r"toko\s*:\s*[a-zA-Z0-9\-_]+", incoming_text or "", re.IGNORECASE)
+            )
+
+            # ---------------------------------------------------------------
+            # STEP B: TOP-LEVEL DEMO MENU INTERCEPTOR
+            #   Trigger: greeting keywords OR sender has no active session
+            #   Does NOT apply to onboarding messages or numeric menu options.
+            # ---------------------------------------------------------------
+            _MENU_TRIGGER_KEYWORDS = {"halo", "hi", "p", "test", "tes", "hai", "start", "info", "menu", "demo", "#reset", "reset"}
+            _MENU_OPTION_MAP = {
+                "1": "bale_pananggeuhan",
+                "2": "atmosfitnes",
+                "3": "suhu-ads-masterclass",
+            }
+
+            _is_keyword_trigger = text_lower in _MENU_TRIGGER_KEYWORDS
+            _has_active_session = bool(clean_phone and clean_phone in user_tenant_sessions)
+
+            if (not _is_onboarding_msg) and (_is_keyword_trigger or not _has_active_session):
+                # Clear any stale session before showing menu
+                if clean_phone:
+                    user_tenant_sessions.pop(clean_phone, None)
+
+                # Let numeric options (1/2/3) fall through to STEP C
+                if text_lower not in _MENU_OPTION_MAP:
+                    logger.info(
+                        f"[CENTRAL WA INTERCEPTOR] Sender {from_phone} triggered menu "
+                        f"(keyword={_is_keyword_trigger}, no_session={not _has_active_session})"
+                    )
+                    await send_wa_text(from_phone, DEMO_MENU_TEXT, phone_id)
+                    safe_log_to_supabase_messages(
+                        sender="bot",
+                        text=DEMO_MENU_TEXT,
+                        tenant_id="__MENU__",
+                        channel="whatsapp",
+                        user_phone=from_phone,
+                        user_name=contact_name,
+                        user_id=from_phone,
+                        conversation_id=from_phone,
+                    )
+                    return web.json_response({
+                        "status": "menu_dispatched",
+                        "tenant": "__MENU__",
+                        "reply": DEMO_MENU_TEXT,
+                    }, status=200)
+
+            # ---------------------------------------------------------------
+            # STEP C: MENU OPTION SELECTION (1, 2, 3)
+            # ---------------------------------------------------------------
+            if text_lower in _MENU_OPTION_MAP:
+                selected_slug = _MENU_OPTION_MAP[text_lower]
+                if clean_phone:
+                    user_tenant_sessions[clean_phone] = selected_slug
+                logger.info(
+                    f"[CENTRAL WA MENU SELECT] Sender {from_phone} selected '{text_lower}' -> locked to '{selected_slug}'"
+                )
+                greeting = DEMO_TENANT_GREETINGS.get(
+                    selected_slug,
+                    f"🎉 Anda kini terhubung dengan *{selected_slug}*. Silakan mulai percakapan!"
+                )
+                await send_wa_text(from_phone, greeting, phone_id)
+                safe_log_to_supabase_messages(
+                    sender="bot",
+                    text=greeting,
+                    tenant_id=selected_slug,
+                    channel="whatsapp",
+                    user_phone=from_phone,
+                    user_name=contact_name,
+                    user_id=from_phone,
+                    conversation_id=from_phone,
+                )
+                return web.json_response({
+                    "status": "success",
+                    "tenant": selected_slug,
+                    "is_new_binding": True,
+                    "reply": greeting,
+                }, status=200)
+
+            # ---------------------------------------------------------------
+            # STEP D: NORMAL PIPELINE — Resolve tenant + AI engine
+            # ---------------------------------------------------------------
             tenant_slug, is_new_binding = resolve_dynamic_tenant_for_whatsapp(
                 phone_id=phone_id,
                 from_phone=from_phone,
@@ -446,11 +545,14 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
             if is_new_binding:
                 welcome_msg = details.get("persona", {}).get("welcome_message", "") if details else ""
-                reply_text = (
-                    f"🎉 *Selamat Datang di {store_name}!* 🎉\n\n"
-                    f"Nomor WhatsApp Kakak (*{contact_name}*) kini resmi terhubung dengan asisten toko *{store_name}*.\n\n"
-                    f"{welcome_msg}\n\n"
-                    f"_Silakan ketik nama produk atau ketik *menu* untuk melihat katalog._"
+                reply_text = DEMO_TENANT_GREETINGS.get(
+                    tenant_slug,
+                    (
+                        f"🎉 *Selamat Datang di {store_name}!* 🎉\n\n"
+                        f"Nomor WhatsApp Kakak (*{contact_name}*) kini resmi terhubung dengan asisten toko *{store_name}*.\n\n"
+                        f"{welcome_msg}\n\n"
+                        f"_Silakan ketik nama produk atau ketik *menu* untuk melihat katalog._"
+                    )
                 )
             else:
                 reply_text = await commerce_ai_engine.generate_commerce_response(
