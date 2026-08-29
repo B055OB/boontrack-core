@@ -25,13 +25,13 @@ class XenditService:
     def __init__(self):
         self.secret_key = os.getenv(
             "XENDIT_SECRET_KEY",
-            "xnd_development_izYqzaXOC31jEr5FLNNXOtGa8PrDgWMCtCCVcjMo0KG0fIy0SRxpiUHUIfK3aGt",
+            "xnd_development_2itAoTg8FOAdr8Vk7jKpU0MksgDSAjaWzlLHzEMkPuHcRyf5IUxfvO7MG1KPe",
         ).strip()
         self.api_url = os.getenv("XENDIT_API_URL", "https://api.xendit.co").rstrip("/")
         self.env = os.getenv("XENDIT_ENV", "sandbox")
         self.callback_token = os.getenv(
             "XENDIT_CALLBACK_TOKEN",
-            "boontrack_xendit_webhook_token_secure",
+            "aM08Ka1LQ9Jx1OsieBe6kcM1pK1Z5eWlpWAka5zBOuGpVbWS",
         ).strip()
 
         # In-memory tracking for fast lookups & test isolation

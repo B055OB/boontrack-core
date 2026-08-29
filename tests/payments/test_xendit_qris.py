@@ -9,6 +9,7 @@ Tests:
 5. Support for multiple Xendit payload shapes (wrapped 'qr_code.paid' and direct object).
 """
 
+import os
 import unittest
 from unittest.mock import patch, AsyncMock, MagicMock
 from fastapi.testclient import TestClient
@@ -23,7 +24,7 @@ class TestXenditQRISIntegration(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
         xendit_service.clear_state()
-        self.valid_token = "boontrack_xendit_webhook_token_secure"
+        self.valid_token = os.getenv("XENDIT_CALLBACK_TOKEN", "aM08Ka1LQ9Jx1OsieBe6kcM1pK1Z5eWlpWAka5zBOuGpVbWS")
 
     # =========================================================================
     # 1. Dynamic QRIS Generation

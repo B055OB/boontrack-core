@@ -79,7 +79,7 @@ async def xendit_webhook_callback(
     """
     configured_token = os.getenv(
         "XENDIT_CALLBACK_TOKEN",
-        "boontrack_xendit_webhook_token_secure",
+        "aM08Ka1LQ9Jx1OsieBe6kcM1pK1Z5eWlpWAka5zBOuGpVbWS",
     ).strip()
 
     # 1. Callback Token Validation
