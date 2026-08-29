@@ -189,6 +189,25 @@ class XenditService:
         """Checks if a transaction is already completed / settled."""
         return str(external_id) in self._processed_transactions
 
+    async def create_qris_invoice(
+        self,
+        tenant_slug: str,
+        amount: int,
+        product_name: str = "Produk",
+        customer_phone: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Creates a dynamic QRIS invoice specifically for closing and checkout flows."""
+        from uuid import uuid4
+        clean_slug = str(tenant_slug).replace("_", "-").lower()[:8]
+        external_id = f"INV-{clean_slug.upper()}-{uuid4().hex[:6].upper()}"
+        return await self.create_dynamic_qris(
+            external_id=external_id,
+            amount=int(amount),
+            tenant_id=tenant_slug,
+            customer_phone=customer_phone,
+            metadata={"product_name": product_name, "tenant_slug": tenant_slug},
+        )
+
     def clear_state(self) -> None:
         """Resets in-memory state for testing isolation."""
         self._intents_by_external_id.clear()

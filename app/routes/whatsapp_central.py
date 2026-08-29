@@ -543,7 +543,17 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 metadata={"phone_number_id": phone_id, "msg_type": msg_type}
             )
 
-            if is_new_binding and _is_onboarding_msg:
+            from app.services.whatsapp_service import is_closing_buy_intent, generate_fast_track_checkout_response
+
+            # 1. Fast-Track Closing Checkout Intent Detection (BYPASS LLM)
+            if is_closing_buy_intent(incoming_text) and tenant_slug not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik"):
+                logger.info(f"[CENTRAL WA FAST-TRACK] Buy intent detected from {from_phone} on tenant '{tenant_slug}' -> issuing QRIS invoice")
+                reply_text, invoice = await generate_fast_track_checkout_response(
+                    tenant_slug=tenant_slug,
+                    from_phone=from_phone,
+                    contact_name=contact_name,
+                )
+            elif is_new_binding and _is_onboarding_msg:
                 welcome_msg = details.get("persona", {}).get("welcome_message", "") if details else ""
                 reply_text = (
                     f"🎉 *Selamat Datang di {store_name}!* 🎉\n\n"

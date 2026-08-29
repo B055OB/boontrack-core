@@ -199,7 +199,7 @@ class TestWhatsAppDemoRouter(unittest.TestCase):
     # =========================================================================
 
     def test_select_option_3_locks_to_suhu_ads_masterclass(self):
-        """Input '3' harus mengunci sesi ke suhu-ads-masterclass dan mengirim greeting Suhu Ads."""
+        """Input '3' harus mengunci sesi ke suhu-ads-masterclass dan mengirim Neuromarketing Sales Closer Greeting."""
         phone = "628111000022"
         clean = normalize_phone_number(phone)
         resp = self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "3"))
@@ -207,7 +207,9 @@ class TestWhatsAppDemoRouter(unittest.TestCase):
         data = resp.json()
         self.assertEqual(data.get("tenant"), "suhu-ads-masterclass")
         self.assertTrue(data.get("is_new_binding"))
-        self.assertIn("Suhu", data["reply"])
+        self.assertIn("Suhu Ads Masterclass 2026", data["reply"])
+        self.assertIn("Rp149.000", data["reply"])
+        self.assertIn("Mau langsung saya amankan slot promo", data["reply"])
         self.assertEqual(user_tenant_sessions.get(clean), "suhu-ads-masterclass")
 
     # =========================================================================
@@ -269,6 +271,63 @@ class TestWhatsAppDemoRouter(unittest.TestCase):
         self.assertEqual(data.get("tenant"), "suhu-ads-masterclass")
         self.assertIn("Pixel Meta Ads", data["reply"])
         self.assertIn("QRIS", data["reply"])
+
+    def test_closing_intent_bypasses_llm_and_sends_qris_invoice(self):
+        """Pesan intent beli ('ya mau' / 'daftar') harus mem-bypass LLM dan langsung mengirim invoice QRIS resmi Rp149.000."""
+        phone = "628111000041"
+        clean = normalize_phone_number(phone)
+
+        # Select option 3 -> lock to suhu-ads-masterclass
+        self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "3"))
+        self.assertEqual(user_tenant_sessions.get(clean), "suhu-ads-masterclass")
+
+        # Kirim intent closing beli
+        resp = self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "ya mau daftar sekarang"))
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data.get("tenant"), "suhu-ads-masterclass")
+        self.assertIn("TAGIHAN PEMBAYARAN RESMI", data["reply"])
+        self.assertIn("INV-SUHU-ADS", data["reply"])
+        self.assertIn("149", data["reply"])
+        self.assertIn("Link Pembayaran Langsung", data["reply"])
+        self.assertIn("[📲 Buka & Scan QRIS]", data["reply"])
+
+        # Verifikasi state sesi
+        from app.services.whatsapp_service import user_session_states
+        self.assertEqual(user_session_states.get(clean), "AWAITING_PAYMENT")
+
+    def test_suhu_ads_reply_boleh_generates_149k_qris(self):
+        """Membalas 'boleh' atau 'mau' langsung men-generate QRIS Rp149.000."""
+        phone = "628111000043"
+        clean = normalize_phone_number(phone)
+
+        # Select option 3
+        self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "3"))
+        
+        # User balas "boleh"
+        resp = self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "boleh"))
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("TAGIHAN PEMBAYARAN RESMI", data["reply"])
+        self.assertIn("149", data["reply"])
+
+    def test_atmosfitnes_closing_intent_sends_gym_qris_invoice(self):
+        """Pesan intent beli di Atmosfitnes ('bayar' / 'qris') langsung mengirim invoice QRIS Gym Rp150.000."""
+        phone = "628111000042"
+        clean = normalize_phone_number(phone)
+
+        # Select option 2 -> lock to atmosfitnes
+        self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "2"))
+        self.assertEqual(user_tenant_sessions.get(clean), "atmosfitnes")
+
+        # Kirim pesan bayar
+        resp = self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "minta qris pembayarannya"))
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data.get("tenant"), "atmosfitnes")
+        self.assertIn("TAGIHAN PEMBAYARAN RESMI", data["reply"])
+        self.assertIn("150", data["reply"])
+        self.assertIn("Link Pembayaran Langsung", data["reply"])
 
     def test_reset_after_session_lock_shows_menu(self):
         """Setelah sesi terkunci ke suhu-ads-masterclass, '#reset' harus kirim menu kembali."""

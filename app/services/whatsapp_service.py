@@ -64,10 +64,11 @@ DEMO_MENU_TEXT = (
 
 DEMO_TENANT_GREETINGS: Dict[str, str] = {
     "suhu-ads-masterclass": (
-        "🎉 *Selamat Datang di Suhu Ads Masterclass!* 🚀\n\n"
-        "Halo Kakak! Anda kini terhubung dengan Asisten Resmi Suhu Ads Masterclass (Digital Course & Edukasi Meta Ads).\n"
-        "Ada yang ingin ditanyakan seputar kurikulum, materi silabus, atau pendaftaran kelas?\n\n"
-        "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
+        "Halo Kak! Selamat datang di *Suhu Ads Masterclass 2026* 🚀\n\n"
+        "Rahasia scale-up Meta Ads & optimasi konversi praktis untuk melipatgandakan profit bisnis.\n\n"
+        "🔥 *Promo Spesial Hari Ini:* Cuma *Rp149.000* (Diskon 50% dari ~Rp299.000~). Sudah termasuk akses video modul Google Drive selamanya + Template Budgeting.\n\n"
+        "Mau langsung saya amankan slot promo & buatkan kode QRIS pembayarannya sekarang Kak?\n\n"
+        "_Ketik #reset kapan saja untuk kembali ke menu demo._"
     ),
     "bale_pananggeuhan": (
         "🏛️ *Sampurasun! Selamat Datang di Balé Pananggeuhan*\n\n"
@@ -82,6 +83,88 @@ DEMO_TENANT_GREETINGS: Dict[str, str] = {
         "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
     ),
 }
+
+# Fast-Track Closing Intents
+BUY_INTENTS = {
+    "ya", "mau", "ya mau", "boleh", "ya boleh", "daftar", "beli", "pesan", "bayar", "transfer", "qris", "checkout", "lanjut",
+    "mau daftar", "mau beli", "mau pesan", "mau bayar", "buatkan qris", "minta qris", "kirim qris",
+    "daftar sekarang", "beli sekarang", "pesan sekarang", "gas", "ok", "oke", "deal", "setuju", "siap", "order", "mau dong", "boleh dong"
+}
+
+user_session_states: Dict[str, str] = {}
+
+
+def is_closing_buy_intent(text: str) -> bool:
+    """Detects if incoming user text indicates high-intent purchase / checkout demand."""
+    clean = (text or "").strip().lower()
+    if clean in BUY_INTENTS:
+        return True
+    tokens = set(clean.split())
+    if any(intent in tokens for intent in {"beli", "pesan", "bayar", "qris", "checkout", "daftar", "order"}):
+        return True
+    if any(phrase in clean for phrase in ["buatkan qris", "minta qris", "kirim qris", "mau bayar", "mau daftar", "mau beli"]):
+        return True
+    return False
+
+
+async def generate_fast_track_checkout_response(
+    tenant_slug: str,
+    from_phone: str,
+    contact_name: str = "Kakak",
+) -> Tuple[str, Dict[str, Any]]:
+    """Generates an immediate fast-track QRIS checkout invoice message for aggressive closing."""
+    from app.services.onboarding_service import onboarding_service
+    from app.services.xendit_service import xendit_service
+
+    clean_phone = normalize_phone_number(from_phone)
+    details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
+    store_name = details.get("tenant", {}).get("name", tenant_slug)
+    products = details.get("products", [])
+
+    if tenant_slug == "atmosfitnes":
+        product_name = "Paket Membership Prima Fit Gym"
+        amount = 150000
+    elif tenant_slug == "suhu-ads-masterclass":
+        product_name = "Suhu Ads Masterclass 2026 (Akses Penuh Promo)"
+        amount = 149000
+    elif products:
+        p = products[0]
+        product_name = p.get("title", f"Produk {store_name}")
+        amount = int(float(p.get("promo_price") or p.get("price") or 50000))
+    else:
+        product_name = f"Paket Layanan {store_name}"
+        amount = 50000
+
+    invoice = await xendit_service.create_qris_invoice(
+        tenant_slug=tenant_slug,
+        amount=amount,
+        product_name=product_name,
+        customer_phone=clean_phone,
+    )
+
+    if clean_phone:
+        user_session_states[clean_phone] = "AWAITING_PAYMENT"
+
+    external_id = invoice.get("external_id")
+    qr_code_url = invoice.get("qr_code_url")
+    amount_fmt = f"Rp{amount:,.0f}"
+
+    reply_text = (
+        f"🧾 *TAGIHAN PEMBAYARAN RESMI (QRIS)* 🚀\n\n"
+        f"Halo {contact_name}! Berikut rincian pesanan Anda di *{store_name}*:\n"
+        f"• *Item*: {product_name}\n"
+        f"• *Total Tagihan*: *{amount_fmt}*\n"
+        f"• *No. Referensi*: `{external_id}`\n"
+        f"• *Status*: *MENUNGGU PEMBAYARAN*\n\n"
+        f"📱 *CARA PEMBAYARAN CEPAT:*\n"
+        f"1. Buka aplikasi e-Wallet (GoPay / DANA / OVO / ShopeePay) atau Mobile Banking (BCA / Mandiri / BRI / BNI / CIMB).\n"
+        f"2. Scan kode QRIS melalui link berikut:\n"
+        f"   {qr_code_url}\n\n"
+        f"⚡ *Link Pembayaran Langsung:* {qr_code_url}\n\n"
+        f"[📲 Buka & Scan QRIS]\n\n"
+        f"_Setelah pembayaran diverifikasi (otomatis dalam hitungan detik), sistem akan langsung mengirimkan konfirmasi dan akses lengkap ke WhatsApp ini!_"
+    )
+    return reply_text, invoice
 
 
 def resolve_dynamic_tenant_for_whatsapp(
