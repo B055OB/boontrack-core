@@ -5,7 +5,7 @@ Dynamically constructs store-bounded AI system prompts for multi-tenant ecosyste
 1. Injects Store Name, Business Vertical Category, and Tone of Voice.
 2. Injects real catalog products with accurate pricing, variants, bundling promos, and digital asset URLs.
 3. Expanded knowledge bases for vertical tenants (suhu-ads-masterclass, atmosfitnes, bale_pananggeuhan).
-4. Aggressive Closing Pipeline: High-conversion sales closer persona with QRIS trigger.
+4. High-Conversion Sales Closer Persona: Luwes, ramah, solutif, anti-robotik, berorientasi closing cepat via QRIS.
 5. Enforces strict context boundaries and intelligent multi-turn responses.
 """
 
@@ -69,8 +69,8 @@ class CommerceAIEngine:
             gym_kb = EXPANDED_TENANT_KNOWLEDGE.get("atmosfitnes", {})
             pkgs_str = "\n".join([f"- {p}" for p in gym_kb.get("packages", [])])
             return (
-                "Anda adalah Sales Closer profesional dan resepsionis AI resmi untuk Prima Fit Gym (Atmosfitnes).\n"
-                "Tone of Voice: Ramah, energik, memotivasi, solutif, dan berorientasi closing cepat.\n\n"
+                "Anda adalah partner fitness dan Sales Closer profesional untuk Prima Fit Gym (Atmosfitnes).\n"
+                "Gaya Komunikasi: Ramah, santai, energik, luwes seperti manusia, tidak kaku atau robotik.\n\n"
                 "INFORMASI GYM & FASILITAS:\n"
                 f"- Nama Gym: {gym_kb.get('title', 'Prima Fit Gym (Atmosfitnes)')}\n"
                 f"- Lokasi: {gym_kb.get('location')}\n"
@@ -78,10 +78,10 @@ class CommerceAIEngine:
                 f"- Fasilitas: {gym_kb.get('facilities')}\n\n"
                 "PAKET MEMBERSHIP & KELAS RESMI:\n"
                 f"{pkgs_str}\n\n"
-                "STRATEGI CLOSING & CONVERSION:\n"
-                "- Setiap kali menjawab pertanyaan tentang paket/kelas/harga, berikan jawaban padat maksimal 3 kalimat.\n"
-                "- SELALU akhiri respons dengan pertanyaan pemicu closing: 'Mau saya buatkan kode QRIS pembayarannya sekarang Kak?'\n"
-                "- Pembayaran didukung via Dynamic QRIS instan dan akses turnstile gate langsung aktif otomatis setelah bayar."
+                "PANDUAN KOMUNIKASI & CLOSING:\n"
+                "- Jawab setiap pertanyaan atau obrolan santai calon member secara luwes, hangat, dan solutif (maksimal 3-4 kalimat).\n"
+                "- Jika calon member bertanya tentang paket, kelas zumba, atau harga, jelaskan dengan jelas lalu ajak amankan slot: 'Mau saya buatkan kode QRIS pembayarannya sekarang Kak?'\n"
+                "- Pembayaran didukung via Dynamic QRIS instan dan kartu/akses turnstile gate langsung aktif otomatis setelah bayar."
             )
 
         # 2. Khusus Tenant Bale Pananggeuhan
@@ -90,7 +90,7 @@ class CommerceAIEngine:
             svcs_str = "\n".join([f"- {s}" for s in bale_kb.get("services", [])])
             return (
                 "Kamu adalah asisten resmi layanan aspirasi dan pengaduan Balé Pananggeuhan (Layanan Publik Jawa Barat).\n"
-                "Tone of Voice: Sopan, mengayomi, solutif, dan informatif.\n\n"
+                "Gaya Komunikasi: Sopan, mengayomi, solutif, dan informatif.\n\n"
                 "LAYANAN DAN PENGADUAN RESMI:\n"
                 f"{svcs_str}\n"
                 f"- Jam Operasional: {bale_kb.get('operating_hours')}\n\n"
@@ -102,8 +102,8 @@ class CommerceAIEngine:
         details = onboarding_service.get_tenant_details_by_slug(tenant_slug)
         if not details:
             return (
-                f"Anda adalah Sales Closer profesional untuk toko '{tenant_slug}'.\n"
-                "Berikan jawaban padat maksimal 3 kalimat seputar produk, lalu SELALU akhiri dengan: 'Mau saya buatkan kode QRIS pembayarannya sekarang Kak?'"
+                f"Anda adalah Sales Closer dan konsultan produk profesional untuk '{tenant_slug}'.\n"
+                "Jawab dengan ramah, luwes, dan solutif seperti manusia (maksimal 3 kalimat), lalu akhiri dengan: 'Mau saya buatkan kode QRIS pembayarannya sekarang Kak?'"
             )
 
         tenant = details.get("tenant", {})
@@ -161,8 +161,8 @@ class CommerceAIEngine:
             )
 
         prompt = (
-            f"Anda adalah Sales Closer profesional untuk toko '{store_name}' ({vertical}).\n"
-            f"Tone of Voice: {tone}.\n\n"
+            f"Anda adalah Konsultan Ahli & Sales Closer profesional untuk '{store_name}' ({vertical}).\n"
+            f"Gaya Komunikasi: {tone}, santai, luwes, ramah, dan solutif seperti manusia (anti-robotik).\n\n"
             f"INFORMASI TOKO:\n"
             f"- Nama Toko: {store_name}\n"
             f"- Kategori Vertikal: {vertical}\n"
@@ -171,7 +171,7 @@ class CommerceAIEngine:
             f"{catalog_text}"
             f"{curriculum_section}\n\n"
             f"STRATEGI CLOSING & HIGH-CONVERSION SALES CLOSER DIRECTIVE:\n"
-            f"1. Setiap kali menjawab pertanyaan tentang produk, kurikulum, atau harga, berikan jawaban padat dan jelas maksimal 3 kalimat.\n"
+            f"1. Jawab pertanyaan, kekhawatiran, atau obrolan calon pembeli secara luwes, meyakinkan, dan padat (maksimal 3 kalimat).\n"
             f"2. SELALU akhiri respons dengan pertanyaan pemicu closing cepat:\n"
             f"   'Mau saya buatkan kode QRIS pembayarannya sekarang Kak?'\n"
             f"3. Pembayaran didukung via Dynamic QRIS otomatis (BCA, Mandiri, BRI, BNI, DANA, GoPay, OVO, ShopeePay) dengan konfirmasi instan.\n\n"
@@ -194,7 +194,8 @@ class CommerceAIEngine:
         btn_triggers = [
             "INFO_PRODUK", "DETAIL_PRODUK", "INFO_PAKET", "ORDER_PRODUK",
             "LIHAT_PRODUK", "INFO_CATALOG", "PRODUK_DETAIL", "INFO_SILABUS",
-            "INFO_KURIKULUM", "BUKA_MATERI", "INFO_GYM", "INFO_ZUMBA"
+            "INFO_KURIKULUM", "BUKA_MATERI", "INFO_GYM", "INFO_ZUMBA",
+            "BTN_VIEW_SYLLABUS"
         ]
         if clean_btn in btn_triggers or any(clean_btn.startswith(prefix) for prefix in ["INFO_", "DETAIL_"]):
             return True

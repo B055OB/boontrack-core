@@ -500,7 +500,25 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     selected_slug,
                     f"🎉 Anda kini terhubung dengan *{selected_slug}*. Silakan mulai percakapan!"
                 )
-                await send_wa_text(from_phone, greeting, phone_id)
+                if selected_slug == "suhu-ads-masterclass":
+                    buttons = [
+                        {"id": "btn_buy_now", "title": "💳 Beli & Bayar QRIS"},
+                        {"id": "btn_view_syllabus", "title": "📚 Cek Silabus Materi"},
+                        {"id": "btn_menu_reset", "title": "🔄 Menu Toko Lain"},
+                    ]
+                    await send_wa_buttons(
+                        from_phone,
+                        (
+                            "Halo Kak! Selamat datang di *Suhu Ads Masterclass 2026* 🚀\n\n"
+                            "Rahasia scale-up Meta Ads & optimasi konversi praktis untuk melipatgandakan profit bisnis.\n\n"
+                            "🔥 *Promo Hari Ini:* Cuma *Rp149.000* (Diskon 50% dari ~Rp299.000~). Full akses video Google Drive selamanya + Template Budgeting."
+                        ),
+                        buttons,
+                        phone_id,
+                    )
+                else:
+                    await send_wa_text(from_phone, greeting, phone_id)
+
                 safe_log_to_supabase_messages(
                     sender="bot",
                     text=greeting,
@@ -521,6 +539,8 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             # ---------------------------------------------------------------
             # STEP D: NORMAL PIPELINE — Resolve tenant + AI engine
             # ---------------------------------------------------------------
+            clean_btn = str(button_id or "").strip().lower()
+
             tenant_slug, is_new_binding = resolve_dynamic_tenant_for_whatsapp(
                 phone_id=phone_id,
                 from_phone=from_phone,
@@ -540,13 +560,29 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 user_name=contact_name,
                 user_id=from_phone,
                 conversation_id=from_phone,
-                metadata={"phone_number_id": phone_id, "msg_type": msg_type}
+                metadata={"phone_number_id": phone_id, "msg_type": msg_type, "button_id": button_id}
             )
 
             from app.services.whatsapp_service import is_closing_buy_intent, generate_fast_track_checkout_response
 
-            # 1. Fast-Track Closing Checkout Intent Detection (BYPASS LLM)
-            if is_closing_buy_intent(incoming_text) and tenant_slug not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik"):
+            # Handle Interactive Button Clicks & Fast-Track Actions
+            if clean_btn == "btn_menu_reset":
+                if clean_phone:
+                    user_tenant_sessions.pop(clean_phone, None)
+                await send_wa_text(from_phone, DEMO_MENU_TEXT, phone_id)
+                return web.json_response({"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}, status=200)
+
+            if clean_btn == "btn_view_syllabus":
+                reply_text = (
+                    "📚 *SILABUS & KURIKULUM LENGKAP SUHU ADS MASTERCLASS:*\n\n"
+                    "• *Modul 1:* Riset Winning Audience & Bedah Pixel Meta Ads (Event tracking, Custom & Lookalike Audience, CAPI setup)\n"
+                    "• *Modul 2:* Struktur Campaign CBO vs ABO & Scaling Strategy (Budgeting & Ad Sets, Horizontal & Vertical Scaling)\n"
+                    "• *Modul 3:* Funneling, Creative Hook & Copywriting Konversi Tinggi (Video hooks, AIDA framework, LP Optimization)\n"
+                    "• *Bonus:* Template Dashboard Budgeting Notion & Akses Grup Diskusi Telegram VIP\n\n"
+                    "🔥 *Investasi Promo:* Cuma *Rp149.000* (Akses Selamanya + Google Drive Update)\n\n"
+                    "Mau saya buatkan kode QRIS pembayarannya sekarang Kak?"
+                )
+            elif clean_btn == "btn_buy_now" or (is_closing_buy_intent(incoming_text) and tenant_slug not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik")):
                 logger.info(f"[CENTRAL WA FAST-TRACK] Buy intent detected from {from_phone} on tenant '{tenant_slug}' -> issuing QRIS invoice")
                 reply_text, invoice = await generate_fast_track_checkout_response(
                     tenant_slug=tenant_slug,
@@ -554,12 +590,10 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     contact_name=contact_name,
                 )
             elif is_new_binding and _is_onboarding_msg:
-                welcome_msg = details.get("persona", {}).get("welcome_message", "") if details else ""
                 reply_text = (
-                    f"🎉 *Selamat Datang di {store_name}!* 🎉\n\n"
+                    f"🎉 *Selamat Datang di {store_name}!* 🚀\n\n"
                     f"Nomor WhatsApp Kakak (*{contact_name}*) kini resmi terhubung dengan asisten toko *{store_name}*.\n\n"
-                    f"{welcome_msg}\n\n"
-                    f"_Silakan ketik nama produk atau ketik *menu* untuk melihat katalog._"
+                    f"Ada yang bisa kami bantu seputar produk atau promo hari ini?"
                 )
             else:
                 reply_text = await commerce_ai_engine.generate_commerce_response(

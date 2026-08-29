@@ -311,6 +311,84 @@ class TestWhatsAppDemoRouter(unittest.TestCase):
         self.assertIn("TAGIHAN PEMBAYARAN RESMI", data["reply"])
         self.assertIn("149", data["reply"])
 
+    def test_button_buy_now_generates_149k_qris(self):
+        """Klik tombol 'btn_buy_now' langsung men-generate tagihan QRIS Rp149.000."""
+        phone = "628111000044"
+        clean = normalize_phone_number(phone)
+
+        # Select option 3
+        self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "3"))
+
+        # Payload klik tombol btn_buy_now
+        payload = _wa_payload(phone, "Beli")
+        payload["entry"][0]["changes"][0]["value"]["messages"][0]["type"] = "interactive"
+        payload["entry"][0]["changes"][0]["value"]["messages"][0]["interactive"] = {
+            "type": "button_reply",
+            "button_reply": {"id": "btn_buy_now", "title": "💳 Beli & Bayar QRIS"}
+        }
+        resp = self.client.post("/api/v1/whatsapp/webhook", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("TAGIHAN PEMBAYARAN RESMI", data["reply"])
+        self.assertIn("149", data["reply"])
+
+    def test_button_view_syllabus_returns_breakdown(self):
+        """Klik tombol 'btn_view_syllabus' mengembalikan silabus materi dan tawaran QRIS."""
+        phone = "628111000045"
+        clean = normalize_phone_number(phone)
+
+        # Select option 3
+        self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "3"))
+
+        payload = _wa_payload(phone, "Silabus")
+        payload["entry"][0]["changes"][0]["value"]["messages"][0]["type"] = "interactive"
+        payload["entry"][0]["changes"][0]["value"]["messages"][0]["interactive"] = {
+            "type": "button_reply",
+            "button_reply": {"id": "btn_view_syllabus", "title": "📚 Cek Silabus Materi"}
+        }
+        resp = self.client.post("/api/v1/whatsapp/webhook", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("SILABUS & KURIKULUM LENGKAP", data["reply"])
+        self.assertIn("Pixel Meta Ads", data["reply"])
+        self.assertIn("Mau saya buatkan kode QRIS", data["reply"])
+
+    def test_button_menu_reset_dispatches_menu(self):
+        """Klik tombol 'btn_menu_reset' mereset sesi dan menampilkan menu demo."""
+        phone = "628111000046"
+        clean = normalize_phone_number(phone)
+
+        # Select option 3
+        self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "3"))
+        self.assertEqual(user_tenant_sessions.get(clean), "suhu-ads-masterclass")
+
+        payload = _wa_payload(phone, "Menu")
+        payload["entry"][0]["changes"][0]["value"]["messages"][0]["type"] = "interactive"
+        payload["entry"][0]["changes"][0]["value"]["messages"][0]["interactive"] = {
+            "type": "button_reply",
+            "button_reply": {"id": "btn_menu_reset", "title": "🔄 Menu Toko Lain"}
+        }
+        resp = self.client.post("/api/v1/whatsapp/webhook", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn(clean, user_tenant_sessions)
+        self.assertIn("BoonTrack", resp.json()["reply"])
+
+    def test_free_conversational_question_forwarded_to_ai(self):
+        """Pertanyaan bebas/obrolan santai diteruskan ke AI Engine dan dijawab luwes."""
+        phone = "628111000047"
+        clean = normalize_phone_number(phone)
+
+        # Select option 3
+        self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "3"))
+
+        # Kirim pertanyaan bebas
+        resp = self.client.post("/api/v1/whatsapp/webhook", json=_wa_payload(phone, "mau nanya2 dulu dong, saya pemula banget nih"))
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data.get("tenant"), "suhu-ads-masterclass")
+        self.assertNotIn("resmi terhubung", data["reply"])
+        self.assertIn("QRIS", data["reply"])
+
     def test_atmosfitnes_closing_intent_sends_gym_qris_invoice(self):
         """Pesan intent beli di Atmosfitnes ('bayar' / 'qris') langsung mengirim invoice QRIS Gym Rp150.000."""
         phone = "628111000042"
