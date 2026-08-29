@@ -16,7 +16,8 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.models.tenant import Tenant
+from app.models.tenant import Tenant, OnboardingMode
+from app.configs.templates import COMMERCE_TEMPLATE, RETAIL_D2C_TEMPLATE, CommerceVertical
 from app.services.onboarding_service import (
     onboarding_service,
     TenantSlugAlreadyExistsError,
@@ -79,6 +80,8 @@ class TestMerchantSelfOnboarding(unittest.TestCase):
         self.assertEqual(tenant["slug"], slug)
         self.assertEqual(tenant["affiliate_ref"], "AFF-BARISTA-01")
         self.assertEqual(tenant["tier"], "STARTER")
+        self.assertEqual(tenant["onboarding_mode"], "SELF_SERVICE")
+        self.assertEqual(tenant["template"], "COMMERCE_TEMPLATE")
         self.assertTrue(tenant["is_active"])
 
         # 2. Verifikasi Relasi Produk Pertama
@@ -259,6 +262,118 @@ class TestMerchantSelfOnboarding(unittest.TestCase):
         self.assertIn(new_slug, LOADED_CONFIG_TENANTS)
         self.assertEqual(LOADED_CONFIG_TENANTS[new_slug].identity.name, "Kedai Ramen Ichiban")
         self.assertIn(new_slug, TENANT_REGISTRY)
+
+    # =========================================================================
+    # 6. Dual GTM Motion Flags (onboarding_mode)
+    # =========================================================================
+
+    def test_onboarding_mode_dual_gtm_motions(self):
+        """Memvalidasi fleksibilitas dual GTM motion (SELF_SERVICE, ASSISTED, ENTERPRISE)."""
+        # 1. Validasi enum definition & model column index
+        self.assertEqual(OnboardingMode.SELF_SERVICE.value, "SELF_SERVICE")
+        self.assertEqual(OnboardingMode.ASSISTED.value, "ASSISTED")
+        self.assertEqual(OnboardingMode.ENTERPRISE.value, "ENTERPRISE")
+
+        mode_col = Tenant.__table__.columns.get("onboarding_mode")
+        self.assertIsNotNone(mode_col, "Kolom onboarding_mode wajib ada di tabel tenants")
+        self.assertTrue(
+            mode_col.index or any(idx.columns.contains(mode_col) for idx in Tenant.__table__.indexes),
+            "Kolom onboarding_mode harus memiliki database index",
+        )
+
+        # 2. Test Default SELF_SERVICE saat onboarding_mode tidak dikirimkan
+        slug_default = f"store-self-{uuid4().hex[:6]}"
+        resp_def = self.client.post("/api/v1/tenants/onboard", json={
+            "name": "Store Self Service",
+            "slug": slug_default,
+            "product": {"title": "Barang 1", "price": 10000},
+            "payout": {"bank_name": "BCA", "account_number": "111", "account_holder": "Owner"},
+        })
+        self.assertEqual(resp_def.status_code, 201)
+        self.assertEqual(resp_def.json()["tenant"]["onboarding_mode"], "SELF_SERVICE")
+
+        # 3. Test Explicit ASSISTED Onboarding Mode
+        slug_assisted = f"store-assisted-{uuid4().hex[:6]}"
+        resp_asst = self.client.post("/api/v1/tenants/onboard", json={
+            "name": "Store Assisted Motion",
+            "slug": slug_assisted,
+            "onboarding_mode": "ASSISTED",
+            "product": {"title": "Barang Assisted", "price": 20000},
+            "payout": {"bank_name": "BRI", "account_number": "222", "account_holder": "Partner"},
+        })
+        self.assertEqual(resp_asst.status_code, 201)
+        self.assertEqual(resp_asst.json()["tenant"]["onboarding_mode"], "ASSISTED")
+
+        # 4. Test Explicit ENTERPRISE Onboarding Mode
+        slug_ent = f"store-enterprise-{uuid4().hex[:6]}"
+        resp_ent = self.client.post("/api/v1/tenants/onboard", json={
+            "name": "Store Enterprise Motion",
+            "slug": slug_ent,
+            "onboarding_mode": "ENTERPRISE",
+            "tier": "ENTERPRISE",
+            "product": {"title": "Custom Solution", "price": 5000000},
+            "payout": {"bank_name": "MANDIRI", "account_number": "333", "account_holder": "PT Maju Bersama"},
+        })
+        self.assertEqual(resp_ent.status_code, 201)
+        self.assertEqual(resp_ent.json()["tenant"]["onboarding_mode"], "ENTERPRISE")
+
+    # =========================================================================
+    # 7. Generic COMMERCE_TEMPLATE Abstraction & Dynamic Verticals
+    # =========================================================================
+
+    def test_commerce_template_abstraction_and_verticals(self):
+        """Memvalidasi template generic COMMERCE_TEMPLATE, alias RETAIL_D2C_TEMPLATE, dan multi-vertical."""
+        # 1. Validasi struktur generic template & alias backward compatibility
+        self.assertIs(RETAIL_D2C_TEMPLATE, COMMERCE_TEMPLATE, "RETAIL_D2C_TEMPLATE harus alias dari COMMERCE_TEMPLATE")
+        self.assertIn("vertical_configs", COMMERCE_TEMPLATE)
+        for vert in ["DIGITAL_PRODUCTS", "FASHION", "BEAUTY", "FNB", "SERVICES"]:
+            self.assertIn(vert, COMMERCE_TEMPLATE["vertical_configs"])
+
+        # 2. Test Onboarding dengan alias RETAIL_D2C_TEMPLATE -> Ter-normalize ke COMMERCE_TEMPLATE
+        slug_alias = f"d2c-store-{uuid4().hex[:6]}"
+        resp_alias = self.client.post("/api/v1/tenants/onboard", json={
+            "name": "Butik Busana Indah",
+            "slug": slug_alias,
+            "template": "RETAIL_D2C_TEMPLATE",
+            "vertical": "FASHION",
+            "product": {"title": "Kemeja Linen Premium", "price": 175000},
+            "payout": {"bank_name": "BCA", "account_number": "444555", "account_holder": "Butik Indah"},
+        })
+        self.assertEqual(resp_alias.status_code, 201)
+        tenant_alias = resp_alias.json()["tenant"]
+        self.assertEqual(tenant_alias["template"], "COMMERCE_TEMPLATE")
+        self.assertEqual(tenant_alias["vertical"], "FASHION")
+
+        # 3. Test Dynamic Multi-Vertical Configuration (Tanpa duplikasi engine)
+        verticals_to_test = [
+            ("FNB", "Resto Sedap Rasa", "Paket Nasi Liwet", 35000),
+            ("BEAUTY", "Glow Skincare Official", "Serum Pencerah Wajah", 120000),
+            ("SERVICES", "Studio Konsultasi Karir", "Sesi 1-on-1 Mentoring", 250000),
+            ("DIGITAL_PRODUCTS", "EduTech Indonesia", "E-Book Master Python", 75000),
+        ]
+
+        for vert_name, brand_name, prod_title, price in verticals_to_test:
+            vert_slug = f"test-vert-{vert_name.lower()}-{uuid4().hex[:4]}"
+            resp_vert = self.client.post("/api/v1/tenants/onboard", json={
+                "name": brand_name,
+                "slug": vert_slug,
+                "template": "COMMERCE_TEMPLATE",
+                "vertical": vert_name,
+                "product": {"title": prod_title, "price": price},
+                "payout": {"bank_name": "BNI", "account_number": "999888", "account_holder": brand_name},
+            })
+            self.assertEqual(resp_vert.status_code, 201)
+            t_data = resp_vert.json()["tenant"]
+            self.assertEqual(t_data["vertical"], vert_name)
+            self.assertEqual(t_data["template"], "COMMERCE_TEMPLATE")
+
+            # Verifikasi injected runtime persona & keywords
+            actual_slug = t_data["slug"]
+            config = LOADED_CONFIG_TENANTS.get(actual_slug)
+            self.assertIsNotNone(config)
+            self.assertIn(vert_name, COMMERCE_TEMPLATE["vertical_configs"])
+            expected_keywords = COMMERCE_TEMPLATE["vertical_configs"][vert_name]["menu_keywords"]
+            self.assertEqual(config.menu_config.keywords, expected_keywords)
 
 
 if __name__ == "__main__":

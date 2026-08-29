@@ -17,9 +17,10 @@ from typing import Dict, Any, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
-from app.models.tenant import Tenant, TenantTier, TenantPayout
+from app.models.tenant import Tenant, TenantTier, OnboardingMode, TenantPayout
 from app.models.catalog import Product, ProductType, LicenseStatus
 from app.schemas.onboarding_schema import TenantOnboardRequest
+from app.configs.templates import COMMERCE_TEMPLATE, RETAIL_D2C_TEMPLATE, get_commerce_template
 from app.core.tenant_loader import (
     LOADED_CONFIG_TENANTS,
     TENANT_REGISTRY,
@@ -75,6 +76,20 @@ class OnboardingService:
         if tier_str in TenantTier.__members__:
             tier_enum = TenantTier[tier_str]
 
+        # Resolve template & alias (RETAIL_D2C_TEMPLATE -> COMMERCE_TEMPLATE)
+        raw_template = (payload.template or "COMMERCE_TEMPLATE").strip()
+        if raw_template.upper() in ("RETAIL_D2C_TEMPLATE", "COMMERCE_TEMPLATE"):
+            template_name = "COMMERCE_TEMPLATE"
+        else:
+            template_name = raw_template
+
+        # Resolve onboarding mode (Default: SELF_SERVICE)
+        raw_mode = (payload.onboarding_mode or "SELF_SERVICE").upper().strip()
+        mode_enum = OnboardingMode[raw_mode] if raw_mode in OnboardingMode.__members__ else OnboardingMode.SELF_SERVICE
+
+        # Resolve dynamic vertical parameters from generic COMMERCE_TEMPLATE
+        vert_config = get_commerce_template(payload.vertical or "DIGITAL_PRODUCTS")
+
         # Resolve product slug
         prod_slug = payload.product.slug or slugify(payload.product.title) or f"prod-{uuid4().hex[:6]}"
 
@@ -95,12 +110,14 @@ class OnboardingService:
                     if existing_tenant:
                         raise TenantSlugAlreadyExistsError(f"Tenant with slug '{tenant_slug}' already exists")
 
-                    # 1. Insert Tenant
+                    # 1. Insert Tenant with onboarding_mode and template
                     tenant_record = Tenant(
                         id=tenant_id,
                         name=payload.name,
                         slug=tenant_slug,
                         tier=tier_enum,
+                        onboarding_mode=mode_enum,
+                        template=template_name,
                         affiliate_ref=payload.affiliate_ref,
                         is_active=True,
                         created_at=now,
@@ -156,6 +173,9 @@ class OnboardingService:
             "name": payload.name,
             "slug": tenant_slug,
             "tier": tier_enum.value,
+            "template": template_name,
+            "vertical": vert_config["vertical"],
+            "onboarding_mode": mode_enum.value,
             "affiliate_ref": payload.affiliate_ref,
             "admin_email": payload.admin_email,
             "admin_phone": payload.admin_phone,
@@ -197,14 +217,16 @@ class OnboardingService:
                     name=payload.name,
                     slug=tenant_slug,
                     status=TenantStatus.ACTIVE,
-                    description=payload.product.description or f"Store {payload.name}",
+                    description=payload.product.description or f"Store {payload.name} ({vert_config['name']})",
                 ),
                 persona=TenantPersona(
-                    system_prompt=f"Kamu adalah asisten resmi untuk toko {payload.name}.",
+                    system_prompt=f"Kamu adalah asisten resmi untuk toko {payload.name}. {vert_config['system_prompt_addon']}",
                     tone="ramah, profesional, solutif",
                     welcome_message=f"Selamat datang di {payload.name}! Ada yang bisa kami bantu hari ini?",
                 ),
-                menu=TenantMenuConfig(),
+                menu_config=TenantMenuConfig(
+                    keywords=vert_config.get("menu_keywords", {}),
+                ),
             )
             LOADED_CONFIG_TENANTS[tenant_slug] = new_config
             TENANT_REGISTRY[tenant_slug] = {

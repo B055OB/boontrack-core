@@ -40,6 +40,8 @@ async def onboard_tenant_endpoint(
     Returns HTTP 409 Conflict if tenant slug is already registered.
     """
     try:
+        if not payload.onboarding_mode:
+            payload.onboarding_mode = "SELF_SERVICE"
         result = await onboarding_service.onboard_tenant(payload)
         return result
     except TenantSlugAlreadyExistsError as slug_err:

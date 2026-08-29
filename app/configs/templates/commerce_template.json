@@ -1,0 +1,87 @@
+{
+  "template_id": "COMMERCE_TEMPLATE",
+  "alias": "RETAIL_D2C_TEMPLATE",
+  "version": "1.0.0",
+  "description": "Generic multi-vertical commerce template for retail, digital products, F&B, and services",
+  "supported_verticals": [
+    "DIGITAL_PRODUCTS",
+    "FASHION",
+    "BEAUTY",
+    "FNB",
+    "SERVICES"
+  ],
+  "default_vertical": "DIGITAL_PRODUCTS",
+  "vertical_configs": {
+    "DIGITAL_PRODUCTS": {
+      "name": "Digital Products & Downloads",
+      "delivery_adapter": "google_drive",
+      "requires_shipping": false,
+      "fulfillment_type": "INSTANT_DOWNLOAD",
+      "menu_keywords": {
+        "katalog": "CATALOG",
+        "beli": "ORDER",
+        "unduh": "DOWNLOAD",
+        "bantuan": "HELP"
+      },
+      "default_pricing_mode": "flat"
+    },
+    "FASHION": {
+      "name": "Fashion & Apparel",
+      "delivery_adapter": "courier",
+      "requires_shipping": true,
+      "fulfillment_type": "PHYSICAL_DELIVERY",
+      "menu_keywords": {
+        "katalog": "CATALOG",
+        "ukuran": "SIZE_CHART",
+        "beli": "ORDER",
+        "ongkir": "SHIPPING_CHECK"
+      },
+      "default_pricing_mode": "variable"
+    },
+    "BEAUTY": {
+      "name": "Beauty & Personal Care",
+      "delivery_adapter": "courier",
+      "requires_shipping": true,
+      "fulfillment_type": "PHYSICAL_DELIVERY",
+      "menu_keywords": {
+        "katalog": "CATALOG",
+        "konsultasi": "CONSULTATION",
+        "beli": "ORDER",
+        "tips": "BEAUTY_TIPS"
+      },
+      "default_pricing_mode": "variable"
+    },
+    "FNB": {
+      "name": "Food & Beverage",
+      "delivery_adapter": "instant_delivery",
+      "requires_shipping": true,
+      "fulfillment_type": "ON_DEMAND",
+      "menu_keywords": {
+        "menu": "CATALOG",
+        "pesan": "ORDER",
+        "promo": "PROMO",
+        "status": "ORDER_STATUS"
+      },
+      "default_pricing_mode": "flat"
+    },
+    "SERVICES": {
+      "name": "Professional & Booking Services",
+      "delivery_adapter": "calendar_booking",
+      "requires_shipping": false,
+      "fulfillment_type": "APPOINTMENT",
+      "menu_keywords": {
+        "jadwal": "SCHEDULE",
+        "booking": "ORDER",
+        "layanan": "CATALOG",
+        "admin": "ESCALATE"
+      },
+      "default_pricing_mode": "custom"
+    }
+  },
+  "features": {
+    "dynamic_qris": true,
+    "xendit_settlement": true,
+    "whatsapp_notifications": true,
+    "meta_capi_tracking": true
+  }
+}

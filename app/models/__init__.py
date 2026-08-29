@@ -4,7 +4,7 @@ from app.models.digital_asset import Delivery, DigitalAsset, KnowledgeMapping
 
 # Sprint 1 Multi-Tenant Foundations
 from app.models.base import Base, TenantScopedBaseMixin
-from app.models.tenant import Tenant, TenantTier, TenantPayout
+from app.models.tenant import Tenant, TenantTier, OnboardingMode, TenantPayout
 from app.models.catalog import LicenseStatus, Product, ProductType
 from app.models.channels import ChannelStatus, TelegramBot, TenantWhatsAppChannel
 from app.models.device import (
@@ -27,6 +27,7 @@ __all__ = [
     "TenantScopedBaseMixin",
     "Tenant",
     "TenantTier",
+    "OnboardingMode",
     "TenantPayout",
     "Product",
     "ProductType",

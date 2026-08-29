@@ -14,6 +14,12 @@ class TenantTier(str, enum.Enum):
     ENTERPRISE = "ENTERPRISE"
 
 
+class OnboardingMode(str, enum.Enum):
+    SELF_SERVICE = "SELF_SERVICE"
+    ASSISTED = "ASSISTED"
+    ENTERPRISE = "ENTERPRISE"
+
+
 class Tenant(Base):
     __tablename__ = "tenants"
 
@@ -23,6 +29,13 @@ class Tenant(Base):
     tier: Mapped[TenantTier] = mapped_column(
         Enum(TenantTier, name="tenant_tier_enum"), default=TenantTier.STARTER, nullable=False
     )
+    onboarding_mode: Mapped[OnboardingMode] = mapped_column(
+        Enum(OnboardingMode, name="onboarding_mode_enum"),
+        default=OnboardingMode.SELF_SERVICE,
+        nullable=False,
+        index=True,
+    )
+    template: Mapped[str] = mapped_column(String(64), default="COMMERCE_TEMPLATE", nullable=False)
     affiliate_ref: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
