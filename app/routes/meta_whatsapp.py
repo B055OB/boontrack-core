@@ -119,6 +119,7 @@ async def handle_whatsapp_webhook(request: Request):
             user_message=incoming_text,
             user_phone=from_phone,
             user_name=contact_name,
+            button_id=event.get("button_id"),
         )
 
     # Send outbound WhatsApp message asynchronously (non-blocking)

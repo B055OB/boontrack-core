@@ -77,3 +77,42 @@ async def get_tenant_by_slug_endpoint(slug: str):
         )
     return details
 
+
+@onboarding_router.post(
+    "/{slug}/chat",
+    summary="Interactive Tenant Commerce Chat via Onboarding Router",
+)
+async def tenant_slug_chat_endpoint(slug: str, payload: dict = Body(...)):
+    """Processes interactive webchat messages and button payloads for a specific tenant."""
+    from app.services.ai_engine import commerce_ai_engine
+
+    clean_slug = str(slug).strip().lower()
+    details = onboarding_service.get_tenant_details_by_slug(clean_slug)
+    if not details:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tenant with slug '{slug}' not found",
+        )
+
+    message = payload.get("message", "")
+    button_id = payload.get("button_id")
+    session_id = payload.get("session_id")
+    user_name = payload.get("user_name", "Visitor")
+
+    reply = await commerce_ai_engine.generate_commerce_response(
+        tenant_slug=clean_slug,
+        user_message=message,
+        user_phone=session_id or "",
+        user_name=user_name,
+        button_id=button_id,
+    )
+
+    return {
+        "status": "success",
+        "tenant": clean_slug,
+        "slug": clean_slug,
+        "reply": reply,
+        "session_id": session_id,
+    }
+
+

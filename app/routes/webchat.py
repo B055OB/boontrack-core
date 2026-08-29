@@ -117,3 +117,43 @@ async def handle_holding_webchat(payload: WebChatRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing holding webchat: {str(e)}"
         )
+
+
+# 3. ENDPOINT WEBCHAT DYNAMIC COMMERCE TENANT ({slug}.boontrack.com)
+@router.post("/tenant/{slug}", response_model=WebChatResponse, summary="Interactive Webchat for Specific Tenant Slug")
+@router.post("/{slug}", response_model=WebChatResponse, summary="Interactive Webchat for Specific Tenant Slug Alias")
+async def handle_dynamic_tenant_webchat(slug: str, payload: WebChatRequest):
+    """Processes interactive webchat for a specific merchant tenant using CommerceAIEngine."""
+    from app.services.ai_engine import commerce_ai_engine
+    from app.services.onboarding_service import onboarding_service
+
+    clean_slug = str(slug).strip().lower()
+    details = onboarding_service.get_tenant_details_by_slug(clean_slug)
+    if not details:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tenant with slug '{slug}' not found",
+        )
+
+    reply = await commerce_ai_engine.generate_commerce_response(
+        tenant_slug=clean_slug,
+        user_message=payload.message,
+        user_phone=payload.session_id,
+        user_name=f"Web Visitor #{payload.session_id[:5]}",
+    )
+
+    await log_to_supabase_messages(
+        sender="bot",
+        text=reply,
+        tenant_id=clean_slug,
+        channel="webchat",
+        user_id=payload.session_id,
+        user_name=f"Web Visitor #{payload.session_id[:5]}",
+    )
+
+    return WebChatResponse(
+        session_id=payload.session_id,
+        reply=reply,
+        is_lead_qualified=False,
+    )
+

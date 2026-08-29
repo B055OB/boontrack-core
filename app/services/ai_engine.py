@@ -101,25 +101,91 @@ class CommerceAIEngine:
         )
         return prompt
 
+    def is_product_info_trigger(self, message: str, button_id: Optional[str] = None) -> bool:
+        """Detects whether incoming message or button payload requests product/catalog details."""
+        clean_btn = str(button_id or "").strip().upper()
+        clean_text = str(message or "").strip().lower()
+
+        btn_triggers = [
+            "INFO_PRODUK", "DETAIL_PRODUK", "INFO_PAKET", "ORDER_PRODUK",
+            "LIHAT_PRODUK", "INFO_CATALOG", "PRODUK_DETAIL"
+        ]
+        if clean_btn in btn_triggers or any(clean_btn.startswith(prefix) for prefix in ["INFO_", "DETAIL_"]):
+            return True
+
+        text_triggers = [
+            "info produk", "detail produk", "info paket", "detail paket",
+            "lihat produk", "katalog produk", "informasi produk", "penjelasan produk",
+            "produk apa saja", "daftar produk"
+        ]
+        return any(trigger in clean_text for trigger in text_triggers)
+
+    def build_internal_product_query(self, details: Dict[str, Any], product_index: int = 0) -> str:
+        """Constructs an internal LLM query for comprehensive, persuasive product explanation."""
+        products = details.get("products", [])
+        tenant = details.get("tenant", {})
+        store_name = tenant.get("name", "Toko")
+
+        if products and len(products) > product_index:
+            p = products[product_index]
+            product_name = p.get("title", "Produk Unggulan")
+            price = f"Rp{float(p.get('price', 0)):,.0f}"
+            variants = p.get("product_type", "Standard Resmi")
+            materials = p.get("description", "Materi dan silabus lengkap siap pakai")
+            p_type = str(variants).upper()
+            if "DIGITAL" in p_type:
+                promo = "Beli 2 gratis template bonus eksklusif"
+            else:
+                promo = "Diskon paket bundling 10% untuk pemesanan hari ini"
+        else:
+            product_name = f"Paket Layanan {store_name}"
+            price = "Rp50,000"
+            variants = "Standard Resmi"
+            materials = "Layanan langsung terintegrasi"
+            promo = "Diskon paket bundling spesial pelanggan baru"
+
+        return (
+            f"Jelaskan secara lengkap, menarik, dan luwes mengenai produk {product_name} "
+            f"dengan harga {price}, varian/opsi {variants}, materi/silabus {materials}, "
+            f"serta promo bundling {promo} sesuai persona toko."
+        )
+
     async def generate_commerce_response(
         self,
         tenant_slug: str,
         user_message: str,
         user_phone: str = "",
         user_name: str = "",
+        button_id: Optional[str] = None,
     ) -> str:
-        """Generates contextual AI completion using the dynamically injected commerce prompt."""
+        """Generates contextual AI completion using the dynamically injected commerce prompt.
+        
+        If a quick-reply button payload or 'Info Produk' trigger is received, routes through
+        an internal LLM prompt describing the product comprehensively.
+        """
+        details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
         system_prompt = self.build_commerce_system_prompt(tenant_slug)
         clean_msg = (user_message or "").strip()
 
+        # Check if button click or product info request
+        is_info_request = self.is_product_info_trigger(clean_msg, button_id)
+        if is_info_request:
+            query_to_llm = self.build_internal_product_query(details)
+            logger.info(
+                f"[{tenant_slug}] Routed quick-reply button payload '{button_id or clean_msg}' to internal LLM query: {query_to_llm}"
+            )
+        else:
+            query_to_llm = clean_msg
+
         try:
             response = await self.ai_service.generate(
-                user_message=clean_msg,
+                user_message=query_to_llm,
                 system_prompt=system_prompt,
                 context={
                     "tenant_slug": tenant_slug,
                     "phone": user_phone,
                     "name": user_name or "Kakak",
+                    "button_id": button_id,
                 },
             )
             if response and response.strip():
@@ -127,9 +193,28 @@ class CommerceAIEngine:
         except Exception as e:
             logger.warning(f"[{tenant_slug}] AI generation error, falling back: {e}")
 
-        # Fallback response
-        details = onboarding_service.get_tenant_details_by_slug(tenant_slug)
+        # Non-static Fallback Response: Never return static greeting for product info triggers!
         store_name = details.get("tenant", {}).get("name", tenant_slug) if details else tenant_slug
+        products = details.get("products", [])
+
+        if is_info_request and products:
+            p = products[0]
+            title = p.get("title", "Produk Unggulan")
+            price = f"Rp{float(p.get('price', 0)):,.0f}"
+            desc = p.get("description", "Materi dan silabus lengkap siap pakai")
+            p_type = p.get("product_type", "Standard Resmi")
+            promo = "Beli 2 gratis template bonus eksklusif / diskon bundling spesial"
+            return (
+                f"🌟 *Detail Lengkap Produk: {title}*\n\n"
+                f"Halo Kakak! Berikut informasi produk di *{store_name}*:\n\n"
+                f"📌 *Nama Produk:* {title}\n"
+                f"💰 *Harga:* {price}\n"
+                f"📦 *Varian / Opsi:* {p_type}\n"
+                f"📚 *Materi / Silabus:* {desc}\n"
+                f"🎁 *Promo Bundling:* {promo}\n\n"
+                f"Apakah Kakak ingin langsung memesan via pembayaran otomatis kami?"
+            )
+
         return (
             f"Halo Kakak! Selamat datang di *{store_name}*. "
             f"Pesan Kakak sudah kami terima. Silakan ketik nama produk yang ingin dipesan atau ketik 'menu' untuk melihat katalog kami."
@@ -138,3 +223,4 @@ class CommerceAIEngine:
 
 # Singleton
 commerce_ai_engine = CommerceAIEngine()
+
