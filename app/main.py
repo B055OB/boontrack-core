@@ -23,6 +23,7 @@ from app.routes.gym_access_routes import gym_router
 from app.routes.gym_admin_routes import router as gym_admin_router
 from app.routes.payment import payment_router
 from app.routes.webchat import router as webchat_router
+from app.routes.internal_routes import internal_router
 
 # ============================================================================
 # FastAPI Application Entrypoint (Uvicorn / ASGI compatible)
@@ -47,6 +48,8 @@ app.include_router(gym_router, prefix="/api/v1/gym")
 app.include_router(gym_admin_router)
 app.include_router(payment_router)
 app.include_router(webchat_router)
+app.include_router(internal_router)
+
 
 
 
