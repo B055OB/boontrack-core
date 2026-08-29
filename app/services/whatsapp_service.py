@@ -108,21 +108,9 @@ def is_closing_buy_intent(text: str) -> bool:
 
 
 def generate_qris_image_bytes(qr_string: str) -> bytes:
-    """Renders EMVCo QRIS payload string to PNG bytes in memory."""
-    import io
-    import qrcode
-    qr = qrcode.QRCode(
-        version=None,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
-        box_size=10,
-        border=2,
-    )
-    qr.add_data(qr_string)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
+    """Renders EMVCo QRIS payload string to PNG bytes in memory using qris_generator."""
+    from app.services.qris_generator import generate_qris_png_bytes
+    return generate_qris_png_bytes(qr_string)
 
 
 async def generate_fast_track_checkout_response(
@@ -795,26 +783,18 @@ async def send_whatsapp_image_link(
 
 async def send_whatsapp_image(
     to_phone: str = "",
-    image_path_or_bytes: Optional[Union[str, bytes]] = None,
+    image_path_or_bytes: Optional[Union[str, bytes, io.BytesIO]] = None,
     caption: str = "",
     tenant_id: str = "boontrack-career",
     to: Optional[str] = None,
-    image_bytes: Optional[Union[str, bytes]] = None,
-    tenant: Optional[str] = None
+    image_bytes: Optional[Union[str, bytes, io.BytesIO]] = None,
+    tenant: Optional[str] = None,
+    media_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Mengirim pesan gambar ke WhatsApp user via Meta WhatsApp Cloud API menggunakan media_id atau URL link."""
+    """Mengirim pesan gambar ke WhatsApp user via Meta WhatsApp Cloud API menggunakan media_id atau in-memory buffer."""
     target_phone = str(to or to_phone or "").strip()
     img_data = image_bytes if image_bytes is not None else image_path_or_bytes
     effective_tenant = str(tenant or tenant_id or "boontrack-career").strip()
-
-    # Jika img_data adalah URL string publik (http/https), langsung gunakan send_whatsapp_image_link
-    if isinstance(img_data, str) and img_data.startswith(("http://", "https://")):
-        return await send_whatsapp_image_link(
-            to=target_phone,
-            image_url=img_data,
-            caption=caption,
-            tenant=effective_tenant
-        )
 
     token, phone_id, version = get_wa_credentials(effective_tenant)
     if not token or not phone_id:
@@ -829,35 +809,47 @@ async def send_whatsapp_image(
         "Content-Type": "application/json"
     }
 
-    # 2. Binary bytes atau file path lokal
-    img_bytes: Optional[bytes] = None
-    filename = "qris.png"
-    mime_type = "image/png"
+    # 1. Jika media_id sudah ada, langsung dispatch tanpa upload ulang
+    resolved_media_id = media_id
 
-    if isinstance(img_data, bytes):
-        img_bytes = img_data
-    elif isinstance(img_data, str) and os.path.exists(img_data):
-        try:
-            with open(img_data, "rb") as f:
-                img_bytes = f.read()
-            filename = os.path.basename(img_data)
-            guessed, _ = mimetypes.guess_type(img_data)
-            mime_type = guessed or ("image/jpeg" if filename.lower().endswith((".jpg", ".jpeg")) else "image/png")
-        except Exception as err:
-            logger.error(f"[WhatsApp Service] Error reading local image file {img_data}: {err}", exc_info=True)
+    # 2. Jika img_data adalah URL string publik (http/https), gunakan send_whatsapp_image_link
+    if not resolved_media_id and isinstance(img_data, str) and img_data.startswith(("http://", "https://")):
+        return await send_whatsapp_image_link(
+            to=target_phone,
+            image_url=img_data,
+            caption=caption,
+            tenant=effective_tenant
+        )
 
-    if not img_bytes:
-        logger.warning("[WhatsApp Service] No valid image bytes to send, falling back to text.")
-        print("[WhatsApp Service WARNING] No valid image bytes to send, falling back to text.", flush=True)
-        return await send_whatsapp_text(clean_phone, caption, tenant_id=effective_tenant)
+    # 3. Handle buffer io.BytesIO, bytes, atau local file path
+    if not resolved_media_id:
+        img_bytes: Optional[bytes] = None
+        filename = "qris.png"
+        mime_type = "image/png"
 
-    # Upload bytes ke Meta Media Endpoint untuk mendapatkan media_id
-    print(f"[WhatsApp Service] Uploading {len(img_bytes)} bytes of {filename} for {clean_phone} (tenant={effective_tenant})...", flush=True)
-    media_id = await upload_media(bytes_data=img_bytes, mime_type=mime_type, filename=filename, tenant_id=effective_tenant)
-    if not media_id:
-        logger.error("[WhatsApp Service] Media upload failed in send_whatsapp_image, falling back to text.")
-        print("[WhatsApp Service ERROR] Media upload failed, falling back to text.", flush=True)
-        return await send_whatsapp_text(clean_phone, caption, tenant_id=effective_tenant)
+        if isinstance(img_data, io.BytesIO):
+            img_bytes = img_data.getvalue()
+        elif isinstance(img_data, bytes):
+            img_bytes = img_data
+        elif isinstance(img_data, str) and os.path.exists(img_data):
+            try:
+                with open(img_data, "rb") as f:
+                    img_bytes = f.read()
+                filename = os.path.basename(img_data)
+                guessed, _ = mimetypes.guess_type(img_data)
+                mime_type = guessed or ("image/jpeg" if filename.lower().endswith((".jpg", ".jpeg")) else "image/png")
+            except Exception as err:
+                logger.error(f"[WhatsApp Service] Error reading local image file {img_data}: {err}", exc_info=True)
+
+        if not img_bytes:
+            logger.warning("[WhatsApp Service] No valid image bytes or media_id to send, falling back to text.")
+            return await send_whatsapp_text(clean_phone, caption, tenant_id=effective_tenant)
+
+        # Upload bytes ke Meta Media Endpoint untuk mendapatkan media_id
+        resolved_media_id = await upload_media(bytes_data=img_bytes, mime_type=mime_type, filename=filename, tenant_id=effective_tenant)
+        if not resolved_media_id:
+            logger.error("[WhatsApp Service] Media upload failed in send_whatsapp_image, falling back to text.")
+            return await send_whatsapp_text(clean_phone, caption, tenant_id=effective_tenant)
 
     payload = {
         "messaging_product": "whatsapp",
@@ -865,13 +857,13 @@ async def send_whatsapp_image(
         "to": clean_phone,
         "type": "image",
         "image": {
-            "id": str(media_id),
+            "id": str(resolved_media_id),
             "caption": caption
         }
     }
 
     try:
-        print(f"[META WA SEND IMAGE (MEDIA_ID)] POST {url} to {clean_phone} | media_id={media_id}", flush=True)
+        print(f"[META WA SEND IMAGE (MEDIA_ID)] POST {url} to {clean_phone} | media_id={resolved_media_id}", flush=True)
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(url, headers=headers, json=payload)
             print(f"[META WA SEND IMAGE RESPONSE] HTTP {response.status_code} - {response.text}", flush=True)
