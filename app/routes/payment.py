@@ -3,23 +3,101 @@ import os
 import re
 import logging
 from aiohttp import web
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
-from fastapi import APIRouter, HTTPException, Path
+from uuid import uuid4
+from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, Path, Body, status
 from fastapi.responses import StreamingResponse
 
 from app.services.whatsapp_service import send_whatsapp_text
 from app.services.cv_state_engine import GLOBAL_USER_STATES
 from app.core.database import track_event
 from app.utils.qris_generator import generate_dynamic_qris_payload, generate_qris_image_bytes
+from app.services.xendit_service import xendit_service
 
 logger = logging.getLogger(__name__)
 
 # FastAPI Router untuk Payment & QRIS Test
-payment_router = APIRouter(prefix="/api/v1/payment", tags=["Payment QRIS"])
+payment_router = APIRouter(tags=["Payment QRIS"])
 
 
-@payment_router.get("/qris/test/{amount}", summary="Test Dynamic QRIS Generator PNG")
+class CreateDynamicQRISRequest(BaseModel):
+    """Payload to create dynamic QRIS transaction."""
+    tenant_id: Optional[str] = Field(None, description="Tenant identifier")
+    tenant_slug: Optional[str] = Field(None, description="Tenant slug")
+    amount: int = Field(..., description="Nominal transaksi dalam Rupiah")
+    external_id: Optional[str] = Field(None, description="ID invoice unik / order ID")
+    customer_phone: Optional[str] = Field(None, description="Nomor WhatsApp customer")
+    customer_name: Optional[str] = Field(None, description="Nama customer")
+    product_name: Optional[str] = Field(None, description="Nama produk")
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Metadata transaksi")
+
+
+class CreateDynamicQRISResponse(BaseModel):
+    """Response containing real EMVCo QR string, image URL, and expiration."""
+    status: str = "ACTIVE"
+    external_id: str
+    amount: int
+    qr_string: str
+    qr_code_url: str
+    expired_at: str
+    tenant_id: str
+
+
+@payment_router.post(
+    "/api/v1/payments/qris/create",
+    response_model=CreateDynamicQRISResponse,
+    summary="Create Real Dynamic QRIS via Xendit Sandbox API",
+)
+@payment_router.post(
+    "/api/v1/payment/qris/create",
+    response_model=CreateDynamicQRISResponse,
+    summary="Create Real Dynamic QRIS Alias",
+)
+async def create_dynamic_qris_endpoint(payload: CreateDynamicQRISRequest = Body(...)):
+    """Creates dynamic QRIS code via Xendit Sandbox API or resilient local EMVCo generator.
+    
+    Returns:
+    - qr_string: Raw EMVCo payload for client-side rendering
+    - qr_code_url: Official QR code image URL
+    - external_id: Order reference ID
+    - amount: Transaction amount
+    - expired_at: Expiration timestamp in ISO 8601
+    """
+    if payload.amount <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nominal pembayaran harus lebih besar dari 0",
+        )
+
+    target_tenant = payload.tenant_slug or payload.tenant_id or "commerce"
+    order_id = payload.external_id or f"INV-{uuid4().hex[:8].upper()}"
+
+    res = await xendit_service.create_dynamic_qris(
+        external_id=order_id,
+        amount=payload.amount,
+        tenant_id=target_tenant,
+        customer_phone=payload.customer_phone,
+        metadata={
+            "product_name": payload.product_name,
+            "customer_name": payload.customer_name,
+            **(payload.metadata or {}),
+        },
+    )
+
+    return CreateDynamicQRISResponse(
+        status=res.get("status", "ACTIVE"),
+        external_id=res.get("external_id", order_id),
+        amount=res.get("amount", payload.amount),
+        qr_string=res.get("qr_string", ""),
+        qr_code_url=res.get("qr_code_url", ""),
+        expired_at=res.get("expired_at", res.get("expires_at", "")),
+        tenant_id=target_tenant,
+    )
+
+
+@payment_router.get("/api/v1/payment/qris/test/{amount}", summary="Test Dynamic QRIS Generator PNG")
 async def test_dynamic_qris_fastapi(amount: int = Path(..., description="Nominal transaksi dalam Rupiah")):
     """Endpoint testing FastAPI untuk generate Dynamic QRIS langsung dalam format gambar PNG."""
     static_qris = os.getenv("BOONTRACK_STATIC_QRIS", "").strip()

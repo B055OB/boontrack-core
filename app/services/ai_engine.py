@@ -157,15 +157,29 @@ class CommerceAIEngine:
         user_phone: str = "",
         user_name: str = "",
         button_id: Optional[str] = None,
+        history: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """Generates contextual AI completion using the dynamically injected commerce prompt.
         
         If a quick-reply button payload or 'Info Produk' trigger is received, routes through
         an internal LLM prompt describing the product comprehensively.
+        Incorporates conversation history for multi-turn conversational context.
         """
         details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
         system_prompt = self.build_commerce_system_prompt(tenant_slug)
         clean_msg = (user_message or "").strip()
+
+        # Incorporate multi-turn conversation history into system prompt
+        if history and isinstance(history, list):
+            formatted_turns = []
+            for turn in history[-8:]:
+                role = turn.get("role") or turn.get("sender") or "User"
+                content = turn.get("content") or turn.get("text") or turn.get("message") or ""
+                if content:
+                    formatted_turns.append(f"{str(role).capitalize()}: {content}")
+            if formatted_turns:
+                history_str = "\n\nRIWAYAT PERCAKAPAN SEBELUMNYA:\n" + "\n".join(formatted_turns)
+                system_prompt = f"{system_prompt}{history_str}"
 
         # Check if button click or product info request
         is_info_request = self.is_product_info_trigger(clean_msg, button_id)
@@ -186,6 +200,7 @@ class CommerceAIEngine:
                     "phone": user_phone,
                     "name": user_name or "Kakak",
                     "button_id": button_id,
+                    "has_history": bool(history),
                 },
             )
             if response and response.strip():
@@ -193,11 +208,11 @@ class CommerceAIEngine:
         except Exception as e:
             logger.warning(f"[{tenant_slug}] AI generation error, falling back: {e}")
 
-        # Non-static Fallback Response: Never return static greeting for product info triggers!
+        # Non-static Conversational Fallback Response:
         store_name = details.get("tenant", {}).get("name", tenant_slug) if details else tenant_slug
         products = details.get("products", [])
 
-        if is_info_request and products:
+        if products:
             p = products[0]
             title = p.get("title", "Produk Unggulan")
             price = f"Rp{float(p.get('price', 0)):,.0f}"
@@ -205,19 +220,15 @@ class CommerceAIEngine:
             p_type = p.get("product_type", "Standard Resmi")
             promo = "Beli 2 gratis template bonus eksklusif / diskon bundling spesial"
             return (
-                f"🌟 *Detail Lengkap Produk: {title}*\n\n"
-                f"Halo Kakak! Berikut informasi produk di *{store_name}*:\n\n"
-                f"📌 *Nama Produk:* {title}\n"
-                f"💰 *Harga:* {price}\n"
-                f"📦 *Varian / Opsi:* {p_type}\n"
-                f"📚 *Materi / Silabus:* {desc}\n"
+                f"Halo Kakak! Di *{store_name}*, kami menyediakan *{title}* seharga {price} ({p_type}).\n\n"
+                f"📚 *Materi & Silabus:* {desc}\n"
                 f"🎁 *Promo Bundling:* {promo}\n\n"
-                f"Apakah Kakak ingin langsung memesan via pembayaran otomatis kami?"
+                f"Apakah ada yang ingin Kakak tanyakan lebih detail, atau ingin langsung memesan via QRIS otomatis?"
             )
 
         return (
             f"Halo Kakak! Selamat datang di *{store_name}*. "
-            f"Pesan Kakak sudah kami terima. Silakan ketik nama produk yang ingin dipesan atau ketik 'menu' untuk melihat katalog kami."
+            f"Ada yang bisa kami bantu seputar produk dan katalog kami hari ini?"
         )
 
 

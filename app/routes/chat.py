@@ -5,7 +5,7 @@ Handles webchat messages and quick-reply button clicks with real product catalog
 """
 
 import logging
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, status, Body
 from pydantic import BaseModel, Field
 
@@ -20,9 +20,11 @@ chat_router = APIRouter(tags=["Tenant Commerce Chat"])
 
 class TenantChatRequest(BaseModel):
     """Payload for initiating or sending messages to tenant commerce chat."""
+    tenant_slug: Optional[str] = Field(None, description="Tenant slug identifier")
     tenant_id: Optional[str] = Field(None, description="Tenant ID or slug")
     slug: Optional[str] = Field(None, description="Tenant slug identifier")
     message: str = Field(..., description="Message text or button label")
+    history: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="Previous conversation turns")
     button_id: Optional[str] = Field(None, description="Optional quick-reply button payload (e.g. INFO_PRODUK)")
     session_id: Optional[str] = Field(None, description="Webchat session or visitor identifier")
     user_name: Optional[str] = Field("Visitor", description="User display name")
@@ -51,15 +53,16 @@ async def send_tenant_chat(payload: TenantChatRequest = Body(...)):
     """Processes interactive chat for a tenant using CommerceAIEngine with real product context.
     
     Accepts:
-    - 'tenant_id' or 'slug'
+    - 'tenant_slug', 'slug', or 'tenant_id'
     - 'message' (user query or button label)
-    - 'button_id' (e.g. INFO_PRODUK, DETAIL_PRODUK)
+    - 'history' (conversation history)
+    - 'session_id' (user session)
     """
-    target_slug = payload.slug or payload.tenant_id
+    target_slug = payload.tenant_slug or payload.slug or payload.tenant_id
     if not target_slug:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Either 'tenant_id' or 'slug' must be specified in the request body",
+            detail="Either 'tenant_slug', 'slug', or 'tenant_id' must be specified in the request body",
         )
 
     clean_slug = str(target_slug).strip().lower()
@@ -76,6 +79,7 @@ async def send_tenant_chat(payload: TenantChatRequest = Body(...)):
         user_phone=payload.session_id or "",
         user_name=payload.user_name or "Visitor",
         button_id=payload.button_id,
+        history=payload.history,
     )
 
     # Safe log to Supabase messages
