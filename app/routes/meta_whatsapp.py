@@ -260,28 +260,36 @@ async def handle_whatsapp_webhook(request: Request):
             "🔥 *Investasi Promo:* Cuma *Rp149.000* (Akses Selamanya + Google Drive Update)\n\n"
             "Mau saya buatkan kode QRIS pembayarannya sekarang Kak?"
         )
-    elif button_id == "btn_buy_now" or (is_closing_buy_intent(incoming_text) and tenant_slug not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik")):
-        logger.info(f"[META WA FAST-TRACK] Buy intent detected from {from_phone} on tenant '{tenant_slug}' -> issuing native QRIS image")
+    elif button_id == "btn_buy_now" or (is_closing_buy_intent(incoming_text, button_id) and tenant_slug not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik")):
+        logger.info(f"[META WA FAST-TRACK] Buy intent detected from {from_phone} on tenant '{tenant_slug}' (button_id={button_id}) -> issuing QRIS invoice")
         reply, invoice, qr_bytes = await generate_fast_track_checkout_response(
             tenant_slug=tenant_slug,
             from_phone=from_phone,
             contact_name=contact_name,
         )
         if from_phone:
-            try:
-                if qr_bytes:
+            image_sent = False
+            if qr_bytes:
+                try:
                     from app.services.whatsapp_service import send_whatsapp_image
-                    await send_whatsapp_image(
+                    img_resp = await send_whatsapp_image(
                         to_phone=from_phone,
                         image_path_or_bytes=qr_bytes,
                         caption=reply,
                         tenant_id=tenant_slug,
                     )
-                else:
+                    if img_resp and not (isinstance(img_resp, dict) and img_resp.get("status") == "failed"):
+                        image_sent = True
+                except Exception as err:
+                    logger.warning(f"[META WA Image Send Warning] {err}")
+                    image_sent = False
+
+            # Robust Fallback: jika pengiriman gambar gagal, kirimkan detail via teks
+            if not image_sent:
+                try:
                     await send_whatsapp_text(to_phone=from_phone, text=reply)
-            except Exception as err:
-                logger.warning(f"[META WA Image Send Warning] {err}")
-                await send_whatsapp_text(to_phone=from_phone, text=reply)
+                except Exception as text_err:
+                    logger.error(f"[META WA Text Fallback Error] {text_err}")
     elif is_new_binding and _is_onboarding_msg:
         reply = (
             f"🎉 *Selamat Datang di {store_name}!* 🚀\n\n"

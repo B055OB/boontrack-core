@@ -88,21 +88,26 @@ DEMO_TENANT_GREETINGS: Dict[str, str] = {
 BUY_INTENTS = {
     "ya", "mau", "ya mau", "boleh", "ya boleh", "daftar", "beli", "pesan", "bayar", "transfer", "qris", "checkout", "lanjut",
     "mau daftar", "mau beli", "mau pesan", "mau bayar", "buatkan qris", "minta qris", "kirim qris",
-    "daftar sekarang", "beli sekarang", "pesan sekarang", "gas", "ok", "oke", "deal", "setuju", "siap", "order", "mau dong", "boleh dong"
+    "daftar sekarang", "beli sekarang", "pesan sekarang", "gas", "ok", "oke", "deal", "setuju", "siap", "order", "mau dong", "boleh dong",
+    "beli & bayar qris", "bayar qris", "btn_buy_now"
 }
 
 user_session_states: Dict[str, str] = {}
 
 
-def is_closing_buy_intent(text: str) -> bool:
-    """Detects if incoming user text indicates high-intent purchase / checkout demand."""
+def is_closing_buy_intent(text: str, button_id: Optional[str] = None) -> bool:
+    """Detects if incoming user text or button payload indicates high-intent purchase / checkout demand."""
+    clean_btn = str(button_id or "").strip().lower()
+    if clean_btn in {"btn_buy_now", "buy_now", "order_now", "qris_buy", "beli_qris"}:
+        return True
+
     clean = (text or "").strip().lower()
     if clean in BUY_INTENTS:
         return True
     tokens = set(clean.split())
     if any(intent in tokens for intent in {"beli", "pesan", "bayar", "qris", "checkout", "daftar", "order"}):
         return True
-    if any(phrase in clean for phrase in ["buatkan qris", "minta qris", "kirim qris", "mau bayar", "mau daftar", "mau beli"]):
+    if any(phrase in clean for phrase in ["buatkan qris", "minta qris", "kirim qris", "mau bayar", "mau daftar", "mau beli", "beli & bayar qris", "bayar qris", "ya boleh"]):
         return True
     return False
 
@@ -484,16 +489,16 @@ def extract_meta_whatsapp_event(data: dict) -> Dict[str, Any]:
             inter = msg_obj.get("interactive", {})
             if isinstance(inter, dict):
                 inter_type = inter.get("type")
-                if inter_type == "button_reply":
+                if inter_type == "button_reply" or "button_reply" in inter:
                     btn = inter.get("button_reply", {})
                     if isinstance(btn, dict):
                         res["button_id"] = btn.get("id")
-                        res["text"] = str(btn.get("title", "")).strip()
-                elif inter_type == "list_reply":
+                        res["text"] = str(btn.get("title", "") or btn.get("id", "")).strip()
+                elif inter_type == "list_reply" or "list_reply" in inter:
                     item = inter.get("list_reply", {})
                     if isinstance(item, dict):
                         res["button_id"] = item.get("id")
-                        res["text"] = str(item.get("title", "")).strip()
+                        res["text"] = str(item.get("title", "") or item.get("id", "")).strip()
 
         elif msg_type == "button":
             btn_obj = msg_obj.get("button", {})

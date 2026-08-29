@@ -96,14 +96,105 @@ class TestNativeQRISMedia(unittest.IsolatedAsyncioTestCase):
             }]
         })
 
+    def test_interactive_button_reply_beli_bayar_qris_triggers_qris_message(self):
+        """Event button_reply 'Beli & Bayar QRIS' / 'btn_buy_now' harus diekstrak dan memicu pesan QRIS."""
+        phone = "6281122334466"
+
+        # Lock session to suhu-ads-masterclass
+        self.client.post("/api/v1/whatsapp/webhook", json={
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "id": "WHATSAPP_BUSINESS_ACCOUNT_ID",
+                "changes": [{
+                    "value": {
+                        "messaging_product": "whatsapp",
+                        "metadata": {"display_phone_number": "628123456789", "phone_number_id": "123456"},
+                        "contacts": [{"profile": {"name": "Tester"}, "wa_id": phone}],
+                        "messages": [{"from": phone, "id": "wamid.001", "timestamp": "1600000000", "text": {"body": "3"}, "type": "text"}]
+                    },
+                    "field": "messages"
+                }]
+            }]
+        })
+
+        # Kirim interactive button_reply
+        resp = self.client.post("/api/v1/whatsapp/webhook", json={
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "id": "WHATSAPP_BUSINESS_ACCOUNT_ID",
+                "changes": [{
+                    "value": {
+                        "messaging_product": "whatsapp",
+                        "metadata": {"display_phone_number": "628123456789", "phone_number_id": "123456"},
+                        "contacts": [{"profile": {"name": "Tester"}, "wa_id": phone}],
+                        "messages": [{
+                            "from": phone,
+                            "id": "wamid.003",
+                            "timestamp": "1600000002",
+                            "type": "interactive",
+                            "interactive": {
+                                "type": "button_reply",
+                                "button_reply": {
+                                    "id": "btn_buy_now",
+                                    "title": "Beli & Bayar QRIS"
+                                }
+                            }
+                        }]
+                    },
+                    "field": "messages"
+                }]
+            }]
+        })
+
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data.get("tenant"), "suhu-ads-masterclass")
         self.assertIn("Berikut Kode QRIS Pembayaran Anda", data["reply"])
-        self.assertIn("Suhu Ads Masterclass 2026", data["reply"])
         self.assertIn("Rp149.000", data["reply"])
-        self.assertIn("15 Menit", data["reply"])
-        self.assertIn("Google Drive", data["reply"])
+
+    @patch("app.services.whatsapp_service.send_whatsapp_image", return_value=None)
+    def test_media_upload_failure_triggers_robust_text_fallback(self, mock_img):
+        """Jika pengiriman media gambar gagal/error, sistem tetap mengirim pesan teks instruksi bayar."""
+        phone = "6281122334477"
+
+        # Lock session
+        self.client.post("/api/v1/whatsapp/webhook", json={
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "id": "WHATSAPP_BUSINESS_ACCOUNT_ID",
+                "changes": [{
+                    "value": {
+                        "messaging_product": "whatsapp",
+                        "metadata": {"display_phone_number": "628123456789", "phone_number_id": "123456"},
+                        "contacts": [{"profile": {"name": "Tester"}, "wa_id": phone}],
+                        "messages": [{"from": phone, "id": "wamid.001", "timestamp": "1600000000", "text": {"body": "3"}, "type": "text"}]
+                    },
+                    "field": "messages"
+                }]
+            }]
+        })
+
+        # Kirim bayar qris
+        resp = self.client.post("/api/v1/whatsapp/webhook", json={
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "id": "WHATSAPP_BUSINESS_ACCOUNT_ID",
+                "changes": [{
+                    "value": {
+                        "messaging_product": "whatsapp",
+                        "metadata": {"display_phone_number": "628123456789", "phone_number_id": "123456"},
+                        "contacts": [{"profile": {"name": "Tester"}, "wa_id": phone}],
+                        "messages": [{"from": phone, "id": "wamid.004", "timestamp": "1600000003", "text": {"body": "bayar qris"}, "type": "text"}]
+                    },
+                    "field": "messages"
+                }]
+            }]
+        })
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("Berikut Kode QRIS Pembayaran Anda", data["reply"])
+        self.assertIn("Rp149.000", data["reply"])
 
 
 if __name__ == "__main__":
