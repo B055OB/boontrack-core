@@ -165,12 +165,25 @@ class XenditService:
         return self._intents_by_external_id.get(str(external_id))
 
     def mark_settled(self, external_id: str) -> None:
-        """Marks a transaction as settled / paid in local state."""
+        """Marks a transaction as settled / paid in local state and attaches digital delivery link."""
         self._processed_transactions.add(str(external_id))
+        intent = self._intents_by_external_id.get(str(external_id), {})
+        tenant_id = intent.get("tenant_id", "commerce")
+
+        download_url = "https://drive.google.com/drive/folders/suhu-ads-masterclass-2026"
+        delivery_msg = (
+            f"Pembayaran Berhasil! Silakan akses materi lengkap Anda di sini: {download_url}\n[📂 Buka Materi Drive]"
+        )
+
         if str(external_id) in self._intents_by_external_id:
             self._intents_by_external_id[str(external_id)]["status"] = "COMPLETED"
+            self._intents_by_external_id[str(external_id)]["download_url"] = download_url
+            self._intents_by_external_id[str(external_id)]["delivery_message"] = delivery_msg
+
         if str(external_id) in PAYMENT_INTENTS:
             PAYMENT_INTENTS[str(external_id)]["status"] = "PAID"
+            PAYMENT_INTENTS[str(external_id)]["download_url"] = download_url
+            PAYMENT_INTENTS[str(external_id)]["delivery_message"] = delivery_msg
 
     def is_settled(self, external_id: str) -> bool:
         """Checks if a transaction is already completed / settled."""

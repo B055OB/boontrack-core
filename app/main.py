@@ -28,6 +28,7 @@ from app.routes.xendit import xendit_router
 from app.routes.onboarding import onboarding_router
 from app.routes.meta_whatsapp import meta_whatsapp_router
 from app.routes.chat import chat_router
+from app.routes.tenant_routes import tenant_router
 
 # ============================================================================
 # FastAPI Application Entrypoint (Uvicorn / ASGI compatible)
@@ -57,6 +58,7 @@ app.include_router(xendit_router)
 app.include_router(onboarding_router)
 app.include_router(meta_whatsapp_router)
 app.include_router(chat_router)
+app.include_router(tenant_router)
 
 
 

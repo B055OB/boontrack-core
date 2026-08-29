@@ -27,19 +27,38 @@ async def send_whatsapp_payment_notification(
     amount: int,
     tenant_id: str = "boontrack-career",
 ) -> None:
-    """Background task to notify customer of successful payment via WhatsApp."""
+    """Background task to notify customer of successful payment via WhatsApp, including digital delivery URL."""
     if not phone:
         logger.info(f"[Xendit WA Skip] No phone number associated with order '{external_id}'")
         return
 
+    from app.services.onboarding_service import onboarding_service
+    details = onboarding_service.get_tenant_details_by_slug(tenant_id) or {}
+    products = details.get("products", [])
+    store_name = details.get("tenant", {}).get("name", tenant_id)
+
+    product_title = "Materi Digital Masterclass"
+    download_url = "https://drive.google.com/drive/folders/suhu-ads-masterclass-2026"
+    if products:
+        p = products[0]
+        product_title = p.get("title", product_title)
+        download_url = (
+            p.get("delivery_url")
+            or p.get("download_url")
+            or p.get("asset_reference")
+            or download_url
+        )
+
     msg = (
-        "🎉 *PEMBAYARAN DITERIMA!*\n\n"
-        f"Halo, pembayaran pesanan Anda telah berhasil diverifikasi oleh sistem:\n"
+        "🎉 *PEMBAYARAN DITERIMA & LUNAS!*\n\n"
+        f"Halo, pembayaran pesanan Anda untuk *{product_title}* di *{store_name}* telah berhasil diverifikasi oleh sistem:\n"
         f"• *Nomor Referensi*: `{external_id}`\n"
         f"• *Total Nominal*: Rp{amount:,}\n"
         f"• *Kanal*: QRIS Dinamis (Xendit)\n"
-        f"• *Status*: *LUNAS (SETTLED)*\n\n"
-        "Layanan / pesanan Anda telah aktif dan sedang diproses. Terima kasih! 🙏"
+        f"• *Status*: *LUNAS (PAID / SETTLED)*\n\n"
+        f"Pembayaran Berhasil! Silakan akses materi lengkap Anda di sini: {download_url}\n\n"
+        f"[📂 Buka Materi Drive]\n\n"
+        "Layanan / pesanan Anda telah aktif dan siap dipelajari. Terima kasih telah bergabung! 🙏"
     )
 
     try:

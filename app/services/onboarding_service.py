@@ -327,6 +327,160 @@ class OnboardingService:
             "persona": persona,
         }
 
+    def get_tenant_settings(self, slug: str) -> Optional[Dict[str, Any]]:
+        """Retrieves store settings, trust badges, persona, payout, products list, and FAQ."""
+        clean_slug = slugify(slug)
+        details = self.get_tenant_details_by_slug(clean_slug)
+        if not details:
+            return None
+
+        tenant = details.get("tenant", {})
+        persona = details.get("persona", {})
+        payout = details.get("payout", {})
+        products = details.get("products", [])
+
+        faq = tenant.get("faq") or [
+            {
+                "q": "Bagaimana cara akses materi digital?",
+                "a": "Link Google Drive resmi otomatis dikirimkan ke WhatsApp Anda setelah verifikasi pembayaran berhasil.",
+            },
+            {
+                "q": "Apakah materi bisa diakses selamanya?",
+                "a": "Ya, seluruh modul video, template, dan grup diskusi dapat diakses seumur hidup (lifetime access).",
+            },
+            {
+                "q": "Metode pembayaran apa saja yang didukung?",
+                "a": "Pembayaran dapat dilakukan melalui Dynamic QRIS otomatis (BCA, Mandiri, BRI, BNI, DANA, GoPay, OVO, ShopeePay).",
+            },
+        ]
+
+        trust_badges = tenant.get("trust_badges") or [
+            "100% Garansi Pembelajaran",
+            "Akses Seumur Hidup",
+            "Update Materi Berkala",
+            "Mentor Praktisi Berpengalaman",
+        ]
+
+        delivery_url = tenant.get("delivery_url") or (
+            products[0].get("delivery_url") if products else "https://drive.google.com/drive/folders/suhu-ads-masterclass-2026"
+        )
+
+        return {
+            "status": "success",
+            "tenant": {
+                **tenant,
+                "public_description": tenant.get("public_description") or (products[0].get("description") if products else "Toko Resmi Terverifikasi"),
+                "trust_badges": trust_badges,
+                "delivery_url": delivery_url,
+            },
+            "persona": persona,
+            "payout": payout,
+            "products": products,
+            "faq": faq,
+        }
+
+    def update_tenant_settings(self, slug: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Updates store metadata, public description, persona bot, and auto-delivery URL.
+        
+        Syncs updates directly to LOADED_CONFIG_TENANTS and TENANT_REGISTRY.
+        """
+        clean_slug = slugify(slug)
+        details = self.get_tenant_details_by_slug(clean_slug)
+        if not details:
+            return None
+
+        tenant = details["tenant"]
+        t_id = tenant.get("id")
+
+        if "name" in updates:
+            tenant["name"] = updates["name"]
+        if "public_description" in updates:
+            tenant["public_description"] = updates["public_description"]
+        if "trust_badges" in updates:
+            tenant["trust_badges"] = updates["trust_badges"]
+        if "delivery_url" in updates:
+            tenant["delivery_url"] = updates["delivery_url"]
+        if "faq" in updates:
+            tenant["faq"] = updates["faq"]
+
+        self._tenants_by_slug[clean_slug] = tenant
+
+        # Sync Persona
+        if "persona" in updates and isinstance(updates["persona"], dict):
+            p_updates = updates["persona"]
+            cfg = LOADED_CONFIG_TENANTS.get(clean_slug)
+            if cfg:
+                if "system_prompt" in p_updates:
+                    cfg.persona.system_prompt = p_updates["system_prompt"]
+                if "tone" in p_updates:
+                    cfg.persona.tone = p_updates["tone"]
+                if "welcome_message" in p_updates:
+                    cfg.persona.welcome_message = p_updates["welcome_message"]
+                if "default_fallback_message" in p_updates:
+                    cfg.persona.default_fallback_message = p_updates["default_fallback_message"]
+
+        # Sync runtime config and registry
+        cfg = LOADED_CONFIG_TENANTS.get(clean_slug)
+        if cfg:
+            if "name" in updates:
+                cfg.identity.name = updates["name"]
+            if "public_description" in updates:
+                cfg.identity.description = updates["public_description"]
+
+        if clean_slug in TENANT_REGISTRY and "name" in updates:
+            TENANT_REGISTRY[clean_slug]["name"] = updates["name"]
+
+        return self.get_tenant_settings(clean_slug)
+
+    def upsert_tenant_product(self, slug: str, product_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Adds or updates a product in tenant catalog, synced with live runtime."""
+        clean_slug = slugify(slug)
+        details = self.get_tenant_details_by_slug(clean_slug)
+        if not details:
+            return None
+
+        tenant = details["tenant"]
+        t_id = str(tenant.get("id"))
+
+        existing_products = self._products_by_tenant.get(t_id)
+        if not isinstance(existing_products, list):
+            existing_products = [existing_products] if existing_products else []
+
+        prod_id = str(product_data.get("id") or uuid4())
+        prod_title = product_data.get("title", "New Product")
+        prod_slug = slugify(prod_title)
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        new_prod = {
+            "id": prod_id,
+            "tenant_id": t_id,
+            "title": prod_title,
+            "slug": prod_slug,
+            "price": float(product_data.get("price", 0)),
+            "promo_price": float(product_data.get("promo_price")) if product_data.get("promo_price") is not None else None,
+            "description": product_data.get("description", ""),
+            "product_type": product_data.get("product_type", "DIGITAL_COURSE"),
+            "delivery_url": product_data.get("delivery_url") or "https://drive.google.com/drive/folders/suhu-ads-masterclass-2026",
+            "asset_reference": product_data.get("asset_reference") or prod_slug,
+            "is_available": product_data.get("is_available", True),
+            "updated_at": now_iso,
+        }
+
+        updated = False
+        for idx, p in enumerate(existing_products):
+            if str(p.get("id")) == prod_id or str(p.get("slug")) == prod_slug:
+                existing_products[idx] = {**p, **new_prod}
+                new_prod = existing_products[idx]
+                updated = True
+                break
+
+        if not updated:
+            new_prod["created_at"] = now_iso
+            existing_products.append(new_prod)
+
+        self._products_by_tenant[t_id] = existing_products
+        return new_prod
+
     def clear_state(self) -> None:
         """Clears in-memory state for test isolation."""
         for slug in list(self._tenants_by_slug.keys()):

@@ -14,6 +14,19 @@ from app.services.ai_gateway import ai_gateway
 
 logger = logging.getLogger("COMMERCE_AI_ENGINE")
 
+EXPANDED_TENANT_KNOWLEDGE: Dict[str, Dict[str, Any]] = {
+    "suhu-ads-masterclass": {
+        "title": "Suhu Ads Masterclass 2026",
+        "curriculum": [
+            "Modul 1: Riset Winning Audience & Bedah Pixel Meta Ads (Event tracking, Custom & Lookalike Audience, CAPI setup)",
+            "Modul 2: Struktur Campaign CBO vs ABO & Scaling Strategy (Budgeting & Ad Sets, Horizontal & Vertical Scaling)",
+            "Modul 3: Funneling, Creative Hook & Copywriting Konversi Tinggi (Video hooks, AIDA framework, LP Optimization)",
+            "Bonus: Template Dashboard Budgeting & Akses Grup Diskusi Eksklusif (Notion spreadsheet, private Telegram VIP)",
+        ],
+        "delivery_url": "https://drive.google.com/drive/folders/suhu-ads-masterclass-2026",
+    }
+}
+
 
 class CommerceAIEngine:
     """Universal AI Engine for Multi-Tenant Commerce with Dynamic Prompt Injection."""
@@ -76,6 +89,17 @@ class CommerceAIEngine:
                 f"   - Info Pengiriman: Konfirmasi instan via WhatsApp"
             )
 
+        # Knowledge Base Kurikulum Khusus
+        kb = EXPANDED_TENANT_KNOWLEDGE.get(tenant_slug, {})
+        curriculum_section = ""
+        if kb.get("curriculum"):
+            modules_str = "\n".join([f"- {m}" for m in kb["curriculum"]])
+            curriculum_section = (
+                f"\n\nKURIKULUM & SILABUS MATERI RESMI:\n"
+                f"{modules_str}\n"
+                f"- Link Akses Materi: {kb.get('delivery_url', '')}\n"
+            )
+
         # 2. Assembling System Prompt dengan Negative Context Boundaries
         prompt = (
             f"Kamu adalah asisten resmi untuk toko '{store_name}' ({vertical}).\n"
@@ -85,7 +109,8 @@ class CommerceAIEngine:
             f"- Kategori Vertikal: {vertical}\n"
             f"- Sapaan Pembuka: {welcome}\n\n"
             f"KATALOG PRODUK RIIL YANG TERSEDIA:\n"
-            f"{catalog_text}\n\n"
+            f"{catalog_text}"
+            f"{curriculum_section}\n\n"
             f"PANDUAN & CARA PEMESANAN:\n"
             f"- Pelanggan dapat memesan produk langsung melalui chat ini.\n"
             f"- Pembayaran didukung via QRIS (BCA, Mandiri, BRI, DANA, GoPay, OVO, ShopeePay) dengan verifikasi otomatis.\n"
@@ -108,7 +133,8 @@ class CommerceAIEngine:
 
         btn_triggers = [
             "INFO_PRODUK", "DETAIL_PRODUK", "INFO_PAKET", "ORDER_PRODUK",
-            "LIHAT_PRODUK", "INFO_CATALOG", "PRODUK_DETAIL"
+            "LIHAT_PRODUK", "INFO_CATALOG", "PRODUK_DETAIL", "INFO_SILABUS",
+            "INFO_KURIKULUM", "BUKA_MATERI"
         ]
         if clean_btn in btn_triggers or any(clean_btn.startswith(prefix) for prefix in ["INFO_", "DETAIL_"]):
             return True
@@ -116,7 +142,8 @@ class CommerceAIEngine:
         text_triggers = [
             "info produk", "detail produk", "info paket", "detail paket",
             "lihat produk", "katalog produk", "informasi produk", "penjelasan produk",
-            "produk apa saja", "daftar produk"
+            "produk apa saja", "daftar produk", "silabus", "kurikulum",
+            "modul", "materi", "belajar apa", "isi materi", "isi kursus"
         ]
         return any(trigger in clean_text for trigger in text_triggers)
 
@@ -211,6 +238,22 @@ class CommerceAIEngine:
         # Non-static Conversational Fallback Response:
         store_name = details.get("tenant", {}).get("name", tenant_slug) if details else tenant_slug
         products = details.get("products", [])
+
+        # Check if tenant has expanded curriculum knowledge base or query asks for syllabus
+        kb = EXPANDED_TENANT_KNOWLEDGE.get(tenant_slug, {})
+        asks_curriculum = any(w in clean_msg.lower() for w in ["silabus", "kurikulum", "modul", "materi", "belajar apa"]) or is_info_request
+
+        if kb.get("curriculum") and asks_curriculum:
+            modules_formatted = "\n".join([f"• *{m}*" for m in kb["curriculum"]])
+            p_price = f"Rp{float(products[0].get('price', 199000)):,.0f}" if products else "Rp199,000"
+            return (
+                f"Halo Kakak! Di *{store_name}*, berikut kurikulum & silabus materi lengkap yang akan dipelajari:\n\n"
+                f"📚 *SILABUS & KURIKULUM LENGKAP:*\n"
+                f"{modules_formatted}\n\n"
+                f"💰 *Investasi:* {p_price} (Akses Seumur Hidup & Update Materi)\n"
+                f"📂 *Akses Pembelajaran:* Link Google Drive resmi otomatis dikirimkan ke WhatsApp setelah pembayaran diverifikasi.\n\n"
+                f"Apakah Kakak ingin langsung mendaftar via pembayaran QRIS otomatis?"
+            )
 
         if products:
             p = products[0]
