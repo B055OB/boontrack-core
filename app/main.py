@@ -25,6 +25,7 @@ from app.routes.payment import payment_router
 from app.routes.webchat import router as webchat_router
 from app.routes.internal_routes import internal_router
 from app.routes.xendit import xendit_router
+from app.routes.onboarding import onboarding_router
 
 # ============================================================================
 # FastAPI Application Entrypoint (Uvicorn / ASGI compatible)
@@ -51,6 +52,7 @@ app.include_router(payment_router)
 app.include_router(webchat_router)
 app.include_router(internal_router)
 app.include_router(xendit_router)
+app.include_router(onboarding_router)
 
 
 
