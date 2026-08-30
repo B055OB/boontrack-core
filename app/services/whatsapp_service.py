@@ -2,14 +2,13 @@ import os
 import io
 import mimetypes
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Union, List, Tuple
 import httpx
 from supabase import create_client, Client
 
 import uuid
 import asyncio
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -54,21 +53,20 @@ def normalize_phone_number(raw_phone: Optional[str]) -> str:
 user_tenant_sessions: Dict[str, str] = {}
 
 DEMO_MENU_TEXT = (
-    "Halo! Selamat datang di Portal Pengujian Ekosistem BoonTrack 🚀\n\n"
+    "Halo! Selamat datang di *Portal Pengujian Ekosistem BoonTrack* 🚀\n\n"
     "Silakan pilih demo asisten/merchant yang ingin Anda uji coba:\n"
-    "1️⃣ Bale Pananggeuhan (Layanan Publik & Administrasi Warga)\n"
-    "2️⃣ Prima Fit Gym (Membership Fitness & Reservasi Fasilitas)\n"
-    "3️⃣ Suhu Ads Masterclass (Digital Course & Edukasi Meta Ads)\n\n"
-    "Balas dengan mengetik angka 1, 2, atau 3 (atau ketik #reset kapan saja untuk ganti toko)."
+    "1️⃣ *Bale Pananggeuhan* (Layanan Publik & Administrasi Warga)\n"
+    "2️⃣ *Prima Fit Gym* (Membership Fitness & Reservasi Fasilitas)\n"
+    "3️⃣ *OnlineBoost* (Digital Marketing, Paid Traffic & Agency Kit)\n\n"
+    "Balas dengan mengetik angka *1*, *2*, atau *3* (atau ketik *#reset* kapan saja untuk ganti toko)."
 )
 
 DEMO_TENANT_GREETINGS: Dict[str, str] = {
-    "suhu-ads-masterclass": (
-        "Halo Kak! Selamat datang di *Suhu Ads Masterclass 2026* 🚀\n\n"
-        "Rahasia scale-up Meta Ads & optimasi konversi praktis untuk melipatgandakan profit bisnis.\n\n"
-        "🔥 *Promo Spesial Hari Ini:* Cuma *Rp149.000* (Diskon 50% dari ~Rp299.000~). Sudah termasuk akses video modul Google Drive selamanya + Template Budgeting.\n\n"
-        "Mau langsung saya amankan slot promo & buatkan kode QRIS pembayarannya sekarang Kak?\n\n"
-        "_Ketik #reset kapan saja untuk kembali ke menu demo._"
+    "onlineboost": (
+        "🚀 *Selamat datang di OnlineBoost Digital Hub*\n\n"
+        "Solusi scale-up bisnis via Paid Traffic (Meta & Google Ads), Landing Page High-Converting, dan Creative Agency.\n\n"
+        "🔥 *Paket Starter Kit:* Cuma *Rp99.000* (Diskon Khusus Hari Ini).\n\n"
+        "Ketik *Beli* untuk pembayaran QRIS instan atau ketik *Layanan* untuk cek paket materi."
     ),
     "bale_pananggeuhan": (
         "🏛️ *Sampurasun! Selamat Datang di Balé Pananggeuhan*\n\n"
@@ -147,19 +145,19 @@ async def generate_fast_track_checkout_response(
     store_name = details.get("tenant", {}).get("name", tenant_slug)
     products = details.get("products", [])
 
-    if tenant_slug == "suhu-ads-masterclass":
-        product_name = "Suhu Ads Masterclass 2026"
-        amount = 149000
+    if tenant_slug in ("onlineboost", "suhu-ads-masterclass"):
+        product_name = "Masterclass Ads & Paid Traffic Starter Kit"
+        amount = 99000
     elif tenant_slug == "atmosfitnes":
         product_name = "Paket Membership Prima Fit Gym"
         amount = 150000
     elif products:
         p = products[0]
         product_name = p.get("title", f"Produk {store_name}")
-        amount = int(float(p.get("promo_price") or p.get("price") or 50000))
+        amount = int(float(p.get("promo_price") or p.get("price") or 99000))
     else:
         product_name = f"Paket Layanan {store_name}"
-        amount = 50000
+        amount = 99000
 
     invoice = await xendit_service.create_qris_invoice(
         tenant_slug=tenant_slug,
@@ -174,21 +172,21 @@ async def generate_fast_track_checkout_response(
     qr_string = invoice.get("qr_string", "")
     qr_bytes = generate_qris_image_bytes(qr_string) if qr_string else b""
     
-    # Pastikan qr_code_url selalu tersedia untuk direct image dispatch
+    # URL gambar PNG resolusi tinggi siap render Meta WhatsApp API
     qr_code_url = invoice.get("qr_code_url")
     if not qr_code_url and qr_string:
-        qr_code_url = f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&data={urllib.parse.quote(qr_string)}"
+        qr_code_url = f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&format=png&data={urllib.parse.quote(qr_string)}"
         invoice["qr_code_url"] = qr_code_url
 
     amount_fmt = f"Rp{amount:,.0f}".replace(",", ".")
 
     caption = (
         f"Berikut Kode QRIS Pembayaran Anda 💳\n\n"
-        f"📌 Produk: {product_name}\n"
-        f"💰 Total: {amount_fmt}\n"
+        f"📌 Produk: *{product_name}*\n"
+        f"💰 Total: *{amount_fmt}*\n"
         f"⏱️ Berlaku: 15 Menit\n\n"
         f"Silakan scan QR di atas menggunakan m-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n\n"
-        f"Setelah pembayaran sukses, link akses Google Drive akan otomatis dikirimkan ke chat ini 🚀"
+        f"Setelah pembayaran sukses, notifikasi dan akses materi/layanan akan otomatis aktif 🚀"
     )
     return caption, invoice, qr_bytes
 
@@ -204,6 +202,12 @@ def resolve_dynamic_tenant_for_whatsapp(
     clean_phone = normalize_phone_number(from_phone)
     text = (message_text or "").strip()
     text_lower = text.lower()
+
+    clean_phone_id = str(phone_id).strip()
+    if clean_phone_id == "1340866379104241":
+        return "boontrack-career", False
+    if clean_phone_id == "1268977686299719":
+        return "om_budi", False
 
     match = re.search(
         r"saya\s+baru\s+(?:saja\s+)?(?:mendaftar|daftar)\s+toko\s+([a-zA-Z0-9\-_]+)",
@@ -229,20 +233,16 @@ def resolve_dynamic_tenant_for_whatsapp(
     option_map = {
         "1": "bale_pananggeuhan",
         "bale": "bale_pananggeuhan",
-        "bale pangageuhan": "bale_pananggeuhan",
         "bale pananggeuhan": "bale_pananggeuhan",
-        "bale-pangageuhan": "bale_pananggeuhan",
         "2": "atmosfitnes",
         "gym": "atmosfitnes",
         "prima fit": "atmosfitnes",
         "prima fit gym": "atmosfitnes",
-        "prima": "atmosfitnes",
         "atmosfitnes": "atmosfitnes",
-        "3": "suhu-ads-masterclass",
-        "suhu ads": "suhu-ads-masterclass",
-        "suhu": "suhu-ads-masterclass",
-        "suhu-ads": "suhu-ads-masterclass",
-        "suhu ads masterclass": "suhu-ads-masterclass",
+        "3": "onlineboost",
+        "onlineboost": "onlineboost",
+        "suhu-ads-masterclass": "onlineboost",
+        "suhu ads": "onlineboost",
     }
     if text_lower in option_map:
         target_slug = option_map[text_lower]
@@ -257,24 +257,17 @@ def resolve_dynamic_tenant_for_whatsapp(
     if text_lower in ("halo", "hi", "p", "test", "tes", "hai", "start", "info"):
         return "__MENU__", False
 
-    clean_phone_id = str(phone_id).strip()
-    if clean_phone_id == "1340866379104241":
-        return "boontrack-career", False
-    if clean_phone_id == "1268977686299719":
-        return "om_budi", False
-
     try:
         from app.services.onboarding_service import onboarding_service
         latest_slug = onboarding_service.get_latest_commerce_tenant()
         if latest_slug:
             if clean_phone:
                 user_tenant_sessions[clean_phone] = latest_slug
-            logger.info(f"[DYNAMIC TENANT WA] Resolved sender {clean_phone} to latest commerce tenant '{latest_slug}'")
             return latest_slug, False
     except Exception as e:
         logger.warning(f"[DYNAMIC TENANT WA] Failed to query latest commerce tenant: {e}")
 
-    return "digicorn", False
+    return "onlineboost", False
 
 
 async def log_to_supabase_messages(
@@ -563,7 +556,7 @@ def _get_auth_headers(token: str) -> Dict[str, str]:
 async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False, tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
     token, phone_id, version = get_wa_credentials(tenant_id)
     if not token or not phone_id:
-        logger.error(f"[WhatsApp Service] Missing credentials (token_len={len(token)}, phone_id={phone_id}, tenant={tenant_id})")
+        logger.error(f"[WhatsApp Service] Missing credentials (phone_id={phone_id}, tenant={tenant_id})")
         return None
 
     clean_phone = str(to_phone).replace("+", "").strip()
@@ -769,7 +762,7 @@ async def send_whatsapp_image(
     token, phone_id, version = get_wa_credentials(effective_tenant)
     clean_phone = str(target_phone).replace("+", "").strip()
 
-    # 1. Jika img_data adalah URL string publik, langsung gunakan send_whatsapp_image_link
+    # 1. Jika img_data adalah URL string publik, gunakan send_whatsapp_image_link
     if isinstance(img_data, str) and img_data.startswith(("http://", "https://")):
         return await send_whatsapp_image_link(
             to=clean_phone,
