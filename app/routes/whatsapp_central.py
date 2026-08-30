@@ -152,7 +152,7 @@ async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any, c
         form_data = aiohttp.FormData()
         form_data.add_field("messaging_product", "whatsapp")
         form_data.add_field("type", "image/png")
-        form_data.add_field("file", image_url_or_path_or_bytes, filename="qris_xendit.png", content_type="image/png")
+        form_data.add_field("file", image_url_or_path_or_bytes, filename="qris_code.png", content_type="image/png")
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -196,7 +196,7 @@ async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any, c
         ).strip().rstrip("/")
         if not public_base.startswith("http"):
             public_base = f"https://{public_base}"
-        filename = os.path.basename(image_url) if image_url else "qrisombudi.png"
+        filename = os.path.basename(image_url) if image_url else "qris_code.png"
         image_url = f"{public_base}/static/{filename}"
 
     url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
@@ -221,7 +221,6 @@ async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any, c
                 if resp.status in (200, 201):
                     return True
                 logger.error(f"[CENTRAL WA] Outbound image error ({resp.status}) phone_id={clean_id}: {resp_text}")
-                # Fallback ke pesan teks lengkap
                 await send_wa_text(recipient_phone, caption, phone_id)
                 return False
     except Exception as e:
@@ -268,6 +267,7 @@ async def send_wa_list_menu(recipient_phone: str, body_text: str, button_text: s
 @central_wa_routes.get("/webhook/whatsapp")
 @central_wa_routes.get("/api/v1/tenants/om_budi/webhook/whatsapp")
 @central_wa_routes.get("/api/whatsapp/webhook")
+@central_wa_routes.get("/api/v1/whatsapp/webhook")
 async def verify_webhook(request: web.Request) -> web.Response:
     query = request.query
     mode = query.get("hub.mode")
@@ -285,6 +285,7 @@ async def verify_webhook(request: web.Request) -> web.Response:
 @central_wa_routes.post("/webhook/whatsapp")
 @central_wa_routes.post("/api/v1/tenants/om_budi/webhook/whatsapp")
 @central_wa_routes.post("/api/whatsapp/webhook")
+@central_wa_routes.post("/api/v1/whatsapp/webhook")
 async def handle_incoming_webhook(request: web.Request) -> web.Response:
     try:
         data = await request.json()
@@ -364,7 +365,6 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         elif phone_id == OM_BUDI_PHONE_NUMBER_ID:
             from app.tenants.om_budi.service import om_budi_service
 
-            # 1. Simpan pesan user masuk ke Supabase secara aman non-blocking
             safe_log_to_supabase_messages(
                 sender="user",
                 text=incoming_text or f"[{msg_type}]",
@@ -427,9 +427,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             elif res_type == "buttons" and len(reply_text) <= 1000:
                 await send_wa_buttons(from_phone, reply_text, buttons or [], phone_id)
             else:
-                # Kirim teks konten biasa (support s/d 4096 karakter)
                 await send_wa_text(from_phone, reply_text, phone_id)
-                # Jika ada tombol navigasi, kirim pesan terpisah berisi tombol
                 if buttons:
                     await send_wa_buttons(
                         from_phone,
@@ -438,7 +436,6 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                         phone_id
                     )
 
-            # 2. Simpan balasan bot ke Supabase secara aman non-blocking
             safe_log_to_supabase_messages(
                 sender="bot",
                 text=reply_text,
@@ -463,6 +460,8 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 resolve_dynamic_tenant_for_whatsapp,
                 user_tenant_sessions,
                 normalize_phone_number,
+                generate_fast_track_checkout_response,
+                is_closing_buy_intent,
                 DEMO_MENU_TEXT,
                 DEMO_TENANT_GREETINGS,
             )
@@ -471,9 +470,66 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
             clean_phone = normalize_phone_number(from_phone)
             text_lower = (incoming_text or "").strip().lower()
+            clean_btn = str(button_id or "").strip().lower()
 
             # ---------------------------------------------------------------
-            # STEP A: Pre-check — is this an onboarding announcement? Exempt it.
+            # STEP A: Prioritas Tertinggi - Deteksi Tombol / Teks Beli QRIS
+            # ---------------------------------------------------------------
+            is_qris_trigger = (
+                clean_btn in {"btn_buy_now", "buy_now", "order_now", "qris_buy", "beli_qris"}
+                or "beli & bayar qris" in text_lower
+                or "bayar qris" in text_lower
+                or is_closing_buy_intent(incoming_text, clean_btn)
+            )
+
+            active_session_tenant = user_tenant_sessions.get(clean_phone) or "suhu-ads-masterclass"
+
+            if is_qris_trigger and active_session_tenant not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik"):
+                logger.info(f"[CENTRAL WA QRIS] Fast-track buy intent from {from_phone} on tenant '{active_session_tenant}'")
+                
+                safe_log_to_supabase_messages(
+                    sender="user",
+                    text=incoming_text or "[Klik Beli QRIS]",
+                    tenant_id=active_session_tenant,
+                    channel="whatsapp",
+                    user_phone=from_phone,
+                    user_name=contact_name,
+                    user_id=from_phone,
+                    conversation_id=from_phone,
+                    metadata={"phone_number_id": phone_id, "button_id": button_id}
+                )
+
+                reply_text, invoice, qr_bytes = await generate_fast_track_checkout_response(
+                    tenant_slug=active_session_tenant,
+                    from_phone=from_phone,
+                    contact_name=contact_name,
+                )
+
+                is_img_sent = False
+                if qr_bytes:
+                    is_img_sent = await send_wa_image(from_phone, qr_bytes, reply_text, phone_id)
+                
+                if not is_img_sent and invoice.get("qr_code_url"):
+                    is_img_sent = await send_wa_image(from_phone, invoice.get("qr_code_url"), reply_text, phone_id)
+
+                if not is_img_sent:
+                    await send_wa_text(from_phone, reply_text, phone_id)
+
+                safe_log_to_supabase_messages(
+                    sender="bot",
+                    text=f"[Kirim QRIS {invoice.get('external_id')}] {reply_text}",
+                    tenant_id=active_session_tenant,
+                    channel="whatsapp",
+                    user_phone=from_phone,
+                    user_name=contact_name,
+                    user_id=from_phone,
+                    conversation_id=from_phone,
+                    metadata={"phone_number_id": phone_id, "invoice_id": invoice.get("external_id")}
+                )
+                return web.json_response({"status": "qris_dispatched", "tenant": active_session_tenant}, status=200)
+
+            # ---------------------------------------------------------------
+            # STEP B: Pre-check — is this an onboarding announcement? Exempt it.
             # ---------------------------------------------------------------
             _is_onboarding_msg = bool(
                 re.search(
@@ -485,9 +541,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             )
 
             # ---------------------------------------------------------------
-            # STEP B: TOP-LEVEL DEMO MENU INTERCEPTOR
-            #   Trigger: greeting keywords OR sender has no active session
-            #   Does NOT apply to onboarding messages or numeric menu options.
+            # STEP C: TOP-LEVEL DEMO MENU INTERCEPTOR
             # ---------------------------------------------------------------
             _MENU_TRIGGER_KEYWORDS = {"halo", "hi", "p", "test", "tes", "hai", "start", "info", "menu", "demo", "#reset", "reset"}
             _MENU_OPTION_MAP = {
@@ -496,15 +550,13 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 "3": "suhu-ads-masterclass",
             }
 
-            _is_keyword_trigger = text_lower in _MENU_TRIGGER_KEYWORDS
+            _is_keyword_trigger = text_lower in _MENU_TRIGGER_KEYWORDS or clean_btn == "btn_menu_reset"
             _has_active_session = bool(clean_phone and clean_phone in user_tenant_sessions)
 
             if (not _is_onboarding_msg) and (_is_keyword_trigger or not _has_active_session):
-                # Clear any stale session before showing menu
                 if clean_phone:
                     user_tenant_sessions.pop(clean_phone, None)
 
-                # Let numeric options (1/2/3) fall through to STEP C
                 if text_lower not in _MENU_OPTION_MAP:
                     logger.info(
                         f"[CENTRAL WA INTERCEPTOR] Sender {from_phone} triggered menu "
@@ -528,7 +580,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     }, status=200)
 
             # ---------------------------------------------------------------
-            # STEP C: MENU OPTION SELECTION (1, 2, 3)
+            # STEP D: MENU OPTION SELECTION (1, 2, 3)
             # ---------------------------------------------------------------
             if text_lower in _MENU_OPTION_MAP:
                 selected_slug = _MENU_OPTION_MAP[text_lower]
@@ -578,10 +630,8 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 }, status=200)
 
             # ---------------------------------------------------------------
-            # STEP D: NORMAL PIPELINE — Resolve tenant + AI engine
+            # STEP E: NORMAL PIPELINE — Resolve tenant + AI engine
             # ---------------------------------------------------------------
-            clean_btn = str(button_id or "").strip().lower()
-
             tenant_slug, is_new_binding = resolve_dynamic_tenant_for_whatsapp(
                 phone_id=phone_id,
                 from_phone=from_phone,
@@ -591,7 +641,6 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             details = onboarding_service.get_tenant_details_by_slug(tenant_slug)
             store_name = details.get("tenant", {}).get("name", tenant_slug) if details else tenant_slug
 
-            # Simpan pesan user ke Supabase
             safe_log_to_supabase_messages(
                 sender="user",
                 text=incoming_text,
@@ -604,16 +653,6 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 metadata={"phone_number_id": phone_id, "msg_type": msg_type, "button_id": button_id}
             )
 
-            from app.services.whatsapp_service import is_closing_buy_intent, generate_fast_track_checkout_response
-
-            # Handle Interactive Button Clicks & Fast-Track Actions
-            if clean_btn == "btn_menu_reset":
-                if clean_phone:
-                    user_tenant_sessions.pop(clean_phone, None)
-                await send_wa_text(from_phone, DEMO_MENU_TEXT, phone_id)
-                return web.json_response({"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}, status=200)
-
-            is_image_sent = False
             if clean_btn == "btn_view_syllabus":
                 reply_text = (
                     "📚 *SILABUS & KURIKULUM LENGKAP SUHU ADS MASTERCLASS:*\n\n"
@@ -624,21 +663,14 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     "🔥 *Investasi Promo:* Cuma *Rp149.000* (Akses Selamanya + Google Drive Update)\n\n"
                     "Mau saya buatkan kode QRIS pembayarannya sekarang Kak?"
                 )
-            elif clean_btn == "btn_buy_now" or (is_closing_buy_intent(incoming_text) and tenant_slug not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik")):
-                logger.info(f"[CENTRAL WA FAST-TRACK] Buy intent detected from {from_phone} on tenant '{tenant_slug}' -> issuing QRIS invoice")
-                reply_text, invoice, qr_bytes = await generate_fast_track_checkout_response(
-                    tenant_slug=tenant_slug,
-                    from_phone=from_phone,
-                    contact_name=contact_name,
-                )
-                if qr_bytes:
-                    is_image_sent = await send_wa_image(from_phone, qr_bytes, reply_text, phone_id)
+                await send_wa_text(from_phone, reply_text, phone_id)
             elif is_new_binding and _is_onboarding_msg:
                 reply_text = (
                     f"🎉 *Selamat Datang di {store_name}!* 🚀\n\n"
                     f"Nomor WhatsApp Kakak (*{contact_name}*) kini resmi terhubung dengan asisten toko *{store_name}*.\n\n"
                     f"Ada yang bisa kami bantu seputar produk atau promo hari ini?"
                 )
+                await send_wa_text(from_phone, reply_text, phone_id)
             else:
                 reply_text = await commerce_ai_engine.generate_commerce_response(
                     tenant_slug=tenant_slug,
@@ -656,11 +688,9 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                         user_name=contact_name,
                         button_id=button_id,
                     )
+                if reply_text:
+                    await send_wa_text(from_phone, reply_text, phone_id)
 
-            if not is_image_sent:
-                await send_wa_text(from_phone, reply_text, phone_id)
-
-            # Simpan balasan bot ke Supabase
             safe_log_to_supabase_messages(
                 sender="bot",
                 text=reply_text,
