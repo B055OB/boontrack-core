@@ -139,12 +139,47 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Di
 
 
 async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any, caption: str, phone_id: str) -> bool:
-    """Mengirim pesan gambar WhatsApp ke Meta Cloud API menggunakan media_id (upload PNG buffer bytes) atau link URL."""
+    """Mengirim pesan gambar WhatsApp ke Meta Cloud API via direct public URL link atau upload fallback."""
     clean_id_match = re.findall(r"\d+", str(phone_id))
     clean_id = clean_id_match[0] if clean_id_match else phone_id
     token = resolve_tenant_token(clean_id)
 
-    # 1. Jika image adalah PNG bytes, upload langsung ke /media endpoint untuk mendapatkan media_id
+    clean_phone = "".join(filter(str.isdigit, str(recipient_phone)))
+    if clean_phone.startswith("08"):
+        clean_phone = "62" + clean_phone[1:]
+    elif clean_phone.startswith("008"):
+        clean_phone = "62" + clean_phone[2:]
+
+    # 1. Jika input merupakan URL gambar publik yang valid
+    if isinstance(image_url_or_path_or_bytes, str) and image_url_or_path_or_bytes.startswith(("http://", "https://")):
+        image_url = image_url_or_path_or_bytes
+        url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": clean_phone,
+            "type": "image",
+            "image": {
+                "link": image_url,
+                "caption": caption
+            }
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=payload) as resp:
+                    resp_text = await resp.text()
+                    if resp.status in (200, 201):
+                        logger.info(f"[CENTRAL WA] Image successfully delivered to {clean_phone}")
+                        return True
+                    logger.error(f"[CENTRAL WA] Outbound image error ({resp.status}) phone_id={clean_id}: {resp_text}")
+        except Exception as e:
+            logger.error(f"[CENTRAL WA] Exception sending image via URL: {e}", exc_info=True)
+
+    # 2. Upload Bytes PNG jika bukan URL
     if isinstance(image_url_or_path_or_bytes, bytes):
         upload_url = f"https://graph.facebook.com/v20.0/{clean_id}/media"
         headers = {"Authorization": f"Bearer {token}"}
@@ -164,7 +199,7 @@ async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any, c
                             payload = {
                                 "messaging_product": "whatsapp",
                                 "recipient_type": "individual",
-                                "to": recipient_phone,
+                                "to": clean_phone,
                                 "type": "image",
                                 "image": {
                                     "id": str(media_id),
@@ -180,52 +215,9 @@ async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any, c
         except Exception as e:
             logger.error(f"[CENTRAL WA] Exception in multipart media upload: {e}", exc_info=True)
 
-        # Fallback to text
-        await send_wa_text(recipient_phone, caption, phone_id)
-        return False
-
-    # 2. Public URL fallback
-    image_url = str(image_url_or_path_or_bytes or "")
-    if not image_url.startswith(("http://", "https://")):
-        public_base = (
-            os.getenv("PUBLIC_BASE_URL")
-            or os.getenv("RAILWAY_STATIC_URL")
-            or os.getenv("RAILWAY_PUBLIC_DOMAIN")
-            or "https://boontrack-core.up.railway.app"
-        ).strip().rstrip("/")
-        if not public_base.startswith("http"):
-            public_base = f"https://{public_base}"
-        filename = os.path.basename(image_url) if image_url else "qris_code.png"
-        image_url = f"{public_base}/static/{filename}"
-
-    url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "messaging_product": "whatsapp",
-        "recipient_type": "individual",
-        "to": recipient_phone,
-        "type": "image",
-        "image": {
-            "link": image_url,
-            "caption": caption
-        }
-    }
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload) as resp:
-                resp_text = await resp.text()
-                if resp.status in (200, 201):
-                    return True
-                logger.error(f"[CENTRAL WA] Outbound image error ({resp.status}) phone_id={clean_id}: {resp_text}")
-                await send_wa_text(recipient_phone, caption, phone_id)
-                return False
-    except Exception as e:
-        logger.error(f"[CENTRAL WA] Exception sending image: {e}", exc_info=True)
-        await send_wa_text(recipient_phone, caption, phone_id)
-        return False
+    # 3. Fallback Teks bila image pengiriman gagal
+    await send_wa_text(clean_phone, caption, phone_id)
+    return False
 
 
 async def send_wa_list_menu(recipient_phone: str, body_text: str, button_text: str, sections: List[Dict[str, Any]], phone_id: str):
@@ -404,7 +396,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 caption_text = res.get("reply", "") or res.get("caption", "")
                 await send_wa_image(
                     recipient_phone=from_phone,
-                    image_url_or_path=img_src,
+                    image_url_or_path_or_bytes=img_src,
                     caption=caption_text,
                     phone_id=phone_id
                 )
@@ -505,12 +497,17 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     contact_name=contact_name,
                 )
 
+                # Siapkan Direct PNG URL untuk render langsung di WhatsApp
+                qr_target_url = invoice.get("qr_code_url")
+                if not qr_target_url and invoice.get("qr_string"):
+                    import urllib.parse
+                    qr_target_url = f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&format=png&data={urllib.parse.quote(invoice.get('qr_string'))}"
+
                 is_img_sent = False
-                if qr_bytes:
+                if qr_target_url:
+                    is_img_sent = await send_wa_image(from_phone, qr_target_url, reply_text, phone_id)
+                elif qr_bytes:
                     is_img_sent = await send_wa_image(from_phone, qr_bytes, reply_text, phone_id)
-                
-                if not is_img_sent and invoice.get("qr_code_url"):
-                    is_img_sent = await send_wa_image(from_phone, invoice.get("qr_code_url"), reply_text, phone_id)
 
                 if not is_img_sent:
                     await send_wa_text(from_phone, reply_text, phone_id)
