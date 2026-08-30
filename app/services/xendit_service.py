@@ -10,8 +10,10 @@ Provides:
 import os
 import base64
 import logging
+import urllib.parse
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
+from uuid import uuid4
 import httpx
 
 from app.services.reconciliation_service import PAYMENT_INTENTS
@@ -48,24 +50,12 @@ class XenditService:
         self,
         external_id: str,
         amount: int,
-        tenant_id: str = "boontrack-career",
+        tenant_id: str = "onlineboost",
         callback_url: Optional[str] = None,
         customer_phone: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Creates a Dynamic QRIS code via Xendit API.
-        
-        Args:
-            external_id: Unique order / transaction ID.
-            amount: Transaction amount in IDR.
-            tenant_id: Tenant identifier (e.g. 'atmosfitnes', 'boontrack-career').
-            callback_url: Optional override for Xendit webhook callback.
-            customer_phone: Optional customer WhatsApp number.
-            metadata: Optional arbitrary metadata.
-            
-        Returns:
-            Dict containing qr_string, qr_id, status, and amount.
-        """
+        """Creates a Dynamic QRIS code via Xendit API."""
         app_domain = os.getenv("APP_DOMAIN", "https://boontrack.com").rstrip("/")
         resolved_callback = callback_url or f"{app_domain}/api/v1/payments/xendit/callback"
 
@@ -89,19 +79,18 @@ class XenditService:
             f"[Xendit] Requesting Dynamic QRIS: external_id='{external_id}', amount={amount}, tenant='{tenant_id}'"
         )
 
+        data: Dict[str, Any] = {}
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(endpoint, json=payload, headers=headers)
-                if resp.status_code not in (200, 201):
-                    logger.error(f"[Xendit] Failed to create QR code: {resp.status_code} - {resp.text}")
-                    raise RuntimeError(
-                        f"Xendit API Error ({resp.status_code}): {resp.text}"
-                    )
-                data = resp.json()
+                if resp.status_code in (200, 201):
+                    data = resp.json()
+                    logger.info(f"[Xendit] QR Code created successfully from API: {data.get('id')}")
+                else:
+                    logger.warning(f"[Xendit API Warning] HTTP {resp.status_code} - {resp.text}")
+                    raise RuntimeError(f"Xendit API ({resp.status_code}): {resp.text}")
         except Exception as api_err:
-            logger.warning(f"[Xendit API Note] Local/Fallback Dynamic QRIS generation: {api_err}")
-            import urllib.parse
-            from uuid import uuid4
+            logger.warning(f"[Xendit Fallback] Generating dynamic QRIS locally: {api_err}")
             from app.utils.qris_generator import generate_dynamic_qris_payload
 
             static_qris = os.getenv(
@@ -110,7 +99,7 @@ class XenditService:
             )
             raw_emvco = generate_dynamic_qris_payload(static_qris, amount)
             exp_time = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
-            qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=350x350&data={urllib.parse.quote(raw_emvco)}"
+            qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&format=png&data={urllib.parse.quote(raw_emvco)}"
             data = {
                 "id": f"qr_{uuid4().hex[:12]}",
                 "qr_string": raw_emvco,
@@ -121,9 +110,9 @@ class XenditService:
                 "expires_at": exp_time,
             }
 
-        import urllib.parse
+        # Gunakan string QR resmi Xendit jika tersedia
         qr_string = data.get("qr_string", "")
-        if not qr_string or not qr_string.startswith("000201"):
+        if not qr_string:
             from app.utils.qris_generator import generate_dynamic_qris_payload
             static_qris = os.getenv(
                 "BOONTRACK_STATIC_QRIS",
@@ -131,7 +120,10 @@ class XenditService:
             )
             qr_string = generate_dynamic_qris_payload(static_qris, amount)
 
-        qr_code_url = data.get("qr_code_url") or f"https://api.qrserver.com/v1/create-qr-code/?size=350x350&data={urllib.parse.quote(qr_string)}"
+        qr_code_url = (
+            data.get("qr_code_url")
+            or f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&format=png&data={urllib.parse.quote(qr_string)}"
+        )
         expired_at = (
             data.get("expires_at")
             or data.get("expired_at")
@@ -177,9 +169,9 @@ class XenditService:
         """Marks a transaction as settled / paid in local state and attaches digital delivery link."""
         self._processed_transactions.add(str(external_id))
         intent = self._intents_by_external_id.get(str(external_id), {})
-        tenant_id = intent.get("tenant_id", "commerce")
+        tenant_id = intent.get("tenant_id", "onlineboost")
 
-        download_url = "https://drive.google.com/drive/folders/suhu-ads-masterclass-2026"
+        download_url = "https://drive.google.com/drive/folders/onlineboost-starterkit-2026"
         delivery_msg = (
             f"Pembayaran Berhasil! Silakan akses materi lengkap Anda di sini: {download_url}\n[📂 Buka Materi Drive]"
         )
@@ -206,7 +198,6 @@ class XenditService:
         customer_phone: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Creates a dynamic QRIS invoice specifically for closing and checkout flows."""
-        from uuid import uuid4
         clean_slug = str(tenant_slug).replace("_", "-").lower()[:8]
         external_id = f"INV-{clean_slug.upper()}-{uuid4().hex[:6].upper()}"
         return await self.create_dynamic_qris(
