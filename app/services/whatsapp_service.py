@@ -170,13 +170,13 @@ async def generate_fast_track_checkout_response(
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
 
     qr_string = invoice.get("qr_string", "")
-    qr_bytes = generate_qris_image_bytes(qr_string) if qr_string else b""
+    # Matikan bytes biner agar WA dipaksa membaca URL berbingkai proporsional
+    qr_bytes = b""
     
-    # URL gambar PNG format Card berbingkai putih luas untuk WhatsApp
-    qr_code_url = invoice.get("qr_code_url")
-    if not qr_code_url and qr_string:
-        qr_code_url = f"https://api.qrserver.com/v1/create-qr-code/?size=450x450&margin=45&format=png&data={urllib.parse.quote(qr_string)}"
-        invoice["qr_code_url"] = qr_code_url
+    # URL gambar berbingkai bersih & pas di tengah
+    import urllib.parse
+    qr_code_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&format=png&data={urllib.parse.quote(qr_string)}"
+    invoice["qr_code_url"] = qr_code_url
 
     amount_fmt = f"Rp{amount:,.0f}".replace(",", ".")
 
