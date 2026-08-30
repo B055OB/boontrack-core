@@ -1046,3 +1046,101 @@ async def download_whatsapp_media_by_id(media_id: str) -> Optional[bytes]:
     except Exception as e:
         logger.error(f"[WhatsApp Service] Exception in download_whatsapp_media_by_id: {e}")
         return None
+
+    # --- SISIPKAN DI PALING BAWAH app/services/whatsapp_service.py ---
+
+user_cart_sessions: Dict[str, List[Dict[str, Any]]] = {}
+
+def add_product_to_cart(from_phone: str, tenant_slug: str, product_key: str) -> Tuple[str, List[Dict[str, str]], int]:
+    """Menambahkan item ke keranjang belanja dinamis."""
+    clean_phone = normalize_phone_number(from_phone)
+    _, products = get_tenant_products_from_db(tenant_slug) if 'get_tenant_products_from_db' in globals() else (tenant_slug, [])
+    
+    if not products:
+        _, sections = build_tenant_catalog_sections(tenant_slug)
+        products = sections[0].get("rows", [])
+
+    clean_key = str(product_key).replace("prod_", "").strip()
+    selected_prod = None
+    for p in products:
+        if str(p.get("id")) == clean_key or str(p.get("id")) == product_key or str(p.get("slug")) == clean_key:
+            selected_prod = p
+            break
+            
+    if not selected_prod and products:
+        selected_prod = products[0]
+
+    if clean_phone not in user_cart_sessions:
+        user_cart_sessions[clean_phone] = []
+
+    if selected_prod:
+        user_cart_sessions[clean_phone].append(selected_prod)
+
+    cart_items = user_cart_sessions[clean_phone]
+    total_price = sum(int(float(item.get("promo_price") or item.get("price") or 0)) for item in cart_items)
+    
+    items_text = "\n".join([
+        f"• *{item.get('title') or item.get('name')}* — Rp {int(float(item.get('promo_price') or item.get('price') or 0)):,}".replace(",", ".")
+        for item in cart_items
+    ])
+    
+    msg_body = (
+        f"🛒 *Keranjang Belanja Anda ({len(cart_items)} Item):*\n\n"
+        f"{items_text}\n\n"
+        f"💰 *Total Tagihan:* Rp {total_price:,}\n\n"
+        f"Silakan pilih aksi di bawah untuk melanjutkan:"
+    ).replace(",", ".")
+
+    buttons = [
+        {"id": "btn_checkout_cart", "title": "💳 Bayar Semua QRIS"},
+        {"id": "btn_view_service", "title": "🛍️ Katalog Produk"},
+        {"id": "btn_clear_cart", "title": "🗑️ Kosongkan Keranjang"}
+    ]
+    return msg_body, buttons, total_price
+
+
+async def generate_cart_checkout_response(
+    tenant_slug: str,
+    from_phone: str,
+    contact_name: str = "Kakak"
+) -> Tuple[str, Dict[str, Any], bytes]:
+    """Menerbitkan QRIS gabungan untuk keranjang belanja."""
+    from app.services.xendit_service import xendit_service
+    import urllib.parse
+
+    clean_phone = normalize_phone_number(from_phone)
+    cart_items = user_cart_sessions.get(clean_phone, [])
+    
+    if not cart_items:
+        return await generate_fast_track_checkout_response(tenant_slug, from_phone, contact_name)
+
+    total_amount = sum(int(float(item.get("promo_price") or item.get("price") or 0)) for item in cart_items)
+    item_titles = ", ".join([str(item.get("title") or item.get("name")) for item in cart_items])
+    product_summary = f"Order {len(cart_items)} Items ({item_titles[:35]}...)" if len(item_titles) > 35 else item_titles
+
+    invoice = await xendit_service.create_qris_invoice(
+        tenant_slug=tenant_slug,
+        amount=total_amount,
+        product_name=product_summary,
+        customer_phone=clean_phone,
+    )
+
+    qr_string = invoice.get("qr_string", "")
+    invoice["qr_code_url"] = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&format=png&data={urllib.parse.quote(qr_string)}"
+
+    items_detail = "\n".join([
+        f"• *{item.get('title') or item.get('name')}* (Rp {int(float(item.get('promo_price') or item.get('price') or 0)):,})".replace(",", ".")
+        for item in cart_items
+    ])
+
+    caption = (
+        f"Berikut Kode QRIS Pembayaran Pesanan Anda 💳\n\n"
+        f"📦 *Rincian Belanja:*\n{items_detail}\n\n"
+        f"💰 *Total Tagihan:* Rp {total_amount:,.0f}\n"
+        f"⏱️ *Masa Berlaku:* 15 Menit\n\n"
+        f"Silakan scan QR di atas menggunakan m-Banking atau E-Wallet.\n"
+        f"Setelah sukses, notifikasi dan akses produk otomatis aktif 🚀"
+    ).replace(",", ".")
+
+    user_cart_sessions.pop(clean_phone, None)
+    return caption, invoice, b""
