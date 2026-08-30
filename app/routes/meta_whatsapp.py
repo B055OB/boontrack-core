@@ -1,5 +1,6 @@
-"""app/routes/meta_whatsapp.py
-FastAPI Router for Meta WhatsApp Cloud API Webhook with Deterministic Tenant Isolation.
+"""
+app/routes/meta_whatsapp.py
+FastAPI Router for Meta WhatsApp Cloud API Webhook with Deterministic Tenant Isolation & OnlineBoost Storefront.
 """
 
 import os
@@ -43,7 +44,7 @@ _COMMERCE_DEMO_TRIGGERS = {"#reset", "#menu", "menu toko"}
 _MENU_OPTION_MAP: Dict[str, str] = {
     "1": "bale_pananggeuhan",
     "2": "atmosfitnes",
-    "3": "suhu-ads-masterclass",
+    "3": "onlineboost",
 }
 
 
@@ -102,16 +103,19 @@ async def handle_whatsapp_webhook(request: Request):
     phone_id = str(event.get("phone_id") or "").strip()
     text_lower = incoming_text.lower()
 
-    # 1. Resolusi Tenant Dinamis Berdasarkan Phone Number ID & Konfigurasi Resmi
+    # Resolusi Tenant Dinamis Berdasarkan Phone Number ID & Konfigurasi
     tenant_slug, _ = resolve_dynamic_tenant_for_whatsapp(
         phone_id=phone_id,
         from_phone=from_phone,
         message_text=incoming_text,
     )
 
+    # Normalisasi slug jika sebelumnya tertinggal nama lama
+    if tenant_slug in ("suhu-ads-masterclass", "suhu_ads"):
+        tenant_slug = "onlineboost"
+
     # =========================================================================
     # JALUR A: PRODUKSI AKTIF (Career Assistant, Om Budi, Bale Pananggeuhan)
-    # Diproses murni oleh Agent AI tanpa terpengaruh flow promo QRIS Masterclass
     # =========================================================================
     if tenant_slug in ("boontrack_career", "career", "om_budi", "ombudi", "bale_pananggeuhan"):
         reply = await process_incoming_message(
@@ -139,16 +143,16 @@ async def handle_whatsapp_webhook(request: Request):
         return {"status": "success", "tenant": tenant_slug, "reply": reply}
 
     # =========================================================================
-    # JALUR B: COMMERCE / DIGITAL COURSE (Suhu Ads Masterclass)
+    # JALUR B: TOKO ONLINEBOOST (Digital Agency, Ads Scaling & Starter Kit)
     # =========================================================================
-    
-    # 1. Menu Reset/Switcher (Hanya jika secara eksplisit dipanggil)
+
+    # 1. Menu Reset/Switcher (Hanya jika secara eksplisit diketik)
     if text_lower in _COMMERCE_DEMO_TRIGGERS or button_id == "btn_menu_reset":
         if from_phone:
             await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT)
         return {"status": "menu_dispatched", "tenant": "__MENU__"}
 
-    # 2. Fast-Track QRIS Closing Flow
+    # 2. Fast-Track QRIS Closing Flow (OnlineBoost Package)
     is_qris_buy_action = (
         button_id in {"btn_buy_now", "buy_now", "order_now", "qris_buy", "beli_qris"}
         or "beli & bayar qris" in text_lower
@@ -160,7 +164,7 @@ async def handle_whatsapp_webhook(request: Request):
     if is_qris_buy_action:
         try:
             reply, invoice, _ = await generate_fast_track_checkout_response(
-                tenant_slug=tenant_slug,
+                tenant_slug="onlineboost",
                 from_phone=from_phone,
                 contact_name=contact_name,
             )
@@ -178,14 +182,14 @@ async def handle_whatsapp_webhook(request: Request):
                     to_phone=from_phone,
                     image_url=qr_code_url,
                     caption=reply,
-                    tenant_id=tenant_slug,
+                    tenant_id="onlineboost",
                 )
                 if link_resp and getattr(link_resp, "status_code", 200) in (200, 201):
                     image_delivered = True
             except Exception as err:
                 logger.warning(f"[WA IMAGE DISPATCH ERROR] {err}")
 
-            # Fallback kirim text jika gambar tertahan
+            # Fallback kirim pesan teks jika gambar tertahan
             if not image_delivered and from_phone:
                 await send_whatsapp_text(to_phone=from_phone, text=reply)
 
@@ -193,7 +197,7 @@ async def handle_whatsapp_webhook(request: Request):
                 safe_log_to_supabase_messages(
                     sender="bot",
                     text=f"[Kirim QRIS {invoice.get('external_id')}] {reply}",
-                    tenant_id=tenant_slug,
+                    tenant_id="onlineboost",
                     channel="whatsapp",
                     user_phone=from_phone,
                     user_name=contact_name,
@@ -203,30 +207,30 @@ async def handle_whatsapp_webhook(request: Request):
 
             return {
                 "status": "qris_dispatched",
-                "tenant": tenant_slug,
+                "tenant": "onlineboost",
                 "invoice_id": invoice.get("external_id"),
             }
         except Exception as e:
             logger.error(f"[FAST TRACK CHECKOUT ERROR] {e}")
 
-    # 3. Silabus Kurikulum Action
-    if button_id == "btn_view_syllabus" or "silabus" in text_lower:
-        syllabus_text = (
-            "📚 *SILABUS & KURIKULUM LENGKAP SUHU ADS MASTERCLASS:*\n\n"
-            "• *Modul 1:* Riset Winning Audience & Bedah Pixel Meta Ads\n"
-            "• *Modul 2:* Struktur Campaign CBO vs ABO & Scaling Strategy\n"
-            "• *Modul 3:* Funneling, Creative Hook & Copywriting Konversi Tinggi\n"
-            "• *Bonus:* Template Dashboard Budgeting Notion + Grup Diskusi VIP\n\n"
-            "🔥 *Investasi Promo:* Cuma *Rp149.000* (Akses Selamanya)\n\n"
-            "Ketik *Beli* untuk langsung membuat kode bayar QRIS."
+    # 3. Paket Layanan / Service List Action
+    if button_id == "btn_view_syllabus" or "layanan" in text_lower or "paket" in text_lower or "silabus" in text_lower:
+        layanan_text = (
+            "🚀 *PAKET SCALE-UP DIGITAL MARKETING ONLINEBOOST:*\n\n"
+            "• *Setup & Audit Meta Ads / TikTok Ads:* Struktur campaign CBO/ABO profitabel\n"
+            "• *High-Converting Landing Page Funnel:* Desain responsif siap pasang pixel\n"
+            "• *Creative Hook & Copywriting:* Format video ads pendek & copywriting closing\n"
+            "• *Bonus:* SOP Scaling & Dashboard Pemantauan ROI Realtime\n\n"
+            "🔥 *Promo Starter Kit:* Cuma *Rp149.000* (Akses Modul + Template Framework)\n\n"
+            "Ketik *Beli* atau klik tombol di bawah untuk pembayaran QRIS instan."
         )
         if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=syllabus_text)
-        return {"status": "success", "tenant": tenant_slug, "reply": syllabus_text}
+            await send_whatsapp_text(to_phone=from_phone, text=layanan_text)
+        return {"status": "success", "tenant": "onlineboost", "reply": layanan_text}
 
-    # 4. Fallback AI Response
+    # 4. Fallback AI Response untuk OnlineBoost
     reply = await commerce_ai_engine.generate_commerce_response(
-        tenant_slug=tenant_slug,
+        tenant_slug="onlineboost",
         user_message=incoming_text,
         user_phone=from_phone,
         user_name=contact_name,
@@ -234,7 +238,7 @@ async def handle_whatsapp_webhook(request: Request):
     )
     if not reply:
         reply = await process_incoming_message(
-            tenant_slug=tenant_slug,
+            tenant_slug="onlineboost",
             message=incoming_text,
             user_phone=from_phone,
             user_name=contact_name,
@@ -248,7 +252,7 @@ async def handle_whatsapp_webhook(request: Request):
         safe_log_to_supabase_messages(
             sender="bot",
             text=reply or "",
-            tenant_id=tenant_slug,
+            tenant_id="onlineboost",
             channel="whatsapp",
             user_phone=from_phone,
             user_name=contact_name,
@@ -256,4 +260,4 @@ async def handle_whatsapp_webhook(request: Request):
     except Exception:
         pass
 
-    return {"status": "success", "tenant": tenant_slug, "reply": reply}
+    return {"status": "success", "tenant": "onlineboost", "reply": reply}
