@@ -65,8 +65,7 @@ DEMO_TENANT_GREETINGS: Dict[str, str] = {
     "onlineboost": (
         "🚀 *Selamat datang di OnlineBoost Digital Hub*\n\n"
         "Solusi scale-up bisnis via Paid Traffic (Meta & Google Ads), Landing Page High-Converting, dan Creative Agency.\n\n"
-        "🔥 *Paket Starter Kit:* Cuma *Rp99.000* (Diskon Khusus Hari Ini).\n\n"
-        "Ketik *Beli* untuk pembayaran QRIS instan atau ketik *Layanan* untuk cek paket materi."
+        "Ketik *Katalog* untuk memilih paket materi langsung atau ketik *Beli* untuk checkout cepat."
     ),
     "bale_pananggeuhan": (
         "🏛️ *Sampurasun! Selamat Datang di Balé Pananggeuhan*\n\n"
@@ -134,26 +133,53 @@ def build_tenant_catalog_sections(tenant_slug: str) -> Tuple[str, List[Dict[str,
     """Mengambil katalog produk aktif dari database onboarding secara dinamis untuk Meta Interactive List."""
     from app.services.onboarding_service import onboarding_service
     
-    details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
-    store_name = details.get("tenant", {}).get("name", tenant_slug)
+    clean_slug = (tenant_slug or "onlineboost").strip().lower()
+    details = onboarding_service.get_tenant_details_by_slug(clean_slug) or {}
+    store_name = details.get("tenant", {}).get("name") or clean_slug.replace("-", " ").title()
     products = details.get("products", [])
 
-    # Default fallback data katalog jika tenant belum mengonfigurasi produk di DB
+    # Query langsung ke Supabase jika cache onboarding belum terisi
     if not products:
-        if tenant_slug in ("onlineboost", "suhu-ads-masterclass"):
+        supabase = get_supabase()
+        if supabase:
+            try:
+                res = supabase.table("products").select("*").eq("tenant_slug", clean_slug).eq("is_active", True).execute()
+                if res.data:
+                    products = res.data
+            except Exception as e:
+                logger.warning(f"[DB PRODUCTS FETCH ERROR] {e}")
+
+    # Fallback produk resmi sesuai web store jika tabel DB kosong
+    if not products:
+        if clean_slug in ("onlineboost", "suhu-ads-masterclass"):
             products = [
-                {"id": "prod_1", "title": "Paket Scale-Up Ads", "price": 99000, "description": "Akses Selamanya"},
-                {"id": "prod_2", "title": "Template Budgeting & ROI", "price": 49000, "description": "Spreadsheet Otomatis"},
-                {"id": "prod_3", "title": "Masterclass Full Video", "price": 149000, "description": "Full Modul 1-3"}
+                {
+                    "id": "prod_dollar_traffic",
+                    "title": "Rahasia Dollar Traffic",
+                    "price": 499000,
+                    "description": "Formula Profit Dollar Paid Traffic"
+                },
+                {
+                    "id": "prod_masterclass_ads",
+                    "title": "Masterclass Ads 2026",
+                    "price": 99000,
+                    "description": "Scale Up Campaign CBO/ABO"
+                },
+                {
+                    "id": "prod_parfum_missionary",
+                    "title": "Parfum Missionary 10ml",
+                    "price": 99000,
+                    "description": "Pheromone Pocket Edition"
+                }
             ]
-        elif tenant_slug == "atmosfitnes":
+        elif clean_slug == "atmosfitnes":
             products = [
                 {"id": "prod_1", "title": "Membership 1 Bulan", "price": 150000, "description": "Akses Gym Bebas"},
                 {"id": "prod_2", "title": "Sesi Personal Trainer", "price": 250000, "description": "10x Pertemuan"}
             ]
         else:
             products = [
-                {"id": "prod_1", "title": f"Layanan Utama {store_name}", "price": 99000, "description": "Paket Standar"}
+                {"id": "prod_1", "title": f"Layanan {store_name}", "price": 99000, "description": "Paket Standar"}
             ]
 
     rows = []
@@ -165,12 +191,13 @@ def build_tenant_catalog_sections(tenant_slug: str) -> Tuple[str, List[Dict[str,
         p_title = str(p.get("title") or p.get("name") or "Produk")[:24]
         price_num = int(float(p.get("promo_price") or p.get("price") or 0))
         price_fmt = f"Rp {price_num:,}".replace(",", ".")
-        desc_text = str(p.get("description") or "Pilihan Produk")[:65]
+        raw_desc = str(p.get("description") or p.get("short_description") or "")
+        desc_text = f"{price_fmt} • {raw_desc}" if raw_desc else price_fmt
         
         rows.append({
             "id": p_id,
             "title": p_title,
-            "description": f"{price_fmt} - {desc_text}"[:70]
+            "description": desc_text[:72]
         })
 
     sections = [{
@@ -193,34 +220,35 @@ async def generate_fast_track_checkout_response(
     import urllib.parse
 
     clean_phone = normalize_phone_number(from_phone)
-    details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
-    store_name = details.get("tenant", {}).get("name", tenant_slug)
+    clean_slug = (tenant_slug or "onlineboost").strip().lower()
+    details = onboarding_service.get_tenant_details_by_slug(clean_slug) or {}
+    store_name = details.get("tenant", {}).get("name") or clean_slug.replace("-", " ").title()
     products = details.get("products", [])
 
-    # Dynamic Product Matching
+    # Dynamic Product Matching dari Database
     selected_product = None
     if products and product_key:
         clean_key = str(product_key).replace("prod_", "").strip()
         for p in products:
-            if str(p.get("id")) == clean_key or str(p.get("id")) == product_key:
+            if str(p.get("id")) == clean_key or str(p.get("id")) == product_key or str(p.get("slug")) == clean_key:
                 selected_product = p
                 break
 
     if not selected_product and products:
         selected_product = products[0]
 
-    # Fallback default untuk demo tenant jika database kosong
+    # Ekstraksi nominal & nama produk dinamis
     if selected_product:
-        product_name = selected_product.get("title") or selected_product.get("name") or f"Produk {store_name}"
+        product_name = str(selected_product.get("title") or selected_product.get("name") or f"Produk {store_name}")
         amount = int(float(selected_product.get("promo_price") or selected_product.get("price") or 99000))
-    elif tenant_slug in ("onlineboost", "suhu-ads-masterclass"):
+    elif clean_slug in ("onlineboost", "suhu-ads-masterclass"):
         catalog_map = {
-            "prod_1": ("Paket Scale-Up Ads", 99000),
-            "prod_2": ("Template Budgeting & ROI", 49000),
-            "prod_3": ("Masterclass Full Video", 149000),
+            "prod_dollar_traffic": ("Step by Step Rahasia Menghasilkan Dollar dari Paid Traffic", 499000),
+            "prod_masterclass_ads": ("Masterclass Ads 2026 - Scale Up Campaign", 99000),
+            "prod_parfum_missionary": ("Parfum Pheromone Pocket 10ml - Missionary", 99000),
         }
-        product_name, amount = catalog_map.get(str(product_key), ("Masterclass Ads & Paid Traffic Starter Kit", 99000))
-    elif tenant_slug == "atmosfitnes":
+        product_name, amount = catalog_map.get(str(product_key), ("Masterclass Ads 2026 - Scale Up Campaign", 99000))
+    elif clean_slug == "atmosfitnes":
         product_name = "Paket Membership Prima Fit Gym"
         amount = 150000
     else:
@@ -228,7 +256,7 @@ async def generate_fast_track_checkout_response(
         amount = 99000
 
     invoice = await xendit_service.create_qris_invoice(
-        tenant_slug=tenant_slug,
+        tenant_slug=clean_slug,
         amount=amount,
         product_name=product_name,
         customer_phone=clean_phone,
@@ -248,9 +276,9 @@ async def generate_fast_track_checkout_response(
 
     caption = (
         f"Berikut Kode QRIS Pembayaran Anda 💳\n\n"
-        f"📌 Produk: *{product_name}*\n"
-        f"💰 Total: *{amount_fmt}*\n"
-        f"⏱️ Berlaku: 15 Menit\n\n"
+        f"📌 *Produk:* {product_name}\n"
+        f"💰 *Total:* {amount_fmt}\n"
+        f"⏱️ *Berlaku:* 15 Menit\n\n"
         f"Silakan scan QR di atas menggunakan m-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n\n"
         f"Setelah pembayaran sukses, notifikasi dan akses materi/layanan akan otomatis aktif 🚀"
     )
