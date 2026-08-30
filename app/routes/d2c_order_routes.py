@@ -10,6 +10,7 @@ from app.services.checkout_flow_service import (
     create_d2c_order_and_dispatch_qris,
     reconcile_payment_webhook
 )
+from app.services.xendit_service import xendit_service
 
 d2c_router = APIRouter(tags=["D2C Checkout & Orders"])
 
@@ -31,7 +32,38 @@ class CheckoutRequest(BaseModel):
     delivery_asset_url: Optional[str] = None
 
 
-@d2c_router.post("/v1/orders/checkout", summary="Submit Web Checkout & Trigger Dual QRIS")
+# Payload ringkas untuk modal keranjang etalase cepat
+class QuickQrisRequest(BaseModel):
+    merchant_slug: str
+    merchant_name: Optional[str] = "Store"
+    product_name: str
+    customer_phone: str
+    total_amount: int
+
+
+@d2c_router.post("/v1/orders/qris-checkout", summary="Quick QRIS Creation from Storefront Cart")
+async def quick_qris_checkout_endpoint(payload: QuickQrisRequest):
+    """Endpoint yang dipanggil langsung saat buyer klik 'Bayar QRIS Sekarang' di etalase."""
+    try:
+        qris_data = await xendit_service.create_qris_invoice(
+            tenant_slug=payload.merchant_slug,
+            amount=payload.total_amount,
+            product_name=payload.product_name,
+            customer_phone=payload.customer_phone
+        )
+        return {
+            "status": "success",
+            "order_id": qris_data.get("external_id"),
+            "total_amount": qris_data.get("amount"),
+            "qr_string": qris_data.get("qr_string"),
+            "qr_code_url": qris_data.get("qr_code_url"),
+            "expires_at": qris_data.get("expires_at")
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@d2c_router.post("/v1/orders/checkout", summary="Submit Full Web Checkout & Trigger Dual QRIS")
 async def submit_checkout_endpoint(payload: CheckoutRequest):
     try:
         result = await create_d2c_order_and_dispatch_qris(
