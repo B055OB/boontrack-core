@@ -96,7 +96,7 @@ user_session_states: Dict[str, str] = {}
 def is_closing_buy_intent(text: str, button_id: Optional[str] = None) -> bool:
     """Detects if incoming user text or button payload indicates high-intent purchase / checkout demand."""
     clean_btn = str(button_id or "").strip().lower()
-    if clean_btn in {"btn_buy_now", "buy_now", "order_now", "qris_buy", "beli_qris"}:
+    if clean_btn in {"btn_buy_now", "buy_now", "order_now", "qris_buy", "beli_qris"} or clean_btn.startswith("prod_"):
         return True
 
     clean = (text or "").strip().lower()
@@ -130,12 +130,64 @@ def generate_qris_image_bytes(qr_string: str) -> bytes:
             return b""
 
 
+def build_tenant_catalog_sections(tenant_slug: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """Mengambil katalog produk aktif dari database onboarding secara dinamis untuk Meta Interactive List."""
+    from app.services.onboarding_service import onboarding_service
+    
+    details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
+    store_name = details.get("tenant", {}).get("name", tenant_slug)
+    products = details.get("products", [])
+
+    # Default fallback data katalog jika tenant belum mengonfigurasi produk di DB
+    if not products:
+        if tenant_slug in ("onlineboost", "suhu-ads-masterclass"):
+            products = [
+                {"id": "prod_1", "title": "Paket Scale-Up Ads", "price": 99000, "description": "Akses Selamanya"},
+                {"id": "prod_2", "title": "Template Budgeting & ROI", "price": 49000, "description": "Spreadsheet Otomatis"},
+                {"id": "prod_3", "title": "Masterclass Full Video", "price": 149000, "description": "Full Modul 1-3"}
+            ]
+        elif tenant_slug == "atmosfitnes":
+            products = [
+                {"id": "prod_1", "title": "Membership 1 Bulan", "price": 150000, "description": "Akses Gym Bebas"},
+                {"id": "prod_2", "title": "Sesi Personal Trainer", "price": 250000, "description": "10x Pertemuan"}
+            ]
+        else:
+            products = [
+                {"id": "prod_1", "title": f"Layanan Utama {store_name}", "price": 99000, "description": "Paket Standar"}
+            ]
+
+    rows = []
+    for p in products[:10]:  # Meta WhatsApp List membatasi maksimal 10 baris
+        p_id = str(p.get("id", "prod_1"))
+        if not p_id.startswith("prod_"):
+            p_id = f"prod_{p_id}"
+            
+        p_title = str(p.get("title") or p.get("name") or "Produk")[:24]
+        price_num = int(float(p.get("promo_price") or p.get("price") or 0))
+        price_fmt = f"Rp {price_num:,}".replace(",", ".")
+        desc_text = str(p.get("description") or "Pilihan Produk")[:65]
+        
+        rows.append({
+            "id": p_id,
+            "title": p_title,
+            "description": f"{price_fmt} - {desc_text}"[:70]
+        })
+
+    sections = [{
+        "title": f"Katalog {store_name}"[:24],
+        "rows": rows
+    }]
+    body_text = f"Pilih produk dari *{store_name}* di bawah ini untuk melihat rincian atau lanjut bayar via QRIS:"
+    return body_text, sections
+
+
 async def generate_fast_track_checkout_response(
     tenant_slug: str,
     from_phone: str,
     contact_name: str = "Kakak",
+    product_key: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any], bytes]:
-    """Generates an immediate fast-track QRIS checkout invoice message for aggressive closing with rendered PNG image bytes."""
+    """Membuat transaksi QRIS checkout dinamis berdasarkan produk database yang dipilih."""
     from app.services.onboarding_service import onboarding_service
     from app.services.xendit_service import xendit_service
     import urllib.parse
@@ -145,16 +197,32 @@ async def generate_fast_track_checkout_response(
     store_name = details.get("tenant", {}).get("name", tenant_slug)
     products = details.get("products", [])
 
-    if tenant_slug in ("onlineboost", "suhu-ads-masterclass"):
-        product_name = "Masterclass Ads & Paid Traffic Starter Kit"
-        amount = 99000
+    # Dynamic Product Matching
+    selected_product = None
+    if products and product_key:
+        clean_key = str(product_key).replace("prod_", "").strip()
+        for p in products:
+            if str(p.get("id")) == clean_key or str(p.get("id")) == product_key:
+                selected_product = p
+                break
+
+    if not selected_product and products:
+        selected_product = products[0]
+
+    # Fallback default untuk demo tenant jika database kosong
+    if selected_product:
+        product_name = selected_product.get("title") or selected_product.get("name") or f"Produk {store_name}"
+        amount = int(float(selected_product.get("promo_price") or selected_product.get("price") or 99000))
+    elif tenant_slug in ("onlineboost", "suhu-ads-masterclass"):
+        catalog_map = {
+            "prod_1": ("Paket Scale-Up Ads", 99000),
+            "prod_2": ("Template Budgeting & ROI", 49000),
+            "prod_3": ("Masterclass Full Video", 149000),
+        }
+        product_name, amount = catalog_map.get(str(product_key), ("Masterclass Ads & Paid Traffic Starter Kit", 99000))
     elif tenant_slug == "atmosfitnes":
         product_name = "Paket Membership Prima Fit Gym"
         amount = 150000
-    elif products:
-        p = products[0]
-        product_name = p.get("title", f"Produk {store_name}")
-        amount = int(float(p.get("promo_price") or p.get("price") or 99000))
     else:
         product_name = f"Paket Layanan {store_name}"
         amount = 99000
@@ -170,11 +238,9 @@ async def generate_fast_track_checkout_response(
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
 
     qr_string = invoice.get("qr_string", "")
-    # Matikan bytes biner agar WA dipaksa membaca URL berbingkai proporsional
     qr_bytes = b""
     
     # URL gambar berbingkai bersih & pas di tengah
-    import urllib.parse
     qr_code_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&format=png&data={urllib.parse.quote(qr_string)}"
     invoice["qr_code_url"] = qr_code_url
 
