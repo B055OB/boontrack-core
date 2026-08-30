@@ -108,7 +108,6 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Di
         await send_wa_text(recipient_phone, clean_body, phone_id)
         return
 
-    # Jika teks melebihi limit 1000 karakter Meta API, kirim teks biasa dulu lalu kirim tombol
     if len(clean_body) > 1000:
         await send_wa_text(recipient_phone, clean_body, phone_id)
         clean_body = "👇 *Silakan pilih menu navigasi di bawah ini:*"
@@ -479,10 +478,11 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 clean_btn in {"btn_buy_now", "buy_now", "order_now", "qris_buy", "beli_qris"}
                 or "beli & bayar qris" in text_lower
                 or "bayar qris" in text_lower
+                or text_lower == "beli"
                 or is_closing_buy_intent(incoming_text, clean_btn)
             )
 
-            active_session_tenant = user_tenant_sessions.get(clean_phone) or "suhu-ads-masterclass"
+            active_session_tenant = user_tenant_sessions.get(clean_phone) or "onlineboost"
 
             if is_qris_trigger and active_session_tenant not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik"):
                 logger.info(f"[CENTRAL WA QRIS] Fast-track buy intent from {from_phone} on tenant '{active_session_tenant}'")
@@ -547,7 +547,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             _MENU_OPTION_MAP = {
                 "1": "bale_pananggeuhan",
                 "2": "atmosfitnes",
-                "3": "suhu-ads-masterclass",
+                "3": "onlineboost",
             }
 
             _is_keyword_trigger = text_lower in _MENU_TRIGGER_KEYWORDS or clean_btn == "btn_menu_reset"
@@ -593,18 +593,18 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     selected_slug,
                     f"🎉 Anda kini terhubung dengan *{selected_slug}*. Silakan mulai percakapan!"
                 )
-                if selected_slug == "suhu-ads-masterclass":
+                if selected_slug == "onlineboost":
                     buttons = [
                         {"id": "btn_buy_now", "title": "💳 Beli & Bayar QRIS"},
-                        {"id": "btn_view_syllabus", "title": "📚 Cek Silabus Materi"},
-                        {"id": "btn_menu_reset", "title": "🔄 Menu Toko Lain"},
+                        {"id": "btn_view_service", "title": "🚀 Info Layanan & Modul"},
+                        {"id": "btn_menu_reset", "title": "🔄 Ganti Demo Toko"},
                     ]
                     await send_wa_buttons(
                         from_phone,
                         (
-                            "Halo Kak! Selamat datang di *Suhu Ads Masterclass 2026* 🚀\n\n"
-                            "Rahasia scale-up Meta Ads & optimasi konversi praktis untuk melipatgandakan profit bisnis.\n\n"
-                            "🔥 *Promo Hari Ini:* Cuma *Rp149.000* (Diskon 50% dari ~Rp299.000~). Full akses video Google Drive selamanya + Template Budgeting."
+                            "Halo Kak! Selamat datang di *OnlineBoost Official Store* 🚀\n\n"
+                            "Solusi praktis scale-up campaign Meta & TikTok Ads, optimasi ROAS, dan landing page konversi tinggi.\n\n"
+                            "🔥 *Promo Hari Ini:* Starter Kit Paid Traffic cuma *Rp99.000* (Diskon 50%). Sudah termasuk modul video HD + Template Kalkulator ROI Spreadsheet."
                         ),
                         buttons,
                         phone_id,
@@ -653,15 +653,15 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 metadata={"phone_number_id": phone_id, "msg_type": msg_type, "button_id": button_id}
             )
 
-            if clean_btn == "btn_view_syllabus":
+            if clean_btn in {"btn_view_service", "btn_view_syllabus"} or "layanan" in text_lower or "paket" in text_lower:
                 reply_text = (
-                    "📚 *SILABUS & KURIKULUM LENGKAP SUHU ADS MASTERCLASS:*\n\n"
-                    "• *Modul 1:* Riset Winning Audience & Bedah Pixel Meta Ads (Event tracking, Custom & Lookalike Audience, CAPI setup)\n"
-                    "• *Modul 2:* Struktur Campaign CBO vs ABO & Scaling Strategy (Budgeting & Ad Sets, Horizontal & Vertical Scaling)\n"
-                    "• *Modul 3:* Funneling, Creative Hook & Copywriting Konversi Tinggi (Video hooks, AIDA framework, LP Optimization)\n"
-                    "• *Bonus:* Template Dashboard Budgeting Notion & Akses Grup Diskusi Telegram VIP\n\n"
-                    "🔥 *Investasi Promo:* Cuma *Rp149.000* (Akses Selamanya + Google Drive Update)\n\n"
-                    "Mau saya buatkan kode QRIS pembayarannya sekarang Kak?"
+                    "🚀 *PAKET SCALE-UP DIGITAL MARKETING ONLINEBOOST:*\n\n"
+                    "• *Modul 1:* Setup Pixel & Riset Winning Audience Meta/TikTok Ads\n"
+                    "• *Modul 2:* Strategi Scaling Budget Campaign CBO vs ABO\n"
+                    "• *Modul 3:* High-Converting Funneling & Copywriting Konversi\n"
+                    "• *Bonus:* Template Spreadsheet Kalkulator ROI Iklan + Diskusi VIP\n\n"
+                    "🔥 *Promo Starter Kit:* Cuma *Rp99.000* (Akses Selamanya)\n\n"
+                    "Ketik *Beli* atau klik tombol di atas untuk pembayaran QRIS instan."
                 )
                 await send_wa_text(from_phone, reply_text, phone_id)
             elif is_new_binding and _is_onboarding_msg:
