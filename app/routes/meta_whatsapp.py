@@ -11,11 +11,13 @@ Features:
    - 2 -> atmosfitnes
    - 3 -> suhu-ads-masterclass
 3. Dynamic Webhook Tenant Resolution for normal messages in active sessions.
-4. Injects real commerce catalog and negative boundaries via CommerceAIEngine.
+4. Direct Fast-Track QRIS Native Image Dispatch for checkout intents.
+5. Injects real commerce catalog and negative boundaries via CommerceAIEngine.
 """
 
 import os
 import logging
+import re
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Request, Response, Query, status
 
@@ -23,9 +25,13 @@ from app.services.whatsapp_service import (
     extract_meta_whatsapp_event,
     resolve_dynamic_tenant_for_whatsapp,
     send_whatsapp_text,
+    send_whatsapp_image,
+    send_whatsapp_image_link,
     user_tenant_sessions,
     safe_log_to_supabase_messages,
     normalize_phone_number,
+    generate_fast_track_checkout_response,
+    is_closing_buy_intent,
     DEMO_MENU_TEXT,
     DEMO_TENANT_GREETINGS,
 )
@@ -89,10 +95,11 @@ async def handle_whatsapp_webhook(request: Request):
 
     Priority execution order:
     1. Ignore status/non-message events.
-    2. TOP-LEVEL INTERCEPTOR: greetings / #reset / no active session -> send Demo Menu.
-    3. Menu Option Selection: '1', '2', '3' -> lock session + send greeting.
-    4. Onboarding announcement: 'saya baru saja mendaftar toko [slug]' -> bind session.
-    5. Active session -> route to tenant AI engine.
+    2. INTERCEPTOR FOR FAST-TRACK QRIS: Directly generates and sends Native QR Image.
+    3. TOP-LEVEL INTERCEPTOR: greetings / #reset / no active session -> send Demo Menu.
+    4. Menu Option Selection: '1', '2', '3' -> lock session + send greeting.
+    5. Onboarding announcement: 'saya baru saja mendaftar toko [slug]' -> bind session.
+    6. Active session -> route to tenant AI engine.
     """
     body_raw = "{}"
     try:
@@ -118,39 +125,113 @@ async def handle_whatsapp_webhook(request: Request):
     contact_name = event.get("contact_name") or "Kakak"
     clean_phone = normalize_phone_number(from_phone)
     text_lower = incoming_text.lower()
-    _button_id_raw = event.get("button_id")
+    button_id = str(event.get("button_id") or "").strip().lower()
+    phone_id = event.get("phone_id", "")
 
     print(
-        f"\ud83c\udfaf [PARSED ACTION] sender={from_phone} | msg_type={event.get('msg_type')} "
-        f"| text={incoming_text!r} | button_id={_button_id_raw!r}",
+        f"🎯 [PARSED ACTION] sender={from_phone} | msg_type={event.get('msg_type')} "
+        f"| text={incoming_text!r} | button_id={button_id!r}",
         flush=True
     )
 
-    # Pre-check: Is this an onboarding announcement? If so, skip the menu interceptor.
-    import re as _re
+    # Resolve active tenant for sender
+    active_tenant = user_tenant_sessions.get(clean_phone) or "suhu-ads-masterclass"
+
+    # =========================================================================
+    # FAST-TRACK QRIS INTENT INTERCEPTOR (Highest Priority for Purchase Flow)
+    # =========================================================================
+    is_qris_buy_action = (
+        button_id in {"btn_buy_now", "buy_now", "order_now", "qris_buy", "beli_qris"}
+        or "beli & bayar qris" in text_lower
+        or "bayar qris" in text_lower
+        or is_closing_buy_intent(incoming_text, button_id)
+    )
+
+    if is_qris_buy_action and active_tenant not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik"):
+        print(f"🛒 [FAST-TRACK] Direct QRIS Intent detected from {from_phone} on tenant '{active_tenant}'", flush=True)
+        logger.info(f"[META WA FAST-TRACK] Direct QRIS Buy action from {from_phone} on tenant '{active_tenant}'")
+
+        reply, invoice, qr_bytes = await generate_fast_track_checkout_response(
+            tenant_slug=active_tenant,
+            from_phone=from_phone,
+            contact_name=contact_name,
+        )
+
+        image_delivered = False
+        qr_code_url = invoice.get("qr_code_url")
+
+        # 1. Dispatch Native Image via Binary Bytes Upload to Meta /media
+        if qr_bytes:
+            try:
+                print(f"📸 [MEDIA UPLOAD] Dispatching {len(qr_bytes)} bytes PNG to Meta API for {from_phone}", flush=True)
+                img_resp = await send_whatsapp_image(
+                    to_phone=from_phone,
+                    image_path_or_bytes=qr_bytes,
+                    caption=reply,
+                    tenant_id=active_tenant,
+                )
+                if img_resp and not (isinstance(img_resp, dict) and img_resp.get("status") == "failed"):
+                    image_delivered = True
+                    print(f"✅ [MEDIA SENT] QRIS image delivered successfully to {from_phone}", flush=True)
+            except Exception as err:
+                print(f"❌ [MEDIA BYTES EXCEPTION] {err}", flush=True)
+                logger.warning(f"[META WA Image Send Error] {err}")
+
+        # 2. Dispatch via Direct Public Image URL Link Fallback
+        if not image_delivered and qr_code_url:
+            try:
+                print(f"🔗 [MEDIA URL FALLBACK] Sending QRIS via Image URL Link: {qr_code_url}", flush=True)
+                link_resp = await send_whatsapp_image_link(
+                    to_phone=from_phone,
+                    image_url=qr_code_url,
+                    caption=reply,
+                    tenant_id=active_tenant,
+                )
+                if link_resp:
+                    image_delivered = True
+                    print(f"✅ [MEDIA LINK SENT] Delivered via Public URL to {from_phone}", flush=True)
+            except Exception as link_err:
+                print(f"❌ [MEDIA LINK EXCEPTION] {link_err}", flush=True)
+
+        # 3. Fallback to Detailed Text Message
+        if not image_delivered:
+            print(f"📩 [TEXT FALLBACK] Sending invoice details as plain text", flush=True)
+            await send_whatsapp_text(to_phone=from_phone, text=reply)
+
+        safe_log_to_supabase_messages(
+            sender="bot",
+            text=f"[Kirim QRIS {invoice.get('external_id')}] {reply}",
+            tenant_id=active_tenant,
+            channel="whatsapp",
+            user_phone=from_phone,
+            user_name=contact_name,
+        )
+        return {
+            "status": "qris_dispatched",
+            "tenant": active_tenant,
+            "invoice_id": invoice.get("external_id"),
+        }
+
+    # Pre-check: Is this an onboarding announcement?
     _is_onboarding_msg = bool(
-        _re.search(
+        re.search(
             r"saya\s+baru\s+(?:saja\s+)?(?:mendaftar|daftar)\s+toko\s+[a-zA-Z0-9\-_]+",
             incoming_text,
-            _re.IGNORECASE,
+            re.IGNORECASE,
         )
-        or _re.search(r"toko\s*:\s*[a-zA-Z0-9\-_]+", incoming_text, _re.IGNORECASE)
+        or re.search(r"toko\s*:\s*[a-zA-Z0-9\-_]+", incoming_text, re.IGNORECASE)
     )
 
     # =========================================================================
-    # 2. TOP-LEVEL DEMO MENU INTERCEPTOR (Highest Priority)
-    #    Fires BEFORE any tenant resolution or AI engine call.
-    #    Condition: greeting keyword, #reset/menu/demo, or sender has NO active session.
+    # 2. TOP-LEVEL DEMO MENU INTERCEPTOR
     # =========================================================================
-    _is_keyword_trigger = text_lower in _MENU_TRIGGER_KEYWORDS
+    _is_keyword_trigger = text_lower in _MENU_TRIGGER_KEYWORDS or button_id == "btn_menu_reset"
     _has_active_session = bool(clean_phone and clean_phone in user_tenant_sessions)
 
     if (not _is_onboarding_msg) and (_is_keyword_trigger or not _has_active_session):
-        # Forced reset: clear any stale session
         if clean_phone:
             user_tenant_sessions.pop(clean_phone, None)
 
-        # BUT: if the message is actually a menu option (1/2/3), let step 3 handle it
         if text_lower not in _MENU_OPTION_MAP:
             logger.info(
                 f"[META WA INTERCEPTOR] Sender {from_phone} triggered menu "
@@ -233,37 +314,10 @@ async def handle_whatsapp_webhook(request: Request):
         }
 
     # =========================================================================
-    # 4. Normal Message Pipeline: Resolve tenant + AI Engine
+    # 4. View Syllabus Action
     # =========================================================================
-    phone_id = event.get("phone_id", "")
-    button_id = str(event.get("button_id") or "").strip().lower()
-
-    tenant_slug, is_new_binding = resolve_dynamic_tenant_for_whatsapp(
-        phone_id=phone_id,
-        from_phone=from_phone,
-        message_text=incoming_text,
-    )
-
-    logger.info(
-        f"[META WA] Inbound message from {from_phone} resolved to tenant '{tenant_slug}' (new_binding={is_new_binding}, button_id={button_id})"
-    )
-
-    # Retrieve tenant info
-    details = onboarding_service.get_tenant_details_by_slug(tenant_slug)
-    store_name = details.get("tenant", {}).get("name", tenant_slug) if details else tenant_slug
-
-    from app.services.whatsapp_service import is_closing_buy_intent, generate_fast_track_checkout_response
-
-    # Handle Interactive Button Clicks & Fast-Track Actions
-    if button_id == "btn_menu_reset":
-        if clean_phone:
-            user_tenant_sessions.pop(clean_phone, None)
-        if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT)
-        return {"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}
-
-    if button_id == "btn_view_syllabus":
-        reply = (
+    if button_id == "btn_view_syllabus" or "silabus" in text_lower:
+        syllabus_text = (
             "📚 *SILABUS & KURIKULUM LENGKAP SUHU ADS MASTERCLASS:*\n\n"
             "• *Modul 1:* Riset Winning Audience & Bedah Pixel Meta Ads (Event tracking, Custom & Lookalike Audience, CAPI setup)\n"
             "• *Modul 2:* Struktur Campaign CBO vs ABO & Scaling Strategy (Budgeting & Ad Sets, Horizontal & Vertical Scaling)\n"
@@ -272,58 +326,30 @@ async def handle_whatsapp_webhook(request: Request):
             "🔥 *Investasi Promo:* Cuma *Rp149.000* (Akses Selamanya + Google Drive Update)\n\n"
             "Mau saya buatkan kode QRIS pembayarannya sekarang Kak?"
         )
-    elif button_id == "btn_buy_now" or (is_closing_buy_intent(incoming_text, button_id) and tenant_slug not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik")):
-        print(f"🛒 [FAST-TRACK] Buy intent from {from_phone} on tenant='{tenant_slug}' | button_id={button_id!r} | text={incoming_text!r}", flush=True)
-        logger.info(f"[META WA FAST-TRACK] Buy intent detected from {from_phone} on tenant '{tenant_slug}' (button_id={button_id}) -> issuing QRIS invoice")
+        await send_whatsapp_text(to_phone=from_phone, text=syllabus_text)
+        return {"status": "success", "tenant": active_tenant, "reply": syllabus_text}
 
-        print(f"🔧 [QRIS GENERATION] Calling generate_fast_track_checkout_response for tenant='{tenant_slug}' phone={from_phone}", flush=True)
-        reply, invoice, qr_bytes = await generate_fast_track_checkout_response(
-            tenant_slug=tenant_slug,
-            from_phone=from_phone,
-            contact_name=contact_name,
-        )
-        print(f"🧾 [QRIS INVOICE] external_id={invoice.get('external_id')} | qr_string_len={len(invoice.get('qr_string',''))} | qr_bytes_len={len(qr_bytes) if qr_bytes else 0}", flush=True)
+    # =========================================================================
+    # 5. Normal Message Pipeline: Resolve tenant + AI Engine
+    # =========================================================================
+    tenant_slug, is_new_binding = resolve_dynamic_tenant_for_whatsapp(
+        phone_id=phone_id,
+        from_phone=from_phone,
+        message_text=incoming_text,
+    )
+    if clean_phone:
+        user_tenant_sessions[clean_phone] = tenant_slug
 
-        if from_phone:
-            image_sent = False
-            if qr_bytes:
-                try:
-                    from app.services.whatsapp_service import send_whatsapp_image
-                    print(f"📸 [MEDIA UPLOAD] Uploading {len(qr_bytes)} bytes PNG to Meta for {from_phone} tenant='{tenant_slug}'", flush=True)
-                    img_resp = await send_whatsapp_image(
-                        to_phone=from_phone,
-                        image_path_or_bytes=qr_bytes,
-                        caption=reply,
-                        tenant_id=tenant_slug,
-                    )
-                    print(f"📤 [META SEND RESULT] img_resp type={type(img_resp).__name__} | value={str(img_resp)[:300]}", flush=True)
-                    if img_resp and not (isinstance(img_resp, dict) and img_resp.get("status") == "failed"):
-                        image_sent = True
-                        print(f"✅ [MEDIA SENT] QRIS image delivered to {from_phone}", flush=True)
-                    else:
-                        print(f"⚠️ [MEDIA FAILED] img_resp indicates failure: {img_resp}", flush=True)
-                except Exception as err:
-                    print(f"❌ [MEDIA EXCEPTION] {type(err).__name__}: {err}", flush=True)
-                    logger.warning(f"[META WA Image Send Warning] {err}")
-                    image_sent = False
+    details = onboarding_service.get_tenant_details_by_slug(tenant_slug)
+    store_name = details.get("tenant", {}).get("name", tenant_slug) if details else tenant_slug
 
-            # Robust Fallback: jika pengiriman gambar gagal, kirimkan detail via teks
-            if not image_sent:
-                print(f"📩 [TEXT FALLBACK] Sending QRIS details as plain text to {from_phone}", flush=True)
-                try:
-                    await send_whatsapp_text(to_phone=from_phone, text=reply)
-                    print(f"✅ [TEXT FALLBACK SENT] Reply delivered as text to {from_phone}", flush=True)
-                except Exception as text_err:
-                    print(f"❌ [TEXT FALLBACK ERROR] {type(text_err).__name__}: {text_err}", flush=True)
-                    logger.error(f"[META WA Text Fallback Error] {text_err}")
-    elif is_new_binding and _is_onboarding_msg:
+    if is_new_binding and _is_onboarding_msg:
         reply = (
             f"🎉 *Selamat Datang di {store_name}!* 🚀\n\n"
             f"Nomor WhatsApp Kakak (*{contact_name}*) kini resmi terhubung dengan asisten toko *{store_name}*.\n\n"
             f"Ada yang bisa kami bantu seputar produk atau promo hari ini?"
         )
     else:
-        # Generate Dynamic AI Engine Response for locked tenant session (100% forwarded to LLM)
         reply = await commerce_ai_engine.generate_commerce_response(
             tenant_slug=tenant_slug,
             user_message=incoming_text,
@@ -341,7 +367,6 @@ async def handle_whatsapp_webhook(request: Request):
                 button_id=event.get("button_id"),
             )
 
-    # Send outbound WhatsApp message
     if reply and from_phone:
         try:
             await send_whatsapp_text(to_phone=from_phone, text=reply)
