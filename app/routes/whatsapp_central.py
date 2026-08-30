@@ -12,7 +12,8 @@ from app.services.whatsapp_service import (
     log_to_supabase_messages, 
     safe_log_to_supabase_messages,
     send_whatsapp_image,
-    extract_meta_whatsapp_event
+    extract_meta_whatsapp_event,
+    build_tenant_catalog_sections,
 )
 
 logger = logging.getLogger("CENTRAL_WA_ROUTER")
@@ -221,7 +222,7 @@ async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any, c
 
 
 async def send_wa_list_menu(recipient_phone: str, body_text: str, button_text: str, sections: List[Dict[str, Any]], phone_id: str):
-    """Mengirim Interactive List Message WhatsApp untuk menu hierarki."""
+    """Mengirim Interactive List Message WhatsApp untuk menu katalog hierarki."""
     clean_id_match = re.findall(r"\d+", str(phone_id))
     clean_id = clean_id_match[0] if clean_id_match else phone_id
     token = resolve_tenant_token(clean_id)
@@ -237,7 +238,11 @@ async def send_wa_list_menu(recipient_phone: str, body_text: str, button_text: s
         "type": "interactive",
         "interactive": {
             "type": "list",
-            "body": {"text": body_text},
+            "header": {
+                "type": "text",
+                "text": "Katalog Produk"
+            },
+            "body": {"text": body_text[:1024]},
             "action": {
                 "button": button_text[:20],
                 "sections": sections
@@ -462,11 +467,37 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             clean_phone = normalize_phone_number(from_phone)
             text_lower = (incoming_text or "").strip().lower()
             clean_btn = str(button_id or "").strip().lower()
+            active_session_tenant = user_tenant_sessions.get(clean_phone) or "onlineboost"
 
             # ---------------------------------------------------------------
-            # STEP A: Prioritas Tertinggi - Deteksi Tombol / Teks Beli QRIS
+            # STEP A1: Buka Interactive List Katalog Produk (Jika Klik Info/Layanan/Katalog)
             # ---------------------------------------------------------------
-            is_qris_trigger = (
+            if clean_btn in {"btn_view_service", "btn_view_syllabus"} or text_lower in {"katalog", "layanan", "daftar produk", "produk", "paket"}:
+                body_msg, catalog_sections = build_tenant_catalog_sections(active_session_tenant)
+                await send_wa_list_menu(
+                    recipient_phone=from_phone,
+                    body_text=body_msg,
+                    button_text="Lihat Daftar Produk",
+                    sections=catalog_sections,
+                    phone_id=phone_id
+                )
+                safe_log_to_supabase_messages(
+                    sender="bot",
+                    text=f"[Katalog List Dikirim]",
+                    tenant_id=active_session_tenant,
+                    channel="whatsapp",
+                    user_phone=from_phone,
+                    user_name=contact_name,
+                    user_id=from_phone,
+                    conversation_id=from_phone,
+                )
+                return web.json_response({"status": "catalog_list_dispatched", "tenant": active_session_tenant}, status=200)
+
+            # ---------------------------------------------------------------
+            # STEP A2: Prioritas Deteksi Beli QRIS (Tombol Beli atau Pilih Item List `prod_...`)
+            # ---------------------------------------------------------------
+            is_product_picked = clean_btn.startswith("prod_") or "prod_" in text_lower
+            is_qris_trigger = is_product_picked or (
                 clean_btn in {"btn_buy_now", "buy_now", "order_now", "qris_buy", "beli_qris"}
                 or "beli & bayar qris" in text_lower
                 or "bayar qris" in text_lower
@@ -474,14 +505,12 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 or is_closing_buy_intent(incoming_text, clean_btn)
             )
 
-            active_session_tenant = user_tenant_sessions.get(clean_phone) or "onlineboost"
-
             if is_qris_trigger and active_session_tenant not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik"):
-                logger.info(f"[CENTRAL WA QRIS] Fast-track buy intent from {from_phone} on tenant '{active_session_tenant}'")
+                logger.info(f"[CENTRAL WA QRIS] Fast-track buy intent from {from_phone} on tenant '{active_session_tenant}' (product={clean_btn})")
                 
                 safe_log_to_supabase_messages(
                     sender="user",
-                    text=incoming_text or "[Klik Beli QRIS]",
+                    text=incoming_text or f"[Klik Beli QRIS {clean_btn}]",
                     tenant_id=active_session_tenant,
                     channel="whatsapp",
                     user_phone=from_phone,
@@ -491,17 +520,19 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     metadata={"phone_number_id": phone_id, "button_id": button_id}
                 )
 
+                target_prod_key = clean_btn if is_product_picked else None
                 reply_text, invoice, qr_bytes = await generate_fast_track_checkout_response(
                     tenant_slug=active_session_tenant,
                     from_phone=from_phone,
                     contact_name=contact_name,
+                    product_key=target_prod_key
                 )
 
-                # Siapkan Direct PNG URL berbingkai kartu bersih (margin 28px) untuk WhatsApp
+                # Siapkan Direct PNG URL berbingkai kartu bersih untuk WhatsApp
                 qr_target_url = invoice.get("qr_code_url")
                 if not qr_target_url and invoice.get("qr_string"):
                     import urllib.parse
-                    qr_target_url = f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=28&format=png&data={urllib.parse.quote(invoice.get('qr_string'))}"
+                    qr_target_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&format=png&data={urllib.parse.quote(invoice.get('qr_string'))}"
 
                 is_img_sent = False
                 if qr_target_url:
@@ -650,18 +681,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 metadata={"phone_number_id": phone_id, "msg_type": msg_type, "button_id": button_id}
             )
 
-            if clean_btn in {"btn_view_service", "btn_view_syllabus"} or "layanan" in text_lower or "paket" in text_lower:
-                reply_text = (
-                    "🚀 *PAKET SCALE-UP DIGITAL MARKETING ONLINEBOOST:*\n\n"
-                    "• *Modul 1:* Setup Pixel & Riset Winning Audience Meta/TikTok Ads\n"
-                    "• *Modul 2:* Strategi Scaling Budget Campaign CBO vs ABO\n"
-                    "• *Modul 3:* High-Converting Funneling & Copywriting Konversi\n"
-                    "• *Bonus:* Template Spreadsheet Kalkulator ROI Iklan + Diskusi VIP\n\n"
-                    "🔥 *Promo Starter Kit:* Cuma *Rp99.000* (Akses Selamanya)\n\n"
-                    "Ketik *Beli* atau klik tombol di atas untuk pembayaran QRIS instan."
-                )
-                await send_wa_text(from_phone, reply_text, phone_id)
-            elif is_new_binding and _is_onboarding_msg:
+            if is_new_binding and _is_onboarding_msg:
                 reply_text = (
                     f"🎉 *Selamat Datang di {store_name}!* 🚀\n\n"
                     f"Nomor WhatsApp Kakak (*{contact_name}*) kini resmi terhubung dengan asisten toko *{store_name}*.\n\n"
