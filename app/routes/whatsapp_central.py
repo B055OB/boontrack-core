@@ -497,11 +497,11 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     contact_name=contact_name,
                 )
 
-                # Siapkan Direct PNG URL untuk render langsung di WhatsApp
+                # Siapkan Direct PNG URL berbingkai kartu bersih (margin 28px) untuk WhatsApp
                 qr_target_url = invoice.get("qr_code_url")
                 if not qr_target_url and invoice.get("qr_string"):
                     import urllib.parse
-                    qr_target_url = f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&format=png&data={urllib.parse.quote(invoice.get('qr_string'))}"
+                    qr_target_url = f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=28&format=png&data={urllib.parse.quote(invoice.get('qr_string'))}"
 
                 is_img_sent = False
                 if qr_target_url:
