@@ -94,14 +94,24 @@ async def process_successful_subscription(
     affiliate_id: Optional[str] = None,
     am_id: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Menghitung dan membagi split komisi sub-ledger 15% - 5% - 80% ke Supabase."""
+    """Menghitung dan membagi split komisi sub-ledger 25% - 5% (atau 30% direct AM) - 70% Platform."""
     clean_slug = str(tenant_slug).strip().lower()
     clean_tier = str(plan_tier).strip().lower()
     gross_amount = TIER_PRICING.get(clean_tier, 199000)
     
-    # Perhitungan Komisi (15% Affiliate, 5% AM, 80% Platform)
-    affiliate_share = int(gross_amount * 0.15)
-    am_share = int(gross_amount * 0.05)
+    # Aturan Pembagian Komisi Baru
+    if am_id and not affiliate_id:
+        # Direct Closing oleh AM
+        affiliate_share = 0
+        am_share = int(gross_amount * 0.30)  # 30%
+    elif affiliate_id:
+        # Closing oleh Affiliate Rekrutan
+        affiliate_share = int(gross_amount * 0.25)  # 25%
+        am_share = int(gross_amount * 0.05) if am_id else 0  # 5% overriding bonus
+    else:
+        affiliate_share = 0
+        am_share = 0
+
     platform_net = gross_amount - affiliate_share - am_share
 
     supabase = get_supabase()
@@ -111,7 +121,7 @@ async def process_successful_subscription(
     now = datetime.now(timezone.utc)
     period_end = now + timedelta(days=30)
 
-    # 1. Update/Insert status langganan aktif
+    # 1. Update status langganan aktif
     sub_res = supabase.table("shop_subscriptions").insert({
         "tenant_slug": clean_slug,
         "plan_tier": clean_tier,
@@ -124,7 +134,7 @@ async def process_successful_subscription(
 
     sub_id = sub_res.data[0]["id"] if sub_res.data else None
 
-    # 2. Catat komisi ke tabel shop_commission_ledger
+    # 2. Catat rincian komisi ke ledger
     if sub_id:
         supabase.table("shop_commission_ledger").insert({
             "subscription_id": sub_id,
@@ -138,15 +148,14 @@ async def process_successful_subscription(
             "disbursement_status": "PENDING"
         }).execute()
 
-    logger.info(f"[SUBSCRIPTION ACTIVATED] Store: '{clean_slug}' | Tier: '{clean_tier}' | Net Platform: Rp {platform_net:,}")
     return {
         "status": "success",
         "tenant_slug": clean_slug,
         "plan_tier": clean_tier,
         "gross_amount": gross_amount,
         "split_ledger": {
-            "affiliate_15_percent": affiliate_share,
-            "am_5_percent": am_share,
-            "platform_net_80_percent": platform_net
+            "affiliate_share": affiliate_share,
+            "am_share": am_share,
+            "platform_net_70_percent": platform_net
         }
     }
