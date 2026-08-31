@@ -29,6 +29,7 @@ from app.routes.onboarding import onboarding_router
 from app.routes.meta_whatsapp import meta_whatsapp_router
 from app.routes.chat import chat_router
 from app.routes.tenant_routes import tenant_router
+from app.routes.shop_gateway_routes import shop_gateway_fastapi_router, register_shop_gateway_routes
 
 # ============================================================================
 # FastAPI Application Entrypoint (Uvicorn / ASGI compatible)
@@ -59,6 +60,7 @@ app.include_router(onboarding_router)
 app.include_router(meta_whatsapp_router)
 app.include_router(chat_router)
 app.include_router(tenant_router)
+app.include_router(shop_gateway_fastapi_router)
 
 
 
@@ -98,6 +100,7 @@ async def start_application():
     # 3. Buat dan Jalankan Web Server aiohttp
     print("[BOOT] Starting Web Server...", flush=True)
     aiohttp_app = create_web_app()
+    register_shop_gateway_routes(aiohttp_app)
     port = int(os.getenv("PORT", 8080))
     await start_web_server(aiohttp_app, port=port)
 
@@ -118,4 +121,3 @@ if __name__ == '__main__':
     finally:
         loop.stop()
         loop.close()
-
