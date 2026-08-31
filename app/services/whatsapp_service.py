@@ -130,10 +130,13 @@ def generate_qris_image_bytes(qr_string: str) -> bytes:
 
 
 def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, Any]]]:
-    """Mengambil katalog produk tenant secara real-time langsung dari database/onboarding service."""
+    """Mengambil katalog produk tenant secara real-time langsung dari database/onboarding service tanpa fallback mock ke toko lain."""
     from app.services.onboarding_service import onboarding_service
     
-    clean_slug = (tenant_slug or "onlineboost").strip().lower()
+    clean_slug = str(tenant_slug or "").strip().lower()
+    if not clean_slug:
+        return "Toko Baru", []
+
     details = onboarding_service.get_tenant_details_by_slug(clean_slug) or {}
     store_name = details.get("tenant", {}).get("name") or clean_slug.replace("-", " ").title()
     products = details.get("products", [])
@@ -149,7 +152,7 @@ def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, A
             except Exception as e:
                 logger.warning(f"[DB PRODUCTS FETCH ERROR] {e}")
 
-    # Fallback produk resmi sesuai web store jika tabel DB kosong
+    # Fallback produk resmi HANYA untuk demo store resmi; toko tenant baru tetap list kosong jika belum input produk
     if not products:
         if clean_slug in ("onlineboost", "suhu-ads-masterclass"):
             products = [
@@ -178,9 +181,7 @@ def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, A
                 {"id": "prod_2", "title": "Sesi Personal Trainer", "price": 250000, "description": "10x Pertemuan"}
             ]
         else:
-            products = [
-                {"id": "prod_1", "title": f"Layanan {store_name}", "price": 99000, "description": "Paket Standar"}
-            ]
+            products = []
 
     return store_name, products
 
@@ -326,7 +327,7 @@ async def generate_fast_track_checkout_response(
     import urllib.parse
 
     clean_phone = normalize_phone_number(from_phone)
-    clean_slug = (tenant_slug or "onlineboost").strip().lower()
+    clean_slug = str(tenant_slug or "").strip().lower()
     store_name, products = get_tenant_products_from_db(clean_slug)
 
     # Dynamic Product Matching dari Database
