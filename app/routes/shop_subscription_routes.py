@@ -57,19 +57,37 @@ async def check_slug_availability_logic(slug: str):
 async def handle_xendit_subscription_webhook_logic(payload: dict):
     status = str(payload.get("status", "")).upper()
     metadata = payload.get("metadata", {}) or {}
+    external_id = str(payload.get("external_id", "") or payload.get("id", ""))
     
-    # Validasi bahwa ini callback untuk paket langganan SaaS toko
+    # Validasi status pembayaran lunas
     if status == "PAID":
-        tenant_slug = metadata.get("tenant_slug") or "onlineboost"
+        # 1. Ekstrak tenant_slug secara dinamis dari metadata
+        tenant_slug = metadata.get("tenant_slug")
+
+        # 2. Fallback jika metadata kosong: ekstrak dari external_id (contoh: sub_yuhu_1725123456)
+        if not tenant_slug and external_id.startswith("sub_"):
+            parts = external_id.split("_")
+            if len(parts) >= 2 and parts[1]:
+                tenant_slug = sanitize_slug(parts[1])
+
+        # 3. Tolak jika tetap tidak menemukan identitas tenant
+        if not tenant_slug:
+            logger.warning(f"[XENDIT WEBHOOK IGNORED] Tidak ada tenant_slug valid. Payload: {payload}")
+            return {
+                "status": "ignored",
+                "reason": "Missing tenant_slug in metadata and external_id"
+            }, 200
+
         plan_tier = metadata.get("plan_tier") or "growth"
-        invoice_id = str(payload.get("id") or payload.get("external_id") or "")
         affiliate_id = metadata.get("affiliate_id")
         am_id = metadata.get("am_id")
+
+        logger.info(f"[XENDIT WEBHOOK PROCESS] Mengaktifkan tenant: {tenant_slug}, Plan: {plan_tier}, Inv: {external_id}")
 
         result = await process_successful_subscription(
             tenant_slug=tenant_slug,
             plan_tier=plan_tier,
-            xendit_invoice_id=invoice_id,
+            xendit_invoice_id=external_id,
             affiliate_id=affiliate_id,
             am_id=am_id
         )
