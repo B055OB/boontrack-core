@@ -40,6 +40,7 @@ from app.services.payout_service import PayoutService
 # IMPORT ROUTER ENTITLEMENT POLICY ENGINE & WHATSAPP GATEWAY
 from app.routes.entitlement_routes import router as entitlement_router
 from app.routes.whatsapp_gateway_routes import router as whatsapp_gateway_router
+from app.routes.whatsapp_control import router as whatsapp_control_router
 
 # Inisialisasi Supabase Client
 supabase_url = os.getenv("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.co")
@@ -80,9 +81,10 @@ app.include_router(shop_subscription_fastapi_router)
 app.include_router(shop_event_fastapi_router)
 app.include_router(webhook_payment_router)
 
-# DAFTARKAN ENTITLEMENT & WHATSAPP GATEWAY ROUTER KE FASTAPI
+# DAFTARKAN ENTITLEMENT, WHATSAPP GATEWAY, & CONTROL ROUTER KE FASTAPI
 app.include_router(entitlement_router)
 app.include_router(whatsapp_gateway_router)
+app.include_router(whatsapp_control_router)
 
 
 @app.get("/", summary="Root Health Check")
