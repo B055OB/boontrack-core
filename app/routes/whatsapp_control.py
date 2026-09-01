@@ -16,13 +16,13 @@ router = APIRouter(prefix="/tenant/whatsapp", tags=["WhatsApp Infrastructure Con
 class GatewayCapabilities(BaseModel):
     qr_pairing: bool = True
     pairing_code: bool = True
-    multi_agent: bool = False
+    multi_agent: bool = True
 
 class GatewayStatusResponse(BaseModel):
     success: bool
-    plan_tier: str = "Growth"
+    plan_tier: str = "Pro Scale"
     gateway_type: str = "QR_SESSION"
-    status: str = "DISCONNECTED"
+    status: str = "CONNECTED"
     phone_number: Optional[str] = None
     last_heartbeat: Optional[str] = None
     pending_messages: int = 0
@@ -35,7 +35,7 @@ class GatewayStatusResponse(BaseModel):
 async def get_authenticated_tenant_context() -> dict:
     return {
         "tenant_id": "onlineboost",
-        "plan_tier": "Growth"
+        "plan_tier": "Pro Scale"
     }
 
 # =====================================================================
@@ -46,7 +46,7 @@ async def get_tenant_whatsapp_status(
     auth_context: dict = Depends(get_authenticated_tenant_context)
 ):
     tenant_id = auth_context.get("tenant_id", "onlineboost")
-    plan_tier = auth_context.get("plan_tier", "Growth")
+    plan_tier = auth_context.get("plan_tier", "Pro Scale")
 
     try:
         session_data = await get_or_create_evolution_session(tenant_id)
@@ -54,7 +54,12 @@ async def get_tenant_whatsapp_status(
             "plan_tier": plan_tier,
             "gateway_type": "QR_SESSION",
             "pending_messages": 0,
-            **session_data
+            **session_data,
+            "capabilities": GatewayCapabilities(
+                qr_pairing=True,
+                pairing_code=True,
+                multi_agent=True
+            )
         }
     except Exception as e:
         logger.error(f"[FastAPI WA Status Error] {e}")
@@ -65,7 +70,11 @@ async def get_tenant_whatsapp_status(
             "status": "DEGRADED",
             "pending_messages": 0,
             "disconnect_reason": "GATEWAY_UNREACHABLE",
-            "capabilities": GatewayCapabilities()
+            "capabilities": GatewayCapabilities(
+                qr_pairing=True,
+                pairing_code=True,
+                multi_agent=True
+            )
         }
 
 @router.post("/reconnect")
@@ -91,7 +100,7 @@ async def trigger_whatsapp_reconnect(
 # =====================================================================
 async def aiohttp_get_whatsapp_status(request: web.Request):
     tenant_id = request.query.get("tenant", "onlineboost")
-    plan_tier = "Growth"
+    plan_tier = "Pro Scale"
     
     try:
         session_data = await get_or_create_evolution_session(tenant_id)
@@ -99,7 +108,12 @@ async def aiohttp_get_whatsapp_status(request: web.Request):
             "plan_tier": plan_tier,
             "gateway_type": "QR_SESSION",
             "pending_messages": 0,
-            **session_data
+            **session_data,
+            "capabilities": {
+                "qr_pairing": True,
+                "pairing_code": True,
+                "multi_agent": True
+            }
         })
     except Exception as e:
         logger.error(f"[aiohttp WA Status Error] {e}")
@@ -113,7 +127,7 @@ async def aiohttp_get_whatsapp_status(request: web.Request):
             "capabilities": {
                 "qr_pairing": True,
                 "pairing_code": True,
-                "multi_agent": False
+                "multi_agent": True
             }
         })
 
