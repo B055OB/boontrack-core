@@ -1,9 +1,11 @@
 import os
+import asyncio
 import logging
 from typing import Dict, Any
 from fastapi import APIRouter, Request, BackgroundTasks
 from aiohttp import web
 from app.services.payment_orchestrator import PaymentOrchestrator
+from app.services.whatsapp_delivery_service import WhatsAppDeliveryService
 
 # Safe import Supabase Client
 try:
@@ -19,16 +21,26 @@ except ImportError:
         supabase = create_client(url, key)
 
 logger = logging.getLogger("boontrack.webhook")
+wa_service = WhatsAppDeliveryService()
+
+# ---------------------------------------------------------
+# BACKGROUND WORKER DISPATCHER
+# ---------------------------------------------------------
+async def background_delivery_and_notify(job_payload: Dict[str, Any]):
+    """
+    Background worker untuk pengiriman WA delivery otomatis dan log status
+    """
+    order_id = job_payload.get("order_id")
+    tenant_slug = job_payload.get("tenant_slug")
+    logger.info(f"[Worker] Processing digital delivery for Order: {order_id} ({tenant_slug})")
+    
+    # Eksekusi pengiriman pesan WhatsApp via Cloud API
+    await wa_service.send_digital_product_delivery(job_payload)
 
 # ---------------------------------------------------------
 # FASTAPI ROUTER
 # ---------------------------------------------------------
 router = APIRouter(prefix="/webhook", tags=["Payments"])
-
-async def background_delivery_and_notify(job_payload: Dict[str, Any]):
-    order_id = job_payload.get("order_id")
-    tenant_slug = job_payload.get("tenant_slug")
-    logger.info(f"[Worker] Processing post-payment tasks for Order: {order_id} ({tenant_slug})")
 
 @router.post("/xendit")
 async def xendit_payment_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -47,7 +59,7 @@ async def xendit_payment_webhook(request: Request, background_tasks: BackgroundT
     return {"received": True}
 
 # ---------------------------------------------------------
-# AIOHTTP HANDLER & REGISTRATION (Untuk Railway runtime)
+# AIOHTTP HANDLER & REGISTRATION (Runtime Railway)
 # ---------------------------------------------------------
 async def aiohttp_xendit_webhook_handler(request: web.Request) -> web.Response:
     try:
@@ -61,8 +73,7 @@ async def aiohttp_xendit_webhook_handler(request: web.Request) -> web.Response:
         result = await orchestrator.process_xendit_webhook(payload)
         
         if result.get("status") == "success" and result.get("order_id"):
-            # Jalankan background task asinkron di event loop
-            import asyncio
+            # Memicu background coroutine di event loop aiohttp
             asyncio.create_task(background_delivery_and_notify(result))
     except Exception as e:
         logger.error(f"[Webhook aiohttp] Processing error: {str(e)}")
@@ -70,6 +81,6 @@ async def aiohttp_xendit_webhook_handler(request: web.Request) -> web.Response:
     return web.json_response({"received": True}, status=200)
 
 def register_webhook_payment_routes(aiohttp_app: web.Application):
-    """Mendaftarkan route langsung ke aiohttp application"""
+    """Mendaftarkan route langsung ke engine aiohttp"""
     aiohttp_app.router.add_post('/webhook/xendit', aiohttp_xendit_webhook_handler)
     logger.info("[BOOT] Webhook Xendit route registered to aiohttp engine at /webhook/xendit")
