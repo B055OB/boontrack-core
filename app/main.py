@@ -2,9 +2,11 @@ import sys
 import os
 import asyncio
 import logging
+from typing import Dict, Any
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from supabase import create_client, Client
 
 # Setup path aplikasi
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -33,6 +35,12 @@ from app.routes.shop_gateway_routes import shop_gateway_fastapi_router, register
 from app.routes.shop_subscription_routes import shop_subscription_fastapi_router, register_shop_subscription_routes
 from app.routes.shop_event_routes import shop_event_fastapi_router, register_shop_event_routes
 from app.api.webhook_payment import router as webhook_payment_router, register_webhook_payment_routes
+from app.services.payout_service import PayoutService
+
+# Inisialisasi Supabase Client
+supabase_url = os.getenv("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.co")
+supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY", "")
+supabase_client: Client = create_client(supabase_url, supabase_key)
 
 # ============================================================================
 # FastAPI Application Entrypoint (Uvicorn / ASGI compatible)
@@ -40,7 +48,7 @@ from app.api.webhook_payment import router as webhook_payment_router, register_w
 
 app = FastAPI(
     title="BoonTrack Core API",
-    description="Unified Multi-Tenant Core Engine & IoT Access Control Service (Atmosfitnes Pilot)",
+    description="Unified Multi-Tenant Core Engine & IoT Access Control Service",
     version="1.0.0",
 )
 
@@ -77,6 +85,21 @@ async def root_health_check():
         "service": "boontrack-core",
         "version": "1.0.0",
     }
+
+
+@app.post("/payout/settle", summary="Batch Settle Affiliate Commission")
+async def settle_payout(payload: Dict[str, Any]):
+    """
+    Endpoint Settlement Batch untuk mencairkan komisi affiliate berstatus PENDING_PAYOUT.
+    """
+    code = payload.get("affiliate_code")
+    notes = payload.get("notes", "Disbursement Manual Transfer")
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing affiliate_code")
+    
+    service = PayoutService(supabase_client)
+    result = await service.settle_affiliate_batch(code, notes)
+    return result
 
 
 # ============================================================================
