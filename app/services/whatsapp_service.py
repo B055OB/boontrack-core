@@ -1152,3 +1152,96 @@ async def download_whatsapp_media_by_id(media_id: str) -> Optional[bytes]:
     except Exception as e:
         logger.error(f"[WhatsApp Service] Exception in download_whatsapp_media_by_id: {e}")
         return None
+
+
+# =====================================================================
+# EVOLUTION API V2 ADAPTER (GROWTH PLAN - QR & PAIRING CODE)
+# =====================================================================
+
+EVOLUTION_BASE_URL = os.getenv("WA_GATEWAY_BASE_URL", "https://evolution-api-production-abb7.up.railway.app").rstrip("/")
+EVOLUTION_API_KEY = os.getenv("WA_GATEWAY_INTERNAL_API_KEY", "4398809d97f770b1a2b243ed0ee33bf3312d02dec42be8789ea3512f487f4c5e")
+
+def get_evolution_headers() -> Dict[str, str]:
+    return {
+        "apikey": EVOLUTION_API_KEY,
+        "Content-Type": "application/json"
+    }
+
+async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> Dict[str, Any]:
+    """
+    Mengambil status sesi WhatsApp dari Evolution API.
+    Jika instance belum ada, otomatis create instance dan request QR code.
+    """
+    instance_name = f"tenant_{tenant_slug.replace('-', '_')}"
+    headers = get_evolution_headers()
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            # 1. Cek status koneksi instance
+            status_res = await client.get(
+                f"{EVOLUTION_BASE_URL}/instance/connectionState/{instance_name}",
+                headers=headers
+            )
+            
+            if status_res.status_code == 200:
+                data = status_res.json()
+                state = data.get("instance", {}).get("state") or data.get("state")
+                
+                if state == "open":
+                    owner = data.get("instance", {}).get("ownerJid") or ""
+                    phone_number = owner.split("@")[0] if "@" in owner else owner
+                    return {
+                        "success": True,
+                        "status": "CONNECTED",
+                        "phone_number": phone_number or None,
+                        "capabilities": {"qr_pairing": True, "pairing_code": True, "multi_agent": False}
+                    }
+
+            # 2. Jika instance belum ada (404/400), buat instance baru
+            if status_res.status_code in (404, 400):
+                create_payload = {
+                    "instanceName": instance_name,
+                    "token": EVOLUTION_API_KEY,
+                    "qrcode": True,
+                    "integration": "WHATSAPP-BAILEYS"
+                }
+                await client.post(
+                    f"{EVOLUTION_BASE_URL}/instance/create",
+                    headers=headers,
+                    json=create_payload
+                )
+
+            # 3. Request QR Code aktif
+            qr_res = await client.get(
+                f"{EVOLUTION_BASE_URL}/instance/connect/{instance_name}",
+                headers=headers
+            )
+            
+            if qr_res.status_code in (200, 201):
+                qr_data = qr_res.json()
+                qr_raw = qr_data.get("code") or qr_data.get("pairingCode")
+                qr_base64 = qr_data.get("base64")
+
+                return {
+                    "success": True,
+                    "status": "CONNECTING",
+                    "qr_raw": qr_raw,
+                    "qr_image": qr_base64 if (qr_base64 and qr_base64.startswith("data:image")) else None,
+                    "capabilities": {"qr_pairing": True, "pairing_code": True, "multi_agent": False}
+                }
+
+            return {
+                "success": False,
+                "status": "DEGRADED",
+                "disconnect_reason": "GATEWAY_SESSION_PENDING",
+                "capabilities": {"qr_pairing": True, "pairing_code": True, "multi_agent": False}
+            }
+
+        except Exception as e:
+            logger.error(f"[Evolution API Handshake Error] {e}")
+            return {
+                "success": False,
+                "status": "DEGRADED",
+                "disconnect_reason": "GATEWAY_UNREACHABLE",
+                "capabilities": {"qr_pairing": True, "pairing_code": True, "multi_agent": False}
+            }
