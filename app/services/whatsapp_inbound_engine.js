@@ -1,4 +1,4 @@
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, delay } from '@whiskeysockets/baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, delay, Browsers } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import axios from 'axios';
 
@@ -12,7 +12,8 @@ export async function initGrowthSession(tenantSlug, onQRCallback) {
   const sock = makeWASocket({
     auth: state,
     printQRInTerminal: false,
-    browser: ['BoonTrack Inbound', 'Chrome', '1.0.0'],
+    // Menggunakan signature browser resmi bawaan Baileys agar handshake QR valid
+    browser: Browsers.macOS('Desktop'),
     syncFullHistory: false
   });
 
@@ -21,7 +22,7 @@ export async function initGrowthSession(tenantSlug, onQRCallback) {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
-    if (qr) {
+    if (qr && onQRCallback) {
       const qrDataUrl = await QRCode.toDataURL(qr);
       onQRCallback({ qr_raw: qr, qr_image: qrDataUrl });
     }
@@ -36,24 +37,23 @@ export async function initGrowthSession(tenantSlug, onQRCallback) {
     }
   });
 
-  // Listener Khusus Pesan Inbound
+  // Listener Pesan Inbound Toko
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
 
     for (const msg of messages) {
-      if (msg.key.fromMe) continue; // Abaikan pesan dari bot sendiri
+      if (msg.key.fromMe) continue;
 
       const senderJid = msg.key.remoteJid;
       const incomingText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
 
       if (!incomingText) continue;
 
-      // 1. Kirim Presence 'composing' (Mengetik)
+      // Status 'mengetik' human-like delay
       await sock.sendPresenceUpdate('composing', senderJid);
-      await delay(2000 + Math.random() * 1500); // Human-like delay 2-3.5 detik
+      await delay(2000 + Math.random() * 1500);
 
       try {
-        // 2. Oper ke FastAPI Core untuk diproses AI Knowledge / Router Katalog
         const res = await axios.post(`${FASTAPI_INTERNAL_URL}/api/v1/whatsapp/inbound-process`, {
           tenant_slug: tenantSlug,
           sender_phone: senderJid.replace('@s.whatsapp.net', ''),
@@ -74,4 +74,35 @@ export async function initGrowthSession(tenantSlug, onQRCallback) {
 
   tenantSessions.set(tenantSlug, sock);
   return sock;
+}
+
+// Handler Khusus Pairing Code via Nomor Telepon
+export async function requestPairingCodeSession(tenantSlug, phoneNumber) {
+  let sock = tenantSessions.get(tenantSlug);
+  
+  if (!sock) {
+    const authDir = `./sessions/${tenantSlug}`;
+    const { state, saveCreds } = await useMultiFileAuthState(authDir);
+
+    sock = makeWASocket({
+      auth: state,
+      printQRInTerminal: false,
+      browser: Browsers.macOS('Desktop'),
+      syncFullHistory: false
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+    tenantSessions.set(tenantSlug, sock);
+  }
+
+  // Bersihkan karakter non-angka
+  const cleanPhone = phoneNumber.replace(/[^0-9]/g, '');
+
+  if (!sock.authState.creds.registered) {
+    await delay(2000);
+    const pairingCode = await sock.requestPairingCode(cleanPhone);
+    return { success: true, pairing_code: pairingCode };
+  }
+
+  return { success: false, message: 'Nomor ini sudah terdaftar pada sesi aktif.' };
 }
