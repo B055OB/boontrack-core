@@ -32,7 +32,7 @@ from app.routes.tenant_routes import tenant_router
 from app.routes.shop_gateway_routes import shop_gateway_fastapi_router, register_shop_gateway_routes
 from app.routes.shop_subscription_routes import shop_subscription_fastapi_router, register_shop_subscription_routes
 from app.routes.shop_event_routes import shop_event_fastapi_router, register_shop_event_routes
-from app.api.webhook_payment import router as webhook_payment_router
+from app.api.webhook_payment import router as webhook_payment_router, register_webhook_payment_routes
 
 # ============================================================================
 # FastAPI Application Entrypoint (Uvicorn / ASGI compatible)
@@ -52,7 +52,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register Routers
+# Register Routers ke FastAPI
 app.include_router(gym_router, prefix="/api/v1/gym")
 app.include_router(gym_admin_router)
 app.include_router(payment_router)
@@ -105,10 +105,11 @@ async def start_application():
     print("[BOOT] Starting Web Server...", flush=True)
     aiohttp_app = create_web_app()
     
-    # Daftarkan Router Modul Gateway, Subscription, & Event Worker ke Aiohttp
+    # Daftarkan Router Modul Gateway, Subscription, Event Worker, & Webhook Xendit ke Aiohttp
     register_shop_gateway_routes(aiohttp_app)
     register_shop_subscription_routes(aiohttp_app)
     register_shop_event_routes(aiohttp_app)
+    register_webhook_payment_routes(aiohttp_app)
     
     port = int(os.getenv("PORT", 8080))
     await start_web_server(aiohttp_app, port=port)
