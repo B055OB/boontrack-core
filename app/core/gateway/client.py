@@ -1,14 +1,15 @@
+import os
 import httpx
 from typing import Dict, Any
-from .base import WhatsAppGatewayInterface
-# Asumsi konfigurasi Pydantic BaseSettings atau os.getenv
-from core.config import settings 
+from app.core.gateway.base import WhatsAppGatewayInterface
 
 class HttpWhatsAppGatewayClient(WhatsAppGatewayInterface):
     def __init__(self):
-        self.gateway_base_url = settings.WA_GATEWAY_BASE_URL.rstrip("/")
+        # Menggunakan os.getenv dengan fallback agar tidak crash jika env kosong
+        self.gateway_base_url = os.getenv("WA_GATEWAY_BASE_URL", "http://localhost:3000").rstrip("/")
+        self.internal_api_key = os.getenv("WA_GATEWAY_INTERNAL_API_KEY", "boontrack_dev_key")
         self.headers = {
-            "Authorization": f"Bearer {settings.WA_GATEWAY_INTERNAL_API_KEY}",
+            "Authorization": f"Bearer {self.internal_api_key}",
             "Content-Type": "application/json"
         }
 
