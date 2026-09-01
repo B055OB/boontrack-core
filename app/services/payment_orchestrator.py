@@ -5,16 +5,19 @@ from typing import Dict, Any, Optional
 from fastapi import HTTPException
 from supabase import Client
 
+from app.services.whatsapp_delivery_service import WhatsAppDeliveryService
+
 logger = logging.getLogger("boontrack.payment")
 
 class PaymentOrchestrator:
     def __init__(self, supabase_client: Client):
         self.supabase = supabase_client
+        self.wa_service = WhatsAppDeliveryService()
 
     async def process_xendit_webhook(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Handler Idempotent untuk Webhook Xendit QRIS / Invoice.
-        Memvalidasi transaksi, mencatat ledger komisi multi-tier, dan menyiapkan delivery payload.
+        Memvalidasi transaksi, mencatat ledger komisi multi-tier, dan mengirim notifikasi WhatsApp otomatis.
         """
         event_id = payload.get("id") or payload.get("payment_id") or payload.get("qr_id")
         external_id = payload.get("external_id")  # Menyimpan order_id BoonTrack
@@ -134,15 +137,31 @@ class PaymentOrchestrator:
             except Exception as e:
                 logger.error(f"[Payment] Commission ledger recording error: {str(e)}")
 
-        # Tandai event selesai diproses
+        # 6. TRIGGER WHATSAPP AUTO-DELIVERY
+        customer_phone = order.get("customer_phone") or order.get("buyer_phone")
+        product_name = order.get("product_title") or order.get("product_name") or "Produk Digital BoonTrack"
+        download_url = order.get("digital_access_url") or f"https://shop.boontrack.com/{tenant_slug}/access/{external_id}"
+
+        if customer_phone:
+            try:
+                await self.wa_service.send_order_success_notification(
+                    customer_phone=customer_phone,
+                    order_id=external_id,
+                    product_name=product_name,
+                    amount=amount,
+                    download_url=download_url
+                )
+            except Exception as wa_err:
+                logger.error(f"[Payment] WA Delivery dispatch failed: {str(wa_err)}")
+
+        # 7. Tandai event selesai diproses
         self.supabase.table("payment_events").update({"status": "PROCESSED"}).eq("event_id", event_id).execute()
 
-        # 6. RETURN PAYLOAD UNTUK BACKGROUND WORKER (WA Delivery)
         return {
             "status": "success",
             "order_id": external_id,
             "tenant_slug": tenant_slug,
-            "customer_phone": order.get("customer_phone"),
-            "product_id": order.get("product_id"),
-            "delivery_url": order.get("digital_access_url")
+            "customer_phone": customer_phone,
+            "product_name": product_name,
+            "delivery_url": download_url
         }
