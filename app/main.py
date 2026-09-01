@@ -32,6 +32,7 @@ from app.routes.tenant_routes import tenant_router
 from app.routes.shop_gateway_routes import shop_gateway_fastapi_router, register_shop_gateway_routes
 from app.routes.shop_subscription_routes import shop_subscription_fastapi_router, register_shop_subscription_routes
 from app.routes.shop_event_routes import shop_event_fastapi_router, register_shop_event_routes
+from app.api.webhook_payment import router as webhook_payment_router
 
 # ============================================================================
 # FastAPI Application Entrypoint (Uvicorn / ASGI compatible)
@@ -65,6 +66,7 @@ app.include_router(tenant_router)
 app.include_router(shop_gateway_fastapi_router)
 app.include_router(shop_subscription_fastapi_router)
 app.include_router(shop_event_fastapi_router)
+app.include_router(webhook_payment_router)
 
 
 @app.get("/", summary="Root Health Check")
