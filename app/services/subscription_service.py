@@ -94,20 +94,22 @@ async def process_successful_subscription(
     affiliate_id: Optional[str] = None,
     am_id: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Menghitung dan membagi split komisi sub-ledger 25% - 5% (atau 30% direct AM) - 70% Platform."""
+    """
+    1. Membagi split komisi sub-ledger 25% - 5% (atau 30% direct AM) - 70% Platform.
+    2. Eksekusi state transition merchant: PENDING_PAYMENT -> PAID -> ACTIVE.
+    3. Provisioning default config tenant & audit log.
+    """
     clean_slug = str(tenant_slug).strip().lower()
     clean_tier = str(plan_tier).strip().lower()
     gross_amount = TIER_PRICING.get(clean_tier, 199000)
     
-    # Aturan Pembagian Komisi Baru
+    # Aturan Pembagian Komisi
     if am_id and not affiliate_id:
-        # Direct Closing oleh AM
         affiliate_share = 0
-        am_share = int(gross_amount * 0.30)  # 30%
+        am_share = int(gross_amount * 0.30)
     elif affiliate_id:
-        # Closing oleh Affiliate Rekrutan
-        affiliate_share = int(gross_amount * 0.25)  # 25%
-        am_share = int(gross_amount * 0.05) if am_id else 0  # 5% overriding bonus
+        affiliate_share = int(gross_amount * 0.25)
+        am_share = int(gross_amount * 0.05) if am_id else 0
     else:
         affiliate_share = 0
         am_share = 0
@@ -121,7 +123,7 @@ async def process_successful_subscription(
     now = datetime.now(timezone.utc)
     period_end = now + timedelta(days=30)
 
-    # 1. Update status langganan aktif
+    # 1. Update status tabel shop_subscriptions
     sub_res = supabase.table("shop_subscriptions").insert({
         "tenant_slug": clean_slug,
         "plan_tier": clean_tier,
@@ -136,17 +138,68 @@ async def process_successful_subscription(
 
     # 2. Catat rincian komisi ke ledger
     if sub_id:
-        supabase.table("shop_commission_ledger").insert({
-            "subscription_id": sub_id,
-            "tenant_slug": clean_slug,
-            "gross_amount": gross_amount,
-            "affiliate_id": affiliate_id,
-            "affiliate_amount": affiliate_share,
-            "am_id": am_id,
-            "am_amount": am_share,
-            "platform_net_amount": platform_net,
-            "disbursement_status": "PENDING"
-        }).execute()
+        try:
+            supabase.table("shop_commission_ledger").insert({
+                "subscription_id": sub_id,
+                "tenant_slug": clean_slug,
+                "gross_amount": gross_amount,
+                "affiliate_id": affiliate_id,
+                "affiliate_amount": affiliate_share,
+                "am_id": am_id,
+                "am_amount": am_share,
+                "platform_net_amount": platform_net,
+                "disbursement_status": "PENDING"
+            }).execute()
+        except Exception as ledger_err:
+            logger.warning(f"[COMMISSION LEDGER ERROR] {ledger_err}")
+
+    # 3. State Transition: Aktivasi Merchant & Reservasi Slug
+    try:
+        m_res = supabase.table("merchants").update({
+            "status": "ACTIVE",
+            "active_until": period_end.isoformat(),
+            "plan_tier": clean_tier.upper(),
+            "updated_at": now.isoformat()
+        }).eq("slug", clean_slug).execute()
+
+        merchant_id = m_res.data[0]["id"] if m_res.data else None
+
+        # Klaim slug resmi
+        supabase.table("slug_reservations").update({
+            "status": "CLAIMED",
+            "updated_at": now.isoformat()
+        }).eq("slug", clean_slug).execute()
+
+        # Provisioning konfigurasi dasar tenant toko
+        if merchant_id:
+            supabase.table("tenant_configs").upsert({
+                "merchant_id": merchant_id,
+                "store_title": clean_slug.replace("-", " ").title(),
+                "timezone": "Asia/Jakarta",
+                "currency": "IDR",
+                "bot_persona": "friendly_cs",
+                "auto_qris_enabled": True,
+                "updated_at": now.isoformat()
+            }, on_conflict="merchant_id").execute()
+
+            # Catat Audit Log Sukses
+            supabase.table("merchant_audit_logs").insert({
+                "merchant_id": merchant_id,
+                "actor_type": "XENDIT_WEBHOOK",
+                "event_name": "MERCHANT_AUTO_PROVISIONED",
+                "status": "SUCCESS",
+                "payload": {
+                    "tenant_slug": clean_slug,
+                    "plan_tier": clean_tier,
+                    "invoice_id": xendit_invoice_id,
+                    "affiliate_id": affiliate_id,
+                    "am_id": am_id
+                }
+            }).execute()
+
+        logger.info(f"[PROVISIONING SUCCESS] Toko '{clean_slug}' resmi aktif hingga {period_end.isoformat()}.")
+    except Exception as prov_err:
+        logger.error(f"[PROVISIONING ERROR] Gagal aktivasi tenant {clean_slug}: {prov_err}")
 
     return {
         "status": "success",
