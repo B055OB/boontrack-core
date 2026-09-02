@@ -13,32 +13,28 @@ import httpx
 logger = logging.getLogger("META_CAPI")
 
 
-def hash_sha256(value: str) -> str:
-    """Hashes normalized string using SHA-256 for Meta CAPI PII requirements."""
+def hash_sha256(value: Optional[str]) -> Optional[str]:
+    """CTO Guardrail: Data privasi WAJIB di-hash SHA-256 sebelum keluar dari backend."""
     if not value:
-        return ""
+        return None
     clean = str(value).strip().lower()
     return hashlib.sha256(clean.encode("utf-8")).hexdigest()
 
 
 async def send_meta_capi_purchase(
     external_id: str,
-    value: int,
+    value: float,
     currency: str = "IDR",
     phone: Optional[str] = None,
+    email: Optional[str] = None,
+    fbclid: Optional[str] = None,
+    client_ip: Optional[str] = None,
+    client_user_agent: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> bool:
     """Sends a 'Purchase' conversion event to Meta Conversions API.
     
-    Args:
-        external_id: Transaction / Order ID used as event_id for deduplication.
-        value: Monetary value of the purchase.
-        currency: 3-letter currency code (default: 'IDR').
-        phone: Customer phone number (will be normalized and SHA-256 hashed).
-        user_id: Optional user identifier.
-        
-    Returns:
-        bool: True if event was dispatched successfully or mocked safely.
+    Fail-safe: tidak melempar exception fatal jika Meta API down.
     """
     pixel_id = os.getenv("META_PIXEL_ID", "boontrack_pixel_default")
     token = (
@@ -49,42 +45,53 @@ async def send_meta_capi_purchase(
     )
 
     now_ts = int(datetime.now(timezone.utc).timestamp())
-    
-    # Normalize and hash phone number if provided
+
+    # Format nomor telepon (standar internasional 628xxx) lalu di-hash
     clean_phone = ""
     if phone:
         digits = "".join(filter(str.isdigit, str(phone)))
         if digits.startswith("08"):
             digits = "62" + digits[1:]
+        elif digits.startswith("8"):
+            digits = "62" + digits
         clean_phone = digits
 
     hashed_phone = hash_sha256(clean_phone) if clean_phone else None
-    hashed_uid = hash_sha256(str(user_id)) if user_id else None
+    hashed_email = hash_sha256(email) if email else None
+
+    user_data: Dict[str, Any] = {
+        "ph": [hashed_phone] if hashed_phone else [],
+        "em": [hashed_email] if hashed_email else [],
+        "external_id": [hash_sha256(str(external_id))],
+    }
+
+    if client_ip:
+        user_data["client_ip_address"] = client_ip
+    if client_user_agent:
+        user_data["client_user_agent"] = client_user_agent
+    if fbclid:
+        user_data["fbc"] = f"fb.1.{now_ts}.{fbclid}"
 
     event_data = {
         "event_name": "Purchase",
         "event_time": now_ts,
-        "event_id": str(external_id),
-        "action_source": "system_generated",
-        "user_data": {
-            "ph": [hashed_phone] if hashed_phone else [],
-            "external_id": [hash_sha256(str(external_id))],
-        },
+        "event_id": f"order_{external_id}",
+        "action_source": "website",
+        "user_data": user_data,
         "custom_data": {
-            "currency": currency,
+            "currency": currency.upper(),
             "value": float(value),
+            "order_id": str(external_id),
         },
     }
-    if hashed_uid:
-        event_data["user_data"]["client_user_agent"] = "BoonTrack-Core/1.0"
 
     payload = {"data": [event_data]}
 
-    # In testing or missing token mode, acknowledge gracefully
+    # Mode Mock jika token belum dipasang
     if not token or pixel_id == "boontrack_pixel_default":
         logger.info(
-            f"[Meta CAPI Mock/Skip] Purchase event recorded for '{external_id}' "
-            f"(Value: {currency} {value:,}) - pixel_id={pixel_id}"
+            f"[Meta CAPI Mock/Skip] Event Purchase dicatat untuk order '{external_id}' "
+            f"(Value: {currency} {value:,.0f}) | pixel_id={pixel_id}"
         )
         return True
 
@@ -92,14 +99,14 @@ async def send_meta_capi_purchase(
     params = {"access_token": token}
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.post(url, params=params, json=payload)
             if resp.status_code in (200, 201):
-                logger.info(f"[Meta CAPI] Successfully sent Purchase event for '{external_id}' (Value: {value})")
+                logger.info(f"[Meta CAPI] Berhasil kirim Purchase order '{external_id}' (Value: {value})")
                 return True
             else:
-                logger.warning(f"[Meta CAPI] Event dispatch warning: {resp.status_code} - {resp.text}")
+                logger.warning(f"[Meta CAPI] Dispatch warning: {resp.status_code} - {resp.text}")
                 return False
     except Exception as e:
-        logger.error(f"[Meta CAPI] Error sending purchase event for '{external_id}': {e}", exc_info=True)
+        logger.error(f"[Meta CAPI] Error kirim purchase event untuk '{external_id}': {e}", exc_info=True)
         return False
