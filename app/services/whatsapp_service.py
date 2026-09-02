@@ -1203,7 +1203,7 @@ async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> D
                     "instanceName": instance_name,
                     "token": EVOLUTION_API_KEY,
                     "qrcode": True,
-                    "integration": "WHATSAPP-BAILEYS"
+                    "integration": "WHATSAPP-BAILEYS",
                     "clientName": "BoonTrack Engine"
                 }
                 await client.post(
