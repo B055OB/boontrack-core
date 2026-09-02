@@ -4,6 +4,7 @@ from typing import Optional, Dict, Any
 from aiohttp import web
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import json
 import os
 from app.services.growth_service import bind_attribution_session, process_order_paid_growth_event
 
@@ -27,22 +28,10 @@ def get_db():
     db_url = (os.getenv("DATABASE_URL") or "").strip()
     return psycopg2.connect(db_url)
 
-# 1. Endpoint Storefront Session Binding (P2.2)
-@router.post("/track")
-def track_session_endpoint(req: TrackSessionRequest, request: Request):
-    client_ip = request.client.host if request.client else "127.0.0.1"
-    ua = req.user_agent or request.headers.get("user-agent", "")
-    result = bind_attribution_session(req.tenant_id, req.referral_code, req.fbclid, ua, client_ip, req.order_id)
-    return result
-
-# 2. Endpoint Portal Affiliate Performance MVP (P2.5)
-@router.get("/portal/{tenant_id}/{referral_code}")
-def get_affiliate_portal(tenant_id: str, referral_code: str):
-    conn = None
+def fetch_portal_data(tenant_id: str, referral_code: str):
+    conn = get_db()
     try:
-        conn = get_db()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-
         cur.execute("""
             SELECT id, name, phone_number, referral_code, commission_rate, status 
             FROM affiliates 
@@ -51,15 +40,13 @@ def get_affiliate_portal(tenant_id: str, referral_code: str):
         affiliate = cur.fetchone()
 
         if not affiliate:
-            raise HTTPException(status_code=404, detail="Affiliate tidak ditemukan!")
+            return None
 
         aff_id = affiliate["id"]
 
-        # Hitung Total Sesi Klik
         cur.execute("SELECT COUNT(*) as total_clicks FROM attribution_sessions WHERE affiliate_id = %s;", (aff_id,))
         total_clicks = cur.fetchone()["total_clicks"]
 
-        # Hitung Saldo Komisi
         cur.execute("""
             SELECT 
                 COUNT(*) as total_orders,
@@ -69,28 +56,41 @@ def get_affiliate_portal(tenant_id: str, referral_code: str):
             WHERE affiliate_id = %s;
         """, (aff_id,))
         stats = cur.fetchone()
-
         cur.close()
+
+        aff_dict = dict(affiliate)
+        aff_dict["id"] = str(aff_dict["id"])
+        aff_dict["commission_rate"] = float(aff_dict["commission_rate"])
+
         return {
-            "success": True,
-            "data": {
-                "affiliate": dict(affiliate),
-                "referral_url": f"https://shop.boontrack.com/{tenant_id}?ref={referral_code}",
-                "metrics": {
-                    "total_clicks": total_clicks,
-                    "total_orders": stats["total_orders"],
-                    "ready_to_withdraw": float(stats["approved_balance"]),
-                    "already_paid": float(stats["paid_balance"])
-                }
+            "affiliate": aff_dict,
+            "referral_url": f"https://shop.boontrack.com/{tenant_id}?ref={referral_code}",
+            "metrics": {
+                "total_clicks": int(total_clicks),
+                "total_orders": int(stats["total_orders"]),
+                "ready_to_withdraw": float(stats["approved_balance"]),
+                "already_paid": float(stats["paid_balance"])
             }
         }
     finally:
-        if conn:
-            conn.close()
+        conn.close()
 
-# 3. Endpoint Simulasi Order PAID (DoD P2 Verification)
+# --- FASTAPI HANDLERS ---
+@router.post("/track")
+def track_session_fastapi(req: TrackSessionRequest, request: Request):
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    ua = req.user_agent or request.headers.get("user-agent", "")
+    return bind_attribution_session(req.tenant_id, req.referral_code, req.fbclid, ua, client_ip, req.order_id)
+
+@router.get("/portal/{tenant_id}/{referral_code}")
+def get_affiliate_portal_fastapi(tenant_id: str, referral_code: str):
+    data = fetch_portal_data(tenant_id, referral_code)
+    if not data:
+        raise HTTPException(status_code=404, detail="Affiliate tidak ditemukan!")
+    return {"success": True, "data": data}
+
 @router.post("/simulate/order-paid")
-async def simulate_order_paid(req: SimulatePaidRequest, request: Request):
+async def simulate_order_paid_fastapi(req: SimulatePaidRequest, request: Request):
     client_ip = request.client.host if request.client else "127.0.0.1"
     await process_order_paid_growth_event(
         tenant_id=req.tenant_id,
@@ -100,11 +100,57 @@ async def simulate_order_paid(req: SimulatePaidRequest, request: Request):
         customer_email=req.customer_email,
         client_ip=client_ip
     )
-    return {
-        "success": True,
-        "message": f"Event order PAID #{req.order_id} berhasil diproses oleh Growth Worker."
-    }
+    return {"success": True, "message": f"Event order PAID #{req.order_id} berhasil diproses oleh Growth Worker."}
 
-# Aiohttp Registrar untuk kompatibilitas runner
+# --- AIOHTTP HANDLERS ---
+async def aiohttp_track_handler(request: web.Request):
+    try:
+        body = await request.json()
+        client_ip = request.remote or "127.0.0.1"
+        ua = body.get("user_agent") or request.headers.get("User-Agent", "")
+        res = bind_attribution_session(
+            body.get("tenant_id", ""),
+            body.get("referral_code"),
+            body.get("fbclid"),
+            ua,
+            client_ip,
+            body.get("order_id")
+        )
+        return web.json_response(res)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def aiohttp_portal_handler(request: web.Request):
+    try:
+        tenant_id = request.match_info.get("tenant_id")
+        referral_code = request.match_info.get("referral_code")
+        data = fetch_portal_data(tenant_id, referral_code)
+        if not data:
+            return web.json_response({"success": False, "detail": "Affiliate tidak ditemukan!"}, status=404)
+        return web.json_response({"success": True, "data": data})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def aiohttp_simulate_paid_handler(request: web.Request):
+    try:
+        body = await request.json()
+        client_ip = request.remote or "127.0.0.1"
+        await process_order_paid_growth_event(
+            tenant_id=body.get("tenant_id", ""),
+            order_id=body.get("order_id", ""),
+            order_amount=float(body.get("amount", 0)),
+            customer_phone=body.get("customer_phone", "08123456789"),
+            customer_email=body.get("customer_email", "buyer@gmail.com"),
+            client_ip=client_ip
+        )
+        return web.json_response({
+            "success": True,
+            "message": f"Event order PAID #{body.get('order_id')} berhasil diproses oleh Growth Worker."
+        })
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
 def register_growth_routes(app: web.Application):
-    pass
+    app.router.add_post('/api/v1/growth/track', aiohttp_track_handler)
+    app.router.add_get('/api/v1/growth/portal/{tenant_id}/{referral_code}', aiohttp_portal_handler)
+    app.router.add_post('/api/v1/growth/simulate/order-paid', aiohttp_simulate_paid_handler)
