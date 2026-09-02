@@ -12,14 +12,11 @@ def log_tenant_incident(
     metadata: Optional[Dict[str, Any]] = None
 ):
     """
-    Mencatat log insiden kesehatan sistem per tenant ke database Supabase.
+    Mencatat log insiden kesehatan sistem per tenant ke tabel tenant_incidents.
     Severity: 'LOW', 'MEDIUM', 'CRITICAL'
     Service: 'WhatsApp', 'Payment', 'Webhook', 'AI', 'Shipping'
     """
-    db_url = os.getenv("DATABASE_URL")
-    if db_url and "postgresql+asyncpg://" in db_url:
-        db_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
-
+    db_url = (os.getenv("DATABASE_URL") or "").strip()
     conn = None
     try:
         conn = psycopg2.connect(db_url)

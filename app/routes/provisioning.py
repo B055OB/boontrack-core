@@ -12,14 +12,12 @@ router = APIRouter(prefix="/api/v1/internal/tenants", tags=["Internal Provisioni
 class ProvisionRequest(BaseModel):
     tenant_name: str
     slug: str
-    vertical: str = Field(default="shop", example="shop")  # shop / gym / career
-    plan: str = Field(default="growth", example="growth")  # growth / pro
+    vertical: str = Field(default="shop", example="shop")
+    plan: str = Field(default="growth", example="growth")
     config: Optional[Dict[str, Any]] = None
 
 def get_db_connection():
-    db_url = os.getenv("DATABASE_URL")
-    if db_url and "postgresql+asyncpg://" in db_url:
-        db_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+    db_url = (os.getenv("DATABASE_URL") or "").strip()
     return psycopg2.connect(db_url)
 
 def execute_provision_logic(tenant_name: str, slug: str, vertical: str = "shop", plan: str = "growth", config: Optional[Dict[str, Any]] = None):
@@ -35,7 +33,7 @@ def execute_provision_logic(tenant_name: str, slug: str, vertical: str = "shop",
         if existing:
             raise ValueError(f"Tenant dengan slug '{slug_sanitized}' sudah terdaftar!")
 
-        # 2. Template seeding vertikal
+        # 2. Template seeding vertikal otomatis
         initial_config = {
             "vertical": vertical,
             "plan": plan,
