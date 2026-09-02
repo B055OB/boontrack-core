@@ -37,10 +37,11 @@ from app.routes.shop_event_routes import shop_event_fastapi_router, register_sho
 from app.api.webhook_payment import router as webhook_payment_router, register_webhook_payment_routes
 from app.services.payout_service import PayoutService
 
-# IMPORT ROUTER & AIOHTTP REGISTRARS ENTITLEMENT & WHATSAPP GATEWAY
+# IMPORT ROUTER & AIOHTTP REGISTRARS ENTITLEMENT, WHATSAPP GATEWAY, & PROVISIONING
 from app.routes.entitlement_routes import router as entitlement_router, register_entitlement_routes
 from app.routes.whatsapp_gateway_routes import router as whatsapp_gateway_router
 from app.routes.whatsapp_control import router as whatsapp_control_router, register_whatsapp_control_routes
+from app.routes.provisioning import router as provisioning_router, register_provisioning_routes
 
 # Inisialisasi Supabase Client
 supabase_url = os.getenv("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.co")
@@ -81,10 +82,11 @@ app.include_router(shop_subscription_fastapi_router)
 app.include_router(shop_event_fastapi_router)
 app.include_router(webhook_payment_router)
 
-# DAFTARKAN ENTITLEMENT, WHATSAPP GATEWAY, & CONTROL ROUTER KE FASTAPI
+# DAFTARKAN ENTITLEMENT, WHATSAPP GATEWAY, CONTROL, & PROVISIONING ROUTER
 app.include_router(entitlement_router)
 app.include_router(whatsapp_gateway_router)
 app.include_router(whatsapp_control_router)
+app.include_router(provisioning_router)
 
 
 @app.get("/", summary="Root Health Check")
@@ -135,13 +137,14 @@ async def start_application():
     print("[BOOT] Starting Web Server...", flush=True)
     aiohttp_app = create_web_app()
     
-    # Daftarkan Router Modul Gateway, Subscription, Event Worker, Webhook, Entitlements, & WhatsApp Control ke Aiohttp
+    # Daftarkan Router Modul Gateway, Subscription, Event Worker, Webhook, Entitlements, WhatsApp Control, & Provisioning ke Aiohttp
     register_shop_gateway_routes(aiohttp_app)
     register_shop_subscription_routes(aiohttp_app)
     register_shop_event_routes(aiohttp_app)
     register_webhook_payment_routes(aiohttp_app)
     register_entitlement_routes(aiohttp_app)
     register_whatsapp_control_routes(aiohttp_app)
+    register_provisioning_routes(aiohttp_app)
     
     port = int(os.getenv("PORT", 8080))
     await start_web_server(aiohttp_app, port=port)
