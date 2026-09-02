@@ -48,14 +48,14 @@ def execute_provision_logic(tenant_name: str, slug: str, vertical: str = "shop",
         if config:
             initial_config.update(config)
 
-        # 3. Insert tenant ke database dengan status HEALTHY
+        # 3. Insert tenant ke database tanpa dependensi kolom updated_at
         cur.execute("""
             INSERT INTO tenants (
                 name, slug, country_code, currency, timezone, 
-                region_config, status, created_at, updated_at
+                region_config, status
             ) VALUES (
                 %s, %s, 'ID', 'IDR', 'Asia/Jakarta', 
-                %s, 'HEALTHY', NOW(), NOW()
+                %s, 'HEALTHY'
             ) RETURNING id, name, slug, status, country_code, currency, region_config;
         """, (tenant_name, slug_sanitized, Json(initial_config)))
         
