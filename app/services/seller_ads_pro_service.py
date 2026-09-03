@@ -14,20 +14,59 @@ def hash_data(val: Optional[str]) -> Optional[str]:
         return None
     return hashlib.sha256(val.strip().lower().encode("utf-8")).hexdigest()
 
-async def verify_seller_addon_entitlement(tenant_id: str) -> bool:
-    """Memverifikasi apakah seller berlangganan add-on Ads Tracking Pro."""
+async def verify_seller_addon_entitlement(tenant_id: str) -> Dict[str, Any]:
+    """
+    Logika Entitlement Ads Tracking Pro:
+    1. Paket PRO_SCALE -> Langsung berhak (Include bawaan paket tanpa add-on).
+    2. Paket GROWTH -> Cek tabel tenant_addons untuk add-on 'ads_tracking_pro' (+Rp99k/bulan).
+    3. Selain itu -> Terkunci (LOCKED).
+    """
     conn = get_db()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
+        # 1. Cek Tier Paket Utama Tenant
+        cur.execute("""
+            SELECT subscription_plan, subscription_status 
+            FROM tenants 
+            WHERE id = %s;
+        """, (tenant_id,))
+        tenant = cur.fetchone()
+
+        plan = (tenant.get("subscription_plan") or "").upper() if tenant else ""
+        sub_status = (tenant.get("subscription_status") or "").upper() if tenant else ""
+
+        # Tier PRO_SCALE otomatis dapat akses penuh
+        if plan == "PRO_SCALE" and sub_status in ["ACTIVE", "TRIAL"]:
+            return {
+                "allowed": True,
+                "reason": "INCLUDED_IN_PRO_SCALE",
+                "plan": plan
+            }
+
+        # 2. Cek Pembelian Add-on Mandiri (+Rp99k/bulan)
         cur.execute("""
             SELECT is_active, expires_at 
             FROM tenant_addons 
-            WHERE tenant_id = %s AND addon_key = 'ads_tracking_pro';
+            WHERE tenant_id = %s 
+              AND addon_key = 'ads_tracking_pro'
+              AND is_active = TRUE 
+              AND (expires_at IS NULL OR expires_at > NOW());
         """, (tenant_id,))
-        row = cur.fetchone()
-        if not row or not row["is_active"]:
-            return False
-        return True
+        addon = cur.fetchone()
+
+        if addon:
+            return {
+                "allowed": True,
+                "reason": "STANDALONE_ADDON_ACTIVE",
+                "expires_at": addon["expires_at"]
+            }
+
+        # Terkunci
+        return {
+            "allowed": False,
+            "reason": "LOCKED",
+            "message": "Fitur Ads Tracking Pro terkunci. Termasuk otomatis di paket Pro Scale atau add-on Rp99.000/bulan untuk paket Growth."
+        }
     finally:
         cur.close()
         conn.close()
@@ -86,9 +125,14 @@ async def get_seller_pixel_settings(tenant_id: str) -> Dict[str, Any]:
 
 async def dispatch_seller_capi_purchase(tenant_id: str, order_id: str, amount: float, tracking_data: Dict[str, Any]):
     """
-    Mengirim event Purchase server-side LANGSUNG ke Ads Manager milik SELLER
-    (Menggunakan Meta Pixel ID & CAPI Token milik seller, bukan akun Boontrack).
+    Mengirim event Purchase server-side LANGSUNG ke Ads Manager milik SELLER.
+    Event dikirim hanya jika entitlement seller aktif.
     """
+    entitlement = await verify_seller_addon_entitlement(tenant_id)
+    if not entitlement["allowed"]:
+        print(f"[SELLER CAPI] Tenant {tenant_id} does not have an active Ads Tracking Pro license. Skipped.")
+        return
+
     conn = get_db()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
