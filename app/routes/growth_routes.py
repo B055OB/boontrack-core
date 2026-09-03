@@ -10,10 +10,18 @@ from app.services.growth_service import bind_attribution_session, process_order_
 
 router = APIRouter(prefix="/api/v1/growth", tags=["Growth & Affiliate Engine"])
 
+# Model Payload Lengkap Sesuai P3-A.1
 class TrackSessionRequest(BaseModel):
     tenant_id: str
+    session_id: Optional[str] = None
     referral_code: Optional[str] = None
+    utm_source: Optional[str] = None
+    utm_medium: Optional[str] = None
+    utm_campaign: Optional[str] = None
+    utm_content: Optional[str] = None
+    utm_term: Optional[str] = None
     fbclid: Optional[str] = None
+    ttclid: Optional[str] = None
     user_agent: Optional[str] = None
     order_id: Optional[str] = None
 
@@ -44,8 +52,15 @@ def fetch_portal_data(tenant_id: str, referral_code: str):
 
         aff_id = affiliate["id"]
 
-        cur.execute("SELECT COUNT(*) as total_clicks FROM attribution_sessions WHERE affiliate_id = %s;", (aff_id,))
-        total_clicks = cur.fetchone()["total_clicks"]
+        # Hitung klik dari tabel attributions baru (dengan fallback ke attribution_sessions)
+        try:
+            cur.execute("SELECT COUNT(*) as total_clicks FROM attributions WHERE affiliate_id = %s;", (aff_id,))
+            click_row = cur.fetchone()
+            total_clicks = click_row["total_clicks"] if click_row else 0
+        except Exception:
+            conn.rollback()
+            cur.execute("SELECT COUNT(*) as total_clicks FROM attribution_sessions WHERE affiliate_id = %s;", (aff_id,))
+            total_clicks = cur.fetchone()["total_clicks"]
 
         cur.execute("""
             SELECT 
@@ -80,7 +95,21 @@ def fetch_portal_data(tenant_id: str, referral_code: str):
 def track_session_fastapi(req: TrackSessionRequest, request: Request):
     client_ip = request.client.host if request.client else "127.0.0.1"
     ua = req.user_agent or request.headers.get("user-agent", "")
-    return bind_attribution_session(req.tenant_id, req.referral_code, req.fbclid, ua, client_ip, req.order_id)
+    return bind_attribution_session(
+        tenant_id=req.tenant_id,
+        referral_code=req.referral_code,
+        fbclid=req.fbclid,
+        user_agent=ua,
+        client_ip=client_ip,
+        order_id=req.order_id,
+        session_id=req.session_id,
+        utm_source=req.utm_source,
+        utm_medium=req.utm_medium,
+        utm_campaign=req.utm_campaign,
+        utm_content=req.utm_content,
+        utm_term=req.utm_term,
+        ttclid=req.ttclid
+    )
 
 @router.get("/portal/{tenant_id}/{referral_code}")
 def get_affiliate_portal_fastapi(tenant_id: str, referral_code: str):
@@ -109,12 +138,19 @@ async def aiohttp_track_handler(request: web.Request):
         client_ip = request.remote or "127.0.0.1"
         ua = body.get("user_agent") or request.headers.get("User-Agent", "")
         res = bind_attribution_session(
-            body.get("tenant_id", ""),
-            body.get("referral_code"),
-            body.get("fbclid"),
-            ua,
-            client_ip,
-            body.get("order_id")
+            tenant_id=body.get("tenant_id", ""),
+            referral_code=body.get("referral_code"),
+            fbclid=body.get("fbclid"),
+            user_agent=ua,
+            client_ip=client_ip,
+            order_id=body.get("order_id"),
+            session_id=body.get("session_id"),
+            utm_source=body.get("utm_source"),
+            utm_medium=body.get("utm_medium"),
+            utm_campaign=body.get("utm_campaign"),
+            utm_content=body.get("utm_content"),
+            utm_term=body.get("utm_term"),
+            ttclid=body.get("ttclid")
         )
         return web.json_response(res)
     except Exception as e:

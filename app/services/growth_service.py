@@ -16,10 +16,18 @@ def bind_attribution_session(
     fbclid: Optional[str],
     user_agent: Optional[str],
     client_ip: str,
-    order_id: Optional[str] = None
+    order_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    utm_source: Optional[str] = None,
+    utm_medium: Optional[str] = None,
+    utm_campaign: Optional[str] = None,
+    utm_content: Optional[str] = None,
+    utm_term: Optional[str] = None,
+    ttclid: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Mencatat sesi klik/checkout dengan IP di-hash SHA-256 (Data Minimization)."""
+    """Mencatat sesi klik/checkout dengan parameter UTM lengkap dan IP hash SHA-256."""
     ip_hash = hashlib.sha256((client_ip or "127.0.0.1").encode("utf-8")).hexdigest()
+    sid = session_id or f"sid_{os.urandom(8).hex()}"
     conn = None
     try:
         conn = get_db_connection()
@@ -35,18 +43,39 @@ def bind_attribution_session(
             if aff:
                 affiliate_id = aff["id"]
 
+        # 1. Simpan ke tabel attributions (P3-A)
         cur.execute("""
-            INSERT INTO attribution_sessions (
-                tenant_id, affiliate_id, order_id, referral_code, fbclid, user_agent, ip_hash, created_at
+            INSERT INTO attributions (
+                tenant_id, session_id, affiliate_id, utm_source, utm_medium,
+                utm_campaign, utm_content, utm_term, fbclid, ttclid,
+                ip_hash, user_agent, created_at
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, NOW()
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
             ) RETURNING id;
-        """, (tenant_id, affiliate_id, order_id, referral_code, fbclid, user_agent, ip_hash))
+        """, (
+            tenant_id, sid, affiliate_id, utm_source, utm_medium,
+            utm_campaign, utm_content, utm_term, fbclid, ttclid,
+            ip_hash, user_agent
+        ))
+        attribution_row = cur.fetchone()
+        attribution_id = str(attribution_row["id"])
 
-        session_row = cur.fetchone()
+        # 2. Jika ada order_id, bind langsung ke product_orders
+        if order_id:
+            cur.execute("""
+                UPDATE product_orders 
+                SET attribution_id = %s 
+                WHERE order_id = %s AND tenant_id = %s;
+            """, (attribution_id, order_id, tenant_id))
+
         conn.commit()
         cur.close()
-        return {"success": True, "session_id": str(session_row["id"]), "affiliate_id": affiliate_id}
+        return {
+            "success": True, 
+            "attribution_id": attribution_id, 
+            "session_id": sid, 
+            "affiliate_id": affiliate_id
+        }
     except Exception as e:
         if conn:
             conn.rollback()
@@ -77,13 +106,22 @@ async def process_order_paid_growth_event(
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Cek apakah order ini terikat sesi atribusi
+        # Cek apakah order ini terikat ke attributions atau legacy attribution_sessions
         cur.execute("""
-            SELECT s.affiliate_id, s.fbclid, s.user_agent, a.name, a.phone_number, a.commission_rate
-            FROM attribution_sessions s
-            LEFT JOIN affiliates a ON s.affiliate_id = a.id
-            WHERE s.tenant_id = %s AND s.order_id = %s
-            ORDER BY s.created_at DESC LIMIT 1;
+            SELECT 
+                po.attribution_id,
+                COALESCE(att.affiliate_id, s.affiliate_id) as affiliate_id,
+                COALESCE(att.fbclid, s.fbclid) as fbclid,
+                COALESCE(att.user_agent, s.user_agent) as user_agent,
+                a.name, 
+                a.phone_number, 
+                a.commission_rate
+            FROM product_orders po
+            LEFT JOIN attributions att ON po.attribution_id = att.id
+            LEFT JOIN attribution_sessions s ON (po.order_id = s.order_id OR po.tenant_id = s.tenant_id)
+            LEFT JOIN affiliates a ON a.id = COALESCE(att.affiliate_id, s.affiliate_id)
+            WHERE po.tenant_id = %s AND po.order_id = %s
+            ORDER BY po.created_at DESC LIMIT 1;
         """, (tenant_id, order_id))
         attribution_info = cur.fetchone()
 
@@ -128,7 +166,7 @@ async def process_order_paid_growth_event(
         except Exception as e:
             print(f"[WA NOTIF WARNING] Gagal kirim WA affiliate: {e}", flush=True)
 
-    # Dispatch Server-Side Meta CAPI
+    # Dispatch Server-Side Meta CAPI Purchase
     fbclid = attribution_info.get("fbclid") if attribution_info else None
     user_agent = attribution_info.get("user_agent") if attribution_info else None
 
