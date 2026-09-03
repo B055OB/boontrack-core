@@ -16,7 +16,7 @@ async def biteship_webhook_handler(request: web.Request):
     try:
         data = await request.json()
         event = data.get("event")
-        order_id = data.get("order_id")  # ID booking Biteship
+        booking_id = data.get("order_id")  # ID booking Biteship
 
         conn = get_db()
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -40,24 +40,24 @@ async def biteship_webhook_handler(request: web.Request):
                     SET status = %s, updated_at = NOW()
                     WHERE booking_id = %s
                     RETURNING tenant_id, order_id, is_cod;
-                """, (new_fulfillment, order_id))
+                """, (new_fulfillment, booking_id))
                 row = cur.fetchone()
 
-                # 2. Update state di product_orders secara terpisah
+                # 2. Update state di product_orders (kunci unik order_id)
                 if row:
                     cur.execute("""
                         UPDATE product_orders
                         SET fulfillment_status = %s
-                        WHERE tenant_id = %s AND order_id = %s;
-                    """, (new_fulfillment, row["tenant_id"], row["order_id"]))
+                        WHERE order_id = %s;
+                    """, (new_fulfillment, row["order_id"]))
 
                     # Jika COD dan barang sampai, status uang menjadi PENDING_REMITTANCE
                     if new_fulfillment == "DELIVERED" and row["is_cod"]:
                         cur.execute("""
                             UPDATE product_orders
                             SET cod_settlement_status = 'PENDING_REMITTANCE'
-                            WHERE tenant_id = %s AND order_id = %s AND cod_settlement_status = 'NONE';
-                        """, (row["tenant_id"], row["order_id"]))
+                            WHERE order_id = %s AND (cod_settlement_status IS NULL OR cod_settlement_status = 'NONE');
+                        """, (row["order_id"],))
 
                 conn.commit()
 
