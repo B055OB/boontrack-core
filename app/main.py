@@ -23,7 +23,7 @@ from app.core.server import create_web_app, start_web_server, start_telegram_pol
 from app.handlers.telegram_bot_handlers import register_all_bot_handlers
 from app.routes.gym_access_routes import gym_router
 from app.routes.gym_admin_routes import router as gym_admin_router
-from app.routes.payment import payment_router
+from app.routes.payment import payment_router, register_payment_routes
 from app.routes.webchat import router as webchat_router
 from app.routes.internal_routes import internal_router
 from app.routes.xendit import xendit_router
@@ -142,6 +142,7 @@ async def start_application():
     aiohttp_app = create_web_app()
     
     # Daftarkan Router Modul Gateway, Subscription, Event Worker, Webhook, Entitlements, WhatsApp Control, Provisioning, Growth, Shipping & Seller Ads Pro
+    register_payment_routes(aiohttp_app)
     register_shop_gateway_routes(aiohttp_app)
     register_shop_subscription_routes(aiohttp_app)
     register_shop_event_routes(aiohttp_app)

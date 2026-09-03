@@ -149,11 +149,27 @@ def get_entitlements_endpoint(tenant_slug: str = "onlineboost"):
         "chatwoot_active": True if is_pro else False
     }
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+_db_url = os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://").replace("postgres://", "postgresql://")
+_sync_engine = create_engine(_db_url, pool_pre_ping=True) if _db_url else None
+_SessionFactory = sessionmaker(bind=_sync_engine) if _sync_engine else None
+
+def get_db():
+    if not _SessionFactory:
+        return None
+    db = _SessionFactory()
+    try:
+        yield db
+    finally:
+        db.close()
+
 @router.post("/tenants/{tenant_slug}/members/invite", status_code=status.HTTP_201_CREATED)
 def invite_staff_member(
     tenant_slug: str,
     payload: InviteStaffRequest,
-    db: Session = Depends()
+    db: Optional[Session] = Depends(get_db)
 ):
     try:
         db.begin_nested() if db.in_transaction() else db.begin()
