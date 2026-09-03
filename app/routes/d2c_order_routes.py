@@ -41,7 +41,10 @@ class QuickQrisRequest(BaseModel):
     total_amount: int
 
 
-@d2c_router.post("/v1/orders/qris-checkout", summary="Quick QRIS Creation from Storefront Cart")
+@d2c_router.post("/api/v1/orders/qris-checkout", summary="Quick QRIS Creation from Storefront Cart")
+@d2c_router.post("/v1/orders/qris-checkout", summary="Quick QRIS Creation from Storefront Cart Alias")
+@d2c_router.post("/api/v1/orders/qris/create", summary="Order QRIS Creation Alias")
+@d2c_router.post("/api/v1/order/qris-checkout", summary="Order QRIS Creation Alias 2")
 async def quick_qris_checkout_endpoint(payload: QuickQrisRequest):
     """Endpoint yang dipanggil langsung saat buyer klik 'Bayar QRIS Sekarang' di etalase."""
     try:
@@ -63,7 +66,10 @@ async def quick_qris_checkout_endpoint(payload: QuickQrisRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@d2c_router.post("/v1/orders/checkout", summary="Submit Full Web Checkout & Trigger Dual QRIS")
+@d2c_router.post("/api/v1/orders/checkout", summary="Submit Full Web Checkout & Trigger Dual QRIS")
+@d2c_router.post("/v1/orders/checkout", summary="Submit Full Web Checkout & Trigger Dual QRIS Alias")
+@d2c_router.post("/api/v1/order/checkout", summary="Submit Full Web Checkout Alias")
+@d2c_router.post("/api/v1/checkout", summary="Direct Checkout Alias")
 async def submit_checkout_endpoint(payload: CheckoutRequest):
     try:
         result = await create_d2c_order_and_dispatch_qris(
@@ -81,6 +87,8 @@ async def submit_checkout_endpoint(payload: CheckoutRequest):
 
 
 @d2c_router.post("/webhooks/payment", summary="Payment Gateway Webhook Listener")
+@d2c_router.post("/api/v1/webhooks/payment", summary="Payment Gateway Webhook Listener Alias")
+@d2c_router.post("/api/v1/webhook/payment", summary="Payment Gateway Webhook Listener Alias 2")
 async def payment_webhook_listener(request: Request, x_callback_token: Optional[str] = Header(None)):
     try:
         body = await request.json()

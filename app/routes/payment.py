@@ -57,6 +57,36 @@ class CreateDynamicQRISResponse(BaseModel):
     response_model=CreateDynamicQRISResponse,
     summary="Create Real Dynamic QRIS Alias",
 )
+@payment_router.post(
+    "/api/v1/payments/qris",
+    response_model=CreateDynamicQRISResponse,
+    summary="Create QRIS Alias 2",
+)
+@payment_router.post(
+    "/api/v1/payment/qris",
+    response_model=CreateDynamicQRISResponse,
+    summary="Create QRIS Alias 3",
+)
+@payment_router.post(
+    "/v1/payments/qris/create",
+    response_model=CreateDynamicQRISResponse,
+    summary="Create QRIS Alias 4",
+)
+@payment_router.post(
+    "/v1/payment/qris/create",
+    response_model=CreateDynamicQRISResponse,
+    summary="Create QRIS Alias 5",
+)
+@payment_router.post(
+    "/api/v1/payments/create",
+    response_model=CreateDynamicQRISResponse,
+    summary="Create QRIS Alias 6",
+)
+@payment_router.post(
+    "/api/v1/payment/create",
+    response_model=CreateDynamicQRISResponse,
+    summary="Create QRIS Alias 7",
+)
 async def create_dynamic_qris_endpoint(payload: CreateDynamicQRISRequest = Body(...)):
     """Creates dynamic QRIS code via Xendit Sandbox API or resilient local EMVCo generator.
     

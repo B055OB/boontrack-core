@@ -1,12 +1,23 @@
 import os
 import random
+import logging
 from datetime import datetime, timedelta, timezone
+from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
-from jose import jwt
+
+try:
+    from jose import jwt
+except ImportError:
+    try:
+        import jwt
+    except ImportError:
+        jwt = None
+
 from supabase import create_client, Client
 from app.services.whatsapp_service import send_whatsapp_text
 
+logger = logging.getLogger("AFFILIATE_AUTH")
 router = APIRouter(prefix="/api/v1/auth/affiliate", tags=["Affiliate Auth"])
 
 JWT_SECRET = os.getenv("JWT_SECRET", "boontrack-secret-key-production-3000")
@@ -17,9 +28,34 @@ supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANO
 supabase: Client = create_client(supabase_url, supabase_key)
 
 
+def generate_jwt_token(payload: dict) -> str:
+    """Safely generates a signed JWT token supporting python-jose, PyJWT, and built-in fallback."""
+    if jwt is not None:
+        token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+        if isinstance(token, bytes):
+            return token.decode("utf-8")
+        return token
+    else:
+        import base64
+        import json
+        import hmac
+        import hashlib
+        header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).rstrip(b"=").decode()
+        clean_payload = {}
+        for k, v in payload.items():
+            if isinstance(v, datetime):
+                clean_payload[k] = int(v.timestamp())
+            else:
+                clean_payload[k] = v
+        body = base64.urlsafe_b64encode(json.dumps(clean_payload).encode()).rstrip(b"=").decode()
+        sig = hmac.new(JWT_SECRET.encode(), f"{header}.{body}".encode(), hashlib.sha256).digest()
+        sig_str = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
+        return f"{header}.{body}.{sig_str}"
+
+
 class SendOTPRequest(BaseModel):
     phone: str
-    name: str | None = None
+    name: Optional[str] = None
 
 
 class VerifyOTPRequest(BaseModel):
@@ -103,7 +139,7 @@ async def verify_affiliate_otp(payload: VerifyOTPRequest):
         "affiliate_code": affiliate_data["affiliate_code"],
         "exp": datetime.now(timezone.utc) + timedelta(days=7)
     }
-    access_token = jwt.encode(token_payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    access_token = generate_jwt_token(token_payload)
 
     return {
         "status": "success",

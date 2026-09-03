@@ -56,20 +56,23 @@ async def create_d2c_order_and_dispatch_qris(
 
     # 2. Simpan order ke database Supabase
     if supabase:
-        supabase.table("orders").insert({
-            "order_id": order_id,
-            "tenant_slug": merchant_slug,
-            "customer_name": customer_name,
-            "customer_phone": clean_phone,
-            "items": items,
-            "total_amount": total_amount,
-            "status": "PENDING",
-            "qr_string": qr_string,
-            "is_digital": is_digital,
-            "delivery_asset_url": delivery_asset_url,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "expires_at": expires_at,
-        }).execute()
+        try:
+            supabase.table("orders").insert({
+                "order_id": order_id,
+                "tenant_slug": merchant_slug,
+                "customer_name": customer_name,
+                "customer_phone": clean_phone,
+                "items": items,
+                "total_amount": total_amount,
+                "status": "PENDING",
+                "qr_string": qr_string,
+                "is_digital": is_digital,
+                "delivery_asset_url": delivery_asset_url,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "expires_at": expires_at,
+            }).execute()
+        except Exception as db_err:
+            logger.warning(f"[DB ORDER INSERT WARNING] {db_err}")
 
     # 3. Format Pesan WhatsApp Invoice Summary
     amount_fmt = f"Rp{total_amount:,.0f}".replace(",", ".")

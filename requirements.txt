@@ -33,3 +33,5 @@ Pillow==12.3.0
 flask
 email-validator
 cryptography
+python-jose[cryptography]>=3.3.0
+PyJWT>=2.8.0
