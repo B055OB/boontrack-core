@@ -234,14 +234,27 @@ async def get_seller_attribution_analytics(tenant_id: str) -> Dict[str, Any]:
         """, (tenant_id,))
         campaigns = cur.fetchall()
 
+        # Konversi Decimal Postgres ke float dan int standar Python
+        formatted_campaigns = []
+        for c in campaigns:
+            formatted_campaigns.append({
+                "campaign_name": str(c["campaign_name"]),
+                "source": str(c["source"]),
+                "total_orders": int(c["total_orders"]),
+                "total_revenue": float(c["total_revenue"])
+            })
+
+        total_orders = int(summary["total_ad_orders"]) if summary else 0
+        total_rev = float(summary["total_ad_revenue"]) if summary else 0.0
+
         return {
             "success": True,
             "tenant_id": tenant_id,
             "summary": {
-                "total_ad_orders": int(summary["total_ad_orders"]),
-                "total_ad_revenue": float(summary["total_ad_revenue"])
+                "total_ad_orders": total_orders,
+                "total_ad_revenue": total_rev
             },
-            "campaign_breakdown": [dict(c) for c in campaigns]
+            "campaign_breakdown": formatted_campaigns
         }
     finally:
         cur.close()
