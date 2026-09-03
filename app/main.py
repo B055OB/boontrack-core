@@ -44,6 +44,7 @@ from app.routes.whatsapp_control import router as whatsapp_control_router, regis
 from app.routes.provisioning import router as provisioning_router, register_provisioning_routes
 from app.routes.growth_routes import router as growth_router, register_growth_routes
 from app.routes.shipping_webhook_routes import register_shipping_routes
+from app.routes.seller_ads_routes import register_seller_ads_routes
 
 # Inisialisasi Supabase Client
 supabase_url = os.getenv("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.co")
@@ -140,7 +141,7 @@ async def start_application():
     print("[BOOT] Starting Web Server...", flush=True)
     aiohttp_app = create_web_app()
     
-    # Daftarkan Router Modul Gateway, Subscription, Event Worker, Webhook, Entitlements, WhatsApp Control, Provisioning, Growth & Shipping
+    # Daftarkan Router Modul Gateway, Subscription, Event Worker, Webhook, Entitlements, WhatsApp Control, Provisioning, Growth, Shipping & Seller Ads Pro
     register_shop_gateway_routes(aiohttp_app)
     register_shop_subscription_routes(aiohttp_app)
     register_shop_event_routes(aiohttp_app)
@@ -150,6 +151,7 @@ async def start_application():
     register_provisioning_routes(aiohttp_app)
     register_growth_routes(aiohttp_app)
     register_shipping_routes(aiohttp_app)
+    register_seller_ads_routes(aiohttp_app)
     
     port = int(os.getenv("PORT", 8080))
     await start_web_server(aiohttp_app, port=port)
