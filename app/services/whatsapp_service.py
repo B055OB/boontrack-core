@@ -38,7 +38,7 @@ def get_supabase() -> Optional[Client]:
 
 
 def normalize_phone_number(raw_phone: Optional[str]) -> str:
-    """Menyeragamkan format nomor telepon WhatsApp ke standar internasional tanpa tanda plus (e.g. 628123456789)."""
+    """Menyeragamkan format nomor telepon WhatsApp ke standar internasional E.164 tanpa tanda plus (e.g. 628123456789)."""
     if not raw_phone:
         return ""
     cleaned = "".join(filter(str.isdigit, str(raw_phone)))
@@ -46,6 +46,10 @@ def normalize_phone_number(raw_phone: Optional[str]) -> str:
         cleaned = "62" + cleaned[1:]
     elif cleaned.startswith("008"):
         cleaned = "62" + cleaned[2:]
+    elif cleaned.startswith("8") and len(cleaned) in (9, 10, 11, 12, 13):
+        cleaned = "62" + cleaned
+    elif cleaned.startswith("6208"):
+        cleaned = "62" + cleaned[3:]
     return cleaned
 
 
@@ -759,7 +763,11 @@ async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False
         logger.error(f"[WhatsApp Service] Missing credentials (phone_id={phone_id}, tenant={tenant_id})")
         return None
 
-    clean_phone = str(to_phone).replace("+", "").strip()
+    clean_phone = normalize_phone_number(to_phone)
+    if not clean_phone:
+        logger.error(f"[WhatsApp Service] Invalid phone number provided: {to_phone}")
+        return None
+
     url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
     headers = {
         **_get_auth_headers(token),
@@ -797,6 +805,96 @@ async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False
     except Exception as e:
         logger.error(f"[WhatsApp Service] Exception in send_whatsapp_text: {e}", exc_info=True)
         return None
+
+
+async def send_otp_whatsapp(
+    to_phone: str,
+    otp_code: str,
+    tenant_id: str = "boontrack-career"
+) -> Optional[Dict[str, Any]]:
+    """Mengirim kode OTP login/verifikasi via nomor resmi BoonTrack Career (Meta Cloud API / WABA endpoint).
+    
+    Nomor penerima secara otomatis dinormalisasi ke standar internasional E.164 (628xxx).
+    """
+    clean_phone = normalize_phone_number(to_phone)
+    if not clean_phone or len(clean_phone) < 10:
+        logger.error(f"[WhatsApp OTP] Invalid phone number: {to_phone}")
+        return None
+
+    msg = (
+        "🔐 *KODE VERIFIKASI RESMI BOONTRACK*\n\n"
+        f"Kode OTP Anda: *{otp_code}*\n\n"
+        "• Berlaku selama *5 menit*.\n"
+        "• Jangan berikan kode ini kepada siapa pun demi keamanan akun Anda.\n\n"
+        "_Pesan otomatis dari Meta Cloud API Gateway BoonTrack Career._"
+    )
+    logger.info(f"[OFFICIAL WABA OTP] Sending OTP to E.164 {clean_phone} via boontrack-career")
+    return await send_whatsapp_text(clean_phone, msg, tenant_id="boontrack-career")
+
+
+async def send_ereceipt_whatsapp(
+    to_phone: str,
+    order_data: Dict[str, Any],
+    tenant_id: str = "boontrack-career"
+) -> Optional[Dict[str, Any]]:
+    """Mengirim E-Receipt bukti pembayaran resmi melalui Meta Cloud API (WABA Endpoint BoonTrack Career).
+    
+    Nomor penerima secara otomatis dinormalisasi ke standar internasional E.164 (628xxx).
+    """
+    clean_phone = normalize_phone_number(to_phone)
+    if not clean_phone or len(clean_phone) < 10:
+        logger.info(f"[WhatsApp E-Receipt] Skip: No valid phone for order: {order_data.get('order_id')}")
+        return None
+
+    order_id = str(
+        order_data.get("order_id")
+        or order_data.get("id")
+        or order_data.get("external_id")
+        or "ORD-UNKNOWN"
+    )
+    raw_amount = (
+        order_data.get("amount")
+        or order_data.get("total_amount")
+        or order_data.get("gross_amount")
+        or 0
+    )
+    try:
+        amt_val = int(float(raw_amount))
+    except (ValueError, TypeError):
+        amt_val = 0
+    amt_str = f"Rp{amt_val:,}".replace(",", ".")
+
+    customer_name = str(order_data.get("customer_name") or order_data.get("name") or "Pelanggan Terhormat").strip()
+    payment_method = str(order_data.get("payment_method") or order_data.get("method") or "QRIS Dinamis").upper()
+    paid_time = str(order_data.get("paid_at") or datetime.now(timezone.utc).strftime("%d-%m-%Y %H:%M:%S UTC"))
+    product_name = str(order_data.get("product_name") or order_data.get("title") or "Layanan / Produk Digital")
+
+    delivery_url = order_data.get("delivery_url") or order_data.get("download_url") or ""
+    delivery_section = ""
+    if delivery_url:
+        delivery_section = (
+            f"📦 *AKSES / TAUTAN PENGIRIMAN:*\n"
+            f"👉 {delivery_url}\n\n"
+        )
+
+    receipt_msg = (
+        "🧾 *BUKTI PEMBAYARAN RESMI (E-RECEIPT)* 🧾\n"
+        "*BOONTRACK COMMERCE NETWORK*\n\n"
+        f"Halo *{customer_name}*, terima kasih! Pembayaran Anda telah berhasil diverifikasi oleh payment gateway resmi.\n\n"
+        "📋 *RINCIAN TRANSAKSI:*\n"
+        f"• *Nomor Pesanan*: `{order_id}`\n"
+        f"• *Item*: {product_name}\n"
+        f"• *Total Nominal*: *{amt_str}*\n"
+        f"• *Metode Bayar*: {payment_method}\n"
+        f"• *Status*: *LUNAS (PAID / SETTLED)*\n"
+        f"• *Waktu Verifikasi*: {paid_time}\n\n"
+        f"{delivery_section}"
+        "Pesanan Anda otomatis diproses dan tercatat aman di sistem. Terima kasih atas kepercayaan Anda! 🙏"
+    )
+
+    logger.info(f"[OFFICIAL WABA E-RECEIPT] Sending receipt for order '{order_id}' to E.164 {clean_phone}")
+    return await send_whatsapp_text(clean_phone, receipt_msg, tenant_id="boontrack-career")
+
 
 async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dict[str, str]], header_text: str = "", footer_text: str = "", tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
     token, phone_id, version = get_wa_credentials(tenant_id)

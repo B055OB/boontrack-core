@@ -15,7 +15,7 @@ except ImportError:
         jwt = None
 
 from supabase import create_client, Client
-from app.services.whatsapp_service import send_whatsapp_text
+from app.services.whatsapp_service import send_whatsapp_text, send_otp_whatsapp
 
 logger = logging.getLogger("AFFILIATE_AUTH")
 router = APIRouter(prefix="/api/v1/auth/affiliate", tags=["Affiliate Auth"])
@@ -85,17 +85,12 @@ async def send_affiliate_otp(payload: SendOTPRequest):
         "expires_at": expires_at.isoformat()
     }).execute()
 
-    msg = (
-        f"🔐 *KODE LOGIN BOONTRACK AFFILIATE*\n\n"
-        f"Kode OTP Anda: *{otp}*\n\n"
-        f"_Berlaku 5 menit. Jangan berikan kode ini kepada siapapun._"
-    )
     try:
-        await send_whatsapp_text(phone, msg)
+        await send_otp_whatsapp(phone, otp)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal mengirim pesan WhatsApp: {str(e)}")
 
-    return {"status": "success", "message": "Kode OTP berhasil dikirim via WhatsApp"}
+    return {"status": "success", "message": "Kode OTP berhasil dikirim via WhatsApp resmi"}
 
 
 @router.post("/verify-otp")

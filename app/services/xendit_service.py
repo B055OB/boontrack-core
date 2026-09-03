@@ -25,16 +25,19 @@ class XenditService:
     """Client wrapper for Xendit QR Codes & Payment APIs."""
 
     def __init__(self):
+        self.provider = os.getenv("PAYMENT_GATEWAY_PROVIDER", "midtrans").strip().lower()
         self.secret_key = os.getenv(
             "XENDIT_SECRET_KEY",
             "xnd_development_2itAoTg8FOAdr8Vk7jKpU0MksgDSAjaWzlLHzEMkPuHcRyf5IUxfvO7MG1KPe",
         ).strip()
         self.api_url = os.getenv("XENDIT_API_URL", "https://api.xendit.co").rstrip("/")
         self.env = os.getenv("XENDIT_ENV", "sandbox")
-        self.callback_token = os.getenv(
-            "XENDIT_CALLBACK_TOKEN",
-            "aM08Ka1LQ9Jx1OsieBe6kcM1pK1Z5eWlpWAka5zBOuGpVbWS",
+        self.callback_token = (
+            os.getenv("XENDIT_WEBHOOK_VERIFICATION_TOKEN")
+            or os.getenv("XENDIT_CALLBACK_TOKEN")
+            or "aM08Ka1LQ9Jx1OsieBe6kcM1pK1Z5eWlpWAka5zBOuGpVbWS"
         ).strip()
+        self.verification_token = self.callback_token
 
         # In-memory tracking for fast lookups & test isolation
         self._intents_by_external_id: Dict[str, Dict[str, Any]] = {}

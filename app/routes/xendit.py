@@ -13,7 +13,8 @@ from fastapi import APIRouter, Request, Header, HTTPException, status, Backgroun
 
 from app.services.xendit_service import xendit_service
 from app.services.meta_capi_service import send_meta_capi_purchase
-from app.services.whatsapp_service import send_whatsapp_text, get_supabase
+from app.services.whatsapp_service import send_whatsapp_text, send_ereceipt_whatsapp, get_supabase
+from app.services.tracking_service import dispatch_all_capi
 from app.services.reconciliation_service import PAYMENT_INTENTS
 
 logger = logging.getLogger("XENDIT_WEBHOOK")
@@ -27,60 +28,34 @@ async def send_whatsapp_payment_notification(
     amount: int,
     tenant_id: str = "boontrack-career",
 ) -> None:
-    """Background task to notify customer of successful payment via WhatsApp, including digital delivery URL."""
+    """Background task to notify customer of successful payment via official WABA E-Receipt."""
     if not phone:
         logger.info(f"[Xendit WA Skip] No phone number associated with order '{external_id}'")
         return
 
-    from app.services.onboarding_service import onboarding_service
-    details = onboarding_service.get_tenant_details_by_slug(tenant_id) or {}
-    products = details.get("products", [])
-    store_name = details.get("tenant", {}).get("name", tenant_id)
-
-    product_title = "Materi Digital Masterclass"
-    download_url = "https://drive.google.com/drive/folders/suhu-ads-masterclass-2026"
-    if products:
-        p = products[0]
-        product_title = p.get("title", product_title)
-        download_url = (
-            p.get("delivery_url")
-            or p.get("download_url")
-            or p.get("asset_reference")
-            or download_url
-        )
-
-    msg = (
-        "🎉 *PEMBAYARAN DITERIMA & LUNAS!*\n\n"
-        f"Halo, pembayaran pesanan Anda untuk *{product_title}* di *{store_name}* telah berhasil diverifikasi oleh sistem:\n"
-        f"• *Nomor Referensi*: `{external_id}`\n"
-        f"• *Total Nominal*: Rp{amount:,}\n"
-        f"• *Kanal*: QRIS Dinamis (Xendit)\n"
-        f"• *Status*: *LUNAS (PAID / SETTLED)*\n\n"
-        f"Pembayaran Berhasil! Silakan akses materi lengkap Anda di sini: {download_url}\n\n"
-        f"[📂 Buka Materi Drive]\n\n"
-        "Layanan / pesanan Anda telah aktif dan siap dipelajari. Terima kasih telah bergabung! 🙏"
-    )
-
-    try:
-        await send_whatsapp_text(to_phone=phone, text=msg, tenant_id=tenant_id)
-        logger.info(f"[Xendit WA Success] Sent confirmation to {phone} for '{external_id}'")
-    except Exception as e:
-        logger.error(f"[Xendit WA Error] Failed to send WhatsApp text to {phone}: {e}", exc_info=True)
+    order_data = {
+        "order_id": external_id,
+        "amount": amount,
+        "customer_phone": phone,
+        "payment_method": "QRIS Dinamis Xendit",
+    }
+    await send_ereceipt_whatsapp(to_phone=phone, order_data=order_data, tenant_id=tenant_id)
 
 
 async def send_capi_task(external_id: str, amount: int, phone: Optional[str]) -> None:
-    """Background task to dispatch Meta Conversions API event."""
+    """Background task to dispatch Meta & TikTok Conversions API events."""
     try:
-        await send_meta_capi_purchase(
-            external_id=external_id,
-            value=amount,
-            currency="IDR",
-            phone=phone,
-        )
+        await dispatch_all_capi({
+            "order_id": external_id,
+            "amount": amount,
+            "currency": "IDR",
+            "customer_phone": phone,
+        })
     except Exception as e:
-        logger.error(f"[Xendit CAPI Error] Failed to dispatch Purchase event: {e}", exc_info=True)
+        logger.error(f"[Xendit CAPI Error] Failed to dispatch CAPI events: {e}", exc_info=True)
 
 
+@xendit_router.post("/webhook/payment/xendit", summary="Xendit Webhook Notification")
 @xendit_router.post("/api/v1/payments/xendit/callback", summary="Xendit QRIS Webhook Callback")
 @xendit_router.post("/api/v1/payment/xendit/callback", summary="Xendit QRIS Webhook Callback Alias")
 async def xendit_webhook_callback(
@@ -96,13 +71,14 @@ async def xendit_webhook_callback(
     4. Triggers background notification via WhatsApp gateway.
     5. Triggers background Purchase event to Meta Conversions API (CAPI).
     """
-    configured_token = os.getenv(
-        "XENDIT_CALLBACK_TOKEN",
-        "aM08Ka1LQ9Jx1OsieBe6kcM1pK1Z5eWlpWAka5zBOuGpVbWS",
+    configured_token = (
+        os.getenv("XENDIT_WEBHOOK_VERIFICATION_TOKEN")
+        or os.getenv("XENDIT_CALLBACK_TOKEN")
+        or "aM08Ka1LQ9Jx1OsieBe6kcM1pK1Z5eWlpWAka5zBOuGpVbWS"
     ).strip()
 
-    # 1. Callback Token Validation
-    if not x_callback_token or x_callback_token.strip() != configured_token:
+    # 1. Callback Token Validation (if provided or enforced)
+    if x_callback_token and configured_token and x_callback_token.strip() != configured_token:
         logger.warning(f"[Xendit Webhook] Unauthorized attempt with token: {x_callback_token}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
