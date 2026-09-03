@@ -1,9 +1,11 @@
+import asyncio
 import logging
 from aiohttp import web
 from app.payments.matcher import extract_clean_dana_amount, match_and_fulfill_payment
 from app.services.reconciliation_service import reconcile_incoming_mutation
 from app.services.whatsapp_service import send_whatsapp_text
 from app.services.cv_state_engine import GLOBAL_USER_STATES
+from app.services.capi_service import dispatch_seller_capi_purchase
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,17 @@ async def handle_reader_mutation_webhook(request: web.Request) -> web.Response:
         logger.info(f"[READER WEBHOOK] Match result for Rp{amount:,}: {match_res}")
 
         if match_res.get("status") == "SUCCESS":
+            # Dispatch CAPI Ads Tracking Pro ke Meta & TikTok secara non-blocking
+            order_info = match_res.get("order") or match_res.get("data") or {}
+            pixel_config = match_res.get("pixel_config") or {}
+            if pixel_config:
+                asyncio.create_task(
+                    dispatch_seller_capi_purchase(
+                        order=order_info,
+                        pixel_config=pixel_config
+                    )
+                )
+
             return web.json_response(match_res, status=200)
 
         # 2. Fallback: Eksekusi Smart Reconciliation (Near Match & Ambiguous)
@@ -100,7 +113,7 @@ async def handle_reader_mutation_webhook(request: web.Request) -> web.Response:
                 GLOBAL_USER_STATES[user_id]["is_premium_paid"] = True
                 GLOBAL_USER_STATES[user_id]["tier"] = "premium_unlocked"
 
-            # 🎯 Funnel Metric: career_premium_hr_converted
+            # Funnel Metric: career_premium_hr_converted
             try:
                 from app.services.analytics_service import analytics_service
                 await analytics_service.log_funnel_event(

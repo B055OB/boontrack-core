@@ -1,10 +1,10 @@
 import io
 import os
 import re
+import asyncio
 import logging
 from aiohttp import web
 from typing import Dict, Any, Optional
-
 from uuid import uuid4
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, HTTPException, Path, Body, status
@@ -15,6 +15,8 @@ from app.services.cv_state_engine import GLOBAL_USER_STATES
 from app.core.database import track_event
 from app.utils.qris_generator import generate_dynamic_qris_payload, generate_qris_image_bytes
 from app.services.xendit_service import xendit_service
+from app.services.capi_service import dispatch_seller_capi_purchase
+from app.payments.matcher import extract_clean_dana_amount, match_and_fulfill_payment
 
 logger = logging.getLogger(__name__)
 
@@ -221,8 +223,6 @@ async def notify_payment_success_universal(user_id: str, amount: int, platform: 
             logger.error(f"[Payment Telegram Notify Error] {te}")
 
 
-from app.payments.matcher import extract_clean_dana_amount, match_and_fulfill_payment
-
 async def handle_dana_webhook(request: web.Request) -> web.Response:
     """Handler endpoint webhook mutasi DANA (Mendukung Payload Reader & Custom Test)."""
     try:
@@ -252,9 +252,20 @@ async def handle_dana_webhook(request: web.Request) -> web.Response:
     )
 
     if match_result.get("status") == "SUCCESS":
+        # Dispatch CAPI Ads Tracking Pro ke Meta & TikTok secara non-blocking
+        order_info = match_result.get("order") or match_result.get("data") or {}
+        pixel_config = match_result.get("pixel_config") or {}
+        if pixel_config:
+            asyncio.create_task(
+                dispatch_seller_capi_purchase(
+                    order=order_info,
+                    pixel_config=pixel_config
+                )
+            )
+
         return web.json_response(match_result, status=200)
 
-    # 1. Matching terhadap Active Session di Memori atau Direct Phone Test
+    # 2. Matching terhadap Active Session di Memori atau Direct Phone Test
     matched_user_id = None
     matched_platform = "whatsapp"
 
