@@ -37,8 +37,13 @@ async def reconcile_single_cod_order(order_id: str, tenant_id: str) -> Dict[str,
         adapter = BiteshipShippingAdapter()
         settlement_info = await adapter.verify_cod_settlement(delivery["booking_id"])
 
-        # Bypass untuk pengujian local/mock booking
-        is_mock_test = delivery["booking_id"].startswith("BITESHIP-TEST")
+        # Bypass untuk pengujian local/mock booking (mendukung format TEST dan AUTO)
+        booking_id_val = str(delivery.get("booking_id") or "")
+        is_mock_test = (
+            booking_id_val.startswith("BITESHIP-TEST") or 
+            booking_id_val.startswith("BITESHIP-AUTO")
+        )
+
         if not settlement_info.is_settled and not is_mock_test:
             return {
                 "success": True, 
