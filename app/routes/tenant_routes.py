@@ -25,7 +25,11 @@ class TenantSettingsUpdateRequest(BaseModel):
     public_description: Optional[str] = Field(None, description="Public store tagline or bio")
     trust_badges: Optional[List[str]] = Field(None, description="List of trust badges")
     delivery_url: Optional[str] = Field(None, description="Default digital asset delivery URL")
-    persona: Optional[Dict[str, Any]] = Field(None, description="Bot persona (tone, welcome_message, system_prompt)")
+    persona: Optional[Dict[str, Any]] = Field(None, description="Bot persona (tone, welcome_message, system_prompt, assistant_name)")
+    ai_knowledge: Optional[Dict[str, Any]] = Field(None, description="AI Knowledge & Persona settings (ai_name, tone, system_prompt)")
+    system_prompt: Optional[str] = Field(None, description="Direct system prompt override")
+    assistant_name: Optional[str] = Field(None, description="Direct assistant name override")
+    ai_name: Optional[str] = Field(None, description="Direct assistant name override alias")
     faq: Optional[List[Dict[str, str]]] = Field(None, description="Frequently asked questions")
 
 
@@ -55,7 +59,8 @@ async def get_tenant_settings_endpoint(slug: str):
     return settings
 
 
-@tenant_router.put("/{slug}/settings", summary="Update Tenant CMS Store Settings")
+@tenant_router.put("/{slug}/settings", summary="Update Tenant CMS Store Settings (PUT)")
+@tenant_router.post("/{slug}/settings", summary="Update Tenant CMS Store Settings (POST)")
 async def update_tenant_settings_endpoint(
     slug: str,
     payload: TenantSettingsUpdateRequest = Body(...),

@@ -263,22 +263,42 @@ class AIGateway:
             "https://generativelanguage.googleapis.com/v1beta/models/"
             f"{self.gemini_model}:generateContent?key={self.gemini_api_key}"
         )
-        full_text = f"{system_prompt}\n\nUser Question: {user_message}"
         payload = {
-            "contents": [{"parts": [{"text": full_text}]}],
+            "contents": [{"parts": [{"text": user_message}]}],
             "generationConfig": {"temperature": 0.7, "maxOutputTokens": 4096},
         }
+        if system_prompt and str(system_prompt).strip():
+            payload["system_instruction"] = {
+                "parts": [{"text": str(system_prompt).strip()}]
+            }
 
         async with session.post(url, json=payload) as resp:
             body = await resp.text()
             if resp.status != 200:
+                # Fallback to contents if system_instruction is not supported by endpoint
+                if "system_instruction" in payload:
+                    full_text = f"{system_prompt}\n\nUser Question: {user_message}"
+                    fallback_payload = {
+                        "contents": [{"parts": [{"text": full_text}]}],
+                        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 4096},
+                    }
+                    async with session.post(url, json=fallback_payload) as fb_resp:
+                        if fb_resp.status == 200:
+                            data = await fb_resp.json()
+                            res_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                            res_text = _clean_response(res_text)
+                            usage_meta = data.get("usageMetadata", {})
+                            p_tokens = usage_meta.get("promptTokenCount", len(full_text) // 4)
+                            c_tokens = usage_meta.get("candidatesTokenCount", len(res_text) // 4)
+                            return res_text, p_tokens, c_tokens
                 raise RuntimeError(f"HTTP {resp.status}: {body[:300]}")
             data = json.loads(body)
             try:
                 res_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                 res_text = _clean_response(res_text)
                 usage_meta = data.get("usageMetadata", {})
-                p_tokens = usage_meta.get("promptTokenCount", len(full_text) // 4)
+                prompt_len = len(str(system_prompt or "")) + len(str(user_message or ""))
+                p_tokens = usage_meta.get("promptTokenCount", prompt_len // 4)
                 c_tokens = usage_meta.get("candidatesTokenCount", len(res_text) // 4)
                 return res_text, p_tokens, c_tokens
             except (KeyError, IndexError) as e:

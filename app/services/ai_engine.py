@@ -108,12 +108,25 @@ class CommerceAIEngine:
 
         tenant = details.get("tenant", {})
         persona = details.get("persona", {})
+        ai_k = details.get("ai_knowledge", {})
         products = details.get("products", [])
 
         store_name = tenant.get("name", tenant_slug)
         vertical = tenant.get("vertical", "COMMERCE")
-        tone = persona.get("tone", "Edukatif & Expert, ramah, to-the-point, high conversion closer")
+        tone = persona.get("tone") or ai_k.get("tone") or "Edukatif & Expert, ramah, to-the-point, high conversion closer"
         welcome = persona.get("welcome_message", f"Selamat datang di {store_name}!")
+        assistant_name = (
+            persona.get("assistant_name")
+            or persona.get("ai_name")
+            or ai_k.get("ai_name")
+            or ai_k.get("assistant_name")
+            or f"Asisten {store_name}"
+        )
+        custom_system_prompt = (
+            persona.get("system_prompt")
+            or ai_k.get("system_prompt")
+            or tenant.get("system_prompt")
+        )
 
         # Format Daftar Produk Riil
         product_lines: List[str] = []
@@ -160,11 +173,29 @@ class CommerceAIEngine:
                 f"- Link Akses Materi: {kb.get('delivery_url', '')}\n"
             )
 
+        # Jika tenant memiliki custom system prompt spesifik dari dashboard/Supabase:
+        if custom_system_prompt and custom_system_prompt.strip() and not custom_system_prompt.startswith("Kamu adalah asisten resmi untuk toko"):
+            prompt = (
+                f"{custom_system_prompt.strip()}\n\n"
+                f"IDENTITAS ASISTEN & TOKO:\n"
+                f"- Nama Asisten AI: {assistant_name}\n"
+                f"- Nama Toko / Merchant: {store_name} ({vertical})\n"
+                f"- Gaya Komunikasi / Tone: {tone}\n"
+                f"- Sapaan Pembuka: {welcome}\n\n"
+                f"KATALOG PRODUK RIIL:\n"
+                f"{catalog_text}"
+                f"{curriculum_section}\n\n"
+                f"INSTRUKSI PEMBAYARAN QRIS:\n"
+                f"Pembayaran transaksi otomatis didukung via Dynamic QRIS instan (BCA, Mandiri, BRI, BNI, DANA, GoPay, OVO, ShopeePay)."
+            )
+            return prompt
+
         prompt = (
-            f"Anda adalah Konsultan Ahli & Sales Closer profesional untuk '{store_name}' ({vertical}).\n"
+            f"Anda adalah {assistant_name}, Konsultan Ahli & Sales Closer profesional untuk '{store_name}' ({vertical}).\n"
             f"Gaya Komunikasi: {tone}, santai, luwes, ramah, dan solutif seperti manusia (anti-robotik).\n\n"
             f"INFORMASI TOKO:\n"
             f"- Nama Toko: {store_name}\n"
+            f"- Nama Asisten AI: {assistant_name}\n"
             f"- Kategori Vertikal: {vertical}\n"
             f"- Sapaan Pembuka: {welcome}\n\n"
             f"KATALOG PRODUK RIIL YANG TERSEDIA:\n"
@@ -182,7 +213,7 @@ class CommerceAIEngine:
             f"   - Layanan publik kelurahan, pengurusan KTP/SKU/bansos, surat pengantar nikah, atau Balé Pananggeuhan.\n"
             f"   - Bimbingan ibadah/riyadhoh Om Budi atau konsultasi karir umum.\n"
             f"3. Jika pelanggan bertanya tentang topik di luar katalog dan layanan {store_name}, tolak dengan sopan dan arahkan kembali ke produk toko:\n"
-            f"   Contoh: 'Mohon maaf Kakak, saya asisten resmi {store_name}. Saya khusus melayani seputar produk dan pesanan di {store_name}. Ada produk kami yang ingin Kakak tanyakan?'"
+            f"   Contoh: 'Mohon maaf Kakak, saya {assistant_name}, asisten resmi {store_name}. Saya khusus melayani seputar produk dan pesanan di {store_name}. Ada produk kami yang ingin Kakak tanyakan?'"
         )
         return prompt
 

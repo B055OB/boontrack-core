@@ -32,6 +32,7 @@ from app.schemas.tenant_config import (
     TenantPersona,
     TenantMenuConfig,
 )
+from app.services.whatsapp_service import get_supabase
 
 logger = logging.getLogger("ONBOARDING_SERVICE")
 
@@ -276,22 +277,55 @@ class OnboardingService:
 
         if not tenant_dict:
             cfg = LOADED_CONFIG_TENANTS.get(clean_slug)
-            if not cfg:
-                return None
-            tenant_dict = {
-                "id": str(uuid4()),
-                "name": cfg.identity.name,
-                "slug": clean_slug,
-                "tier": "STARTER",
-                "template": "COMMERCE_TEMPLATE",
-                "vertical": "DIGITAL_PRODUCTS",
-                "onboarding_mode": "SELF_SERVICE",
-                "affiliate_ref": None,
-                "admin_email": None,
-                "admin_phone": None,
-                "is_active": True,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
+            if cfg:
+                tenant_dict = {
+                    "id": str(uuid4()),
+                    "name": cfg.identity.name,
+                    "slug": clean_slug,
+                    "tier": "STARTER",
+                    "template": "COMMERCE_TEMPLATE",
+                    "vertical": "DIGITAL_PRODUCTS",
+                    "onboarding_mode": "SELF_SERVICE",
+                    "affiliate_ref": None,
+                    "admin_email": None,
+                    "admin_phone": None,
+                    "is_active": True,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+            else:
+                supabase = get_supabase()
+                if supabase:
+                    try:
+                        res = supabase.table("tenants").select("*").eq("slug", clean_slug).execute()
+                        if res and res.data:
+                            row = res.data[0]
+                            tenant_dict = {
+                                "id": str(row.get("id") or clean_slug),
+                                "name": row.get("name") or clean_slug.replace("-", " ").title(),
+                                "slug": clean_slug,
+                                "tier": "STARTER",
+                                "template": "COMMERCE_TEMPLATE",
+                                "vertical": row.get("category", "COMMERCE"),
+                                "is_active": True,
+                                "created_at": row.get("created_at") or datetime.now(timezone.utc).isoformat(),
+                            }
+                    except Exception as e:
+                        logger.debug(f"[OnboardingService Supabase lookup note] {e}")
+
+                if not tenant_dict:
+                    tenant_dict = {
+                        "id": str(uuid4()),
+                        "name": clean_slug.replace("-", " ").title(),
+                        "slug": clean_slug,
+                        "tier": "STARTER",
+                        "template": "COMMERCE_TEMPLATE",
+                        "vertical": "COMMERCE",
+                        "onboarding_mode": "SELF_SERVICE",
+                        "affiliate_ref": None,
+                        "is_active": True,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+            self._tenants_by_slug[clean_slug] = tenant_dict
 
         t_id = tenant_dict.get("id")
         products = []
@@ -304,13 +338,16 @@ class OnboardingService:
 
         payout = self._payouts_by_tenant.get(t_id, {}) if t_id else {}
 
-        cfg = LOADED_CONFIG_TENANTS.get(clean_slug)
-        if cfg:
+        if tenant_dict.get("persona"):
+            persona = dict(tenant_dict["persona"])
+        elif cfg:
             persona = {
                 "system_prompt": cfg.persona.system_prompt,
                 "tone": cfg.persona.tone,
                 "welcome_message": cfg.persona.welcome_message,
                 "default_fallback_message": cfg.persona.default_fallback_message,
+                "assistant_name": f"{cfg.identity.name} Assistant",
+                "ai_name": f"{cfg.identity.name} Assistant",
             }
         else:
             persona = {
@@ -318,7 +355,48 @@ class OnboardingService:
                 "tone": "Edukatif & Expert, ramah, to-the-point",
                 "welcome_message": f"Selamat datang di {tenant_dict['name']}! Ada yang bisa kami bantu?",
                 "default_fallback_message": "Mohon maaf, layanan sedang memproses antrean pesan lain.",
+                "assistant_name": f"{tenant_dict['name']} Assistant",
+                "ai_name": f"{tenant_dict['name']} Assistant",
             }
+
+        # Check Supabase tenants table to load custom system_prompt & AI Persona
+        supabase = get_supabase()
+        if supabase:
+            try:
+                res = supabase.table("tenants").select("*").eq("slug", clean_slug).execute()
+                if res and res.data:
+                    row = res.data[0]
+                    meta = row.get("metadata") or {}
+                    ai_k = meta.get("ai_knowledge") or {}
+                    p_meta = meta.get("persona") or {}
+                    
+                    sys_prompt = ai_k.get("system_prompt") or p_meta.get("system_prompt")
+                    ai_name = (
+                        ai_k.get("ai_name")
+                        or ai_k.get("assistant_name")
+                        or p_meta.get("ai_name")
+                        or p_meta.get("assistant_name")
+                    )
+                    tone = ai_k.get("tone") or p_meta.get("tone")
+                    
+                    if sys_prompt:
+                        persona["system_prompt"] = sys_prompt
+                    if ai_name:
+                        persona["assistant_name"] = ai_name
+                        persona["ai_name"] = ai_name
+                    if tone:
+                        persona["tone"] = tone
+
+                    tenant_dict["persona"] = persona
+                    tenant_dict["ai_knowledge"] = {
+                        "ai_name": ai_name or persona.get("assistant_name"),
+                        "assistant_name": ai_name or persona.get("assistant_name"),
+                        "system_prompt": sys_prompt or persona.get("system_prompt", ""),
+                        "tone": tone or persona.get("tone", "casual"),
+                        "faq": ai_k.get("faq") or [],
+                    }
+            except Exception as db_err:
+                logger.debug(f"[OnboardingService Supabase detail lookup note] {db_err}")
 
         return {
             "status": "success",
@@ -326,6 +404,11 @@ class OnboardingService:
             "products": products,
             "payout": payout,
             "persona": persona,
+            "ai_knowledge": tenant_dict.get("ai_knowledge") or {
+                "ai_name": persona.get("ai_name") or f"{tenant_dict.get('name', clean_slug)} Assistant",
+                "system_prompt": persona.get("system_prompt", ""),
+                "tone": persona.get("tone", "casual"),
+            }
         }
 
     def get_tenant_settings(self, slug: str) -> Optional[Dict[str, Any]]:
@@ -337,6 +420,7 @@ class OnboardingService:
 
         tenant = details.get("tenant", {})
         persona = details.get("persona", {})
+        ai_knowledge = details.get("ai_knowledge", {})
         payout = details.get("payout", {})
         products = details.get("products", [])
 
@@ -375,6 +459,7 @@ class OnboardingService:
                 "delivery_url": delivery_url,
             },
             "persona": persona,
+            "ai_knowledge": ai_knowledge,
             "payout": payout,
             "products": products,
             "faq": faq,
@@ -383,7 +468,7 @@ class OnboardingService:
     def update_tenant_settings(self, slug: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Updates store metadata, public description, persona bot, and auto-delivery URL.
         
-        Syncs updates directly to LOADED_CONFIG_TENANTS and TENANT_REGISTRY.
+        Syncs updates directly to LOADED_CONFIG_TENANTS, TENANT_REGISTRY, and Supabase DB.
         """
         clean_slug = slugify(slug)
         details = self.get_tenant_details_by_slug(clean_slug)
@@ -404,25 +489,52 @@ class OnboardingService:
         if "faq" in updates:
             tenant["faq"] = updates["faq"]
 
+        # Extract AI & Persona updates
+        sys_prompt = (
+            updates.get("system_prompt")
+            or (updates.get("persona") or {}).get("system_prompt")
+            or (updates.get("ai_knowledge") or {}).get("system_prompt")
+        )
+        ai_name = (
+            updates.get("assistant_name")
+            or updates.get("ai_name")
+            or (updates.get("persona") or {}).get("assistant_name")
+            or (updates.get("persona") or {}).get("ai_name")
+            or (updates.get("ai_knowledge") or {}).get("ai_name")
+            or (updates.get("ai_knowledge") or {}).get("assistant_name")
+        )
+        tone = (
+            (updates.get("persona") or {}).get("tone")
+            or (updates.get("ai_knowledge") or {}).get("tone")
+        )
+
+        p_dict = tenant.setdefault("persona", {})
+        if sys_prompt:
+            p_dict["system_prompt"] = sys_prompt
+        if ai_name:
+            p_dict["assistant_name"] = ai_name
+            p_dict["ai_name"] = ai_name
+        if tone:
+            p_dict["tone"] = tone
+
+        ai_dict = tenant.setdefault("ai_knowledge", {})
+        if sys_prompt:
+            ai_dict["system_prompt"] = sys_prompt
+        if ai_name:
+            ai_dict["ai_name"] = ai_name
+            ai_dict["assistant_name"] = ai_name
+        if tone:
+            ai_dict["tone"] = tone
+
         self._tenants_by_slug[clean_slug] = tenant
 
-        # Sync Persona
-        if "persona" in updates and isinstance(updates["persona"], dict):
-            p_updates = updates["persona"]
-            cfg = LOADED_CONFIG_TENANTS.get(clean_slug)
-            if cfg:
-                if "system_prompt" in p_updates:
-                    cfg.persona.system_prompt = p_updates["system_prompt"]
-                if "tone" in p_updates:
-                    cfg.persona.tone = p_updates["tone"]
-                if "welcome_message" in p_updates:
-                    cfg.persona.welcome_message = p_updates["welcome_message"]
-                if "default_fallback_message" in p_updates:
-                    cfg.persona.default_fallback_message = p_updates["default_fallback_message"]
-
-        # Sync runtime config and registry
+        # Sync to LOADED_CONFIG_TENANTS
         cfg = LOADED_CONFIG_TENANTS.get(clean_slug)
         if cfg:
+            if sys_prompt:
+                cfg.persona.system_prompt = sys_prompt
+            if tone:
+                cfg.persona.tone = tone
             if "name" in updates:
                 cfg.identity.name = updates["name"]
             if "public_description" in updates:
@@ -430,6 +542,41 @@ class OnboardingService:
 
         if clean_slug in TENANT_REGISTRY and "name" in updates:
             TENANT_REGISTRY[clean_slug]["name"] = updates["name"]
+
+        # Persist directly to Supabase tenants table
+        supabase = get_supabase()
+        if supabase:
+            try:
+                res = supabase.table("tenants").select("*").eq("slug", clean_slug).execute()
+                existing = res.data[0] if res.data else None
+                existing_meta = existing.get("metadata", {}) if existing else {}
+
+                updated_meta = {
+                    **existing_meta,
+                    "ai_knowledge": {
+                        **existing_meta.get("ai_knowledge", {}),
+                        **(updates.get("ai_knowledge") or {}),
+                        **({"system_prompt": sys_prompt} if sys_prompt else {}),
+                        **({"ai_name": ai_name, "assistant_name": ai_name} if ai_name else {}),
+                        **({"tone": tone} if tone else {}),
+                    },
+                    "persona": {
+                        **existing_meta.get("persona", {}),
+                        **(updates.get("persona") or {}),
+                        **({"system_prompt": sys_prompt} if sys_prompt else {}),
+                        **({"assistant_name": ai_name, "ai_name": ai_name} if ai_name else {}),
+                        **({"tone": tone} if tone else {}),
+                    }
+                }
+                supabase.table("tenants").upsert({
+                    "slug": clean_slug,
+                    "name": updates.get("name") or (existing.get("name") if existing else tenant.get("name", clean_slug)),
+                    "metadata": updated_meta,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }).execute()
+                logger.info(f"[OnboardingService] Synced AI Persona & System Prompt to Supabase for tenant '{clean_slug}'")
+            except Exception as e:
+                logger.debug(f"[OnboardingService Supabase sync note] {e}")
 
         return self.get_tenant_settings(clean_slug)
 
