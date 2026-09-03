@@ -6,12 +6,19 @@ from typing import Dict, Any, Optional
 from app.utils.qris_generator import (
     generate_dynamic_qris_payload,
     render_qris_bytes,
-    generate_unique_code
+    generate_unique_code,
+    get_quickchart_qr_url
 )
 from app.services.cv_state_engine import GLOBAL_USER_STATES
 from app.services.reconciliation_service import PAYMENT_INTENTS
 
 logger = logging.getLogger("PAYMENT_SERVICE")
+
+# Provider & Midtrans Configuration
+PAYMENT_GATEWAY_PROVIDER = os.getenv("PAYMENT_GATEWAY_PROVIDER", "midtrans" if os.getenv("MIDTRANS_SERVER_KEY") else "xendit").strip().lower()
+MIDTRANS_SERVER_KEY = os.getenv("MIDTRANS_SERVER_KEY", "").strip()
+MIDTRANS_CLIENT_KEY = os.getenv("MIDTRANS_CLIENT_KEY", "").strip()
+MIDTRANS_IS_PRODUCTION = os.getenv("MIDTRANS_IS_PRODUCTION", "false").strip().lower() in ("true", "1", "yes")
 
 
 def get_supabase():
@@ -102,6 +109,8 @@ class PaymentService:
             "created_at": now_dt.isoformat()
         }
 
+        qr_url = get_quickchart_qr_url(dynamic_payload)
+
         # 8. Simpan ke database Supabase: tabel orders (untuk log) & tabel document_jobs (untuk payment matching)
         supabase = get_supabase()
         if supabase:
@@ -109,12 +118,18 @@ class PaymentService:
             try:
                 supabase.table("orders").upsert({
                     "id": order_id,
+                    "order_id": order_id,
                     "user_id": user_str_id,
                     "tenant_id": tenant_id,
+                    "tenant_slug": tenant_id,
                     "base_amount": base_amount,
                     "total_amount": total_amount,
+                    "amount": total_amount,
                     "status": "PENDING",
                     "qris_payload": dynamic_payload,
+                    "qr_string": dynamic_payload,
+                    "qr_code_url": qr_url,
+                    "payment_gateway": PAYMENT_GATEWAY_PROVIDER,
                     "created_at": now_dt.isoformat()
                 }).execute()
             except Exception as e:
@@ -148,7 +163,6 @@ class PaymentService:
             except Exception as e:
                 logger.error(f"[PAYMENT SERVICE] CRITICAL: document_jobs insert failed: {e}")
 
-
         logger.info(
             f"[PAYMENT ORDER CREATED] Order {order_id} | User {user_id} | "
             f"Base: Rp{base_amount:,} + Code: {unique_code} -> Total: Rp{total_amount:,}"
@@ -163,9 +177,12 @@ class PaymentService:
             "total_amount": total_amount,
             "amount": total_amount,
             "dynamic_payload": dynamic_payload,
+            "qr_string": dynamic_payload,
+            "qr_code_url": qr_url,
             "qr_image_bytes": qr_image_bytes,
             "qr_bytes": qr_image_bytes,
-            "status": "PENDING"
+            "status": "PENDING",
+            "payment_gateway": PAYMENT_GATEWAY_PROVIDER
         }
 
     @classmethod
@@ -185,6 +202,58 @@ class PaymentService:
             tenant_id=tenant_id,
             meta=meta
         )
+
+    @classmethod
+    async def create_midtrans_qris_order(
+        cls,
+        order_id: str,
+        amount: int,
+        customer_name: Optional[str] = "Customer",
+        customer_phone: Optional[str] = None,
+        tenant_id: str = "boontrack-store",
+        meta: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Membuat order QRIS langsung melalui Midtrans Core API (POST /v2/charge)."""
+        from app.services.midtrans_service import midtrans_service
+        return await midtrans_service.create_qris_charge(
+            order_id=order_id,
+            amount=amount,
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+            tenant_id=tenant_id,
+            metadata=meta
+        )
+
+    @classmethod
+    async def create_dynamic_qris(
+        cls,
+        order_id: str,
+        amount: int,
+        tenant_id: str = "boontrack-store",
+        customer_name: Optional[str] = "Customer",
+        customer_phone: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Adapter serbaguna yang otomatis memilih Midtrans jika PAYMENT_GATEWAY_PROVIDER == 'midtrans'."""
+        if PAYMENT_GATEWAY_PROVIDER == "midtrans" or (not os.getenv("PAYMENT_GATEWAY_PROVIDER") and MIDTRANS_SERVER_KEY):
+            from app.services.midtrans_service import midtrans_service
+            return await midtrans_service.create_qris_charge(
+                order_id=order_id,
+                amount=amount,
+                customer_name=customer_name,
+                customer_phone=customer_phone,
+                tenant_id=tenant_id,
+                metadata=metadata
+            )
+        else:
+            from app.services.xendit_service import xendit_service
+            return await xendit_service.create_dynamic_qris(
+                external_id=order_id,
+                amount=amount,
+                tenant_id=tenant_id,
+                customer_phone=customer_phone,
+                metadata=metadata
+            )
 
 
 payment_service = PaymentService()

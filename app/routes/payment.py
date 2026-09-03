@@ -7,14 +7,17 @@ from aiohttp import web
 from typing import Dict, Any, Optional
 from uuid import uuid4
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, HTTPException, Path, Body, status
+from datetime import datetime, timezone
+from fastapi import APIRouter, HTTPException, Path, Body, status, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 
-from app.services.whatsapp_service import send_whatsapp_text
+from app.services.whatsapp_service import send_whatsapp_text, get_supabase
 from app.services.cv_state_engine import GLOBAL_USER_STATES
+from app.services.reconciliation_service import PAYMENT_INTENTS
 from app.core.database import track_event
 from app.utils.qris_generator import generate_dynamic_qris_payload, generate_qris_image_bytes
 from app.services.xendit_service import xendit_service
+from app.services.midtrans_service import midtrans_service
 from app.services.capi_service import dispatch_seller_capi_purchase
 from app.payments.matcher import extract_clean_dana_amount, match_and_fulfill_payment
 
@@ -106,17 +109,32 @@ async def create_dynamic_qris_endpoint(payload: CreateDynamicQRISRequest = Body(
     target_tenant = payload.tenant_slug or payload.tenant_id or "commerce"
     order_id = payload.external_id or f"INV-{uuid4().hex[:8].upper()}"
 
-    res = await xendit_service.create_dynamic_qris(
-        external_id=order_id,
-        amount=payload.amount,
-        tenant_id=target_tenant,
-        customer_phone=payload.customer_phone,
-        metadata={
-            "product_name": payload.product_name,
-            "customer_name": payload.customer_name,
-            **(payload.metadata or {}),
-        },
-    )
+    provider = os.getenv("PAYMENT_GATEWAY_PROVIDER", "").strip().lower()
+    if provider == "midtrans" or (not provider and os.getenv("MIDTRANS_SERVER_KEY")):
+        res = await midtrans_service.create_qris_charge(
+            order_id=order_id,
+            amount=payload.amount,
+            customer_name=payload.customer_name or "Customer",
+            customer_phone=payload.customer_phone,
+            tenant_id=target_tenant,
+            metadata={
+                "product_name": payload.product_name,
+                "customer_name": payload.customer_name,
+                **(payload.metadata or {}),
+            },
+        )
+    else:
+        res = await xendit_service.create_dynamic_qris(
+            external_id=order_id,
+            amount=payload.amount,
+            tenant_id=target_tenant,
+            customer_phone=payload.customer_phone,
+            metadata={
+                "product_name": payload.product_name,
+                "customer_name": payload.customer_name,
+                **(payload.metadata or {}),
+            },
+        )
 
     return CreateDynamicQRISResponse(
         status=res.get("status", "ACTIVE"),
@@ -148,6 +166,158 @@ async def test_dynamic_qris_fastapi(amount: int = Path(..., description="Nominal
             status_code=400,
             detail=f"Gagal generate dynamic QRIS: {str(e)}"
         )
+
+
+# ============================================================================
+# MIDTRANS PAYMENT WEBHOOK LISTENER & NOTIFICATION HANDLER
+# ============================================================================
+
+async def handle_midtrans_notification_logic(payload: Dict[str, Any]) -> tuple[Dict[str, Any], int]:
+    """Memproses webhook notifikasi dari Midtrans.
+    
+    Jika transaction_status adalah 'settlement' atau 'capture' (dengan fraud_status 'accept'),
+    status order diupdate menjadi PAID dan memicu fulfillment serta notifikasi ke WhatsApp.
+    """
+    order_id = payload.get("order_id") or payload.get("id") or ""
+    transaction_status = str(payload.get("transaction_status", "")).strip().lower()
+    fraud_status = str(payload.get("fraud_status", "")).strip().lower()
+    status_code = str(payload.get("status_code", ""))
+    gross_amount = str(payload.get("gross_amount", ""))
+    signature_key = payload.get("signature_key")
+
+    logger.info(
+        f"[MIDTRANS WEBHOOK RECEIVED] Order: '{order_id}' | "
+        f"Status: '{transaction_status}' | Fraud: '{fraud_status}' | Gross: '{gross_amount}'"
+    )
+
+    if not order_id:
+        return {"status": "ignored", "reason": "no_order_id"}, 200
+
+    # 1. Evaluasi apakah status bernilai lunas/settled
+    is_paid = (transaction_status == "settlement") or (
+        transaction_status == "capture" and fraud_status in ("accept", "")
+    )
+
+    if is_paid:
+        supabase = get_supabase()
+        order_record = None
+
+        # 2. Update status order menjadi PAID di database Supabase
+        if supabase:
+            try:
+                try:
+                    res = supabase.table("orders").select("*").eq("id", order_id).execute()
+                    if res.data:
+                        order_record = res.data[0]
+                        supabase.table("orders").update({
+                            "status": "PAID",
+                            "paid_at": datetime.now(timezone.utc).isoformat()
+                        }).eq("id", order_id).execute()
+                except Exception:
+                    res = supabase.table("orders").select("*").eq("order_id", order_id).execute()
+                    if res.data:
+                        order_record = res.data[0]
+                        supabase.table("orders").update({
+                            "status": "PAID",
+                            "paid_at": datetime.now(timezone.utc).isoformat()
+                        }).eq("order_id", order_id).execute()
+                logger.info(f"[MIDTRANS WEBHOOK] Order '{order_id}' successfully marked as PAID in Supabase")
+            except Exception as db_err:
+                logger.debug(f"[MIDTRANS WEBHOOK DB NOTE] {db_err}")
+
+        # 3. Update in-memory intent registry & active session
+        if order_id in PAYMENT_INTENTS:
+            PAYMENT_INTENTS[order_id]["status"] = "PAID"
+            PAYMENT_INTENTS[order_id]["paid_at"] = datetime.now(timezone.utc).isoformat()
+
+        for uid, state in list(GLOBAL_USER_STATES.items()):
+            active_p = state.get("active_payment", {})
+            if active_p and (active_p.get("order_id") == order_id or active_p.get("invoice_id") == order_id):
+                state["is_premium"] = True
+                state["mode"] = "post_cv"
+                active_p["status"] = "PAID"
+                break
+
+        # 4. Trigger event order fulfillment & notifikasi ke whatsapp_service
+        buyer_phone = (
+            (order_record or {}).get("customer_phone")
+            or payload.get("customer_phone")
+            or PAYMENT_INTENTS.get(order_id, {}).get("phone")
+        )
+        buyer_name = (
+            (order_record or {}).get("customer_name")
+            or payload.get("customer_name")
+            or "Kakak"
+        )
+        tenant_id = (
+            (order_record or {}).get("tenant_slug")
+            or (order_record or {}).get("tenant_id")
+            or PAYMENT_INTENTS.get(order_id, {}).get("tenant_id")
+            or "boontrack-store"
+        )
+        raw_amt = (order_record or {}).get("total_amount") or payload.get("gross_amount") or 0
+        try:
+            amt_val = int(float(raw_amt))
+        except (ValueError, TypeError):
+            amt_val = 0
+
+        # Trigger fulfillment pipeline non-blocking
+        try:
+            from app.services.checkout_flow_service import reconcile_payment_webhook
+            asyncio.create_task(reconcile_payment_webhook({
+                "external_id": order_id,
+                "status": "SETTLED",
+                "id": payload.get("transaction_id") or order_id
+            }))
+        except Exception as flow_err:
+            logger.warning(f"[MIDTRANS FULFILLMENT WARNING] {flow_err}")
+
+        if buyer_phone:
+            try:
+                phone_clean = str(buyer_phone).strip().replace("+", "")
+                if phone_clean.startswith("0"):
+                    phone_clean = "62" + phone_clean[1:]
+
+                amount_display = f"Rp{amt_val:,}".replace(",", ".")
+                msg = (
+                    f"🎉 *PEMBAYARAN MIDTRANS BERHASIL!* 🎉\n\n"
+                    f"Halo *{buyer_name}*, pembayaran untuk pesanan `{order_id}` sebesar *{amount_display}* telah berhasil diverifikasi oleh sistem Midtrans.\n\n"
+                    f"• *Status*: *LUNAS (PAID)*\n"
+                    f"• *Metode*: QRIS Dinamis Midtrans\n"
+                    f"• *Waktu*: {datetime.now(timezone.utc).strftime('%d-%m-%Y %H:%M:%S UTC')}\n\n"
+                    f"Pesanan Anda sedang diproses dan akses/konfirmasi akan segera aktif."
+                )
+                asyncio.create_task(send_whatsapp_text(phone_clean, msg, tenant_id=tenant_id))
+                logger.info(f"[MIDTRANS WA NOTIFICATION] Sent to {phone_clean}")
+            except Exception as wa_err:
+                logger.warning(f"[MIDTRANS WA NOTIFY ERROR] {wa_err}")
+
+        # Track event analytics
+        try:
+            digits = re.sub(r"\D", "", str(buyer_phone)) if buyer_phone else ""
+            if digits:
+                asyncio.create_task(track_event(
+                    int(digits),
+                    "payment_success",
+                    meta={"amount": amt_val, "order_id": order_id, "method": "MIDTRANS_QRIS", "gateway": "midtrans"}
+                ))
+        except Exception as tr_err:
+            logger.debug(f"[MIDTRANS TRACK ERROR] {tr_err}")
+
+        return {"status": "ok"}, 200
+
+    logger.info(f"[MIDTRANS WEBHOOK] Status '{transaction_status}' acknowledged without settlement.")
+    return {"status": "ok"}, 200
+
+
+@payment_router.post("/webhook/payment/midtrans", summary="Midtrans Webhook Notification")
+@payment_router.post("/api/v1/payments/webhook/midtrans", summary="Midtrans Webhook Notification Alias")
+@payment_router.post("/api/v1/payment/webhook/midtrans", summary="Midtrans Webhook Notification Alias 2")
+@payment_router.post("/api/webhook/payment/midtrans", summary="Midtrans Webhook Notification Alias 3")
+async def midtrans_webhook_fastapi(payload: Dict[str, Any] = Body(...)):
+    """FastAPI route handler untuk Midtrans webhook notifications."""
+    res, _ = await handle_midtrans_notification_logic(payload)
+    return res
 
 
 def extract_amount_from_text(text: str) -> int:
@@ -368,3 +538,15 @@ def register_payment_routes(app: web.Application):
     async def _dana_health(r):
         return web.json_response({"status": "running", "gateway": "BoonTrack QRIS"})
     app.router.add_get("/webhook/dana", _dana_health)
+
+    # Endpoint webhook Midtrans
+    async def _aiohttp_midtrans_webhook(req: web.Request):
+        try:
+            data = await req.json()
+        except Exception:
+            data = {}
+        res, status_code = await handle_midtrans_notification_logic(data)
+        return web.json_response(res, status=status_code)
+
+    app.router.add_post("/webhook/payment/midtrans", _aiohttp_midtrans_webhook)
+    app.router.add_post("/api/v1/payments/webhook/midtrans", _aiohttp_midtrans_webhook)

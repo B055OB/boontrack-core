@@ -48,12 +48,27 @@ class QuickQrisRequest(BaseModel):
 async def quick_qris_checkout_endpoint(payload: QuickQrisRequest):
     """Endpoint yang dipanggil langsung saat buyer klik 'Bayar QRIS Sekarang' di etalase."""
     try:
-        qris_data = await xendit_service.create_qris_invoice(
-            tenant_slug=payload.merchant_slug,
-            amount=payload.total_amount,
-            product_name=payload.product_name,
-            customer_phone=payload.customer_phone
-        )
+        import os
+        provider = os.getenv("PAYMENT_GATEWAY_PROVIDER", "").strip().lower()
+        if provider == "midtrans" or (not provider and os.getenv("MIDTRANS_SERVER_KEY")):
+            from app.services.midtrans_service import midtrans_service
+            from uuid import uuid4
+            order_id = f"INV-{payload.merchant_slug.upper()[:6]}-{uuid4().hex[:6].upper()}"
+            qris_data = await midtrans_service.create_qris_charge(
+                order_id=order_id,
+                amount=payload.total_amount,
+                customer_name=payload.merchant_name or "Buyer",
+                customer_phone=payload.customer_phone,
+                tenant_id=payload.merchant_slug,
+                metadata={"product_name": payload.product_name, "tenant_slug": payload.merchant_slug}
+            )
+        else:
+            qris_data = await xendit_service.create_qris_invoice(
+                tenant_slug=payload.merchant_slug,
+                amount=payload.total_amount,
+                product_name=payload.product_name,
+                customer_phone=payload.customer_phone
+            )
         return {
             "status": "success",
             "order_id": qris_data.get("external_id"),

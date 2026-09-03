@@ -40,14 +40,26 @@ async def create_d2c_order_and_dispatch_qris(
     clean_phone = normalize_phone_number(customer_phone)
     order_id = f"ORD-{merchant_slug.upper()[:6]}-{int(datetime.now().timestamp())}"
     
-    # 1. Buat Dynamic QRIS via Xendit / Gateway Engine
-    qris_data = await xendit_service.create_dynamic_qris(
-        external_id=order_id,
-        amount=total_amount,
-        tenant_id=merchant_slug,
-        customer_phone=clean_phone,
-        metadata={"merchant_slug": merchant_slug, "customer_name": customer_name}
-    )
+    # 1. Buat Dynamic QRIS via Gateway Engine (Midtrans / Xendit)
+    provider = os.getenv("PAYMENT_GATEWAY_PROVIDER", "").strip().lower()
+    if provider == "midtrans" or (not provider and os.getenv("MIDTRANS_SERVER_KEY")):
+        from app.services.midtrans_service import midtrans_service
+        qris_data = await midtrans_service.create_qris_charge(
+            order_id=order_id,
+            amount=total_amount,
+            customer_name=customer_name,
+            customer_phone=clean_phone,
+            tenant_id=merchant_slug,
+            metadata={"merchant_slug": merchant_slug, "customer_name": customer_name}
+        )
+    else:
+        qris_data = await xendit_service.create_dynamic_qris(
+            external_id=order_id,
+            amount=total_amount,
+            tenant_id=merchant_slug,
+            customer_phone=clean_phone,
+            metadata={"merchant_slug": merchant_slug, "customer_name": customer_name}
+        )
     
     qr_string = qris_data.get("qr_string", "")
     qr_code_url = qris_data.get("qr_code_url", "")
@@ -127,14 +139,25 @@ async def reconcile_payment_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
     order_data = None
 
     if supabase and external_id:
-        res = supabase.table("orders").select("*").eq("order_id", external_id).execute()
-        if res.data:
-            order_data = res.data[0]
-            # Update status order menjadi PAID
-            supabase.table("orders").update({
-                "status": "PAID",
-                "paid_at": datetime.now(timezone.utc).isoformat()
-            }).eq("order_id", external_id).execute()
+        try:
+            res = supabase.table("orders").select("*").eq("id", external_id).execute()
+            if res.data:
+                order_data = res.data[0]
+                supabase.table("orders").update({
+                    "status": "PAID",
+                    "paid_at": datetime.now(timezone.utc).isoformat()
+                }).eq("id", external_id).execute()
+        except Exception:
+            try:
+                res = supabase.table("orders").select("*").eq("order_id", external_id).execute()
+                if res.data:
+                    order_data = res.data[0]
+                    supabase.table("orders").update({
+                        "status": "PAID",
+                        "paid_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("order_id", external_id).execute()
+            except Exception as e2:
+                logger.debug(f"[RECONCILE DB NOTE] {e2}")
 
     if event_id:
         PROCESSED_WEBHOOK_EVENTS.add(event_id)
