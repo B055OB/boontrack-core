@@ -17,30 +17,30 @@ def hash_data(val: Optional[str]) -> Optional[str]:
 async def verify_seller_addon_entitlement(tenant_id: str) -> Dict[str, Any]:
     """
     Logika Entitlement Ads Tracking Pro:
-    1. Paket PRO_SCALE -> Langsung berhak (Include bawaan paket tanpa add-on).
+    1. Paket PRO_SCALE / PRO (kolom 'tier' di tenants) -> Langsung berhak (Include bawaan paket).
     2. Paket GROWTH -> Cek tabel tenant_addons untuk add-on 'ads_tracking_pro' (+Rp99k/bulan).
     3. Selain itu -> Terkunci (LOCKED).
     """
     conn = get_db()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        # 1. Cek Tier Paket Utama Tenant
+        # 1. Cek Tier Paket Toko berdasarkan slug
         cur.execute("""
-            SELECT subscription_plan, subscription_status 
+            SELECT tier, is_active, status 
             FROM tenants 
-            WHERE id = %s;
+            WHERE slug = %s;
         """, (tenant_id,))
         tenant = cur.fetchone()
 
-        plan = (tenant.get("subscription_plan") or "").upper() if tenant else ""
-        sub_status = (tenant.get("subscription_status") or "").upper() if tenant else ""
+        tier = str(tenant.get("tier") or "").upper() if tenant else ""
+        is_active = tenant.get("is_active", False) if tenant else False
 
-        # Tier PRO_SCALE otomatis dapat akses penuh
-        if plan == "PRO_SCALE" and sub_status in ["ACTIVE", "TRIAL"]:
+        # Tier PRO / PRO_SCALE otomatis dapat akses penuh
+        if ("PRO" in tier or "SCALE" in tier) and is_active:
             return {
                 "allowed": True,
                 "reason": "INCLUDED_IN_PRO_SCALE",
-                "plan": plan
+                "plan": tier
             }
 
         # 2. Cek Pembelian Add-on Mandiri (+Rp99k/bulan)
