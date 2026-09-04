@@ -1310,6 +1310,25 @@ async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> D
                     json=create_payload
                 )
 
+            # Konfigurasi Webhook ke boontrack-core agar Evolution meneruskan pesan masuk
+            backend_url = os.getenv("BACKEND_WEBHOOK_URL") or os.getenv("FASTAPI_BASE_URL", "https://boontrack-core-production.up.railway.app").rstrip("/")
+            try:
+                await client.post(
+                    f"{EVOLUTION_BASE_URL}/webhook/set/{instance_name}",
+                    headers=headers,
+                    json={
+                        "webhook": {
+                            "enabled": True,
+                            "url": f"{backend_url}/api/v1/whatsapp/webhook/evolution/{tenant_slug}",
+                            "byEvents": False,
+                            "base64": False,
+                            "events": ["MESSAGES_UPSERT"]
+                        }
+                    }
+                )
+            except Exception as hook_err:
+                logger.debug(f"[Evolution Webhook Setup Note] {hook_err}")
+
             # 3. Request QR Code aktif
             qr_res = await client.get(
                 f"{EVOLUTION_BASE_URL}/instance/connect/{instance_name}",

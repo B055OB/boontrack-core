@@ -273,10 +273,10 @@ class OnboardingService:
     def get_tenant_details_by_slug(self, slug: str) -> Optional[Dict[str, Any]]:
         """Finds full tenant profile, real products list, payout details, and persona configuration."""
         clean_slug = slugify(slug)
+        cfg = LOADED_CONFIG_TENANTS.get(clean_slug)
         tenant_dict = self._tenants_by_slug.get(clean_slug)
 
         if not tenant_dict:
-            cfg = LOADED_CONFIG_TENANTS.get(clean_slug)
             if cfg:
                 tenant_dict = {
                     "id": str(uuid4()),

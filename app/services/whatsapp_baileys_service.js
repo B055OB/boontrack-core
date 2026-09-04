@@ -1,15 +1,18 @@
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, Browsers } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
+import { registerInboundMessageListener } from './whatsapp_inbound_engine.js';
 
 const sessions = new Map();
 
 export async function createTenantWASession(tenantSlug, onQRGenerated) {
-  const { state, saveCreds } = await useMultiFileAuthState(`./sessions/${tenantSlug}`);
+  const resolvedTenant = String(tenantSlug || 'onlineboost').trim().toLowerCase();
+  const { state, saveCreds } = await useMultiFileAuthState(`./sessions/${resolvedTenant}`);
   
   const sock = makeWASocket({
     auth: state,
     printQRInTerminal: false,
-    browser: ['BoonTrack Engine', 'Chrome', '1.0.0']
+    browser: Browsers.macOS('Desktop'),
+    syncFullHistory: false
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -18,7 +21,7 @@ export async function createTenantWASession(tenantSlug, onQRGenerated) {
     const { connection, lastDisconnect, qr } = update;
 
     // String token mentah resmi dari server WhatsApp
-    if (qr) {
+    if (qr && onQRGenerated) {
       const qrDataUrl = await QRCode.toDataURL(qr);
       onQRGenerated({
         qr_raw: qr,
@@ -26,14 +29,24 @@ export async function createTenantWASession(tenantSlug, onQRGenerated) {
       });
     }
 
+    if (connection === 'open') {
+      console.log(`[BAILEYS SESSION CONNECTED] Sesi aktif terhubung untuk tenant: [${resolvedTenant}]`);
+    }
+
     if (connection === 'close') {
       const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log(`[BAILEYS SESSION CLOSED] Sesi [${resolvedTenant}] terputus. Reconnect: ${shouldReconnect}`);
       if (shouldReconnect) {
-        createTenantWASession(tenantSlug, onQRGenerated);
+        createTenantWASession(resolvedTenant, onQRGenerated);
+      } else {
+        sessions.delete(resolvedTenant);
       }
     }
   });
 
-  sessions.set(tenantSlug, sock);
+  // Daftarkan listener messages.upsert inbound auto-reply
+  registerInboundMessageListener(sock, resolvedTenant);
+
+  sessions.set(resolvedTenant, sock);
   return sock;
 }
