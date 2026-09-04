@@ -26,6 +26,7 @@ from app.services.whatsapp_service import (
 from app.services.ai_engine import commerce_ai_engine
 from app.services.agent_service import process_incoming_message
 from app.services.onboarding_service import onboarding_service
+from app.services.whatsapp_menu_flow_service import whatsapp_menu_flow_service
 
 logger = logging.getLogger("WHATSAPP_GROWTH_ROUTER")
 
@@ -134,41 +135,53 @@ async def process_inbound_message(payload: InboundPayload):
         or "trust_builder"
     ).lower().strip()
 
-    # 2. Pipeline Auto-Reply: Deteksi Checkout & Pembelian Cepat
-    if resolved_strategy == "trust_builder":
-        # Mode trust_builder hanya trigger checkout instan jika user eksplisit berniat beli/bayar
-        is_buy_intent = any(
-            kw in text_lower for kw in [
-                "saya mau beli", "saya mau bayar", "saya mau order", "beli sekarang", "transfer sekarang", "kirim link bayar", "kirim qris"
-            ]
-        )
-    elif resolved_strategy == "hard_selling":
-        is_buy_intent = any(
-            kw in text_lower for kw in [
-                "beli", "order", "checkout", "bayar", "qris", "ambil promo", "daftar sekarang", "harga"
-            ]
-        )
-    else:  # balanced
-        is_buy_intent = any(
-            kw in text_lower for kw in [
-                "beli", "order", "checkout", "bayar qris", "qris", "ambil promo", "daftar sekarang"
-            ]
-        )
+    # 2. Pipeline Numbered Menu Flow: Tanya Produk -> Pilih Nomor -> Testimoni / Beli / Kembali
+    menu_reply = await whatsapp_menu_flow_service.process_message(
+        tenant_slug=tenant_slug,
+        sender_phone=clean_phone,
+        incoming_text=incoming_text,
+        contact_name=contact_name,
+    )
+    if menu_reply:
+        logger.info(f"[GROWTH GATEWAY MENU] Handled by Numbered Menu Flow for '{clean_phone}'")
+        reply = menu_reply
 
-    if is_buy_intent:
-        logger.info(f"[GROWTH GATEWAY] Deteksi niat beli dari '{clean_phone}' untuk toko '{tenant_slug}' (Strategy: {resolved_strategy})")
-        try:
-            fast_reply, invoice, _ = await generate_fast_track_checkout_response(
-                tenant_slug=tenant_slug,
-                from_phone=clean_phone,
-                contact_name=contact_name,
+    # 3. Pipeline Auto-Reply: Deteksi Checkout & Pembelian Cepat
+    if not reply:
+        if resolved_strategy == "trust_builder":
+            # Mode trust_builder hanya trigger checkout instan jika user eksplisit berniat beli/bayar
+            is_buy_intent = any(
+                kw in text_lower for kw in [
+                    "saya mau beli", "saya mau bayar", "saya mau order", "beli sekarang", "transfer sekarang", "kirim link bayar", "kirim qris"
+                ]
             )
-            if fast_reply:
-                reply = fast_reply
-        except Exception as ft_err:
-            logger.warning(f"[GROWTH FAST TRACK WARN] {ft_err}")
+        elif resolved_strategy == "hard_selling":
+            is_buy_intent = any(
+                kw in text_lower for kw in [
+                    "beli", "order", "checkout", "bayar", "qris", "ambil promo", "daftar sekarang", "harga"
+                ]
+            )
+        else:  # balanced
+            is_buy_intent = any(
+                kw in text_lower for kw in [
+                    "beli", "order", "checkout", "bayar qris", "qris", "ambil promo", "daftar sekarang"
+                ]
+            )
 
-    # 3. Pipeline AI Knowledge Base: Tanya Jawab Produk, Konsultasi, dan Persona Tenant
+        if is_buy_intent:
+            logger.info(f"[GROWTH GATEWAY] Deteksi niat beli dari '{clean_phone}' untuk toko '{tenant_slug}' (Strategy: {resolved_strategy})")
+            try:
+                fast_reply, invoice, _ = await generate_fast_track_checkout_response(
+                    tenant_slug=tenant_slug,
+                    from_phone=clean_phone,
+                    contact_name=contact_name,
+                )
+                if fast_reply:
+                    reply = fast_reply
+            except Exception as ft_err:
+                logger.warning(f"[GROWTH FAST TRACK WARN] {ft_err}")
+
+    # 4. Pipeline AI Knowledge Base: Tanya Jawab Produk, Konsultasi, dan Persona Tenant
     if not reply:
         logger.info(
             f"[GROWTH GATEWAY AI] 🧠 Mengambil jawaban dari AI Knowledge Base "
@@ -185,7 +198,7 @@ async def process_inbound_message(payload: InboundPayload):
         except Exception as ai_err:
             logger.error(f"[GROWTH AI ERROR] Error in commerce_ai_engine for '{tenant_slug}': {ai_err}", exc_info=True)
 
-    # 4. Fallback ke General Agent / Tenant Persona Handler
+    # 5. Fallback ke General Agent / Tenant Persona Handler
     if not reply:
         logger.info(f"[GROWTH GATEWAY FALLBACK] Mencoba general process_incoming_message...")
         try:
@@ -198,7 +211,7 @@ async def process_inbound_message(payload: InboundPayload):
         except Exception as proc_err:
             logger.error(f"[GROWTH PROCESS ERROR] Error in process_incoming_message: {proc_err}", exc_info=True)
 
-    # 5. Default welcoming response jika AI tidak merespons
+    # 6. Default welcoming response jika AI tidak merespons
     if not reply:
         store_name = store_details.get("tenant", {}).get("name", tenant_slug.upper())
         reply = (
@@ -232,10 +245,14 @@ async def process_inbound_message(payload: InboundPayload):
         user_name=contact_name,
     ))
 
+    session = whatsapp_menu_flow_service.get_session(tenant_slug, clean_phone)
+
     return {
         "status": "success",
         "tenant_slug": tenant_slug,
         "bot_strategy": resolved_strategy,
+        "current_state": session.current_state,
+        "selected_product_id": session.selected_product_id,
         "reply_text": reply
     }
 
