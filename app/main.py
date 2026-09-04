@@ -49,6 +49,7 @@ from app.routes.shipping_webhook_routes import register_shipping_routes
 from app.routes.seller_ads_routes import register_seller_ads_routes
 from app.routes.affiliate_auth import router as affiliate_auth_router
 from app.routes.meta_waba_routes import waba_router
+from app.routes.shipping_routes import router as shipping_router
 
 # Inisialisasi Supabase Client
 supabase_url = os.getenv("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.co")
@@ -99,6 +100,7 @@ app.include_router(d2c_router)
 app.include_router(meta_exchange_router)
 app.include_router(affiliate_auth_router)
 app.include_router(waba_router)
+app.include_router(shipping_router)
 
 
 @app.get("/", summary="Root Health Check")
