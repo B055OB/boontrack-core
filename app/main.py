@@ -51,6 +51,7 @@ from app.routes.affiliate_auth import router as affiliate_auth_router
 from app.routes.meta_waba_routes import waba_router
 from app.routes.shipping_routes import router as shipping_router
 from app.routes.partner_routes import partner_router, manager_router
+from app.routes.analytics_fastapi_routes import router as analytics_router
 
 # Inisialisasi Supabase Client
 supabase_url = os.getenv("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.co")
@@ -104,6 +105,7 @@ app.include_router(waba_router)
 app.include_router(shipping_router)
 app.include_router(partner_router)
 app.include_router(manager_router)
+app.include_router(analytics_router)
 
 
 @app.get("/", summary="Root Health Check")

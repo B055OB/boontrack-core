@@ -22,6 +22,7 @@ from app.models.affiliate import (
     PayoutStatus,
     AllowedBank,
 )
+from app.models.campaign import CampaignAttribution
 
 __all__ = [
     # Legacy Exports
@@ -56,5 +57,7 @@ __all__ = [
     "PayoutRequest",
     "PayoutStatus",
     "AllowedBank",
+    # Campaign Attribution Exports
+    "CampaignAttribution",
 ]
 
