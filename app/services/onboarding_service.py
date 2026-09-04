@@ -378,6 +378,14 @@ class OnboardingService:
                         or p_meta.get("assistant_name")
                     )
                     tone = ai_k.get("tone") or p_meta.get("tone")
+                    bot_strategy_val = (
+                        meta.get("bot_strategy")
+                        or p_meta.get("bot_strategy")
+                        or ai_k.get("bot_strategy")
+                        or row.get("bot_strategy")
+                        or tenant_dict.get("bot_strategy")
+                        or "trust_builder"
+                    )
                     
                     if sys_prompt:
                         persona["system_prompt"] = sys_prompt
@@ -386,6 +394,8 @@ class OnboardingService:
                         persona["ai_name"] = ai_name
                     if tone:
                         persona["tone"] = tone
+                    persona["bot_strategy"] = bot_strategy_val
+                    tenant_dict["bot_strategy"] = bot_strategy_val
 
                     tenant_dict["persona"] = persona
                     tenant_dict["ai_knowledge"] = {
@@ -393,10 +403,16 @@ class OnboardingService:
                         "assistant_name": ai_name or persona.get("assistant_name"),
                         "system_prompt": sys_prompt or persona.get("system_prompt", ""),
                         "tone": tone or persona.get("tone", "casual"),
+                        "bot_strategy": bot_strategy_val,
                         "faq": ai_k.get("faq") or [],
                     }
             except Exception as db_err:
                 logger.debug(f"[OnboardingService Supabase detail lookup note] {db_err}")
+
+        # Ensure bot_strategy is present in persona and tenant
+        final_strategy = tenant_dict.get("bot_strategy") or persona.get("bot_strategy") or "trust_builder"
+        persona["bot_strategy"] = final_strategy
+        tenant_dict["bot_strategy"] = final_strategy
 
         return {
             "status": "success",
@@ -408,6 +424,7 @@ class OnboardingService:
                 "ai_name": persona.get("ai_name") or f"{tenant_dict.get('name', clean_slug)} Assistant",
                 "system_prompt": persona.get("system_prompt", ""),
                 "tone": persona.get("tone", "casual"),
+                "bot_strategy": final_strategy,
             }
         }
 
@@ -507,6 +524,11 @@ class OnboardingService:
             (updates.get("persona") or {}).get("tone")
             or (updates.get("ai_knowledge") or {}).get("tone")
         )
+        bot_strat = (
+            updates.get("bot_strategy")
+            or (updates.get("persona") or {}).get("bot_strategy")
+            or (updates.get("ai_knowledge") or {}).get("bot_strategy")
+        )
 
         p_dict = tenant.setdefault("persona", {})
         if sys_prompt:
@@ -516,6 +538,8 @@ class OnboardingService:
             p_dict["ai_name"] = ai_name
         if tone:
             p_dict["tone"] = tone
+        if bot_strat:
+            p_dict["bot_strategy"] = bot_strat
 
         ai_dict = tenant.setdefault("ai_knowledge", {})
         if sys_prompt:
@@ -525,6 +549,11 @@ class OnboardingService:
             ai_dict["assistant_name"] = ai_name
         if tone:
             ai_dict["tone"] = tone
+        if bot_strat:
+            ai_dict["bot_strategy"] = bot_strat
+
+        if bot_strat:
+            tenant["bot_strategy"] = bot_strat
 
         self._tenants_by_slug[clean_slug] = tenant
 
@@ -535,6 +564,8 @@ class OnboardingService:
                 cfg.persona.system_prompt = sys_prompt
             if tone:
                 cfg.persona.tone = tone
+            if bot_strat and hasattr(cfg.persona, "bot_strategy"):
+                cfg.persona.bot_strategy = bot_strat
             if "name" in updates:
                 cfg.identity.name = updates["name"]
             if "public_description" in updates:
@@ -553,12 +584,14 @@ class OnboardingService:
 
                 updated_meta = {
                     **existing_meta,
+                    "bot_strategy": bot_strat or existing_meta.get("bot_strategy") or tenant.get("bot_strategy", "trust_builder"),
                     "ai_knowledge": {
                         **existing_meta.get("ai_knowledge", {}),
                         **(updates.get("ai_knowledge") or {}),
                         **({"system_prompt": sys_prompt} if sys_prompt else {}),
                         **({"ai_name": ai_name, "assistant_name": ai_name} if ai_name else {}),
                         **({"tone": tone} if tone else {}),
+                        **({"bot_strategy": bot_strat} if bot_strat else {}),
                     },
                     "persona": {
                         **existing_meta.get("persona", {}),
@@ -566,15 +599,19 @@ class OnboardingService:
                         **({"system_prompt": sys_prompt} if sys_prompt else {}),
                         **({"assistant_name": ai_name, "ai_name": ai_name} if ai_name else {}),
                         **({"tone": tone} if tone else {}),
+                        **({"bot_strategy": bot_strat} if bot_strat else {}),
                     }
                 }
-                supabase.table("tenants").upsert({
+                upsert_payload = {
                     "slug": clean_slug,
                     "name": updates.get("name") or (existing.get("name") if existing else tenant.get("name", clean_slug)),
                     "metadata": updated_meta,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
-                }).execute()
-                logger.info(f"[OnboardingService] Synced AI Persona & System Prompt to Supabase for tenant '{clean_slug}'")
+                }
+                if bot_strat:
+                    upsert_payload["bot_strategy"] = bot_strat
+                supabase.table("tenants").upsert(upsert_payload).execute()
+                logger.info(f"[OnboardingService] Synced AI Persona & Bot Strategy ('{bot_strat}') to Supabase for tenant '{clean_slug}'")
             except Exception as e:
                 logger.debug(f"[OnboardingService Supabase sync note] {e}")
 

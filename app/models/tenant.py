@@ -20,6 +20,12 @@ class OnboardingMode(str, enum.Enum):
     ENTERPRISE = "ENTERPRISE"
 
 
+class BotStrategy(str, enum.Enum):
+    TRUST_BUILDER = "trust_builder"
+    BALANCED = "balanced"
+    HARD_SELLING = "hard_selling"
+
+
 class Tenant(Base):
     __tablename__ = "tenants"
 
@@ -37,6 +43,9 @@ class Tenant(Base):
     )
     template: Mapped[str] = mapped_column(String(64), default="COMMERCE_TEMPLATE", nullable=False)
     affiliate_ref: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    bot_strategy: Mapped[str] = mapped_column(
+        String(32), default=BotStrategy.TRUST_BUILDER.value, nullable=False
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False

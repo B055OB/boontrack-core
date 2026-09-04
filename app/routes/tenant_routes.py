@@ -30,6 +30,10 @@ class TenantSettingsUpdateRequest(BaseModel):
     system_prompt: Optional[str] = Field(None, description="Direct system prompt override")
     assistant_name: Optional[str] = Field(None, description="Direct assistant name override")
     ai_name: Optional[str] = Field(None, description="Direct assistant name override alias")
+    bot_strategy: Optional[str] = Field(
+        None,
+        description="Bot response strategy enum: 'trust_builder', 'balanced', 'hard_selling'"
+    )
     faq: Optional[List[Dict[str, str]]] = Field(None, description="Frequently asked questions")
 
 

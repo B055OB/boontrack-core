@@ -17,6 +17,11 @@ class PlanTierEnum(str, Enum):
     PRO_SCALE = "PRO_SCALE"
     ENTERPRISE = "ENTERPRISE"
 
+class BotStrategyEnum(str, Enum):
+    TRUST_BUILDER = "trust_builder"
+    BALANCED = "balanced"
+    HARD_SELLING = "hard_selling"
+
 class MerchantRegisterRequest(BaseModel):
     store_name: str = Field(..., min_length=3, max_length=100)
     slug: str = Field(..., min_length=3, max_length=50)
@@ -26,6 +31,7 @@ class MerchantRegisterRequest(BaseModel):
     owner_email: EmailStr
     password: Optional[str] = Field(None, min_length=6)
     plan_tier: PlanTierEnum = PlanTierEnum.GROWTH
+    bot_strategy: BotStrategyEnum = BotStrategyEnum.TRUST_BUILDER
     referral_code: Optional[str] = None
     cf_turnstile_token: Optional[str] = None
 

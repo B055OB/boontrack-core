@@ -39,6 +39,7 @@ class InboundPayload(BaseModel):
     sender_phone: str = Field(..., description="Customer phone number without @s.whatsapp.net")
     message_body: str = Field(..., description="Message text extracted from Baileys")
     sender_name: Optional[str] = Field("Pelanggan", description="Customer contact name")
+    bot_strategy: Optional[str] = Field(None, description="Optional override bot strategy: 'trust_builder', 'balanced', 'hard_selling'")
 
 
 @router.post("/sessions/{tenant_slug}/connect")
@@ -123,15 +124,39 @@ async def process_inbound_message(payload: InboundPayload):
 
     reply: Optional[str] = None
 
+    # Resolve Bot Strategy for this tenant
+    store_details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
+    tenant_info = store_details.get("tenant", {})
+    resolved_strategy = (
+        payload.bot_strategy
+        or tenant_info.get("bot_strategy")
+        or store_details.get("persona", {}).get("bot_strategy")
+        or "trust_builder"
+    ).lower().strip()
+
     # 2. Pipeline Auto-Reply: Deteksi Checkout & Pembelian Cepat
-    is_buy_intent = any(
-        kw in text_lower for kw in [
-            "beli", "order", "checkout", "bayar qris", "qris", "ambil promo", "daftar sekarang"
-        ]
-    )
+    if resolved_strategy == "trust_builder":
+        # Mode trust_builder hanya trigger checkout instan jika user eksplisit berniat beli/bayar
+        is_buy_intent = any(
+            kw in text_lower for kw in [
+                "saya mau beli", "saya mau bayar", "saya mau order", "beli sekarang", "transfer sekarang", "kirim link bayar", "kirim qris"
+            ]
+        )
+    elif resolved_strategy == "hard_selling":
+        is_buy_intent = any(
+            kw in text_lower for kw in [
+                "beli", "order", "checkout", "bayar", "qris", "ambil promo", "daftar sekarang", "harga"
+            ]
+        )
+    else:  # balanced
+        is_buy_intent = any(
+            kw in text_lower for kw in [
+                "beli", "order", "checkout", "bayar qris", "qris", "ambil promo", "daftar sekarang"
+            ]
+        )
 
     if is_buy_intent:
-        logger.info(f"[GROWTH GATEWAY] Deteksi niat beli dari '{clean_phone}' untuk toko '{tenant_slug}'")
+        logger.info(f"[GROWTH GATEWAY] Deteksi niat beli dari '{clean_phone}' untuk toko '{tenant_slug}' (Strategy: {resolved_strategy})")
         try:
             fast_reply, invoice, _ = await generate_fast_track_checkout_response(
                 tenant_slug=tenant_slug,
@@ -145,13 +170,17 @@ async def process_inbound_message(payload: InboundPayload):
 
     # 3. Pipeline AI Knowledge Base: Tanya Jawab Produk, Konsultasi, dan Persona Tenant
     if not reply:
-        logger.info(f"[GROWTH GATEWAY AI] 🧠 Mengambil jawaban dari AI Knowledge Base untuk tenant '{tenant_slug}'...")
+        logger.info(
+            f"[GROWTH GATEWAY AI] 🧠 Mengambil jawaban dari AI Knowledge Base "
+            f"(Strategy: '{resolved_strategy}') untuk tenant '{tenant_slug}'..."
+        )
         try:
             reply = await commerce_ai_engine.generate_commerce_response(
                 tenant_slug=tenant_slug,
                 user_message=incoming_text,
                 user_phone=clean_phone,
                 user_name=contact_name,
+                bot_strategy=resolved_strategy,
             )
         except Exception as ai_err:
             logger.error(f"[GROWTH AI ERROR] Error in commerce_ai_engine for '{tenant_slug}': {ai_err}", exc_info=True)
@@ -171,7 +200,6 @@ async def process_inbound_message(payload: InboundPayload):
 
     # 5. Default welcoming response jika AI tidak merespons
     if not reply:
-        store_details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
         store_name = store_details.get("tenant", {}).get("name", tenant_slug.upper())
         reply = (
             f"Halo Kak! Selamat datang di asisten resmi *{store_name}* 👋\n\n"
@@ -183,7 +211,7 @@ async def process_inbound_message(payload: InboundPayload):
     # Log Terminal Detail Poin 3: Saat balasan siap dikirim
     logger.info(
         f"[GROWTH GATEWAY REPLY READY] ✅ Balasan Terbentuk untuk {clean_phone} "
-        f"({len(reply)} chars): \"{reply[:80]}...\""
+        f"(Strategy: {resolved_strategy}, {len(reply)} chars): \"{reply[:80]}...\""
     )
 
     # Catat pesan masuk dan keluar ke Supabase secara asinkron
@@ -207,6 +235,7 @@ async def process_inbound_message(payload: InboundPayload):
     return {
         "status": "success",
         "tenant_slug": tenant_slug,
+        "bot_strategy": resolved_strategy,
         "reply_text": reply
     }
 

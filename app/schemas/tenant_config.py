@@ -31,6 +31,10 @@ class TenantPersona(BaseModel):
         description="Pesan fallback jika AI mengalami timeout atau offline"
     )
     welcome_message: Optional[str] = Field(None, description="Pesan sambutan pembuka percakapan")
+    bot_strategy: str = Field(
+        default="trust_builder",
+        description="Strategi respon bot: 'trust_builder', 'balanced', 'hard_selling'"
+    )
 
 
 class MenuItem(BaseModel):
