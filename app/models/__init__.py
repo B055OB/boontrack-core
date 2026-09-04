@@ -13,6 +13,15 @@ from app.models.device import (
     DeviceStatus,
     MerchantDevice,
 )
+from app.models.affiliate import (
+    Partner,
+    PartnerRole,
+    PartnerStatus,
+    PartnerBankAccount,
+    PayoutRequest,
+    PayoutStatus,
+    AllowedBank,
+)
 
 __all__ = [
     # Legacy Exports
@@ -39,4 +48,13 @@ __all__ = [
     "ActivationCode",
     "DeviceStatus",
     "ActivationCodeStatus",
+    # Partner & Whitelist Exports
+    "Partner",
+    "PartnerRole",
+    "PartnerStatus",
+    "PartnerBankAccount",
+    "PayoutRequest",
+    "PayoutStatus",
+    "AllowedBank",
 ]
+
