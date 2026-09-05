@@ -6,6 +6,8 @@ Menyediakan engine copilot operasional toko:
 2. Guardrails keamanan (larangan ekspos nomor rekening lengkap & kredensial platform).
 3. Tooling & Function Calling (query-only auto execute & mutation proposal).
 4. Human-in-the-Loop Safeguard dengan TTL 10 menit.
+5. WhatsApp Automation capabilities & Pencegahan Greeting Loop.
+6. Multi-turn Conversation History support.
 """
 
 import os
@@ -103,7 +105,7 @@ def mask_sensitive_data(text: str) -> str:
 class BoonPilotService:
     """
     Agentic Copilot untuk toko merchant BoonTrack.
-    Mengelola konteks, routing fungsi, dan safeguard Human-in-the-loop.
+    Mengelola konteks, routing fungsi, multi-turn history, dan safeguard Human-in-the-loop.
     """
 
     def __init__(self):
@@ -118,20 +120,39 @@ class BoonPilotService:
         }
         # In-memory storage action proposals {action_id: {...}}
         self._action_proposals: Dict[str, Dict[str, Any]] = {}
+        # In-memory storage session conversation histories {session_id: [{"role": ..., "content": ...}]}
+        self._session_histories: Dict[str, List[Dict[str, str]]] = {}
+
+    def _append_turn(self, session_id: str, role: str, content: str):
+        """Menyimpan turn ke riwayat percakapan sesi."""
+        if not session_id:
+            return
+        if session_id not in self._session_histories:
+            self._session_histories[session_id] = []
+        self._session_histories[session_id].append({"role": role, "content": content})
+        # Batasi riwayat maksimum 20 turn terakhir
+        if len(self._session_histories[session_id]) > 20:
+            self._session_histories[session_id] = self._session_histories[session_id][-20:]
 
     # =========================================================================
     # 1. CONTEXT BUILDER & SNAPSHOT
     # =========================================================================
 
-    async def build_tenant_context(self, tenant_slug: str) -> Dict[str, Any]:
+    async def build_tenant_context(
+        self,
+        tenant_slug: str,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+    ) -> Dict[str, Any]:
         """
         Membuat bundle konteks dinamis toko:
         - System Prompt identitas 'BoonPilot'
         - Katalog produk aktif, varian, dan stok
         - Snapshot analytics 7-30 hari (omset, orders, kampanye iklan)
-        - Konfigurasi logistik & kurir
+        - Konfigurasi logistik, kurir, dan otomatisasi WhatsApp
+        - Riwayat percakapan multi-turn
         """
         clean_slug = tenant_slug.strip().lower()
+        tenant_name = clean_slug.replace('-', ' ').replace('_', ' ').title()
 
         # 1. Katalog & Stok
         products = self._get_tenant_products(clean_slug)
@@ -143,7 +164,6 @@ class BoonPilotService:
         total_leads = sum(c.get("leads_wa", 0) for c in campaigns)
         blended_cr = round((total_closings / total_leads * 100), 2) if total_leads > 0 else 0.0
 
-        # Estimasi metric 7 hari vs 30 hari
         sales_snapshot = {
             "last_7_days": {
                 "gross_revenue": float(total_omset * 0.4),
@@ -168,37 +188,55 @@ class BoonPilotService:
         })
         active_couriers = self._couriers.get(clean_slug, {"GoSend": True, "Grab": True})
 
-        # 4. System Prompt BoonPilot
+        # 4. Format Riwayat Percakapan Multi-Turn
+        history_text = ""
+        if conversation_history:
+            history_text = "\n\nRiwayat Percakapan Sebelumnya:\n"
+            for turn in conversation_history[-6:]:
+                role_label = "Merchant" if turn.get("role") in ["user", "merchant"] else "BoonPilot"
+                msg_content = turn.get("content", "").strip()
+                if msg_content:
+                    history_text += f"• {role_label}: {msg_content}\n"
+
+        # 5. System Prompt BoonPilot
         system_prompt = (
             "Kamu adalah 'BoonPilot', Copilot AI operasional toko resmi BoonTrack.\n"
             "Tugasmu membantu merchant mengelola toko: memantau performa penjualan/iklan, memeriksa stok, "
-            "dan mengonfigurasi logistik toko secara proaktif, taktis, dan akurat.\n\n"
-            f"Konteks Toko Saat Ini: '{tenant_slug}'\n"
+            "mengelola otomatisasi WhatsApp, dan mengonfigurasi logistik toko secara proaktif, taktis, dan akurat.\n\n"
+            f"Konteks Toko Saat Ini: '{tenant_name}' (Slug: {clean_slug})\n"
             f"- Produk Aktif: {len(products)} item\n"
             f"- Omset 30 Hari: Rp {sales_snapshot['last_30_days']['gross_revenue']:,.0f} ({sales_snapshot['last_30_days']['total_orders']} orders)\n"
             f"- Alamat Pengiriman: {shipping_origin.get('address')} ({shipping_origin.get('postal_code')})\n"
-            f"- Kurir Aktif: {', '.join(k for k, v in active_couriers.items() if v)}\n\n"
+            f"- Kurir Aktif: {', '.join(k for k, v in active_couriers.items() if v)}\n"
+            "- Fitur Otomatisasi WhatsApp Toko: AKTIF\n"
+            "  Alur otomatisasi:\n"
+            "  1. Sambutan otomatis calon pembeli via WA.\n"
+            "  2. Menu bernomor (1, 2, 3) untuk cek detail produk & ulasan.\n"
+            "  3. Link checkout instan & pelacakan konversi iklan otomatis (Lead/CAPI).\n\n"
             "Pedoman Menjawab & Guardrails:\n"
             "1. Jawab ramah, profesional, ringkas, dan fokus pada efisiensi operasional toko.\n"
-            "2. DILARANG KERAS menampilkan nomor rekening bank pembeli atau toko secara lengkap (wajib disensor ****1234).\n"
-            "3. DILARANG membocorkan kredensial sistem, API keys, password, atau database internal platform.\n"
-            "4. Jika merchant meminta perubahan data (stok, alamat gudang, kurir), berikan konfirmasi usulan perubahan secara jelas."
+            "2. JANGAN PERNAH merespons dengan salam perkenalan berulang jika user menanyakan kapabilitas spesifik sistem atau melanjutkan percakapan.\n"
+            "3. DILARANG KERAS menampilkan nomor rekening bank pembeli atau toko secara lengkap (wajib disensor ****1234).\n"
+            "4. DILARANG membocorkan kredensial sistem, API keys, password, atau database internal platform.\n"
+            "5. Jika merchant meminta perubahan data (stok, alamat gudang, kurir), berikan konfirmasi usulan perubahan secara jelas."
+            f"{history_text}"
         )
 
         return {
             "tenant_slug": clean_slug,
+            "tenant_name": tenant_name,
             "system_prompt": system_prompt,
             "products": products,
             "analytics_snapshot": sales_snapshot,
             "shipping_origin": shipping_origin,
             "active_couriers": active_couriers,
+            "whatsapp_status": "ACTIVE",
         }
 
     def _get_tenant_products(self, tenant_slug: str) -> List[Dict[str, Any]]:
         clean_slug = tenant_slug.strip().lower()
         if clean_slug in self._inventory:
             return self._inventory[clean_slug]
-        # Fallback catalog untuk tenant baru
         return [
             {
                 "product_id": f"{clean_slug}_prod_1",
@@ -360,6 +398,23 @@ class BoonPilotService:
             couriers[courier_name] = is_active
             mutation_result = {"courier_name": courier_name, "is_active": is_active, "all_couriers": couriers}
 
+        elif action_type == "test_assistant_number":
+            test_phone = payload.get("test_phone", "6281237450222")
+            mutation_result = {
+                "test_phone": test_phone,
+                "mode": payload.get("mode", "handshake_test"),
+                "status": "DISPATCHED",
+                "message": f"Pesan handshake uji coba berhasil dikirimkan ke nomor WhatsApp {test_phone}.",
+            }
+
+        elif action_type == "edit_catalog_flow":
+            mutation_result = {
+                "flow_type": payload.get("flow_type", "numbered_menu"),
+                "catalog_limit": payload.get("catalog_limit", 5),
+                "status": "UPDATED",
+                "message": "Konfigurasi alur katalog menu bernomor berhasil diperbarui.",
+            }
+
         else:
             return False, f"Tipe mutasi '{action_type}' tidak dikenali.", {}
 
@@ -370,7 +425,7 @@ class BoonPilotService:
         return True, "Aksi mutasi data berhasil dieksekusi ke database toko.", proposal
 
     # =========================================================================
-    # 4. AGENTIC CONVERSATION DISPATCHER
+    # 4. AGENTIC CONVERSATION DISPATCHER & INTENT PARSER
     # =========================================================================
 
     async def chat(
@@ -378,20 +433,96 @@ class BoonPilotService:
         tenant_slug: str,
         message: str,
         session_id: Optional[str] = None,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
     ) -> Dict[str, Any]:
         """
         Entrypoint chat BoonPilot:
-        - Mendeteksi apakah user meminta query report (sales/inventory).
-        - Mendeteksi apakah user meminta mutasi data (ubah stok, gudang, kurir) -> Buat Action Proposal.
-        - Jika obrolan biasa / konsultasi operasional -> Panggil LLM dengan Context & Guardrails.
+        - Mendukung multi-turn conversation history.
+        - Mencegah fallback ke greeting loop pada pertanyaan kapabilitas (termasuk WhatsApp Automation).
+        - Menangani query sales report dan inventory monitoring secara instan.
+        - Menghasilkan Action Proposal pada instruksi mutasi data toko.
         """
         clean_slug = tenant_slug.strip().lower()
+        tenant_name = clean_slug.replace('-', ' ').replace('_', ' ').title()
         text_lower = message.lower().strip()
+        sess_id = session_id or str(uuid.uuid4())
 
-        context_data = await self.build_tenant_context(clean_slug)
+        # Sinkronisasi riwayat percakapan multi-turn
+        if conversation_history:
+            self._session_histories[sess_id] = list(conversation_history)
+        current_history = self._session_histories.get(sess_id, [])
+
+        context_data = await self.build_tenant_context(clean_slug, conversation_history=current_history)
 
         # ---------------------------------------------------------------------
-        # A. Deteksi Tool 1: Sales & ROAS Report
+        # A. Deteksi Intent: WhatsApp Automation Capabilities & Sub-Actions
+        # ---------------------------------------------------------------------
+        # 1. Sub-aksi: Uji Nomor Asisten
+        if any(k in text_lower for k in ["uji nomor", "test nomor", "tes nomor", "uji asisten", "test asisten"]):
+            proposal = self.create_action_proposal(
+                tenant_slug=clean_slug,
+                action_type="test_assistant_number",
+                description=f"Konfirmasi pengiriman pesan uji coba (handshake test) ke WhatsApp asisten toko '{tenant_name}'.",
+                payload={"test_phone": "6281237450222", "mode": "handshake_test"},
+            )
+            self._append_turn(sess_id, "user", message)
+            self._append_turn(sess_id, "assistant", proposal["description"])
+            return proposal
+
+        # 2. Sub-aksi: Ubah Alur Katalog
+        if any(k in text_lower for k in ["ubah alur", "ganti alur", "edit alur", "alur katalog"]):
+            proposal = self.create_action_proposal(
+                tenant_slug=clean_slug,
+                action_type="edit_catalog_flow",
+                description=f"Konfirmasi penyesuaian alur menu bernomor katalog produk WhatsApp toko '{tenant_name}'.",
+                payload={"flow_type": "numbered_menu", "catalog_limit": 5},
+            )
+            self._append_turn(sess_id, "user", message)
+            self._append_turn(sess_id, "assistant", proposal["description"])
+            return proposal
+
+        # 3. Status & Kapabilitas WhatsApp Automation (Pencegahan Greeting Loop)
+        wa_keywords = [
+            "whatsapp", "wa", "otomatisasi wa", "bot wa", "fitur wa",
+            "wa gateway", "alur wa", "whatsapp automation", "pesan otomatis",
+            "asisten wa", "nomor asisten"
+        ]
+        if any(k in text_lower for k in wa_keywords):
+            # Response Taktis & Terstruktur WhatsApp Automation
+            reply = (
+                f"Otomatisasi WhatsApp untuk toko {tenant_name} sudah aktif dengan alur:\n"
+                f" 1. Sambutan otomatis calon pembeli via WA.\n"
+                f" 2. Menu bernomor (1, 2, 3) untuk cek detail produk & ulasan.\n"
+                f" 3. Link checkout instan & pelacakan konversi iklan otomatis (Lead/CAPI).\n\n"
+                "Apakah Anda ingin melihat statistik chat, menguji nomor asisten, atau mengubah alur katalog?"
+            )
+            data = {
+                "feature": "whatsapp_automation",
+                "status": "ACTIVE",
+                "tenant_slug": clean_slug,
+                "tenant_name": tenant_name,
+                "automation_flows": [
+                    "1. Sambutan otomatis calon pembeli via WA.",
+                    "2. Menu bernomor (1, 2, 3) untuk cek detail produk & ulasan.",
+                    "3. Link checkout instan & pelacakan konversi iklan otomatis (Lead/CAPI)."
+                ],
+                "quick_actions": [
+                    {"label": "Lihat Statistik Chat", "action": "view_chat_analytics", "path": "/dashboard/chats"},
+                    {"label": "Uji Nomor Asisten", "action": "test_assistant_number", "path": "/dashboard/whatsapp/test"},
+                    {"label": "Ubah Alur Katalog", "action": "edit_catalog_flow", "path": "/dashboard/catalog/flow"}
+                ]
+            }
+            self._append_turn(sess_id, "user", message)
+            self._append_turn(sess_id, "assistant", reply)
+            return {
+                "type": "text",
+                "reply": reply,
+                "data": data,
+                "session_id": sess_id,
+            }
+
+        # ---------------------------------------------------------------------
+        # B. Deteksi Tool 1: Sales & ROAS Report
         # ---------------------------------------------------------------------
         if any(k in text_lower for k in ["omset", "roas", "penjualan", "revenue", "closing", "performa"]):
             days = 30 if "30" in text_lower or "sebulan" in text_lower else 7
@@ -404,17 +535,20 @@ class BoonPilotService:
                 f"• *Conversion Rate:* {report['conversion_rate_pct']}%\n\n"
                 f"💡 *Insight BoonPilot:* {report['recommendation']}"
             )
+            masked_reply = mask_sensitive_data(reply)
+            self._append_turn(sess_id, "user", message)
+            self._append_turn(sess_id, "assistant", masked_reply)
             return {
                 "type": "text",
-                "reply": mask_sensitive_data(reply),
+                "reply": masked_reply,
                 "data": report,
+                "session_id": sess_id,
             }
 
         # ---------------------------------------------------------------------
-        # B. Deteksi Tool 2: Check Inventory Levels
+        # C. Deteksi Tool 2: Check Inventory Levels
         # ---------------------------------------------------------------------
         if any(k in text_lower for k in ["stok", "inventory", "sisa barang", "menipis", "habis"]):
-            # Cek apakah ini permintaan mutasi (misal "ubah stok...")
             if not any(k in text_lower for k in ["ubah", "ganti", "tambah", "set", "update"]):
                 inv = self.check_inventory_levels(clean_slug, threshold=5)
                 if inv["low_stock_items"]:
@@ -433,21 +567,23 @@ class BoonPilotService:
                         f"✅ *Status Stok Aman!* Seluruh produk ({inv['total_products']} item) "
                         f"memiliki ketersediaan stok di atas batas minimum."
                     )
+                masked_reply = mask_sensitive_data(reply)
+                self._append_turn(sess_id, "user", message)
+                self._append_turn(sess_id, "assistant", masked_reply)
                 return {
                     "type": "text",
-                    "reply": mask_sensitive_data(reply),
+                    "reply": masked_reply,
                     "data": inv,
+                    "session_id": sess_id,
                 }
 
         # ---------------------------------------------------------------------
-        # C. Deteksi Tool 3 (MUTATION): Update Product Stock
+        # D. Deteksi Tool 3 (MUTATION): Update Product Stock
         # ---------------------------------------------------------------------
         if any(k in text_lower for k in ["ubah stok", "ganti stok", "update stok", "set stok"]):
-            # Ekstraksi angka stok
             stock_match = re.search(r"\b(\d+)\b", text_lower)
             new_stock = int(stock_match.group(1)) if stock_match else 50
 
-            # Cari target produk
             products = self._get_tenant_products(clean_slug)
             target_prod = products[0]
             for p in products:
@@ -465,13 +601,14 @@ class BoonPilotService:
                     "new_stock": new_stock,
                 },
             )
+            self._append_turn(sess_id, "user", message)
+            self._append_turn(sess_id, "assistant", proposal["description"])
             return proposal
 
         # ---------------------------------------------------------------------
-        # D. Deteksi Tool 4 (MUTATION): Update Shipping Origin
+        # E. Deteksi Tool 4 (MUTATION): Update Shipping Origin
         # ---------------------------------------------------------------------
         if any(k in text_lower for k in ["ganti alamat", "ubah alamat", "update alamat", "gudang pengiriman"]):
-            # Ekstraksi kodepos jika ada
             postal_match = re.search(r"\b(\d{5})\b", message)
             postal_code = postal_match.group(1) if postal_match else "40111"
 
@@ -485,10 +622,12 @@ class BoonPilotService:
                     "subdistrict": "Bandung",
                 },
             )
+            self._append_turn(sess_id, "user", message)
+            self._append_turn(sess_id, "assistant", proposal["description"])
             return proposal
 
         # ---------------------------------------------------------------------
-        # E. Deteksi Tool 5 (MUTATION): Toggle Courier Service
+        # F. Deteksi Tool 5 (MUTATION): Toggle Courier Service
         # ---------------------------------------------------------------------
         if any(k in text_lower for k in ["kurir", "gosend", "grab", "jne", "sicepat"]):
             if any(k in text_lower for k in ["aktifkan", "nonaktifkan", "matikan", "nyalakan", "toggle"]):
@@ -511,37 +650,51 @@ class BoonPilotService:
                         "is_active": is_active,
                     },
                 )
+                self._append_turn(sess_id, "user", message)
+                self._append_turn(sess_id, "assistant", proposal["description"])
                 return proposal
 
         # ---------------------------------------------------------------------
-        # F. General Agentic Chat via LLM Gateway dengan Context & Guardrails
+        # G. General Agentic Chat via LLM Gateway dengan Context & Multi-turn History
         # ---------------------------------------------------------------------
         system_prompt = context_data["system_prompt"]
         try:
             llm_reply = await ai_gateway.generate(
                 user_message=message,
-                context={"feature": "boonpilot", "tenant_slug": clean_slug},
+                context={
+                    "feature": "boonpilot",
+                    "tenant_slug": clean_slug,
+                    "conversation_history": current_history,
+                },
                 system_prompt=system_prompt,
             )
-            if not llm_reply:
-                llm_reply = (
-                    f"Halo! Saya BoonPilot, siap membantu pengelolaan toko *{tenant_slug}*. "
-                    "Kakak bisa meminta laporan penjualan, memantau ketersediaan stok, "
-                    "atau memperbarui pengaturan logistik toko."
-                )
         except Exception as e:
-            logger.warning(f"BoonPilot LLM gateway fallback: {e}")
-            llm_reply = (
-                f"Halo! Saya BoonPilot, siap membantu operasional toko *{tenant_slug}*. "
-                "Silakan berikan instruksi seputar stok, laporan omset, atau pengiriman."
-            )
+            logger.warning(f"BoonPilot LLM gateway call failed: {e}")
+            llm_reply = None
+
+        # Anti-Greeting Loop Fallback: jika LLM gagal, jangan ulangi salam perkenalan jika user bertanya
+        if not llm_reply:
+            is_pure_greeting = text_lower in ["halo", "hai", "hi", "pagi", "siang", "sore", "malam", "halo boonpilot"]
+            if is_pure_greeting:
+                llm_reply = (
+                    f"Halo! Saya BoonPilot, siap membantu pengelolaan toko *{tenant_name}*. "
+                    "Ada yang bisa saya bantu seputar laporan omset, stok produk, pengiriman, atau otomatisasi WhatsApp?"
+                )
+            else:
+                llm_reply = (
+                    f"Sebagai Copilot operasional toko *{tenant_name}*, saya dapat membantu Anda "
+                    "memantau performa penjualan, mengecek ketersediaan stok, mengubah alamat logistik/kurir, "
+                    "serta mengatur otomatisasi WhatsApp toko. Silakan beri tahu tindakan yang ingin dijalankan."
+                )
 
         sanitized_reply = mask_sensitive_data(llm_reply)
+        self._append_turn(sess_id, "user", message)
+        self._append_turn(sess_id, "assistant", sanitized_reply)
 
         return {
             "type": "text",
             "reply": sanitized_reply,
-            "session_id": session_id or str(uuid.uuid4()),
+            "session_id": sess_id,
         }
 
 

@@ -266,6 +266,109 @@ class TestBoonPilot(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(exp_resp.status_code, 404)
         self.assertIn("kedaluwarsa", exp_resp.json()["detail"].lower())
 
+    # =========================================================================
+    # 5. WHATSAPP AUTOMATION CAPABILITIES & ANTI-GREETING LOOP
+    # =========================================================================
+
+    def test_chat_whatsapp_automation_capability_response(self):
+        """
+        Memverifikasi respon taktis untuk pertanyaan WhatsApp Automation:
+        - Tidak merespons dengan greeting loop perkenalan berulang.
+        - Menyajikan 3 alur otomatisasi WhatsApp dan opsi aksi cepat.
+        """
+        queries = [
+            "Bagaimana otomatisasi whatsapp untuk toko ini?",
+            "Status bot wa toko",
+            "Apakah whatsapp automation sudah aktif?",
+            "Fitur otomatisasi wa",
+        ]
+        for q in queries:
+            resp = self.client.post(
+                "/api/v1/boonpilot/chat",
+                json={
+                    "tenant_slug": "onlineboost",
+                    "message": q,
+                },
+            )
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertEqual(data["type"], "text")
+            reply = data["reply"]
+
+            # Pastikan TIDAK mengulang greeting loop generic
+            self.assertNotIn("Halo! Saya BoonPilot, siap membantu pengelolaan toko", reply)
+
+            # Pastikan teks alur terstruktur hadir sesuai spesifikasi
+            self.assertIn("Otomatisasi WhatsApp untuk toko Onlineboost sudah aktif dengan alur:", reply)
+            self.assertIn("1. Sambutan otomatis calon pembeli via WA.", reply)
+            self.assertIn("2. Menu bernomor (1, 2, 3) untuk cek detail produk & ulasan.", reply)
+            self.assertIn("3. Link checkout instan & pelacakan konversi iklan otomatis (Lead/CAPI).", reply)
+            self.assertIn("Apakah Anda ingin melihat statistik chat, menguji nomor asisten, atau mengubah alur katalog?", reply)
+
+            # Pastikan metadata quick actions ada di payload response
+            self.assertIn("data", data)
+            self.assertEqual(data["data"]["status"], "ACTIVE")
+            self.assertGreaterEqual(len(data["data"]["quick_actions"]), 3)
+
+    def test_chat_whatsapp_subactions_proposals(self):
+        """Memverifikasi sub-aksi pengujian nomor dan modifikasi alur katalog menghasilkan proposal."""
+        # 1. Sub-aksi Uji Nomor Asisten
+        test_num_resp = self.client.post(
+            "/api/v1/boonpilot/chat",
+            json={
+                "tenant_slug": "onlineboost",
+                "message": "Tolong uji nomor asisten sekarang",
+            },
+        )
+        self.assertEqual(test_num_resp.status_code, 200)
+        num_proposal = test_num_resp.json()
+        self.assertEqual(num_proposal["type"], "action_proposal")
+        self.assertEqual(num_proposal["action_type"], "test_assistant_number")
+        self.assertEqual(num_proposal["status"], "AWAITING_APPROVAL")
+
+        # 2. Sub-aksi Ubah Alur Katalog
+        edit_flow_resp = self.client.post(
+            "/api/v1/boonpilot/chat",
+            json={
+                "tenant_slug": "onlineboost",
+                "message": "Ubah alur katalog produk WhatsApp toko",
+            },
+        )
+        self.assertEqual(edit_flow_resp.status_code, 200)
+        flow_proposal = edit_flow_resp.json()
+        self.assertEqual(flow_proposal["type"], "action_proposal")
+        self.assertEqual(flow_proposal["action_type"], "edit_catalog_flow")
+        self.assertEqual(flow_proposal["status"], "AWAITING_APPROVAL")
+
+    # =========================================================================
+    # 6. MULTI-TURN CONVERSATION HISTORY
+    # =========================================================================
+
+    def test_chat_multi_turn_conversation_history(self):
+        """Memverifikasi endpoint /chat menerima dan membaca array conversation_history."""
+        history = [
+            {"role": "user", "content": "Halo BoonPilot"},
+            {"role": "assistant", "content": "Halo! Saya BoonPilot siap membantu operasional toko Onlineboost."},
+            {"role": "user", "content": "Berapa omset minggu ini?"},
+            {"role": "assistant", "content": "Total omset 7 hari terakhir adalah Rp 11.085.600."},
+        ]
+
+        resp = self.client.post(
+            "/api/v1/boonpilot/chat",
+            json={
+                "tenant_slug": "onlineboost",
+                "message": "Bagaimana dengan otomatisasi WhatsApp tokonya?",
+                "session_id": "sess-multi-turn-001",
+                "conversation_history": history,
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["type"], "text")
+        self.assertIn("Otomatisasi WhatsApp untuk toko Onlineboost sudah aktif", data["reply"])
+        self.assertEqual(data["session_id"], "sess-multi-turn-001")
+
 
 if __name__ == "__main__":
     unittest.main()
+

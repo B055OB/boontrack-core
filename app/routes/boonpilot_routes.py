@@ -2,7 +2,7 @@
 FastAPI Routes for Agentic AI BoonPilot.
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
@@ -19,6 +19,10 @@ class BoonPilotChatRequest(BaseModel):
     tenant_slug: str = Field(..., description="Slug tenant toko (contoh: 'onlineboost')")
     message: str = Field(..., description="Pesan / instruksi pengguna untuk BoonPilot")
     session_id: Optional[str] = Field(None, description="ID sesi percakapan (opsional)")
+    conversation_history: Optional[List[Dict[str, str]]] = Field(
+        default_factory=list,
+        description="Riwayat percakapan multi-turn [{'role': 'user'|'assistant', 'content': '...'}]"
+    )
 
 
 class BoonPilotExecuteActionRequest(BaseModel):
@@ -36,6 +40,8 @@ async def chat_with_boonpilot(payload: BoonPilotChatRequest):
     """
     Endpoint interaksi utama BoonPilot:
     - Menjawab pertanyaan laporan penjualan & inventory secara langsung (Query-only tools).
+    - Merespons informasi kapabilitas WhatsApp Automation toko secara taktis (anti greeting-loop).
+    - Mendukung riwayat percakapan multi-turn (conversation_history).
     - Menghasilkan Action Proposal terstruktur dengan status AWAITING_APPROVAL jika mendeteksi instruksi mutasi data.
     - Menjawab konsultasi operasional toko dengan sistem prompt & guardrails yang ketat.
     """
@@ -49,6 +55,7 @@ async def chat_with_boonpilot(payload: BoonPilotChatRequest):
         tenant_slug=payload.tenant_slug,
         message=payload.message,
         session_id=payload.session_id,
+        conversation_history=payload.conversation_history,
     )
     return response
 
