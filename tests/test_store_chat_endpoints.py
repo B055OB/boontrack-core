@@ -9,10 +9,15 @@ Integration & Security Tests for BoonTrack AI Gateway ADR Endpoints:
 3. POST /api/v1/platform/support (BoonTrack CS - BALANCED)
 """
 
+import os
+import sys
 import unittest
 from unittest.mock import patch, AsyncMock
-from fastapi.testclient import TestClient
 
+# Pastikan root direktori masuk ke sys.path untuk eksekusi pytest langsung
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from fastapi.testclient import TestClient
 from app.main import app
 from app.services.sales_agent_guard import StoreContextBoundaryManager, backend_security_validator
 from app.services.ai_gateway import ai_gateway, AgentProfile, ModelProfile
@@ -182,6 +187,36 @@ class TestStoreChatEndpoints(unittest.TestCase):
         # Harus NONE karena ditolak oleh DB validator
         self.assertEqual(data["action"], "NONE")
         self.assertIn("habis", data["reply_text"].lower())
+
+    def test_store_chat_shipping_intent_does_not_render_product(self):
+        """Pertanyaan ongkir/pengiriman mengembalikan action NONE dan tanpa kartu produk."""
+        fake_catalog = [
+            {
+                "product_id": "prod_kaos",
+                "title": "Kaos Polos Premium",
+                "slug": "kaos-polos",
+                "price": 85000.0,
+                "stock": 50,
+                "is_available": True,
+            }
+        ]
+
+        with patch.object(StoreContextBoundaryManager, "fetch_transaction_data", return_value=fake_catalog):
+            resp = self.client.post(
+                "/api/v1/store/chat",
+                json={
+                    "tenant_slug": "onlineboost",
+                    "message": "Berapa ongkir ke Jakarta Selatan via ekspedisi JNE?",
+                    "session_id": "buyer_wa_shipping",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["action"], "NONE")
+        self.assertIsNone(data.get("product"))
+        self.assertEqual(data["payload"]["product_ids"], [])
+        self.assertIn("reply_text", data)
 
     # =========================================================================
     # 2. MERCHANT COPILOT (POST /api/v1/merchant/copilot)

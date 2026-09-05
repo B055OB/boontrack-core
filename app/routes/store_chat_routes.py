@@ -143,7 +143,8 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
     q_lower = q.lower()
     is_checkout_intent = any(w in q_lower for w in ["beli", "checkout", "pesan sekarang", "bayar", "qris", "ambil promo", "transfer"])
     is_list_intent = any(w in q_lower for w in ["semua produk", "katalog lengkap", "daftar produk", "list produk", "produk apa saja"])
-    is_product_intent = any(w in q_lower for w in ["harga", "berapa", "produk", "detail", "fitur", "manfaat", "stok", "ongkir", "materi", "silabus"])
+    is_shipping_intent = any(w in q_lower for w in ["ongkir", "ongkos kirim", "pengiriman", "ekspedisi", "kurir"])
+    is_product_intent = any(w in q_lower for w in ["harga", "berapa", "produk", "detail", "fitur", "manfaat", "stok", "materi", "silabus"])
     is_human_intent = any(w in q_lower for w in ["bicara dengan admin", "hubungi cs", "cs manusia", "kontak admin", "bantuan manusia"])
 
     action = "NONE"
@@ -156,14 +157,23 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
             if any(part in q_lower for part in prod_title.split() if len(part) > 2) or prod_slug in q_lower:
                 matched_product = prod
                 break
-        if not matched_product and (is_product_intent or is_checkout_intent) and not is_list_intent:
-            matched_product = db_catalog[0]
+
+    # Kondisi penanganan ongkir: jika menanyakan ongkir tanpa checkout intent spesifik, jangan render kartu produk
+    if is_shipping_intent and not is_checkout_intent:
+        action = "NONE"
+        matched_product = None
 
     # 4. Validasi Keamanan Backend & Stok Database Riil
     sanitized_product_card = None
     product_ids_payload: List[Any] = []
 
-    if is_human_intent:
+    if is_shipping_intent and not is_checkout_intent:
+        action = "NONE"
+        sanitized_product_card = None
+        product_ids_payload = []
+        payload_data = {}
+
+    elif is_human_intent:
         action = "TRANSFER_TO_HUMAN"
         action_res = await backend_security_validator.validate_and_sanitize_action(
             tenant_id=clean_slug,
