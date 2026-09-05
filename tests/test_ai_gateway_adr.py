@@ -177,6 +177,7 @@ class TestAIGatewayModelRouter(unittest.IsolatedAsyncioTestCase):
         groq_call_args = mock_session.post.call_args
         self.assertEqual(groq_call_args.kwargs["json"]["temperature"], 0.15)
         self.assertEqual(groq_call_args.kwargs["json"]["response_format"], {"type": "json_object"})
+        self.assertEqual(groq_call_args.kwargs["json"]["max_tokens"], 600)
 
         # Test OpenAI Provider payload
         openai_p = OpenAIProvider()
@@ -191,6 +192,7 @@ class TestAIGatewayModelRouter(unittest.IsolatedAsyncioTestCase):
         openai_call_args = mock_session.post.call_args
         self.assertEqual(openai_call_args.kwargs["json"]["temperature"], 0.15)
         self.assertEqual(openai_call_args.kwargs["json"]["response_format"], {"type": "json_object"})
+        self.assertEqual(openai_call_args.kwargs["json"]["max_tokens"], 600)
 
         # Test Gemini Provider payload
         gemini_p = GeminiProvider()
@@ -211,6 +213,8 @@ class TestAIGatewayModelRouter(unittest.IsolatedAsyncioTestCase):
         gen_config = gemini_call_args.kwargs["json"]["generationConfig"]
         self.assertEqual(gen_config["temperature"], 0.15)
         self.assertEqual(gen_config["responseMimeType"], "application/json")
+        self.assertEqual(gen_config["maxOutputTokens"], 600)
+
 
 
 class TestSalesAgentSecurityBoundary(unittest.IsolatedAsyncioTestCase):

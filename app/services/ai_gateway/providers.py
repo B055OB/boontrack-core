@@ -74,7 +74,7 @@ class GeminiProvider(BaseLLMProvider):
             "contents": [{"parts": [{"text": user_message}]}],
             "generationConfig": {
                 "temperature": 0.15,
-                "maxOutputTokens": 4096,
+                "maxOutputTokens": 600,
                 "responseMimeType": "application/json",
             },
         }
@@ -92,7 +92,7 @@ class GeminiProvider(BaseLLMProvider):
                         "contents": [{"parts": [{"text": full_text}]}],
                         "generationConfig": {
                             "temperature": 0.15,
-                            "maxOutputTokens": 4096,
+                            "maxOutputTokens": 600,
                             "responseMimeType": "application/json",
                         },
                     }
@@ -151,7 +151,7 @@ class GroqProvider(BaseLLMProvider):
             ],
             "temperature": 0.15,
             "response_format": {"type": "json_object"},
-            "max_tokens": 4096,
+            "max_tokens": 600,
         }
         async with session.post(url, headers=headers, json=payload) as resp:
             body = await resp.text()
@@ -198,7 +198,7 @@ class ClaudeProvider(BaseLLMProvider):
         }
         payload: Dict[str, Any] = {
             "model": model_name,
-            "max_tokens": 4096,
+            "max_tokens": 600,
             "temperature": 0.15,
             "messages": [{"role": "user", "content": user_message}],
         }
@@ -253,7 +253,7 @@ class OpenAIProvider(BaseLLMProvider):
             ],
             "temperature": 0.15,
             "response_format": {"type": "json_object"},
-            "max_tokens": 4096,
+            "max_tokens": 600,
         }
         async with session.post(url, headers=headers, json=payload) as resp:
             body = await resp.text()
@@ -307,7 +307,7 @@ class OpenRouterProvider(BaseLLMProvider):
             ],
             "temperature": 0.15,
             "response_format": {"type": "json_object"},
-            "max_tokens": 4096,
+            "max_tokens": 600,
         }
         async with session.post(url, headers=headers, json=payload) as resp:
             body = await resp.text()
@@ -318,4 +318,5 @@ class OpenRouterProvider(BaseLLMProvider):
             res_text = clean_ai_response(res_text)
             usage = data.get("usage", {})
             return res_text, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+
 
