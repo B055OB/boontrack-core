@@ -26,13 +26,18 @@ if not any(isinstance(f, ZeroPIILogFilter) for f in logger.filters):
 central_wa_routes = web.RouteTableDef()
 
 # --- 1. Verifikasi Tokens Meta ---
+WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "boontrack_verify_secret")
 VERIFY_TOKENS = [
+    WHATSAPP_VERIFY_TOKEN,
+    os.getenv("META_WEBHOOK_VERIFY_TOKEN", "boontrack-secure-verify-token"),
+    "boontrack_verify_secret",
     "boontrack_master_verify_token_2026",
     "om_budi_secure_token_2026",
     "boontrack_career_token",
     "boontrack_wa_secret_token",
     "boontrack_aduan_token"
 ]
+
 
 # --- 2. Konfigurasi Phone Number ID Tenant ---
 OM_BUDI_PHONE_NUMBER_ID = "1268977686299719"       # Produksi Om Budi
@@ -269,15 +274,17 @@ async def send_wa_list_menu(recipient_phone: str, body_text: str, button_text: s
 @central_wa_routes.get("/api/v1/whatsapp/webhook")
 async def verify_webhook(request: web.Request) -> web.Response:
     query = request.query
-    mode = query.get("hub.mode")
-    token = query.get("hub.verify_token")
-    challenge = query.get("hub.challenge")
+    verify_token = os.getenv("WHATSAPP_VERIFY_TOKEN", "boontrack_verify_secret")
+    mode = query.get("hub.mode") or query.get("mode")
+    token = query.get("hub.verify_token") or query.get("token") or query.get("verify_token")
+    challenge = query.get("hub.challenge") or query.get("challenge")
 
-    if mode == "subscribe" and token in VERIFY_TOKENS:
+    if mode == "subscribe" and (token == verify_token or token in VERIFY_TOKENS):
         logger.info(f"[CENTRAL WA] Webhook verified with token: {token}")
-        return web.Response(text=challenge or "", status=200)
+        return web.Response(text=str(challenge or ""), content_type="text/plain", status=200)
 
     return web.Response(text="Verification failed", status=403)
+
 
 
 # --- 6. Webhook POST: Dispatcher Pesan Terisolasi ---
