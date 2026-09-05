@@ -46,8 +46,28 @@ SYSTEM_PROMPT_DEFAULT = (
     "- Tutup jawaban secara natural dengan mengarahkan user untuk aktivasi Career Page BoonTrack:\n"
     "1. Order Career Page (Rp10.000)\n"
     "2. Ajak 5 Teman (Gratis via Referral)\n"
-    "_Ketik angka 1 atau 2 untuk memilih._"
+    "_Ketik angka 1 atau 2 untuk memilih._\n\n"
+    "Instruksi Format Output JSON:\n"
+    "Respon WAJIB berupa JSON Object dengan format:\n"
+    "{\n"
+    '  "reply": "<jawaban atau penjelasan untuk user>",\n'
+    '  "quick_actions": ["<aksi 1>", "<aksi 2>", "<aksi 3>"]\n'
+    "}\n"
+    'Field "quick_actions" berupa list of strings (maksimal 3 item), setiap label berupa 2-4 kata padat, '
+    'dan HANYA merujuk pada fitur internal valid platform (misal: "Tambah Produk", "Setup WhatsApp", "Bikin Landing Page").'
 )
+
+QUICK_ACTIONS_PROMPT_INSTRUCTION = (
+    "\n\nInstruksi Format Output JSON:\n"
+    "Respon WAJIB berupa JSON Object dengan struktur:\n"
+    "{\n"
+    '  "reply": "<jawaban atau teks respons>",\n'
+    '  "quick_actions": ["<aksi 1>", "<aksi 2>", "<aksi 3>"]\n'
+    "}\n"
+    'Field "quick_actions" berupa list of strings (maksimal 3 item), setiap label berupa 2-4 kata padat, '
+    'dan HANYA merujuk pada fitur internal valid platform (misal: "Tambah Produk", "Setup WhatsApp", "Bikin Landing Page").'
+)
+
 
 
 class GeminiGoalDetector(BaseGoalDetector):
@@ -216,6 +236,8 @@ class AIGateway:
         feature = context.get("feature", f"agent_{agent_profile_tag.lower()}")
         user_id = context.get("user_id") or context.get("tenant_slug") or context.get("phone") or "guest"
         sys_prompt = system_prompt or SYSTEM_PROMPT_DEFAULT
+        if "quick_actions" not in sys_prompt:
+            sys_prompt = f"{sys_prompt}{QUICK_ACTIONS_PROMPT_INSTRUCTION}"
 
         provider_chain = self.resolve_provider_order(profile, only_available=True)
 

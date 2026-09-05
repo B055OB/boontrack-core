@@ -218,9 +218,61 @@ class TestStoreChatEndpoints(unittest.TestCase):
         self.assertEqual(data["payload"]["product_ids"], [])
         self.assertIn("reply_text", data)
 
+    def test_store_chat_dynamic_quick_actions_from_ai(self):
+        """Quick actions diekstrak secara dinamis dari response JSON AI Gateway (maks 3 item)."""
+        fake_catalog = [
+            {"product_id": "p1", "title": "Produk 1", "slug": "p1", "price": 50000.0, "stock": 10, "is_available": True}
+        ]
+        mock_ai_json = (
+            '{"reply": "Selamat datang di toko kami! Ada yang bisa kami bantu?", '
+            '"quick_actions": ["  Lihat Katalog  ", "Tanya Promo", "Bantuan CS", "Item Keempat Dibuang"]}'
+        )
+
+        with patch.object(StoreContextBoundaryManager, "fetch_transaction_data", return_value=fake_catalog), \
+             patch("app.services.ai_engine.commerce_ai_engine.generate_commerce_response", new_callable=AsyncMock) as mock_gen:
+            mock_gen.return_value = mock_ai_json
+            resp = self.client.post(
+                "/api/v1/store/chat",
+                json={
+                    "tenant_slug": "onlineboost",
+                    "message": "Halo",
+                    "session_id": "test_quick_actions_sess",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["reply_text"], "Selamat datang di toko kami! Ada yang bisa kami bantu?")
+        self.assertEqual(data["quick_actions"], ["Lihat Katalog", "Tanya Promo", "Bantuan CS"])
+
+    def test_store_chat_quick_actions_fallback_on_empty_or_failure(self):
+        """Jika quick_actions kosong atau gagal di-parse, fallback default dikembalikan."""
+        fake_catalog = [
+            {"product_id": "p1", "title": "Produk 1", "slug": "p1", "price": 50000.0, "stock": 10, "is_available": True}
+        ]
+
+        # Plain text tanpa JSON
+        with patch.object(StoreContextBoundaryManager, "fetch_transaction_data", return_value=fake_catalog), \
+             patch("app.services.ai_engine.commerce_ai_engine.generate_commerce_response", new_callable=AsyncMock) as mock_gen:
+            mock_gen.return_value = "Ini jawaban teks biasa non-JSON."
+            resp = self.client.post(
+                "/api/v1/store/chat",
+                json={
+                    "tenant_slug": "onlineboost",
+                    "message": "Halo",
+                    "session_id": "test_fallback_sess",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["reply_text"], "Ini jawaban teks biasa non-JSON.")
+        self.assertEqual(data["quick_actions"], ["Tambah Produk", "Setup WhatsApp", "Bikin Landing Page"])
+
     # =========================================================================
     # 2. MERCHANT COPILOT (POST /api/v1/merchant/copilot)
     # =========================================================================
+
 
     def test_merchant_copilot_sales_query(self):
         """Merchant copilot merespons pertanyaan performa penjualan dengan data omset."""

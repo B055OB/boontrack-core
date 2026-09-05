@@ -17,7 +17,7 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, status, Body
 from pydantic import BaseModel, Field
 
-from app.services.ai_gateway import AgentProfile
+from app.services.ai_gateway import AgentProfile, parse_ai_quick_actions_response
 from app.services.ai_engine import commerce_ai_engine
 from app.services.boonpilot_service import boonpilot_service
 from app.services.platform_support_agent import platform_support_agent
@@ -27,6 +27,7 @@ from app.services.sales_agent_guard import (
     StoreContextBoundaryManager,
     format_tenant_session_key,
 )
+
 from app.services.onboarding_service import onboarding_service
 from app.services.whatsapp_service import safe_log_to_supabase_messages
 
@@ -130,7 +131,7 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
             if content:
                 formatted_history.append({"role": role, "content": content})
 
-    ai_reply = await commerce_ai_engine.generate_commerce_response(
+    ai_raw = await commerce_ai_engine.generate_commerce_response(
         tenant_slug=clean_slug,
         user_message=q,
         user_phone=session_id,
@@ -138,6 +139,7 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
         button_id=payload.button_id,
         history=formatted_history,
     )
+    ai_reply, dynamic_quick_actions = parse_ai_quick_actions_response(ai_raw)
 
     # 3. Klasifikasi Intent Aksi Storefront
     q_lower = q.lower()
@@ -271,17 +273,8 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
         "last_action": action,
     }
 
-    # 5. Siapkan Quick Actions responsif
-    quick_actions = [
-        "Lihat Rekomendasi Terlaris",
-        "Tanya Detail Promo & Garansi",
-        "Cara Pembayaran QRIS",
-        "Hubungi WhatsApp",
-    ]
-    if action == "SHOW_PRODUCT":
-        quick_actions = ["Langsung Checkout QRIS", "Apakah Ada Garansi?", "Cek Katalog Lengkap"]
-    elif action == "SHOW_CHECKOUT":
-        quick_actions = ["Cek Produk Lain", "Detail Garansi", "Bantuan WhatsApp"]
+    # 5. Quick Actions responsif (Dynamic dari AI Gateway dengan Fallback)
+    quick_actions = dynamic_quick_actions
 
     # Catat pesan ke database
     safe_log_to_supabase_messages(
@@ -312,6 +305,7 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
         session_id=session_id,
         tenant_id=clean_slug,
     )
+
 
 
 # =============================================================================

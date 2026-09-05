@@ -6,8 +6,10 @@ from app.services.ai_gateway.models import (
     ModelProfile,
     AgentProfile,
     AGENT_TO_MODEL_PROFILE,
+    DEFAULT_QUICK_ACTIONS,
     clean_ai_response,
     _clean_response,
+    parse_ai_quick_actions_response,
 )
 from app.services.ai_gateway.providers import (
     BaseLLMProvider,
@@ -22,14 +24,17 @@ from app.services.ai_gateway.gateway import (
     ai_gateway,
     GeminiGoalDetector,
     SYSTEM_PROMPT_DEFAULT,
+    QUICK_ACTIONS_PROMPT_INSTRUCTION,
 )
 
 __all__ = [
     "ModelProfile",
     "AgentProfile",
     "AGENT_TO_MODEL_PROFILE",
+    "DEFAULT_QUICK_ACTIONS",
     "clean_ai_response",
     "_clean_response",
+    "parse_ai_quick_actions_response",
     "BaseLLMProvider",
     "GeminiProvider",
     "GroqProvider",
@@ -40,4 +45,6 @@ __all__ = [
     "ai_gateway",
     "GeminiGoalDetector",
     "SYSTEM_PROMPT_DEFAULT",
+    "QUICK_ACTIONS_PROMPT_INSTRUCTION",
 ]
+

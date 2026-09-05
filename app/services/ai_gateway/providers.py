@@ -72,7 +72,11 @@ class GeminiProvider(BaseLLMProvider):
         )
         payload: Dict[str, Any] = {
             "contents": [{"parts": [{"text": user_message}]}],
-            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 4096},
+            "generationConfig": {
+                "temperature": 0.15,
+                "maxOutputTokens": 4096,
+                "responseMimeType": "application/json",
+            },
         }
         if system_prompt and str(system_prompt).strip():
             payload["system_instruction"] = {
@@ -86,7 +90,11 @@ class GeminiProvider(BaseLLMProvider):
                     full_text = f"{system_prompt}\n\nUser Question: {user_message}"
                     fallback_payload = {
                         "contents": [{"parts": [{"text": full_text}]}],
-                        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 4096},
+                        "generationConfig": {
+                            "temperature": 0.15,
+                            "maxOutputTokens": 4096,
+                            "responseMimeType": "application/json",
+                        },
                     }
                     async with session.post(url, json=fallback_payload) as fb_resp:
                         if fb_resp.status == 200:
@@ -141,7 +149,8 @@ class GroqProvider(BaseLLMProvider):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
-            "temperature": 0.7,
+            "temperature": 0.15,
+            "response_format": {"type": "json_object"},
             "max_tokens": 4096,
         }
         async with session.post(url, headers=headers, json=payload) as resp:
@@ -190,6 +199,7 @@ class ClaudeProvider(BaseLLMProvider):
         payload: Dict[str, Any] = {
             "model": model_name,
             "max_tokens": 4096,
+            "temperature": 0.15,
             "messages": [{"role": "user", "content": user_message}],
         }
         if system_prompt and system_prompt.strip():
@@ -241,7 +251,8 @@ class OpenAIProvider(BaseLLMProvider):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
-            "temperature": 0.7,
+            "temperature": 0.15,
+            "response_format": {"type": "json_object"},
             "max_tokens": 4096,
         }
         async with session.post(url, headers=headers, json=payload) as resp:
@@ -294,7 +305,8 @@ class OpenRouterProvider(BaseLLMProvider):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
-            "temperature": 0.7,
+            "temperature": 0.15,
+            "response_format": {"type": "json_object"},
             "max_tokens": 4096,
         }
         async with session.post(url, headers=headers, json=payload) as resp:
@@ -306,3 +318,4 @@ class OpenRouterProvider(BaseLLMProvider):
             res_text = clean_ai_response(res_text)
             usage = data.get("usage", {})
             return res_text, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+

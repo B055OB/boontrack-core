@@ -299,9 +299,14 @@ class CommerceAIEngine:
             f"   - Layanan publik kelurahan, pengurusan KTP/SKU/bansos, surat pengantar nikah, atau Balé Pananggeuhan.\n"
             f"   - Bimbingan ibadah/riyadhoh Om Budi atau konsultasi karir umum.\n"
             f"3. Jika pelanggan bertanya tentang topik di luar katalog dan layanan {store_name}, tolak dengan sopan dan arahkan kembali ke produk toko:\n"
-            f"   Contoh: 'Mohon maaf Kakak, saya {assistant_name}, asisten resmi {store_name}. Saya khusus melayani seputar produk dan pesanan di {store_name}. Ada produk kami yang ingin Kakak tanyakan?'"
+            f"   Contoh: 'Mohon maaf Kakak, saya {assistant_name}, asisten resmi {store_name}. Saya khusus melayani seputar produk dan pesanan di {store_name}. Ada produk kami yang ingin Kakak tanyakan?'\n\n"
+            f"FORMAT OUTPUT JSON & QUICK ACTIONS:\n"
+            f"Respon WAJIB berupa JSON Object dengan struktur:\n"
+            f'{{\n  "reply": "<teks balasan kepada calon pembeli>",\n  "quick_actions": ["<aksi 1>", "<aksi 2>", "<aksi 3>"]\n}}\n'
+            f'Field "quick_actions" berisi list of strings (maksimal 3 item), label 2-4 kata padat, dan HANYA fitur internal valid platform toko.'
         )
         return prompt
+
 
     def is_product_info_trigger(self, message: str, button_id: Optional[str] = None) -> bool:
         """Detects whether incoming message or button payload requests product/catalog details."""

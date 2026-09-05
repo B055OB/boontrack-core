@@ -8,15 +8,23 @@ Unit & Integration Tests for BoonTrack AI Gateway ADR Architecture:
 6. Strict Tenant-Scoped Session Isolation ('tenant:{tenant_id}:session:{session_id}').
 """
 
+import os
+import sys
 import unittest
 from unittest.mock import AsyncMock, patch, MagicMock
 from decimal import Decimal
+
+# Pastikan root direktori masuk ke sys.path untuk eksekusi pytest langsung
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 
 from app.services.ai_gateway import (
     AIGateway,
     AgentProfile,
     ModelProfile,
     AGENT_TO_MODEL_PROFILE,
+    DEFAULT_QUICK_ACTIONS,
+    parse_ai_quick_actions_response,
     BaseLLMProvider,
     GeminiProvider,
     GroqProvider,
@@ -24,7 +32,9 @@ from app.services.ai_gateway import (
     OpenAIProvider,
     OpenRouterProvider,
     ai_gateway,
+    SYSTEM_PROMPT_DEFAULT,
 )
+
 from app.services.sales_agent_guard import (
     StoreActionType,
     ALLOWED_STORE_ACTIONS,
@@ -108,8 +118,103 @@ class TestAIGatewayModelRouter(unittest.IsolatedAsyncioTestCase):
         mock_p1.call.assert_awaited_once()
         mock_p2.call.assert_awaited_once()
 
+    def test_parse_ai_quick_actions_response_sanitization_and_fallback(self):
+        """Pastikan fungsi parse_ai_quick_actions_response memotong maks 3 item, trim spasi, dan fallback default."""
+        # 1. JSON valid dengan 4 item -> harus dipotong jadi 3 item dan di-strip
+        raw_json_4 = '{"reply": "Halo Kak!", "quick_actions": ["  Tambah Produk  ", " Setup WhatsApp ", "Bikin Landing Page", "Opsi Tambahan"]}'
+        reply, actions = parse_ai_quick_actions_response(raw_json_4)
+        self.assertEqual(reply, "Halo Kak!")
+        self.assertEqual(actions, ["Tambah Produk", "Setup WhatsApp", "Bikin Landing Page"])
+
+        # 2. JSON dibungkus markdown codeblock ```json ... ```
+        fenced_json = '```json\n{"reply": "Bisa kami bantu", "quick_actions": ["Cek Katalog", "Hubungi CS"]}\n```'
+        reply, actions = parse_ai_quick_actions_response(fenced_json)
+        self.assertEqual(reply, "Bisa kami bantu")
+        self.assertEqual(actions, ["Cek Katalog", "Hubungi CS"])
+
+        # 3. JSON dengan list kosong -> fallback default
+        empty_json = '{"reply": "Toko kami buka 24 jam", "quick_actions": []}'
+        reply, actions = parse_ai_quick_actions_response(empty_json)
+        self.assertEqual(reply, "Toko kami buka 24 jam")
+        self.assertEqual(actions, DEFAULT_QUICK_ACTIONS)
+
+        # 4. Teks biasa non-JSON -> fallback default
+        plain_text = "Terima kasih telah berbelanja di toko kami."
+        reply, actions = parse_ai_quick_actions_response(plain_text)
+        self.assertEqual(reply, "Terima kasih telah berbelanja di toko kami.")
+        self.assertEqual(actions, DEFAULT_QUICK_ACTIONS)
+
+        # 5. Nilai None / kosong -> fallback default
+        reply, actions = parse_ai_quick_actions_response(None)
+        self.assertEqual(reply, "")
+        self.assertEqual(actions, DEFAULT_QUICK_ACTIONS)
+
+    def test_system_prompt_instruction_contains_quick_actions(self):
+        """Pastikan default system prompt memuat instruksi quick_actions maks 3 item."""
+        self.assertIn("quick_actions", SYSTEM_PROMPT_DEFAULT)
+        self.assertIn("3 item", SYSTEM_PROMPT_DEFAULT)
+        self.assertIn("2-4 kata", SYSTEM_PROMPT_DEFAULT)
+
+    async def test_providers_payload_configuration(self):
+        """Pastikan semua provider menggunakan aiohttp dengan temperature 0.15 dan json_object."""
+        # Test Groq Provider payload
+        groq = GroqProvider()
+        groq.api_key = "test_groq_key"
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.text.return_value = '{"choices": [{"message": {"content": "{\\"reply\\": \\"ok\\", \\"quick_actions\\": [\\"A\\"]}"}}], "usage": {"prompt_tokens": 5, "completion_tokens": 5}}'
+
+        mock_session = MagicMock()
+        mock_session.post.return_value.__aenter__.return_value = mock_resp
+
+        res_text, p_tok, c_tok = await groq.call(
+            session=mock_session,
+            user_message="Halo",
+            context={},
+            system_prompt="Test prompt",
+            model_name="llama-3.3-70b-versatile",
+        )
+        groq_call_args = mock_session.post.call_args
+        self.assertEqual(groq_call_args.kwargs["json"]["temperature"], 0.15)
+        self.assertEqual(groq_call_args.kwargs["json"]["response_format"], {"type": "json_object"})
+
+        # Test OpenAI Provider payload
+        openai_p = OpenAIProvider()
+        openai_p.api_key = "test_openai_key"
+        res_text, p_tok, c_tok = await openai_p.call(
+            session=mock_session,
+            user_message="Halo",
+            context={},
+            system_prompt="Test prompt",
+            model_name="gpt-4o-mini",
+        )
+        openai_call_args = mock_session.post.call_args
+        self.assertEqual(openai_call_args.kwargs["json"]["temperature"], 0.15)
+        self.assertEqual(openai_call_args.kwargs["json"]["response_format"], {"type": "json_object"})
+
+        # Test Gemini Provider payload
+        gemini_p = GeminiProvider()
+        gemini_p.api_key = "test_gemini_key"
+        gemini_mock_resp = AsyncMock()
+        gemini_mock_resp.status = 200
+        gemini_mock_resp.text.return_value = '{"candidates": [{"content": {"parts": [{"text": "{\\"reply\\": \\"gemini ok\\", \\"quick_actions\\": [\\"B\\"]}"}]}}], "usageMetadata": {}}'
+        mock_session.post.return_value.__aenter__.return_value = gemini_mock_resp
+
+        await gemini_p.call(
+            session=mock_session,
+            user_message="Halo",
+            context={},
+            system_prompt="Test prompt",
+            model_name="gemini-1.5-flash",
+        )
+        gemini_call_args = mock_session.post.call_args
+        gen_config = gemini_call_args.kwargs["json"]["generationConfig"]
+        self.assertEqual(gen_config["temperature"], 0.15)
+        self.assertEqual(gen_config["responseMimeType"], "application/json")
+
 
 class TestSalesAgentSecurityBoundary(unittest.IsolatedAsyncioTestCase):
+
     """2. Test Keamanan & Data Boundary Store Sales Agent."""
 
     def test_action_catalog_strict_membership(self):

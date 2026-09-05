@@ -262,8 +262,17 @@ ATURAN KEAMANAN & BATAS DATA TRANSAKSI MUTLAK (SECURITY BOUNDARY):
 5. KNOWLEDGE & KEBIJAKAN TOKO:
 - Garansi: {knowledge['return_policy']}
 - Pembayaran: {', '.join(knowledge['payment_methods'])}
+
+6. FORMAT OUTPUT JSON & QUICK ACTIONS:
+Respon WAJIB berupa JSON Object dengan format:
+{{
+  "reply": "<teks respons percakapan>",
+  "quick_actions": ["<opsi 1>", "<opsi 2>", "<opsi 3>"]
+}}
+Field "quick_actions" berisi list of strings (maksimal 3 item), label 2-4 kata padat, dan HANYA merujuk pada fitur internal valid platform toko.
 """
         return prompt
+
 
 
 # ============================================================================
