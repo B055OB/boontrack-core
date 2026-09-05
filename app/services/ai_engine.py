@@ -12,7 +12,15 @@ Dynamically constructs store-bounded AI system prompts for multi-tenant ecosyste
 import logging
 from typing import Dict, Any, List, Optional
 from app.services.onboarding_service import onboarding_service
-from app.services.ai_gateway import ai_gateway
+from app.services.ai_gateway import ai_gateway, AgentProfile, ModelProfile
+from app.services.sales_agent_guard import (
+    StoreContextBoundaryManager,
+    backend_security_validator,
+    format_tenant_session_key,
+    tenant_session_store,
+    StoreActionType,
+    ALLOWED_STORE_ACTIONS,
+)
 
 logger = logging.getLogger("COMMERCE_AI_ENGINE")
 
@@ -398,18 +406,34 @@ class CommerceAIEngine:
             query_to_llm = clean_msg
 
         try:
-            response = await self.ai_service.generate(
-                user_message=query_to_llm,
-                system_prompt=system_prompt,
-                context={
-                    "tenant_slug": tenant_slug,
-                    "phone": user_phone,
-                    "name": user_name or "Kakak",
-                    "button_id": button_id,
-                    "has_history": bool(history),
-                    "bot_strategy": strategy_key,
-                },
-            )
+            # ADR: Route BUYER_ASSISTANT profile (Store Sales Agent) to FAST Model Profile
+            if hasattr(self.ai_service, "generate_for_agent"):
+                response = await self.ai_service.generate_for_agent(
+                    agent_profile=AgentProfile.BUYER_ASSISTANT,
+                    user_message=query_to_llm,
+                    system_prompt=system_prompt,
+                    context={
+                        "tenant_slug": tenant_slug,
+                        "phone": user_phone,
+                        "name": user_name or "Kakak",
+                        "button_id": button_id,
+                        "has_history": bool(history),
+                        "bot_strategy": strategy_key,
+                    },
+                )
+            else:
+                response = await self.ai_service.generate(
+                    user_message=query_to_llm,
+                    system_prompt=system_prompt,
+                    context={
+                        "tenant_slug": tenant_slug,
+                        "phone": user_phone,
+                        "name": user_name or "Kakak",
+                        "button_id": button_id,
+                        "has_history": bool(history),
+                        "bot_strategy": strategy_key,
+                    },
+                )
             if response and response.strip():
                 return response.strip()
         except Exception as e:
@@ -532,6 +556,17 @@ class CommerceAIEngine:
                 f"Halo Kakak! Selamat datang di *{store_name}*. Kami memberikan 100% garansi resmi dan transaksi terpercaya. "
                 f"Ada yang bisa kami bantu jelaskan seputar produk dan layanan kami?"
             )
+
+    async def validate_store_action(
+        self,
+        tenant_id_or_slug: str,
+        action: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """ADR Security Guard: Validates and sanitizes store sales actions strictly against real DB."""
+        return await backend_security_validator.validate_and_sanitize_action(
+            tenant_id=tenant_id_or_slug,
+            proposed_action=action,
+        )
 
 
 # Singleton

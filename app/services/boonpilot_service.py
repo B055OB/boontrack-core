@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 
-from app.services.ai_gateway import ai_gateway
+from app.services.ai_gateway import ai_gateway, AgentProfile
 from app.services.campaign_analytics_service import campaign_analytics_service
 
 logger = logging.getLogger("BOONPILOT_SERVICE")
@@ -659,7 +659,8 @@ class BoonPilotService:
         # ---------------------------------------------------------------------
         system_prompt = context_data["system_prompt"]
         try:
-            llm_reply = await ai_gateway.generate(
+            llm_reply = await ai_gateway.generate_for_agent(
+                agent_profile=AgentProfile.MERCHANT_COPILOT,
                 user_message=message,
                 context={
                     "feature": "boonpilot",
