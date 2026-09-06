@@ -20,6 +20,7 @@ from app.services.xendit_service import xendit_service
 from app.services.midtrans_service import midtrans_service
 from app.services.capi_service import dispatch_seller_capi_purchase
 from app.services.tracking_service import dispatch_all_capi
+from app.services.meta_capi_service import send_meta_capi_purchase
 from app.payments.matcher import extract_clean_dana_amount, match_and_fulfill_payment
 
 logger = logging.getLogger(__name__)
@@ -538,6 +539,154 @@ async def xendit_webhook_fastapi(
     """FastAPI route handler untuk Xendit webhook notifications."""
     res, _ = await handle_xendit_notification_logic(payload)
     return res
+
+
+@payment_router.post("/api/v1/payments/webhook", summary="Unified Dynamic QRIS Payment Webhook")
+@payment_router.post("/api/v1/payments/callback", summary="Unified Dynamic QRIS Payment Callback")
+@payment_router.post("/api/v1/payment/callback", summary="Unified Dynamic QRIS Payment Callback Alias")
+async def unified_qris_payment_webhook(payload: Dict[str, Any] = Body(...)):
+    """Webhook callback pembayaran QRIS dinamis EMVCo / native.
+    Saat status transaksi 'PAID' / 'SETTLED' / 'COMPLETED', memicu update status order dan CAPI Purchase event otomatis.
+    """
+    data_obj = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    order_id = str(
+        data_obj.get("order_id")
+        or data_obj.get("external_id")
+        or data_obj.get("reference_id")
+        or data_obj.get("id")
+        or payload.get("order_id")
+        or payload.get("external_id")
+        or payload.get("id")
+        or ""
+    ).strip()
+
+    status_str = str(data_obj.get("status") or payload.get("status") or "").strip().upper()
+    raw_amount = (
+        data_obj.get("amount")
+        or data_obj.get("total_amount")
+        or data_obj.get("paid_amount")
+        or data_obj.get("gross_amount")
+        or payload.get("amount")
+        or 0
+    )
+    try:
+        amount_val = int(float(raw_amount))
+    except (ValueError, TypeError):
+        amount_val = 0
+
+    customer_phone = (
+        data_obj.get("customer_phone")
+        or data_obj.get("phone")
+        or payload.get("customer_phone")
+        or payload.get("phone")
+        or PAYMENT_INTENTS.get(order_id, {}).get("customer_phone")
+        or PAYMENT_INTENTS.get(order_id, {}).get("phone")
+    )
+    customer_email = (
+        data_obj.get("customer_email")
+        or data_obj.get("email")
+        or payload.get("customer_email")
+        or payload.get("email")
+        or PAYMENT_INTENTS.get(order_id, {}).get("customer_email")
+        or PAYMENT_INTENTS.get(order_id, {}).get("email")
+    )
+    product_name = (
+        data_obj.get("product_name")
+        or payload.get("product_name")
+        or PAYMENT_INTENTS.get(order_id, {}).get("product_name")
+        or "Produk Digital"
+    )
+    tenant_id = (
+        data_obj.get("tenant_id")
+        or data_obj.get("tenant_slug")
+        or payload.get("tenant_id")
+        or payload.get("tenant_slug")
+        or PAYMENT_INTENTS.get(order_id, {}).get("tenant_id")
+        or "onlineboost"
+    )
+
+    logger.info(f"[UNIFIED PAYMENT WEBHOOK] Order '{order_id}' Status '{status_str}' Amount: Rp{amount_val:,}")
+
+    is_paid = status_str in ("PAID", "SETTLED", "COMPLETED", "SUCCESS")
+
+    if is_paid and order_id:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        # 1. Update in-memory intent
+        if order_id in PAYMENT_INTENTS:
+            PAYMENT_INTENTS[order_id]["status"] = "PAID"
+            PAYMENT_INTENTS[order_id]["paid_at"] = now_iso
+
+        # 2. Update Supabase orders table
+        supabase = get_supabase()
+        if supabase:
+            try:
+                supabase.table("orders").update({
+                    "status": "PAID",
+                    "paid_at": now_iso
+                }).eq("id", order_id).execute()
+            except Exception:
+                try:
+                    supabase.table("orders").update({
+                        "status": "PAID",
+                        "paid_at": now_iso
+                    }).eq("order_id", order_id).execute()
+                except Exception as e:
+                    logger.debug(f"[UNIFIED PAYMENT] Supabase update note: {e}")
+
+        # 3. WhatsApp notification
+        if customer_phone:
+            try:
+                await send_whatsapp_text(
+                    to_phone=customer_phone,
+                    text=f"Pembayaran sukses untuk Order #{order_id} sejumlah Rp{amount_val:,}.",
+                    tenant_id=tenant_id
+                )
+            except Exception as e:
+                logger.warning(f"[UNIFIED PAYMENT WA Text Error] {e}")
+
+            try:
+                order_data = {
+                    "order_id": order_id,
+                    "amount": amount_val,
+                    "customer_phone": customer_phone,
+                    "payment_method": "QRIS Dinamis EMVCo",
+                }
+                await send_ereceipt_whatsapp(to_phone=customer_phone, order_data=order_data, tenant_id=tenant_id)
+            except Exception:
+                pass
+
+        # 4. Trigger Server-Side CAPI Purchase (Meta & TikTok)
+        try:
+            await send_meta_capi_purchase(
+                external_id=order_id,
+                value=float(amount_val),
+                currency="IDR",
+                phone=customer_phone,
+                email=customer_email,
+            )
+        except Exception as me:
+            logger.warning(f"[UNIFIED PAYMENT META CAPI Note] {me}")
+
+        try:
+            await dispatch_all_capi({
+                "order_id": order_id,
+                "amount": amount_val,
+                "currency": "IDR",
+                "customer_phone": customer_phone,
+                "customer_email": customer_email,
+                "product_name": product_name,
+            })
+        except Exception as te:
+            logger.warning(f"[UNIFIED PAYMENT CAPI Note] {te}")
+
+        return {
+            "status": "SUCCESS",
+            "message": "Payment verified and CAPI Purchase triggered",
+            "order_id": order_id,
+            "amount": amount_val
+        }
+
+    return {"status": "ACKNOWLEDGED", "order_id": order_id, "payment_status": status_str}
 
 
 def extract_amount_from_text(text: str) -> int:

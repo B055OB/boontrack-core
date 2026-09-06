@@ -21,7 +21,6 @@ from app.services.whatsapp_service import (
     normalize_phone_number,
 )
 from app.services.whatsapp_menu_flow_service import WhatsAppMenuFlowService
-from app.services.xendit_service import xendit_service
 
 
 def _make_wa_payload(phone: str, text: str, phone_id: str = "1306479742542883") -> dict:
@@ -57,11 +56,9 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
         user_tenant_sessions.clear()
-        xendit_service.clear_state()
 
     def tearDown(self):
         user_tenant_sessions.clear()
-        xendit_service.clear_state()
 
     # =========================================================================
     # 1. Main Interactive Menu (4 Opsi: ombudi, growthplus, proscale, onlineboost)
@@ -166,25 +163,13 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
         self.assertNotIn("Masterclass Meta & TikTok Ads 2026", msg)
 
     # =========================================================================
-    # 3. Dynamic QRIS Generation & Webhook CAPI Trigger
+    # 3. Dynamic QRIS Generation (EMVCo Standard) & Webhook CAPI Trigger
     # =========================================================================
 
-    @patch("app.services.xendit_service.httpx.AsyncClient.post")
-    def test_dynamic_qris_generation_uses_product_amount(self, mock_post):
-        """generate_fast_track_checkout_response menggunakan nominal asli produk database."""
-        fake_resp = MagicMock()
-        fake_resp.status_code = 200
-        fake_resp.json.return_value = {
-            "id": "qr_test_real_001",
-            "external_id": "INV-ONLINE-001",
-            "amount": 499000,
-            "currency": "IDR",
-            "qr_string": "00020101021226570011ID.DANA.WWW...6304B7A1",
-        }
-        mock_post.return_value = fake_resp
-
+    def test_dynamic_qris_generation_uses_emvco_standards(self):
+        """generate_fast_track_checkout_response menggunakan generator QRIS standar EMVCo."""
         import asyncio
-        caption, invoice, _ = asyncio.run(
+        caption, invoice, qr_bytes = asyncio.run(
             generate_fast_track_checkout_response(
                 tenant_slug="onlineboost",
                 from_phone="628123456789",
@@ -195,29 +180,37 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
         self.assertIn("Berikut Kode QRIS Pembayaran Anda", caption)
         self.assertIn("Total:", caption)
         self.assertTrue(invoice.get("qr_string", "").startswith("000201"))
+        # EMVCo Dynamic Tag 01 Point of Initiation Method == 12
+        self.assertIn("010212", invoice.get("qr_string", ""))
+        # Tag 54 nominal transaksi
+        self.assertIn("54", invoice.get("qr_string", ""))
+        self.assertIn("5802ID", invoice.get("qr_string", ""))
+        # QuickChart URL
+        self.assertIn("quickchart.io/qr", invoice.get("qr_code_url", ""))
+        # PNG bytes signature
+        self.assertTrue(qr_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
 
-    @patch("app.routes.xendit.dispatch_all_capi", new_callable=AsyncMock)
-    @patch("app.routes.xendit.send_meta_capi_purchase", new_callable=AsyncMock)
-    @patch("app.routes.xendit.send_whatsapp_text", new_callable=AsyncMock)
+    @patch("app.routes.payment.dispatch_all_capi", new_callable=AsyncMock)
+    @patch("app.routes.payment.send_meta_capi_purchase", new_callable=AsyncMock)
+    @patch("app.routes.payment.send_whatsapp_text", new_callable=AsyncMock)
     def test_webhook_payment_paid_triggers_capi_purchase(self, mock_wa, mock_capi, mock_dispatch):
         """Saat webhook status COMPLETED/PAID, CAPI event Purchase terpicu dengan order_id, amount, dan phone."""
-        external_id = "INV-TEST-CAPI-888"
+        order_id = "INV-EMVCO-CAPI-999"
         amount = 499000
         phone = "081299887766"
-        token = "aM08Ka1LQ9Jx1OsieBe6kcM1pK1Z5eWlpWAka5zBOuGpVbWS"
 
         payload = {
-            "id": "qr_test_888",
-            "external_id": external_id,
+            "order_id": order_id,
             "amount": amount,
-            "status": "COMPLETED",
+            "status": "PAID",
             "customer_phone": phone,
+            "customer_email": "buyer@example.com",
+            "product_name": "Rahasia Dollar Paid Traffic",
         }
 
         resp = self.client.post(
-            "/api/v1/payments/xendit/callback",
+            "/api/v1/payments/callback",
             json=payload,
-            headers={"x-callback-token": token},
         )
 
         self.assertEqual(resp.status_code, 200)
@@ -226,18 +219,20 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
         # Verifikasi trigger CAPI Purchase
         mock_capi.assert_called_once()
         capi_args = mock_capi.call_args.kwargs
-        self.assertEqual(capi_args["external_id"], external_id)
+        self.assertEqual(capi_args["external_id"], order_id)
         self.assertEqual(capi_args["value"], float(amount))
         self.assertEqual(capi_args["currency"], "IDR")
         self.assertEqual(capi_args["phone"], phone)
+        self.assertEqual(capi_args["email"], "buyer@example.com")
 
         # Verifikasi dispatch_all_capi juga terpanggil
         mock_dispatch.assert_called_once()
         dispatch_payload = mock_dispatch.call_args.args[0]
-        self.assertEqual(dispatch_payload["order_id"], external_id)
+        self.assertEqual(dispatch_payload["order_id"], order_id)
         self.assertEqual(dispatch_payload["amount"], amount)
         self.assertEqual(dispatch_payload["customer_phone"], phone)
 
 
 if __name__ == "__main__":
     unittest.main()
+
