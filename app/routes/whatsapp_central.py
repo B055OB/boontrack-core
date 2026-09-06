@@ -540,307 +540,250 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
         # 6.5. Dispatching Terisolasi Berdasarkan Phone Number ID & Session Lock
         active_locked_tenant = user_tenant_sessions.get(clean_phone)
-        if active_locked_tenant and active_locked_tenant in ("onlineboost", "growthplus", "proscale"):
-            # KUNCI SESI: Jangan teruskan ke Career atau Om Budi lama jika user sedang aktif di OnlineBoost, Growth+, atau ProScale!
-            pass
-        elif phone_id == CAREER_PHONE_NUMBER_ID:
-            from app.tenants.career.router import handle_incoming_whatsapp
-            return await handle_incoming_whatsapp(request)
+        is_demo_locked = bool(active_locked_tenant and active_locked_tenant in ("onlineboost", "growthplus", "proscale"))
 
-        elif phone_id == OM_BUDI_PHONE_NUMBER_ID:
-            from app.tenants.om_budi.service import om_budi_service
+        if not is_demo_locked:
+            if phone_id == CAREER_PHONE_NUMBER_ID:
+                from app.tenants.career.router import handle_incoming_whatsapp
+                return await handle_incoming_whatsapp(request)
 
+            elif phone_id == OM_BUDI_PHONE_NUMBER_ID:
+                from app.tenants.om_budi.service import om_budi_service
+
+                safe_log_to_supabase_messages(
+                    sender="user",
+                    text=incoming_text or f"[{msg_type}]",
+                    tenant_id="om-budi",
+                    channel="whatsapp",
+                    user_phone=from_phone,
+                    user_name=contact_name,
+                    user_id=from_phone,
+                    conversation_id=from_phone,
+                    metadata={
+                        "button_id": button_id,
+                        "phone_number_id": phone_id,
+                        "msg_type": msg_type
+                    }
+                )
+
+                res = await om_budi_service.handle_incoming_message(
+                    phone_number=from_phone,
+                    message_text=incoming_text,
+                    button_id=button_id,
+                    user_name=contact_name,
+                    image_bytes=image_bytes,
+                    image_mime=image_mime
+                )
+
+                res_type = res.get("type", "text")
+                reply_text = res.get("reply", "")
+                buttons = res.get("buttons") or res.get("nav_buttons")
+
+                if res_type == "image":
+                    img_src = (
+                        res.get("image_url")
+                        or res.get("image_link")
+                        or (res.get("image", {}).get("link") if isinstance(res.get("image"), dict) else None)
+                        or res.get("image_path")
+                        or res.get("image")
+                    )
+                    caption_text = res.get("reply", "") or res.get("caption", "")
+                    await send_wa_image(
+                        recipient_phone=from_phone,
+                        image_url_or_path_or_bytes=img_src,
+                        caption=caption_text,
+                        phone_id=phone_id
+                    )
+                    if buttons:
+                        await send_wa_buttons(
+                            from_phone,
+                            "👇 *Pilih menu untuk melanjutkan:*",
+                            buttons,
+                            phone_id
+                        )
+                elif res_type == "list":
+                    await send_wa_list_menu(
+                        from_phone,
+                        reply_text,
+                        res.get("button_text", "Pilih Menu"),
+                        res.get("sections", []),
+                        phone_id
+                    )
+                elif res_type == "buttons" and len(reply_text) <= 1000:
+                    await send_wa_buttons(from_phone, reply_text, buttons or [], phone_id)
+                else:
+                    await send_wa_text(from_phone, reply_text, phone_id)
+                    if buttons:
+                        await send_wa_buttons(
+                            from_phone,
+                            "👇 *Pilih menu untuk melanjutkan:*",
+                            buttons,
+                            phone_id
+                        )
+
+                safe_log_to_supabase_messages(
+                    sender="bot",
+                    text=reply_text,
+                    tenant_id="om-budi",
+                    channel="whatsapp",
+                    user_phone=from_phone,
+                    user_name=contact_name,
+                    user_id=from_phone,
+                    conversation_id=from_phone,
+                    metadata={
+                        "res_type": res_type,
+                        "phone_number_id": phone_id,
+                        "buttons": buttons
+                    }
+                )
+
+                return web.json_response({"status": "success", "tenant": "om_budi"}, status=200)
+
+        # 6.6. Dynamic Tenant Resolution with Top-Level Demo Menu Interceptor
+        from app.services.ai_engine import commerce_ai_engine
+        from app.services.onboarding_service import onboarding_service
+
+        text_lower = (incoming_text or "").strip().lower()
+        clean_btn = str(button_id or "").strip().lower()
+        active_session_tenant = user_tenant_sessions.get(clean_phone) or "onlineboost"
+
+
+        # ---------------------------------------------------------------
+        # STEP A1: Buka Interactive List Katalog Produk
+        # ---------------------------------------------------------------
+        if clean_btn in {"btn_view_service", "btn_view_syllabus"} or text_lower in {"katalog", "katalog produk", "layanan", "daftar produk", "produk", "paket"}:
+            body_msg, catalog_sections = build_tenant_catalog_sections(active_session_tenant)
+            await send_wa_list_menu(
+                recipient_phone=from_phone,
+                body_text=body_msg,
+                button_text="Pilih Produk",
+                sections=catalog_sections,
+                phone_id=phone_id
+            )
             safe_log_to_supabase_messages(
-                sender="user",
-                text=incoming_text or f"[{msg_type}]",
-                tenant_id="om-budi",
+                sender="bot",
+                text=f"[Katalog List Dikirim]",
+                tenant_id=active_session_tenant,
                 channel="whatsapp",
                 user_phone=from_phone,
                 user_name=contact_name,
                 user_id=from_phone,
                 conversation_id=from_phone,
-                metadata={
-                    "button_id": button_id,
-                    "phone_number_id": phone_id,
-                    "msg_type": msg_type
-                }
             )
+            return web.json_response({"status": "catalog_list_dispatched", "tenant": active_session_tenant}, status=200)
 
-            res = await om_budi_service.handle_incoming_message(
-                phone_number=from_phone,
-                message_text=incoming_text,
-                button_id=button_id,
+        # ---------------------------------------------------------------
+        # STEP A2: Tambah Item ke Keranjang Belanja
+        # ---------------------------------------------------------------
+        if clean_btn.startswith("prod_") or "prod_" in text_lower:
+            cart_text, cart_buttons, _ = add_product_to_cart(from_phone, active_session_tenant, clean_btn)
+            await send_wa_buttons(from_phone, cart_text, cart_buttons, phone_id)
+            safe_log_to_supabase_messages(
+                sender="bot",
+                text=f"[Item Ditambahkan ke Cart]",
+                tenant_id=active_session_tenant,
+                channel="whatsapp",
+                user_phone=from_phone,
                 user_name=contact_name,
-                image_bytes=image_bytes,
-                image_mime=image_mime
+                user_id=from_phone,
+                conversation_id=from_phone,
+            )
+            return web.json_response({"status": "cart_updated", "tenant": active_session_tenant}, status=200)
+
+        # ---------------------------------------------------------------
+        # STEP A3: Kosongkan Keranjang Belanja
+        # ---------------------------------------------------------------
+        if clean_btn == "btn_clear_cart":
+            user_cart_sessions.pop(clean_phone, None)
+            await send_wa_text(
+                from_phone,
+                "🗑️ Keranjang belanja Anda telah dikosongkan.\n\nKetik *Katalog* atau klik tombol di atas untuk memilih produk baru.",
+                phone_id
+            )
+            return web.json_response({"status": "cart_cleared", "tenant": active_session_tenant}, status=200)
+
+        # ---------------------------------------------------------------
+        # STEP A4: Checkout Bayar Semua QRIS
+        # ---------------------------------------------------------------
+        is_qris_trigger = (
+            clean_btn in {"btn_checkout_cart", "btn_buy_now", "buy_now", "order_now", "qris_buy", "beli_qris"}
+            or "beli & bayar qris" in text_lower
+            or "bayar qris" in text_lower
+            or text_lower == "beli"
+            or is_closing_buy_intent(incoming_text, clean_btn)
+        )
+
+        if is_qris_trigger and active_session_tenant not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik"):
+            reply_text, invoice, qr_bytes = await generate_cart_checkout_response(
+                tenant_slug=active_session_tenant,
+                from_phone=from_phone,
+                contact_name=contact_name
             )
 
-            res_type = res.get("type", "text")
-            reply_text = res.get("reply", "")
-            buttons = res.get("buttons") or res.get("nav_buttons")
+            qr_target_url = invoice.get("qr_code_url")
+            is_img_sent = False
+            if qr_target_url:
+                is_img_sent = await send_wa_image(from_phone, qr_target_url, reply_text, phone_id)
+            elif qr_bytes:
+                is_img_sent = await send_wa_image(from_phone, qr_bytes, reply_text, phone_id)
 
-            if res_type == "image":
-                img_src = (
-                    res.get("image_url")
-                    or res.get("image_link")
-                    or (res.get("image", {}).get("link") if isinstance(res.get("image"), dict) else None)
-                    or res.get("image_path")
-                    or res.get("image")
-                )
-                caption_text = res.get("reply", "") or res.get("caption", "")
-                await send_wa_image(
-                    recipient_phone=from_phone,
-                    image_url_or_path_or_bytes=img_src,
-                    caption=caption_text,
-                    phone_id=phone_id
-                )
-                if buttons:
-                    await send_wa_buttons(
-                        from_phone,
-                        "👇 *Pilih menu untuk melanjutkan:*",
-                        buttons,
-                        phone_id
-                    )
-            elif res_type == "list":
-                await send_wa_list_menu(
-                    from_phone,
-                    reply_text,
-                    res.get("button_text", "Pilih Menu"),
-                    res.get("sections", []),
-                    phone_id
-                )
-            elif res_type == "buttons" and len(reply_text) <= 1000:
-                await send_wa_buttons(from_phone, reply_text, buttons or [], phone_id)
-            else:
+            if not is_img_sent:
                 await send_wa_text(from_phone, reply_text, phone_id)
-                if buttons:
-                    await send_wa_buttons(
-                        from_phone,
-                        "👇 *Pilih menu untuk melanjutkan:*",
-                        buttons,
-                        phone_id
-                    )
 
             safe_log_to_supabase_messages(
                 sender="bot",
-                text=reply_text,
-                tenant_id="om-budi",
+                text=f"[Kirim QRIS {invoice.get('external_id')}] {reply_text}",
+                tenant_id=active_session_tenant,
                 channel="whatsapp",
                 user_phone=from_phone,
                 user_name=contact_name,
                 user_id=from_phone,
                 conversation_id=from_phone,
-                metadata={
-                    "res_type": res_type,
-                    "phone_number_id": phone_id,
-                    "buttons": buttons
-                }
+                metadata={"phone_number_id": phone_id, "invoice_id": invoice.get("external_id")}
             )
+            return web.json_response({"status": "qris_cart_dispatched", "tenant": active_session_tenant}, status=200)
 
-            return web.json_response({"status": "success", "tenant": "om_budi"}, status=200)
+        # ---------------------------------------------------------------
+        # STEP B: Pre-check — is this an onboarding announcement? Exempt it.
+        # ---------------------------------------------------------------
+        _is_onboarding_msg = bool(
+            re.search(
+                r"saya\s+baru\s+(?:saja\s+)?(?:mendaftar|daftar)\s+toko\s+[a-zA-Z0-9\-_]+",
+                incoming_text or "",
+                re.IGNORECASE,
+            )
+            or re.search(r"toko\s*:\s*[a-zA-Z0-9\-_]+", incoming_text or "", re.IGNORECASE)
+        )
 
-        else:
-            # 6.6. Dynamic Tenant Resolution with Top-Level Demo Menu Interceptor
-            from app.services.ai_engine import commerce_ai_engine
-            from app.services.onboarding_service import onboarding_service
+        # ---------------------------------------------------------------
+        # STEP C: TOP-LEVEL DEMO MENU INTERCEPTOR
+        # ---------------------------------------------------------------
+        _MENU_TRIGGER_KEYWORDS = {"halo", "hi", "p", "test", "tes", "hai", "start", "info", "menu", "demo", "#reset", "reset"}
+        _MENU_OPTION_MAP = {
+            "1": "ombudi",
+            "2": "growthplus",
+            "3": "proscale",
+            "4": "onlineboost",
+        }
 
-            text_lower = (incoming_text or "").strip().lower()
-            clean_btn = str(button_id or "").strip().lower()
-            active_session_tenant = user_tenant_sessions.get(clean_phone) or "onlineboost"
+        _is_keyword_trigger = text_lower in _MENU_TRIGGER_KEYWORDS or clean_btn == "btn_menu_reset"
+        _has_active_session = bool(clean_phone and clean_phone in user_tenant_sessions)
 
-
-            # ---------------------------------------------------------------
-            # STEP A1: Buka Interactive List Katalog Produk
-            # ---------------------------------------------------------------
-            if clean_btn in {"btn_view_service", "btn_view_syllabus"} or text_lower in {"katalog", "katalog produk", "layanan", "daftar produk", "produk", "paket"}:
-                body_msg, catalog_sections = build_tenant_catalog_sections(active_session_tenant)
-                await send_wa_list_menu(
-                    recipient_phone=from_phone,
-                    body_text=body_msg,
-                    button_text="Pilih Produk",
-                    sections=catalog_sections,
-                    phone_id=phone_id
-                )
-                safe_log_to_supabase_messages(
-                    sender="bot",
-                    text=f"[Katalog List Dikirim]",
-                    tenant_id=active_session_tenant,
-                    channel="whatsapp",
-                    user_phone=from_phone,
-                    user_name=contact_name,
-                    user_id=from_phone,
-                    conversation_id=from_phone,
-                )
-                return web.json_response({"status": "catalog_list_dispatched", "tenant": active_session_tenant}, status=200)
-
-            # ---------------------------------------------------------------
-            # STEP A2: Tambah Item ke Keranjang Belanja
-            # ---------------------------------------------------------------
-            if clean_btn.startswith("prod_") or "prod_" in text_lower:
-                cart_text, cart_buttons, _ = add_product_to_cart(from_phone, active_session_tenant, clean_btn)
-                await send_wa_buttons(from_phone, cart_text, cart_buttons, phone_id)
-                safe_log_to_supabase_messages(
-                    sender="bot",
-                    text=f"[Item Ditambahkan ke Cart]",
-                    tenant_id=active_session_tenant,
-                    channel="whatsapp",
-                    user_phone=from_phone,
-                    user_name=contact_name,
-                    user_id=from_phone,
-                    conversation_id=from_phone,
-                )
-                return web.json_response({"status": "cart_updated", "tenant": active_session_tenant}, status=200)
-
-            # ---------------------------------------------------------------
-            # STEP A3: Kosongkan Keranjang Belanja
-            # ---------------------------------------------------------------
-            if clean_btn == "btn_clear_cart":
+        if (not _is_onboarding_msg) and (_is_keyword_trigger or not _has_active_session):
+            if clean_phone:
+                user_tenant_sessions.pop(clean_phone, None)
                 user_cart_sessions.pop(clean_phone, None)
-                await send_wa_text(
-                    from_phone,
-                    "🗑️ Keranjang belanja Anda telah dikosongkan.\n\nKetik *Katalog* atau klik tombol di atas untuk memilih produk baru.",
-                    phone_id
-                )
-                return web.json_response({"status": "cart_cleared", "tenant": active_session_tenant}, status=200)
 
-            # ---------------------------------------------------------------
-            # STEP A4: Checkout Bayar Semua QRIS
-            # ---------------------------------------------------------------
-            is_qris_trigger = (
-                clean_btn in {"btn_checkout_cart", "btn_buy_now", "buy_now", "order_now", "qris_buy", "beli_qris"}
-                or "beli & bayar qris" in text_lower
-                or "bayar qris" in text_lower
-                or text_lower == "beli"
-                or is_closing_buy_intent(incoming_text, clean_btn)
-            )
-
-            if is_qris_trigger and active_session_tenant not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik"):
-                reply_text, invoice, qr_bytes = await generate_cart_checkout_response(
-                    tenant_slug=active_session_tenant,
-                    from_phone=from_phone,
-                    contact_name=contact_name
-                )
-
-                qr_target_url = invoice.get("qr_code_url")
-                is_img_sent = False
-                if qr_target_url:
-                    is_img_sent = await send_wa_image(from_phone, qr_target_url, reply_text, phone_id)
-                elif qr_bytes:
-                    is_img_sent = await send_wa_image(from_phone, qr_bytes, reply_text, phone_id)
-
-                if not is_img_sent:
-                    await send_wa_text(from_phone, reply_text, phone_id)
-
-                safe_log_to_supabase_messages(
-                    sender="bot",
-                    text=f"[Kirim QRIS {invoice.get('external_id')}] {reply_text}",
-                    tenant_id=active_session_tenant,
-                    channel="whatsapp",
-                    user_phone=from_phone,
-                    user_name=contact_name,
-                    user_id=from_phone,
-                    conversation_id=from_phone,
-                    metadata={"phone_number_id": phone_id, "invoice_id": invoice.get("external_id")}
-                )
-                return web.json_response({"status": "qris_cart_dispatched", "tenant": active_session_tenant}, status=200)
-
-            # ---------------------------------------------------------------
-            # STEP B: Pre-check — is this an onboarding announcement? Exempt it.
-            # ---------------------------------------------------------------
-            _is_onboarding_msg = bool(
-                re.search(
-                    r"saya\s+baru\s+(?:saja\s+)?(?:mendaftar|daftar)\s+toko\s+[a-zA-Z0-9\-_]+",
-                    incoming_text or "",
-                    re.IGNORECASE,
-                )
-                or re.search(r"toko\s*:\s*[a-zA-Z0-9\-_]+", incoming_text or "", re.IGNORECASE)
-            )
-
-            # ---------------------------------------------------------------
-            # STEP C: TOP-LEVEL DEMO MENU INTERCEPTOR
-            # ---------------------------------------------------------------
-            _MENU_TRIGGER_KEYWORDS = {"halo", "hi", "p", "test", "tes", "hai", "start", "info", "menu", "demo", "#reset", "reset"}
-            _MENU_OPTION_MAP = {
-                "1": "ombudi",
-                "2": "growthplus",
-                "3": "proscale",
-                "4": "onlineboost",
-            }
-
-            _is_keyword_trigger = text_lower in _MENU_TRIGGER_KEYWORDS or clean_btn == "btn_menu_reset"
-            _has_active_session = bool(clean_phone and clean_phone in user_tenant_sessions)
-
-            if (not _is_onboarding_msg) and (_is_keyword_trigger or not _has_active_session):
-                if clean_phone:
-                    user_tenant_sessions.pop(clean_phone, None)
-                    user_cart_sessions.pop(clean_phone, None)
-
-                if text_lower not in _MENU_OPTION_MAP:
-                    logger.info(
-                        f"[CENTRAL WA INTERCEPTOR] Sender {from_phone} triggered menu "
-                        f"(keyword={_is_keyword_trigger}, no_session={not _has_active_session})"
-                    )
-                    await send_wa_text(from_phone, DEMO_MENU_TEXT, phone_id)
-                    safe_log_to_supabase_messages(
-                        sender="bot",
-                        text=DEMO_MENU_TEXT,
-                        tenant_id="__MENU__",
-                        channel="whatsapp",
-                        user_phone=from_phone,
-                        user_name=contact_name,
-                        user_id=from_phone,
-                        conversation_id=from_phone,
-                    )
-                    return web.json_response({
-                        "status": "menu_dispatched",
-                        "tenant": "__MENU__",
-                        "reply": DEMO_MENU_TEXT,
-                    }, status=200)
-
-            # ---------------------------------------------------------------
-            # STEP D: MENU OPTION SELECTION (DATABASE-DRIVEN UNIVERSAL)
-            # ---------------------------------------------------------------
-            if text_lower in _MENU_OPTION_MAP:
-                selected_slug = _MENU_OPTION_MAP[text_lower]
-                if clean_phone:
-                    user_tenant_sessions[clean_phone] = selected_slug
-                    user_cart_sessions.pop(clean_phone, None)
-
+            if text_lower not in _MENU_OPTION_MAP:
                 logger.info(
-                    f"[CENTRAL WA MENU SELECT] Sender {from_phone} selected '{text_lower}' -> locked to '{selected_slug}'"
+                    f"[CENTRAL WA INTERCEPTOR] Sender {from_phone} triggered menu "
+                    f"(keyword={_is_keyword_trigger}, no_session={not _has_active_session})"
                 )
-
-                details = onboarding_service.get_tenant_details_by_slug(selected_slug) or {}
-                tenant_info = details.get("tenant", {})
-                store_name = tenant_info.get("name") or selected_slug.replace("-", " ").replace("_", " ").title()
-                store_desc = tenant_info.get("description") or "Pusat produk & layanan resmi terpercaya."
-                products = details.get("products", [])
-
-                if products or selected_slug not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik"):
-                    welcome_msg = (
-                        f"Halo Kak! Selamat datang di *{store_name}* 🛍️\n\n"
-                        f"{store_desc}\n\n"
-                        f"Silakan pilih menu di bawah untuk melihat katalog produk lengkap atau transaksi cepat:"
-                    )
-                    standard_buttons = [
-                        {"id": "btn_view_service", "title": "🛍️ Katalog Produk"},
-                        {"id": "btn_buy_now", "title": "💳 Beli Cepat QRIS"},
-                        {"id": "btn_menu_reset", "title": "🔄 Ganti Toko"}
-                    ]
-                    await send_wa_buttons(from_phone, welcome_msg, standard_buttons, phone_id)
-                else:
-                    welcome_msg = (
-                        f"🏛️ *Selamat Datang di {store_name}*\n\n"
-                        f"{store_desc}\n\n"
-                        f"Silakan sampaikan pesan atau laporan Anda langsung di chat ini.\n\n"
-                        f"_Ketik #reset kapan saja untuk mengganti layanan._"
-                    )
-                    await send_wa_text(from_phone, welcome_msg, phone_id)
-
+                await send_wa_text(from_phone, DEMO_MENU_TEXT, phone_id)
                 safe_log_to_supabase_messages(
                     sender="bot",
-                    text=f"[Welcome Greeting {store_name}]",
-                    tenant_id=selected_slug,
+                    text=DEMO_MENU_TEXT,
+                    tenant_id="__MENU__",
                     channel="whatsapp",
                     user_phone=from_phone,
                     user_name=contact_name,
@@ -848,55 +791,112 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     conversation_id=from_phone,
                 )
                 return web.json_response({
-                    "status": "success",
-                    "tenant": selected_slug,
-                    "is_new_binding": True
+                    "status": "menu_dispatched",
+                    "tenant": "__MENU__",
+                    "reply": DEMO_MENU_TEXT,
                 }, status=200)
 
-            # ---------------------------------------------------------------
-            # STEP E: NORMAL PIPELINE — Resolve tenant + AI engine
-            # ---------------------------------------------------------------
-            tenant_slug, is_new_binding = resolve_dynamic_tenant_for_whatsapp(
-                phone_id=phone_id,
-                from_phone=from_phone,
-                message_text=incoming_text,
+        # ---------------------------------------------------------------
+        # STEP D: MENU OPTION SELECTION (DATABASE-DRIVEN UNIVERSAL)
+        # ---------------------------------------------------------------
+        if text_lower in _MENU_OPTION_MAP:
+            selected_slug = _MENU_OPTION_MAP[text_lower]
+            if clean_phone:
+                user_tenant_sessions[clean_phone] = selected_slug
+                user_cart_sessions.pop(clean_phone, None)
+
+            logger.info(
+                f"[CENTRAL WA MENU SELECT] Sender {from_phone} selected '{text_lower}' -> locked to '{selected_slug}'"
             )
 
-            details = onboarding_service.get_tenant_details_by_slug(tenant_slug)
-            store_name = details.get("tenant", {}).get("name", tenant_slug) if details else tenant_slug
+            details = onboarding_service.get_tenant_details_by_slug(selected_slug) or {}
+            tenant_info = details.get("tenant", {})
+            store_name = tenant_info.get("name") or selected_slug.replace("-", " ").replace("_", " ").title()
+            store_desc = tenant_info.get("description") or "Pusat produk & layanan resmi terpercaya."
+            products = details.get("products", [])
+
+            if products or selected_slug not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik"):
+                welcome_msg = (
+                    f"Halo Kak! Selamat datang di *{store_name}* 🛍️\n\n"
+                    f"{store_desc}\n\n"
+                    f"Silakan pilih menu di bawah untuk melihat katalog produk lengkap atau transaksi cepat:"
+                )
+                standard_buttons = [
+                    {"id": "btn_view_service", "title": "🛍️ Katalog Produk"},
+                    {"id": "btn_buy_now", "title": "💳 Beli Cepat QRIS"},
+                    {"id": "btn_menu_reset", "title": "🔄 Ganti Toko"}
+                ]
+                await send_wa_buttons(from_phone, welcome_msg, standard_buttons, phone_id)
+            else:
+                welcome_msg = (
+                    f"🏛️ *Selamat Datang di {store_name}*\n\n"
+                    f"{store_desc}\n\n"
+                    f"Silakan sampaikan pesan atau laporan Anda langsung di chat ini.\n\n"
+                    f"_Ketik #reset kapan saja untuk mengganti layanan._"
+                )
+                await send_wa_text(from_phone, welcome_msg, phone_id)
 
             safe_log_to_supabase_messages(
-                sender="user",
-                text=incoming_text,
-                tenant_id=tenant_slug,
+                sender="bot",
+                text=f"[Welcome Greeting {store_name}]",
+                tenant_id=selected_slug,
                 channel="whatsapp",
                 user_phone=from_phone,
                 user_name=contact_name,
                 user_id=from_phone,
                 conversation_id=from_phone,
-                metadata={"phone_number_id": phone_id, "msg_type": msg_type, "button_id": button_id}
             )
+            return web.json_response({
+                "status": "success",
+                "tenant": selected_slug,
+                "is_new_binding": True
+            }, status=200)
 
-            if is_new_binding and _is_onboarding_msg:
-                reply_text = (
-                    f"🎉 *Selamat Datang di {store_name}!* 🚀\n\n"
-                    f"Nomor WhatsApp Kakak (*{contact_name}*) kini resmi terhubung dengan asisten toko *{store_name}*.\n\n"
-                    f"Ada yang bisa kami bantu seputar produk atau promo hari ini?"
-                )
-                await send_wa_text(from_phone, reply_text, phone_id)
-            else:
-                from app.repositories.session_repository import SessionRepository
-                from app.modules.conversation import (
-                    load_customer_state,
-                    dump_customer_state,
-                    extract_signals,
-                    determine_strategy,
-                    get_system_prompt_for_mode,
-                    validate_action,
-                    TenantDBAdapter,
-                )
-                from app.services.whatsapp_service import get_tenant_products_from_db
+        # ---------------------------------------------------------------
+        # STEP E: NORMAL PIPELINE — Resolve tenant + AI engine
+        # ---------------------------------------------------------------
+        tenant_slug, is_new_binding = resolve_dynamic_tenant_for_whatsapp(
+            phone_id=phone_id,
+            from_phone=from_phone,
+            message_text=incoming_text,
+        )
 
+        details = onboarding_service.get_tenant_details_by_slug(tenant_slug)
+        store_name = details.get("tenant", {}).get("name", tenant_slug) if details else tenant_slug
+
+        safe_log_to_supabase_messages(
+            sender="user",
+            text=incoming_text,
+            tenant_id=tenant_slug,
+            channel="whatsapp",
+            user_phone=from_phone,
+            user_name=contact_name,
+            user_id=from_phone,
+            conversation_id=from_phone,
+            metadata={"phone_number_id": phone_id, "msg_type": msg_type, "button_id": button_id}
+        )
+
+        if is_new_binding and _is_onboarding_msg:
+            reply_text = (
+                f"🎉 *Selamat Datang di {store_name}!* 🚀\n\n"
+                f"Nomor WhatsApp Kakak (*{contact_name}*) kini resmi terhubung dengan asisten toko *{store_name}*.\n\n"
+                f"Ada yang bisa kami bantu seputar produk atau promo hari ini?"
+            )
+            await send_wa_text(from_phone, reply_text, phone_id)
+        else:
+            from app.repositories.session_repository import SessionRepository
+            from app.modules.conversation import (
+                load_customer_state,
+                dump_customer_state,
+                extract_signals,
+                determine_strategy,
+                get_system_prompt_for_mode,
+                validate_action,
+                TenantDBAdapter,
+            )
+            from app.services.whatsapp_service import get_tenant_products_from_db
+
+            try:
                 _conv_repo = SessionRepository()
                 clean_p = from_phone.replace("+", "")
                 session_key = f"{tenant_slug}:{clean_p}"
@@ -925,6 +925,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
                 mode_prompt = get_system_prompt_for_mode(nba, prod_context)
 
+                logger.info(f"[CENTRAL WA 3-LAYER] Executing conversation engine for tenant={tenant_slug}, user={from_phone}")
                 reply_text = await commerce_ai_engine.generate_commerce_response(
                     tenant_slug=tenant_slug,
                     user_message=incoming_text,
@@ -943,29 +944,53 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                         button_id=button_id,
                     )
 
+                if not reply_text:
+                    reply_text = (
+                        f"Halo Kak! Senang bisa membantu di *{store_name}*. "
+                        "Untuk pemula di dunia digital marketing, kami sangat menyarankan paket dasar praktis kami. "
+                        "Ketik *Katalog* untuk melihat daftar kurikulum ecourse lengkap atau langsung tanyakan materi yang ingin dipelajari ya Kak! ✨"
+                    )
+
                 db_adapter = TenantDBAdapter(prods)
                 action_res = validate_action(customer_state, db_adapter)
 
-                if reply_text:
+                if action_res.get("allow_button") is True and len(reply_text) <= 1000:
+                    checkout_buttons = [
+                        {"id": "btn_buy_now", "title": "💳 Beli Sekarang (QRIS)"},
+                        {"id": "btn_view_service", "title": "🛍️ Lihat Produk Lain"},
+                    ]
+                    try:
+                        await send_wa_buttons(from_phone, reply_text, checkout_buttons, phone_id)
+                    except Exception as btn_err:
+                        logger.warning(f"[CENTRAL WA BUTTON DISPATCH ERROR] {btn_err}")
+                        await send_wa_text(from_phone, reply_text, phone_id)
+                else:
                     await send_wa_text(from_phone, reply_text, phone_id)
 
                 wa_session.context_json = dump_customer_state(customer_state, wa_session.context_json or {})
                 await _conv_repo.save(wa_session)
+            except Exception as ce_err:
+                logger.error(f"[CENTRAL WA 3-LAYER ERROR] Pipeline failure for {tenant_slug}: {ce_err}", exc_info=True)
+                reply_text = (
+                    f"Halo Kak! Terima kasih sudah menghubungi kami di *{store_name}*. "
+                    "Pesan Kakak sudah kami terima. Ketik *Katalog* untuk melihat pilihan ecourse kami atau *Beli* untuk pemesanan langsung ya Kak! 🙏"
+                )
+                await send_wa_text(from_phone, reply_text, phone_id)
 
 
-            safe_log_to_supabase_messages(
-                sender="bot",
-                text=reply_text,
-                tenant_id=tenant_slug,
-                channel="whatsapp",
-                user_phone=from_phone,
-                user_name=contact_name,
-                user_id=from_phone,
-                conversation_id=from_phone,
-                metadata={"phone_number_id": phone_id}
-            )
+        safe_log_to_supabase_messages(
+            sender="bot",
+            text=reply_text,
+            tenant_id=tenant_slug,
+            channel="whatsapp",
+            user_phone=from_phone,
+            user_name=contact_name,
+            user_id=from_phone,
+            conversation_id=from_phone,
+            metadata={"phone_number_id": phone_id}
+        )
 
-            return web.json_response({"status": "success", "tenant": tenant_slug}, status=200)
+        return web.json_response({"status": "success", "tenant": tenant_slug}, status=200)
 
     except Exception as e:
         logger.error(f"[CENTRAL WA ERROR] {e}", exc_info=True)

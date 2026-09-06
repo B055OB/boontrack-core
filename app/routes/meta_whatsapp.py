@@ -545,21 +545,33 @@ async def handle_whatsapp_webhook(request: Request):
     # d. Layer 3: Generator Prompt Mode
     mode_prompt = get_system_prompt_for_mode(nba, product_context)
 
-    reply = await commerce_ai_engine.generate_commerce_response(
-        tenant_slug=active_tenant,
-        user_message=incoming_text,
-        user_phone=from_phone,
-        user_name=contact_name,
-        button_id=event.get("button_id"),
-        mode_prompt=mode_prompt,
-    )
-    if not reply:
-        reply = await process_incoming_message(
+    logger.info(f"[META WA 3-LAYER] Executing conversation engine for tenant={active_tenant}, user={from_phone}")
+    try:
+        reply = await commerce_ai_engine.generate_commerce_response(
             tenant_slug=active_tenant,
-            message=incoming_text,
+            user_message=incoming_text,
             user_phone=from_phone,
             user_name=contact_name,
             button_id=event.get("button_id"),
+            mode_prompt=mode_prompt,
+        )
+        if not reply:
+            reply = await process_incoming_message(
+                tenant_slug=active_tenant,
+                message=incoming_text,
+                user_phone=from_phone,
+                user_name=contact_name,
+                button_id=event.get("button_id"),
+            )
+    except Exception as ai_err:
+        logger.error(f"[META WA AI GENERATION ERROR] Error calling commerce_ai_engine: {ai_err}", exc_info=True)
+        reply = None
+
+    if not reply:
+        reply = (
+            f"Halo Kak! Senang bisa membantu di *{store_name}*. "
+            "Untuk pemula di dunia digital marketing, kami sangat menyarankan paket dasar praktis kami. "
+            "Ketik *Katalog* untuk melihat kurikulum ecourse lengkap atau langsung tanyakan materi yang ingin dipelajari ya Kak! ✨"
         )
 
     # e. Validator Guardrail

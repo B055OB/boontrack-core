@@ -199,7 +199,40 @@ class TestConversationWebhookIntegration(unittest.TestCase):
         data4 = res4.json()
         self.assertEqual(data4.get("status"), "qris_dispatched")
 
+    def test_onlineboost_locked_session_natural_chat_response(self):
+        """Tes user yang terkunci di sesi onlineboost mengirim chat pertanyaan umum dijawab oleh bot."""
+        from app.routes.meta_whatsapp import user_tenant_sessions
+        phone = "6281122334455"
+        user_tenant_sessions[phone] = "onlineboost"
+
+        payload = {
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "messaging_product": "whatsapp",
+                        "metadata": {"phone_number_id": "1268977686299719"},
+                        "contacts": [{"profile": {"name": "Pemula"}, "wa_id": phone}],
+                        "messages": [{
+                            "from": phone,
+                            "id": "msg_ob_advice",
+                            "type": "text",
+                            "text": {"body": "Saya pemula di dunia digital marketing, enaknya ambil yang mana ya min?"},
+                        }],
+                    },
+                    "field": "messages",
+                }]
+            }]
+        }
+        res = self.client.post("/api/v1/whatsapp/webhook", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data.get("status"), "success")
+        self.assertEqual(data.get("tenant"), "onlineboost")
+        self.assertTrue(len(data.get("reply", "")) > 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
