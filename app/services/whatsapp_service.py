@@ -332,14 +332,13 @@ async def send_whatsapp_tenant_catalog(phone: str, tenant_slug: str = "onlineboo
         empty_msg = f"Saat ini katalog produk untuk *{store_name}* sedang disiapkan. Silakan hubungi admin kami ya, Kak! 🙏"
         return await send_whatsapp_text(clean_phone, empty_msg, tenant_id=target_tenant, phone_number_id=phone_number_id, access_token=access_token)
 
-    # Susun teks rincian seluruh produk
     product_lines = []
     for idx, p in enumerate(products, 1):
         p_title = str(p.get("title") or p.get("name") or "Produk").strip()
         price_num = int(float(p.get("promo_price") or p.get("price") or 0))
         price_fmt = f"Rp{price_num:,}".replace(",", ".")
         p_desc = str(p.get("description") or p.get("short_description") or "").strip()
-        desc_snippet = f"\n   _{p_desc[:100]}..._" if p_desc else ""
+        desc_snippet = f"\n   _{p_desc[:90]}..._" if p_desc else ""
         product_lines.append(f"*{idx}. {p_title}* — *{price_fmt}*{desc_snippet}")
 
     catalog_text = (
@@ -347,34 +346,11 @@ async def send_whatsapp_tenant_catalog(phone: str, tenant_slug: str = "onlineboo
         f"Berikut daftar lengkap {len(products)} produk / ecourse pilihan:\n\n"
         + "\n\n".join(product_lines) +
         f"\n\n━━━━━━━━━━━━━━━━━━\n"
-        f"💳 Ketik *Beli* atau *Beli 1* (sampai *Beli {len(products)}*) untuk bayar instan via *Dynamic QRIS* ⚡\n"
+        f"💳 Ketik *Beli* atau *Beli 1* (sampai *Beli {len(products)}*) untuk langsung bayar via *Dynamic QRIS* ⚡\n"
         f"_Ketik #reset kapan saja untuk kembali ke menu demo toko._"
     )
 
-    # HAPUS if len(products) <= 3:
-    # Selalu pasang 3 tombol interaktif utama di bawah teks katalog
-    buttons = [
-        {"id": "btn_view_service", "title": "🛍️ Daftar Produk"},
-        {"id": "btn_view_cart", "title": "🛒 Keranjang Belanja"},
-        {"id": "btn_ask_ai", "title": "💬 Tanya Produk (AI)"},
-    ]
-    
-    try:
-        res = await send_whatsapp_buttons(
-            to_phone=clean_phone,
-            body_text=catalog_text,
-            buttons=buttons,
-            footer_text="Pilih opsi untuk lanjut:",
-            tenant_id=target_tenant,
-            phone_number_id=phone_number_id,
-            access_token=access_token,
-        )
-        if res:
-            return res
-    except Exception:
-        pass
-
-    # Fallback jika Meta API sedang gangguan saat render tombol
+    # Kirim sebagai teks murni agar seluruh produk (lebih dari 3) tampil utuh tanpa error Meta API
     return await send_whatsapp_text(clean_phone, catalog_text, tenant_id=target_tenant, phone_number_id=phone_number_id, access_token=access_token)
 
 
