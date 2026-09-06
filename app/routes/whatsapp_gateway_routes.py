@@ -1,11 +1,11 @@
 """
 app/routes/whatsapp_gateway_routes.py
-FastAPI Router for WhatsApp Growth Engine (Scan QR / Baileys & Evolution API Adapter).
+FastAPI Router for WhatsApp Growth Engine (Scan QR / BoonTrack WhatsApp Engine & Evolution API Adapter).
 
 Handles:
 1. Session connection & QR generation (/sessions/{tenant_slug}/connect).
 2. Inbound message processing (/inbound-process) routed to AI Knowledge Base & Commerce AI Engine.
-3. Evolution API / Baileys webhook listener (/webhook/evolution/{tenant_slug}).
+3. Evolution API / BoonTrack WhatsApp Engine webhook listener (/webhook/evolution/{tenant_slug}).
 """
 
 import os
@@ -32,13 +32,14 @@ logger = logging.getLogger("WHATSAPP_GROWTH_ROUTER")
 
 router = APIRouter(prefix="/api/v1/whatsapp", tags=["WhatsApp Growth Engine"])
 
-BAILEYS_WORKER_URL = os.getenv("BAILEYS_WORKER_URL", "http://127.0.0.1:3001")
+BOONTRACK_WA_WORKER_URL = os.getenv("BOONTRACK_WA_WORKER_URL", os.getenv("BAILEYS_WORKER_URL", "http://127.0.0.1:3001"))
+BAILEYS_WORKER_URL = BOONTRACK_WA_WORKER_URL
 
 
 class InboundPayload(BaseModel):
     tenant_slug: Optional[str] = Field(None, description="Merchant tenant slug")
     sender_phone: str = Field(..., description="Customer phone number without @s.whatsapp.net")
-    message_body: str = Field(..., description="Message text extracted from Baileys")
+    message_body: str = Field(..., description="Message text extracted from BoonTrack WhatsApp Engine")
     sender_name: Optional[str] = Field("Pelanggan", description="Customer contact name")
     bot_strategy: Optional[str] = Field(None, description="Optional override bot strategy: 'trust_builder', 'balanced', 'hard_selling'")
 
@@ -46,14 +47,14 @@ class InboundPayload(BaseModel):
 @router.post("/sessions/{tenant_slug}/connect")
 async def connect_growth_session(tenant_slug: str):
     """
-    Meminta QR code live socket Baileys.
+    Meminta QR code live socket BoonTrack WhatsApp Engine.
     """
     clean_tenant = (tenant_slug or "onlineboost").strip().lower()
 
-    # 1. Coba hubungi Baileys standalone worker jika ada di localhost:3001
+    # 1. Coba hubungi standalone worker BoonTrack WhatsApp Engine jika ada di localhost:3001
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
-            res = await client.post(f"{BAILEYS_WORKER_URL}/sessions/{clean_tenant}/start")
+            res = await client.post(f"{BOONTRACK_WA_WORKER_URL}/sessions/{clean_tenant}/start")
             if res.status_code == 200:
                 data = res.json()
                 return {
@@ -61,12 +62,12 @@ async def connect_growth_session(tenant_slug: str):
                     "tenant_slug": clean_tenant,
                     "qr_raw": data.get("qr_raw"),
                     "qr_image": data.get("qr_image"),
-                    "message": "Sesi QR Baileys siap dipindai."
+                    "message": "Sesi QR BoonTrack WhatsApp Engine siap dipindai."
                 }
     except Exception:
         pass
 
-    # 2. Coba hubungi Evolution API Baileys manager
+    # 2. Coba hubungi Evolution API (BoonTrack WhatsApp Engine manager)
     try:
         from app.services.whatsapp_service import get_or_create_evolution_session
         evo_data = await get_or_create_evolution_session(clean_tenant)
@@ -77,7 +78,7 @@ async def connect_growth_session(tenant_slug: str):
                 "qr_raw": evo_data.get("qr_raw"),
                 "qr_image": evo_data.get("qr_image"),
                 "status": evo_data.get("status"),
-                "message": "Sesi QR WhatsApp terhubung melalui Evolution API Baileys."
+                "message": "Sesi QR WhatsApp terhubung melalui BoonTrack WhatsApp Engine."
             }
     except Exception as evo_err:
         logger.debug(f"[Evolution Connect Note] {evo_err}")
@@ -87,17 +88,17 @@ async def connect_growth_session(tenant_slug: str):
         "success": True,
         "tenant_slug": clean_tenant,
         "qr_image": f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=BoonTrack-{clean_tenant.upper()}-Session",
-        "message": "Sesi QR Baileys siap dipindai."
+        "message": "Sesi QR BoonTrack WhatsApp Engine siap dipindai."
     }
 
 
 @router.post("/inbound-process")
 async def process_inbound_message(payload: InboundPayload):
     """
-    Memproses logika pesan masuk Baileys Growth Plan:
+    Memproses logika pesan masuk BoonTrack WhatsApp Engine (Growth Plan):
     1. Memetakan session ID / tenant_slug ke toko yang sesuai secara presisi.
     2. Menjalankan pipeline AI Knowledge Base & Commerce Rules.
-    3. Mengembalikan reply_text ke Baileys worker untuk di-dispatch via sock.sendMessage.
+    3. Mengembalikan reply_text ke worker BoonTrack WhatsApp Engine untuk di-dispatch via sock.sendMessage.
     """
     # 1. Validasi & Normalisasi Tenant Routing
     raw_tenant = str(payload.tenant_slug or "").strip().lower()
@@ -116,7 +117,7 @@ async def process_inbound_message(payload: InboundPayload):
     # Log Terminal Detail Poin 3: Saat pesan masuk diterima
     logger.info(
         f"\n========================================================\n"
-        f"[GROWTH GATEWAY INBOUND] 📩 Pesan Masuk Diterima dari Baileys!\n"
+        f"[GROWTH GATEWAY INBOUND] 📩 Pesan Masuk Diterima dari BoonTrack WhatsApp Engine!\n"
         f"  • Pengirim     : {clean_phone} (raw: {payload.sender_phone})\n"
         f"  • Tenant ID    : {tenant_slug}\n"
         f"  • Isi Pesan    : \"{incoming_text}\"\n"
@@ -232,7 +233,7 @@ async def process_inbound_message(payload: InboundPayload):
         sender="user",
         text=incoming_text,
         tenant_id=tenant_slug,
-        channel="baileys",
+        channel="boontrack_whatsapp_engine",
         user_phone=clean_phone,
         user_name=contact_name,
     ))
@@ -240,7 +241,7 @@ async def process_inbound_message(payload: InboundPayload):
         sender="bot",
         text=reply,
         tenant_id=tenant_slug,
-        channel="baileys",
+        channel="boontrack_whatsapp_engine",
         user_phone=clean_phone,
         user_name=contact_name,
     ))
@@ -266,7 +267,7 @@ async def process_inbound_message(payload: InboundPayload):
 @router.post("/evolution/webhook", summary="Evolution API Webhook Alias")
 async def handle_evolution_webhook(request: Request, tenant_slug: Optional[str] = None):
     """
-    Webhook Ingestion untuk pesan masuk dari Evolution API (Baileys engine).
+    Webhook Ingestion untuk pesan masuk dari Evolution API (BoonTrack WhatsApp Engine).
     Menerima event MESSAGES_UPSERT, memproses AI Knowledge, dan membalas via sendText.
     """
     try:

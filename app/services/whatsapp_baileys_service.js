@@ -30,12 +30,12 @@ export async function createTenantWASession(tenantSlug, onQRGenerated) {
     }
 
     if (connection === 'open') {
-      console.log(`[BAILEYS SESSION CONNECTED] Sesi aktif terhubung untuk tenant: [${resolvedTenant}]`);
+      console.log(`[BOONTRACK WA ENGINE SESSION CONNECTED] Sesi aktif terhubung untuk tenant: [${resolvedTenant}]`);
     }
 
     if (connection === 'close') {
       const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log(`[BAILEYS SESSION CLOSED] Sesi [${resolvedTenant}] terputus. Reconnect: ${shouldReconnect}`);
+      console.log(`[BOONTRACK WA ENGINE SESSION CLOSED] Sesi [${resolvedTenant}] terputus. Reconnect: ${shouldReconnect}`);
       if (shouldReconnect) {
         createTenantWASession(resolvedTenant, onQRGenerated);
       } else {

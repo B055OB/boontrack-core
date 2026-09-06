@@ -6,7 +6,7 @@ const tenantSessions = new Map();
 const FASTAPI_INTERNAL_URL = process.env.FASTAPI_INTERNAL_URL || 'http://127.0.0.1:8000';
 
 /**
- * Ekstraksi teks pesan secara lengkap dari berbagai format payload Baileys WhatsApp.
+ * Ekstraksi teks pesan secara lengkap dari berbagai format payload BoonTrack WhatsApp Engine.
  */
 export function extractMessageText(msg) {
   if (!msg || !msg.message) return '';
@@ -35,7 +35,7 @@ export function extractMessageText(msg) {
 }
 
 /**
- * Registrasi listener messages.upsert pada socket Baileys dengan filtering & auto-reply AI pipeline.
+ * Registrasi listener messages.upsert pada socket BoonTrack WhatsApp Engine dengan filtering & auto-reply AI pipeline.
  */
 export function registerInboundMessageListener(sock, tenantSlug) {
   const resolvedTenant = String(tenantSlug || 'onlineboost').trim().toLowerCase();
@@ -70,7 +70,7 @@ export function registerInboundMessageListener(sock, tenantSlug) {
       // 4. Ekstraksi teks pesan secara lengkap
       const incomingText = extractMessageText(msg);
       if (!incomingText) {
-        console.log(`[BAILEYS INBOUND] Pesan non-teks diterima dari ${senderJid} (dilewati).`);
+        console.log(`[BOONTRACK WA ENGINE INBOUND] Pesan non-teks diterima dari ${senderJid} (dilewati).`);
         continue;
       }
 
@@ -78,7 +78,7 @@ export function registerInboundMessageListener(sock, tenantSlug) {
 
       // Log Terminal Detail Poin 3: Saat pesan masuk diterima
       console.log(`\n========================================================`);
-      console.log(`[BAILEYS INBOUND] 📩 Pesan Masuk Diterima`);
+      console.log(`[BOONTRACK WA ENGINE INBOUND] 📩 Pesan Masuk Diterima`);
       console.log(`  • Pengirim (JID) : ${senderJid} (HP: ${senderPhone})`);
       console.log(`  • Tenant ID      : ${resolvedTenant}`);
       console.log(`  • Isi Teks       : "${incomingText}"`);
@@ -91,7 +91,7 @@ export function registerInboundMessageListener(sock, tenantSlug) {
 
       try {
         // Log Terminal Detail Poin 3: Proses pengambilan jawaban dari AI/Rules
-        console.log(`[BAILEYS AI PIPELINE] Mengarahkan pesan ke backend AI Knowledge (/api/v1/whatsapp/inbound-process)...`);
+        console.log(`[BOONTRACK WA ENGINE AI PIPELINE] Mengarahkan pesan ke backend AI Knowledge (/api/v1/whatsapp/inbound-process)...`);
         
         const res = await axios.post(
           `${FASTAPI_INTERNAL_URL}/api/v1/whatsapp/inbound-process`,
@@ -104,18 +104,18 @@ export function registerInboundMessageListener(sock, tenantSlug) {
         );
 
         const replyText = res.data?.reply_text;
-        console.log(`[BAILEYS AI PIPELINE] Jawaban diterima dari backend: ${replyText ? `"${replyText.substring(0, 80)}..."` : '(KOSONG)'}`);
+        console.log(`[BOONTRACK WA ENGINE AI PIPELINE] Jawaban diterima dari backend: ${replyText ? `"${replyText.substring(0, 80)}..."` : '(KOSONG)'}`);
 
         // Log Terminal Detail Poin 3: Saat fungsi pengiriman balasan (sock.sendMessage) dipanggil
         if (replyText) {
-          console.log(`[BAILEYS DISPATCH] Mengirim balasan via sock.sendMessage ke ${senderJid}...`);
+          console.log(`[BOONTRACK WA ENGINE DISPATCH] Mengirim balasan via sock.sendMessage ke ${senderJid}...`);
           const sendResult = await sock.sendMessage(senderJid, { text: replyText });
-          console.log(`[BAILEYS DISPATCH SUCCESS] ✅ Balasan berhasil terkirim ke ${senderJid} (Msg ID: ${sendResult?.key?.id || 'OK'})`);
+          console.log(`[BOONTRACK WA ENGINE DISPATCH SUCCESS] ✅ Balasan berhasil terkirim ke ${senderJid} (Msg ID: ${sendResult?.key?.id || 'OK'})`);
         } else {
-          console.warn(`[BAILEYS DISPATCH WARN] Backend tidak mengembalikan reply_text untuk tenant [${resolvedTenant}]`);
+          console.warn(`[BOONTRACK WA ENGINE DISPATCH WARN] Backend tidak mengembalikan reply_text untuk tenant [${resolvedTenant}]`);
         }
       } catch (err) {
-        console.error(`[BAILEYS ERROR] ❌ Gagal memproses auto-reply tenant [${resolvedTenant}] ke ${senderJid}:`, err.response?.data || err.message);
+        console.error(`[BOONTRACK WA ENGINE ERROR] ❌ Gagal memproses auto-reply tenant [${resolvedTenant}] ke ${senderJid}:`, err.response?.data || err.message);
       } finally {
         try {
           await sock.sendPresenceUpdate('paused', senderJid);
@@ -148,12 +148,12 @@ export async function initGrowthSession(tenantSlug, onQRCallback) {
     }
 
     if (connection === 'open') {
-      console.log(`[BAILEYS SESSION CONNECTED] Sesi WhatsApp Baileys terhubung untuk tenant: [${resolvedTenant}]`);
+      console.log(`[BOONTRACK WA ENGINE SESSION CONNECTED] Sesi BoonTrack WhatsApp Engine terhubung untuk tenant: [${resolvedTenant}]`);
     }
 
     if (connection === 'close') {
       const isLoggedOut = lastDisconnect?.error?.output?.statusCode === DisconnectReason.loggedOut;
-      console.log(`[BAILEYS SESSION CLOSED] Sesi [${resolvedTenant}] terputus. Reconnect: ${!isLoggedOut}`);
+      console.log(`[BOONTRACK WA ENGINE SESSION CLOSED] Sesi [${resolvedTenant}] terputus. Reconnect: ${!isLoggedOut}`);
       if (!isLoggedOut) {
         initGrowthSession(resolvedTenant, onQRCallback);
       } else {

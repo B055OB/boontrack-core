@@ -477,7 +477,7 @@ async def handle_platform_support(payload: PlatformSupportRequest = Body(...)):
     """
     Rute layanan pelanggan & CS resmi platform BoonTrack.
     - Memanggil profil PLATFORM_SUPPORT (ModelProfile: BALANCED).
-    - Panduan integrasi WhatsApp (Baileys vs Meta WABA), dynamic QRIS, payout affiliate, logistik Biteship.
+    - Panduan integrasi WhatsApp (BoonTrack WhatsApp Engine vs Meta WABA), dynamic QRIS, payout affiliate, logistik Biteship.
     - Menyertakan eskalasi langsung ke CS WhatsApp resmi (+6281237450222) untuk isu mendesak.
     """
     target_tenant = payload.tenant_slug or payload.tenant_id or "boontrack-platform"
