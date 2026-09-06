@@ -386,8 +386,8 @@ async def handle_whatsapp_webhook(request: Request):
     # 2. HANDLER TOMBOL INTERAKTIF 1, 2, 3
     # -------------------------------------------------------------------------
 
-    # Tombol 1: Daftar / Rincian Produk
-    if button_id in {"btn_view_service", "btn_view_catalog"} or "daftar produk" in text_lower or text_lower == "katalog":
+# Tombol 1: Daftar / Rincian Produk
+    if button_id in {"btn_view_service", "btn_catalog", "btn_view_catalog"} or "daftar produk" in text_lower or text_lower == "katalog":
         if from_phone:
             await send_whatsapp_tenant_catalog(
                 phone=from_phone,
