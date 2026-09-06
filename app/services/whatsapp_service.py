@@ -521,13 +521,9 @@ def resolve_dynamic_tenant_for_whatsapp(
     clean_phone = normalize_phone_number(from_phone)
     text = (message_text or "").strip()
     text_lower = text.lower()
-
-    if text_lower in ("#reset", "reset", "menu utama", "#menu", "menu", "demo"):
-        if clean_phone:
-            reset_whatsapp_user_session(clean_phone)
-            user_session_states[clean_phone] = "AWAITING_PORTAL_CHOICE"
-        logger.info(f"[DYNAMIC TENANT WA] Sender {clean_phone} triggered reset/demo menu")
-        return "__MENU__", False
+    clean_phone_id = str(phone_id).strip()
+    career_phone_id = os.getenv("CAREER_PHONE_NUMBER_ID", "1340866379104241")
+    is_career_phone = (clean_phone_id == "1340866379104241" or clean_phone_id == career_phone_id)
 
     option_map = {
         "1": "ombudi",
@@ -558,6 +554,46 @@ def resolve_dynamic_tenant_for_whatsapp(
         "prima fit gym": "atmosfitnes",
         "atmosfitnes": "atmosfitnes",
     }
+
+    # =========================================================================
+    # JALUR KHUSUS NOMOR CAREER ASSISTANT
+    # =========================================================================
+    if is_career_phone:
+        # HANYA '#reset' eksplisit yang boleh membuka menu 4 portal pengujian di nomor Career
+        if text_lower == "#reset":
+            if clean_phone:
+                reset_whatsapp_user_session(clean_phone)
+                user_session_states[clean_phone] = "AWAITING_PORTAL_CHOICE"
+            logger.info(f"[DYNAMIC TENANT WA] Career sender {clean_phone} explicitly triggered #reset -> portal menu")
+            return "__MENU__", False
+
+        # Jika user di nomor Career sedang memilih portal setelah #reset
+        if user_session_states.get(clean_phone) == "AWAITING_PORTAL_CHOICE" and text_lower in option_map:
+            target_slug = option_map[text_lower]
+            if clean_phone:
+                user_tenant_sessions[clean_phone] = target_slug
+                user_session_states[clean_phone] = "ACTIVE"
+            logger.info(f"[DYNAMIC TENANT WA] Career sender {clean_phone} chose portal '{target_slug}'")
+            return target_slug, True
+
+        # Jika user di nomor Career sudah mengunci session ke demo tenant (misal OnlineBoost)
+        if clean_phone and clean_phone in user_tenant_sessions:
+            return user_tenant_sessions[clean_phone], False
+
+        # Pesan salam biasa ("halo", "hi", "p", dst) atau pertanyaan karir TIDAK BOLEH di-intercept!
+        # Langsung arahkan ke agent konsultasi Career
+        return "boontrack-career", False
+
+    # =========================================================================
+    # JALUR NOMOR OM BUDI / DEMO NUMBER (SANDBOX)
+    # =========================================================================
+    if text_lower in ("#reset", "reset", "menu utama", "#menu", "menu", "demo"):
+        if clean_phone:
+            reset_whatsapp_user_session(clean_phone)
+            user_session_states[clean_phone] = "AWAITING_PORTAL_CHOICE"
+        logger.info(f"[DYNAMIC TENANT WA] Sender {clean_phone} triggered reset/demo menu")
+        return "__MENU__", False
+
     if text_lower in option_map:
         target_slug = option_map[text_lower]
         if clean_phone:
@@ -584,12 +620,10 @@ def resolve_dynamic_tenant_for_whatsapp(
         logger.info(f"[DYNAMIC TENANT WA] Bound sender {clean_phone} to store '{target_slug}' via onboarding message")
         return target_slug, True
 
+    # Salam biasa ("halo", "hi", "test", dll) untuk nomor demo / Om Budi: tampilkan menu 4 portal sebagai default/fallback
     if text_lower in ("halo", "hi", "p", "test", "tes", "hai", "start", "info"):
         return "__MENU__", False
 
-    clean_phone_id = str(phone_id).strip()
-    if clean_phone_id == "1340866379104241":
-        return "boontrack-career", False
     if clean_phone_id == "1268977686299719":
         return "om_budi", False
 

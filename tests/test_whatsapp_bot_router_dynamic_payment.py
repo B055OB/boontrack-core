@@ -349,7 +349,34 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
         conf, score, ans, intent = om_budi_service.matcher.find_match("4")
         self.assertNotEqual(intent, "tanya_materi_riyadhoh")
 
+    @patch("app.tenants.career.service.career_service.handle_text_or_button", new_callable=AsyncMock)
+    def test_career_phone_greeting_routes_to_career_not_demo_menu(self, mock_career_handle):
+        """Pesan salam (halo/hi) ke Phone ID Career Assist diarahkan langsung ke Career Assistant tanpa memunculkan menu 4 portal."""
+        career_phone_id = "1340866379104241"
+        phone = "628777123456"
+        clean = normalize_phone_number(phone)
+
+        for kw in ["halo", "hi", "p", "mau konsultasi karir"]:
+            resp = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, kw, phone_id=career_phone_id))
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            # BUKAN menu_dispatched dan BUKAN __MENU__
+            self.assertNotEqual(data.get("status"), "menu_dispatched")
+            self.assertEqual(data.get("tenant"), "boontrack-career")
+
+        mock_career_handle.assert_called()
+
+        # Namun jika eksplisit mengetik #reset, menu 4 portal pengujian HARUS muncul
+        resp_reset = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, "#reset", phone_id=career_phone_id))
+        self.assertEqual(resp_reset.status_code, 200)
+        data_reset = resp_reset.json()
+        self.assertEqual(data_reset.get("status"), "menu_dispatched")
+        self.assertEqual(data_reset.get("tenant"), "__MENU__")
+        self.assertIn("Om Budi Channel", data_reset.get("reply", ""))
+        self.assertIn("OnlineBoost", data_reset.get("reply", ""))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

@@ -254,11 +254,25 @@ class CareerService:
         return False
 
     def _init_user_session(self, sender_wa_id: str) -> dict:
-        user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}})
+        user_session = GLOBAL_USER_STATES.setdefault(sender_wa_id, {"step": 0, "mode": "menu", "data": {}, "context_json": {}})
+        if "context_json" not in user_session:
+            user_session["context_json"] = {}
         if is_whitelisted_career_phone(sender_wa_id):
             user_session["is_premium_paid"] = True
             user_session["tier"] = "premium_unlocked"
         return user_session
+
+    def _update_session_context(self, sender_wa_id: str) -> None:
+        user_session = self._init_user_session(sender_wa_id)
+        user_session["context_json"] = {
+            "step": user_session.get("step", 0),
+            "mode": user_session.get("mode", "menu"),
+            "data": user_session.get("data", {}),
+            "tier": user_session.get("tier", "free"),
+            "is_premium_paid": user_session.get("is_premium_paid", False),
+            "active_invoice": user_session.get("active_invoice"),
+            "has_completed_cv": user_session.get("data", {}).get("has_completed_cv", False),
+        }
 
     async def send_menu_buttons(self, sender_wa_id: str):
         """Kirim menu interaktif (Dinamis: Freemium vs Premium Decision Engine)"""
@@ -578,6 +592,7 @@ class CareerService:
         await self.check_and_expire_session(sender_wa_id, ttl_minutes=30)
 
         user_session = self._init_user_session(sender_wa_id)
+        self._update_session_context(sender_wa_id)
         user_text_clean = (user_text or "").lower().strip()
         current_mode = user_session.get("mode", "menu")
 
@@ -592,7 +607,7 @@ class CareerService:
             user_name=display_name,
             user_id=sender_wa_id,
             conversation_id=sender_wa_id,
-            metadata={"button_id": button_id, "mode": current_mode, "msg_type": "interactive" if button_id else "text"}
+            metadata={"button_id": button_id, "mode": current_mode, "msg_type": "interactive" if button_id else "text", "context_json": user_session.get("context_json", {})}
         )
 
         # 2. Admin Fallback Commands (/verify & /retry_doc)

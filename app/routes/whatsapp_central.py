@@ -379,9 +379,12 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             normalize_phone_number,
             send_whatsapp_tenant_catalog,
         )
-        clean_phone = normalize_phone_number(from_phone)
+        is_career = (str(phone_id).strip() == CAREER_PHONE_NUMBER_ID or str(phone_id).strip() == os.getenv("CAREER_PHONE_NUMBER_ID", CAREER_PHONE_NUMBER_ID))
+        is_reset = (clean_text == "#reset") if is_career else (
+            clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo"] or clean_btn in ["btn_menu_reset", "reset"]
+        )
 
-        if clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo"] or clean_btn in ["btn_menu_reset", "reset"]:
+        if is_reset:
             reset_whatsapp_user_session(from_phone)
             if clean_phone:
                 user_session_states[clean_phone] = "AWAITING_PORTAL_CHOICE"

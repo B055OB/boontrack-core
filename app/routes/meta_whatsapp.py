@@ -143,11 +143,20 @@ async def handle_whatsapp_webhook(request: Request):
     if clean_phone and phone_id:
         user_phone_number_id_sessions[clean_phone] = phone_id
 
+    career_phone_id = os.getenv("CAREER_PHONE_NUMBER_ID", "1340866379104241")
+    is_career_phone = (phone_id == "1340866379104241" or phone_id == career_phone_id)
+
     # =========================================================================
     # P0 INTERCEPT: COMMAND #RESET / RESET / MENU UTAMA
     # =========================================================================
-    if clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo"] or clean_btn in ["btn_menu_reset", "reset"]:
-        logger.info(f"[META WA ROUTER] Reset command detected from {clean_phone}.")
+    # Isolasi Nomor Career: HANYA command '#reset' eksplisit yang boleh membuka menu 4 portal pengujian.
+    # Untuk nomor demo / Om Budi: reset, menu utama, demo, dll tetap aktif.
+    is_reset = (clean_text == "#reset") if is_career_phone else (
+        clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo"] or clean_btn in ["btn_menu_reset", "reset"]
+    )
+
+    if is_reset:
+        logger.info(f"[META WA ROUTER] Reset command detected from {clean_phone} (is_career={is_career_phone}).")
         reset_whatsapp_user_session(clean_phone)
         if clean_phone:
             user_session_states[clean_phone] = "AWAITING_PORTAL_CHOICE"
@@ -180,12 +189,7 @@ async def handle_whatsapp_webhook(request: Request):
 
         if selected_slug == "onlineboost":
             if from_phone:
-                await send_whatsapp_tenant_catalog(
-                    phone=from_phone,
-                    tenant_slug="onlineboost",
-                    tenant_id="ombudi",
-                    phone_number_id=phone_id
-                )
+                await send_whatsapp_tenant_catalog(from_phone, "onlineboost")
             safe_log_to_supabase_messages(
                 sender="bot",
                 text="[Katalog OnlineBoost Dispatched]",
@@ -252,27 +256,32 @@ async def handle_whatsapp_webhook(request: Request):
     # =========================================================================
     if tenant_slug in ("onlineboost", "growthplus", "proscale"):
         pass
-    elif tenant_slug in ("boontrack-career", "boontrack_career", "career"):
-        reply = await process_incoming_message(
-            tenant_slug=tenant_slug,
-            message=incoming_text,
-            user_phone=from_phone,
-            user_name=contact_name,
-            button_id=event.get("button_id"),
-        )
-        reply = sanitize_whatsapp_message_text(reply)
-        if reply and from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id=tenant_slug, phone_number_id=phone_id)
-
-        safe_log_to_supabase_messages(
-            sender="bot",
-            text=reply or "",
-            tenant_id=tenant_slug,
-            channel="whatsapp",
-            user_phone=from_phone,
-            user_name=contact_name,
-        )
-        return JSONResponse(status_code=200, content={"status": "success", "tenant": tenant_slug, "reply": reply})
+    elif tenant_slug in ("boontrack-career", "boontrack_career", "career") or (is_career_phone and user_tenant_sessions.get(clean_phone) not in ("onlineboost", "growthplus", "proscale")):
+        from app.tenants.career.service import career_service
+        msg_type = event.get("msg_type", "text")
+        if msg_type == "image":
+            await career_service.handle_image(
+                sender_wa_id=from_phone,
+                display_name=contact_name,
+                media_id=event.get("media_id")
+            )
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-career", "reply": "Career image handled"})
+        elif msg_type == "document":
+            await career_service.handle_document(
+                sender_wa_id=from_phone,
+                display_name=contact_name,
+                media_id=event.get("media_id"),
+                filename=event.get("media_filename") or "document.pdf"
+            )
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-career", "reply": "Career document handled"})
+        else:
+            await career_service.handle_text_or_button(
+                sender_wa_id=from_phone,
+                display_name=contact_name,
+                user_text=incoming_text,
+                button_id=event.get("button_id") or ""
+            )
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-career", "reply": "Career message handled"})
 
     elif tenant_slug in ("ombudi", "om_budi", "om-budi"):
         from app.tenants.om_budi.service import om_budi_service
