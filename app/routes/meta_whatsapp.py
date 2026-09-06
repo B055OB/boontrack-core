@@ -8,6 +8,7 @@ import logging
 import urllib.parse
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Request, Response, Query
+from fastapi.responses import JSONResponse
 
 from app.services.whatsapp_service import (
     extract_meta_whatsapp_event,
@@ -21,6 +22,7 @@ from app.services.whatsapp_service import (
     user_tenant_sessions,
     user_session_states,
     user_phone_number_id_sessions,
+    user_cart_sessions,
     safe_log_to_supabase_messages,
     normalize_phone_number,
     generate_fast_track_checkout_response,
@@ -108,22 +110,21 @@ async def handle_whatsapp_webhook(request: Request):
     try:
         data = await request.json()
     except Exception:
-        return {"status": "error", "message": "Invalid JSON format"}
+        return JSONResponse(status_code=200, content={"status": "error", "message": "Invalid JSON format"})
 
-    # Guard 1: Filter status updates (sent, delivered, read) agar tidak looping
     try:
         entry = data.get("entry", [{}])[0]
         changes = entry.get("changes", [{}])[0]
         val = changes.get("value", {})
         if "statuses" in val and "messages" not in val:
-            return {"status": "status_ignored"}
+            return JSONResponse(status_code=200, content={"status": "status_ignored"})
     except Exception:
         pass
 
     event = extract_meta_whatsapp_event(data)
 
     if event.get("is_status") or not event.get("is_message"):
-        return {"status": "ignored"}
+        return JSONResponse(status_code=200, content={"status": "ignored"})
 
     from_phone = event.get("from_phone", "")
     incoming_text = (event.get("text") or "").strip()
@@ -131,7 +132,6 @@ async def handle_whatsapp_webhook(request: Request):
     clean_phone = normalize_phone_number(from_phone)
     button_id = str(event.get("button_id") or "").strip().lower()
     
-    # Resolusi Phone ID dengan fallback wajib ke nomor Om Budi jika payload kosong
     phone_id = str(event.get("phone_id") or "").strip()
     if not phone_id:
         phone_id = os.getenv("OM_BUDI_PHONE_NUMBER_ID", "1268977686299719")
@@ -140,15 +140,14 @@ async def handle_whatsapp_webhook(request: Request):
     text_lower = clean_text
     clean_btn = button_id
 
-    # Simpan session phone_number_id agar tetap konsisten
     if clean_phone and phone_id:
         user_phone_number_id_sessions[clean_phone] = phone_id
 
     # =========================================================================
-    # P0 INTERCEPT: COMMAND #RESET / RESET / MENU UTAMA (TOP PRIORITY)
+    # P0 INTERCEPT: COMMAND #RESET / RESET / MENU UTAMA
     # =========================================================================
     if clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo"] or clean_btn in ["btn_menu_reset", "reset"]:
-        logger.info(f"[META WA ROUTER] Reset command '{clean_text}' detected from {clean_phone}. Clearing session & dispatching 4-portal demo menu.")
+        logger.info(f"[META WA ROUTER] Reset command detected from {clean_phone}.")
         reset_whatsapp_user_session(clean_phone)
         if clean_phone:
             user_session_states[clean_phone] = "AWAITING_PORTAL_CHOICE"
@@ -164,7 +163,7 @@ async def handle_whatsapp_webhook(request: Request):
             user_phone=from_phone,
             user_name=contact_name,
         )
-        return {"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}
+        return JSONResponse(status_code=200, content={"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT})
 
     # =========================================================================
     # P0 INTERCEPT: MENU SELECTION 1, 2, 3, 4
@@ -195,7 +194,7 @@ async def handle_whatsapp_webhook(request: Request):
                 user_phone=from_phone,
                 user_name=contact_name,
             )
-            return {"status": "success", "tenant": "onlineboost", "reply": "[Katalog OnlineBoost Dispatched]", "is_new_binding": True}
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": "onlineboost", "reply": "[Katalog OnlineBoost Dispatched]"})
 
         elif selected_slug == "ombudi":
             ombudi_buttons = [
@@ -223,33 +222,20 @@ async def handle_whatsapp_webhook(request: Request):
                 user_phone=from_phone,
                 user_name=contact_name,
             )
-            return {"status": "success", "tenant": "ombudi", "reply": greeting, "is_new_binding": True}
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": "ombudi", "reply": greeting})
 
-        elif selected_slug == "growthplus":
+        elif selected_slug in ("growthplus", "proscale"):
             if from_phone:
                 await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="ombudi", phone_number_id=phone_id)
             safe_log_to_supabase_messages(
                 sender="bot",
                 text=greeting,
-                tenant_id="growthplus",
+                tenant_id=selected_slug,
                 channel="whatsapp",
                 user_phone=from_phone,
                 user_name=contact_name,
             )
-            return {"status": "success", "tenant": "growthplus", "reply": greeting, "is_new_binding": True}
-
-        elif selected_slug == "proscale":
-            if from_phone:
-                await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="ombudi", phone_number_id=phone_id)
-            safe_log_to_supabase_messages(
-                sender="bot",
-                text=greeting,
-                tenant_id="proscale",
-                channel="whatsapp",
-                user_phone=from_phone,
-                user_name=contact_name,
-            )
-            return {"status": "success", "tenant": "proscale", "reply": greeting, "is_new_binding": True}
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": selected_slug, "reply": greeting})
 
     # Resolusi Tenant Dinamis
     tenant_slug, is_new_bind = resolve_dynamic_tenant_for_whatsapp(
@@ -262,7 +248,7 @@ async def handle_whatsapp_webhook(request: Request):
         tenant_slug = "onlineboost"
 
     # =========================================================================
-    # JALUR A: PRODUKSI AKTIF (Career Assistant & Admin Om Budi)
+    # JALUR PRODUKSI: CAREER ATAU OM BUDI LAMA
     # =========================================================================
     if tenant_slug in ("onlineboost", "growthplus", "proscale"):
         pass
@@ -286,7 +272,8 @@ async def handle_whatsapp_webhook(request: Request):
             user_phone=from_phone,
             user_name=contact_name,
         )
-        return {"status": "success", "tenant": tenant_slug, "reply": reply}
+        return JSONResponse(status_code=200, content={"status": "success", "tenant": tenant_slug, "reply": reply})
+
     elif tenant_slug in ("ombudi", "om_budi", "om-budi"):
         from app.tenants.om_budi.service import om_budi_service
         res = await om_budi_service.handle_incoming_message(
@@ -319,33 +306,28 @@ async def handle_whatsapp_webhook(request: Request):
             user_phone=from_phone,
             user_name=contact_name,
         )
-        return {"status": "success", "tenant": "ombudi", "reply": reply_text}
+        return JSONResponse(status_code=200, content={"status": "success", "tenant": "ombudi", "reply": reply_text})
 
     # =========================================================================
-    # JALUR B: TOKO DEMO (Menu Switcher 1, 2, 3, 4)
+    # JALUR TOKO DEMO (ONLINEBOOST, GROWTH+, PROSCALE)
     # =========================================================================
-
-    # 1. Reset ke Menu Utama atau trigger salam/menu
     if tenant_slug == "__MENU__" or clean_text in _COMMERCE_DEMO_TRIGGERS or button_id == "btn_menu_reset":
         if clean_phone:
             reset_whatsapp_user_session(clean_phone)
         if from_phone:
             await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, tenant_id="ombudi", phone_number_id=phone_id)
-        return {"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}
+        return JSONResponse(status_code=200, content={"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT})
 
-    # Ambil tenant aktif sesi saat ini
-    active_tenant = user_tenant_sessions.get(clean_phone)
-    if not active_tenant:
-        if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, tenant_id="ombudi", phone_number_id=phone_id)
-        return {"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}
+    active_tenant = user_tenant_sessions.get(clean_phone) or "onlineboost"
 
-    # 3. Fast-Track QRIS Closing (Tombol Beli / Kata Kunci Pembelian)
+    # -------------------------------------------------------------------------
+    # 1. FAST-TRACK QRIS CHECKOUT
+    # -------------------------------------------------------------------------
     is_qris_buy_action = (
-        button_id in {"btn_buy_now", "buy_now", "order_now", "qris_buy", "beli_qris"}
+        button_id in {"btn_buy_now", "buy_now", "order_now", "qris_buy", "beli_qris", "btn_checkout_cart"}
         or "beli & bayar qris" in text_lower
         or "bayar qris" in text_lower
-        or text_lower == "beli"
+        or text_lower in {"beli", "beli 1", "bayar"}
         or is_closing_buy_intent(incoming_text, button_id)
     )
 
@@ -388,30 +370,99 @@ async def handle_whatsapp_webhook(request: Request):
                 user_phone=from_phone,
                 user_name=contact_name,
             )
-            return {
+            return JSONResponse(status_code=200, content={
                 "status": "qris_dispatched",
                 "tenant": active_tenant,
                 "invoice_id": invoice.get("external_id"),
-            }
+            })
         except Exception as e:
             logger.error(f"[FAST TRACK CHECKOUT ERROR] {e}")
+            fallback_msg = "Maaf, sistem sedang memproses antrean invoice QRIS. Silakan ketik *Beli* sekali lagi ya Kak! 🙏"
+            if from_phone:
+                await send_whatsapp_text(to_phone=from_phone, text=fallback_msg, tenant_id="ombudi", phone_number_id=phone_id)
+            return JSONResponse(status_code=200, content={"status": "error", "tenant": active_tenant, "error": str(e)})
 
-    # 4. Info Layanan Action
-    if button_id == "btn_view_service" or "layanan" in clean_text or "paket" in clean_text or "silabus" in clean_text:
-        layanan_text = (
-            "🚀 *PAKET SCALE-UP DIGITAL MARKETING ONLINEBOOST:*\n\n"
-            "• *Modul 1:* Setup Pixel & Riset Winning Audience Meta/TikTok Ads\n"
-            "• *Modul 2:* Strategi Scaling Budget Campaign CBO vs ABO\n"
-            "• *Modul 3:* High-Converting Funneling & Copywriting Konversi\n"
-            "• *Bonus:* Template Spreadsheet Kalkulator ROI Iklan + Diskusi VIP\n\n"
-            "🔥 *Promo Starter Kit:* Cuma *Rp99.000* (Akses Selamanya)\n\n"
-            "Ketik *Beli* atau klik tombol di atas untuk pembayaran QRIS instan."
+    # -------------------------------------------------------------------------
+    # 2. HANDLER TOMBOL INTERAKTIF 1, 2, 3
+    # -------------------------------------------------------------------------
+
+    # Tombol 1: Daftar / Rincian Produk
+    if button_id in {"btn_view_service", "btn_view_catalog"} or "daftar produk" in text_lower or text_lower == "katalog":
+        if from_phone:
+            await send_whatsapp_tenant_catalog(
+                phone=from_phone,
+                tenant_slug=active_tenant,
+                tenant_id="ombudi",
+                phone_number_id=phone_id,
+            )
+        return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "action": "view_catalog"})
+
+    # Tombol 2: Keranjang Belanja
+    if button_id in {"btn_view_cart", "btn_cart"} or "keranjang" in text_lower:
+        items = user_cart_sessions.get(clean_phone, [])
+        if not items:
+            cart_msg = (
+                "🛒 *Keranjang Belanja Anda Kosong*\n\n"
+                "Silakan pilih produk dari katalog terlebih dahulu dengan mengetik *Beli* atau klik tombol di bawah:"
+            )
+            cart_empty_btns = [
+                {"id": "btn_view_service", "title": "🛍️ Daftar Produk"},
+                {"id": "btn_ask_ai", "title": "💬 Tanya Produk (AI)"},
+            ]
+            if from_phone:
+                await send_whatsapp_buttons(
+                    to_phone=from_phone,
+                    body_text=cart_msg,
+                    buttons=cart_empty_btns,
+                    tenant_id="ombudi",
+                    phone_number_id=phone_id,
+                )
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "action": "empty_cart"})
+
+        item_lines = [
+            f"• *{it.get('title') or it.get('name')}* (Rp{int(float(it.get('promo_price') or it.get('price') or 0)):,})".replace(",", ".")
+            for it in items
+        ]
+        total_bill = sum(int(float(it.get('promo_price') or it.get('price') or 0)) for it in items)
+        cart_summary = (
+            f"🛒 *KERANJANG BELANJA ANDA ({len(items)} Item)*\n\n"
+            + "\n".join(item_lines)
+            + f"\n\n💰 *Total:* Rp{total_bill:,}".replace(",", ".")
+            + "\n\nKetik *Beli* untuk langsung bayar via Dynamic QRIS."
+        )
+        cart_filled_btns = [
+            {"id": "btn_buy_now", "title": "💳 Bayar QRIS"},
+            {"id": "btn_view_service", "title": "🛍️ Tambah Produk"},
+        ]
+        if from_phone:
+            await send_whatsapp_buttons(
+                to_phone=from_phone,
+                body_text=cart_summary,
+                buttons=cart_filled_btns,
+                tenant_id="ombudi",
+                phone_number_id=phone_id,
+            )
+        return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "action": "view_cart"})
+
+    # Tombol 3: Tanya Produk (LLM Contextual Agent)
+    if button_id in {"btn_ask_ai", "ask_ai"} or "tanya produk" in text_lower:
+        prompt_intro = (
+            "🤖 *BoonPilot AI Assistant*\n\n"
+            f"Ada yang ingin ditanyakan seputar materi ecourse atau paket layanan di *{active_tenant.upper()}*?\n\n"
+            "Ketik langsung pertanyaan Kakak (misal: _'Apa materi yang dipelajari di Ecourse CPM?'_), asisten AI kami siap menjawab! ✨"
         )
         if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=layanan_text, tenant_id="ombudi", phone_number_id=phone_id)
-        return {"status": "success", "tenant": "onlineboost", "reply": layanan_text}
+            await send_whatsapp_text(
+                to_phone=from_phone,
+                text=prompt_intro,
+                tenant_id="ombudi",
+                phone_number_id=phone_id,
+            )
+        return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "action": "ask_ai_prompt"})
 
-    # 5. Fallback AI Response
+    # -------------------------------------------------------------------------
+    # 3. CONVERSATIONAL COMMERCE AI (FALLBACK LLM DENGAN DATA TOKO)
+    # -------------------------------------------------------------------------
     reply = await commerce_ai_engine.generate_commerce_response(
         tenant_slug=active_tenant,
         user_message=incoming_text,
@@ -442,4 +493,4 @@ async def handle_whatsapp_webhook(request: Request):
         user_name=contact_name,
     )
 
-    return {"status": "success", "tenant": active_tenant, "reply": reply}
+    return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "reply": reply})

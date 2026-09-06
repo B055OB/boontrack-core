@@ -59,8 +59,6 @@ def normalize_phone_number(raw_phone: Optional[str]) -> str:
 user_tenant_sessions: Dict[str, str] = {}
 user_session_states: Dict[str, str] = {}
 user_cart_sessions: Dict[str, List[Dict[str, Any]]] = {}
-# Track the WhatsApp Business Phone Number ID per user session so replies
-# always originate from the same number the user messaged.
 user_phone_number_id_sessions: Dict[str, str] = {}
 
 DEMO_MENU_TEXT = (
@@ -157,7 +155,6 @@ def sanitize_whatsapp_message_text(text: Any) -> str:
         return str(text).strip()
 
     raw = text.strip()
-    # 1. Lepaskan pembungkus markdown ```json ... ``` atau ``` ... ```
     if raw.startswith("```"):
         lines = raw.split("\n")
         if len(lines) >= 2 and lines[-1].strip().startswith("```"):
@@ -167,7 +164,6 @@ def sanitize_whatsapp_message_text(text: Any) -> str:
         elif raw.startswith("```"):
             raw = raw[3:].rstrip("`").strip()
 
-    # 2. Parse jika berbentuk JSON object dengan key reply
     if (raw.startswith("{") and raw.endswith("}")) or '"reply"' in raw:
         try:
             parsed = json.loads(raw)
@@ -183,7 +179,6 @@ def sanitize_whatsapp_message_text(text: Any) -> str:
                 except Exception:
                     raw = match.group(1).strip()
 
-    # 3. Format rapi markdown
     try:
         from app.services.ai_gateway.models import clean_ai_response
         return clean_ai_response(raw)
@@ -191,7 +186,6 @@ def sanitize_whatsapp_message_text(text: Any) -> str:
         return raw
 
 
-# Fast-Track Closing Intents
 BUY_INTENTS = {
     "ya", "mau", "ya mau", "boleh", "ya boleh", "daftar", "beli", "pesan", "bayar", "transfer", "qris", "checkout", "lanjut",
     "mau daftar", "mau beli", "mau pesan", "mau bayar", "buatkan qris", "minta qris", "kirim qris",
@@ -201,7 +195,6 @@ BUY_INTENTS = {
 
 
 def is_closing_buy_intent(text: str, button_id: Optional[str] = None) -> bool:
-    """Detects if incoming user text or button payload indicates high-intent purchase / checkout demand."""
     clean_btn = str(button_id or "").strip().lower()
     if clean_btn in {"btn_buy_now", "buy_now", "order_now", "qris_buy", "beli_qris", "btn_checkout_cart"} or clean_btn.startswith("prod_"):
         return True
@@ -218,7 +211,6 @@ def is_closing_buy_intent(text: str, button_id: Optional[str] = None) -> bool:
 
 
 def generate_qris_image_bytes(qr_string: str) -> bytes:
-    """Renders EMVCo QRIS payload string to PNG bytes in memory using qris_generator."""
     try:
         from app.services.qris_generator import generate_qris_png_bytes
         return generate_qris_png_bytes(qr_string)
@@ -238,7 +230,6 @@ def generate_qris_image_bytes(qr_string: str) -> bytes:
 
 
 def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, Any]]]:
-    """Mengambil katalog produk tenant secara real-time langsung dari database Supabase/onboarding service tanpa fallback mock ke toko lain."""
     from app.services.onboarding_service import onboarding_service
     
     clean_slug = str(tenant_slug or "").strip().lower()
@@ -257,12 +248,10 @@ def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, A
     store_name = details.get("tenant", {}).get("name") or clean_slug.replace("-", " ").replace("_", " ").title()
     products = details.get("products", [])
 
-    # Query langsung ke Supabase jika cache onboarding belum terisi
     if not products:
         supabase = get_supabase()
         if supabase:
             try:
-                # 1. Cari data tenant untuk mendapatkan tenant_id (UUID) & store_name
                 t_id = None
                 try:
                     t_res = supabase.table("tenants").select("id, name, slug").in_("slug", candidate_slugs).execute()
@@ -272,7 +261,6 @@ def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, A
                 except Exception as te:
                     logger.debug(f"[TENANT RESOLVE ERROR] {te}")
 
-                # 2. Query products berdasarkan tenant_id (UUID FK di Supabase)
                 if t_id:
                     try:
                         p_res = supabase.table("products").select("*").eq("tenant_id", t_id).execute()
@@ -281,7 +269,6 @@ def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, A
                     except Exception as pe:
                         logger.debug(f"[PRODUCTS BY TENANT_ID ERROR] {pe}")
 
-                # 3. Fallback jika ada tabel dengan kolom tenant_slug langsung
                 if not products:
                     try:
                         p_res2 = supabase.table("products").select("*").in_("tenant_slug", candidate_slugs).execute()
@@ -290,7 +277,6 @@ def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, A
                     except Exception:
                         pass
 
-                # 4. Fallback jika tersimpan di commerce_products
                 if not products:
                     try:
                         cp_res = supabase.table("commerce_products").select("*").in_("tenant_slug", candidate_slugs).execute()
@@ -301,12 +287,10 @@ def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, A
             except Exception as e:
                 logger.warning(f"[DB PRODUCTS FETCH ERROR] {e}")
 
-    # Kembalikan store_name dan produk murni dari DB (tanpa fallback mock toko lain)
     return store_name, products
 
 
 def build_tenant_catalog_sections(tenant_slug: str) -> Tuple[str, List[Dict[str, Any]]]:
-    """Mengambil katalog produk aktif dari database onboarding secara dinamis untuk Meta Interactive List."""
     store_name, products = get_tenant_products_from_db(tenant_slug)
 
     if not products:
@@ -314,7 +298,7 @@ def build_tenant_catalog_sections(tenant_slug: str) -> Tuple[str, List[Dict[str,
         return body_text, []
 
     rows = []
-    for p in products[:10]:  # Meta WhatsApp List membatasi maksimal 10 baris
+    for p in products[:10]:
         p_id = str(p.get("id", "prod_1"))
         if not p_id.startswith("prod_"):
             p_id = f"prod_{p_id}"
@@ -340,7 +324,6 @@ def build_tenant_catalog_sections(tenant_slug: str) -> Tuple[str, List[Dict[str,
 
 
 async def send_whatsapp_tenant_catalog(phone: str, tenant_slug: str = "onlineboost", tenant_id: Optional[str] = None, phone_number_id: Optional[str] = None, access_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """Menampilkan 4 ecourse / katalog produk riil dari Supabase ke WhatsApp user."""
     clean_phone = normalize_phone_number(phone)
     target_tenant = tenant_id or tenant_slug
     store_name, products = get_tenant_products_from_db(tenant_slug)
@@ -363,10 +346,11 @@ async def send_whatsapp_tenant_catalog(phone: str, tenant_slug: str = "onlineboo
         f"_Ketik #reset kapan saja untuk kembali ke menu demo toko._"
     )
 
+    # 3 Tombol Utama: Daftar Produk, Keranjang Belanja, Tanya Produk
     buttons = [
-        {"id": "btn_buy_now", "title": "💳 Beli & Bayar QRIS"},
-        {"id": "btn_view_service", "title": "🚀 Info Layanan"},
-        {"id": "btn_menu_reset", "title": "🔄 Ganti Demo Toko"},
+        {"id": "btn_view_service", "title": "🛍️ Daftar Produk"},
+        {"id": "btn_view_cart", "title": "🛒 Keranjang Belanja"},
+        {"id": "btn_ask_ai", "title": "💬 Tanya Produk (AI)"},
     ]
 
     try:
@@ -388,7 +372,6 @@ async def send_whatsapp_tenant_catalog(phone: str, tenant_slug: str = "onlineboo
 
 
 def add_product_to_cart(from_phone: str, tenant_slug: str, product_key: str) -> Tuple[str, List[Dict[str, str]], int]:
-    """Menambahkan item ke keranjang dan mengembalikan ringkasan serta tombol navigasi."""
     clean_phone = normalize_phone_number(from_phone)
     _, products = get_tenant_products_from_db(tenant_slug)
     
@@ -437,7 +420,6 @@ async def generate_cart_checkout_response(
     from_phone: str,
     contact_name: str = "Kakak"
 ) -> Tuple[str, Dict[str, Any], bytes]:
-    """Menerbitkan satu invoice QRIS gabungan untuk seluruh produk di keranjang belanja via Xendit Sandbox."""
     from app.services.xendit_service import xendit_service
     import urllib.parse
 
@@ -492,7 +474,6 @@ async def generate_fast_track_checkout_response(
     contact_name: str = "Kakak",
     product_key: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any], bytes]:
-    """Membuat transaksi QRIS checkout dinamis menggunakan modul Xendit Sandbox resmi berdasarkan produk database yang dipilih."""
     from app.services.xendit_service import xendit_service
     import urllib.parse
 
@@ -500,7 +481,6 @@ async def generate_fast_track_checkout_response(
     clean_slug = str(tenant_slug or "").strip().lower()
     store_name, products = get_tenant_products_from_db(clean_slug)
 
-    # Dynamic Product Matching dari Database
     selected_product = None
     if products and product_key:
         clean_key = str(product_key).replace("prod_", "").strip()
@@ -512,7 +492,6 @@ async def generate_fast_track_checkout_response(
     if not selected_product and products:
         selected_product = products[0]
 
-    # Ekstraksi nominal & nama produk dinamis murni dari database
     if selected_product:
         product_name = str(selected_product.get("title") or selected_product.get("name") or f"Produk {store_name}")
         amount = int(float(selected_product.get("promo_price") or selected_product.get("price") or 99000))
@@ -533,7 +512,6 @@ async def generate_fast_track_checkout_response(
     qr_string = invoice.get("qr_string", "")
     qr_bytes = b""
     
-    # URL gambar berbingkai bersih & pas di tengah
     qr_code_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&format=png&data={urllib.parse.quote(qr_string)}"
     invoice["qr_code_url"] = qr_code_url
 
@@ -556,13 +534,11 @@ def resolve_dynamic_tenant_for_whatsapp(
     message_text: str,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, bool]:
-    """Dynamically resolves the destination tenant slug for an incoming WhatsApp message."""
     import re
     clean_phone = normalize_phone_number(from_phone)
     text = (message_text or "").strip()
     text_lower = text.lower()
 
-    # 1. P0 Intercept: #reset / reset / menu utama
     if text_lower in ("#reset", "reset", "menu utama", "#menu", "menu", "demo"):
         if clean_phone:
             reset_whatsapp_user_session(clean_phone)
@@ -570,7 +546,6 @@ def resolve_dynamic_tenant_for_whatsapp(
         logger.info(f"[DYNAMIC TENANT WA] Sender {clean_phone} triggered reset/demo menu")
         return "__MENU__", False
 
-    # 2. Pilihan Menu 1, 2, 3, 4
     option_map = {
         "1": "ombudi",
         "ombudi": "ombudi",
@@ -593,7 +568,6 @@ def resolve_dynamic_tenant_for_whatsapp(
         "course": "onlineboost",
         "suhu-ads-masterclass": "onlineboost",
         "suhu ads": "onlineboost",
-        # Legacy aliases
         "bale": "bale_pananggeuhan",
         "bale pananggeuhan": "bale_pananggeuhan",
         "gym": "atmosfitnes",
@@ -609,11 +583,9 @@ def resolve_dynamic_tenant_for_whatsapp(
         logger.info(f"[DYNAMIC TENANT WA] Sender {clean_phone} selected option '{text_lower}' -> locked to '{target_slug}'")
         return target_slug, True
 
-    # 3. Active session check
     if clean_phone and clean_phone in user_tenant_sessions:
         return user_tenant_sessions[clean_phone], False
 
-    # 4. Explicit onboarding match
     match = re.search(
         r"saya\s+baru\s+(?:saja\s+)?(?:mendaftar|daftar)\s+toko\s+([a-zA-Z0-9\-_]+)",
         text,
@@ -629,11 +601,9 @@ def resolve_dynamic_tenant_for_whatsapp(
         logger.info(f"[DYNAMIC TENANT WA] Bound sender {clean_phone} to store '{target_slug}' via onboarding message")
         return target_slug, True
 
-    # 5. Greeting triggers without active session -> Show Demo Menu
     if text_lower in ("halo", "hi", "p", "test", "tes", "hai", "start", "info"):
         return "__MENU__", False
 
-    # 6. Static phone_id fallback (only if no session and no explicit command matched)
     clean_phone_id = str(phone_id).strip()
     if clean_phone_id == "1340866379104241":
         return "boontrack-career", False
@@ -665,7 +635,6 @@ async def log_to_supabase_messages(
     message_text: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None
 ) -> bool:
-    """Menyimpan pesan masuk/keluar ke tabel Supabase public.messages & conversations."""
     try:
         supabase = get_supabase()
         content = text if text is not None else (message_text or "")
@@ -746,7 +715,6 @@ def safe_log_to_supabase_messages(
     message_text: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None
 ):
-    """Non-blocking background logging to Supabase."""
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(log_to_supabase_messages(
@@ -779,7 +747,6 @@ def safe_log_to_supabase_messages(
 
 
 def extract_meta_whatsapp_event(data: dict) -> Dict[str, Any]:
-    """Ekstraksi aman dari payload webhook WhatsApp Cloud API Meta."""
     res = {
         "is_message": False,
         "is_status": False,
@@ -892,8 +859,6 @@ def extract_meta_whatsapp_event(data: dict) -> Dict[str, Any]:
         return res
 
 def get_wa_credentials(tenant_id: str = "boontrack-career", phone_number_id: Optional[str] = None, access_token: Optional[str] = None) -> Tuple[str, str, str]:
-    """Resolve Meta API credentials. Menjamin nomor pengirim tidak pernah tertukar ke nomor Career
-    pada tenant ritel / ombudi / demo showcase."""
     default_token = (
         os.getenv("WHATSAPP_TOKEN")
         or os.getenv("META_WA_TOKEN")
@@ -906,11 +871,11 @@ def get_wa_credentials(tenant_id: str = "boontrack-career", phone_number_id: Opt
 
     clean_tenant = str(tenant_id).lower().strip() if tenant_id else "ombudi"
 
-    # --- Priority 1: Explicit overrides from webhook payload ---
+    # Priority 1: Explicit overrides from webhook payload
     if phone_number_id and str(phone_number_id).strip():
         resolved_phone_id = str(phone_number_id).strip()
         
-        # Guard: Jangan pernah membiarkan Career Phone ID merespons jika targetnya tenant showcase/retail
+        # Guard: cegah nomor Career membalas di toko showcase / retail
         if clean_tenant in ["ombudi", "om-budi", "om_budi", "onlineboost", "growthplus", "proscale"] and resolved_phone_id == "1340866379104241":
             resolved_phone_id = os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "1268977686299719"
 
@@ -924,7 +889,7 @@ def get_wa_credentials(tenant_id: str = "boontrack-career", phone_number_id: Opt
                 resolved_token = os.getenv("ADUAN_ACCESS_TOKEN") or default_token
         return resolved_token.strip(), resolved_phone_id, version
 
-    # --- Priority 2: Tenant-based resolution ---
+    # Priority 2: Tenant-based resolution
     if clean_tenant in ["ombudi", "om-budi", "om_budi", "onlineboost", "growthplus", "proscale"]:
         phone_id = os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "1268977686299719"
         token = os.getenv("OM_BUDI_ACCESS_TOKEN") or default_token
@@ -940,7 +905,6 @@ def get_wa_credentials(tenant_id: str = "boontrack-career", phone_number_id: Opt
         token = os.getenv("ADUAN_ACCESS_TOKEN") or default_token
         return token.strip(), str(phone_id).strip(), version
 
-    # DEFAULT FALLBACK (Aman: Gunakan Om Budi untuk flow testing/demo):
     phone_id = os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "1268977686299719"
     return default_token.strip(), str(phone_id).strip(), version
 
@@ -1139,7 +1103,6 @@ async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dic
         return await send_whatsapp_text(to_phone, body_text, tenant_id=tenant_id, phone_number_id=phone_number_id, access_token=access_token)
 
 async def upload_media(bytes_data: bytes, mime_type: str = "image/png", filename: str = "qris.png", tenant_id: str = "boontrack-career", phone_number_id: Optional[str] = None, access_token: Optional[str] = None) -> Optional[str]:
-    """Melakukan HTTP POST multipart ke Meta media endpoint dengan dynamic phone_number_id."""
     token, phone_id, version = get_wa_credentials(tenant_id, phone_number_id=phone_number_id, access_token=access_token)
     if not token or not phone_id:
         return None
@@ -1177,7 +1140,6 @@ async def send_whatsapp_image_link(
     phone_number_id: Optional[str] = None,
     access_token: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Mengirim pesan gambar ke WhatsApp via Direct Public Image URL Link."""
     target_phone = str(to or to_phone or "").replace("+", "").strip()
     effective_tenant = str(tenant or tenant_id or "boontrack-career").strip()
     token, phone_id, version = get_wa_credentials(effective_tenant, phone_number_id=phone_number_id, access_token=access_token)
@@ -1234,7 +1196,6 @@ async def send_whatsapp_image(
     phone_number_id: Optional[str] = None,
     access_token: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Mengirim pesan gambar ke WhatsApp user via Meta WhatsApp Cloud API dengan auto-fallback aman."""
     target_phone = str(to or to_phone or "").strip()
     img_data = image_bytes if image_bytes is not None else image_path_or_bytes
     effective_tenant = str(tenant or tenant_id or "boontrack-career").strip()
@@ -1242,7 +1203,6 @@ async def send_whatsapp_image(
     token, phone_id, version = get_wa_credentials(effective_tenant, phone_number_id=phone_number_id, access_token=access_token)
     clean_phone = str(target_phone).replace("+", "").strip()
 
-    # 1. Jika img_data adalah URL string publik, gunakan send_whatsapp_image_link
     if isinstance(img_data, str) and img_data.startswith(("http://", "https://")):
         return await send_whatsapp_image_link(
             to=clean_phone,
@@ -1253,7 +1213,6 @@ async def send_whatsapp_image(
             access_token=access_token,
         )
 
-    # 2. Upload Bytes PNG jika belum ada media_id
     resolved_media_id = media_id
     if not resolved_media_id and img_data:
         b_data: Optional[bytes] = None
@@ -1278,7 +1237,6 @@ async def send_whatsapp_image(
                 access_token=access_token
             )
 
-    # 3. Jika upload media_id berhasil, kirim via ID
     if resolved_media_id:
         url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
         headers = {
@@ -1313,7 +1271,6 @@ async def send_whatsapp_image(
         except Exception:
             pass
 
-    # 4. Fallback Teks bila pengiriman gambar terkendala
     return await send_whatsapp_text(clean_phone, caption, tenant_id=effective_tenant, phone_number_id=phone_number_id, access_token=access_token)
 
 async def send_whatsapp_document(
@@ -1326,7 +1283,6 @@ async def send_whatsapp_document(
     phone_number_id: Optional[str] = None,
     access_token: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
-    """Mengirim file attachment dokumen (.docx / .pdf) via WhatsApp Cloud API."""
     token, phone_id, version = get_wa_credentials(tenant_id, phone_number_id=phone_number_id, access_token=access_token)
     clean_phone = str(to_phone).replace("+", "").strip()
 
@@ -1459,16 +1415,11 @@ def get_evolution_headers() -> Dict[str, str]:
     }
 
 async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> Dict[str, Any]:
-    """
-    Mengambil status sesi WhatsApp dari Evolution API.
-    Jika instance belum ada, otomatis create instance dan request QR code.
-    """
     instance_name = f"tenant_{tenant_slug.replace('-', '_')}"
     headers = get_evolution_headers()
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         try:
-            # 1. Cek status koneksi instance
             status_res = await client.get(
                 f"{EVOLUTION_BASE_URL}/instance/connectionState/{instance_name}",
                 headers=headers
@@ -1488,7 +1439,6 @@ async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> D
                         "capabilities": {"qr_pairing": True, "pairing_code": True, "multi_agent": False}
                     }
 
-            # 2. Jika instance belum ada (404/400), buat instance baru
             if status_res.status_code in (404, 400):
                 create_payload = {
                     "instanceName": instance_name,
@@ -1503,7 +1453,6 @@ async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> D
                     json=create_payload
                 )
 
-            # Konfigurasi Webhook ke boontrack-core agar Evolution meneruskan pesan masuk
             backend_url = os.getenv("BACKEND_WEBHOOK_URL") or os.getenv("FASTAPI_BASE_URL", "https://boontrack-core-production.up.railway.app").rstrip("/")
             try:
                 await client.post(
@@ -1522,7 +1471,6 @@ async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> D
             except Exception as hook_err:
                 logger.debug(f"[Evolution Webhook Setup Note] {hook_err}")
 
-            # 3. Request QR Code aktif
             qr_res = await client.get(
                 f"{EVOLUTION_BASE_URL}/instance/connect/{instance_name}",
                 headers=headers
