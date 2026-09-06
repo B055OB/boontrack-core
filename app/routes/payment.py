@@ -529,11 +529,9 @@ async def handle_xendit_notification_logic(payload: Dict[str, Any]) -> tuple[Dic
     return {"status": "ok"}, 200
 
 
-@payment_router.post("/webhook/payment/xendit", summary="Xendit Webhook Notification")
 @payment_router.post("/api/v1/payments/webhook/xendit", summary="Xendit Webhook Notification Alias")
 @payment_router.post("/api/v1/payment/webhook/xendit", summary="Xendit Webhook Notification Alias 2")
 @payment_router.post("/api/webhook/payment/xendit", summary="Xendit Webhook Notification Alias 3")
-@payment_router.post("/api/v1/payments/xendit/callback", summary="Xendit Webhook Callback Alias")
 async def xendit_webhook_fastapi(
     payload: Dict[str, Any] = Body(...),
 ):

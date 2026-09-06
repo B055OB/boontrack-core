@@ -61,16 +61,37 @@ user_cart_sessions: Dict[str, List[Dict[str, Any]]] = {}
 DEMO_MENU_TEXT = (
     "Halo! Selamat datang di *Portal Pengujian Ekosistem BoonTrack* 🚀\n\n"
     "Silakan pilih demo asisten/merchant yang ingin Anda uji coba:\n"
-    "1️⃣ *Bale Pananggeuhan* (Layanan Publik & Administrasi Warga)\n"
-    "2️⃣ *Prima Fit Gym* (Membership Fitness & Reservasi Fasilitas)\n"
-    "3️⃣ *OnlineBoost* (Digital Marketing, Paid Traffic & Agency Kit)\n\n"
-    "Balas dengan mengetik angka *1*, *2*, atau *3* (atau ketik *#reset* kapan saja untuk ganti toko)."
+    "1️⃣ *Om Budi Channel* (slug: ombudi / retail showcase)\n"
+    "2️⃣ *Tier Growth+* (slug: growthplus / Unofficial WhatsApp + Ads Tracking Meta CAPI & TikTok)\n"
+    "3️⃣ *Tier ProScale* (slug: proscale / Official Meta Cloud WABA + Omnichannel & BoonPilot AI)\n"
+    "4️⃣ *OnlineBoost* (slug: onlineboost / Digital Marketing & Course Vault)\n\n"
+    "Balas dengan mengetik angka *1*, *2*, *3*, atau *4* (atau ketik *#reset* kapan saja untuk ganti toko)."
 )
 
 DEMO_TENANT_GREETINGS: Dict[str, str] = {
+    "ombudi": (
+        "🛒 *Selamat Datang di Om Budi Channel!*\n\n"
+        "Showcase ritel & produk UMKM terpercaya. Layanan pelanggan cepat dan produk berkualitas siap kirim.\n\n"
+        "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
+    ),
+    "om-budi": (
+        "🛒 *Selamat Datang di Om Budi Channel!*\n\n"
+        "Showcase ritel & produk UMKM terpercaya. Layanan pelanggan cepat dan produk berkualitas siap kirim.\n\n"
+        "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
+    ),
+    "growthplus": (
+        "⚡ *Selamat Datang di Tier Growth+ BoonTrack!*\n\n"
+        "Paket scale-up bisnis via Unofficial WhatsApp Gateway terintegrasi Server-Side Ads Tracking Meta CAPI & TikTok Pixel.\n\n"
+        "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
+    ),
+    "proscale": (
+        "🏢 *Selamat Datang di Tier ProScale Enterprise!*\n\n"
+        "Solusi Official Meta Cloud WABA verified, Omnichannel Inbox multi-CS, dan BoonPilot AI Copilot 24/7.\n\n"
+        "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
+    ),
     "onlineboost": (
         "🚀 *Selamat datang di OnlineBoost Digital Hub*\n\n"
-        "Solusi scale-up bisnis via Paid Traffic (Meta & Google Ads), Landing Page High-Converting, dan Creative Agency.\n\n"
+        "Digital Marketing & Course Vault: Koleksi Ecourse Paid Traffic, Strategi YouTube AI, dan Masterclass scale-up bisnis.\n\n"
         "Ketik *Katalog* untuk memilih paket materi langsung atau ketik *Beli* untuk checkout cepat."
     ),
     "bale_pananggeuhan": (
@@ -134,15 +155,23 @@ def generate_qris_image_bytes(qr_string: str) -> bytes:
 
 
 def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, Any]]]:
-    """Mengambil katalog produk tenant secara real-time langsung dari database/onboarding service tanpa fallback mock ke toko lain."""
+    """Mengambil katalog produk tenant secara real-time langsung dari database Supabase/onboarding service tanpa fallback mock ke toko lain."""
     from app.services.onboarding_service import onboarding_service
     
     clean_slug = str(tenant_slug or "").strip().lower()
     if not clean_slug:
         return "Toko Baru", []
 
+    candidate_slugs = [
+        clean_slug,
+        clean_slug.replace("_", "-"),
+        clean_slug.replace("-", "_"),
+    ]
+    if clean_slug in ("ombudi", "om-budi", "om_budi"):
+        candidate_slugs.extend(["om-budi", "ombudi", "om_budi"])
+
     details = onboarding_service.get_tenant_details_by_slug(clean_slug) or {}
-    store_name = details.get("tenant", {}).get("name") or clean_slug.replace("-", " ").title()
+    store_name = details.get("tenant", {}).get("name") or clean_slug.replace("-", " ").replace("_", " ").title()
     products = details.get("products", [])
 
     # Query langsung ke Supabase jika cache onboarding belum terisi
@@ -150,49 +179,56 @@ def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, A
         supabase = get_supabase()
         if supabase:
             try:
-                res = supabase.table("products").select("*").eq("tenant_slug", clean_slug).eq("is_active", True).execute()
-                if res.data:
-                    products = res.data
+                # 1. Cari data tenant untuk mendapatkan tenant_id (UUID) & store_name
+                t_id = None
+                try:
+                    t_res = supabase.table("tenants").select("id, name, slug").in_("slug", candidate_slugs).execute()
+                    if t_res.data:
+                        t_id = t_res.data[0].get("id")
+                        store_name = t_res.data[0].get("name") or store_name
+                except Exception as te:
+                    logger.debug(f"[TENANT RESOLVE ERROR] {te}")
+
+                # 2. Query products berdasarkan tenant_id (UUID FK di Supabase)
+                if t_id:
+                    try:
+                        p_res = supabase.table("products").select("*").eq("tenant_id", t_id).execute()
+                        if p_res.data:
+                            products = [p for p in p_res.data if p.get("is_available") is not False]
+                    except Exception as pe:
+                        logger.debug(f"[PRODUCTS BY TENANT_ID ERROR] {pe}")
+
+                # 3. Fallback jika ada tabel dengan kolom tenant_slug langsung
+                if not products:
+                    try:
+                        p_res2 = supabase.table("products").select("*").in_("tenant_slug", candidate_slugs).execute()
+                        if p_res2.data:
+                            products = [p for p in p_res2.data if p.get("is_available") is not False]
+                    except Exception:
+                        pass
+
+                # 4. Fallback jika tersimpan di commerce_products
+                if not products:
+                    try:
+                        cp_res = supabase.table("commerce_products").select("*").in_("tenant_slug", candidate_slugs).execute()
+                        if cp_res.data:
+                            products = [p for p in cp_res.data if p.get("is_available") is not False]
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.warning(f"[DB PRODUCTS FETCH ERROR] {e}")
 
-    # Fallback produk resmi HANYA untuk demo store resmi; toko tenant baru tetap list kosong jika belum input produk
-    if not products:
-        if clean_slug in ("onlineboost", "suhu-ads-masterclass"):
-            products = [
-                {
-                    "id": "prod_dollar_traffic",
-                    "title": "Rahasia Dollar Traffic",
-                    "price": 499000,
-                    "description": "Formula Profit Dollar Paid Traffic"
-                },
-                {
-                    "id": "prod_masterclass_ads",
-                    "title": "Masterclass Ads 2026",
-                    "price": 99000,
-                    "description": "Scale Up Campaign CBO/ABO"
-                },
-                {
-                    "id": "prod_parfum_missionary",
-                    "title": "Parfum Missionary 10ml",
-                    "price": 99000,
-                    "description": "Pheromone Pocket Edition"
-                }
-            ]
-        elif clean_slug == "atmosfitnes":
-            products = [
-                {"id": "prod_1", "title": "Membership 1 Bulan", "price": 150000, "description": "Akses Gym Bebas"},
-                {"id": "prod_2", "title": "Sesi Personal Trainer", "price": 250000, "description": "10x Pertemuan"}
-            ]
-        else:
-            products = []
-
+    # Kembalikan store_name dan produk murni dari DB (tanpa fallback mock toko lain)
     return store_name, products
 
 
 def build_tenant_catalog_sections(tenant_slug: str) -> Tuple[str, List[Dict[str, Any]]]:
     """Mengambil katalog produk aktif dari database onboarding secara dinamis untuk Meta Interactive List."""
     store_name, products = get_tenant_products_from_db(tenant_slug)
+
+    if not products:
+        body_text = f"Saat ini katalog produk untuk *{store_name}* sedang disiapkan oleh admin. Silakan hubungi customer support kami untuk informasi lebih lanjut ya, Kak! 🙏"
+        return body_text, []
 
     rows = []
     for p in products[:10]:  # Meta WhatsApp List membatasi maksimal 10 baris
@@ -216,7 +252,7 @@ def build_tenant_catalog_sections(tenant_slug: str) -> Tuple[str, List[Dict[str,
         "title": f"Katalog {store_name}"[:24],
         "rows": rows
     }]
-    body_text = f"Pilih produk dari *{store_name}* di bawah ini untuk melihat rincian atau masukkan ke keranjang belanja:"
+    body_text = f"Pilih produk dari *{store_name}* di bawah ini untuk melihat rincian atau checkout langsung:"
     return body_text, sections
 
 
@@ -346,20 +382,10 @@ async def generate_fast_track_checkout_response(
     if not selected_product and products:
         selected_product = products[0]
 
-    # Ekstraksi nominal & nama produk dinamis
+    # Ekstraksi nominal & nama produk dinamis murni dari database
     if selected_product:
         product_name = str(selected_product.get("title") or selected_product.get("name") or f"Produk {store_name}")
         amount = int(float(selected_product.get("promo_price") or selected_product.get("price") or 99000))
-    elif clean_slug in ("onlineboost", "suhu-ads-masterclass"):
-        catalog_map = {
-            "prod_dollar_traffic": ("Step by Step Rahasia Menghasilkan Dollar dari Paid Traffic", 499000),
-            "prod_masterclass_ads": ("Masterclass Ads 2026 - Scale Up Campaign", 99000),
-            "prod_parfum_missionary": ("Parfum Pheromone Pocket 10ml - Missionary", 99000),
-        }
-        product_name, amount = catalog_map.get(str(product_key), ("Masterclass Ads 2026 - Scale Up Campaign", 99000))
-    elif clean_slug == "atmosfitnes":
-        product_name = "Paket Membership Prima Fit Gym"
-        amount = 150000
     else:
         product_name = f"Paket Layanan {store_name}"
         amount = 99000
@@ -435,18 +461,34 @@ def resolve_dynamic_tenant_for_whatsapp(
         return "__MENU__", False
 
     option_map = {
-        "1": "bale_pananggeuhan",
+        "1": "ombudi",
+        "ombudi": "ombudi",
+        "om budi": "ombudi",
+        "om-budi": "ombudi",
+        "retail": "ombudi",
+        "2": "growthplus",
+        "growth": "growthplus",
+        "growthplus": "growthplus",
+        "growth+": "growthplus",
+        "tier growth+": "growthplus",
+        "3": "proscale",
+        "proscale": "proscale",
+        "pro scale": "proscale",
+        "tier proscale": "proscale",
+        "waba": "proscale",
+        "4": "onlineboost",
+        "onlineboost": "onlineboost",
+        "digital": "onlineboost",
+        "course": "onlineboost",
+        "suhu-ads-masterclass": "onlineboost",
+        "suhu ads": "onlineboost",
+        # Legacy aliases
         "bale": "bale_pananggeuhan",
         "bale pananggeuhan": "bale_pananggeuhan",
-        "2": "atmosfitnes",
         "gym": "atmosfitnes",
         "prima fit": "atmosfitnes",
         "prima fit gym": "atmosfitnes",
         "atmosfitnes": "atmosfitnes",
-        "3": "onlineboost",
-        "onlineboost": "onlineboost",
-        "suhu-ads-masterclass": "onlineboost",
-        "suhu ads": "onlineboost",
     }
     if text_lower in option_map:
         target_slug = option_map[text_lower]

@@ -45,9 +45,10 @@ VERIFY_TOKENS = [
 _COMMERCE_DEMO_TRIGGERS = {"#reset", "reset", "menu", "#menu", "demo"}
 
 _MENU_OPTION_MAP: Dict[str, str] = {
-    "1": "bale_pananggeuhan",
-    "2": "atmosfitnes",
-    "3": "onlineboost",
+    "1": "ombudi",
+    "2": "growthplus",
+    "3": "proscale",
+    "4": "onlineboost",
 }
 
 
@@ -127,7 +128,7 @@ async def handle_whatsapp_webhook(request: Request):
     # =========================================================================
     # JALUR A: PRODUKSI AKTIF (Career Assistant & Admin Om Budi)
     # =========================================================================
-    if tenant_slug in ("boontrack-career", "boontrack_career", "career", "om_budi", "om-budi", "ombudi"):
+    if tenant_slug in ("boontrack-career", "boontrack_career", "career"):
         reply = await process_incoming_message(
             tenant_slug=tenant_slug,
             message=incoming_text,
@@ -149,18 +150,18 @@ async def handle_whatsapp_webhook(request: Request):
         return {"status": "success", "tenant": tenant_slug, "reply": reply}
 
     # =========================================================================
-    # JALUR B: TOKO DEMO (Menu Switcher 1, 2, 3)
+    # JALUR B: TOKO DEMO (Menu Switcher 1, 2, 3, 4)
     # =========================================================================
 
-    # 1. Reset ke Menu Utama
-    if text_lower in _COMMERCE_DEMO_TRIGGERS or button_id == "btn_menu_reset":
+    # 1. Reset ke Menu Utama atau trigger salam/menu
+    if tenant_slug == "__MENU__" or text_lower in _COMMERCE_DEMO_TRIGGERS or button_id == "btn_menu_reset":
         if clean_phone:
             user_tenant_sessions.pop(clean_phone, None)
         if from_phone:
             await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT)
-        return {"status": "menu_dispatched", "tenant": "__MENU__"}
+        return {"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}
 
-    # 2. Pilihan Menu 1, 2, 3
+    # 2. Pilihan Menu 1, 2, 3, 4
     if text_lower in _MENU_OPTION_MAP:
         selected_slug = _MENU_OPTION_MAP[text_lower]
         if clean_phone:
@@ -178,11 +179,7 @@ async def handle_whatsapp_webhook(request: Request):
                 try:
                     await send_whatsapp_buttons(
                         to_phone=from_phone,
-                        body_text=(
-                            "Halo Kak! Selamat datang di *OnlineBoost Official Store* 🚀\n\n"
-                            "Solusi praktis scale-up campaign Meta & Google Ads, optimasi ROAS, dan landing page konversi tinggi.\n\n"
-                            "🔥 *Promo Hari Ini:* Starter Kit Paid Traffic cuma *Rp99.000* (Diskon 50%). Sudah termasuk modul video HD + Template Kalkulator ROI Spreadsheet."
-                        ),
+                        body_text=greeting,
                         buttons=buttons,
                         footer_text="Pilih opsi di bawah untuk lanjut:",
                     )
@@ -199,10 +196,14 @@ async def handle_whatsapp_webhook(request: Request):
             user_phone=from_phone,
             user_name=contact_name,
         )
-        return {"status": "success", "tenant": selected_slug, "reply": greeting}
+        return {"status": "success", "tenant": selected_slug, "reply": greeting, "is_new_binding": True}
 
     # Ambil tenant aktif sesi saat ini
-    active_tenant = user_tenant_sessions.get(clean_phone, "onlineboost")
+    active_tenant = user_tenant_sessions.get(clean_phone)
+    if not active_tenant:
+        if from_phone:
+            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT)
+        return {"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}
 
     # 3. Fast-Track QRIS Closing (Tombol Beli / Kata Kunci Pembelian)
     is_qris_buy_action = (
@@ -216,7 +217,7 @@ async def handle_whatsapp_webhook(request: Request):
     if is_qris_buy_action and active_tenant not in ("bale_pananggeuhan", "pelayanan_publik"):
         try:
             reply, invoice, _ = await generate_fast_track_checkout_response(
-                tenant_slug="onlineboost",
+                tenant_slug=active_tenant,
                 from_phone=from_phone,
                 contact_name=contact_name,
             )
@@ -233,7 +234,7 @@ async def handle_whatsapp_webhook(request: Request):
                     to_phone=from_phone,
                     image_url=qr_code_url,
                     caption=reply,
-                    tenant_id="onlineboost",
+                    tenant_id=active_tenant,
                 )
                 if link_resp and getattr(link_resp, "status_code", 200) in (200, 201):
                     image_delivered = True
@@ -246,14 +247,14 @@ async def handle_whatsapp_webhook(request: Request):
             safe_log_to_supabase_messages(
                 sender="bot",
                 text=f"[Kirim QRIS {invoice.get('external_id')}] {reply}",
-                tenant_id="onlineboost",
+                tenant_id=active_tenant,
                 channel="whatsapp",
                 user_phone=from_phone,
                 user_name=contact_name,
             )
             return {
                 "status": "qris_dispatched",
-                "tenant": "onlineboost",
+                "tenant": active_tenant,
                 "invoice_id": invoice.get("external_id"),
             }
         except Exception as e:

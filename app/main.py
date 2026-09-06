@@ -85,10 +85,10 @@ app.add_middleware(
 # Register Routers ke FastAPI
 app.include_router(gym_router, prefix="/api/v1/gym")
 app.include_router(gym_admin_router)
+app.include_router(xendit_router)
 app.include_router(payment_router)
 app.include_router(webchat_router)
 app.include_router(internal_router)
-app.include_router(xendit_router)
 app.include_router(onboarding_router)
 app.include_router(meta_whatsapp_router)
 app.include_router(chat_router)

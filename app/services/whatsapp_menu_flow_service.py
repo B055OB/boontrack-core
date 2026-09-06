@@ -121,22 +121,22 @@ class WhatsAppMenuFlowService:
         self.set_session_state(tenant_slug, sender_phone, state="idle", selected_product_id=None, product_data=None)
 
     def get_tenant_products(self, tenant_slug: str) -> List[Dict[str, Any]]:
-        """Fetches active products for the given merchant with default catalog fallback."""
-        details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
-        prods = details.get("products", [])
+        """Fetches active products for the given merchant from real database / onboarding without mock fallback."""
+        from app.services.whatsapp_service import get_tenant_products_from_db
+        _, prods = get_tenant_products_from_db(tenant_slug)
         if prods and isinstance(prods, list) and len(prods) > 0:
             formatted = []
             for idx, p in enumerate(prods, 1):
                 formatted.append({
                     "id": str(p.get("id") or f"prod-{idx}"),
-                    "title": p.get("title") or f"Produk {idx}",
+                    "title": p.get("title") or p.get("name") or f"Produk {idx}",
                     "slug": p.get("slug") or f"produk-{idx}",
-                    "price": float(p.get("price") or 50000),
-                    "description": p.get("description") or "Katalog produk resmi berkualitas.",
+                    "price": float(p.get("promo_price") or p.get("price") or 50000),
+                    "description": p.get("description") or p.get("short_description") or "Katalog produk resmi berkualitas.",
                     "benefits": "Garansi resmi, materi berkualitas, dan dukungan pelanggan prioritas.",
                 })
             return formatted
-        return DEFAULT_MERCHANT_CATALOG
+        return []
 
     def get_product_testimonials(self, tenant_slug: str, product_id: str, product_title: str) -> List[Dict[str, Any]]:
         """Returns 5 recent verified buyer testimonials for product."""
@@ -145,6 +145,10 @@ class WhatsAppMenuFlowService:
     def build_products_menu_message(self, tenant_slug: str) -> str:
         """Constructs numbered list of active products."""
         products = self.get_tenant_products(tenant_slug)
+        if not products:
+            clean_name = tenant_slug.replace("-", " ").replace("_", " ").title()
+            return f"Saat ini katalog produk untuk *{clean_name}* sedang disiapkan oleh admin. Silakan hubungi kami untuk informasi lebih lanjut ya, Kak! 🙏"
+
         lines = ["Silakan pilih produk yang ingin Kakak ketahui:\n"]
         for idx, p in enumerate(products, 1):
             price_str = _format_price_idr(p["price"])

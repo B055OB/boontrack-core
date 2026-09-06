@@ -28,28 +28,57 @@ async def send_whatsapp_payment_notification(
     amount: int,
     tenant_id: str = "boontrack-career",
 ) -> None:
-    """Background task to notify customer of successful payment via official WABA E-Receipt."""
+    """Background task to notify customer of successful payment via text notification & official WABA E-Receipt."""
     if not phone:
         logger.info(f"[Xendit WA Skip] No phone number associated with order '{external_id}'")
         return
 
-    order_data = {
-        "order_id": external_id,
-        "amount": amount,
-        "customer_phone": phone,
-        "payment_method": "QRIS Dinamis Xendit",
-    }
-    await send_ereceipt_whatsapp(to_phone=phone, order_data=order_data, tenant_id=tenant_id)
+    text = f"Pembayaran sukses untuk Order #{external_id} sejumlah Rp{amount:,}."
+    try:
+        await send_whatsapp_text(to_phone=phone, text=text, tenant_id=tenant_id)
+    except Exception as e:
+        logger.warning(f"[Xendit WA Text Error] {e}")
+
+    try:
+        order_data = {
+            "order_id": external_id,
+            "amount": amount,
+            "customer_phone": phone,
+            "payment_method": "QRIS Dinamis Xendit",
+        }
+        await send_ereceipt_whatsapp(to_phone=phone, order_data=order_data, tenant_id=tenant_id)
+    except Exception:
+        pass
 
 
-async def send_capi_task(external_id: str, amount: int, phone: Optional[str]) -> None:
+async def send_capi_task(
+    external_id: str,
+    amount: int,
+    phone: Optional[str],
+    email: Optional[str] = None,
+    product_name: Optional[str] = None,
+    currency: str = "IDR",
+) -> None:
     """Background task to dispatch Meta & TikTok Conversions API events."""
+    try:
+        await send_meta_capi_purchase(
+            external_id=external_id,
+            value=float(amount),
+            currency=currency,
+            phone=phone,
+            email=email,
+        )
+    except Exception as e:
+        logger.warning(f"[Xendit Meta CAPI Note] {e}")
+
     try:
         await dispatch_all_capi({
             "order_id": external_id,
             "amount": amount,
-            "currency": "IDR",
+            "currency": currency,
             "customer_phone": phone,
+            "customer_email": email,
+            "product_name": product_name or "Produk Digital",
         })
     except Exception as e:
         logger.error(f"[Xendit CAPI Error] Failed to dispatch CAPI events: {e}", exc_info=True)
@@ -77,8 +106,8 @@ async def xendit_webhook_callback(
         or "aM08Ka1LQ9Jx1OsieBe6kcM1pK1Z5eWlpWAka5zBOuGpVbWS"
     ).strip()
 
-    # 1. Callback Token Validation (if provided or enforced)
-    if x_callback_token and configured_token and x_callback_token.strip() != configured_token:
+    # 1. Callback Token Validation (strict: reject if missing or mismatched)
+    if not x_callback_token or (configured_token and x_callback_token.strip() != configured_token):
         logger.warning(f"[Xendit Webhook] Unauthorized attempt with token: {x_callback_token}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -139,6 +168,18 @@ async def xendit_webhook_callback(
         or stored_intent.get("customer_phone")
         or stored_intent.get("phone")
     )
+    customer_email = (
+        data_obj.get("customer_email")
+        or payload.get("customer_email")
+        or stored_intent.get("customer_email")
+        or stored_intent.get("email")
+    )
+    product_name = (
+        data_obj.get("product_name")
+        or payload.get("product_name")
+        or (stored_intent.get("metadata", {}) if isinstance(stored_intent.get("metadata"), dict) else {}).get("product_name")
+        or "Produk Digital"
+    )
     tenant_id = (
         data_obj.get("tenant_id")
         or payload.get("tenant_id")
@@ -153,18 +194,30 @@ async def xendit_webhook_callback(
     supabase = get_supabase()
     if supabase and external_id:
         try:
-            # Update payment_intents table
-            supabase.table("payment_intents") \
-                .update({"status": "SETTLED"}) \
-                .eq("order_id", str(external_id)) \
-                .execute()
+            # Update orders table if exists
+            try:
+                supabase.table("orders").update({
+                    "status": "PAID",
+                    "paid_at": datetime.now(timezone.utc).isoformat()
+                }).eq("id", str(external_id)).execute()
+            except Exception:
+                try:
+                    supabase.table("orders").update({
+                        "status": "PAID",
+                        "paid_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("order_id", str(external_id)).execute()
+                except Exception:
+                    pass
 
             # Record in payment_settlements table
-            supabase.table("payment_settlements").insert({
-                "provider_ref": f"xendit_{external_id}",
-                "settled_amount": amount,
-                "raw_payload": payload,
-            }).execute()
+            try:
+                supabase.table("payment_settlements").insert({
+                    "provider_ref": f"xendit_{external_id}",
+                    "settled_amount": amount,
+                    "raw_payload": payload,
+                }).execute()
+            except Exception:
+                pass
         except Exception as db_err:
             logger.warning(f"[Xendit Webhook] Supabase settlement note: {db_err}")
 
@@ -184,6 +237,9 @@ async def xendit_webhook_callback(
         external_id=str(external_id),
         amount=amount,
         phone=customer_phone,
+        email=customer_email,
+        product_name=product_name,
+        currency="IDR",
     )
 
     logger.info(f"[Xendit Webhook] Settlement successful for '{external_id}' (Rp{amount:,})")

@@ -154,7 +154,27 @@ class PaymentOrchestrator:
             except Exception as wa_err:
                 logger.error(f"[Payment] WA Delivery dispatch failed: {str(wa_err)}")
 
-        # 7. Tandai event selesai diproses
+        # 7. TRIGGER SERVER-SIDE CAPI PURCHASE EVENT (Meta & TikTok)
+        try:
+            from app.services.tracking_service import dispatch_all_capi
+            capi_payload = {
+                "order_id": external_id,
+                "amount": amount,
+                "currency": "IDR",
+                "customer_phone": customer_phone,
+                "customer_email": order.get("customer_email") or order.get("buyer_email"),
+                "product_name": product_name,
+                "fbclid": order.get("fbclid"),
+                "ttclid": order.get("ttclid"),
+                "user_agent": order.get("user_agent"),
+                "client_ip": order.get("client_ip"),
+            }
+            asyncio.create_task(dispatch_all_capi(capi_payload))
+            logger.info(f"[Payment] Triggered CAPI Purchase event for Order {external_id}")
+        except Exception as capi_err:
+            logger.error(f"[Payment] CAPI dispatch failed: {capi_err}")
+
+        # 8. Tandai event selesai diproses
         self.supabase.table("payment_events").update({"status": "PROCESSED"}).eq("event_id", event_id).execute()
 
         return {
