@@ -306,11 +306,9 @@ async def generate_cart_checkout_response(
     from_phone: str,
     contact_name: str = "Kakak"
 ) -> Tuple[str, Dict[str, Any], bytes]:
-    """Menerbitkan satu invoice QRIS gabungan untuk seluruh produk di keranjang belanja menggunakan EMVCo QRIS generator."""
-    from app.utils.qris_generator import generate_dynamic_qris_payload, render_qris_bytes, get_quickchart_qr_url
-    from app.services.reconciliation_service import PAYMENT_INTENTS
-    from datetime import timedelta
-    import uuid
+    """Menerbitkan satu invoice QRIS gabungan untuk seluruh produk di keranjang belanja via Xendit Sandbox."""
+    from app.services.xendit_service import xendit_service
+    import urllib.parse
 
     clean_phone = normalize_phone_number(from_phone)
     cart_items = user_cart_sessions.get(clean_phone, [])
@@ -324,61 +322,20 @@ async def generate_cart_checkout_response(
     item_titles = ", ".join([str(item.get("title") or item.get("name")) for item in cart_items])
     product_summary = f"Order {len(cart_items)} Items ({item_titles[:35]}...)" if len(item_titles) > 35 else item_titles
 
-    # EMVCo Standard Dynamic QRIS Generation dari BOONTRACK_STATIC_QRIS (.env)
-    master_static = os.getenv("BOONTRACK_STATIC_QRIS", "").strip() or (
-        "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI"
-        "51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI520473725303360"
-        "5802ID5909BoonTrack6012Kab. Bandung61054028663048DC1"
+    invoice = await xendit_service.create_qris_invoice(
+        tenant_slug=tenant_slug,
+        amount=total_amount,
+        product_name=product_summary,
+        customer_phone=clean_phone,
     )
-    clean_slug = str(tenant_slug or "").strip().lower()
-    order_id = f"INV-{clean_slug.upper()[:8]}-{uuid.uuid4().hex[:6].upper()}"
-    qr_string = generate_dynamic_qris_payload(master_static, total_amount)
-    qr_bytes = render_qris_bytes(qr_string)
-    qr_code_url = get_quickchart_qr_url(qr_string)
-
-    now_dt = datetime.now(timezone.utc)
-    invoice = {
-        "id": order_id,
-        "external_id": order_id,
-        "order_id": order_id,
-        "amount": total_amount,
-        "total_amount": total_amount,
-        "product_name": product_summary,
-        "customer_phone": clean_phone,
-        "customer_name": contact_name,
-        "tenant_id": clean_slug,
-        "tenant_slug": clean_slug,
-        "qr_string": qr_string,
-        "qr_code_url": qr_code_url,
-        "status": "PENDING",
-        "created_at": now_dt.isoformat(),
-        "expires_at": (now_dt + timedelta(minutes=15)).isoformat(),
-    }
-
-    PAYMENT_INTENTS[order_id] = invoice
-    supabase = get_supabase()
-    if supabase:
-        try:
-            supabase.table("orders").upsert({
-                "id": order_id,
-                "order_id": order_id,
-                "tenant_id": clean_slug,
-                "tenant_slug": clean_slug,
-                "amount": total_amount,
-                "total_amount": total_amount,
-                "status": "PENDING",
-                "customer_phone": clean_phone,
-                "customer_name": contact_name,
-                "product_name": product_summary,
-                "qr_string": qr_string,
-                "qr_code_url": qr_code_url,
-                "created_at": now_dt.isoformat(),
-            }).execute()
-        except Exception as e:
-            logger.debug(f"[EMVCO QRIS] Supabase cart order note: {e}")
 
     if clean_phone:
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
+
+    qr_string = invoice.get("qr_string", "")
+    qr_bytes = b""
+    qr_code_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&format=png&data={urllib.parse.quote(qr_string)}"
+    invoice["qr_code_url"] = qr_code_url
 
     items_detail = "\n".join([
         f"• *{item.get('title') or item.get('name')}* (Rp {int(float(item.get('promo_price') or item.get('price') or 0)):,})".replace(",", ".")
@@ -404,11 +361,9 @@ async def generate_fast_track_checkout_response(
     contact_name: str = "Kakak",
     product_key: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any], bytes]:
-    """Membuat transaksi QRIS checkout dinamis berdasarkan generator EMVCo dan produk database yang dipilih."""
-    from app.utils.qris_generator import generate_dynamic_qris_payload, render_qris_bytes, get_quickchart_qr_url
-    from app.services.reconciliation_service import PAYMENT_INTENTS
-    from datetime import timedelta
-    import uuid
+    """Membuat transaksi QRIS checkout dinamis menggunakan modul Xendit Sandbox resmi berdasarkan produk database yang dipilih."""
+    from app.services.xendit_service import xendit_service
+    import urllib.parse
 
     clean_phone = normalize_phone_number(from_phone)
     clean_slug = str(tenant_slug or "").strip().lower()
@@ -434,61 +389,22 @@ async def generate_fast_track_checkout_response(
         product_name = f"Paket Layanan {store_name}"
         amount = 99000
 
-    # Generator Dynamic QRIS Standar EMVCo dari BOONTRACK_STATIC_QRIS di .env
-    master_static = os.getenv("BOONTRACK_STATIC_QRIS", "").strip() or (
-        "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI"
-        "51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI520473725303360"
-        "5802ID5909BoonTrack6012Kab. Bandung61054028663048DC1"
+    invoice = await xendit_service.create_qris_invoice(
+        tenant_slug=clean_slug,
+        amount=amount,
+        product_name=product_name,
+        customer_phone=clean_phone,
     )
-    order_id = f"INV-{clean_slug.upper()[:8]}-{uuid.uuid4().hex[:6].upper()}"
-    qr_string = generate_dynamic_qris_payload(master_static, amount)
-    qr_bytes = render_qris_bytes(qr_string)
-    qr_code_url = get_quickchart_qr_url(qr_string)
-
-    now_dt = datetime.now(timezone.utc)
-    invoice = {
-        "id": order_id,
-        "external_id": order_id,
-        "order_id": order_id,
-        "amount": amount,
-        "total_amount": amount,
-        "product_name": product_name,
-        "customer_phone": clean_phone,
-        "customer_name": contact_name,
-        "tenant_id": clean_slug,
-        "tenant_slug": clean_slug,
-        "qr_string": qr_string,
-        "qr_code_url": qr_code_url,
-        "status": "PENDING",
-        "created_at": now_dt.isoformat(),
-        "expires_at": (now_dt + timedelta(minutes=15)).isoformat(),
-    }
-
-    # Simpan di in-memory intents & Supabase orders
-    PAYMENT_INTENTS[order_id] = invoice
-    supabase = get_supabase()
-    if supabase:
-        try:
-            supabase.table("orders").upsert({
-                "id": order_id,
-                "order_id": order_id,
-                "tenant_id": clean_slug,
-                "tenant_slug": clean_slug,
-                "amount": amount,
-                "total_amount": amount,
-                "status": "PENDING",
-                "customer_phone": clean_phone,
-                "customer_name": contact_name,
-                "product_name": product_name,
-                "qr_string": qr_string,
-                "qr_code_url": qr_code_url,
-                "created_at": now_dt.isoformat(),
-            }).execute()
-        except Exception as e:
-            logger.debug(f"[EMVCO QRIS] Supabase order upsert note: {e}")
 
     if clean_phone:
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
+
+    qr_string = invoice.get("qr_string", "")
+    qr_bytes = b""
+    
+    # URL gambar berbingkai bersih & pas di tengah
+    qr_code_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&format=png&data={urllib.parse.quote(qr_string)}"
+    invoice["qr_code_url"] = qr_code_url
 
     amount_fmt = f"Rp{amount:,.0f}".replace(",", ".")
 

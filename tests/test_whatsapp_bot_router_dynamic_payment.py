@@ -163,13 +163,25 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
         self.assertNotIn("Masterclass Meta & TikTok Ads 2026", msg)
 
     # =========================================================================
-    # 3. Dynamic QRIS Generation (EMVCo Standard) & Webhook CAPI Trigger
+    # 3. Dynamic QRIS Generation (Xendit Sandbox) & Webhook CAPI Trigger
     # =========================================================================
 
-    def test_dynamic_qris_generation_uses_emvco_standards(self):
-        """generate_fast_track_checkout_response menggunakan generator QRIS standar EMVCo."""
+    @patch("app.services.xendit_service.httpx.AsyncClient.post")
+    def test_dynamic_qris_generation_uses_xendit_sandbox(self, mock_post):
+        """generate_fast_track_checkout_response menggunakan modul Xendit Sandbox resmi."""
+        fake_resp = MagicMock()
+        fake_resp.status_code = 200
+        fake_resp.json.return_value = {
+            "id": "qr_xendit_test_001",
+            "external_id": "INV-ONLINE-001",
+            "amount": 499000,
+            "currency": "IDR",
+            "qr_string": "00020101021226570011ID.DANA.WWW...6304B7A1",
+        }
+        mock_post.return_value = fake_resp
+
         import asyncio
-        caption, invoice, qr_bytes = asyncio.run(
+        caption, invoice, _ = asyncio.run(
             generate_fast_track_checkout_response(
                 tenant_slug="onlineboost",
                 from_phone="628123456789",
@@ -180,37 +192,32 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
         self.assertIn("Berikut Kode QRIS Pembayaran Anda", caption)
         self.assertIn("Total:", caption)
         self.assertTrue(invoice.get("qr_string", "").startswith("000201"))
-        # EMVCo Dynamic Tag 01 Point of Initiation Method == 12
-        self.assertIn("010212", invoice.get("qr_string", ""))
-        # Tag 54 nominal transaksi
-        self.assertIn("54", invoice.get("qr_string", ""))
-        self.assertIn("5802ID", invoice.get("qr_string", ""))
-        # QuickChart URL
-        self.assertIn("quickchart.io/qr", invoice.get("qr_code_url", ""))
-        # PNG bytes signature
-        self.assertTrue(qr_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertIn("api.qrserver.com", invoice.get("qr_code_url", ""))
 
-    @patch("app.routes.payment.dispatch_all_capi", new_callable=AsyncMock)
-    @patch("app.routes.payment.send_meta_capi_purchase", new_callable=AsyncMock)
-    @patch("app.routes.payment.send_whatsapp_text", new_callable=AsyncMock)
+    @patch("app.routes.xendit.dispatch_all_capi", new_callable=AsyncMock)
+    @patch("app.routes.xendit.send_meta_capi_purchase", new_callable=AsyncMock)
+    @patch("app.routes.xendit.send_whatsapp_text", new_callable=AsyncMock)
     def test_webhook_payment_paid_triggers_capi_purchase(self, mock_wa, mock_capi, mock_dispatch):
         """Saat webhook status COMPLETED/PAID, CAPI event Purchase terpicu dengan order_id, amount, dan phone."""
-        order_id = "INV-EMVCO-CAPI-999"
+        order_id = "INV-XENDIT-CAPI-888"
         amount = 499000
         phone = "081299887766"
+        token = "aM08Ka1LQ9Jx1OsieBe6kcM1pK1Z5eWlpWAka5zBOuGpVbWS"
 
         payload = {
-            "order_id": order_id,
+            "id": "qr_xendit_888",
+            "external_id": order_id,
             "amount": amount,
-            "status": "PAID",
+            "status": "COMPLETED",
             "customer_phone": phone,
             "customer_email": "buyer@example.com",
             "product_name": "Rahasia Dollar Paid Traffic",
         }
 
         resp = self.client.post(
-            "/api/v1/payments/callback",
+            "/api/v1/payments/xendit/callback",
             json=payload,
+            headers={"x-callback-token": token},
         )
 
         self.assertEqual(resp.status_code, 200)
