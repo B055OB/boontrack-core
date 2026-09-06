@@ -54,6 +54,8 @@ from app.routes.partner_routes import partner_router, manager_router
 from app.routes.analytics_fastapi_routes import router as analytics_router
 from app.routes.boonpilot_routes import router as boonpilot_router
 from app.routes.store_chat_routes import router as store_chat_router
+from app.routes.media_routes import media_router
+from fastapi.staticfiles import StaticFiles
 
 # Inisialisasi Supabase Client
 supabase_url = os.getenv("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.co")
@@ -110,6 +112,12 @@ app.include_router(manager_router)
 app.include_router(analytics_router)
 app.include_router(boonpilot_router)
 app.include_router(store_chat_router)
+app.include_router(media_router)
+
+# Mount Static Uploads
+uploads_dir = os.path.join(project_root, "assets", "uploads")
+os.makedirs(uploads_dir, exist_ok=True)
+app.mount("/assets/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 
 @app.get("/", summary="Root Health Check")
