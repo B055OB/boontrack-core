@@ -16,8 +16,20 @@ from app.services.whatsapp_service import (
     build_tenant_catalog_sections,
     add_product_to_cart,
     generate_cart_checkout_response,
-    user_cart_sessions
+    user_cart_sessions,
+    normalize_phone_number,
+    reset_whatsapp_user_session,
+    DEMO_MENU_TEXT,
+    DEMO_TENANT_GREETINGS,
+    user_tenant_sessions,
+    user_session_states,
+    send_whatsapp_tenant_catalog,
+    resolve_dynamic_tenant_for_whatsapp,
+    is_closing_buy_intent,
 )
+
+
+
 
 logger = logging.getLogger("CENTRAL_WA_ROUTER")
 if not any(isinstance(f, ZeroPIILogFilter) for f in logger.filters):
@@ -308,15 +320,18 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         if not event["is_message"]:
             return web.json_response({"status": "ignored"}, status=200)
 
-        phone_id = event["phone_id"]
-        from_phone = event["from_phone"]
-        msg_type = event["msg_type"]
-        contact_name = event["contact_name"] or "Kakak"
-        incoming_text = event["text"]
-        button_id = event["button_id"]
-        media_id = event["media_id"]
-        image_mime = event["media_mime"] or "image/jpeg"
+        phone_id = str(event.get("phone_id") or "").strip()
+        from_phone = str(event.get("from_phone") or "").strip()
+        clean_phone = normalize_phone_number(from_phone) or re.sub(r"\D", "", from_phone)
+        msg_type = str(event.get("msg_type") or "text").strip()
+        contact_name = str(event.get("contact_name") or "Kakak").strip()
+        incoming_text = str(event.get("text") or "").strip()
+        clean_text = incoming_text.strip().lower()
+        button_id = str(event.get("button_id") or "").strip().lower()
+        media_id = event.get("media_id")
+        image_mime = event.get("media_mime") or "image/jpeg"
         image_bytes: Optional[bytes] = None
+
 
         # 6.2. Anti-Spam Rate Limiter (Maks 5 pesan / menit)
         is_allowed, retry_after = wa_rate_limiter.is_allowed(from_phone)
@@ -368,19 +383,9 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 logger.error(f"[MEDIA DOWNLOAD ERROR] {e}")
 
         # P0 INTERCEPT: Command #reset / reset / menu utama
-        clean_text = (incoming_text or "").strip().lower()
-        clean_btn = str(button_id or "").strip().lower()
-        from app.services.whatsapp_service import (
-            reset_whatsapp_user_session,
-            DEMO_MENU_TEXT,
-            DEMO_TENANT_GREETINGS,
-            user_tenant_sessions,
-            user_session_states,
-            normalize_phone_number,
-            send_whatsapp_tenant_catalog,
-        )
         is_career = (str(phone_id).strip() == CAREER_PHONE_NUMBER_ID or str(phone_id).strip() == os.getenv("CAREER_PHONE_NUMBER_ID", CAREER_PHONE_NUMBER_ID))
         clean_kw = re.sub(r"[^\w#]", "", clean_text)
+
         is_explicit_reset = (
             clean_kw in ["#reset", "reset"]
             or clean_text.startswith("#reset")
@@ -618,21 +623,13 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
         else:
             # 6.6. Dynamic Tenant Resolution with Top-Level Demo Menu Interceptor
-            from app.services.whatsapp_service import (
-                resolve_dynamic_tenant_for_whatsapp,
-                user_tenant_sessions,
-                normalize_phone_number,
-                is_closing_buy_intent,
-                DEMO_MENU_TEXT,
-                DEMO_TENANT_GREETINGS,
-            )
             from app.services.ai_engine import commerce_ai_engine
             from app.services.onboarding_service import onboarding_service
 
-            clean_phone = normalize_phone_number(from_phone)
             text_lower = (incoming_text or "").strip().lower()
             clean_btn = str(button_id or "").strip().lower()
             active_session_tenant = user_tenant_sessions.get(clean_phone) or "onlineboost"
+
 
             # ---------------------------------------------------------------
             # STEP A1: Buka Interactive List Katalog Produk
