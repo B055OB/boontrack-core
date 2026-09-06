@@ -59,6 +59,9 @@ def normalize_phone_number(raw_phone: Optional[str]) -> str:
 user_tenant_sessions: Dict[str, str] = {}
 user_session_states: Dict[str, str] = {}
 user_cart_sessions: Dict[str, List[Dict[str, Any]]] = {}
+# Track the WhatsApp Business Phone Number ID per user session so replies
+# always originate from the same number the user messaged.
+user_phone_number_id_sessions: Dict[str, str] = {}
 
 DEMO_MENU_TEXT = (
     "Halo! Selamat datang di *Portal Pengujian Ekosistem BoonTrack* 🚀\n\n"
@@ -118,11 +121,13 @@ def reset_whatsapp_user_session(phone: str) -> None:
     user_tenant_sessions.pop(clean_phone, None)
     user_session_states.pop(clean_phone, None)
     user_cart_sessions.pop(clean_phone, None)
+    user_phone_number_id_sessions.pop(clean_phone, None)
     raw_phone = str(phone).strip().replace("+", "")
     if raw_phone:
         user_tenant_sessions.pop(raw_phone, None)
         user_session_states.pop(raw_phone, None)
         user_cart_sessions.pop(raw_phone, None)
+        user_phone_number_id_sessions.pop(raw_phone, None)
 
     try:
         from app.tenants.om_budi.service import om_budi_service
@@ -334,7 +339,7 @@ def build_tenant_catalog_sections(tenant_slug: str) -> Tuple[str, List[Dict[str,
     return body_text, sections
 
 
-async def send_whatsapp_tenant_catalog(phone: str, tenant_slug: str = "onlineboost", tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+async def send_whatsapp_tenant_catalog(phone: str, tenant_slug: str = "onlineboost", tenant_id: Optional[str] = None, phone_number_id: Optional[str] = None, access_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Menampilkan 4 ecourse / katalog produk riil dari Supabase ke WhatsApp user."""
     clean_phone = normalize_phone_number(phone)
     target_tenant = tenant_id or tenant_slug
@@ -371,13 +376,15 @@ async def send_whatsapp_tenant_catalog(phone: str, tenant_slug: str = "onlineboo
             buttons=buttons,
             footer_text="Pilih opsi untuk lanjut:",
             tenant_id=target_tenant,
+            phone_number_id=phone_number_id,
+            access_token=access_token,
         )
         if res:
             return res
     except Exception as err:
         logger.warning(f"[SEND WA CATALOG BUTTONS ERROR] {err}")
 
-    return await send_whatsapp_text(clean_phone, catalog_text, tenant_id=target_tenant)
+    return await send_whatsapp_text(clean_phone, catalog_text, tenant_id=target_tenant, phone_number_id=phone_number_id, access_token=access_token)
 
 
 def add_product_to_cart(from_phone: str, tenant_slug: str, product_key: str) -> Tuple[str, List[Dict[str, str]], int]:
@@ -884,7 +891,11 @@ def extract_meta_whatsapp_event(data: dict) -> Dict[str, Any]:
         logger.error(f"[Extract Meta WA Event Error] {err}")
         return res
 
-def get_wa_credentials(tenant_id: str = "boontrack-career") -> Tuple[str, str, str]:
+def get_wa_credentials(tenant_id: str = "boontrack-career", phone_number_id: Optional[str] = None, access_token: Optional[str] = None) -> Tuple[str, str, str]:
+    """Resolve Meta API credentials. If explicit phone_number_id/access_token are
+    provided they take priority over tenant-based resolution — this ensures
+    replies always originate from the same WhatsApp number that received the
+    incoming message."""
     default_token = (
         os.getenv("WHATSAPP_TOKEN")
         or os.getenv("META_WA_TOKEN")
@@ -893,6 +904,22 @@ def get_wa_credentials(tenant_id: str = "boontrack-career") -> Tuple[str, str, s
         or os.getenv("META_ACCESS_TOKEN")
         or "EAANbiVgBfGQBSQkvsZBc8JmqdEZBJWSrZAWR1gnJep0lkyZAv4O02LKEwjoNAc8lNOvaEeKhtb6pcr45S8wtd5CrSKdoMwEq6A1eJV4Yb140DBOMbmj3wLzo0Y7fZBrus25EJ0xeqXlPbDisP6d4DmZAGkvbJ7hnKfFih3G7L7mn6g56OQVU42dZByNSHNEiwZDZD"
     )
+    version = os.getenv("META_GRAPH_VERSION", "v20.0")
+
+    # --- Priority 1: Explicit overrides from webhook payload ---
+    if phone_number_id and str(phone_number_id).strip():
+        resolved_phone_id = str(phone_number_id).strip()
+        resolved_token = str(access_token).strip() if access_token else default_token
+        if not access_token:
+            if resolved_phone_id == (os.getenv("CAREER_PHONE_NUMBER_ID") or "1340866379104241"):
+                resolved_token = os.getenv("CAREER_ACCESS_TOKEN") or default_token
+            elif resolved_phone_id == (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "1268977686299719"):
+                resolved_token = os.getenv("OM_BUDI_ACCESS_TOKEN") or default_token
+            elif resolved_phone_id == (os.getenv("PHONE_NUMBER_ID") or "1306479742542883"):
+                resolved_token = os.getenv("ADUAN_ACCESS_TOKEN") or default_token
+        return resolved_token.strip(), resolved_phone_id, version
+
+    # --- Priority 2: Tenant-based resolution ---
     clean_tenant = str(tenant_id).lower().strip() if tenant_id else "boontrack-career"
 
     if clean_tenant in ["boontrack-career", "career"]:
@@ -923,14 +950,13 @@ def get_wa_credentials(tenant_id: str = "boontrack-career") -> Tuple[str, str, s
         )
         token = default_token
 
-    version = os.getenv("META_GRAPH_VERSION", "v20.0")
     return token.strip(), str(phone_id).strip(), version
 
 def _get_auth_headers(token: str) -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
-async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False, tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
-    token, phone_id, version = get_wa_credentials(tenant_id)
+async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False, tenant_id: str = "boontrack-career", phone_number_id: Optional[str] = None, access_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    token, phone_id, version = get_wa_credentials(tenant_id, phone_number_id=phone_number_id, access_token=access_token)
     if not token or not phone_id:
         logger.error(f"[WhatsApp Service] Missing credentials (phone_id={phone_id}, tenant={tenant_id})")
         return None
@@ -983,12 +1009,10 @@ async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False
 async def send_otp_whatsapp(
     to_phone: str,
     otp_code: str,
-    tenant_id: str = "boontrack-career"
+    tenant_id: str = "boontrack-career",
+    phone_number_id: Optional[str] = None,
+    access_token: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
-    """Mengirim kode OTP login/verifikasi via nomor resmi BoonTrack Career (Meta Cloud API / WABA endpoint).
-    
-    Nomor penerima secara otomatis dinormalisasi ke standar internasional E.164 (628xxx).
-    """
     clean_phone = normalize_phone_number(to_phone)
     if not clean_phone or len(clean_phone) < 10:
         logger.error(f"[WhatsApp OTP] Invalid phone number: {to_phone}")
@@ -1001,22 +1025,18 @@ async def send_otp_whatsapp(
         "• Jangan berikan kode ini kepada siapa pun demi keamanan akun Anda.\n\n"
         "_Pesan otomatis dari Meta Cloud API Gateway BoonTrack Career._"
     )
-    logger.info(f"[OFFICIAL WABA OTP] Sending OTP to E.164 {clean_phone} via boontrack-career")
-    return await send_whatsapp_text(clean_phone, msg, tenant_id="boontrack-career")
+    return await send_whatsapp_text(clean_phone, msg, tenant_id=tenant_id, phone_number_id=phone_number_id, access_token=access_token)
 
 
 async def send_ereceipt_whatsapp(
     to_phone: str,
     order_data: Dict[str, Any],
-    tenant_id: str = "boontrack-career"
+    tenant_id: str = "boontrack-career",
+    phone_number_id: Optional[str] = None,
+    access_token: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
-    """Mengirim E-Receipt bukti pembayaran resmi melalui Meta Cloud API (WABA Endpoint BoonTrack Career).
-    
-    Nomor penerima secara otomatis dinormalisasi ke standar internasional E.164 (628xxx).
-    """
     clean_phone = normalize_phone_number(to_phone)
     if not clean_phone or len(clean_phone) < 10:
-        logger.info(f"[WhatsApp E-Receipt] Skip: No valid phone for order: {order_data.get('order_id')}")
         return None
 
     order_id = str(
@@ -1043,12 +1063,7 @@ async def send_ereceipt_whatsapp(
     product_name = str(order_data.get("product_name") or order_data.get("title") or "Layanan / Produk Digital")
 
     delivery_url = order_data.get("delivery_url") or order_data.get("download_url") or ""
-    delivery_section = ""
-    if delivery_url:
-        delivery_section = (
-            f"📦 *AKSES / TAUTAN PENGIRIMAN:*\n"
-            f"👉 {delivery_url}\n\n"
-        )
+    delivery_section = f"📦 *AKSES / TAUTAN PENGIRIMAN:*\n👉 {delivery_url}\n\n" if delivery_url else ""
 
     receipt_msg = (
         "🧾 *BUKTI PEMBAYARAN RESMI (E-RECEIPT)* 🧾\n"
@@ -1065,14 +1080,13 @@ async def send_ereceipt_whatsapp(
         "Pesanan Anda otomatis diproses dan tercatat aman di sistem. Terima kasih atas kepercayaan Anda! 🙏"
     )
 
-    logger.info(f"[OFFICIAL WABA E-RECEIPT] Sending receipt for order '{order_id}' to E.164 {clean_phone}")
-    return await send_whatsapp_text(clean_phone, receipt_msg, tenant_id="boontrack-career")
+    return await send_whatsapp_text(clean_phone, receipt_msg, tenant_id=tenant_id, phone_number_id=phone_number_id, access_token=access_token)
 
 
-async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dict[str, str]], header_text: str = "", footer_text: str = "", tenant_id: str = "boontrack-career") -> Optional[Dict[str, Any]]:
-    token, phone_id, version = get_wa_credentials(tenant_id)
+async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dict[str, str]], header_text: str = "", footer_text: str = "", tenant_id: str = "boontrack-career", phone_number_id: Optional[str] = None, access_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    token, phone_id, version = get_wa_credentials(tenant_id, phone_number_id=phone_number_id, access_token=access_token)
     if not token or not phone_id:
-        return await send_whatsapp_text(to_phone, body_text, tenant_id=tenant_id)
+        return await send_whatsapp_text(to_phone, body_text, tenant_id=tenant_id, phone_number_id=phone_number_id, access_token=access_token)
 
     clean_phone = str(to_phone).replace("+", "").strip()
     sanitized_body = sanitize_whatsapp_message_text(body_text)
@@ -1115,8 +1129,7 @@ async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dic
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(url, headers=headers, json=payload)
             if response.status_code not in (200, 201):
-                logger.error(f"[WhatsApp Service] send_buttons failed: {response.status_code} - {response.text}")
-                return await send_whatsapp_text(to_phone, body_text, tenant_id=tenant_id)
+                return await send_whatsapp_text(to_phone, body_text, tenant_id=tenant_id, phone_number_id=phone_number_id, access_token=access_token)
             
             await log_to_supabase_messages(
                 sender="bot",
@@ -1131,11 +1144,11 @@ async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dic
             return response.json()
     except Exception as e:
         logger.error(f"[WhatsApp Service] Exception in send_whatsapp_buttons: {e}", exc_info=True)
-        return await send_whatsapp_text(to_phone, body_text, tenant_id=tenant_id)
+        return await send_whatsapp_text(to_phone, body_text, tenant_id=tenant_id, phone_number_id=phone_number_id, access_token=access_token)
 
-async def upload_media(bytes_data: bytes, mime_type: str = "image/png", filename: str = "qris.png", tenant_id: str = "boontrack-career") -> Optional[str]:
-    """Melakukan HTTP POST multipart ke Meta media endpoint."""
-    token, phone_id, version = get_wa_credentials(tenant_id)
+async def upload_media(bytes_data: bytes, mime_type: str = "image/png", filename: str = "qris.png", tenant_id: str = "boontrack-career", phone_number_id: Optional[str] = None, access_token: Optional[str] = None) -> Optional[str]:
+    """Melakukan HTTP POST multipart ke Meta media endpoint dengan dynamic phone_number_id."""
+    token, phone_id, version = get_wa_credentials(tenant_id, phone_number_id=phone_number_id, access_token=access_token)
     if not token or not phone_id:
         return None
 
@@ -1159,8 +1172,8 @@ async def upload_media(bytes_data: bytes, mime_type: str = "image/png", filename
         logger.warning(f"[WhatsApp Service] Exception in upload_media: {e}")
         return None
 
-async def upload_whatsapp_media(file_bytes: bytes, filename: str, mime_type: str, tenant_id: str = "boontrack-career") -> Optional[str]:
-    return await upload_media(bytes_data=file_bytes, mime_type=mime_type, filename=filename, tenant_id=tenant_id)
+async def upload_whatsapp_media(file_bytes: bytes, filename: str, mime_type: str, tenant_id: str = "boontrack-career", phone_number_id: Optional[str] = None, access_token: Optional[str] = None) -> Optional[str]:
+    return await upload_media(bytes_data=file_bytes, mime_type=mime_type, filename=filename, tenant_id=tenant_id, phone_number_id=phone_number_id, access_token=access_token)
 
 async def send_whatsapp_image_link(
     to: str = "",
@@ -1168,14 +1181,16 @@ async def send_whatsapp_image_link(
     caption: str = "",
     tenant: str = "boontrack-career",
     to_phone: Optional[str] = None,
-    tenant_id: Optional[str] = None
+    tenant_id: Optional[str] = None,
+    phone_number_id: Optional[str] = None,
+    access_token: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Mengirim pesan gambar ke WhatsApp via Direct Public Image URL Link."""
     target_phone = str(to or to_phone or "").replace("+", "").strip()
     effective_tenant = str(tenant or tenant_id or "boontrack-career").strip()
-    token, phone_id, version = get_wa_credentials(effective_tenant)
+    token, phone_id, version = get_wa_credentials(effective_tenant, phone_number_id=phone_number_id, access_token=access_token)
     if not token or not phone_id:
-        return await send_whatsapp_text(target_phone, caption, tenant_id=effective_tenant)
+        return await send_whatsapp_text(target_phone, caption, tenant_id=effective_tenant, phone_number_id=phone_number_id, access_token=access_token)
 
     url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
     headers = {
@@ -1197,8 +1212,7 @@ async def send_whatsapp_image_link(
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(url, headers=headers, json=payload)
             if response.status_code not in (200, 201):
-                logger.warning(f"[WhatsApp Service] send_whatsapp_image_link failed: {response.status_code} - {response.text}")
-                return await send_whatsapp_text(target_phone, caption, tenant_id=effective_tenant)
+                return await send_whatsapp_text(target_phone, caption, tenant_id=effective_tenant, phone_number_id=phone_number_id, access_token=access_token)
 
             res_data = response.json()
             await log_to_supabase_messages(
@@ -1214,7 +1228,7 @@ async def send_whatsapp_image_link(
             return res_data
     except Exception as e:
         logger.error(f"[WhatsApp Service] Exception in send_whatsapp_image_link: {e}")
-        return await send_whatsapp_text(target_phone, caption, tenant_id=effective_tenant)
+        return await send_whatsapp_text(target_phone, caption, tenant_id=effective_tenant, phone_number_id=phone_number_id, access_token=access_token)
 
 async def send_whatsapp_image(
     to_phone: str = "",
@@ -1225,13 +1239,15 @@ async def send_whatsapp_image(
     image_bytes: Optional[Union[str, bytes, io.BytesIO]] = None,
     tenant: Optional[str] = None,
     media_id: Optional[str] = None,
+    phone_number_id: Optional[str] = None,
+    access_token: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Mengirim pesan gambar ke WhatsApp user via Meta WhatsApp Cloud API dengan auto-fallback aman."""
     target_phone = str(to or to_phone or "").strip()
     img_data = image_bytes if image_bytes is not None else image_path_or_bytes
     effective_tenant = str(tenant or tenant_id or "boontrack-career").strip()
 
-    token, phone_id, version = get_wa_credentials(effective_tenant)
+    token, phone_id, version = get_wa_credentials(effective_tenant, phone_number_id=phone_number_id, access_token=access_token)
     clean_phone = str(target_phone).replace("+", "").strip()
 
     # 1. Jika img_data adalah URL string publik, gunakan send_whatsapp_image_link
@@ -1240,7 +1256,9 @@ async def send_whatsapp_image(
             to=clean_phone,
             image_url=img_data,
             caption=caption,
-            tenant=effective_tenant
+            tenant=effective_tenant,
+            phone_number_id=phone_number_id,
+            access_token=access_token,
         )
 
     # 2. Upload Bytes PNG jika belum ada media_id
@@ -1259,7 +1277,14 @@ async def send_whatsapp_image(
                 pass
 
         if b_data:
-            resolved_media_id = await upload_media(bytes_data=b_data, mime_type="image/png", filename="qris_code.png", tenant_id=effective_tenant)
+            resolved_media_id = await upload_media(
+                bytes_data=b_data, 
+                mime_type="image/png", 
+                filename="qris_code.png", 
+                tenant_id=effective_tenant,
+                phone_number_id=phone_number_id,
+                access_token=access_token
+            )
 
     # 3. Jika upload media_id berhasil, kirim via ID
     if resolved_media_id:
@@ -1297,7 +1322,7 @@ async def send_whatsapp_image(
             pass
 
     # 4. Fallback Teks bila pengiriman gambar terkendala
-    return await send_whatsapp_text(clean_phone, caption, tenant_id=effective_tenant)
+    return await send_whatsapp_text(clean_phone, caption, tenant_id=effective_tenant, phone_number_id=phone_number_id, access_token=access_token)
 
 async def send_whatsapp_document(
     to_phone: str,
@@ -1305,10 +1330,12 @@ async def send_whatsapp_document(
     filename: str = "CV_Hasil_Polish.docx",
     caption: str = "",
     mime_type: Optional[str] = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    tenant_id: str = "boontrack-career"
+    tenant_id: str = "boontrack-career",
+    phone_number_id: Optional[str] = None,
+    access_token: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """Mengirim file attachment dokumen (.docx / .pdf) via WhatsApp Cloud API."""
-    token, phone_id, version = get_wa_credentials(tenant_id)
+    token, phone_id, version = get_wa_credentials(tenant_id, phone_number_id=phone_number_id, access_token=access_token)
     clean_phone = str(to_phone).replace("+", "").strip()
 
     if not token or not phone_id:
@@ -1368,7 +1395,7 @@ async def send_whatsapp_document(
     if not file_bytes:
         return None
 
-    media_id = await upload_whatsapp_media(file_bytes, filename, mime_type, tenant_id=tenant_id)
+    media_id = await upload_whatsapp_media(file_bytes, filename, mime_type, tenant_id=tenant_id, phone_number_id=phone_number_id, access_token=access_token)
     if not media_id:
         return None
 
@@ -1401,8 +1428,8 @@ async def send_whatsapp_document(
         pass
     return None
 
-async def download_whatsapp_media_by_id(media_id: str) -> Optional[bytes]:
-    token, _, version = get_wa_credentials()
+async def download_whatsapp_media_by_id(media_id: str, phone_number_id: Optional[str] = None, access_token: Optional[str] = None) -> Optional[bytes]:
+    token, _, version = get_wa_credentials(phone_number_id=phone_number_id, access_token=access_token)
     if not token:
         return None
 

@@ -20,6 +20,7 @@ from app.services.whatsapp_service import (
     send_whatsapp_tenant_catalog,
     user_tenant_sessions,
     user_session_states,
+    user_phone_number_id_sessions,
     safe_log_to_supabase_messages,
     normalize_phone_number,
     generate_fast_track_checkout_response,
@@ -96,7 +97,6 @@ async def verify_webhook_handshake(
     return Response(content="Verification token mismatch", media_type="text/plain", status_code=403)
 
 
-
 # =============================================================================
 # 2. POST Message Ingestion & Safe Multi-Tenant Routing
 # =============================================================================
@@ -135,6 +135,10 @@ async def handle_whatsapp_webhook(request: Request):
     text_lower = clean_text
     clean_btn = button_id
 
+    # Simpan session phone_number_id agar tetap konsisten
+    if clean_phone and phone_id:
+        user_phone_number_id_sessions[clean_phone] = phone_id
+
     # =========================================================================
     # P0 INTERCEPT: COMMAND #RESET / RESET / MENU UTAMA (TOP PRIORITY)
     # Harus dieksekusi sebelum AI engine, LLM, atau prompt Om Budi dipanggil!
@@ -144,8 +148,10 @@ async def handle_whatsapp_webhook(request: Request):
         reset_whatsapp_user_session(clean_phone)
         if clean_phone:
             user_session_states[clean_phone] = "AWAITING_PORTAL_CHOICE"
+            if phone_id:
+                user_phone_number_id_sessions[clean_phone] = phone_id
         if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT)
+            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, phone_number_id=phone_id)
         safe_log_to_supabase_messages(
             sender="bot",
             text=DEMO_MENU_TEXT,
@@ -165,12 +171,14 @@ async def handle_whatsapp_webhook(request: Request):
         if clean_phone:
             user_tenant_sessions[clean_phone] = selected_slug
             user_session_states[clean_phone] = "ACTIVE"
+            if phone_id:
+                user_phone_number_id_sessions[clean_phone] = phone_id
         
         greeting = DEMO_TENANT_GREETINGS.get(selected_slug, f"🎉 Anda kini terhubung dengan *{selected_slug}*.")
 
         if selected_slug == "onlineboost":
             if from_phone:
-                await send_whatsapp_tenant_catalog(from_phone, "onlineboost")
+                await send_whatsapp_tenant_catalog(from_phone, "onlineboost", phone_number_id=phone_id)
             safe_log_to_supabase_messages(
                 sender="bot",
                 text="[Katalog OnlineBoost Dispatched]",
@@ -195,9 +203,10 @@ async def handle_whatsapp_webhook(request: Request):
                         buttons=ombudi_buttons,
                         footer_text="Pilih menu di bawah untuk lanjut:",
                         tenant_id="ombudi",
+                        phone_number_id=phone_id,
                     )
                 except Exception:
-                    await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="ombudi")
+                    await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="ombudi", phone_number_id=phone_id)
             safe_log_to_supabase_messages(
                 sender="bot",
                 text=greeting,
@@ -210,7 +219,7 @@ async def handle_whatsapp_webhook(request: Request):
 
         elif selected_slug == "growthplus":
             if from_phone:
-                await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="growthplus")
+                await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="growthplus", phone_number_id=phone_id)
             safe_log_to_supabase_messages(
                 sender="bot",
                 text=greeting,
@@ -223,7 +232,7 @@ async def handle_whatsapp_webhook(request: Request):
 
         elif selected_slug == "proscale":
             if from_phone:
-                await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="proscale")
+                await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="proscale", phone_number_id=phone_id)
             safe_log_to_supabase_messages(
                 sender="bot",
                 text=greeting,
@@ -261,7 +270,7 @@ async def handle_whatsapp_webhook(request: Request):
         )
         reply = sanitize_whatsapp_message_text(reply)
         if reply and from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id=tenant_slug)
+            await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id=tenant_slug, phone_number_id=phone_id)
 
         safe_log_to_supabase_messages(
             sender="bot",
@@ -289,11 +298,12 @@ async def handle_whatsapp_webhook(request: Request):
                     body_text=reply_text,
                     buttons=buttons,
                     tenant_id="ombudi",
+                    phone_number_id=phone_id,
                 )
             except Exception:
-                await send_whatsapp_text(to_phone=from_phone, text=reply_text, tenant_id="ombudi")
+                await send_whatsapp_text(to_phone=from_phone, text=reply_text, tenant_id="ombudi", phone_number_id=phone_id)
         elif reply_text and from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=reply_text, tenant_id="ombudi")
+            await send_whatsapp_text(to_phone=from_phone, text=reply_text, tenant_id="ombudi", phone_number_id=phone_id)
 
         safe_log_to_supabase_messages(
             sender="bot",
@@ -314,14 +324,14 @@ async def handle_whatsapp_webhook(request: Request):
         if clean_phone:
             reset_whatsapp_user_session(clean_phone)
         if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT)
+            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, phone_number_id=phone_id)
         return {"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}
 
     # Ambil tenant aktif sesi saat ini
     active_tenant = user_tenant_sessions.get(clean_phone)
     if not active_tenant:
         if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT)
+            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, phone_number_id=phone_id)
         return {"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}
 
     # 3. Fast-Track QRIS Closing (Tombol Beli / Kata Kunci Pembelian)
@@ -354,6 +364,7 @@ async def handle_whatsapp_webhook(request: Request):
                     image_url=qr_code_url,
                     caption=reply,
                     tenant_id=active_tenant,
+                    phone_number_id=phone_id,
                 )
                 if link_resp and getattr(link_resp, "status_code", 200) in (200, 201):
                     image_delivered = True
@@ -361,7 +372,7 @@ async def handle_whatsapp_webhook(request: Request):
                 logger.warning(f"[WA IMAGE DISPATCH ERROR] {err}")
 
             if not image_delivered and from_phone:
-                await send_whatsapp_text(to_phone=from_phone, text=reply)
+                await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id=active_tenant, phone_number_id=phone_id)
 
             safe_log_to_supabase_messages(
                 sender="bot",
@@ -391,7 +402,7 @@ async def handle_whatsapp_webhook(request: Request):
             "Ketik *Beli* atau klik tombol di atas untuk pembayaran QRIS instan."
         )
         if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=layanan_text)
+            await send_whatsapp_text(to_phone=from_phone, text=layanan_text, tenant_id="onlineboost", phone_number_id=phone_id)
         return {"status": "success", "tenant": "onlineboost", "reply": layanan_text}
 
     # 5. Fallback AI Response
@@ -414,7 +425,7 @@ async def handle_whatsapp_webhook(request: Request):
     reply = sanitize_whatsapp_message_text(reply)
 
     if reply and from_phone:
-        await send_whatsapp_text(to_phone=from_phone, text=reply)
+        await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id=active_tenant, phone_number_id=phone_id)
 
     safe_log_to_supabase_messages(
         sender="bot",
