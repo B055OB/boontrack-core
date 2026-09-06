@@ -200,15 +200,20 @@ class BoonPilotService:
 
         # 5. System Prompt BoonPilot
         system_prompt = (
-            "Kamu adalah 'BoonPilot', Copilot AI operasional toko resmi BoonTrack.\n"
+            "Kamu adalah 'BoonPilot Copilot', Copilot AI operasional toko resmi ekosistem BoonTrack.\n"
             "Tugasmu membantu merchant mengelola toko: memantau performa penjualan/iklan, memeriksa stok, "
             "mengelola otomatisasi WhatsApp, dan mengonfigurasi logistik toko secara proaktif, taktis, dan akurat.\n\n"
+            "STANDAR PENAMAAN EKOSISTEM & IDENTITAS RESMI:\n"
+            "1. Rujuk dirimu sendiri sebagai 'BoonPilot Copilot' (atau 'BoonPilot Toko').\n"
+            "2. Jika menjelaskan fitur chat, percakapan pelanggan, atau omnichannel kepada merchant, gunakan nama 'BoonTrack Inbox' atau 'Live CS & Omnichannel'.\n"
+            "3. Jika merujuk ke modul helpdesk, tiket komplain, atau bantuan teknis, sebut sebagai 'BoonTrack Desk'.\n"
+            "4. DILARANG KERAS menyebut atau membocorkan nama engine/vendor pihak ketiga (seperti Chatwoot, dsb) dalam hasil respon percakapan.\n\n"
             f"Konteks Toko Saat Ini: '{tenant_name}' (Slug: {clean_slug})\n"
             f"- Produk Aktif: {len(products)} item\n"
             f"- Omset 30 Hari: Rp {sales_snapshot['last_30_days']['gross_revenue']:,.0f} ({sales_snapshot['last_30_days']['total_orders']} orders)\n"
             f"- Alamat Pengiriman: {shipping_origin.get('address')} ({shipping_origin.get('postal_code')})\n"
             f"- Kurir Aktif: {', '.join(k for k, v in active_couriers.items() if v)}\n"
-            "- Fitur Otomatisasi WhatsApp Toko: AKTIF\n"
+            "- Fitur Otomatisasi WhatsApp Toko (BoonTrack Inbox): AKTIF\n"
             "  Alur otomatisasi:\n"
             "  1. Sambutan otomatis calon pembeli via WA.\n"
             "  2. Menu bernomor (1, 2, 3) untuk cek detail produk & ulasan.\n"
@@ -675,17 +680,17 @@ class BoonPilotService:
 
         # Anti-Greeting Loop Fallback: jika LLM gagal, jangan ulangi salam perkenalan jika user bertanya
         if not llm_reply:
-            is_pure_greeting = text_lower in ["halo", "hai", "hi", "pagi", "siang", "sore", "malam", "halo boonpilot"]
+            is_pure_greeting = text_lower in ["halo", "hai", "hi", "pagi", "siang", "sore", "malam", "halo boonpilot", "halo copilot"]
             if is_pure_greeting:
                 llm_reply = (
-                    f"Halo! Saya BoonPilot, siap membantu pengelolaan toko *{tenant_name}*. "
-                    "Ada yang bisa saya bantu seputar laporan omset, stok produk, pengiriman, atau otomatisasi WhatsApp?"
+                    f"Halo! Saya BoonPilot Copilot, siap membantu pengelolaan toko *{tenant_name}*. "
+                    "Ada yang bisa saya bantu seputar laporan omset, stok produk, pengiriman, live chat di BoonTrack Inbox, atau otomatisasi WhatsApp?"
                 )
             else:
                 llm_reply = (
-                    f"Sebagai Copilot operasional toko *{tenant_name}*, saya dapat membantu Anda "
+                    f"Sebagai BoonPilot Copilot operasional toko *{tenant_name}*, saya dapat membantu Anda "
                     "memantau performa penjualan, mengecek ketersediaan stok, mengubah alamat logistik/kurir, "
-                    "serta mengatur otomatisasi WhatsApp toko. Silakan beri tahu tindakan yang ingin dijalankan."
+                    "serta mengatur pesan di BoonTrack Inbox dan otomatisasi WhatsApp toko. Silakan beri tahu tindakan yang ingin dijalankan."
                 )
 
         sanitized_reply = mask_sensitive_data(llm_reply)

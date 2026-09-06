@@ -40,4 +40,22 @@ async def test_merchant_copilot_endpoint_persona():
         assert "BoonTrack Group" not in data["reply"]
         assert "software kustom" not in data["reply"]
         assert "Holding" not in data["reply"]
+        # DILARANG keras menyebut third-party engines
+        assert "chatwoot" not in data["reply"].lower()
         assert len(data["quick_actions"]) > 0
+
+@pytest.mark.asyncio
+async def test_boonpilot_naming_convention_fallback():
+    # Uji bahwa fallback tanpa mock menggunakan identitas resmi BoonPilot Copilot dan BoonTrack Inbox
+    from app.services.boonpilot_service import boonpilot_service
+
+    with patch("app.services.ai_gateway.ai_gateway.generate_for_agent", new_callable=AsyncMock) as mock_gen:
+        mock_gen.return_value = None  # Force fallback
+        res = await boonpilot_service.chat(
+            tenant_slug="onlineboost",
+            message="apa yang bisa kamu lakukan?"
+        )
+        reply = res["reply"]
+        assert "BoonPilot Copilot" in reply
+        assert "BoonTrack Inbox" in reply
+        assert "chatwoot" not in reply.lower()

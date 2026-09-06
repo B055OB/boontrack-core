@@ -354,7 +354,7 @@ class MerchantCopilotResponse(BaseModel):
 @router.post(
     "/api/v1/merchant/copilot",
     response_model=MerchantCopilotResponse,
-    summary="Merchant Copilot Assistant (MERCHANT_COPILOT - BoonPilot)",
+    summary="Merchant Copilot Assistant (MERCHANT_COPILOT - BoonPilot Copilot)",
 )
 @router.post(
     "/api/merchant/copilot",
@@ -363,9 +363,9 @@ class MerchantCopilotResponse(BaseModel):
 )
 async def handle_merchant_copilot(payload: MerchantCopilotRequest = Body(...)):
     """
-    Rute utama Merchant Copilot (BoonPilot).
+    Rute utama Merchant Copilot (BoonPilot Copilot).
     - Memanggil profil MERCHANT_COPILOT (ModelProfile: REASONING).
-    - Query-only tools: Laporan omset & ROAS, monitoring stok menipis, status WhatsApp Automation.
+    - Query-only tools: Laporan omset & ROAS, monitoring stok menipis, status live chat & BoonTrack Inbox.
     - Data mutation tools: Menghasilkan Action Proposal dengan TTL 10 menit (Human-in-the-Loop).
     """
     clean_slug = str(payload.tenant_slug or "onlineboost").strip().lower()
@@ -421,7 +421,7 @@ async def handle_merchant_copilot(payload: MerchantCopilotRequest = Body(...)):
         "Bagaimana performa penjualan toko saya minggu ini?",
         "Cek stok produk yang hampir habis",
         "Bantu atur titik penjemputan gudang kurir",
-        "Cek status otomatisasi WhatsApp",
+        "Cek live chat & status BoonTrack Inbox",
     ]
 
     return MerchantCopilotResponse(
@@ -508,7 +508,7 @@ async def handle_platform_support(payload: PlatformSupportRequest = Body(...)):
     quick_actions = [
         "Info Upgrade Paket Toko (Growth & ProScale)",
         "Bantuan Teknis Meta CAPI & Pixel",
-        "Tanya Program Kemitraan Mitra & Payout",
+        "Buat Tiket Kendala di BoonTrack Desk",
         "Hubungi Live Support WA (+6281237450222)",
     ]
 

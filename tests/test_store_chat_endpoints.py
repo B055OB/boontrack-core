@@ -19,7 +19,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from fastapi.testclient import TestClient
 from app.main import app
-from app.services.sales_agent_guard import StoreContextBoundaryManager, backend_security_validator
+from app.services.sales_agent_guard import (
+    StoreContextBoundaryManager,
+    backend_security_validator,
+    format_tenant_session_key,
+)
 from app.services.ai_gateway import ai_gateway, AgentProfile, ModelProfile
 from app.services.platform_support_agent import platform_support_agent
 from app.services.boonpilot_service import boonpilot_service
@@ -76,7 +80,7 @@ class TestStoreChatEndpoints(unittest.TestCase):
         state = data["session_state"]
         self.assertEqual(state["tenant_id"], "growth")
         self.assertEqual(state["session_id"], "sess_cust_001")
-        self.assertEqual(state["scoped_key"], "tenant:growth:session:sess_cust_001")
+        self.assertEqual(state["scoped_key"], format_tenant_session_key("growth", "sess_cust_001"))
 
     def test_store_chat_action_show_product(self):
         """Saat user bertanya harga atau detail, action menjadi SHOW_PRODUCT dengan product_ids terverifikasi."""

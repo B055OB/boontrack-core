@@ -35,12 +35,12 @@ class BoonPilotExecuteActionRequest(BaseModel):
 # Endpoints
 # =============================================================================
 
-@router.post("/chat", summary="Chat Interaktif dengan Agentic AI BoonPilot")
+@router.post("/chat", summary="Chat Interaktif dengan BoonPilot Copilot")
 async def chat_with_boonpilot(payload: BoonPilotChatRequest):
     """
-    Endpoint interaksi utama BoonPilot:
+    Endpoint interaksi utama BoonPilot Copilot:
     - Menjawab pertanyaan laporan penjualan & inventory secara langsung (Query-only tools).
-    - Merespons informasi kapabilitas WhatsApp Automation toko secara taktis (anti greeting-loop).
+    - Merespons informasi status live chat BoonTrack Inbox & otomatisasi toko secara taktis (anti greeting-loop).
     - Mendukung riwayat percakapan multi-turn (conversation_history).
     - Menghasilkan Action Proposal terstruktur dengan status AWAITING_APPROVAL jika mendeteksi instruksi mutasi data.
     - Menjawab konsultasi operasional toko dengan sistem prompt & guardrails yang ketat.
