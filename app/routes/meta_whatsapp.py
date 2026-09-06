@@ -130,7 +130,12 @@ async def handle_whatsapp_webhook(request: Request):
     contact_name = event.get("contact_name") or "Kakak"
     clean_phone = normalize_phone_number(from_phone)
     button_id = str(event.get("button_id") or "").strip().lower()
+    
+    # Resolusi Phone ID dengan fallback wajib ke nomor Om Budi jika payload kosong
     phone_id = str(event.get("phone_id") or "").strip()
+    if not phone_id:
+        phone_id = os.getenv("OM_BUDI_PHONE_NUMBER_ID", "1268977686299719")
+
     clean_text = incoming_text.strip().lower()
     text_lower = clean_text
     clean_btn = button_id
@@ -141,7 +146,6 @@ async def handle_whatsapp_webhook(request: Request):
 
     # =========================================================================
     # P0 INTERCEPT: COMMAND #RESET / RESET / MENU UTAMA (TOP PRIORITY)
-    # Harus dieksekusi sebelum AI engine, LLM, atau prompt Om Budi dipanggil!
     # =========================================================================
     if clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo"] or clean_btn in ["btn_menu_reset", "reset"]:
         logger.info(f"[META WA ROUTER] Reset command '{clean_text}' detected from {clean_phone}. Clearing session & dispatching 4-portal demo menu.")
@@ -151,7 +155,7 @@ async def handle_whatsapp_webhook(request: Request):
             if phone_id:
                 user_phone_number_id_sessions[clean_phone] = phone_id
         if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, phone_number_id=phone_id)
+            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, tenant_id="ombudi", phone_number_id=phone_id)
         safe_log_to_supabase_messages(
             sender="bot",
             text=DEMO_MENU_TEXT,
@@ -164,7 +168,6 @@ async def handle_whatsapp_webhook(request: Request):
 
     # =========================================================================
     # P0 INTERCEPT: MENU SELECTION 1, 2, 3, 4
-    # Harus dieksekusi sebelum handler spesifik Om Budi / riyadhoh / AI!
     # =========================================================================
     if clean_text in _MENU_OPTION_MAP or (user_session_states.get(clean_phone) == "AWAITING_PORTAL_CHOICE" and clean_text in _MENU_OPTION_MAP):
         selected_slug = _MENU_OPTION_MAP[clean_text]
@@ -178,7 +181,12 @@ async def handle_whatsapp_webhook(request: Request):
 
         if selected_slug == "onlineboost":
             if from_phone:
-                await send_whatsapp_tenant_catalog(from_phone, "onlineboost", phone_number_id=phone_id)
+                await send_whatsapp_tenant_catalog(
+                    phone=from_phone,
+                    tenant_slug="onlineboost",
+                    tenant_id="ombudi",
+                    phone_number_id=phone_id
+                )
             safe_log_to_supabase_messages(
                 sender="bot",
                 text="[Katalog OnlineBoost Dispatched]",
@@ -219,7 +227,7 @@ async def handle_whatsapp_webhook(request: Request):
 
         elif selected_slug == "growthplus":
             if from_phone:
-                await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="growthplus", phone_number_id=phone_id)
+                await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="ombudi", phone_number_id=phone_id)
             safe_log_to_supabase_messages(
                 sender="bot",
                 text=greeting,
@@ -232,7 +240,7 @@ async def handle_whatsapp_webhook(request: Request):
 
         elif selected_slug == "proscale":
             if from_phone:
-                await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="proscale", phone_number_id=phone_id)
+                await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="ombudi", phone_number_id=phone_id)
             safe_log_to_supabase_messages(
                 sender="bot",
                 text=greeting,
@@ -256,8 +264,6 @@ async def handle_whatsapp_webhook(request: Request):
     # =========================================================================
     # JALUR A: PRODUKSI AKTIF (Career Assistant & Admin Om Budi)
     # =========================================================================
-    # KUNCI SESI: Jika user telah memilih OnlineBoost, Growth+, atau ProScale,
-    # jangan biarkan diarahkan ke Career atau Om Budi lama!
     if tenant_slug in ("onlineboost", "growthplus", "proscale"):
         pass
     elif tenant_slug in ("boontrack-career", "boontrack_career", "career"):
@@ -324,14 +330,14 @@ async def handle_whatsapp_webhook(request: Request):
         if clean_phone:
             reset_whatsapp_user_session(clean_phone)
         if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, phone_number_id=phone_id)
+            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, tenant_id="ombudi", phone_number_id=phone_id)
         return {"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}
 
     # Ambil tenant aktif sesi saat ini
     active_tenant = user_tenant_sessions.get(clean_phone)
     if not active_tenant:
         if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, phone_number_id=phone_id)
+            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, tenant_id="ombudi", phone_number_id=phone_id)
         return {"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}
 
     # 3. Fast-Track QRIS Closing (Tombol Beli / Kata Kunci Pembelian)
@@ -363,7 +369,7 @@ async def handle_whatsapp_webhook(request: Request):
                     to_phone=from_phone,
                     image_url=qr_code_url,
                     caption=reply,
-                    tenant_id=active_tenant,
+                    tenant_id="ombudi",
                     phone_number_id=phone_id,
                 )
                 if link_resp and getattr(link_resp, "status_code", 200) in (200, 201):
@@ -372,7 +378,7 @@ async def handle_whatsapp_webhook(request: Request):
                 logger.warning(f"[WA IMAGE DISPATCH ERROR] {err}")
 
             if not image_delivered and from_phone:
-                await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id=active_tenant, phone_number_id=phone_id)
+                await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="ombudi", phone_number_id=phone_id)
 
             safe_log_to_supabase_messages(
                 sender="bot",
@@ -402,7 +408,7 @@ async def handle_whatsapp_webhook(request: Request):
             "Ketik *Beli* atau klik tombol di atas untuk pembayaran QRIS instan."
         )
         if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=layanan_text, tenant_id="onlineboost", phone_number_id=phone_id)
+            await send_whatsapp_text(to_phone=from_phone, text=layanan_text, tenant_id="ombudi", phone_number_id=phone_id)
         return {"status": "success", "tenant": "onlineboost", "reply": layanan_text}
 
     # 5. Fallback AI Response
@@ -425,7 +431,7 @@ async def handle_whatsapp_webhook(request: Request):
     reply = sanitize_whatsapp_message_text(reply)
 
     if reply and from_phone:
-        await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id=active_tenant, phone_number_id=phone_id)
+        await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="ombudi", phone_number_id=phone_id)
 
     safe_log_to_supabase_messages(
         sender="bot",
