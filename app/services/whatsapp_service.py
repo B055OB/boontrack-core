@@ -143,6 +143,15 @@ def reset_whatsapp_user_session(phone: str) -> None:
     except Exception:
         pass
 
+    try:
+        from app.repositories.session_repository import _SESSION_CACHE
+        for k in list(_SESSION_CACHE.keys()):
+            if clean_phone in k or (raw_phone and raw_phone in k):
+                _SESSION_CACHE.pop(k, None)
+    except Exception:
+        pass
+
+
 
 def sanitize_whatsapp_message_text(text: Any) -> str:
     """Sanitasi respons AI agar tidak pernah membocorkan raw JSON {"reply": ...} ke chat WhatsApp."""

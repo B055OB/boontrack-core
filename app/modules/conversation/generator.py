@@ -13,10 +13,17 @@ PROMPT_MODES = {
     ),
     "PREPARE_CLOSING": (
         "User siap membeli. Konfirmasi varian pilihan dan tanyakan apakah ingin langsung dibuatkan pesanan sekarang."
-    )
+    ),
+    "PREPARE_CHECKOUT": (
+        "User siap membeli. Konfirmasi varian pilihan dan informasikan bahwa tombol atau link pembayaran sudah disiapkan."
+    ),
+    "RENDER_CHECKOUT_BUTTON": (
+        "User siap membeli. Konfirmasi pesanan dan informasikan bahwa tombol/link checkout QRIS sudah disiapkan."
+    ),
 }
 
 
 def get_system_prompt_for_mode(mode: str, product_context: str = "") -> str:
     template = PROMPT_MODES.get(mode, PROMPT_MODES["PROBE_NEED"])
     return template.format(product_context=product_context)
+

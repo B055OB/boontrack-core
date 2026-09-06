@@ -19,6 +19,7 @@ from app.services.whatsapp_service import (
     send_whatsapp_buttons,
     send_whatsapp_image_link,
     send_whatsapp_tenant_catalog,
+    get_tenant_products_from_db,
     user_tenant_sessions,
     user_session_states,
     user_phone_number_id_sessions,
@@ -33,8 +34,21 @@ from app.services.whatsapp_service import (
 from app.services.onboarding_service import onboarding_service
 from app.services.ai_engine import commerce_ai_engine
 from app.services.agent_service import process_incoming_message
+from app.repositories.session_repository import SessionRepository
+from app.modules.conversation import (
+    load_customer_state,
+    dump_customer_state,
+    extract_signals,
+    determine_strategy,
+    get_system_prompt_for_mode,
+    validate_action,
+    TenantDBAdapter,
+)
 
 logger = logging.getLogger("META_WHATSAPP_ROUTER")
+
+_conversation_session_repo = SessionRepository()
+
 
 meta_whatsapp_router = APIRouter(tags=["Meta WhatsApp Webhook"])
 router = meta_whatsapp_router
@@ -371,19 +385,22 @@ async def handle_whatsapp_webhook(request: Request):
             if not image_delivered and from_phone:
                 await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="ombudi", phone_number_id=phone_id)
 
-            safe_log_to_supabase_messages(
-                sender="bot",
-                text=f"[Kirim QRIS {invoice.get('external_id')}] {reply}",
-                tenant_id=active_tenant,
-                channel="whatsapp",
-                user_phone=from_phone,
-                user_name=contact_name,
-            )
+            try:
+                session_key = f"{active_tenant}:{clean_phone}"
+                wa_session = await _conversation_session_repo.get_or_create(user_id=session_key, channel="whatsapp")
+                c_state = load_customer_state(session_id=clean_phone, tenant_id=active_tenant, raw_context=wa_session.context_json or {})
+                c_state.stage = "CLOSED"
+                wa_session.context_json = dump_customer_state(c_state, wa_session.context_json or {})
+                await _conversation_session_repo.save(wa_session)
+            except Exception as se:
+                logger.debug(f"[SESSION SAVE ERROR] {se}")
+
             return JSONResponse(status_code=200, content={
                 "status": "qris_dispatched",
                 "tenant": active_tenant,
                 "invoice_id": invoice.get("external_id"),
             })
+
         except Exception as e:
             logger.error(f"[FAST TRACK CHECKOUT ERROR] {e}")
             fallback_msg = "Maaf, sistem sedang memproses antrean invoice QRIS. Silakan ketik *Beli* sekali lagi ya Kak! 🙏"
@@ -470,14 +487,46 @@ async def handle_whatsapp_webhook(request: Request):
         return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "action": "ask_ai_prompt"})
 
     # -------------------------------------------------------------------------
-    # 3. CONVERSATIONAL COMMERCE AI (FALLBACK LLM DENGAN DATA TOKO)
+    # 3. 3-LAYER CONVERSATIONAL COMMERCE ENGINE (LAYER 1 -> 2 -> 3 + VALIDATOR)
     # -------------------------------------------------------------------------
+    session_key = f"{active_tenant}:{clean_phone}"
+    wa_session = await _conversation_session_repo.get_or_create(user_id=session_key, channel="whatsapp")
+    raw_context = wa_session.context_json or {}
+    customer_state = load_customer_state(session_id=clean_phone, tenant_id=active_tenant, raw_context=raw_context)
+
+    # a. Layer 1: Signal Extraction
+    intent = extract_signals(incoming_text, customer_state)
+
+    # b. Layer 2: Strategy Determination
+    nba = determine_strategy(customer_state, intent)
+
+    # c. Data Fetching
+    store_name, products = get_tenant_products_from_db(active_tenant)
+    if not customer_state.target_product_ids and products:
+        first_pid = str(products[0].get("id") or products[0].get("slug") or "")
+        if first_pid:
+            customer_state.target_product_ids.append(first_pid)
+
+    product_context = ""
+    if customer_state.stage in ["CONSIDERATION", "DECISION"]:
+        p_summaries = []
+        for p in products[:3]:
+            p_name = p.get("title") or p.get("name") or "Produk"
+            p_price = int(float(p.get("promo_price") or p.get("price") or 0))
+            p_desc = (p.get("description") or "").strip()
+            p_summaries.append(f"- {p_name} (Rp{p_price:,}): {p_desc[:100]}".replace(",", "."))
+        product_context = "\n".join(p_summaries)
+
+    # d. Layer 3: Generator Prompt Mode
+    mode_prompt = get_system_prompt_for_mode(nba, product_context)
+
     reply = await commerce_ai_engine.generate_commerce_response(
         tenant_slug=active_tenant,
         user_message=incoming_text,
         user_phone=from_phone,
         user_name=contact_name,
         button_id=event.get("button_id"),
+        mode_prompt=mode_prompt,
     )
     if not reply:
         reply = await process_incoming_message(
@@ -488,10 +537,43 @@ async def handle_whatsapp_webhook(request: Request):
             button_id=event.get("button_id"),
         )
 
+    # e. Validator Guardrail
+    db_session = TenantDBAdapter(products)
+    action_result = validate_action(customer_state, db_session)
+
+    # 3. Dispatch Balasan & State Persistence
     reply = sanitize_whatsapp_message_text(reply)
 
-    if reply and from_phone:
-        await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="ombudi", phone_number_id=phone_id)
+    if action_result.get("allow_button") is True:
+        # Kirim tombol interaktif transaksi / Checkout QRIS
+        checkout_buttons = [
+            {"id": "btn_buy_now", "title": "💳 Beli Sekarang (QRIS)"},
+            {"id": "btn_view_service", "title": "🛍️ Lihat Produk Lain"},
+        ]
+        btn_sent = False
+        if from_phone and len(reply) <= 1000:
+            try:
+                await send_whatsapp_buttons(
+                    to_phone=from_phone,
+                    body_text=reply,
+                    buttons=checkout_buttons,
+                    footer_text="Pilih aksi di bawah untuk lanjut:",
+                    tenant_id="ombudi",
+                    phone_number_id=phone_id,
+                )
+                btn_sent = True
+            except Exception as b_err:
+                logger.warning(f"[WA BUTTON DISPATCH FAILED] {b_err}")
+        if not btn_sent and reply and from_phone:
+            await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="ombudi", phone_number_id=phone_id)
+    else:
+        # JANGAN kirim tombol checkout sama sekali (hanya kirim teks percakapan natural)
+        if reply and from_phone:
+            await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="ombudi", phone_number_id=phone_id)
+
+    # Simpan kembali state ke context_json via dump_customer_state dan update ke session database
+    wa_session.context_json = dump_customer_state(customer_state, wa_session.context_json or {})
+    await _conversation_session_repo.save(wa_session)
 
     safe_log_to_supabase_messages(
         sender="bot",
@@ -500,6 +582,17 @@ async def handle_whatsapp_webhook(request: Request):
         channel="whatsapp",
         user_phone=from_phone,
         user_name=contact_name,
+        metadata={
+            "conversation_engine_stage": customer_state.stage,
+            "next_best_action": nba,
+            "allow_button": action_result.get("allow_button", False),
+        },
     )
 
-    return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "reply": reply})
+    return JSONResponse(status_code=200, content={
+        "status": "success",
+        "tenant": active_tenant,
+        "reply": reply,
+        "stage": customer_state.stage,
+        "allow_button": action_result.get("allow_button", False),
+    })

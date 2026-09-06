@@ -370,6 +370,7 @@ class CommerceAIEngine:
         button_id: Optional[str] = None,
         history: Optional[List[Dict[str, Any]]] = None,
         bot_strategy: Optional[str] = None,
+        mode_prompt: Optional[str] = None,
     ) -> str:
         """Generates contextual AI completion using the strategy-oriented system prompt."""
         details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
@@ -386,7 +387,11 @@ class CommerceAIEngine:
             strategy_key = "trust_builder"
 
         system_prompt = self.build_commerce_system_prompt(tenant_slug, bot_strategy=strategy_key)
+        if mode_prompt:
+            system_prompt = f"PANDUAN STRATEGI CONVERSATION ENGINE:\n{mode_prompt}\n\n{system_prompt}"
+
         clean_msg = (user_message or "").strip()
+
 
         # Incorporate multi-turn conversation history into system prompt
         if history and isinstance(history, list):

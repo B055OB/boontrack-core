@@ -3,7 +3,7 @@ from app.modules.conversation.state import load_customer_state, dump_customer_st
 from app.modules.conversation.signals import extract_signals
 from app.modules.conversation.strategy import determine_strategy
 from app.modules.conversation.generator import get_system_prompt_for_mode
-from app.modules.conversation.validator import validate_action
+from app.modules.conversation.validator import validate_action, TenantDBAdapter, ProductAdapter
 
 __all__ = [
     "SignalState",
@@ -14,4 +14,7 @@ __all__ = [
     "determine_strategy",
     "get_system_prompt_for_mode",
     "validate_action",
+    "TenantDBAdapter",
+    "ProductAdapter",
 ]
+

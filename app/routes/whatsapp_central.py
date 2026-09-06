@@ -859,12 +859,53 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 )
                 await send_wa_text(from_phone, reply_text, phone_id)
             else:
+                from app.repositories.session_repository import SessionRepository
+                from app.modules.conversation import (
+                    load_customer_state,
+                    dump_customer_state,
+                    extract_signals,
+                    determine_strategy,
+                    get_system_prompt_for_mode,
+                    validate_action,
+                    TenantDBAdapter,
+                )
+                from app.services.whatsapp_service import get_tenant_products_from_db
+
+                _conv_repo = SessionRepository()
+                clean_p = from_phone.replace("+", "")
+                session_key = f"{tenant_slug}:{clean_p}"
+                wa_session = await _conv_repo.get_or_create(user_id=session_key, channel="whatsapp")
+                raw_ctx = wa_session.context_json or {}
+                customer_state = load_customer_state(session_id=clean_p, tenant_id=tenant_slug, raw_context=raw_ctx)
+
+                intent = extract_signals(incoming_text, customer_state)
+                nba = determine_strategy(customer_state, intent)
+
+                _, prods = get_tenant_products_from_db(tenant_slug)
+                if not customer_state.target_product_ids and prods:
+                    first_pid = str(prods[0].get("id") or prods[0].get("slug") or "")
+                    if first_pid:
+                        customer_state.target_product_ids.append(first_pid)
+
+                prod_context = ""
+                if customer_state.stage in ["CONSIDERATION", "DECISION"]:
+                    p_summaries = []
+                    for p in prods[:3]:
+                        p_name = p.get("title") or p.get("name") or "Produk"
+                        p_price = int(float(p.get("promo_price") or p.get("price") or 0))
+                        p_desc = (p.get("description") or "").strip()
+                        p_summaries.append(f"- {p_name} (Rp{p_price:,}): {p_desc[:100]}".replace(",", "."))
+                    prod_context = "\n".join(p_summaries)
+
+                mode_prompt = get_system_prompt_for_mode(nba, prod_context)
+
                 reply_text = await commerce_ai_engine.generate_commerce_response(
                     tenant_slug=tenant_slug,
                     user_message=incoming_text,
                     user_phone=from_phone,
                     user_name=contact_name,
                     button_id=button_id,
+                    mode_prompt=mode_prompt,
                 )
                 if not reply_text:
                     from app.services.agent_service import process_incoming_message
@@ -875,8 +916,16 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                         user_name=contact_name,
                         button_id=button_id,
                     )
+
+                db_adapter = TenantDBAdapter(prods)
+                action_res = validate_action(customer_state, db_adapter)
+
                 if reply_text:
                     await send_wa_text(from_phone, reply_text, phone_id)
+
+                wa_session.context_json = dump_customer_state(customer_state, wa_session.context_json or {})
+                await _conv_repo.save(wa_session)
+
 
             safe_log_to_supabase_messages(
                 sender="bot",

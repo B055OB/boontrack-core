@@ -92,5 +92,114 @@ class TestConversationEngine(unittest.TestCase):
         self.assertFalse(state.show_interactive_button)
 
 
+class TestConversationWebhookIntegration(unittest.TestCase):
+    """End-to-End integration test for 3-layer engine wired to WhatsApp webhook."""
+
+    def setUp(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+        from app.services.whatsapp_service import user_tenant_sessions
+        self.client = TestClient(app)
+        user_tenant_sessions.clear()
+
+    def test_webhook_3_layer_flow_multi_turn(self):
+        from app.services.whatsapp_service import user_tenant_sessions
+        from app.repositories.session_repository import SessionRepository
+        from app.modules.conversation import load_customer_state
+
+        phone = "6281122334455"
+        user_tenant_sessions[phone] = "onlineboost"
+        session_repo = SessionRepository()
+
+        # Turn 1: Tanya kebutuhan / budget (AWARENESS)
+        payload1 = {
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "messaging_product": "whatsapp",
+                        "metadata": {"phone_number_id": "1268977686299719"},
+                        "contacts": [{"profile": {"name": "Budi"}, "wa_id": phone}],
+                        "messages": [{"from": phone, "id": "m1", "type": "text", "text": {"body": "Budget saya 500k"}}],
+                    },
+                    "field": "messages",
+                }]
+            }]
+        }
+        res1 = self.client.post("/api/v1/whatsapp/webhook", json=payload1)
+        self.assertEqual(res1.status_code, 200)
+        data1 = res1.json()
+        self.assertEqual(data1.get("stage"), "AWARENESS")
+        self.assertFalse(data1.get("allow_button"))
+
+        # Turn 2: Tanya varian / stok (CONSIDERATION)
+        payload2 = {
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "messaging_product": "whatsapp",
+                        "metadata": {"phone_number_id": "1268977686299719"},
+                        "contacts": [{"profile": {"name": "Budi"}, "wa_id": phone}],
+                        "messages": [{"from": phone, "id": "m2", "type": "text", "text": {"body": "Size 42 ready?"}}],
+                    },
+                    "field": "messages",
+                }]
+            }]
+        }
+        res2 = self.client.post("/api/v1/whatsapp/webhook", json=payload2)
+        self.assertEqual(res2.status_code, 200)
+        data2 = res2.json()
+        self.assertEqual(data2.get("stage"), "CONSIDERATION")
+        self.assertFalse(data2.get("allow_button"))
+
+        # Turn 3: Siap beli (DECISION -> allow_button = True)
+        payload3 = {
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "messaging_product": "whatsapp",
+                        "metadata": {"phone_number_id": "1268977686299719"},
+                        "contacts": [{"profile": {"name": "Budi"}, "wa_id": phone}],
+                        "messages": [{"from": phone, "id": "m3", "type": "text", "text": {"body": "Oke saya ambil ini"}}],
+                    },
+                    "field": "messages",
+                }]
+            }]
+        }
+        res3 = self.client.post("/api/v1/whatsapp/webhook", json=payload3)
+        self.assertEqual(res3.status_code, 200)
+        data3 = res3.json()
+        self.assertEqual(data3.get("stage"), "DECISION")
+        self.assertTrue(data3.get("allow_button"))
+
+        # Turn 4: Beli QRIS (CLOSED)
+        payload4 = {
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "messaging_product": "whatsapp",
+                        "metadata": {"phone_number_id": "1268977686299719"},
+                        "contacts": [{"profile": {"name": "Budi"}, "wa_id": phone}],
+                        "messages": [{
+                            "from": phone,
+                            "id": "m4",
+                            "type": "interactive",
+                            "interactive": {"type": "button_reply", "button_reply": {"id": "btn_buy_now", "title": "Beli"}},
+                        }],
+                    },
+                    "field": "messages",
+                }]
+            }]
+        }
+        res4 = self.client.post("/api/v1/whatsapp/webhook", json=payload4)
+        self.assertEqual(res4.status_code, 200)
+        data4 = res4.json()
+        self.assertEqual(data4.get("status"), "qris_dispatched")
+
+
 if __name__ == "__main__":
     unittest.main()
+
