@@ -239,6 +239,68 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
         self.assertEqual(dispatch_payload["amount"], amount)
         self.assertEqual(dispatch_payload["customer_phone"], phone)
 
+    # =========================================================================
+    # 4. P0 Tests: #reset Intercept Before AI Engine & Raw JSON Sanitization
+    # =========================================================================
+
+    def test_reset_command_intercepts_production_phone_ids_and_clears_session(self):
+        """Memverifikasi command #reset, reset, dan menu utama meng-clear session dan langsung return menu 4 portal tanpa ke AI."""
+        from app.services.whatsapp_service import sanitize_whatsapp_message_text
+
+        test_cases = [
+            ("628111222333", "#reset", "1340866379104241"),   # Career production phone ID
+            ("628111222333", "reset", "1268977686299719"),    # Om Budi production phone ID
+            ("628111222333", "menu utama", "1306479742542883"),# Sandbox phone ID
+        ]
+
+        clean = normalize_phone_number("628111222333")
+
+        for phone, cmd, p_id in test_cases:
+            # Set existing session seolah-olah user sedang aktif di ombudi
+            user_tenant_sessions[clean] = "ombudi"
+
+            payload = _make_wa_payload(phone, cmd, phone_id=p_id)
+            resp = self.client.post("/api/v1/whatsapp/webhook", json=payload)
+            self.assertEqual(resp.status_code, 200)
+
+            data = resp.json()
+            # Harus langsung return status menu_dispatched
+            self.assertEqual(data.get("status"), "menu_dispatched")
+            self.assertEqual(data.get("tenant"), "__MENU__")
+
+            # Session harus sudah terhapus (None / pop)
+            self.assertNotIn(clean, user_tenant_sessions)
+
+            reply = data.get("reply", "")
+            # Menu 4 Portal Merchant wajib lengkap
+            self.assertIn("Om Budi Channel", reply)
+            self.assertIn("Tier Growth+", reply)
+            self.assertIn("Tier ProScale", reply)
+            self.assertIn("OnlineBoost", reply)
+
+            # TIDAK BOLEH bocor JSON atau doa Om Budi
+            self.assertNotIn('{"reply":', reply)
+            self.assertNotIn("peluk hangat dan doa tulus", reply)
+
+    def test_ai_response_sanitization_strips_raw_json(self):
+        """Memverifikasi sanitize_whatsapp_message_text membersihkan string raw JSON {"reply": ...}."""
+        from app.services.whatsapp_service import sanitize_whatsapp_message_text
+
+        # 1. Pure raw JSON
+        raw_json = '{"reply": "Siap membantu Kak! Mau info modul apa?", "quick_actions": ["Modul 1", "Modul 2"]}'
+        cleaned = sanitize_whatsapp_message_text(raw_json)
+        self.assertEqual(cleaned, "Siap membantu Kak! Mau info modul apa?")
+        self.assertNotIn('{"reply":', cleaned)
+
+        # 2. Markdown fenced codeblock
+        fenced_json = '```json\n{"reply": "Toko OnlineBoost buka 24 jam.", "quick_actions": []}\n```'
+        cleaned_fenced = sanitize_whatsapp_message_text(fenced_json)
+        self.assertEqual(cleaned_fenced, "Toko OnlineBoost buka 24 jam.")
+
+        # 3. Plain text tetap utuh
+        plain_text = "Halo Kakak! Selamat berbelanja di toko kami."
+        self.assertEqual(sanitize_whatsapp_message_text(plain_text), plain_text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -75,11 +75,12 @@ def resolve_tenant_token(phone_id: str) -> str:
 
 # --- 4. Helper Outbound WA Dinamis Multi-Tenant ---
 async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
+    from app.services.whatsapp_service import sanitize_whatsapp_message_text
     clean_id_match = re.findall(r"\d+", str(phone_id))
     clean_id = clean_id_match[0] if clean_id_match else phone_id
     token = resolve_tenant_token(clean_id)
 
-    clean_text = str(text).strip() if text else ""
+    clean_text = sanitize_whatsapp_message_text(text)
     if not clean_text or clean_text.lower() in ["none", "null"]:
         clean_text = "Afwan Kakak, pesan sedang diproses. Silakan pilih opsi menu yang tersedia."
 
@@ -105,11 +106,12 @@ async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
 
 
 async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Dict[str, str]], phone_id: str):
+    from app.services.whatsapp_service import sanitize_whatsapp_message_text
     clean_id_match = re.findall(r"\d+", str(phone_id))
     clean_id = clean_id_match[0] if clean_id_match else phone_id
     token = resolve_tenant_token(clean_id)
 
-    clean_body = str(body_text).strip() if body_text else ""
+    clean_body = sanitize_whatsapp_message_text(body_text)
     if not clean_body or clean_body.lower() in ["none", "null"]:
         clean_body = "Silakan pilih salah satu opsi di bawah untuk melanjutkan:"
 
@@ -362,6 +364,15 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                                     image_bytes = await bin_resp.read()
             except Exception as e:
                 logger.error(f"[MEDIA DOWNLOAD ERROR] {e}")
+
+        # P0 INTERCEPT: Command #reset / reset / menu utama
+        clean_text = (incoming_text or "").strip().lower()
+        clean_btn = str(button_id or "").strip().lower()
+        if clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo"] or clean_btn in ["btn_menu_reset", "reset"]:
+            from app.services.whatsapp_service import reset_whatsapp_user_session, DEMO_MENU_TEXT
+            reset_whatsapp_user_session(from_phone)
+            await send_wa_text(from_phone, DEMO_MENU_TEXT, phone_id)
+            return web.json_response({"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}, status=200)
 
         # 6.5. Dispatching Terisolasi Berdasarkan Phone Number ID
         if phone_id == CAREER_PHONE_NUMBER_ID:

@@ -12,6 +12,8 @@ from fastapi import APIRouter, Request, Response, Query
 from app.services.whatsapp_service import (
     extract_meta_whatsapp_event,
     resolve_dynamic_tenant_for_whatsapp,
+    reset_whatsapp_user_session,
+    sanitize_whatsapp_message_text,
     send_whatsapp_text,
     send_whatsapp_buttons,
     send_whatsapp_image_link,
@@ -113,7 +115,66 @@ async def handle_whatsapp_webhook(request: Request):
     clean_phone = normalize_phone_number(from_phone)
     button_id = str(event.get("button_id") or "").strip().lower()
     phone_id = str(event.get("phone_id") or "").strip()
-    text_lower = incoming_text.lower()
+    clean_text = incoming_text.strip().lower()
+    clean_btn = button_id
+
+    # =========================================================================
+    # P0 INTERCEPT: COMMAND #RESET / RESET / MENU UTAMA (TOP PRIORITY)
+    # Harus dieksekusi sebelum AI engine, LLM, atau prompt Om Budi dipanggil!
+    # =========================================================================
+    if clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo"] or clean_btn in ["btn_menu_reset", "reset"]:
+        logger.info(f"[META WA ROUTER] Reset command '{clean_text}' detected from {clean_phone}. Clearing session & dispatching 4-portal demo menu.")
+        reset_whatsapp_user_session(clean_phone)
+        if from_phone:
+            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT)
+        safe_log_to_supabase_messages(
+            sender="bot",
+            text=DEMO_MENU_TEXT,
+            tenant_id="__MENU__",
+            channel="whatsapp",
+            user_phone=from_phone,
+            user_name=contact_name,
+        )
+        return {"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}
+
+    # =========================================================================
+    # P0 INTERCEPT: MENU SELECTION 1, 2, 3, 4
+    # =========================================================================
+    if clean_text in _MENU_OPTION_MAP:
+        selected_slug = _MENU_OPTION_MAP[clean_text]
+        if clean_phone:
+            user_tenant_sessions[clean_phone] = selected_slug
+        
+        greeting = DEMO_TENANT_GREETINGS.get(selected_slug, f"🎉 Anda kini terhubung dengan *{selected_slug}*.")
+
+        if selected_slug == "onlineboost":
+            buttons = [
+                {"id": "btn_buy_now", "title": "💳 Beli & Bayar QRIS"},
+                {"id": "btn_view_service", "title": "🚀 Info Layanan & Modul"},
+                {"id": "btn_menu_reset", "title": "🔄 Ganti Demo Toko"},
+            ]
+            if from_phone:
+                try:
+                    await send_whatsapp_buttons(
+                        to_phone=from_phone,
+                        body_text=greeting,
+                        buttons=buttons,
+                        footer_text="Pilih opsi di bawah untuk lanjut:",
+                    )
+                except Exception:
+                    await send_whatsapp_text(to_phone=from_phone, text=greeting)
+        elif from_phone:
+            await send_whatsapp_text(to_phone=from_phone, text=greeting)
+
+        safe_log_to_supabase_messages(
+            sender="bot",
+            text=greeting,
+            tenant_id=selected_slug,
+            channel="whatsapp",
+            user_phone=from_phone,
+            user_name=contact_name,
+        )
+        return {"status": "success", "tenant": selected_slug, "reply": greeting, "is_new_binding": True}
 
     # Resolusi Tenant Dinamis
     tenant_slug, is_new_bind = resolve_dynamic_tenant_for_whatsapp(
@@ -136,6 +197,7 @@ async def handle_whatsapp_webhook(request: Request):
             user_name=contact_name,
             button_id=event.get("button_id"),
         )
+        reply = sanitize_whatsapp_message_text(reply)
         if reply and from_phone:
             await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id=tenant_slug)
 
@@ -154,9 +216,9 @@ async def handle_whatsapp_webhook(request: Request):
     # =========================================================================
 
     # 1. Reset ke Menu Utama atau trigger salam/menu
-    if tenant_slug == "__MENU__" or text_lower in _COMMERCE_DEMO_TRIGGERS or button_id == "btn_menu_reset":
+    if tenant_slug == "__MENU__" or clean_text in _COMMERCE_DEMO_TRIGGERS or button_id == "btn_menu_reset":
         if clean_phone:
-            user_tenant_sessions.pop(clean_phone, None)
+            reset_whatsapp_user_session(clean_phone)
         if from_phone:
             await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT)
         return {"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}
@@ -261,7 +323,7 @@ async def handle_whatsapp_webhook(request: Request):
             logger.error(f"[FAST TRACK CHECKOUT ERROR] {e}")
 
     # 4. Info Layanan Action
-    if button_id == "btn_view_service" or "layanan" in text_lower or "paket" in text_lower or "silabus" in text_lower:
+    if button_id == "btn_view_service" or "layanan" in clean_text or "paket" in clean_text or "silabus" in clean_text:
         layanan_text = (
             "🚀 *PAKET SCALE-UP DIGITAL MARKETING ONLINEBOOST:*\n\n"
             "• *Modul 1:* Setup Pixel & Riset Winning Audience Meta/TikTok Ads\n"
@@ -291,6 +353,8 @@ async def handle_whatsapp_webhook(request: Request):
             user_name=contact_name,
             button_id=event.get("button_id"),
         )
+
+    reply = sanitize_whatsapp_message_text(reply)
 
     if reply and from_phone:
         await send_whatsapp_text(to_phone=from_phone, text=reply)

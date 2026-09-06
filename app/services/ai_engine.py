@@ -440,7 +440,8 @@ class CommerceAIEngine:
                     },
                 )
             if response and response.strip():
-                return response.strip()
+                from app.services.whatsapp_service import sanitize_whatsapp_message_text
+                return sanitize_whatsapp_message_text(response.strip())
         except Exception as e:
             logger.warning(f"[{tenant_slug}] AI generation error, falling back: {e}")
 

@@ -1,5 +1,7 @@
 import os
 import io
+import re
+import json
 import mimetypes
 import logging
 from datetime import datetime, timezone
@@ -107,6 +109,82 @@ DEMO_TENANT_GREETINGS: Dict[str, str] = {
         "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
     ),
 }
+
+def reset_whatsapp_user_session(phone: str) -> None:
+    """Clear all session states across all stores and tenant services for a user."""
+    clean_phone = normalize_phone_number(phone)
+    if not clean_phone:
+        return
+    user_tenant_sessions.pop(clean_phone, None)
+    user_session_states.pop(clean_phone, None)
+    user_cart_sessions.pop(clean_phone, None)
+    raw_phone = str(phone).strip().replace("+", "")
+    if raw_phone:
+        user_tenant_sessions.pop(raw_phone, None)
+        user_session_states.pop(raw_phone, None)
+        user_cart_sessions.pop(raw_phone, None)
+
+    try:
+        from app.tenants.om_budi.service import om_budi_service
+        om_budi_service.user_sessions.pop(clean_phone, None)
+        if raw_phone:
+            om_budi_service.user_sessions.pop(raw_phone, None)
+    except Exception:
+        pass
+
+    try:
+        from app.services.cv_state_engine import GLOBAL_USER_STATES
+        GLOBAL_USER_STATES.pop(clean_phone, None)
+        if raw_phone:
+            GLOBAL_USER_STATES.pop(raw_phone, None)
+    except Exception:
+        pass
+
+
+def sanitize_whatsapp_message_text(text: Any) -> str:
+    """Sanitasi respons AI agar tidak pernah membocorkan raw JSON {"reply": ...} ke chat WhatsApp."""
+    if not text:
+        return ""
+    if not isinstance(text, str):
+        if isinstance(text, dict):
+            val = text.get("reply") or text.get("reply_text") or text.get("message") or text.get("text") or ""
+            return str(val).strip()
+        return str(text).strip()
+
+    raw = text.strip()
+    # 1. Lepaskan pembungkus markdown ```json ... ``` atau ``` ... ```
+    if raw.startswith("```"):
+        lines = raw.split("\n")
+        if len(lines) >= 2 and lines[-1].strip().startswith("```"):
+            raw = "\n".join(lines[1:-1]).strip()
+        elif raw.startswith("```json"):
+            raw = raw[7:].rstrip("`").strip()
+        elif raw.startswith("```"):
+            raw = raw[3:].rstrip("`").strip()
+
+    # 2. Parse jika berbentuk JSON object dengan key reply
+    if (raw.startswith("{") and raw.endswith("}")) or '"reply"' in raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                val = parsed.get("reply") or parsed.get("reply_text") or parsed.get("message") or parsed.get("text")
+                if val is not None:
+                    raw = str(val).strip()
+        except Exception:
+            match = re.search(r'"reply"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
+            if match:
+                try:
+                    raw = match.group(1).encode().decode("unicode_escape", errors="ignore").strip()
+                except Exception:
+                    raw = match.group(1).strip()
+
+    # 3. Format rapi markdown
+    try:
+        from app.services.ai_gateway.models import clean_ai_response
+        return clean_ai_response(raw)
+    except Exception:
+        return raw
+
 
 # Fast-Track Closing Intents
 BUY_INTENTS = {
@@ -431,34 +509,14 @@ def resolve_dynamic_tenant_for_whatsapp(
     text = (message_text or "").strip()
     text_lower = text.lower()
 
-    clean_phone_id = str(phone_id).strip()
-    if clean_phone_id == "1340866379104241":
-        return "boontrack-career", False
-    if clean_phone_id == "1268977686299719":
-        return "om_budi", False
-
-    match = re.search(
-        r"saya\s+baru\s+(?:saja\s+)?(?:mendaftar|daftar)\s+toko\s+([a-zA-Z0-9\-_]+)",
-        text,
-        re.IGNORECASE,
-    )
-    if not match:
-        match = re.search(r"toko\s*:\s*([a-zA-Z0-9\-_]+)", text, re.IGNORECASE)
-
-    if match:
-        target_slug = match.group(1).lower().strip()
+    # 1. P0 Intercept: #reset / reset / menu utama
+    if text_lower in ("#reset", "reset", "menu utama", "#menu", "menu", "demo"):
         if clean_phone:
-            user_tenant_sessions[clean_phone] = target_slug
-        logger.info(f"[DYNAMIC TENANT WA] Bound sender {clean_phone} to store '{target_slug}' via onboarding message")
-        return target_slug, True
-
-    if text_lower in ("#reset", "reset", "menu", "demo"):
-        if clean_phone:
-            user_tenant_sessions.pop(clean_phone, None)
-            user_cart_sessions.pop(clean_phone, None)
+            reset_whatsapp_user_session(clean_phone)
         logger.info(f"[DYNAMIC TENANT WA] Sender {clean_phone} triggered reset/demo menu")
         return "__MENU__", False
 
+    # 2. Pilihan Menu 1, 2, 3, 4
     option_map = {
         "1": "ombudi",
         "ombudi": "ombudi",
@@ -496,11 +554,36 @@ def resolve_dynamic_tenant_for_whatsapp(
         logger.info(f"[DYNAMIC TENANT WA] Sender {clean_phone} selected option '{text_lower}' -> locked to '{target_slug}'")
         return target_slug, True
 
+    # 3. Active session check
     if clean_phone and clean_phone in user_tenant_sessions:
         return user_tenant_sessions[clean_phone], False
 
+    # 4. Explicit onboarding match
+    match = re.search(
+        r"saya\s+baru\s+(?:saja\s+)?(?:mendaftar|daftar)\s+toko\s+([a-zA-Z0-9\-_]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        match = re.search(r"toko\s*:\s*([a-zA-Z0-9\-_]+)", text, re.IGNORECASE)
+
+    if match:
+        target_slug = match.group(1).lower().strip()
+        if clean_phone:
+            user_tenant_sessions[clean_phone] = target_slug
+        logger.info(f"[DYNAMIC TENANT WA] Bound sender {clean_phone} to store '{target_slug}' via onboarding message")
+        return target_slug, True
+
+    # 5. Greeting triggers without active session -> Show Demo Menu
     if text_lower in ("halo", "hi", "p", "test", "tes", "hai", "start", "info"):
         return "__MENU__", False
+
+    # 6. Static phone_id fallback (only if no session and no explicit command matched)
+    clean_phone_id = str(phone_id).strip()
+    if clean_phone_id == "1340866379104241":
+        return "boontrack-career", False
+    if clean_phone_id == "1268977686299719":
+        return "om_budi", False
 
     try:
         from app.services.onboarding_service import onboarding_service
@@ -809,6 +892,7 @@ async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False
         logger.error(f"[WhatsApp Service] Invalid phone number provided: {to_phone}")
         return None
 
+    sanitized_text = sanitize_whatsapp_message_text(text)
     url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
     headers = {
         **_get_auth_headers(token),
@@ -821,7 +905,7 @@ async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False
         "type": "text",
         "text": {
             "preview_url": preview_url,
-            "body": text
+            "body": sanitized_text
         }
     }
 
@@ -834,7 +918,7 @@ async def send_whatsapp_text(to_phone: str, text: str, preview_url: bool = False
             
             await log_to_supabase_messages(
                 sender="bot",
-                text=text,
+                text=sanitized_text,
                 tenant_id=tenant_id,
                 channel="whatsapp",
                 user_phone=clean_phone,
@@ -943,6 +1027,7 @@ async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dic
         return await send_whatsapp_text(to_phone, body_text, tenant_id=tenant_id)
 
     clean_phone = str(to_phone).replace("+", "").strip()
+    sanitized_body = sanitize_whatsapp_message_text(body_text)
     url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
     headers = {
         **_get_auth_headers(token),
@@ -961,7 +1046,7 @@ async def send_whatsapp_buttons(to_phone: str, body_text: str, buttons: List[Dic
 
     interactive_obj: Dict[str, Any] = {
         "type": "button",
-        "body": {"text": body_text},
+        "body": {"text": sanitized_body},
         "action": {"buttons": button_action_list}
     }
 
