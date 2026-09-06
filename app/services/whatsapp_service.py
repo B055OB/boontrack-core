@@ -351,29 +351,30 @@ async def send_whatsapp_tenant_catalog(phone: str, tenant_slug: str = "onlineboo
         f"_Ketik #reset kapan saja untuk kembali ke menu demo toko._"
     )
 
-    # OTOMATISASI CERDAS: Jika produk <= 3, boleh pakai tombol interaktif. Jika > 3, kirim teks lengkap agar tidak terpotong!
-    if len(products) <= 3:
-        buttons = [
-            {"id": "btn_buy_now", "title": "💳 Beli & Bayar QRIS"},
-            {"id": "btn_view_service", "title": "🛍️ Daftar Produk"},
-            {"id": "btn_menu_reset", "title": "🔄 Ganti Demo Toko"},
-        ]
-        try:
-            res = await send_whatsapp_buttons(
-                to_phone=clean_phone,
-                body_text=catalog_text,
-                buttons=buttons,
-                footer_text="Pilih opsi untuk lanjut:",
-                tenant_id=target_tenant,
-                phone_number_id=phone_number_id,
-                access_token=access_token,
-            )
-            if res:
-                return res
-        except Exception:
-            pass
+    # HAPUS if len(products) <= 3:
+    # Selalu pasang 3 tombol interaktif utama di bawah teks katalog
+    buttons = [
+        {"id": "btn_view_service", "title": "🛍️ Daftar Produk"},
+        {"id": "btn_view_cart", "title": "🛒 Keranjang Belanja"},
+        {"id": "btn_ask_ai", "title": "💬 Tanya Produk (AI)"},
+    ]
+    
+    try:
+        res = await send_whatsapp_buttons(
+            to_phone=clean_phone,
+            body_text=catalog_text,
+            buttons=buttons,
+            footer_text="Pilih opsi untuk lanjut:",
+            tenant_id=target_tenant,
+            phone_number_id=phone_number_id,
+            access_token=access_token,
+        )
+        if res:
+            return res
+    except Exception:
+        pass
 
-    # Fallback / Pilihan otomatis jika produk lebih dari 3 item
+    # Fallback jika Meta API sedang gangguan saat render tombol
     return await send_whatsapp_text(clean_phone, catalog_text, tenant_id=target_tenant, phone_number_id=phone_number_id, access_token=access_token)
 
 
