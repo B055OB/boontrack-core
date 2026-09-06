@@ -334,6 +334,52 @@ def build_tenant_catalog_sections(tenant_slug: str) -> Tuple[str, List[Dict[str,
     return body_text, sections
 
 
+async def send_whatsapp_tenant_catalog(phone: str, tenant_slug: str = "onlineboost", tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Menampilkan 4 ecourse / katalog produk riil dari Supabase ke WhatsApp user."""
+    clean_phone = normalize_phone_number(phone)
+    target_tenant = tenant_id or tenant_slug
+    store_name, products = get_tenant_products_from_db(tenant_slug)
+
+    product_lines = []
+    for idx, p in enumerate(products[:10], 1):
+        p_title = str(p.get("title") or p.get("name") or "Produk").strip()
+        price_num = int(float(p.get("promo_price") or p.get("price") or 0))
+        price_fmt = f"Rp{price_num:,}".replace(",", ".")
+        p_desc = str(p.get("description") or p.get("short_description") or "").strip()
+        desc_snippet = f"\n   _{p_desc[:90]}..._" if p_desc else ""
+        product_lines.append(f"*{idx}. {p_title}* — *{price_fmt}*{desc_snippet}")
+
+    catalog_text = (
+        f"🚀 *KATALOG RESMI {store_name.upper()}*\n\n"
+        f"Berikut koleksi modul & ecourse digital aktif di database:\n\n"
+        + "\n\n".join(product_lines) +
+        f"\n\n━━━━━━━━━━━━━━━━━━\n"
+        f"💳 Ketik *Beli* atau *Beli 1* (atau klik tombol di bawah) untuk bayar instan via *Dynamic QRIS* ⚡\n"
+        f"_Ketik #reset kapan saja untuk kembali ke menu demo toko._"
+    )
+
+    buttons = [
+        {"id": "btn_buy_now", "title": "💳 Beli & Bayar QRIS"},
+        {"id": "btn_view_service", "title": "🚀 Info Layanan"},
+        {"id": "btn_menu_reset", "title": "🔄 Ganti Demo Toko"},
+    ]
+
+    try:
+        res = await send_whatsapp_buttons(
+            to_phone=clean_phone,
+            body_text=catalog_text,
+            buttons=buttons,
+            footer_text="Pilih opsi untuk lanjut:",
+            tenant_id=target_tenant,
+        )
+        if res:
+            return res
+    except Exception as err:
+        logger.warning(f"[SEND WA CATALOG BUTTONS ERROR] {err}")
+
+    return await send_whatsapp_text(clean_phone, catalog_text, tenant_id=target_tenant)
+
+
 def add_product_to_cart(from_phone: str, tenant_slug: str, product_key: str) -> Tuple[str, List[Dict[str, str]], int]:
     """Menambahkan item ke keranjang dan mengembalikan ringkasan serta tombol navigasi."""
     clean_phone = normalize_phone_number(from_phone)
@@ -513,6 +559,7 @@ def resolve_dynamic_tenant_for_whatsapp(
     if text_lower in ("#reset", "reset", "menu utama", "#menu", "menu", "demo"):
         if clean_phone:
             reset_whatsapp_user_session(clean_phone)
+            user_session_states[clean_phone] = "AWAITING_PORTAL_CHOICE"
         logger.info(f"[DYNAMIC TENANT WA] Sender {clean_phone} triggered reset/demo menu")
         return "__MENU__", False
 
@@ -551,6 +598,7 @@ def resolve_dynamic_tenant_for_whatsapp(
         target_slug = option_map[text_lower]
         if clean_phone:
             user_tenant_sessions[clean_phone] = target_slug
+            user_session_states[clean_phone] = "ACTIVE"
         logger.info(f"[DYNAMIC TENANT WA] Sender {clean_phone} selected option '{text_lower}' -> locked to '{target_slug}'")
         return target_slug, True
 

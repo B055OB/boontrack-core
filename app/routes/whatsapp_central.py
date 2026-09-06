@@ -149,8 +149,10 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Di
         logger.error(f"[CENTRAL WA] Exception sending buttons: {e}", exc_info=True)
 
 
-async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any, caption: str, phone_id: str) -> bool:
+async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any = None, caption: str = "", phone_id: str = "", image_url_or_path: Any = None) -> bool:
     """Mengirim pesan gambar WhatsApp ke Meta Cloud API via direct public URL link atau upload fallback."""
+    if image_url_or_path_or_bytes is None and image_url_or_path is not None:
+        image_url_or_path_or_bytes = image_url_or_path
     clean_id_match = re.findall(r"\d+", str(phone_id))
     clean_id = clean_id_match[0] if clean_id_match else phone_id
     token = resolve_tenant_token(clean_id)
@@ -368,14 +370,143 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         # P0 INTERCEPT: Command #reset / reset / menu utama
         clean_text = (incoming_text or "").strip().lower()
         clean_btn = str(button_id or "").strip().lower()
+        from app.services.whatsapp_service import (
+            reset_whatsapp_user_session,
+            DEMO_MENU_TEXT,
+            DEMO_TENANT_GREETINGS,
+            user_tenant_sessions,
+            user_session_states,
+            normalize_phone_number,
+            send_whatsapp_tenant_catalog,
+        )
+        clean_phone = normalize_phone_number(from_phone)
+
         if clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo"] or clean_btn in ["btn_menu_reset", "reset"]:
-            from app.services.whatsapp_service import reset_whatsapp_user_session, DEMO_MENU_TEXT
             reset_whatsapp_user_session(from_phone)
+            if clean_phone:
+                user_session_states[clean_phone] = "AWAITING_PORTAL_CHOICE"
             await send_wa_text(from_phone, DEMO_MENU_TEXT, phone_id)
             return web.json_response({"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}, status=200)
 
-        # 6.5. Dispatching Terisolasi Berdasarkan Phone Number ID
-        if phone_id == CAREER_PHONE_NUMBER_ID:
+        # P0 INTERCEPT: Menu Selection 1, 2, 3, 4 (PRIORITAS SEBELUM OM BUDI / RIYADHOH / CAREER)
+        _CENTRAL_MENU_MAP = {
+            "1": "ombudi",
+            "ombudi": "ombudi",
+            "om budi": "ombudi",
+            "om-budi": "ombudi",
+            "retail": "ombudi",
+            "2": "growthplus",
+            "growthplus": "growthplus",
+            "growth+": "growthplus",
+            "tier growth+": "growthplus",
+            "3": "proscale",
+            "proscale": "proscale",
+            "tier proscale": "proscale",
+            "4": "onlineboost",
+            "onlineboost": "onlineboost",
+            "digital": "onlineboost",
+            "course": "onlineboost",
+            "suhu-ads-masterclass": "onlineboost",
+            "suhu ads": "onlineboost",
+        }
+
+        if clean_text in _CENTRAL_MENU_MAP or (user_session_states.get(clean_phone) == "AWAITING_PORTAL_CHOICE" and clean_text in _CENTRAL_MENU_MAP):
+            selected_slug = _CENTRAL_MENU_MAP[clean_text]
+            if clean_phone:
+                user_tenant_sessions[clean_phone] = selected_slug
+                user_session_states[clean_phone] = "ACTIVE"
+            logger.info(f"[CENTRAL WA ROUTER] User {clean_phone} selected '{clean_text}' -> locked to '{selected_slug}'")
+
+            if selected_slug == "onlineboost":
+                await send_whatsapp_tenant_catalog(from_phone, "onlineboost")
+                safe_log_to_supabase_messages(
+                    sender="bot",
+                    text="[Katalog OnlineBoost Dispatched]",
+                    tenant_id="onlineboost",
+                    channel="whatsapp",
+                    user_phone=from_phone,
+                    user_name=contact_name,
+                    user_id=from_phone,
+                    conversation_id=from_phone,
+                )
+                return web.json_response({
+                    "status": "success",
+                    "tenant": "onlineboost",
+                    "reply": "[Katalog OnlineBoost Dispatched]",
+                    "is_new_binding": True
+                }, status=200)
+
+            elif selected_slug == "ombudi":
+                welcome_ombudi = DEMO_TENANT_GREETINGS.get("ombudi", "🛒 *Selamat Datang di Om Budi Channel!*")
+                ombudi_buttons = [
+                    {"id": "menu_zoom_booster", "title": "🚀 Zoom Booster"},
+                    {"id": "menu_sedekah_berjamaah", "title": "🤲 Sedekah"},
+                    {"id": "menu_daftar_kelas", "title": "Daftar Kelas Online"}
+                ]
+                await send_wa_buttons(from_phone, welcome_ombudi, ombudi_buttons, phone_id)
+                safe_log_to_supabase_messages(
+                    sender="bot",
+                    text=welcome_ombudi,
+                    tenant_id="ombudi",
+                    channel="whatsapp",
+                    user_phone=from_phone,
+                    user_name=contact_name,
+                    user_id=from_phone,
+                    conversation_id=from_phone,
+                )
+                return web.json_response({
+                    "status": "success",
+                    "tenant": "ombudi",
+                    "reply": welcome_ombudi,
+                    "is_new_binding": True
+                }, status=200)
+
+            elif selected_slug == "growthplus":
+                welcome_growth = DEMO_TENANT_GREETINGS.get("growthplus", "⚡ *Selamat Datang di Tier Growth+ BoonTrack!*")
+                await send_wa_text(from_phone, welcome_growth, phone_id)
+                safe_log_to_supabase_messages(
+                    sender="bot",
+                    text=welcome_growth,
+                    tenant_id="growthplus",
+                    channel="whatsapp",
+                    user_phone=from_phone,
+                    user_name=contact_name,
+                    user_id=from_phone,
+                    conversation_id=from_phone,
+                )
+                return web.json_response({
+                    "status": "success",
+                    "tenant": "growthplus",
+                    "reply": welcome_growth,
+                    "is_new_binding": True
+                }, status=200)
+
+            elif selected_slug == "proscale":
+                welcome_proscale = DEMO_TENANT_GREETINGS.get("proscale", "🏢 *Selamat Datang di Tier ProScale Enterprise!*")
+                await send_wa_text(from_phone, welcome_proscale, phone_id)
+                safe_log_to_supabase_messages(
+                    sender="bot",
+                    text=welcome_proscale,
+                    tenant_id="proscale",
+                    channel="whatsapp",
+                    user_phone=from_phone,
+                    user_name=contact_name,
+                    user_id=from_phone,
+                    conversation_id=from_phone,
+                )
+                return web.json_response({
+                    "status": "success",
+                    "tenant": "proscale",
+                    "reply": welcome_proscale,
+                    "is_new_binding": True
+                }, status=200)
+
+        # 6.5. Dispatching Terisolasi Berdasarkan Phone Number ID & Session Lock
+        active_locked_tenant = user_tenant_sessions.get(clean_phone)
+        if active_locked_tenant and active_locked_tenant in ("onlineboost", "growthplus", "proscale"):
+            # KUNCI SESI: Jangan teruskan ke Career atau Om Budi lama jika user sedang aktif di OnlineBoost, Growth+, atau ProScale!
+            pass
+        elif phone_id == CAREER_PHONE_NUMBER_ID:
             from app.tenants.career.router import handle_incoming_whatsapp
             return await handle_incoming_whatsapp(request)
 
@@ -601,9 +732,10 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             # ---------------------------------------------------------------
             _MENU_TRIGGER_KEYWORDS = {"halo", "hi", "p", "test", "tes", "hai", "start", "info", "menu", "demo", "#reset", "reset"}
             _MENU_OPTION_MAP = {
-                "1": "bale_pananggeuhan",
-                "2": "atmosfitnes",
-                "3": "onlineboost",
+                "1": "ombudi",
+                "2": "growthplus",
+                "3": "proscale",
+                "4": "onlineboost",
             }
 
             _is_keyword_trigger = text_lower in _MENU_TRIGGER_KEYWORDS or clean_btn == "btn_menu_reset"

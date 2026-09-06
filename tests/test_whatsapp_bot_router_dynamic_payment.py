@@ -18,6 +18,7 @@ from app.services.whatsapp_service import (
     generate_fast_track_checkout_response,
     resolve_dynamic_tenant_for_whatsapp,
     user_tenant_sessions,
+    user_session_states,
     normalize_phone_number,
 )
 from app.services.whatsapp_menu_flow_service import WhatsAppMenuFlowService
@@ -300,6 +301,53 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
         # 3. Plain text tetap utuh
         plain_text = "Halo Kakak! Selamat berbelanja di toko kami."
         self.assertEqual(sanitize_whatsapp_message_text(plain_text), plain_text)
+
+    # =========================================================================
+    # 4. Om Budi Number WhatsApp Router Pilihan 1-4 & Session Locking
+    # =========================================================================
+
+    @patch("app.routes.meta_whatsapp.send_whatsapp_tenant_catalog", new_callable=AsyncMock)
+    def test_om_budi_number_choice_4_dispatches_catalog_and_locks_session(self, mock_catalog):
+        """Memvalidasi pilihan '4' di nomor Om Budi mengunci session ke OnlineBoost dan memanggil send_whatsapp_tenant_catalog."""
+        phone = "628999888777"
+        clean = normalize_phone_number(phone)
+        om_budi_phone_id = "1268977686299719"
+
+        # 1. Kirim #reset -> State menjadi AWAITING_PORTAL_CHOICE
+        resp_reset = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, "#reset", phone_id=om_budi_phone_id))
+        self.assertEqual(resp_reset.status_code, 200)
+        self.assertEqual(user_session_states.get(clean), "AWAITING_PORTAL_CHOICE")
+        self.assertIn("OnlineBoost", resp_reset.json().get("reply", ""))
+
+        # 2. Balas '4' -> Harus masuk ke OnlineBoost, BUKAN riyadhoh sholawat Om Budi!
+        resp_choice = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, "4", phone_id=om_budi_phone_id))
+        self.assertEqual(resp_choice.status_code, 200)
+        data = resp_choice.json()
+
+        # Harus terkunci ke OnlineBoost
+        self.assertEqual(data.get("tenant"), "onlineboost")
+        self.assertEqual(user_tenant_sessions.get(clean), "onlineboost")
+        self.assertEqual(user_session_states.get(clean), "ACTIVE")
+
+        # Katalog wajib dipanggil
+        mock_catalog.assert_called_once_with(phone, "onlineboost")
+
+        # TIDAK BOLEH mengandung materi riyadhoh sholawat
+        reply_str = str(data.get("reply", "")).lower()
+        self.assertNotIn("riyadhoh", reply_str)
+        self.assertNotIn("sholawat", reply_str)
+
+        # 3. Kunci Sesi: Chat berikutnya tanpa #reset harus tetap berada di OnlineBoost (bukan Om Budi)
+        resp_chat = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, "info modul", phone_id=om_budi_phone_id))
+        self.assertEqual(resp_chat.status_code, 200)
+        self.assertEqual(resp_chat.json().get("tenant"), "onlineboost")
+        self.assertEqual(user_tenant_sessions.get(clean), "onlineboost")
+
+    def test_matcher_and_om_budi_service_guard_digit_4(self):
+        """Memverifikasi matcher dan service Om Budi tidak menganggap '4' sebagai tanya_materi_riyadhoh."""
+        from app.tenants.om_budi.service import om_budi_service
+        conf, score, ans, intent = om_budi_service.matcher.find_match("4")
+        self.assertNotEqual(intent, "tanya_materi_riyadhoh")
 
 
 if __name__ == "__main__":

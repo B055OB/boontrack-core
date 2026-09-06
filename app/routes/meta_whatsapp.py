@@ -17,7 +17,9 @@ from app.services.whatsapp_service import (
     send_whatsapp_text,
     send_whatsapp_buttons,
     send_whatsapp_image_link,
+    send_whatsapp_tenant_catalog,
     user_tenant_sessions,
+    user_session_states,
     safe_log_to_supabase_messages,
     normalize_phone_number,
     generate_fast_track_checkout_response,
@@ -48,9 +50,23 @@ _COMMERCE_DEMO_TRIGGERS = {"#reset", "reset", "menu", "#menu", "demo"}
 
 _MENU_OPTION_MAP: Dict[str, str] = {
     "1": "ombudi",
+    "ombudi": "ombudi",
+    "om budi": "ombudi",
+    "om-budi": "ombudi",
+    "retail": "ombudi",
     "2": "growthplus",
+    "growthplus": "growthplus",
+    "growth+": "growthplus",
+    "tier growth+": "growthplus",
     "3": "proscale",
+    "proscale": "proscale",
+    "tier proscale": "proscale",
     "4": "onlineboost",
+    "onlineboost": "onlineboost",
+    "digital": "onlineboost",
+    "course": "onlineboost",
+    "suhu-ads-masterclass": "onlineboost",
+    "suhu ads": "onlineboost",
 }
 
 
@@ -116,6 +132,7 @@ async def handle_whatsapp_webhook(request: Request):
     button_id = str(event.get("button_id") or "").strip().lower()
     phone_id = str(event.get("phone_id") or "").strip()
     clean_text = incoming_text.strip().lower()
+    text_lower = clean_text
     clean_btn = button_id
 
     # =========================================================================
@@ -125,6 +142,8 @@ async def handle_whatsapp_webhook(request: Request):
     if clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo"] or clean_btn in ["btn_menu_reset", "reset"]:
         logger.info(f"[META WA ROUTER] Reset command '{clean_text}' detected from {clean_phone}. Clearing session & dispatching 4-portal demo menu.")
         reset_whatsapp_user_session(clean_phone)
+        if clean_phone:
+            user_session_states[clean_phone] = "AWAITING_PORTAL_CHOICE"
         if from_phone:
             await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT)
         safe_log_to_supabase_messages(
@@ -139,42 +158,81 @@ async def handle_whatsapp_webhook(request: Request):
 
     # =========================================================================
     # P0 INTERCEPT: MENU SELECTION 1, 2, 3, 4
+    # Harus dieksekusi sebelum handler spesifik Om Budi / riyadhoh / AI!
     # =========================================================================
-    if clean_text in _MENU_OPTION_MAP:
+    if clean_text in _MENU_OPTION_MAP or (user_session_states.get(clean_phone) == "AWAITING_PORTAL_CHOICE" and clean_text in _MENU_OPTION_MAP):
         selected_slug = _MENU_OPTION_MAP[clean_text]
         if clean_phone:
             user_tenant_sessions[clean_phone] = selected_slug
+            user_session_states[clean_phone] = "ACTIVE"
         
         greeting = DEMO_TENANT_GREETINGS.get(selected_slug, f"🎉 Anda kini terhubung dengan *{selected_slug}*.")
 
         if selected_slug == "onlineboost":
-            buttons = [
-                {"id": "btn_buy_now", "title": "💳 Beli & Bayar QRIS"},
-                {"id": "btn_view_service", "title": "🚀 Info Layanan & Modul"},
-                {"id": "btn_menu_reset", "title": "🔄 Ganti Demo Toko"},
+            if from_phone:
+                await send_whatsapp_tenant_catalog(from_phone, "onlineboost")
+            safe_log_to_supabase_messages(
+                sender="bot",
+                text="[Katalog OnlineBoost Dispatched]",
+                tenant_id="onlineboost",
+                channel="whatsapp",
+                user_phone=from_phone,
+                user_name=contact_name,
+            )
+            return {"status": "success", "tenant": "onlineboost", "reply": "[Katalog OnlineBoost Dispatched]", "is_new_binding": True}
+
+        elif selected_slug == "ombudi":
+            ombudi_buttons = [
+                {"id": "menu_zoom_booster", "title": "🚀 Zoom Booster"},
+                {"id": "menu_sedekah_berjamaah", "title": "🤲 Sedekah"},
+                {"id": "menu_daftar_kelas", "title": "Daftar Kelas Online"}
             ]
             if from_phone:
                 try:
                     await send_whatsapp_buttons(
                         to_phone=from_phone,
                         body_text=greeting,
-                        buttons=buttons,
-                        footer_text="Pilih opsi di bawah untuk lanjut:",
+                        buttons=ombudi_buttons,
+                        footer_text="Pilih menu di bawah untuk lanjut:",
+                        tenant_id="ombudi",
                     )
                 except Exception:
-                    await send_whatsapp_text(to_phone=from_phone, text=greeting)
-        elif from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=greeting)
+                    await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="ombudi")
+            safe_log_to_supabase_messages(
+                sender="bot",
+                text=greeting,
+                tenant_id="ombudi",
+                channel="whatsapp",
+                user_phone=from_phone,
+                user_name=contact_name,
+            )
+            return {"status": "success", "tenant": "ombudi", "reply": greeting, "is_new_binding": True}
 
-        safe_log_to_supabase_messages(
-            sender="bot",
-            text=greeting,
-            tenant_id=selected_slug,
-            channel="whatsapp",
-            user_phone=from_phone,
-            user_name=contact_name,
-        )
-        return {"status": "success", "tenant": selected_slug, "reply": greeting, "is_new_binding": True}
+        elif selected_slug == "growthplus":
+            if from_phone:
+                await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="growthplus")
+            safe_log_to_supabase_messages(
+                sender="bot",
+                text=greeting,
+                tenant_id="growthplus",
+                channel="whatsapp",
+                user_phone=from_phone,
+                user_name=contact_name,
+            )
+            return {"status": "success", "tenant": "growthplus", "reply": greeting, "is_new_binding": True}
+
+        elif selected_slug == "proscale":
+            if from_phone:
+                await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="proscale")
+            safe_log_to_supabase_messages(
+                sender="bot",
+                text=greeting,
+                tenant_id="proscale",
+                channel="whatsapp",
+                user_phone=from_phone,
+                user_name=contact_name,
+            )
+            return {"status": "success", "tenant": "proscale", "reply": greeting, "is_new_binding": True}
 
     # Resolusi Tenant Dinamis
     tenant_slug, is_new_bind = resolve_dynamic_tenant_for_whatsapp(
@@ -189,7 +247,11 @@ async def handle_whatsapp_webhook(request: Request):
     # =========================================================================
     # JALUR A: PRODUKSI AKTIF (Career Assistant & Admin Om Budi)
     # =========================================================================
-    if tenant_slug in ("boontrack-career", "boontrack_career", "career"):
+    # KUNCI SESI: Jika user telah memilih OnlineBoost, Growth+, atau ProScale,
+    # jangan biarkan diarahkan ke Career atau Om Budi lama!
+    if tenant_slug in ("onlineboost", "growthplus", "proscale"):
+        pass
+    elif tenant_slug in ("boontrack-career", "boontrack_career", "career"):
         reply = await process_incoming_message(
             tenant_slug=tenant_slug,
             message=incoming_text,
@@ -210,6 +272,38 @@ async def handle_whatsapp_webhook(request: Request):
             user_name=contact_name,
         )
         return {"status": "success", "tenant": tenant_slug, "reply": reply}
+    elif tenant_slug in ("ombudi", "om_budi", "om-budi"):
+        from app.tenants.om_budi.service import om_budi_service
+        res = await om_budi_service.handle_incoming_message(
+            phone_number=from_phone,
+            message_text=incoming_text,
+            button_id=event.get("button_id"),
+            user_name=contact_name,
+        )
+        reply_text = sanitize_whatsapp_message_text(res.get("reply", ""))
+        buttons = res.get("buttons") or res.get("nav_buttons")
+        if buttons and len(buttons) <= 3 and len(reply_text) <= 1000:
+            try:
+                await send_whatsapp_buttons(
+                    to_phone=from_phone,
+                    body_text=reply_text,
+                    buttons=buttons,
+                    tenant_id="ombudi",
+                )
+            except Exception:
+                await send_whatsapp_text(to_phone=from_phone, text=reply_text, tenant_id="ombudi")
+        elif reply_text and from_phone:
+            await send_whatsapp_text(to_phone=from_phone, text=reply_text, tenant_id="ombudi")
+
+        safe_log_to_supabase_messages(
+            sender="bot",
+            text=reply_text or "",
+            tenant_id="ombudi",
+            channel="whatsapp",
+            user_phone=from_phone,
+            user_name=contact_name,
+        )
+        return {"status": "success", "tenant": "ombudi", "reply": reply_text}
 
     # =========================================================================
     # JALUR B: TOKO DEMO (Menu Switcher 1, 2, 3, 4)
@@ -222,43 +316,6 @@ async def handle_whatsapp_webhook(request: Request):
         if from_phone:
             await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT)
         return {"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT}
-
-    # 2. Pilihan Menu 1, 2, 3, 4
-    if text_lower in _MENU_OPTION_MAP:
-        selected_slug = _MENU_OPTION_MAP[text_lower]
-        if clean_phone:
-            user_tenant_sessions[clean_phone] = selected_slug
-        
-        greeting = DEMO_TENANT_GREETINGS.get(selected_slug, f"🎉 Anda kini terhubung dengan *{selected_slug}*.")
-
-        if selected_slug == "onlineboost":
-            buttons = [
-                {"id": "btn_buy_now", "title": "💳 Beli & Bayar QRIS"},
-                {"id": "btn_view_service", "title": "🚀 Info Layanan & Modul"},
-                {"id": "btn_menu_reset", "title": "🔄 Ganti Demo Toko"},
-            ]
-            if from_phone:
-                try:
-                    await send_whatsapp_buttons(
-                        to_phone=from_phone,
-                        body_text=greeting,
-                        buttons=buttons,
-                        footer_text="Pilih opsi di bawah untuk lanjut:",
-                    )
-                except Exception:
-                    await send_whatsapp_text(to_phone=from_phone, text=greeting)
-        elif from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=greeting)
-
-        safe_log_to_supabase_messages(
-            sender="bot",
-            text=greeting,
-            tenant_id=selected_slug,
-            channel="whatsapp",
-            user_phone=from_phone,
-            user_name=contact_name,
-        )
-        return {"status": "success", "tenant": selected_slug, "reply": greeting, "is_new_binding": True}
 
     # Ambil tenant aktif sesi saat ini
     active_tenant = user_tenant_sessions.get(clean_phone)

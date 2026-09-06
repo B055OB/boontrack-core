@@ -156,6 +156,69 @@ class OmBudiService(BaseTenantService):
         clean_text = (message_text or "").strip().lower()
         clean_phone = self._clean_phone(phone_number)
 
+        # 0. Intercept P0: Reset command & Portal Switching
+        if clean_text in ["#reset", "reset", "#menu", "demo"] or button_id in ["btn_menu_reset", "reset"]:
+            from app.services.whatsapp_service import reset_whatsapp_user_session, DEMO_MENU_TEXT, user_session_states
+            reset_whatsapp_user_session(clean_phone)
+            if clean_phone:
+                user_session_states[clean_phone] = "AWAITING_PORTAL_CHOICE"
+            return {
+                "type": "text",
+                "reply": DEMO_MENU_TEXT
+            }
+
+        if clean_text in ["1", "2", "3", "4"]:
+            from app.services.whatsapp_service import user_tenant_sessions, user_session_states, DEMO_TENANT_GREETINGS
+            if clean_text == "1":
+                self.user_sessions[clean_phone] = "auto"
+                if clean_phone:
+                    user_tenant_sessions[clean_phone] = "ombudi"
+                    user_session_states[clean_phone] = "ACTIVE"
+                menu_text = (
+                    f"Assalamu'alaikum Warahmatullahi Wabarakatuh Bapak/Ibu *{user_name}* 🙏😊\n\n"
+                    "Portal Bimbingan *Om Budi Channel* siap mendampingi ikhtiar Anda.\n\n"
+                    "Silakan pilih menu yang ingin diakses:"
+                )
+                return {
+                    "type": "buttons",
+                    "reply": menu_text,
+                    "buttons": [
+                        {"id": "menu_zoom_booster", "title": "🚀 Zoom Booster"},
+                        {"id": "menu_sedekah_berjamaah", "title": "🤲 Sedekah"},
+                        {"id": "menu_daftar_kelas", "title": "Daftar Kelas Online"}
+                    ]
+                }
+            elif clean_text == "2":
+                if clean_phone:
+                    user_tenant_sessions[clean_phone] = "growthplus"
+                    user_session_states[clean_phone] = "ACTIVE"
+                return {
+                    "type": "text",
+                    "reply": DEMO_TENANT_GREETINGS.get("growthplus", "⚡ *Selamat Datang di Tier Growth+ BoonTrack!*")
+                }
+            elif clean_text == "3":
+                if clean_phone:
+                    user_tenant_sessions[clean_phone] = "proscale"
+                    user_session_states[clean_phone] = "ACTIVE"
+                return {
+                    "type": "text",
+                    "reply": DEMO_TENANT_GREETINGS.get("proscale", "🏢 *Selamat Datang di Tier ProScale Enterprise!*")
+                }
+            elif clean_text == "4":
+                if clean_phone:
+                    user_tenant_sessions[clean_phone] = "onlineboost"
+                    user_session_states[clean_phone] = "ACTIVE"
+                from app.services.whatsapp_service import send_whatsapp_tenant_catalog
+                try:
+                    import asyncio
+                    asyncio.create_task(send_whatsapp_tenant_catalog(phone_number, "onlineboost"))
+                except Exception:
+                    pass
+                return {
+                    "type": "text",
+                    "reply": "[Katalog OnlineBoost Dispatched]"
+                }
+
         # 1. OCR Multimodal Verifikasi Struk Pendaftaran / Sedekah (2 Parameter Inti)
         if image_bytes:
             try:

@@ -30,7 +30,12 @@ class LocalKnowledgeMatcher:
 
             # 1. Exact Match (Score = 1.0)
             for phrase in exact_phrases:
-                if self._normalize(phrase) in raw_query or raw_query in self._normalize(phrase):
+                norm_phrase = self._normalize(phrase)
+                if norm_phrase and (
+                    norm_phrase == raw_query
+                    or (len(raw_query) >= 4 and re.search(r'\b' + re.escape(raw_query) + r'\b', norm_phrase))
+                    or (len(norm_phrase) >= 4 and re.search(r'\b' + re.escape(norm_phrase) + r'\b', raw_query))
+                ):
                     return MatchConfidence.HIGH, 1.0, rule.get("answer"), rule.get("intent")
 
             # 2. Substring Keyword Presence (Cek kata kunci spesifik)
