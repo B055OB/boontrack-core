@@ -55,6 +55,7 @@ from app.routes.analytics_fastapi_routes import router as analytics_router
 from app.routes.boonpilot_routes import router as boonpilot_router
 from app.routes.store_chat_routes import router as store_chat_router
 from app.routes.media_routes import media_router
+from app.routes.product_routes import product_router
 from fastapi.staticfiles import StaticFiles
 
 # Inisialisasi Supabase Client
@@ -113,6 +114,7 @@ app.include_router(analytics_router)
 app.include_router(boonpilot_router)
 app.include_router(store_chat_router)
 app.include_router(media_router)
+app.include_router(product_router)
 
 # Mount Static Uploads
 uploads_dir = os.path.join(project_root, "assets", "uploads")

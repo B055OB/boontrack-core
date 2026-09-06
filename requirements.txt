@@ -36,3 +36,5 @@ cryptography
 python-jose[cryptography]>=3.3.0
 PyJWT>=2.8.0
 python-multipart>=0.0.9
+pandas>=2.2.0
+openpyxl>=3.1.0
