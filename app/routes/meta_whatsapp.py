@@ -163,15 +163,27 @@ async def handle_whatsapp_webhook(request: Request):
     # =========================================================================
     # P0 INTERCEPT: COMMAND #RESET / RESET / MENU UTAMA
     # =========================================================================
-    # Isolasi Nomor Career: HANYA command '#reset' eksplisit yang boleh membuka menu 4 portal pengujian.
-    # Untuk nomor demo / Om Budi: reset, menu utama, demo, dll tetap aktif.
-    is_reset = (clean_text == "#reset") if is_career_phone else (
-        clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo"] or clean_btn in ["btn_menu_reset", "reset"]
+    import re
+    clean_kw = re.sub(r"[^\w#]", "", clean_text)
+    is_explicit_reset = (
+        clean_kw in ["#reset", "reset"]
+        or clean_text.startswith("#reset")
+        or clean_text.startswith("# reset")
+        or "#reset" in clean_text
+    )
+    is_reset = is_explicit_reset if is_career_phone else (
+        is_explicit_reset
+        or clean_kw in ["reset", "menu", "demo"]
+        or clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo", "# reset", "start", "#start"]
+        or clean_btn in ["btn_menu_reset", "reset"]
     )
 
     if is_reset:
         logger.info(f"[META WA ROUTER] Reset command detected from {clean_phone} (is_career={is_career_phone}).")
         reset_whatsapp_user_session(clean_phone)
+        if from_phone:
+            reset_whatsapp_user_session(from_phone)
+
         if clean_phone:
             user_session_states[clean_phone] = "AWAITING_PORTAL_CHOICE"
             if phone_id:

@@ -157,15 +157,26 @@ class OmBudiService(BaseTenantService):
         clean_phone = self._clean_phone(phone_number)
 
         # 0. Intercept P0: Reset command & Portal Switching
-        if clean_text in ["#reset", "reset", "#menu", "demo"] or button_id in ["btn_menu_reset", "reset"]:
+        clean_kw = re.sub(r"[^\w#]", "", clean_text)
+        is_reset_cmd = (
+            clean_kw in ["#reset", "reset", "menu", "demo"]
+            or clean_text.startswith("#reset")
+            or clean_text.startswith("# reset")
+            or "#reset" in clean_text
+            or clean_text in ["#reset", "reset", "#menu", "demo", "menu utama", "# reset", "start", "#start"]
+            or button_id in ["btn_menu_reset", "reset"]
+        )
+        if is_reset_cmd:
             from app.services.whatsapp_service import reset_whatsapp_user_session, DEMO_MENU_TEXT, user_session_states
             reset_whatsapp_user_session(clean_phone)
+            reset_whatsapp_user_session(phone_number)
             if clean_phone:
                 user_session_states[clean_phone] = "AWAITING_PORTAL_CHOICE"
             return {
                 "type": "text",
                 "reply": DEMO_MENU_TEXT
             }
+
 
         if clean_text in ["1", "2", "3", "4"]:
             from app.services.whatsapp_service import user_tenant_sessions, user_session_states, DEMO_TENANT_GREETINGS

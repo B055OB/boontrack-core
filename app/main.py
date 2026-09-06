@@ -30,7 +30,8 @@ from app.routes.xendit import xendit_router
 from app.routes.onboarding import onboarding_router
 from app.routes.meta_whatsapp import meta_whatsapp_router
 from app.routes.chat import chat_router
-from app.routes.tenant_routes import tenant_router
+from app.routes.tenant_routes import tenant_router, tenant_singular_router, commerce_products_router
+
 from app.routes.shop_gateway_routes import shop_gateway_fastapi_router, register_shop_gateway_routes
 from app.routes.shop_subscription_routes import shop_subscription_fastapi_router, register_shop_subscription_routes
 from app.routes.shop_event_routes import shop_event_fastapi_router, register_shop_event_routes
@@ -93,6 +94,9 @@ app.include_router(onboarding_router)
 app.include_router(meta_whatsapp_router)
 app.include_router(chat_router)
 app.include_router(tenant_router)
+app.include_router(tenant_singular_router)
+app.include_router(commerce_products_router)
+
 app.include_router(shop_gateway_fastapi_router)
 app.include_router(shop_subscription_fastapi_router)
 app.include_router(shop_event_fastapi_router)

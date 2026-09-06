@@ -380,9 +380,20 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             send_whatsapp_tenant_catalog,
         )
         is_career = (str(phone_id).strip() == CAREER_PHONE_NUMBER_ID or str(phone_id).strip() == os.getenv("CAREER_PHONE_NUMBER_ID", CAREER_PHONE_NUMBER_ID))
-        is_reset = (clean_text == "#reset") if is_career else (
-            clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo"] or clean_btn in ["btn_menu_reset", "reset"]
+        clean_kw = re.sub(r"[^\w#]", "", clean_text)
+        is_explicit_reset = (
+            clean_kw in ["#reset", "reset"]
+            or clean_text.startswith("#reset")
+            or clean_text.startswith("# reset")
+            or "#reset" in clean_text
         )
+        is_reset = is_explicit_reset if is_career else (
+            is_explicit_reset
+            or clean_kw in ["reset", "menu", "demo"]
+            or clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo", "# reset", "start", "#start"]
+            or clean_btn in ["btn_menu_reset", "reset"]
+        )
+
 
         if is_reset:
             reset_whatsapp_user_session(from_phone)

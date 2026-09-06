@@ -105,29 +105,33 @@ async def upsert_tenant_product_endpoint(
     }
 
 
+from app.services.whatsapp_service import get_tenant_products_from_db
+
+
 @tenant_router.get("/{slug}/products", summary="Get All Tenant Products")
 async def get_tenant_products_endpoint(slug: str):
-    """Returns the full product catalog for a tenant, including category, price, and delivery URL."""
-    ctx = resolve_tenant_context(
-        tenant_slug=slug,
-        surface=SurfaceType.STOREFRONT.value,
-        actor_type=ActorType.CUSTOMER.value,
-        session_id=f"catalog_query_{slug}"
-    )
-
-    products = onboarding_service.get_tenant_products(slug)
-    if products is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Tenant with slug '{slug}' not found",
-        )
-
-    # Context Integrity Check: Pastikan setiap produk yang dikembalikan adalah milik tenant aktif
-    prod_tenant_ids = [p.get("tenant_id") for p in products if isinstance(p, dict) and p.get("tenant_id")]
-    assert_tenant_integrity(ctx, prod_tenant_ids)
+    """Returns the full product catalog for a tenant directly from Supabase / DB."""
+    store_name, products = get_tenant_products_from_db(slug)
+    if not products:
+        products = onboarding_service.get_tenant_products(slug) or []
 
     return {
         "slug": slug,
+        "name": store_name,
         "count": len(products),
         "products": products,
     }
+
+
+# Singular /api/v1/tenant route alias
+tenant_singular_router = APIRouter(prefix="/api/v1/tenant", tags=["Tenant Backpanel CMS Singular"])
+tenant_singular_router.add_api_route("/{slug}/products", get_tenant_products_endpoint, methods=["GET"])
+
+# Commerce products endpoint alias
+commerce_products_router = APIRouter(prefix="/api/v1/commerce", tags=["Commerce Products"])
+
+
+@commerce_products_router.get("/products", summary="Get Commerce Products")
+async def get_commerce_products(tenant_slug: str = "onlineboost"):
+    return await get_tenant_products_endpoint(tenant_slug)
+

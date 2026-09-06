@@ -19,6 +19,12 @@ _supabase_client: Optional[Client] = None
 def get_supabase() -> Optional[Client]:
     global _supabase_client
     if _supabase_client is None:
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except Exception:
+            pass
+
         supabase_url = (
             os.getenv("SUPABASE_URL") 
             or os.getenv("NEXT_PUBLIC_SUPABASE_URL") 
@@ -37,6 +43,7 @@ def get_supabase() -> Optional[Client]:
             except Exception as e:
                 logger.error(f"[Supabase Init Error] {e}")
     return _supabase_client
+
 
 
 def normalize_phone_number(raw_phone: Optional[str]) -> str:
