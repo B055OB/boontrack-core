@@ -892,10 +892,8 @@ def extract_meta_whatsapp_event(data: dict) -> Dict[str, Any]:
         return res
 
 def get_wa_credentials(tenant_id: str = "boontrack-career", phone_number_id: Optional[str] = None, access_token: Optional[str] = None) -> Tuple[str, str, str]:
-    """Resolve Meta API credentials. If explicit phone_number_id/access_token are
-    provided they take priority over tenant-based resolution — this ensures
-    replies always originate from the same WhatsApp number that received the
-    incoming message."""
+    """Resolve Meta API credentials. Menjamin nomor pengirim tidak pernah tertukar ke nomor Career
+    pada tenant ritel / ombudi / demo showcase."""
     default_token = (
         os.getenv("WHATSAPP_TOKEN")
         or os.getenv("META_WA_TOKEN")
@@ -906,9 +904,16 @@ def get_wa_credentials(tenant_id: str = "boontrack-career", phone_number_id: Opt
     )
     version = os.getenv("META_GRAPH_VERSION", "v20.0")
 
+    clean_tenant = str(tenant_id).lower().strip() if tenant_id else "ombudi"
+
     # --- Priority 1: Explicit overrides from webhook payload ---
     if phone_number_id and str(phone_number_id).strip():
         resolved_phone_id = str(phone_number_id).strip()
+        
+        # Guard: Jangan pernah membiarkan Career Phone ID merespons jika targetnya tenant showcase/retail
+        if clean_tenant in ["ombudi", "om-budi", "om_budi", "onlineboost", "growthplus", "proscale"] and resolved_phone_id == "1340866379104241":
+            resolved_phone_id = os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "1268977686299719"
+
         resolved_token = str(access_token).strip() if access_token else default_token
         if not access_token:
             if resolved_phone_id == (os.getenv("CAREER_PHONE_NUMBER_ID") or "1340866379104241"):
@@ -920,37 +925,24 @@ def get_wa_credentials(tenant_id: str = "boontrack-career", phone_number_id: Opt
         return resolved_token.strip(), resolved_phone_id, version
 
     # --- Priority 2: Tenant-based resolution ---
-    clean_tenant = str(tenant_id).lower().strip() if tenant_id else "boontrack-career"
+    if clean_tenant in ["ombudi", "om-budi", "om_budi", "onlineboost", "growthplus", "proscale"]:
+        phone_id = os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "1268977686299719"
+        token = os.getenv("OM_BUDI_ACCESS_TOKEN") or default_token
+        return token.strip(), str(phone_id).strip(), version
 
     if clean_tenant in ["boontrack-career", "career"]:
-        phone_id = (
-            os.getenv("CAREER_PHONE_NUMBER_ID")
-            or "1340866379104241"
-        )
+        phone_id = os.getenv("CAREER_PHONE_NUMBER_ID") or "1340866379104241"
         token = os.getenv("CAREER_ACCESS_TOKEN") or default_token
-    elif clean_tenant in ["om-budi", "ombudi"]:
-        phone_id = (
-            os.getenv("OM_BUDI_PHONE_NUMBER_ID")
-            or "1268977686299719"
-        )
-        token = os.getenv("OM_BUDI_ACCESS_TOKEN") or default_token
-    elif clean_tenant in ["aduan", "aduan-sandbox", "sandbox"]:
-        phone_id = (
-            os.getenv("PHONE_NUMBER_ID")
-            or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
-            or "1306479742542883"
-        )
-        token = os.getenv("ADUAN_ACCESS_TOKEN") or default_token
-    else:
-        phone_id = (
-            os.getenv("PHONE_NUMBER_ID")
-            or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
-            or os.getenv("CAREER_PHONE_NUMBER_ID")
-            or "1340866379104241"
-        )
-        token = default_token
+        return token.strip(), str(phone_id).strip(), version
 
-    return token.strip(), str(phone_id).strip(), version
+    if clean_tenant in ["aduan", "aduan-sandbox", "sandbox"]:
+        phone_id = os.getenv("PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID") or "1306479742542883"
+        token = os.getenv("ADUAN_ACCESS_TOKEN") or default_token
+        return token.strip(), str(phone_id).strip(), version
+
+    # DEFAULT FALLBACK (Aman: Gunakan Om Budi untuk flow testing/demo):
+    phone_id = os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "1268977686299719"
+    return default_token.strip(), str(phone_id).strip(), version
 
 def _get_auth_headers(token: str) -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
