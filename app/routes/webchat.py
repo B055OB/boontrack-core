@@ -7,6 +7,7 @@ from app.services.ai_gateway import AIGateway
 from app.repositories.session_repository import SessionRepository
 from app.services.whatsapp_service import log_to_supabase_messages
 from app.services.ai_service import ai_gateway
+from app.schemas.context import resolve_tenant_context, ChannelType, SurfaceType, ActorType
 
 router = APIRouter(prefix="/api/webchat", tags=["WebChat Multi-Channel"])
 
@@ -74,6 +75,15 @@ async def handle_career_webchat(payload: WebChatRequest):
 async def handle_holding_webchat(payload: WebChatRequest):
     try:
         tenant = "boontrack-holding"
+
+        # Resolve Server-Side Context locked to B2B Surface
+        ctx = resolve_tenant_context(
+            tenant_slug=tenant,
+            channel=ChannelType.WEBCHAT.value,
+            surface=SurfaceType.B2B.value,
+            actor_type=ActorType.ANONYMOUS.value,
+            session_id=payload.session_id
+        )
 
         # 1. Catat chat user holding
         await log_to_supabase_messages(

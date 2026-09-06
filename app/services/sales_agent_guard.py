@@ -49,14 +49,23 @@ ALLOWED_STORE_ACTIONS: Set[str] = {action.value for action in StoreActionType}
 # 2. STRICT TENANT SESSION SCOPE HELPER
 # ============================================================================
 
-def format_tenant_session_key(tenant_id: str, session_id: str, sub_key: str = "") -> str:
+def format_tenant_session_key(
+    tenant_id: str,
+    session_id: str,
+    sub_key: str = "",
+    channel: str = "webchat",
+    env: Optional[str] = None
+) -> str:
     """
-    Format standar isolasi multi-tenant:
-    'tenant:{tenant_id}:session:{session_id}' atau 'tenant:{tenant_id}:session:{session_id}:{sub_key}'
+    Format standar komposit isolasi multi-tenant:
+    bt:{env}:tenant:{tenant_id}:channel:{channel}:session:{session_id}[:{sub_key}]
     """
+    environment = (env or os.getenv("ENVIRONMENT", os.getenv("APP_ENV", "production"))).strip().lower()
     clean_tenant = str(tenant_id or "default").strip().lower()
+    clean_channel = str(channel or "webchat").strip().lower()
     clean_session = str(session_id or "global").strip()
-    base = f"tenant:{clean_tenant}:session:{clean_session}"
+
+    base = f"bt:{environment}:tenant:{clean_tenant}:channel:{clean_channel}:session:{clean_session}"
     if sub_key:
         return f"{base}:{sub_key.strip()}"
     return base

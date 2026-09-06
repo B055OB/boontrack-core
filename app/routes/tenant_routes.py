@@ -13,6 +13,8 @@ from fastapi import APIRouter, HTTPException, status, Body
 from pydantic import BaseModel, Field
 
 from app.services.onboarding_service import onboarding_service
+from app.schemas.context import resolve_tenant_context, SurfaceType, ActorType
+from app.core.security_context import assert_tenant_integrity
 
 logger = logging.getLogger("TENANT_CMS_ROUTES")
 
@@ -106,12 +108,24 @@ async def upsert_tenant_product_endpoint(
 @tenant_router.get("/{slug}/products", summary="Get All Tenant Products")
 async def get_tenant_products_endpoint(slug: str):
     """Returns the full product catalog for a tenant, including category, price, and delivery URL."""
+    ctx = resolve_tenant_context(
+        tenant_slug=slug,
+        surface=SurfaceType.STOREFRONT.value,
+        actor_type=ActorType.CUSTOMER.value,
+        session_id=f"catalog_query_{slug}"
+    )
+
     products = onboarding_service.get_tenant_products(slug)
     if products is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Tenant with slug '{slug}' not found",
         )
+
+    # Context Integrity Check: Pastikan setiap produk yang dikembalikan adalah milik tenant aktif
+    prod_tenant_ids = [p.get("tenant_id") for p in products if isinstance(p, dict) and p.get("tenant_id")]
+    assert_tenant_integrity(ctx, prod_tenant_ids)
+
     return {
         "slug": slug,
         "count": len(products),

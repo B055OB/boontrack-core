@@ -30,6 +30,8 @@ from app.services.sales_agent_guard import (
 
 from app.services.onboarding_service import onboarding_service
 from app.services.whatsapp_service import safe_log_to_supabase_messages
+from app.schemas.context import RequestContext, resolve_tenant_context, ChannelType, SurfaceType, ActorType
+from app.core.security_context import assert_tenant_integrity, format_composite_session_key
 
 logger = logging.getLogger("STORE_CHAT_ROUTES")
 
@@ -119,8 +121,22 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
             detail="Pesan tidak boleh kosong.",
         )
 
+    # Resolve Server-side Tenant RequestContext
+    ctx = resolve_tenant_context(
+        tenant_slug=clean_slug,
+        channel=ChannelType.WEBCHAT.value,
+        surface=SurfaceType.STOREFRONT.value,
+        actor_type=ActorType.CUSTOMER.value,
+        session_id=session_id,
+        untrusted_client_tenant_id=payload.tenant_id
+    )
+
     # 1. Ambil katalog produk riil langsung dari database PostgreSQL tenant
-    db_catalog = StoreContextBoundaryManager.fetch_transaction_data(clean_slug)
+    db_catalog = StoreContextBoundaryManager.fetch_transaction_data(ctx.tenant_slug)
+    
+    # Validasi integritas produk: pastikan produk yang diambil ber-tenant_id sesuai context
+    catalog_tids = [p.get("tenant_id") for p in db_catalog if isinstance(p, dict) and p.get("tenant_id")]
+    assert_tenant_integrity(ctx, catalog_tids)
     
     # 2. Generate respons AI dari Commerce Engine (BUYER_ASSISTANT profile)
     formatted_history = []
@@ -361,6 +377,15 @@ async def handle_merchant_copilot(payload: MerchantCopilotRequest = Body(...)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Pesan tidak boleh kosong.",
         )
+
+    # Resolve Server-Side Tenant Context locked strictly to MERCHANT_COPILOT surface
+    ctx = resolve_tenant_context(
+        tenant_slug=clean_slug,
+        channel=ChannelType.WEBCHAT.value,
+        surface=SurfaceType.MERCHANT_COPILOT.value,
+        actor_type=ActorType.MERCHANT.value,
+        session_id=session_id
+    )
 
     # Format history turn
     formatted_history = []
