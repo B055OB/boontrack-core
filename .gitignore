@@ -32,3 +32,6 @@ Proposal_*.docx
 Proposal_*.pdf
 generate_proposal*.py
 data/r2_mock_storage/
+.demo_sessions.json
+scratch/
+

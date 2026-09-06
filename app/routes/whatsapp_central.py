@@ -27,6 +27,12 @@ from app.services.whatsapp_service import (
     resolve_dynamic_tenant_for_whatsapp,
     is_closing_buy_intent,
 )
+from app.services.session_store import (
+    get_user_tenant_session,
+    set_user_tenant_session,
+    clear_user_tenant_session,
+    detect_demo_intent_keyword,
+)
 
 
 
@@ -450,8 +456,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         if clean_text in _CENTRAL_MENU_MAP or (user_session_states.get(clean_phone) == "AWAITING_PORTAL_CHOICE" and clean_text in _CENTRAL_MENU_MAP):
             selected_slug = _CENTRAL_MENU_MAP[clean_text]
             if clean_phone:
-                user_tenant_sessions[clean_phone] = selected_slug
-                user_session_states[clean_phone] = "ACTIVE"
+                set_user_tenant_session(clean_phone, selected_slug)
             logger.info(f"[CENTRAL WA ROUTER] User {clean_phone} selected '{clean_text}' -> locked to '{selected_slug}'")
 
             if selected_slug == "onlineboost":
@@ -539,7 +544,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 }, status=200)
 
         # 6.5. Dispatching Terisolasi Berdasarkan Phone Number ID & Session Lock
-        active_locked_tenant = user_tenant_sessions.get(clean_phone)
+        active_locked_tenant = get_user_tenant_session(clean_phone, incoming_text)
         is_demo_locked = bool(active_locked_tenant and active_locked_tenant in ("onlineboost", "growthplus", "proscale"))
 
         if not is_demo_locked:
@@ -645,7 +650,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
         text_lower = (incoming_text or "").strip().lower()
         clean_btn = str(button_id or "").strip().lower()
-        active_session_tenant = user_tenant_sessions.get(clean_phone) or "onlineboost"
+        active_session_tenant = get_user_tenant_session(clean_phone, incoming_text) or "onlineboost"
 
 
         # ---------------------------------------------------------------
@@ -767,11 +772,11 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         }
 
         _is_keyword_trigger = text_lower in _MENU_TRIGGER_KEYWORDS or clean_btn == "btn_menu_reset"
-        _has_active_session = bool(clean_phone and clean_phone in user_tenant_sessions)
+        _has_active_session = bool(clean_phone and get_user_tenant_session(clean_phone, incoming_text))
 
         if (not _is_onboarding_msg) and (_is_keyword_trigger or not _has_active_session):
             if clean_phone:
-                user_tenant_sessions.pop(clean_phone, None)
+                clear_user_tenant_session(clean_phone)
                 user_cart_sessions.pop(clean_phone, None)
 
             if text_lower not in _MENU_OPTION_MAP:
@@ -802,7 +807,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         if text_lower in _MENU_OPTION_MAP:
             selected_slug = _MENU_OPTION_MAP[text_lower]
             if clean_phone:
-                user_tenant_sessions[clean_phone] = selected_slug
+                set_user_tenant_session(clean_phone, selected_slug)
                 user_cart_sessions.pop(clean_phone, None)
 
             logger.info(

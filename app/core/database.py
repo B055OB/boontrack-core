@@ -157,6 +157,17 @@ def _init_db_sync():
         );
     """)
     
+    # 10. Tabel demo_user_sessions (Persistent WhatsApp Session Lock)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS demo_user_sessions (
+            phone VARCHAR(50) PRIMARY KEY,
+            tenant_slug VARCHAR(100) NOT NULL,
+            state VARCHAR(50) DEFAULT 'ACTIVE',
+            context_json JSONB DEFAULT '{}'::jsonb,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
     conn.commit()
     cur.close()
     conn.close()

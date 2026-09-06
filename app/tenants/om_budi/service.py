@@ -180,12 +180,13 @@ class OmBudiService(BaseTenantService):
 
 
         if clean_text in ["1", "2", "3", "4"]:
-            from app.services.whatsapp_service import user_tenant_sessions, user_session_states, DEMO_TENANT_GREETINGS
+            from app.services.whatsapp_service import DEMO_TENANT_GREETINGS
+            from app.services.session_store import set_user_tenant_session
+
             if clean_text == "1":
                 self.user_sessions[clean_phone] = "auto"
                 if clean_phone:
-                    user_tenant_sessions[clean_phone] = "ombudi"
-                    user_session_states[clean_phone] = "ACTIVE"
+                    set_user_tenant_session(clean_phone, "ombudi")
                 menu_text = (
                     f"Assalamu'alaikum Warahmatullahi Wabarakatuh Bapak/Ibu *{user_name}* 🙏😊\n\n"
                     "Portal Bimbingan *Om Budi Channel* siap mendampingi ikhtiar Anda.\n\n"
@@ -202,24 +203,21 @@ class OmBudiService(BaseTenantService):
                 }
             elif clean_text == "2":
                 if clean_phone:
-                    user_tenant_sessions[clean_phone] = "growthplus"
-                    user_session_states[clean_phone] = "ACTIVE"
+                    set_user_tenant_session(clean_phone, "growthplus")
                 return {
                     "type": "text",
                     "reply": DEMO_TENANT_GREETINGS.get("growthplus", "⚡ *Selamat Datang di Tier Growth+ BoonTrack!*")
                 }
             elif clean_text == "3":
                 if clean_phone:
-                    user_tenant_sessions[clean_phone] = "proscale"
-                    user_session_states[clean_phone] = "ACTIVE"
+                    set_user_tenant_session(clean_phone, "proscale")
                 return {
                     "type": "text",
                     "reply": DEMO_TENANT_GREETINGS.get("proscale", "🏢 *Selamat Datang di Tier ProScale Enterprise!*")
                 }
             elif clean_text == "4":
                 if clean_phone:
-                    user_tenant_sessions[clean_phone] = "onlineboost"
-                    user_session_states[clean_phone] = "ACTIVE"
+                    set_user_tenant_session(clean_phone, "onlineboost")
                 from app.services.whatsapp_service import send_whatsapp_tenant_catalog
                 try:
                     import asyncio
@@ -229,6 +227,38 @@ class OmBudiService(BaseTenantService):
                 return {
                     "type": "text",
                     "reply": "[Katalog OnlineBoost Dispatched]"
+                }
+
+        # Safeguard P0: Cek apakah user sedang berada di sesi demo atau pesan mengarah ke produk demo
+        from app.services.session_store import get_user_tenant_session, set_user_tenant_session, detect_demo_intent_keyword
+        demo_intent_tenant = detect_demo_intent_keyword(message_text)
+        demo_session_tenant = get_user_tenant_session(clean_phone, message_text)
+        active_demo_tenant = demo_intent_tenant or (demo_session_tenant if demo_session_tenant in ("onlineboost", "growthplus", "proscale") else None)
+
+        if active_demo_tenant and active_demo_tenant in ("onlineboost", "growthplus", "proscale"):
+            logger.info(f"[OM BUDI ROUTER RECOVERY] Redirecting demo message from {clean_phone} to '{active_demo_tenant}'")
+            if clean_phone:
+                set_user_tenant_session(clean_phone, active_demo_tenant)
+
+            if active_demo_tenant == "onlineboost":
+                from app.services.whatsapp_service import send_whatsapp_tenant_catalog
+                try:
+                    import asyncio
+                    asyncio.create_task(send_whatsapp_tenant_catalog(phone_number, "onlineboost"))
+                except Exception:
+                    pass
+                return {
+                    "type": "text",
+                    "reply": (
+                        "Halo Kak! Sepertinya pesan Kakak berkaitan dengan materi/produk *OnlineBoost*.\n\n"
+                        "Sesi Anda telah kami hubungkan kembali ke *OnlineBoost*. Silakan ketik *Katalog* untuk melihat daftar silabus/ecourse atau tanyakan materi yang ingin dipelajari ya Kak! 🙏"
+                    )
+                }
+            elif active_demo_tenant in ("growthplus", "proscale"):
+                from app.services.whatsapp_service import DEMO_TENANT_GREETINGS
+                return {
+                    "type": "text",
+                    "reply": DEMO_TENANT_GREETINGS.get(active_demo_tenant, f"Sesi Anda terhubung ke *{active_demo_tenant}*.")
                 }
 
         # 1. OCR Multimodal Verifikasi Struk Pendaftaran / Sedekah (2 Parameter Inti)

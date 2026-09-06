@@ -31,6 +31,12 @@ from app.services.whatsapp_service import (
     DEMO_MENU_TEXT,
     DEMO_TENANT_GREETINGS,
 )
+from app.services.session_store import (
+    get_user_tenant_session,
+    set_user_tenant_session,
+    clear_user_tenant_session,
+    detect_demo_intent_keyword,
+)
 from app.services.onboarding_service import onboarding_service
 from app.services.ai_engine import commerce_ai_engine
 from app.services.agent_service import process_incoming_message
@@ -219,8 +225,7 @@ async def handle_whatsapp_webhook(request: Request):
     if clean_text in _MENU_OPTION_MAP or (user_session_states.get(clean_phone) == "AWAITING_PORTAL_CHOICE" and clean_text in _MENU_OPTION_MAP):
         selected_slug = _MENU_OPTION_MAP[clean_text]
         if clean_phone:
-            user_tenant_sessions[clean_phone] = selected_slug
-            user_session_states[clean_phone] = "ACTIVE"
+            set_user_tenant_session(clean_phone, selected_slug)
             if phone_id:
                 user_phone_number_id_sessions[clean_phone] = phone_id
         
@@ -293,9 +298,13 @@ async def handle_whatsapp_webhook(request: Request):
     # =========================================================================
     # JALUR PRODUKSI: CAREER ATAU OM BUDI LAMA
     # =========================================================================
+    active_locked_tenant = get_user_tenant_session(clean_phone, incoming_text)
+    if active_locked_tenant in ("onlineboost", "growthplus", "proscale"):
+        tenant_slug = active_locked_tenant
+
     if tenant_slug in ("onlineboost", "growthplus", "proscale"):
         pass
-    elif tenant_slug in ("boontrack-career", "boontrack_career", "career") or (is_career_phone and user_tenant_sessions.get(clean_phone) not in ("onlineboost", "growthplus", "proscale")):
+    elif tenant_slug in ("boontrack-career", "boontrack_career", "career") or (is_career_phone and active_locked_tenant not in ("onlineboost", "growthplus", "proscale")):
         from app.tenants.career.service import career_service
         msg_type = event.get("msg_type", "text")
         if msg_type == "image":
@@ -366,7 +375,7 @@ async def handle_whatsapp_webhook(request: Request):
             await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, tenant_id="ombudi", phone_number_id=phone_id)
         return JSONResponse(status_code=200, content={"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT})
 
-    active_tenant = user_tenant_sessions.get(clean_phone) or "onlineboost"
+    active_tenant = get_user_tenant_session(clean_phone, incoming_text) or "onlineboost"
 
     # -------------------------------------------------------------------------
     # 1. FAST-TRACK QRIS CHECKOUT

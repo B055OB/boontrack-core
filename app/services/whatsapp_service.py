@@ -135,6 +135,14 @@ def reset_whatsapp_user_session(phone: str) -> None:
         user_phone_number_id_sessions.pop(raw_phone, None)
 
     try:
+        from app.services.session_store import clear_user_tenant_session
+        clear_user_tenant_session(clean_phone)
+        if raw_phone:
+            clear_user_tenant_session(raw_phone)
+    except Exception:
+        pass
+
+    try:
         from app.tenants.om_budi.service import om_budi_service
         om_budi_service.user_sessions.pop(clean_phone, None)
         if raw_phone:
@@ -574,6 +582,12 @@ def resolve_dynamic_tenant_for_whatsapp(
     # =========================================================================
     # JALUR KHUSUS NOMOR CAREER ASSISTANT
     # =========================================================================
+    from app.services.session_store import (
+        get_user_tenant_session,
+        set_user_tenant_session,
+        detect_demo_intent_keyword
+    )
+
     if is_career_phone:
         # HANYA '#reset' eksplisit yang boleh membuka menu 4 portal pengujian di nomor Career
         if text_lower == "#reset":
@@ -587,14 +601,14 @@ def resolve_dynamic_tenant_for_whatsapp(
         if user_session_states.get(clean_phone) == "AWAITING_PORTAL_CHOICE" and text_lower in option_map:
             target_slug = option_map[text_lower]
             if clean_phone:
-                user_tenant_sessions[clean_phone] = target_slug
-                user_session_states[clean_phone] = "ACTIVE"
+                set_user_tenant_session(clean_phone, target_slug)
             logger.info(f"[DYNAMIC TENANT WA] Career sender {clean_phone} chose portal '{target_slug}'")
             return target_slug, True
 
         # Jika user di nomor Career sudah mengunci session ke demo tenant (misal OnlineBoost)
-        if clean_phone and clean_phone in user_tenant_sessions:
-            return user_tenant_sessions[clean_phone], False
+        locked_career = get_user_tenant_session(clean_phone, text)
+        if locked_career in ("onlineboost", "growthplus", "proscale"):
+            return locked_career, False
 
         # Pesan salam biasa ("halo", "hi", "p", dst) atau pertanyaan karir TIDAK BOLEH di-intercept!
         # Langsung arahkan ke agent konsultasi Career
@@ -613,13 +627,14 @@ def resolve_dynamic_tenant_for_whatsapp(
     if text_lower in option_map:
         target_slug = option_map[text_lower]
         if clean_phone:
-            user_tenant_sessions[clean_phone] = target_slug
-            user_session_states[clean_phone] = "ACTIVE"
+            set_user_tenant_session(clean_phone, target_slug)
         logger.info(f"[DYNAMIC TENANT WA] Sender {clean_phone} selected option '{text_lower}' -> locked to '{target_slug}'")
         return target_slug, True
 
-    if clean_phone and clean_phone in user_tenant_sessions:
-        return user_tenant_sessions[clean_phone], False
+    # Cek session lock persisten (In-memory -> Disk -> Supabase DB -> Recent History -> Keyword)
+    locked_tenant = get_user_tenant_session(clean_phone, text)
+    if locked_tenant and locked_tenant in ("onlineboost", "growthplus", "proscale", "ombudi"):
+        return locked_tenant, False
 
     match = re.search(
         r"saya\s+baru\s+(?:saja\s+)?(?:mendaftar|daftar)\s+toko\s+([a-zA-Z0-9\-_]+)",
@@ -632,7 +647,7 @@ def resolve_dynamic_tenant_for_whatsapp(
     if match:
         target_slug = match.group(1).lower().strip()
         if clean_phone:
-            user_tenant_sessions[clean_phone] = target_slug
+            set_user_tenant_session(clean_phone, target_slug)
         logger.info(f"[DYNAMIC TENANT WA] Bound sender {clean_phone} to store '{target_slug}' via onboarding message")
         return target_slug, True
 
@@ -648,12 +663,25 @@ def resolve_dynamic_tenant_for_whatsapp(
         latest_slug = onboarding_service.get_latest_commerce_tenant()
         if latest_slug:
             if clean_phone:
-                user_tenant_sessions[clean_phone] = latest_slug
+                set_user_tenant_session(clean_phone, latest_slug)
             return latest_slug, False
     except Exception as e:
         logger.warning(f"[DYNAMIC TENANT WA] Failed to query latest commerce tenant: {e}")
 
     return "onlineboost", False
+
+
+def get_user_session(phone: str, message_text: str = "") -> Optional[str]:
+    """Helper persisten get_user_session(phone) tahan restart container."""
+    from app.services.session_store import get_user_tenant_session
+    return get_user_tenant_session(phone, message_text)
+
+
+def set_user_session(phone: str, tenant_slug: str, state: str = "ACTIVE", context: Optional[dict] = None) -> None:
+    """Helper persisten set_user_session(phone, tenant) tahan restart container."""
+    from app.services.session_store import set_user_tenant_session
+    set_user_tenant_session(phone, tenant_slug, state, context)
+
 
 
 async def log_to_supabase_messages(
