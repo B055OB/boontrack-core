@@ -144,7 +144,21 @@ async def handle_whatsapp_webhook(request: Request):
     incoming_text = (event.get("text") or "").strip()
     contact_name = event.get("contact_name") or "Kakak"
     clean_phone = normalize_phone_number(from_phone)
-    button_id = str(event.get("button_id") or "").strip().lower()
+    # Inisialisasi default button untuk mencegah UnboundLocalError
+    button_id = ""
+    clean_btn = ""
+    raw_msg = event.get("raw_msg") or {}
+    if event.get("button_id"):
+        button_id = str(event.get("button_id") or "").strip()
+        clean_btn = button_id.lower()
+    elif raw_msg.get("type") == "interactive":
+        interactive = raw_msg.get("interactive", {})
+        button_reply = interactive.get("button_reply", {})
+        button_id = str(button_reply.get("id", "")).strip()
+        clean_btn = button_id.lower()
+    elif raw_msg.get("type") == "button":
+        button_id = str(raw_msg.get("button", {}).get("payload", "")).strip()
+        clean_btn = button_id.lower()
     
     phone_id = str(event.get("phone_id") or "").strip()
     if not phone_id:
@@ -152,7 +166,6 @@ async def handle_whatsapp_webhook(request: Request):
 
     clean_text = incoming_text.strip().lower()
     text_lower = clean_text
-    clean_btn = button_id
 
     if clean_phone and phone_id:
         user_phone_number_id_sessions[clean_phone] = phone_id

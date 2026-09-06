@@ -327,7 +327,25 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         contact_name = str(event.get("contact_name") or "Kakak").strip()
         incoming_text = str(event.get("text") or "").strip()
         clean_text = incoming_text.strip().lower()
-        button_id = str(event.get("button_id") or "").strip().lower()
+        text_lower = clean_text
+
+        # Inisialisasi default button untuk mencegah UnboundLocalError
+        button_id = ""
+        clean_btn = ""
+
+        raw_msg = event.get("raw_msg") or {}
+        if event.get("button_id"):
+            button_id = str(event.get("button_id") or "").strip()
+            clean_btn = button_id.lower()
+        elif raw_msg.get("type") == "interactive":
+            interactive = raw_msg.get("interactive", {})
+            button_reply = interactive.get("button_reply", {})
+            button_id = str(button_reply.get("id", "")).strip()
+            clean_btn = button_id.lower()
+        elif raw_msg.get("type") == "button":
+            button_id = str(raw_msg.get("button", {}).get("payload", "")).strip()
+            clean_btn = button_id.lower()
+
         media_id = event.get("media_id")
         image_mime = event.get("media_mime") or "image/jpeg"
         image_bytes: Optional[bytes] = None
