@@ -452,10 +452,21 @@ async def generate_cart_checkout_response(
     if clean_phone:
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
 
+    from app.utils.qris_generator import render_qris_bytes, get_qr_code_image_url, get_dynamic_qris_string
+
     qr_string = invoice.get("qr_string", "")
-    qr_bytes = b""
-    qr_code_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&format=png&data={urllib.parse.quote(qr_string)}"
+    external_id = invoice.get("external_id", "-")
+    if not qr_string or not str(qr_string).strip().startswith("000201"):
+        qr_string = get_dynamic_qris_string(amount=total_amount, invoice_id=str(external_id))
+        invoice["qr_string"] = qr_string
+
+    qr_bytes = render_qris_bytes(qr_string, box_size=10, border=4)
+    qr_code_url = invoice.get("qr_code_url") or get_qr_code_image_url(qr_string, size=600)
     invoice["qr_code_url"] = qr_code_url
+
+    app_domain = os.getenv("APP_DOMAIN", "https://boontrack.com").rstrip("/")
+    web_pay_url = f"{app_domain}/pay/{external_id}"
+    invoice["web_pay_url"] = web_pay_url
 
     items_detail = "\n".join([
         f"• *{item.get('title') or item.get('name')}* (Rp {int(float(item.get('promo_price') or item.get('price') or 0)):,})".replace(",", ".")
@@ -465,10 +476,18 @@ async def generate_cart_checkout_response(
     caption = (
         f"Berikut Kode QRIS Pembayaran Pesanan Anda 💳\n\n"
         f"📦 *Rincian Belanja:*\n{items_detail}\n\n"
-        f"💰 *Total Pembayaran:* Rp {total_amount:,.0f}\n"
+        f"💰 *Total:* Rp {total_amount:,.0f}\n"
+        f"📄 *No. Invoice / Kode Bayar:* `{external_id}`\n"
         f"⏱️ *Masa Berlaku:* 15 Menit\n\n"
-        f"Silakan scan QR di atas menggunakan m-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n\n"
-        f"Setelah pembayaran sukses, notifikasi dan link akses produk akan otomatis aktif 🚀"
+        f"📱 *Petunjuk Pembayaran:*\n"
+        f"1. Simpan atau screenshot gambar QRIS di atas.\n"
+        f"2. Buka aplikasi m-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
+        f"3. Buka menu *Scan QRIS* -> pilih unggah foto dari Galeri HP.\n\n"
+        f"🌐 *Link Pembayaran Web Alternatif:*\n"
+        f"{web_pay_url}\n\n"
+        f"🔢 *String Kode QRIS (Copy Manual):*\n"
+        f"`{qr_string}`\n\n"
+        f"_Notifikasi dan link akses produk akan otomatis aktif setelah pembayaran berhasil._ 🚀"
     ).replace(",", ".")
 
     user_cart_sessions.pop(clean_phone, None)
@@ -516,21 +535,39 @@ async def generate_fast_track_checkout_response(
     if clean_phone:
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
 
+    from app.utils.qris_generator import render_qris_bytes, get_qr_code_image_url, get_dynamic_qris_string
+
     qr_string = invoice.get("qr_string", "")
-    qr_bytes = b""
-    
-    qr_code_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&format=png&data={urllib.parse.quote(qr_string)}"
+    external_id = invoice.get("external_id", "-")
+    if not qr_string or not str(qr_string).strip().startswith("000201"):
+        qr_string = get_dynamic_qris_string(amount=amount, invoice_id=str(external_id))
+        invoice["qr_string"] = qr_string
+
+    qr_bytes = render_qris_bytes(qr_string, box_size=10, border=4)
+    qr_code_url = invoice.get("qr_code_url") or get_qr_code_image_url(qr_string, size=600)
     invoice["qr_code_url"] = qr_code_url
+
+    app_domain = os.getenv("APP_DOMAIN", "https://boontrack.com").rstrip("/")
+    web_pay_url = f"{app_domain}/pay/{external_id}"
+    invoice["web_pay_url"] = web_pay_url
 
     amount_fmt = f"Rp{amount:,.0f}".replace(",", ".")
 
     caption = (
         f"Berikut Kode QRIS Pembayaran Anda 💳\n\n"
-        f"📌 *Produk:* {product_name}\n"
+        f"📌 *Nama Produk:* {product_name}\n"
         f"💰 *Total:* {amount_fmt}\n"
-        f"⏱️ *Berlaku:* 15 Menit\n\n"
-        f"Silakan scan QR di atas menggunakan m-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n\n"
-        f"Setelah pembayaran sukses, notifikasi dan akses materi/layanan akan otomatis aktif 🚀"
+        f"📄 *No. Invoice / Kode Bayar:* `{external_id}`\n"
+        f"⏱️ *Masa Berlaku:* 15 Menit\n\n"
+        f"📱 *Petunjuk Pembayaran:*\n"
+        f"1. Simpan atau screenshot gambar QRIS di atas.\n"
+        f"2. Buka aplikasi m-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
+        f"3. Buka menu *Scan QRIS* -> pilih unggah foto dari Galeri HP.\n\n"
+        f"🌐 *Link Pembayaran Web Alternatif:*\n"
+        f"{web_pay_url}\n\n"
+        f"🔢 *String Kode QRIS (Copy Manual):*\n"
+        f"`{qr_string}`\n\n"
+        f"_Akses materi & layanan akan otomatis aktif setelah pembayaran berhasil terverifikasi._ 🚀"
     )
     return caption, invoice, qr_bytes
 

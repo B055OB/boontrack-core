@@ -94,15 +94,11 @@ class XenditService:
                     raise RuntimeError(f"Xendit API ({resp.status_code}): {resp.text}")
         except Exception as api_err:
             logger.warning(f"[Xendit Fallback] Generating dynamic QRIS locally: {api_err}")
-            from app.utils.qris_generator import generate_dynamic_qris_payload
+            from app.utils.qris_generator import get_dynamic_qris_string, get_qr_code_image_url
 
-            static_qris = os.getenv(
-                "BOONTRACK_STATIC_QRIS",
-                "00020101021126540014ID.LINKAJA.WWW011893600911002237890202152009221102000010303UMI51440014ID.DANA.WWW011893600911002237890202152009221102000010303UMI5802ID5911BOONTRACK6007JAKARTA6105129406304C22F",
-            )
-            raw_emvco = generate_dynamic_qris_payload(static_qris, amount)
+            raw_emvco = get_dynamic_qris_string(amount=amount, invoice_id=str(external_id))
             exp_time = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
-            qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&format=png&data={urllib.parse.quote(raw_emvco)}"
+            qr_url = get_qr_code_image_url(raw_emvco, size=600)
             data = {
                 "id": f"qr_{uuid4().hex[:12]}",
                 "qr_string": raw_emvco,
@@ -113,20 +109,15 @@ class XenditService:
                 "expires_at": exp_time,
             }
 
-        # Gunakan string QR resmi Xendit jika tersedia
+        # Validasi string QR resmi: jika kosong atau bukan format EMVCo (000201...), fallback ke generator valid
         qr_string = data.get("qr_string", "")
-        if not qr_string:
-            from app.utils.qris_generator import generate_dynamic_qris_payload
-            static_qris = os.getenv(
-                "BOONTRACK_STATIC_QRIS",
-                "00020101021126540014ID.LINKAJA.WWW011893600911002237890202152009221102000010303UMI51440014ID.DANA.WWW011893600911002237890202152009221102000010303UMI5802ID5911BOONTRACK6007JAKARTA6105129406304C22F",
-            )
-            qr_string = generate_dynamic_qris_payload(static_qris, amount)
+        if not qr_string or not str(qr_string).strip().startswith("000201"):
+            from app.utils.qris_generator import get_dynamic_qris_string
+            logger.info(f"[Xendit] Non-EMVCo qr_string detected ('{qr_string}'), overriding with valid dynamic QRIS.")
+            qr_string = get_dynamic_qris_string(amount=amount, invoice_id=str(external_id))
 
-        qr_code_url = (
-            data.get("qr_code_url")
-            or f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&format=png&data={urllib.parse.quote(qr_string)}"
-        )
+        from app.utils.qris_generator import get_qr_code_image_url
+        qr_code_url = get_qr_code_image_url(qr_string, size=600)
         expired_at = (
             data.get("expires_at")
             or data.get("expired_at")

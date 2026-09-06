@@ -41,6 +41,10 @@ def generate_qris_png_buffer(
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
 
+    from PIL import Image
+    if hasattr(img, "size") and (img.size[0] < 500 or img.size[1] < 500):
+        img = img.resize((540, 540), Image.Resampling.NEAREST)
+
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
     buffer.seek(0)

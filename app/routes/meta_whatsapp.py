@@ -390,29 +390,53 @@ async def handle_whatsapp_webhook(request: Request):
 
     if is_qris_buy_action and active_tenant not in ("bale_pananggeuhan", "pelayanan_publik"):
         try:
-            reply, invoice, _ = await generate_fast_track_checkout_response(
+            reply, invoice, qr_bytes = await generate_fast_track_checkout_response(
                 tenant_slug=active_tenant,
                 from_phone=from_phone,
                 contact_name=contact_name,
             )
 
             qr_string = invoice.get("qr_string", "")
-            qr_code_url = (
-                invoice.get("qr_code_url")
-                or f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&format=png&data={urllib.parse.quote(qr_string)}"
-            )
+            qr_code_url = invoice.get("qr_code_url") or f"https://quickchart.io/qr?text={urllib.parse.quote(qr_string)}&size=600&margin=4&ecLevel=M"
 
             image_delivered = False
             try:
-                link_resp = await send_whatsapp_image_link(
-                    to_phone=from_phone,
-                    image_url=qr_code_url,
-                    caption=reply,
-                    tenant_id="ombudi",
-                    phone_number_id=phone_id,
-                )
-                if link_resp and getattr(link_resp, "status_code", 200) in (200, 201):
-                    image_delivered = True
+                from app.services.whatsapp_service import upload_whatsapp_media
+                if qr_bytes and len(qr_bytes) > 100:
+                    media_id = await upload_whatsapp_media(
+                        file_bytes=qr_bytes,
+                        filename="qris_code.png",
+                        mime_type="image/png",
+                        tenant_id="ombudi",
+                        phone_number_id=phone_id,
+                    )
+                    if media_id:
+                        token, p_id, version = get_wa_credentials("ombudi", phone_number_id=phone_id)
+                        if token and p_id:
+                            msg_url = f"https://graph.facebook.com/{version}/{p_id}/messages"
+                            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+                            payload = {
+                                "messaging_product": "whatsapp",
+                                "recipient_type": "individual",
+                                "to": clean_phone,
+                                "type": "image",
+                                "image": {"id": str(media_id), "caption": reply}
+                            }
+                            async with httpx.AsyncClient(timeout=30.0) as client:
+                                m_res = await client.post(msg_url, headers=headers, json=payload)
+                                if m_res.status_code in (200, 201):
+                                    image_delivered = True
+
+                if not image_delivered and qr_code_url:
+                    link_resp = await send_whatsapp_image_link(
+                        to_phone=from_phone,
+                        image_url=qr_code_url,
+                        caption=reply,
+                        tenant_id="ombudi",
+                        phone_number_id=phone_id,
+                    )
+                    if link_resp and getattr(link_resp, "status_code", 200) in (200, 201):
+                        image_delivered = True
             except Exception as err:
                 logger.warning(f"[WA IMAGE DISPATCH ERROR] {err}")
 

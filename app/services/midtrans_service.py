@@ -122,13 +122,9 @@ class MidtransService:
                     raise RuntimeError(f"Midtrans API HTTP {resp.status_code}: {resp.text}")
         except Exception as api_err:
             logger.warning(f"[Midtrans Fallback] Using resilient EMVCo local generator: {api_err}")
-            from app.utils.qris_generator import generate_dynamic_qris_payload
-            static_qris = os.getenv(
-                "BOONTRACK_STATIC_QRIS",
-                "00020101021126540014ID.LINKAJA.WWW011893600911002237890202152009221102000010303UMI51440014ID.DANA.WWW011893600911002237890202152009221102000010303UMI5802ID5911BOONTRACK6007JAKARTA6105129406304C22F"
-            )
-            raw_emvco = generate_dynamic_qris_payload(static_qris, clean_amount)
-            qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&format=png&data={urllib.parse.quote(raw_emvco)}"
+            from app.utils.qris_generator import get_dynamic_qris_string, get_qr_code_image_url
+            raw_emvco = get_dynamic_qris_string(amount=clean_amount, invoice_id=str(clean_order_id))
+            qr_url = get_qr_code_image_url(raw_emvco, size=600)
             data = {
                 "transaction_id": f"mdtr_{uuid4().hex[:12]}",
                 "order_id": clean_order_id,
@@ -141,13 +137,10 @@ class MidtransService:
 
         # 1. Ekstrak qr_string dari respon Midtrans
         qr_string = data.get("qr_string", "")
-        if not qr_string:
-            from app.utils.qris_generator import generate_dynamic_qris_payload
-            static_qris = os.getenv(
-                "BOONTRACK_STATIC_QRIS",
-                "00020101021126540014ID.LINKAJA.WWW011893600911002237890202152009221102000010303UMI51440014ID.DANA.WWW011893600911002237890202152009221102000010303UMI5802ID5911BOONTRACK6007JAKARTA6105129406304C22F"
-            )
-            qr_string = generate_dynamic_qris_payload(static_qris, clean_amount)
+        if not qr_string or not str(qr_string).strip().startswith("000201"):
+            from app.utils.qris_generator import get_dynamic_qris_string
+            logger.info(f"[Midtrans] Non-EMVCo qr_string detected ('{qr_string}'), overriding with valid dynamic QRIS.")
+            qr_string = get_dynamic_qris_string(amount=clean_amount, invoice_id=str(clean_order_id))
 
         # 2. Ekstrak raw QR image URL dari actions jika ada
         actions = data.get("actions") or []
@@ -156,8 +149,9 @@ class MidtransService:
                 qr_code_url = act.get("url", "")
                 break
 
+        from app.utils.qris_generator import get_qr_code_image_url
         if not qr_code_url and qr_string:
-            qr_code_url = f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&format=png&data={urllib.parse.quote(qr_string)}"
+            qr_code_url = get_qr_code_image_url(qr_string, size=600)
 
         expired_at = data.get("expiry_time") or exp_time
 

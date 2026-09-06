@@ -727,10 +727,10 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
             qr_target_url = invoice.get("qr_code_url")
             is_img_sent = False
-            if qr_target_url:
-                is_img_sent = await send_wa_image(from_phone, qr_target_url, reply_text, phone_id)
-            elif qr_bytes:
+            if qr_bytes and len(qr_bytes) > 100:
                 is_img_sent = await send_wa_image(from_phone, qr_bytes, reply_text, phone_id)
+            if not is_img_sent and qr_target_url:
+                is_img_sent = await send_wa_image(from_phone, qr_target_url, reply_text, phone_id)
 
             if not is_img_sent:
                 await send_wa_text(from_phone, reply_text, phone_id)
