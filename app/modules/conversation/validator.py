@@ -51,8 +51,10 @@ class TenantDBAdapter:
 
 
 def validate_action(state: CustomerState, db_session) -> dict:
-    if state.stage == "DECISION" and state.next_best_action == "RENDER_CHECKOUT_BUTTON":
-        if state.target_product_ids:
+    # Syarat mutlak: allow_button = True HANYA DAN HANYA JIKA stage sudah pasti 'DECISION'
+    # dan next_best_action == 'RENDER_CHECKOUT_BUTTON' dan state.show_interactive_button is True
+    if state.stage == "DECISION" and state.next_best_action == "RENDER_CHECKOUT_BUTTON" and state.show_interactive_button:
+        if state.target_product_ids and not state.signals.objection_raised:
             product = db_session.get_product(state.target_product_ids[0])
             stock = getattr(product, 'stock', None)
             if stock is None and isinstance(product, dict):
@@ -61,7 +63,7 @@ def validate_action(state: CustomerState, db_session) -> dict:
             if product_id is None and isinstance(product, dict):
                 product_id = product.get('id')
 
-            if product and (stock or 0) > 0 and not state.signals.objection_raised:
+            if product and (stock or 0) > 0:
                 state.show_interactive_button = True
                 return {
                     "allow_button": True,

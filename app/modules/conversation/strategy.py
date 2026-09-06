@@ -9,16 +9,21 @@ def determine_strategy(state: CustomerState, extracted_intent: str) -> str:
         state.next_best_action = "HANDLE_OBJECTION"
         return "HANDLE_OBJECTION"
 
-    # 2. Siap Beli
-    if extracted_intent == "PURCHASE_CONFIRMED" or (
-        state.signals.asked_stock and state.signals.asked_shipping and state.signals.asked_price_count >= 1
-    ):
+    # 2. Siap Beli (HANYA DAN HANYA JIKA ada sinyal kuat pembelian)
+    if extracted_intent in ("PURCHASE_CONFIRMED", "CONFIRM_BUY"):
         state.stage = "DECISION"
+        state.show_interactive_button = True
         state.next_best_action = "RENDER_CHECKOUT_BUTTON"
         return "PREPARE_CHECKOUT"
 
-    # 3. Masa Pertimbangan
-    if state.signals.asked_variant_or_spec or state.signals.asked_stock or state.signals.asked_shipping:
+    # 3. Masa Pertimbangan (Tanya materi, silabus, beda varian, spek, stok, dsb.)
+    # Stage HARUS tetap 'CONSIDERATION' dan show_interactive_button WAJIB False!
+    if (
+        extracted_intent == "CONSIDERATION_INQUIRY"
+        or state.signals.asked_variant_or_spec
+        or state.signals.asked_stock
+        or state.signals.asked_shipping
+    ):
         state.stage = "CONSIDERATION"
         state.show_interactive_button = False
         state.next_best_action = "RECOMMEND_AND_VALIDATE"

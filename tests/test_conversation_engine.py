@@ -91,6 +91,38 @@ class TestConversationEngine(unittest.TestCase):
         self.assertFalse(result["allow_button"])
         self.assertFalse(state.show_interactive_button)
 
+    def test_6_tanya_silabus_no_button_bleeding(self):
+        """Test 6 (Tanya Silabus): User tanya 'Materi dan silabus apa aja yang dipelajari?' -> stage == 'CONSIDERATION', allow_button WAJIB False."""
+        state = CustomerState(session_id="sess_6", tenant_id="onlineboost", target_product_ids=["prod_course_01"])
+        query = "Materi dan silabus apa saja yang dipelajari?"
+
+        intent = extract_signals(query, state)
+        self.assertEqual(intent, "CONSIDERATION_INQUIRY")
+
+        strategy = determine_strategy(state, intent)
+        self.assertEqual(strategy, "RECOMMEND_AND_VALIDATE")
+        self.assertEqual(state.stage, "CONSIDERATION")
+        self.assertFalse(state.show_interactive_button)
+
+        result = validate_action(state, self.mock_db)
+        self.assertFalse(result["allow_button"])
+
+    def test_7_tanya_beda_pemula_stays_consideration(self):
+        """Test 7 (Tanya Beda Pemula): User tanya 'Saya pemula, enaknya ambil yang mana dan bedanya apa?' -> stage == 'CONSIDERATION', allow_button WAJIB False."""
+        state = CustomerState(session_id="sess_7", tenant_id="onlineboost", target_product_ids=["prod_course_01"])
+        query = "Saya pemula, enaknya ambil yang mana dan bedanya apa?"
+
+        intent = extract_signals(query, state)
+        self.assertEqual(intent, "CONSIDERATION_INQUIRY")
+
+        strategy = determine_strategy(state, intent)
+        self.assertEqual(strategy, "RECOMMEND_AND_VALIDATE")
+        self.assertEqual(state.stage, "CONSIDERATION")
+        self.assertFalse(state.show_interactive_button)
+
+        result = validate_action(state, self.mock_db)
+        self.assertFalse(result["allow_button"])
+
 
 class TestConversationWebhookIntegration(unittest.TestCase):
     """End-to-End integration test for 3-layer engine wired to WhatsApp webhook."""
@@ -98,9 +130,11 @@ class TestConversationWebhookIntegration(unittest.TestCase):
     def setUp(self):
         from fastapi.testclient import TestClient
         from app.main import app
-        from app.services.whatsapp_service import user_tenant_sessions
+        from app.services.whatsapp_service import user_tenant_sessions, reset_whatsapp_user_session
         self.client = TestClient(app)
         user_tenant_sessions.clear()
+        reset_whatsapp_user_session("6281122334455")
+        reset_whatsapp_user_session("6287711223344")
 
     def test_webhook_3_layer_flow_multi_turn(self):
         from app.services.whatsapp_service import user_tenant_sessions
@@ -202,7 +236,9 @@ class TestConversationWebhookIntegration(unittest.TestCase):
     def test_onlineboost_locked_session_natural_chat_response(self):
         """Tes user yang terkunci di sesi onlineboost mengirim chat pertanyaan umum dijawab oleh bot."""
         from app.routes.meta_whatsapp import user_tenant_sessions
-        phone = "6281122334455"
+        from app.services.whatsapp_service import reset_whatsapp_user_session
+        phone = "6287711223344"
+        reset_whatsapp_user_session(phone)
         user_tenant_sessions[phone] = "onlineboost"
 
         payload = {

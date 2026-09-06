@@ -199,6 +199,14 @@ class CommerceAIEngine:
         persona = details.get("persona", {})
         ai_k = details.get("ai_knowledge", {})
         products = details.get("products", [])
+        if not products:
+            try:
+                from app.services.whatsapp_service import get_tenant_products_from_db
+                _, db_prods = get_tenant_products_from_db(tenant_slug)
+                if db_prods:
+                    products = db_prods
+            except Exception:
+                pass
 
         store_name = tenant.get("name", tenant_slug)
         vertical = tenant.get("vertical", "COMMERCE")
@@ -222,7 +230,7 @@ class CommerceAIEngine:
         if products:
             for idx, p in enumerate(products, 1):
                 title = p.get("title", f"Produk {idx}")
-                price = p.get("price", 0)
+                price = p.get("promo_price") or p.get("price") or 0
                 desc = p.get("description") or "Katalog resmi berkualitas tinggi"
                 p_type = p.get("product_type", "DIGITAL_FILE")
                 asset_ref = p.get("asset_reference", "digital_access")
@@ -236,7 +244,7 @@ class CommerceAIEngine:
 
                 product_lines.append(
                     f"{idx}. {title}\n"
-                    f"   - Harga: Rp{float(price):,.0f}\n"
+                    f"   - Harga Resmi: Rp{float(price):,.0f}\n"
                     f"   - Deskripsi: {desc}\n"
                     f"   - Varian / Spesifikasi: Standard Resmi ({p_type})\n"
                     f"   - {bundling_note}\n"
@@ -245,10 +253,9 @@ class CommerceAIEngine:
             catalog_text = "\n\n".join(product_lines)
         else:
             catalog_text = (
-                f"1. Paket Layanan {store_name}\n"
-                f"   - Harga: Rp50,000\n"
-                f"   - Deskripsi: Solusi layanan berkualitas langsung dari {store_name}\n"
-                f"   - Info Pengiriman: Konfirmasi instan via WhatsApp"
+                f"1. Paket Layanan Resmi {store_name}\n"
+                f"   - Deskripsi: Solusi produk & materi resmi berkualitas dari {store_name}\n"
+                f"   - Info Pengiriman: Akses digital resmi langsung via WhatsApp"
             )
 
         # Knowledge Base Kurikulum Khusus
@@ -299,7 +306,8 @@ class CommerceAIEngine:
             f"   - Layanan publik kelurahan, pengurusan KTP/SKU/bansos, surat pengantar nikah, atau Balé Pananggeuhan.\n"
             f"   - Bimbingan ibadah/riyadhoh Om Budi atau konsultasi karir umum.\n"
             f"3. Jika pelanggan bertanya tentang topik di luar katalog dan layanan {store_name}, tolak dengan sopan dan arahkan kembali ke produk toko:\n"
-            f"   Contoh: 'Mohon maaf Kakak, saya {assistant_name}, asisten resmi {store_name}. Saya khusus melayani seputar produk dan pesanan di {store_name}. Ada produk kami yang ingin Kakak tanyakan?'\n\n"
+            f"   Contoh: 'Mohon maaf Kakak, saya {assistant_name}, asisten resmi {store_name}. Saya khusus melayani seputar produk dan pesanan di {store_name}. Ada produk kami yang ingin Kakak tanyakan?'\n"
+            f"4. ATURAN HARGA KETAT: DILARANG mengarang harga atau paket baru. Gunakan HANYA nama produk dan harga resmi yang tertera pada KATALOG PRODUK RIIL di atas. Jangan pernah menyebutkan nominal harga yang tidak ada pada data katalog resmi.\n\n"
             f"FORMAT OUTPUT JSON & QUICK ACTIONS:\n"
             f"Respon WAJIB berupa JSON Object dengan struktur:\n"
             f'{{\n  "reply": "<teks balasan kepada calon pembeli>",\n  "quick_actions": ["<aksi 1>", "<aksi 2>", "<aksi 3>"]\n}}\n'

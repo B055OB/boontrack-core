@@ -533,13 +533,13 @@ async def handle_whatsapp_webhook(request: Request):
             customer_state.target_product_ids.append(first_pid)
 
     product_context = ""
-    if customer_state.stage in ["CONSIDERATION", "DECISION"]:
+    if products:
         p_summaries = []
-        for p in products[:3]:
+        for p in products[:5]:
             p_name = p.get("title") or p.get("name") or "Produk"
             p_price = int(float(p.get("promo_price") or p.get("price") or 0))
             p_desc = (p.get("description") or "").strip()
-            p_summaries.append(f"- {p_name} (Rp{p_price:,}): {p_desc[:100]}".replace(",", "."))
+            p_summaries.append(f"- {p_name} (Harga Resmi: Rp{p_price:,}): {p_desc}".replace(",", "."))
         product_context = "\n".join(p_summaries)
 
     # d. Layer 3: Generator Prompt Mode

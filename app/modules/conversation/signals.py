@@ -4,18 +4,43 @@ OBJECTION_KEYWORDS = ["mahal", "kemahalan", "pikir-pikir", "ragu", "kurang sreg"
 STOCK_KEYWORDS = ["ready", "stok", "ada?", "tersedia", "size", "ukuran", "warna", "variant"]
 SHIPPING_KEYWORDS = ["ongkir", "kirim ke", "ekspedisi", "pengiriman", "sampai berapa hari"]
 PRICE_KEYWORDS = ["berapa", "harga", "biaya", "price", "rp", "budget"]
-PURCHASE_KEYWORDS = ["oke saya ambil", "saya ambil", "beli sekarang", "bungkus", "order ini", "mau pesan", "saya mau"]
+
+# Sinyal eksplisit pertanyaan/pertimbangan kurikulum & silabus (CONSIDERATION)
+CONSIDERATION_KEYWORDS = [
+    "materi", "silabus", "kurikulum", "apa aja", "apa saja", "bedanya apa",
+    "bedanya", "beda", "rekomendasi", "pemula", "belajar apa", "isi modul",
+    "detail produk", "penjelasan", "tanya", "contoh", "gimana"
+]
+
+# Sinyal kuat konfirmasi pembelian (CONFIRM_BUY / PURCHASE_CONFIRMED)
+STRONG_PURCHASE_KEYWORDS = [
+    "beli sekarang", "mau beli", "saya beli", "beli ini", "ambil ini",
+    "mau ambil", "mau ini", "bungkus", "checkout", "bayar sekarang",
+    "mau bayar", "order ini", "pesan ini", "order sekarang",
+    "pesan sekarang", "deal", "fix beli", "mau pesan", "mau order",
+    "oke saya ambil", "saya ambil", "order ini"
+]
 
 
 def extract_signals(user_text: str, state: CustomerState) -> str:
-    text = user_text.lower()
+    text = user_text.lower().strip()
 
     if any(k in text for k in OBJECTION_KEYWORDS):
         state.signals.objection_raised = True
         return "OBJECTION_RAISED"
 
-    if any(k in text for k in PURCHASE_KEYWORDS):
+    # Deteksi apakah pesan mengandung pertanyaan pertimbangan (materi, silabus, rekomendasi)
+    is_consideration = any(k in text for k in CONSIDERATION_KEYWORDS)
+
+    # Sinyal pembelian HANYA jika ada kata beli/ambil/bungkus/checkout/bayar/mau ini
+    # dan BUKAN kalimat pertanyaan kurikulum/silabus
+    has_purchase = any(k in text for k in STRONG_PURCHASE_KEYWORDS)
+    if has_purchase and not is_consideration:
         return "PURCHASE_CONFIRMED"
+
+    if is_consideration:
+        state.signals.asked_variant_or_spec = True
+        return "CONSIDERATION_INQUIRY"
 
     if any(k in text for k in SHIPPING_KEYWORDS):
         state.signals.asked_shipping = True
