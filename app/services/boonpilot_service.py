@@ -486,6 +486,45 @@ class BoonPilotService:
             self._append_turn(sess_id, "assistant", proposal["description"])
             return proposal
 
+        # 2b. Intent Deteksi: Panduan Onboarding & Import Massal Katalog (.xlsx / .csv)
+        import_keywords = [
+            "import", "unggah", "upload", "excel", "csv", "xlsx", "spreadsheet",
+            "format spreadsheet", "tokopedia", "shopee", "tambah produk", "katalog",
+            "buat produk", "isi produk", "etalase kosong"
+        ]
+        if any(k in text_lower for k in import_keywords):
+            reply = (
+                f"Halo! Untuk mengisi atau mengelola etalase produk toko *{tenant_name}*:\n\n"
+                "1. **Import Massal (.xlsx / .csv)**:\n"
+                "   - Klik tombol **'Import Massal (.xlsx / .csv)'** di samping tombol Tambah Produk.\n"
+                "   - Siapkan file spreadsheet dengan kolom: `name` (wajib), `price` (wajib), `stock`, `sku`, `category`, dan `description`.\n"
+                "   - Sistem akan langsung memvalidasi dan menambahkan seluruh SKU dalam beberapa detik!\n\n"
+                "2. **Tambah Produk Manual**:\n"
+                "   - Klik tombol **'+ Tambah Produk Baru'** untuk mengisi detail satuan beserta unggah foto produk.\n\n"
+                "3. **Format Export Marketplace**:\n"
+                "   - Jika Anda memiliki file export dari Shopee atau Tokopedia, sistem kami secara cerdas mengenali kolom nama dan harga secara otomatis.\n\n"
+                "Ada yang ingin Anda tanyakan lebih lanjut seputar impor katalog produk?"
+            )
+            data = {
+                "feature": "catalog_onboarding",
+                "status": "READY",
+                "tenant_slug": clean_slug,
+                "tenant_name": tenant_name,
+                "quick_actions": [
+                    {"label": "Import Massal (.xlsx / .csv)", "action": "open_bulk_import"},
+                    {"label": "+ Tambah Produk Baru", "action": "open_new_product"},
+                    {"label": "Panduan Format Spreadsheet", "action": "spreadsheet_guide"},
+                ]
+            }
+            self._append_turn(sess_id, "user", message)
+            self._append_turn(sess_id, "assistant", reply)
+            return {
+                "type": "text",
+                "reply": reply,
+                "data": data,
+                "session_id": sess_id,
+            }
+
         # 3. Status & Kapabilitas WhatsApp Automation (Pencegahan Greeting Loop)
         wa_keywords = [
             "whatsapp", "wa", "otomatisasi wa", "bot wa", "fitur wa",
