@@ -107,7 +107,7 @@ class XenditService:
         if resp.status_code in (200, 201):
             return resp.json()
 
-        logger.error(f"[XENDIT ERROR] Failed HTTP {resp.status_code}: {resp.text}")
+        logger.error(f"[XENDIT_ERROR] Status: {resp.status_code}, Body: {resp.text}")
         raise RuntimeError(f"Xendit Invoice API ({resp.status_code}): {resp.text}")
 
     async def create_dynamic_qris(
@@ -147,7 +147,7 @@ class XenditService:
         logger.info(f"[XENDIT] Status: {resp.status_code}, Response: {resp.text[:200]}")
 
         if resp.status_code not in (200, 201):
-            logger.error(f"[XENDIT ERROR] Failed HTTP {resp.status_code}: {resp.text}")
+            logger.error(f"[XENDIT_ERROR] Status: {resp.status_code}, Body: {resp.text}")
             raise RuntimeError(f"Xendit API ({resp.status_code}): {resp.text}")
 
         data = resp.json()
@@ -155,7 +155,7 @@ class XenditService:
         # Gunakan string QR resmi murni langsung dari respons API Xendit
         qr_string = str(data.get("qr_string") or "").strip()
         if not qr_string:
-            logger.error(f"[XENDIT ERROR] Missing 'qr_string' in response: {data}")
+            logger.error(f"[XENDIT_ERROR] Missing 'qr_string' in response: {data}")
             raise RuntimeError(f"Xendit response missing 'qr_string': {data}")
 
         # Render URL gambar QR resmi dari qr_string Xendit

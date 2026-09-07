@@ -22,8 +22,29 @@ class PaymentOrchestrator:
         customer_phone: Optional[str] = None,
         product_name: str = "Modul Praktis CPM 24 Jam",
         metadata: Optional[Dict[str, Any]] = None,
+        gateway: str = "xendit",
     ) -> Dict[str, Any]:
-        """Creates official Xendit Dynamic QRIS code without local DANA Bisnis generator."""
+        """Creates dynamic QRIS code with switchable gateway architecture:
+        - Default: 100% official Xendit Production API (no silent fallback).
+        - Standby: Isolated local DANA Bisnis generator ONLY when gateway='dana_bisnis'.
+        """
+        clean_gateway = str(gateway or "xendit").strip().lower()
+
+        # Opsi Standby: DANA Bisnis hanya aktif jika dipanggil secara eksplisit
+        if clean_gateway == "dana_bisnis":
+            from app.utils.qris_generator import get_dynamic_qris_string, get_qr_code_image_url
+            qr_string = get_dynamic_qris_string(amount=amount, invoice_id=external_id)
+            return {
+                "qr_string": qr_string,
+                "qr_code_url": get_qr_code_image_url(qr_string),
+                "qr_id": f"dana_{external_id}",
+                "status": "ACTIVE",
+                "amount": amount,
+                "external_id": external_id,
+                "provider": "DANA_BISNIS",
+            }
+
+        # Jalur Default: 100% Xendit Production API (tanpa silent fallback)
         from app.services.xendit_service import xendit_service
         meta = metadata or {}
         meta["product_name"] = product_name

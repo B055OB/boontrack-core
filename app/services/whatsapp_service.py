@@ -436,7 +436,8 @@ def add_product_to_cart(from_phone: str, tenant_slug: str, product_key: str) -> 
 async def generate_cart_checkout_response(
     tenant_slug: str,
     from_phone: str,
-    contact_name: str = "Kakak"
+    contact_name: str = "Kakak",
+    gateway: str = "xendit",
 ) -> Tuple[str, Dict[str, Any], bytes]:
     from app.services.xendit_service import xendit_service
     import urllib.parse
@@ -453,12 +454,28 @@ async def generate_cart_checkout_response(
     item_titles = ", ".join([str(item.get("title") or item.get("name")) for item in cart_items])
     product_summary = f"Order {len(cart_items)} Items ({item_titles[:35]}...)" if len(item_titles) > 35 else item_titles
 
-    invoice = await xendit_service.create_qris_invoice(
-        tenant_slug=tenant_slug,
-        amount=total_amount,
-        product_name=product_summary,
-        customer_phone=clean_phone,
-    )
+    clean_gateway = str(gateway or "xendit").strip().lower()
+    if clean_gateway == "dana_bisnis":
+        from app.utils.qris_generator import get_dynamic_qris_string, get_qr_code_image_url
+        clean_inv_slug = str(tenant_slug).replace("_", "-").lower()[:8]
+        external_id = f"INV-{clean_inv_slug.upper()}-{uuid.uuid4().hex[:6].upper()}"
+        qr_string = get_dynamic_qris_string(amount=total_amount, invoice_id=external_id)
+        invoice = {
+            "external_id": external_id,
+            "amount": total_amount,
+            "qr_string": qr_string,
+            "qr_code_url": get_qr_code_image_url(qr_string),
+            "status": "ACTIVE",
+            "provider": "DANA_BISNIS",
+            "tenant_id": tenant_slug,
+        }
+    else:
+        invoice = await xendit_service.create_qris_invoice(
+            tenant_slug=tenant_slug,
+            amount=total_amount,
+            product_name=product_summary,
+            customer_phone=clean_phone,
+        )
 
     if clean_phone:
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
@@ -502,6 +519,7 @@ async def generate_fast_track_checkout_response(
     from_phone: str,
     contact_name: str = "Kakak",
     product_key: Optional[str] = None,
+    gateway: str = "xendit",
 ) -> Tuple[str, Dict[str, Any], bytes]:
     from app.services.xendit_service import xendit_service
     import urllib.parse
@@ -536,12 +554,28 @@ async def generate_fast_track_checkout_response(
         product_name = "Modul Praktis CPM 24 Jam"
         amount = 1000
 
-    invoice = await xendit_service.create_qris_invoice(
-        tenant_slug=clean_slug,
-        amount=amount,
-        product_name=product_name,
-        customer_phone=clean_phone,
-    )
+    clean_gateway = str(gateway or "xendit").strip().lower()
+    if clean_gateway == "dana_bisnis":
+        from app.utils.qris_generator import get_dynamic_qris_string, get_qr_code_image_url
+        clean_inv_slug = str(clean_slug).replace("_", "-").lower()[:8]
+        external_id = f"INV-{clean_inv_slug.upper()}-{uuid.uuid4().hex[:6].upper()}"
+        qr_string = get_dynamic_qris_string(amount=amount, invoice_id=external_id)
+        invoice = {
+            "external_id": external_id,
+            "amount": amount,
+            "qr_string": qr_string,
+            "qr_code_url": get_qr_code_image_url(qr_string),
+            "status": "ACTIVE",
+            "provider": "DANA_BISNIS",
+            "tenant_id": clean_slug,
+        }
+    else:
+        invoice = await xendit_service.create_qris_invoice(
+            tenant_slug=clean_slug,
+            amount=amount,
+            product_name=product_name,
+            customer_phone=clean_phone,
+        )
 
     if clean_phone:
         user_session_states[clean_phone] = "AWAITING_PAYMENT"

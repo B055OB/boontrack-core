@@ -210,3 +210,35 @@ class TestXenditWhatsAppCheckout(unittest.IsolatedAsyncioTestCase):
                 )
             self.assertIn("missing 'qr_string'", str(ctx.exception))
 
+    async def test_switchable_gateway_fast_track_checkout_dana_bisnis(self):
+        """Memastikan parameter gateway='dana_bisnis' memicu modul DANA Bisnis standby secara terisolasi."""
+        caption, invoice, qr_bytes = await generate_fast_track_checkout_response(
+            tenant_slug="onlineboost",
+            from_phone="081234567890",
+            contact_name="Budi",
+            product_key="cpm-24jam",
+            gateway="dana_bisnis",
+        )
+
+        self.assertEqual(invoice["provider"], "DANA_BISNIS")
+        self.assertIn("ID.DANA.WWW", invoice["qr_string"])
+        self.assertGreater(len(qr_bytes), 100)
+        self.assertTrue(qr_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    async def test_switchable_gateway_payment_orchestrator_dana_bisnis(self):
+        """Memastikan PaymentOrchestrator.create_qr_code mendukung gateway='dana_bisnis' sebagai opsi standby."""
+        mock_supabase = MagicMock()
+        orchestrator = PaymentOrchestrator(supabase_client=mock_supabase)
+
+        res = await orchestrator.create_qr_code(
+            external_id="ORD-DANA-STANDBY-01",
+            amount=50000,
+            tenant_id="onlineboost",
+            gateway="dana_bisnis",
+        )
+
+        self.assertEqual(res["provider"], "DANA_BISNIS")
+        self.assertIn("ID.DANA.WWW", res["qr_string"])
+        self.assertEqual(res["amount"], 50000)
+
+
