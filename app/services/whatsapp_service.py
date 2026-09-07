@@ -311,6 +311,9 @@ def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, A
             except Exception as e:
                 logger.warning(f"[DB PRODUCTS FETCH ERROR] {e}")
 
+    if products:
+        products.sort(key=lambda x: 0 if str(x.get("slug")) == "cpm-24jam" else 1)
+
     return store_name, products
 
 
