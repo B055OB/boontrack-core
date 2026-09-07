@@ -58,15 +58,35 @@ class XenditService:
         customer_phone: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Creates dynamic QR code directly via Xendit QR Codes API."""
-        return await self.create_dynamic_qris(
+        """Creates official invoice on Xendit /v2/invoices API."""
+        product_name = (metadata or {}).get("product_name") or "Modul Praktis CPM 24 Jam"
+        inv_data = await self.create_invoice(
             external_id=external_id,
             amount=amount,
-            tenant_id=tenant_id,
-            callback_url=callback_url,
+            product_name=product_name,
             customer_phone=customer_phone,
-            metadata=metadata,
+            tenant_id=tenant_id,
         )
+        invoice_url = inv_data.get("invoice_url") or f"https://checkout.xendit.co/web/{external_id}"
+        qr_string = str(inv_data.get("qr_string") or invoice_url).strip()
+        encoded_qr = urllib.parse.quote(qr_string) if qr_string else ""
+        qr_code_url = inv_data.get("qr_code_url") or (
+            f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=16&format=png&data={encoded_qr}"
+            if qr_string
+            else ""
+        )
+        return {
+            "id": inv_data.get("id", ""),
+            "qr_id": inv_data.get("id", ""),
+            "external_id": inv_data.get("external_id") or external_id,
+            "invoice_url": invoice_url,
+            "web_pay_url": invoice_url,
+            "amount": inv_data.get("amount", amount),
+            "status": inv_data.get("status", "PENDING"),
+            "qr_string": qr_string,
+            "qr_code_url": qr_code_url,
+            "provider": "XENDIT",
+        }
 
     async def create_invoice(
         self,
@@ -244,16 +264,55 @@ class XenditService:
         product_name: str = "Produk",
         customer_phone: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Creates a dynamic QRIS invoice specifically for closing and checkout flows."""
+        """Creates official invoice on Xendit /v2/invoices API specifically for closing and checkout flows."""
         clean_slug = str(tenant_slug).replace("_", "-").lower()[:8]
         external_id = f"INV-{clean_slug.upper()}-{uuid4().hex[:6].upper()}"
-        return await self.create_dynamic_qris(
+        inv_data = await self.create_invoice(
             external_id=external_id,
             amount=int(amount),
-            tenant_id=tenant_slug,
+            product_name=product_name,
             customer_phone=customer_phone,
-            metadata={"product_name": product_name, "tenant_slug": tenant_slug},
+            tenant_id=tenant_slug,
         )
+        invoice_url = inv_data.get("invoice_url") or f"https://checkout.xendit.co/web/{external_id}"
+        qr_string = str(inv_data.get("qr_string") or invoice_url).strip()
+        encoded_qr = urllib.parse.quote(qr_string) if qr_string else ""
+        qr_code_url = inv_data.get("qr_code_url") or (
+            f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=16&format=png&data={encoded_qr}"
+            if qr_string
+            else ""
+        )
+
+        result = {
+            "id": inv_data.get("id", ""),
+            "external_id": inv_data.get("external_id") or external_id,
+            "invoice_url": invoice_url,
+            "web_pay_url": invoice_url,
+            "amount": inv_data.get("amount", amount),
+            "status": inv_data.get("status", "PENDING"),
+            "qr_string": qr_string,
+            "qr_code_url": qr_code_url,
+            "tenant_id": tenant_slug,
+            "customer_phone": customer_phone,
+            "product_name": product_name,
+            "currency": inv_data.get("currency", "IDR"),
+        }
+
+        # Track intent in-memory & legacy store for cross-service reconciliation
+        self._intents_by_external_id[str(external_id)] = result
+        PAYMENT_INTENTS[external_id] = {
+            "invoice_id": external_id,
+            "order_id": external_id,
+            "tenant_id": tenant_slug,
+            "amount": amount,
+            "total_amount": amount,
+            "status": "PENDING",
+            "phone": customer_phone,
+            "invoice_url": invoice_url,
+            "qr_string": qr_string,
+        }
+
+        return result
 
     def clear_state(self) -> None:
         """Resets in-memory state for testing isolation."""

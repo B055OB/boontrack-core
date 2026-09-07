@@ -482,31 +482,36 @@ async def generate_cart_checkout_response(
 
     qr_string = str(invoice.get("qr_string") or "").strip()
     external_id = invoice.get("external_id", "-")
+    invoice_url = invoice.get("invoice_url") or f"https://checkout.xendit.co/web/{external_id}"
+    invoice["invoice_url"] = invoice_url
+    invoice["web_pay_url"] = invoice_url
 
-    # Render QR code image natively directly from official Xendit qr_string
-    qr_bytes = generate_qris_image_bytes(qr_string) if qr_string else b""
-    qr_code_url = invoice.get("qr_code_url") or f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=16&format=png&data={urllib.parse.quote(qr_string)}"
+    qr_string = str(invoice.get("qr_string") or "").strip()
+    qr_data = qr_string or invoice_url
+    # Render QR code image natively directly from official Xendit qr_string or invoice_url
+    qr_bytes = generate_qris_image_bytes(qr_data) if qr_data else b""
+    qr_code_url = invoice.get("qr_code_url") or f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=16&format=png&data={urllib.parse.quote(qr_data)}"
     invoice["qr_code_url"] = qr_code_url
-
-    app_domain = os.getenv("APP_DOMAIN", "https://boontrack.com").rstrip("/")
-    web_pay_url = invoice.get("invoice_url") or invoice.get("web_pay_url") or f"{app_domain}/pay/{external_id}"
-    invoice["web_pay_url"] = web_pay_url
 
     items_detail = "\n".join([
         f"• *{item.get('title') or item.get('name')}* (Rp {int(float(item.get('promo_price') or item.get('price') or 0)):,})".replace(",", ".")
         for item in cart_items
     ])
 
+    amount_fmt = f"Rp{total_amount:,.0f}".replace(",", ".")
+
     caption = (
-        f"Berikut Kode QRIS Pembayaran Pesanan Anda 💳\n\n"
+        f"Berikut Rincian Tagihan Pembayaran Pesanan Anda 💳\n\n"
         f"📦 *Rincian Belanja:*\n{items_detail}\n\n"
-        f"💰 *Total Tagihan:* Rp {total_amount:,.0f}\n"
+        f"💰 *Total Tagihan:* {amount_fmt}\n"
         f"📄 *No. Invoice / Kode Bayar:* `{external_id}`\n"
         f"⏱️ *Masa Berlaku:* 15 Menit\n\n"
+        f"🔗 *Link Pembayaran Resmi Xendit:*\n"
+        f"{invoice_url}\n\n"
         f"📱 *Petunjuk Pembayaran:*\n"
-        f"1. Simpan atau screenshot gambar QRIS di atas.\n"
-        f"2. Buka aplikasi m-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
-        f"3. Buka menu *Scan QRIS* -> pilih unggah foto dari Galeri HP.\n\n"
+        f"1. Klik link pembayaran resmi Xendit di atas.\n"
+        f"2. Pilih metode bayar QRIS atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
+        f"3. Selesaikan transaksi langsung di halaman pembayaran resmi Xendit.\n\n"
         f"_Notifikasi dan link akses produk akan otomatis dikirimkan setelah pembayaran berhasil._ 🚀"
     ).replace(",", ".")
 
@@ -580,30 +585,33 @@ async def generate_fast_track_checkout_response(
     if clean_phone:
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
 
-    qr_string = str(invoice.get("qr_string") or "").strip()
     external_id = invoice.get("external_id", "-")
+    invoice_url = invoice.get("invoice_url") or f"https://checkout.xendit.co/web/{external_id}"
+    invoice["invoice_url"] = invoice_url
+    invoice["web_pay_url"] = invoice_url
 
-    # Render QR code image natively directly from official Xendit qr_string
-    qr_bytes = generate_qris_image_bytes(qr_string) if qr_string else b""
-    qr_code_url = invoice.get("qr_code_url") or f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=16&format=png&data={urllib.parse.quote(qr_string)}"
+    qr_string = str(invoice.get("qr_string") or "").strip()
+    qr_data = qr_string or invoice_url
+
+    # Render QR code image natively directly from official Xendit qr_string or invoice_url
+    qr_bytes = generate_qris_image_bytes(qr_data) if qr_data else b""
+    qr_code_url = invoice.get("qr_code_url") or f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=16&format=png&data={urllib.parse.quote(qr_data)}"
     invoice["qr_code_url"] = qr_code_url
-
-    app_domain = os.getenv("APP_DOMAIN", "https://boontrack.com").rstrip("/")
-    web_pay_url = invoice.get("invoice_url") or invoice.get("web_pay_url") or f"{app_domain}/pay/{external_id}"
-    invoice["web_pay_url"] = web_pay_url
 
     amount_fmt = f"Rp{amount:,.0f}".replace(",", ".")
 
     caption = (
-        f"Berikut Kode QRIS Pembayaran Anda 💳\n\n"
+        f"Berikut Rincian Tagihan Pembayaran Anda 💳\n\n"
         f"📌 *Nama Produk:* {product_name}\n"
         f"💰 *Total Tagihan:* {amount_fmt}\n"
         f"📄 *No. Invoice / Kode Bayar:* `{external_id}`\n"
         f"⏱️ *Masa Berlaku:* 15 Menit\n\n"
+        f"🔗 *Link Pembayaran Resmi Xendit:*\n"
+        f"{invoice_url}\n\n"
         f"📱 *Petunjuk Pembayaran:*\n"
-        f"1. Simpan atau screenshot gambar QRIS di atas.\n"
-        f"2. Buka aplikasi m-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
-        f"3. Buka menu *Scan QRIS* -> pilih unggah foto dari Galeri HP.\n\n"
+        f"1. Klik link pembayaran resmi Xendit di atas.\n"
+        f"2. Pilih metode bayar QRIS atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
+        f"3. Selesaikan transaksi langsung di halaman pembayaran resmi Xendit.\n\n"
         f"_Akses materi & layanan akan otomatis aktif setelah pembayaran berhasil terverifikasi._ 🚀"
     )
     return caption, invoice, qr_bytes

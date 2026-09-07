@@ -31,15 +31,17 @@ class TestXenditWhatsAppCheckout(unittest.IsolatedAsyncioTestCase):
         xendit_service.clear_state()
 
     async def test_fast_track_checkout_uses_xendit_and_cpm_rp1000(self):
-        """Memastikan WhatsApp fast-track checkout mengambil qr_string resmi dari Xendit untuk cpm-24jam senilai Rp1.000."""
+        """Memastikan WhatsApp fast-track checkout menggunakan Xendit Invoice API (/v2/invoices) dan menyertakan invoice_url."""
         mock_xendit_qr_string = "00020101021226540014ID.LINKAJA.WWW0118936009143000000000520459995303360540410005802ID5911XENDIT_PROD6007JAKARTA6304ABCD"
+        mock_invoice_url = "https://checkout.xendit.co/web/60c070abc123"
         mock_xendit_api_resp = {
-            "id": "qr_xendit_live_test_01",
-            "reference_id": "INV-ONLINEBO-001",
-            "type": "DYNAMIC",
+            "id": "inv_xendit_live_test_01",
+            "external_id": "INV-ONLINEBO-001",
             "currency": "IDR",
             "amount": 1000,
-            "status": "ACTIVE",
+            "status": "PENDING",
+            "invoice_url": mock_invoice_url,
+            "description": "Modul Praktis CPM 24 Jam",
             "qr_string": mock_xendit_qr_string,
         }
 
@@ -61,8 +63,9 @@ class TestXenditWhatsAppCheckout(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Modul Praktis CPM 24 Jam", caption)
             self.assertIn("Rp1.000", caption)
 
-            # 2. Pastikan qr_string tersimpan di invoice dari respons resmi Xendit
-            self.assertEqual(invoice["qr_string"], mock_xendit_qr_string)
+            # 2. Pastikan link resmi Xendit invoice_url ada di caption dan invoice object
+            self.assertIn(mock_invoice_url, caption)
+            self.assertEqual(invoice["invoice_url"], mock_invoice_url)
 
             # 3. Pastikan teks raw QR string dan link web pay 404 TIDAK ada di pesan WhatsApp
             self.assertNotIn(mock_xendit_qr_string, caption)
@@ -71,10 +74,10 @@ class TestXenditWhatsAppCheckout(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("pay/", caption)
 
             # 4. Pastikan string DANA Bisnis lokal TIDAK digunakan
-            self.assertNotIn("ID.DANA.WWW", invoice["qr_string"])
+            self.assertNotIn("ID.DANA.WWW", invoice.get("qr_string", ""))
             self.assertNotIn("ID.DANA.WWW", caption)
 
-            # 4. Pastikan gambar QR code PNG berhasil dirender dari string Xendit
+            # 5. Pastikan gambar QR code PNG berhasil dirender dari string/url Xendit
             self.assertGreater(len(qr_bytes), 100)
             self.assertTrue(qr_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
 
