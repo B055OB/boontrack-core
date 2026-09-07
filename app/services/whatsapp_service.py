@@ -470,12 +470,17 @@ async def generate_cart_checkout_response(
             "tenant_id": tenant_slug,
         }
     else:
-        invoice = await xendit_service.create_qris_invoice(
-            tenant_slug=tenant_slug,
-            amount=total_amount,
-            product_name=product_summary,
-            customer_phone=clean_phone,
-        )
+        try:
+            invoice = await xendit_service.create_qris_invoice(
+                tenant_slug=tenant_slug,
+                amount=total_amount,
+                product_name=product_summary,
+                customer_phone=clean_phone,
+            )
+        except Exception as e:
+            import traceback
+            logger.error(f"[CHECKOUT_EXCEPTION] {str(e)}\n{traceback.format_exc()}")
+            raise e
 
     if clean_phone:
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
@@ -575,12 +580,17 @@ async def generate_fast_track_checkout_response(
             "tenant_id": clean_slug,
         }
     else:
-        invoice = await xendit_service.create_qris_invoice(
-            tenant_slug=clean_slug,
-            amount=amount,
-            product_name=product_name,
-            customer_phone=clean_phone,
-        )
+        try:
+            invoice = await xendit_service.create_qris_invoice(
+                tenant_slug=clean_slug,
+                amount=amount,
+                product_name=product_name,
+                customer_phone=clean_phone,
+            )
+        except Exception as e:
+            import traceback
+            logger.error(f"[CHECKOUT_EXCEPTION] {str(e)}\n{traceback.format_exc()}")
+            raise e
 
     if clean_phone:
         user_session_states[clean_phone] = "AWAITING_PAYMENT"

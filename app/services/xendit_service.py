@@ -115,13 +115,21 @@ class XenditService:
             "failure_redirect_url": f"{app_domain}/payment-failed?order_id={external_id}",
         }
         if customer_phone:
-            payload["customer"] = {"mobile_number": customer_phone}
+            phone_val = str(customer_phone).strip()
+            if not phone_val.startswith("+") and phone_val:
+                phone_val = f"+{phone_val}"
+            payload["customer"] = {"mobile_number": phone_val}
         if customer_email:
             payload["payer_email"] = customer_email
 
         logger.info(f"[XENDIT] Calling POST {endpoint} with payload: {payload}")
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(endpoint, json=payload, headers=headers)
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(endpoint, json=payload, headers=headers)
+        except Exception as net_err:
+            import traceback
+            logger.error(f"[XENDIT_NETWORK_ERROR] {str(net_err)}\n{traceback.format_exc()}")
+            raise net_err
 
         logger.info(f"[XENDIT] Status: {resp.status_code}, Response: {resp.text[:200]}")
         if resp.status_code in (200, 201):

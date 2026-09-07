@@ -244,4 +244,23 @@ class TestXenditWhatsAppCheckout(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ID.DANA.WWW", res["qr_string"])
         self.assertEqual(res["amount"], 50000)
 
+    async def test_checkout_exception_logs_full_traceback(self):
+        """Memastikan jika create_qris_invoice gagal, [CHECKOUT_EXCEPTION] dicatat beserta traceback lengkap."""
+        with patch.object(xendit_service, "create_qris_invoice", side_effect=ValueError("Test invoice error")):
+            with patch("logging.Logger.error") as mock_log_err:
+                with self.assertRaises(ValueError) as ctx:
+                    await generate_fast_track_checkout_response(
+                        tenant_slug="onlineboost",
+                        from_phone="081234567890",
+                        contact_name="Budi",
+                        product_key="cpm-24jam",
+                    )
+                self.assertIn("Test invoice error", str(ctx.exception))
+                
+                # Pastikan error logger mencatat format [CHECKOUT_EXCEPTION] dan traceback
+                logged_messages = [str(c[0][0]) for c in mock_log_err.call_args_list if c[0]]
+                has_checkout_exception = any("[CHECKOUT_EXCEPTION]" in msg for msg in logged_messages)
+                self.assertTrue(has_checkout_exception)
+
+
 
