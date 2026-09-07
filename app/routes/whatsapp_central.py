@@ -167,9 +167,14 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Di
             async with session.post(url, headers=headers, json=payload) as resp:
                 resp_text = await resp.text()
                 if resp.status not in (200, 201):
-                    logger.error(f"[CENTRAL WA] Outbound button error ({resp.status}) phone_id={clean_id}: {resp_text}")
+                    logger.warning(f"[CENTRAL WA] Outbound button error ({resp.status}) phone_id={clean_id}: {resp_text}")
+                    await send_wa_text(recipient_phone, clean_body, phone_id)
+                    return False
+                return True
     except Exception as e:
         logger.error(f"[CENTRAL WA] Exception sending buttons: {e}", exc_info=True)
+        await send_wa_text(recipient_phone, clean_body, phone_id)
+        return False
 
 
 async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any = None, caption: str = "", phone_id: str = "", image_url_or_path: Any = None) -> bool:
@@ -750,38 +755,56 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             or "beli & bayar qris" in text_lower
             or "bayar qris" in text_lower
             or text_lower == "beli"
-            or is_closing_buy_intent(incoming_text, clean_btn)
         )
 
         if is_qris_trigger and active_session_tenant not in ("bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik"):
-            reply_text, invoice, qr_bytes = await generate_cart_checkout_response(
-                tenant_slug=active_session_tenant,
-                from_phone=from_phone,
-                contact_name=contact_name
-            )
+            try:
+                reply_text, invoice, qr_bytes = await generate_cart_checkout_response(
+                    tenant_slug=active_session_tenant,
+                    from_phone=from_phone,
+                    contact_name=contact_name
+                )
 
-            qr_target_url = invoice.get("qr_code_url")
-            is_img_sent = False
-            if qr_bytes and len(qr_bytes) > 100:
-                is_img_sent = await send_wa_image(from_phone, qr_bytes, reply_text, phone_id)
-            if not is_img_sent and qr_target_url:
-                is_img_sent = await send_wa_image(from_phone, qr_target_url, reply_text, phone_id)
+                qr_target_url = invoice.get("qr_code_url")
+                is_img_sent = False
+                if qr_bytes and len(qr_bytes) > 100:
+                    try:
+                        is_img_sent = await send_wa_image(from_phone, qr_bytes, reply_text, phone_id)
+                    except Exception as img_err:
+                        logger.warning(f"[CENTRAL QR IMAGE SEND ERROR] {img_err}")
+                if not is_img_sent and qr_target_url:
+                    try:
+                        is_img_sent = await send_wa_image(from_phone, qr_target_url, reply_text, phone_id)
+                    except Exception as img_err2:
+                        logger.warning(f"[CENTRAL QR URL IMAGE SEND ERROR] {img_err2}")
 
-            if not is_img_sent:
-                await send_wa_text(from_phone, reply_text, phone_id)
+                if not is_img_sent:
+                    await send_wa_text(from_phone, reply_text, phone_id)
 
-            safe_log_to_supabase_messages(
-                sender="bot",
-                text=f"[Kirim QRIS {invoice.get('external_id')}] {reply_text}",
-                tenant_id=active_session_tenant,
-                channel="whatsapp",
-                user_phone=from_phone,
-                user_name=contact_name,
-                user_id=from_phone,
-                conversation_id=from_phone,
-                metadata={"phone_number_id": phone_id, "invoice_id": invoice.get("external_id")}
-            )
-            return web.json_response({"status": "qris_cart_dispatched", "tenant": active_session_tenant}, status=200)
+                try:
+                    safe_log_to_supabase_messages(
+                        sender="bot",
+                        text=f"[Kirim QRIS {invoice.get('external_id')}] {reply_text}",
+                        tenant_id=active_session_tenant,
+                        channel="whatsapp",
+                        user_phone=from_phone,
+                        user_name=contact_name,
+                        user_id=from_phone,
+                        conversation_id=from_phone,
+                        metadata={"phone_number_id": phone_id, "invoice_id": invoice.get("external_id")}
+                    )
+                except Exception:
+                    pass
+
+                return web.json_response({"status": "qris_cart_dispatched", "tenant": active_session_tenant}, status=200)
+            except Exception as q_err:
+                logger.error(f"[CENTRAL QRIS DISPATCH ERROR] {q_err}", exc_info=True)
+                fallback_msg = (
+                    "Mohon maaf Kak, terjadi kendala saat menyiapkan invoice QRIS otomatis. "
+                    "Silakan ketik *Katalog* untuk melihat pilihan produk atau ketik *Beli* kembali ya Kak! 🙏"
+                )
+                await send_wa_text(from_phone, fallback_msg, phone_id)
+                return web.json_response({"status": "qris_error_handled", "tenant": active_session_tenant, "error": str(q_err)}, status=200)
 
         # ---------------------------------------------------------------
         # STEP B: Pre-check — is this an onboarding announcement? Exempt it.
@@ -1020,7 +1043,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                         logger.warning(f"[CENTRAL CAPI INITIATE CHECKOUT ERROR] {capi_err}")
 
                     checkout_buttons = [
-                        {"id": "btn_buy_now", "title": "💳 Beli Sekarang (QRIS)"},
+                        {"id": "btn_buy_now", "title": "💳 Beli Sekarang (QR)"},
                         {"id": "btn_view_service", "title": "🛍️ Lihat Produk Lain"},
                     ]
                     try:
@@ -1031,8 +1054,11 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 else:
                     await send_wa_text(from_phone, reply_text, phone_id)
 
-                wa_session.context_json = dump_customer_state(customer_state, wa_session.context_json or {})
-                await _conv_repo.save(wa_session)
+                try:
+                    wa_session.context_json = dump_customer_state(customer_state, wa_session.context_json or {})
+                    await _conv_repo.save(wa_session)
+                except Exception as s_err:
+                    logger.warning(f"[CENTRAL WA SESSION SAVE NOTE] {s_err}")
             except Exception as ce_err:
                 logger.error(f"[CENTRAL WA 3-LAYER ERROR] Pipeline failure for {tenant_slug}: {ce_err}", exc_info=True)
                 reply_text = (
@@ -1041,24 +1067,35 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 )
                 await send_wa_text(from_phone, reply_text, phone_id)
 
-
-        safe_log_to_supabase_messages(
-            sender="bot",
-            text=reply_text,
-            tenant_id=tenant_slug,
-            channel="whatsapp",
-            user_phone=from_phone,
-            user_name=contact_name,
-            user_id=from_phone,
-            conversation_id=from_phone,
-            metadata={"phone_number_id": phone_id}
-        )
+        try:
+            safe_log_to_supabase_messages(
+                sender="bot",
+                text=reply_text,
+                tenant_id=tenant_slug,
+                channel="whatsapp",
+                user_phone=from_phone,
+                user_name=contact_name,
+                user_id=from_phone,
+                conversation_id=from_phone,
+                metadata={"phone_number_id": phone_id}
+            )
+        except Exception as l_err:
+            logger.debug(f"[CENTRAL WA SUPABASE LOG NOTE] {l_err}")
 
         return web.json_response({"status": "success", "tenant": tenant_slug}, status=200)
 
     except Exception as e:
         logger.error(f"[CENTRAL WA ERROR] {e}", exc_info=True)
-        return web.json_response({"status": "error", "message": str(e)}, status=500)
+        try:
+            if from_phone:
+                await send_wa_text(
+                    from_phone,
+                    "Halo Kak! Terima kasih sudah menghubungi kami. Ketik *Katalog* untuk melihat pilihan produk atau ketik *Beli* untuk pemesanan langsung ya! 🙏",
+                    phone_id,
+                )
+        except Exception:
+            pass
+        return web.json_response({"status": "error_handled", "message": str(e)}, status=200)
 
 
 def register_central_whatsapp_routes(app: web.Application):

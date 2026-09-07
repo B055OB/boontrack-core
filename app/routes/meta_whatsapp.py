@@ -26,6 +26,7 @@ from app.services.whatsapp_service import (
     user_cart_sessions,
     safe_log_to_supabase_messages,
     normalize_phone_number,
+    get_wa_credentials,
     generate_fast_track_checkout_response,
     is_closing_buy_intent,
     DEMO_MENU_TEXT,
@@ -421,7 +422,6 @@ async def handle_whatsapp_webhook(request: Request):
         or "beli & bayar qris" in text_lower
         or "bayar qris" in text_lower
         or text_lower in {"beli", "beli 1", "bayar"}
-        or is_closing_buy_intent(incoming_text, button_id)
     )
 
     if is_qris_buy_action and active_tenant not in ("bale_pananggeuhan", "pelayanan_publik"):
@@ -677,7 +677,7 @@ async def handle_whatsapp_webhook(request: Request):
 
         # Kirim tombol interaktif transaksi / Checkout QRIS
         checkout_buttons = [
-            {"id": "btn_buy_now", "title": "💳 Beli Sekarang (QRIS)"},
+            {"id": "btn_buy_now", "title": "💳 Beli Sekarang (QR)"},
             {"id": "btn_view_service", "title": "🛍️ Lihat Produk Lain"},
         ]
         btn_sent = False
@@ -702,22 +702,28 @@ async def handle_whatsapp_webhook(request: Request):
             await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="ombudi", phone_number_id=phone_id)
 
     # Simpan kembali state ke context_json via dump_customer_state dan update ke session database
-    wa_session.context_json = dump_customer_state(customer_state, wa_session.context_json or {})
-    await _conversation_session_repo.save(wa_session)
+    try:
+        wa_session.context_json = dump_customer_state(customer_state, wa_session.context_json or {})
+        await _conversation_session_repo.save(wa_session)
+    except Exception as save_err:
+        logger.warning(f"[META WA SESSION SAVE ERROR] {save_err}")
 
-    safe_log_to_supabase_messages(
-        sender="bot",
-        text=reply or "",
-        tenant_id=active_tenant,
-        channel="whatsapp",
-        user_phone=from_phone,
-        user_name=contact_name,
-        metadata={
-            "conversation_engine_stage": customer_state.stage,
-            "next_best_action": nba,
-            "allow_button": action_result.get("allow_button", False),
-        },
-    )
+    try:
+        safe_log_to_supabase_messages(
+            sender="bot",
+            text=reply or "",
+            tenant_id=active_tenant,
+            channel="whatsapp",
+            user_phone=from_phone,
+            user_name=contact_name,
+            metadata={
+                "conversation_engine_stage": customer_state.stage,
+                "next_best_action": nba,
+                "allow_button": action_result.get("allow_button", False),
+            },
+        )
+    except Exception as log_err:
+        logger.debug(f"[META WA SUPABASE LOG NOTE] {log_err}")
 
     return JSONResponse(status_code=200, content={
         "status": "success",

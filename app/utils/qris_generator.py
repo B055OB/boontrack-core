@@ -88,23 +88,37 @@ def generate_dynamic_qris_payload(static_payload: str, amount: int, invoice_id: 
 
 def render_qris_bytes(payload: str, box_size: int = 10, border: int = 4) -> bytes:
     """Render matriks QR ke in-memory byte buffer (io.BytesIO) PNG resolusi tinggi (>= 500x500 px)."""
-    qr = qrcode.QRCode(
-        version=None,
-        error_correction=ERROR_CORRECT_M,
-        box_size=box_size,
-        border=border,
-    )
-    qr.add_data(payload.strip())
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
+    clean_payload = (payload or "").strip()
+    if not clean_payload.startswith("000201"):
+        clean_payload = STANDARD_MASTER_QRIS
 
-    # Pastikan ukuran gambar minimal 500x500 pixel untuk ketajaman scan kamera & m-banking gallery
-    if hasattr(img, "size") and (img.size[0] < 500 or img.size[1] < 500):
-        img = img.resize((540, 540), Image.Resampling.NEAREST)
+    try:
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=ERROR_CORRECT_M,
+            box_size=box_size,
+            border=border,
+        )
+        qr.add_data(clean_payload)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
 
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
-    return buffer.getvalue()
+        # Pastikan ukuran gambar minimal 500x500 pixel untuk ketajaman scan kamera & m-banking gallery
+        if hasattr(img, "size") and (img.size[0] < 500 or img.size[1] < 500):
+            img = img.resize((540, 540), Image.Resampling.NEAREST)
+
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        return buffer.getvalue()
+    except Exception:
+        # Fallback generator sederhana jika terjadi issue resize/pillow
+        qr = qrcode.QRCode(box_size=box_size, border=border)
+        qr.add_data(clean_payload)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        return buffer.getvalue()
 
 
 def get_dynamic_qris_string(amount: int, master_static: str = "", invoice_id: str = "") -> str:

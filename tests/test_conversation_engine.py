@@ -267,6 +267,67 @@ class TestConversationWebhookIntegration(unittest.TestCase):
         self.assertEqual(data.get("tenant"), "onlineboost")
         self.assertTrue(len(data.get("reply", "")) > 0)
 
+    def test_user_wants_to_buy_via_qris_conversational_and_button_dispatch(self):
+        """Tes pesan 'Saya mau beli sekarang via QRIS': dijawab 3-Layer engine dengan stage DECISION dan tombol [💳 Beli Sekarang (QR)]."""
+        from app.routes.meta_whatsapp import user_tenant_sessions
+        from app.services.whatsapp_service import reset_whatsapp_user_session
+        phone = "6289988776655"
+        reset_whatsapp_user_session(phone)
+        user_tenant_sessions[phone] = "onlineboost"
+
+        # Turn 1: User menyatakan mau beli via QRIS
+        payload1 = {
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "messaging_product": "whatsapp",
+                        "metadata": {"phone_number_id": "1268977686299719"},
+                        "contacts": [{"profile": {"name": "Buyer"}, "wa_id": phone}],
+                        "messages": [{
+                            "from": phone,
+                            "id": "msg_buy_qris_intent",
+                            "type": "text",
+                            "text": {"body": "Saya mau beli sekarang via QRIS"},
+                        }],
+                    },
+                    "field": "messages",
+                }]
+            }]
+        }
+        res1 = self.client.post("/api/v1/whatsapp/webhook", json=payload1)
+        self.assertEqual(res1.status_code, 200)
+        data1 = res1.json()
+        self.assertEqual(data1.get("status"), "success")
+        self.assertEqual(data1.get("stage"), "DECISION")
+        self.assertTrue(data1.get("allow_button"))
+        self.assertTrue(len(data1.get("reply", "")) > 0)
+
+        # Turn 2: User menekan tombol transaksi Beli Sekarang (btn_buy_now)
+        payload2 = {
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "messaging_product": "whatsapp",
+                        "metadata": {"phone_number_id": "1268977686299719"},
+                        "contacts": [{"profile": {"name": "Buyer"}, "wa_id": phone}],
+                        "messages": [{
+                            "from": phone,
+                            "id": "msg_btn_click",
+                            "type": "interactive",
+                            "interactive": {"type": "button_reply", "button_reply": {"id": "btn_buy_now", "title": "💳 Beli Sekarang (QR)"}},
+                        }],
+                    },
+                    "field": "messages",
+                }]
+            }]
+        }
+        res2 = self.client.post("/api/v1/whatsapp/webhook", json=payload2)
+        self.assertEqual(res2.status_code, 200)
+        data2 = res2.json()
+        self.assertEqual(data2.get("status"), "qris_dispatched")
+
 
 if __name__ == "__main__":
     unittest.main()

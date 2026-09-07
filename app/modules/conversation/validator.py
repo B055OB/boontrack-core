@@ -52,10 +52,11 @@ class TenantDBAdapter:
 
 def validate_action(state: CustomerState, db_session) -> dict:
     # Syarat mutlak: allow_button = True HANYA DAN HANYA JIKA stage sudah pasti 'DECISION'
-    # dan next_best_action == 'RENDER_CHECKOUT_BUTTON' dan state.show_interactive_button is True
-    if state.stage == "DECISION" and state.next_best_action == "RENDER_CHECKOUT_BUTTON" and state.show_interactive_button:
-        if state.target_product_ids and not state.signals.objection_raised:
-            product = db_session.get_product(state.target_product_ids[0])
+    # dan next_best_action in ('RENDER_CHECKOUT_BUTTON', 'PREPARE_CHECKOUT') dan state.show_interactive_button is True
+    if state.stage == "DECISION" and state.next_best_action in ("RENDER_CHECKOUT_BUTTON", "PREPARE_CHECKOUT") and state.show_interactive_button:
+        if not state.signals.objection_raised:
+            prod_id = state.target_product_ids[0] if state.target_product_ids else None
+            product = db_session.get_product(prod_id)
             stock = getattr(product, 'stock', None)
             if stock is None and isinstance(product, dict):
                 stock = product.get('stock', 0)
@@ -63,13 +64,15 @@ def validate_action(state: CustomerState, db_session) -> dict:
             if product_id is None and isinstance(product, dict):
                 product_id = product.get('id')
 
+            resolved_id = product_id or prod_id or (state.target_product_ids[0] if state.target_product_ids else "prod_1")
+
             if product and (stock or 0) > 0:
                 state.show_interactive_button = True
                 return {
                     "allow_button": True,
                     "button_type": "CHECKOUT_QRIS",
                     "payload": {
-                        "product_id": product_id or state.target_product_ids[0],
+                        "product_id": resolved_id,
                         "variant_id": state.selected_variant_id
                     }
                 }

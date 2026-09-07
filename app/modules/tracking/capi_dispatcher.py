@@ -80,6 +80,8 @@ class CapiDispatcher:
         Fallback ke environment variables (META_DATASET_ID / META_CAPI_ACCESS_TOKEN) jika belum ada.
         """
         def _fetch_config():
+            conn = None
+            cur = None
             try:
                 conn = get_db_connection()
                 cur = conn.cursor()
@@ -93,14 +95,23 @@ class CapiDispatcher:
                     (tenant_id,)
                 )
                 row = cur.fetchone()
-                cur.close()
-                conn.close()
                 if row:
                     ds_id = row[0] or row[1] or ""
                     token = row[2] or ""
                     return str(ds_id).strip(), str(token).strip()
             except Exception as e:
                 logger.debug(f"[CAPI Credential Lookup Note] {e}")
+            finally:
+                if cur:
+                    try:
+                        cur.close()
+                    except Exception:
+                        pass
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
             return "", ""
 
         dataset_id, access_token = await asyncio.to_thread(_fetch_config)
@@ -144,6 +155,8 @@ class CapiDispatcher:
             occurred_at = occurred_at.replace(tzinfo=timezone.utc)
 
         def _insert_ledger():
+            conn = None
+            cur = None
             try:
                 conn = get_db_connection()
                 cur = conn.cursor()
@@ -171,10 +184,19 @@ class CapiDispatcher:
                     ),
                 )
                 conn.commit()
-                cur.close()
-                conn.close()
             except Exception as e:
                 logger.error(f"[EVENT LEDGER WRITE ERROR] Failed to record ledger: {e}")
+            finally:
+                if cur:
+                    try:
+                        cur.close()
+                    except Exception:
+                        pass
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
 
         await asyncio.to_thread(_insert_ledger)
         return event_id
@@ -201,6 +223,8 @@ class CapiDispatcher:
             occurred_at = occurred_at.replace(tzinfo=timezone.utc)
 
         def _insert_attr():
+            conn = None
+            cur = None
             try:
                 conn = get_db_connection()
                 cur = conn.cursor()
@@ -227,10 +251,19 @@ class CapiDispatcher:
                     ),
                 )
                 conn.commit()
-                cur.close()
-                conn.close()
             except Exception as e:
                 logger.error(f"[MARKETING ATTRIBUTION WRITE ERROR] {e}")
+            finally:
+                if cur:
+                    try:
+                        cur.close()
+                    except Exception:
+                        pass
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
 
         await asyncio.to_thread(_insert_attr)
         return attr_id
@@ -281,81 +314,85 @@ class CapiDispatcher:
         Mengirimkan event 'InitiateCheckout' ke Meta Conversions API.
         Trigger: Saat action validator meloloskan tombol [💳 Beli Sekarang (QR)].
         """
-        if occurred_at is None:
-            occurred_at = datetime.now(timezone.utc)
-        elif occurred_at.tzinfo is None:
-            occurred_at = occurred_at.replace(tzinfo=timezone.utc)
+        try:
+            if occurred_at is None:
+                occurred_at = datetime.now(timezone.utc)
+            elif occurred_at.tzinfo is None:
+                occurred_at = occurred_at.replace(tzinfo=timezone.utc)
 
-        event_epoch = int(occurred_at.timestamp())
-        event_uuid = uuid.uuid4()
-        clean_phone = normalize_phone_for_capi(phone)
-        hashed_phone = hash_sha256(clean_phone)
+            event_epoch = int(occurred_at.timestamp())
+            event_uuid = uuid.uuid4()
+            clean_phone = normalize_phone_for_capi(phone)
+            hashed_phone = hash_sha256(clean_phone)
 
-        user_data: Dict[str, Any] = {}
-        if hashed_phone:
-            user_data["ph"] = [hashed_phone]
-        if ctwa_clid:
-            user_data["ctwa_clid"] = str(ctwa_clid).strip()
+            user_data: Dict[str, Any] = {}
+            if hashed_phone:
+                user_data["ph"] = [hashed_phone]
+            if ctwa_clid:
+                user_data["ctwa_clid"] = str(ctwa_clid).strip()
 
-        content_list = [str(p) for p in product_ids] if isinstance(product_ids, (list, tuple)) else [str(product_ids)]
+            content_list = [str(p) for p in product_ids] if isinstance(product_ids, (list, tuple)) else [str(product_ids)]
 
-        event_payload = {
-            "event_name": "InitiateCheckout",
-            "event_time": event_epoch,
-            "event_id": str(event_uuid),
-            "action_source": "business_messaging",
-            "user_data": user_data,
-            "custom_data": {
-                "currency": "IDR",
-                "value": float(total_amount),
-                "content_ids": content_list,
-                "content_type": "product",
-            },
-        }
-        body = {"data": [event_payload]}
+            event_payload = {
+                "event_name": "InitiateCheckout",
+                "event_time": event_epoch,
+                "event_id": str(event_uuid),
+                "action_source": "business_messaging",
+                "user_data": user_data,
+                "custom_data": {
+                    "currency": "IDR",
+                    "value": float(total_amount),
+                    "content_ids": content_list,
+                    "content_type": "product",
+                },
+            }
+            body = {"data": [event_payload]}
 
-        dataset_id, token = await self.resolve_credentials(tenant_id)
-        delivery_status = "PENDING"
-        resp_text = None
+            dataset_id, token = await self.resolve_credentials(tenant_id)
+            delivery_status = "PENDING"
+            resp_text = None
 
-        if not dataset_id or not token or dataset_id.startswith("mock_") or token.startswith("mock_"):
-            logger.info(
-                f"[CAPI MOCK DISPATCH] InitiateCheckout for tenant '{tenant_id}' (Amount: Rp{total_amount:,.0f}) | ctwa_clid={ctwa_clid}"
+            if not dataset_id or not token or dataset_id.startswith("mock_") or token.startswith("mock_"):
+                logger.info(
+                    f"[CAPI MOCK DISPATCH] InitiateCheckout for tenant '{tenant_id}' (Amount: Rp{total_amount:,.0f}) | ctwa_clid={ctwa_clid}"
+                )
+                delivery_status = "SENT"
+                resp_text = json.dumps({"status": "mock_sent", "events_received": 1})
+            else:
+                url = f"https://graph.facebook.com/{self.GRAPH_API_VERSION}/{dataset_id}/events"
+                try:
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        resp = await client.post(url, json=body, params={"access_token": token})
+                        resp_text = resp.text
+                        if resp.status_code in (200, 201):
+                            delivery_status = "SENT"
+                        else:
+                            delivery_status = "FAILED"
+                            logger.warning(f"[CAPI GRAPH API ERROR] InitiateCheckout {resp.status_code}: {resp_text}")
+                except Exception as net_err:
+                    delivery_status = "FAILED"
+                    resp_text = str(net_err)
+                    logger.error(f"[CAPI DISPATCH EXCEPTION] InitiateCheckout: {net_err}")
+
+            await self.record_ledger(
+                tenant_id=tenant_id,
+                event_name="InitiateCheckout",
+                occurred_at=occurred_at,
+                payload=body,
+                delivery_status=delivery_status,
+                response_payload=resp_text,
+                event_id=event_uuid,
             )
-            delivery_status = "SENT"
-            resp_text = json.dumps({"status": "mock_sent", "events_received": 1})
-        else:
-            url = f"https://graph.facebook.com/{self.GRAPH_API_VERSION}/{dataset_id}/events"
-            try:
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    resp = await client.post(url, json=body, params={"access_token": token})
-                    resp_text = resp.text
-                    if resp.status_code in (200, 201):
-                        delivery_status = "SENT"
-                    else:
-                        delivery_status = "FAILED"
-                        logger.warning(f"[CAPI GRAPH API ERROR] InitiateCheckout {resp.status_code}: {resp_text}")
-            except Exception as net_err:
-                delivery_status = "FAILED"
-                resp_text = str(net_err)
-                logger.error(f"[CAPI DISPATCH EXCEPTION] InitiateCheckout: {net_err}")
 
-        await self.record_ledger(
-            tenant_id=tenant_id,
-            event_name="InitiateCheckout",
-            occurred_at=occurred_at,
-            payload=body,
-            delivery_status=delivery_status,
-            response_payload=resp_text,
-            event_id=event_uuid,
-        )
-
-        return {
-            "status": delivery_status,
-            "event_id": str(event_uuid),
-            "event_epoch": event_epoch,
-            "payload": body,
-        }
+            return {
+                "status": delivery_status,
+                "event_id": str(event_uuid),
+                "event_epoch": event_epoch,
+                "payload": body,
+            }
+        except Exception as e:
+            logger.error(f"[CAPI INITIATE CHECKOUT ERROR] {e}", exc_info=True)
+            return {"status": "FAILED", "error": str(e)}
 
     async def dispatch_purchase(
         self,
@@ -372,88 +409,92 @@ class CapiDispatcher:
         Trigger: Saat webhook notifikasi pembayaran SUCCEEDED/PAID diterima.
         Deduplikasi: event_id disetel menggunakan order_id/payment_id.
         """
-        if occurred_at is None:
-            occurred_at = datetime.now(timezone.utc)
-        elif occurred_at.tzinfo is None:
-            occurred_at = occurred_at.replace(tzinfo=timezone.utc)
-
-        event_epoch = int(occurred_at.timestamp())
-        clean_phone = normalize_phone_for_capi(phone)
-        hashed_phone = hash_sha256(clean_phone)
-
-        # Generate deterministic UUID from order_id for database ledger primary key if order_id is not already UUID
         try:
-            event_uuid = uuid.UUID(str(order_id))
-        except (ValueError, AttributeError):
-            event_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, f"boontrack.order.{order_id}")
+            if occurred_at is None:
+                occurred_at = datetime.now(timezone.utc)
+            elif occurred_at.tzinfo is None:
+                occurred_at = occurred_at.replace(tzinfo=timezone.utc)
 
-        user_data: Dict[str, Any] = {}
-        if hashed_phone:
-            user_data["ph"] = [hashed_phone]
-        if ctwa_clid:
-            user_data["ctwa_clid"] = str(ctwa_clid).strip()
+            event_epoch = int(occurred_at.timestamp())
+            clean_phone = normalize_phone_for_capi(phone)
+            hashed_phone = hash_sha256(clean_phone)
 
-        content_list = [str(p) for p in product_ids] if isinstance(product_ids, (list, tuple)) else [str(product_ids)]
-
-        event_payload = {
-            "event_name": "Purchase",
-            "event_time": event_epoch,
-            "event_id": str(order_id),
-            "action_source": "business_messaging",
-            "user_data": user_data,
-            "custom_data": {
-                "currency": "IDR",
-                "value": float(total_amount),
-                "order_id": str(order_id),
-                "content_ids": content_list,
-                "content_type": "product",
-            },
-        }
-        body = {"data": [event_payload]}
-
-        dataset_id, token = await self.resolve_credentials(tenant_id)
-        delivery_status = "PENDING"
-        resp_text = None
-
-        if not dataset_id or not token or dataset_id.startswith("mock_") or token.startswith("mock_"):
-            logger.info(
-                f"[CAPI MOCK DISPATCH] Purchase for tenant '{tenant_id}', order '{order_id}' "
-                f"(Amount: Rp{total_amount:,.0f}) | ctwa_clid={ctwa_clid}"
-            )
-            delivery_status = "SENT"
-            resp_text = json.dumps({"status": "mock_sent", "events_received": 1})
-        else:
-            url = f"https://graph.facebook.com/{self.GRAPH_API_VERSION}/{dataset_id}/events"
+            # Generate deterministic UUID from order_id for database ledger primary key if order_id is not already UUID
             try:
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    resp = await client.post(url, json=body, params={"access_token": token})
-                    resp_text = resp.text
-                    if resp.status_code in (200, 201):
-                        delivery_status = "SENT"
-                    else:
-                        delivery_status = "FAILED"
-                        logger.warning(f"[CAPI GRAPH API ERROR] Purchase {resp.status_code}: {resp_text}")
-            except Exception as net_err:
-                delivery_status = "FAILED"
-                resp_text = str(net_err)
-                logger.error(f"[CAPI DISPATCH EXCEPTION] Purchase: {net_err}")
+                event_uuid = uuid.UUID(str(order_id))
+            except (ValueError, AttributeError):
+                event_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, f"boontrack.order.{order_id}")
 
-        await self.record_ledger(
-            tenant_id=tenant_id,
-            event_name="Purchase",
-            occurred_at=occurred_at,
-            payload=body,
-            delivery_status=delivery_status,
-            response_payload=resp_text,
-            event_id=event_uuid,
-        )
+            user_data: Dict[str, Any] = {}
+            if hashed_phone:
+                user_data["ph"] = [hashed_phone]
+            if ctwa_clid:
+                user_data["ctwa_clid"] = str(ctwa_clid).strip()
 
-        return {
-            "status": delivery_status,
-            "event_id": str(order_id),
-            "event_epoch": event_epoch,
-            "payload": body,
-        }
+            content_list = [str(p) for p in product_ids] if isinstance(product_ids, (list, tuple)) else [str(product_ids)]
+
+            event_payload = {
+                "event_name": "Purchase",
+                "event_time": event_epoch,
+                "event_id": str(order_id),
+                "action_source": "business_messaging",
+                "user_data": user_data,
+                "custom_data": {
+                    "currency": "IDR",
+                    "value": float(total_amount),
+                    "order_id": str(order_id),
+                    "content_ids": content_list,
+                    "content_type": "product",
+                },
+            }
+            body = {"data": [event_payload]}
+
+            dataset_id, token = await self.resolve_credentials(tenant_id)
+            delivery_status = "PENDING"
+            resp_text = None
+
+            if not dataset_id or not token or dataset_id.startswith("mock_") or token.startswith("mock_"):
+                logger.info(
+                    f"[CAPI MOCK DISPATCH] Purchase for tenant '{tenant_id}', order '{order_id}' "
+                    f"(Amount: Rp{total_amount:,.0f}) | ctwa_clid={ctwa_clid}"
+                )
+                delivery_status = "SENT"
+                resp_text = json.dumps({"status": "mock_sent", "events_received": 1})
+            else:
+                url = f"https://graph.facebook.com/{self.GRAPH_API_VERSION}/{dataset_id}/events"
+                try:
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        resp = await client.post(url, json=body, params={"access_token": token})
+                        resp_text = resp.text
+                        if resp.status_code in (200, 201):
+                            delivery_status = "SENT"
+                        else:
+                            delivery_status = "FAILED"
+                            logger.warning(f"[CAPI GRAPH API ERROR] Purchase {resp.status_code}: {resp_text}")
+                except Exception as net_err:
+                    delivery_status = "FAILED"
+                    resp_text = str(net_err)
+                    logger.error(f"[CAPI DISPATCH EXCEPTION] Purchase: {net_err}")
+
+            await self.record_ledger(
+                tenant_id=tenant_id,
+                event_name="Purchase",
+                occurred_at=occurred_at,
+                payload=body,
+                delivery_status=delivery_status,
+                response_payload=resp_text,
+                event_id=event_uuid,
+            )
+
+            return {
+                "status": delivery_status,
+                "event_id": str(order_id),
+                "event_epoch": event_epoch,
+                "payload": body,
+            }
+        except Exception as e:
+            logger.error(f"[CAPI PURCHASE DISPATCH ERROR] {e}", exc_info=True)
+            return {"status": "FAILED", "error": str(e)}
 
 
 # Global singleton instance

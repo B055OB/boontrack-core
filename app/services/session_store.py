@@ -65,10 +65,13 @@ def _save_disk_cache(data: Dict[str, Any]) -> None:
 
 
 def _save_to_db(phone: str, tenant_slug: str, state: str = "ACTIVE", context: Optional[dict] = None) -> None:
+    conn = None
+    cur = None
     try:
         from app.core.database import get_db_connection
         conn = get_db_connection()
         cur = conn.cursor()
+        ctx_str = json.dumps(context or {}, ensure_ascii=False)
         cur.execute("""
             INSERT INTO demo_user_sessions (phone, tenant_slug, state, context_json, updated_at)
             VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
@@ -77,23 +80,32 @@ def _save_to_db(phone: str, tenant_slug: str, state: str = "ACTIVE", context: Op
                 state = EXCLUDED.state,
                 context_json = COALESCE(EXCLUDED.context_json, demo_user_sessions.context_json),
                 updated_at = CURRENT_TIMESTAMP;
-        """, (phone, tenant_slug, state, json.dumps(context or {})))
+        """, (phone, tenant_slug, state, ctx_str))
         conn.commit()
-        cur.close()
-        conn.close()
     except Exception as e:
         logger.warning(f"[SESSION STORE DB SAVE ERROR] {e}")
+    finally:
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _load_from_db(phone: str) -> Optional[Dict[str, Any]]:
+    conn = None
+    cur = None
     try:
         from app.core.database import get_db_connection
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("SELECT tenant_slug, state, context_json FROM demo_user_sessions WHERE phone = %s", (phone,))
         row = cur.fetchone()
-        cur.close()
-        conn.close()
         if row and row[0]:
             ctx = row[2]
             if isinstance(ctx, str):
@@ -101,27 +113,59 @@ def _load_from_db(phone: str) -> Optional[Dict[str, Any]]:
                     ctx = json.loads(ctx)
                 except Exception:
                     ctx = {}
-            return {"tenant_slug": str(row[0]).strip(), "state": str(row[1]).strip() if row[1] else "ACTIVE", "context_json": ctx or {}}
+            elif isinstance(ctx, dict):
+                pass
+            else:
+                ctx = {}
+            return {
+                "tenant_slug": str(row[0]).strip(),
+                "state": str(row[1]).strip() if row[1] else "ACTIVE",
+                "context_json": ctx or {},
+            }
     except Exception as e:
         logger.debug(f"[SESSION STORE DB LOAD] {e}")
+    finally:
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
     return None
 
 
 def _delete_from_db(phone: str) -> None:
+    conn = None
+    cur = None
     try:
         from app.core.database import get_db_connection
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("DELETE FROM demo_user_sessions WHERE phone = %s", (phone,))
         conn.commit()
-        cur.close()
-        conn.close()
     except Exception as e:
         logger.debug(f"[SESSION STORE DB DELETE] {e}")
+    finally:
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _recover_from_recent_messages(phone: str) -> Optional[str]:
     """Pemulihan darurat jika sesi kosong: cek riwayat pesan terakhir di Supabase."""
+    conn = None
+    cur = None
     try:
         from app.core.database import get_db_connection
         conn = get_db_connection()
@@ -134,12 +178,21 @@ def _recover_from_recent_messages(phone: str) -> Optional[str]:
             LIMIT 1;
         """, (phone,))
         row = cur.fetchone()
-        cur.close()
-        conn.close()
         if row and row[0]:
             return str(row[0]).strip()
     except Exception as e:
         logger.debug(f"[SESSION RECOVERY ERROR] {e}")
+    finally:
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
     return None
 
 
