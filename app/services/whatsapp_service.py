@@ -481,18 +481,14 @@ async def generate_cart_checkout_response(
     caption = (
         f"Berikut Kode QRIS Pembayaran Pesanan Anda 💳\n\n"
         f"📦 *Rincian Belanja:*\n{items_detail}\n\n"
-        f"💰 *Total:* Rp {total_amount:,.0f}\n"
+        f"💰 *Total Tagihan:* Rp {total_amount:,.0f}\n"
         f"📄 *No. Invoice / Kode Bayar:* `{external_id}`\n"
         f"⏱️ *Masa Berlaku:* 15 Menit\n\n"
         f"📱 *Petunjuk Pembayaran:*\n"
         f"1. Simpan atau screenshot gambar QRIS di atas.\n"
         f"2. Buka aplikasi m-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
         f"3. Buka menu *Scan QRIS* -> pilih unggah foto dari Galeri HP.\n\n"
-        f"🌐 *Link Pembayaran Web Alternatif:*\n"
-        f"{web_pay_url}\n\n"
-        f"🔢 *String Kode QRIS (Copy Manual):*\n"
-        f"`{qr_string}`\n\n"
-        f"_Notifikasi dan link akses produk akan otomatis aktif setelah pembayaran berhasil._ 🚀"
+        f"_Notifikasi dan link akses produk akan otomatis dikirimkan setelah pembayaran berhasil._ 🚀"
     ).replace(",", ".")
 
     user_cart_sessions.pop(clean_phone, None)
@@ -565,17 +561,13 @@ async def generate_fast_track_checkout_response(
     caption = (
         f"Berikut Kode QRIS Pembayaran Anda 💳\n\n"
         f"📌 *Nama Produk:* {product_name}\n"
-        f"💰 *Total:* {amount_fmt}\n"
+        f"💰 *Total Tagihan:* {amount_fmt}\n"
         f"📄 *No. Invoice / Kode Bayar:* `{external_id}`\n"
         f"⏱️ *Masa Berlaku:* 15 Menit\n\n"
         f"📱 *Petunjuk Pembayaran:*\n"
         f"1. Simpan atau screenshot gambar QRIS di atas.\n"
         f"2. Buka aplikasi m-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
         f"3. Buka menu *Scan QRIS* -> pilih unggah foto dari Galeri HP.\n\n"
-        f"🌐 *Link Pembayaran Web Alternatif:*\n"
-        f"{web_pay_url}\n\n"
-        f"🔢 *String Kode QRIS (Copy Manual):*\n"
-        f"`{qr_string}`\n\n"
         f"_Akses materi & layanan akan otomatis aktif setelah pembayaran berhasil terverifikasi._ 🚀"
     )
     return caption, invoice, qr_bytes

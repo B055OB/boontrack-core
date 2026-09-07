@@ -61,11 +61,16 @@ class TestXenditWhatsAppCheckout(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Modul Praktis CPM 24 Jam", caption)
             self.assertIn("Rp1.000", caption)
 
-            # 2. Pastikan qr_string langsung menggunakan respons resmi Xendit
+            # 2. Pastikan qr_string tersimpan di invoice dari respons resmi Xendit
             self.assertEqual(invoice["qr_string"], mock_xendit_qr_string)
-            self.assertIn(mock_xendit_qr_string, caption)
 
-            # 3. Pastikan string DANA Bisnis lokal TIDAK digunakan
+            # 3. Pastikan teks raw QR string dan link web pay 404 TIDAK ada di pesan WhatsApp
+            self.assertNotIn(mock_xendit_qr_string, caption)
+            self.assertNotIn("Link Pembayaran Web Alternatif", caption)
+            self.assertNotIn("String Kode QRIS", caption)
+            self.assertNotIn("pay/", caption)
+
+            # 4. Pastikan string DANA Bisnis lokal TIDAK digunakan
             self.assertNotIn("ID.DANA.WWW", invoice["qr_string"])
             self.assertNotIn("ID.DANA.WWW", caption)
 

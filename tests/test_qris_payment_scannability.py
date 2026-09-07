@@ -89,18 +89,15 @@ def test_qris_image_generator_parameters():
 
 
 @pytest.mark.asyncio
-async def test_xendit_service_overrides_sandbox_dummy_string():
-    # Even if Xendit API returns 'some-random-qr-string', xendit_service must override it with valid EMVCo
+async def test_xendit_service_preserves_official_xendit_response():
+    # Xendit service strictly preserves official qr_string returned by Xendit API without local DANA Bisnis override
     res = await xendit_service.create_qris_invoice("onlineboost", 150000, "Masterclass FB Ads")
     qr_string = res.get("qr_string", "")
 
-    assert qr_string.startswith("000201")
-    assert "5303360" in qr_string
-    assert "5406150000" in qr_string
-    assert "5802ID" in qr_string
-    assert "some-random-qr-string" not in qr_string
+    assert qr_string != ""
+    assert "ID.DANA.WWW" not in qr_string
 
-    # QR Code URL must use high-res URL with size >= 500
+    # QR Code URL must use high-res URL
     qr_url = res.get("qr_code_url", "")
     assert ("api.qrserver.com" in qr_url or "quickchart.io/qr" in qr_url)
     assert "size=600" in qr_url or "size=500" in qr_url
@@ -124,13 +121,13 @@ async def test_checkout_responses_include_billing_details_and_web_link():
     assert img.size[0] >= 500
 
     # 2. Caption details
-    assert "Total:" in caption
+    assert "Total" in caption
     assert "No. Invoice / Kode Bayar:" in caption
-    assert "Link Pembayaran Web Alternatif:" in caption
-    assert "String Kode QRIS (Copy Manual):" in caption
+    assert "Petunjuk Pembayaran:" in caption
     assert invoice.get("external_id") in caption
-    assert invoice.get("qr_string") in caption
-    assert "pay/" in caption
+    assert "Link Pembayaran Web Alternatif" not in caption
+    assert "String Kode QRIS" not in caption
+    assert "pay/" not in caption
 
     # Test cart checkout response
     cart_caption, cart_inv, cart_qr_bytes = await generate_cart_checkout_response(
@@ -139,6 +136,6 @@ async def test_checkout_responses_include_billing_details_and_web_link():
         contact_name="Budi",
     )
     assert len(cart_qr_bytes) > 500
-    assert "Total:" in cart_caption
-    assert "Link Pembayaran Web Alternatif:" in cart_caption
-    assert cart_inv.get("qr_string").startswith("000201")
+    assert "Total" in cart_caption
+    assert "Link Pembayaran Web Alternatif" not in cart_caption
+    assert "String Kode QRIS" not in cart_caption
