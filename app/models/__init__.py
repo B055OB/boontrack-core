@@ -23,6 +23,9 @@ from app.models.affiliate import (
     AllowedBank,
 )
 from app.models.campaign import CampaignAttribution
+from app.models.attribution import MarketingAttribution
+from app.models.tracking_config import TenantMetaConfig
+from app.models.event_ledger import EventLedger
 
 __all__ = [
     # Legacy Exports
@@ -59,5 +62,8 @@ __all__ = [
     "AllowedBank",
     # Campaign Attribution Exports
     "CampaignAttribution",
+    "MarketingAttribution",
+    "TenantMetaConfig",
+    "EventLedger",
 ]
 

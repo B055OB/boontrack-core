@@ -31,11 +31,16 @@ from app.services.whatsapp_service import (
     DEMO_MENU_TEXT,
     DEMO_TENANT_GREETINGS,
 )
+from datetime import datetime, timezone
+import asyncio
+from app.modules.tracking import capi_dispatcher
 from app.services.session_store import (
     get_user_tenant_session,
     set_user_tenant_session,
     clear_user_tenant_session,
     detect_demo_intent_keyword,
+    get_user_session_context,
+    update_user_session_context,
 )
 from app.services.onboarding_service import onboarding_service
 from app.services.ai_engine import commerce_ai_engine
@@ -178,6 +183,37 @@ async def handle_whatsapp_webhook(request: Request):
 
     career_phone_id = os.getenv("CAREER_PHONE_NUMBER_ID", "1340866379104241")
     is_career_phone = (phone_id == "1340866379104241" or phone_id == career_phone_id)
+
+    # =========================================================================
+    # CTWA CAPTURE: Tangkap referral iklan Meta Ads (Click-to-WhatsApp)
+    # =========================================================================
+    referral = event.get("referral")
+    if not referral and isinstance(data, dict):
+        try:
+            referral = data.get("entry", [{}])[0].get("changes", [{}])[0].get("value", {}).get("messages", [{}])[0].get("referral")
+        except Exception:
+            referral = None
+
+    if referral and isinstance(referral, dict):
+        msg_ts = event.get("timestamp") or (raw_msg.get("timestamp") if isinstance(raw_msg, dict) else None)
+        occurred_at = None
+        if msg_ts:
+            try:
+                occurred_at = datetime.fromtimestamp(int(msg_ts), tz=timezone.utc)
+            except Exception:
+                occurred_at = datetime.now(timezone.utc)
+
+        target_tenant = get_user_tenant_session(clean_phone) or "onlineboost"
+        captured_clid = await capi_dispatcher.capture_ctwa_referral(
+            tenant_id=target_tenant,
+            session_id=clean_phone or from_phone,
+            referral_data=referral,
+            occurred_at=occurred_at,
+            conversation_id=event.get("message_id"),
+        )
+        if captured_clid:
+            update_user_session_context(clean_phone, {"ctwa_clid": captured_clid})
+            logger.info(f"[META WA CTWA] Captured ctwa_clid for {clean_phone}: {captured_clid}")
 
     # =========================================================================
     # P0 INTERCEPT: COMMAND #RESET / RESET / MENU UTAMA
@@ -615,6 +651,30 @@ async def handle_whatsapp_webhook(request: Request):
     reply = sanitize_whatsapp_message_text(reply)
 
     if action_result.get("allow_button") is True:
+        # CAPI: Dispatch InitiateCheckout event
+        try:
+            sess_ctx = get_user_session_context(clean_phone)
+            clid = sess_ctx.get("ctwa_clid") or (customer_state.metadata.get("ctwa_clid") if customer_state.metadata else None)
+            total_amt = 0.0
+            prod_ids = customer_state.target_product_ids or []
+            if products:
+                matching_p = next((p for p in products if str(p.get("id") or p.get("slug")) in prod_ids), None)
+                if matching_p:
+                    total_amt = float(matching_p.get("promo_price") or matching_p.get("price") or 0.0)
+                if total_amt <= 0:
+                    total_amt = float(products[0].get("promo_price") or products[0].get("price") or 0.0)
+            asyncio.create_task(
+                capi_dispatcher.dispatch_initiate_checkout(
+                    tenant_id=active_tenant,
+                    phone=clean_phone,
+                    total_amount=total_amt,
+                    product_ids=prod_ids,
+                    ctwa_clid=clid,
+                )
+            )
+        except Exception as capi_err:
+            logger.warning(f"[CAPI INITIATE CHECKOUT DISPATCH ERROR] {capi_err}")
+
         # Kirim tombol interaktif transaksi / Checkout QRIS
         checkout_buttons = [
             {"id": "btn_buy_now", "title": "💳 Beli Sekarang (QRIS)"},

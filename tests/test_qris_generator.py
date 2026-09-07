@@ -14,7 +14,7 @@ from app.utils.qris_generator import (
 )
 from app.routes.payment import (
     payment_router,
-    test_dynamic_qris_aiohttp_handler
+    test_dynamic_qris_aiohttp_handler as qris_aiohttp_handler
 )
 
 SAMPLE_STATIC_QRIS = (
@@ -159,7 +159,7 @@ class TestQRISAioHTTP(AioHTTPTestCase):
     async def get_application(self):
         os.environ["BOONTRACK_STATIC_QRIS"] = SAMPLE_STATIC_QRIS
         app = web.Application()
-        app.router.add_get("/api/v1/payment/qris/test/{amount}", test_dynamic_qris_aiohttp_handler)
+        app.router.add_get("/api/v1/payment/qris/test/{amount}", qris_aiohttp_handler)
         return app
 
     @unittest_run_loop

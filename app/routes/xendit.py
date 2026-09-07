@@ -51,6 +51,10 @@ async def send_whatsapp_payment_notification(
         pass
 
 
+from app.modules.tracking import capi_dispatcher
+from app.services.session_store import get_user_session_context
+
+
 async def send_capi_task(
     external_id: str,
     amount: int,
@@ -58,8 +62,23 @@ async def send_capi_task(
     email: Optional[str] = None,
     product_name: Optional[str] = None,
     currency: str = "IDR",
+    tenant_id: str = "boontrack-career",
 ) -> None:
     """Background task to dispatch Meta & TikTok Conversions API events."""
+    try:
+        sess_ctx = get_user_session_context(phone) if phone else {}
+        clid = sess_ctx.get("ctwa_clid")
+        await capi_dispatcher.dispatch_purchase(
+            tenant_id=tenant_id,
+            phone=phone or "",
+            total_amount=float(amount),
+            product_ids=[str(product_name or "digital_product")],
+            order_id=str(external_id),
+            ctwa_clid=clid,
+        )
+    except Exception as e:
+        logger.warning(f"[Xendit CAPI Dispatcher Purchase Error] {e}")
+
     try:
         await send_meta_capi_purchase(
             external_id=external_id,
@@ -82,6 +101,7 @@ async def send_capi_task(
         })
     except Exception as e:
         logger.error(f"[Xendit CAPI Error] Failed to dispatch CAPI events: {e}", exc_info=True)
+
 
 
 @xendit_router.post("/webhook/payment/xendit", summary="Xendit Webhook Notification")
@@ -240,6 +260,7 @@ async def xendit_webhook_callback(
         email=customer_email,
         product_name=product_name,
         currency="IDR",
+        tenant_id=tenant_id,
     )
 
     logger.info(f"[Xendit Webhook] Settlement successful for '{external_id}' (Rp{amount:,})")

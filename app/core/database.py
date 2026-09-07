@@ -168,6 +168,69 @@ def _init_db_sync():
         );
     """)
 
+    # 11. Migration kolom tenants: timezone & currency
+    cur.execute("""
+        DO $$ 
+        BEGIN 
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'tenants') THEN 
+                ALTER TABLE tenants ADD COLUMN IF NOT EXISTS timezone VARCHAR(64) NOT NULL DEFAULT 'Asia/Jakarta';
+                ALTER TABLE tenants ADD COLUMN IF NOT EXISTS currency VARCHAR(16) NOT NULL DEFAULT 'IDR';
+            END IF;
+        END $$;
+    """)
+
+    # 12. Tabel marketing_attributions (CTWA & CAPI Attribution)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS marketing_attributions (
+            id UUID PRIMARY KEY,
+            tenant_id VARCHAR(64) NOT NULL,
+            session_id VARCHAR(128) NOT NULL,
+            conversation_id VARCHAR(128),
+            channel VARCHAR(64) DEFAULT 'WHATSAPP_CTWA',
+            source VARCHAR(64) DEFAULT 'META_ADS',
+            ctwa_clid VARCHAR(255) NOT NULL,
+            source_id VARCHAR(128),
+            source_url TEXT,
+            occurred_at TIMESTAMPTZ NOT NULL,
+            received_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_marketing_attr_tenant ON marketing_attributions(tenant_id);
+        CREATE INDEX IF NOT EXISTS idx_marketing_attr_session ON marketing_attributions(session_id);
+        CREATE INDEX IF NOT EXISTS idx_marketing_attr_ctwa_clid ON marketing_attributions(ctwa_clid);
+    """)
+
+    # 13. Tabel tenant_meta_configs (Multi-tenant CAPI / Pixel Credentials)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS tenant_meta_configs (
+            id UUID PRIMARY KEY,
+            tenant_id VARCHAR(64) UNIQUE NOT NULL,
+            pixel_id VARCHAR(64),
+            dataset_id VARCHAR(64),
+            access_token_ref TEXT,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_tenant_meta_configs_tenant ON tenant_meta_configs(tenant_id);
+    """)
+
+    # 14. Tabel event_ledger (Audit Ledger CAPI Deliveries)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS event_ledger (
+            event_id UUID PRIMARY KEY,
+            tenant_id VARCHAR(64) NOT NULL,
+            event_name VARCHAR(64) NOT NULL,
+            occurred_at TIMESTAMPTZ NOT NULL,
+            payload_hash VARCHAR(64) NOT NULL,
+            delivery_status VARCHAR(32) DEFAULT 'PENDING',
+            retry_count INT DEFAULT 0,
+            response_payload TEXT,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_event_ledger_tenant ON event_ledger(tenant_id);
+    """)
+
     conn.commit()
     cur.close()
     conn.close()

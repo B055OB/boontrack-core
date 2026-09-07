@@ -896,6 +896,9 @@ def extract_meta_whatsapp_event(data: dict) -> Dict[str, Any]:
         res["raw_msg"] = msg_obj
         res["from_phone"] = str(msg_obj.get("from", "")).strip()
         res["msg_type"] = str(msg_obj.get("type", "text")).strip()
+        res["timestamp"] = msg_obj.get("timestamp")
+        res["message_id"] = msg_obj.get("id")
+        res["referral"] = msg_obj.get("referral")
 
         meta = value.get("metadata", {})
         if isinstance(meta, dict):

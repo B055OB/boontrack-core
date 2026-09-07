@@ -27,11 +27,16 @@ from app.services.whatsapp_service import (
     resolve_dynamic_tenant_for_whatsapp,
     is_closing_buy_intent,
 )
+from datetime import datetime, timezone
+import asyncio
+from app.modules.tracking import capi_dispatcher
 from app.services.session_store import (
     get_user_tenant_session,
     set_user_tenant_session,
     clear_user_tenant_session,
     detect_demo_intent_keyword,
+    get_user_session_context,
+    update_user_session_context,
 )
 
 
@@ -356,6 +361,36 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         image_mime = event.get("media_mime") or "image/jpeg"
         image_bytes: Optional[bytes] = None
 
+        # =========================================================================
+        # CTWA CAPTURE: Tangkap referral iklan Meta Ads (Click-to-WhatsApp)
+        # =========================================================================
+        referral = event.get("referral")
+        if not referral and isinstance(data, dict):
+            try:
+                referral = data.get("entry", [{}])[0].get("changes", [{}])[0].get("value", {}).get("messages", [{}])[0].get("referral")
+            except Exception:
+                referral = None
+
+        if referral and isinstance(referral, dict):
+            msg_ts = event.get("timestamp") or (raw_msg.get("timestamp") if isinstance(raw_msg, dict) else None)
+            occurred_at = None
+            if msg_ts:
+                try:
+                    occurred_at = datetime.fromtimestamp(int(msg_ts), tz=timezone.utc)
+                except Exception:
+                    occurred_at = datetime.now(timezone.utc)
+
+            t_slug = get_user_tenant_session(clean_phone) or "onlineboost"
+            captured_clid = await capi_dispatcher.capture_ctwa_referral(
+                tenant_id=t_slug,
+                session_id=clean_phone or from_phone,
+                referral_data=referral,
+                occurred_at=occurred_at,
+                conversation_id=event.get("message_id"),
+            )
+            if captured_clid:
+                update_user_session_context(clean_phone, {"ctwa_clid": captured_clid})
+                logger.info(f"[CENTRAL WA CTWA] Captured ctwa_clid for {clean_phone}: {captured_clid}")
 
         # 6.2. Anti-Spam Rate Limiter (Maks 5 pesan / menit)
         is_allowed, retry_after = wa_rate_limiter.is_allowed(from_phone)
@@ -960,6 +995,30 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 action_res = validate_action(customer_state, db_adapter)
 
                 if action_res.get("allow_button") is True and len(reply_text) <= 1000:
+                    # CAPI: Dispatch InitiateCheckout event
+                    try:
+                        sess_ctx = get_user_session_context(clean_p)
+                        clid = sess_ctx.get("ctwa_clid") or (customer_state.metadata.get("ctwa_clid") if customer_state.metadata else None)
+                        total_amt = 0.0
+                        prod_ids = customer_state.target_product_ids or []
+                        if prods:
+                            matching_p = next((p for p in prods if str(p.get("id") or p.get("slug")) in prod_ids), None)
+                            if matching_p:
+                                total_amt = float(matching_p.get("promo_price") or matching_p.get("price") or 0.0)
+                            if total_amt <= 0:
+                                total_amt = float(prods[0].get("promo_price") or prods[0].get("price") or 0.0)
+                        asyncio.create_task(
+                            capi_dispatcher.dispatch_initiate_checkout(
+                                tenant_id=tenant_slug,
+                                phone=clean_p,
+                                total_amount=total_amt,
+                                product_ids=prod_ids,
+                                ctwa_clid=clid,
+                            )
+                        )
+                    except Exception as capi_err:
+                        logger.warning(f"[CENTRAL CAPI INITIATE CHECKOUT ERROR] {capi_err}")
+
                     checkout_buttons = [
                         {"id": "btn_buy_now", "title": "💳 Beli Sekarang (QRIS)"},
                         {"id": "btn_view_service", "title": "🛍️ Lihat Produk Lain"},

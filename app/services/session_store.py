@@ -230,3 +230,43 @@ def clear_user_tenant_session(phone: str) -> None:
 
     _delete_from_db(clean_p)
     logger.info(f"[SESSION STORE] Cleared session lock for {clean_p}")
+
+
+def get_user_session_context(phone: str) -> Dict[str, Any]:
+    """Mengambil context_json dari sesi pengguna aktif (disk/db)."""
+    clean_p = normalize_phone_number(phone)
+    if not clean_p:
+        return {}
+
+    disk_data = _load_disk_cache()
+    if clean_p in disk_data and "context_json" in disk_data[clean_p]:
+        return disk_data[clean_p]["context_json"] or {}
+
+    db_res = _load_from_db(clean_p)
+    if db_res and "context_json" in db_res:
+        return db_res["context_json"] or {}
+
+    return {}
+
+
+def update_user_session_context(phone: str, updates: Dict[str, Any]) -> None:
+    """Memperbarui atau menyisipkan metadata (seperti ctwa_clid) ke context_json sesi pengguna."""
+    clean_p = normalize_phone_number(phone)
+    if not clean_p or not updates:
+        return
+
+    ctx = get_user_session_context(clean_p)
+    ctx.update(updates)
+
+    disk_data = _load_disk_cache()
+    tenant = user_tenant_sessions.get(clean_p) or (disk_data.get(clean_p, {}).get("tenant_slug"))
+    if not tenant:
+        db_res = _load_from_db(clean_p)
+        if db_res:
+            tenant = db_res.get("tenant_slug")
+    if not tenant:
+        tenant = "onlineboost"
+
+    state = user_session_states.get(clean_p, "ACTIVE")
+    set_user_tenant_session(clean_p, tenant, state=state, context=ctx)
+
