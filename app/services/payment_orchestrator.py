@@ -14,15 +14,55 @@ class PaymentOrchestrator:
         self.supabase = supabase_client
         self.wa_service = WhatsAppDeliveryService()
 
+    async def create_qr_code(
+        self,
+        external_id: str,
+        amount: int,
+        tenant_id: str = "onlineboost",
+        customer_phone: Optional[str] = None,
+        product_name: str = "Modul Praktis CPM 24 Jam",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Creates official Xendit Dynamic QRIS code without local DANA Bisnis generator."""
+        from app.services.xendit_service import xendit_service
+        meta = metadata or {}
+        meta["product_name"] = product_name
+        return await xendit_service.create_qr_code(
+            external_id=external_id,
+            amount=amount,
+            tenant_id=tenant_id,
+            customer_phone=customer_phone,
+            metadata=meta,
+        )
+
+    async def create_invoice(
+        self,
+        external_id: str,
+        amount: int,
+        product_name: str = "Modul Praktis CPM 24 Jam",
+        customer_phone: Optional[str] = None,
+        tenant_id: str = "onlineboost",
+    ) -> Dict[str, Any]:
+        """Creates official invoice on Xendit API."""
+        from app.services.xendit_service import xendit_service
+        return await xendit_service.create_invoice(
+            external_id=external_id,
+            amount=amount,
+            product_name=product_name,
+            customer_phone=customer_phone,
+            tenant_id=tenant_id,
+        )
+
     async def process_xendit_webhook(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Handler Idempotent untuk Webhook Xendit QRIS / Invoice.
-        Memvalidasi transaksi, mencatat ledger komisi multi-tier, dan mengirim notifikasi WhatsApp otomatis.
+        Memvalidasi transaksi, mencatat status LUNAS, mencatat ledger komisi multi-tier, dan mengirim notifikasi WhatsApp otomatis.
         """
-        event_id = payload.get("id") or payload.get("payment_id") or payload.get("qr_id")
-        external_id = payload.get("external_id")  # Menyimpan order_id BoonTrack
-        status = payload.get("status", "").upper()
-        amount = float(payload.get("amount", 0) or payload.get("paid_amount", 0))
+        data_obj = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+        event_id = payload.get("id") or payload.get("payment_id") or payload.get("qr_id") or data_obj.get("id") or data_obj.get("payment_id")
+        external_id = data_obj.get("external_id") or data_obj.get("reference_id") or payload.get("external_id")
+        status = (data_obj.get("status") or payload.get("status") or "").upper()
+        amount = float(data_obj.get("amount") or data_obj.get("paid_amount") or payload.get("amount") or 0)
 
         if not event_id or not external_id:
             logger.error(f"[Payment] Invalid payload received: {payload}")
@@ -45,8 +85,8 @@ class PaymentOrchestrator:
             "status": "PROCESSING"
         }).execute()
 
-        # Hanya proses jika status resmi PAID / SETTLED / COMPLETED
-        if status not in ["PAID", "SETTLED", "COMPLETED"]:
+        # Hanya proses jika status resmi PAID / SETTLED / COMPLETED / SUCCEEDED
+        if status not in ["PAID", "SETTLED", "COMPLETED", "SUCCEEDED"]:
             logger.info(f"[Payment] Non-paid status ({status}) ignored for order {external_id}.")
             self.supabase.table("payment_events").update({"status": "IGNORED"}).eq("event_id", event_id).execute()
             return {"status": "success", "message": f"Event recorded with status {status}"}
@@ -54,24 +94,44 @@ class PaymentOrchestrator:
         # 3. VERIFIKASI DATA ORDER
         order_res = self.supabase.table("orders").select("*").eq("id", external_id).execute()
         if not order_res.data:
-            logger.error(f"[Payment] Order not found: {external_id}")
-            self.supabase.table("payment_events").update({"status": "ORDER_NOT_FOUND"}).eq("event_id", event_id).execute()
-            raise HTTPException(status_code=404, detail="Order reference not found")
+            order_res = self.supabase.table("orders").select("*").eq("order_id", external_id).execute()
 
-        order = order_res.data[0]
-        
-        if order.get("status") == "PAID":
-            logger.warning(f"[Payment] Order {external_id} was already marked as PAID.")
-            self.supabase.table("payment_events").update({"status": "PROCESSED_DUPLICATE_ORDER"}).eq("event_id", event_id).execute()
-            return {"status": "ignored", "reason": "order_already_paid"}
+        if not order_res.data:
+            logger.info(f"[Payment] Order not found in db: {external_id}. Auto-registering LUNAS order.")
+            now_iso = datetime.utcnow().isoformat()
+            new_order = {
+                "id": str(external_id),
+                "order_id": str(external_id),
+                "status": "LUNAS",
+                "payment_status": "PAID",
+                "paid_at": now_iso,
+                "total_amount": amount,
+                "amount": amount,
+                "customer_phone": data_obj.get("customer_phone") or payload.get("customer_phone"),
+                "product_name": data_obj.get("product_name") or payload.get("product_name") or "Modul Praktis CPM 24 Jam",
+                "tenant_slug": data_obj.get("tenant_id") or payload.get("tenant_id") or "onlineboost"
+            }
+            try:
+                self.supabase.table("orders").insert(new_order).execute()
+                order = new_order
+            except Exception as ins_err:
+                logger.warning(f"[Payment] Auto-order insert note: {ins_err}")
+                order = new_order
+        else:
+            order = order_res.data[0]
+            if order.get("status") in ("PAID", "LUNAS"):
+                logger.warning(f"[Payment] Order {external_id} was already marked as LUNAS/PAID.")
+                self.supabase.table("payment_events").update({"status": "PROCESSED_DUPLICATE_ORDER"}).eq("event_id", event_id).execute()
+                return {"status": "ignored", "reason": "order_already_paid"}
 
-        # 4. UPDATE STATUS ORDER MENJADI PAID
-        paid_at = datetime.utcnow().isoformat()
-        self.supabase.table("orders").update({
-            "status": "PAID",
-            "paid_at": paid_at,
-            "payment_event_id": event_id
-        }).eq("id", external_id).execute()
+            # 4. UPDATE STATUS ORDER MENJADI LUNAS
+            paid_at = datetime.utcnow().isoformat()
+            self.supabase.table("orders").update({
+                "status": "LUNAS",
+                "payment_status": "PAID",
+                "paid_at": paid_at,
+                "payment_event_id": event_id
+            }).eq("id", order.get("id") or external_id).execute()
 
         # 5. ATRIBUSI KOMISI & COMMISSION LEDGER ENTRY
         affiliate_id = order.get("affiliate_id")

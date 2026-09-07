@@ -312,7 +312,13 @@ def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, A
                 logger.warning(f"[DB PRODUCTS FETCH ERROR] {e}")
 
     if products:
-        products.sort(key=lambda x: 0 if str(x.get("slug")) == "cpm-24jam" else 1)
+        def _cpm_priority(x):
+            s = str(x.get("slug") or "").lower()
+            t = str(x.get("title") or x.get("name") or "").lower()
+            if "cpm-24jam" in s or "cpm-24-jam" in s or "modul-praktis-cpm" in s or "cpm 24 jam" in t:
+                return 0
+            return 1
+        products.sort(key=_cpm_priority)
 
     return store_name, products
 
@@ -455,20 +461,16 @@ async def generate_cart_checkout_response(
     if clean_phone:
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
 
-    from app.utils.qris_generator import render_qris_bytes, get_qr_code_image_url, get_dynamic_qris_string
-
-    qr_string = invoice.get("qr_string", "")
+    qr_string = str(invoice.get("qr_string") or "").strip()
     external_id = invoice.get("external_id", "-")
-    if not qr_string or not str(qr_string).strip().startswith("000201"):
-        qr_string = get_dynamic_qris_string(amount=total_amount, invoice_id=str(external_id))
-        invoice["qr_string"] = qr_string
 
-    qr_bytes = render_qris_bytes(qr_string, box_size=10, border=4)
-    qr_code_url = invoice.get("qr_code_url") or get_qr_code_image_url(qr_string, size=600)
+    # Render QR code image natively directly from official Xendit qr_string
+    qr_bytes = generate_qris_image_bytes(qr_string) if qr_string else b""
+    qr_code_url = invoice.get("qr_code_url") or f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=16&format=png&data={urllib.parse.quote(qr_string)}"
     invoice["qr_code_url"] = qr_code_url
 
     app_domain = os.getenv("APP_DOMAIN", "https://boontrack.com").rstrip("/")
-    web_pay_url = f"{app_domain}/pay/{external_id}"
+    web_pay_url = invoice.get("invoice_url") or invoice.get("web_pay_url") or f"{app_domain}/pay/{external_id}"
     invoice["web_pay_url"] = web_pay_url
 
     items_detail = "\n".join([
@@ -512,9 +514,12 @@ async def generate_fast_track_checkout_response(
 
     selected_product = None
     if products and product_key:
-        clean_key = str(product_key).replace("prod_", "").strip()
+        clean_key = str(product_key).replace("prod_", "").strip().lower()
         for p in products:
-            if str(p.get("id")) == clean_key or str(p.get("id")) == product_key or str(p.get("slug")) == clean_key:
+            p_slug = str(p.get("slug") or "").lower()
+            p_id = str(p.get("id") or "").lower()
+            p_title = str(p.get("title") or p.get("name") or "").lower()
+            if clean_key in p_id or clean_key in p_slug or clean_key in p_title or ("cpm" in clean_key and ("cpm" in p_slug or "cpm" in p_title)):
                 selected_product = p
                 break
 
@@ -523,10 +528,15 @@ async def generate_fast_track_checkout_response(
 
     if selected_product:
         product_name = str(selected_product.get("title") or selected_product.get("name") or f"Produk {store_name}")
-        amount = int(float(selected_product.get("promo_price") or selected_product.get("price") or 99000))
+        amount = int(float(selected_product.get("promo_price") or selected_product.get("price") or 1000))
     else:
-        product_name = f"Paket Layanan {store_name}"
-        amount = 99000
+        product_name = "Modul Praktis CPM 24 Jam"
+        amount = 1000
+
+    # Khusus tenant onlineboost / produk CPM: selalu pasang harga resmi Rp1.000
+    if "cpm" in product_name.lower() or (product_key and "cpm" in str(product_key).lower()) or (clean_slug == "onlineboost" and not product_key):
+        product_name = "Modul Praktis CPM 24 Jam"
+        amount = 1000
 
     invoice = await xendit_service.create_qris_invoice(
         tenant_slug=clean_slug,
@@ -538,20 +548,16 @@ async def generate_fast_track_checkout_response(
     if clean_phone:
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
 
-    from app.utils.qris_generator import render_qris_bytes, get_qr_code_image_url, get_dynamic_qris_string
-
-    qr_string = invoice.get("qr_string", "")
+    qr_string = str(invoice.get("qr_string") or "").strip()
     external_id = invoice.get("external_id", "-")
-    if not qr_string or not str(qr_string).strip().startswith("000201"):
-        qr_string = get_dynamic_qris_string(amount=amount, invoice_id=str(external_id))
-        invoice["qr_string"] = qr_string
 
-    qr_bytes = render_qris_bytes(qr_string, box_size=10, border=4)
-    qr_code_url = invoice.get("qr_code_url") or get_qr_code_image_url(qr_string, size=600)
+    # Render QR code image natively directly from official Xendit qr_string
+    qr_bytes = generate_qris_image_bytes(qr_string) if qr_string else b""
+    qr_code_url = invoice.get("qr_code_url") or f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=16&format=png&data={urllib.parse.quote(qr_string)}"
     invoice["qr_code_url"] = qr_code_url
 
     app_domain = os.getenv("APP_DOMAIN", "https://boontrack.com").rstrip("/")
-    web_pay_url = f"{app_domain}/pay/{external_id}"
+    web_pay_url = invoice.get("invoice_url") or invoice.get("web_pay_url") or f"{app_domain}/pay/{external_id}"
     invoice["web_pay_url"] = web_pay_url
 
     amount_fmt = f"Rp{amount:,.0f}".replace(",", ".")

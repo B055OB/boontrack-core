@@ -266,6 +266,23 @@ async def xendit_webhook_callback(
                 except Exception:
                     pass
 
+            if not updated:
+                try:
+                    supabase.table("orders").upsert({
+                        "id": str(external_id),
+                        "order_id": str(external_id),
+                        "status": "LUNAS",
+                        "payment_status": "PAID",
+                        "paid_at": now_iso,
+                        "total_amount": amount,
+                        "amount": amount,
+                        "customer_phone": customer_phone,
+                        "product_name": product_name,
+                        "tenant_slug": tenant_id,
+                    }).execute()
+                except Exception:
+                    pass
+
             # Record in payment_settlements table
             try:
                 supabase.table("payment_settlements").insert({
