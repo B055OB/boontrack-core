@@ -176,3 +176,37 @@ class TestXenditWhatsAppCheckout(unittest.IsolatedAsyncioTestCase):
             update_calls = mock_tbl.update.call_args_list
             statuses = [c[0][0].get("status") for c in update_calls if isinstance(c[0][0], dict)]
             self.assertIn("LUNAS", statuses)
+
+    async def test_xendit_api_failure_raises_explicit_error_without_fallback(self):
+        """Memastikan jika Xendit API gagal (HTTP 400/500), error langsung di-raise dan TIDAK fallback ke DANA Bisnis."""
+        with patch("httpx.AsyncClient.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 400
+            mock_resp.text = '{"error_code":"INVALID_API_KEY","message":"API key is invalid"}'
+            mock_post.return_value = mock_resp
+
+            with self.assertRaises(RuntimeError) as ctx:
+                await xendit_service.create_dynamic_qris(
+                    external_id="INV-FAIL-01",
+                    amount=1000,
+                    tenant_id="onlineboost",
+                )
+            self.assertIn("Xendit API (400)", str(ctx.exception))
+
+    async def test_xendit_api_missing_qr_string_raises_explicit_error(self):
+        """Memastikan jika respons Xendit tidak menyertakan qr_string, sistem menolak dan me-raise error."""
+        with patch("httpx.AsyncClient.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 201
+            mock_resp.json.return_value = {"id": "qr_123", "status": "ACTIVE"}  # missing qr_string
+            mock_resp.text = '{"id":"qr_123","status":"ACTIVE"}'
+            mock_post.return_value = mock_resp
+
+            with self.assertRaises(RuntimeError) as ctx:
+                await xendit_service.create_dynamic_qris(
+                    external_id="INV-NOQR-01",
+                    amount=1000,
+                    tenant_id="onlineboost",
+                )
+            self.assertIn("missing 'qr_string'", str(ctx.exception))
+

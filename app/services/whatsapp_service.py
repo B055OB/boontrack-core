@@ -235,22 +235,24 @@ def is_closing_buy_intent(text: str, button_id: Optional[str] = None) -> bool:
 
 
 def generate_qris_image_bytes(qr_string: str) -> bytes:
+    """Renders QR code PNG directly from official Xendit qr_string without local DANA Bisnis generator."""
+    if not qr_string or not isinstance(qr_string, str):
+        return b""
     try:
-        from app.services.qris_generator import generate_qris_png_bytes
-        return generate_qris_png_bytes(qr_string)
+        import qrcode
+        from PIL import Image
+        qr = qrcode.QRCode(box_size=10, border=2)
+        qr.add_data(qr_string.strip())
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        if hasattr(img, "size") and (img.size[0] < 500 or img.size[1] < 500):
+            img = img.resize((540, 540), Image.Resampling.NEAREST)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
     except Exception as e:
-        logger.warning(f"[QRIS Generator Fallback] {e}")
-        try:
-            import qrcode
-            qr = qrcode.QRCode(box_size=10, border=2)
-            qr.add_data(qr_string)
-            qr.make(fit=True)
-            img = qr.make_image(fill_color="black", back_color="white")
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            return buf.getvalue()
-        except Exception:
-            return b""
+        logger.error(f"[QR Image Render Error] Failed to generate PNG from qr_string: {e}")
+        return b""
 
 
 def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, Any]]]:

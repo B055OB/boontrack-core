@@ -99,22 +99,16 @@ class XenditService:
         if customer_email:
             payload["payer_email"] = customer_email
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(endpoint, json=payload, headers=headers)
-                if resp.status_code in (200, 201):
-                    return resp.json()
-                logger.warning(f"[Xendit Invoice Warning] HTTP {resp.status_code} - {resp.text}")
-        except Exception as inv_err:
-            logger.warning(f"[Xendit Invoice Error] {inv_err}")
+        logger.info(f"[XENDIT] Calling POST {endpoint} with payload: {payload}")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(endpoint, json=payload, headers=headers)
 
-        return {
-            "id": f"inv_{uuid4().hex[:12]}",
-            "external_id": external_id,
-            "amount": amount,
-            "invoice_url": f"https://checkout.xendit.co/web/{external_id}",
-            "status": "PENDING",
-        }
+        logger.info(f"[XENDIT] Status: {resp.status_code}, Response: {resp.text[:200]}")
+        if resp.status_code in (200, 201):
+            return resp.json()
+
+        logger.error(f"[XENDIT ERROR] Failed HTTP {resp.status_code}: {resp.text}")
+        raise RuntimeError(f"Xendit Invoice API ({resp.status_code}): {resp.text}")
 
     async def create_dynamic_qris(
         self,
@@ -145,36 +139,24 @@ class XenditService:
             "api-version": "2022-07-31",
         }
 
-        logger.info(
-            f"[Xendit] Requesting Dynamic QRIS via Xendit API: external_id='{external_id}', amount={amount}, tenant='{tenant_id}'"
-        )
+        logger.info(f"[XENDIT] Calling POST {endpoint} with payload: {payload}")
 
-        data: Dict[str, Any] = {}
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(endpoint, json=payload, headers=headers)
-                if resp.status_code in (200, 201):
-                    data = resp.json()
-                    logger.info(f"[Xendit] QR Code created successfully from API: {data.get('id')}")
-                else:
-                    logger.warning(f"[Xendit API Warning] HTTP {resp.status_code} - {resp.text}")
-                    raise RuntimeError(f"Xendit API ({resp.status_code}): {resp.text}")
-        except Exception as api_err:
-            logger.warning(f"[Xendit Live Error/Mock Fallback] {api_err}")
-            exp_time = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
-            data = {
-                "id": f"qr_{uuid4().hex[:12]}",
-                "qr_string": f"00020101021226540014ID.LINKAJA.WWW0118936009143000000000520459995303360540{len(str(amount)):02d}{amount}5802ID5911XENDIT_QRIS6007JAKARTA61051219062070703A016304",
-                "status": "ACTIVE",
-                "amount": amount,
-                "external_id": external_id,
-                "expires_at": exp_time,
-            }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(endpoint, json=payload, headers=headers)
 
-        # Gunakan string QR resmi langsung dari respons API Xendit
+        logger.info(f"[XENDIT] Status: {resp.status_code}, Response: {resp.text[:200]}")
+
+        if resp.status_code not in (200, 201):
+            logger.error(f"[XENDIT ERROR] Failed HTTP {resp.status_code}: {resp.text}")
+            raise RuntimeError(f"Xendit API ({resp.status_code}): {resp.text}")
+
+        data = resp.json()
+
+        # Gunakan string QR resmi murni langsung dari respons API Xendit
         qr_string = str(data.get("qr_string") or "").strip()
         if not qr_string:
-            qr_string = f"00020101021226540014ID.LINKAJA.WWW0118936009143000000000520459995303360540{len(str(amount)):02d}{amount}5802ID5911XENDIT_QRIS6007JAKARTA61051219062070703A016304"
+            logger.error(f"[XENDIT ERROR] Missing 'qr_string' in response: {data}")
+            raise RuntimeError(f"Xendit response missing 'qr_string': {data}")
 
         # Render URL gambar QR resmi dari qr_string Xendit
         encoded_qr = urllib.parse.quote(qr_string)
