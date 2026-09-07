@@ -104,13 +104,13 @@ class XenditService:
             "Authorization": self.get_auth_header(),
             "Content-Type": "application/json",
         }
+        # Parameter payment_methods dilepas agar menggunakan semua kanal aktif di akun Xendit
         payload: Dict[str, Any] = {
             "external_id": str(external_id),
             "amount": int(amount),
             "description": str(product_name),
             "invoice_duration": 900,
             "currency": "IDR",
-            "payment_methods": ["QRIS"],
             "success_redirect_url": f"{app_domain}/payment-success?order_id={external_id}",
             "failure_redirect_url": f"{app_domain}/payment-failed?order_id={external_id}",
         }
