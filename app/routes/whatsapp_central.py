@@ -344,14 +344,39 @@ async def verify_webhook(request: web.Request) -> web.Response:
 async def handle_incoming_webhook(request: web.Request) -> web.Response:
     try:
         data = await request.json()
+    except Exception:
+        return web.Response(text="INVALID_JSON", status=200)
+
+    # Pemeriksaan payload Meta webhook: jika hanya berisi 'statuses' tanpa 'messages', segera hentikan eksekusi
+    has_statuses = False
+    has_messages = False
+    if isinstance(data, dict):
+        if "statuses" in data and "messages" not in data:
+            has_statuses = True
+        for entry in data.get("entry", []) if isinstance(data.get("entry"), list) else []:
+            if isinstance(entry, dict):
+                for change in entry.get("changes", []) if isinstance(entry.get("changes"), list) else []:
+                    if isinstance(change, dict):
+                        val = change.get("value", {})
+                        if isinstance(val, dict):
+                            if "messages" in val and val.get("messages"):
+                                has_messages = True
+                            if "statuses" in val and val.get("statuses"):
+                                has_statuses = True
+
+    if has_statuses and not has_messages:
+        logger.info("[CENTRAL WA] Webhook payload contains only statuses without messages. Execution halted.")
+        return web.Response(text="STATUS_IGNORED", status=200)
+
+    try:
         event = extract_meta_whatsapp_event(data)
 
         # 6.1. Abaikan status delivery / read receipts
         if event["is_status"]:
-            return web.json_response({"status": "status_ignored"}, status=200)
+            return web.Response(text="STATUS_IGNORED", status=200)
 
         if not event["is_message"]:
-            return web.json_response({"status": "ignored"}, status=200)
+            return web.Response(text="STATUS_IGNORED", status=200)
 
         phone_id = str(event.get("phone_id") or "").strip() or (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or OM_BUDI_PHONE_NUMBER_ID)
         from_phone = str(event.get("from_phone") or "").strip()

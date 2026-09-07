@@ -138,19 +138,31 @@ async def handle_whatsapp_webhook(request: Request):
     except Exception:
         return JSONResponse(status_code=200, content={"status": "error", "message": "Invalid JSON format"})
 
-    try:
-        entry = data.get("entry", [{}])[0]
-        changes = entry.get("changes", [{}])[0]
-        val = changes.get("value", {})
-        if "statuses" in val and "messages" not in val:
-            return JSONResponse(status_code=200, content={"status": "status_ignored"})
-    except Exception:
-        pass
+    # Pemeriksaan payload Meta webhook: jika hanya berisi 'statuses' tanpa 'messages', segera hentikan eksekusi
+    has_statuses = False
+    has_messages = False
+    if isinstance(data, dict):
+        if "statuses" in data and "messages" not in data:
+            has_statuses = True
+        for entry in data.get("entry", []) if isinstance(data.get("entry"), list) else []:
+            if isinstance(entry, dict):
+                for change in entry.get("changes", []) if isinstance(entry.get("changes"), list) else []:
+                    if isinstance(change, dict):
+                        val = change.get("value", {})
+                        if isinstance(val, dict):
+                            if "messages" in val and val.get("messages"):
+                                has_messages = True
+                            if "statuses" in val and val.get("statuses"):
+                                has_statuses = True
+
+    if has_statuses and not has_messages:
+        logger.info("[META WA] Webhook payload contains only statuses without messages. Execution halted.")
+        return Response(content="STATUS_IGNORED", status_code=200, media_type="text/plain")
 
     event = extract_meta_whatsapp_event(data)
 
     if event.get("is_status") or not event.get("is_message"):
-        return JSONResponse(status_code=200, content={"status": "ignored"})
+        return Response(content="STATUS_IGNORED", status_code=200, media_type="text/plain")
 
     from_phone = event.get("from_phone", "")
     incoming_text = (event.get("text") or "").strip()

@@ -415,23 +415,25 @@ async def handle_xendit_notification_logic(payload: Dict[str, Any]) -> tuple[Dic
                         order_record = res.data[0]
 
                 # Idempotency check di level DB
-                if order_record and order_record.get("status") == "PAID":
-                    logger.info(f"[XENDIT IDEMPOTENT DB SKIP] Order '{external_id}' already marked PAID in DB.")
+                if order_record and order_record.get("status") in ("PAID", "LUNAS"):
+                    logger.info(f"[XENDIT IDEMPOTENT DB SKIP] Order '{external_id}' already marked PAID/LUNAS in DB.")
                     xendit_service._processed_transactions.add(external_id)
                     return {"status": "ok", "message": "already_processed"}, 200
 
-                # Lakukan update status ke PAID
+                # Lakukan update status ke LUNAS
                 try:
                     supabase.table("orders").update({
-                        "status": "PAID",
+                        "status": "LUNAS",
+                        "payment_status": "PAID",
                         "paid_at": datetime.now(timezone.utc).isoformat()
                     }).eq("id", external_id).execute()
                 except Exception:
                     supabase.table("orders").update({
-                        "status": "PAID",
+                        "status": "LUNAS",
+                        "payment_status": "PAID",
                         "paid_at": datetime.now(timezone.utc).isoformat()
                     }).eq("order_id", external_id).execute()
-                logger.info(f"[XENDIT WEBHOOK] Order '{external_id}' successfully marked as PAID in Supabase")
+                logger.info(f"[XENDIT WEBHOOK] Order '{external_id}' successfully marked as LUNAS in Supabase")
             except Exception as db_err:
                 logger.debug(f"[XENDIT WEBHOOK DB NOTE] {db_err}")
 

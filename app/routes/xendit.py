@@ -8,6 +8,7 @@ Endpoints:
 
 import os
 import logging
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Request, Header, HTTPException, status, BackgroundTasks
 
@@ -26,14 +27,23 @@ async def send_whatsapp_payment_notification(
     phone: Optional[str],
     external_id: str,
     amount: int,
-    tenant_id: str = "boontrack-career",
+    tenant_id: str = "onlineboost",
+    product_name: Optional[str] = None,
 ) -> None:
     """Background task to notify customer of successful payment via text notification & official WABA E-Receipt."""
     if not phone:
         logger.info(f"[Xendit WA Skip] No phone number associated with order '{external_id}'")
         return
 
-    text = f"Pembayaran sukses untuk Order #{external_id} sejumlah Rp{amount:,}."
+    item_name = product_name or ("Modul Praktis CPM 24 Jam" if amount == 1000 else "Produk Digital")
+    amt_comma = f"{amount:,}"
+    amt_str = f"Rp{amount:,.0f}".replace(",", ".")
+
+    text = (
+        f"🎉 *PEMBAYARAN LUNAS TERVERIFIKASI!*\n\n"
+        f"Pembayaran sukses untuk Order #{external_id} sejumlah Rp{amt_comma} ({amt_str}) untuk {item_name} telah kami terima dan berstatus *LUNAS*.\n\n"
+        f"Akses materi ecourse & layanan Anda kini telah aktif. Terima kasih telah bertransaksi di BoonTrack! 🙏"
+    )
     try:
         await send_whatsapp_text(to_phone=phone, text=text, tenant_id=tenant_id)
     except Exception as e:
@@ -44,11 +54,13 @@ async def send_whatsapp_payment_notification(
             "order_id": external_id,
             "amount": amount,
             "customer_phone": phone,
-            "payment_method": "QRIS Dinamis Xendit",
+            "product_name": item_name,
+            "payment_method": "QRIS Dinamis Xendit / DANA Bisnis",
+            "status": "LUNAS",
         }
         await send_ereceipt_whatsapp(to_phone=phone, order_data=order_data, tenant_id=tenant_id)
-    except Exception:
-        pass
+    except Exception as er_err:
+        logger.warning(f"[Xendit WA E-Receipt Error] {er_err}")
 
 
 from app.modules.tracking import capi_dispatcher
@@ -194,38 +206,63 @@ async def xendit_webhook_callback(
         or stored_intent.get("customer_email")
         or stored_intent.get("email")
     )
+    product_slug = (
+        data_obj.get("product_slug")
+        or data_obj.get("slug")
+        or payload.get("product_slug")
+        or payload.get("slug")
+        or (stored_intent.get("metadata", {}) if isinstance(stored_intent.get("metadata"), dict) else {}).get("product_slug")
+        or ""
+    )
+
     product_name = (
         data_obj.get("product_name")
         or payload.get("product_name")
         or (stored_intent.get("metadata", {}) if isinstance(stored_intent.get("metadata"), dict) else {}).get("product_name")
-        or "Produk Digital"
+        or ("Modul Praktis CPM 24 Jam" if (amount == 1000 or product_slug == "cpm-24jam" or "cpm" in str(external_id).lower()) else "Produk Digital")
     )
+    if amount == 1000 or product_slug == "cpm-24jam":
+        product_name = "Modul Praktis CPM 24 Jam"
+
     tenant_id = (
         data_obj.get("tenant_id")
         or payload.get("tenant_id")
         or stored_intent.get("tenant_id")
-        or "boontrack-career"
+        or ("onlineboost" if (amount == 1000 or product_slug == "cpm-24jam") else "boontrack-career")
     )
 
-    # 4. Update Database & State to PAID
+    # 4. Update Database & State to LUNAS / PAID
     if external_id:
         xendit_service.mark_settled(str(external_id))
 
     supabase = get_supabase()
     if supabase and external_id:
         try:
-            # Update orders table if exists
+            now_iso = datetime.now(timezone.utc).isoformat()
+            # Update orders table if exists, or upsert with status LUNAS
+            updated = False
             try:
-                supabase.table("orders").update({
-                    "status": "PAID",
-                    "paid_at": datetime.now(timezone.utc).isoformat()
+                up_res1 = supabase.table("orders").update({
+                    "status": "LUNAS",
+                    "payment_status": "PAID",
+                    "paid_at": now_iso,
+                    "product_name": product_name,
                 }).eq("id", str(external_id)).execute()
+                if up_res1.data:
+                    updated = True
             except Exception:
+                pass
+
+            if not updated:
                 try:
-                    supabase.table("orders").update({
-                        "status": "PAID",
-                        "paid_at": datetime.now(timezone.utc).isoformat()
+                    up_res2 = supabase.table("orders").update({
+                        "status": "LUNAS",
+                        "payment_status": "PAID",
+                        "paid_at": now_iso,
+                        "product_name": product_name,
                     }).eq("order_id", str(external_id)).execute()
+                    if up_res2.data:
+                        updated = True
                 except Exception:
                     pass
 
@@ -234,6 +271,7 @@ async def xendit_webhook_callback(
                 supabase.table("payment_settlements").insert({
                     "provider_ref": f"xendit_{external_id}",
                     "settled_amount": amount,
+                    "status": "LUNAS",
                     "raw_payload": payload,
                 }).execute()
             except Exception:
@@ -241,7 +279,7 @@ async def xendit_webhook_callback(
         except Exception as db_err:
             logger.warning(f"[Xendit Webhook] Supabase settlement note: {db_err}")
 
-    # 5. Background Task 1: WhatsApp Customer Confirmation
+    # 5. Background Task 1: WhatsApp Customer Confirmation (LUNAS)
     if customer_phone:
         background_tasks.add_task(
             send_whatsapp_payment_notification,
@@ -249,6 +287,7 @@ async def xendit_webhook_callback(
             external_id=str(external_id),
             amount=amount,
             tenant_id=tenant_id,
+            product_name=product_name,
         )
 
     # 6. Background Task 2: Meta Conversions API (CAPI) Event

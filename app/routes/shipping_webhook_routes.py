@@ -12,65 +12,67 @@ from app.services.checkout_shipping_service import (
 def get_db():
     return psycopg2.connect(os.getenv("DATABASE_URL", "").strip())
 
+from app.services.biteship_service import map_biteship_event_status
+
 async def biteship_webhook_handler(request: web.Request):
     """
     Menangkap webhook event dari Biteship.
+    Pemetaan status standar BoonTrack:
+    ORDER_CREATED -> ALLOCATED -> PICKING_UP -> DROPPING_OFF -> DELIVERED / COD_COLLECTED
     Prinsip Isolasi State: DELIVERED hanya memperbarui fulfillment_status!
     State COD dan komisi affiliate tetap terkunci sampai dana settlement terverifikasi.
     """
     try:
         data = await request.json()
-        event = data.get("event")
-        booking_id = data.get("order_id")  # ID booking Biteship
+        event = data.get("event") or data.get("status") or "order.status"
+        booking_id = data.get("order_id") or data.get("id") or data.get("booking_id")  # ID booking Biteship
+        raw_status = data.get("status") or data.get("courier_status") or event
+        is_cod = bool(data.get("is_cod") or (data.get("cash_on_delivery") and data.get("cash_on_delivery", {}).get("amount", 0) > 0))
+
+        new_fulfillment = map_biteship_event_status(
+            event_or_status=raw_status,
+            is_cod=is_cod,
+            raw_data=data
+        )
 
         conn = get_db()
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        if event == "order.status":
-            biteship_status = data.get("status", "").lower()
-            
-            fulfillment_map = {
-                "picking_up": "ALLOCATING",
-                "picked": "PICKED_UP",
-                "dropping_off": "IN_TRANSIT",
-                "delivered": "DELIVERED",
-                "returned": "RETURNED"
-            }
-            new_fulfillment = fulfillment_map.get(biteship_status)
+        if new_fulfillment:
+            # 1. Update status shipment di delivery_orders
+            cur.execute("""
+                UPDATE delivery_orders
+                SET status = %s, updated_at = NOW()
+                WHERE booking_id = %s
+                RETURNING tenant_id, order_id, is_cod;
+            """, (new_fulfillment, booking_id))
+            row = cur.fetchone()
 
-            if new_fulfillment:
-                # 1. Update status shipment di delivery_orders
+            # 2. Update state di product_orders (kunci unik order_id)
+            if row:
                 cur.execute("""
-                    UPDATE delivery_orders
-                    SET status = %s, updated_at = NOW()
-                    WHERE booking_id = %s
-                    RETURNING tenant_id, order_id, is_cod;
-                """, (new_fulfillment, booking_id))
-                row = cur.fetchone()
+                    UPDATE product_orders
+                    SET fulfillment_status = %s
+                    WHERE order_id = %s;
+                """, (new_fulfillment, row["order_id"]))
 
-                # 2. Update state di product_orders (kunci unik order_id)
-                if row:
+                # Jika COD dan barang sampai / COD collected, status uang disesuaikan
+                if new_fulfillment in ("COD_COLLECTED", "DELIVERED") and row["is_cod"]:
+                    settlement_status = "SETTLED" if new_fulfillment == "COD_COLLECTED" else "PENDING_REMITTANCE"
+                    order_status = "PAID" if new_fulfillment == "COD_COLLECTED" else "DELIVERED"
                     cur.execute("""
                         UPDATE product_orders
-                        SET fulfillment_status = %s
+                        SET cod_settlement_status = %s, status = %s
                         WHERE order_id = %s;
-                    """, (new_fulfillment, row["order_id"]))
+                    """, (settlement_status, order_status, row["order_id"]))
 
-                    # Jika COD dan barang sampai, status uang menjadi PENDING_REMITTANCE
-                    if new_fulfillment == "DELIVERED" and row["is_cod"]:
-                        cur.execute("""
-                            UPDATE product_orders
-                            SET cod_settlement_status = 'PENDING_REMITTANCE'
-                            WHERE order_id = %s AND (cod_settlement_status IS NULL OR cod_settlement_status = 'NONE');
-                        """, (row["order_id"],))
-
-                conn.commit()
+            conn.commit()
 
         cur.close()
         conn.close()
-        return web.json_response({"success": True})
+        return web.json_response({"success": True, "status": new_fulfillment, "booking_id": booking_id})
     except Exception as e:
-        return web.json_response({"success": False, "error": str(e)}, status=500)
+        return web.json_response({"success": False, "error": str(e)}, status=200)
 
 async def reconcile_cod_handler(request: web.Request):
     """Trigger endpoint untuk verifikasi settlement dana COD dan pelepasan komisi."""
@@ -129,6 +131,8 @@ async def process_order_awb_handler(request: web.Request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 def register_shipping_routes(app: web.Application):
+    app.router.add_post('/api/v1/logistics/biteship/webhook', biteship_webhook_handler)
+    app.router.add_post('/api/v1/shipping/biteship/webhook', biteship_webhook_handler)
     app.router.add_post('/api/v1/webhooks/biteship', biteship_webhook_handler)
     app.router.add_post('/api/v1/shipping/cod/reconcile', reconcile_cod_handler)
     app.router.add_post('/api/v1/shipping/rates', get_shipping_rates_handler)
