@@ -435,6 +435,19 @@ async def handle_whatsapp_webhook(request: Request):
             qr_string = invoice.get("qr_string", "")
             qr_code_url = invoice.get("qr_code_url") or f"https://quickchart.io/qr?text={urllib.parse.quote(qr_string)}&size=600&margin=4&ecLevel=M"
 
+            # 1. KIRIM TEKS RINCIAN INVOICE & LINK BAYAR INSTAN TERLEBIH DAHULU (USER LANGSUNG MENERIMA RESPON)
+            if from_phone and reply:
+                try:
+                    await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="ombudi", phone_number_id=phone_id)
+                except Exception as txt_err:
+                    logger.warning(f"[META WA] Error sending fast-track invoice text: {txt_err}")
+
+            # 2. KIRIM GAMBAR KODE QRIS DENGAN CAPTION RINGKAS (< 1024 CHAR)
+            qr_caption = (
+                f"Kode QRIS Pembayaran ({invoice.get('external_id', 'INVOICE')})\n"
+                f"Scan gambar QR di atas via m-Banking atau E-Wallet untuk menyelesaikan pembayaran. 💳"
+            )
+
             image_delivered = False
             try:
                 from app.services.whatsapp_service import upload_whatsapp_media
@@ -456,28 +469,29 @@ async def handle_whatsapp_webhook(request: Request):
                                 "recipient_type": "individual",
                                 "to": clean_phone,
                                 "type": "image",
-                                "image": {"id": str(media_id), "caption": reply}
+                                "image": {"id": str(media_id), "caption": qr_caption}
                             }
                             async with httpx.AsyncClient(timeout=30.0) as client:
                                 m_res = await client.post(msg_url, headers=headers, json=payload)
                                 if m_res.status_code in (200, 201):
                                     image_delivered = True
+                                    logger.info(f"[META WA] QR image binary delivered successfully to {clean_phone}")
+                                else:
+                                    logger.warning(f"[META WA] Outbound media_id message FAILED ({m_res.status_code}): {m_res.text}")
 
                 if not image_delivered and qr_code_url:
                     link_resp = await send_whatsapp_image_link(
                         to_phone=from_phone,
                         image_url=qr_code_url,
-                        caption=reply,
+                        caption=qr_caption,
                         tenant_id="ombudi",
                         phone_number_id=phone_id,
                     )
                     if link_resp and getattr(link_resp, "status_code", 200) in (200, 201):
                         image_delivered = True
+                        logger.info(f"[META WA] QR image URL link delivered successfully to {from_phone}")
             except Exception as err:
-                logger.warning(f"[WA IMAGE DISPATCH ERROR] {err}")
-
-            if not image_delivered and from_phone:
-                await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="ombudi", phone_number_id=phone_id)
+                logger.error(f"[META WA IMAGE DISPATCH ERROR] {err}", exc_info=True)
 
             try:
                 session_key = f"{active_tenant}:{clean_phone}"

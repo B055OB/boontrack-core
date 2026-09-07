@@ -88,19 +88,29 @@ ALLOWED_IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/jpg"]
 
 def resolve_tenant_token(phone_id: str) -> str:
     """Mengambil access token yang tepat sesuai Phone Number ID."""
-    clean_id = str(phone_id).strip()
+    clean_id = str(phone_id or "").strip()
     if clean_id == CAREER_PHONE_NUMBER_ID:
-        return CAREER_ACCESS_TOKEN
+        tok = os.getenv("CAREER_ACCESS_TOKEN") or os.getenv("WHATSAPP_TOKEN") or PERMANENT_META_TOKEN
+        return tok.strip()
     elif clean_id == ADUAN_SANDBOX_PHONE_ID:
-        return ADUAN_SANDBOX_ACCESS_TOKEN
-    return OM_BUDI_ACCESS_TOKEN
+        tok = os.getenv("ADUAN_ACCESS_TOKEN") or os.getenv("WHATSAPP_TOKEN") or PERMANENT_META_TOKEN
+        return tok.strip()
+    tok = (
+        os.getenv("OM_BUDI_ACCESS_TOKEN")
+        or os.getenv("WHATSAPP_TOKEN")
+        or os.getenv("META_WA_TOKEN")
+        or os.getenv("WA_TOKEN")
+        or os.getenv("META_ACCESS_TOKEN")
+        or PERMANENT_META_TOKEN
+    )
+    return tok.strip()
 
 
 # --- 4. Helper Outbound WA Dinamis Multi-Tenant ---
 async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
     from app.services.whatsapp_service import sanitize_whatsapp_message_text
-    clean_id_match = re.findall(r"\d+", str(phone_id))
-    clean_id = clean_id_match[0] if clean_id_match else phone_id
+    clean_id_match = re.findall(r"\d+", str(phone_id or ""))
+    clean_id = clean_id_match[0] if clean_id_match else (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or OM_BUDI_PHONE_NUMBER_ID)
     token = resolve_tenant_token(clean_id)
 
     clean_text = sanitize_whatsapp_message_text(text)
@@ -130,8 +140,8 @@ async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
 
 async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Dict[str, str]], phone_id: str):
     from app.services.whatsapp_service import sanitize_whatsapp_message_text
-    clean_id_match = re.findall(r"\d+", str(phone_id))
-    clean_id = clean_id_match[0] if clean_id_match else phone_id
+    clean_id_match = re.findall(r"\d+", str(phone_id or ""))
+    clean_id = clean_id_match[0] if clean_id_match else (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or OM_BUDI_PHONE_NUMBER_ID)
     token = resolve_tenant_token(clean_id)
 
     clean_body = sanitize_whatsapp_message_text(body_text)
@@ -178,22 +188,67 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Di
 
 
 async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any = None, caption: str = "", phone_id: str = "", image_url_or_path: Any = None) -> bool:
-    """Mengirim pesan gambar WhatsApp ke Meta Cloud API via direct public URL link atau upload fallback."""
+    """Mengirim pesan gambar WhatsApp ke Meta Cloud API via direct byte upload atau direct public URL link."""
     if image_url_or_path_or_bytes is None and image_url_or_path is not None:
         image_url_or_path_or_bytes = image_url_or_path
-    clean_id_match = re.findall(r"\d+", str(phone_id))
-    clean_id = clean_id_match[0] if clean_id_match else phone_id
+
+    clean_id_match = re.findall(r"\d+", str(phone_id or ""))
+    clean_id = clean_id_match[0] if clean_id_match else (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or OM_BUDI_PHONE_NUMBER_ID)
     token = resolve_tenant_token(clean_id)
 
-    clean_phone = "".join(filter(str.isdigit, str(recipient_phone)))
+    clean_phone = normalize_phone_number(recipient_phone) or "".join(filter(str.isdigit, str(recipient_phone)))
     if clean_phone.startswith("08"):
         clean_phone = "62" + clean_phone[1:]
     elif clean_phone.startswith("008"):
         clean_phone = "62" + clean_phone[2:]
 
-    # 1. Jika input merupakan URL gambar publik yang valid
+    safe_caption = (caption or "")[:1024]
+
+    # 1. Upload Bytes PNG jika input merupakan bytes
+    if isinstance(image_url_or_path_or_bytes, bytes) and len(image_url_or_path_or_bytes) > 0:
+        upload_url = f"https://graph.facebook.com/v20.0/{clean_id}/media"
+        headers = {"Authorization": f"Bearer {token}"}
+        form_data = aiohttp.FormData()
+        form_data.add_field("messaging_product", "whatsapp")
+        form_data.add_field("type", "image/png")
+        form_data.add_field("file", image_url_or_path_or_bytes, filename="qris_code.png", content_type="image/png")
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(upload_url, headers=headers, data=form_data) as up_resp:
+                    up_text = await up_resp.text()
+                    if up_resp.status in (200, 201):
+                        up_json = json.loads(up_text)
+                        media_id = up_json.get("id")
+                        if media_id:
+                            msg_url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
+                            payload = {
+                                "messaging_product": "whatsapp",
+                                "recipient_type": "individual",
+                                "to": clean_phone,
+                                "type": "image",
+                                "image": {
+                                    "id": str(media_id),
+                                    "caption": safe_caption
+                                }
+                            }
+                            async with session.post(msg_url, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, json=payload) as msg_resp:
+                                msg_text = await msg_resp.text()
+                                if msg_resp.status in (200, 201):
+                                    logger.info(f"[CENTRAL WA] Image byte delivery SUCCESS to {clean_phone} (media_id={media_id})")
+                                    return True
+                                logger.error(f"[CENTRAL WA] Outbound media_id message FAILED ({msg_resp.status}) phone_id={clean_id}: {msg_text}")
+                    else:
+                        logger.error(f"[CENTRAL WA] Media upload to Meta /media FAILED ({up_resp.status}) phone_id={clean_id}: {up_text}")
+        except Exception as e:
+            logger.error(f"[CENTRAL WA] Exception in multipart media upload: {e}", exc_info=True)
+
+    # 2. Jika upload bytes gagal atau input merupakan URL gambar publik
+    image_url = None
     if isinstance(image_url_or_path_or_bytes, str) and image_url_or_path_or_bytes.startswith(("http://", "https://")):
         image_url = image_url_or_path_or_bytes
+
+    if image_url:
         url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
         headers = {
             "Authorization": f"Bearer {token}",
@@ -206,7 +261,7 @@ async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any = 
             "type": "image",
             "image": {
                 "link": image_url,
-                "caption": caption
+                "caption": safe_caption
             }
         }
         try:
@@ -214,50 +269,12 @@ async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any = 
                 async with session.post(url, headers=headers, json=payload) as resp:
                     resp_text = await resp.text()
                     if resp.status in (200, 201):
-                        logger.info(f"[CENTRAL WA] Image successfully delivered to {clean_phone}")
+                        logger.info(f"[CENTRAL WA] Image URL link delivery SUCCESS to {clean_phone}")
                         return True
-                    logger.error(f"[CENTRAL WA] Outbound image error ({resp.status}) phone_id={clean_id}: {resp_text}")
+                    logger.error(f"[CENTRAL WA] Outbound image URL error ({resp.status}) phone_id={clean_id}: {resp_text}")
         except Exception as e:
             logger.error(f"[CENTRAL WA] Exception sending image via URL: {e}", exc_info=True)
 
-    # 2. Upload Bytes PNG jika bukan URL
-    if isinstance(image_url_or_path_or_bytes, bytes):
-        upload_url = f"https://graph.facebook.com/v20.0/{clean_id}/media"
-        headers = {"Authorization": f"Bearer {token}"}
-        form_data = aiohttp.FormData()
-        form_data.add_field("messaging_product", "whatsapp")
-        form_data.add_field("type", "image/png")
-        form_data.add_field("file", image_url_or_path_or_bytes, filename="qris_code.png", content_type="image/png")
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(upload_url, headers=headers, data=form_data) as up_resp:
-                    if up_resp.status in (200, 201):
-                        up_json = await up_resp.json()
-                        media_id = up_json.get("id")
-                        if media_id:
-                            msg_url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
-                            payload = {
-                                "messaging_product": "whatsapp",
-                                "recipient_type": "individual",
-                                "to": clean_phone,
-                                "type": "image",
-                                "image": {
-                                    "id": str(media_id),
-                                    "caption": caption
-                                }
-                            }
-                            async with session.post(msg_url, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, json=payload) as msg_resp:
-                                if msg_resp.status in (200, 201):
-                                    return True
-                                logger.error(f"[CENTRAL WA] Outbound media_id error ({msg_resp.status}): {await msg_resp.text()}")
-                    else:
-                        logger.error(f"[CENTRAL WA] Media upload error ({up_resp.status}): {await up_resp.text()}")
-        except Exception as e:
-            logger.error(f"[CENTRAL WA] Exception in multipart media upload: {e}", exc_info=True)
-
-    # 3. Fallback Teks bila image pengiriman gagal
-    await send_wa_text(clean_phone, caption, phone_id)
     return False
 
 
@@ -336,7 +353,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         if not event["is_message"]:
             return web.json_response({"status": "ignored"}, status=200)
 
-        phone_id = str(event.get("phone_id") or "").strip()
+        phone_id = str(event.get("phone_id") or "").strip() or (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or OM_BUDI_PHONE_NUMBER_ID)
         from_phone = str(event.get("from_phone") or "").strip()
         clean_phone = normalize_phone_number(from_phone) or re.sub(r"\D", "", from_phone)
         msg_type = str(event.get("msg_type") or "text").strip()
@@ -765,21 +782,26 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     contact_name=contact_name
                 )
 
+                # 1. KIRIM TEKS RINCIAN INVOICE & LINK BAYAR INSTAN TERLEBIH DAHULU (USER LANGSUNG MENERIMA RESPON)
+                await send_wa_text(from_phone, reply_text, phone_id)
+
+                # 2. KIRIM GAMBAR KODE QRIS DENGAN CAPTION RINGKAS SEBAGAI MEDIA LANJUTAN
                 qr_target_url = invoice.get("qr_code_url")
+                qr_caption = (
+                    f"Kode QRIS Pembayaran ({invoice.get('external_id')})\n"
+                    "Scan gambar QR di atas via m-Banking atau E-Wallet untuk menyelesaikan pembayaran. 💳"
+                )
                 is_img_sent = False
                 if qr_bytes and len(qr_bytes) > 100:
                     try:
-                        is_img_sent = await send_wa_image(from_phone, qr_bytes, reply_text, phone_id)
+                        is_img_sent = await send_wa_image(from_phone, qr_bytes, qr_caption, phone_id)
                     except Exception as img_err:
                         logger.warning(f"[CENTRAL QR IMAGE SEND ERROR] {img_err}")
                 if not is_img_sent and qr_target_url:
                     try:
-                        is_img_sent = await send_wa_image(from_phone, qr_target_url, reply_text, phone_id)
+                        is_img_sent = await send_wa_image(from_phone, qr_target_url, qr_caption, phone_id)
                     except Exception as img_err2:
                         logger.warning(f"[CENTRAL QR URL IMAGE SEND ERROR] {img_err2}")
-
-                if not is_img_sent:
-                    await send_wa_text(from_phone, reply_text, phone_id)
 
                 try:
                     safe_log_to_supabase_messages(

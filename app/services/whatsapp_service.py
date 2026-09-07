@@ -983,30 +983,30 @@ def get_wa_credentials(tenant_id: str = "boontrack-career", phone_number_id: Opt
         resolved_token = str(access_token).strip() if access_token else default_token
         if not access_token:
             if resolved_phone_id == (os.getenv("CAREER_PHONE_NUMBER_ID") or "1340866379104241"):
-                resolved_token = os.getenv("CAREER_ACCESS_TOKEN") or default_token
+                resolved_token = (os.getenv("CAREER_ACCESS_TOKEN") or "").strip() or default_token
             elif resolved_phone_id == (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "1268977686299719"):
-                resolved_token = os.getenv("OM_BUDI_ACCESS_TOKEN") or default_token
+                resolved_token = (os.getenv("OM_BUDI_ACCESS_TOKEN") or "").strip() or default_token
             elif resolved_phone_id == (os.getenv("PHONE_NUMBER_ID") or "1306479742542883"):
-                resolved_token = os.getenv("ADUAN_ACCESS_TOKEN") or default_token
-        return resolved_token.strip(), resolved_phone_id, version
+                resolved_token = (os.getenv("ADUAN_ACCESS_TOKEN") or "").strip() or default_token
+        return (resolved_token or default_token).strip(), resolved_phone_id, version
 
     # Priority 2: Tenant-based resolution
     if clean_tenant in ["ombudi", "om-budi", "om_budi", "onlineboost", "growthplus", "proscale"]:
-        phone_id = os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "1268977686299719"
-        token = os.getenv("OM_BUDI_ACCESS_TOKEN") or default_token
+        phone_id = (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "").strip() or "1268977686299719"
+        token = (os.getenv("OM_BUDI_ACCESS_TOKEN") or "").strip() or default_token
         return token.strip(), str(phone_id).strip(), version
 
     if clean_tenant in ["boontrack-career", "career"]:
-        phone_id = os.getenv("CAREER_PHONE_NUMBER_ID") or "1340866379104241"
-        token = os.getenv("CAREER_ACCESS_TOKEN") or default_token
+        phone_id = (os.getenv("CAREER_PHONE_NUMBER_ID") or "").strip() or "1340866379104241"
+        token = (os.getenv("CAREER_ACCESS_TOKEN") or "").strip() or default_token
         return token.strip(), str(phone_id).strip(), version
 
     if clean_tenant in ["aduan", "aduan-sandbox", "sandbox"]:
-        phone_id = os.getenv("PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID") or "1306479742542883"
-        token = os.getenv("ADUAN_ACCESS_TOKEN") or default_token
+        phone_id = (os.getenv("PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID") or "").strip() or "1306479742542883"
+        token = (os.getenv("ADUAN_ACCESS_TOKEN") or "").strip() or default_token
         return token.strip(), str(phone_id).strip(), version
 
-    phone_id = os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "1268977686299719"
+    phone_id = (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "").strip() or "1268977686299719"
     return default_token.strip(), str(phone_id).strip(), version
 
 def _get_auth_headers(token: str) -> Dict[str, str]:
@@ -1252,6 +1252,7 @@ async def send_whatsapp_image_link(
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
+    safe_caption = (caption or "")[:1024]
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
@@ -1259,7 +1260,7 @@ async def send_whatsapp_image_link(
         "type": "image",
         "image": {
             "link": image_url,
-            "caption": caption
+            "caption": safe_caption
         }
     }
 
@@ -1267,6 +1268,7 @@ async def send_whatsapp_image_link(
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(url, headers=headers, json=payload)
             if response.status_code not in (200, 201):
+                logger.warning(f"[WhatsApp Service] send_whatsapp_image_link failed (HTTP {response.status_code}): {response.text}")
                 return await send_whatsapp_text(target_phone, caption, tenant_id=effective_tenant, phone_number_id=phone_number_id, access_token=access_token)
 
             res_data = response.json()
@@ -1344,6 +1346,7 @@ async def send_whatsapp_image(
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         }
+        safe_caption = (caption or "")[:1024]
         payload = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
@@ -1351,7 +1354,7 @@ async def send_whatsapp_image(
             "type": "image",
             "image": {
                 "id": str(resolved_media_id),
-                "caption": caption
+                "caption": safe_caption
             }
         }
         try:
@@ -1369,8 +1372,9 @@ async def send_whatsapp_image(
                         metadata={"msg_type": "image", "media_id": str(resolved_media_id)}
                     )
                     return resp.json()
-        except Exception:
-            pass
+                logger.warning(f"[WhatsApp Service] send_whatsapp_image failed (HTTP {resp.status_code}): {resp.text}")
+        except Exception as e:
+            logger.warning(f"[WhatsApp Service] Exception in send_whatsapp_image: {e}")
 
     return await send_whatsapp_text(clean_phone, caption, tenant_id=effective_tenant, phone_number_id=phone_number_id, access_token=access_token)
 
