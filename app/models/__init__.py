@@ -31,10 +31,13 @@ from app.models.event_ledger import EventLedger
 from app.models.local_service import (
     BusinessVertical,
     ConversionTriggerEvent,
+    ReminderType,
+    ReminderStatus,
     TenantBusinessProfile,
     TenantBookingSchema,
     ConversationEntity,
     TenantConversionRule,
+    BookingReminder,
 )
 
 __all__ = [
@@ -78,9 +81,12 @@ __all__ = [
     # LOCAL_SERVICE_V1 Exports
     "BusinessVertical",
     "ConversionTriggerEvent",
+    "ReminderType",
+    "ReminderStatus",
     "TenantBusinessProfile",
     "TenantBookingSchema",
     "ConversationEntity",
     "TenantConversionRule",
+    "BookingReminder",
 ]
 

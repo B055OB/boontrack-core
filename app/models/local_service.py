@@ -6,6 +6,7 @@ Tables:
 - tenant_booking_schemas     : Skema slot wajib & aturan validasi booking per tenant
 - conversation_entities      : Cache entity hasil ekstraksi NLP per percakapan (slot filling state)
 - tenant_conversion_rules    : Aturan deterministik pemicuan CAPI berdasarkan state slot
+- booking_reminders          : Jadwal auto-reminder H-1 & H-2 jam untuk booking terkonfirmasi
 
 Semua tabel menggunakan TenantScopedBaseMixin (id UUID, tenant_id, created_at).
 """
@@ -40,6 +41,19 @@ class ConversionTriggerEvent(str, enum.Enum):
     ADD_TO_CART = "AddToCart"
     PURCHASE = "Purchase"
     COMPLETE_REGISTRATION = "CompleteRegistration"
+
+
+class ReminderType(str, enum.Enum):
+    """Tipe jadwal auto-reminder untuk booking terkonfirmasi."""
+    H_MINUS_1 = "H_MINUS_1"           # Satu hari sebelum hari kunjungan (09:00 WIB)
+    H_MINUS_2_HOURS = "H_MINUS_2_HOURS"  # 2 jam sebelum jam kunjungan teknisi
+
+
+class ReminderStatus(str, enum.Enum):
+    """Status lifecycle pengiriman reminder."""
+    PENDING = "PENDING"   # Belum saatnya dikirim / menunggu eksekusi scheduler
+    SENT = "SENT"         # Berhasil dikirim via WhatsApp
+    FAILED = "FAILED"     # Gagal dikirim (error disimpan di error_message)
 
 
 # ---------------------------------------------------------------------------
@@ -148,3 +162,45 @@ class TenantConversionRule(Base, TenantScopedBaseMixin):
     platform: Mapped[str] = mapped_column(String(16), default="all", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     priority: Mapped[int] = mapped_column(default=100, nullable=False)
+
+
+# ---------------------------------------------------------------------------
+# Model: BookingReminder
+# ---------------------------------------------------------------------------
+
+class BookingReminder(Base, TenantScopedBaseMixin):
+    """Jadwal auto-reminder untuk booking terkonfirmasi.
+
+    Dua record dibuat per booking:
+    - H_MINUS_1       : Dikirim pada 09:00 WIB sehari sebelum kunjungan
+    - H_MINUS_2_HOURS : Dikirim 2 jam sebelum scheduled_time teknisi tiba
+
+    Idempotency dijamin oleh unique constraint (booking_id, reminder_type).
+    Worker scheduler hanya memproses status=PENDING dan scheduled_for <= utcnow().
+    Setelah dikirim, status diubah ke SENT dan tidak akan diproses ulang.
+    """
+    __tablename__ = "booking_reminders"
+
+    conversation_id: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    booking_id: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    reminder_type: Mapped[ReminderType] = mapped_column(
+        Enum(ReminderType, name="reminder_type_enum"),
+        nullable=False,
+    )
+    scheduled_for: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    status: Mapped[ReminderStatus] = mapped_column(
+        Enum(ReminderStatus, name="reminder_status_enum"),
+        default=ReminderStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    # JSONB snapshot booking data saat reminder dibuat
+    # {"customer_name": "Budi", "address": "...", "capacity": "50",
+    #  "scheduled_date": "2026-09-15", "scheduled_time": "10:00"}
+    payload: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
