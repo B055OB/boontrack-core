@@ -44,7 +44,7 @@ from app.routes.whatsapp_gateway_routes import router as whatsapp_gateway_router
 from app.routes.whatsapp_control import router as whatsapp_control_router, register_whatsapp_control_routes
 from app.routes.provisioning import router as provisioning_router, register_provisioning_routes
 from app.routes.growth_routes import router as growth_router, register_growth_routes
-from app.routes.d2c_order_routes import d2c_router
+from app.routes.d2c_router import d2c_router
 from app.routes.meta_oauth import meta_exchange_router
 from app.routes.shipping_webhook_routes import register_shipping_routes
 from app.routes.seller_ads_routes import register_seller_ads_routes
@@ -130,7 +130,7 @@ uploads_dir = os.path.join(project_root, "assets", "uploads")
 os.makedirs(uploads_dir, exist_ok=True)
 app.mount("/assets/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
-# Mount Obfuscated Reader APK Download
+# Mount Obfuscated Reader APK Download (FastAPI)
 reader_dir = os.path.join(project_root, "static", "dl-reader-x9k2m")
 os.makedirs(reader_dir, exist_ok=True)
 app.mount("/dl-reader-x9k2m", StaticFiles(directory=reader_dir), name="reader_download")
@@ -183,6 +183,11 @@ async def start_application():
     # 3. Buat dan Jalankan Web Server aiohttp
     print("[BOOT] Starting Web Server...", flush=True)
     aiohttp_app = create_web_app()
+
+    # Mount Static Route APK di aiohttp
+    aiohttp_reader_dir = os.path.join(project_root, "static", "dl-reader-x9k2m")
+    os.makedirs(aiohttp_reader_dir, exist_ok=True)
+    aiohttp_app.router.add_static("/dl-reader-x9k2m/", path=aiohttp_reader_dir, name="aiohttp_reader_download")
     
     # Daftarkan Router Modul Gateway, Subscription, Event Worker, Webhook, Entitlements, WhatsApp Control, Provisioning, Growth, Shipping & Seller Ads Pro
     register_payment_routes(aiohttp_app)
