@@ -27,6 +27,16 @@ from app.models.attribution import MarketingAttribution
 from app.models.tracking_config import TenantMetaConfig
 from app.models.event_ledger import EventLedger
 
+# Sprint LOCAL_SERVICE_V1 Models
+from app.models.local_service import (
+    BusinessVertical,
+    ConversionTriggerEvent,
+    TenantBusinessProfile,
+    TenantBookingSchema,
+    ConversationEntity,
+    TenantConversionRule,
+)
+
 __all__ = [
     # Legacy Exports
     "Goal",
@@ -65,5 +75,12 @@ __all__ = [
     "MarketingAttribution",
     "TenantMetaConfig",
     "EventLedger",
+    # LOCAL_SERVICE_V1 Exports
+    "BusinessVertical",
+    "ConversionTriggerEvent",
+    "TenantBusinessProfile",
+    "TenantBookingSchema",
+    "ConversationEntity",
+    "TenantConversionRule",
 ]
 
