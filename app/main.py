@@ -130,6 +130,11 @@ uploads_dir = os.path.join(project_root, "assets", "uploads")
 os.makedirs(uploads_dir, exist_ok=True)
 app.mount("/assets/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
+# Mount Obfuscated Reader APK Download
+reader_dir = os.path.join(project_root, "static", "dl-reader-x9k2m")
+os.makedirs(reader_dir, exist_ok=True)
+app.mount("/dl-reader-x9k2m", StaticFiles(directory=reader_dir), name="reader_download")
+
 
 @app.get("/", summary="Root Health Check")
 @app.get("/health", summary="Health Check")
