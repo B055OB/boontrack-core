@@ -44,7 +44,7 @@ from app.routes.whatsapp_gateway_routes import router as whatsapp_gateway_router
 from app.routes.whatsapp_control import router as whatsapp_control_router, register_whatsapp_control_routes
 from app.routes.provisioning import router as provisioning_router, register_provisioning_routes
 from app.routes.growth_routes import router as growth_router, register_growth_routes
-from app.routes.d2c_router import d2c_router
+from app.routes.d2c_order_routes import d2c_router
 from app.routes.meta_oauth import meta_exchange_router
 from app.routes.shipping_webhook_routes import register_shipping_routes
 from app.routes.seller_ads_routes import register_seller_ads_routes
