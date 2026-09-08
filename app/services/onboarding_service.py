@@ -50,6 +50,48 @@ def slugify(text: str) -> str:
     return clean.strip("-")
 
 
+
+# Tiers yang mendapat akses fitur advanced (CAPI, Reader, Ads Tracking)
+_ADVANCED_TIERS = {"ADS_PERFORMANCE", "PRO_SCALE", "TEAM_SCALE"}
+
+
+def _build_feature_flags(tier: str, metadata_features: dict) -> dict:
+    """Build feature flags dict secara deterministik berdasarkan tier tenant.
+
+    Urutan prioritas:
+    1. Jika metadata_features sudah terisi (dari DB), gunakan nilai tersebut.
+    2. Jika kosong, fallback ke mapping tier bawaan.
+
+    Args:
+        tier             : Nilai tier tenant (mis. "ADS_PERFORMANCE", "STARTER")
+        metadata_features: Dict features dari row["metadata"]["features"] (bisa kosong {})
+
+    Returns:
+        Dict feature flags dengan keys:
+            has_capi, has_reader, ads_tracking, multi_cs
+    """
+    tier_upper = (tier or "STARTER").upper().strip()
+    is_advanced = tier_upper in _ADVANCED_TIERS
+
+    defaults = {
+        "has_capi": is_advanced,
+        "has_reader": is_advanced,
+        "ads_tracking": is_advanced,
+        "multi_cs": tier_upper == "TEAM_SCALE",
+    }
+
+    if not metadata_features:
+        return defaults
+
+    # Metadata override — nilai eksplisit dari DB menang atas default tier
+    return {
+        "has_capi": metadata_features.get("has_capi", defaults["has_capi"]),
+        "has_reader": metadata_features.get("has_reader", defaults["has_reader"]),
+        "ads_tracking": metadata_features.get("ads_tracking", defaults["ads_tracking"]),
+        "multi_cs": metadata_features.get("multi_cs", defaults["multi_cs"]),
+    }
+
+
 class OnboardingService:
     """Service handling atomic merchant onboarding & provisioning."""
 
@@ -278,11 +320,13 @@ class OnboardingService:
 
         if not tenant_dict:
             if cfg:
+                _cfg_tier = getattr(cfg, "tier", None) or getattr(getattr(cfg, "billing", None), "tier", None) or "STARTER"
                 tenant_dict = {
                     "id": str(uuid4()),
                     "name": cfg.identity.name,
                     "slug": clean_slug,
-                    "tier": "STARTER",
+                    "tier": _cfg_tier,
+                    "features": _build_feature_flags(_cfg_tier, {}),
                     "template": "COMMERCE_TEMPLATE",
                     "vertical": "DIGITAL_PRODUCTS",
                     "onboarding_mode": "SELF_SERVICE",
@@ -299,11 +343,15 @@ class OnboardingService:
                         res = supabase.table("tenants").select("*").eq("slug", clean_slug).execute()
                         if res and res.data:
                             row = res.data[0]
+                            _row_tier = row.get("tier") or "STARTER"
+                            _row_meta = row.get("metadata") or {}
+                            _row_features = _row_meta.get("features") or {}
                             tenant_dict = {
                                 "id": str(row.get("id") or clean_slug),
                                 "name": row.get("name") or clean_slug.replace("-", " ").title(),
                                 "slug": clean_slug,
-                                "tier": "STARTER",
+                                "tier": _row_tier,
+                                "features": _build_feature_flags(_row_tier, _row_features),
                                 "template": "COMMERCE_TEMPLATE",
                                 "vertical": row.get("category", "COMMERCE"),
                                 "is_active": True,
@@ -318,6 +366,7 @@ class OnboardingService:
                         "name": clean_slug.replace("-", " ").title(),
                         "slug": clean_slug,
                         "tier": "STARTER",
+                        "features": _build_feature_flags("STARTER", {}),
                         "template": "COMMERCE_TEMPLATE",
                         "vertical": "COMMERCE",
                         "onboarding_mode": "SELF_SERVICE",
@@ -359,7 +408,7 @@ class OnboardingService:
                 "ai_name": f"{tenant_dict['name']} Assistant",
             }
 
-        # Check Supabase tenants table to load custom system_prompt & AI Persona
+        # Check Supabase tenants table to load custom system_prompt, AI Persona, tier & features
         supabase = get_supabase()
         if supabase:
             try:
@@ -369,7 +418,15 @@ class OnboardingService:
                     meta = row.get("metadata") or {}
                     ai_k = meta.get("ai_knowledge") or {}
                     p_meta = meta.get("persona") or {}
-                    
+
+                    # --- Dynamic tier & feature flags ---
+                    live_tier = row.get("tier") or tenant_dict.get("tier") or "STARTER"
+                    live_features_raw = meta.get("features") or {}
+                    live_features = _build_feature_flags(live_tier, live_features_raw)
+                    tenant_dict["tier"] = live_tier
+                    tenant_dict["features"] = live_features
+                    # ------------------------------------
+
                     sys_prompt = ai_k.get("system_prompt") or p_meta.get("system_prompt")
                     ai_name = (
                         ai_k.get("ai_name")
@@ -386,7 +443,7 @@ class OnboardingService:
                         or tenant_dict.get("bot_strategy")
                         or "trust_builder"
                     )
-                    
+
                     if sys_prompt:
                         persona["system_prompt"] = sys_prompt
                     if ai_name:
@@ -414,9 +471,17 @@ class OnboardingService:
         persona["bot_strategy"] = final_strategy
         tenant_dict["bot_strategy"] = final_strategy
 
+        # Ensure tier & features always present in final tenant_dict
+        if "tier" not in tenant_dict:
+            tenant_dict["tier"] = "STARTER"
+        if "features" not in tenant_dict:
+            tenant_dict["features"] = _build_feature_flags(tenant_dict["tier"], {})
+
         return {
             "status": "success",
             "tenant": tenant_dict,
+            "tier": tenant_dict["tier"],
+            "features": tenant_dict["features"],
             "products": products,
             "payout": payout,
             "persona": persona,
