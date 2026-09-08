@@ -58,6 +58,7 @@ from app.routes.store_chat_routes import router as store_chat_router
 from app.routes.media_routes import media_router
 from app.routes.product_routes import product_router
 from app.routes.auth_routes import router as magic_link_auth_router
+from app.api.v1.reader_router import router as reader_router
 from fastapi.staticfiles import StaticFiles
 
 # Inisialisasi Supabase Client
@@ -122,6 +123,7 @@ app.include_router(store_chat_router)
 app.include_router(media_router)
 app.include_router(product_router)
 app.include_router(magic_link_auth_router)
+app.include_router(reader_router)
 
 # Mount Static Uploads
 uploads_dir = os.path.join(project_root, "assets", "uploads")
