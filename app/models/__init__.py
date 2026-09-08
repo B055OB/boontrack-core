@@ -33,11 +33,13 @@ from app.models.local_service import (
     ConversionTriggerEvent,
     ReminderType,
     ReminderStatus,
+    ReaderNotificationStatus,
     TenantBusinessProfile,
     TenantBookingSchema,
     ConversationEntity,
     TenantConversionRule,
     BookingReminder,
+    ReaderNotification,
 )
 
 __all__ = [
@@ -83,10 +85,12 @@ __all__ = [
     "ConversionTriggerEvent",
     "ReminderType",
     "ReminderStatus",
+    "ReaderNotificationStatus",
     "TenantBusinessProfile",
     "TenantBookingSchema",
     "ConversationEntity",
     "TenantConversionRule",
     "BookingReminder",
+    "ReaderNotification",
 ]
 

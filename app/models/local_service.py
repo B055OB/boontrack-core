@@ -7,6 +7,7 @@ Tables:
 - conversation_entities      : Cache entity hasil ekstraksi NLP per percakapan (slot filling state)
 - tenant_conversion_rules    : Aturan deterministik pemicuan CAPI berdasarkan state slot
 - booking_reminders          : Jadwal auto-reminder H-1 & H-2 jam untuk booking terkonfirmasi
+- reader_notifications       : Audit trail notifikasi masuk dari Android Reader (GoPay, DANA, dll)
 
 Semua tabel menggunakan TenantScopedBaseMixin (id UUID, tenant_id, created_at).
 """
@@ -16,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Enum, String
+from sqlalchemy import Boolean, DateTime, Enum, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -204,3 +205,61 @@ class BookingReminder(Base, TenantScopedBaseMixin):
         DateTime(timezone=True), nullable=True
     )
     error_message: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# Enum: ReaderNotificationStatus
+# ---------------------------------------------------------------------------
+
+class ReaderNotificationStatus(str, enum.Enum):
+    """Status lifecycle notifikasi masuk dari Android Reader."""
+    PENDING = "PENDING"       # Baru masuk, belum diproses
+    MATCHED = "MATCHED"       # Nominal cocok dengan booking aktif -> booking jadi PAID
+    UNMATCHED = "UNMATCHED"   # Tidak ada booking yang nominalnya cocok
+    DUPLICATE = "DUPLICATE"   # transaction_ref sudah pernah diproses (idempotency guard)
+
+
+# ---------------------------------------------------------------------------
+# Model: ReaderNotification
+# ---------------------------------------------------------------------------
+
+class ReaderNotification(Base, TenantScopedBaseMixin):
+    """Audit trail setiap notifikasi masuk dari Android Reader app.
+
+    Setiap notifikasi GoPay/DANA/BCA yang diterima endpoint /api/v1/reader/notification
+    disimpan di sini sebelum diproses. Record ini tidak pernah dihapus (immutable audit log).
+
+    Alur:
+        PENDING -> MATCHED   : nominal cocok, booking jadi PAID, CAPI Purchase dipicu
+        PENDING -> UNMATCHED : nominal tidak cocok dengan booking manapun
+        PENDING -> DUPLICATE : transaction_ref sudah ada -> tolak, skip CAPI
+
+    Idempotency: unique constraint pada transaction_ref.
+    """
+    __tablename__ = "reader_notifications"
+
+    # Sumber notifikasi: "GOPAY_MERCHANT" | "DANA_BISNIS" | "BCA_MOBILE" | dll.
+    app_source: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # Teks mentah notifikasi dari Android
+    raw_text: Mapped[str] = mapped_column(String(1024), nullable=False)
+    # Nominal yang berhasil diparsing (0 jika gagal)
+    parsed_amount: Mapped[Optional[float]] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
+    # ID transaksi / referensi unik dari notifikasi (digunakan sebagai idempotency key)
+    transaction_ref: Mapped[str] = mapped_column(
+        String(256), nullable=False, unique=True, index=True
+    )
+    status: Mapped[ReaderNotificationStatus] = mapped_column(
+        Enum(ReaderNotificationStatus, name="reader_notification_status_enum"),
+        default=ReaderNotificationStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    # booking_id yang berhasil di-match (nullable - hanya diisi saat MATCHED)
+    matched_booking_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)

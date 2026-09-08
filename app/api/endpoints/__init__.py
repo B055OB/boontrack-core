@@ -8,6 +8,7 @@ from app.api.endpoints.gym import (
     handle_gym_sync_events,
     handle_gym_heartbeat,
 )
+from app.api.v1.reader import handle_reader_notification
 
 def register_api_routes(app: web.Application):
     """Mendaftarkan seluruh endpoint REST API & Webchat base ke aplikasi aiohttp."""
@@ -33,3 +34,5 @@ def register_api_routes(app: web.Application):
     app.router.add_post('/api/v1/gym/access/sync-events', handle_gym_sync_events)
     app.router.add_post('/api/v1/gym/controllers/{controller_id}/heartbeat', handle_gym_heartbeat)
 
+    # Reader Hybrid Callback (LOCAL_SERVICE_V1)
+    app.router.add_post('/api/v1/reader/notification', handle_reader_notification)
