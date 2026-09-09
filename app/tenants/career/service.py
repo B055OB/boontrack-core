@@ -24,6 +24,7 @@ from app.tenants.career.messages import (
     RECEIPT_INVALID_MSG,
     REVIEW_INTRO_MSG,
     PARAPHRASE_INTRO_MSG,
+    CAREER_ASK_INTRO_MSG,
     DOC_READING_TEMPLATE,
     DOC_UNREADABLE_MSG,
     DOC_ERROR_MSG,
@@ -74,7 +75,6 @@ from app.utils.qris_generator import (
 
 logger = logging.getLogger(__name__)
 
-# Safe import OCR service agar server tetap aman berjalan
 try:
     from app.services.receipt_ocr_service import parse_receipt_image
 except Exception as e:
@@ -104,7 +104,6 @@ async def cancel_user_unpaid_invoices(user_id: str, tenant_id: str = "boontrack-
     now_iso = datetime.now(timezone.utc).isoformat()
     cancelled_intents = []
 
-    # 1. Update in-memory PAYMENT_INTENTS
     for inv_id, intent in list(PAYMENT_INTENTS.items()):
         if str(intent.get("user_id")).replace("+", "") == user_str and intent.get("status") in ["PENDING", "WAITING_PAYMENT"]:
             intent["status"] = "CANCELLED"
@@ -112,7 +111,6 @@ async def cancel_user_unpaid_invoices(user_id: str, tenant_id: str = "boontrack-
             cancelled_intents.append(inv_id)
             logger.info(f"[RESET/CANCEL] Cancelled payment intent: {inv_id} for user {user_str}")
 
-    # 2. Update Supabase document_jobs & orders
     cancelled_jobs = 0
     cancelled_orders = 0
     supabase = get_supabase()
@@ -137,7 +135,6 @@ async def cancel_user_unpaid_invoices(user_id: str, tenant_id: str = "boontrack-
         except Exception as e:
             logger.debug(f"[RESET/CANCEL] Error updating orders: {e}")
 
-    # 3. Reset session state user di GLOBAL_USER_STATES
     user_session = GLOBAL_USER_STATES.get(user_str)
     if user_session:
         user_session["mode"] = "menu"
@@ -196,7 +193,6 @@ async def check_and_expire_session(sender_wa_id: str, ttl_minutes: int = 30) -> 
         else:
             is_expired = (now - created_dt).total_seconds() > (ttl_minutes * 60)
     else:
-        # Fallback cek expires_at di PAYMENT_INTENTS
         if active_inv and active_inv in PAYMENT_INTENTS:
             expires_at = PAYMENT_INTENTS[active_inv].get("expires_at")
             if expires_at and now > expires_at:
@@ -233,7 +229,6 @@ class CareerService:
             return True
         user_session = GLOBAL_USER_STATES.get(sender_wa_id, {})
 
-        # 1. Cek kuota bundle aktif yang belum expired
         bundle_quota = user_session.get("bundle_quota", 0)
         bundle_expiry = user_session.get("bundle_expires_at")
         if bundle_quota > 0:
@@ -247,7 +242,6 @@ class CareerService:
             else:
                 return True
 
-        # 2. Cek status aktif untuk draft aktif saat ini
         if user_session.get("tier") in ["premium_unlocked", "bundle_active", "single_draft_paid"] or user_session.get("is_premium_paid"):
             return True
 
@@ -309,7 +303,6 @@ class CareerService:
         await send_whatsapp_text(sender_wa_id, diagnosis_msg, tenant_id=TENANT_ID)
         await track_event(sender_wa_id, "review_completed", meta={"score": overall_score, "file": filename})
 
-        # 🎯 2. Funnel Metric: career_cv_review_submitted
         user_session = GLOBAL_USER_STATES.get(sender_wa_id, {})
         await analytics_service.log_funnel_event(
             event_name="career_cv_review_submitted",
@@ -324,7 +317,6 @@ class CareerService:
             }
         )
 
-        # Jika user memiliki kuota bundle aktif, tawarkan menu pro. Jika pay-per-job biasa, WAJIB tawarkan upsell rewrite!
         if self.is_user_premium(sender_wa_id) and user_session.get("tier") == "bundle_active":
             await asyncio.sleep(2)
             await self.send_menu_buttons(sender_wa_id)
@@ -343,9 +335,7 @@ class CareerService:
 
     async def handle_image(self, sender_wa_id: str, display_name: str, media_id: Optional[str]):
         """Handler untuk pesan gambar (OCR bukti pembayaran transfer QRIS)"""
-        # 0. TTL / Expiry Check (> 30 menit)
         await self.check_and_expire_session(sender_wa_id, ttl_minutes=30)
-
         user_session = self._init_user_session(sender_wa_id)
 
         safe_log_to_supabase_messages(
@@ -394,12 +384,10 @@ class CareerService:
                         target_intent["paid_at"] = datetime.now()
                         target_intent["transaction_reference"] = f"OCR_VERIFIED: Rp{amount:,}"
 
-                    # Unlock Status Premium & Decision Engine
                     user_session["is_premium_paid"] = True
                     user_session["tier"] = "premium_unlocked"
                     user_session["mode"] = "menu"
 
-                    # 🎯 3. Funnel Metric: career_premium_hr_converted
                     await analytics_service.log_funnel_event(
                         event_name="career_premium_hr_converted",
                         user_id=sender_wa_id,
@@ -440,9 +428,7 @@ class CareerService:
 
     async def handle_document(self, sender_wa_id: str, display_name: str, media_id: Optional[str], filename: str):
         """Handler untuk dokumen CV atau naskah (PDF / DOCX)"""
-        # 0. TTL / Expiry Check (> 30 menit)
         await self.check_and_expire_session(sender_wa_id, ttl_minutes=30)
-
         user_session = self._init_user_session(sender_wa_id)
         current_mode = user_session.get("mode", "menu")
 
@@ -476,12 +462,10 @@ class CareerService:
                 )
                 return
 
-            # Jika user dalam mode Polish & Rephrase
             if current_mode == "paraphrase":
                 metrics = calculate_document_metrics(extracted_text)
                 pricing = calculate_pricing(TASK_POLISH_REPHRASE, metrics["word_count"])
                 
-                # 1. Buat dynamic order QRIS dengan 3-digit kode unik
                 order = payment_service.create_dynamic_order(
                     user_id=sender_wa_id,
                     base_amount=pricing["final_price"],
@@ -491,11 +475,9 @@ class CareerService:
                 total_amount = order["total_amount"]
                 unique_code = order["unique_code"]
 
-                # Generator dynamic QRIS QuickChart direct image URL
                 qris_string = get_dynamic_qris_string(total_amount)
                 qr_url = get_quickchart_qr_url(qris_string)
 
-                # 2. Registrasi Job ke Document Engine dengan Status WAITING_PAYMENT & exact price_amount
                 intake_res = await intake_document_job(
                     tenant_id=TENANT_ID,
                     task_type=TASK_POLISH_REPHRASE,
@@ -513,7 +495,6 @@ class CareerService:
                 user_session["last_uploaded_filename"] = filename
                 user_session["job_id"] = intake_res.get("job_id")
 
-                # Pesan 1: Teks Rincian Analisis Dokumen & Biaya
                 summary_msg = (
                     f"📄 *DOKUMEN BERHASIL DIANALISIS*\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -524,28 +505,20 @@ class CareerService:
                     f"💰 *Investasi:* Rp{total_amount:,}\n\n"
                     f"_{COMPLIANCE_DISCLAIMER}_"
                 )
-                print(f"[CAREER INTAKE] Pesan 1: Sending summary text to {sender_wa_id}...", flush=True)
                 await send_whatsapp_text(sender_wa_id, summary_msg, tenant_id=TENANT_ID)
                 await asyncio.sleep(1)
 
-                # Pesan 2: Gambar Dynamic QRIS via Direct Image URL Link (QuickChart)
                 qris_caption = f"Silakan scan QRIS di atas untuk menyelesaikan pembayaran Rp{total_amount:,}.\n\nNaskah akan diproses otomatis setelah transfer terverifikasi."
-                print(f"[CAREER INTAKE] Pesan 2: Sending dynamic QRIS image link ({qr_url}, nominal=Rp{total_amount:,}) to {sender_wa_id}...", flush=True)
-                img_res = await send_whatsapp_image_link(
+                await send_whatsapp_image_link(
                     to=sender_wa_id,
                     image_url=qr_url,
                     caption=qris_caption,
                     tenant="boontrack-career"
                 )
-                print(f"[CAREER INTAKE] Dynamic QRIS image delivery result: {img_res}", flush=True)
                 return
 
-            # Default: Mode Review CV
             user_session["parsed_cv_text"] = extracted_text
 
-            # Strict Pay-Per-Job State Machine:
-            # Upload CV baru mereset status pembayaran draft sebelumnya
-            # KECUALI jika user masih memiliki kuota bundle aktif yang belum expired
             bundle_quota = user_session.get("bundle_quota", 0)
             bundle_expiry = user_session.get("bundle_expires_at")
             has_active_bundle = False
@@ -588,15 +561,12 @@ class CareerService:
 
     async def handle_text_or_button(self, sender_wa_id: str, display_name: str, user_text: str, button_id: str):
         """Handler untuk input teks, tombol interaktif, dan Decision Engine workflows."""
-        # 0. TTL / Expiry Check (> 30 menit)
         await self.check_and_expire_session(sender_wa_id, ttl_minutes=30)
-
         user_session = self._init_user_session(sender_wa_id)
         self._update_session_context(sender_wa_id)
         user_text_clean = (user_text or "").lower().strip()
         current_mode = user_session.get("mode", "menu")
 
-        # 1. Log Inbound
         inbound_text = user_text or (f"[Klik Tombol: {button_id}]" if button_id else "[Pesan Masuk]")
         safe_log_to_supabase_messages(
             sender="user",
@@ -610,7 +580,6 @@ class CareerService:
             metadata={"button_id": button_id, "mode": current_mode, "msg_type": "interactive" if button_id else "text", "context_json": user_session.get("context_json", {})}
         )
 
-        # 2. Admin Fallback Commands (/verify & /retry_doc)
         if user_text_clean.startswith("/verify") or user_text_clean.startswith("verify "):
             from app.payments.matcher import handle_admin_verify_command
             reply_msg = await handle_admin_verify_command(user_text, tenant_id=TENANT_ID)
@@ -623,7 +592,6 @@ class CareerService:
             await send_whatsapp_text(sender_wa_id, reply_msg, tenant_id=TENANT_ID)
             return
 
-        # 3. Reset / Navigation Keywords (Berlaku di SEMUA state termasuk WAITING_PAYMENT)
         NAV_RESET_KEYWORDS = {
             "menu", "batal", "reset", "ulang", "start", "cancel", "kembali",
             "stop", "mulai", "halo", "hi", "bantuan", "home", "/menu", "/start", "/reset", "/batal", "/cancel"
@@ -638,7 +606,6 @@ class CareerService:
             await self.send_menu_buttons(sender_wa_id)
             return
 
-        # 4. Info Unggah Bukti Struk (Hanya sebagai opsi bantuan manual jika mutasi belum terbaca)
         if button_id == "btn_upload_receipt_info" or user_text_clean in [
             "struk", "bukti", "bukti transfer", "kirim struk", "bukti bayar", "upload struk", "bantuan bayar", "konfirmasi manual"
         ]:
@@ -649,7 +616,6 @@ class CareerService:
             )
             return
 
-        # 5. Guard: Jika user masih di awaiting_rewrite_payment dan mengirim pesan teks biasa
         if current_mode == "awaiting_rewrite_payment":
             active_inv = user_session.get("active_invoice", "")
             active_amt = 0
@@ -669,7 +635,6 @@ class CareerService:
             await send_whatsapp_text(sender_wa_id, remind_msg, tenant_id=TENANT_ID)
             return
 
-        # 4. Kluster Menu Premium: 📄 LAYANAN DOKUMEN
         if button_id == "btn_cluster_docs" or (current_mode == "menu" and user_text_clean in ["layanan dokumen", "dokumen", "menu dokumen", "1"]):
             await send_whatsapp_buttons(
                 to_phone=sender_wa_id,
@@ -681,7 +646,6 @@ class CareerService:
             )
             return
 
-        # 5. Kluster Menu Premium: 🎯 CAREER COMPANION
         if button_id == "btn_cluster_companion" or (current_mode == "menu" and user_text_clean in ["career companion", "companion", "karir", "2"]):
             await send_whatsapp_buttons(
                 to_phone=sender_wa_id,
@@ -693,7 +657,14 @@ class CareerService:
             )
             return
 
-        # 6. Mode: ✍️ DOCUMENT POLISH & REPHRASE
+        # Kluster Menu: 💬 TANYA DUNIA KERJA
+        if button_id == "btn_career_ask" or (current_mode == "menu" and user_text_clean in [
+            "tanya dunia kerja", "konsultasi", "konsultasi karir", "tanya karir", "tanya kerja", "curhat kerja", "3"
+        ]):
+            user_session["mode"] = "career_ask"
+            await send_whatsapp_text(sender_wa_id, CAREER_ASK_INTRO_MSG, tenant_id=TENANT_ID)
+            return
+
         if button_id == "btn_paraphrase" or user_text_clean in ["parafrase", "polish", "rephrase", "polish & rephrase", "✍️ polish & rephrase", "paraphrase"]:
             user_session["mode"] = "paraphrase"
             await send_whatsapp_text(sender_wa_id, PARAPHRASE_INTRO_MSG, tenant_id=TENANT_ID)
@@ -717,7 +688,6 @@ class CareerService:
                 meta={"product": "polish_rephrase"}
             )
 
-            # Registrasi job teks ke Document Engine dengan Status WAITING_PAYMENT & exact price_amount
             txt_bytes = user_text.encode("utf-8")
             intake_res = await intake_document_job(
                 tenant_id=TENANT_ID,
@@ -750,28 +720,23 @@ class CareerService:
                 f"💰 *Total Investasi:* Rp{order['total_amount']:,}\n\n"
                 f"_{COMPLIANCE_DISCLAIMER}_"
             )
-            print(f"[CAREER PARAPHRASE] Pesan 1: Sending summary text to {sender_wa_id}...", flush=True)
             await send_whatsapp_text(sender_wa_id, summary_msg, tenant_id=TENANT_ID)
             await asyncio.sleep(1)
 
-            # Generator dynamic QRIS QuickChart direct image URL
             qris_string = get_dynamic_qris_string(order["total_amount"])
             qr_url = get_quickchart_qr_url(qris_string)
             qris_caption = (
                 f"Silakan scan QRIS di atas untuk menyelesaikan pembayaran Rp{order['total_amount']:,}. "
                 f"Sistem akan memproses naskah otomatis setelah transfer terverifikasi."
             )
-            print(f"[CAREER PARAPHRASE] Pesan 2: Sending dynamic QRIS image link ({qr_url}, nominal=Rp{order['total_amount']:,}) to {sender_wa_id}...", flush=True)
-            img_res = await send_whatsapp_image_link(
+            await send_whatsapp_image_link(
                 to=sender_wa_id,
                 image_url=qr_url,
                 caption=qris_caption,
                 tenant="boontrack-career"
             )
-            print(f"[CAREER PARAPHRASE] Dynamic QRIS image delivery result: {img_res}", flush=True)
             return
 
-        # 7. Trigger Rewrite & Package Selection (Single CV Rp10.000 vs Pro Bundle Rp25.000)
         is_bundle_btn = button_id in ["btn_bundle_pro", "btn_pro_bundle", "btn_package_pro"]
         is_rewrite_btn = button_id in ["btn_rewrite_single", "btn_rewrite", "btn_cv_rewrite", "btn_single_rewrite", "btn_package_rewrite"]
         
@@ -781,7 +746,6 @@ class CareerService:
         if is_bundle_btn or is_rewrite_btn or is_bundle_text or is_rewrite_text:
             is_bundle = is_bundle_btn or is_bundle_text or ("bundle" in user_text_clean) or ("25" in user_text_clean)
 
-            # Cek apakah user memiliki kuota bundle aktif yang belum expired
             bundle_quota = user_session.get("bundle_quota", 0)
             bundle_expiry = user_session.get("bundle_expires_at")
             has_valid_bundle = False
@@ -796,7 +760,6 @@ class CareerService:
                 else:
                     has_valid_bundle = True
 
-            # Jika user meminta single rewrite dan masih memiliki kuota bundle aktif
             if has_valid_bundle and not is_bundle:
                 user_session["bundle_quota"] -= 1
                 remaining = user_session["bundle_quota"]
@@ -821,7 +784,6 @@ class CareerService:
 
             await track_event(sender_wa_id, f"rewrite_{prod_id}_clicked")
 
-            # 1. Buat dynamic order QRIS dengan 3-digit kode unik
             order = payment_service.create_dynamic_order(
                 user_id=sender_wa_id,
                 base_amount=base_amount,
@@ -833,11 +795,9 @@ class CareerService:
             unique_code = order["unique_code"]
             invoice_id = order["order_id"]
 
-            # 2. Generator dynamic QRIS QuickChart direct image URL
             qris_string = get_dynamic_qris_string(exact_amount)
             qr_url = get_quickchart_qr_url(qris_string)
 
-            # 3. Registrasi Job ke Document Engine dengan Status WAITING_PAYMENT & exact price_amount
             cv_text = user_session.get("parsed_cv_text") or user_session.get("parsed_doc_text") or "Draft CV Profile"
             cv_bytes = cv_text.encode("utf-8")
             await intake_document_job(
@@ -854,7 +814,6 @@ class CareerService:
             user_session["active_invoice"] = invoice_id
             user_session["awaiting_payment_at"] = datetime.now().isoformat()
 
-            # Pesan 1 (Teks): Rincian paket, total nominal transfer Rp{exact_amount:,}, dan batas waktu verifikasi
             package_detail_msg = (
                 f"📄 *INVOICE PAKET LAYANAN*\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -866,26 +825,21 @@ class CareerService:
                 f"⚠️ *PENTING:* Mohon transfer *tepat Rp{exact_amount:,}* (termasuk 3 digit kode unik) agar sistem memverifikasi mutasi dan memproses pesanan Anda secara otomatis.\n\n"
                 f"_{COMPLIANCE_DISCLAIMER}_"
             )
-            print(f"[CAREER REWRITE] Pesan 1: Sending package detail text to {sender_wa_id}...", flush=True)
             await send_whatsapp_text(sender_wa_id, package_detail_msg, tenant_id=TENANT_ID)
             await asyncio.sleep(1)
 
-            # Pesan 2 (Image): Gambar QRIS Dinamis via send_whatsapp_image_link dengan caption nominal eksak
             qris_caption = (
                 f"Silakan scan QRIS di atas untuk menyelesaikan pembayaran Rp{exact_amount:,}. "
                 f"Sistem akan memproses naskah otomatis setelah transfer terverifikasi."
             )
-            print(f"[CAREER REWRITE] Pesan 2: Sending dynamic QRIS image link ({qr_url}, nominal=Rp{exact_amount:,}) to {sender_wa_id}...", flush=True)
-            img_res = await send_whatsapp_image_link(
+            await send_whatsapp_image_link(
                 to=sender_wa_id,
                 image_url=qr_url,
                 caption=qris_caption,
                 tenant="boontrack-career"
             )
-            print(f"[CAREER REWRITE] Dynamic QRIS image delivery result: {img_res}", flush=True)
             return
 
-        # 5. DECISION ENGINE: 🎯 JOB MATCHER AI
         if button_id == "btn_job_match" or (current_mode == "menu" and user_text_clean in ["1", "job match", "job matcher", "loker", "cocokkan loker", "target loker"]):
             user_session["mode"] = "job_match"
             await send_whatsapp_text(sender_wa_id, JOB_MATCH_INVITATION_MSG, tenant_id=TENANT_ID)
@@ -964,7 +918,7 @@ class CareerService:
             user_session["interview_history"] = []
 
             q1_msg = (
-                f"🎙️ *[SIMULASI INTERVIEW HR SENIOR - RONDA 1/3]*\n\n"
+                f"🎙️ *[SIMULASI INTERVIEW HR SENIOR - RONDE 1/3]*\n\n"
                 f"Selamat datang di ruang simulasi wawancara kerja! AI HR akan memberikan 3 pertanyaan terarah untuk menguji kesiapan Anda.\n\n"
                 f"💼 *Target Posisi:* *{role}*\n\n"
                 f"📌 *Pertanyaan #1 (Behavioral & Elevator Pitch):*\n"
@@ -996,7 +950,7 @@ class CareerService:
                     f"📊 *EVALUASI JAWABAN #1:*\n"
                     f"{eval_1}\n\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🎙️ *[SIMULASI INTERVIEW HR SENIOR - RONDA 2/3]*\n\n"
+                    f"🎙️ *[SIMULASI INTERVIEW HR SENIOR - RONDE 2/3]*\n\n"
                     f"📌 *Pertanyaan #2 (Situational & Problem Solving):*\n"
                     f"\"Ceritakan situasi nyata saat Anda menghadapi deadline sangat ketat atau kendala besar dalam proyek. Bagaimana langkah konkret Anda mengatasinya?\"\n\n"
                     f"👉 *Ketik jawaban Anda langsung di chat ini.*"
@@ -1021,7 +975,7 @@ class CareerService:
                     f"📊 *EVALUASI JAWABAN #2:*\n"
                     f"{eval_2}\n\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🎙️ *[SIMULASI INTERVIEW HR SENIOR - RONDA 3/3]*\n\n"
+                    f"🎙️ *[SIMULASI INTERVIEW HR SENIOR - RONDE 3/3]*\n\n"
                     f"📌 *Pertanyaan #3 (Strategic Vision & 90-Day Plan):*\n"
                     f"\"Jika Anda diterima di posisi *{role}*, apa target atau inisiatif utama yang ingin Anda eksekusi dalam 90 hari pertama untuk memberikan dampak positif bagi perusahaan?\"\n\n"
                     f"👉 *Ketik jawaban Anda langsung di chat ini.*"
@@ -1079,7 +1033,6 @@ class CareerService:
                 )
                 return
 
-        # 7. DECISION ENGINE: 💰 SALARY & NEGOTIATION COACH
         if button_id == "btn_salary_coach" or (current_mode == "menu" and user_text_clean in ["3", "gaji", "nego gaji", "salary", "salary coach", "negosiasi gaji"]):
             user_session["mode"] = "salary_coach"
             await send_whatsapp_text(sender_wa_id, SALARY_COACH_INVITATION_MSG, tenant_id=TENANT_ID)
@@ -1139,13 +1092,11 @@ class CareerService:
             )
             return
 
-        # 8. Trigger Optimasi / Bedah CV Lagi
         if button_id in ["btn_rewrite_again", "btn_review", "btn_review_cv"] or (current_mode == "menu" and user_text_clean in ["4", "review", "bedah cv", "review cv", "🔍 review cv", "revisi cv", "bedah cv ulang"]):
             user_session["mode"] = "review"
             await send_whatsapp_text(sender_wa_id, REVIEW_INTRO_MSG, tenant_id=TENANT_ID)
             return
 
-        # 9. Builder Menu Button
         if button_id in ["btn_builder", "btn_create_cv"] or (current_mode == "menu" and user_text_clean in ["bikin cv", "buat cv", "📝 bikin cv dasar", "📝 buat cv baru", "create cv"]):
             user_session["mode"] = "builder"
             user_session["step"] = 0
@@ -1160,14 +1111,12 @@ class CareerService:
             )
             return
 
-        # 10. CV Builder Language Selection
         if button_id.startswith("lang_"):
             lang_choice = "1" if button_id == "lang_en_id" else ("2" if button_id == "lang_id" else "3")
             result = await process_unified_cv_step(sender_wa_id, lang_choice, platform="whatsapp")
             await send_whatsapp_text(sender_wa_id, result["reply_text"], tenant_id=TENANT_ID)
             return
 
-        # 11. CV Builder Wizard Steps
         if current_mode == "builder" or user_session.get("step", 0) > 0:
             result = await process_unified_cv_step(sender_wa_id, user_text, platform="whatsapp")
             messages_to_send = result.get("messages", [])
@@ -1196,7 +1145,6 @@ class CareerService:
                 user_session["step"] = 0
                 user_session.setdefault("data", {})["has_completed_cv"] = True
 
-                # 🎯 1. Funnel Metric: career_cv_build_completed
                 await analytics_service.log_funnel_event(
                     event_name="career_cv_build_completed",
                     user_id=sender_wa_id,
@@ -1210,7 +1158,6 @@ class CareerService:
                 )
             return
 
-        # 12. Review via Manual Text Input
         if current_mode == "review":
             if len(user_text.split()) < 6:
                 await send_whatsapp_text(
@@ -1238,16 +1185,31 @@ class CareerService:
                 await send_whatsapp_text(sender_wa_id, "⚠️ Gagal menganalisis teks CV.", tenant_id=TENANT_ID)
             return
 
-        # 13. Fallback AI Consultation
-        ai_reply = await ai_gateway.generate(
-            user_message=user_text,
-            context={"user_id": sender_wa_id, "feature": "career_consultation"}
-        )
-        if ai_reply:
-            await send_whatsapp_text(sender_wa_id, ai_reply, tenant_id=TENANT_ID)
-        else:
-            await self.send_menu_buttons(sender_wa_id)
+        # 13. State: 💬 CAREER CONSULTATION (Supportive Senior Peer)
+        if current_mode == "career_ask" or user_text:
+            prompt_career_peer = (
+                "Role: Senior Career Mentor & Supportive Peer (BoonTrack Career).\n"
+                "Karakter: Hangat, solutif, realistis, dan tidak menggurui atau kaku.\n"
+                "Instruksi:\n"
+                "- Jawab pertanyaan atau konsultasi pengguna secara berbobot (maksimal 2-3 paragraf ringkas).\n"
+                "- Berikan saran atau sudut pandang profesional yang praktis.\n"
+                "- Di baris terakhir, ingatkan dengan santai bahwa pengguna bisa mengetik 'menu' kapan saja untuk kembali.\n\n"
+                f"Pesan Pengguna: '{user_text}'"
+            )
+
+            ai_reply = await ai_gateway.generate(
+                prompt=prompt_career_peer,
+                user_message=user_text,
+                context={"user_id": sender_wa_id, "feature": "career_consultation"}
+            )
+
+            if ai_reply:
+                await send_whatsapp_text(sender_wa_id, ai_reply, tenant_id=TENANT_ID)
+            else:
+                await self.send_menu_buttons(sender_wa_id)
+            return
+
+        await self.send_menu_buttons(sender_wa_id)
 
 
 career_service = CareerService()
-

@@ -14,16 +14,16 @@ WELCOME_CAREER_TEMPLATE = (
 
 # 3 Interactive Buttons for Pre-Payment / Entry Menu
 CAREER_ENTRY_BUTTONS = [
-    {"id": "btn_create_cv", "title": "💼 Buat CV ATS"},
-    {"id": "btn_review_cv", "title": "🔍 Bedah CV Saya"},
-    {"id": "btn_paraphrase", "title": "✍️ Parafrase Naskah"}
+    {"id": "btn_cluster_docs", "title": "📄 Layanan Dokumen"},
+    {"id": "btn_cluster_companion", "title": "🎯 Career Companion"},
+    {"id": "btn_career_ask", "title": "💬 Tanya Dunia Kerja"}
 ]
 
 # Legacy alias for backward compatibility
 CAREER_MENU_BUTTONS = CAREER_ENTRY_BUTTONS
 
 
-# --- 2. POST-PAYMENT / PREMIUM DASHBOARD (2 CLUSTER BUTTONS) ---
+# --- 2. POST-PAYMENT / PREMIUM DASHBOARD (3 CLUSTER BUTTONS) ---
 WELCOME_PREMIUM_CAREER_TEMPLATE = (
     "Halo{greeting}! 🎖️ *AKSES BOONTRACK PRO DASHBOARD AKTIF*\n\n"
     "Silakan pilih kluster layanan terpadu Anda:\n\n"
@@ -31,13 +31,16 @@ WELCOME_PREMIUM_CAREER_TEMPLATE = (
     "Buat CV Baru, Bedah CV Ulang, dan Document Polish & Rephrase.\n\n"
     "🎯 *2. Career Companion* (`career companion`)\n"
     "Job Matcher AI, Simulasi Interview HR STAR, dan Negosiasi Gaji.\n\n"
+    "💬 *3. Tanya Dunia Kerja* (`tanya dunia kerja`)\n"
+    "Konsultasi karier langsung bersama AI Senior Peer.\n\n"
     f"_{COMPLIANCE_DISCLAIMER}_"
 )
 
-# 2 Cluster Buttons for Post-Payment
+# 3 Cluster Buttons for Post-Payment
 PREMIUM_CLUSTER_BUTTONS = [
     {"id": "btn_cluster_docs", "title": "📄 Layanan Dokumen"},
-    {"id": "btn_cluster_companion", "title": "🎯 Career Companion"}
+    {"id": "btn_cluster_companion", "title": "🎯 Career Companion"},
+    {"id": "btn_career_ask", "title": "💬 Tanya Dunia Kerja"}
 ]
 
 PREMIUM_CAREER_BUTTONS = PREMIUM_CLUSTER_BUTTONS
@@ -129,6 +132,14 @@ PARAPHRASE_INTRO_MSG = (
     "Silakan kirim dokumen (*format PDF/DOCX*) atau tempel naskah yang ingin Anda perbaiki struktur dan keterbacaannya.\n\n"
     "Sistem akan menghitung jumlah kata secara otomatis dan menampilkan estimasi tarif resmi.\n\n"
     f"_{COMPLIANCE_DISCLAIMER}_"
+)
+
+CAREER_ASK_INTRO_MSG = (
+    "💬 *RUANG KONSULTASI DUNIA KERJA*\n"
+    "━━━━━━━━━━━━━━━━━━━━\n"
+    "Ada hal yang ingin Anda diskusikan seputar karier, dinamika kantor, atau tips melamar kerja?\n\n"
+    "Silakan tuliskan pertanyaan Anda langsung di bawah ini.\n\n"
+    "_Ketik 'menu' kapan saja jika ingin kembali ke menu utama._"
 )
 
 DOC_READING_TEMPLATE = "📥 Menerima dokumen *{filename}*. Sedang menganalisis struktur & menghitung metrik dokumen... ⏳"

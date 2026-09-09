@@ -47,7 +47,6 @@ def get_supabase() -> Optional[Client]:
     return _supabase_client
 
 
-
 def normalize_phone_number(raw_phone: Optional[str]) -> str:
     """Menyeragamkan format nomor telepon WhatsApp ke standar internasional E.164 tanpa tanda plus (e.g. 628123456789)."""
     if not raw_phone:
@@ -167,7 +166,6 @@ def reset_whatsapp_user_session(phone: str) -> None:
                 _SESSION_CACHE.pop(k, None)
     except Exception:
         pass
-
 
 
 def sanitize_whatsapp_message_text(text: Any) -> str:
@@ -387,7 +385,6 @@ async def send_whatsapp_tenant_catalog(phone: str, tenant_slug: str = "onlineboo
         f"_Ketik #reset kapan saja untuk kembali ke menu demo toko._"
     )
 
-    # Kirim sebagai teks murni agar seluruh produk (lebih dari 3) tampil utuh tanpa error Meta API
     return await send_whatsapp_text(clean_phone, catalog_text, tenant_id=target_tenant, phone_number_id=phone_number_id, access_token=access_token)
 
 
@@ -495,7 +492,6 @@ async def generate_cart_checkout_response(
 
     qr_string = str(invoice.get("qr_string") or "").strip()
     qr_data = qr_string or invoice_url
-    # Render QR code image natively directly from official Xendit qr_string or invoice_url
     qr_bytes = generate_qris_image_bytes(qr_data) if qr_data else b""
     qr_code_url = invoice.get("qr_code_url") or f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=16&format=png&data={urllib.parse.quote(qr_data)}"
     invoice["qr_code_url"] = qr_code_url
@@ -561,7 +557,6 @@ async def generate_fast_track_checkout_response(
         product_name = "Modul Praktis CPM 24 Jam"
         amount = 1000
 
-    # Khusus tenant onlineboost / produk CPM: selalu pasang harga resmi Rp1.000
     if "cpm" in product_name.lower() or (product_key and "cpm" in str(product_key).lower()) or (clean_slug == "onlineboost" and not product_key):
         product_name = "Modul Praktis CPM 24 Jam"
         amount = 1000
@@ -605,7 +600,6 @@ async def generate_fast_track_checkout_response(
     qr_string = str(invoice.get("qr_string") or "").strip()
     qr_data = qr_string or invoice_url
 
-    # Render QR code image natively directly from official Xendit qr_string or invoice_url
     qr_bytes = generate_qris_image_bytes(qr_data) if qr_data else b""
     qr_code_url = invoice.get("qr_code_url") or f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=16&format=png&data={urllib.parse.quote(qr_data)}"
     invoice["qr_code_url"] = qr_code_url
@@ -643,6 +637,23 @@ def resolve_dynamic_tenant_for_whatsapp(
     career_phone_id = os.getenv("CAREER_PHONE_NUMBER_ID", "1340866379104241")
     is_career_phone = (clean_phone_id == "1340866379104241" or clean_phone_id == career_phone_id)
 
+    # =========================================================================
+    # JALUR KHUSUS NOMOR CAREER ASSISTANT (TOTAL ISOLATION)
+    # =========================================================================
+    if is_career_phone:
+        # Jika user di nomor Career ketik #reset, bersihkan session tapi TETAP di boontrack-career
+        if text_lower in ("#reset", "reset"):
+            if clean_phone:
+                reset_whatsapp_user_session(clean_phone)
+            logger.info(f"[DYNAMIC TENANT WA] Career sender {clean_phone} reset session -> kept in boontrack-career")
+            return "boontrack-career", False
+
+        # Nomor Career TIDAK BOLEH bocor ke demo portal toko ritel/B2B sama sekali!
+        return "boontrack-career", False
+
+    # =========================================================================
+    # JALUR NOMOR OM BUDI / DEMO NUMBER (SANDBOX)
+    # =========================================================================
     option_map = {
         "1": "ombudi",
         "ombudi": "ombudi",
@@ -673,44 +684,6 @@ def resolve_dynamic_tenant_for_whatsapp(
         "atmosfitnes": "atmosfitnes",
     }
 
-    # =========================================================================
-    # JALUR KHUSUS NOMOR CAREER ASSISTANT
-    # =========================================================================
-    from app.services.session_store import (
-        get_user_tenant_session,
-        set_user_tenant_session,
-        detect_demo_intent_keyword
-    )
-
-    if is_career_phone:
-        # HANYA '#reset' eksplisit yang boleh membuka menu 4 portal pengujian di nomor Career
-        if text_lower == "#reset":
-            if clean_phone:
-                reset_whatsapp_user_session(clean_phone)
-                user_session_states[clean_phone] = "AWAITING_PORTAL_CHOICE"
-            logger.info(f"[DYNAMIC TENANT WA] Career sender {clean_phone} explicitly triggered #reset -> portal menu")
-            return "__MENU__", False
-
-        # Jika user di nomor Career sedang memilih portal setelah #reset
-        if user_session_states.get(clean_phone) == "AWAITING_PORTAL_CHOICE" and text_lower in option_map:
-            target_slug = option_map[text_lower]
-            if clean_phone:
-                set_user_tenant_session(clean_phone, target_slug)
-            logger.info(f"[DYNAMIC TENANT WA] Career sender {clean_phone} chose portal '{target_slug}'")
-            return target_slug, True
-
-        # Jika user di nomor Career sudah mengunci session ke demo tenant (misal OnlineBoost)
-        locked_career = get_user_tenant_session(clean_phone, text)
-        if locked_career in ("onlineboost", "growthplus", "proscale"):
-            return locked_career, False
-
-        # Pesan salam biasa ("halo", "hi", "p", dst) atau pertanyaan karir TIDAK BOLEH di-intercept!
-        # Langsung arahkan ke agent konsultasi Career
-        return "boontrack-career", False
-
-    # =========================================================================
-    # JALUR NOMOR OM BUDI / DEMO NUMBER (SANDBOX)
-    # =========================================================================
     if text_lower in ("#reset", "reset", "menu utama", "#menu", "menu", "demo"):
         if clean_phone:
             reset_whatsapp_user_session(clean_phone)
@@ -718,14 +691,15 @@ def resolve_dynamic_tenant_for_whatsapp(
         logger.info(f"[DYNAMIC TENANT WA] Sender {clean_phone} triggered reset/demo menu")
         return "__MENU__", False
 
-    if text_lower in option_map:
+    if user_session_states.get(clean_phone) == "AWAITING_PORTAL_CHOICE" and text_lower in option_map:
         target_slug = option_map[text_lower]
         if clean_phone:
+            from app.services.session_store import set_user_tenant_session
             set_user_tenant_session(clean_phone, target_slug)
         logger.info(f"[DYNAMIC TENANT WA] Sender {clean_phone} selected option '{text_lower}' -> locked to '{target_slug}'")
         return target_slug, True
 
-    # Cek session lock persisten (In-memory -> Disk -> Supabase DB -> Recent History -> Keyword)
+    from app.services.session_store import get_user_tenant_session, set_user_tenant_session
     locked_tenant = get_user_tenant_session(clean_phone, text)
     if locked_tenant and locked_tenant in ("onlineboost", "growthplus", "proscale", "ombudi"):
         return locked_tenant, False
@@ -745,7 +719,6 @@ def resolve_dynamic_tenant_for_whatsapp(
         logger.info(f"[DYNAMIC TENANT WA] Bound sender {clean_phone} to store '{target_slug}' via onboarding message")
         return target_slug, True
 
-    # Salam biasa ("halo", "hi", "test", dll) untuk nomor demo / Om Budi: tampilkan menu 4 portal sebagai default/fallback
     if text_lower in ("halo", "hi", "p", "test", "tes", "hai", "start", "info"):
         return "__MENU__", False
 
@@ -766,16 +739,13 @@ def resolve_dynamic_tenant_for_whatsapp(
 
 
 def get_user_session(phone: str, message_text: str = "") -> Optional[str]:
-    """Helper persisten get_user_session(phone) tahan restart container."""
     from app.services.session_store import get_user_tenant_session
     return get_user_tenant_session(phone, message_text)
 
 
 def set_user_session(phone: str, tenant_slug: str, state: str = "ACTIVE", context: Optional[dict] = None) -> None:
-    """Helper persisten set_user_session(phone, tenant) tahan restart container."""
     from app.services.session_store import set_user_tenant_session
     set_user_tenant_session(phone, tenant_slug, state, context)
-
 
 
 async def log_to_supabase_messages(
@@ -827,7 +797,6 @@ async def log_to_supabase_messages(
 
         now_iso = datetime.now(timezone.utc).isoformat()
 
-        # Evaluasi Unified Engine untuk Lead State Projection
         engine_result = await unified_engine_core.process_incoming_message(
             tenant_slug=clean_tenant,
             phone=clean_digits,
@@ -842,7 +811,7 @@ async def log_to_supabase_messages(
                     "tenant_id": clean_tenant,
                     "phone_number": clean_digits,
                     "contact_name": user_name or f"User {clean_digits[-4:]}",
-                    "lead_state": lead_state_val, # Sinkronisasi lead_state ke BoonTrack Inbox
+                    "lead_state": lead_state_val,
                     "updated_at": now_iso
                 }).execute()
             except Exception as conv_err:
@@ -1570,108 +1539,3 @@ async def download_whatsapp_media_by_id(media_id: str, phone_number_id: Optional
     except Exception as e:
         logger.error(f"[WhatsApp Service] Exception in download_whatsapp_media_by_id: {e}")
         return None
-
-
-# =====================================================================
-# EVOLUTION API V2 ADAPTER (GROWTH PLAN - QR & PAIRING CODE)
-# =====================================================================
-
-EVOLUTION_BASE_URL = os.getenv("WA_GATEWAY_BASE_URL", "https://evolution-api-production-abb7.up.railway.app").rstrip("/")
-EVOLUTION_API_KEY = os.getenv("WA_GATEWAY_INTERNAL_API_KEY", "4398809d97f770b1a2b243ed0ee33bf3312d02dec42be8789ea3512f487f4c5e")
-
-def get_evolution_headers() -> Dict[str, str]:
-    return {
-        "apikey": EVOLUTION_API_KEY,
-        "Content-Type": "application/json"
-    }
-
-async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> Dict[str, Any]:
-    instance_name = f"tenant_{tenant_slug.replace('-', '_')}"
-    headers = get_evolution_headers()
-
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        try:
-            status_res = await client.get(
-                f"{EVOLUTION_BASE_URL}/instance/connectionState/{instance_name}",
-                headers=headers
-            )
-            
-            if status_res.status_code == 200:
-                data = status_res.json()
-                state = data.get("instance", {}).get("state") or data.get("state")
-                
-                if state == "open":
-                    owner = data.get("instance", {}).get("ownerJid") or ""
-                    phone_number = owner.split("@")[0] if "@" in owner else owner
-                    return {
-                        "success": True,
-                        "status": "CONNECTED",
-                        "phone_number": phone_number or None,
-                        "capabilities": {"qr_pairing": True, "pairing_code": True, "multi_agent": False}
-                    }
-
-            if status_res.status_code in (404, 400):
-                create_payload = {
-                    "instanceName": instance_name,
-                    "token": EVOLUTION_API_KEY,
-                    "qrcode": True,
-                    "integration": "WHATSAPP-BAILEYS",
-                    "clientName": "BoonTrack Engine"
-                }
-                await client.post(
-                    f"{EVOLUTION_BASE_URL}/instance/create",
-                    headers=headers,
-                    json=create_payload
-                )
-
-            backend_url = os.getenv("BACKEND_WEBHOOK_URL") or os.getenv("FASTAPI_BASE_URL", "https://boontrack-core-production.up.railway.app").rstrip("/")
-            try:
-                await client.post(
-                    f"{EVOLUTION_BASE_URL}/webhook/set/{instance_name}",
-                    headers=headers,
-                    json={
-                        "webhook": {
-                            "enabled": True,
-                            "url": f"{backend_url}/api/v1/whatsapp/webhook/evolution/{tenant_slug}",
-                            "byEvents": False,
-                            "base64": False,
-                            "events": ["MESSAGES_UPSERT"]
-                        }
-                    }
-                )
-            except Exception as hook_err:
-                logger.debug(f"[Evolution Webhook Setup Note] {hook_err}")
-
-            qr_res = await client.get(
-                f"{EVOLUTION_BASE_URL}/instance/connect/{instance_name}",
-                headers=headers
-            )
-            
-            if qr_res.status_code in (200, 201):
-                qr_data = qr_res.json()
-                qr_raw = qr_data.get("code") or qr_data.get("pairingCode")
-                qr_base64 = qr_data.get("base64")
-
-                return {
-                    "success": True,
-                    "status": "CONNECTING",
-                    "qr_raw": qr_raw,
-                    "qr_image": qr_base64 if (qr_base64 and qr_base64.startswith("data:image")) else None,
-                    "capabilities": {"qr_pairing": True, "pairing_code": True, "multi_agent": False}
-                }
-
-            return {
-                "success": False,
-                "status": "DEGRADED",
-                "disconnect_reason": "GATEWAY_SESSION_PENDING",
-                "capabilities": {"qr_pairing": True, "pairing_code": True, "multi_agent": False}
-            }
-
-        except Exception as e:
-            logger.error(f"[Evolution API Handshake Error] {e}")
-            return {
-                "success": False,
-                "status": "DEGRADED",
-                "disconnect_reason": "GATEWAY_UNREACHABLE",
-                "capabilities": {"qr_pairing": True, "pairing_code": True, "multi_agent": False}
-            }

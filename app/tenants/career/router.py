@@ -1,7 +1,7 @@
 import logging
 from aiohttp import web
 
-from app.tenants.career.config import TENANT_ID, VERIFY_TOKEN
+from app.tenants.career.config import TENANT_ID, VERIFY_TOKEN, CAREER_PHONE_NUMBER_ID
 from app.tenants.career.service import career_service, GLOBAL_USER_STATES
 from app.services.whatsapp_service import extract_meta_whatsapp_event
 
@@ -36,6 +36,12 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
 
     if not event["is_message"]:
         return web.Response(text="EVENT_RECEIVED", status=200)
+
+    # Strict Tenant Guard: Jika request masuk ke endpoint career tapi phone_number_id bukan nomor career, log peringatan
+    incoming_phone_id = str(event.get("phone_id") or "").strip()
+    if incoming_phone_id and CAREER_PHONE_NUMBER_ID and incoming_phone_id != CAREER_PHONE_NUMBER_ID:
+        logger.warning(f"[TENANT ISOLATION] Rejected event for mismatched phone_id: {incoming_phone_id} (expected {CAREER_PHONE_NUMBER_ID})")
+        return web.Response(text="EVENT_MISMATCHED_TENANT", status=200)
 
     sender_wa_id = event["from_phone"]
     msg_type = event["msg_type"]
