@@ -7,6 +7,7 @@ Unified AI Routes for BoonTrack Multi-Agent Architecture (ADR):
 Enforces:
 - Strict Backend Security Validator on prices and stock (Anti-price tampering)
 - Dynamic Catalog Injection to avoid hallucinated/vague pricing
+- Numeric Capacity Intent Matching for accurate product cards
 - Tenant-scoped session isolation
 - Structured action payloads for Storefront Webchat (SHOW_PRODUCT, SHOW_CHECKOUT, TEXT, etc.)
 """
@@ -109,8 +110,8 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
     """
     Rute utama obrolan etalase toko (Storefront Webchat).
     - Menghubungkan produk katalog database secara deterministik ke AI prompt.
+    - Mencocokkan kartu produk berbasis angka kapasitas secara spesifik.
     - Memanggil profil BUYER_ASSISTANT melalui CommerceAIEngine.
-    - Format response standar: reply_text, action, payload, session_state.
     """
     target_slug = payload.tenant_slug or payload.slug or payload.tenant_id or "onlineboost"
     clean_slug = str(target_slug).strip().lower()
@@ -134,7 +135,7 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
     )
     runtime_ctx = tenant_context_resolver.resolve_runtime_context(clean_slug)
 
-    # 2. Pengumpulan Katalog Produk Komprehensif (Payload Frontend -> DB Boundary -> DB Direct -> Metadata Settings)
+    # 2. Pengumpulan Katalog Produk Komprehensif
     merged_catalog: List[Dict[str, Any]] = []
 
     if payload.products:
@@ -156,7 +157,7 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
         if isinstance(meta, dict) and meta.get("products"):
             merged_catalog.extend(meta["products"])
 
-    # Normalisasi format katalog agar seragam
+    # Normalisasi format katalog
     normalized_catalog = []
     for item in merged_catalog:
         if not isinstance(item, dict):
@@ -190,7 +191,7 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
         f"KATALOG HARGA RESMI SAAT INI (GUNAKAN DATA INI SECARA AKURAT):\n"
         f"{catalog_prompt_snippet}\n\n"
         f"ATURAN WAJIB:\n"
-        f"- Jika pembeli menanyakan harga atau paket (contoh: 1000L, 520L, dll), sebutkan nominal harga resmi di atas secara tegas dan jelas.\n"
+        f"- Jika pembeli menanyakan harga atau paket (contoh: 1000L, 800L, 650L, 520L, 350L), sebutkan nominal harga resmi di atas secara tegas dan jelas.\n"
         f"- DILARANG menjawab mengambang seperti 'harga tergantung paket' jika harga layanan sudah terdaftar di atas."
     )
 
@@ -214,26 +215,35 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
     )
     ai_reply, dynamic_quick_actions = parse_ai_quick_actions_response(ai_raw)
 
-    # 4. Klasifikasi Intent Aksi Storefront
+    # 4. Klasifikasi Intent & Pencocokan Produk Akurat
     q_lower = q.lower()
     is_checkout_intent = any(w in q_lower for w in ["beli", "checkout", "pesan sekarang", "bayar", "qris", "ambil promo", "transfer"])
     is_list_intent = any(w in q_lower for w in ["semua produk", "katalog lengkap", "daftar produk", "list produk", "produk apa saja"])
     is_shipping_intent = any(w in q_lower for w in ["ongkir", "ongkos kirim", "pengiriman", "ekspedisi", "kurir"])
-    is_product_intent = any(w in q_lower for w in ["harga", "berapa", "produk", "detail", "fitur", "manfaat", "stok", "kuras"])
+    is_product_intent = any(w in q_lower for w in ["harga", "berapa", "produk", "detail", "fitur", "manfaat", "stok", "kuras", "toren", "liter", "biaya"])
     is_human_intent = any(w in q_lower for w in ["bicara dengan admin", "hubungi cs", "cs manusia", "kontak admin", "bantuan manusia"])
 
     action = "NONE"
     matched_product = None
 
     if normalized_catalog:
-        for prod in normalized_catalog:
-            p_name = prod["title"].lower()
-            p_id = prod["product_id"].lower()
-            # Mencocokkan kata kunci seperti "1000", "520", atau nama produk
-            tokens = [t for t in re.split(r"[\s\-_]+", p_name) if len(t) > 2]
-            if any(t in q_lower for t in tokens) or p_id in q_lower:
-                matched_product = prod
-                break
+        # Prioritas 1: Cocokkan nomor kapasitas spesifik (1000, 800, 650, 520, 350)
+        user_numbers = re.findall(r"\d+", q_lower)
+        if user_numbers:
+            for prod in normalized_catalog:
+                prod_numbers = re.findall(r"\d+", prod["title"])
+                if any(num in user_numbers for num in prod_numbers):
+                    matched_product = prod
+                    break
+
+        # Prioritas 2: Cocokkan kata kunci unik nama produk (abaikan kata umum seperti kuras/toren)
+        if not matched_product:
+            for prod in normalized_catalog:
+                p_name = prod["title"].lower()
+                tokens = [t for t in re.split(r"[\s\-_]+", p_name) if len(t) > 3 and t not in ["kuras", "toren", "jasa"]]
+                if any(t in q_lower for t in tokens):
+                    matched_product = prod
+                    break
 
     sanitized_product_card = None
     product_ids_payload: List[Any] = []
