@@ -1198,10 +1198,10 @@ class CareerService:
             )
 
             ai_reply = await ai_gateway.generate(
-                prompt=prompt_career_peer,
-                user_message=user_text,
-                context={"user_id": sender_wa_id, "feature": "career_consultation"}
-            )
+    user_message=user_text,
+    system_prompt=prompt_career_peer,
+    context={"user_id": sender_wa_id, "feature": "career_consultation"}
+)
 
             if ai_reply:
                 await send_whatsapp_text(sender_wa_id, ai_reply, tenant_id=TENANT_ID)
