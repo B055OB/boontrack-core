@@ -490,6 +490,12 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
         # P0 INTERCEPT: Command #reset / reset / menu utama
         is_career = (str(phone_id).strip() == CAREER_PHONE_NUMBER_ID or str(phone_id).strip() == os.getenv("CAREER_PHONE_NUMBER_ID", CAREER_PHONE_NUMBER_ID))
+        # =========================================================================
+        # STRICT ISOLATION: NOMOR CAREER ASSISTANT (+62 851-9638-0468)
+        # =========================================================================
+        if is_career:
+            from app.tenants.career.router import handle_incoming_whatsapp
+            return await handle_incoming_whatsapp(request)
         clean_kw = re.sub(r"[^\w#]", "", clean_text)
 
         is_explicit_reset = (

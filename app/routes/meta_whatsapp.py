@@ -228,6 +228,36 @@ async def handle_whatsapp_webhook(request: Request):
             update_user_session_context(clean_phone, {"ctwa_clid": captured_clid})
             logger.info(f"[META WA CTWA] Captured ctwa_clid for {clean_phone}: {captured_clid}")
 
+            # =========================================================================
+    # STRICT ISOLATION: NOMOR CAREER ASSISTANT (+62 851-9638-0468)
+    # =========================================================================
+    if is_career_phone:
+        from app.tenants.career.service import career_service
+        msg_type = event.get("msg_type", "text")
+        if msg_type == "image":
+            await career_service.handle_image(
+                sender_wa_id=from_phone,
+                display_name=contact_name,
+                media_id=event.get("media_id")
+            )
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-career"})
+        elif msg_type == "document":
+            await career_service.handle_document(
+                sender_wa_id=from_phone,
+                display_name=contact_name,
+                media_id=event.get("media_id"),
+                filename=event.get("media_filename") or "document.pdf"
+            )
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-career"})
+        else:
+            await career_service.handle_text_or_button(
+                sender_wa_id=from_phone,
+                display_name=contact_name,
+                user_text=incoming_text,
+                button_id=button_id
+            )
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-career"})
+
     # =========================================================================
     # P0 INTERCEPT: COMMAND #RESET / RESET / MENU UTAMA
     # =========================================================================
