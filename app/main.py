@@ -55,7 +55,7 @@ from app.routes.shipping_routes import router as shipping_router, logistics_rout
 from app.routes.partner_routes import partner_router, manager_router
 from app.routes.analytics_fastapi_routes import router as analytics_router
 from app.routes.boonpilot_routes import router as boonpilot_router
-from app.routes.store_chat_routes import router as store_chat_router
+from app.routes.store_chat_routes import router as store_chat_router, handle_store_chat, StoreChatRequest
 from app.routes.media_routes import media_router
 from app.routes.product_routes import product_router
 from app.routes.auth_routes import router as magic_link_auth_router
@@ -216,14 +216,15 @@ async def start_application():
     register_shipping_routes(aiohttp_app)
     register_seller_ads_routes(aiohttp_app)
 
+    cors_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+    }
+
     # Register endpoint ads-config langsung pada router aiohttp
     async def aiohttp_ads_config(request):
         tenant_slug = request.match_info.get("tenant_slug", "kurastorenkrw")
-        cors_headers = {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, OPTIONS",
-            "Access-Control-Allow-Headers": "*",
-        }
         return web.json_response(
             {
                 "status": "success",
@@ -238,6 +239,20 @@ async def start_application():
     aiohttp_app.router.add_get("/api/ads-config", aiohttp_ads_config)
     aiohttp_app.router.add_get("/api/v1/store/ads-config", aiohttp_ads_config)
     aiohttp_app.router.add_get("/api/v1/shop/{tenant_slug}/ads-config", aiohttp_ads_config)
+
+    # Register endpoint store chat langsung pada router aiohttp
+    async def aiohttp_store_chat(request):
+        try:
+            body = await request.json()
+            payload = StoreChatRequest(**body)
+            res = await handle_store_chat(payload)
+            return web.json_response(res.model_dump(), headers=cors_headers)
+        except Exception as e:
+            logger.exception("Store chat processing error")
+            return web.json_response({"status": "error", "detail": str(e)}, status=500, headers=cors_headers)
+
+    aiohttp_app.router.add_post("/api/v1/store/chat", aiohttp_store_chat)
+    aiohttp_app.router.add_post("/api/store/chat", aiohttp_store_chat)
     
     port = int(os.getenv("PORT", 8080))
     await start_web_server(aiohttp_app, port=port)
