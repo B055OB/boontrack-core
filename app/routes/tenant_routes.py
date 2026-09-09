@@ -5,6 +5,7 @@ Endpoints:
 - GET /api/v1/tenants/{slug}/settings: Returns store settings, trust badges, persona, payout, products, and FAQ.
 - PUT /api/v1/tenants/{slug}/settings: Updates store metadata, public description, bot persona, and auto-delivery URL.
 - POST /api/v1/tenants/{slug}/products: Adds or updates products in catalog.
+- GET /api/v1/tenants/{slug}/ads-config: Returns tracking & ads conversion configuration.
 """
 
 import logging
@@ -123,9 +124,32 @@ async def get_tenant_products_endpoint(slug: str):
     }
 
 
+@tenant_router.get("/{slug}/ads-config", summary="Get Tenant Ads & Conversion Tracking Config")
+async def get_tenant_ads_config_endpoint(slug: str):
+    """
+    Returns tracking config for Meta CAPI, TikTok Pixel, and Google Tag.
+    Prevents storefront HTTP 404/500 errors when ads_tracking is enabled.
+    """
+    settings = onboarding_service.get_tenant_settings(slug) or {}
+    meta = settings.get("metadata", {}) if isinstance(settings, dict) else {}
+    features = meta.get("features", {}) if isinstance(meta, dict) else {}
+
+    return {
+        "status": "success",
+        "tenant_slug": slug,
+        "ads_tracking_enabled": features.get("ads_tracking", True),
+        "has_capi": features.get("has_capi", True),
+        "meta_pixel_id": meta.get("meta_pixel_id") or meta.get("fb_pixel_id"),
+        "google_tag_id": meta.get("google_tag_id") or meta.get("gtm_id"),
+        "tiktok_pixel_id": meta.get("tiktok_pixel_id"),
+        "conversion_events": ["PageView", "ViewContent", "Contact", "Lead", "InitiateCheckout", "Purchase"],
+    }
+
+
 # Singular /api/v1/tenant route alias
 tenant_singular_router = APIRouter(prefix="/api/v1/tenant", tags=["Tenant Backpanel CMS Singular"])
 tenant_singular_router.add_api_route("/{slug}/products", get_tenant_products_endpoint, methods=["GET"])
+tenant_singular_router.add_api_route("/{slug}/ads-config", get_tenant_ads_config_endpoint, methods=["GET"])
 
 # Commerce products endpoint alias
 commerce_products_router = APIRouter(prefix="/api/v1/commerce", tags=["Commerce Products"])
@@ -135,3 +159,8 @@ commerce_products_router = APIRouter(prefix="/api/v1/commerce", tags=["Commerce 
 async def get_commerce_products(tenant_slug: str = "onlineboost"):
     return await get_tenant_products_endpoint(tenant_slug)
 
+
+# Direct /api/tenants legacy route alias (Storefront Direct Compatibility)
+legacy_tenant_router = APIRouter(prefix="/api/tenants", tags=["Tenant Legacy Compatibility"])
+legacy_tenant_router.add_api_route("/{slug}/products", get_tenant_products_endpoint, methods=["GET"])
+legacy_tenant_router.add_api_route("/{slug}/ads-config", get_tenant_ads_config_endpoint, methods=["GET"])
