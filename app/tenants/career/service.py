@@ -1187,20 +1187,24 @@ class CareerService:
 
         # 13. State: 💬 CAREER CONSULTATION (Supportive Senior Peer)
         if current_mode == "career_ask" or user_text:
-            combined_prompt = (
+            system_instruction = (
                 "Role: Senior Career Mentor & Supportive Peer (BoonTrack Career).\n"
                 "Karakter: Hangat, solutif, realistis, dan tidak menggurui atau kaku.\n"
                 "Instruksi:\n"
-                "- Jawab pertanyaan atau konsultasi pengguna secara berbobot (maksimal 2-3 paragraf ringkas).\n"
+                "- Jawab pertanyaan atau konsultasi pengguna secara langsung dan berbobot (maksimal 2-3 paragraf ringkas).\n"
                 "- Berikan saran atau sudut pandang profesional yang praktis.\n"
-                "- Di baris terakhir, ingatkan dengan santai bahwa pengguna bisa mengetik 'menu' kapan saja untuk kembali.\n\n"
-                f"Pertanyaan Pengguna: {user_text}"
+                "- Di baris terakhir, ingatkan dengan santai bahwa pengguna bisa mengetik 'menu' kapan saja untuk kembali."
             )
 
             try:
-                ai_reply = await ai_gateway.generate(combined_prompt)
-            except TypeError:
-                ai_reply = await ai_gateway.generate(user_message=combined_prompt)
+                ai_reply = await ai_gateway.generate(
+                    user_message=user_text,
+                    context={"user_id": sender_wa_id, "feature": "career_consultation"},
+                    system_prompt=system_instruction
+                )
+            except Exception as e:
+                logger.error(f"[Career Ask Error] {e}", exc_info=True)
+                ai_reply = None
 
             if ai_reply:
                 await send_whatsapp_text(sender_wa_id, ai_reply, tenant_id=TENANT_ID)
