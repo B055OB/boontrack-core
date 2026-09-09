@@ -1,6 +1,6 @@
 """app/services/ai_gateway/gateway.py
 BoonTrack Shared AI Gateway & Model Router.
-Coordinates multi-agent profiles, provider fallback chains, and non-blocking usage metrics.
+Coordinates multi-agent profiles, task capabilities, and resilient failover chains.
 """
 
 import os
@@ -13,100 +13,67 @@ from typing import Dict, Any, Optional, Tuple, List
 import psycopg2
 import aiohttp
 
-from app.services.goal_detector import BaseGoalDetector
 from app.services.ai_gateway.models import (
     ModelProfile,
     AgentProfile,
-    AGENT_TO_MODEL_PROFILE,
+    AICapability,
+    AGENT_TO_CAPABILITY,
     clean_ai_response,
 )
 from app.services.ai_gateway.providers import (
     BaseLLMProvider,
     GeminiProvider,
     GroqProvider,
-    ClaudeProvider,
-    OpenAIProvider,
     OpenRouterProvider,
 )
 
 logger = logging.getLogger("ai_gateway")
 
-PROMPT_VERSION = "goal_detector_v1"
-MOCK_MODE = False
 
-SYSTEM_PROMPT_DEFAULT = (
-    "Kamu adalah BoonTrack, asisten karir & rekrutmen profesional yang hangat, empatik, dan to-the-point.\n\n"
-    "Pedoman Menjawab & Gaya Penulisan:\n"
-    "1. Jawab pertanyaan user seputar pembuatan CV, persiapan interview, estimasi gaji/UMR, dan strategi karir secara langsung, praktis, ringkas, padat, dan langsung ke poin utama tanpa bertele-tele.\n"
-    "2. Gunakan Bahasa Indonesia yang natural, profesional, efisien, dan mudah dipahami.\n"
-    "3. JANGAN PERNAH menyertakan penawaran jasa pembuatan website agensi berharga jutaan rupiah.\n\n"
-    "Instruksi Khusus untuk Career Page / Portofolio Web:\n"
-    "Jika user bertanya tentang pengaruh, fungsi, atau manfaat memiliki Career Page / Portofolio Online:\n"
-    "- Jelaskan secara ringkas 2-3 alasan kenapa rekruter menyukainya.\n"
-    "- Tutup jawaban secara natural dengan mengarahkan user untuk aktivasi Career Page BoonTrack:\n"
-    "1. Order Career Page (Rp10.000)\n"
-    "2. Ajak 5 Teman (Gratis via Referral)\n"
-    "_Ketik angka 1 atau 2 untuk memilih._\n\n"
-    "Instruksi Format Output JSON:\n"
-    "Respon WAJIB berupa JSON Object dengan format:\n"
-    "{\n"
-    '  "reply": "<jawaban atau penjelasan untuk user yang ringkas, padat, dan langsung ke poin utama>",\n'
-    '  "quick_actions": ["<aksi 1>", "<aksi 2>", "<aksi 3>"]\n'
-    "}\n"
-    'Field "quick_actions" berupa list of strings (maksimal 3 item), setiap label berupa 2-4 kata padat, '
-    'dan HANYA merujuk pada fitur internal valid platform (misal: "Tambah Produk", "Setup WhatsApp", "Bikin Landing Page").\n'
-    "Gaya penulisan harus tetap ringkas, padat, dan langsung ke poin utama tanpa bertele-tele."
-)
+class CircuitBreaker:
+    """Circuit Breaker untuk mencegah request flood saat provider mengalami total outage."""
+    def __init__(self, failure_threshold: int = 3, recovery_time: float = 45.0):
+        self.failure_threshold = failure_threshold
+        self.recovery_time = recovery_time
+        self.failure_count = 0
+        self.last_failure_time = 0.0
 
-QUICK_ACTIONS_PROMPT_INSTRUCTION = (
-    "\n\nInstruksi Format Output JSON & Gaya Penulisan:\n"
-    "Gaya penulisan WAJIB ringkas, padat, dan langsung ke poin utama tanpa bertele-tele.\n"
-    "Respon WAJIB berupa JSON Object dengan struktur:\n"
-    "{\n"
-    '  "reply": "<jawaban atau teks respons yang ringkas dan to-the-point>",\n'
-    '  "quick_actions": ["<aksi 1>", "<aksi 2>", "<aksi 3>"]\n'
-    "}\n"
-    'Field "quick_actions" berupa list of strings (maksimal 3 item), setiap label berupa 2-4 kata padat, '
-    'dan HANYA merujuk pada fitur internal valid platform (misal: "Tambah Produk", "Setup WhatsApp", "Bikin Landing Page").'
-)
+    def is_open(self) -> bool:
+        if self.failure_count >= self.failure_threshold:
+            if time.time() - self.last_failure_time > self.recovery_time:
+                self.failure_count = 0
+                return False
+            return True
+        return False
 
+    def record_success(self):
+        self.failure_count = 0
 
-
-
-class GeminiGoalDetector(BaseGoalDetector):
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-
-    async def detect(self, query: str, request_id: str = None) -> Dict[str, Any]:
-        return {
-            "intent": "general_query",
-            "confidence": 0.95,
-            "request_id": request_id or str(uuid.uuid4()),
-        }
+    def record_failure(self):
+        self.failure_count += 1
+        self.last_failure_time = time.time()
 
 
 class AIGateway:
     """
     Shared Enterprise AI Gateway BoonTrack.
-    Mengatur router model multi-agent profile, failover antar provider, dan audit logging.
+    Mengatur Single Doorway LLM, Capability Mapping, Circuit Breaker, dan Audit Usage Logging.
     """
 
     def __init__(self):
-        self.providers: Dict[str, BaseLLMProvider] = {
-            "Gemini": GeminiProvider(),
-            "Groq": GroqProvider(),
-            "Claude": ClaudeProvider(),
-            "OpenAI": OpenAIProvider(),
-            "OpenRouter": OpenRouterProvider(),
+        self.gemini = GeminiProvider()
+        self.groq = GroqProvider()
+        self.openrouter = OpenRouterProvider()
+
+        self.circuit_breakers: Dict[str, CircuitBreaker] = {
+            "gemini": CircuitBreaker(failure_threshold=3, recovery_time=45.0),
+            "groq": CircuitBreaker(failure_threshold=3, recovery_time=45.0),
+            "openrouter": CircuitBreaker(failure_threshold=2, recovery_time=60.0),
         }
 
-        # Legacy backward compatibility
-        self.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
-        self.gemini_detector = GeminiGoalDetector(self.gemini_api_key)
-
-        available_providers = [name for name, p in self.providers.items() if p.is_available()]
         logger.info(
-            f"AIGateway initialized | Available Providers: {available_providers} | MockMode={MOCK_MODE}"
+            f"AIGateway initialized per CTO Spec | Gemini Available={self.gemini.is_available()}, "
+            f"Groq Available={self.groq.is_available()}, OpenRouter Available={self.openrouter.is_available()}"
         )
 
     def _get_db_conn(self):
@@ -121,13 +88,16 @@ class AIGateway:
                     password=os.getenv("POSTGRES_PASSWORD"),
                     connect_timeout=3,
                 )
-            except Exception as e:
-                logger.warning(f"[AI Gateway] Pooler connect failed ({e}), trying DATABASE_URL...")
+            except Exception:
+                pass
 
         db_url = os.getenv("DATABASE_URL")
         if db_url:
             clean_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
-            return psycopg2.connect(clean_url, connect_timeout=3)
+            try:
+                return psycopg2.connect(clean_url, connect_timeout=3)
+            except Exception:
+                return None
         return None
 
     def _insert_db_sync(self, user_id, provider, feature, p_tokens, c_tokens, status_code, is_error, error_msg):
@@ -145,136 +115,89 @@ class AIGateway:
                 )
             conn.commit()
             conn.close()
-        except Exception as e:
-            logger.debug(f"[AI Gateway] Logging usage to PostgreSQL skipped: {e}")
+        except Exception:
+            pass
 
-    async def log_usage_db(
-        self,
-        user_id: str,
-        provider: str,
-        feature: str,
-        p_tokens: int,
-        c_tokens: int,
-        status_code: int = 200,
-        is_error: bool = False,
-        error_msg: str = None,
-    ):
+    async def log_usage_db(self, user_id: str, provider: str, feature: str, p_tokens: int, c_tokens: int, status_code: int = 200, is_error: bool = False, error_msg: str = None):
         try:
             loop = asyncio.get_running_loop()
-            loop.run_in_executor(
-                None,
-                self._insert_db_sync,
-                user_id, provider, feature, p_tokens, c_tokens, status_code, is_error, error_msg,
-            )
+            loop.run_in_executor(None, self._insert_db_sync, user_id, provider, feature, p_tokens, c_tokens, status_code, is_error, error_msg)
         except RuntimeError:
             self._insert_db_sync(user_id, provider, feature, p_tokens, c_tokens, status_code, is_error, error_msg)
 
-    async def detect_goal_and_intent(self, query: str, request_id: str = None) -> Dict[str, Any]:
-        return await self.gemini_detector.detect(query, request_id)
-
-    def resolve_provider_order(
-        self,
-        profile: ModelProfile,
-        only_available: bool = True,
-    ) -> List[Tuple[BaseLLMProvider, str]]:
+    def build_execution_chain(self, capability: AICapability) -> List[Tuple[BaseLLMProvider, str, str]]:
         """
-        Menyusun urutan provider dan nama model berdasarkan ModelProfile yang diminta:
-        - FAST: Memprioritaskan Groq (Llama 70B fast inference) -> Gemini Flash -> Claude Haiku -> OpenAI mini -> OpenRouter
-        - BALANCED: Memprioritaskan Gemini Flash -> Claude Haiku -> Groq -> OpenAI mini -> OpenRouter
-        - REASONING: Memprioritaskan Gemini Pro / Claude Sonnet -> OpenAI GPT-4o -> Groq / OpenRouter
+        Menyusun rantai eksekusi terverifikasi CTO:
+        1. Primary: Gemini 3.8 Flash
+        2. Groq #1: Qwen 3.6 27B
+        3. Groq #2: OpenAI GPT-OSS 120B
+        4. Emergency: OpenRouter
         """
-        resolved: List[Tuple[BaseLLMProvider, str]] = []
+        chain: List[Tuple[BaseLLMProvider, str, str]] = []
 
-        if profile == ModelProfile.FAST:
-            preference = ["Groq", "Gemini", "Claude", "OpenAI", "OpenRouter"]
-        elif profile == ModelProfile.REASONING:
-            preference = ["Gemini", "Claude", "OpenAI", "Groq", "OpenRouter"]
-        else:  # BALANCED
-            preference = ["Gemini", "Groq", "Claude", "OpenAI", "OpenRouter"]
+        # 1. Primary Path (Gemini 3.8 Flash)
+        if self.gemini.is_available() and not self.circuit_breakers["gemini"].is_open():
+            gemini_model = self.gemini.get_model_for_capability(capability)
+            chain.append((self.gemini, gemini_model, "Primary (Gemini 3.8)"))
 
-        for name in preference:
-            p = self.providers.get(name)
-            if p and (not only_available or p.is_available()):
-                model = p.get_model_for_profile(profile)
-                resolved.append((p, model))
+        # 2. Secondary Path (Groq Qwen 3.6 27B & GPT-OSS 120B)
+        if self.groq.is_available() and not self.circuit_breakers["groq"].is_open():
+            groq_qwen = os.getenv("AI_GROQ_MODEL", "qwen/qwen3.6-27b").strip()
+            groq_gpt_oss = os.getenv("AI_GROQ_FALLBACK_MODEL", "openai/gpt-oss-120b").strip()
+            chain.append((self.groq, groq_qwen, "Groq #1 (Qwen 3.6)"))
+            chain.append((self.groq, groq_gpt_oss, "Groq #2 (GPT-OSS 120B)"))
 
-        return resolved
+        # 3. Emergency Path (OpenRouter)
+        if self.openrouter.is_available() and not self.circuit_breakers["openrouter"].is_open():
+            chain.append((self.openrouter, self.openrouter.get_model_for_capability(capability), "Emergency (OpenRouter)"))
 
-    async def generate_for_agent(
+        return chain
+
+    async def generate_for_capability(
         self,
-        agent_profile: AgentProfile,
+        capability: AICapability,
         user_message: str,
+        system_prompt: str,
         context: Optional[Dict[str, Any]] = None,
-        system_prompt: Optional[str] = None,
     ) -> Optional[str]:
-        """
-        Entrypoint terpadu untuk mengeksekusi inferensi AI berdasarkan profil agen khusus.
-        Memetakan AgentProfile -> ModelProfile (FAST, REASONING, BALANCED).
-        """
+        """Eksekusi inferensi AI berdasarkan Capability Task secara deterministik."""
         context = context or {}
-        model_profile = AGENT_TO_MODEL_PROFILE.get(agent_profile, ModelProfile.FAST)
-        logger.info(
-            f"[AI Gateway] Routing agent '{agent_profile.value}' -> ModelProfile: '{model_profile.value}'"
-        )
-        return await self.generate_with_profile(
-            profile=model_profile,
-            user_message=user_message,
-            context=context,
-            system_prompt=system_prompt,
-            agent_profile_tag=agent_profile.value,
-        )
+        feature = context.get("feature", f"capability_{capability.value.lower()}")
+        user_id = context.get("user_id") or context.get("tenant_slug") or "store_guest"
 
-    async def generate_with_profile(
-        self,
-        profile: ModelProfile,
-        user_message: str,
-        context: Optional[Dict[str, Any]] = None,
-        system_prompt: Optional[str] = None,
-        agent_profile_tag: str = "GENERAL",
-    ) -> Optional[str]:
-        """
-        Mengeksekusi inferensi AI berdasarkan profil model dengan chain of failover otomatis.
-        """
-        context = context or {}
-        feature = context.get("feature", f"agent_{agent_profile_tag.lower()}")
-        user_id = context.get("user_id") or context.get("tenant_slug") or context.get("phone") or "guest"
-        sys_prompt = system_prompt or SYSTEM_PROMPT_DEFAULT
-        if "quick_actions" not in sys_prompt:
-            sys_prompt = f"{sys_prompt}{QUICK_ACTIONS_PROMPT_INSTRUCTION}"
-
-        provider_chain = self.resolve_provider_order(profile, only_available=True)
-
-        if not provider_chain:
-            logger.error(f"[AI Gateway] No available providers configured for profile {profile.value}")
+        chain = self.build_execution_chain(capability)
+        if not chain:
+            logger.error(f"[AI Gateway] Circuit breaker open or all providers unconfigured for {capability.value}")
             return None
 
         total_start = time.time()
-        trace_logs = []
-        timeout = aiohttp.ClientTimeout(total=18.0)
+        timeout = aiohttp.ClientTimeout(total=15.0)
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            for idx, (provider, model_name) in enumerate(provider_chain):
+            for provider, model_name, path_role in chain:
                 p_start = time.time()
                 try:
                     res_text, p_tokens, c_tokens = await provider.call(
                         session=session,
                         user_message=user_message,
                         context=context,
-                        system_prompt=sys_prompt,
+                        system_prompt=system_prompt,
                         model_name=model_name,
+                        capability=capability,
                     )
-                    p_lat_ms = (time.time() - p_start) * 1000.0
                     tot_lat_s = time.time() - total_start
 
-                    # Log successful inference
-                    fallback_flag = f"YES (Used {provider.name})" if idx > 0 else "NO"
+                    cb_key = provider.name.lower()
+                    if cb_key in self.circuit_breakers:
+                        self.circuit_breakers[cb_key].record_success()
+
                     print(
-                        f"\n[AI LOG]\n"
+                        f"\n[AI LOG - CTO PIPELINE]\n"
+                        f"  Role      : {path_role}\n"
                         f"  Provider  : {provider.name}\n"
                         f"  Model     : {model_name}\n"
                         f"  Status    : SUCCESS\n"
-                        f"  Latency   : {tot_lat_s:.2f}s\n"
-                        f"  Fallback  : {fallback_flag}",
+                        f"  Latency   : {tot_lat_s:.2f}s\n",
                         flush=True,
                     )
 
@@ -292,18 +215,18 @@ class AIGateway:
                 except Exception as e:
                     p_lat_ms = (time.time() - p_start) * 1000.0
                     err_str = str(e)
-                    err_type = "TIMEOUT" if isinstance(e, asyncio.TimeoutError) else "ERROR"
-                    trace_logs.append(f"• {provider.name} ({model_name}): {p_lat_ms:.1f}ms -> {err_type} ({err_str[:60]})")
 
-                    fallback_target = provider_chain[idx + 1][0].name if idx + 1 < len(provider_chain) else "None"
+                    cb_key = provider.name.lower()
+                    if cb_key in self.circuit_breakers:
+                        self.circuit_breakers[cb_key].record_failure()
+
                     print(
-                        f"\n[AI LOG]\n"
+                        f"\n[AI LOG - CTO PIPELINE]\n"
+                        f"  Role      : {path_role}\n"
                         f"  Provider  : {provider.name}\n"
                         f"  Model     : {model_name}\n"
-                        f"  Status    : FAILED\n"
-                        f"  Latency   : {p_lat_ms / 1000.0:.2f}s\n"
-                        f"  Fallback  : YES ({fallback_target})\n"
-                        f"  Reason    : {err_str[:120]}",
+                        f"  Status    : FAILED ({p_lat_ms:.1f}ms)\n"
+                        f"  Reason    : {err_str[:120]}\n",
                         flush=True,
                     )
 
@@ -317,46 +240,40 @@ class AIGateway:
                         is_error=True,
                         error_msg=err_str[:250],
                     )
-
-                    if idx + 1 < len(provider_chain):
-                        logger.warning(
-                            f"[AI Gateway Failover] {provider.name} failed ({err_str[:60]}), "
-                            f"trying fallback provider: {provider_chain[idx + 1][0].name}"
-                        )
                     continue
 
-        tot_lat_ms = (time.time() - total_start) * 1000.0
-        trace_str = "\n".join(trace_logs)
-        print(f"\n[AI TRACE ({profile.value})] Agent: {agent_profile_tag} | Total: {tot_lat_ms:.1f}ms\n{trace_str}\n", flush=True)
-        logger.error(f"[AI Gateway] All providers exhausted for profile {profile.value}")
+        logger.error(f"[AI Gateway] All execution paths exhausted for capability {capability.value}")
         return None
+
+    async def generate_for_agent(
+        self,
+        agent_profile: AgentProfile,
+        user_message: str,
+        context: Optional[Dict[str, Any]] = None,
+        system_prompt: Optional[str] = None,
+    ) -> Optional[str]:
+        """Adapter router AgentProfile -> AICapability."""
+        capability = AGENT_TO_CAPABILITY.get(agent_profile, AICapability.FAST_CONVERSATION)
+        return await self.generate_for_capability(
+            capability=capability,
+            user_message=user_message,
+            system_prompt=system_prompt or "",
+            context=context,
+        )
 
     async def generate(
         self,
         user_message: str,
         context: Optional[Dict[str, Any]] = None,
         system_prompt: Optional[str] = None,
-        feature: Optional[str] = None,
-        user_id: Optional[str] = None,
     ) -> Optional[str]:
-        """
-        Fungsi general generasi teks yang backwards-compatible.
-        Memanfaatkan profile BALANCED secara default.
-        """
-        ctx = context or {}
-        if feature:
-            ctx["feature"] = feature
-        if user_id:
-            ctx["user_id"] = user_id
-
-        return await self.generate_with_profile(
-            profile=ModelProfile.BALANCED,
+        """General fallback."""
+        return await self.generate_for_capability(
+            capability=AICapability.FAST_CONVERSATION,
             user_message=user_message,
-            context=ctx,
-            system_prompt=system_prompt,
-            agent_profile_tag="LEGACY_BALANCED",
+            system_prompt=system_prompt or "",
+            context=context,
         )
 
 
-# Singleton
 ai_gateway = AIGateway()
