@@ -32,6 +32,7 @@ from app.services.onboarding_service import onboarding_service
 from app.services.whatsapp_service import safe_log_to_supabase_messages
 from app.schemas.context import RequestContext, resolve_tenant_context, ChannelType, SurfaceType, ActorType
 from app.core.security_context import assert_tenant_integrity, format_composite_session_key
+from app.services.tenant_context_resolver import tenant_context_resolver
 
 logger = logging.getLogger("STORE_CHAT_ROUTES")
 
@@ -130,6 +131,9 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
         session_id=session_id,
         untrusted_client_tenant_id=payload.tenant_id
     )
+
+    # P0-1 & P0-4: Single Doorway Context Resolution
+    runtime_ctx = tenant_context_resolver.resolve_runtime_context(clean_slug)
 
     # 1. Ambil katalog produk riil langsung dari database PostgreSQL tenant
     db_catalog = StoreContextBoundaryManager.fetch_transaction_data(ctx.tenant_slug)
@@ -289,8 +293,11 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
         "last_action": action,
     }
 
-    # 5. Quick Actions responsif (Dynamic dari AI Gateway dengan Fallback)
-    quick_actions = dynamic_quick_actions
+    # 5. Quick Actions responsif (P0-2: Quick Action Policy strictly separating buyer vs merchant)
+    quick_actions = tenant_context_resolver.filter_buyer_actions(
+        raw_actions=dynamic_quick_actions,
+        runtime_ctx=runtime_ctx
+    )
 
     # Catat pesan ke database
     safe_log_to_supabase_messages(
@@ -321,7 +328,6 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
         session_id=session_id,
         tenant_id=clean_slug,
     )
-
 
 
 # =============================================================================
