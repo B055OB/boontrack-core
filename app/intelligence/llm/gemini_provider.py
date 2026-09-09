@@ -15,6 +15,8 @@ class GeminiProvider(BaseLLMProvider):
     def __init__(self):
         # Mengambil API Key dari environment variable GEMINI_API_KEY
         self.api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        # Model default dinamis mengikuti arahan CTO (fallback ke gemini-3.8-flash)
+        self.model = os.getenv("AI_PRIMARY_MODEL", "gemini-3.8-flash").strip()
 
         if not self.api_key:
             logger.warning(
@@ -31,7 +33,7 @@ class GeminiProvider(BaseLLMProvider):
                 text="Maaf, konfigurasi API Key Gemini belum diatur di server.",
                 finish_reason="error",
                 provider="gemini",
-                model="gemini-3.6-flash",
+                model=self.model,
             )
 
         start_time = time.time()
@@ -45,7 +47,7 @@ class GeminiProvider(BaseLLMProvider):
             # Memanggil endpoint SDK dalam thread pool agar non-blocking
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
-                model="gemini-3.6-flash", 
+                model=self.model, 
                 contents=prompt, 
                 config=config
             )
@@ -62,7 +64,7 @@ class GeminiProvider(BaseLLMProvider):
                 finish_reason="stop",
                 latency_ms=round(latency, 2),
                 provider="gemini",
-                model="gemini-3.6-flash",
+                model=self.model,
                 token_usage={
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
@@ -76,5 +78,5 @@ class GeminiProvider(BaseLLMProvider):
                 text=f"Maaf, kendala koneksi AI: {str(e)}",
                 finish_reason="error",
                 provider="gemini",
-                model="gemini-3.6-flash",
+                model=self.model,
             )
