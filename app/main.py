@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
+from aiohttp import web
 
 # Setup path aplikasi
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -214,6 +215,29 @@ async def start_application():
     register_growth_routes(aiohttp_app)
     register_shipping_routes(aiohttp_app)
     register_seller_ads_routes(aiohttp_app)
+
+    # Register endpoint ads-config langsung pada router aiohttp
+    async def aiohttp_ads_config(request):
+        tenant_slug = request.match_info.get("tenant_slug", "kurastorenkrw")
+        cors_headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
+        return web.json_response(
+            {
+                "status": "success",
+                "tenant_slug": tenant_slug,
+                "meta_pixel_id": None,
+                "tiktok_pixel_id": None,
+                "google_tag_id": None,
+            },
+            headers=cors_headers,
+        )
+
+    aiohttp_app.router.add_get("/api/ads-config", aiohttp_ads_config)
+    aiohttp_app.router.add_get("/api/v1/store/ads-config", aiohttp_ads_config)
+    aiohttp_app.router.add_get("/api/v1/shop/{tenant_slug}/ads-config", aiohttp_ads_config)
     
     port = int(os.getenv("PORT", 8080))
     await start_web_server(aiohttp_app, port=port)
