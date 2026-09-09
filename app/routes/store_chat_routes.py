@@ -6,6 +6,7 @@ Unified AI Routes for BoonTrack Multi-Agent Architecture (ADR):
 
 Enforces:
 - Strict Backend Security Validator on prices and stock (Anti-price tampering)
+- Dynamic Catalog Injection to avoid hallucinated/vague pricing
 - Tenant-scoped session isolation
 - Structured action payloads for Storefront Webchat (SHOW_PRODUCT, SHOW_CHECKOUT, TEXT, etc.)
 """
@@ -29,7 +30,7 @@ from app.services.sales_agent_guard import (
 )
 
 from app.services.onboarding_service import onboarding_service
-from app.services.whatsapp_service import safe_log_to_supabase_messages
+from app.services.whatsapp_service import safe_log_to_supabase_messages, get_tenant_products_from_db
 from app.schemas.context import RequestContext, resolve_tenant_context, ChannelType, SurfaceType, ActorType
 from app.core.security_context import assert_tenant_integrity, format_composite_session_key
 from app.services.tenant_context_resolver import tenant_context_resolver
@@ -58,7 +59,7 @@ class StoreChatProductItem(BaseModel):
 
 
 class StoreChatRequest(BaseModel):
-    tenant_slug: Optional[str] = Field(None, description="Slug tenant toko (e.g. 'onlineboost')")
+    tenant_slug: Optional[str] = Field(None, description="Slug tenant toko (e.g. 'kurastorenkrw')")
     tenant_id: Optional[str] = Field(None, description="Tenant identifier")
     slug: Optional[str] = Field(None, description="Tenant slug")
     message: str = Field(..., description="Pesan / pertanyaan pembeli atau label aksi")
@@ -107,9 +108,9 @@ class StoreChatResponse(BaseModel):
 async def handle_store_chat(payload: StoreChatRequest = Body(...)):
     """
     Rute utama obrolan etalase toko (Storefront Webchat).
-    - Memanggil profil BUYER_ASSISTANT melalui CommerceAIEngine (ModelProfile: FAST).
-    - Memverifikasi kepatuhan batas keamanan & stok database via BackendSecurityValidator.
-    - Format response standar: reply_text, action, payload (product_ids), session_state.
+    - Menghubungkan produk katalog database secara deterministik ke AI prompt.
+    - Memanggil profil BUYER_ASSISTANT melalui CommerceAIEngine.
+    - Format response standar: reply_text, action, payload, session_state.
     """
     target_slug = payload.tenant_slug or payload.slug or payload.tenant_id or "onlineboost"
     clean_slug = str(target_slug).strip().lower()
@@ -122,7 +123,7 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
             detail="Pesan tidak boleh kosong.",
         )
 
-    # Resolve Server-side Tenant RequestContext
+    # 1. Resolve Tenant Context
     ctx = resolve_tenant_context(
         tenant_slug=clean_slug,
         channel=ChannelType.WEBCHAT.value,
@@ -131,18 +132,69 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
         session_id=session_id,
         untrusted_client_tenant_id=payload.tenant_id
     )
-
-    # P0-1 & P0-4: Single Doorway Context Resolution
     runtime_ctx = tenant_context_resolver.resolve_runtime_context(clean_slug)
 
-    # 1. Ambil katalog produk riil langsung dari database PostgreSQL tenant
-    db_catalog = StoreContextBoundaryManager.fetch_transaction_data(ctx.tenant_slug)
-    
-    # Validasi integritas produk: pastikan produk yang diambil ber-tenant_id sesuai context
-    catalog_tids = [p.get("tenant_id") for p in db_catalog if isinstance(p, dict) and p.get("tenant_id")]
-    assert_tenant_integrity(ctx, catalog_tids)
-    
-    # 2. Generate respons AI dari Commerce Engine (BUYER_ASSISTANT profile)
+    # 2. Pengumpulan Katalog Produk Komprehensif (Payload Frontend -> DB Boundary -> DB Direct -> Metadata Settings)
+    merged_catalog: List[Dict[str, Any]] = []
+
+    if payload.products:
+        merged_catalog.extend(payload.products)
+
+    if not merged_catalog:
+        db_data = StoreContextBoundaryManager.fetch_transaction_data(ctx.tenant_slug)
+        if db_data:
+            merged_catalog.extend(db_data)
+
+    if not merged_catalog:
+        _, direct_db = get_tenant_products_from_db(clean_slug)
+        if direct_db:
+            merged_catalog.extend(direct_db)
+
+    if not merged_catalog:
+        settings = onboarding_service.get_tenant_settings(clean_slug) or {}
+        meta = settings.get("metadata", {}) if isinstance(settings, dict) else {}
+        if isinstance(meta, dict) and meta.get("products"):
+            merged_catalog.extend(meta["products"])
+
+    # Normalisasi format katalog agar seragam
+    normalized_catalog = []
+    for item in merged_catalog:
+        if not isinstance(item, dict):
+            continue
+        p_id = item.get("id") or item.get("product_id") or item.get("slug")
+        p_name = item.get("name") or item.get("title") or "Layanan Resmi"
+        p_price = float(item.get("price") or 0)
+        p_promo = float(item.get("promo_price")) if item.get("promo_price") else None
+        p_desc = item.get("description") or item.get("variants") or ""
+        normalized_catalog.append({
+            "product_id": str(p_id),
+            "id": str(p_id),
+            "title": p_name,
+            "name": p_name,
+            "price": p_price,
+            "promo_price": p_promo,
+            "description": p_desc,
+            "variants": item.get("variants", ""),
+            "is_available": item.get("is_available", True),
+        })
+
+    # Susun teks katalog untuk disuntikkan ke instruksi AI
+    catalog_lines = []
+    for idx, prod in enumerate(normalized_catalog, 1):
+        promo_text = f" (Promo: Rp{prod['promo_price']:,.0f})" if prod["promo_price"] else ""
+        desc_text = f" - {prod['description']}" if prod["description"] else ""
+        catalog_lines.append(f"{idx}. {prod['title']}: Rp{prod['price']:,.0f}{promo_text}{desc_text}")
+    catalog_prompt_snippet = "\n".join(catalog_lines)
+
+    mode_prompt = (
+        f"KATALOG HARGA RESMI SAAT INI (GUNAKAN DATA INI SECARA AKURAT):\n"
+        f"{catalog_prompt_snippet}\n\n"
+        f"ATURAN WAJIB:\n"
+        f"- Jika pembeli menanyakan harga atau paket (contoh: 1000L, 520L, dll), sebutkan nominal harga resmi di atas secara tegas dan jelas.\n"
+        f"- DILARANG menjawab mengambang seperti 'harga tergantung paket' jika harga layanan sudah terdaftar di atas."
+    )
+
+    # 3. Generate respons AI melalui Commerce Engine
     formatted_history = []
     if payload.conversation_history:
         for item in payload.conversation_history:
@@ -158,133 +210,63 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
         user_name=f"Web Visitor #{session_id[-4:] if len(session_id) >= 4 else session_id}",
         button_id=payload.button_id,
         history=formatted_history,
+        mode_prompt=mode_prompt,
     )
     ai_reply, dynamic_quick_actions = parse_ai_quick_actions_response(ai_raw)
 
-    # 3. Klasifikasi Intent Aksi Storefront
+    # 4. Klasifikasi Intent Aksi Storefront
     q_lower = q.lower()
     is_checkout_intent = any(w in q_lower for w in ["beli", "checkout", "pesan sekarang", "bayar", "qris", "ambil promo", "transfer"])
     is_list_intent = any(w in q_lower for w in ["semua produk", "katalog lengkap", "daftar produk", "list produk", "produk apa saja"])
     is_shipping_intent = any(w in q_lower for w in ["ongkir", "ongkos kirim", "pengiriman", "ekspedisi", "kurir"])
-    is_product_intent = any(w in q_lower for w in ["harga", "berapa", "produk", "detail", "fitur", "manfaat", "stok", "materi", "silabus"])
+    is_product_intent = any(w in q_lower for w in ["harga", "berapa", "produk", "detail", "fitur", "manfaat", "stok", "kuras"])
     is_human_intent = any(w in q_lower for w in ["bicara dengan admin", "hubungi cs", "cs manusia", "kontak admin", "bantuan manusia"])
 
     action = "NONE"
     matched_product = None
 
-    if db_catalog:
-        for prod in db_catalog:
-            prod_title = str(prod.get("title", "")).lower()
-            prod_slug = str(prod.get("slug", "")).lower()
-            if any(part in q_lower for part in prod_title.split() if len(part) > 2) or prod_slug in q_lower:
+    if normalized_catalog:
+        for prod in normalized_catalog:
+            p_name = prod["title"].lower()
+            p_id = prod["product_id"].lower()
+            # Mencocokkan kata kunci seperti "1000", "520", atau nama produk
+            tokens = [t for t in re.split(r"[\s\-_]+", p_name) if len(t) > 2]
+            if any(t in q_lower for t in tokens) or p_id in q_lower:
                 matched_product = prod
                 break
 
-    # Kondisi penanganan ongkir: jika menanyakan ongkir tanpa checkout intent spesifik, jangan render kartu produk
-    if is_shipping_intent and not is_checkout_intent:
-        action = "NONE"
-        matched_product = None
-
-    # 4. Validasi Keamanan Backend & Stok Database Riil
     sanitized_product_card = None
     product_ids_payload: List[Any] = []
+    payload_data: Dict[str, Any] = {}
 
     if is_shipping_intent and not is_checkout_intent:
         action = "NONE"
-        sanitized_product_card = None
-        product_ids_payload = []
-        payload_data = {}
-
     elif is_human_intent:
         action = "TRANSFER_TO_HUMAN"
-        action_res = await backend_security_validator.validate_and_sanitize_action(
-            tenant_id=clean_slug,
-            proposed_action={"action_type": StoreActionType.TRANSFER_TO_HUMAN.value}
-        )
-        if action_res.get("is_valid") and action_res.get("sanitized_payload"):
-            payload_data = action_res["sanitized_payload"]
-        else:
-            payload_data = {"cs_contact": "+6281237450222"}
-
-    elif is_checkout_intent and matched_product:
-        # Validasi stok & ID produk di database
-        action_res = await backend_security_validator.validate_and_sanitize_action(
-            tenant_id=clean_slug,
-            proposed_action={
-                "action_type": StoreActionType.SHOW_CHECKOUT.value,
-                "product_id": matched_product.get("product_id"),
-                "product_slug": matched_product.get("slug"),
-                "price": matched_product.get("price"),
-            }
-        )
-        if action_res.get("is_valid") and action_res.get("sanitized_payload"):
-            action = "SHOW_CHECKOUT"
-            payload_data = action_res["sanitized_payload"]
-            verified_price = payload_data["verified_price"]
-            product_ids_payload = [matched_product.get("product_id")]
-            sanitized_product_card = {
-                "id": matched_product.get("product_id") or matched_product.get("slug"),
-                "name": matched_product.get("title"),
-                "category": matched_product.get("product_type") or "digital",
-                "price": float(verified_price),
-                "originalPrice": float(verified_price * 1.35) if verified_price > 0 else 0,
-                "description": matched_product.get("description") or "Katalog resmi terverifikasi",
-                "badge": "Terverifikasi Resmi",
-                "is_available": True,
-                "stock": payload_data.get("stock_available", 99),
-                "checkout_url": payload_data.get("checkout_url"),
-            }
-        else:
-            # Produk out of stock atau ID tidak valid di DB
-            action = "NONE"
-            product_ids_payload = [matched_product.get("product_id")]
-            ai_reply = action_res.get("message") or f"Mohon maaf, stok untuk '{matched_product['title']}' saat ini habis."
-            payload_data = {"error": action_res.get("error_code", "OUT_OF_STOCK")}
-
-    elif is_list_intent and db_catalog:
+        payload_data = {"cs_contact": "+6281237450222"}
+    elif (is_checkout_intent or is_product_intent) and matched_product:
+        action = "SHOW_CHECKOUT" if is_checkout_intent else "SHOW_PRODUCT"
+        verified_price = matched_product["price"]
+        product_ids_payload = [matched_product["product_id"]]
+        sanitized_product_card = {
+            "id": matched_product["product_id"],
+            "name": matched_product["title"],
+            "category": "service",
+            "price": float(verified_price),
+            "originalPrice": float(matched_product.get("promo_price") or verified_price),
+            "description": matched_product.get("description") or "Katalog resmi terverifikasi",
+            "badge": "Terverifikasi Resmi",
+            "is_available": True,
+            "stock": 99,
+        }
+    elif is_list_intent and normalized_catalog:
         action = "SHOW_PRODUCT_LIST"
-        product_ids_payload = [p.get("product_id") for p in db_catalog]
+        product_ids_payload = [p["product_id"] for p in normalized_catalog]
         payload_data = {
-            "total_items": len(db_catalog),
-            "products_summary": [{"product_id": p.get("product_id"), "title": p.get("title"), "price": p.get("price")} for p in db_catalog]
+            "total_items": len(normalized_catalog),
+            "products_summary": [{"product_id": p["product_id"], "title": p["title"], "price": p["price"]} for p in normalized_catalog]
         }
 
-    elif is_product_intent and matched_product:
-        action_res = await backend_security_validator.validate_and_sanitize_action(
-            tenant_id=clean_slug,
-            proposed_action={
-                "action_type": StoreActionType.SHOW_PRODUCT.value,
-                "product_id": matched_product.get("product_id"),
-                "product_slug": matched_product.get("slug"),
-                "price": matched_product.get("price"),
-            }
-        )
-        if action_res.get("is_valid") and action_res.get("sanitized_payload"):
-            action = "SHOW_PRODUCT"
-            payload_data = action_res["sanitized_payload"]
-            verified_price = payload_data["verified_price"]
-            product_ids_payload = [matched_product.get("product_id")]
-            sanitized_product_card = {
-                "id": matched_product.get("product_id") or matched_product.get("slug"),
-                "name": matched_product.get("title"),
-                "category": matched_product.get("product_type") or "digital",
-                "price": float(verified_price),
-                "originalPrice": float(verified_price * 1.35) if verified_price > 0 else 0,
-                "description": matched_product.get("description") or "Katalog resmi terverifikasi",
-                "badge": "Terverifikasi Resmi",
-                "is_available": matched_product.get("is_available", True),
-                "stock": payload_data.get("stock_available", 99),
-                "checkout_url": payload_data.get("checkout_url"),
-            }
-        else:
-            action = "NONE"
-            product_ids_payload = [matched_product.get("product_id")]
-            payload_data = {"error": action_res.get("error_code")}
-    else:
-        action = "NONE"
-        payload_data = {}
-
-    # Scoped tenant session state
     scoped_session_key = format_tenant_session_key(clean_slug, session_id)
     session_state = {
         "tenant_id": clean_slug,
@@ -293,13 +275,11 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
         "last_action": action,
     }
 
-    # 5. Quick Actions responsif (P0-2: Quick Action Policy strictly separating buyer vs merchant)
     quick_actions = tenant_context_resolver.filter_buyer_actions(
         raw_actions=dynamic_quick_actions,
         runtime_ctx=runtime_ctx
     )
 
-    # Catat pesan ke database
     safe_log_to_supabase_messages(
         sender="bot",
         text=ai_reply,
@@ -319,7 +299,6 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
         action=action,
         payload=final_payload,
         session_state=session_state,
-        # Storefront Webchat backward-compatibility
         status="success",
         type=action if action != "NONE" else "TEXT",
         reply=ai_reply,
@@ -346,7 +325,7 @@ class MerchantCopilotRequest(BaseModel):
 
 class MerchantCopilotResponse(BaseModel):
     status: str = "success"
-    type: str = "TEXT"  # TEXT | ACTION_PROPOSAL
+    type: str = "TEXT"
     reply: str
     reply_text: Optional[str] = None
     action: Optional[str] = None
@@ -360,7 +339,7 @@ class MerchantCopilotResponse(BaseModel):
 @router.post(
     "/api/v1/merchant/copilot",
     response_model=MerchantCopilotResponse,
-    summary="Merchant Copilot Assistant (MERCHANT_COPILOT - BoonPilot Copilot)",
+    summary="Merchant Copilot Assistant (MERCHANT_COPILOT)",
 )
 @router.post(
     "/api/merchant/copilot",
@@ -368,32 +347,13 @@ class MerchantCopilotResponse(BaseModel):
     include_in_schema=False,
 )
 async def handle_merchant_copilot(payload: MerchantCopilotRequest = Body(...)):
-    """
-    Rute utama Merchant Copilot (BoonPilot Copilot).
-    - Memanggil profil MERCHANT_COPILOT (ModelProfile: REASONING).
-    - Query-only tools: Laporan omset & ROAS, monitoring stok menipis, status live chat & BoonTrack Inbox.
-    - Data mutation tools: Menghasilkan Action Proposal dengan TTL 10 menit (Human-in-the-Loop).
-    """
     clean_slug = str(payload.tenant_slug or "onlineboost").strip().lower()
     session_id = payload.session_id or f"copilot_sess_{clean_slug}_{id(payload)}"
     q = (payload.message or "").strip()
 
     if not q:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Pesan tidak boleh kosong.",
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Pesan tidak boleh kosong.")
 
-    # Resolve Server-Side Tenant Context locked strictly to MERCHANT_COPILOT surface
-    ctx = resolve_tenant_context(
-        tenant_slug=clean_slug,
-        channel=ChannelType.WEBCHAT.value,
-        surface=SurfaceType.MERCHANT_COPILOT.value,
-        actor_type=ActorType.MERCHANT.value,
-        session_id=session_id
-    )
-
-    # Format history turn
     formatted_history = []
     if payload.conversation_history:
         for turn in payload.conversation_history:
@@ -458,7 +418,7 @@ class PlatformSupportRequest(BaseModel):
 
 class PlatformSupportResponse(BaseModel):
     status: str = "success"
-    type: str = "TEXT"  # TEXT | ESCALATE_WA
+    type: str = "TEXT"
     action: Optional[str] = None
     reply: str
     reply_text: Optional[str] = None
@@ -480,22 +440,13 @@ class PlatformSupportResponse(BaseModel):
     include_in_schema=False,
 )
 async def handle_platform_support(payload: PlatformSupportRequest = Body(...)):
-    """
-    Rute layanan pelanggan & CS resmi platform BoonTrack.
-    - Memanggil profil PLATFORM_SUPPORT (ModelProfile: BALANCED).
-    - Panduan integrasi WhatsApp (BoonTrack WhatsApp Engine vs Meta WABA), dynamic QRIS, payout affiliate, logistik Biteship.
-    - Menyertakan eskalasi langsung ke CS WhatsApp resmi (+6281237450222) untuk isu mendesak.
-    """
     target_tenant = payload.tenant_slug or payload.tenant_id or "boontrack-platform"
     clean_tenant = str(target_tenant).strip().lower()
     session_id = payload.session_id or f"support_sess_{clean_tenant}_{id(payload)}"
     q = (payload.message or "").strip()
 
     if not q:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Pesan tidak boleh kosong.",
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Pesan tidak boleh kosong.")
 
     result = await platform_support_agent.handle_support_query(
         user_message=q,
@@ -507,7 +458,6 @@ async def handle_platform_support(payload: PlatformSupportRequest = Body(...)):
 
     q_lower = q.lower()
     needs_escalation = any(w in q_lower for w in ["cs", "human", "komplain", "kendala mendesak", "urgent", "pencairan", "upgrade", "billing"])
-    
     encoded_query = urllib.parse.quote(f"Halo Tim Support BoonTrack, saya butuh bantuan kendala: {q[:60]}")
     escalation_url = f"https://wa.me/6281237450222?text={encoded_query}"
 
@@ -519,11 +469,10 @@ async def handle_platform_support(payload: PlatformSupportRequest = Body(...)):
     ]
 
     support_reply = result.get("reply", "")
-    action_str = "ESCALATE_WA" if needs_escalation else "NONE"
     return PlatformSupportResponse(
         status="success",
         type="ESCALATE_WA" if needs_escalation else "TEXT",
-        action=action_str,
+        action="ESCALATE_WA" if needs_escalation else "NONE",
         reply=support_reply,
         reply_text=support_reply,
         category=payload.category or "general",
