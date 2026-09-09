@@ -146,6 +146,18 @@ async def root_health_check():
     }
 
 
+@app.get("/api/ads-config", summary="Tenant Ads Pixel Config")
+@app.get("/api/v1/store/ads-config", summary="Tenant Ads Pixel Config v1")
+async def get_store_ads_config(tenant_slug: str = "kurastorenkrw"):
+    return {
+        "status": "success",
+        "tenant_slug": tenant_slug,
+        "meta_pixel_id": None,
+        "tiktok_pixel_id": None,
+        "google_tag_id": None,
+    }
+
+
 @app.post("/payout/settle", summary="Batch Settle Affiliate Commission")
 async def settle_payout(payload: Dict[str, Any]):
     code = payload.get("affiliate_code")
