@@ -1187,6 +1187,8 @@ class CareerService:
 
         # 13. State: 💬 CAREER CONSULTATION (Supportive Senior Peer)
         if current_mode == "career_ask" or user_text:
+            from app.services.ai_gateway.models import AICapability
+
             system_instruction = (
                 "Role: Senior Career Mentor & Supportive Peer (BoonTrack Career).\n"
                 "Karakter: Hangat, solutif, realistis, dan tidak menggurui atau kaku.\n"
@@ -1196,14 +1198,24 @@ class CareerService:
                 "- Di baris terakhir, ingatkan dengan santai bahwa pengguna bisa mengetik 'menu' kapan saja untuk kembali."
             )
 
+            # Fallback capability jika CAREER_CONSULTATION belum terdaftar di Enum
+            cap = getattr(AICapability, "CAREER_CONSULTATION", AICapability.FAST_CONVERSATION)
+
             try:
-                ai_reply = await ai_gateway.generate(
+                ai_reply = await ai_gateway.generate_for_capability(
+                    capability=cap,
                     user_message=user_text,
-                    context={"user_id": sender_wa_id, "feature": "career_consultation"},
-                    system_prompt=system_instruction
+                    context={
+                        "tenant_id": TENANT_ID,
+                        "user_id": sender_wa_id,
+                        "sender_wa_id": sender_wa_id,
+                        "feature": "career_consultation",
+                        "session_role": "career_seeker",
+                    },
+                    system_prompt=system_instruction,
                 )
             except Exception as e:
-                logger.error(f"[Career Ask Error] {e}", exc_info=True)
+                logger.error(f"[CAREER CONSULTATION ERROR] {e}", exc_info=True)
                 ai_reply = None
 
             if ai_reply:
