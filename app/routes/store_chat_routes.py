@@ -60,18 +60,18 @@ class StoreChatProductItem(BaseModel):
 
 
 class StoreChatRequest(BaseModel):
-    tenant_slug: Optional[str] = Field(None, description="Slug tenant toko (e.g. 'kurastorenkrw')")
+    tenant_slug: Optional[str] = Field(None, description="Slug tenant toko")
     tenant_id: Optional[str] = Field(None, description="Tenant identifier")
     slug: Optional[str] = Field(None, description="Tenant slug")
     message: str = Field(..., description="Pesan / pertanyaan pembeli atau label aksi")
     session_id: Optional[str] = Field(None, description="ID sesi webchat pembeli")
     conversation_history: Optional[List[Dict[str, Any]]] = Field(
         default_factory=list,
-        description="Riwayat percakapan sebelumnya [{'sender': 'user'|'bot', 'text': '...'}]"
+        description="Riwayat percakapan sebelumnya"
     )
     products: Optional[List[Dict[str, Any]]] = Field(
         default_factory=list,
-        description="Daftar produk aktif (opsional jika ingin di-override dari frontend)"
+        description="Daftar produk aktif"
     )
     cart: Optional[List[Dict[str, Any]]] = Field(
         default_factory=list,
@@ -135,7 +135,7 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
     )
     runtime_ctx = tenant_context_resolver.resolve_runtime_context(clean_slug)
 
-    # 2. Pengumpulan Katalog Produk Komprehensif
+    # 2. Pengumpulan Katalog Produk Komprehensif secara Dinamis dari Database / Metadata
     merged_catalog: List[Dict[str, Any]] = []
 
     if payload.products:
@@ -154,7 +154,9 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
     if not merged_catalog:
         settings = onboarding_service.get_tenant_settings(clean_slug) or {}
         meta = settings.get("metadata", {}) if isinstance(settings, dict) else {}
-        if isinstance(meta, dict) and meta.get("products"):
+        if isinstance(meta, dict) and meta.get("capacities"):
+            merged_catalog.extend(meta["capacities"])
+        elif isinstance(meta, dict) and meta.get("products"):
             merged_catalog.extend(meta["products"])
 
     # Normalisasi format katalog
@@ -188,11 +190,11 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
     catalog_prompt_snippet = "\n".join(catalog_lines)
 
     mode_prompt = (
-        f"KATALOG HARGA RESMI SAAT INI (GUNAKAN DATA INI SECARA AKURAT):\n"
+        f"KATALOG & TARIF RESMI SAAT INI (DARI DATABASE):\n"
         f"{catalog_prompt_snippet}\n\n"
         f"ATURAN WAJIB:\n"
-        f"- Jika pembeli menanyakan harga atau paket (contoh: 1000L, 800L, 650L, 520L, 350L), sebutkan nominal harga resmi di atas secara tegas dan jelas.\n"
-        f"- DILARANG menjawab mengambang seperti 'harga tergantung paket' jika harga layanan sudah terdaftar di atas."
+        f"- Jika pembeli menanyakan harga atau kapasitas, sebutkan nominal harga resmi di atas secara tegas dan jelas.\n"
+        f"- DILARANG menjawab mengambang jika harga layanan sudah terdaftar di atas."
     )
 
     # 3. Generate respons AI melalui Commerce Engine
@@ -220,14 +222,13 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
     is_checkout_intent = any(w in q_lower for w in ["beli", "checkout", "pesan sekarang", "bayar", "qris", "ambil promo", "transfer"])
     is_list_intent = any(w in q_lower for w in ["semua produk", "katalog lengkap", "daftar produk", "list produk", "produk apa saja"])
     is_shipping_intent = any(w in q_lower for w in ["ongkir", "ongkos kirim", "pengiriman", "ekspedisi", "kurir"])
-    is_product_intent = any(w in q_lower for w in ["harga", "berapa", "produk", "detail", "fitur", "manfaat", "stok", "kuras", "toren", "liter", "biaya"])
+    is_product_intent = any(w in q_lower for w in ["harga", "berapa", "produk", "detail", "fitur", "manfaat", "stok", "kuras", "toren", "liter", "biaya", "kapasitas"])
     is_human_intent = any(w in q_lower for w in ["bicara dengan admin", "hubungi cs", "cs manusia", "kontak admin", "bantuan manusia"])
 
     action = "NONE"
     matched_product = None
 
     if normalized_catalog:
-        # Prioritas 1: Cocokkan nomor kapasitas spesifik (1000, 800, 650, 520, 350)
         user_numbers = re.findall(r"\d+", q_lower)
         if user_numbers:
             for prod in normalized_catalog:
@@ -236,7 +237,6 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
                     matched_product = prod
                     break
 
-        # Prioritas 2: Cocokkan kata kunci unik nama produk (abaikan kata umum seperti kuras/toren)
         if not matched_product:
             for prod in normalized_catalog:
                 p_name = prod["title"].lower()
