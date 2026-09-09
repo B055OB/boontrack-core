@@ -146,8 +146,9 @@ async def root_health_check():
     }
 
 
-@app.get("/api/ads-config", summary="Tenant Ads Pixel Config")
-@app.get("/api/v1/store/ads-config", summary="Tenant Ads Pixel Config v1")
+@app.get("/api/ads-config", summary="Tenant Ads Pixel Config Root")
+@app.get("/api/v1/store/ads-config", summary="Tenant Ads Pixel Config v1 Store")
+@app.get("/api/v1/shop/{tenant_slug}/ads-config", summary="Tenant Shop Ads Pixel Config")
 async def get_store_ads_config(tenant_slug: str = "kurastorenkrw"):
     return {
         "status": "success",
