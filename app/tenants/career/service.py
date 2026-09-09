@@ -4,7 +4,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List
-
+from app.services.ai_gateway.gateway import ai_gateway
 from app.tenants.career.config import TENANT_ID, CAREER_VIP_WHITELIST
 from app.tenants.career.messages import (
     WELCOME_CAREER_TEMPLATE,
