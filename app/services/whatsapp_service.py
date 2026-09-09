@@ -12,6 +12,8 @@ from supabase import create_client, Client
 import uuid
 import asyncio
 
+from app.services.unified_engine.engine_core import unified_engine_core
+
 logger = logging.getLogger(__name__)
 
 _supabase_client: Optional[Client] = None
@@ -825,6 +827,14 @@ async def log_to_supabase_messages(
 
         now_iso = datetime.now(timezone.utc).isoformat()
 
+        # Evaluasi Unified Engine untuk Lead State Projection
+        engine_result = await unified_engine_core.process_incoming_message(
+            tenant_slug=clean_tenant,
+            phone=clean_digits,
+            message_text=content
+        )
+        lead_state_val = engine_result.get("lead_state", "TANYA_TANYA")
+
         if conv_uuid and clean_digits:
             try:
                 supabase.table("conversations").upsert({
@@ -832,6 +842,7 @@ async def log_to_supabase_messages(
                     "tenant_id": clean_tenant,
                     "phone_number": clean_digits,
                     "contact_name": user_name or f"User {clean_digits[-4:]}",
+                    "lead_state": lead_state_val, # Sinkronisasi lead_state ke BoonTrack Inbox
                     "updated_at": now_iso
                 }).execute()
             except Exception as conv_err:
