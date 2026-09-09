@@ -133,3 +133,5 @@ def parse_ai_quick_actions_response(raw_response: Any) -> Tuple[str, List[str]]:
         quick_actions = default_actions
 
     return reply_text, quick_actions
+
+clean_response = clean_ai_response
