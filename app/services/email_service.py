@@ -6,18 +6,28 @@ from email.mime.text import MIMEText
 from typing import Optional, Dict, Any
 
 try:
+    import resend
+except ImportError:
+    resend = None
+
+try:
     import aiosmtplib
 except ImportError:
     aiosmtplib = None
 
 logger = logging.getLogger("EMAIL_SERVICE")
 
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+EMAIL_FROM = os.getenv("EMAIL_FROM", os.getenv("FROM_EMAIL", "BoonTrack <no-reply@boontrack.com>"))
+
 SMTP_HOST = os.getenv("SMTP_HOST", "")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-FROM_EMAIL = os.getenv("FROM_EMAIL", "BoonTrack <noreply@boontrack.com>")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "https://app.boontrack.com")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://shop.boontrack.com/login")
+
+if RESEND_API_KEY and resend:
+    resend.api_key = RESEND_API_KEY
 
 
 def render_magic_link_html(
@@ -56,7 +66,6 @@ def render_magic_link_html(
         <tr>
             <td align="center" style="padding: 40px 16px;">
                 <table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 540px; background: #ffffff; border-radius: 24px; box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08); overflow: hidden; border: 1px solid #e2e8f0;">
-                    <!-- HEADER BRAND -->
                     <tr>
                         <td style="padding: 36px 40px 28px 40px; background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); text-align: center;">
                             <div style="display: inline-block; padding: 8px 18px; border-radius: 12px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2);">
@@ -65,8 +74,6 @@ def render_magic_link_html(
                             </div>
                         </td>
                     </tr>
-
-                    <!-- CONTENT BODY -->
                     <tr>
                         <td style="padding: 40px 40px 32px 40px;">
                             <h1 style="margin: 0 0 16px 0; font-size: 22px; font-weight: 800; color: #0f172a; line-height: 1.3;">
@@ -75,17 +82,12 @@ def render_magic_link_html(
                             <p style="margin: 0 0 24px 0; font-size: 14px; color: #475569; line-height: 1.6;">
                                 Kami menerima permintaan autentikasi login{tenant_display}. Klik tombol di bawah untuk langsung membuka sesi dashboard Anda tanpa perlu mengingat kata sandi:
                             </p>
-
-                            <!-- CTA BUTTON -->
                             <div style="text-align: center; margin: 32px 0;">
                                 <a href="{magic_link_url}" target="_blank" style="display: inline-block; padding: 15px 36px; background: #2563eb; color: #ffffff; font-size: 14px; font-weight: 700; text-decoration: none; border-radius: 14px; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35); text-transform: uppercase; letter-spacing: 0.5px;">
                                     Masuk ke Dashboard Sekarang &rarr;
                                 </a>
                             </div>
-
                             {otp_block}
-
-                            <!-- SECURITY DISCLAIMER -->
                             <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #f1f5f9;">
                                 <p style="margin: 0; font-size: 12px; color: #94a3b8; line-height: 1.5;">
                                     <strong>Penting:</strong> Tautan ajaib (Magic Link) ini hanya dapat digunakan satu kali dan akan kadaluarsa dalam 15 menit. Jika Anda tidak meminta email ini, akun Anda tetap aman dan Anda dapat mengabaikan pesan ini.
@@ -93,8 +95,6 @@ def render_magic_link_html(
                             </div>
                         </td>
                     </tr>
-
-                    <!-- FOOTER -->
                     <tr>
                         <td style="padding: 24px 40px; background: #f8fafc; border-top: 1px solid #e2e8f0; text-align: center;">
                             <p style="margin: 0; font-size: 11px; color: #94a3b8; line-height: 1.5;">
@@ -141,7 +141,6 @@ def render_merchant_welcome_html(
         <tr>
             <td align="center" style="padding: 40px 16px;">
                 <table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 560px; background: #ffffff; border-radius: 24px; box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08); overflow: hidden; border: 1px solid #e2e8f0;">
-                    <!-- HEADER -->
                     <tr>
                         <td style="padding: 40px 40px 30px 40px; background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); text-align: center;">
                             <div style="display: inline-block; padding: 8px 18px; border-radius: 12px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2);">
@@ -150,8 +149,6 @@ def render_merchant_welcome_html(
                             </div>
                         </td>
                     </tr>
-
-                    <!-- BODY -->
                     <tr>
                         <td style="padding: 40px 40px 32px 40px;">
                             <h1 style="margin: 0 0 12px 0; font-size: 24px; font-weight: 800; color: #0f172a; line-height: 1.3;">
@@ -160,8 +157,6 @@ def render_merchant_welcome_html(
                             <p style="margin: 0 0 20px 0; font-size: 14px; color: #475569; line-height: 1.6;">
                                 Selamat bergabung di <strong>BoonTrack</strong>! Toko digital dan infrastruktur omnichannel commerce Anda kini telah siap digunakan untuk meningkatkan konversi penjualan secara otomatis.
                             </p>
-
-                            <!-- STEPS LIST -->
                             <div style="background: #f8fafc; border-radius: 16px; padding: 20px; margin: 24px 0; border: 1px solid #e2e8f0;">
                                 <p style="margin: 0 0 14px 0; font-size: 13px; font-weight: 800; color: #1e293b; text-transform: uppercase; letter-spacing: 0.05em;">
                                     Langkah Cepat Memulai Toko:
@@ -187,23 +182,17 @@ def render_merchant_welcome_html(
                                     </tr>
                                 </table>
                             </div>
-
                             {cred_block}
-
-                            <!-- CTA BUTTON -->
                             <div style="text-align: center; margin: 32px 0;">
                                 <a href="{dashboard_url}" target="_blank" style="display: inline-block; padding: 15px 36px; background: #2563eb; color: #ffffff; font-size: 14px; font-weight: 700; text-decoration: none; border-radius: 14px; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35); text-transform: uppercase; letter-spacing: 0.5px;">
                                     Buka Dashboard Toko &rarr;
                                 </a>
                             </div>
-
                             <p style="margin: 24px 0 0 0; font-size: 13px; color: #64748b; line-height: 1.6;">
                                 Jika Anda memerlukan pendampingan konfigurasi, tim ahli kami selalu siap membantu Anda melalui layanan <strong>BoonTrack Desk</strong>.
                             </p>
                         </td>
                     </tr>
-
-                    <!-- FOOTER -->
                     <tr>
                         <td style="padding: 24px 40px; background: #f8fafc; border-top: 1px solid #e2e8f0; text-align: center;">
                             <p style="margin: 0; font-size: 11px; color: #94a3b8; line-height: 1.5;">
@@ -222,68 +211,32 @@ def render_merchant_welcome_html(
 
 
 class EmailService:
-    """Service modular untuk pengiriman email transaksional & notifikasi otomatis."""
+    """Service modular untuk pengiriman email transaksional & notifikasi otomatis (Resend + fallback SMTP)."""
 
     def __init__(
         self,
+        resend_api_key: Optional[str] = None,
+        from_email: Optional[str] = None,
         host: Optional[str] = None,
         port: Optional[int] = None,
         user: Optional[str] = None,
         password: Optional[str] = None,
-        from_email: Optional[str] = None,
     ):
+        self.resend_api_key = resend_api_key if resend_api_key is not None else RESEND_API_KEY
+        self.from_email = from_email if from_email is not None else EMAIL_FROM
         self.host = host if host is not None else SMTP_HOST
         self.port = port if port is not None else SMTP_PORT
         self.user = user if user is not None else SMTP_USER
         self.password = password if password is not None else SMTP_PASSWORD
-        self.from_email = from_email if from_email is not None else FROM_EMAIL
 
-    def is_configured(self) -> bool:
-        """Checks if SMTP credentials are validly provided."""
+        if self.resend_api_key and resend:
+            resend.api_key = self.resend_api_key
+
+    def has_resend(self) -> bool:
+        return bool(self.resend_api_key and resend)
+
+    def is_smtp_configured(self) -> bool:
         return bool(self.host and self.user and self.password)
-
-    async def send_email_async(
-        self,
-        to_email: str,
-        subject: str,
-        html_content: str,
-        text_content: Optional[str] = None,
-    ) -> bool:
-        """Asynchronously sends an email using aiosmtplib with graceful dev-mode fallback."""
-        if not self.is_configured():
-            logger.info(
-                f"[EMAIL DEV MODE] SMTP not configured. Mocking async email send to {to_email}. "
-                f"Subject: {subject}"
-            )
-            return True
-
-        message = MIMEMultipart("alternative")
-        message["Subject"] = subject
-        message["From"] = self.from_email
-        message["To"] = to_email
-
-        if text_content:
-            message.attach(MIMEText(text_content, "plain", "utf-8"))
-        message.attach(MIMEText(html_content, "html", "utf-8"))
-
-        try:
-            if aiosmtplib is not None:
-                await aiosmtplib.send(
-                    message,
-                    hostname=self.host,
-                    port=self.port,
-                    username=self.user,
-                    password=self.password,
-                    start_tls=True,
-                    timeout=15,
-                )
-                logger.info(f"[EMAIL] Successfully sent email async to {to_email}")
-                return True
-            else:
-                return self.send_email_sync(to_email, subject, html_content, text_content)
-        except Exception as e:
-            logger.error(f"[EMAIL ERROR] Failed sending async email to {to_email}: {e}")
-            return False
 
     def send_email_sync(
         self,
@@ -292,10 +245,30 @@ class EmailService:
         html_content: str,
         text_content: Optional[str] = None,
     ) -> bool:
-        """Synchronously sends an email using standard smtplib with graceful dev-mode fallback."""
-        if not self.is_configured():
+        # Jalur Utama: Resend API
+        if self.has_resend():
+            try:
+                params = {
+                    "from": self.from_email,
+                    "to": [to_email],
+                    "subject": subject,
+                    "html": html_content,
+                }
+                if text_content:
+                    params["text"] = text_content
+                res = resend.Emails.send(params)
+                logger.info(f"[EMAIL RESEND] Successfully sent to {to_email}: {res}")
+                return True
+            except Exception as e:
+                logger.error(f"[EMAIL RESEND ERROR] Failed to send to {to_email}: {e}")
+                # Jika Resend gagal, coba fallback ke SMTP jika diset
+                if not self.is_smtp_configured():
+                    return False
+
+        # Jalur Cadangan: SMTP Standar
+        if not self.is_smtp_configured():
             logger.info(
-                f"[EMAIL DEV MODE] SMTP not configured. Mocking sync email send to {to_email}. "
+                f"[EMAIL DEV MODE] Neither Resend nor SMTP configured. Mocking send to {to_email}. "
                 f"Subject: {subject}"
             )
             return True
@@ -317,11 +290,25 @@ class EmailService:
             server.login(self.user, self.password)
             server.sendmail(self.from_email, [to_email], message.as_string())
             server.close()
-            logger.info(f"[EMAIL] Successfully sent email sync to {to_email}")
+            logger.info(f"[EMAIL SMTP] Successfully sent email sync to {to_email}")
             return True
         except Exception as e:
-            logger.error(f"[EMAIL ERROR] Failed sending sync email to {to_email}: {e}")
+            logger.error(f"[EMAIL SMTP ERROR] Failed sending sync email to {to_email}: {e}")
             return False
+
+    async def send_email_async(
+        self,
+        to_email: str,
+        subject: str,
+        html_content: str,
+        text_content: Optional[str] = None,
+    ) -> bool:
+        """Asynchronously sends email via Resend SDK (blocking executed safely) or aiosmtplib."""
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self.send_email_sync, to_email, subject, html_content, text_content
+        )
 
     async def send_magic_link_email(
         self,
