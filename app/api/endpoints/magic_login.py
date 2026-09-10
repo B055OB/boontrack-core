@@ -26,18 +26,20 @@ async def magic_login_handler(request: web.Request) -> web.Response:
         supabase = get_supabase()
         if supabase:
             try:
-                res = supabase.table('tenants').select('slug,dashboard_path,domain').eq('slug', slug).execute()
+                res = supabase.table('tenants').select('slug').eq('slug', slug).execute()
                 if res and res.data:
                     row = res.data[0]
                     tenant_config = {
                         'slug': row.get('slug'),
-                        'dashboard_path': row.get('dashboard_path') or f"/{row.get('slug')}/dashboard",
-                        'domain': row.get('domain'),
+                        # No specific dashboard_path stored; fallback to default path
+                        'dashboard_path': f"/{row.get('slug')}/dashboard",
+                        # domain not used; optional
+                        'domain': None,
                     }
                 else:
                     raise web.HTTPNotFound(reason='Tenant not found')
             except Exception as e:
-                logger.warning(f"[MagicLogin] Supabase lookup failed for slug '{slug}': {e}")
+                logger.error(f"Error querying tenant: {e}")
                 raise web.HTTPNotFound(reason='Tenant not found')
         else:
             raise web.HTTPNotFound(reason='Tenant not found')
