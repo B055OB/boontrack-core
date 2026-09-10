@@ -197,3 +197,57 @@ def test_magic_link_missing_parameters_returns_400():
         json={},
     )
     assert response.status_code == 400
+
+
+def test_merchant_registration_triggers_welcome_email():
+    """POST /api/v1/auth/register should trigger send_merchant_welcome_email."""
+    with patch.object(email_service, "send_merchant_welcome_email", new_callable=AsyncMock) as mock_welcome, \
+         patch("app.routes.auth_routes.get_supabase", return_value=None):
+        mock_welcome.return_value = True
+
+        response = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "owner_baru@boontrack.com",
+                "name": "Budi Sukses",
+                "store_name": "Toko Berkah Budi",
+                "phone": "081234567890",
+            },
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["user"]["email"] == "owner_baru@boontrack.com"
+        assert data["user"]["name"] == "Budi Sukses"
+        assert "access_token" in data
+
+        # Verifikasi pemanggilan send_merchant_welcome_email
+        assert mock_welcome.called
+        call_kwargs = mock_welcome.call_args.kwargs
+        assert call_kwargs["to_email"] == "owner_baru@boontrack.com"
+        assert call_kwargs["merchant_name"] == "Budi Sukses"
+        assert "https://shop.boontrack.com/login" in call_kwargs["dashboard_url"]
+
+
+def test_merchant_registration_succeeds_even_if_email_fails():
+    """Registration response must still succeed even if email dispatch fails/timeouts."""
+    with patch.object(email_service, "send_merchant_welcome_email", new_callable=AsyncMock) as mock_welcome, \
+         patch("app.routes.auth_routes.get_supabase", return_value=None):
+        mock_welcome.side_effect = Exception("Resend API Timeout / Network Error")
+
+        response = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "resend_error@boontrack.com",
+                "name": "Merchant Resend Error",
+            },
+        )
+
+        # Response registrasi tetap berhasil 201 Created
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["user"]["email"] == "resend_error@boontrack.com"
+        assert mock_welcome.called
+

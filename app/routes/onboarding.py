@@ -5,6 +5,7 @@ Endpoints:
 - POST /api/v1/tenants/onboard : Provision tenant, initial product, and payout in 1 atomic transaction.
 """
 
+import os
 import logging
 from fastapi import APIRouter, HTTPException, status, Body
 
@@ -43,6 +44,21 @@ async def onboard_tenant_endpoint(
         if not payload.onboarding_mode:
             payload.onboarding_mode = "SELF_SERVICE"
         result = await onboarding_service.onboard_tenant(payload)
+
+        # Tepat setelah proses insert/commit merchant baru ke database berhasil, kirim email onboarding
+        user_email = payload.admin_email or (payload.payout.payout_email if payload.payout else None)
+        user_name = payload.name or payload.store_name
+        if user_email:
+            try:
+                from app.services.email_service import email_service
+                await email_service.send_merchant_welcome_email(
+                    to_email=user_email,
+                    merchant_name=user_name,
+                    dashboard_url=os.getenv("FRONTEND_URL", "https://shop.boontrack.com/login")
+                )
+            except Exception as mail_err:
+                logger.warning(f"[Onboarding Email Error] Gagal mengirim email onboarding: {mail_err}")
+
         return result
     except TenantSlugAlreadyExistsError as slug_err:
         logger.warning(f"[Onboard Endpoint Conflict] {slug_err}")

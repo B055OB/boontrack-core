@@ -149,6 +149,20 @@ async def create_subscription_logic(payload: CreateSubPayload):
                 "referral_code": payload.referral_code or payload.affiliate_id,
                 "is_otp_verified": True
             }, on_conflict="slug").execute()
+
+            # Tepat setelah proses insert/commit merchant ke database berhasil, kirim email onboarding
+            user_email = payload.customer_email
+            user_name = payload.merchant_name or "Owner"
+            if user_email and user_email != "merchant@boontrack.com":
+                try:
+                    from app.services.email_service import email_service
+                    await email_service.send_merchant_welcome_email(
+                        to_email=user_email,
+                        merchant_name=user_name,
+                        dashboard_url=os.getenv("FRONTEND_URL", "https://shop.boontrack.com/login")
+                    )
+                except Exception as mail_err:
+                    logger.warning(f"[Subscription Welcome Email Error] Gagal mengirim email onboarding: {mail_err}")
         except Exception as e:
             logger.error(f"[MERCHANT REGISTRATION ERROR] Gagal menyimpan data merchant: {e}")
 

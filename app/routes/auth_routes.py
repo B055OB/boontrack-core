@@ -24,6 +24,7 @@ except ImportError:
     redis = None
 
 from app.services.email_service import email_service
+from app.services.whatsapp_service import get_supabase
 
 logger = logging.getLogger("AUTH_ROUTES")
 router = APIRouter(prefix="/api/v1/auth/magic-link", tags=["Magic Link Auth"])
@@ -300,3 +301,76 @@ async def magic_login(slug: str = Query(..., description="Tenant slug"), secret:
     response = RedirectResponse(url=f"/{slug}/dashboard", status_code=302)
     response.set_cookie(key="access_token", value=token, httponly=True, secure=True, samesite="Lax")
     return response
+
+
+# --- Merchant Registration & Onboarding Integration ---
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    name: str
+    tenant_slug: Optional[str] = None
+    phone: Optional[str] = None
+    store_name: Optional[str] = None
+
+
+async def handle_register_logic(req: RegisterRequest) -> Dict[str, Any]:
+    user_email = req.email.strip().lower()
+    user_name = req.name.strip()
+    slug_raw = req.tenant_slug or req.store_name or user_name
+    slug = "".join(c if c.isalnum() or c == "-" else "-" for c in slug_raw.lower()).strip("-") or "merchant"
+
+    try:
+        supabase = get_supabase()
+        if supabase:
+            supabase.table("merchants").upsert({
+                "slug": slug,
+                "store_name": req.store_name or user_name,
+                "owner_name": user_name,
+                "owner_email": user_email,
+                "owner_whatsapp": req.phone or "",
+                "status": "ACTIVE",
+            }, on_conflict="slug").execute()
+    except Exception as db_err:
+        logger.warning(f"[AUTH REGISTER DB] Error persisting merchant record: {db_err}")
+
+    # Tepat setelah proses insert/commit merchant atau user baru ke database berhasil, panggil email onboarding
+    try:
+        from app.services.email_service import email_service
+        await email_service.send_merchant_welcome_email(
+            to_email=user_email,
+            merchant_name=user_name,
+            dashboard_url=os.getenv("FRONTEND_URL", "https://shop.boontrack.com/login")
+        )
+    except Exception as mail_err:
+        logger.warning(f"[AUTH REGISTER EMAIL] Gagal mengirim welcome email: {mail_err}")
+
+    token = generate_session_jwt(email=user_email, tenant_slug=slug)
+
+    return {
+        "status": "success",
+        "message": "Registrasi merchant berhasil.",
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {
+            "email": user_email,
+            "name": user_name,
+            "tenant_slug": slug,
+            "role": "merchant",
+        },
+    }
+
+
+@router.post("/register", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
+async def register_merchant_magic_link(req: RegisterRequest):
+    """POST /api/v1/auth/magic-link/register"""
+    return await handle_register_logic(req)
+
+
+auth_general_router = APIRouter(prefix="/api/v1/auth", tags=["Merchant Auth"])
+
+
+@auth_general_router.post("/register", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
+async def register_merchant_general(req: RegisterRequest):
+    """POST /api/v1/auth/register"""
+    return await handle_register_logic(req)
+
