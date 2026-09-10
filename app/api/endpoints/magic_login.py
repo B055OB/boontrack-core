@@ -48,8 +48,8 @@ async def magic_login_handler(request: web.Request) -> web.Response:
     admin_email = f"admin@{slug}.com"
     token = generate_session_jwt(email=admin_email, tenant_slug=slug)
     # Build redirect response with cookie
-    # Determine redirect location – prefer dashboard_path if provided
-    redirect_location = tenant_config.get('dashboard_path') if isinstance(tenant_config, dict) else f"/{slug}/dashboard"
+    # Build absolute redirect to shop frontend
+    redirect_location = f"https://shop.boontrack.com/{slug}/dashboard"
     response = web.HTTPFound(location=redirect_location)
-    response.set_cookie('access_token', token, httponly=True, secure=True, samesite='Lax')
+    response.set_cookie('access_token', token, httponly=True, secure=True, samesite='Lax', domain=".boontrack.com", path="/")
     return response
