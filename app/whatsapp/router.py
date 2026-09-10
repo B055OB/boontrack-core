@@ -28,3 +28,15 @@ def register_whatsapp_routes(app: web.Application, db_session_factory):
 
     app.router.add_get("/api/v1/whatsapp/webhook", _wrap_get)
     app.router.add_post("/api/v1/whatsapp/webhook", _wrap_post)
+    app.router.add_get("/api/v1/whatsapp/config", whatsapp_config_get)
+
+@web.middleware
+async def _add_json_header(request: web.Request, handler):
+    response = await handler(request)
+    if isinstance(response, web.Response) and response.content_type == "application/json":
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+async def whatsapp_config_get(request: web.Request) -> web.Response:
+    """GET /api/v1/whatsapp/config – return verification token and status."""
+    return web.json_response({"verify_token": META_VERIFY_TOKEN, "status": "ready"})
