@@ -50,6 +50,9 @@ async def magic_login_handler(request: web.Request) -> web.Response:
     # Build redirect response with cookie
     # Build absolute redirect to shop frontend
     redirect_location = f"https://shop.boontrack.com/{slug}/dashboard"
+    # Cookie will persist for 7 days (same as JWT expiration)
+    max_age = 7 * 24 * 60 * 60
     response = web.HTTPFound(location=redirect_location)
-    response.set_cookie('access_token', token, httponly=True, secure=True, samesite='Lax', domain=".boontrack.com", path="/")
+    response.set_cookie('access_token', token, httponly=True, secure=True, samesite='Lax',
+                        domain=".boontrack.com", path="/", max_age=max_age)
     return response
