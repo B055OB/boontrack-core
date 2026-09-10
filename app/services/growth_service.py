@@ -127,16 +127,36 @@ async def process_order_paid_growth_event(
 
         if attribution_info and attribution_info.get("affiliate_id"):
             aff_id = attribution_info["affiliate_id"]
-            comm_rate = float(attribution_info.get("commission_rate") or 10.0)
-            comm_amount = (order_amount * comm_rate) / 100.0
+            raw_rate = attribution_info.get("commission_rate")
+            
+            # Sinkronkan logic split 2-tier (Direct AM 30%, atau Mitra 25% + AM pembina 5%)
+            # Margin platform minimal 70.0%, total komisi maksimal 30.0%
+            is_direct_am = str(attribution_info.get("role", "")).upper() == "AM"
+            if is_direct_am:
+                affiliate_rate = 30.0
+                am_rate = 0.0
+            else:
+                affiliate_rate = float(raw_rate) if raw_rate is not None else 25.0
+                am_rate = 5.0  # default AM pembina
 
-            # Catat ke Ledger Komisi
+            total_rate = affiliate_rate + am_rate
+            if total_rate > 30.0:
+                scale = 30.0 / total_rate
+                affiliate_rate = round(affiliate_rate * scale, 4)
+                am_rate = round(am_rate * scale, 4)
+
+            comm_amount = round((order_amount * affiliate_rate) / 100.0, 2)
+
+            # Catat / Setujui ke Ledger Komisi
             cur.execute("""
                 INSERT INTO affiliate_commissions (
                     tenant_id, affiliate_id, order_id, order_amount, amount, status, created_at
                 ) VALUES (
                     %s, %s, %s, %s, %s, 'APPROVED', NOW()
-                ) ON CONFLICT (tenant_id, order_id) DO NOTHING;
+                ) ON CONFLICT (tenant_id, order_id) DO UPDATE SET 
+                    order_amount = EXCLUDED.order_amount,
+                    amount = EXCLUDED.amount,
+                    status = 'APPROVED';
             """, (tenant_id, aff_id, order_id, order_amount, comm_amount))
             conn.commit()
 

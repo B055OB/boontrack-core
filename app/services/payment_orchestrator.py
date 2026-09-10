@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from datetime import datetime, date
@@ -160,15 +161,51 @@ class PaymentOrchestrator:
         manager_id = order.get("manager_id")
         tenant_slug = order.get("tenant_slug", "onlineboost")
 
-        # Jika order memiliki atribusi referral (affiliate_id atau affiliate_code)
-        if affiliate_code or affiliate_id:
+        # Jika order memiliki atribusi referral (affiliate_id, affiliate_code, atau direct manager_id)
+        if affiliate_code or affiliate_id or manager_id:
             try:
-                affiliate_rate = float(order.get("affiliate_commission_rate") or 30.0)
-                manager_rate = float(order.get("manager_override_rate") or 10.0)
+                # ── Ambil commission_rate langsung dari tabel affiliates di Supabase ──
+                affiliate_rate = 25.0   # default: sale via mitra
+                manager_rate   = 5.0    # default: AM pembina
 
-                affiliate_commission = float(order.get("commission_amount") or ((amount * affiliate_rate) / 100.0))
-                manager_override = (amount * manager_rate) / 100.0 if manager_id else 0.0
-                net_platform = amount - (affiliate_commission + manager_override)
+                aff_lookup_key = "id" if affiliate_id else "referral_code"
+                aff_lookup_val = affiliate_id or affiliate_code
+                if aff_lookup_val:
+                    aff_res = self.supabase.table("affiliates").select(
+                        "commission_rate"
+                    ).eq(aff_lookup_key, aff_lookup_val).execute()
+
+                    if aff_res.data:
+                        aff_row = aff_res.data[0]
+                        db_rate = aff_row.get("commission_rate")
+                        if db_rate is not None:
+                            affiliate_rate = float(db_rate)
+
+                # ── Jika AM direct (tidak ada affiliate mitra): 30% ke AM ──
+                if manager_id and not affiliate_id and not affiliate_code:
+                    affiliate_rate = 0.0
+                    manager_rate   = 30.0
+
+                # ── Clamp: total komisi wajib ≤ 30.0% (platform min 70%) ──
+                effective_manager_rate = manager_rate if manager_id else 0.0
+                total_rate = affiliate_rate + effective_manager_rate
+                if total_rate > 30.0:
+                    scale = 30.0 / total_rate
+                    affiliate_rate         = round(affiliate_rate * scale, 4)
+                    effective_manager_rate = round(effective_manager_rate * scale, 4)
+                    logger.warning(
+                        f"[Payment] Commission rate clamped for order {external_id}: "
+                        f"affiliate={affiliate_rate}%, manager={effective_manager_rate}% (total was {total_rate:.2f}%)"
+                    )
+
+                affiliate_commission = round((amount * affiliate_rate) / 100.0, 2)
+                manager_override     = round((amount * effective_manager_rate) / 100.0, 2) if manager_id else 0.0
+                net_platform         = round(amount - affiliate_commission - manager_override, 2)
+
+                # ── Sanity check: platform wajib minimal 70% ──
+                assert net_platform >= round(amount * 0.70, 2) - 0.01, (
+                    f"Platform net {net_platform} < 70% of {amount} — commission guard triggered"
+                )
 
                 # Catat ke Commission Ledger (Immutable Source of Truth)
                 ledger_payload = {
@@ -180,7 +217,7 @@ class PaymentOrchestrator:
                     "gross_amount": amount,
                     "affiliate_commission_rate": affiliate_rate,
                     "affiliate_commission_amount": affiliate_commission,
-                    "manager_override_rate": manager_rate,
+                    "manager_override_rate": effective_manager_rate,
                     "manager_override_amount": manager_override,
                     "net_platform_revenue": net_platform,
                     "status": "PENDING_PAYOUT"
@@ -215,6 +252,8 @@ class PaymentOrchestrator:
                             "total_commission": affiliate_commission
                         }).execute()
 
+            except AssertionError as ae:
+                logger.error(f"[Payment] Commission guard FAILED for order {external_id}: {ae}")
             except Exception as e:
                 logger.error(f"[Payment] Commission ledger recording error: {str(e)}")
 

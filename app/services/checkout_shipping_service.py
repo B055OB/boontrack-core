@@ -106,6 +106,7 @@ async def create_checkout_order_with_shipping(payload: Dict[str, Any]) -> Dict[s
     
     payment_method = payload.get("payment_method", "DIRECT").upper()
     referral_code = payload.get("referral_code")
+    manager_id = payload.get("manager_id") or payload.get("am_id")
     
     conn = get_db()
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -128,18 +129,41 @@ async def create_checkout_order_with_shipping(payload: Dict[str, Any]) -> Dict[s
             payload.get("courier_code"), payload.get("courier_service_name"), payload.get("shipping_address")
         ))
 
-        # Komisi Affiliate: Dihitung MURNI dari base_price (tanpa shipping_cost)
-        if referral_code:
-            cur.execute("""
-                SELECT id, commission_rate FROM affiliates 
-                WHERE tenant_id = %s AND referral_code = %s AND status = 'ACTIVE';
-            """, (tenant_id, referral_code))
-            affiliate = cur.fetchone()
+        # Komisi Affiliate & Split 2-Tier: Dihitung MURNI dari base_price (tanpa shipping_cost)
+        if referral_code or manager_id:
+            affiliate = None
+            if referral_code:
+                cur.execute("""
+                    SELECT id, commission_rate FROM affiliates 
+                    WHERE tenant_id = %s AND referral_code = %s AND status = 'ACTIVE';
+                """, (tenant_id, referral_code))
+                affiliate = cur.fetchone()
 
-            if affiliate:
-                rate = float(affiliate.get("commission_rate", 10.0))
-                commission_earned = (base_price * rate) / 100.0
+            # Aturan Split 2-Tier (Maksimal total komisi 30%, Margin Platform minimal 70%):
+            # 1. Direct AM (tanpa mitra referral): 30% ke AM
+            # 2. Sale via Mitra: Mitra 25% (atau custom rate), AM pembina 5%
+            if manager_id and not affiliate:
+                affiliate_rate = 0.0
+                am_rate = 30.0
+                target_aff_id = manager_id
+            else:
+                db_rate = affiliate.get("commission_rate") if affiliate else None
+                affiliate_rate = float(db_rate) if db_rate is not None else 25.0
+                am_rate = 5.0 if manager_id else 0.0
+                target_aff_id = affiliate["id"] if affiliate else None
 
+            # Clamp total komisi maksimal 30.0% (Margin platform minimal 70.0%)
+            total_rate = affiliate_rate + am_rate
+            if total_rate > 30.0:
+                scale = 30.0 / total_rate
+                affiliate_rate = round(affiliate_rate * scale, 4)
+                am_rate = round(am_rate * scale, 4)
+
+            # Nominal komisi untuk penerima utama (affiliate mitra atau direct AM)
+            effective_rate = affiliate_rate if affiliate else am_rate
+            commission_earned = round((base_price * effective_rate) / 100.0, 2)
+
+            if target_aff_id and commission_earned > 0:
                 cur.execute("""
                     INSERT INTO affiliate_commissions (
                         tenant_id, affiliate_id, order_id, order_amount, amount, status, created_at
@@ -148,7 +172,7 @@ async def create_checkout_order_with_shipping(payload: Dict[str, Any]) -> Dict[s
                         order_amount = EXCLUDED.order_amount,
                         amount = EXCLUDED.amount,
                         status = 'PENDING';
-                """, (tenant_id, affiliate["id"], order_id, int(base_price), commission_earned))
+                """, (tenant_id, target_aff_id, order_id, int(base_price), commission_earned))
 
         conn.commit()
         return {
