@@ -64,3 +64,28 @@ class TenantOnboardResponse(BaseModel):
     tenant: Dict[str, Any]
     product: Dict[str, Any]
     payout: Dict[str, Any]
+
+
+class AffiliateOnboardRequest(BaseModel):
+    """Payload pendaftaran & kualifikasi screening mitra affiliate baru."""
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = Field(..., min_length=2, max_length=128, description="Nama lengkap mitra affiliate")
+    phone: str = Field(..., min_length=10, max_length=32, description="Nomor WhatsApp resmi mitra")
+    email: Optional[str] = Field(None, description="Alamat email aktif")
+    tenant_id: Optional[str] = Field("onlineboost", description="Tenant ID ekosistem toko")
+    referral_code: Optional[str] = Field(None, description="Kode referral khusus (opsional)")
+    manager_id: Optional[str] = Field(None, description="ID Account Manager pembina (opsional)")
+
+    # Data Rekening Bank untuk Payout
+    bank_name: Optional[str] = Field(None, max_length=64, description="Nama Bank / E-Wallet (BCA, Mandiri, BRI, BNI, GoPay, DANA)")
+    bank_account_number: Optional[str] = Field(None, max_length=64, description="Nomor rekening bank atau e-wallet")
+    bank_account_holder: Optional[str] = Field(None, max_length=128, description="Nama pemilik rekening bank")
+
+    # Screening & Kualifikasi
+    experience_level: Optional[str] = Field("BEGINNER", description="Level pengalaman: BEGINNER, INTERMEDIATE, ADVANCED, PRO")
+    promotion_strategy_notes: Optional[str] = Field(None, description="Rencana strategi promosi atau channel pemasaran")
+    social_media_links: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Tautan akun medsos / channel (TikTok, IG, YT, dll)")
+    portfolio_url: Optional[str] = Field(None, description="Tautan portofolio / website promosi")
+    agreed_to_rules: bool = Field(False, description="Persetujuan mematuhi aturan platform & anti-spam")
+
