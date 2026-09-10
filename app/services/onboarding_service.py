@@ -11,8 +11,9 @@ Executes atomic database transactions to provision:
 import re
 import uuid
 import logging
+import hashlib
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional
 from uuid import UUID, uuid4
 
@@ -101,8 +102,65 @@ class OnboardingService:
         self._products_by_tenant: Dict[str, Dict[str, Any]] = {}
         self._payouts_by_tenant: Dict[str, Dict[str, Any]] = {}
 
+    async def _identity_exists(self, phone_hash: str, device_fp_hash: str | None) -> bool:
+        """Check if a phone or device fingerprint hash already exists in tenant_identities."""
+        supabase = get_supabase()
+        if not supabase:
+            return False
+        try:
+            if device_fp_hash:
+                filters = f"phone_hash.eq.{phone_hash},device_fingerprint_hash.eq.{device_fp_hash}"
+                res = supabase.table("tenant_identities").select("id").or_(filters).execute()
+            else:
+                res = supabase.table("tenant_identities").select("id").eq("phone_hash", phone_hash).execute()
+            return bool(res and res.data)
+        except Exception as e:
+            logger.warning(f"[OnboardingService] Identity existence check failed: {e}")
+            return False
+
+    async def _setup_tenant_entitlements_and_identity(self, tenant_id: str, plan_code: str, phone_hash: str, device_fp_hash: str | None) -> None:
+        """Insert identity record and copy entitlements from plan_entitlements to tenant_entitlements."""
+        supabase = get_supabase()
+        if not supabase:
+            return
+        # Insert identity
+        identity_payload: Dict[str, Any] = {
+            "tenant_id": tenant_id,
+            "phone_hash": phone_hash,
+        }
+        if device_fp_hash:
+            identity_payload["device_fingerprint_hash"] = device_fp_hash
+        try:
+            supabase.table("tenant_identities").insert(identity_payload).execute()
+        except Exception as e:
+            logger.warning(f"[OnboardingService] Failed to insert tenant identity: {e}")
+        # Copy entitlements
+        try:
+            ent_res = supabase.table("plan_entitlements").select("*").eq("plan_code", plan_code).execute()
+        except Exception as e:
+            logger.warning(f"[OnboardingService] Failed to fetch plan entitlements: {e}")
+            return
+        now_iso = datetime.now(timezone.utc).isoformat()
+        entitlements_to_insert = []
+        if ent_res and ent_res.data:
+            for row in ent_res.data:
+                tenant_ent = {
+                    "tenant_id": tenant_id,
+                    "feature_code": row.get("feature_code"),
+                    "status": "trial" if plan_code == "SOLO_TRIAL" else "active",
+                    "starts_at": now_iso,
+                    "expires_at": (datetime.now(timezone.utc) + timedelta(days=14)).isoformat() if plan_code == "SOLO_TRIAL" else None,
+                }
+                entitlements_to_insert.append(tenant_ent)
+        if entitlements_to_insert:
+            try:
+                supabase.table("tenant_entitlements").insert(entitlements_to_insert).execute()
+            except Exception as e:
+                logger.warning(f"[OnboardingService] Failed to insert tenant entitlements: {e}")
+
+
     async def onboard_tenant(self, payload: TenantOnboardRequest) -> Dict[str, Any]:
-        """Provisions a new merchant, initial product, and payout in 1 atomic transaction."""
+        """Provisions a new merchant, initial product, and payout in 1 atomic transaction, with reverse‑trial and anti‑abuse logic."""
         # 1. Resolve & validate tenant slug
         raw_slug = payload.slug or payload.name
         tenant_slug = slugify(raw_slug)
@@ -135,6 +193,15 @@ class OnboardingService:
 
         # Resolve product slug
         prod_slug = payload.product.slug or slugify(payload.product.title) or f"prod-{uuid4().hex[:6]}"
+
+        # Compute hashes for anti‑abuse
+        phone_hash = hashlib.sha256(payload.phone.encode()).hexdigest()
+        device_fp_hash = hashlib.sha256(payload.device_fingerprint.encode()).hexdigest() if payload.device_fingerprint else None
+
+        # Determine initial plan based on existing identity
+        is_duplicate = await self._identity_exists(phone_hash, device_fp_hash)
+        plan_code = "FREE" if is_duplicate else "SOLO_TRIAL"
+        logger.info(f"[OnboardingService] Assigned plan '{plan_code}' for tenant '{tenant_slug}' (duplicate={is_duplicate})")
 
         tenant_id = uuid4()
         product_id = uuid4()
@@ -283,6 +350,17 @@ class OnboardingService:
             logger.info(f"[Onboarding Registry] Registered '{tenant_slug}' into active runtime loader")
         except Exception as reg_err:
             logger.warning(f"[Onboarding Registry Note] Runtime config registration warning: {reg_err}")
+
+        # 5. Setup entitlements and identity based on plan
+        try:
+            await self._setup_tenant_entitlements_and_identity(
+                tenant_id=str(tenant_id),
+                plan_code=plan_code,
+                phone_hash=phone_hash,
+                device_fp_hash=device_fp_hash,
+            )
+        except Exception as e:
+            logger.warning(f"[OnboardingService] Entitlement setup failed: {e}")
 
         return {
             "status": "SUCCESS",

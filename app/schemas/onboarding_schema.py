@@ -3,7 +3,7 @@ Pydantic schemas for Merchant Self-Onboarding & Provisioning.
 """
 
 from decimal import Decimal
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Literal
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -45,6 +45,13 @@ class TenantOnboardRequest(BaseModel):
     admin_phone: Optional[str] = Field(None, description="Nomor WhatsApp pemilik tenant")
     product: ProductOnboardingPayload = Field(..., description="Spesifikasi produk pertama")
     payout: PayoutOnboardingPayload = Field(..., description="Informasi pencairan dana (payout)")
+
+    # New fields for reverse‑trial registration
+    business_type: Literal["DIGITAL", "PHYSICAL", "FIELD_SERVICE"] = Field(..., description="Tipe bisnis tenant")
+    phone: str = Field(..., description="Nomor telepon utama tenant")
+    password: str = Field(..., description="Password akun admin tenant")
+    store_name: str = Field(..., description="Nama toko yang akan ditampilkan pada UI")
+    device_fingerprint: Optional[str] = Field(None, description="Fingerprint unik perangkat untuk anti‑abuse guard")
 
 
 class TenantOnboardResponse(BaseModel):

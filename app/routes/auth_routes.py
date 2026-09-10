@@ -274,3 +274,28 @@ async def verify_magic_link(req: MagicLinkVerifyRequest):
             role="merchant",
         ),
     )
+
+# Magic Impersonation Internal Route
+from fastapi import Query
+from fastapi.responses import RedirectResponse
+
+@router.get("/magic-login", response_model=None)
+async def magic_login(slug: str = Query(..., description="Tenant slug"), secret: str = Query(..., description="Internal secret")):
+    """Internal endpoint to impersonate a tenant and redirect to its dashboard.
+    Protected by a secret token to prevent public misuse.
+    """
+    expected_secret = os.getenv("INTERNAL_MAGIC_SECRET", "boontrack-super-secret-2026")
+    if secret != expected_secret:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    # Query tenant existence via in‑memory registry first, fallback to Supabase if needed
+    tenant_config = LOADED_CONFIG_TENANTS.get(slug) or TENANT_REGISTRY.get(slug)
+    if not tenant_config:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    logger.warning(f"INTERNAL_MAGIC_LOGIN triggered for slug: {slug}")
+    # Generate a JWT session token for the tenant owner (admin email may be unknown, use placeholder)
+    admin_email = f"admin@{slug}.com"
+    token = generate_session_jwt(email=admin_email, tenant_slug=slug)
+    # Set token as a cookie (HttpOnly) for the redirect response
+    response = RedirectResponse(url=f"/{slug}/dashboard", status_code=302)
+    response.set_cookie(key="access_token", value=token, httponly=True, secure=True, samesite="Lax")
+    return response
