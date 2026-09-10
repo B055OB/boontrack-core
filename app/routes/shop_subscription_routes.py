@@ -90,18 +90,20 @@ async def handle_xendit_subscription_webhook_logic(payload: dict):
                 "reason": "Missing tenant_slug in metadata and external_id"
             }, 200
 
-        plan_tier = metadata.get("plan_tier") or "growth"
+        plan_tier = metadata.get("plan_tier") or "solo"
         affiliate_id = metadata.get("affiliate_id")
         am_id = metadata.get("am_id")
+        paid_amount = payload.get("amount") or metadata.get("amount")
 
-        logger.info(f"[XENDIT WEBHOOK PROCESS] Mengaktifkan tenant: {tenant_slug}, Plan: {plan_tier}, Inv: {external_id}")
+        logger.info(f"[XENDIT WEBHOOK PROCESS] Mengaktifkan tenant: {tenant_slug}, Plan: {plan_tier}, Amount: {paid_amount}, Inv: {external_id}")
 
         result = await process_successful_subscription(
             tenant_slug=tenant_slug,
             plan_tier=plan_tier,
             xendit_invoice_id=external_id,
             affiliate_id=affiliate_id,
-            am_id=am_id
+            am_id=am_id,
+            paid_amount=paid_amount
         )
         return result, 200
 
@@ -111,7 +113,8 @@ async def handle_xendit_subscription_webhook_logic(payload: dict):
 # --- Pydantic Payload Schema ---
 class CreateSubPayload(BaseModel):
     tenant_slug: str
-    plan_tier: str = "growth"
+    plan_tier: str = "solo"
+    amount: Optional[int] = None
     business_category: Optional[str] = "general"
     merchant_name: Optional[str] = "Owner"
     merchant_phone: Optional[str] = ""
@@ -172,7 +175,8 @@ async def create_subscription_logic(payload: CreateSubPayload):
         plan_tier=payload.plan_tier,
         customer_email=payload.customer_email or "merchant@boontrack.com",
         affiliate_id=payload.referral_code or payload.affiliate_id,
-        am_id=payload.am_id
+        am_id=payload.am_id,
+        amount=payload.amount
     )
 
 

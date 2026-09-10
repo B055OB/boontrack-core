@@ -6,10 +6,38 @@ from app.services.whatsapp_service import get_supabase
 
 logger = logging.getLogger("SUBSCRIPTION_SERVICE")
 
-TIER_PRICING = {
+# 1. Mapping Harga Paket Langganan SaaS Toko (PLAN_PRICING)
+PLAN_PRICING = {
+    # Official Plan Names
+    "solo": 199000,
+    "ads_performance": 299000,
+    "team_scale": 499000,
+
+    # Backward Compatibility & Synonyms
     "growth": 199000,
-    "pro_scale": 499000
+    "starter": 199000,
+    "growth_tracking": 299000,
+    "pro_scale": 499000,
+    "proscale": 499000,
 }
+
+# Alias for backward compatibility
+TIER_PRICING = PLAN_PRICING
+
+
+def get_plan_pricing(plan_tier: str, amount: Optional[int] = None) -> int:
+    """
+    Menghitung harga paket langganan secara deterministik:
+    1. Mencocokkan plan_tier ke PLAN_PRICING (case-insensitive, strip whitespace & hyphen/underscore).
+    2. Jika tier tidak ada di dict tapi amount eksplisit valid (> 0) dikirim dari request, gunakan amount.
+    3. Default fallback: 199000 (Solo / Growth).
+    """
+    clean_tier = str(plan_tier).strip().lower().replace("-", "_").replace(" ", "_")
+    if clean_tier in PLAN_PRICING:
+        return PLAN_PRICING[clean_tier]
+    if amount and isinstance(amount, (int, float)) and amount > 0:
+        return int(amount)
+    return 199000
 
 
 async def create_subscription_invoice(
@@ -17,31 +45,34 @@ async def create_subscription_invoice(
     plan_tier: str,
     customer_email: str = "merchant@boontrack.com",
     affiliate_id: Optional[str] = None,
-    am_id: Optional[str] = None
+    am_id: Optional[str] = None,
+    amount: Optional[int] = None
 ) -> Dict[str, Any]:
     """Membuat invoice langganan Xendit Sandbox untuk paket SaaS toko."""
     import httpx
     
     clean_slug = str(tenant_slug).strip().lower()
-    clean_tier = str(plan_tier).strip().lower()
-    amount = TIER_PRICING.get(clean_tier, 199000)
+    clean_tier = str(plan_tier).strip().lower().replace("-", "_").replace(" ", "_")
+    final_amount = get_plan_pricing(clean_tier, amount)
     
     xendit_secret_key = os.getenv("XENDIT_SECRET_KEY", "xnd_development_dummy_key_2026")
     external_id = f"sub_{clean_slug}_{clean_tier}_{int(datetime.now().timestamp())}"
     
     payload = {
         "external_id": external_id,
-        "amount": amount,
+        "amount": final_amount,
         "payer_email": customer_email,
         "description": f"Subscription BoonTrack Shop ({clean_tier.upper()}) - Store: {clean_slug}",
         "invoice_duration": 86400,
         "currency": "IDR",
+        "payment_methods": ["QRIS"],
         "metadata": {
             "type": "SUBSCRIPTION",
             "tenant_slug": clean_slug,
             "plan_tier": clean_tier,
             "affiliate_id": affiliate_id,
-            "am_id": am_id
+            "am_id": am_id,
+            "amount": final_amount
         }
     }
     
@@ -69,7 +100,7 @@ async def create_subscription_invoice(
             supabase.table("shop_subscriptions").insert({
                 "tenant_slug": clean_slug,
                 "plan_tier": clean_tier,
-                "amount": amount,
+                "amount": final_amount,
                 "status": "PENDING",
                 "xendit_invoice_id": invoice_id,
                 "xendit_external_id": external_id
@@ -81,7 +112,7 @@ async def create_subscription_invoice(
         "status": "success",
         "tenant_slug": clean_slug,
         "plan_tier": clean_tier,
-        "amount": amount,
+        "amount": final_amount,
         "invoice_url": invoice_url,
         "external_id": external_id
     }
@@ -92,7 +123,8 @@ async def process_successful_subscription(
     plan_tier: str,
     xendit_invoice_id: str,
     affiliate_id: Optional[str] = None,
-    am_id: Optional[str] = None
+    am_id: Optional[str] = None,
+    paid_amount: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     1. Membagi split komisi sub-ledger 25% - 5% (atau 30% direct AM) - 70% Platform.
@@ -100,8 +132,8 @@ async def process_successful_subscription(
     3. Provisioning default config tenant & audit log.
     """
     clean_slug = str(tenant_slug).strip().lower()
-    clean_tier = str(plan_tier).strip().lower()
-    gross_amount = TIER_PRICING.get(clean_tier, 199000)
+    clean_tier = str(plan_tier).strip().lower().replace("-", "_").replace(" ", "_")
+    gross_amount = get_plan_pricing(clean_tier, paid_amount)
     
     # Aturan Pembagian Komisi
     if am_id and not affiliate_id:
