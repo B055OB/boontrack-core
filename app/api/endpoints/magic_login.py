@@ -3,6 +3,7 @@ import logging
 from aiohttp import web
 from app.core.tenant_loader import LOADED_CONFIG_TENANTS, TENANT_REGISTRY
 from app.routes.auth_routes import generate_session_jwt
+from app.services.whatsapp_service import get_supabase
 
 logger = logging.getLogger('MAGIC_LOGIN_AIOHTTP')
 
@@ -18,15 +19,35 @@ async def magic_login_handler(request: web.Request) -> web.Response:
     expected_secret = os.getenv('INTERNAL_MAGIC_SECRET', 'boontrack-super-secret-2026')
     if secret != expected_secret:
         raise web.HTTPForbidden(reason='Forbidden')
-    # Lookup tenant config
+    # Lookup tenant config locally first
     tenant_config = LOADED_CONFIG_TENANTS.get(slug) or TENANT_REGISTRY.get(slug)
+    # Fallback to Supabase if not found locally
     if not tenant_config:
-        raise web.HTTPNotFound(reason='Tenant not found')
+        supabase = get_supabase()
+        if supabase:
+            try:
+                res = supabase.table('tenants').select('slug,dashboard_path,domain').eq('slug', slug).execute()
+                if res and res.data:
+                    row = res.data[0]
+                    tenant_config = {
+                        'slug': row.get('slug'),
+                        'dashboard_path': row.get('dashboard_path') or f"/{row.get('slug')}/dashboard",
+                        'domain': row.get('domain'),
+                    }
+                else:
+                    raise web.HTTPNotFound(reason='Tenant not found')
+            except Exception as e:
+                logger.warning(f"[MagicLogin] Supabase lookup failed for slug '{slug}': {e}")
+                raise web.HTTPNotFound(reason='Tenant not found')
+        else:
+            raise web.HTTPNotFound(reason='Tenant not found')
     logger.warning(f"INTERNAL_MAGIC_LOGIN triggered for slug: {slug}")
     # Generate a placeholder admin email and JWT token
     admin_email = f"admin@{slug}.com"
     token = generate_session_jwt(email=admin_email, tenant_slug=slug)
     # Build redirect response with cookie
-    response = web.HTTPFound(location=f"/{slug}/dashboard")
+    # Determine redirect location – prefer dashboard_path if provided
+    redirect_location = tenant_config.get('dashboard_path') if isinstance(tenant_config, dict) else f"/{slug}/dashboard"
+    response = web.HTTPFound(location=redirect_location)
     response.set_cookie('access_token', token, httponly=True, secure=True, samesite='Lax')
     return response
