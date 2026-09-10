@@ -1,0 +1,47 @@
+# GitHub Actions workflow to backup Supabase PostgreSQL database daily
+name: Supabase Database Backup
+
+# Triggers – run daily at 02:00 WIB (19:00 UTC) and allow manual trigger
+on:
+  schedule:
+    - cron: '0 19 * * *'   # 02:00 WIB (UTC+7)
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   # for checking out the repo (optional)
+    steps:
+      - name: Checkout repository (optional)
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Dump Supabase database
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          # Export to a gzipped SQL dump, only the public schema
+          BACKUP_FILE="backup-$(date +'%Y-%m-%d').sql.gz"
+          pg_dump "$SUPABASE_DB_URL" --no-owner --no-acl --schema=public |
+          gzip > "$BACKUP_FILE"
+          echo "Backup created: $BACKUP_FILE"
+
+      - name: Upload backup as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-backup
+          path: backup-*.sql.gz
+          retention-days: 14
+
+      # Optional: you could add a step here to upload the dump to remote storage (e.g., S3, GCS) using a separate action.
+
+# ------------------------------------------------------------
+# Secrets required (add in repository Settings > Secrets and variables > Actions):
+#   SUPABASE_DB_URL – Full PostgreSQL connection string for the Supabase database.
+#                         Example: postgres://USER:PASS@HOST:5432/DATABASE
+#   (Optional) Any credentials needed for a downstream storage upload step if you enable it.
