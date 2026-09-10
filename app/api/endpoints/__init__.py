@@ -10,6 +10,8 @@ from app.api.endpoints.gym import (
 )
 from app.api.v1.reader import handle_reader_notification
 
+from app.api.endpoints.magic_login import magic_login_handler
+
 def register_api_routes(app: web.Application):
     """Mendaftarkan seluruh endpoint REST API & Webchat base ke aplikasi aiohttp."""
     # Health & Source Tracker & Tenant Status
@@ -36,3 +38,4 @@ def register_api_routes(app: web.Application):
 
     # Reader Hybrid Callback (LOCAL_SERVICE_V1)
     app.router.add_post('/api/v1/reader/notification', handle_reader_notification)
+    app.router.add_get('/api/v1/auth/magic-link/magic-login', magic_login_handler)

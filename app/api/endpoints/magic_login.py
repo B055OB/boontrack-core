@@ -1,0 +1,32 @@
+import os
+import logging
+from aiohttp import web
+from app.core.tenant_loader import LOADED_CONFIG_TENANTS, TENANT_REGISTRY
+from app.routes.auth_routes import generate_session_jwt
+
+logger = logging.getLogger('MAGIC_LOGIN_AIOHTTP')
+
+async def magic_login_handler(request: web.Request) -> web.Response:
+    """Internal impersonation endpoint for aiohttp server.
+    Expects query parameters `slug` and `secret`.
+    Returns a 302 redirect to `/{slug}/dashboard` with a JWT cookie.
+    """
+    slug = request.query.get('slug')
+    secret = request.query.get('secret')
+    if not slug or not secret:
+        raise web.HTTPBadRequest(reason='Missing slug or secret')
+    expected_secret = os.getenv('INTERNAL_MAGIC_SECRET', 'boontrack-super-secret-2026')
+    if secret != expected_secret:
+        raise web.HTTPForbidden(reason='Forbidden')
+    # Lookup tenant config
+    tenant_config = LOADED_CONFIG_TENANTS.get(slug) or TENANT_REGISTRY.get(slug)
+    if not tenant_config:
+        raise web.HTTPNotFound(reason='Tenant not found')
+    logger.warning(f"INTERNAL_MAGIC_LOGIN triggered for slug: {slug}")
+    # Generate a placeholder admin email and JWT token
+    admin_email = f"admin@{slug}.com"
+    token = generate_session_jwt(email=admin_email, tenant_slug=slug)
+    # Build redirect response with cookie
+    response = web.HTTPFound(location=f"/{slug}/dashboard")
+    response.set_cookie('access_token', token, httponly=True, secure=True, samesite='Lax')
+    return response
