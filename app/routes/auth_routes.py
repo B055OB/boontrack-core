@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
+from app.core.tenant_loader import LOADED_CONFIG_TENANTS, TENANT_REGISTRY
 
 try:
     from jose import jwt
