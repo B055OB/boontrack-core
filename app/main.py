@@ -56,7 +56,7 @@ from app.routes.partner_routes import partner_router, manager_router
 from app.routes.analytics_fastapi_routes import router as analytics_router
 from app.routes.boonpilot_routes import router as boonpilot_router
 from app.routes.store_chat_routes import router as store_chat_router, handle_store_chat, StoreChatRequest
-from app.routes.media_routes import media_router
+from app.routes.media_routes import media_router, general_upload_router, register_media_routes
 from app.routes.product_routes import product_router
 from app.routes.auth_routes import router as auth_router, auth_general_router
 from app.api.v1.reader_router import router as reader_router
@@ -79,7 +79,16 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://shop.boontrack.com",
+        "https://boontrack.com",
+        "https://boontrack-inbox.vercel.app",
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+    ],
+    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -122,6 +131,7 @@ app.include_router(analytics_router)
 app.include_router(boonpilot_router)
 app.include_router(store_chat_router)
 app.include_router(media_router)
+app.include_router(general_upload_router)
 app.include_router(product_router)
 app.include_router(auth_router)
 app.include_router(auth_general_router)
@@ -203,6 +213,11 @@ async def start_application():
     aiohttp_reader_dir = os.path.join(project_root, "static", "dl-reader-x9k2m")
     os.makedirs(aiohttp_reader_dir, exist_ok=True)
     aiohttp_app.router.add_static("/dl-reader-x9k2m/", path=aiohttp_reader_dir, name="aiohttp_reader_download")
+
+    # Mount Static Route Uploads di aiohttp
+    aiohttp_uploads_dir = os.path.join(project_root, "assets", "uploads")
+    os.makedirs(aiohttp_uploads_dir, exist_ok=True)
+    aiohttp_app.router.add_static("/assets/uploads/", path=aiohttp_uploads_dir, name="aiohttp_static_uploads")
     
     # Daftarkan Router Modul Gateway, Subscription, Event Worker, Webhook, Entitlements, WhatsApp Control, Provisioning, Growth, Shipping & Seller Ads Pro
     register_payment_routes(aiohttp_app)
@@ -216,6 +231,7 @@ async def start_application():
     register_growth_routes(aiohttp_app)
     register_shipping_routes(aiohttp_app)
     register_seller_ads_routes(aiohttp_app)
+    register_media_routes(aiohttp_app)
 
     cors_headers = {
         "Access-Control-Allow-Origin": "*",

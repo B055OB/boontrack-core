@@ -43,6 +43,13 @@ def create_web_app() -> web.Application:
         app.router.add_static("/static", app_assets_dir, name="static")
         app.router.add_static("/app/assets", app_assets_dir, name="app_assets")
 
+    # 4. Media Upload Routes
+    try:
+        from app.routes.media_routes import register_media_routes
+        register_media_routes(app)
+    except Exception as media_err:
+        logger.warning(f"[create_web_app] Media route registration note: {media_err}")
+
     return app
 
 async def start_web_server(app: web.Application, port: int = 8080) -> web.AppRunner:
