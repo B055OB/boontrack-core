@@ -57,7 +57,15 @@ def create_web_app() -> web.Application:
     except Exception as prod_err:
         logger.warning(f"[create_web_app] Product route registration note: {prod_err}")
 
+    # 6. Custom Domain Routes
+    try:
+        from app.routes.custom_domain_routes import register_custom_domain_routes
+        register_custom_domain_routes(app)
+    except Exception as cd_err:
+        logger.warning(f"[create_web_app] Custom domain route registration note: {cd_err}")
+
     return app
+
 
 async def start_web_server(app: web.Application, port: int = 8080) -> web.AppRunner:
     """Menjalankan aiohttp web server di host 0.0.0.0."""

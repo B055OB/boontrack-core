@@ -163,6 +163,23 @@ class TestModularServerRoutes(AioHTTPTestCase):
         self.assertEqual(res_data.get("product", {}).get("slug"), "aiohttp-new-slug-2026")
         self.assertEqual(res_data.get("product", {}).get("price"), 125000)
 
+    @unittest_run_loop
+    async def test_aiohttp_custom_domain_endpoints(self):
+        # 1. OPTIONS preflight CORS
+        resp_options = await self.client.request("OPTIONS", "/api/v1/store/custom-domain")
+        self.assertEqual(resp_options.status, 200)
+        self.assertEqual(resp_options.headers.get("Access-Control-Allow-Origin"), "*")
+
+        # 2. GET status when not configured
+        from unittest.mock import patch
+        with patch("app.routes.custom_domain_routes._get_tenant_record_from_db", return_value=({"slug": "onlineboost"}, {})):
+            resp = await self.client.request("GET", "/api/v1/store/custom-domain/status?tenant_slug=onlineboost")
+            self.assertEqual(resp.status, 200)
+            data = await resp.json()
+            self.assertEqual(data.get("status"), "not_configured")
+            self.assertIsNone(data.get("custom_domain"))
+
 if __name__ == "__main__":
     unittest.main()
+
 

@@ -59,6 +59,7 @@ from app.routes.store_chat_routes import router as store_chat_router, handle_sto
 from app.routes.media_routes import media_router, general_upload_router, register_media_routes
 from app.routes.product_routes import product_router, product_singular_router, register_product_routes
 from app.routes.auth_routes import router as auth_router, auth_general_router
+from app.routes.custom_domain_routes import custom_domain_router, register_custom_domain_routes
 from app.api.v1.reader_router import router as reader_router
 from fastapi.staticfiles import StaticFiles
 
@@ -137,6 +138,7 @@ app.include_router(product_singular_router)
 app.include_router(auth_router)
 app.include_router(auth_general_router)
 app.include_router(reader_router)
+app.include_router(custom_domain_router)
 
 # Mount Static Uploads
 uploads_dir = os.path.join(project_root, "assets", "uploads")
@@ -273,6 +275,7 @@ async def start_application():
     aiohttp_app.router.add_post("/api/store/chat", aiohttp_store_chat)
 
     register_product_routes(aiohttp_app)
+    register_custom_domain_routes(aiohttp_app)
 
     port = int(os.getenv("PORT", 8080))
     await start_web_server(aiohttp_app, port=port)
