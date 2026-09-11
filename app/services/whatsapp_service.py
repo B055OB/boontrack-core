@@ -1592,7 +1592,9 @@ async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> D
                     "token": EVOLUTION_API_KEY,
                     "qrcode": True,
                     "integration": "WHATSAPP-BAILEYS",
-                    "clientName": "BoonTrack Engine"
+                    "clientName": "BoonTrack Engine",
+                    "browser": ["BoonTrack Engine", "Chrome", "1.0.0"],
+                    "browserName": "BoonTrack Engine"
                 }
                 await client.post(
                     f"{EVOLUTION_BASE_URL}/instance/create",
@@ -1610,7 +1612,7 @@ async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> D
                             "enabled": True,
                             "url": f"{backend_url}/api/v1/whatsapp/webhook/evolution/{tenant_slug}",
                             "byEvents": False,
-                            "base64": False,
+                            "base64": True,
                             "events": ["MESSAGES_UPSERT"]
                         }
                     }

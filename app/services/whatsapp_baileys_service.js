@@ -11,7 +11,7 @@ export async function createTenantWASession(tenantSlug, onQRGenerated) {
   const sock = makeWASocket({
     auth: state,
     printQRInTerminal: false,
-    browser: Browsers.macOS('Desktop'),
+    browser: ['BoonTrack Engine', 'Chrome', '1.0.0'],
     syncFullHistory: false
   });
 

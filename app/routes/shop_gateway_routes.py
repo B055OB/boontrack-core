@@ -54,7 +54,14 @@ async def handle_create_instance_logic(tenant_slug: str):
             resp = await client.post(
                 f"{WA_ENGINE_BASE_URL}/instance/create",
                 headers=headers,
-                json={"instanceName": instance_name, "qrcode": True}
+                json={
+                    "instanceName": instance_name,
+                    "qrcode": True,
+                    "integration": "WHATSAPP-BAILEYS",
+                    "clientName": "BoonTrack Engine",
+                    "browser": ["BoonTrack Engine", "Chrome", "1.0.0"],
+                    "browserName": "BoonTrack Engine",
+                }
             )
             if resp.status_code in (200, 201):
                 res_data = resp.json()
