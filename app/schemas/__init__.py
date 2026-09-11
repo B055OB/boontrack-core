@@ -34,6 +34,13 @@ from app.schemas.gym_schema import (
     TapAccessRequest,
     TapAccessResponse,
 )
+from app.schemas.boonpilot import (
+    VerticalTemplateCode,
+    ProposalStatus,
+    KnowledgeSemanticCategory,
+    KnowledgeProposalItem,
+    BusinessConfigurationProposal,
+)
 
 __all__ = [
     "TenantConfig",
@@ -68,5 +75,11 @@ __all__ = [
     "GymAccessEvent",
     "TapAccessRequest",
     "TapAccessResponse",
+    "VerticalTemplateCode",
+    "ProposalStatus",
+    "KnowledgeSemanticCategory",
+    "KnowledgeProposalItem",
+    "BusinessConfigurationProposal",
 ]
+
 
