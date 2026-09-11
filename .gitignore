@@ -17,6 +17,8 @@ __pycache__/
 !app/assets/*.jpg
 !app/assets/*.png
 !assets/**
+assets/uploads/*
+!assets/uploads/.gitkeep
 !app/assets/temp/.gitkeep
 !app/assets/static/.gitkeep
 

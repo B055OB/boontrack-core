@@ -71,5 +71,41 @@ class TestModularServerRoutes(AioHTTPTestCase):
         data = await resp.json()
         self.assertEqual(data.get("status"), "ignored")
 
+    @unittest_run_loop
+    async def test_aiohttp_media_upload_endpoint(self):
+        import io
+        from PIL import Image
+        from aiohttp import FormData
+
+        buf = io.BytesIO()
+        img = Image.new("RGB", (200, 200), (0, 255, 0))
+        img.save(buf, format="JPEG")
+        buf.seek(0)
+
+        data = FormData()
+        data.add_field("file", buf.read(), filename="aiohttp_test.jpg", content_type="image/jpeg")
+
+        resp = await self.client.request(
+            "POST",
+            "/api/v1/media/upload",
+            data=data,
+            headers={"Origin": "https://shop.boontrack.com"}
+        )
+        self.assertEqual(resp.status, 200)
+        res_data = await resp.json()
+        self.assertEqual(res_data.get("status"), "success")
+        self.assertIn("url", res_data)
+        self.assertEqual(resp.headers.get("Access-Control-Allow-Origin"), "https://shop.boontrack.com")
+
+    @unittest_run_loop
+    async def test_aiohttp_media_options_cors_shop(self):
+        resp = await self.client.request(
+            "OPTIONS",
+            "/api/v1/upload",
+            headers={"Origin": "https://shop.boontrack.com"}
+        )
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.headers.get("Access-Control-Allow-Origin"), "https://shop.boontrack.com")
+
 if __name__ == "__main__":
     unittest.main()
