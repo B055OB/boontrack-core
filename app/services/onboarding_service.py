@@ -505,6 +505,10 @@ class OnboardingService:
                     tenant_dict["features"] = live_features
                     # ------------------------------------
 
+                    for k in ("qris_image_url", "qris_url", "qris_string", "logo_url", "avatar_url", "banner_url", "payout", "payment_methods", "bank_accounts"):
+                        if k in meta and meta[k] is not None and k not in tenant_dict:
+                            tenant_dict[k] = meta[k]
+
                     sys_prompt = ai_k.get("system_prompt") or p_meta.get("system_prompt")
                     ai_name = (
                         ai_k.get("ai_name")
@@ -617,10 +621,16 @@ class OnboardingService:
                 "public_description": tenant.get("public_description") or (products[0].get("description") if products else "Toko Resmi Terverifikasi"),
                 "trust_badges": trust_badges,
                 "delivery_url": delivery_url,
+                "qris_image_url": tenant.get("qris_image_url") or tenant.get("qris_url"),
+                "qris_url": tenant.get("qris_url") or tenant.get("qris_image_url"),
+                "qris_string": tenant.get("qris_string"),
+                "logo_url": tenant.get("logo_url"),
+                "avatar_url": tenant.get("avatar_url"),
+                "banner_url": tenant.get("banner_url"),
             },
             "persona": persona,
             "ai_knowledge": ai_knowledge,
-            "payout": payout,
+            "payout": tenant.get("payout") or payout,
             "products": products,
             "faq": faq,
         }
@@ -648,6 +658,19 @@ class OnboardingService:
             tenant["delivery_url"] = updates["delivery_url"]
         if "faq" in updates:
             tenant["faq"] = updates["faq"]
+
+        # Support QRIS, branding, and payout fields in tenant profile
+        for key in (
+            "qris_image_url", "qris_url", "qris_string",
+            "logo_url", "avatar_url", "banner_url",
+            "payout", "payment_methods", "bank_accounts"
+        ):
+            if key in updates and updates[key] is not None:
+                tenant[key] = updates[key]
+        if "qris_image_url" in tenant and not tenant.get("qris_url"):
+            tenant["qris_url"] = tenant["qris_image_url"]
+        if "qris_url" in tenant and not tenant.get("qris_image_url"):
+            tenant["qris_image_url"] = tenant["qris_url"]
 
         # Extract AI & Persona updates
         sys_prompt = (
@@ -745,6 +768,14 @@ class OnboardingService:
                         **({"bot_strategy": bot_strat} if bot_strat else {}),
                     }
                 }
+                for key in (
+                    "qris_image_url", "qris_url", "qris_string",
+                    "logo_url", "avatar_url", "banner_url",
+                    "payout", "payment_methods", "bank_accounts"
+                ):
+                    if key in tenant and tenant[key] is not None:
+                        updated_meta[key] = tenant[key]
+
                 upsert_payload = {
                     "slug": clean_slug,
                     "name": updates.get("name") or (existing.get("name") if existing else tenant.get("name", clean_slug)),
@@ -754,7 +785,7 @@ class OnboardingService:
                 if bot_strat:
                     upsert_payload["bot_strategy"] = bot_strat
                 supabase.table("tenants").upsert(upsert_payload).execute()
-                logger.info(f"[OnboardingService] Synced AI Persona & Bot Strategy ('{bot_strat}') to Supabase for tenant '{clean_slug}'")
+                logger.info(f"[OnboardingService] Synced AI Persona & Store Profile ('{clean_slug}') to Supabase")
             except Exception as e:
                 logger.debug(f"[OnboardingService Supabase sync note] {e}")
 

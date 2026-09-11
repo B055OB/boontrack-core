@@ -70,6 +70,7 @@ def upload_media_to_r2(
     file_bytes: bytes,
     file_name: str,
     content_type: str = "image/jpeg",
+    folder: str = "media",
 ) -> str:
     """
     Upload file/media ke Cloudflare R2 dan kembalikan URL publik-nya.
@@ -78,19 +79,24 @@ def upload_media_to_r2(
         file_bytes:   Raw bytes dari file yang akan di-upload.
         file_name:    Nama file asli (dipakai untuk mengambil ekstensinya).
         content_type: MIME type file, default "image/jpeg".
+        folder:       Folder path di R2 bucket ('qris', 'media', 'products', dsb.). Default 'media'.
 
     Returns:
         URL publik lengkap file yang sudah di-upload, contoh:
-        https://pub-cdf9b905df884053a60ef8bdb777d463.r2.dev/media/abc123.jpg
+        https://pub-cdf9b905df884053a60ef8bdb777d463.r2.dev/qris/abc123.png
 
     Raises:
         EnvironmentError: Jika env vars R2 belum di-set.
         ImportError:      Jika boto3 belum terinstall.
         Exception:        Jika upload ke R2 gagal.
     """
-    # Ambil ekstensi dari nama file asli (termasuk titik, misal ".jpg")
+    clean_folder = (folder or "media").strip("/ ")
+    if not clean_folder:
+        clean_folder = "media"
+
+    # Ambil ekstensi dari nama file asli (termasuk titik, misal ".jpg" atau ".png")
     suffix = PurePosixPath(file_name).suffix or ".bin"
-    unique_key = f"media/{uuid.uuid4().hex}{suffix}"
+    unique_key = f"{clean_folder}/{uuid.uuid4().hex}{suffix}"
 
     client = _get_r2_client()
 
@@ -110,9 +116,26 @@ def upload_media_to_r2(
     return public_url
 
 
+def upload_qris_to_r2(
+    file_bytes: bytes,
+    file_name: str = "qris.png",
+    content_type: str = "image/png",
+) -> str:
+    """
+    Helper fungsi spesifik untuk upload QRIS image ke Cloudflare R2 pada folder 'qris/'.
+    """
+    return upload_media_to_r2(
+        file_bytes=file_bytes,
+        file_name=file_name,
+        content_type=content_type,
+        folder="qris",
+    )
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 __all__ = [
     "upload_media_to_r2",
+    "upload_qris_to_r2",
     "R2_BUCKET_NAME",
     "R2_PUBLIC_URL",
 ]

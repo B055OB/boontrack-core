@@ -24,10 +24,18 @@ tenant_router = APIRouter(prefix="/api/v1/tenants", tags=["Tenant Backpanel CMS"
 
 class TenantSettingsUpdateRequest(BaseModel):
     """Payload for updating store settings and AI configuration."""
+    model_config = {"extra": "allow"}
+
     name: Optional[str] = Field(None, description="Updated store / brand name")
     public_description: Optional[str] = Field(None, description="Public store tagline or bio")
     trust_badges: Optional[List[str]] = Field(None, description="List of trust badges")
     delivery_url: Optional[str] = Field(None, description="Default digital asset delivery URL")
+    qris_image_url: Optional[str] = Field(None, description="Public URL of tenant QRIS image")
+    qris_url: Optional[str] = Field(None, description="Alias for QRIS image URL")
+    qris_string: Optional[str] = Field(None, description="Static or Dynamic QRIS payload string")
+    logo_url: Optional[str] = Field(None, description="Store logo URL")
+    avatar_url: Optional[str] = Field(None, description="Store avatar URL")
+    banner_url: Optional[str] = Field(None, description="Store banner URL")
     persona: Optional[Dict[str, Any]] = Field(None, description="Bot persona (tone, welcome_message, system_prompt, assistant_name)")
     ai_knowledge: Optional[Dict[str, Any]] = Field(None, description="AI Knowledge & Persona settings (ai_name, tone, system_prompt)")
     system_prompt: Optional[str] = Field(None, description="Direct system prompt override")
@@ -38,6 +46,9 @@ class TenantSettingsUpdateRequest(BaseModel):
         description="Bot response strategy enum: 'trust_builder', 'balanced', 'hard_selling'"
     )
     faq: Optional[List[Dict[str, str]]] = Field(None, description="Frequently asked questions")
+    payout: Optional[Dict[str, Any]] = Field(None, description="Payout & bank account details")
+    payment_methods: Optional[List[str]] = Field(None, description="Supported payment methods")
+    bank_accounts: Optional[List[Dict[str, Any]]] = Field(None, description="Bank account numbers and details")
 
 
 class TenantProductUpsertRequest(BaseModel):
@@ -85,6 +96,37 @@ async def update_tenant_settings_endpoint(
         "message": f"Settings for tenant '{slug}' successfully updated",
         "settings": updated,
     }
+
+
+from fastapi import UploadFile, File, Request
+from app.routes.media_routes import _fastapi_handle_upload
+
+
+@tenant_router.post("/{slug}/qris/upload", summary="Upload QRIS image for tenant")
+@tenant_router.post("/{slug}/upload-qris", summary="Upload QRIS image for tenant alias")
+@tenant_router.post("/{slug}/upload", summary="Upload general image for tenant")
+async def tenant_upload_media_endpoint(
+    slug: str,
+    request: Request,
+    file: Optional[UploadFile] = File(None),
+    image: Optional[UploadFile] = File(None),
+    qris: Optional[UploadFile] = File(None),
+    qris_image: Optional[UploadFile] = File(None),
+):
+    """Menerima upload gambar QRIS atau media untuk tenant dan mengupdate profile settings secara otomatis."""
+    path_lower = request.url.path.lower()
+    is_qris = "qris" in path_lower or qris is not None or qris_image is not None
+    folder = "qris" if is_qris else "media"
+    return await _fastapi_handle_upload(
+        request,
+        file=file,
+        image=image,
+        qris=qris,
+        qris_image=qris_image,
+        is_qris=is_qris,
+        folder=folder,
+        slug=slug
+    )
 
 
 @tenant_router.post("/{slug}/products", summary="Add or Update Tenant Product")

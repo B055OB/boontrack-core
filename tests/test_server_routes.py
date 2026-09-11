@@ -107,5 +107,34 @@ class TestModularServerRoutes(AioHTTPTestCase):
         self.assertEqual(resp.status, 200)
         self.assertEqual(resp.headers.get("Access-Control-Allow-Origin"), "https://shop.boontrack.com")
 
+    @unittest_run_loop
+    async def test_aiohttp_qris_upload_endpoint(self):
+        import io
+        from PIL import Image
+        from aiohttp import FormData
+
+        buf = io.BytesIO()
+        img = Image.new("RGBA", (300, 300), (0, 0, 0, 255))
+        img.save(buf, format="PNG")
+        buf.seek(0)
+
+        data = FormData()
+        data.add_field("qris", buf.read(), filename="toko_qris.png", content_type="image/png")
+
+        resp = await self.client.request(
+            "POST",
+            "/api/v1/qris/upload",
+            data=data,
+            headers={"Origin": "https://shop.boontrack.com"}
+        )
+        self.assertEqual(resp.status, 200)
+        res_data = await resp.json()
+        self.assertEqual(res_data.get("status"), "success")
+        self.assertEqual(res_data.get("folder"), "qris")
+        self.assertTrue(res_data.get("is_qris"))
+        self.assertTrue(res_data.get("filename").startswith("qris_"))
+        self.assertTrue(res_data.get("filename").endswith(".png"))
+        self.assertIn("qris_url", res_data)
+
 if __name__ == "__main__":
     unittest.main()

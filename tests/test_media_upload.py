@@ -153,3 +153,59 @@ def test_media_upload_cors_shop_boontrack():
     assert post_res.status_code == 200
     assert post_res.headers.get("access-control-allow-origin") == "https://shop.boontrack.com"
 
+
+def test_qris_upload_png_format_and_qris_folder():
+    """Memverifikasi bahwa upload gambar QRIS disimpan dengan format PNG lossless dan folder path qris/."""
+    img_data = create_dummy_image(format="PNG", size=(500, 500), mode="RGBA")
+    response = client.post(
+        "/api/v1/qris/upload",
+        files={"file": ("toko_qris.png", img_data, "image/png")}
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["is_qris"] is True
+    assert data["folder"] == "qris"
+    assert data["filename"].startswith("qris_")
+    assert data["filename"].endswith(".png")
+    assert data["content_type"] == "image/png"
+    assert "qris_url" in data
+    assert data["url"] == data["qris_url"]
+    assert "path" in data and "/qris/" in data["path"]
+
+
+def test_qris_upload_with_qris_form_field():
+    """Memverifikasi form field bernama 'qris' atau 'qris_image' otomatis terdeteksi sebagai QRIS."""
+    img_data = create_dummy_image(format="JPEG", size=(600, 600), mode="RGB")
+    response = client.post(
+        "/api/v1/upload",
+        files={"qris": ("my_barcode.jpg", img_data, "image/jpeg")}
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["is_qris"] is True
+    assert data["folder"] == "qris"
+    assert data["filename"].startswith("qris_")
+    assert data["filename"].endswith(".png")
+    assert data["qris_url"] == data["url"]
+
+
+def test_tenant_specific_qris_upload_and_settings_sync():
+    """Memverifikasi endpoint /api/v1/tenants/{slug}/qris/upload mengupload dan memperbarui profile settings."""
+    from app.services.onboarding_service import onboarding_service
+    onboarding_service._tenants_by_slug["warung-kopi"] = {"id": "wk-1", "slug": "warung-kopi", "name": "Warung Kopi"}
+
+    img_data = create_dummy_image(format="PNG", size=(400, 400), mode="RGB")
+    response = client.post(
+        "/api/v1/tenants/warung-kopi/qris/upload",
+        files={"file": ("warung_qris.png", img_data, "image/png")}
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["is_qris"] is True
+    assert data["folder"] == "qris"
+
+    # Verifikasi auto-sync ke settings
+    settings = onboarding_service.get_tenant_settings("warung-kopi")
+    assert settings is not None
+    assert settings["tenant"].get("qris_image_url") == data["url"]
+
