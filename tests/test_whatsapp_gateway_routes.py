@@ -46,3 +46,58 @@ async def test_inbound_process_whitelabel_channel():
         for call in calls:
             assert call.kwargs.get("channel") == "boontrack_whatsapp_engine"
             assert "baileys" not in call.kwargs.get("channel", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_evolution_webhook_image_message_upload_r2():
+    """Memverifikasi bahwa webhook Evolution API dengan imageMessage mengupload media ke R2 dan menyertakan media_url."""
+    import base64
+    dummy_bytes = b"fake_image_binary_content"
+    dummy_b64 = base64.b64encode(dummy_bytes).decode("utf-8")
+    expected_r2_url = "https://pub-cdf9b905df884053a60ef8bdb777d463.r2.dev/media/test12345.jpg"
+
+    with patch("app.routes.whatsapp_gateway_routes.upload_media_to_r2") as mock_r2, \
+         patch("app.routes.whatsapp_gateway_routes.log_to_supabase_messages", new_callable=AsyncMock) as mock_log, \
+         patch("app.routes.whatsapp_gateway_routes.process_inbound_message", new_callable=AsyncMock) as mock_process:
+
+        mock_r2.return_value = expected_r2_url
+        mock_process.return_value = {"reply_text": "Terima kasih atas kiriman gambarnya!"}
+
+        payload = {
+            "event": "messages.upsert",
+            "instance": "onlineboost",
+            "data": {
+                "key": {
+                    "remoteJid": "628987654321@s.whatsapp.net",
+                    "fromMe": False,
+                    "id": "MSG_IMG_001"
+                },
+                "message": {
+                    "imageMessage": {
+                        "caption": "Bukti transfer",
+                        "mimetype": "image/jpeg",
+                        "base64": dummy_b64
+                    }
+                }
+            }
+        }
+
+        res = client.post("/api/v1/whatsapp/webhook/evolution/onlineboost", json=payload)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "success"
+        assert data["media_url"] == expected_r2_url
+
+        # Pastikan upload_media_to_r2 dipanggil dengan bytes yang di-decode
+        mock_r2.assert_called_once()
+        call_kwargs = mock_r2.call_args[1]
+        assert call_kwargs["file_bytes"] == dummy_bytes
+        assert "MSG_IMG_001" in call_kwargs["file_name"]
+
+        # Pastikan log_to_supabase_messages dipanggil dengan parameter media_url
+        mock_log.assert_called_once()
+        log_kwargs = mock_log.call_args[1]
+        assert log_kwargs["media_url"] == expected_r2_url
+        assert log_kwargs["text"] == "Bukti transfer"
+        assert log_kwargs["user_phone"] == "628987654321"
+

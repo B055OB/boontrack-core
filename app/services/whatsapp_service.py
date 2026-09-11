@@ -749,8 +749,8 @@ def set_user_session(phone: str, tenant_slug: str, state: str = "ACTIVE", contex
 
 
 async def log_to_supabase_messages(
-    sender: str, 
-    text: Optional[str] = None, 
+    sender: str,
+    text: Optional[str] = None,
     tenant_id: str = "boontrack-career",
     channel: str = "whatsapp",
     user_phone: Optional[str] = None,
@@ -758,13 +758,16 @@ async def log_to_supabase_messages(
     user_id: Optional[str] = None,
     conversation_id: Optional[str] = None,
     message_text: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
+    media_url: Optional[str] = None,
 ) -> bool:
     try:
         supabase = get_supabase()
         content = text if text is not None else (message_text or "")
-        if not supabase or not content:
+        if not supabase or (not content and not media_url):
             return False
+        if not content and media_url:
+            content = "[Gambar]"
 
         raw_tenant = str(tenant_id or "boontrack-career").strip().lower()
         if raw_tenant in ["om_budi", "om-budi", "1268977686299719"]:
@@ -827,7 +830,8 @@ async def log_to_supabase_messages(
             "user_phone": resolved_phone,
             "user_name": user_name,
             "conversation_id": conv_uuid,
-            "created_at": now_iso
+            "created_at": now_iso,
+            "media_url": media_url,
         }
         supabase.table("messages").insert(payload).execute()
         return True
@@ -846,7 +850,8 @@ def safe_log_to_supabase_messages(
     user_id: Optional[str] = None,
     conversation_id: Optional[str] = None,
     message_text: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
+    media_url: Optional[str] = None,
 ):
     try:
         loop = asyncio.get_running_loop()
@@ -860,7 +865,8 @@ def safe_log_to_supabase_messages(
             user_id=user_id,
             conversation_id=conversation_id,
             message_text=message_text,
-            metadata=metadata
+            metadata=metadata,
+            media_url=media_url,
         ))
     except RuntimeError:
         asyncio.create_task(log_to_supabase_messages(
@@ -873,7 +879,8 @@ def safe_log_to_supabase_messages(
             user_id=user_id,
             conversation_id=conversation_id,
             message_text=message_text,
-            metadata=metadata
+            metadata=metadata,
+            media_url=media_url,
         ))
     except Exception as e:
         logger.error(f"[Safe Supabase Log Exception] {e}")

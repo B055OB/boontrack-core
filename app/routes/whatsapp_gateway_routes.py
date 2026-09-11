@@ -9,12 +9,15 @@ Handles:
 """
 
 import os
+import base64
 import asyncio
 import logging
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 import httpx
+
+from app.services.storage import upload_media_to_r2
 
 from app.services.whatsapp_service import (
     normalize_phone_number,
@@ -269,6 +272,7 @@ async def handle_evolution_webhook(request: Request, tenant_slug: Optional[str] 
     """
     Webhook Ingestion untuk pesan masuk dari Evolution API (BoonTrack WhatsApp Engine).
     Menerima event MESSAGES_UPSERT, memproses AI Knowledge, dan membalas via sendText.
+    Mendukung imageMessage: media di-upload ke Cloudflare R2 dan media_url disimpan ke DB.
     """
     try:
         payload = await request.json()
@@ -292,14 +296,72 @@ async def handle_evolution_webhook(request: Request, tenant_slug: Optional[str] 
     if not remote_jid or remote_jid == "status@broadcast" or remote_jid.endswith("@broadcast") or remote_jid.endswith("@g.us"):
         return {"status": "ignored_non_personal"}
 
-    # Ekstraksi teks pesan
+    # ── Deteksi tipe pesan ──────────────────────────────────────────────────
+    # Unpack ephemeral / viewOnce wrappers jika ada
+    unwrapped_msg = message_obj
+    if "ephemeralMessage" in unwrapped_msg:
+        unwrapped_msg = unwrapped_msg.get("ephemeralMessage", {}).get("message", {})
+    elif "viewOnceMessage" in unwrapped_msg:
+        unwrapped_msg = unwrapped_msg.get("viewOnceMessage", {}).get("message", {})
+    elif "viewOnceMessageV2" in unwrapped_msg:
+        unwrapped_msg = unwrapped_msg.get("viewOnceMessageV2", {}).get("message", {})
+
+    image_obj = unwrapped_msg.get("imageMessage", {})
+    message_type = str(data.get("messageType") or "").lower()
+    if not image_obj and message_type in ("imagemessage", "image"):
+        image_obj = unwrapped_msg
+
+    is_image_message = bool(image_obj)
+    media_url: Optional[str] = None
+
+    if is_image_message:
+        message_id = key_obj.get("id", f"img_{remote_jid}")
+        # Coba ambil base64 dari berbagai kemungkinan lokasi field Evolution API / Baileys
+        raw_b64: Optional[str] = (
+            data.get("base64")
+            or data.get("mediaBase64")
+            or (data.get("media") if isinstance(data.get("media"), str) else None)
+            or (data.get("media", {}) if isinstance(data.get("media"), dict) else {}).get("base64")
+            or image_obj.get("base64")
+            or unwrapped_msg.get("base64")
+            or image_obj.get("jpegThumbnail")
+        )
+        if raw_b64:
+            try:
+                # Hapus header data URI jika ada, misal "data:image/jpeg;base64,"
+                if "," in raw_b64:
+                    raw_b64 = raw_b64.split(",", 1)[1]
+                media_bytes = base64.b64decode(raw_b64)
+                # Gunakan mimetype dari payload jika tersedia
+                mime_type = image_obj.get("mimetype", "image/jpeg")
+                if "png" in mime_type:
+                    ext = ".png"
+                elif "webp" in mime_type:
+                    ext = ".webp"
+                else:
+                    ext = ".jpg"
+
+                media_url = upload_media_to_r2(
+                    file_bytes=media_bytes,
+                    file_name=f"{message_id}{ext}",
+                    content_type=mime_type,
+                )
+                logger.info(f"[EVOLUTION WEBHOOK] Image uploaded to R2: {media_url}")
+            except Exception as media_err:
+                logger.warning(f"[EVOLUTION WEBHOOK] Gagal upload image ke R2: {media_err}")
+
+    # ── Ekstraksi teks / caption ────────────────────────────────────────────
     incoming_text = (
         message_obj.get("conversation")
         or message_obj.get("extendedTextMessage", {}).get("text")
-        or message_obj.get("imageMessage", {}).get("caption")
+        or image_obj.get("caption")
         or message_obj.get("videoMessage", {}).get("caption")
         or ""
     ).strip()
+
+    # Jika pesan berupa gambar tanpa caption, gunakan placeholder agar tetap diproses
+    if not incoming_text and is_image_message:
+        incoming_text = "[Gambar diterima]"
 
     if not incoming_text:
         return {"status": "ignored_empty_text"}
@@ -309,7 +371,17 @@ async def handle_evolution_webhook(request: Request, tenant_slug: Optional[str] 
 
     logger.info(f"[EVOLUTION WEBHOOK] Inbound message for tenant '{resolved_tenant}' from {sender_phone}: '{incoming_text}'")
 
-    # Jalankan pemrosesan inbound AI
+    # ── Log pesan masuk ke Supabase (termasuk media_url jika ada gambar) ───
+    asyncio.create_task(log_to_supabase_messages(
+        sender="user",
+        text=incoming_text,
+        tenant_id=resolved_tenant,
+        channel="whatsapp",
+        user_phone=sender_phone,
+        media_url=media_url,
+    ))
+
+    # ── Jalankan pemrosesan inbound AI ─────────────────────────────────────
     inbound_res = await process_inbound_message(InboundPayload(
         tenant_slug=resolved_tenant,
         sender_phone=sender_phone,
@@ -317,7 +389,7 @@ async def handle_evolution_webhook(request: Request, tenant_slug: Optional[str] 
     ))
     reply_text = inbound_res.get("reply_text")
 
-    # Kirim balasan via Evolution API sendText jika terhubung
+    # ── Kirim balasan via Evolution API sendText jika terhubung ────────────
     if reply_text:
         instance_name = f"tenant_{resolved_tenant.replace('-', '_')}"
         send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{instance_name}"
@@ -334,4 +406,9 @@ async def handle_evolution_webhook(request: Request, tenant_slug: Optional[str] 
         except Exception as send_err:
             logger.error(f"[EVOLUTION SEND ERROR] {send_err}")
 
-    return {"status": "success", "tenant": resolved_tenant, "reply": reply_text}
+    return {
+        "status": "success",
+        "tenant": resolved_tenant,
+        "reply": reply_text,
+        "media_url": media_url,
+    }
