@@ -16,6 +16,7 @@
 8. **Configuration belongs in database/environment, not hardcoded in code.**
 9. **Webhook handlers must be fast, idempotent, and asynchronous where appropriate.**
 10. **New features must strengthen the BoonTrack Business Graph or remain isolated as optional capabilities.**
+11. **Verticals define configuration and business rules; the Core Engine defines how configuration is interpreted and executed.**
 
 ---
 
@@ -81,21 +82,34 @@
 
 ## 8. Unified Natural Engine & Conversational Architecture
 
-### Three-Pillar Hybrid Core
-1. **Pillar 1 — Seller Persona Layer (Presentation Policy - HOW it speaks)**
-   - Mengatur tone bahasa, greeting, objection handling, closing style, custom do/don't rules, dan brand personality toko.
-   - **Authority Boundary**: Persona DILARANG menentukan kebenaran data transaksional (harga, stok, validitas pesanan, status pembayaran).
-2. **Pillar 2 — Conversational LLM (Intelligence Layer - HOW it understands)**
-   - Bertanggung jawab atas NLU, deteksi intent, ekstraksi entitas, penanganan bahasa gaul/slang, dan perangkai respon natural.
-   - **Authority Boundary**: Output LLM diperlakukan sebagai *untrusted proposal*. LLM DILARANG memutasi state order/pembayaran, menghitung nominal final, atau membuat payload QRIS.
-3. **Pillar 3 — Deterministic State Machine & Knowledge (The System Authority - WHAT it can do)**
-   - Otoritas tunggal untuk alur percakapan, katalog, stok, validasi checkout, payload QRIS, aturan bisnis, dan CAPI events. Backend state selalu meng-override interpretasi LLM.
+### Core Principle
+> **"Natural conversation, deterministic commerce."**
 
-### Intent Interruption Contract
-Engine percakapan wajib mendukung interupsi sementara:
+BoonTrack menggunakan arsitektur hybrid yang memisahkan:
+- seller configuration,
+- conversational intelligence,
+- business rules,
+- transaction execution.
+
+LLM dan BoonPilot bersifat probabilistic/untrusted. Backend configuration, state machine, business rules, catalog, payment, fulfillment, dan transaction state bersifat deterministic/system-authoritative.
+
 ```text
-CURRENT_STATE: COLLECT_ADDRESS
-  ↓ (Customer: "Eh kak, warna hitam ready?")
-TEMPORARY_INTERRUPTION: PRODUCT_VARIANT_QUERY
-  ↓ (Jawab ketersediaan warna via knowledge)
-RESUME_STATE: COLLECT_ADDRESS ("Warna hitam ready kak. Boleh lanjut alamat lengkapnya?")
+                    BOONTRACK AI
+                        │
+             ┌──────────┴──────────┐
+             │                     │
+             ▼                     ▼
+       BOONPILOT                RUNTIME AI
+   Seller Configuration       Buyer Conversation
+             │                     │
+             ▼                     ▼
+    Business Config          Signal / Intent
+             │                     │
+             ▼                     ▼
+       Validation             Policy Engine
+             │                     │
+             ▼                     ▼
+          Publish             State Machine
+                                   │
+                                   ▼
+                             Transaction
