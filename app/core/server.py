@@ -50,6 +50,13 @@ def create_web_app() -> web.Application:
     except Exception as media_err:
         logger.warning(f"[create_web_app] Media route registration note: {media_err}")
 
+    # 5. Product CRUD Routes
+    try:
+        from app.routes.product_routes import register_product_routes
+        register_product_routes(app)
+    except Exception as prod_err:
+        logger.warning(f"[create_web_app] Product route registration note: {prod_err}")
+
     return app
 
 async def start_web_server(app: web.Application, port: int = 8080) -> web.AppRunner:

@@ -14,7 +14,7 @@ import logging
 import hashlib
 from decimal import Decimal
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -49,6 +49,84 @@ def slugify(text: str) -> str:
     clean = re.sub(r"[^\w\s-]", "", clean)
     clean = re.sub(r"[\s_-]+", "-", clean)
     return clean.strip("-")
+
+
+def sanitize_product_slug(raw_slug: str, fallback_title: str = "") -> str:
+    """
+    Sanitasi slug salespage produk:
+    - Lowercase
+    - Strip karakter aneh / non-alfanumerik
+    - Ganti spasi, underscore, titik, dan slash menjadi tanda minus '-'
+    - Gabungkan tanda '-' berurutan dan strip leading/trailing minus.
+    """
+    source = str(raw_slug or "").strip()
+    if not source:
+        source = str(fallback_title or "").strip()
+    if not source:
+        source = "product"
+
+    # Lowercase & strip whitespace
+    slug = source.lower().strip()
+    # Ganti pemisah (spasi, underscore, titik, slash) menjadi minus '-'
+    slug = re.sub(r"[\s_./\\]+", "-", slug)
+    # Hapus semua karakter yang bukan alfanumerik atau '-'
+    slug = re.sub(r"[^a-z0-9-]", "", slug)
+    # Satukan minus berulang
+    slug = re.sub(r"-+", "-", slug)
+    # Strip minus di awal atau akhir
+    slug = slug.strip("-")
+
+    return slug or "product"
+
+
+def ensure_unique_product_slug(
+    desired_slug: str,
+    tenant_id_or_slug: str,
+    current_product_id: Optional[str] = None,
+    existing_products: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """
+    Memastikan slug produk unik per-tenant agar tidak bentrok dengan produk lain.
+    Jika slug sudah digunakan oleh produk lain dalam tenant yang sama,
+    secara otomatis menambahkan suffix numerik (-2, -3, dst).
+    """
+    used_slugs = set()
+
+    # 1. Cek dari koleksi produk in-memory tenant
+    if existing_products:
+        for p in existing_products:
+            p_id = str(p.get("id") or "")
+            p_slug = str(p.get("slug") or "").strip().lower()
+            if p_slug and (not current_product_id or p_id != str(current_product_id)):
+                used_slugs.add(p_slug)
+
+    # 2. Cek dari Supabase DB jika terhubung
+    try:
+        supabase = get_supabase()
+        if supabase and tenant_id_or_slug:
+            t_key = str(tenant_id_or_slug).strip()
+            res = supabase.table("products").select("id, slug").or_(
+                f"tenant_id.eq.{t_key},tenant_slug.eq.{t_key}"
+            ).execute()
+            if res and res.data:
+                for row in res.data:
+                    r_id = str(row.get("id") or "")
+                    r_slug = str(row.get("slug") or "").strip().lower()
+                    if r_slug and (not current_product_id or r_id != str(current_product_id)):
+                        used_slugs.add(r_slug)
+    except Exception as db_err:
+        logger.debug(f"[ensure_unique_product_slug DB check note]: {db_err}")
+
+    if desired_slug not in used_slugs:
+        return desired_slug
+
+    counter = 2
+    candidate = f"{desired_slug}-{counter}"
+    while candidate in used_slugs:
+        counter += 1
+        candidate = f"{desired_slug}-{counter}"
+
+    return candidate
 
 
 
@@ -792,7 +870,7 @@ class OnboardingService:
         return self.get_tenant_settings(clean_slug)
 
     def upsert_tenant_product(self, slug: str, product_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Adds or updates a product in tenant catalog, synced with live runtime."""
+        """Adds or updates a product in tenant catalog, synced with live runtime and database."""
         clean_slug = slugify(slug)
         details = self.get_tenant_details_by_slug(clean_slug)
         if not details:
@@ -806,8 +884,17 @@ class OnboardingService:
             existing_products = [existing_products] if existing_products else []
 
         prod_id = str(product_data.get("id") or uuid4())
-        prod_title = product_data.get("title", "New Product")
-        prod_slug = slugify(prod_title)
+        prod_title = str(product_data.get("title") or "New Product").strip()
+
+        # 1. Sanitasi dan Unikalisasi Slug
+        raw_slug = product_data.get("slug") or prod_title
+        base_slug = sanitize_product_slug(raw_slug, fallback_title=prod_title)
+        prod_slug = ensure_unique_product_slug(
+            desired_slug=base_slug,
+            tenant_id_or_slug=t_id or clean_slug,
+            current_product_id=prod_id,
+            existing_products=existing_products
+        )
         now_iso = datetime.now(timezone.utc).isoformat()
 
         new_prod = {
@@ -823,12 +910,15 @@ class OnboardingService:
             "delivery_url": product_data.get("delivery_url") or "https://drive.google.com/drive/folders/suhu-ads-masterclass-2026",
             "asset_reference": product_data.get("asset_reference") or prod_slug,
             "is_available": product_data.get("is_available", True),
+            "image": product_data.get("image") or product_data.get("primary_image") or "",
+            "images": product_data.get("images") or [],
+            "stock": int(product_data.get("stock", 0)) if product_data.get("stock") is not None else 0,
             "updated_at": now_iso,
         }
 
         updated = False
         for idx, p in enumerate(existing_products):
-            if str(p.get("id")) == prod_id or str(p.get("slug")) == prod_slug:
+            if str(p.get("id")) == prod_id:
                 existing_products[idx] = {**p, **new_prod}
                 new_prod = existing_products[idx]
                 updated = True
@@ -839,6 +929,34 @@ class OnboardingService:
             existing_products.append(new_prod)
 
         self._products_by_tenant[t_id] = existing_products
+
+        # 2. Sinkronkan ke Supabase table 'products'
+        supabase = get_supabase()
+        if supabase:
+            try:
+                db_payload = {
+                    "id": prod_id,
+                    "tenant_id": t_id,
+                    "tenant_slug": clean_slug,
+                    "title": prod_title,
+                    "slug": prod_slug,
+                    "price": new_prod["price"],
+                    "promo_price": new_prod["promo_price"],
+                    "category": new_prod["category"],
+                    "description": new_prod["description"],
+                    "product_type": new_prod["product_type"],
+                    "delivery_url": new_prod["delivery_url"],
+                    "asset_reference": new_prod["asset_reference"],
+                    "is_available": new_prod["is_available"],
+                    "updated_at": now_iso,
+                }
+                update_res = supabase.table("products").update(db_payload).eq("id", prod_id).execute()
+                if not update_res.data:
+                    supabase.table("products").upsert(db_payload).execute()
+                logger.info(f"[OnboardingService] Synced product '{prod_title}' (slug: {prod_slug}) to Supabase DB")
+            except Exception as db_err:
+                logger.debug(f"[OnboardingService product db sync note]: {db_err}")
+
         return new_prod
 
     def get_tenant_products(self, slug: str) -> Optional[list]:

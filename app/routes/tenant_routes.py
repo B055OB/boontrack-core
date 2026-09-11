@@ -53,8 +53,11 @@ class TenantSettingsUpdateRequest(BaseModel):
 
 class TenantProductUpsertRequest(BaseModel):
     """Payload for adding or updating a store product."""
+    model_config = {"extra": "allow"}
+
     id: Optional[str] = Field(None, description="Existing product ID to update")
     title: str = Field(..., description="Product title / course name")
+    slug: Optional[str] = Field(None, description="Custom or updated product URL slug")
     category: Optional[str] = Field("Digital Course", description="Product category: Digital Course, E-Book, Template, Merchandise, Membership")
     price: float = Field(..., gt=0, description="Standard price in IDR")
     promo_price: Optional[float] = Field(None, description="Optional discounted promotional price")
@@ -62,6 +65,9 @@ class TenantProductUpsertRequest(BaseModel):
     product_type: Optional[str] = Field("DIGITAL_COURSE", description="Product type key")
     delivery_url: Optional[str] = Field(None, description="Direct download / Google Drive delivery link")
     asset_reference: Optional[str] = Field(None, description="Asset reference key")
+    image: Optional[str] = Field(None, description="Primary product image URL")
+    images: Optional[List[str]] = Field(None, description="Gallery images")
+    stock: Optional[int] = Field(None, description="Product stock quantity")
     is_available: bool = Field(True, description="Availability flag")
 
 
@@ -144,6 +150,29 @@ async def upsert_tenant_product_endpoint(
     return {
         "status": "success",
         "message": f"Product '{payload.title}' successfully saved for tenant '{slug}'",
+        "product": product,
+    }
+
+
+@tenant_router.put("/{slug}/products/{id}", summary="Update Tenant Product via PUT")
+@tenant_router.patch("/{slug}/products/{id}", summary="Update Tenant Product via PATCH")
+async def update_tenant_product_by_id_endpoint(
+    slug: str,
+    id: str,
+    payload: TenantProductUpsertRequest = Body(...),
+):
+    """Memperbarui produk tenant berdasarkan ID termasuk custom/updated URL slug."""
+    data = payload.model_dump()
+    data["id"] = id
+    product = onboarding_service.upsert_tenant_product(slug, data)
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tenant with slug '{slug}' not found",
+        )
+    return {
+        "status": "success",
+        "message": f"Product '{product.get('title')}' successfully updated for tenant '{slug}'",
         "product": product,
     }
 

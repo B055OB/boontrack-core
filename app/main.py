@@ -57,7 +57,7 @@ from app.routes.analytics_fastapi_routes import router as analytics_router
 from app.routes.boonpilot_routes import router as boonpilot_router
 from app.routes.store_chat_routes import router as store_chat_router, handle_store_chat, StoreChatRequest
 from app.routes.media_routes import media_router, general_upload_router, register_media_routes
-from app.routes.product_routes import product_router
+from app.routes.product_routes import product_router, product_singular_router, register_product_routes
 from app.routes.auth_routes import router as auth_router, auth_general_router
 from app.api.v1.reader_router import router as reader_router
 from fastapi.staticfiles import StaticFiles
@@ -133,6 +133,7 @@ app.include_router(store_chat_router)
 app.include_router(media_router)
 app.include_router(general_upload_router)
 app.include_router(product_router)
+app.include_router(product_singular_router)
 app.include_router(auth_router)
 app.include_router(auth_general_router)
 app.include_router(reader_router)
@@ -270,7 +271,9 @@ async def start_application():
 
     aiohttp_app.router.add_post("/api/v1/store/chat", aiohttp_store_chat)
     aiohttp_app.router.add_post("/api/store/chat", aiohttp_store_chat)
-    
+
+    register_product_routes(aiohttp_app)
+
     port = int(os.getenv("PORT", 8080))
     await start_web_server(aiohttp_app, port=port)
 

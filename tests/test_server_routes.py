@@ -136,5 +136,33 @@ class TestModularServerRoutes(AioHTTPTestCase):
         self.assertTrue(res_data.get("filename").endswith(".png"))
         self.assertIn("qris_url", res_data)
 
+    @unittest_run_loop
+    async def test_aiohttp_product_update_slug_endpoint(self):
+        from app.services.onboarding_service import onboarding_service
+        onboarding_service._tenants_by_slug["demo-aio"] = {"id": "t-aio-1", "slug": "demo-aio", "name": "Demo AIO"}
+        onboarding_service.upsert_tenant_product("demo-aio", {
+            "id": "prod-aio-1",
+            "title": "Aiohttp Product",
+            "price": 99000
+        })
+
+        resp = await self.client.request(
+            "PUT",
+            "/api/v1/products/prod-aio-1",
+            json={
+                "tenant_slug": "demo-aio",
+                "title": "Aiohttp Product Updated",
+                "slug": "  Aiohttp NEW Slug 2026!  ",
+                "price": 125000
+            },
+            headers={"Origin": "https://shop.boontrack.com"}
+        )
+        self.assertEqual(resp.status, 200)
+        res_data = await resp.json()
+        self.assertEqual(res_data.get("status"), "success")
+        self.assertEqual(res_data.get("product", {}).get("slug"), "aiohttp-new-slug-2026")
+        self.assertEqual(res_data.get("product", {}).get("price"), 125000)
+
 if __name__ == "__main__":
     unittest.main()
+
