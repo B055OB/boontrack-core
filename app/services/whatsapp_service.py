@@ -1679,120 +1679,195 @@ def format_whatsapp_pairing_code(raw_code: str) -> str:
     return raw_code.strip()
 
 
-async def request_evolution_pairing_code(tenant_slug: str, phone: str) -> Dict[str, Any]:
+# --- WAHA (WhatsApp HTTP API) CONFIGURATION ---
+WAHA_URL = (
+    os.getenv("WAHA_URL")
+    or os.getenv("WAHA_BASE_URL")
+    or os.getenv("WHATSAPP_GATEWAY_URL")
+    or "http://localhost:3000"
+).rstrip("/")
+
+WAHA_API_KEY = (
+    os.getenv("WAHA_API_KEY")
+    or os.getenv("WHATSAPP_API_KEY")
+    or ""
+)
+
+
+def get_waha_headers() -> Dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if WAHA_API_KEY:
+        headers["X-Api-Key"] = WAHA_API_KEY
+    return headers
+
+
+async def request_waha_pairing_code(tenant_slug: str, phone: str) -> Dict[str, Any]:
     """
-    Requests an official 8-digit WhatsApp pairing code for linking via phone number.
-    Tries:
-    1. Standalone Baileys worker (calling sock.requestPairingCode(phone))
-    2. Evolution API (/instance/connect/{instance}?number={phone}) - strictly extracting pairingCode, rejecting raw QR.
-    3. Fallback pairing code generator (deterministic 8-digit alphanumeric formatted as XXXX-XXXX).
+    Mengambil kode pairing resmi WhatsApp dari WAHA API:
+    1. Pastikan session WAHA dalam status 'SCAN_QR_CODE'.
+       Jika session stopped/failed, panggil POST /api/sessions/{session}/start.
+    2. Tembak endpoint resmi WAHA:
+       POST {WAHA_URL}/api/{clean_session}/auth/request-code
+       Header: Content-Type: application/json, X-Api-Key: {WAHA_API_KEY}
+       Body: {"phoneNumber": clean_phone}
+    3. Parsing respons resmi WAHA: WAHA akan mengembalikan JSON {"code": "ABCD-1234"}.
+       Kembalikan kode asli tersebut ke frontend.
+    4. Tanpa silent fallback acak. Jika error, kembalikan status error aslinya.
     """
-    clean_tenant = (tenant_slug or "onlineboost").strip().lower()
+    clean_tenant = (tenant_slug or "default").strip()
     clean_phone = normalize_phone_number(phone)
     if not clean_phone:
         return {
             "success": False,
-            "message": "Nomor WhatsApp tidak valid. Masukkan nomor dengan format internasional (awali 62).",
-            "detail": "Nomor WhatsApp tidak valid."
+            "error": "Nomor WhatsApp tidak valid. Masukkan nomor dengan format internasional (awali 62).",
+            "detail": "Nomor WhatsApp kosong atau tidak valid."
         }
 
-    instance_name = f"tenant_{clean_tenant.replace('-', '_')}"
-    headers = get_evolution_headers()
+    clean_session = clean_tenant.replace("tenant_", "")
+    headers = get_waha_headers()
 
-    # 1. Coba standalone worker jika ada (Baileys sock.requestPairingCode)
-    worker_url = os.getenv("BOONTRACK_WA_WORKER_URL", os.getenv("BAILEYS_WORKER_URL", "http://127.0.0.1:3001"))
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            res = await client.post(
-                f"{worker_url}/sessions/{clean_tenant}/pairing-code",
-                json={"phone": clean_phone}
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        target_session = clean_session
+        session_data = None
+
+        try:
+            # 1. Cek session di WAHA
+            status_res = await client.get(f"{WAHA_URL}/api/sessions/{target_session}", headers=headers)
+            if status_res.status_code == 200:
+                session_data = status_res.json()
+            elif status_res.status_code == 404:
+                # Coba dengan prefix tenant_
+                alt_session = f"tenant_{clean_session.replace('-', '_')}"
+                alt_res = await client.get(f"{WAHA_URL}/api/sessions/{alt_session}", headers=headers)
+                if alt_res.status_code == 200:
+                    target_session = alt_session
+                    session_data = alt_res.json()
+                else:
+                    # Cek session default
+                    def_res = await client.get(f"{WAHA_URL}/api/sessions/default", headers=headers)
+                    if def_res.status_code == 200:
+                        target_session = "default"
+                        session_data = def_res.json()
+                    else:
+                        # Buat session baru di WAHA
+                        create_res = await client.post(
+                            f"{WAHA_URL}/api/sessions",
+                            headers=headers,
+                            json={"name": target_session, "start": True}
+                        )
+                        if create_res.status_code in (200, 201):
+                            session_data = create_res.json()
+                        else:
+                            logger.warning(f"[WAHA] Buat session {target_session} response: {create_res.text}")
+        except Exception as conn_err:
+            logger.error(f"[WAHA] Gagal menghubungi WAHA di {WAHA_URL}: {conn_err}")
+            return {
+                "success": False,
+                "error": f"Tidak dapat terhubung ke server WAHA di {WAHA_URL}: {str(conn_err)}",
+                "detail": str(conn_err)
+            }
+
+        # 2. Cek status session
+        current_status = (session_data.get("status") if isinstance(session_data, dict) else "") or ""
+
+        # Jika session STOPPED atau FAILED, panggil POST /api/sessions/{session}/start
+        if current_status in ("STOPPED", "FAILED"):
+            logger.info(f"[WAHA] Session {target_session} status: {current_status}. Memulai session...")
+            try:
+                start_res = await client.post(f"{WAHA_URL}/api/sessions/{target_session}/start", headers=headers)
+                if start_res.status_code in (200, 201):
+                    current_status = "STARTING"
+            except Exception as start_err:
+                logger.warning(f"[WAHA] Start session {target_session} error: {start_err}")
+
+        # Polling singkat jika session masih dalam proses STARTING/INITIALIZING
+        if current_status in ("STARTING", "INITIALIZING", ""):
+            for _ in range(6):
+                await asyncio.sleep(1.0)
+                try:
+                    chk_res = await client.get(f"{WAHA_URL}/api/sessions/{target_session}", headers=headers)
+                    if chk_res.status_code == 200:
+                        current_status = chk_res.json().get("status", "")
+                        if current_status in ("SCAN_QR_CODE", "WORKING"):
+                            break
+                except Exception:
+                    pass
+
+        # Jika sudah terhubung aktif
+        if current_status == "WORKING":
+            return {
+                "success": False,
+                "error": f"WhatsApp pada session '{target_session}' sudah terhubung aktif (status: WORKING).",
+                "detail": "Session is already active and authenticated.",
+                "status": "WORKING"
+            }
+
+        # 3. Tembak endpoint resmi WAHA: POST {WAHA_URL}/api/{clean_session}/auth/request-code
+        request_code_url = f"{WAHA_URL}/api/{target_session}/auth/request-code"
+        logger.info(f"[WAHA] Requesting pairing code via {request_code_url} for phone {clean_phone} (session status: {current_status})...")
+
+        try:
+            req_res = await client.post(
+                request_code_url,
+                headers=headers,
+                json={"phoneNumber": clean_phone}
             )
-            if res.status_code == 200:
-                data = res.json()
-                candidate = data.get("pairing_code") or data.get("pairingCode") or data.get("code")
-                if is_valid_whatsapp_pairing_code(candidate):
-                    formatted = format_whatsapp_pairing_code(candidate)
+
+            # Fallback path jika endpoint versi WAHA menggunakan query-param
+            if req_res.status_code == 404:
+                alt_req_url = f"{WAHA_URL}/api/auth/request-code"
+                alt_res = await client.post(
+                    alt_req_url,
+                    headers=headers,
+                    json={"session": target_session, "phoneNumber": clean_phone}
+                )
+                if alt_res.status_code in (200, 201):
+                    req_res = alt_res
+
+            if req_res.status_code in (200, 201):
+                res_json = req_res.json()
+                pairing_code = res_json.get("code") or res_json.get("pairingCode")
+                if pairing_code:
+                    code_str = str(pairing_code).strip()
+                    logger.info(f"[WAHA] Berhasil menerima pairing code resmi: {code_str}")
                     return {
                         "success": True,
-                        "pairing_code": formatted,
+                        "pairing_code": code_str,
                         "tenant_slug": clean_tenant,
+                        "session": target_session,
                         "phone": clean_phone,
-                        "message": f"Pairing code berhasil dibuat: {formatted}"
+                        "message": f"Pairing code resmi diterima dari WAHA: {code_str}"
                     }
                 else:
-                    logger.warning(f"[Baileys Worker] Response rejected because it is not 8-digit pairing code: {candidate}")
-    except Exception:
-        pass
-
-    # 2. Coba Evolution API
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            status_res = await client.get(
-                f"{EVOLUTION_BASE_URL}/instance/connectionState/{instance_name}",
-                headers=headers
-            )
-            if status_res.status_code in (404, 400):
-                create_payload = {
-                    "instanceName": instance_name,
-                    "token": EVOLUTION_API_KEY,
-                    "qrcode": False,
-                    "integration": "WHATSAPP-BAILEYS",
-                    "clientName": "BoonTrack Engine",
-                    "browser": ["BoonTrack Engine", "Chrome", "1.0.0"],
-                    "browserName": "BoonTrack Engine"
-                }
-                await client.post(
-                    f"{EVOLUTION_BASE_URL}/instance/create",
-                    headers=headers,
-                    json=create_payload
-                )
-
-            pair_res = await client.get(
-                f"{EVOLUTION_BASE_URL}/instance/connect/{instance_name}?number={clean_phone}",
-                headers=headers
-            )
-            if pair_res.status_code in (200, 201):
-                pair_data = pair_res.json()
-                # PENTING: Hanya ambil pairingCode resmi. Tolak 'code' jika berupa raw QR string!
-                candidate = pair_data.get("pairingCode")
-                if not candidate and pair_data.get("code"):
-                    # Periksa apakah 'code' adalah pairing code atau raw QR
-                    raw_candidate = pair_data.get("code")
-                    if is_valid_whatsapp_pairing_code(raw_candidate):
-                        candidate = raw_candidate
-                    else:
-                        logger.warning(f"[Evolution API] Raw QR string ignored as pairing code: {raw_candidate}")
-
-                if is_valid_whatsapp_pairing_code(candidate):
-                    formatted = format_whatsapp_pairing_code(candidate)
                     return {
-                        "success": True,
-                        "pairing_code": formatted,
-                        "tenant_slug": clean_tenant,
-                        "phone": clean_phone,
-                        "message": f"Pairing code berhasil dibuat: {formatted}"
+                        "success": False,
+                        "error": "Server WAHA tidak mengembalikan atribut 'code'.",
+                        "detail": res_json
                     }
-    except Exception as evo_err:
-        logger.debug(f"[Evolution Pairing Code Note] {evo_err}")
+            else:
+                err_text = req_res.text
+                try:
+                    err_json = req_res.json()
+                    err_detail = err_json.get("message") or err_json.get("error") or str(err_json)
+                except Exception:
+                    err_detail = err_text
 
-    # 3. Fallback pairing code generator jika gateway sedang dalam proses inisialisasi
-    # Menghasilkan 8 digit alfanumerik resmi WhatsApp: format XXXX-XXXX (misal ABCD-1234)
-    chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    raw_hash = abs(hash(f"{clean_phone}_{clean_tenant}_{os.getpid()}"))
-    code_chars = []
-    for i in range(8):
-        idx = (raw_hash >> (i * 3)) % len(chars)
-        code_chars.append(chars[idx])
-    
-    code_part1 = "".join(code_chars[:4])
-    code_part2 = "".join(code_chars[4:])
-    fallback_code = f"{code_part1}-{code_part2}"
+                logger.error(f"[WAHA Error] request-code gagal ({req_res.status_code}): {err_detail}")
+                return {
+                    "success": False,
+                    "error": f"WAHA Error ({req_res.status_code}): {err_detail}",
+                    "detail": err_detail,
+                    "session_status": current_status,
+                    "status_code": req_res.status_code
+                }
+        except Exception as post_err:
+            logger.error(f"[WAHA Post Error] {post_err}")
+            return {
+                "success": False,
+                "error": f"Gagal mengeksekusi request-code ke server WAHA: {str(post_err)}",
+                "detail": str(post_err)
+            }
 
-    return {
-        "success": True,
-        "pairing_code": fallback_code,
-        "tenant_slug": clean_tenant,
-        "phone": clean_phone,
-        "message": f"Kode pairing berhasil digenerate: {fallback_code}",
-        "is_fallback": True
-    }
+
+# Alias backward-compatibility
+request_evolution_pairing_code = request_waha_pairing_code
