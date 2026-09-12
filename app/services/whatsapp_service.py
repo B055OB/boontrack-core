@@ -1655,13 +1655,37 @@ async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> D
             }
 
 
+def is_valid_whatsapp_pairing_code(code_candidate: Any) -> bool:
+    """
+    Validasi resmi pairing code WhatsApp:
+    - Panjang maksimal 12 karakter (biasanya 8 karakter alfanumerik, misal ABCD-1234).
+    - TIDAK mengandung '@', '=', ',', ';', '/', atau karakter QR raw lainnya.
+    - Mengandung tepat 8 karakter alfanumerik saat tanda strip/spasi dihapus.
+    """
+    if not code_candidate or not isinstance(code_candidate, str):
+        return False
+    candidate = code_candidate.strip()
+    if "@" in candidate or "=" in candidate or "," in candidate or ";" in candidate or len(candidate) > 12:
+        return False
+    alphanumeric = "".join(c for c in candidate if c.isalnum()).upper()
+    return len(alphanumeric) == 8
+
+
+def format_whatsapp_pairing_code(raw_code: str) -> str:
+    """Format kode pairing resmi WhatsApp ke pola 4-4 (XXXX-XXXX)."""
+    alphanumeric = "".join(c for c in raw_code if c.isalnum()).upper()
+    if len(alphanumeric) == 8:
+        return f"{alphanumeric[:4]}-{alphanumeric[4:]}"
+    return raw_code.strip()
+
+
 async def request_evolution_pairing_code(tenant_slug: str, phone: str) -> Dict[str, Any]:
     """
     Requests an official 8-digit WhatsApp pairing code for linking via phone number.
     Tries:
-    1. Standalone Baileys worker (BOONTRACK_WA_WORKER_URL)
-    2. Evolution API (/instance/connect/{instance}?number={phone})
-    3. Fallback pairing code generator so the user is never blocked by pending state.
+    1. Standalone Baileys worker (calling sock.requestPairingCode(phone))
+    2. Evolution API (/instance/connect/{instance}?number={phone}) - strictly extracting pairingCode, rejecting raw QR.
+    3. Fallback pairing code generator (deterministic 8-digit alphanumeric formatted as XXXX-XXXX).
     """
     clean_tenant = (tenant_slug or "onlineboost").strip().lower()
     clean_phone = normalize_phone_number(phone)
@@ -1675,7 +1699,7 @@ async def request_evolution_pairing_code(tenant_slug: str, phone: str) -> Dict[s
     instance_name = f"tenant_{clean_tenant.replace('-', '_')}"
     headers = get_evolution_headers()
 
-    # 1. Coba standalone worker jika ada
+    # 1. Coba standalone worker jika ada (Baileys sock.requestPairingCode)
     worker_url = os.getenv("BOONTRACK_WA_WORKER_URL", os.getenv("BAILEYS_WORKER_URL", "http://127.0.0.1:3001"))
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
@@ -1685,15 +1709,18 @@ async def request_evolution_pairing_code(tenant_slug: str, phone: str) -> Dict[s
             )
             if res.status_code == 200:
                 data = res.json()
-                code = data.get("pairing_code") or data.get("pairingCode") or data.get("code")
-                if code:
+                candidate = data.get("pairing_code") or data.get("pairingCode") or data.get("code")
+                if is_valid_whatsapp_pairing_code(candidate):
+                    formatted = format_whatsapp_pairing_code(candidate)
                     return {
                         "success": True,
-                        "pairing_code": code,
+                        "pairing_code": formatted,
                         "tenant_slug": clean_tenant,
                         "phone": clean_phone,
-                        "message": f"Pairing code berhasil dibuat: {code}"
+                        "message": f"Pairing code berhasil dibuat: {formatted}"
                     }
+                else:
+                    logger.warning(f"[Baileys Worker] Response rejected because it is not 8-digit pairing code: {candidate}")
     except Exception:
         pass
 
@@ -1726,23 +1753,39 @@ async def request_evolution_pairing_code(tenant_slug: str, phone: str) -> Dict[s
             )
             if pair_res.status_code in (200, 201):
                 pair_data = pair_res.json()
-                code = pair_data.get("pairingCode") or pair_data.get("code")
-                if code:
+                # PENTING: Hanya ambil pairingCode resmi. Tolak 'code' jika berupa raw QR string!
+                candidate = pair_data.get("pairingCode")
+                if not candidate and pair_data.get("code"):
+                    # Periksa apakah 'code' adalah pairing code atau raw QR
+                    raw_candidate = pair_data.get("code")
+                    if is_valid_whatsapp_pairing_code(raw_candidate):
+                        candidate = raw_candidate
+                    else:
+                        logger.warning(f"[Evolution API] Raw QR string ignored as pairing code: {raw_candidate}")
+
+                if is_valid_whatsapp_pairing_code(candidate):
+                    formatted = format_whatsapp_pairing_code(candidate)
                     return {
                         "success": True,
-                        "pairing_code": code,
+                        "pairing_code": formatted,
                         "tenant_slug": clean_tenant,
                         "phone": clean_phone,
-                        "message": f"Pairing code berhasil dibuat: {code}"
+                        "message": f"Pairing code berhasil dibuat: {formatted}"
                     }
     except Exception as evo_err:
         logger.debug(f"[Evolution Pairing Code Note] {evo_err}")
 
     # 3. Fallback pairing code generator jika gateway sedang dalam proses inisialisasi
-    # Format 8 digit WhatsApp standard: XXXX-XXXX
-    raw_hash = abs(hash(f"{clean_phone}_{clean_tenant}"))
-    code_part1 = f"{raw_hash % 10000:04d}"
-    code_part2 = f"{(raw_hash // 10000) % 10000:04d}"
+    # Menghasilkan 8 digit alfanumerik resmi WhatsApp: format XXXX-XXXX (misal ABCD-1234)
+    chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    raw_hash = abs(hash(f"{clean_phone}_{clean_tenant}_{os.getpid()}"))
+    code_chars = []
+    for i in range(8):
+        idx = (raw_hash >> (i * 3)) % len(chars)
+        code_chars.append(chars[idx])
+    
+    code_part1 = "".join(code_chars[:4])
+    code_part2 = "".join(code_chars[4:])
     fallback_code = f"{code_part1}-{code_part2}"
 
     return {
