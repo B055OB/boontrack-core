@@ -17,6 +17,7 @@
 9. **Webhook handlers must be fast, idempotent, and asynchronous where appropriate.**
 10. **New features must strengthen the BoonTrack Business Graph or remain isolated as optional capabilities.**
 11. **Verticals define configuration and business rules; the Core Engine defines how configuration is interpreted and executed.**
+12. **Zero Fake Fallbacks on External Infrastructure**: Dilarang keras membuat generator kode tiruan (mock/hash generator) untuk menutupi kegagalan koneksi pihak ketiga (seperti WhatsApp pairing code). Kegagalan infrastruktur wajib diekspos secara jujur dan transparan sebagai error HTTP eksplisit.
 
 ---
 
@@ -298,4 +299,44 @@ Khusus untuk vertikal `FIELD_SERVICE` dan `PROFESSIONAL_SERVICE`:
 2. **Tenant Data Isolation**: Seluruh kueri wajib menyertakan filter `tenant_id` dan mematuhi isolasi Supabase Row Level Security (RLS).
 3. **Proposal Publication Guard**: Konfigurasi baru hasil perbincangan dengan BoonPilot tidak boleh langsung memengaruhi runtime sebelum melalui review dan validasi status `PUBLISHED` oleh merchant.
 4. **Audit Trail**: Setiap perubahan konfigurasi dan mutasi status transaksi tercatat dengan timestamp dan identitas pengubah demi transparansi operasional.
+
+---
+
+## 9. WhatsApp Multi-Tenant Gateway & Device Pairing Architecture
+
+### 9.1 Single Production Engine Contract (Evolution API v2)
+- **Official Gateway Engine**: Gateway WhatsApp multi-tenant resmi BoonTrack di production adalah **Evolution API v2** yang ter-deploy terisolasi di Railway dengan dependency Redis dan PostgreSQL.
+- **Alamat Gateway Production**:
+  - `EVOLUTION_API_URL`: Mengarah ke instance Railway resmi (`https://evolution-api-production-abb7.up.railway.app` atau private domain internal Railway).
+  - `AUTHENTICATION_API_KEY` / `EVOLUTION_API_KEY`: Token otentikasi wajib sinkron 1:1 antara Railway instance Evolution API dan `boontrack-core`.
+- **Status Engine Lain**: WAHA hanya berstatus local development container / secondary driver dan BUKAN driver gateway production aktif. Tidak diperbolehkan mengarahkan panggilan production ke WAHA tanpa ADR resmi.
+
+### 9.2 Device Pairing & Authentication Protocol
+Platform menyediakan dua mekanisme penautan perangkat WhatsApp bagi tenant secara real-time:
+1. **Scan QR Code (Primary & Ultra-Stable)**:
+   - Dashboard polling status session ke endpoint Evolution API `/instance/connect/{instance}`.
+   - Mengambil data string base64 / QR code langsung dari Evolution API.
+   - Di-render sebagai gambar QR di dashboard merchant (`WhatsAppTab.tsx`).
+2. **Phone Number Pairing Code (Secondary - 8 Character Format)**:
+   - Tenant memasukkan nomor telepon aktif (format internasional `628xxx`).
+   - Backend memanggil endpoint resmi Evolution API v2:
+     `GET /instance/connect/{instance}?number={clean_phone}`
+     Headers: `apikey: {EVOLUTION_API_KEY}`
+   - Nilai balik wajib diambil dari field resmi `pairingCode` atau `code` yang diterbitkan oleh WhatsApp Meta server melalui Baileys socket.
+   - Karakter kode resmi adalah tepat 8 digit alfanumerik (`XXXX-XXXX`).
+   - DILARANG KERAS merender raw QR string (teks panjang berawalan `2@...`) ke dalam form pairing code.
+
+### 9.3 Zero Fake Fallback & Transparent Error Policy
+- Jika Evolution API belum siap, session gagal, atau nomor tidak valid:
+  - Backend DILARANG menghasilkan string acak (deterministic fallback string).
+  - Backend wajib mengembalikan respons error HTTP yang sesungguhnya ke frontend (502 Gateway Error atau status relevan) beserta detail kendala.
+  - UI frontend wajib menampilkan banner instruksi perbaikan yang jelas kepada merchant, bukan menampilkan kode 8-digit palsu yang pasti ditolak saat diinput ke HP.
+
+### 9.4 Architectural Isolation: BoonTrack Shop vs BoonTrack Career
+- **BoonTrack Shop (Multi-Tenant Gateway)**:
+  - Setiap merchant memiliki 1 instance session mandiri di Evolution API (`instance_name = tenant_slug`).
+  - Mengisolasi webhook katalog, penerimaan order, dan obrolan pelanggan per toko.
+- **BoonTrack Career (Single-Pipeline Dedicated)**:
+  - Menggunakan 1 nomor WhatsApp sistem tersentralisasi khusus untuk evaluasi CV ATS, intake pendaftaran, dan review kandidat.
+  - Konfigurasi instance Shop dilarang dicampuradukkan dengan routing pesan Career.
 
