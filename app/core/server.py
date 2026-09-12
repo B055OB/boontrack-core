@@ -64,6 +64,13 @@ def create_web_app() -> web.Application:
     except Exception as cd_err:
         logger.warning(f"[create_web_app] Custom domain route registration note: {cd_err}")
 
+    # 7. WhatsApp Gateway & Pairing Routes
+    try:
+        from app.routes.whatsapp_gateway_routes import register_whatsapp_gateway_routes
+        register_whatsapp_gateway_routes(app)
+    except Exception as wa_err:
+        logger.warning(f"[create_web_app] WhatsApp gateway route registration note: {wa_err}")
+
     return app
 
 

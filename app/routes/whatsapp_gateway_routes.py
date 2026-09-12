@@ -25,7 +25,10 @@ from app.services.whatsapp_service import (
     generate_fast_track_checkout_response,
     EVOLUTION_BASE_URL,
     get_evolution_headers,
+    request_evolution_pairing_code,
+    get_or_create_evolution_session,
 )
+
 from app.services.ai_engine import commerce_ai_engine
 from app.services.agent_service import process_incoming_message
 from app.services.onboarding_service import onboarding_service
@@ -93,6 +96,90 @@ async def connect_growth_session(tenant_slug: str):
         "qr_image": f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=BoonTrack-{clean_tenant.upper()}-Session",
         "message": "Sesi QR BoonTrack WhatsApp Engine siap dipindai."
     }
+
+
+class PairingCodePayload(BaseModel):
+    model_config = {"extra": "allow"}
+    phone: str = Field(..., description="Nomor WhatsApp aktif pelanggan/merchant (awali 62)")
+    tenant: Optional[str] = Field(None, description="Slug tenant")
+    tenant_slug: Optional[str] = Field(None, description="Slug tenant alias")
+
+
+@router.post("/sessions/{tenant_slug}/pairing-code", summary="Request 8-digit WhatsApp Pairing Code")
+@router.post("/pairing-code", summary="Request 8-digit WhatsApp Pairing Code Generic")
+async def get_whatsapp_pairing_code_endpoint(
+    payload: PairingCodePayload,
+    tenant_slug: Optional[str] = None,
+):
+    """
+    Menghasilkan kode pairing 8 digit resmi WhatsApp untuk menautkan perangkat tanpa scan QR.
+    """
+    slug = tenant_slug or payload.tenant or payload.tenant_slug or "onlineboost"
+    return await request_evolution_pairing_code(slug, payload.phone)
+
+
+tenant_reconnect_router = APIRouter(tags=["Tenant WhatsApp Reconnect Legacy"])
+
+
+@tenant_reconnect_router.post("/tenant/whatsapp/reconnect", summary="Tenant WhatsApp Reconnect & Pairing Fallback")
+async def tenant_whatsapp_reconnect_legacy(request: Request):
+    """
+    Legacy reconnect endpoint compatibility for frontend useTenantDashboard hook.
+    Menerima { tenant, phone } dan mengembalikan pairing_code resmi atau reconnect session data.
+    """
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    tenant = body.get("tenant") or body.get("tenant_slug") or "onlineboost"
+    phone = body.get("phone") or body.get("phone_number") or body.get("phoneNumber")
+
+    if phone:
+        return await request_evolution_pairing_code(tenant, str(phone))
+
+    evo_data = await get_or_create_evolution_session(tenant)
+    return {"success": True, "tenant": tenant, **(evo_data or {})}
+
+
+async def aiohttp_pairing_code_handler(request):
+    try:
+        from aiohttp import web
+        body = await request.json()
+    except Exception:
+        body = {}
+    tenant_slug = request.match_info.get("tenant_slug") or body.get("tenant") or body.get("tenant_slug") or "onlineboost"
+    phone = body.get("phone") or body.get("phone_number") or body.get("phoneNumber") or request.query.get("phone") or ""
+    result = await request_evolution_pairing_code(tenant_slug, str(phone))
+    return web.json_response(result)
+
+
+async def aiohttp_tenant_reconnect_handler(request):
+    try:
+        from aiohttp import web
+        body = await request.json()
+    except Exception:
+        body = {}
+    tenant = body.get("tenant") or body.get("tenant_slug") or "onlineboost"
+    phone = body.get("phone") or body.get("phone_number") or body.get("phoneNumber")
+    if phone:
+        res = await request_evolution_pairing_code(tenant, str(phone))
+        return web.json_response(res)
+    evo_data = await get_or_create_evolution_session(tenant)
+    return web.json_response({"success": True, "tenant": tenant, **(evo_data or {})})
+
+
+def register_whatsapp_gateway_routes(app):
+    """Mendaftarkan route pairing code & reconnect ke server aiohttp."""
+    try:
+        app.router.add_post("/tenant/whatsapp/reconnect", aiohttp_tenant_reconnect_handler)
+        app.router.add_post("/api/v1/whatsapp/sessions/{tenant_slug}/pairing-code", aiohttp_pairing_code_handler)
+        app.router.add_post("/api/v1/whatsapp/pairing-code", aiohttp_pairing_code_handler)
+        logger.info("[register_whatsapp_gateway_routes] WhatsApp pairing & reconnect routes mounted to aiohttp.")
+    except Exception as reg_err:
+        logger.warning(f"[register_whatsapp_gateway_routes] Note: {reg_err}")
+
 
 
 @router.post("/inbound-process")

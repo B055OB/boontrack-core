@@ -41,7 +41,7 @@ from app.services.payout_service import PayoutService
 
 # IMPORT ROUTER & AIOHTTP REGISTRARS ENTITLEMENT, WHATSAPP GATEWAY, PROVISIONING, GROWTH & SHIPPING LOGISTICS
 from app.routes.entitlement_routes import router as entitlement_router, register_entitlement_routes
-from app.routes.whatsapp_gateway_routes import router as whatsapp_gateway_router
+from app.routes.whatsapp_gateway_routes import router as whatsapp_gateway_router, tenant_reconnect_router, register_whatsapp_gateway_routes
 from app.routes.whatsapp_control import router as whatsapp_control_router, register_whatsapp_control_routes
 from app.routes.provisioning import router as provisioning_router, register_provisioning_routes
 from app.routes.growth_routes import router as growth_router, register_growth_routes
@@ -117,6 +117,7 @@ app.include_router(webhook_payment_router)
 # DAFTARKAN ENTITLEMENT, WHATSAPP GATEWAY, CONTROL, PROVISIONING & GROWTH ROUTER
 app.include_router(entitlement_router)
 app.include_router(whatsapp_gateway_router)
+app.include_router(tenant_reconnect_router)
 app.include_router(whatsapp_control_router)
 app.include_router(provisioning_router)
 app.include_router(growth_router)
