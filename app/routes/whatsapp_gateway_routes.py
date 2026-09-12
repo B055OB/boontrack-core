@@ -14,6 +14,7 @@ import asyncio
 import logging
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 import httpx
 
@@ -54,27 +55,10 @@ class InboundPayload(BaseModel):
 @router.post("/sessions/{tenant_slug}/connect")
 async def connect_growth_session(tenant_slug: str):
     """
-    Meminta QR code live socket BoonTrack WhatsApp Engine.
+    Meminta QR code live socket Evolution API v2 (Production WhatsApp Gateway resmi).
     """
     clean_tenant = (tenant_slug or "onlineboost").strip().lower()
 
-    # 1. Coba hubungi standalone worker BoonTrack WhatsApp Engine jika ada di localhost:3001
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            res = await client.post(f"{BOONTRACK_WA_WORKER_URL}/sessions/{clean_tenant}/start")
-            if res.status_code == 200:
-                data = res.json()
-                return {
-                    "success": True,
-                    "tenant_slug": clean_tenant,
-                    "qr_raw": data.get("qr_raw"),
-                    "qr_image": data.get("qr_image"),
-                    "message": "Sesi QR BoonTrack WhatsApp Engine siap dipindai."
-                }
-    except Exception:
-        pass
-
-    # 2. Coba hubungi Evolution API (BoonTrack WhatsApp Engine manager)
     try:
         from app.services.whatsapp_service import get_or_create_evolution_session
         evo_data = await get_or_create_evolution_session(clean_tenant)
@@ -85,18 +69,32 @@ async def connect_growth_session(tenant_slug: str):
                 "qr_raw": evo_data.get("qr_raw"),
                 "qr_image": evo_data.get("qr_image"),
                 "status": evo_data.get("status"),
-                "message": "Sesi QR WhatsApp terhubung melalui BoonTrack WhatsApp Engine."
+                "message": "Sesi QR WhatsApp terhubung melalui Evolution API v2."
             }
+        else:
+            return JSONResponse(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                content={
+                    "success": False,
+                    "tenant_slug": clean_tenant,
+                    "status": "DEGRADED",
+                    "error": evo_data.get("error") or "Gagal membuat atau menghubungkan sesi di Evolution API v2.",
+                    "disconnect_reason": evo_data.get("disconnect_reason") or "GATEWAY_SESSION_PENDING",
+                    "detail": evo_data
+                }
+            )
     except Exception as evo_err:
-        logger.debug(f"[Evolution Connect Note] {evo_err}")
-
-    # 3. Fallback QR code display
-    return {
-        "success": True,
-        "tenant_slug": clean_tenant,
-        "qr_image": f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=BoonTrack-{clean_tenant.upper()}-Session",
-        "message": "Sesi QR BoonTrack WhatsApp Engine siap dipindai."
-    }
+        logger.error(f"[Evolution Connect Error] {evo_err}")
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={
+                "success": False,
+                "tenant_slug": clean_tenant,
+                "status": "DEGRADED",
+                "disconnect_reason": "GATEWAY_UNREACHABLE",
+                "error": f"Evolution API v2 tidak dapat dihubungi: {str(evo_err)}"
+            }
+        )
 
 
 class PairingCodePayload(BaseModel):
@@ -113,20 +111,26 @@ async def get_whatsapp_pairing_code_endpoint(
     tenant_slug: Optional[str] = None,
 ):
     """
-    Menghasilkan kode pairing 8 digit resmi WhatsApp untuk menautkan perangkat tanpa scan QR.
+    Menghasilkan kode pairing 8 digit resmi WhatsApp via Evolution API v2 di Railway.
     """
     slug = tenant_slug or payload.tenant or payload.tenant_slug or "onlineboost"
-    return await request_waha_pairing_code(slug, payload.phone)
+    res = await request_evolution_pairing_code(slug, payload.phone)
+    if not res.get("success"):
+        return JSONResponse(
+            status_code=res.get("status_code") or status.HTTP_502_BAD_GATEWAY,
+            content=res
+        )
+    return res
 
 
-@router.get("/waha/test", summary="Test WAHA request-code endpoint live")
-@router.post("/waha/test", summary="Test WAHA request-code endpoint live")
-async def test_waha_pairing_endpoint(phone: Optional[str] = "6281237450222", session: Optional[str] = "onlineboost"):
+@router.get("/evolution/test", summary="Test Evolution API pairing & connect live")
+@router.post("/evolution/test", summary="Test Evolution API pairing & connect live")
+async def test_evolution_pairing_endpoint(phone: Optional[str] = "6281237450222", session: Optional[str] = "onlineboost"):
     """
-    Diagnostic probe endpoint to test direct pairing code request to WAHA container.
-    Returns the raw response, status code, and diagnosis without fallbacks.
+    Diagnostic probe endpoint to test direct pairing code request to Evolution API v2 on Railway.
     """
-    return await request_waha_pairing_code(session, phone)
+    return await request_evolution_pairing_code(session, phone)
+
 
 
 tenant_reconnect_router = APIRouter(tags=["Tenant WhatsApp Reconnect Legacy"])
