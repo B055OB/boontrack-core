@@ -1570,6 +1570,35 @@ def get_evolution_headers() -> Dict[str, str]:
         "Content-Type": "application/json"
     }
 
+def clean_evolution_base64_qr(raw_base64: Optional[str]) -> Optional[str]:
+    """
+    Membersihkan dan menormalisasi string base64 QR Code dari Evolution API v2:
+    - Menghilangkan prefix dobel seperti 'data:image/png;base64,data:image/png;base64,...'
+    - Memastikan format valid data URL 'data:image/png;base64,...' tanpa dobel prefix.
+    """
+    if not raw_base64 or not isinstance(raw_base64, str):
+        return None
+    val = raw_base64.strip()
+    if not val:
+        return None
+
+    # Hapus nested/duplicate prefix data:image jika sudah ada
+    while val.startswith("data:image"):
+        comma_idx = val.find(",")
+        if comma_idx != -1:
+            rest = val[comma_idx + 1:].strip()
+            if rest.startswith("data:image"):
+                val = rest
+            else:
+                break
+        else:
+            break
+
+    if not val.startswith("data:image"):
+        val = f"data:image/png;base64,{val}"
+    return val
+
+
 async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> Dict[str, Any]:
     instance_name = f"tenant_{tenant_slug.replace('-', '_')}"
     headers = get_evolution_headers()
@@ -1583,7 +1612,7 @@ async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> D
             
             if status_res.status_code == 200:
                 data = status_res.json()
-                state = data.get("instance", {}).get("state") or data.get("state")
+                state = (data.get("instance", {}).get("state") or data.get("state") or "").lower()
                 
                 if state == "open":
                     owner = data.get("instance", {}).get("ownerJid") or ""
@@ -1594,6 +1623,14 @@ async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> D
                         "phone_number": phone_number or None,
                         "capabilities": {"qr_pairing": True, "pairing_code": True, "multi_agent": False}
                     }
+                elif state in ("close", "refused", "disconnected"):
+                    # Status gagal taut sebelumnya -> restart session otomatis agar soket Baileys tidak macet (stale socket)
+                    logger.info(f"[Evolution API] Instance {instance_name} berstatus '{state}'. Memulai restart socket...")
+                    try:
+                        await client.post(f"{EVOLUTION_BASE_URL}/instance/restart/{instance_name}", headers=headers)
+                        await asyncio.sleep(1.5)
+                    except Exception as restart_err:
+                        logger.warning(f"[Evolution API] Restart note on {instance_name}: {restart_err}")
 
             if status_res.status_code in (404, 400):
                 create_payload = {
@@ -1634,16 +1671,36 @@ async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> D
                 headers=headers
             )
             
+            # Jika respons connect belum mengembalikan base64/code atau error, bersihkan stale socket via restart
+            if qr_res.status_code not in (200, 201) or (
+                qr_res.status_code in (200, 201) 
+                and not qr_res.json().get("base64") 
+                and not qr_res.json().get("code")
+            ):
+                logger.info(f"[Evolution API] Connect untuk {instance_name} perlu disegarkan (status {qr_res.status_code}). Melakukan restart socket...")
+                try:
+                    await client.post(f"{EVOLUTION_BASE_URL}/instance/restart/{instance_name}", headers=headers)
+                    await asyncio.sleep(1.5)
+                    qr_res = await client.get(
+                        f"{EVOLUTION_BASE_URL}/instance/connect/{instance_name}",
+                        headers=headers
+                    )
+                except Exception as restart_err:
+                    logger.warning(f"[Evolution API] Retry connect error on {instance_name}: {restart_err}")
+
             if qr_res.status_code in (200, 201):
                 qr_data = qr_res.json()
                 qr_raw = qr_data.get("code") or qr_data.get("pairingCode")
                 qr_base64 = qr_data.get("base64")
+                clean_b64 = clean_evolution_base64_qr(qr_base64)
 
                 return {
                     "success": True,
                     "status": "CONNECTING",
+                    "code": qr_raw,
                     "qr_raw": qr_raw,
-                    "qr_image": qr_base64 if (qr_base64 and qr_base64.startswith("data:image")) else None,
+                    "base64": clean_b64,
+                    "qr_image": clean_b64,
                     "capabilities": {"qr_pairing": True, "pairing_code": True, "multi_agent": False}
                 }
 
@@ -1943,6 +2000,13 @@ async def request_evolution_pairing_code(tenant_slug: str, phone: str) -> Dict[s
                         "detail": "Instance already authenticated and open.",
                         "status": "CONNECTED"
                     }
+                elif state in ("close", "refused", "disconnected"):
+                    logger.info(f"[Evolution API] Instance {instance_name} berstatus '{state}' (gagal taut sebelumnya). Memulai restart socket...")
+                    try:
+                        await client.post(f"{EVOLUTION_BASE_URL}/instance/restart/{instance_name}", headers=headers)
+                        await asyncio.sleep(1.5)
+                    except Exception as restart_err:
+                        logger.warning(f"[Evolution API] Restart note on {instance_name}: {restart_err}")
         except Exception as check_err:
             logger.warning(f"[Evolution API] Error saat memeriksa instance {instance_name}: {check_err}")
 
@@ -1953,6 +2017,8 @@ async def request_evolution_pairing_code(tenant_slug: str, phone: str) -> Dict[s
         try:
             conn_res = await client.get(connect_url, headers=headers)
             res_data = conn_res.json() if conn_res.status_code in (200, 201) else {}
+            if "base64" in res_data and res_data.get("base64"):
+                res_data["base64"] = clean_evolution_base64_qr(res_data.get("base64"))
             raw_pairing = res_data.get("pairingCode")
 
             # Jika pairingCode belum terbit (misal session sebelumnya dalam mode pure QR atau count habis),
@@ -1960,10 +2026,12 @@ async def request_evolution_pairing_code(tenant_slug: str, phone: str) -> Dict[s
             if not raw_pairing:
                 try:
                     await client.post(f"{EVOLUTION_BASE_URL}/instance/restart/{instance_name}", headers=headers)
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(1.5)
                     retry_res = await client.get(connect_url, headers=headers)
                     if retry_res.status_code in (200, 201):
                         res_data = retry_res.json()
+                        if "base64" in res_data and res_data.get("base64"):
+                            res_data["base64"] = clean_evolution_base64_qr(res_data.get("base64"))
                         raw_pairing = res_data.get("pairingCode")
                 except Exception as restart_err:
                     logger.debug(f"[Evolution API] Restart note: {restart_err}")

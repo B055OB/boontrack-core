@@ -66,9 +66,12 @@ async def connect_growth_session(tenant_slug: str):
             return {
                 "success": True,
                 "tenant_slug": clean_tenant,
-                "qr_raw": evo_data.get("qr_raw"),
-                "qr_image": evo_data.get("qr_image"),
+                "base64": evo_data.get("base64") or evo_data.get("qr_image"),
+                "code": evo_data.get("code") or evo_data.get("qr_raw"),
+                "qr_raw": evo_data.get("qr_raw") or evo_data.get("code"),
+                "qr_image": evo_data.get("qr_image") or evo_data.get("base64"),
                 "status": evo_data.get("status"),
+                "phone_number": evo_data.get("phone_number"),
                 "message": "Sesi QR WhatsApp terhubung melalui Evolution API v2."
             }
         else:
