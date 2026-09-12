@@ -94,7 +94,7 @@ services:
     restart: unless-stopped
 
     ports:
-      - "3000:3000"
+      - "3001:3000"
 
     volumes:
       - metabase_data:/metabase-data
@@ -103,7 +103,21 @@ services:
       postgres:
         condition: service_healthy
 
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: boontrack_waha
+    restart: unless-stopped
+    environment:
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
+      WAHA_DASHBOARD_ENABLED: "true"
+      WAHA_API_KEY: ${WAHA_API_KEY:-""}
+    ports:
+      - "3000:3000"
+    volumes:
+      - waha_data:/app/.waha
+
 volumes:
   postgres_data:
   bot_data:
   metabase_data:
+  waha_data:

@@ -26,6 +26,7 @@ from app.services.whatsapp_service import (
     EVOLUTION_BASE_URL,
     get_evolution_headers,
     request_evolution_pairing_code,
+    request_waha_pairing_code,
     get_or_create_evolution_session,
 )
 
@@ -115,7 +116,17 @@ async def get_whatsapp_pairing_code_endpoint(
     Menghasilkan kode pairing 8 digit resmi WhatsApp untuk menautkan perangkat tanpa scan QR.
     """
     slug = tenant_slug or payload.tenant or payload.tenant_slug or "onlineboost"
-    return await request_evolution_pairing_code(slug, payload.phone)
+    return await request_waha_pairing_code(slug, payload.phone)
+
+
+@router.get("/waha/test", summary="Test WAHA request-code endpoint live")
+@router.post("/waha/test", summary="Test WAHA request-code endpoint live")
+async def test_waha_pairing_endpoint(phone: Optional[str] = "6281237450222", session: Optional[str] = "onlineboost"):
+    """
+    Diagnostic probe endpoint to test direct pairing code request to WAHA container.
+    Returns the raw response, status code, and diagnosis without fallbacks.
+    """
+    return await request_waha_pairing_code(session, phone)
 
 
 tenant_reconnect_router = APIRouter(tags=["Tenant WhatsApp Reconnect Legacy"])
