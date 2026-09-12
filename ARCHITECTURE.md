@@ -340,3 +340,56 @@ Platform menyediakan dua mekanisme penautan perangkat WhatsApp bagi tenant secar
   - Menggunakan 1 nomor WhatsApp sistem tersentralisasi khusus untuk evaluasi CV ATS, intake pendaftaran, dan review kandidat.
   - Konfigurasi instance Shop dilarang dicampuradukkan dengan routing pesan Career.
 
+### 9.5 Bidirectional Message Lifecycle & Transport Layer Contract
+WhatsApp pada BoonTrack diperlakukan secara mutlak sebagai **bidirectional transport layer**, bukan business logic engine. BoonTrack Core tetap menjadi satu-satunya otak transaksional.
+
+1. **Pipeline Arsitektur Dua Arah**:
+   - **Inbound**: WhatsApp User → Evolution API v2 → Inbound Webhook → Signature & Payload Validation → Idempotency Check → Message Persistence → Inbound Queue → HTTP 200 OK → Background Worker → Conversation Engine (LLM / State Machine).
+   - **Outbound**: Business Logic / State Machine → Outbound Message Command → Outbound Queue → Worker Rate-Limiter & Deduplicator → WhatsApp Adapter → Evolution API v2 → WhatsApp User.
+2. **Fast & Asynchronous Inbound Webhook**:
+   - Webhook handler DILARANG memanggil LLM atau mengeksekusi mutasi bisnis berat secara sinkron.
+   - Webhook wajib merespons `HTTP 200 OK` dalam waktu < 500ms setelah pesan divalidasi dan dimasukkan ke antrean (*queue*).
+3. **Strict Inbound Idempotency (P0 Guard)**:
+   - Provider WhatsApp/Evolution API kerap melakukan webhook retry saat jaringan fluktuatif.
+   - Idempotency key wajib dibentuk dari kombinasi: `{tenant_id}:{provider_message_id}:{event_type}`.
+   - Jika key sudah terdaftar di database/cache Redis: Abaikan pemrosesan ulang dan langsung kembalikan status ACK (`HTTP 200`).
+4. **Decoupled Outbound Queue**:
+   - Dilarang memanggil endpoint kirim pesan pihak ketiga langsung dari alur transaksi (*blocking call*).
+   - Seluruh pesan keluar wajib melalui antrean outbound untuk menjamin retry terukur, rate-limiting, deduplikasi, dan toleransi kegagalan gateway.
+
+### 9.6 Message Event Schema & Conversation Relationship
+Sistem memisahkan secara ketat antara entitas **Conversation** (konteks percakapan) dan **Message Event** (rekam jejak pesan individual):
+
+1. **Relasi 1-to-Many**: Satu `Conversation` menaungi banyak `Message Events` lintas tipe (text, media, audio, interactive button, system event).
+2. **Message Event Minimum Contract**:
+   - `message_id` (UUID internal)
+   - `tenant_id`
+   - `conversation_id`
+   - `direction` (`INBOUND` | `OUTBOUND`)
+   - `platform` (`WHATSAPP_BAILEYS` | `WHATSAPP_WABA`)
+   - `sender` & `recipient` (nomor telepon E.164)
+   - `message_type` (`text`, `image`, `document`, `audio`, `interactive`, `system`)
+   - `message_body`
+   - `provider_message_id` (ID unik dari WhatsApp/Meta)
+   - `status` (`QUEUED`, `SENDING`, `SENT`, `DELIVERED`, `READ`, `FAILED`)
+   - `occurred_at` & `received_at`
+   - `metadata` (JSON payload)
+3. **Message Ordering & FIFO Enforcement**:
+   - Pesan dalam satu `conversation_id` wajib dieksekusi berurutan (*sequential FIFO ordering*) menggunakan penanda urutan (`sequence_number` atau timestamp presisi) untuk mencegah race condition (misal: penentuan ukuran produk terproses sebelum pertanyaan ketersediaan warna).
+
+### 9.7 Operational Observability, Lifecycle States & Health Metrics
+Pairing berhasil tidak sama dengan gateway yang beroperasi sehat. Sistem memantau status operasional secara terpisah:
+
+1. **Connection State Lifecycle**:
+   - `CREATED` → `PAIRING` → `CONNECTED` → `DISCONNECTED` → `RECONNECTING` → `ERROR` → `LOGGED_OUT`.
+   - Dashboard merchant wajib menampilkan visual status yang akurat (🟢 Connected, 🟡 Reconnecting, 🔴 Disconnected / Perlu Tindakan).
+2. **Decoupled Metric Health (IT & Telemetry Dashboard)**:
+   - Status kesehatan dipisah per layer: *Connection Health*, *Inbound Webhook Health*, *Queue Lag*, *AI Processing Latency*, dan *Outbound Delivery Success Rate*.
+
+### 9.8 Human Handoff & Business Graph Attribution
+1. **Human Handoff State**:
+   - Conversation memiliki status kontrol: `AI_ACTIVE` → `HANDOFF_REQUESTED` → `HUMAN_ACTIVE` → `AI_RESUMED`.
+   - Jika pelanggan meminta interaksi manusia atau terdeteksi eskalasi komplain kritis, bot AI seketika masuk status pause (*silent listener*) dan kendali penuh diserahkan ke CS/Merchant.
+2. **Outbound Business Graph Attribution**:
+   - Setiap pesan outbound wajib merekam atribut pemicu (`trigger_source`: `ORDER_PAYMENT_PENDING`, `ABANDONED_CART_FOLLOWUP`, `AI_RECOMMENDATION`, `HUMAN_AGENT`).
+   - Memungkinkan analisis deterministik: percakapan mana yang secara langsung menghasilkan konversi transaksi dan omzet merchant (*Conversation → Decision → Transaction → Revenue*).
