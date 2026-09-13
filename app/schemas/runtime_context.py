@@ -2,9 +2,16 @@ from enum import Enum
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
+from app.schemas.context import (
+    TenantRuntimeContext,
+    TenantKind,
+    BusinessTypeLiteral,
+    has_capability,
+)
+
 class BusinessType(str, Enum):
-    SERVICE = "SERVICE"
-    PRODUCT = "PRODUCT"
+    SERVICE = "FIELD_SERVICE"
+    PRODUCT = "PHYSICAL"
     DIGITAL = "DIGITAL"
 
 class TenantCapabilities(BaseModel):
@@ -15,16 +22,3 @@ class TenantCapabilities(BaseModel):
     variants: bool = False
     shipping: bool = False
     payment: bool = True
-
-class TenantRuntimeContext(BaseModel):
-    tenant_id: str
-    tenant_slug: str
-    template_code: str
-    business_type: BusinessType
-    capabilities: TenantCapabilities
-    allowed_buyer_actions: List[str]
-    disallowed_actions: List[str] = Field(default_factory=lambda: [
-        "Tambah Produk", "Setup WhatsApp", "Bikin Landing Page", 
-        "Atur Toko", "Hubungkan Domain", "Kelola Staff"
-    ])
-    persona_system_hint: str

@@ -10,8 +10,67 @@ Architectural Guarantees:
 
 import os
 import enum
-from typing import Optional, Any
+from typing import Optional, Any, Dict, List, Literal
 from pydantic import BaseModel, Field, ConfigDict
+
+TenantKind = Literal['SAAS', 'CUSTOM_APP', 'INTERNAL']
+
+BusinessTypeLiteral = Literal[
+    'PHYSICAL',
+    'DIGITAL',
+    'CREATOR',
+    'FIELD_SERVICE',
+    'PROFESSIONAL_SERVICE',
+    'FOOD_BEVERAGE',
+    'MEMBERSHIP',
+    'B2G',
+]
+
+
+class TenantRuntimeContext(BaseModel):
+    """
+    Standardized Server-Side Database-Driven Runtime Context for all Tenants.
+    Replaces static file-based tenant branching with capability and vertical archetype scoping.
+    """
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    tenant_id: str = Field(..., description="UUID or unique identifier of the tenant in database")
+    slug: str = Field(..., description="Canonical lowercase URL slug of the tenant")
+    tenant_kind: TenantKind = Field(default="SAAS", description="Tenant kind category: SAAS, CUSTOM_APP, or INTERNAL")
+    business_type: BusinessTypeLiteral = Field(
+        default="PHYSICAL",
+        description="Business vertical category (PHYSICAL, DIGITAL, CREATOR, FIELD_SERVICE, PROFESSIONAL_SERVICE, FOOD_BEVERAGE, MEMBERSHIP, B2G)"
+    )
+    template_code: str = Field(default="DEFAULT", description="Template code or preset identifier")
+    capabilities: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Capabilities flags e.g. {'membership': true, 'turnstile_iot': true, 'capi': true, 'qris': true}"
+    )
+    ai_persona: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="AI Persona directives, system prompt, tone of voice, and FAQ rules"
+    )
+
+    @property
+    def tenant_slug(self) -> str:
+        return self.slug
+
+    def has_capability(self, capability_name: str) -> bool:
+        if not self.capabilities or not isinstance(self.capabilities, dict):
+            return False
+        key = str(capability_name).strip().lower()
+        for k, v in self.capabilities.items():
+            if str(k).strip().lower() == key:
+                return bool(v)
+        return False
+
+
+def has_capability(context: Optional[TenantRuntimeContext], capability_name: str) -> bool:
+    """Helper function to check if a tenant runtime context possesses a specific capability."""
+    if not context or not isinstance(context, TenantRuntimeContext):
+        return False
+    return context.has_capability(capability_name)
+
 
 
 class ChannelType(str, enum.Enum):
