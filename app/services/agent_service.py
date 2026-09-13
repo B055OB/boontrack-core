@@ -36,14 +36,28 @@ async def process_incoming_message(
     button_id: Optional[str] = None,
 ) -> str:
     """Processes incoming message for a tenant with appropriate fallback service routing."""
-    if tenant_slug == "atmosfitnes":
+    from app.services.tenant_context_resolver import tenant_context_resolver, has_capability
+    context = await tenant_context_resolver.resolve_tenant(tenant_slug)
+
+    # 1. Membership Capability (Gym / Facility)
+    if (
+        has_capability(context, "membership")
+        or (context and context.business_type == "MEMBERSHIP")
+        or tenant_slug == "atmosfitnes"
+    ):
         try:
             from app.tenants.gym.service import gym_service
             res = await gym_service.handle_user_message(user_phone, message, user_name)
             return res.get("reply", "") or f"Halo {user_name}! Selamat datang di Prima Fit Gym (Atmosfitnes). Ada yang bisa kami bantu seputar paket membership atau kelas zumba?"
         except Exception:
             pass
-    elif tenant_slug in ("bale_pananggeuhan", "pelayanan_publik"):
+
+    # 2. Public Service / B2G Capability
+    elif (
+        has_capability(context, "public_service")
+        or (context and context.business_type == "B2G")
+        or tenant_slug in ("bale_pananggeuhan", "pelayanan_publik")
+    ):
         try:
             from app.modules.public_services.service import public_service_service
             res = await public_service_service.handle_query(message, user_phone, tenant_id=tenant_slug)

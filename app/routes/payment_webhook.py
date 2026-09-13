@@ -89,14 +89,21 @@ async def handle_reader_mutation_webhook(request: web.Request) -> web.Response:
 
         # 1. EXACT MATCH: Langsung Selesaikan Order
         if status == "EXACT_MATCH":
-            if intent.get("tenant_id") == "digicorn":
-                from app.tenants.digicorn.service import digicorn_service
-                await digicorn_service.deliver_paid_order(intent)
+            from app.services.tenant_context_resolver import tenant_context_resolver, has_capability
+            t_slug = intent.get("tenant_id") or "default"
+            context = await tenant_context_resolver.resolve_tenant(t_slug)
+
+            if has_capability(context, "digital_fulfillment") or (context and context.business_type == "DIGITAL") or t_slug == "digicorn":
+                try:
+                    from app.tenants.digicorn.service import digicorn_service
+                    await digicorn_service.deliver_paid_order(intent)
+                except Exception as e:
+                    logger.error(f"[PAYMENT WEBHOOK] Digital delivery error: {e}")
                 return web.json_response({
                     "status": "SUCCESS",
-                    "action": "AUTO_FULFILLED_DIGICORN",
+                    "action": "AUTO_FULFILLED_DIGITAL",
                     "invoice": invoice_id,
-                    "tenant": "digicorn"
+                    "tenant": t_slug
                 })
 
             success_msg = (

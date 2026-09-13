@@ -145,7 +145,7 @@ async def find_matching_unpaid_job(amount: int, tenant_id: Optional[str] = None)
 async def match_and_fulfill_payment(
     amount: int,
     raw_text: str = "",
-    tenant_id: str = "boontrack-career",
+    tenant_id: Optional[str] = None,
     source: str = "dana_reader",
     direct_phone: Optional[str] = None,
     raw_payload: Optional[Dict[str, Any]] = None
@@ -308,12 +308,21 @@ async def match_and_fulfill_payment(
 
         logger.info(f"[PAYMENT MATCHED] Intent {invoice_id} matched for exact amount Rp{amount:,} (User: {user_id})")
 
-        # Handle fulfillment sesuai produk
-        if matched_intent.get("tenant_id") == "atmosfitnes" or matched_intent.get("product") == "gym_membership_renewal":
+        # Handle fulfillment dinamis berbasis TenantRuntimeContext & Capabilities
+        from app.services.tenant_context_resolver import tenant_context_resolver, has_capability
+        intent_tenant_slug = matched_intent.get("tenant_id") or tenant_id or "career"
+        runtime_ctx = await tenant_context_resolver.resolve_tenant(intent_tenant_slug)
+
+        if (
+            has_capability(runtime_ctx, "membership")
+            or (runtime_ctx and runtime_ctx.business_type == "MEMBERSHIP")
+            or matched_intent.get("tenant_id") == "atmosfitnes"
+            or matched_intent.get("product") == "gym_membership_renewal"
+        ):
             from app.services.gym_access_service import gym_access_service
             member_id = str(matched_intent.get("member_id") or matched_intent.get("user_id") or "")
             renewal_res = await gym_access_service.process_gym_membership_renewal(
-                tenant_id=matched_intent.get("tenant_id", "atmosfitnes"),
+                tenant_id=intent_tenant_slug,
                 member_id=member_id,
                 amount=amount,
                 invoice_id=invoice_id
@@ -322,19 +331,26 @@ async def match_and_fulfill_payment(
                 "status": "SUCCESS",
                 "action": "GYM_MEMBERSHIP_RENEWED",
                 "invoice_id": invoice_id,
-                "tenant": "atmosfitnes",
+                "tenant": intent_tenant_slug,
                 "amount": amount,
                 "member_id": member_id,
                 "renewal_details": renewal_res
             }
-        elif matched_intent.get("tenant_id") == "digicorn":
-            from app.tenants.digicorn.service import digicorn_service
-            await digicorn_service.deliver_paid_order(matched_intent)
+        elif (
+            has_capability(runtime_ctx, "digital_fulfillment")
+            or (runtime_ctx and runtime_ctx.business_type == "DIGITAL")
+            or matched_intent.get("tenant_id") == "digicorn"
+        ):
+            try:
+                from app.tenants.digicorn.service import digicorn_service
+                await digicorn_service.deliver_paid_order(matched_intent)
+            except Exception as e:
+                logger.error(f"[PAYMENT MATCHER] Error in digital delivery: {e}")
             return {
                 "status": "SUCCESS",
-                "action": "AUTO_FULFILLED_DIGICORN",
+                "action": "AUTO_FULFILLED_DIGITAL",
                 "invoice": invoice_id,
-                "tenant": "digicorn",
+                "tenant": intent_tenant_slug,
                 "amount": amount
             }
         elif user_id:

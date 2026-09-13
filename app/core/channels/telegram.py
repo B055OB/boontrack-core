@@ -274,19 +274,33 @@ async def handle_incoming_telegram_webhook(request: web.Request) -> web.Response
     reply_buttons = []
     reply_photo = None
 
-    if clean_tenant == "digicorn":
-        from app.tenants.digicorn.service import digicorn_service
-        result = await digicorn_service.handle_message(
-            chat_id=chat_id,
-            user_text=user_text,
-            callback_data=callback_data,
-            user_name=user_name
-        )
-        reply_text = result.get("text", "")
-        reply_buttons = result.get("buttons", [])
-        reply_photo = result.get("photo")
+    from app.services.tenant_context_resolver import tenant_context_resolver, has_capability
+    context = await tenant_context_resolver.resolve_tenant(clean_tenant)
 
-    elif clean_tenant in ["career", "boontrack-career"]:
+    if (
+        has_capability(context, "digital_fulfillment")
+        or (context and context.business_type == "DIGITAL")
+        or clean_tenant == "digicorn"
+    ):
+        try:
+            from app.tenants.digicorn.service import digicorn_service
+            result = await digicorn_service.handle_message(
+                chat_id=chat_id,
+                user_text=user_text,
+                callback_data=callback_data,
+                user_name=user_name
+            )
+            reply_text = result.get("text", "")
+            reply_buttons = result.get("buttons", [])
+            reply_photo = result.get("photo")
+        except Exception as e:
+            logger.error(f"[TELEGRAM] Error in digital delivery handler: {e}")
+
+    elif (
+        has_capability(context, "consultation")
+        or (context and context.business_type == "PROFESSIONAL_SERVICE")
+        or clean_tenant in ["career", "boontrack-career"]
+    ):
         # Fallback AI consultation untuk channel Telegram Career
         ai_reply = await ai_gateway.generate(
             user_message=user_text,

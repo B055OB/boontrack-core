@@ -228,19 +228,33 @@ async def handle_whatsapp_webhook(request: Request):
             update_user_session_context(clean_phone, {"ctwa_clid": captured_clid})
             logger.info(f"[META WA CTWA] Captured ctwa_clid for {clean_phone}: {captured_clid}")
 
-            # =========================================================================
-    # STRICT ISOLATION: NOMOR CAREER ASSISTANT (+62 851-9638-0468)
     # =========================================================================
-    if is_career_phone:
+    # STRICT ISOLATION: DYNAMIC RESOLUTION FOR PROFESSIONAL / CAREER SERVICE
+    # =========================================================================
+    from app.services.tenant_context_resolver import tenant_context_resolver, has_capability
+    runtime_context = await tenant_context_resolver.resolve_by_phone_number_id(phone_id)
+    if not runtime_context and target_tenant:
+        runtime_context = await tenant_context_resolver.resolve_tenant(target_tenant)
+
+    is_consultation_phone = bool(
+        runtime_context and (
+            has_capability(runtime_context, "consultation")
+            or has_capability(runtime_context, "career_services")
+            or runtime_context.business_type == "PROFESSIONAL_SERVICE"
+        )
+    )
+
+    if is_consultation_phone or (is_career_phone and not runtime_context):
         from app.tenants.career.service import career_service
         msg_type = event.get("msg_type", "text")
+        t_slug = runtime_context.slug if runtime_context else "career"
         if msg_type == "image":
             await career_service.handle_image(
                 sender_wa_id=from_phone,
                 display_name=contact_name,
                 media_id=event.get("media_id")
             )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-career"})
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": t_slug})
         elif msg_type == "document":
             await career_service.handle_document(
                 sender_wa_id=from_phone,
@@ -248,7 +262,7 @@ async def handle_whatsapp_webhook(request: Request):
                 media_id=event.get("media_id"),
                 filename=event.get("media_filename") or "document.pdf"
             )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-career"})
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": t_slug})
         else:
             await career_service.handle_text_or_button(
                 sender_wa_id=from_phone,
@@ -256,7 +270,7 @@ async def handle_whatsapp_webhook(request: Request):
                 user_text=incoming_text,
                 button_id=button_id
             )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-career"})
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": t_slug})
 
     # =========================================================================
     # P0 INTERCEPT: COMMAND #RESET / RESET / MENU UTAMA
@@ -381,68 +395,82 @@ async def handle_whatsapp_webhook(request: Request):
     if active_locked_tenant in ("onlineboost", "growthplus", "proscale"):
         tenant_slug = active_locked_tenant
 
-    if tenant_slug in ("onlineboost", "growthplus", "proscale"):
-        pass
-    elif tenant_slug in ("boontrack-career", "boontrack_career", "career") or (is_career_phone and active_locked_tenant not in ("onlineboost", "growthplus", "proscale")):
-        from app.tenants.career.service import career_service
-        msg_type = event.get("msg_type", "text")
-        if msg_type == "image":
-            await career_service.handle_image(
-                sender_wa_id=from_phone,
-                display_name=contact_name,
-                media_id=event.get("media_id")
-            )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-career", "reply": "Career image handled"})
-        elif msg_type == "document":
-            await career_service.handle_document(
-                sender_wa_id=from_phone,
-                display_name=contact_name,
-                media_id=event.get("media_id"),
-                filename=event.get("media_filename") or "document.pdf"
-            )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-career", "reply": "Career document handled"})
-        else:
-            await career_service.handle_text_or_button(
-                sender_wa_id=from_phone,
-                display_name=contact_name,
-                user_text=incoming_text,
-                button_id=event.get("button_id") or ""
-            )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-career", "reply": "Career message handled"})
+    # Resolusi konteks runtime berbasis database dan capabilities
+    resolved_context = await tenant_context_resolver.resolve_tenant(tenant_slug)
+    if not resolved_context and phone_id:
+        resolved_context = await tenant_context_resolver.resolve_by_phone_number_id(phone_id)
 
-    elif tenant_slug in ("ombudi", "om_budi", "om-budi"):
-        from app.tenants.om_budi.service import om_budi_service
-        res = await om_budi_service.handle_incoming_message(
-            phone_number=from_phone,
-            message_text=incoming_text,
-            button_id=event.get("button_id"),
-            user_name=contact_name,
-        )
-        reply_text = sanitize_whatsapp_message_text(res.get("reply", ""))
-        buttons = res.get("buttons") or res.get("nav_buttons")
-        if buttons and len(buttons) <= 3 and len(reply_text) <= 1000:
-            try:
-                await send_whatsapp_buttons(
-                    to_phone=from_phone,
-                    body_text=reply_text,
-                    buttons=buttons,
-                    tenant_id="ombudi",
-                    phone_number_id=phone_id,
+    if resolved_context:
+        # 1. Professional Service / Career Assistant Capability
+        if (
+            has_capability(resolved_context, "career_services")
+            or has_capability(resolved_context, "consultation")
+            or resolved_context.business_type == "PROFESSIONAL_SERVICE"
+        ):
+            from app.tenants.career.service import career_service
+            msg_type = event.get("msg_type", "text")
+            if msg_type == "image":
+                await career_service.handle_image(
+                    sender_wa_id=from_phone,
+                    display_name=contact_name,
+                    media_id=event.get("media_id")
                 )
-            except Exception:
-                await send_whatsapp_text(to_phone=from_phone, text=reply_text, tenant_id="ombudi", phone_number_id=phone_id)
-        elif reply_text and from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=reply_text, tenant_id="ombudi", phone_number_id=phone_id)
+                return JSONResponse(status_code=200, content={"status": "success", "tenant": resolved_context.slug, "reply": "Career image handled"})
+            elif msg_type == "document":
+                await career_service.handle_document(
+                    sender_wa_id=from_phone,
+                    display_name=contact_name,
+                    media_id=event.get("media_id"),
+                    filename=event.get("media_filename") or "document.pdf"
+                )
+                return JSONResponse(status_code=200, content={"status": "success", "tenant": resolved_context.slug, "reply": "Career document handled"})
+            else:
+                await career_service.handle_text_or_button(
+                    sender_wa_id=from_phone,
+                    display_name=contact_name,
+                    user_text=incoming_text,
+                    button_id=event.get("button_id") or ""
+                )
+                return JSONResponse(status_code=200, content={"status": "success", "tenant": resolved_context.slug, "reply": "Career message handled"})
 
-        safe_log_to_supabase_messages(
-            sender="bot",
-            text=reply_text or "",
-            tenant_id="ombudi",
-            channel="whatsapp",
-            user_phone=from_phone,
-            user_name=contact_name,
-        )
-        return JSONResponse(status_code=200, content={"status": "success", "tenant": "ombudi", "reply": reply_text})
+        # 2. Interactive Persona / Custom Chat Assistant Capability
+        elif (
+            has_capability(resolved_context, "interactive_consultation")
+            or resolved_context.template_code == "OM_BUDI"
+            or resolved_context.slug in ("ombudi", "om_budi")
+        ):
+            from app.tenants.om_budi.service import om_budi_service
+            res = await om_budi_service.handle_incoming_message(
+                phone_number=from_phone,
+                message_text=incoming_text,
+                button_id=event.get("button_id"),
+                user_name=contact_name,
+            )
+            reply_text = sanitize_whatsapp_message_text(res.get("reply", ""))
+            buttons = res.get("buttons") or res.get("nav_buttons")
+            if buttons and len(buttons) <= 3 and len(reply_text) <= 1000:
+                try:
+                    await send_whatsapp_buttons(
+                        to_phone=from_phone,
+                        body_text=reply_text,
+                        buttons=buttons,
+                        tenant_id=resolved_context.slug,
+                        phone_number_id=phone_id,
+                    )
+                except Exception:
+                    await send_whatsapp_text(to_phone=from_phone, text=reply_text, tenant_id=resolved_context.slug, phone_number_id=phone_id)
+            elif reply_text and from_phone:
+                await send_whatsapp_text(to_phone=from_phone, text=reply_text, tenant_id=resolved_context.slug, phone_number_id=phone_id)
+
+            safe_log_to_supabase_messages(
+                sender="bot",
+                text=reply_text or "",
+                tenant_id=resolved_context.slug,
+                channel="whatsapp",
+                user_phone=from_phone,
+                user_name=contact_name,
+            )
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": resolved_context.slug, "reply": reply_text})
 
     # =========================================================================
     # JALUR TOKO DEMO (ONLINEBOOST, GROWTH+, PROSCALE)

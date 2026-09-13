@@ -502,13 +502,30 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 logger.error(f"[MEDIA DOWNLOAD ERROR] {e}")
 
         # P0 INTERCEPT: Command #reset / reset / menu utama
-        is_career = (str(phone_id).strip() == CAREER_PHONE_NUMBER_ID or str(phone_id).strip() == os.getenv("CAREER_PHONE_NUMBER_ID", CAREER_PHONE_NUMBER_ID))
+        from app.services.tenant_context_resolver import tenant_context_resolver, has_capability
+        runtime_context = await tenant_context_resolver.resolve_by_phone_number_id(phone_id)
+        if not runtime_context:
+            user_session_slug = get_user_tenant_session(clean_phone, incoming_text)
+            if user_session_slug:
+                runtime_context = await tenant_context_resolver.resolve_tenant(user_session_slug)
+
+        is_consultation_service = bool(
+            runtime_context and (
+                has_capability(runtime_context, "consultation")
+                or has_capability(runtime_context, "career_services")
+                or runtime_context.business_type == "PROFESSIONAL_SERVICE"
+            )
+        )
         # =========================================================================
-        # STRICT ISOLATION: NOMOR CAREER ASSISTANT (+62 851-9638-0468)
+        # STRICT ISOLATION: NOMOR CONSULTATION / PROFESSIONAL SERVICE ASSISTANT
         # =========================================================================
-        if is_career:
-            from app.tenants.career.router import handle_incoming_whatsapp
-            return await handle_incoming_whatsapp(request)
+        if is_consultation_service or (str(phone_id).strip() == CAREER_PHONE_NUMBER_ID and not runtime_context):
+            try:
+                from app.tenants.career.router import handle_incoming_whatsapp
+                return await handle_incoming_whatsapp(request)
+            except Exception as e:
+                logger.error(f"[WHATSAPP CENTRAL] Error in consultation router: {e}")
+
         clean_kw = re.sub(r"[^\w#]", "", clean_text)
 
         is_explicit_reset = (
@@ -517,7 +534,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             or clean_text.startswith("# reset")
             or "#reset" in clean_text
         )
-        is_reset = is_explicit_reset if is_career else (
+        is_reset = is_explicit_reset if is_consultation_service else (
             is_explicit_reset
             or clean_kw in ["reset", "menu", "demo"]
             or clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo", "# reset", "start", "#start"]
@@ -644,106 +661,124 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     "is_new_binding": True
                 }, status=200)
 
-        # 6.5. Dispatching Terisolasi Berdasarkan Phone Number ID & Session Lock
+        # 6.5. Dispatching Dinamis Berbasis Runtime Context & Capabilities
         active_locked_tenant = get_user_tenant_session(clean_phone, incoming_text)
         is_demo_locked = bool(active_locked_tenant and active_locked_tenant in ("onlineboost", "growthplus", "proscale"))
 
         if not is_demo_locked:
-            if phone_id == CAREER_PHONE_NUMBER_ID:
-                from app.tenants.career.router import handle_incoming_whatsapp
-                return await handle_incoming_whatsapp(request)
+            resolved_ctx = await tenant_context_resolver.resolve_by_phone_number_id(phone_id)
+            if not resolved_ctx and active_locked_tenant:
+                resolved_ctx = await tenant_context_resolver.resolve_tenant(active_locked_tenant)
 
-            elif phone_id == OM_BUDI_PHONE_NUMBER_ID:
-                from app.tenants.om_budi.service import om_budi_service
+            if resolved_ctx:
+                # 1. Professional Service / Career Assistant Capability
+                if (
+                    has_capability(resolved_ctx, "consultation")
+                    or has_capability(resolved_ctx, "career_services")
+                    or resolved_ctx.business_type == "PROFESSIONAL_SERVICE"
+                ):
+                    try:
+                        from app.tenants.career.router import handle_incoming_whatsapp
+                        return await handle_incoming_whatsapp(request)
+                    except Exception as e:
+                        logger.error(f"[WHATSAPP CENTRAL] Career router error: {e}")
 
-                safe_log_to_supabase_messages(
-                    sender="user",
-                    text=incoming_text or f"[{msg_type}]",
-                    tenant_id="om-budi",
-                    channel="whatsapp",
-                    user_phone=from_phone,
-                    user_name=contact_name,
-                    user_id=from_phone,
-                    conversation_id=from_phone,
-                    metadata={
-                        "button_id": button_id,
-                        "phone_number_id": phone_id,
-                        "msg_type": msg_type
-                    }
-                )
+                # 2. Interactive Persona / Custom Chat Assistant Capability
+                elif (
+                    has_capability(resolved_ctx, "interactive_consultation")
+                    or resolved_ctx.template_code == "OM_BUDI"
+                    or resolved_ctx.slug in ("om_budi", "ombudi")
+                ):
+                    from app.tenants.om_budi.service import om_budi_service
 
-                res = await om_budi_service.handle_incoming_message(
-                    phone_number=from_phone,
-                    message_text=incoming_text,
-                    button_id=button_id,
-                    user_name=contact_name,
-                    image_bytes=image_bytes,
-                    image_mime=image_mime
-                )
-
-                res_type = res.get("type", "text")
-                reply_text = res.get("reply", "")
-                buttons = res.get("buttons") or res.get("nav_buttons")
-
-                if res_type == "image":
-                    img_src = (
-                        res.get("image_url")
-                        or res.get("image_link")
-                        or (res.get("image", {}).get("link") if isinstance(res.get("image"), dict) else None)
-                        or res.get("image_path")
-                        or res.get("image")
+                    safe_log_to_supabase_messages(
+                        sender="user",
+                        text=incoming_text or f"[{msg_type}]",
+                        tenant_id=resolved_ctx.slug,
+                        channel="whatsapp",
+                        user_phone=from_phone,
+                        user_name=contact_name,
+                        user_id=from_phone,
+                        conversation_id=from_phone,
+                        metadata={
+                            "button_id": button_id,
+                            "phone_number_id": phone_id,
+                            "msg_type": msg_type
+                        }
                     )
-                    caption_text = res.get("reply", "") or res.get("caption", "")
-                    await send_wa_image(
-                        recipient_phone=from_phone,
-                        image_url_or_path_or_bytes=img_src,
-                        caption=caption_text,
-                        phone_id=phone_id
+
+                    res = await om_budi_service.handle_incoming_message(
+                        phone_number=from_phone,
+                        message_text=incoming_text,
+                        button_id=button_id,
+                        user_name=contact_name,
+                        image_bytes=image_bytes,
+                        image_mime=image_mime
                     )
-                    if buttons:
-                        await send_wa_buttons(
+
+                    res_type = res.get("type", "text")
+                    reply_text = res.get("reply", "")
+                    buttons = res.get("buttons") or res.get("nav_buttons")
+
+                    if res_type == "image":
+                        img_src = (
+                            res.get("image_url")
+                            or res.get("image_link")
+                            or (res.get("image", {}).get("link") if isinstance(res.get("image"), dict) else None)
+                            or res.get("image_path")
+                            or res.get("image")
+                        )
+                        caption_text = res.get("reply", "") or res.get("caption", "")
+                        await send_wa_image(
+                            recipient_phone=from_phone,
+                            image_url_or_path_or_bytes=img_src,
+                            caption=caption_text,
+                            phone_id=phone_id
+                        )
+                        if buttons:
+                            await send_wa_buttons(
+                                from_phone,
+                                "👇 *Pilih menu untuk melanjutkan:*",
+                                buttons,
+                                phone_id
+                            )
+                    elif res_type == "list":
+                        await send_wa_list_menu(
                             from_phone,
-                            "👇 *Pilih menu untuk melanjutkan:*",
-                            buttons,
+                            reply_text,
+                            res.get("button_text", "Pilih Menu"),
+                            res.get("sections", []),
                             phone_id
                         )
-                elif res_type == "list":
-                    await send_wa_list_menu(
-                        from_phone,
-                        reply_text,
-                        res.get("button_text", "Pilih Menu"),
-                        res.get("sections", []),
-                        phone_id
+                    elif res_type == "buttons" and len(reply_text) <= 1000:
+                        await send_wa_buttons(from_phone, reply_text, buttons or [], phone_id)
+                    else:
+                        await send_wa_text(from_phone, reply_text, phone_id)
+                        if buttons:
+                            await send_wa_buttons(
+                                from_phone,
+                                "👇 *Pilih menu untuk melanjutkan:*",
+                                buttons,
+                                phone_id
+                            )
+
+                    safe_log_to_supabase_messages(
+                        sender="bot",
+                        text=reply_text,
+                        tenant_id=resolved_ctx.slug,
+                        channel="whatsapp",
+                        user_phone=from_phone,
+                        user_name=contact_name,
+                        user_id=from_phone,
+                        conversation_id=from_phone,
+                        metadata={
+                            "res_type": res_type,
+                            "phone_number_id": phone_id,
+                            "buttons": buttons
+                        }
                     )
-                elif res_type == "buttons" and len(reply_text) <= 1000:
-                    await send_wa_buttons(from_phone, reply_text, buttons or [], phone_id)
-                else:
-                    await send_wa_text(from_phone, reply_text, phone_id)
-                    if buttons:
-                        await send_wa_buttons(
-                            from_phone,
-                            "👇 *Pilih menu untuk melanjutkan:*",
-                            buttons,
-                            phone_id
-                        )
 
-                safe_log_to_supabase_messages(
-                    sender="bot",
-                    text=reply_text,
-                    tenant_id="om-budi",
-                    channel="whatsapp",
-                    user_phone=from_phone,
-                    user_name=contact_name,
-                    user_id=from_phone,
-                    conversation_id=from_phone,
-                    metadata={
-                        "res_type": res_type,
-                        "phone_number_id": phone_id,
-                        "buttons": buttons
-                    }
-                )
-
-                return web.json_response({"status": "success", "tenant": "om_budi"}, status=200)
+                    return web.json_response({"status": "success", "tenant": resolved_ctx.slug}, status=200)
 
         # 6.6. Dynamic Tenant Resolution with Top-Level Demo Menu Interceptor
         from app.services.ai_engine import commerce_ai_engine

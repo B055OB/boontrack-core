@@ -144,10 +144,14 @@ def reset_whatsapp_user_session(phone: str) -> None:
         pass
 
     try:
-        from app.tenants.om_budi.service import om_budi_service
-        om_budi_service.user_sessions.pop(clean_phone, None)
-        if raw_phone:
-            om_budi_service.user_sessions.pop(raw_phone, None)
+        import sys
+        if "app.tenants.om_budi.service" in sys.modules:
+            mod = sys.modules["app.tenants.om_budi.service"]
+            obs = getattr(mod, "om_budi_service", None)
+            if obs and hasattr(obs, "user_sessions"):
+                obs.user_sessions.pop(clean_phone, None)
+                if raw_phone:
+                    obs.user_sessions.pop(raw_phone, None)
     except Exception:
         pass
 

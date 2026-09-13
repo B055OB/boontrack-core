@@ -300,12 +300,85 @@ class TenantContextResolver:
             return None
 
         if not row:
+            # Check slug aliases for compatibility
+            slug_aliases = {
+                "boontrack-career": "career",
+                "boontrack_career": "career",
+                "ombudi": "om_budi",
+                "om-budi": "om_budi",
+            }
+            if clean_slug in slug_aliases:
+                alias_target = slug_aliases[clean_slug]
+                try:
+                    res_alias = supabase.table("tenants").select("*").eq("slug", alias_target).execute()
+                    if res_alias.data and len(res_alias.data) > 0:
+                        row = res_alias.data[0]
+                except Exception:
+                    pass
+
+        if not row:
             logger.info(f"[TENANT_RESOLVER] Tenant '{clean_slug}' not found in database.")
             return None
 
         context = build_context_from_dict(row)
         self.set_cached(clean_slug, context)
         return context
+
+    # Alias method: resolve_tenant is an alias to resolve_context for Phase D compatibility
+    resolve_tenant = resolve_context
+
+    async def resolve_by_phone_number_id(
+        self,
+        phone_number_id: str,
+        force_refresh: bool = False
+    ) -> Optional[TenantRuntimeContext]:
+        """
+        Resolves tenant runtime context based on WhatsApp Phone Number ID.
+        Checks in-memory cache, registered settings/metadata in Supabase,
+        and fallback environment mapping.
+        """
+        clean_phone_id = str(phone_number_id or "").strip()
+        if not clean_phone_id:
+            return None
+
+        cache_key = f"phone_id:{clean_phone_id}"
+        if not force_refresh:
+            cached = self.get_cached(cache_key)
+            if cached:
+                return cached
+
+        # Check database for tenant matching phone_number_id in metadata
+        supabase = get_supabase()
+        if supabase:
+            try:
+                res = supabase.table("tenants").select("*").filter("metadata->>phone_number_id", "eq", clean_phone_id).execute()
+                if res.data and len(res.data) > 0:
+                    ctx = build_context_from_dict(res.data[0])
+                    self.set_cached(cache_key, ctx)
+                    return ctx
+            except Exception as e:
+                logger.debug(f"[TENANT_RESOLVER] DB query by phone_number_id filter error: {e}")
+
+        # Standard environment phone number ID mapping
+        career_phone_id = os.getenv("CAREER_PHONE_NUMBER_ID", "1340866379104241").strip()
+        om_budi_phone_id = os.getenv("OM_BUDI_PHONE_NUMBER_ID", "1268977686299719").strip()
+        aduan_phone_id = os.getenv("ADUAN_SANDBOX_PHONE_ID", "1306479742542883").strip()
+
+        target_slug = None
+        if clean_phone_id in (career_phone_id, "1340866379104241"):
+            target_slug = "career"
+        elif clean_phone_id in (om_budi_phone_id, "1268977686299719"):
+            target_slug = "om_budi"
+        elif clean_phone_id in (aduan_phone_id, "1306479742542883"):
+            target_slug = "pelayanan_publik"
+
+        if target_slug:
+            ctx = await self.resolve_context(target_slug, force_refresh=force_refresh)
+            if ctx:
+                self.set_cached(cache_key, ctx)
+                return ctx
+
+        return None
 
     def resolve_runtime_context(
         self,
