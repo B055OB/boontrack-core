@@ -393,3 +393,24 @@ Pairing berhasil tidak sama dengan gateway yang beroperasi sehat. Sistem memanta
 2. **Outbound Business Graph Attribution**:
    - Setiap pesan outbound wajib merekam atribut pemicu (`trigger_source`: `ORDER_PAYMENT_PENDING`, `ABANDONED_CART_FOLLOWUP`, `AI_RECOMMENDATION`, `HUMAN_AGENT`).
    - Memungkinkan analisis deterministik: percakapan mana yang secara langsung menghasilkan konversi transaksi dan omzet merchant (*Conversation → Decision → Transaction → Revenue*).
+
+---
+
+## Storage & Asset Distribution Architecture
+
+### 1. Canonical Asset Domain & Infrastructure
+- **Public Domain**: `https://assets.boontrack.com` (Cloudflare R2 Custom Domain).
+- **Storage Provider**: Cloudflare R2 Object Storage (Bucket: `boontrack-media`).
+- **Stateless Runtime**: Aplikasi Next.js dan Core Backend tidak menyimpan file statis di disk lokal container/server. Seluruh payload upload langsung diteruskan dan dialirkan ke Cloudflare R2.
+
+### 2. Client-Side Pre-Processing
+- **Auto-Conversion**: Gambar diproses di browser menjadi format `image/webp` sebelum dikirim.
+- **Constraints**: Resolusi maksimum dibatasi `1200px` (aspect-ratio preserved), kualitas kompresi `0.85`, batas maksimal ukuran file `5 MB`.
+
+### 3. Sanitization & Auto-Healing Guardrails
+- **Endpoint Contract**: Response dari endpoint upload (`/api/v1/upload`) wajib mengembalikan URL kanonikal berbasis `https://assets.boontrack.com/...`.
+- **Sanitization Layer (`sanitizeImageUrl`)**:
+  - Merewrite URL legacy (`api.boontrack.com`, backend Railway `boontrack-core-production.up.railway.app`, variasi `asset.boontrack.com` singular, dan dev URL `*.r2.dev`) langsung ke `https://assets.boontrack.com/${path}`.
+  - Memaksa upgrade protokol dari `http://` ke `https://`.
+- **Client Auto-Healing**: Form edit produk mendeteksi URL legacy saat render pertama kali dan menyembuhkan state data menjadi URL kanonikal sebelum disimpan kembali ke Supabase.
+

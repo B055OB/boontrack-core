@@ -13,8 +13,9 @@ class WhatsAppAdapter(NotificationService):
         headers = {"apikey": self.api_key, "Content-Type": "application/json"}
         payload = {
             "number": to_phone,
+            "text": message,
+            "textMessage": {"text": message},
             "options": {"delay": 1200, "presence": "composing"},
-            "textMessage": {"text": message}
         }
         
         async with httpx.AsyncClient(timeout=10.0) as client:

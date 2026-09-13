@@ -347,6 +347,19 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
     except Exception:
         return web.Response(text="INVALID_JSON", status=200)
 
+    # Deteksi apakah payload berasal dari Evolution API / Baileys (bukan Meta WhatsApp Cloud)
+    if isinstance(data, dict):
+        evo_event = str(data.get("event") or "").lower()
+        has_evo_data = isinstance(data.get("data"), dict) and "key" in data.get("data", {})
+        if evo_event in ("messages.upsert", "messages_upsert") or has_evo_data or ("instance" in data and "data" in data):
+            try:
+                from app.routes.whatsapp_gateway_routes import process_evolution_webhook_payload
+                res = await process_evolution_webhook_payload(data)
+                return web.json_response(res)
+            except Exception as evo_delegate_err:
+                logger.error(f"[CENTRAL WA] Error delegating to Evolution webhook: {evo_delegate_err}")
+                return web.json_response({"status": "error", "message": str(evo_delegate_err)}, status=500)
+
     # Pemeriksaan payload Meta webhook: jika hanya berisi 'statuses' tanpa 'messages', segera hentikan eksekusi
     has_statuses = False
     has_messages = False

@@ -29,6 +29,7 @@ class PaymentProviderType(str, Enum):
     DANA_BUSINESS = "DANA_BUSINESS"
     BANK_TRANSFER = "BANK_TRANSFER"
     MANUAL = "MANUAL"
+    DUITKU = "DUITKU"
 
 
 class PaymentIntentCreate(BaseModel):
@@ -40,6 +41,9 @@ class PaymentIntentCreate(BaseModel):
     amount: int = Field(..., gt=0, description="Base transaction amount in IDR")
     user_id: Optional[str] = Field(None, description="Customer phone / user identifier")
     customer_name: Optional[str] = Field(None, description="Customer name if known")
+    customer_email: Optional[str] = Field(None, description="Customer email for payment gateway")
+    customer_phone: Optional[str] = Field(None, description="Customer phone number")
+    payment_method: Optional[str] = Field("SP", description="Gateway method code (e.g. 'SP' for ShopeePay/QRIS, 'NQ' for Nobu)")
     product_name: Optional[str] = Field(None, description="Product / service description")
     expiry_minutes: int = Field(default=30, ge=1, le=1440, description="Expiration window in minutes")
     static_qr_payload: Optional[str] = Field(None, description="Optional override for static master QRIS string")
@@ -54,7 +58,7 @@ class PaymentIntentResponse(BaseModel):
     tenant_id: str
     order_id: str
     amount: int = Field(..., description="Base amount in IDR")
-    unique_code: int = Field(..., description="Injected 3-digit unique verification code")
+    unique_code: int = Field(..., description="Injected 3-digit unique verification code (0 if gateway handles routing)")
     total_amount: int = Field(..., description="Total amount payable (amount + unique_code)")
     qr_string: str = Field(..., description="EMVCo Dynamic QRIS string")
     qr_image_url: Optional[str] = Field(None, description="QuickChart or CDN QR link")
@@ -90,7 +94,7 @@ class WebhookEventPayload(BaseModel):
     """Normalized payment settlement or mutation notification from providers / readers."""
     model_config = ConfigDict(extra="ignore")
 
-    provider: str = Field(default="QRIS_DYNAMIC", description="Provider identifier (e.g. 'DANA_READER', 'XENDIT')")
+    provider: str = Field(default="QRIS_DYNAMIC", description="Provider identifier (e.g. 'DANA_READER', 'DUITKU', 'XENDIT')")
     event_type: str = Field(default="PAYMENT_SETTLED", description="Event type identifier")
     provider_ref: str = Field(..., description="Unique provider transaction reference ID / hash")
     amount: int = Field(..., description="Settled nominal amount detected")

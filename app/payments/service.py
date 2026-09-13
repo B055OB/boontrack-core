@@ -2,8 +2,7 @@
 Core Payment Engine for BoonTrack Core.
 
 Orchestrates:
-- Payment intent creation with 3-digit non-colliding unique codes.
-- Dynamic QRIS generation via adapter.
+- Payment intent creation with dynamic routing (Duitku / Legacy QRIS).
 - Status lifecycle transitions: PENDING -> SETTLED / EXPIRED / FAILED.
 - Strict idempotency handling (prevents duplicate webhook settlements).
 - Automatic tenant callback hooks (auto-dispatch to Gym, Career, Commerce, etc.).
@@ -27,6 +26,7 @@ from app.payments.schemas import (
 )
 from app.payments.base_provider import BasePaymentProvider
 from app.payments.qris_adapter import QRISPaymentAdapter
+from app.payments.duitku_adapter import DuitkuPaymentAdapter
 from app.payments.matcher import (
     extract_clean_dana_amount,
     find_matching_unpaid_job,
@@ -61,6 +61,7 @@ class PaymentCoreService:
         self.in_memory_mode = in_memory_mode
         self.providers: Dict[PaymentProviderType, BasePaymentProvider] = {
             PaymentProviderType.QRIS_DYNAMIC: QRISPaymentAdapter(),
+            PaymentProviderType.DUITKU: DuitkuPaymentAdapter(),
         }
         # In-memory caches for high-performance and isolated testing
         self._intents_by_id: Dict[str, PaymentIntentResponse] = {}
@@ -100,13 +101,11 @@ class PaymentCoreService:
                 if now < exp:
                     occupied_amounts.add(intent.total_amount)
 
-        # Attempt up to 50 random tries to find a collision-free code
         for _ in range(50):
             code = random.randint(min_val, max_val)
             if (base_amount + code) not in occupied_amounts:
                 return code
 
-        # Fallback sequential
         for code in range(min_val, max_val + 1):
             if (base_amount + code) not in occupied_amounts:
                 return code
@@ -115,18 +114,22 @@ class PaymentCoreService:
     async def create_payment_intent(
         self,
         intent_data: PaymentIntentCreate,
-        provider_type: PaymentProviderType = PaymentProviderType.QRIS_DYNAMIC,
+        provider_type: PaymentProviderType = PaymentProviderType.DUITKU,
     ) -> PaymentIntentResponse:
-        """Creates and persists a new PaymentIntent with Dynamic QRIS and unique code."""
+        """Creates and persists a new PaymentIntent with Dynamic QRIS."""
         provider = self.providers.get(provider_type)
         if not provider:
             raise ValueError(f"Unsupported payment provider: {provider_type}")
 
-        # 1. Allocate non-colliding unique verification code
-        unique_code = self.generate_unique_code(intent_data.tenant_id, intent_data.amount)
-        total_amount = intent_data.amount + unique_code
+        # 1. Alokasi nominal dan kode verifikasi
+        if provider_type == PaymentProviderType.DUITKU:
+            unique_code = 0
+            total_amount = intent_data.amount
+        else:
+            unique_code = self.generate_unique_code(intent_data.tenant_id, intent_data.amount)
+            total_amount = intent_data.amount + unique_code
 
-        # 2. Generate QR payload and image URL via provider adapter
+        # 2. Generate QR via provider adapter
         qr_string, qr_image_url = await provider.generate_qr(intent_data, unique_code)
 
         now = datetime.now(timezone.utc)
@@ -148,12 +151,11 @@ class PaymentCoreService:
             metadata=intent_data.metadata or {},
         )
 
-        # 3. Store in in-memory caches
+        # 3. Cache di memori
         self._intents_by_id[intent.id] = intent
         self._intents_by_tenant_order[f"{intent.tenant_id}:{intent.order_id}"] = intent
         self._intents_by_amount[f"{intent.tenant_id}:{intent.total_amount}"] = intent
 
-        # Backwards-compatibility with legacy reconciliation store
         LEGACY_PAYMENT_INTENTS[total_amount] = {
             "invoice_id": intent.order_id,
             "order_id": intent.order_id,
@@ -166,7 +168,7 @@ class PaymentCoreService:
         }
         LEGACY_PAYMENT_INTENTS[intent.order_id] = LEGACY_PAYMENT_INTENTS[total_amount]
 
-        # 4. Persist to Supabase if not in isolated memory mode
+        # 4. Simpan ke Supabase jika tersedia
         if not self.in_memory_mode:
             supabase = get_supabase()
             if supabase:
@@ -190,7 +192,7 @@ class PaymentCoreService:
 
         logger.info(
             f"[PaymentCore] Created intent '{intent.order_id}' for tenant '{intent.tenant_id}' "
-            f"(Total: Rp{total_amount:,} with code {unique_code})"
+            f"via {provider_type.value} (Total: Rp{total_amount:,})"
         )
         return intent
 
@@ -199,7 +201,6 @@ class PaymentCoreService:
         webhook: WebhookEventPayload,
     ) -> SettlementRecord:
         """Processes incoming settlement notification with strict idempotency and auto-dispatch."""
-        # 1. Idempotency Check: Prevent duplicate settlement for identical provider_ref / idempotency_key
         idem_key = webhook.idempotency_key or webhook.provider_ref
         if idem_key in self._idempotency_keys or webhook.provider_ref in self._settlements_by_ref:
             existing_settlement = self._settlements_by_ref.get(webhook.provider_ref)
@@ -207,30 +208,24 @@ class PaymentCoreService:
                 logger.info(f"[PaymentCore] Idempotent webhook hit for ref '{webhook.provider_ref}' - skipping duplicate")
                 return existing_settlement
 
-        # 2. Match target PaymentIntent
         matched_intent: Optional[PaymentIntentResponse] = None
 
-        # Try match by order_id if supplied
         if webhook.order_id:
             if webhook.tenant_id:
                 matched_intent = self._intents_by_tenant_order.get(f"{webhook.tenant_id}:{webhook.order_id}")
             if not matched_intent:
-                # Search across all tenants by order_id
                 for item in self._intents_by_id.values():
                     if item.order_id == webhook.order_id:
                         matched_intent = item
                         break
 
-        # Fallback match by (tenant_id, amount) or amount alone
         if not matched_intent and webhook.amount:
-            now = datetime.now(timezone.utc)
             if webhook.tenant_id:
                 candidate = self._intents_by_amount.get(f"{webhook.tenant_id}:{webhook.amount}")
                 if candidate and candidate.status == PaymentStatus.PENDING:
                     matched_intent = candidate
 
             if not matched_intent:
-                # Search for active PENDING intent matching exact total_amount
                 for candidate in self._intents_by_id.values():
                     if candidate.total_amount == webhook.amount and candidate.status == PaymentStatus.PENDING:
                         matched_intent = candidate
@@ -241,7 +236,6 @@ class PaymentCoreService:
             logger.error(f"[PaymentCore] Settlement rejected: {err_msg}")
             raise ValueError(err_msg)
 
-        # 3. Expiration Check
         now = datetime.now(timezone.utc)
         exp = matched_intent.expires_at if matched_intent.expires_at.tzinfo else matched_intent.expires_at.replace(tzinfo=timezone.utc)
         if matched_intent.status == PaymentStatus.EXPIRED or now > exp:
@@ -250,13 +244,11 @@ class PaymentCoreService:
             logger.warning(f"[PaymentCore] Settlement rejected: {err_msg}")
             raise ValueError(err_msg)
 
-        # 4. Check if already settled
         if matched_intent.status == PaymentStatus.SETTLED:
             existing_settlement = self._settlements_by_intent.get(matched_intent.id)
             if existing_settlement:
                 return existing_settlement
 
-        # 5. Transition Intent to SETTLED
         matched_intent.status = PaymentStatus.SETTLED
         settlement_id = str(uuid4())
         settlement = SettlementRecord(
@@ -268,30 +260,25 @@ class PaymentCoreService:
             settled_at=now,
         )
 
-        # Register idempotency & records in memory
         self._idempotency_keys.add(idem_key)
         self._settlements_by_id[settlement.id] = settlement
         self._settlements_by_ref[settlement.provider_ref] = settlement
         self._settlements_by_intent[matched_intent.id] = settlement
 
-        # Update legacy in-memory reconciler
         if matched_intent.order_id in LEGACY_PAYMENT_INTENTS:
             LEGACY_PAYMENT_INTENTS[matched_intent.order_id]["status"] = "PAID"
         if matched_intent.total_amount in LEGACY_PAYMENT_INTENTS:
             LEGACY_PAYMENT_INTENTS[matched_intent.total_amount]["status"] = "PAID"
 
-        # 6. Persist to Supabase if available
         if not self.in_memory_mode:
             supabase = get_supabase()
             if supabase:
                 try:
-                    # Update intent status
                     supabase.table("payment_intents") \
                         .update({"status": "SETTLED"}) \
                         .eq("id", matched_intent.id) \
                         .execute()
 
-                    # Insert settlement record
                     settlement_payload = {
                         "id": settlement.id,
                         "payment_intent_id": settlement.payment_intent_id,
@@ -309,7 +296,6 @@ class PaymentCoreService:
             f"via provider ref '{webhook.provider_ref}' (Rp{webhook.amount:,})"
         )
 
-        # 7. Auto-Dispatch Webhook Callback Hooks to Target Tenant
         tenant_callbacks = self._tenant_callbacks.get(matched_intent.tenant_id, [])
         global_callbacks = self._tenant_callbacks.get("*", [])
         all_callbacks = tenant_callbacks + global_callbacks
@@ -335,7 +321,6 @@ class PaymentCoreService:
                 if now >= exp:
                     intent.status = PaymentStatus.EXPIRED
                     expired_ids.append(intent.id)
-                    # Update legacy store
                     if intent.order_id in LEGACY_PAYMENT_INTENTS:
                         LEGACY_PAYMENT_INTENTS[intent.order_id]["status"] = "EXPIRED"
 

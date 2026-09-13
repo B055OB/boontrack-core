@@ -819,6 +819,7 @@ async def log_to_supabase_messages(
                 }).execute()
             except Exception as conv_err:
                 logger.debug(f"[Supabase Conv Upsert Warning] {conv_err}")
+                conv_uuid = None
 
         payload = {
             "sender": normalized_sender,

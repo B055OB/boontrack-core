@@ -72,7 +72,7 @@ async def connect_growth_session(tenant_slug: str):
                 "qr_image": evo_data.get("qr_image") or evo_data.get("base64"),
                 "status": evo_data.get("status"),
                 "phone_number": evo_data.get("phone_number"),
-                "message": "Sesi QR WhatsApp terhubung melalui Evolution API v2."
+                "message": "Sesi QR WhatsApp terhubung melalui BoonTrack WhatsApp Engine (Evolution API v2)."
             }
         else:
             return JSONResponse(
@@ -189,12 +189,21 @@ async def aiohttp_tenant_reconnect_handler(request):
 
 
 def register_whatsapp_gateway_routes(app):
-    """Mendaftarkan route pairing code & reconnect ke server aiohttp."""
+    """Mendaftarkan seluruh route WhatsApp gateway (pairing, reconnect, Evolution webhook) ke server aiohttp."""
     try:
         app.router.add_post("/tenant/whatsapp/reconnect", aiohttp_tenant_reconnect_handler)
         app.router.add_post("/api/v1/whatsapp/sessions/{tenant_slug}/pairing-code", aiohttp_pairing_code_handler)
         app.router.add_post("/api/v1/whatsapp/pairing-code", aiohttp_pairing_code_handler)
-        logger.info("[register_whatsapp_gateway_routes] WhatsApp pairing & reconnect routes mounted to aiohttp.")
+
+        # Evolution API Webhook Endpoints
+        app.router.add_post("/api/v1/whatsapp/webhook/evolution/{tenant_slug}", aiohttp_evolution_webhook_handler)
+        app.router.add_post("/api/v1/whatsapp/webhook/evolution/{tenant_slug}/messages-upsert", aiohttp_evolution_webhook_handler)
+        app.router.add_post("/api/v1/whatsapp/webhook/evolution", aiohttp_evolution_webhook_handler)
+        app.router.add_post("/api/v1/whatsapp/evolution/webhook", aiohttp_evolution_webhook_handler)
+        app.router.add_post("/webhook/evolution/{tenant_slug}", aiohttp_evolution_webhook_handler)
+        app.router.add_post("/webhook/evolution", aiohttp_evolution_webhook_handler)
+        app.router.add_post("/api/v1/whatsapp/inbound-process", aiohttp_inbound_process_handler)
+        logger.info("[register_whatsapp_gateway_routes] Evolution API webhook & pairing routes mounted to aiohttp.")
     except Exception as reg_err:
         logger.warning(f"[register_whatsapp_gateway_routes] Note: {reg_err}")
 
@@ -370,39 +379,53 @@ async def process_inbound_message(payload: InboundPayload):
 # EVOLUTION API WEBHOOK LISTENER (MESSAGES_UPSERT)
 # ============================================================================
 
-@router.post("/webhook/evolution/{tenant_slug}", summary="Evolution API Webhook per Tenant")
-@router.post("/webhook/evolution", summary="Evolution API Webhook Default")
-@router.post("/evolution/webhook", summary="Evolution API Webhook Alias")
-async def handle_evolution_webhook(request: Request, tenant_slug: Optional[str] = None):
+async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug: Optional[str] = None) -> Dict[str, Any]:
     """
-    Webhook Ingestion untuk pesan masuk dari Evolution API (BoonTrack WhatsApp Engine).
-    Menerima event MESSAGES_UPSERT, memproses AI Knowledge, dan membalas via sendText.
-    Mendukung imageMessage: media di-upload ke Cloudflare R2 dan media_url disimpan ke DB.
+    Core Ingestion Logic untuk event MESSAGES_UPSERT dari Evolution API (Baileys Engine):
+    1. Validasi event: Hanya proses 'messages.upsert'.
+    2. Filter Self-Message: fromMe == True di-skip agar bot tidak membalas chatnya sendiri.
+    3. Filter Grup & Broadcast: Abaikan remoteJid berakhiran '@g.us' atau '@broadcast'.
+    4. Ekstraksi Pengirim: remoteJid (buang suffix @s.whatsapp.net / @c.us).
+    5. Ekstraksi Teks Berjenjang: conversation -> extendedTextMessage.text -> imageMessage.caption -> videoMessage.caption -> buttons/list reply.
+    6. Pemrosesan AI Commerce & balasan otomatis via Evolution API sendText:
+       Payload wajib menyediakan 'text' (Evolution API v2 Baileys contract) dan 'textMessage'.
     """
-    try:
-        payload = await request.json()
-    except Exception:
-        return {"status": "error", "message": "Invalid JSON format"}
-
     event = str(payload.get("event") or "").lower()
     if event and event not in ("messages.upsert", "messages_upsert"):
         return {"status": "ignored", "event": event}
 
     data = payload.get("data", {})
-    message_obj = data.get("message", {})
-    key_obj = data.get("key", {})
+    if isinstance(data, list) and len(data) > 0:
+        data = data[0]
+    elif not isinstance(data, dict):
+        data = {}
 
-    # Abaikan pesan dari bot sendiri (fromMe)
-    if key_obj.get("fromMe") is True:
+    # Jika payload Baileys membungkus data di dalam list 'messages'
+    if "messages" in data and isinstance(data["messages"], list) and len(data["messages"]) > 0:
+        data = data["messages"][0]
+
+    key_obj = data.get("key", {}) if isinstance(data.get("key"), dict) else {}
+    message_obj = data.get("message", {}) if isinstance(data.get("message"), dict) else {}
+
+    # 1. Filter Self-Message: fromMe == True di-skip
+    if key_obj.get("fromMe") is True or payload.get("fromMe") is True:
+        logger.info("[EVOLUTION WEBHOOK] Ignored: message fromMe is True (Self-Reply Guard)")
         return {"status": "ignored_from_me"}
 
-    # JID pengirim & filter status / grup
-    remote_jid = key_obj.get("remoteJid", "")
+    # 2. Filter Grup & Broadcast
+    remote_jid = str(key_obj.get("remoteJid") or payload.get("sender") or "").strip()
     if not remote_jid or remote_jid == "status@broadcast" or remote_jid.endswith("@broadcast") or remote_jid.endswith("@g.us"):
+        logger.info(f"[EVOLUTION WEBHOOK] Ignored non-personal/group JID: '{remote_jid}'")
         return {"status": "ignored_non_personal"}
 
-    # ── Deteksi tipe pesan ──────────────────────────────────────────────────
-    # Unpack ephemeral / viewOnce wrappers jika ada
+    # 3. Ekstraksi Nomor Pengirim
+    raw_sender = remote_jid.replace("@s.whatsapp.net", "").replace("@c.us", "").split("@")[0]
+    sender_phone = normalize_phone_number(raw_sender) or re.sub(r"\D", "", raw_sender)
+    if not sender_phone:
+        logger.warning(f"[EVOLUTION WEBHOOK] Could not extract valid sender phone from JID: {remote_jid}")
+        return {"status": "ignored_invalid_phone"}
+
+    # 4. Unpack ephemeral / viewOnce wrappers jika ada
     unwrapped_msg = message_obj
     if "ephemeralMessage" in unwrapped_msg:
         unwrapped_msg = unwrapped_msg.get("ephemeralMessage", {}).get("message", {})
@@ -420,8 +443,7 @@ async def handle_evolution_webhook(request: Request, tenant_slug: Optional[str] 
     media_url: Optional[str] = None
 
     if is_image_message:
-        message_id = key_obj.get("id", f"img_{remote_jid}")
-        # Coba ambil base64 dari berbagai kemungkinan lokasi field Evolution API / Baileys
+        message_id = key_obj.get("id", f"img_{sender_phone}")
         raw_b64: Optional[str] = (
             data.get("base64")
             or data.get("mediaBase64")
@@ -433,11 +455,9 @@ async def handle_evolution_webhook(request: Request, tenant_slug: Optional[str] 
         )
         if raw_b64:
             try:
-                # Hapus header data URI jika ada, misal "data:image/jpeg;base64,"
                 if "," in raw_b64:
                     raw_b64 = raw_b64.split(",", 1)[1]
                 media_bytes = base64.b64decode(raw_b64)
-                # Gunakan mimetype dari payload jika tersedia
                 mime_type = image_obj.get("mimetype", "image/jpeg")
                 if "png" in mime_type:
                     ext = ".png"
@@ -455,59 +475,68 @@ async def handle_evolution_webhook(request: Request, tenant_slug: Optional[str] 
             except Exception as media_err:
                 logger.warning(f"[EVOLUTION WEBHOOK] Gagal upload image ke R2: {media_err}")
 
-    # ── Ekstraksi teks / caption ────────────────────────────────────────────
+    # 5. Ekstraksi teks berjenjang (Conversation -> Extended Text -> Image Caption -> Video Caption -> Interactive)
     incoming_text = (
-        message_obj.get("conversation")
-        or message_obj.get("extendedTextMessage", {}).get("text")
+        unwrapped_msg.get("conversation")
+        or unwrapped_msg.get("extendedTextMessage", {}).get("text")
         or image_obj.get("caption")
-        or message_obj.get("videoMessage", {}).get("caption")
+        or unwrapped_msg.get("videoMessage", {}).get("caption")
+        or unwrapped_msg.get("buttonsResponseMessage", {}).get("selectedButtonId")
+        or unwrapped_msg.get("templateButtonReplyMessage", {}).get("selectedId")
+        or unwrapped_msg.get("listResponseMessage", {}).get("singleSelectReply", {}).get("selectedRowId")
         or ""
     ).strip()
 
-    # Jika pesan berupa gambar tanpa caption, gunakan placeholder agar tetap diproses
     if not incoming_text and is_image_message:
         incoming_text = "[Gambar diterima]"
 
     if not incoming_text:
         return {"status": "ignored_empty_text"}
 
-    sender_phone = remote_jid.split("@")[0]
-    resolved_tenant = (tenant_slug or payload.get("instance") or "onlineboost").replace("tenant_", "").replace("_", "-")
+    raw_instance = str(payload.get("instance") or "").strip()
+    clean_slug = (tenant_slug or raw_instance or "onlineboost").strip()
+    resolved_tenant = clean_slug.replace("tenant_", "").replace("_", "-").lower()
+    sender_name = str(data.get("pushName") or payload.get("pushName") or "Pelanggan").strip()
 
-    logger.info(f"[EVOLUTION WEBHOOK] Inbound message for tenant '{resolved_tenant}' from {sender_phone}: '{incoming_text}'")
+    logger.info(f"[EVOLUTION WEBHOOK] Inbound message for tenant '{resolved_tenant}' from {sender_phone} ({sender_name}): '{incoming_text}'")
 
-    # ── Log pesan masuk ke Supabase (termasuk media_url jika ada gambar) ───
+    # Log pesan masuk ke Supabase
     asyncio.create_task(log_to_supabase_messages(
         sender="user",
         text=incoming_text,
         tenant_id=resolved_tenant,
         channel="whatsapp",
         user_phone=sender_phone,
+        user_name=sender_name,
         media_url=media_url,
     ))
 
-    # ── Jalankan pemrosesan inbound AI ─────────────────────────────────────
+    # Jalankan pemrosesan inbound AI
     inbound_res = await process_inbound_message(InboundPayload(
         tenant_slug=resolved_tenant,
         sender_phone=sender_phone,
         message_body=incoming_text,
+        sender_name=sender_name,
     ))
     reply_text = inbound_res.get("reply_text")
 
-    # ── Kirim balasan via Evolution API sendText jika terhubung ────────────
+    # Kirim balasan via Evolution API sendText jika ada balasan terbentuk
     if reply_text:
         instance_name = f"tenant_{resolved_tenant.replace('-', '_')}"
         send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{instance_name}"
         headers = get_evolution_headers()
         send_payload = {
             "number": sender_phone,
-            "options": {"delay": 1200, "presence": "composing"},
-            "textMessage": {"text": reply_text}
+            "text": reply_text,
+            "textMessage": {"text": reply_text},
+            "options": {"delay": 1200, "presence": "composing"}
         }
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 res = await client.post(send_url, headers=headers, json=send_payload)
                 logger.info(f"[EVOLUTION SEND STATUS] Dispatched to {sender_phone} via {instance_name}: {res.status_code}")
+                if res.status_code not in (200, 201):
+                    logger.warning(f"[EVOLUTION SEND WARNING] Response body: {res.text[:200]}")
         except Exception as send_err:
             logger.error(f"[EVOLUTION SEND ERROR] {send_err}")
 
@@ -517,3 +546,50 @@ async def handle_evolution_webhook(request: Request, tenant_slug: Optional[str] 
         "reply": reply_text,
         "media_url": media_url,
     }
+
+
+# --- FASTAPI WEBHOOK ENDPOINTS ---
+@router.post("/webhook/evolution/{tenant_slug}", summary="Evolution API Webhook per Tenant")
+@router.post("/webhook/evolution/{tenant_slug}/messages-upsert", summary="Evolution API Webhook byEvent")
+@router.post("/webhook/evolution", summary="Evolution API Webhook Default")
+@router.post("/evolution/webhook", summary="Evolution API Webhook Alias")
+async def handle_evolution_webhook(request: Request, tenant_slug: Optional[str] = None):
+    """FastAPI handler untuk webhook Evolution API."""
+    try:
+        payload = await request.json()
+    except Exception:
+        return {"status": "error", "message": "Invalid JSON format"}
+    return await process_evolution_webhook_payload(payload, tenant_slug)
+
+
+# --- AIOHTTP WEBHOOK & INBOUND HANDLERS (Railway Active Runner) ---
+async def aiohttp_evolution_webhook_handler(request):
+    """aiohttp handler untuk webhook Evolution API pada runner aktif Railway."""
+    try:
+        from aiohttp import web
+        payload = await request.json()
+    except Exception:
+        from aiohttp import web
+        return web.json_response({"status": "error", "message": "Invalid JSON format"}, status=400)
+
+    tenant_slug = (
+        request.match_info.get("tenant_slug")
+        or request.query.get("tenant")
+        or request.query.get("tenant_slug")
+    )
+    res = await process_evolution_webhook_payload(payload, tenant_slug)
+    from aiohttp import web
+    return web.json_response(res)
+
+
+async def aiohttp_inbound_process_handler(request):
+    """aiohttp handler untuk pemrosesan pesan inbound langsung."""
+    try:
+        from aiohttp import web
+        body = await request.json()
+        payload = InboundPayload(**body)
+        res = await process_inbound_message(payload)
+        return web.json_response(res)
+    except Exception as e:
+        from aiohttp import web
+        return web.json_response({"status": "error", "message": str(e)}, status=400)
