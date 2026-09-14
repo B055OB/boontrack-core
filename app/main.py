@@ -29,6 +29,7 @@ from app.routes.webchat import router as webchat_router
 from app.routes.internal_routes import internal_router
 from app.routes.xendit import xendit_router
 from app.routes.onboarding import onboarding_router
+from app.routes.tenant_onboard_routes import tenant_intake_router
 from app.routes.meta_whatsapp import meta_whatsapp_router
 from app.routes.chat import chat_router
 from app.routes.tenant_routes import tenant_router, tenant_singular_router, commerce_products_router, legacy_tenant_router
@@ -62,6 +63,7 @@ from app.routes.auth_routes import router as auth_router, auth_general_router
 from app.routes.custom_domain_routes import custom_domain_router, register_custom_domain_routes
 from app.api.v1.reader_router import router as reader_router
 from app.tenants.career.router import career_fastapi_router, register_career_routes
+from app.routers.creator_ugc import router as creator_ugc_router, register_creator_ugc_routes
 from fastapi.staticfiles import StaticFiles
 
 # Inisialisasi Supabase Client
@@ -104,6 +106,7 @@ app.include_router(payment_router)
 app.include_router(webchat_router)
 app.include_router(internal_router)
 app.include_router(onboarding_router)
+app.include_router(tenant_intake_router)
 app.include_router(meta_whatsapp_router)
 app.include_router(chat_router)
 app.include_router(tenant_router)
@@ -142,6 +145,7 @@ app.include_router(auth_general_router)
 app.include_router(reader_router)
 app.include_router(custom_domain_router)
 app.include_router(career_fastapi_router)
+app.include_router(creator_ugc_router)
 
 # Mount Static Uploads
 uploads_dir = os.path.join(project_root, "assets", "uploads")
@@ -253,6 +257,7 @@ async def start_application():
     register_seller_ads_routes(aiohttp_app)
     register_media_routes(aiohttp_app)
     register_career_routes(aiohttp_app)
+    register_creator_ugc_routes(aiohttp_app)
 
     cors_headers = {
         "Access-Control-Allow-Origin": "*",

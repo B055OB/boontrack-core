@@ -42,7 +42,11 @@ from app.models.local_service import (
     ReaderNotification,
 )
 
+from app.models.tenant_prospect import TenantProspect
+
 __all__ = [
+    # Control Plane & Onboarding Exports
+    "TenantProspect",
     # Legacy Exports
     "Goal",
     "Intent",

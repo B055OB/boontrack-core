@@ -71,6 +71,13 @@ def create_web_app() -> web.Application:
     except Exception as wa_err:
         logger.warning(f"[create_web_app] WhatsApp gateway route registration note: {wa_err}")
 
+    # 8. Creator UGC Studio Routes
+    try:
+        from app.routers.creator_ugc import register_creator_ugc_routes
+        register_creator_ugc_routes(app)
+    except Exception as ugc_err:
+        logger.warning(f"[create_web_app] Creator UGC route registration note: {ugc_err}")
+
     return app
 
 
