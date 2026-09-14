@@ -468,10 +468,30 @@ Penamaan key/path di bucket Cloudflare R2 wajib seragam dan scoped per konteks/t
 * **Foto Produk**: `products/{tenant_id}/{product_id}_{timestamp}.webp`
 * **Bukti Transfer**: `proofs/{tenant_id}/{order_id}_{timestamp}.jpg`
 * **Video/Media Kampanye**: `media/{tenant_id}/videos/{hash}_{timestamp}.mp4`
+* **Resume Mentah**: `resumes/{user_id}/raw/{timestamp}_{filename}.pdf`
+* **Resume ATS Terkompilasi**: `resumes/{user_id}/generated/ats_{user_id}_{timestamp}.pdf`
 
 ### 3. Database Mutation & Schema Integrity Guard
 * Setiap operasi `UPDATE` / `PATCH` pada entitas tenant pasca pembaruan berkas media:
   * **DILARANG KERAS** menyertakan field otomatis seperti `updated_at` kecuali kolom tersebut sudah nyata terdaftar di schema tabel `tenants` Supabase.
   * Operasi pembaruan wajib menargetkan kolom `metadata` secara aman (JSONB merge) tanpa merusak struktur data yang telah ada.
+
+### 4. 📄 Career Resume & Document Pipeline Standard
+1. **Ingestion File Mentah**:
+   - Sumber: Web upload atau WhatsApp incoming webhook.
+   - Penanganan: File binary dibaca via in-memory stream (`io.BytesIO`), langsung dialirkan ke Cloudflare R2 dengan key:
+     `resumes/{user_id}/raw/{timestamp}_{filename}.pdf`
+   - Metadata Supabase: Simpan URL R2 ke kolom `raw_file_url` tabel `career_resumes`. Tidak ada biner yang disimpan ke database.
+
+2. **Ekstraksi Teks & Analisis AI**:
+   - Stream bytes dibaca langsung oleh parser (`pypdf` / `pdfplumber`) dari memori atau R2 stream.
+   - Hasil parsing dikirim ke AI Engine. Output analisis disimpan sebagai JSON murni pada kolom `parsed_content` / `analysis_result` (tipe `jsonb`).
+
+3. **ATS Generation & Distribution**:
+   - Hasil kompilasi ATS di-render dan dialirkan langsung ke Cloudflare R2 dengan key:
+     `resumes/{user_id}/generated/ats_{user_id}_{timestamp}.pdf`
+   - URL publik yang dikembalikan: `https://assets.boontrack.com/resumes/{user_id}/generated/...`
+   - Simpan URL ke kolom `generated_file_url` dan kirimkan tautan tersebut ke WhatsApp user.
+
 
 
