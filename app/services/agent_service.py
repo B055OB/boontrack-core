@@ -4,6 +4,26 @@ Agent Service Layer for Multi-Tenant Commerce AI & Prompt Execution.
 
 from typing import Dict, Any, Optional
 from app.services.ai_engine import commerce_ai_engine, CommerceAIEngine
+from app.services.telemetry_service import track_ai_tokens
+
+
+def record_ai_token_telemetry(
+    tenant_id: str,
+    session_id: str,
+    prompt_tokens: int,
+    candidate_tokens: int,
+    model: str = "gemini-flash",
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Convenience helper to record Gemini Flash token usage asynchronously to telemetry & Supabase."""
+    track_ai_tokens(
+        tenant_id=tenant_id,
+        session_id=session_id,
+        prompt_tokens=prompt_tokens,
+        candidate_tokens=candidate_tokens,
+        model=model,
+        metadata=metadata,
+    )
 
 
 async def handle_button_or_message(
@@ -12,15 +32,31 @@ async def handle_button_or_message(
     button_id: Optional[str] = None,
     user_phone: str = "",
     user_name: str = "",
+    session_id: Optional[str] = None,
 ) -> str:
-    """Entrypoint helper to process incoming message or quick-reply button via CommerceAIEngine."""
-    return await commerce_ai_engine.generate_commerce_response(
+    """Entrypoint helper to process incoming message or quick-reply button via CommerceAIEngine with telemetry."""
+    usage_out: Dict[str, Any] = {}
+    reply = await commerce_ai_engine.generate_commerce_response(
         tenant_slug=tenant_slug,
         user_message=message,
         user_phone=user_phone,
         user_name=user_name,
         button_id=button_id,
+        usage_out=usage_out,
     )
+
+    # Fire-and-forget AI Token Telemetry Hook
+    sess_id = session_id or user_phone or f"sess_{tenant_slug}"
+    record_ai_token_telemetry(
+        tenant_id=tenant_slug,
+        session_id=sess_id,
+        prompt_tokens=usage_out.get("prompt_tokens") or max(1, len(message) // 4),
+        candidate_tokens=usage_out.get("candidate_tokens") or max(1, len(reply) // 4),
+        model=usage_out.get("model", "gemini-flash"),
+        metadata={"button_id": button_id, "user_name": user_name},
+    )
+
+    return reply
 
 
 def is_button_trigger(message: str, button_id: Optional[str] = None) -> bool:
@@ -34,8 +70,9 @@ async def process_incoming_message(
     user_phone: str = "",
     user_name: str = "",
     button_id: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> str:
-    """Processes incoming message for a tenant with appropriate fallback service routing."""
+    """Processes incoming message for a tenant with appropriate fallback service routing and telemetry."""
     from app.services.tenant_context_resolver import tenant_context_resolver, has_capability
     context = await tenant_context_resolver.resolve_tenant(tenant_slug)
 
@@ -65,13 +102,28 @@ async def process_incoming_message(
         except Exception:
             pass
 
-    return await commerce_ai_engine.generate_commerce_response(
+    usage_out: Dict[str, Any] = {}
+    reply = await commerce_ai_engine.generate_commerce_response(
         tenant_slug=tenant_slug,
         user_message=message,
         user_phone=user_phone,
         user_name=user_name,
         button_id=button_id,
+        usage_out=usage_out,
     )
+
+    # Fire-and-forget AI Token Telemetry Hook
+    sess_id = session_id or user_phone or f"sess_{tenant_slug}"
+    record_ai_token_telemetry(
+        tenant_id=tenant_slug,
+        session_id=sess_id,
+        prompt_tokens=usage_out.get("prompt_tokens") or max(1, len(message) // 4),
+        candidate_tokens=usage_out.get("candidate_tokens") or max(1, len(reply) // 4),
+        model=usage_out.get("model", "gemini-flash"),
+        metadata={"button_id": button_id, "user_name": user_name},
+    )
+
+    return reply
 
 
 __all__ = [
@@ -80,4 +132,5 @@ __all__ = [
     "handle_button_or_message",
     "is_button_trigger",
     "process_incoming_message",
+    "record_ai_token_telemetry",
 ]

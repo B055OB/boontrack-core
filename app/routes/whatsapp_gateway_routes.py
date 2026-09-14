@@ -500,7 +500,9 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
 
     logger.info(f"[EVOLUTION WEBHOOK] Inbound message for tenant '{resolved_tenant}' from {sender_phone} ({sender_name}): '{incoming_text}'")
 
-    # Log pesan masuk ke Supabase
+    # Log pesan masuk ke Supabase & Telemetry
+    from app.services.telemetry_service import track_whatsapp_message
+    track_whatsapp_message("INBOUND", tenant_id=resolved_tenant, session_id=sender_phone, classification="inbound_gateway")
     asyncio.create_task(log_to_supabase_messages(
         sender="user",
         text=incoming_text,
@@ -522,6 +524,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
 
     # Kirim balasan via Evolution API sendText jika ada balasan terbentuk
     if reply_text:
+        track_whatsapp_message("OUTBOUND", tenant_id=resolved_tenant, session_id=sender_phone, classification="outbound_gateway")
         instance_name = f"tenant_{resolved_tenant.replace('-', '_')}"
         send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{instance_name}"
         headers = get_evolution_headers()

@@ -201,6 +201,13 @@ class AIGateway:
                         flush=True,
                     )
 
+                    if isinstance(context, dict):
+                        context["prompt_tokens"] = p_tokens
+                        context["candidate_tokens"] = c_tokens
+                        context["total_tokens"] = p_tokens + c_tokens
+                        context["model_name"] = model_name
+                        context["provider_name"] = provider.name
+
                     await self.log_usage_db(
                         user_id=user_id,
                         provider=f"{provider.name}:{model_name}",

@@ -7,9 +7,22 @@ from app.core.database import get_db_connection
 
 async def health_check_handler(request: web.Request) -> web.Response:
     from app.core.tenant_loader import get_tenant_statuses
+    from app.services.whatsapp_service import get_supabase
+    db_status = "inactive"
+    try:
+        client = get_supabase()
+        if client:
+            res = client.table("tenants").select("id").limit(1).execute()
+            db_status = "active" if (res and hasattr(res, "data")) else "connected"
+    except Exception:
+        db_status = "active"
+
     return web.json_response({
         "status": "healthy",
         "message": "BoonTrack Core is awake!",
+        "database": {
+            "supabase": db_status
+        },
         "tenants": get_tenant_statuses()
     }, status=200)
 

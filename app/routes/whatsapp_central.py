@@ -30,6 +30,7 @@ from app.services.whatsapp_service import (
 from datetime import datetime, timezone
 import asyncio
 from app.modules.tracking import capi_dispatcher
+from app.services.telemetry_service import track_whatsapp_message
 from app.services.session_store import (
     get_user_tenant_session,
     set_user_tenant_session,
@@ -106,12 +107,26 @@ def resolve_tenant_token(phone_id: str) -> str:
     return tok.strip()
 
 
+def resolve_tenant_id_from_phone_id(phone_id: str) -> str:
+    """Mengambil tenant_id sesuai Phone Number ID."""
+    clean_id = str(phone_id or "").strip()
+    if clean_id == CAREER_PHONE_NUMBER_ID:
+        return "boontrack-career"
+    elif clean_id == ADUAN_SANDBOX_PHONE_ID:
+        return "aduan-sandbox"
+    return "om_budi"
+
+
 # --- 4. Helper Outbound WA Dinamis Multi-Tenant ---
 async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
     from app.services.whatsapp_service import sanitize_whatsapp_message_text
     clean_id_match = re.findall(r"\d+", str(phone_id or ""))
     clean_id = clean_id_match[0] if clean_id_match else (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or OM_BUDI_PHONE_NUMBER_ID)
     token = resolve_tenant_token(clean_id)
+
+    # Telemetry Outbound Counter Hook
+    t_id = resolve_tenant_id_from_phone_id(clean_id)
+    track_whatsapp_message(direction="OUTBOUND", tenant_id=t_id, session_id=recipient_phone, classification="text")
 
     clean_text = sanitize_whatsapp_message_text(text)
     if not clean_text or clean_text.lower() in ["none", "null"]:
@@ -143,6 +158,10 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Di
     clean_id_match = re.findall(r"\d+", str(phone_id or ""))
     clean_id = clean_id_match[0] if clean_id_match else (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or OM_BUDI_PHONE_NUMBER_ID)
     token = resolve_tenant_token(clean_id)
+
+    # Telemetry Outbound Counter Hook
+    t_id = resolve_tenant_id_from_phone_id(clean_id)
+    track_whatsapp_message(direction="OUTBOUND", tenant_id=t_id, session_id=recipient_phone, classification="button")
 
     clean_body = sanitize_whatsapp_message_text(body_text)
     if not clean_body or clean_body.lower() in ["none", "null"]:
@@ -201,6 +220,10 @@ async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any = 
         clean_phone = "62" + clean_phone[1:]
     elif clean_phone.startswith("008"):
         clean_phone = "62" + clean_phone[2:]
+
+    # Telemetry Outbound Counter Hook
+    t_id = resolve_tenant_id_from_phone_id(clean_id)
+    track_whatsapp_message(direction="OUTBOUND", tenant_id=t_id, session_id=clean_phone, classification="image")
 
     safe_caption = (caption or "")[:1024]
 
@@ -283,6 +306,10 @@ async def send_wa_list_menu(recipient_phone: str, body_text: str, button_text: s
     clean_id_match = re.findall(r"\d+", str(phone_id))
     clean_id = clean_id_match[0] if clean_id_match else phone_id
     token = resolve_tenant_token(clean_id)
+
+    # Telemetry Outbound Counter Hook
+    t_id = resolve_tenant_id_from_phone_id(clean_id)
+    track_whatsapp_message(direction="OUTBOUND", tenant_id=t_id, session_id=recipient_phone, classification="list_menu")
 
     url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
     headers = {
@@ -516,6 +543,26 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 or runtime_context.business_type == "PROFESSIONAL_SERVICE"
             )
         )
+        # Telemetry Inbound Message Counter & Session Classification Hook
+        inbound_classification = "general"
+        if is_consultation_service:
+            inbound_classification = "consultation"
+        elif is_closing_buy_intent(clean_text) or any(k in clean_text for k in ["beli", "checkout", "order", "bayar", "pesan"]):
+            inbound_classification = "checkout"
+        elif any(k in clean_text for k in ["info", "katalog", "harga", "produk", "layanan", "tarif"]):
+            inbound_classification = "inquiry"
+        elif any(k in clean_text for k in ["membership", "gym", "fitnes", "zumba"]):
+            inbound_classification = "membership"
+
+        inbound_tenant = runtime_context.tenant_id if runtime_context else resolve_tenant_id_from_phone_id(phone_id)
+        track_whatsapp_message(
+            direction="INBOUND",
+            tenant_id=inbound_tenant,
+            session_id=clean_phone or from_phone,
+            classification=inbound_classification,
+            metadata={"phone_id": phone_id, "msg_type": msg_type},
+        )
+
         # =========================================================================
         # STRICT ISOLATION: NOMOR CONSULTATION / PROFESSIONAL SERVICE ASSISTANT
         # =========================================================================

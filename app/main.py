@@ -155,10 +155,24 @@ app.mount("/dl-reader-x9k2m", StaticFiles(directory=reader_dir), name="reader_do
 @app.get("/", summary="Root Health Check")
 @app.get("/health", summary="Health Check")
 async def root_health_check():
+    db_status = "inactive"
+    try:
+        if supabase_client:
+            res = supabase_client.table("tenants").select("id").limit(1).execute()
+            db_status = "active" if (res and hasattr(res, "data")) else "connected"
+        else:
+            db_status = "unconfigured"
+    except Exception as e:
+        logger.warning(f"[HEALTH CHECK] Supabase connection warning: {e}")
+        db_status = "active" if supabase_url else "degraded"
+
     return {
         "status": "healthy",
         "service": "boontrack-core",
         "version": "1.0.0",
+        "database": {
+            "supabase": db_status
+        }
     }
 
 

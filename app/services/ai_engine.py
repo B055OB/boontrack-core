@@ -182,6 +182,7 @@ class CommerceAIEngine:
         history: Optional[List[Dict[str, Any]]] = None,
         bot_strategy: Optional[str] = None,
         mode_prompt: Optional[str] = None,
+        usage_out: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Generates contextual AI completion using 100% dynamic database-driven system prompt."""
         details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
@@ -215,6 +216,14 @@ class CommerceAIEngine:
                 system_prompt = f"{system_prompt}{history_str}"
 
         query_to_llm = clean_msg
+        ai_context = {
+            "tenant_slug": tenant_slug,
+            "phone": user_phone,
+            "name": user_name or "Kakak",
+            "button_id": button_id,
+            "has_history": bool(history),
+            "bot_strategy": strategy_key,
+        }
 
         try:
             if hasattr(self.ai_service, "generate_for_agent"):
@@ -222,28 +231,24 @@ class CommerceAIEngine:
                     agent_profile=AgentProfile.BUYER_ASSISTANT,
                     user_message=query_to_llm,
                     system_prompt=system_prompt,
-                    context={
-                        "tenant_slug": tenant_slug,
-                        "phone": user_phone,
-                        "name": user_name or "Kakak",
-                        "button_id": button_id,
-                        "has_history": bool(history),
-                        "bot_strategy": strategy_key,
-                    },
+                    context=ai_context,
                 )
             else:
                 response = await self.ai_service.generate(
                     user_message=query_to_llm,
                     system_prompt=system_prompt,
-                    context={
-                        "tenant_slug": tenant_slug,
-                        "phone": user_phone,
-                        "name": user_name or "Kakak",
-                        "button_id": button_id,
-                        "has_history": bool(history),
-                        "bot_strategy": strategy_key,
-                    },
+                    context=ai_context,
                 )
+
+            if usage_out is not None and isinstance(usage_out, dict):
+                p_tok = ai_context.get("prompt_tokens") or max(1, (len(system_prompt) + len(query_to_llm)) // 4)
+                c_tok = ai_context.get("candidate_tokens") or max(1, len(response or "") // 4)
+                usage_out["prompt_tokens"] = p_tok
+                usage_out["candidate_tokens"] = c_tok
+                usage_out["total_tokens"] = p_tok + c_tok
+                usage_out["model"] = ai_context.get("model_name", "gemini-flash")
+                usage_out["provider"] = ai_context.get("provider_name", "Gemini")
+
             if response and response.strip():
                 from app.services.whatsapp_service import sanitize_whatsapp_message_text
                 return sanitize_whatsapp_message_text(response.strip())
