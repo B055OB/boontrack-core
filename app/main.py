@@ -27,7 +27,7 @@ from app.routes.gym_admin_routes import router as gym_admin_router
 from app.routes.payment import payment_router, register_payment_routes
 from app.routes.webchat import router as webchat_router
 from app.routes.internal_routes import internal_router
-from app.routes.xendit import xendit_router
+from app.routes.xendit import xendit_router, register_xendit_routes
 from app.routes.onboarding import onboarding_router
 from app.routes.tenant_onboard_routes import tenant_intake_router
 from app.routes.meta_whatsapp import meta_whatsapp_router
@@ -250,6 +250,7 @@ async def start_application():
     # Daftarkan Router Modul Gateway, Subscription, Event Worker, Webhook, Entitlements, WhatsApp Control, Provisioning, Growth, Shipping & Seller Ads Pro
     register_payment_routes(aiohttp_app)
     register_shop_gateway_routes(aiohttp_app)
+    register_xendit_routes(aiohttp_app)
     register_shop_subscription_routes(aiohttp_app)
     register_shop_event_routes(aiohttp_app)
     register_webhook_payment_routes(aiohttp_app)

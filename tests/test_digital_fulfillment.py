@@ -13,7 +13,7 @@ Covers:
 import os
 import time
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, patch as patch_dict
 import pytest
 from starlette.testclient import TestClient
 
@@ -216,3 +216,111 @@ async def test_non_digital_product_skipped(mock_get_sb):
 
     assert result["status"] == "SKIPPED"
     assert result["product_type"] == "PHYSICAL"
+
+
+# ---------------------------------------------------------------------------
+# Xendit webhook integration tests
+# ---------------------------------------------------------------------------
+
+XENDIT_CALLBACK_TOKEN = "test-xendit-callback-token-abc123"
+XENDIT_PAID_PAYLOAD = {
+    "external_id": "xendit-order-xyz-456",
+    "status": "PAID",
+    "amount": 99000,
+    "customer_email": "buyer@example.com",
+    "customer_phone": "08123456789",
+    "tenant_id": "suji",
+}
+
+
+@patch.dict(os.environ, {"XENDIT_WEBHOOK_VERIFICATION_TOKEN": XENDIT_CALLBACK_TOKEN})
+@patch("app.routes.xendit.xendit_service")
+@patch("app.routes.xendit.get_supabase")
+@patch("app.routes.xendit.asyncio.create_task")
+def test_xendit_paid_triggers_digital_fulfillment(mock_create_task, mock_get_sb, mock_xendit_svc):
+    """POST /api/v1/payments/xendit/callback with status=PAID should schedule fulfill_if_digital."""
+    from unittest.mock import patch as _patch
+
+    mock_xendit_svc.is_settled.return_value = False
+    mock_xendit_svc.mark_settled.return_value = None
+    mock_get_sb.return_value = None  # skip DB writes for this test
+
+    res = client.post(
+        "/api/v1/payments/xendit/callback",
+        json=XENDIT_PAID_PAYLOAD,
+        headers={"x-callback-token": XENDIT_CALLBACK_TOKEN},
+    )
+
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "SUCCESS"
+    assert data["external_id"] == XENDIT_PAID_PAYLOAD["external_id"]
+
+    # asyncio.create_task must have been called (digital fulfillment scheduled)
+    assert mock_create_task.called, "Expected asyncio.create_task to be called for digital fulfillment"
+
+
+@patch.dict(os.environ, {"XENDIT_WEBHOOK_VERIFICATION_TOKEN": XENDIT_CALLBACK_TOKEN})
+@patch("app.routes.xendit.xendit_service")
+@patch("app.routes.xendit.get_supabase")
+@patch("app.routes.xendit.asyncio.create_task")
+def test_xendit_failed_status_does_not_trigger_fulfillment(mock_create_task, mock_get_sb, mock_xendit_svc):
+    """Xendit FAILED/EXPIRED status must NOT trigger digital fulfillment."""
+    mock_xendit_svc.is_settled.return_value = False
+    mock_xendit_svc.mark_settled.return_value = None
+    mock_get_sb.return_value = None
+
+    failed_payload = {**XENDIT_PAID_PAYLOAD, "status": "FAILED", "external_id": "xendit-order-failed-789"}
+
+    res = client.post(
+        "/api/v1/payments/xendit/callback",
+        json=failed_payload,
+        headers={"x-callback-token": XENDIT_CALLBACK_TOKEN},
+    )
+
+    assert res.status_code == 200
+    # create_task should NOT have been called for FAILED status
+    assert not mock_create_task.called, "fulfill_if_digital must NOT be scheduled for FAILED payments"
+
+
+@patch.dict(os.environ, {"XENDIT_WEBHOOK_VERIFICATION_TOKEN": XENDIT_CALLBACK_TOKEN})
+def test_xendit_missing_callback_token_returns_403():
+    """Missing x-callback-token header → 403 Forbidden."""
+    res = client.post(
+        "/api/v1/payments/xendit/callback",
+        json=XENDIT_PAID_PAYLOAD,
+        # No x-callback-token header
+    )
+    assert res.status_code == 403
+
+
+@patch.dict(os.environ, {"XENDIT_WEBHOOK_VERIFICATION_TOKEN": XENDIT_CALLBACK_TOKEN})
+def test_xendit_wrong_callback_token_returns_403():
+    """Wrong x-callback-token value → 403 Forbidden."""
+    res = client.post(
+        "/api/v1/payments/xendit/callback",
+        json=XENDIT_PAID_PAYLOAD,
+        headers={"x-callback-token": "wrong-token-value"},
+    )
+    assert res.status_code == 403
+
+
+@patch.dict(os.environ, {"XENDIT_WEBHOOK_VERIFICATION_TOKEN": XENDIT_CALLBACK_TOKEN})
+@patch("app.routes.xendit.xendit_service")
+@patch("app.routes.xendit.get_supabase")
+def test_xendit_idempotent_duplicate_returns_already_processed(mock_get_sb, mock_xendit_svc):
+    """Duplicate Xendit callback for same external_id → ALREADY_PROCESSED (no double fulfillment)."""
+    mock_xendit_svc.is_settled.return_value = True  # already settled
+    mock_get_sb.return_value = None
+
+    res = client.post(
+        "/api/v1/payments/xendit/callback",
+        json=XENDIT_PAID_PAYLOAD,
+        headers={"x-callback-token": XENDIT_CALLBACK_TOKEN},
+    )
+
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "ALREADY_PROCESSED"
+    assert data.get("idempotent") is True
+

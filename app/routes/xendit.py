@@ -6,11 +6,13 @@ Endpoints:
 - POST /api/v1/payment/xendit/callback (route alias)
 """
 
+import asyncio
 import os
 import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Request, Header, HTTPException, status, BackgroundTasks
+from aiohttp import web
 
 from app.services.xendit_service import xendit_service
 from app.services.meta_capi_service import send_meta_capi_purchase
@@ -319,6 +321,25 @@ async def xendit_webhook_callback(
         tenant_id=tenant_id,
     )
 
+    # 7. Background Task 3: Instant Digital Fulfillment (auto-entitlement + signed download token)
+    #    Mirrors the identical flow in duitku_routes.py — both gateways share one engine.
+    _PAID_STATUSES = {"PAID", "SETTLED", "COMPLETED", "LUNAS"}
+    if event_status in _PAID_STATUSES:
+        try:
+            from app.services.digital_fulfillment_service import fulfill_if_digital
+            asyncio.create_task(
+                fulfill_if_digital(
+                    order_id=str(external_id),
+                    tenant_id=tenant_id,
+                    buyer_email=customer_email or "",
+                    buyer_phone=customer_phone,
+                    amount=amount,
+                )
+            )
+            logger.info(f"[Xendit Webhook] Digital fulfillment task scheduled for order '{external_id}'")
+        except Exception as fe:
+            logger.warning(f"[Xendit Webhook] Digital fulfillment task could not be scheduled: {fe}")
+
     logger.info(f"[Xendit Webhook] Settlement successful for '{external_id}' (Rp{amount:,})")
     return {
         "status": "SUCCESS",
@@ -326,3 +347,77 @@ async def xendit_webhook_callback(
         "external_id": external_id,
         "amount": amount,
     }
+
+
+# =============================================================================
+# aiohttp handler — Dual-Runner compliance (ARCHITECTURE.md §1)
+# =============================================================================
+
+_XENDIT_PAID_STATUSES = {"PAID", "SETTLED", "COMPLETED", "LUNAS"}
+
+
+async def aiohttp_xendit_webhook(request: web.Request) -> web.Response:
+    """aiohttp mirror of the FastAPI Xendit webhook — same validation, same fulfillment hook."""
+    configured_token = (
+        os.getenv("XENDIT_WEBHOOK_VERIFICATION_TOKEN")
+        or os.getenv("XENDIT_CALLBACK_TOKEN")
+        or ""
+    ).strip()
+
+    x_callback_token = request.headers.get("x-callback-token", "").strip()
+    if configured_token and x_callback_token != configured_token:
+        logger.warning(f"[Xendit aiohttp] Unauthorized: bad callback token")
+        return web.json_response({"error": "Invalid callback token"}, status=403)
+
+    try:
+        payload: Dict[str, Any] = await request.json()
+    except Exception as err:
+        logger.error(f"[Xendit aiohttp] Malformed JSON: {err}")
+        return web.json_response({"error": "Malformed JSON payload"}, status=400)
+
+    data_obj = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+
+    external_id = (
+        data_obj.get("external_id")
+        or data_obj.get("reference_id")
+        or payload.get("external_id")
+        or data_obj.get("id")
+        or payload.get("id")
+    )
+    amount = int(data_obj.get("amount") or data_obj.get("paid_amount") or payload.get("amount") or 0)
+    event_status = str(data_obj.get("status") or payload.get("status") or "COMPLETED").upper()
+    customer_email = data_obj.get("customer_email") or payload.get("customer_email") or ""
+    customer_phone = data_obj.get("customer_phone") or payload.get("customer_phone")
+    tenant_id = data_obj.get("tenant_id") or payload.get("tenant_id") or "boontrack-career"
+
+    if external_id and xendit_service.is_settled(str(external_id)):
+        return web.json_response({"status": "ALREADY_PROCESSED", "idempotent": True})
+
+    if external_id:
+        xendit_service.mark_settled(str(external_id))
+
+    if event_status in _XENDIT_PAID_STATUSES:
+        try:
+            from app.services.digital_fulfillment_service import fulfill_if_digital
+            asyncio.create_task(
+                fulfill_if_digital(
+                    order_id=str(external_id),
+                    tenant_id=tenant_id,
+                    buyer_email=customer_email,
+                    buyer_phone=customer_phone,
+                    amount=amount,
+                )
+            )
+        except Exception as fe:
+            logger.warning(f"[Xendit aiohttp] Digital fulfillment task error: {fe}")
+
+    logger.info(f"[Xendit aiohttp] Settlement processed for '{external_id}' (Rp{amount:,})")
+    return web.json_response({"status": "SUCCESS", "external_id": external_id, "amount": amount})
+
+
+def register_xendit_routes(aiohttp_app: web.Application) -> None:
+    """Register Xendit webhook routes on the aiohttp runner (dual-runner compliance)."""
+    aiohttp_app.router.add_post("/webhook/payment/xendit", aiohttp_xendit_webhook)
+    aiohttp_app.router.add_post("/api/v1/payments/xendit/callback", aiohttp_xendit_webhook)
+    aiohttp_app.router.add_post("/api/v1/payment/xendit/callback", aiohttp_xendit_webhook)
+    logger.info("[Xendit] aiohttp routes registered.")
