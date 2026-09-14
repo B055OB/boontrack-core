@@ -439,3 +439,39 @@ Pairing berhasil tidak sama dengan gateway yang beroperasi sehat. Sistem memanta
   - Memaksa upgrade protokol dari `http://` ke `https://`.
 - **Client Auto-Healing**: Form edit produk mendeteksi URL legacy saat render pertama kali dan menyembuhkan state data menjadi URL kanonikal sebelum disimpan kembali ke Supabase.
 
+---
+
+## 🗄️ Media & Asset Storage Standard Pattern (Cloudflare R2 + Supabase)
+
+### 1. Separation of Concerns
+* **Cloudflare R2 (Object Storage / Binary Data)**:
+  * Gudang penyimpanan fisik untuk seluruh berkas media berat: QRIS statis, katalog foto produk, bukti bayar konsumen, video promosi, dan PDF invoice.
+  * Diakses via Custom Domain publik (misal: `assets.boontrack.com`) untuk menjamin **Zero Egress Fee** tanpa beban biaya bandwidth.
+  * **Fallback**: Supabase Storage hanya aktif jika koneksi/kredensial API R2 gagal merespons saat proses upload.
+
+* **Supabase PostgreSQL (State Machine & Relational Metadata)**:
+  * Database **DILARANG** menyimpan data biner atau string base64.
+  * Database hanya menyimpan string URL publik R2 di kolom metadata JSONB atau kolom URL relasional:
+    ```json
+    {
+      "payment_config": {
+        "mode": "MANUAL_TRANSFER",
+        "static_qris_url": "https://assets.boontrack.com/qris/1769366055685_whatsapp_image.jpg",
+        "bank_accounts": [...]
+      }
+    }
+    ```
+
+### 2. S3/R2 Object Key Naming Conventions
+Penamaan key/path di bucket Cloudflare R2 wajib seragam dan scoped per konteks/tenant:
+* **QRIS Toko**: `qris/{timestamp}_{sanitized_filename}`
+* **Foto Produk**: `products/{tenant_id}/{product_id}_{timestamp}.webp`
+* **Bukti Transfer**: `proofs/{tenant_id}/{order_id}_{timestamp}.jpg`
+* **Video/Media Kampanye**: `media/{tenant_id}/videos/{hash}_{timestamp}.mp4`
+
+### 3. Database Mutation & Schema Integrity Guard
+* Setiap operasi `UPDATE` / `PATCH` pada entitas tenant pasca pembaruan berkas media:
+  * **DILARANG KERAS** menyertakan field otomatis seperti `updated_at` kecuali kolom tersebut sudah nyata terdaftar di schema tabel `tenants` Supabase.
+  * Operasi pembaruan wajib menargetkan kolom `metadata` secara aman (JSONB merge) tanpa merusak struktur data yang telah ada.
+
+
