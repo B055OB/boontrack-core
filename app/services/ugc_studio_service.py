@@ -70,7 +70,7 @@ async def generate_ugc_script(payload: UGCGenerateRequest) -> Dict[str, Any]:
     response = await loop.run_in_executor(
         None,
         lambda: client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -87,7 +87,7 @@ async def generate_ugc_script(payload: UGCGenerateRequest) -> Dict[str, Any]:
             tenant_id=payload.tenant_id,
             prompt_tokens=usage.prompt_token_count or 0,
             candidate_tokens=usage.candidates_token_count or 0,
-            model="gemini-2.5-flash"
+            model="gemini-3.8-flash"
         ))
 
     return json.loads(response.text)
