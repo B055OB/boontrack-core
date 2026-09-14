@@ -64,6 +64,8 @@ from app.routes.custom_domain_routes import custom_domain_router, register_custo
 from app.api.v1.reader_router import router as reader_router
 from app.tenants.career.router import career_fastapi_router, register_career_routes
 from app.routers.creator_ugc import router as creator_ugc_router, register_creator_ugc_routes
+from app.routes.creator_storefront import router as creator_storefront_router, register_creator_storefront_routes
+from app.routes.digital_download_routes import router as digital_download_router, register_digital_download_routes
 from fastapi.staticfiles import StaticFiles
 
 # Inisialisasi Supabase Client
@@ -146,6 +148,8 @@ app.include_router(reader_router)
 app.include_router(custom_domain_router)
 app.include_router(career_fastapi_router)
 app.include_router(creator_ugc_router)
+app.include_router(creator_storefront_router)
+app.include_router(digital_download_router)
 
 # Mount Static Uploads
 uploads_dir = os.path.join(project_root, "assets", "uploads")
@@ -258,6 +262,8 @@ async def start_application():
     register_media_routes(aiohttp_app)
     register_career_routes(aiohttp_app)
     register_creator_ugc_routes(aiohttp_app)
+    register_creator_storefront_routes(aiohttp_app)
+    register_digital_download_routes(aiohttp_app)
 
     cors_headers = {
         "Access-Control-Allow-Origin": "*",

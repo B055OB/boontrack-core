@@ -2,8 +2,10 @@
 Router handling Duitku Payment Gateway Callbacks and Inquiries.
 """
 
+import asyncio
 import logging
-from fastapi import APIRouter, Form, HTTPException, status, Depends
+from typing import Optional
+from fastapi import APIRouter, Form, HTTPException, status
 from fastapi.responses import PlainTextResponse
 
 from app.payments.service import payment_core_service
@@ -57,10 +59,31 @@ async def duitku_payment_callback(
         if webhook_event.event_type == "PAYMENT_SETTLED":
             await payment_core_service.process_webhook_settlement(webhook_event)
             logger.info(f"[DUITKU] Webhook settlement successful for Order ID: {merchantOrderId}")
+
+            # 3. Trigger digital auto-entitlement as non-blocking background task
+            raw = webhook_event.raw_payload or {}
+            buyer_email: str = raw.get("email") or raw.get("customerEmail") or ""
+            buyer_phone: Optional[str] = raw.get("phoneNumber") or raw.get("customerPhone")
+            tenant: str = webhook_event.tenant_id or ""
+
+            try:
+                from app.services.digital_fulfillment_service import fulfill_if_digital
+                asyncio.create_task(
+                    fulfill_if_digital(
+                        order_id=merchantOrderId,
+                        tenant_id=tenant,
+                        buyer_email=buyer_email,
+                        buyer_phone=buyer_phone,
+                        amount=int(float(amount)),
+                    )
+                )
+            except Exception as fe:
+                logger.warning(f"[DUITKU] Digital fulfillment task could not be scheduled: {fe}")
+
         else:
             logger.warning(f"[DUITKU] Order ID: {merchantOrderId} failed with resultCode: {resultCode}")
 
-        # 3. Duitku mewajibkan HTTP 200 dengan text 'OK'
+        # 4. Duitku mewajibkan HTTP 200 dengan text 'OK'
         return "OK"
 
     except ValueError as e:
