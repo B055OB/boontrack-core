@@ -1,4 +1,7 @@
+import io
+import base64
 import logging
+from typing import Dict, Any, Optional
 from aiohttp import web
 
 from app.tenants.career.config import TENANT_ID, VERIFY_TOKEN, CAREER_PHONE_NUMBER_ID
@@ -99,6 +102,169 @@ async def handle_incoming_whatsapp(request: web.Request) -> web.Response:
         return web.Response(text="EVENT_ERROR_ISOLATED", status=200)
 
 
+# ============================================================================
+# AIOHTTP CAREER DOCUMENT PIPELINE ENDPOINTS
+# ============================================================================
+
+@career_routes.post("/api/v1/career/upload-cv")
+async def aiohttp_upload_cv(request: web.Request) -> web.Response:
+    """Ingest raw CV via in-memory stream to Cloudflare R2 and Supabase metadata."""
+    cors_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+    }
+    try:
+        content_type = request.headers.get("Content-Type", "")
+        if "multipart/" in content_type:
+            reader = await request.multipart()
+            file_bytes = None
+            filename = "resume.pdf"
+            user_id = "anonymous"
+            while True:
+                part = await reader.next()
+                if part is None:
+                    break
+                if part.name == "file":
+                    filename = part.filename or "resume.pdf"
+                    file_bytes = await part.read()
+                elif part.name == "user_id":
+                    val = await part.text()
+                    if val.strip():
+                        user_id = val.strip()
+            
+            if not file_bytes:
+                return web.json_response({"status": "error", "message": "No file uploaded"}, status=400, headers=cors_headers)
+            
+            result = await career_service.ingest_raw_cv(
+                user_id=user_id,
+                file_buffer=io.BytesIO(file_bytes),
+                filename=filename
+            )
+            return web.json_response(result, status=200, headers=cors_headers)
+        else:
+            data = await request.json()
+            user_id = str(data.get("user_id") or "anonymous").strip()
+            filename = data.get("filename") or "resume.pdf"
+            b64_data = data.get("file_base64")
+            if not b64_data:
+                return web.json_response({"status": "error", "message": "Missing file_base64 or multipart file"}, status=400, headers=cors_headers)
+            
+            file_bytes = base64.b64decode(b64_data)
+            result = await career_service.ingest_raw_cv(
+                user_id=user_id,
+                file_buffer=io.BytesIO(file_bytes),
+                filename=filename
+            )
+            return web.json_response(result, status=200, headers=cors_headers)
+    except Exception as e:
+        logger.exception(f"[CAREER ROUTER] Upload CV error: {e}")
+        return web.json_response({"status": "error", "detail": str(e)}, status=500, headers=cors_headers)
+
+
+@career_routes.post("/api/v1/career/generate-ats")
+async def aiohttp_generate_ats(request: web.Request) -> web.Response:
+    """Generate ATS PDF directly to Cloudflare R2 and update Supabase metadata."""
+    cors_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+    }
+    try:
+        data = await request.json()
+        user_id = data.get("user_id")
+        if not user_id:
+            return web.json_response({"status": "error", "message": "Missing user_id"}, status=400, headers=cors_headers)
+        
+        parsed_content = data.get("parsed_content") or data.get("cv_data") or {}
+        analysis_result = data.get("analysis_result") or {}
+        resume_id = data.get("resume_id")
+        
+        result = await career_service.generate_and_upload_ats(
+            user_id=str(user_id),
+            parsed_content=parsed_content,
+            analysis_result=analysis_result,
+            resume_id=resume_id
+        )
+        return web.json_response(result, status=200, headers=cors_headers)
+    except Exception as e:
+        logger.exception(f"[CAREER ROUTER] Generate ATS error: {e}")
+        return web.json_response({"status": "error", "detail": str(e)}, status=500, headers=cors_headers)
+
+
+# ============================================================================
+# FASTAPI CAREER ROUTER
+# ============================================================================
+
+from fastapi import APIRouter, File, UploadFile, Form, HTTPException
+from pydantic import BaseModel
+
+career_fastapi_router = APIRouter(prefix="/api/v1/career", tags=["Career Document Pipeline"])
+
+
+class ATSGenerateRequest(BaseModel):
+    user_id: str
+    resume_id: Optional[str] = None
+    parsed_content: Optional[Dict[str, Any]] = None
+    analysis_result: Optional[Dict[str, Any]] = None
+    cv_data: Optional[Dict[str, Any]] = None
+
+
+class CVUploadBase64Request(BaseModel):
+    user_id: Optional[str] = "anonymous"
+    filename: Optional[str] = "resume.pdf"
+    file_base64: str
+
+
+@career_fastapi_router.post("/upload-cv", summary="Upload Raw CV to Cloudflare R2")
+async def fastapi_upload_cv(
+    file: Optional[UploadFile] = File(None),
+    user_id: Optional[str] = Form(None),
+):
+    if not file:
+        raise HTTPException(status_code=400, detail="Missing CV file multipart")
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty CV file")
+    
+    uid = str(user_id or "anonymous").strip()
+    filename = file.filename or "resume.pdf"
+    result = await career_service.ingest_raw_cv(
+        user_id=uid,
+        file_buffer=io.BytesIO(contents),
+        filename=filename
+    )
+    return result
+
+
+@career_fastapi_router.post("/upload-cv-json", summary="Upload Raw CV via Base64 JSON")
+async def fastapi_upload_cv_json(payload: CVUploadBase64Request):
+    try:
+        raw_bytes = base64.b64decode(payload.file_base64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 payload")
+    
+    result = await career_service.ingest_raw_cv(
+        user_id=payload.user_id or "anonymous",
+        file_buffer=io.BytesIO(raw_bytes),
+        filename=payload.filename or "resume.pdf"
+    )
+    return result
+
+
+@career_fastapi_router.post("/generate-ats", summary="Generate ATS Resume to Cloudflare R2")
+async def fastapi_generate_ats(payload: ATSGenerateRequest):
+    parsed_content = payload.parsed_content or payload.cv_data or {}
+    analysis_result = payload.analysis_result or {}
+    result = await career_service.generate_and_upload_ats(
+        user_id=payload.user_id,
+        parsed_content=parsed_content,
+        analysis_result=analysis_result,
+        resume_id=payload.resume_id,
+    )
+    return result
+
+
 def register_career_routes(app: web.Application):
     app.add_routes(career_routes)
-    logger.info("[ROUTER] Career WhatsApp Webhook registered.")
+    logger.info("[ROUTER] Career WhatsApp Webhook & Document Pipeline registered.")

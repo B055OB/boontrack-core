@@ -61,6 +61,7 @@ from app.routes.product_routes import product_router, product_singular_router, r
 from app.routes.auth_routes import router as auth_router, auth_general_router
 from app.routes.custom_domain_routes import custom_domain_router, register_custom_domain_routes
 from app.api.v1.reader_router import router as reader_router
+from app.tenants.career.router import career_fastapi_router, register_career_routes
 from fastapi.staticfiles import StaticFiles
 
 # Inisialisasi Supabase Client
@@ -140,6 +141,7 @@ app.include_router(auth_router)
 app.include_router(auth_general_router)
 app.include_router(reader_router)
 app.include_router(custom_domain_router)
+app.include_router(career_fastapi_router)
 
 # Mount Static Uploads
 uploads_dir = os.path.join(project_root, "assets", "uploads")
@@ -250,6 +252,7 @@ async def start_application():
     register_shipping_routes(aiohttp_app)
     register_seller_ads_routes(aiohttp_app)
     register_media_routes(aiohttp_app)
+    register_career_routes(aiohttp_app)
 
     cors_headers = {
         "Access-Control-Allow-Origin": "*",

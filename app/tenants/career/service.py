@@ -1,9 +1,10 @@
+import io
 import os
 import re
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 from app.services.ai_gateway.gateway import ai_gateway
 from app.tenants.career.config import TENANT_ID, CAREER_VIP_WHITELIST
 from app.tenants.career.messages import (
@@ -72,6 +73,8 @@ from app.utils.qris_generator import (
     get_dynamic_qris_string,
     get_quickchart_qr_url
 )
+from app.services.storage.r2 import r2_client
+from app.tenants.career.parser import parse_resume_buffer
 
 logger = logging.getLogger(__name__)
 
@@ -426,6 +429,213 @@ class CareerService:
                 logger.error(f"[Receipt Image OCR Error] {e}")
                 await send_whatsapp_text(sender_wa_id, "⚠️ Terjadi kesalahan saat membaca gambar. Silakan coba unggah kembali.", tenant_id=TENANT_ID)
 
+    async def ingest_raw_cv(
+        self,
+        user_id: str,
+        file_buffer: Union[bytes, io.BytesIO],
+        filename: str = "document.pdf",
+    ) -> Dict[str, Any]:
+        """
+        Ingests raw CV purely in-memory:
+        1. Uploads binary stream to Cloudflare R2: resumes/{user_id}/raw/{timestamp}_{filename}
+        2. Extracts text in-memory using parser.py without writing to disk
+        3. Runs AI CV review engine
+        4. Persists metadata to Supabase table `career_resumes`
+        """
+        ts = int(datetime.now(timezone.utc).timestamp())
+        clean_name = re.sub(r"[^\w\.-]", "_", str(filename or "cv.pdf")).strip()
+        r2_key = f"resumes/{user_id}/raw/{ts}_{clean_name}"
+        content_type = "application/pdf" if clean_name.lower().endswith(".pdf") else "application/octet-stream"
+
+        # 1. Upload to Cloudflare R2
+        raw_file_url = await r2_client.upload_bytes_async(file_buffer, r2_key, content_type=content_type)
+
+        # 2. In-memory text extraction
+        extracted_text = parse_resume_buffer(file_buffer, filename=clean_name)
+        if not extracted_text:
+            try:
+                raw_bytes = file_buffer.getvalue() if isinstance(file_buffer, io.BytesIO) else file_buffer
+                extracted_text = extract_text_from_bytes(raw_bytes, filename=clean_name) or ""
+            except Exception:
+                pass
+
+        # 3. AI Evaluation
+        eval_result = {}
+        if extracted_text and len(extracted_text) >= 30:
+            try:
+                eval_result = cv_review_engine.evaluate_cv(extracted_text, target_position="General Professional")
+            except Exception as e:
+                logger.warning(f"[Career Ingest] AI evaluation warning: {e}")
+                eval_result = {"status": "unprocessed", "error": str(e)}
+
+        # 4. Supabase Persistence (Metadata only, no binary/base64)
+        resume_record_id = None
+        supabase = get_supabase()
+        if supabase:
+            try:
+                insert_payload = {
+                    "user_id": str(user_id),
+                    "tenant_id": TENANT_ID,
+                    "raw_file_url": raw_file_url,
+                    "filename": clean_name,
+                    "parsed_content": {"raw_text": extracted_text[:12000]},
+                    "analysis_result": eval_result,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                res = supabase.table("career_resumes").insert(insert_payload).execute()
+                if res and res.data and len(res.data) > 0:
+                    resume_record_id = res.data[0].get("id")
+            except Exception as db_err:
+                logger.warning(f"[Career Ingest] Supabase career_resumes logging notice: {db_err}")
+
+        return {
+            "status": "success",
+            "resume_id": resume_record_id or f"res_{user_id}_{ts}",
+            "user_id": user_id,
+            "filename": clean_name,
+            "raw_file_url": raw_file_url,
+            "extracted_text": extracted_text,
+            "analysis_result": eval_result,
+        }
+
+    async def generate_and_upload_ats(
+        self,
+        user_id: str,
+        parsed_content: Optional[Dict[str, Any]] = None,
+        analysis_result: Optional[Dict[str, Any]] = None,
+        resume_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Compiles and renders ATS-friendly PDF directly to io.BytesIO stream,
+        uploads to Cloudflare R2 (resumes/{user_id}/generated/ats_{user_id}_{timestamp}.pdf),
+        and updates metadata in Supabase `career_resumes`.
+        """
+        ts = int(datetime.now(timezone.utc).timestamp())
+        r2_key = f"resumes/{user_id}/generated/ats_{user_id}_{ts}.pdf"
+
+        # 1. Generate PDF in-memory buffer via ReportLab
+        pdf_buffer = self._render_ats_pdf_buffer(
+            user_id=user_id,
+            parsed_content=parsed_content or {},
+            analysis_result=analysis_result or {},
+        )
+
+        # 2. Upload to Cloudflare R2
+        generated_file_url = await r2_client.upload_bytes_async(pdf_buffer, r2_key, content_type="application/pdf")
+
+        # 3. Update Supabase metadata
+        supabase = get_supabase()
+        if supabase:
+            try:
+                update_payload = {
+                    "generated_file_url": generated_file_url,
+                    "status": "ATS_GENERATED",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+                if resume_id:
+                    supabase.table("career_resumes").update(update_payload).eq("id", resume_id).execute()
+                else:
+                    supabase.table("career_resumes").update(update_payload).eq("user_id", user_id).execute()
+            except Exception as db_err:
+                logger.warning(f"[Career ATS] Supabase career_resumes update notice: {db_err}")
+
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "generated_file_url": generated_file_url,
+            "destination_key": r2_key,
+        }
+
+    def _render_ats_pdf_buffer(
+        self,
+        user_id: str,
+        parsed_content: Dict[str, Any],
+        analysis_result: Dict[str, Any],
+    ) -> io.BytesIO:
+        """Renders standard single-column ATS resume directly into in-memory BytesIO stream."""
+        from reportlab.lib.pagesizes import letter
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib import colors
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buf,
+            pagesize=letter,
+            rightMargin=40,
+            leftMargin=40,
+            topMargin=40,
+            bottomMargin=40,
+        )
+        styles = getSampleStyleSheet()
+
+        title_style = ParagraphStyle(
+            "ATSTitle",
+            parent=styles["Heading1"],
+            fontName="Helvetica-Bold",
+            fontSize=18,
+            leading=22,
+            alignment=1,
+            textColor=colors.HexColor("#1A365D"),
+        )
+        contact_style = ParagraphStyle(
+            "ATSContact",
+            parent=styles["Normal"],
+            fontName="Helvetica",
+            fontSize=10,
+            leading=14,
+            alignment=1,
+            textColor=colors.HexColor("#4A5568"),
+        )
+        section_style = ParagraphStyle(
+            "ATSSection",
+            parent=styles["Heading2"],
+            fontName="Helvetica-Bold",
+            fontSize=12,
+            leading=16,
+            textColor=colors.HexColor("#2B6CB0"),
+            spaceBefore=10,
+            spaceAfter=4,
+        )
+        body_style = ParagraphStyle(
+            "ATSBody",
+            parent=styles["Normal"],
+            fontName="Helvetica",
+            fontSize=10,
+            leading=14,
+            textColor=colors.HexColor("#2D3748"),
+        )
+
+        name = parsed_content.get("name") or analysis_result.get("candidate_name") or f"Candidate {user_id[-4:] if len(user_id) >= 4 else user_id}"
+        contact_info = parsed_content.get("contact") or f"WhatsApp: {user_id} | Verified BoonTrack Career Candidate"
+        summary = analysis_result.get("summary") or parsed_content.get("summary") or "Results-driven professional with demonstrated experience in driving organizational performance and operational excellence."
+
+        story = [
+            Paragraph(name, title_style),
+            Paragraph(contact_info, contact_style),
+            Spacer(1, 8),
+            HRFlowable(width="100%", thickness=1, color=colors.HexColor("#CBD5E0"), spaceBefore=4, spaceAfter=8),
+            Paragraph("PROFESSIONAL SUMMARY", section_style),
+            Paragraph(summary, body_style),
+            Spacer(1, 8),
+            Paragraph("CORE COMPETENCIES & KEY STRENGTHS", section_style),
+        ]
+
+        strengths = analysis_result.get("strengths") or ["Operational Strategy", "Workflow Optimization", "Cross-Functional Collaboration", "Data-Driven Decision Making"]
+        for s in strengths:
+            story.append(Paragraph(f"• {s}", body_style))
+
+        recommendations = analysis_result.get("recommendations") or analysis_result.get("improvements") or []
+        if recommendations:
+            story.append(Spacer(1, 8))
+            story.append(Paragraph("ATS OPTIMIZATION & KEY ACHIEVEMENTS", section_style))
+            for r in recommendations:
+                story.append(Paragraph(f"• {r}", body_style))
+
+        doc.build(story)
+        buf.seek(0)
+        return buf
+
     async def handle_document(self, sender_wa_id: str, display_name: str, media_id: Optional[str], filename: str):
         """Handler untuk dokumen CV atau naskah (PDF / DOCX)"""
         await self.check_and_expire_session(sender_wa_id, ttl_minutes=30)
@@ -452,7 +662,16 @@ class CareerService:
 
         try:
             file_bytes = await download_whatsapp_media(media_id, tenant_id=TENANT_ID)
-            extracted_text = extract_text_from_bytes(file_bytes, filename)
+
+            # Ingest raw CV directly via Cloudflare R2 & In-Memory Parser
+            ingest_result = await self.ingest_raw_cv(
+                user_id=sender_wa_id,
+                file_buffer=file_bytes,
+                filename=filename,
+            )
+            extracted_text = ingest_result.get("extracted_text", "")
+            user_session["raw_file_url"] = ingest_result.get("raw_file_url", "")
+            user_session["resume_id"] = ingest_result.get("resume_id", "")
 
             if not extracted_text or len(extracted_text) < 30:
                 await send_whatsapp_text(
