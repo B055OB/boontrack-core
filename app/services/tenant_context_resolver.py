@@ -222,6 +222,7 @@ def build_context_from_dict(row: Dict[str, Any]) -> TenantRuntimeContext:
         template_code=template_code,
         capabilities=capabilities,
         ai_persona=ai_persona,
+        metadata=meta,
     )
 
 
