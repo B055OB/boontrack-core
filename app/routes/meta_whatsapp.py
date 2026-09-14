@@ -665,6 +665,37 @@ async def handle_whatsapp_webhook(request: Request):
         return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "action": "ask_ai_prompt"})
 
     # -------------------------------------------------------------------------
+    # 2.5 CUSTOM KEYWORD AUTO-REPLY RULES PER TENANT
+    # -------------------------------------------------------------------------
+    from app.services.auto_reply_service import find_tenant_auto_reply
+    custom_auto_reply = await find_tenant_auto_reply(
+        tenant_slug=active_tenant,
+        user_message=incoming_text,
+    )
+    if custom_auto_reply:
+        logger.info(f"[META WA AUTO-REPLY] Matched custom keyword rule for '{active_tenant}' from '{from_phone}'")
+        if from_phone:
+            await send_whatsapp_text(
+                to_phone=from_phone,
+                text=custom_auto_reply,
+                tenant_id="ombudi",
+                phone_number_id=phone_id,
+            )
+        safe_log_to_supabase_messages(
+            sender="bot",
+            text=custom_auto_reply,
+            tenant_id=active_tenant,
+            channel="whatsapp",
+            user_phone=from_phone,
+            user_name=contact_name,
+        )
+        return JSONResponse(status_code=200, content={
+            "status": "auto_reply_matched",
+            "tenant": active_tenant,
+            "reply": custom_auto_reply
+        })
+
+    # -------------------------------------------------------------------------
     # 3. 3-LAYER CONVERSATIONAL COMMERCE ENGINE (LAYER 1 -> 2 -> 3 + VALIDATOR)
     # -------------------------------------------------------------------------
     session_key = f"{active_tenant}:{clean_phone}"

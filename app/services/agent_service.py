@@ -74,6 +74,13 @@ async def process_incoming_message(
 ) -> str:
     """Processes incoming message for a tenant with appropriate fallback service routing and telemetry."""
     from app.services.tenant_context_resolver import tenant_context_resolver, has_capability
+    from app.services.auto_reply_service import find_tenant_auto_reply
+
+    # 0. Custom Keyword Auto-Reply Rules per Tenant
+    custom_reply = await find_tenant_auto_reply(tenant_slug, message)
+    if custom_reply:
+        return custom_reply
+
     context = await tenant_context_resolver.resolve_tenant(tenant_slug)
 
     # 1. Membership Capability (Gym / Facility)

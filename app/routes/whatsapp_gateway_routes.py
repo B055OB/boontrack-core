@@ -253,16 +253,28 @@ async def process_inbound_message(payload: InboundPayload):
         or "trust_builder"
     ).lower().strip()
 
-    # 2. Pipeline Numbered Menu Flow: Tanya Produk -> Pilih Nomor -> Testimoni / Beli / Kembali
-    menu_reply = await whatsapp_menu_flow_service.process_message(
+    # 1.5 Custom Keyword Auto-Reply Rules per Tenant
+    from app.services.auto_reply_service import find_tenant_auto_reply
+    custom_auto_reply = await find_tenant_auto_reply(
         tenant_slug=tenant_slug,
-        sender_phone=clean_phone,
-        incoming_text=incoming_text,
-        contact_name=contact_name,
+        user_message=incoming_text,
+        tenant_metadata=tenant_info.get("metadata") or store_details.get("metadata"),
     )
-    if menu_reply:
-        logger.info(f"[GROWTH GATEWAY MENU] Handled by Numbered Menu Flow for '{clean_phone}'")
-        reply = menu_reply
+    if custom_auto_reply:
+        logger.info(f"[GROWTH GATEWAY AUTO-REPLY] Matched custom keyword rule for '{tenant_slug}' from '{clean_phone}'")
+        reply = custom_auto_reply
+
+    # 2. Pipeline Numbered Menu Flow: Tanya Produk -> Pilih Nomor -> Testimoni / Beli / Kembali
+    if not reply:
+        menu_reply = await whatsapp_menu_flow_service.process_message(
+            tenant_slug=tenant_slug,
+            sender_phone=clean_phone,
+            incoming_text=incoming_text,
+            contact_name=contact_name,
+        )
+        if menu_reply:
+            logger.info(f"[GROWTH GATEWAY MENU] Handled by Numbered Menu Flow for '{clean_phone}'")
+            reply = menu_reply
 
     # 3. Pipeline Auto-Reply: Deteksi Checkout & Pembelian Cepat
     if not reply:

@@ -49,6 +49,7 @@ class TenantSettingsUpdateRequest(BaseModel):
     payout: Optional[Dict[str, Any]] = Field(None, description="Payout & bank account details")
     payment_methods: Optional[List[str]] = Field(None, description="Supported payment methods")
     bank_accounts: Optional[List[Dict[str, Any]]] = Field(None, description="Bank account numbers and details")
+    auto_replies: Optional[List[Dict[str, Any]]] = Field(None, description="Custom auto-reply keyword rules")
 
 
 class TenantProductUpsertRequest(BaseModel):
@@ -101,6 +102,46 @@ async def update_tenant_settings_endpoint(
         "status": "success",
         "message": f"Settings for tenant '{slug}' successfully updated",
         "settings": updated,
+    }
+
+
+class AutoRepliesPayload(BaseModel):
+    auto_replies: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+@tenant_router.get("/{slug}/auto-replies", summary="Get Tenant Auto-Reply Rules")
+async def get_tenant_auto_replies_endpoint(slug: str):
+    """Retrieves custom keyword auto-reply rules for a tenant."""
+    settings = onboarding_service.get_tenant_settings(slug)
+    if not settings:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tenant with slug '{slug}' not found",
+        )
+    meta = settings.get("metadata") or settings
+    rules = meta.get("auto_replies") or []
+    return {
+        "status": "success",
+        "tenant_slug": slug,
+        "auto_replies": rules,
+    }
+
+
+@tenant_router.put("/{slug}/auto-replies", summary="Update Tenant Auto-Reply Rules")
+@tenant_router.post("/{slug}/auto-replies", summary="Update Tenant Auto-Reply Rules Alias")
+async def update_tenant_auto_replies_endpoint(slug: str, payload: AutoRepliesPayload):
+    """Updates custom keyword auto-reply rules in tenant metadata."""
+    updated = onboarding_service.update_tenant_settings(slug, {"auto_replies": payload.auto_replies})
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tenant with slug '{slug}' not found",
+        )
+    return {
+        "status": "success",
+        "message": f"Auto-reply rules for tenant '{slug}' successfully updated",
+        "tenant_slug": slug,
+        "auto_replies": payload.auto_replies,
     }
 
 

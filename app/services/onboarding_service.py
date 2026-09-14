@@ -737,11 +737,11 @@ class OnboardingService:
         if "faq" in updates:
             tenant["faq"] = updates["faq"]
 
-        # Support QRIS, branding, and payout fields in tenant profile
+        # Support QRIS, branding, payout, and auto_replies fields in tenant profile
         for key in (
             "qris_image_url", "qris_url", "qris_string",
             "logo_url", "avatar_url", "banner_url",
-            "payout", "payment_methods", "bank_accounts"
+            "payout", "payment_methods", "bank_accounts", "auto_replies"
         ):
             if key in updates and updates[key] is not None:
                 tenant[key] = updates[key]
@@ -849,7 +849,7 @@ class OnboardingService:
                 for key in (
                     "qris_image_url", "qris_url", "qris_string",
                     "logo_url", "avatar_url", "banner_url",
-                    "payout", "payment_methods", "bank_accounts"
+                    "payout", "payment_methods", "bank_accounts", "auto_replies"
                 ):
                     if key in tenant and tenant[key] is not None:
                         updated_meta[key] = tenant[key]
