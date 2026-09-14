@@ -28,27 +28,8 @@ TENANT_CONFIG_DIR = os.getenv(
 LOADED_CONFIG_TENANTS: Dict[str, TenantConfig] = {}
 
 TENANT_REGISTRY: Dict[str, Dict[str, Any]] = {
-    "gym": {
-        "name": "Atmosfitnes Gym Assistant",
-        "module": "app.tenants.gym.router",
-        "register_func": "register_gym_routes",
-        "description": "Smart Gym & IoT Turnstile WhatsApp Assistant",
-        "enabled": True,
-    },
-    "career": {
-        "name": "Career Assistant",
-        "module": "app.tenants.career.router",
-        "register_func": "register_career_routes",
-        "description": "WhatsApp Career & CV Review Assistant",
-        "enabled": True,
-    },
-    "om_budi": {
-        "name": "Om Budi Bot",
-        "module": "app.tenants.om_budi.router",
-        "register_func": "register_om_budi_routes",
-        "description": "Interactive Om Budi WhatsApp Assistant",
-        "enabled": True,
-    },
+    # Legacy tenant modules (gym, career, om_budi) deprecated in Phase E.
+    # Routing is now handled centrally via TenantRuntimeContext and dynamic capabilities.
     "reader": {
         "name": "Android Reader",
         "module": "app.modules.reader.router",
