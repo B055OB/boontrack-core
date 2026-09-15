@@ -8,6 +8,7 @@ Endpoints:
 - PATCH /api/v1/superadmin/leads/{id}/status: Updates a lead's status.
 """
 
+import json
 import asyncio
 import logging
 from typing import Optional
@@ -156,6 +157,7 @@ def _aiohttp_cors_json_response(data: dict, status_code: int = 200) -> web.Respo
     return web.json_response(
         data,
         status=status_code,
+        dumps=lambda obj: json.dumps(obj, default=str),
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
