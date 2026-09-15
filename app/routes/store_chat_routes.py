@@ -107,6 +107,90 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
             "description": item.get("description", "")
         })
 
+    from app.services.unified_conversation_service import (
+        unified_conversation_engine,
+        get_welcome_buttons_for_category,
+        normalize_business_category,
+        EMPTY_CATALOG_MESSAGE,
+        UNKNOWN_PRODUCT_MESSAGE,
+    )
+    from app.services.rotary_routing_service import rotary_routing_service
+
+    business_category = normalize_business_category(settings.get("tenant", {}).get("category") or settings.get("tenant", {}).get("vertical") or "PHYSICAL")
+    welcome_buttons = get_welcome_buttons_for_category(business_category)
+
+    # ZERO-HALLUCINATION SAFE GUARD 1: Katalog Kosong
+    if not normalized_catalog:
+        rotary_routing_service.ensure_conversation_and_mark_unassigned(
+            tenant_id=clean_slug,
+            phone_or_session=session_id,
+            reason="EMPTY_CATALOG_HANDOVER"
+        )
+        safe_log_to_supabase_messages(
+            sender="bot", text=EMPTY_CATALOG_MESSAGE, tenant_id=clean_slug, channel="webchat", user_id=session_id
+        )
+        return StoreChatResponse(
+            reply_text=EMPTY_CATALOG_MESSAGE,
+            action="CS_HANDOVER",
+            payload={"product_ids": []},
+            session_state={"tenant_id": clean_slug, "session_id": session_id},
+            status="success",
+            type="TEXT",
+            reply=EMPTY_CATALOG_MESSAGE,
+            quick_actions=welcome_buttons,
+            session_id=session_id,
+            tenant_id=clean_slug,
+        )
+
+    # ZERO-HALLUCINATION SAFE GUARD 2: Pertanyaan Produk di Luar Database
+    is_unknown, queried_item = unified_conversation_engine.detect_unlisted_product_inquiry(q, normalized_catalog)
+    if is_unknown:
+        rotary_routing_service.ensure_conversation_and_mark_unassigned(
+            tenant_id=clean_slug,
+            phone_or_session=session_id,
+            reason=f"UNKNOWN_PRODUCT_QUERY: {queried_item}"
+        )
+        safe_log_to_supabase_messages(
+            sender="bot", text=UNKNOWN_PRODUCT_MESSAGE, tenant_id=clean_slug, channel="webchat", user_id=session_id
+        )
+        return StoreChatResponse(
+            reply_text=UNKNOWN_PRODUCT_MESSAGE,
+            action="CS_HANDOVER",
+            payload={"product_ids": [p["product_id"] for p in normalized_catalog]},
+            session_state={"tenant_id": clean_slug, "session_id": session_id},
+            status="success",
+            type="TEXT",
+            reply=UNKNOWN_PRODUCT_MESSAGE,
+            quick_actions=welcome_buttons,
+            session_id=session_id,
+            tenant_id=clean_slug,
+        )
+
+    # Greeting Awal
+    if unified_conversation_engine.is_initial_greeting(q, payload.conversation_history) or payload.button_id == "START_GREETING":
+        greeting_text = (
+            f"{welcome_msg}\n\n"
+            f"Silakan pilih menu cepat berikut untuk memulai:\n"
+            f"1. {welcome_buttons[0]}\n"
+            f"2. {welcome_buttons[1]}\n"
+            f"3. {welcome_buttons[2]}"
+        )
+        safe_log_to_supabase_messages(
+            sender="bot", text=greeting_text, tenant_id=clean_slug, channel="webchat", user_id=session_id
+        )
+        return StoreChatResponse(
+            reply_text=greeting_text,
+            action="SHOW_MENU",
+            payload={"product_ids": [p["product_id"] for p in normalized_catalog]},
+            session_state={"tenant_id": clean_slug, "session_id": session_id},
+            status="success",
+            type="TEXT",
+            reply=greeting_text,
+            quick_actions=welcome_buttons,
+            session_id=session_id,
+            tenant_id=clean_slug,
+        )
+
     # 1. CEK LOCAL FAQ INTERCEPTOR (Hemat Biaya LLM)
     matched_faq_answer = None
     for faq in faqs:
@@ -117,12 +201,11 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
             break
 
     if matched_faq_answer:
-        ai_reply = f"{matched_faq_answer}\n\nAda hal lain mengenai layanan atau ukuran toren yang ingin ditanyakan?"
+        ai_reply = f"{matched_faq_answer}\n\nAda hal lain yang ingin ditanyakan?"
         action = "NONE"
-        quick_actions = ["Daftar Harga Layanan", "Metode Pembayaran", "Jadwal & Cara Pesan"]
+        quick_actions = welcome_buttons
     else:
         # 2. STATE MACHINE FUNNEL (Self-Service Rules)
-        # Deteksi kapasitas angka dari pesan pembeli (misal: 500, 1000, dll)
         user_numbers = re.findall(r"\d+", q_lower)
         matched_product = None
         
@@ -140,15 +223,15 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
             price_display = f"Rp{matched_product['price']:,.0f}"
             promo_display = f" (Promo: Rp{matched_product['promo_price']:,.0f})" if matched_product['promo_price'] else ""
             ai_reply = (
-                f"Untuk kapasitas {matched_product['title']}, biaya jasanya adalah *{price_display}{promo_display}*.\n\n"
-                f"Bagaimana Kak, ingin dilanjutkan untuk penjadwalan pengerjaan sekarang?"
+                f"Untuk pilihan {matched_product['title']}, biaya jasanya adalah *{price_display}{promo_display}*.\n\n"
+                f"Bagaimana Kak, ingin dilanjutkan untuk pemesanan sekarang?"
             )
             action = "SHOW_PRODUCT"
             quick_actions = ["Ya, Lanjut Pesan / Booking", "Pikir-pikir Dulu"]
         elif is_pikir_dulu:
             ai_reply = "Baik, terima kasih banyak Kak atas informasinya. Kalau nanti berminat, silakan kontak kami kembali ya. Sehat selalu! 😊"
             action = "NONE"
-            quick_actions = ["Daftar Harga Layanan"]
+            quick_actions = welcome_buttons
         elif any(w in q_lower for w in ["lanjut", "pesan", "booking", "mau"]):
             ai_reply = "Baik Kak! Silakan pilih metode pembayaran yang diinginkan (dibayar setelah pengerjaan beres / 0% fee QRIS):"
             action = "SHOW_CHECKOUT"
@@ -162,23 +245,19 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
             action = "SHOW_CHECKOUT"
             quick_actions = ["Konfirmasi Jadwal", "Hubungi Admin WA"]
         else:
-            # 3. LLM BACKUP FALLBACK (Jika pertanyaan umum di luar aturan)
-            catalog_summary = "\n".join([f"- {p['title']}: Rp{p['price']:,.0f}" for p in normalized_catalog])
-            system_prompt = (
-                f"Anda adalah asisten ramah dan solutif untuk {clean_slug}.\n"
-                f"Sapaan Awal: {welcome_msg}\n"
-                f"Daftar Layanan & Harga:\n{catalog_summary}\n"
-                f"Jawab secara singkat, ramah, dan arahkan pembeli untuk menyebutkan kapasitas toren yang ingin dikuras."
-            )
-            ai_raw = await commerce_ai_engine.generate_commerce_response(
+            # 3. LLM BACKUP FALLBACK Deterministik
+            engine_res = await unified_conversation_engine.process_chat(
                 tenant_slug=clean_slug,
-                user_message=q,
-                user_phone=session_id,
+                message=q,
+                sender_id=session_id,
+                sender_name="Visitor",
+                channel="webchat",
                 history=payload.conversation_history,
+                button_id=payload.button_id,
             )
-            ai_reply, dynamic_quick_actions = parse_ai_quick_actions_response(ai_raw)
-            quick_actions = dynamic_quick_actions or ["Daftar Harga Layanan", "Jadwal & Cara Pesan"]
-            action = "NONE"
+            ai_reply = engine_res.get("reply", "")
+            quick_actions = engine_res.get("quick_actions") or welcome_buttons
+            action = engine_res.get("action", "NONE")
 
     # Log pesan & kembalikan respons terstruktur
     safe_log_to_supabase_messages(

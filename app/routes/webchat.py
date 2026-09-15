@@ -133,8 +133,7 @@ async def handle_holding_webchat(payload: WebChatRequest):
 @router.post("/tenant/{slug}", response_model=WebChatResponse, summary="Interactive Webchat for Specific Tenant Slug")
 @router.post("/{slug}", response_model=WebChatResponse, summary="Interactive Webchat for Specific Tenant Slug Alias")
 async def handle_dynamic_tenant_webchat(slug: str, payload: WebChatRequest):
-    """Processes interactive webchat for a specific merchant tenant using CommerceAIEngine."""
-    from app.services.ai_engine import commerce_ai_engine
+    from app.services.unified_conversation_service import unified_conversation_engine
     from app.services.onboarding_service import onboarding_service
 
     clean_slug = str(slug).strip().lower()
@@ -145,12 +144,14 @@ async def handle_dynamic_tenant_webchat(slug: str, payload: WebChatRequest):
             detail=f"Tenant with slug '{slug}' not found",
         )
 
-    reply = await commerce_ai_engine.generate_commerce_response(
+    engine_res = await unified_conversation_engine.process_chat(
         tenant_slug=clean_slug,
-        user_message=payload.message,
-        user_phone=payload.session_id,
-        user_name=f"Web Visitor #{payload.session_id[:5]}",
+        message=payload.message,
+        sender_id=payload.session_id,
+        sender_name=f"Web Visitor #{payload.session_id[:5]}",
+        channel="webchat",
     )
+    reply = engine_res.get("reply", "")
 
     await log_to_supabase_messages(
         sender="bot",

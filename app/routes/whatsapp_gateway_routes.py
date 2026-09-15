@@ -264,6 +264,19 @@ async def process_inbound_message(payload: InboundPayload):
         logger.info(f"[GROWTH GATEWAY AUTO-REPLY] Matched custom keyword rule for '{tenant_slug}' from '{clean_phone}'")
         reply = custom_auto_reply
 
+    # 1.6 Unified Conversation Engine Guardrails (Greeting Awal, Safe-Guard Katalog Kosong & Produk Tak Terdaftar)
+    from app.services.unified_conversation_service import unified_conversation_engine
+    engine_res = await unified_conversation_engine.process_chat(
+        tenant_slug=tenant_slug,
+        message=incoming_text,
+        sender_id=clean_phone,
+        sender_name=contact_name,
+        channel="whatsapp",
+    )
+    # Jika trigger greeting awal, katalog kosong, atau produk di luar database
+    if engine_res.get("action") in ("SHOW_MENU", "CS_HANDOVER") or engine_res.get("unassigned_triggered"):
+        reply = engine_res.get("reply")
+
     # 2. Pipeline Numbered Menu Flow: Tanya Produk -> Pilih Nomor -> Testimoni / Beli / Kembali
     if not reply:
         menu_reply = await whatsapp_menu_flow_service.process_message(
@@ -311,22 +324,25 @@ async def process_inbound_message(payload: InboundPayload):
             except Exception as ft_err:
                 logger.warning(f"[GROWTH FAST TRACK WARN] {ft_err}")
 
-    # 4. Pipeline AI Knowledge Base: Tanya Jawab Produk, Konsultasi, dan Persona Tenant
+    # 4. Pipeline AI Knowledge Base & Unified Conversation Engine
     if not reply:
-        logger.info(
-            f"[GROWTH GATEWAY AI] 🧠 Mengambil jawaban dari AI Knowledge Base "
-            f"(Strategy: '{resolved_strategy}') untuk tenant '{tenant_slug}'..."
-        )
-        try:
-            reply = await commerce_ai_engine.generate_commerce_response(
-                tenant_slug=tenant_slug,
-                user_message=incoming_text,
-                user_phone=clean_phone,
-                user_name=contact_name,
-                bot_strategy=resolved_strategy,
+        if engine_res and engine_res.get("reply"):
+            reply = engine_res.get("reply")
+        else:
+            logger.info(
+                f"[GROWTH GATEWAY AI] 🧠 Mengambil jawaban dari AI Knowledge Base "
+                f"(Strategy: '{resolved_strategy}') untuk tenant '{tenant_slug}'..."
             )
-        except Exception as ai_err:
-            logger.error(f"[GROWTH AI ERROR] Error in commerce_ai_engine for '{tenant_slug}': {ai_err}", exc_info=True)
+            try:
+                reply = await commerce_ai_engine.generate_commerce_response(
+                    tenant_slug=tenant_slug,
+                    user_message=incoming_text,
+                    user_phone=clean_phone,
+                    user_name=contact_name,
+                    bot_strategy=resolved_strategy,
+                )
+            except Exception as ai_err:
+                logger.error(f"[GROWTH AI ERROR] Error in commerce_ai_engine for '{tenant_slug}': {ai_err}", exc_info=True)
 
     # 5. Fallback ke General Agent / Tenant Persona Handler
     if not reply:

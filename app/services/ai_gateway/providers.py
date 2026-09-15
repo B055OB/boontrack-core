@@ -86,8 +86,9 @@ class GeminiProvider(BaseLLMProvider):
         if capability and capability in CAPABILITY_TO_GEMINI_THINKING:
             thinking_level = CAPABILITY_TO_GEMINI_THINKING[capability]
 
+        temp = float(context.get("temperature", 0.0)) if isinstance(context, dict) and "temperature" in context else 0.0
         generation_config: Dict[str, Any] = {
-            "temperature": 0.2,
+            "temperature": temp,
             "maxOutputTokens": 1024,
             "responseMimeType": "application/json",
         }
@@ -113,7 +114,7 @@ class GeminiProvider(BaseLLMProvider):
                 # Fallback tanpa thinkingConfig jika model v1 / payload ditolak
                 fallback_payload = {
                     "contents": [{"parts": [{"text": f"{system_prompt}\n\nUser: {user_message}"}]}],
-                    "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1024},
+                    "generationConfig": {"temperature": temp, "maxOutputTokens": 1024},
                 }
                 async with session.post(url, json=fallback_payload) as fb_resp:
                     if fb_resp.status == 200:
@@ -166,13 +167,14 @@ class GroqProvider(BaseLLMProvider):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        temp = float(context.get("temperature", 0.0)) if isinstance(context, dict) and "temperature" in context else 0.0
         payload = {
             "model": target_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
-            "temperature": 0.2,
+            "temperature": temp,
             "response_format": {"type": "json_object"},
             "max_tokens": 1024,
         }
@@ -229,13 +231,14 @@ class OpenRouterProvider(BaseLLMProvider):
             if m not in models_to_try:
                 models_to_try.append(m)
 
+        temp = float(context.get("temperature", 0.0)) if isinstance(context, dict) and "temperature" in context else 0.0
         payload = {
             "models": models_to_try,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
-            "temperature": 0.2,
+            "temperature": temp,
             "response_format": {"type": "json_object"},
             "max_tokens": 1024,
         }

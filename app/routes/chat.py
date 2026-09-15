@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from app.services.ai_engine import commerce_ai_engine
 from app.services.onboarding_service import onboarding_service
 from app.services.whatsapp_service import safe_log_to_supabase_messages
+from app.services.unified_conversation_service import unified_conversation_engine
 
 logger = logging.getLogger("CHAT_ROUTES")
 
@@ -37,6 +38,11 @@ class TenantChatResponse(BaseModel):
     slug: str
     reply: str
     session_id: Optional[str] = None
+    quick_actions: Optional[List[str]] = None
+    business_category: Optional[str] = None
+    action: Optional[str] = None
+    type: Optional[str] = None
+    unassigned_triggered: Optional[bool] = False
 
 
 @chat_router.post(
@@ -50,14 +56,7 @@ class TenantChatResponse(BaseModel):
     summary="Send message to Tenant Commerce Chat Alias",
 )
 async def send_tenant_chat(payload: TenantChatRequest = Body(...)):
-    """Processes interactive chat for a tenant using CommerceAIEngine with real product context.
-    
-    Accepts:
-    - 'tenant_slug', 'slug', or 'tenant_id'
-    - 'message' (user query or button label)
-    - 'history' (conversation history)
-    - 'session_id' (user session)
-    """
+    """Processes interactive chat for a tenant using UnifiedConversationEngine with real product context."""
     target_slug = payload.tenant_slug or payload.slug or payload.tenant_id
     if not target_slug:
         raise HTTPException(
@@ -73,14 +72,17 @@ async def send_tenant_chat(payload: TenantChatRequest = Body(...)):
             detail=f"Tenant with slug or ID '{target_slug}' not found",
         )
 
-    reply = await commerce_ai_engine.generate_commerce_response(
+    engine_res = await unified_conversation_engine.process_chat(
         tenant_slug=clean_slug,
-        user_message=payload.message,
-        user_phone=payload.session_id or "",
-        user_name=payload.user_name or "Visitor",
-        button_id=payload.button_id,
+        message=payload.message,
+        sender_id=payload.session_id or f"web_sess_{clean_slug}",
+        sender_name=payload.user_name or "Visitor",
+        channel="webchat",
         history=payload.history,
+        button_id=payload.button_id,
     )
+
+    reply = engine_res.get("reply", "")
 
     # Safe log to Supabase messages
     safe_log_to_supabase_messages(
@@ -98,6 +100,11 @@ async def send_tenant_chat(payload: TenantChatRequest = Body(...)):
         slug=clean_slug,
         reply=reply,
         session_id=payload.session_id,
+        quick_actions=engine_res.get("quick_actions"),
+        business_category=engine_res.get("business_category"),
+        action=engine_res.get("action"),
+        type=engine_res.get("type"),
+        unassigned_triggered=engine_res.get("unassigned_triggered", False),
     )
 
 
