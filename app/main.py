@@ -29,7 +29,7 @@ from app.routes.webchat import router as webchat_router
 from app.routes.internal_routes import internal_router
 from app.routes.xendit import xendit_router, register_xendit_routes
 from app.routes.onboarding import onboarding_router
-from app.routes.tenant_onboard_routes import tenant_intake_router
+from app.routes.tenant_onboard_routes import tenant_intake_router, register_tenant_onboard_routes
 from app.routes.meta_whatsapp import meta_whatsapp_router
 from app.routes.chat import chat_router
 from app.routes.tenant_routes import tenant_router, tenant_singular_router, commerce_products_router, legacy_tenant_router
@@ -306,6 +306,7 @@ async def start_application():
 
     register_product_routes(aiohttp_app)
     register_custom_domain_routes(aiohttp_app)
+    register_tenant_onboard_routes(aiohttp_app)
 
     port = int(os.getenv("PORT", 8080))
     await start_web_server(aiohttp_app, port=port)
