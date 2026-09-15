@@ -28,6 +28,8 @@ logger = logging.getLogger("WABA_NOTIFICATION_SERVICE")
 # ---------------------------------------------------------------------------
 # Environment Config
 # ---------------------------------------------------------------------------
+# Environment Config
+# ---------------------------------------------------------------------------
 WABA_ACCESS_TOKEN: str = (
     os.getenv("WABA_ACCESS_TOKEN")
     or os.getenv("META_WA_PERMANENT_TOKEN")
@@ -48,6 +50,30 @@ META_GRAPH_VERSION: str = os.getenv("META_GRAPH_VERSION", "v20.0")
 META_BASE_URL: str = f"https://graph.facebook.com/{META_GRAPH_VERSION}"
 
 # ---------------------------------------------------------------------------
+# [SAFETY GUARD] Blocklist nomor/ID yang dinonaktifkan sementara
+# Tambahkan entri baru di sini ketika ada nomor yang perlu dihold.
+# ---------------------------------------------------------------------------
+_DEACTIVATED_PHONE_IDS: frozenset = frozenset({
+    "1268977686299719",   # [DEACTIVATED 2026-09-16] Om Budi WABA — pending penggantian
+})
+_DEACTIVATED_PHONES: frozenset = frozenset({
+    "6285139555449",      # [DEACTIVATED 2026-09-16] +62 851-3955-5449 Om Budi
+    "85139555449",        # format alternatif tanpa leading 0
+})
+
+
+def _is_blocked_sender(phone_number_id: str) -> bool:
+    """Return True jika Phone Number ID termasuk dalam blocklist deactivated."""
+    return str(phone_number_id).strip() in _DEACTIVATED_PHONE_IDS
+
+
+def _is_blocked_recipient(to_phone: str) -> bool:
+    """Return True jika nomor tujuan termasuk dalam blocklist deactivated."""
+    clean = str(to_phone).strip().lstrip("+")
+    return clean in _DEACTIVATED_PHONES
+
+
+# ---------------------------------------------------------------------------
 # Internal: Low-level WABA text sender (FREE-FORM via session window)
 # Falls back gracefully when outside 24-hour session window.
 # ---------------------------------------------------------------------------
@@ -58,12 +84,29 @@ async def _send_waba_text(to_phone: str, message: str, phone_number_id: str = ""
     token = access_token or WABA_ACCESS_TOKEN
     clean = normalize_phone_number(to_phone)
 
+    # [SAFETY GUARD] Blokir sender Phone ID yang dinonaktifkan
+    if _is_blocked_sender(pid):
+        logger.warning(
+            f"[WABA_NOTIF BLOCKED] WABA sender Phone ID '{pid}' dinonaktifkan sementara "
+            f"(pending new number replacement). Dispatch ke '{to_phone}' ditahan."
+        )
+        return {"success": False, "error": "WABA sender deactivated / pending new number replacement", "blocked": True}
+
+    # [SAFETY GUARD] Blokir recipient yang dinonaktifkan
+    if _is_blocked_recipient(to_phone):
+        logger.warning(
+            f"[WABA_NOTIF BLOCKED] Nomor tujuan '{to_phone}' termasuk dalam daftar "
+            f"nonaktif (pending replacement). Dispatch ditahan."
+        )
+        return {"success": False, "error": "WABA recipient deactivated / pending new number replacement", "blocked": True}
+
     if not pid or not token:
         logger.warning("[WABA_NOTIF] Kredensial WABA tidak terkonfigurasi — skip send.")
         return {"success": False, "error": "WABA credentials not configured"}
     if not clean or len(clean) < 8:
         logger.warning(f"[WABA_NOTIF] Nomor tujuan tidak valid: '{to_phone}'")
         return {"success": False, "error": f"Invalid phone: {to_phone}"}
+
 
     url = f"{META_BASE_URL}/{pid}/messages"
     headers = {

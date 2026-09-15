@@ -55,10 +55,18 @@ def _make_httpx_fail(status_code=400):
 
 @pytest.fixture(autouse=True)
 def set_waba_env(monkeypatch):
-    """Set WABA env vars untuk seluruh test."""
+    """
+    Set WABA env vars untuk seluruh test.
+    SUPER_ADMIN_WA_PHONE menggunakan nomor MOCK DUMMY yang tidak termasuk
+    dalam blocklist deactivated — bukan nomor Om Budi yang dinonaktifkan.
+    """
     monkeypatch.setenv("WABA_ACCESS_TOKEN", "test_waba_token")
-    monkeypatch.setenv("WABA_PHONE_NUMBER_ID", "test_phone_id")
-    monkeypatch.setenv("SUPER_ADMIN_WA_PHONE", MOCK_ADMIN_PHONE)
+    monkeypatch.setenv("WABA_PHONE_NUMBER_ID", "test_phone_id_safe")  # bukan 1268977686299719
+    monkeypatch.setenv("SUPER_ADMIN_WA_PHONE", MOCK_ADMIN_PHONE)      # 6281999888777 (mock)
+    # Override module-level constants yang sudah di-resolve saat import
+    monkeypatch.setattr("app.services.waba_notification_service.WABA_ACCESS_TOKEN", "test_waba_token")
+    monkeypatch.setattr("app.services.waba_notification_service.WABA_PHONE_NUMBER_ID", "test_phone_id_safe")
+    monkeypatch.setattr("app.services.waba_notification_service.SUPER_ADMIN_WA_PHONE", MOCK_ADMIN_PHONE)
 
 
 # ---------------------------------------------------------------------------

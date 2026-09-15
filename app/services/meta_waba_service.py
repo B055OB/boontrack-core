@@ -34,6 +34,28 @@ STATUS_RANK = {
 }
 
 
+# ---------------------------------------------------------------------------
+# [SAFETY GUARD] Blocklist Phone ID & nomor yang dinonaktifkan sementara.
+# Sync dengan waba_notification_service._DEACTIVATED_PHONE_IDS
+# ---------------------------------------------------------------------------
+_DEACTIVATED_SENDER_IDS: frozenset = frozenset({
+    "1268977686299719",   # [DEACTIVATED 2026-09-16] Om Budi WABA +6285139555449 — pending replacement
+})
+_DEACTIVATED_RECIPIENT_PHONES: frozenset = frozenset({
+    "6285139555449",
+    "85139555449",
+})
+
+
+def _waba_sender_is_blocked(phone_number_id: str) -> bool:
+    return str(phone_number_id).strip() in _DEACTIVATED_SENDER_IDS
+
+
+def _waba_recipient_is_blocked(phone: str) -> bool:
+    clean = str(phone).strip().lstrip("+")
+    return clean in _DEACTIVATED_RECIPIENT_PHONES
+
+
 class MetaGraphAPIDispatcher:
     """Dispatcher for direct Meta WhatsApp Business Cloud API (Graph API)."""
 
@@ -57,6 +79,14 @@ class MetaGraphAPIDispatcher:
             or os.getenv("PHONE_NUMBER_ID")
             or "1340866379104241"
         ).strip()
+
+        # [SAFETY GUARD] Jika Phone ID yang di-resolve termasuk yang dinonaktifkan, ganti ke empty
+        if _waba_sender_is_blocked(phone_id):
+            logger.warning(
+                f"[Meta WABA Guard] get_default_credentials: Phone ID '{phone_id}' dinonaktifkan "
+                f"(tenant={tenant_id}). Mengembalikan ID kosong — dispatch akan ditahan."
+            )
+            phone_id = ""
 
         return phone_id, token
 
@@ -157,6 +187,32 @@ class MetaGraphAPIDispatcher:
         body_parameters: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Dispatches an official template message to recipient phone number."""
+        # [SAFETY GUARD] Blokir sender Phone ID yang dinonaktifkan
+        if _waba_sender_is_blocked(phone_number_id):
+            logger.warning(
+                f"[Meta WABA BLOCKED] send_template: Sender Phone ID '{phone_number_id}' dinonaktifkan "
+                f"(pending new number replacement). Template '{template_name}' ke '{to_phone}' ditahan."
+            )
+            return {
+                "success": False,
+                "error": "WABA sender deactivated / pending new number replacement",
+                "blocked": True,
+                "phone_number_id": phone_number_id,
+            }
+
+        # [SAFETY GUARD] Blokir recipient yang dinonaktifkan
+        if _waba_recipient_is_blocked(to_phone):
+            logger.warning(
+                f"[Meta WABA BLOCKED] send_template: Recipient '{to_phone}' dinonaktifkan "
+                f"(pending replacement). Template '{template_name}' ditahan."
+            )
+            return {
+                "success": False,
+                "error": "WABA recipient deactivated / pending new number replacement",
+                "blocked": True,
+                "to_phone": to_phone,
+            }
+
         clean_phone = normalize_phone_number(to_phone)
         if not clean_phone or len(clean_phone) < 10:
             return {
