@@ -72,7 +72,7 @@ def decode_jwt_token(token: str) -> Dict[str, Any]:
     # 1. Decode with python-jose or PyJWT
     if jwt is not None:
         try:
-            return jwt.decode(clean_token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            return jwt.decode(clean_token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_aud": False})
         except Exception as e:
             err_str = str(e).lower()
             if "expired" in err_str or "signature has expired" in err_str:
@@ -83,7 +83,29 @@ def decode_jwt_token(token: str) -> Dict[str, Any]:
                 )
             logger.warning(f"JWT library decode failed: {e}")
 
-    # 2. Manual HMAC-SHA256 fallback decode
+    # 2. Try Supabase Auth get_user (for native Supabase Auth JWT tokens)
+    try:
+        if supabase is not None and hasattr(supabase, "auth") and callable(getattr(supabase.auth, "get_user", None)):
+            user_resp = supabase.auth.get_user(clean_token)
+            if user_resp and hasattr(user_resp, "user") and user_resp.user:
+                u = user_resp.user
+                return {
+                    "sub": str(u.id),
+                    "user_id": str(u.id),
+                    "email": u.email,
+                    "role": getattr(u, "role", "authenticated") or "authenticated",
+                    "aud": getattr(u, "aud", "authenticated") or "authenticated",
+                }
+    except Exception as supa_err:
+        err_msg = str(supa_err).lower()
+        if "expired" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token telah kedaluwarsa",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    # 3. Manual HMAC-SHA256 fallback decode
     try:
         import base64
         import json
@@ -147,6 +169,7 @@ async def get_current_affiliate(
 ) -> Dict[str, Any]:
     """
     Ekstrak identitas user dari Request State, Authorization Header, atau Cookie.
+    Membaca identitas affiliate berdasarkan email atau auth.uid dari session Supabase Auth.
     - 401 Unauthorized: Jika tidak ada token, token expired, atau tidak valid.
     - 403 Forbidden: Jika user terotentikasi tetapi role/keanggotaannya bukan Affiliate aktif.
     """
@@ -161,7 +184,8 @@ async def get_current_affiliate(
 
     if not token and hasattr(request, "cookies") and request.cookies:
         token = (
-            request.cookies.get("authSession")
+            request.cookies.get("affiliate_token")
+            or request.cookies.get("authSession")
             or request.cookies.get("access_token")
             or request.cookies.get("token")
         )
@@ -183,19 +207,30 @@ async def get_current_affiliate(
         request.state.user = payload
 
     user_id = payload.get("sub") or payload.get("user_id") or payload.get("id")
-    user_phone = payload.get("phone") or payload.get("phone_number")
+    user_email = payload.get("email")
     user_role = str(payload.get("role") or "").strip().upper()
 
-    # Jika payload JWT secara eksplisit mendefinisikan non-affiliate role (misal: USER, MERCHANT, CUSTOMER)
-    if user_role and user_role not in ["AFFILIATE", "PARTNER"]:
+    # Note: Supabase Auth session tokens emit role="authenticated"
+    if user_role and user_role not in ["AFFILIATE", "PARTNER", "AUTHENTICATED"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Akses ditolak. Keanggotaan bukan Affiliate aktif.",
         )
 
-    # Query profil affiliate ke database Supabase berdasarkan user_id / identity terotentikasi
+    # Query profil affiliate ke database Supabase:
+    # 1. Prioritaskan query berdasarkan email (Email Auth)
     affiliate = None
-    if user_id:
+    if user_email:
+        clean_email = str(user_email).strip().lower()
+        try:
+            res = supabase.table("affiliates").select("*").eq("email", clean_email).execute()
+            if res.data:
+                affiliate = res.data[0]
+        except Exception as e:
+            logger.warning(f"[Auth] Supabase lookup by email failed: {e}")
+
+    # 2. Query berdasarkan auth.uid / user_id
+    if not affiliate and user_id:
         try:
             res = supabase.table("affiliates").select("*").eq("id", str(user_id)).execute()
             if res.data:
@@ -203,22 +238,19 @@ async def get_current_affiliate(
         except Exception as e:
             logger.warning(f"[Auth] Supabase lookup by id failed: {e}")
 
-    if not affiliate and user_phone:
-        norm_phone = normalize_phone(str(user_phone))
-        try:
-            res = supabase.table("affiliates").select("*").eq("phone", norm_phone).execute()
-            if not res.data:
-                res = supabase.table("affiliates").select("*").eq("phone_number", norm_phone).execute()
-            if res.data:
-                affiliate = res.data[0]
-        except Exception as e:
-            logger.warning(f"[Auth] Supabase lookup by phone failed: {e}")
+        if not affiliate:
+            try:
+                res = supabase.table("affiliates").select("*").eq("auth_user_id", str(user_id)).execute()
+                if res.data:
+                    affiliate = res.data[0]
+            except Exception:
+                pass
 
-    # Jika user terotentikasi tapi tidak terdaftar di database affiliates -> 403 Forbidden
+    # Jika tidak ditemukan di tabel affiliates -> bukan mitra affiliate
     if not affiliate:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Akses ditolak. Akun Anda bukan bagian dari program Affiliate aktif.",
+            detail="Akses ditolak. Profil Affiliate tidak ditemukan untuk email/identitas ini.",
         )
 
     # Validasi role dan status keanggotaan
@@ -1136,10 +1168,10 @@ try:
 
             payload = decode_jwt_token(token)
             user_id = payload.get("sub") or payload.get("user_id") or payload.get("id")
-            user_phone = payload.get("phone") or payload.get("phone_number")
+            user_email = payload.get("email")
             user_role = str(payload.get("role") or "").strip().upper()
 
-            if user_role and user_role not in ["AFFILIATE", "PARTNER"]:
+            if user_role and user_role not in ["AFFILIATE", "PARTNER", "AUTHENTICATED"]:
                 return _aiohttp_affiliate_json_response(
                     {"status": "error", "detail": "Akses ditolak. Keanggotaan bukan Affiliate aktif."},
                     status_code=403,
@@ -1147,7 +1179,16 @@ try:
                 )
 
             affiliate = None
-            if user_id:
+            if user_email:
+                clean_email = str(user_email).strip().lower()
+                try:
+                    res = supabase.table("affiliates").select("*").eq("email", clean_email).execute()
+                    if res.data:
+                        affiliate = res.data[0]
+                except Exception:
+                    pass
+
+            if not affiliate and user_id:
                 try:
                     res = supabase.table("affiliates").select("*").eq("id", str(user_id)).execute()
                     if res.data:
@@ -1155,20 +1196,17 @@ try:
                 except Exception:
                     pass
 
-            if not affiliate and user_phone:
-                norm_phone = normalize_phone(str(user_phone))
-                try:
-                    res = supabase.table("affiliates").select("*").eq("phone", norm_phone).execute()
-                    if not res.data:
-                        res = supabase.table("affiliates").select("*").eq("phone_number", norm_phone).execute()
-                    if res.data:
-                        affiliate = res.data[0]
-                except Exception:
-                    pass
+                if not affiliate:
+                    try:
+                        res = supabase.table("affiliates").select("*").eq("auth_user_id", str(user_id)).execute()
+                        if res.data:
+                            affiliate = res.data[0]
+                    except Exception:
+                        pass
 
             if not affiliate:
                 return _aiohttp_affiliate_json_response(
-                    {"status": "error", "detail": "Akses ditolak. Akun Anda bukan bagian dari program Affiliate aktif."},
+                    {"status": "error", "detail": "Akses ditolak. Profil Affiliate tidak ditemukan untuk email/identitas ini."},
                     status_code=403,
                     request=request
                 )

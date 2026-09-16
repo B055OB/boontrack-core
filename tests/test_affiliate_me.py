@@ -81,7 +81,7 @@ def test_affiliate_me_with_regular_user_token_returns_403(mock_supabase):
         headers={"Authorization": f"Bearer {token_no_aff}"}
     )
     assert res_not_aff.status_code == 403
-    assert "bukan bagian dari program Affiliate aktif" in res_not_aff.json().get("detail", "")
+    assert "Akses ditolak" in res_not_aff.json().get("detail", "")
 
 
 @patch("app.routes.affiliate_auth.supabase")
@@ -222,3 +222,61 @@ def test_affiliate_portal_public_attribution_isolated(mock_supabase):
     # 2. Missing code -> 400 Bad Request
     res_missing = client.get("/api/v1/affiliate/portal")
     assert res_missing.status_code == 400
+
+
+@patch("app.routes.affiliate_auth.supabase")
+def test_affiliate_me_with_supabase_auth_email_token_returns_200(mock_supabase):
+    """
+    Memverifikasi token JWT Supabase Auth berbasis Email & auth.uid (role='authenticated')
+    berhasil diotentikasi dan dipetakan ke data affiliate tanpa pencocokan nomor WhatsApp.
+    """
+    user_uid = "supa-auth-uid-7777"
+    user_email = "mitra.sukses@boontrack.com"
+
+    # Supabase Auth JWT token payload
+    token_payload = {
+        "sub": user_uid,
+        "email": user_email,
+        "role": "authenticated",
+        "aud": "authenticated",
+        "exp": datetime.now(timezone.utc) + timedelta(days=1),
+    }
+    supabase_token = generate_jwt_token(token_payload)
+
+    def table_router(table_name):
+        mock_t = MagicMock()
+        if table_name == "affiliates":
+            # Mock lookup by email
+            mock_t.select.return_value.eq.return_value.execute.return_value.data = [{
+                "id": "aff_from_email_001",
+                "name": "Mitra Email Sukses",
+                "email": user_email,
+                "phone": "6281122334455",
+                "role": "AFFILIATE",
+                "status": "ACTIVE",
+                "referral_code": "MITRAEMAIL",
+            }]
+        elif table_name == "affiliate_commissions":
+            mock_t.select.return_value.eq.return_value.execute.return_value.data = [
+                {"amount": 500000, "status": "APPROVED"},
+                {"amount": 100000, "status": "PENDING"},
+            ]
+        elif table_name == "commission_ledger":
+            mock_t.select.return_value.eq.return_value.execute.return_value.data = []
+        return mock_t
+
+    mock_supabase.table.side_effect = table_router
+
+    response = client.get(
+        "/api/v1/affiliate/me",
+        headers={"Authorization": f"Bearer {supabase_token}"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == "aff_from_email_001"
+    assert data["name"] == "Mitra Email Sukses"
+    assert data["referral_code"] == "MITRAEMAIL"
+    assert data["commission"]["available"] == 500000
+    assert data["commission"]["pending"] == 100000
+    assert response.headers["Cache-Control"] == "private, no-store, no-cache, must-revalidate"
+
