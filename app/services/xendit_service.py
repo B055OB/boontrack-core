@@ -148,7 +148,7 @@ class XenditService:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Creates a Dynamic QRIS code via Xendit API without local DANA Bisnis generator."""
-        app_domain = os.getenv("APP_DOMAIN", "https://boontrack.com").rstrip("/")
+        app_domain = os.getenv("APP_DOMAIN", "https://api.boontrack.com").rstrip("/")
         resolved_callback = callback_url or f"{app_domain}/api/v1/payments/xendit/callback"
 
         payload = {

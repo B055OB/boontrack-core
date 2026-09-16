@@ -46,11 +46,11 @@ from app.routes.whatsapp_gateway_routes import router as whatsapp_gateway_router
 from app.routes.whatsapp_control import router as whatsapp_control_router, register_whatsapp_control_routes
 from app.routes.provisioning import router as provisioning_router, register_provisioning_routes
 from app.routes.growth_routes import router as growth_router, register_growth_routes
-from app.routes.d2c_order_routes import d2c_router
+from app.routes.d2c_order_routes import d2c_router, register_d2c_order_routes
 from app.routes.meta_oauth import meta_exchange_router
 from app.routes.shipping_webhook_routes import register_shipping_routes
 from app.routes.seller_ads_routes import register_seller_ads_routes
-from app.routes.affiliate_auth import router as affiliate_auth_router
+from app.routes.affiliate_auth import router as affiliate_auth_router, register_affiliate_auth_routes
 from app.routes.meta_waba_routes import waba_router
 from app.routes.shipping_routes import router as shipping_router, logistics_router
 from app.routes.partner_routes import partner_router, manager_router
@@ -66,6 +66,7 @@ from app.tenants.career.router import career_fastapi_router, register_career_rou
 from app.routers.creator_ugc import router as creator_ugc_router, register_creator_ugc_routes
 from app.routes.creator_storefront import router as creator_storefront_router, register_creator_storefront_routes
 from app.routes.digital_download_routes import router as digital_download_router, register_digital_download_routes
+from app.routes.inbox_routes import router as inbox_router, register_inbox_routes
 from fastapi.staticfiles import StaticFiles
 
 # Inisialisasi Supabase Client
@@ -87,14 +88,20 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://shop.boontrack.com",
+        "http://shop.boontrack.com",
         "https://boontrack.com",
+        "http://boontrack.com",
+        "https://inbox.boontrack.com",
+        "https://affiliate.boontrack.com",
+        "https://partner.boontrack.com",
+        "https://api.boontrack.com",
         "https://boontrack-inbox.vercel.app",
         "http://localhost:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:3001",
     ],
-    allow_origin_regex=r"https?://.*",
+    allow_origin_regex=r"^https?://([a-zA-Z0-9-]+\.)?boontrack\.com$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -150,6 +157,7 @@ app.include_router(career_fastapi_router)
 app.include_router(creator_ugc_router)
 app.include_router(creator_storefront_router)
 app.include_router(digital_download_router)
+app.include_router(inbox_router)
 
 # Mount Static Uploads
 uploads_dir = os.path.join(project_root, "assets", "uploads")
@@ -265,6 +273,7 @@ async def start_application():
     register_creator_ugc_routes(aiohttp_app)
     register_creator_storefront_routes(aiohttp_app)
     register_digital_download_routes(aiohttp_app)
+    register_affiliate_auth_routes(aiohttp_app)
 
     cors_headers = {
         "Access-Control-Allow-Origin": "*",
@@ -307,6 +316,8 @@ async def start_application():
     register_product_routes(aiohttp_app)
     register_custom_domain_routes(aiohttp_app)
     register_tenant_onboard_routes(aiohttp_app)
+    register_inbox_routes(aiohttp_app)
+    register_d2c_order_routes(aiohttp_app)
 
     port = int(os.getenv("PORT", 8080))
     await start_web_server(aiohttp_app, port=port)

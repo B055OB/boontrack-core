@@ -58,7 +58,7 @@ def _resolve_qris_public_url() -> str:
         or os.getenv("RAILWAY_PUBLIC_DOMAIN")
         or os.getenv("DOMAIN_URL")
         or os.getenv("APP_URL")
-        or "https://boontrack-core.up.railway.app"
+        or "https://api.boontrack.com"
     ).strip().rstrip("/")
 
     if not public_base.startswith("http"):

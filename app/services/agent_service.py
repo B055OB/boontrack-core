@@ -2,9 +2,12 @@
 Agent Service Layer for Multi-Tenant Commerce AI & Prompt Execution.
 """
 
+import logging
 from typing import Dict, Any, Optional
 from app.services.ai_engine import commerce_ai_engine, CommerceAIEngine
 from app.services.telemetry_service import track_ai_tokens
+
+logger = logging.getLogger(__name__)
 
 
 def record_ai_token_telemetry(
@@ -76,7 +79,17 @@ async def process_incoming_message(
     from app.services.tenant_context_resolver import tenant_context_resolver, has_capability
     from app.services.auto_reply_service import find_tenant_auto_reply
 
-    # 0. Custom Keyword Auto-Reply Rules per Tenant
+    # 0a. Human Takeover / Bot Paused Guard (Inbox CS Interception)
+    if user_phone:
+        try:
+            from app.services.rotary_routing_service import rotary_routing_service
+            if rotary_routing_service.is_bot_paused_for_phone(tenant_slug, user_phone):
+                logger.info(f"[Bot Paused] Human takeover is active for phone {user_phone} on tenant {tenant_slug}. Suppressing AI auto-reply.")
+                return ""
+        except Exception as bot_check_err:
+            logger.debug(f"[Bot Paused Check Note] {bot_check_err}")
+
+    # 0b. Custom Keyword Auto-Reply Rules per Tenant
     custom_reply = await find_tenant_auto_reply(tenant_slug, message)
     if custom_reply:
         return custom_reply
@@ -108,6 +121,47 @@ async def process_incoming_message(
             return res.get("reply", "") or "Sampurasun! Ada yang bisa dibantu seputar layanan Balé Pananggeuhan?"
         except Exception:
             pass
+
+    # 3. STATIC Bot Mode Default (Unified Deterministic Architecture §8.1)
+    bot_mode = (
+        getattr(context, "bot_mode", None)
+        or (context.metadata.get("bot_mode") if context and context.metadata else None)
+        or "STATIC"
+    ).upper().strip()
+
+    store_name = (
+        (context.metadata.get("name") or context.metadata.get("brand_name"))
+        if context and context.metadata
+        else None
+    ) or tenant_slug.replace("-", " ").title()
+
+    business_type = getattr(context, "business_type", "DIGITAL") or "DIGITAL"
+
+    if bot_mode == "STATIC":
+        clean_msg = message.strip()
+        from app.configs.templates import resolve_static_menu_choice, format_vertical_menu
+
+        # 3a. Numeric selection (1-6)
+        if clean_msg.isdigit() and 1 <= int(clean_msg) <= 6:
+            return resolve_static_menu_choice(
+                vertical=business_type,
+                choice_digit=int(clean_msg),
+                store_name=store_name,
+                tenant_slug=tenant_slug,
+            )
+
+        # 3b. Standard greetings / menu requests
+        greeting_triggers = [
+            "menu", "halo", "hello", "hi", "pagi", "siang", "sore", "malam",
+            "assalamu", "bantuan", "info", "mulai", "start"
+        ]
+        msg_lower = clean_msg.lower()
+        if any(g in msg_lower for g in greeting_triggers) and len(clean_msg) <= 30:
+            return format_vertical_menu(
+                vertical=business_type,
+                store_name=store_name,
+                tenant_slug=tenant_slug,
+            )
 
     usage_out: Dict[str, Any] = {}
     reply = await commerce_ai_engine.generate_commerce_response(

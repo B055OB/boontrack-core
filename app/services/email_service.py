@@ -15,6 +15,12 @@ try:
 except ImportError:
     aiosmtplib = None
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 logger = logging.getLogger("EMAIL_SERVICE")
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
@@ -222,12 +228,14 @@ class EmailService:
         user: Optional[str] = None,
         password: Optional[str] = None,
     ):
-        self.resend_api_key = resend_api_key if resend_api_key is not None else RESEND_API_KEY
-        self.from_email = from_email if from_email is not None else EMAIL_FROM
-        self.host = host if host is not None else SMTP_HOST
-        self.port = port if port is not None else SMTP_PORT
-        self.user = user if user is not None else SMTP_USER
-        self.password = password if password is not None else SMTP_PASSWORD
+        self.resend_api_key = resend_api_key if resend_api_key is not None else os.getenv("RESEND_API_KEY", RESEND_API_KEY)
+        self.from_email = from_email if from_email is not None else os.getenv("EMAIL_FROM", EMAIL_FROM)
+        self.host = host if host is not None else os.getenv("SMTP_HOST", SMTP_HOST)
+        self.port = port if port is not None else int(os.getenv("SMTP_PORT", str(SMTP_PORT)))
+        self.user = user if user is not None else os.getenv("SMTP_USER", SMTP_USER)
+        self.password = password if password is not None else os.getenv("SMTP_PASSWORD", SMTP_PASSWORD)
+        self.last_delivery_id: Optional[str] = None
+        self.last_resend_response: Any = None
 
         if self.resend_api_key and resend:
             resend.api_key = self.resend_api_key
@@ -257,7 +265,14 @@ class EmailService:
                 if text_content:
                     params["text"] = text_content
                 res = resend.Emails.send(params)
-                logger.info(f"[EMAIL RESEND] Successfully sent to {to_email}: {res}")
+                self.last_resend_response = res
+                delivery_id = None
+                if isinstance(res, dict):
+                    delivery_id = res.get("id")
+                elif hasattr(res, "id"):
+                    delivery_id = getattr(res, "id")
+                self.last_delivery_id = delivery_id
+                logger.info(f"[EMAIL RESEND] Successfully sent to {to_email} (ID: {delivery_id}): {res}")
                 return True
             except Exception as e:
                 logger.error(f"[EMAIL RESEND ERROR] Failed to send to {to_email}: {e}")

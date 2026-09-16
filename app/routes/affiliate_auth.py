@@ -81,11 +81,17 @@ class VerifyOTPRequest(BaseModel):
 
 
 class AffiliateRegisterRequest(BaseModel):
-    """Payload pendaftaran & kualifikasi screening mitra affiliate langsung."""
+    """Payload pendaftaran mitra affiliate (cukup selesai saat pengisian rekening bank)."""
+    model_config = {"extra": "allow"}
+
     phone: str
-    name: str
+    name: Optional[str] = None
+    full_name: Optional[str] = None
     email: Optional[str] = None
+    password: Optional[str] = None
     referral_code: Optional[str] = None
+    am_referral_code: Optional[str] = None
+    am_pembina: Optional[str] = None
     tenant_id: Optional[str] = "onlineboost"
     manager_id: Optional[str] = None
 
@@ -94,12 +100,17 @@ class AffiliateRegisterRequest(BaseModel):
     bank_account_number: Optional[str] = None
     bank_account_holder: Optional[str] = None
 
-    # Screening & Kualifikasi Mitra Affiliate
+    # Screening & Kualifikasi (Opsional / Bypass Tahap 3)
     experience_level: Optional[str] = "BEGINNER"
     promotion_strategy_notes: Optional[str] = None
+    promotion_plan: Optional[str] = None
+    promotion_channels: Optional[Any] = None
+    promotion_channel: Optional[str] = None
+    audience_size: Optional[str] = None
     social_media_links: Optional[Dict[str, Any]] = None
     portfolio_url: Optional[str] = None
-    agreed_to_rules: bool = False
+    agreed_to_rules: Optional[bool] = True
+    agreed_to_terms: Optional[bool] = True
 
 
 class AffiliateScreeningRequest(BaseModel):
@@ -310,7 +321,8 @@ async def register_affiliate(payload: AffiliateRegisterRequest):
     if len(phone) < 10:
         raise HTTPException(status_code=400, detail="Nomor WhatsApp tidak valid (minimal 10 digit)")
 
-    if not payload.name or len(payload.name.strip()) < 2:
+    affiliate_name = (payload.name or payload.full_name or "").strip()
+    if not affiliate_name or len(affiliate_name) < 2:
         raise HTTPException(status_code=400, detail="Nama lengkap wajib diisi minimal 2 karakter")
 
     # Cek apakah nomor telepon sudah terdaftar
@@ -318,16 +330,17 @@ async def register_affiliate(payload: AffiliateRegisterRequest):
     if not aff_res.data:
         aff_res = supabase.table("affiliates").select("*").eq("phone_number", phone).execute()
 
+    raw_ref = payload.referral_code or payload.am_referral_code or payload.am_pembina
     affiliate_code = (
-        payload.referral_code.strip().upper()
-        if payload.referral_code and payload.referral_code.strip()
+        raw_ref.strip().upper()
+        if raw_ref and raw_ref.strip()
         else f"AFF{phone[-4:]}{random.randint(10, 99)}"
     )
 
     db_payload = {
         "phone": phone,
         "phone_number": phone,
-        "name": payload.name.strip(),
+        "name": affiliate_name,
         "referral_code": affiliate_code,
         "tenant_id": payload.tenant_id or "onlineboost",
         "manager_id": payload.manager_id,
@@ -339,14 +352,16 @@ async def register_affiliate(payload: AffiliateRegisterRequest):
         "experience_level": payload.experience_level or "BEGINNER",
     }
 
+    if payload.email:
+        db_payload["email"] = payload.email.strip().lower()
     if payload.bank_name:
         db_payload["bank_name"] = payload.bank_name.strip()
     if payload.bank_account_number:
         db_payload["bank_account_number"] = payload.bank_account_number.strip()
     if payload.bank_account_holder:
         db_payload["bank_account_holder"] = payload.bank_account_holder.strip()
-    if payload.promotion_strategy_notes:
-        db_payload["promotion_strategy_notes"] = payload.promotion_strategy_notes.strip()
+    if payload.promotion_strategy_notes or payload.promotion_plan:
+        db_payload["promotion_strategy_notes"] = (payload.promotion_strategy_notes or payload.promotion_plan or "").strip()
     if payload.social_media_links:
         db_payload["social_media_links"] = payload.social_media_links
     if payload.portfolio_url:
@@ -360,16 +375,28 @@ async def register_affiliate(payload: AffiliateRegisterRequest):
             "account_holder": payload.bank_account_holder,
         }
 
-    if aff_res.data:
-        # Mitra sudah terdaftar: perbarui profil & screening
-        existing_id = aff_res.data[0]["id"]
-        update_data = {k: v for k, v in db_payload.items() if k not in ["phone", "phone_number", "referral_code"]}
-        affiliate_data = save_affiliate_record(update_data, affiliate_id=existing_id)
+    try:
+        logger.info(f"[AFFILIATE_REGISTRATION] Processing affiliate '{affiliate_name}' (phone: {phone}, bank: {payload.bank_name})")
+        if aff_res.data:
+            # Mitra sudah terdaftar: perbarui profil & screening
+            existing_id = aff_res.data[0]["id"]
+            update_data = {k: v for k, v in db_payload.items() if k not in ["phone", "phone_number", "referral_code"]}
+            affiliate_data = save_affiliate_record(update_data, affiliate_id=existing_id)
+            if not affiliate_data:
+                affiliate_data = aff_res.data[0]
+        else:
+            # Pendaftaran mitra baru
+            affiliate_data = save_affiliate_record(db_payload)
+
         if not affiliate_data:
-            affiliate_data = aff_res.data[0]
-    else:
-        # Pendaftaran mitra baru
-        affiliate_data = save_affiliate_record(db_payload)
+            raise ValueError("Data affiliate tidak berhasil disimpan ke database")
+
+        logger.info(f"[AFFILIATE_REGISTRATION ✓] Successfully saved affiliate record ID: {affiliate_data.get('id')}")
+    except HTTPException:
+        raise
+    except Exception as save_err:
+        logger.error(f"[AFFILIATE_REGISTRATION ERROR] Failed saving affiliate {phone}: {save_err}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Gagal menyimpan data pendaftaran affiliate: {str(save_err)}")
 
     aff_code = affiliate_data.get("referral_code") or affiliate_data.get("affiliate_code") or affiliate_code
     affiliate_data["affiliate_code"] = aff_code
@@ -448,3 +475,99 @@ async def submit_affiliate_screening(payload: AffiliateScreeningRequest):
         "message": "Data kualifikasi screening dan rekening bank berhasil diperbarui",
         "affiliate": updated
     }
+
+
+# ============================================================================
+# aiohttp Handlers & Registrar (Dual-Runner Railway Compliance)
+# ============================================================================
+
+try:
+    from aiohttp import web
+
+    def _aiohttp_affiliate_cors_headers(request: web.Request) -> Dict[str, str]:
+        origin = request.headers.get("Origin", "*")
+        req_headers = request.headers.get("Access-Control-Request-Headers", "*")
+        return {
+            "Access-Control-Allow-Origin": origin if origin else "*",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE, PATCH",
+            "Access-Control-Allow-Headers": req_headers if req_headers != "*" else "Content-Type, Authorization, X-Requested-With, apikey, Accept, Origin, x-tenant-id",
+        }
+
+    async def aiohttp_options_affiliate(request: web.Request) -> web.Response:
+        return web.Response(status=200, headers=_aiohttp_affiliate_cors_headers(request))
+
+    def _aiohttp_affiliate_json_response(data: dict, status_code: int = 200, request: web.Request = None) -> web.Response:
+        headers = _aiohttp_affiliate_cors_headers(request) if request else {}
+        return web.json_response(data, status=status_code, headers=headers)
+
+    async def aiohttp_register_affiliate(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            payload = AffiliateRegisterRequest(**body)
+            result = await register_affiliate(payload)
+            return _aiohttp_affiliate_json_response(result, status_code=200, request=request)
+        except HTTPException as he:
+            return _aiohttp_affiliate_json_response({"status": "error", "detail": he.detail}, status_code=he.status_code, request=request)
+        except Exception as e:
+            logger.error(f"[aiohttp Affiliate Register Error] {e}", exc_info=True)
+            return _aiohttp_affiliate_json_response({"status": "error", "detail": str(e)}, status_code=400, request=request)
+
+    async def aiohttp_send_otp(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            payload = SendOTPRequest(**body)
+            result = await send_affiliate_otp(payload)
+            return _aiohttp_affiliate_json_response(result, status_code=200, request=request)
+        except HTTPException as he:
+            return _aiohttp_affiliate_json_response({"status": "error", "detail": he.detail}, status_code=he.status_code, request=request)
+        except Exception as e:
+            logger.error(f"[aiohttp Affiliate Send OTP Error] {e}", exc_info=True)
+            return _aiohttp_affiliate_json_response({"status": "error", "detail": str(e)}, status_code=400, request=request)
+
+    async def aiohttp_verify_otp(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            payload = VerifyOTPRequest(**body)
+            result = await verify_affiliate_otp(payload)
+            return _aiohttp_affiliate_json_response(result, status_code=200, request=request)
+        except HTTPException as he:
+            return _aiohttp_affiliate_json_response({"status": "error", "detail": he.detail}, status_code=he.status_code, request=request)
+        except Exception as e:
+            logger.error(f"[aiohttp Affiliate Verify OTP Error] {e}", exc_info=True)
+            return _aiohttp_affiliate_json_response({"status": "error", "detail": str(e)}, status_code=400, request=request)
+
+    async def aiohttp_screening(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            payload = AffiliateScreeningUpdateRequest(**body)
+            result = await update_screening_qualification(payload)
+            return _aiohttp_affiliate_json_response(result, status_code=200, request=request)
+        except HTTPException as he:
+            return _aiohttp_affiliate_json_response({"status": "error", "detail": he.detail}, status_code=he.status_code, request=request)
+        except Exception as e:
+            logger.error(f"[aiohttp Affiliate Screening Error] {e}", exc_info=True)
+            return _aiohttp_affiliate_json_response({"status": "error", "detail": str(e)}, status_code=400, request=request)
+
+    def register_affiliate_auth_routes(app: web.Application):
+        """Mendaftarkan rute auth affiliate ke aiohttp web server."""
+        routes = [
+            ("POST", "/api/v1/auth/affiliate/register", aiohttp_register_affiliate),
+            ("OPTIONS", "/api/v1/auth/affiliate/register", aiohttp_options_affiliate),
+            ("POST", "/api/v1/auth/affiliate/send-otp", aiohttp_send_otp),
+            ("OPTIONS", "/api/v1/auth/affiliate/send-otp", aiohttp_options_affiliate),
+            ("POST", "/api/v1/auth/affiliate/verify-otp", aiohttp_verify_otp),
+            ("OPTIONS", "/api/v1/auth/affiliate/verify-otp", aiohttp_options_affiliate),
+            ("POST", "/api/v1/auth/affiliate/screening", aiohttp_screening),
+            ("OPTIONS", "/api/v1/auth/affiliate/screening", aiohttp_options_affiliate),
+        ]
+        for method, path, handler in routes:
+            if method == "POST":
+                app.router.add_post(path, handler)
+            elif method == "OPTIONS":
+                app.router.add_options(path, handler)
+        logger.info("[ROUTER] Affiliate auth routes registered on aiohttp (/api/v1/auth/affiliate/*).")
+
+except ImportError:
+    def register_affiliate_auth_routes(app):
+        pass

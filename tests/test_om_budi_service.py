@@ -265,7 +265,7 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
 
             success = await send_wa_image(
                 recipient_phone="628123456789",
-                image_url_or_path="https://boontrack-core.up.railway.app/static/qrisombudi.png",
+                image_url_or_path="https://api.boontrack.com/static/qrisombudi.png",
                 caption=PANDUAN_QRIS_OM_BUDI,
                 phone_id="1268977686299719"
             )
@@ -274,7 +274,7 @@ class TestOmBudiService(unittest.IsolatedAsyncioTestCase):
             call_kwargs = mock_post.call_args[1]
             payload = call_kwargs["json"]
             self.assertEqual(payload["type"], "image")
-            self.assertEqual(payload["image"]["link"], "https://boontrack-core.up.railway.app/static/qrisombudi.png")
+            self.assertEqual(payload["image"]["link"], "https://api.boontrack.com/static/qrisombudi.png")
             self.assertEqual(payload["image"]["caption"], PANDUAN_QRIS_OM_BUDI)
 
         # 2. Test Fallback to Text on Error

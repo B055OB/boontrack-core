@@ -28,11 +28,8 @@ from app.services.ai_gateway import (
     BaseLLMProvider,
     GeminiProvider,
     GroqProvider,
-    ClaudeProvider,
-    OpenAIProvider,
     OpenRouterProvider,
     ai_gateway,
-    SYSTEM_PROMPT_DEFAULT,
 )
 
 from app.services.sales_agent_guard import (

@@ -1653,7 +1653,7 @@ async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> D
                     json=create_payload
                 )
 
-            backend_url = os.getenv("BACKEND_WEBHOOK_URL") or os.getenv("FASTAPI_BASE_URL", "https://boontrack-core-production.up.railway.app").rstrip("/")
+            backend_url = os.getenv("BACKEND_WEBHOOK_URL") or os.getenv("FASTAPI_BASE_URL", "https://api.boontrack.com").rstrip("/")
             try:
                 await client.post(
                     f"{EVOLUTION_BASE_URL}/webhook/set/{instance_name}",

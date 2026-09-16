@@ -253,6 +253,105 @@ def _init_db_sync():
         CREATE INDEX IF NOT EXISTS idx_tenant_prospects_status ON control_plane.tenant_prospects(status);
     """)
 
+    # 16. Tabel payment_events (Webhook Inbound Idempotency Guard)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS payment_events (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            provider VARCHAR(64) NOT NULL,
+            event_id VARCHAR(128) UNIQUE NOT NULL,
+            reference_id VARCHAR(128),
+            event_type VARCHAR(64) NOT NULL,
+            payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+            status VARCHAR(64) NOT NULL DEFAULT 'PROCESSING',
+            processed_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS reference_id VARCHAR(128);
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ;
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+        CREATE INDEX IF NOT EXISTS idx_payment_events_event_id ON payment_events(event_id);
+        CREATE INDEX IF NOT EXISTS idx_payment_events_ref_id ON payment_events(reference_id);
+        CREATE INDEX IF NOT EXISTS idx_payment_events_status ON payment_events(status);
+    """)
+
+    # 17. Tabel financial_ledger (Financial Transaction & Settlement Ledger)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS financial_ledger (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            order_id VARCHAR(128) NOT NULL,
+            tenant_id VARCHAR(64) NOT NULL,
+            provider VARCHAR(64) NOT NULL,
+            event_id VARCHAR(128),
+            gross_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+            fee_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+            net_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+            currency VARCHAR(16) NOT NULL DEFAULT 'IDR',
+            transaction_type VARCHAR(64) NOT NULL DEFAULT 'PAYMENT_CREDIT',
+            status VARCHAR(32) NOT NULL DEFAULT 'SETTLED',
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_financial_ledger_order ON financial_ledger(order_id);
+        CREATE INDEX IF NOT EXISTS idx_financial_ledger_tenant ON financial_ledger(tenant_id);
+        CREATE INDEX IF NOT EXISTS idx_financial_ledger_event ON financial_ledger(event_id);
+    """)
+
+    # 18. Tabel cs_agents & Update Skema conversations (BoonTrack Inbox Rotary Engine)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS cs_agents (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            tenant_id VARCHAR(100) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            phone VARCHAR(50),
+            email VARCHAR(255),
+            role VARCHAR(20) NOT NULL DEFAULT 'agent' CHECK (role IN ('admin', 'agent')),
+            presence VARCHAR(20) NOT NULL DEFAULT 'offline' CHECK (presence IN ('active', 'break', 'offline')),
+            max_active_chats INT NOT NULL DEFAULT 10,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_cs_agents_tenant_presence ON cs_agents (tenant_id, presence);
+        CREATE INDEX IF NOT EXISTS idx_cs_agents_tenant ON cs_agents (tenant_id);
+
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name = 'conversations' AND column_name = 'assigned_agent_id'
+            ) THEN
+                ALTER TABLE conversations ADD COLUMN assigned_agent_id UUID REFERENCES cs_agents(id) ON DELETE SET NULL;
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name = 'conversations' AND column_name = 'status'
+            ) THEN
+                ALTER TABLE conversations ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'unassigned';
+                ALTER TABLE conversations ADD CONSTRAINT chk_conversations_status CHECK (status IN ('unassigned', 'assigned', 'resolved'));
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name = 'conversations' AND column_name = 'bot_mode'
+            ) THEN
+                ALTER TABLE conversations ADD COLUMN bot_mode VARCHAR(20) NOT NULL DEFAULT 'AI_ACTIVE';
+                ALTER TABLE conversations ADD CONSTRAINT chk_conversations_bot_mode CHECK (bot_mode IN ('AI_ACTIVE', 'HUMAN_ACTIVE'));
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name = 'conversations' AND column_name = 'bot_paused'
+            ) THEN
+                ALTER TABLE conversations ADD COLUMN bot_paused BOOLEAN NOT NULL DEFAULT FALSE;
+            END IF;
+        END $$;
+
+        CREATE INDEX IF NOT EXISTS idx_conversations_tenant_status ON conversations (tenant_id, status);
+        CREATE INDEX IF NOT EXISTS idx_conversations_assigned_agent ON conversations (assigned_agent_id, status);
+    """)
+
     conn.commit()
     cur.close()
     conn.close()

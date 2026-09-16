@@ -135,6 +135,53 @@ async def test_evolution_pairing_endpoint(phone: Optional[str] = "6281237450222"
     return await request_evolution_pairing_code(session, phone)
 
 
+@router.get("/instance/connectionState/{instance}", summary="Get Evolution API instance connection state")
+@router.get("/sessions/{instance}/connection-state", summary="Get instance connection state alias")
+async def get_evolution_instance_connection_state(instance: str):
+    """
+    Validasi status koneksi socket instance WhatsApp di Evolution API v2 di Railway.
+    Status state: 'open' (terhubung), 'connecting' (dalam proses), 'close' (terputus/belum scan).
+    """
+    clean_instance = instance.strip()
+    if not clean_instance.startswith("tenant_") and not clean_instance.startswith("instance_"):
+        clean_instance = f"tenant_{clean_instance.replace('-', '_')}"
+
+    headers = get_evolution_headers()
+    url = f"{EVOLUTION_BASE_URL}/instance/connectionState/{clean_instance}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                state = data.get("instance", {}).get("state") or data.get("state") or "unknown"
+                return {
+                    "success": True,
+                    "instance": clean_instance,
+                    "state": state,
+                    "raw": data
+                }
+            else:
+                return JSONResponse(
+                    status_code=resp.status_code,
+                    content={
+                        "success": False,
+                        "instance": clean_instance,
+                        "status_code": resp.status_code,
+                        "error": resp.text[:300]
+                    }
+                )
+    except Exception as exc:
+        logger.error(f"[Evolution connectionState Error] {clean_instance}: {exc}")
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={
+                "success": False,
+                "instance": clean_instance,
+                "error": f"Tidak dapat terhubung ke Evolution API di {EVOLUTION_BASE_URL}: {str(exc)}"
+            }
+        )
+
+
 
 tenant_reconnect_router = APIRouter(tags=["Tenant WhatsApp Reconnect Legacy"])
 
@@ -188,12 +235,38 @@ async def aiohttp_tenant_reconnect_handler(request):
     return web.json_response({"success": True, "tenant": tenant, **(evo_data or {})})
 
 
+async def aiohttp_connection_state_handler(request):
+    try:
+        from aiohttp import web
+        instance = request.match_info.get("instance") or "onlineboost"
+        clean_instance = instance.strip()
+        if not clean_instance.startswith("tenant_") and not clean_instance.startswith("instance_"):
+            clean_instance = f"tenant_{clean_instance.replace('-', '_')}"
+        headers = get_evolution_headers()
+        url = f"{EVOLUTION_BASE_URL}/instance/connectionState/{clean_instance}"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                state = data.get("instance", {}).get("state") or data.get("state") or "unknown"
+                return web.json_response({"success": True, "instance": clean_instance, "state": state, "raw": data})
+            else:
+                return web.json_response({"success": False, "instance": clean_instance, "error": resp.text[:300]}, status=resp.status_code)
+    except Exception as exc:
+        from aiohttp import web
+        return web.json_response({"success": False, "error": str(exc)}, status=502)
+
+
 def register_whatsapp_gateway_routes(app):
-    """Mendaftarkan seluruh route WhatsApp gateway (pairing, reconnect, Evolution webhook) ke server aiohttp."""
+    """Mendaftarkan seluruh route WhatsApp gateway (pairing, reconnect, Evolution webhook, status) ke server aiohttp."""
     try:
         app.router.add_post("/tenant/whatsapp/reconnect", aiohttp_tenant_reconnect_handler)
         app.router.add_post("/api/v1/whatsapp/sessions/{tenant_slug}/pairing-code", aiohttp_pairing_code_handler)
         app.router.add_post("/api/v1/whatsapp/pairing-code", aiohttp_pairing_code_handler)
+
+        # Evolution API Connection State Endpoints
+        app.router.add_get("/instance/connectionState/{instance}", aiohttp_connection_state_handler)
+        app.router.add_get("/api/v1/whatsapp/instance/connectionState/{instance}", aiohttp_connection_state_handler)
 
         # Evolution API Webhook Endpoints
         app.router.add_post("/api/v1/whatsapp/webhook/evolution/{tenant_slug}", aiohttp_evolution_webhook_handler)
@@ -203,7 +276,7 @@ def register_whatsapp_gateway_routes(app):
         app.router.add_post("/webhook/evolution/{tenant_slug}", aiohttp_evolution_webhook_handler)
         app.router.add_post("/webhook/evolution", aiohttp_evolution_webhook_handler)
         app.router.add_post("/api/v1/whatsapp/inbound-process", aiohttp_inbound_process_handler)
-        logger.info("[register_whatsapp_gateway_routes] Evolution API webhook & pairing routes mounted to aiohttp.")
+        logger.info("[register_whatsapp_gateway_routes] Evolution API webhook, pairing, and connectionState routes mounted to aiohttp.")
     except Exception as reg_err:
         logger.warning(f"[register_whatsapp_gateway_routes] Note: {reg_err}")
 

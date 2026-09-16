@@ -63,7 +63,7 @@ async def send_wa_image(recipient_phone: str, image_source: str, caption: str):
             os.getenv("PUBLIC_BASE_URL")
             or os.getenv("RAILWAY_STATIC_URL")
             or os.getenv("RAILWAY_PUBLIC_DOMAIN")
-            or "https://boontrack-core.up.railway.app"
+            or "https://api.boontrack.com"
         ).strip().rstrip("/")
         if not public_base.startswith("http"):
             public_base = f"https://{public_base}"

@@ -11,6 +11,7 @@ from app.services.payment.base import (
 )
 from app.services.payment.manual_adapter import ManualTransferAdapter
 from app.services.payment.gateway_duitku import DuitkuAdapter
+from app.services.payment.gateway_xendit import XenditAdapter
 from app.services.payment.factory import PaymentAdapterFactory
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "WebhookResult",
     "ManualTransferAdapter",
     "DuitkuAdapter",
+    "XenditAdapter",
     "PaymentAdapterFactory",
 ]

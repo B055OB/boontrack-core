@@ -657,29 +657,32 @@ async def unified_qris_payment_webhook(payload: Dict[str, Any] = Body(...)):
             except Exception:
                 pass
 
-        # 4. Trigger Server-Side CAPI Purchase (Meta & TikTok)
-        try:
-            await send_meta_capi_purchase(
-                external_id=order_id,
-                value=float(amount_val),
-                currency="IDR",
-                phone=customer_phone,
-                email=customer_email,
-            )
-        except Exception as me:
-            logger.warning(f"[UNIFIED PAYMENT META CAPI Note] {me}")
+        # 4. Decoupled Server-Side CAPI Purchase (Meta & TikTok) in background task
+        async def _decoupled_capi_dispatch():
+            try:
+                await send_meta_capi_purchase(
+                    external_id=order_id,
+                    value=float(amount_val),
+                    currency="IDR",
+                    phone=customer_phone,
+                    email=customer_email,
+                )
+            except Exception as me:
+                logger.warning(f"[UNIFIED PAYMENT META CAPI Note] {me}")
 
-        try:
-            await dispatch_all_capi({
-                "order_id": order_id,
-                "amount": amount_val,
-                "currency": "IDR",
-                "customer_phone": customer_phone,
-                "customer_email": customer_email,
-                "product_name": product_name,
-            })
-        except Exception as te:
-            logger.warning(f"[UNIFIED PAYMENT CAPI Note] {te}")
+            try:
+                await dispatch_all_capi({
+                    "order_id": order_id,
+                    "amount": amount_val,
+                    "currency": "IDR",
+                    "customer_phone": customer_phone,
+                    "customer_email": customer_email,
+                    "product_name": product_name,
+                })
+            except Exception as te:
+                logger.warning(f"[UNIFIED PAYMENT CAPI Note] {te}")
+
+        asyncio.create_task(_decoupled_capi_dispatch())
 
         return {
             "status": "SUCCESS",

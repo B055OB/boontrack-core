@@ -8,6 +8,7 @@ from app.schemas.context import TenantRuntimeContext
 from app.services.payment.base import PaymentAdapter
 from app.services.payment.manual_adapter import ManualTransferAdapter
 from app.services.payment.gateway_duitku import DuitkuAdapter
+from app.services.payment.gateway_xendit import XenditAdapter
 
 
 class PaymentAdapterFactory:
@@ -21,7 +22,7 @@ class PaymentAdapterFactory:
     ) -> PaymentAdapter:
         """
         Menentukan adapter pembayaran:
-        1. Menggunakan provider_override jika disediakan ('duitku' / 'manual').
+        1. Menggunakan provider_override jika disediakan ('xendit' / 'duitku' / 'manual').
         2. Membaca context.metadata.payment_config jika context_or_config adalah TenantRuntimeContext.
         3. Membaca dict config langsung jika context_or_config adalah dict.
         4. Fallback ke ManualTransferAdapter jika tidak ada konfigurasi payment gateway khusus.
@@ -35,6 +36,16 @@ class PaymentAdapterFactory:
             config = context_or_config.get("payment_config") or context_or_config
 
         provider = str(provider_override or config.get("provider") or config.get("gateway") or "").strip().lower()
+
+        if provider in ("xendit", "qris_xendit", "xendit_qris", "xendit_invoice"):
+            secret_key = config.get("secret_key") or config.get("api_key")
+            callback_token = config.get("callback_token") or config.get("verification_token")
+            is_sandbox = config.get("is_sandbox")
+            return XenditAdapter(
+                secret_key=secret_key,
+                callback_token=callback_token,
+                is_sandbox=is_sandbox,
+            )
 
         if provider in ("duitku", "gateway", "dynamic_qris"):
             merchant_code = config.get("merchant_code")

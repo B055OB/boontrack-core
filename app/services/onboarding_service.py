@@ -196,22 +196,23 @@ class OnboardingService:
             logger.warning(f"[OnboardingService] Identity existence check failed: {e}")
             return False
 
-    async def _setup_tenant_entitlements_and_identity(self, tenant_id: str, plan_code: str, phone_hash: str, device_fp_hash: str | None) -> None:
+    async def _setup_tenant_entitlements_and_identity(self, tenant_id: str, plan_code: str, phone_hash: Optional[str], device_fp_hash: Optional[str]) -> None:
         """Insert identity record and copy entitlements from plan_entitlements to tenant_entitlements."""
         supabase = get_supabase()
         if not supabase:
             return
-        # Insert identity
-        identity_payload: Dict[str, Any] = {
-            "tenant_id": tenant_id,
-            "phone_hash": phone_hash,
-        }
-        if device_fp_hash:
-            identity_payload["device_fingerprint_hash"] = device_fp_hash
-        try:
-            supabase.table("tenant_identities").insert(identity_payload).execute()
-        except Exception as e:
-            logger.warning(f"[OnboardingService] Failed to insert tenant identity: {e}")
+        # Insert identity if phone_hash is present
+        if phone_hash:
+            identity_payload: Dict[str, Any] = {
+                "tenant_id": tenant_id,
+                "phone_hash": phone_hash,
+            }
+            if device_fp_hash:
+                identity_payload["device_fingerprint_hash"] = device_fp_hash
+            try:
+                supabase.table("tenant_identities").insert(identity_payload).execute()
+            except Exception as e:
+                logger.warning(f"[OnboardingService] Failed to insert tenant identity: {e}")
         # Copy entitlements
         try:
             ent_res = supabase.table("plan_entitlements").select("*").eq("plan_code", plan_code).execute()
@@ -227,7 +228,7 @@ class OnboardingService:
                     "feature_code": row.get("feature_code"),
                     "status": "trial" if plan_code == "SOLO_TRIAL" else "active",
                     "starts_at": now_iso,
-                    "expires_at": (datetime.now(timezone.utc) + timedelta(days=14)).isoformat() if plan_code == "SOLO_TRIAL" else None,
+                    "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat() if plan_code == "SOLO_TRIAL" else None,
                 }
                 entitlements_to_insert.append(tenant_ent)
         if entitlements_to_insert:
@@ -273,11 +274,12 @@ class OnboardingService:
         prod_slug = payload.product.slug or slugify(payload.product.title) or f"prod-{uuid4().hex[:6]}"
 
         # Compute hashes for anti‑abuse
-        phone_hash = hashlib.sha256(payload.phone.encode()).hexdigest()
+        phone_raw = payload.phone or payload.admin_phone
+        phone_hash = hashlib.sha256(phone_raw.encode()).hexdigest() if phone_raw else None
         device_fp_hash = hashlib.sha256(payload.device_fingerprint.encode()).hexdigest() if payload.device_fingerprint else None
 
         # Determine initial plan based on existing identity
-        is_duplicate = await self._identity_exists(phone_hash, device_fp_hash)
+        is_duplicate = await self._identity_exists(phone_hash, device_fp_hash) if phone_hash else False
         plan_code = "FREE" if is_duplicate else "SOLO_TRIAL"
         logger.info(f"[OnboardingService] Assigned plan '{plan_code}' for tenant '{tenant_slug}' (duplicate={is_duplicate})")
 
@@ -362,7 +364,7 @@ class OnboardingService:
             "slug": tenant_slug,
             "tier": tier_enum.value,
             "template": template_name,
-            "vertical": vert_config["vertical"],
+            "vertical": (payload.vertical or vert_config["vertical"]).upper(),
             "onboarding_mode": mode_enum.value,
             "affiliate_ref": payload.affiliate_ref,
             "admin_email": payload.admin_email,

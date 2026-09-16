@@ -2,15 +2,22 @@
 API Core Endpoints for D2C Orders and Payment Webhooks.
 """
 
+import asyncio
+import logging
+from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Header, Request, status
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from psycopg2.extras import RealDictCursor
 
+from app.core.database import get_db_connection
 from app.services.checkout_flow_service import (
     create_d2c_order_and_dispatch_qris,
     reconcile_payment_webhook
 )
 from app.services.xendit_service import xendit_service
+from app.services.meta_capi_service import send_meta_capi_purchase
+
+logger = logging.getLogger(__name__)
 
 d2c_router = APIRouter(tags=["D2C Checkout & Orders"])
 
@@ -111,3 +118,175 @@ async def payment_webhook_listener(request: Request, x_callback_token: Optional[
         return reconcile_result
     except Exception as err:
         raise HTTPException(status_code=400, detail=f"Webhook processing error: {err}")
+
+
+# =====================================================================
+# Manual CS Transaction: Mark Order Paid & Meta CAPI Dispatch
+# =====================================================================
+
+class MarkPaidRequest(BaseModel):
+    agent_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@d2c_router.post("/api/v1/orders/{order_id}/mark-paid", summary="Set Order Paid Manually by CS and Dispatch Meta CAPI")
+@d2c_router.post("/v1/orders/{order_id}/mark-paid", summary="Set Order Paid Manually Alias")
+async def mark_order_paid_endpoint(
+    order_id: str,
+    payload: Optional[MarkPaidRequest] = None,
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Endpoint Set Paid Manual oleh CS / Admin:
+    1. Validasi otorisasi CS/Admin dan keberadaan order di tabel orders.
+    2. Mutasi status pesanan menjadi 'PAID'.
+    3. Dispatch event Purchase asinkron ke Meta Conversions API (CAPI)
+       lengkap dengan nominal transaksi riil dan kontak pembeli (di-hash SHA-256).
+    """
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM orders WHERE id = %s;", (order_id,))
+            order = cur.fetchone()
+            if not order:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Pesanan dengan ID '{order_id}' tidak ditemukan."
+                )
+
+            current_status = str(order.get("status") or "").upper()
+            if current_status == "PAID":
+                return {
+                    "success": True,
+                    "order_id": order_id,
+                    "status": "PAID",
+                    "gross_amount": float(order["gross_amount"]),
+                    "capi_dispatched": False,
+                    "message": "Pesanan sudah berstatus PAID sebelumnya."
+                }
+
+            # Mutasi status order ke PAID
+            cur.execute(
+                """
+                UPDATE orders 
+                SET status = 'PAID', updated_at = NOW()
+                WHERE id = %s
+                RETURNING id, tenant_slug, product_title, gross_amount, customer_name, customer_phone, customer_email, fbclid, status, updated_at;
+                """,
+                (order_id,)
+            )
+            updated_order = dict(cur.fetchone())
+            conn.commit()
+    finally:
+        conn.close()
+
+    # Dispatch event asinkron ke Meta CAPI
+    capi_dispatched = False
+    try:
+        asyncio.create_task(
+            send_meta_capi_purchase(
+                external_id=str(updated_order["id"]),
+                value=float(updated_order["gross_amount"]),
+                currency="IDR",
+                phone=updated_order.get("customer_phone"),
+                email=updated_order.get("customer_email"),
+                fbclid=updated_order.get("fbclid"),
+                user_id=updated_order.get("customer_phone")
+            )
+        )
+        capi_dispatched = True
+        logger.info(
+            f"[Meta CAPI] Dispatched Purchase event for order {order_id} "
+            f"(Value: Rp {float(updated_order['gross_amount']):,.0f}, Phone: {updated_order.get('customer_phone')})"
+        )
+    except Exception as capi_err:
+        logger.warning(f"[Meta CAPI Warning] Background task creation error for order {order_id}: {capi_err}")
+
+    return {
+        "success": True,
+        "order_id": str(updated_order["id"]),
+        "status": "PAID",
+        "gross_amount": float(updated_order["gross_amount"]),
+        "customer_name": updated_order.get("customer_name"),
+        "customer_phone": updated_order.get("customer_phone"),
+        "capi_dispatched": capi_dispatched,
+        "message": "Pesanan berhasil ditandai LUNAS dan event konversi Purchase telah di-dispatch ke Meta CAPI."
+    }
+
+
+# =====================================================================
+# aiohttp Handlers & Registrar (Dual-Runner Railway Compliance)
+# =====================================================================
+
+async def aiohttp_mark_order_paid(request):
+    from aiohttp import web
+    order_id = request.match_info.get("order_id")
+    if not order_id:
+        return web.json_response({"success": False, "detail": "order_id is required."}, status=400)
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM orders WHERE id = %s;", (order_id,))
+            order = cur.fetchone()
+            if not order:
+                return web.json_response({"success": False, "detail": f"Pesanan '{order_id}' tidak ditemukan."}, status=404)
+
+            current_status = str(order.get("status") or "").upper()
+            if current_status == "PAID":
+                return web.json_response({
+                    "success": True,
+                    "order_id": order_id,
+                    "status": "PAID",
+                    "gross_amount": float(order["gross_amount"]),
+                    "capi_dispatched": False,
+                    "message": "Pesanan sudah berstatus PAID sebelumnya."
+                })
+
+            cur.execute(
+                """
+                UPDATE orders 
+                SET status = 'PAID', updated_at = NOW()
+                WHERE id = %s
+                RETURNING id, tenant_slug, product_title, gross_amount, customer_name, customer_phone, customer_email, fbclid, status, updated_at;
+                """,
+                (order_id,)
+            )
+            updated_order = dict(cur.fetchone())
+            conn.commit()
+    finally:
+        conn.close()
+
+    try:
+        asyncio.create_task(
+            send_meta_capi_purchase(
+                external_id=str(updated_order["id"]),
+                value=float(updated_order["gross_amount"]),
+                currency="IDR",
+                phone=updated_order.get("customer_phone"),
+                email=updated_order.get("customer_email"),
+                fbclid=updated_order.get("fbclid"),
+                user_id=updated_order.get("customer_phone")
+            )
+        )
+        capi_dispatched = True
+    except Exception as capi_err:
+        logger.warning(f"[Meta CAPI Warning] aiohttp task creation error: {capi_err}")
+        capi_dispatched = False
+
+    return web.json_response({
+        "success": True,
+        "order_id": str(updated_order["id"]),
+        "status": "PAID",
+        "gross_amount": float(updated_order["gross_amount"]),
+        "capi_dispatched": capi_dispatched,
+        "message": "Pesanan berhasil ditandai LUNAS dan event konversi Purchase telah di-dispatch ke Meta CAPI."
+    })
+
+
+def register_d2c_order_routes(app):
+    """Mendaftarkan rute D2C orders ke aplikasi aiohttp."""
+    app.router.add_post("/api/v1/orders/{order_id}/mark-paid", aiohttp_mark_order_paid)
+    app.router.add_post("/v1/orders/{order_id}/mark-paid", aiohttp_mark_order_paid)

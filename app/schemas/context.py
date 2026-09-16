@@ -50,6 +50,10 @@ class TenantRuntimeContext(BaseModel):
         default=None,
         description="AI Persona directives, system prompt, tone of voice, and FAQ rules"
     )
+    bot_mode: Literal["STATIC", "AI"] = Field(
+        default="STATIC",
+        description="Bot conversation mode: STATIC (deterministic default) or AI"
+    )
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
         description="Custom tenant metadata e.g. payment_config, shipping_config"

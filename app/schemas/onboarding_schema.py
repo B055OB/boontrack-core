@@ -46,12 +46,12 @@ class TenantOnboardRequest(BaseModel):
     product: ProductOnboardingPayload = Field(..., description="Spesifikasi produk pertama")
     payout: PayoutOnboardingPayload = Field(..., description="Informasi pencairan dana (payout)")
 
-    # New fields for reverse‑trial registration
-    business_type: Literal["DIGITAL", "PHYSICAL", "FIELD_SERVICE"] = Field(..., description="Tipe bisnis tenant")
-    phone: str = Field(..., description="Nomor telepon utama tenant")
-    password: str = Field(..., description="Password akun admin tenant")
-    store_name: str = Field(..., description="Nama toko yang akan ditampilkan pada UI")
-    device_fingerprint: Optional[str] = Field(None, description="Fingerprint unik perangkat untuk anti‑abuse guard")
+    # New fields for reverse‑trial registration (optional with safe defaults for backward compatibility)
+    business_type: Optional[Literal["DIGITAL", "PHYSICAL", "FIELD_SERVICE"]] = Field(default="DIGITAL", description="Tipe bisnis tenant")
+    phone: Optional[str] = Field(default=None, description="Nomor telepon utama tenant")
+    password: Optional[str] = Field(default=None, description="Password akun admin tenant")
+    store_name: Optional[str] = Field(default=None, description="Nama toko yang akan ditampilkan pada UI")
+    device_fingerprint: Optional[str] = Field(default=None, description="Fingerprint unik perangkat untuk anti‑abuse guard")
 
 
 class TenantOnboardResponse(BaseModel):

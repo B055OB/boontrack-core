@@ -14,10 +14,19 @@ Fungsi tersedia:
 """
 
 import os
+import re
 import logging
 from typing import Optional
 
 logger = logging.getLogger("EMAIL_NOTIFICATION_SERVICE")
+
+_EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
+
+
+def _is_valid_email(email: str) -> bool:
+    if not email or not isinstance(email, str):
+        return False
+    return bool(_EMAIL_REGEX.match(email.strip()))
 
 # ---------------------------------------------------------------------------
 # Import EmailService singleton yang sudah ada (Resend + SMTP configured)
@@ -43,7 +52,7 @@ async def _send_email(to_email: str, subject: str, html_body: str) -> dict:
     Delegate pengiriman email ke EmailService.send_email_async.
     Return dict: {success: bool, provider: str, error?: str}
     """
-    if not to_email or "@" not in to_email:
+    if not to_email or not _is_valid_email(to_email):
         return {"success": False, "error": f"Invalid email address: {to_email}"}
 
     if not _EMAIL_SVC_AVAILABLE or _email_service is None:
@@ -57,8 +66,10 @@ async def _send_email(to_email: str, subject: str, html_body: str) -> dict:
             html_content=html_body,
         )
         if ok:
-            logger.info(f"[EMAIL_NOTIF ✓] Sent → {to_email} | subject='{subject}'")
-            return {"success": True, "provider": "email_service"}
+            delivery_id = getattr(_email_service, "last_delivery_id", None)
+            provider = "resend" if getattr(_email_service, "has_resend", lambda: False)() else "email_service"
+            logger.info(f"[EMAIL_NOTIF ✓] Sent → {to_email} | ID: {delivery_id} | subject='{subject}'")
+            return {"success": True, "provider": provider, "delivery_id": delivery_id}
         else:
             logger.warning(f"[EMAIL_NOTIF ✗] EmailService returned False → {to_email}")
             return {"success": False, "error": "EmailService returned False", "provider": "email_service"}
@@ -190,10 +201,10 @@ async def send_trial_welcome_email(to_email: str, tenant_slug: str, owner_name: 
     <p style="margin:0 0 16px;font-size:15px;color:#334155;line-height:1.6;">
       {name_greeting} Toko BoonTrack Anda dengan slug
       <strong><code style="background:#f1f5f9;padding:2px 6px;border-radius:6px;">{tenant_slug}</code></strong>
-      sudah aktif dan siap menerima pelanggan.
+      sudah aktif dengan <strong>7 Hari Akses Penuh</strong> dan siap menerima pelanggan.
     </p>
     <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:16px 20px;margin:20px 0;">
-      <p style="margin:0 0 8px;font-size:13px;font-weight:700;color:#15803d;">✅ Langkah Berikutnya:</p>
+      <p style="margin:0 0 8px;font-size:13px;font-weight:700;color:#15803d;">✅ Langkah Berikutnya (7 Hari Akses Penuh):</p>
       <ol style="margin:0;padding-left:20px;font-size:14px;color:#334155;line-height:2;">
         <li>Buka dashboard dan tambahkan produk pertama Anda</li>
         <li>Bagikan link toko ke pelanggan</li>
