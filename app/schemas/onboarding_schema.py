@@ -36,7 +36,7 @@ class TenantOnboardRequest(BaseModel):
 
     name: str = Field(..., min_length=2, max_length=128, description="Nama resmi toko / brand / tenant")
     slug: Optional[str] = Field(None, min_length=2, max_length=64, description="Slug identifikasi unik URL (opsional)")
-    tier: str = Field(default="STARTER", description="Tier tenant: FREE, STARTER, ENTERPRISE")
+    tier: str = Field(default="STARTER", description="Tier tenant: FREE, STARTER, PRO_SCALE, ENTERPRISE")
     template: str = Field(default="COMMERCE_TEMPLATE", description="Template arsitektur: COMMERCE_TEMPLATE / RETAIL_D2C_TEMPLATE")
     vertical: Optional[str] = Field(default="DIGITAL_PRODUCTS", description="Vertikal bisnis: DIGITAL_PRODUCTS, FASHION, BEAUTY, FNB, SERVICES")
     onboarding_mode: str = Field(default="SELF_SERVICE", description="Mode onboarding: SELF_SERVICE, ASSISTED, ENTERPRISE")
@@ -47,7 +47,7 @@ class TenantOnboardRequest(BaseModel):
     payout: PayoutOnboardingPayload = Field(..., description="Informasi pencairan dana (payout)")
 
     # New fields for reverse‑trial registration (optional with safe defaults for backward compatibility)
-    business_type: Optional[Literal["DIGITAL", "PHYSICAL", "FIELD_SERVICE"]] = Field(default="DIGITAL", description="Tipe bisnis tenant")
+    business_type: Optional[Literal["DIGITAL", "PHYSICAL", "FIELD_SERVICE", "PROFESSIONAL_SERVICE", "FOOD", "CREATOR_AGENCY", "RETAIL"]] = Field(default="DIGITAL", description="Tipe bisnis tenant")
     phone: Optional[str] = Field(default=None, description="Nomor telepon utama tenant")
     password: Optional[str] = Field(default=None, description="Password akun admin tenant")
     store_name: Optional[str] = Field(default=None, description="Nama toko yang akan ditampilkan pada UI")

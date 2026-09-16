@@ -8,17 +8,26 @@ logger = logging.getLogger("SUBSCRIPTION_SERVICE")
 
 # 1. Mapping Harga Paket Langganan SaaS Toko (PLAN_PRICING)
 PLAN_PRICING = {
-    # Official Plan Names
-    "solo": 199000,
-    "ads_performance": 299000,
-    "team_scale": 499000,
-
-    # Backward Compatibility & Synonyms
-    "growth": 199000,
+    # 3 Official Plan Tiers
+    # 1. Solo / Starter -> STARTER (Rp 199.000 / bln)
     "starter": 199000,
+    "solo": 199000,
+    "solo_trial": 199000,
+
+    # 2. Ads Performance -> PRO_SCALE (Rp 299.000 / bln)
+    "ads_performance": 299000,
+    "pro_scale": 299000,
+    "proscale": 299000,
     "growth_tracking": 299000,
-    "pro_scale": 499000,
-    "proscale": 499000,
+
+    # 3. Team Scale -> ENTERPRISE (Rp 499.000 / bln)
+    "team_scale": 499000,
+    "enterprise": 499000,
+    "scale": 499000,
+
+    # Backward Compatibility
+    "growth": 199000,
+    "free": 0,
 }
 
 # Alias for backward compatibility
@@ -185,14 +194,48 @@ async def process_successful_subscription(
         except Exception as ledger_err:
             logger.warning(f"[COMMISSION LEDGER ERROR] {ledger_err}")
 
+    # Resolve canonical 3 tier mapping:
+    # 1. Solo / Starter -> STARTER
+    # 2. Ads Performance -> PRO_SCALE
+    # 3. Team Scale -> ENTERPRISE
+    if any(k in clean_tier for k in ("team", "enterprise", "scale")):
+        db_tier = "ENTERPRISE"
+        canonical_plan_tier = "ENTERPRISE"
+    elif any(k in clean_tier for k in ("ads", "performance", "pro")):
+        db_tier = "PRO_SCALE"
+        canonical_plan_tier = "PRO_SCALE"
+    else:
+        db_tier = "STARTER"
+        canonical_plan_tier = "STARTER"
+
     # 3. State Transition: Aktivasi Merchant & Reservasi Slug
     try:
         m_res = supabase.table("merchants").update({
             "status": "ACTIVE",
             "active_until": period_end.isoformat(),
-            "plan_tier": clean_tier.upper(),
+            "plan_tier": db_tier,
             "updated_at": now.isoformat()
         }).eq("slug", clean_slug).execute()
+
+        # Sinkronisasi ke tabel tenants (single source of truth frontend)
+        try:
+            t_res = supabase.table("tenants").select("metadata").eq("slug", clean_slug).execute()
+            meta = (t_res.data[0].get("metadata") or {}) if t_res.data else {}
+            meta["plan_tier"] = canonical_plan_tier
+            meta["tier"] = db_tier
+            meta["subscription_ends_at"] = period_end.isoformat()
+            if "capabilities" not in meta:
+                meta["capabilities"] = {}
+            meta["capabilities"]["inbox"] = (db_tier == "ENTERPRISE")
+
+            supabase.table("tenants").update({
+                "tier": db_tier,
+                "status": "active",
+                "subscription_ends_at": period_end.isoformat(),
+                "metadata": meta
+            }).eq("slug", clean_slug).execute()
+        except Exception as t_sync_err:
+            logger.warning(f"[TENANT TABLE SYNC NOTE] {t_sync_err}")
 
         merchant_id = m_res.data[0]["id"] if m_res.data else None
 

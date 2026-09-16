@@ -62,6 +62,15 @@ Seluruh domain, routing funnel, edge infrastructure, dan event tracking terikat 
 
 > **Contract Rule**: Setiap domain baru yang ditambahkan ke ekosistem BoonTrack **WAJIB** didaftarkan di tabel ini beserta edge infra, funnel intent, dan Meta event trigger-nya sebelum dipublikasikan ke produksi.
 
+### 2.2 Auth-Only Affiliate Dashboard Standard (Production Contract)
+1. **Automated Session Authentication (Cookie / JWT Based)**:
+   - Halaman portal afiliasi (`/affiliate/dashboard` dan `/affiliate`) WAJIB beroperasi secara murni *auth-only* berbasis sesi terotentikasi (JWT Bearer / HTTP-only Secure Cookie `authSession` / `affiliate_code`).
+   - Data profil mitra, kode referral unik personal, metrik performa (klik, lead masuk, toko trial aktif, toko berbayar, komisi tercatat), serta link promosi WAJIB dimuat secara otomatis dari sesi aktif tanpa intervensi manual.
+2. **Larangan Mutlak Manual Search di Level Produksi**:
+   - DILARANG KERAS menampilkan kotak input pencarian manual ("KODE REFERRAL MITRA") atau tombol pencarian ("Cari Mitra") di level produksi.
+   - Mitra tidak boleh dibebani untuk mencari data dirinya sendiri.
+   - Jika sesi autentikasi belum terdeteksi / expired, antarmuka wajib mengarahkan mitra secara elegan ke alur login OTP WhatsApp resmi (`/affiliate/login`).
+
 ---
 
 ## 3. Entitlement Engine & Security Guard
@@ -70,6 +79,18 @@ Seluruh domain, routing funnel, edge infrastructure, dan event tracking terikat 
   - *Feature* = kapabilitas teknis sistem internal (contoh: `AI_BOT`, `META_CAPI`).
   - *Add-on* = paket komersial yang dibeli user.
 - **FastAPI Enforcement**: Setiap endpoint privat wajib memvalidasi entitlement via guard/dependency decorator. Kembalikan error `403 FEATURE_NOT_ENTITLED` jika hak akses tidak aktif.
+
+### 3.1 Entitlement & Commercial Subscription Tiers (Contract ADR)
+Ekosistem BoonTrack meresmikan standarisasi 3 Tier Komersial baku yang mengikat seluruh lapisan (Frontend UI, Onboarding Gateway, Billing Invoicing, dan PostgreSQL Database):
+
+| Nama Komersial (UI) | Tier PostgreSQL Enum | Durasi & Skema Harga | Hak Akses Fitur Utama |
+| :--- | :--- | :--- | :--- |
+| **Solo / Starter** | `STARTER` | Rp 0 (Trial 7 Hari Penuh) / Rp 199.000/bln | Storefront mandiri, katalog tanpa batas, cek ongkir multi-ekspedisi, QRIS dinamis, Bot WhatsApp auto-reply dasar. |
+| **Ads Performance** | `PRO_SCALE` | Rp 299.000 / bulan | Semua fitur STARTER + Meta & TikTok CAPI Server-Side, God Button konversi, 2 Seats CS Inbox, Advanced Analytics. |
+| **Team Scale** | `ENTERPRISE` | Rp 499.000 / bulan | Semua fitur PRO_SCALE + Unlimited Multi-Seat CS, Official Meta Cloud API (WABA), Broadcast WA, Custom Domain + SSL. |
+
+> **ADR Database Invariant**:
+> Kolom `tenants.tier` dan `shop_subscriptions.plan_tier` di PostgreSQL Supabase serta enum SQLAlchemy/Pydantic di Core ENGINE WAJIB hanya menampung nilai resmi: `'STARTER'`, `'PRO_SCALE'`, dan `'ENTERPRISE'` (serta `'FREE'` untuk internal testing). Seluruh string legacy (seperti `GROWTH`, `growth_tracking`, `proscale`, `team_scale`, `solo`) wajib ditransformasikan melalui adapter/migrasi database ke 3 enum resmi di atas.
 
 ---
 
@@ -83,6 +104,21 @@ Seluruh domain, routing funnel, edge infrastructure, dan event tracking terikat 
 
 ## 5. Monetization & Entitlement Lifecycle (Flexible Policy)
 - **Status Lifecycle Engine**: Mendukung transisi status dinamis: `TRIAL`, `ACTIVE`, `EXPIRED`, `CANCELLED`. Durasi aktif dan kuota pemakaian dibaca dari database (`valid_until`, `usage_limit`), bukan di-hardcode.
+
+### 5.1 Three Official Subscription Tiers (Canonical Standard)
+Ekosistem BoonTrack (frontend registrasi, gateway onboarding, billing Xendit, dan database PostgreSQL) distandarisasi mutlak pada 3 tier resmi:
+1. **Solo / Starter** (`tier = 'STARTER'`)
+   - Harga: Rp 0 (Reverse Trial 7 Hari), normal Rp 199.000 / bulan.
+   - Hak Akses: Storefront mandiri, katalog produk, kalkulasi ongkir, QRIS dinamis 0% MDR, bot auto-reply dasar.
+2. **Ads Performance** (`tier = 'PRO_SCALE'`)
+   - Harga: Rp 299.000 / bulan.
+   - Hak Akses: Semua fitur Solo/Starter + Meta & TikTok CAPI Server-Side, God Button konversi, 2 Seats CS Inbox.
+3. **Team Scale** (`tier = 'ENTERPRISE'`)
+   - Harga: Rp 499.000 / bulan.
+   - Hak Akses: Semua fitur Ads Performance + Full Skala Tim, CS Inbox Unlimited / Multi-seat, Integrasi WhatsApp WABA & AI Bot Omnichannel.
+
+> **Database & Schema Invariant**: Kolom `tenants.tier` di database PostgreSQL Supabase dan SQLAlchemy Core WAJIB menggunakan nilai enum kanonikal: `'STARTER'`, `'PRO_SCALE'`, atau `'ENTERPRISE'`.
+
 - **Cost-Guarding Enforcement**:
   - Membedakan fitur berbiaya marjinal rendah (Storefront, Katalog, Input Pesanan) dengan fitur berbiaya variabel pihak ketiga (AI Bot Token, Sesi WhatsApp).
   - Ketika akun berada di status tanpa entitlement bot (misal: mode dasar atau promo habis), backend worker wajib menonaktifkan panggilan ke AI/WhatsApp secara otomatis tanpa merusak data katalog dan riwayat pesanan.
@@ -510,5 +546,35 @@ Penamaan key/path di bucket Cloudflare R2 wajib seragam dan scoped per konteks/t
    - URL publik yang dikembalikan: `https://assets.boontrack.com/resumes/{user_id}/generated/...`
    - Simpan URL ke kolom `generated_file_url` dan kirimkan tautan tersebut ke WhatsApp user.
 
+---
 
+## 11. Merchant Dashboard Navigation & Dynamic Vertical Standard
+
+### 11.1 Canvas Layout & Live Phone Preview Isolation Rule
+1. **Full-Width Canvas (`w-full`)**:
+   - Tab Dashboard/Beranda Utama wajib menggunakan kanvas kerja 100% lebar penuh horizontal (`w-full`) agar kartu metrik ringkasan, widget link bio, dan checklist onboarding tertata lega.
+   - Dilarang keras menampilkan `LivePhonePreview` di tab Dashboard (baik di samping layar desktop maupun di bawah layar mobile).
+2. **Strict Live Preview Isolation**:
+   - Komponen `LivePhonePreview` HANYA di-render pada tab `themes` / `storefront` (Tampilan & Tema) dalam format split 2-kolom desktop (`lg:flex`).
+   - Seluruh tab operasional lainnya (`dashboard`, `catalog`, `orders`, `whatsapp`, `inbox`, `tracking`, `finance`, serta menu vertikal spesifik) wajib berstatus 100% lebar penuh (`w-full`) tanpa frame ponsel.
+3. **Canonical Store URL**:
+   - Seluruh tombol dan aksi "Salin Tautan" wajib menyalin URL etalase kanonikal:
+     `https://boontrack.com/[tenantSlug]`
+
+### 11.2 Canonical Business Vertical Navigation Matrix
+Navigasi sidebar (`DashboardSidebar.tsx`) pada grup `STORE ENGINE` menyematkan Menu Dinamis (#3) yang beradaptasi secara ketat mengikuti `tenants.category`:
+
+| Canonical Enum (`tenants.category`) | Label Kategori UI | Modul Vertikal | Menu Khusus Operasional (#3 Store Engine) | Target Tab | Ikon Sidebar | Fitur & Batasan Operasional |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `PHYSICAL` | Retail & Produk Fisik | `physical-retail` | **Logistik & Ekspedisi** | `shipping` | `Truck` | Multi-kurir ekspedisi (JNE, J&T, SiCepat), input berat/dimensi, resi otomatis. Dilarang form booking jam atau link file. |
+| `FOOD` | Kuliner & F&B | `fnb-culinary` | **Kurir Instan & Dapur** | `shipping` | `Bike` / `UtensilsCrossed` | Pola GoFood/GrabFood: kurir instan, takeaway vs delivery, radius KM, pesanan dapur. Dilarang opsi kurir reguler berhari-hari. |
+| `FIELD_SERVICE` | Jasa Booking & Lapangan | `field-service` | **Jadwal & Booking Servis** | `booking` | `CalendarCheck` | Kalender teknisi lapangan, slot kedatangan, alamat survei. Dilarang keranjang belanja add-to-cart produk fisik. |
+| `PROFESSIONAL_SERVICE` | Jasa Travel, Properti, Showroom & Konsultan | `pro-service` | **Jadwal & Sesi Konsultasi** | `booking` | `Calendar` / `Compass` | Form janji temu, survei properti, test drive mobil, simulasi DP/angsuran. Dilarang checkout keranjang belanja instan. |
+| `DIGITAL` | Produk Digital & Edukasi | `digital-product` | **Akses Unduh & Lisensi** | `downloads` | `FolderKey` / `Download` | Link download instan (Drive, Notion, ZIP), proteksi lisensi, akses member area. Dilarang form alamat dan ongkir. |
+| `CREATOR_AGENCY` | Affiliate, Agensi Live & Kreator | `creator-agency` | **Manajemen Kampanye & UGC** | `campaigns` | `Share2` / `Percent` | Manajemen tautan rujukan affiliate, jadwal live streaming talent, kode kupon diskon kreator. |
+
+### 11.3 Static AI Bot Invariant
+- Setiap tenant yang dibuat otomatis memiliki konfigurasi status bot aktif secara baku:
+  `is_bot_active: true` dan `bot_paused: false`.
+- Webhook pesan masuk menyalurkan percakapan langsung ke Conversation Engine tanpa mewajibkan toggle manual dari pihak merchant.
 

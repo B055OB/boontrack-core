@@ -139,6 +139,15 @@ async def create_subscription_logic(payload: CreateSubPayload):
                 "expires_at": (datetime.utcnow() + timedelta(hours=24)).isoformat()
             }, on_conflict="slug").execute()
 
+            # Petakan ke 3 tier resmi sesuai ARCHITECTURE.md: STARTER, PRO_SCALE, ENTERPRISE
+            raw_tier = str(payload.plan_tier or "STARTER").strip().upper().replace("-", "_").replace(" ", "_")
+            if any(k in raw_tier for k in ("TEAM", "ENTERPRISE", "SCALE")):
+                canonical_db_tier = "ENTERPRISE"
+            elif any(k in raw_tier for k in ("ADS", "PERFORMANCE", "PRO")):
+                canonical_db_tier = "PRO_SCALE"
+            else:
+                canonical_db_tier = "STARTER"
+
             # 2. Catat / Update data calon merchant ke database
             supabase.table("merchants").upsert({
                 "slug": clean_slug,
@@ -148,7 +157,7 @@ async def create_subscription_logic(payload: CreateSubPayload):
                 "owner_whatsapp": payload.merchant_phone or "",
                 "owner_email": payload.customer_email or "merchant@boontrack.com",
                 "status": "PENDING_PAYMENT",
-                "plan_tier": payload.plan_tier.upper(),
+                "plan_tier": canonical_db_tier,
                 "referral_code": payload.referral_code or payload.affiliate_id,
                 "is_otp_verified": True
             }, on_conflict="slug").execute()

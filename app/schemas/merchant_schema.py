@@ -13,7 +13,6 @@ class BusinessCategoryEnum(str, Enum):
 
 class PlanTierEnum(str, Enum):
     STARTER = "STARTER"
-    GROWTH = "GROWTH"
     PRO_SCALE = "PRO_SCALE"
     ENTERPRISE = "ENTERPRISE"
 
@@ -30,10 +29,23 @@ class MerchantRegisterRequest(BaseModel):
     owner_whatsapp: str = Field(..., min_length=9, max_length=20)
     owner_email: EmailStr
     password: Optional[str] = Field(None, min_length=6)
-    plan_tier: PlanTierEnum = PlanTierEnum.GROWTH
+    plan_tier: PlanTierEnum = PlanTierEnum.STARTER
     bot_strategy: BotStrategyEnum = BotStrategyEnum.TRUST_BUILDER
     referral_code: Optional[str] = None
     cf_turnstile_token: Optional[str] = None
+
+    @validator("plan_tier", pre=True)
+    def normalize_plan_tier(cls, v):
+        if not v:
+            return PlanTierEnum.STARTER
+        clean = str(v).strip().upper().replace("-", "_").replace(" ", "_")
+        if clean in ("GROWTH", "SOLO", "FREE"):
+            return PlanTierEnum.STARTER
+        if clean in ("ADS_PERFORMANCE", "PROSCALE"):
+            return PlanTierEnum.PRO_SCALE
+        if clean in ("TEAM_SCALE", "SCALE"):
+            return PlanTierEnum.ENTERPRISE
+        return clean
 
     @validator("slug")
     def validate_slug(cls, v):

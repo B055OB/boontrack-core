@@ -15,13 +15,16 @@ client = TestClient(app)
 
 def test_plan_pricing_mapping():
     """Validasi konstanta harga paket langganan."""
+    assert PLAN_PRICING["starter"] == 199000
     assert PLAN_PRICING["solo"] == 199000
     assert PLAN_PRICING["ads_performance"] == 299000
+    assert PLAN_PRICING["pro_scale"] == 299000
     assert PLAN_PRICING["team_scale"] == 499000
+    assert PLAN_PRICING["enterprise"] == 499000
     # Synonyms / legacy aliases
     assert PLAN_PRICING["growth"] == 199000
     assert PLAN_PRICING["growth_tracking"] == 299000
-    assert PLAN_PRICING["pro_scale"] == 499000
+    assert PLAN_PRICING["proscale"] == 299000
     # Backward compatibility
     assert TIER_PRICING == PLAN_PRICING
 

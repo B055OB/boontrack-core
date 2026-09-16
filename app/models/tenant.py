@@ -11,6 +11,7 @@ from app.models.base import Base, TenantScopedBaseMixin
 class TenantTier(str, enum.Enum):
     FREE = "FREE"
     STARTER = "STARTER"
+    PRO_SCALE = "PRO_SCALE"
     ENTERPRISE = "ENTERPRISE"
 
 

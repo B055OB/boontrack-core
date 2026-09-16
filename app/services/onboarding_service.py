@@ -131,7 +131,7 @@ def ensure_unique_product_slug(
 
 
 # Tiers yang mendapat akses fitur advanced (CAPI, Reader, Ads Tracking)
-_ADVANCED_TIERS = {"ADS_PERFORMANCE", "PRO_SCALE", "TEAM_SCALE"}
+_ADVANCED_TIERS = {"ADS_PERFORMANCE", "PRO_SCALE", "TEAM_SCALE", "ENTERPRISE"}
 
 
 def _build_feature_flags(tier: str, metadata_features: dict) -> dict:
@@ -156,7 +156,7 @@ def _build_feature_flags(tier: str, metadata_features: dict) -> dict:
         "has_capi": is_advanced,
         "has_reader": is_advanced,
         "ads_tracking": is_advanced,
-        "multi_cs": tier_upper == "TEAM_SCALE",
+        "multi_cs": tier_upper in ("TEAM_SCALE", "ENTERPRISE"),
     }
 
     if not metadata_features:
@@ -251,10 +251,15 @@ class OnboardingService:
             raise TenantSlugAlreadyExistsError(f"Tenant with slug '{tenant_slug}' already exists")
 
         # Resolve tier
-        tier_str = payload.tier.upper()
-        tier_enum = TenantTier.STARTER
-        if tier_str in TenantTier.__members__:
+        tier_str = payload.tier.upper().replace("-", "_").replace(" ", "_")
+        if tier_str in ("ADS_PERFORMANCE", "PROSCALE", "PRO_SCALE"):
+            tier_enum = TenantTier.PRO_SCALE
+        elif tier_str in ("TEAM_SCALE", "ENTERPRISE", "CUSTOM_ENTERPRISE"):
+            tier_enum = TenantTier.ENTERPRISE
+        elif tier_str in TenantTier.__members__:
             tier_enum = TenantTier[tier_str]
+        else:
+            tier_enum = TenantTier.STARTER
 
         # Resolve template & alias (RETAIL_D2C_TEMPLATE -> COMMERCE_TEMPLATE)
         raw_template = (payload.template or "COMMERCE_TEMPLATE").strip()
