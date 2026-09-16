@@ -1,3 +1,4 @@
+import re
 import os
 import random
 import logging
@@ -86,6 +87,7 @@ class AffiliateRegisterRequest(BaseModel):
     model_config = {"extra": "allow"}
 
     phone: str
+    custom_slug: Optional[str] = None
     name: Optional[str] = None
     full_name: Optional[str] = None
     email: Optional[str] = None
@@ -392,12 +394,30 @@ async def register_affiliate(payload: AffiliateRegisterRequest):
     if not aff_res.data:
         aff_res = supabase.table("affiliates").select("*").eq("phone_number", phone).execute()
 
-    raw_ref = payload.referral_code or payload.am_referral_code or payload.am_pembina
-    affiliate_code = (
-        raw_ref.strip().upper()
-        if raw_ref and raw_ref.strip()
-        else f"AFF{phone[-4:]}{random.randint(10, 99)}"
-    )
+    # Ekstraksi custom slug pendaftar
+    custom_slug_input = (payload.custom_slug or "").strip().lower()
+    if not custom_slug_input and payload.referral_code:
+        # Periksa apakah referral_code yang dikirim berbeda dengan AM pembina (artinya custom slug)
+        ref_cand = payload.referral_code.strip().lower()
+        am_cand = (payload.am_pembina or payload.am_referral_code or "").strip().lower()
+        if ref_cand and ref_cand != am_cand:
+            custom_slug_input = ref_cand
+
+    if custom_slug_input:
+        clean_slug = re.sub(r"[^a-z0-9-]", "", custom_slug_input)
+        if len(clean_slug) < 3 or len(clean_slug) > 30:
+            raise HTTPException(status_code=400, detail="Custom slug minimal 3 karakter dan maksimal 30 karakter (hanya huruf kecil, angka, dan strip).")
+        
+        # Cek keunikan slug di database Supabase
+        slug_check = supabase.table("affiliates").select("id, referral_code").ilike("referral_code", clean_slug).execute()
+        if slug_check.data:
+            # Jika nomor telepon sama dan sedang update, perbolehkan jika milik sendiri
+            is_own = any(normalize_phone(r.get("phone", "") or r.get("phone_number", "")) == phone for r in slug_check.data)
+            if not is_own:
+                raise HTTPException(status_code=400, detail="Slug sudah dipakai, gunakan nama lain")
+        affiliate_code = clean_slug
+    else:
+        affiliate_code = f"AFF{phone[-4:]}{random.randint(10, 99)}"
 
     db_payload = {
         "phone": phone,
@@ -663,6 +683,104 @@ async def update_affiliate_payout_account(payload: UpdatePayoutAccountRequest):
 
 
 # ============================================================================
+
+
+class UpdateSlugRequest(BaseModel):
+    model_config = {"extra": "allow"}
+
+    affiliate_id: Optional[str] = None
+    partner_id: Optional[str] = None
+    id: Optional[str] = None
+    current_code: Optional[str] = None
+    referral_code: Optional[str] = None
+    phone: Optional[str] = None
+    new_slug: str
+
+
+@router.patch("/slug")
+@router.post("/slug")
+@affiliate_payout_router.patch("/api/v1/affiliate/slug")
+@affiliate_payout_router.post("/api/v1/affiliate/slug")
+async def update_affiliate_slug(payload: UpdateSlugRequest):
+    """
+    Endpoint update slug / kode referral kustom mitra affiliate.
+    Payload: { affiliate_id / current_code, new_slug }
+    """
+    raw_slug = (payload.new_slug or "").strip().lower()
+    clean_slug = re.sub(r"[^a-z0-9-]", "", raw_slug)
+
+    if not clean_slug or len(clean_slug) < 3 or len(clean_slug) > 30:
+        raise HTTPException(
+            status_code=400,
+            detail="Slug referral minimal 3 karakter dan maksimal 30 karakter (hanya huruf kecil, angka, dan strip)."
+        )
+
+    # Reserved keywords check
+    RESERVED = {
+        "login", "register", "daftar", "api", "dashboard", "auth", "admin",
+        "affiliate", "manager", "shop", "creator", "www", "app", "career", "static", "chat"
+    }
+    if clean_slug in RESERVED:
+        raise HTTPException(status_code=400, detail="Slug ini dicadangkan untuk sistem, gunakan nama lain.")
+
+    # Cari partner / affiliate
+    aff_id = payload.affiliate_id or payload.partner_id or payload.id
+    current_code = (payload.current_code or payload.referral_code or "").strip().lower()
+    target_phone = payload.phone
+
+    aff_record = None
+    if aff_id:
+        res = supabase.table("affiliates").select("*").eq("id", aff_id).execute()
+        if res.data:
+            aff_record = res.data[0]
+
+    if not aff_record and current_code:
+        res = supabase.table("affiliates").select("*").ilike("referral_code", current_code).execute()
+        if res.data:
+            aff_record = res.data[0]
+
+    if not aff_record and target_phone:
+        normalized = normalize_phone(target_phone)
+        res = supabase.table("affiliates").select("*").eq("phone", normalized).execute()
+        if not res.data:
+            res = supabase.table("affiliates").select("*").eq("phone_number", normalized).execute()
+        if res.data:
+            aff_record = res.data[0]
+
+    if not aff_record:
+        raise HTTPException(status_code=404, detail="Data mitra affiliate tidak ditemukan.")
+
+    target_aff_id = aff_record["id"]
+
+    # Cek apakah new_slug sudah dipakai affiliate lain
+    slug_check = supabase.table("affiliates").select("id, referral_code").ilike("referral_code", clean_slug).execute()
+    if slug_check.data:
+        for r in slug_check.data:
+            if str(r.get("id")) != str(target_aff_id):
+                raise HTTPException(status_code=400, detail="Slug sudah dipakai, gunakan nama lain")
+
+    # Update tabel affiliates
+    update_payload = {
+        "referral_code": clean_slug,
+        "is_ref_customized": True,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    updated_aff = save_affiliate_record(update_payload, affiliate_id=target_aff_id)
+    if not updated_aff:
+        updated_aff = {**aff_record, **update_payload}
+
+    logger.info(f"[AFFILIATE_SLUG_UPDATE] Affiliate {target_aff_id} successfully updated slug to '{clean_slug}'")
+
+    return {
+        "status": "success",
+        "success": True,
+        "message": "Slug berhasil diperbarui.",
+        "slug": clean_slug,
+        "referral_code": clean_slug,
+        "affiliate": updated_aff
+    }
+
 # aiohttp Handlers & Registrar (Dual-Runner Railway Compliance)
 # ============================================================================
 
@@ -747,6 +865,19 @@ try:
             logger.error(f"[aiohttp Affiliate Update Payout Account Error] {e}", exc_info=True)
             return _aiohttp_affiliate_json_response({"status": "error", "detail": str(e), "message": str(e)}, status_code=400, request=request)
 
+
+    async def aiohttp_update_slug(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            payload = UpdateSlugRequest(**body)
+            result = await update_affiliate_slug(payload)
+            return _aiohttp_affiliate_json_response(result, status_code=200, request=request)
+        except HTTPException as he:
+            return _aiohttp_affiliate_json_response({"status": "error", "detail": he.detail, "message": he.detail}, status_code=he.status_code, request=request)
+        except Exception as e:
+            logger.error(f"[aiohttp Affiliate Update Slug Error] {e}", exc_info=True)
+            return _aiohttp_affiliate_json_response({"status": "error", "detail": str(e), "message": str(e)}, status_code=400, request=request)
+
     def register_affiliate_auth_routes(app: web.Application):
         """Mendaftarkan rute auth affiliate ke aiohttp web server dengan proteksi duplikasi penuh."""
         existing = set()
@@ -772,6 +903,12 @@ try:
             ("OPTIONS", "/api/v1/auth/affiliate/update-bank", aiohttp_options_affiliate),
             ("PATCH", "/api/v1/auth/affiliate/payout-account", aiohttp_update_payout_account),
             ("POST", "/api/v1/auth/affiliate/payout-account", aiohttp_update_payout_account),
+            ("PATCH", "/api/v1/affiliate/slug", aiohttp_update_slug),
+            ("POST", "/api/v1/affiliate/slug", aiohttp_update_slug),
+            ("OPTIONS", "/api/v1/affiliate/slug", aiohttp_options_affiliate),
+            ("PATCH", "/api/v1/auth/affiliate/slug", aiohttp_update_slug),
+            ("POST", "/api/v1/auth/affiliate/slug", aiohttp_update_slug),
+            ("OPTIONS", "/api/v1/auth/affiliate/slug", aiohttp_options_affiliate),
         ]
         for method, path, handler in routes:
             if (method.upper(), path) in existing:
