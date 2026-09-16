@@ -44,6 +44,7 @@ def test_affiliate_register_endpoint_success(mock_supabase):
     # Mock search existing: empty
     mock_select = MagicMock()
     mock_select.select.return_value.eq.return_value.execute.return_value.data = []
+    mock_select.select.return_value.ilike.return_value.execute.return_value.data = []
     
     # Mock insert
     fake_inserted = {

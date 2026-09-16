@@ -4,7 +4,7 @@ import random
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Header, Request, Response, Depends, Query
 from pydantic import BaseModel
 
 try:
@@ -21,6 +21,7 @@ from app.services.whatsapp_service import send_whatsapp_text, send_otp_whatsapp
 logger = logging.getLogger("AFFILIATE_AUTH")
 router = APIRouter(prefix="/api/v1/auth/affiliate", tags=["Affiliate Auth"])
 affiliate_payout_router = APIRouter(tags=["Affiliate Payout Account"])
+affiliate_router = APIRouter(prefix="/api/v1/affiliate", tags=["Affiliate Dashboard"])
 
 JWT_SECRET = os.getenv("JWT_SECRET", "boontrack-secret-key-production-3000")
 JWT_ALGORITHM = "HS256"
@@ -53,6 +54,191 @@ def generate_jwt_token(payload: dict) -> str:
         sig = hmac.new(JWT_SECRET.encode(), f"{header}.{body}".encode(), hashlib.sha256).digest()
         sig_str = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
         return f"{header}.{body}.{sig_str}"
+
+
+def decode_jwt_token(token: str) -> Dict[str, Any]:
+    """
+    Safely decodes and validates a signed JWT token.
+    Raises HTTPException 401 if token is missing, invalid, or expired.
+    """
+    clean_token = token.replace("Bearer ", "").strip()
+    if not clean_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token autentikasi kosong",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # 1. Decode with python-jose or PyJWT
+    if jwt is not None:
+        try:
+            return jwt.decode(clean_token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        except Exception as e:
+            err_str = str(e).lower()
+            if "expired" in err_str or "signature has expired" in err_str:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token telah kedaluwarsa",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            logger.warning(f"JWT library decode failed: {e}")
+
+    # 2. Manual HMAC-SHA256 fallback decode
+    try:
+        import base64
+        import json
+        import hmac
+        import hashlib
+
+        parts = clean_token.split(".")
+        if len(parts) != 3:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Format token autentikasi tidak valid",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        header_b64, body_b64, sig_b64 = parts
+
+        def b64_decode(data: str) -> bytes:
+            padding = 4 - (len(data) % 4)
+            if padding and padding != 4:
+                data += "=" * padding
+            return base64.urlsafe_b64decode(data.encode())
+
+        expected_sig = hmac.new(
+            JWT_SECRET.encode(), f"{header_b64}.{body_b64}".encode(), hashlib.sha256
+        ).digest()
+        actual_sig = b64_decode(sig_b64)
+        if not hmac.compare_digest(expected_sig, actual_sig):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Tanda tangan token tidak valid",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        payload_bytes = b64_decode(body_b64)
+        payload = json.loads(payload_bytes.decode("utf-8"))
+
+        # Check expiration timestamp
+        if "exp" in payload:
+            exp_val = payload["exp"]
+            now_ts = datetime.now(timezone.utc).timestamp()
+            if isinstance(exp_val, (int, float)) and now_ts > exp_val:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token telah kedaluwarsa",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        return payload
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Fallback JWT decode error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Token autentikasi tidak valid: {str(e)}",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+async def get_current_affiliate(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """
+    Ekstrak identitas user dari Request State, Authorization Header, atau Cookie.
+    - 401 Unauthorized: Jika tidak ada token, token expired, atau tidak valid.
+    - 403 Forbidden: Jika user terotentikasi tetapi role/keanggotaannya bukan Affiliate aktif.
+    """
+    user_state = getattr(request.state, "user", None) if hasattr(request, "state") else None
+
+    token = None
+    if authorization:
+        if authorization.startswith("Bearer "):
+            token = authorization.split(" ", 1)[1].strip()
+        else:
+            token = authorization.strip()
+
+    if not token and hasattr(request, "cookies") and request.cookies:
+        token = (
+            request.cookies.get("authSession")
+            or request.cookies.get("access_token")
+            or request.cookies.get("token")
+        )
+
+    payload = None
+    if user_state and isinstance(user_state, dict):
+        payload = user_state
+    elif token:
+        payload = decode_jwt_token(token)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Autentikasi diperlukan. Sertakan Bearer token atau session cookie.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Simpan ke request.state.user untuk auth context downstream
+    if hasattr(request, "state"):
+        request.state.user = payload
+
+    user_id = payload.get("sub") or payload.get("user_id") or payload.get("id")
+    user_phone = payload.get("phone") or payload.get("phone_number")
+    user_role = str(payload.get("role") or "").strip().upper()
+
+    # Jika payload JWT secara eksplisit mendefinisikan non-affiliate role (misal: USER, MERCHANT, CUSTOMER)
+    if user_role and user_role not in ["AFFILIATE", "PARTNER"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Akses ditolak. Keanggotaan bukan Affiliate aktif.",
+        )
+
+    # Query profil affiliate ke database Supabase berdasarkan user_id / identity terotentikasi
+    affiliate = None
+    if user_id:
+        try:
+            res = supabase.table("affiliates").select("*").eq("id", str(user_id)).execute()
+            if res.data:
+                affiliate = res.data[0]
+        except Exception as e:
+            logger.warning(f"[Auth] Supabase lookup by id failed: {e}")
+
+    if not affiliate and user_phone:
+        norm_phone = normalize_phone(str(user_phone))
+        try:
+            res = supabase.table("affiliates").select("*").eq("phone", norm_phone).execute()
+            if not res.data:
+                res = supabase.table("affiliates").select("*").eq("phone_number", norm_phone).execute()
+            if res.data:
+                affiliate = res.data[0]
+        except Exception as e:
+            logger.warning(f"[Auth] Supabase lookup by phone failed: {e}")
+
+    # Jika user terotentikasi tapi tidak terdaftar di database affiliates -> 403 Forbidden
+    if not affiliate:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Akses ditolak. Akun Anda bukan bagian dari program Affiliate aktif.",
+        )
+
+    # Validasi role dan status keanggotaan
+    db_role = str(affiliate.get("role") or "AFFILIATE").strip().upper()
+    db_status = str(affiliate.get("status") or "ACTIVE").strip().upper()
+
+    if db_role not in ["AFFILIATE", "PARTNER"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Akses ditolak. Role akun bukan Affiliate.",
+        )
+
+    if db_status != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Akses ditolak. Status keanggotaan affiliate adalah {db_status}.",
+        )
+
+    return affiliate
+
 
 
 class SendOTPRequest(BaseModel):
@@ -781,6 +967,126 @@ async def update_affiliate_slug(payload: UpdateSlugRequest):
         "affiliate": updated_aff
     }
 
+
+# ============================================================================
+# AFFILIATE DASHBOARD & ATTR PORTAL ENDPOINTS
+# ============================================================================
+
+@affiliate_router.get("/me", summary="Get Authenticated Affiliate Profile")
+@affiliate_payout_router.get("/api/v1/affiliate/me")
+async def get_affiliate_me(
+    response: Response,
+    current_affiliate: Dict[str, Any] = Depends(get_current_affiliate),
+):
+    """
+    Mengembalikan data profil affiliate dari sesi terotentikasi.
+    Strictly auth-only: tidak bergantung pada query parameter ?code= atau subdomain lookup.
+    """
+    response.headers["Cache-Control"] = "private, no-store, no-cache, must-revalidate"
+
+    aff_id = str(current_affiliate.get("id"))
+    aff_code = (
+        current_affiliate.get("referral_code")
+        or current_affiliate.get("affiliate_code")
+        or ""
+    )
+
+    available_comm = 0.0
+    pending_comm = 0.0
+
+    # 1. Query komisi dari tabel affiliate_commissions
+    try:
+        comm_res = supabase.table("affiliate_commissions").select("amount, status").eq("affiliate_id", aff_id).execute()
+        if comm_res.data:
+            for r in comm_res.data:
+                amt = float(r.get("amount") or 0.0)
+                st = str(r.get("status") or "").strip().upper()
+                if st in ["APPROVED", "AVAILABLE", "READY"]:
+                    available_comm += amt
+                elif st in ["PENDING", "PENDING_PAYOUT", "WAITING"]:
+                    pending_comm += amt
+    except Exception as e:
+        logger.warning(f"[Affiliate Me] Query affiliate_commissions failed: {e}")
+
+    # 2. Fallback query ke commission_ledger jika belum tercatat di affiliate_commissions
+    if available_comm == 0 and pending_comm == 0 and aff_code:
+        try:
+            ledger_res = supabase.table("commission_ledger").select("affiliate_commission_amount, status").eq("affiliate_code", aff_code).execute()
+            if ledger_res.data:
+                for r in ledger_res.data:
+                    amt = float(r.get("affiliate_commission_amount") or 0.0)
+                    st = str(r.get("status") or "").strip().upper()
+                    if st in ["APPROVED", "AVAILABLE"]:
+                        available_comm += amt
+                    elif st in ["PENDING", "PENDING_PAYOUT"]:
+                        pending_comm += amt
+        except Exception:
+            pass
+
+    def _format_comm(val: float):
+        return int(val) if val.is_integer() else round(val, 2)
+
+    return {
+        "id": aff_id,
+        "name": current_affiliate.get("name") or "Nama Mitra",
+        "phone": current_affiliate.get("phone") or current_affiliate.get("phone_number") or "",
+        "role": current_affiliate.get("role") or "AFFILIATE",
+        "status": current_affiliate.get("status") or "ACTIVE",
+        "referral_code": aff_code,
+        "commission": {
+            "available": _format_comm(available_comm),
+            "pending": _format_comm(pending_comm),
+        },
+    }
+
+
+@affiliate_router.get("/portal", summary="Validasi Publik Kode Promo untuk Atribusi Registrasi (Deprecated for Dashboard)")
+@affiliate_payout_router.get("/api/v1/affiliate/portal")
+async def get_affiliate_portal(
+    response: Response,
+    code: Optional[str] = Query(None, description="Kode promo / referral"),
+    ref: Optional[str] = Query(None, description="Alias kode referral"),
+    referral_code: Optional[str] = Query(None, description="Alias kode referral"),
+):
+    """
+    Endpoint atribusi registrasi publik (DEPRECATED untuk data dashboard privat).
+    Strictly hanya memvalidasi apakah kode promo aktif untuk atribusi pendaftaran (ref/code).
+    TIDAK PERNAH mengembalikan saldo, komisi, rekening bank, atau data dashboard privat.
+    """
+    response.headers["Cache-Control"] = "private, no-store, no-cache, must-revalidate"
+    response.headers["X-Deprecated"] = "Endpoint ini didepresiasi untuk akses dashboard. Gunakan GET /api/v1/affiliate/me dengan Bearer token."
+
+    cand_code = code or ref or referral_code
+    if not cand_code or not cand_code.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Parameter kode referral ('code' atau 'ref') diperlukan untuk atribusi registrasi.",
+        )
+
+    clean_code = cand_code.strip()
+    try:
+        res = supabase.table("affiliates").select("id, name, referral_code, status").ilike("referral_code", clean_code).execute()
+        if res.data:
+            record = res.data[0]
+            is_active = str(record.get("status") or "ACTIVE").upper() == "ACTIVE"
+            return {
+                "valid": is_active,
+                "referral_code": record.get("referral_code"),
+                "name": record.get("name") if is_active else None,
+                "attribution_only": True,
+                "message": "Kode promo valid untuk atribusi registrasi." if is_active else "Kode promo tidak aktif.",
+            }
+    except Exception as e:
+        logger.warning(f"[Portal] Supabase referral check failed: {e}")
+
+    return {
+        "valid": False,
+        "referral_code": clean_code,
+        "attribution_only": True,
+        "message": "Kode promo tidak ditemukan.",
+    }
+
+
 # aiohttp Handlers & Registrar (Dual-Runner Railway Compliance)
 # ============================================================================
 
@@ -802,7 +1108,148 @@ try:
 
     def _aiohttp_affiliate_json_response(data: dict, status_code: int = 200, request: web.Request = None) -> web.Response:
         headers = _aiohttp_affiliate_cors_headers(request) if request else {}
+        headers["Cache-Control"] = "private, no-store, no-cache, must-revalidate"
         return web.json_response(data, status=status_code, headers=headers)
+
+    async def aiohttp_affiliate_me(request: web.Request) -> web.Response:
+        try:
+            auth_header = request.headers.get("Authorization")
+            token = None
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header.split(" ", 1)[1].strip()
+            elif auth_header:
+                token = auth_header.strip()
+
+            if not token and request.cookies:
+                token = (
+                    request.cookies.get("authSession")
+                    or request.cookies.get("access_token")
+                    or request.cookies.get("token")
+                )
+
+            if not token:
+                return _aiohttp_affiliate_json_response(
+                    {"status": "error", "detail": "Autentikasi diperlukan. Sertakan Bearer token atau session cookie."},
+                    status_code=401,
+                    request=request
+                )
+
+            payload = decode_jwt_token(token)
+            user_id = payload.get("sub") or payload.get("user_id") or payload.get("id")
+            user_phone = payload.get("phone") or payload.get("phone_number")
+            user_role = str(payload.get("role") or "").strip().upper()
+
+            if user_role and user_role not in ["AFFILIATE", "PARTNER"]:
+                return _aiohttp_affiliate_json_response(
+                    {"status": "error", "detail": "Akses ditolak. Keanggotaan bukan Affiliate aktif."},
+                    status_code=403,
+                    request=request
+                )
+
+            affiliate = None
+            if user_id:
+                try:
+                    res = supabase.table("affiliates").select("*").eq("id", str(user_id)).execute()
+                    if res.data:
+                        affiliate = res.data[0]
+                except Exception:
+                    pass
+
+            if not affiliate and user_phone:
+                norm_phone = normalize_phone(str(user_phone))
+                try:
+                    res = supabase.table("affiliates").select("*").eq("phone", norm_phone).execute()
+                    if not res.data:
+                        res = supabase.table("affiliates").select("*").eq("phone_number", norm_phone).execute()
+                    if res.data:
+                        affiliate = res.data[0]
+                except Exception:
+                    pass
+
+            if not affiliate:
+                return _aiohttp_affiliate_json_response(
+                    {"status": "error", "detail": "Akses ditolak. Akun Anda bukan bagian dari program Affiliate aktif."},
+                    status_code=403,
+                    request=request
+                )
+
+            db_role = str(affiliate.get("role") or "AFFILIATE").strip().upper()
+            db_status = str(affiliate.get("status") or "ACTIVE").strip().upper()
+
+            if db_role not in ["AFFILIATE", "PARTNER"] or db_status != "ACTIVE":
+                return _aiohttp_affiliate_json_response(
+                    {"status": "error", "detail": "Akses ditolak. Bukan Affiliate aktif."},
+                    status_code=403,
+                    request=request
+                )
+
+            aff_id = str(affiliate.get("id"))
+            aff_code = affiliate.get("referral_code") or affiliate.get("affiliate_code") or ""
+            available_comm = 0.0
+            pending_comm = 0.0
+
+            try:
+                comm_res = supabase.table("affiliate_commissions").select("amount, status").eq("affiliate_id", aff_id).execute()
+                if comm_res.data:
+                    for r in comm_res.data:
+                        amt = float(r.get("amount") or 0.0)
+                        st = str(r.get("status") or "").strip().upper()
+                        if st in ["APPROVED", "AVAILABLE", "READY"]:
+                            available_comm += amt
+                        elif st in ["PENDING", "PENDING_PAYOUT", "WAITING"]:
+                            pending_comm += amt
+            except Exception:
+                pass
+
+            data = {
+                "id": aff_id,
+                "name": affiliate.get("name") or "Nama Mitra",
+                "phone": affiliate.get("phone") or affiliate.get("phone_number") or "",
+                "role": affiliate.get("role") or "AFFILIATE",
+                "status": affiliate.get("status") or "ACTIVE",
+                "referral_code": aff_code,
+                "commission": {
+                    "available": int(available_comm) if available_comm.is_integer() else round(available_comm, 2),
+                    "pending": int(pending_comm) if pending_comm.is_integer() else round(pending_comm, 2),
+                },
+            }
+            return _aiohttp_affiliate_json_response(data, status_code=200, request=request)
+        except HTTPException as he:
+            return _aiohttp_affiliate_json_response({"status": "error", "detail": he.detail}, status_code=he.status_code, request=request)
+        except Exception as e:
+            logger.error(f"[aiohttp Affiliate Me Error] {e}", exc_info=True)
+            return _aiohttp_affiliate_json_response({"status": "error", "detail": str(e)}, status_code=500, request=request)
+
+    async def aiohttp_affiliate_portal(request: web.Request) -> web.Response:
+        cand_code = request.query.get("code") or request.query.get("ref") or request.query.get("referral_code")
+        if not cand_code or not cand_code.strip():
+            return _aiohttp_affiliate_json_response(
+                {"status": "error", "detail": "Parameter kode referral ('code' atau 'ref') diperlukan."},
+                status_code=400,
+                request=request
+            )
+        clean_code = cand_code.strip()
+        try:
+            res = supabase.table("affiliates").select("id, name, referral_code, status").ilike("referral_code", clean_code).execute()
+            if res.data:
+                record = res.data[0]
+                is_active = str(record.get("status") or "ACTIVE").upper() == "ACTIVE"
+                return _aiohttp_affiliate_json_response({
+                    "valid": is_active,
+                    "referral_code": record.get("referral_code"),
+                    "name": record.get("name") if is_active else None,
+                    "attribution_only": True,
+                    "message": "Kode promo valid untuk atribusi registrasi." if is_active else "Kode promo tidak aktif.",
+                }, status_code=200, request=request)
+        except Exception as e:
+            logger.warning(f"[aiohttp Portal Error] {e}")
+
+        return _aiohttp_affiliate_json_response({
+            "valid": False,
+            "referral_code": clean_code,
+            "attribution_only": True,
+            "message": "Kode promo tidak ditemukan.",
+        }, status_code=200, request=request)
 
     async def aiohttp_register_affiliate(request: web.Request) -> web.Response:
         try:
@@ -888,6 +1335,10 @@ try:
                     existing.add((r.method.upper(), canon))
 
         routes = [
+            ("GET", "/api/v1/affiliate/me", aiohttp_affiliate_me),
+            ("OPTIONS", "/api/v1/affiliate/me", aiohttp_options_affiliate),
+            ("GET", "/api/v1/affiliate/portal", aiohttp_affiliate_portal),
+            ("OPTIONS", "/api/v1/affiliate/portal", aiohttp_options_affiliate),
             ("POST", "/api/v1/auth/affiliate/register", aiohttp_register_affiliate),
             ("OPTIONS", "/api/v1/auth/affiliate/register", aiohttp_options_affiliate),
             ("POST", "/api/v1/auth/affiliate/send-otp", aiohttp_send_otp),
@@ -919,6 +1370,8 @@ try:
                 app.router.add_options(path, handler)
             elif method == "PATCH":
                 app.router.add_patch(path, handler)
+            elif method == "GET":
+                app.router.add_get(path, handler)
             existing.add((method.upper(), path))
         logger.info("[ROUTER] Affiliate auth & payout routes registered on aiohttp.")
 

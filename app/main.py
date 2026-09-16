@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Dict, Any
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from aiohttp import web
@@ -50,7 +50,7 @@ from app.routes.d2c_order_routes import d2c_router, register_d2c_order_routes
 from app.routes.meta_oauth import meta_exchange_router
 from app.routes.shipping_webhook_routes import register_shipping_routes
 from app.routes.seller_ads_routes import register_seller_ads_routes
-from app.routes.affiliate_auth import router as affiliate_auth_router, affiliate_payout_router, register_affiliate_auth_routes
+from app.routes.affiliate_auth import router as affiliate_auth_router, affiliate_payout_router, affiliate_router, register_affiliate_auth_routes
 from app.routes.meta_waba_routes import waba_router
 from app.routes.shipping_routes import router as shipping_router, logistics_router
 from app.routes.partner_routes import partner_router, manager_router
@@ -107,6 +107,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def affiliate_cache_control_middleware(request: Request, call_next):
+    """
+    Header P0.5 Cache Boundary:
+    Set Cache-Control: private, no-store, no-cache, must-revalidate
+    untuk response endpoint /api/v1/affiliate/* agar data dashboard privat tidak pernah di-cache.
+    """
+    response = await call_next(request)
+    if request.url.path.startswith("/api/v1/affiliate"):
+        response.headers["Cache-Control"] = "private, no-store, no-cache, must-revalidate"
+    return response
+
 # Register Routers ke FastAPI
 app.include_router(gym_router, prefix="/api/v1/gym")
 app.include_router(gym_admin_router)
@@ -138,6 +150,7 @@ app.include_router(d2c_router)
 app.include_router(meta_exchange_router)
 app.include_router(affiliate_auth_router)
 app.include_router(affiliate_payout_router)
+app.include_router(affiliate_router)
 app.include_router(waba_router)
 app.include_router(shipping_router)
 app.include_router(logistics_router)
