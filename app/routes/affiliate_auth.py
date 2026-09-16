@@ -19,6 +19,7 @@ from app.services.whatsapp_service import send_whatsapp_text, send_otp_whatsapp
 
 logger = logging.getLogger("AFFILIATE_AUTH")
 router = APIRouter(prefix="/api/v1/auth/affiliate", tags=["Affiliate Auth"])
+affiliate_payout_router = APIRouter(tags=["Affiliate Payout Account"])
 
 JWT_SECRET = os.getenv("JWT_SECRET", "boontrack-secret-key-production-3000")
 JWT_ALGORITHM = "HS256"
@@ -117,6 +118,28 @@ class AffiliateRegisterRequest(BaseModel):
     agreed_to_rules: Optional[bool] = True
     agreed_to_terms: Optional[bool] = True
 
+
+
+class UpdatePayoutAccountRequest(BaseModel):
+    """Payload pembaruan data rekening pencairan komisi mitra affiliate."""
+    model_config = {"extra": "allow"}
+
+    affiliate_id: Optional[str] = None
+    partner_id: Optional[str] = None
+    id: Optional[str] = None
+    phone: Optional[str] = None
+    phone_number: Optional[str] = None
+    email: Optional[str] = None
+
+    # Kolom resmi bank & aliases
+    bank_name: Optional[str] = None
+    bank: Optional[str] = None
+    bank_account_number: Optional[str] = None
+    account_number: Optional[str] = None
+    bank_account_holder: Optional[str] = None
+    account_holder: Optional[str] = None
+    account_name: Optional[str] = None
+    payout_bank_details: Optional[Dict[str, Any]] = None
 
 class AffiliateScreeningRequest(BaseModel):
     """Payload pembaruan data screening & rekening bank mitra yang sudah ada."""
@@ -537,6 +560,108 @@ async def submit_affiliate_screening(payload: AffiliateScreeningRequest):
     }
 
 
+
+@router.patch("/payout-account")
+@router.post("/payout-account")
+@router.post("/update-bank")
+@affiliate_payout_router.patch("/api/v1/affiliate/payout-account")
+@affiliate_payout_router.post("/api/v1/affiliate/payout-account")
+@affiliate_payout_router.post("/api/v1/auth/affiliate/update-bank")
+async def update_affiliate_payout_account(payload: UpdatePayoutAccountRequest):
+    """
+    Endpoint pembaruan rekening bank / e-wallet pencairan komisi mitra affiliate.
+    Mendukung PATCH/POST /api/v1/affiliate/payout-account dan POST /api/v1/auth/affiliate/update-bank.
+    """
+    # 1. Ekstraksi bank info dengan toleransi alias lengkap
+    resolved_bank = (
+        payload.bank_name
+        or payload.bank
+        or (payload.payout_bank_details.get("bank_name") if isinstance(payload.payout_bank_details, dict) else None)
+    )
+    resolved_account_number = (
+        payload.bank_account_number
+        or payload.account_number
+        or (payload.payout_bank_details.get("account_number") if isinstance(payload.payout_bank_details, dict) else None)
+        or (payload.payout_bank_details.get("bank_account_number") if isinstance(payload.payout_bank_details, dict) else None)
+    )
+    resolved_account_holder = (
+        payload.bank_account_holder
+        or payload.account_holder
+        or payload.account_name
+        or (payload.payout_bank_details.get("account_holder") if isinstance(payload.payout_bank_details, dict) else None)
+        or (payload.payout_bank_details.get("bank_account_holder") if isinstance(payload.payout_bank_details, dict) else None)
+    )
+
+    if not resolved_bank or not resolved_account_number or not resolved_account_holder:
+        raise HTTPException(
+            status_code=400,
+            detail="Pilihan bank/e-wallet, nomor rekening, dan nama pemilik rekening wajib diisi lengkap."
+        )
+
+    clean_bank = str(resolved_bank).strip().upper()
+    clean_account = str(resolved_account_number).strip().replace(" ", "")
+    clean_holder = str(resolved_account_holder).strip().upper()
+
+    # 2. Cari partner / affiliate
+    aff_id = payload.affiliate_id or payload.partner_id or payload.id
+    target_phone = payload.phone or payload.phone_number
+
+    aff_record = None
+    if aff_id:
+        res = supabase.table("affiliates").select("*").eq("id", aff_id).execute()
+        if res.data:
+            aff_record = res.data[0]
+
+    if not aff_record and target_phone:
+        normalized = normalize_phone(target_phone)
+        res = supabase.table("affiliates").select("*").eq("phone", normalized).execute()
+        if not res.data:
+            res = supabase.table("affiliates").select("*").eq("phone_number", normalized).execute()
+        if res.data:
+            aff_record = res.data[0]
+
+    if not aff_record and payload.email:
+        res = supabase.table("affiliates").select("*").eq("email", str(payload.email).strip().lower()).execute()
+        if res.data:
+            aff_record = res.data[0]
+
+    if not aff_record:
+        raise HTTPException(status_code=404, detail="Data mitra affiliate tidak ditemukan.")
+
+    target_aff_id = aff_record["id"]
+
+    update_payload = {
+        "bank_name": clean_bank,
+        "bank_account_number": clean_account,
+        "bank_account_holder": clean_holder,
+        "payout_bank_details": {
+            "bank_name": clean_bank,
+            "account_number": clean_account,
+            "account_holder": clean_holder,
+        },
+        "is_bank_verified": True,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    updated_aff = save_affiliate_record(update_payload, affiliate_id=target_aff_id)
+    if not updated_aff:
+        updated_aff = {**aff_record, **update_payload}
+
+    logger.info(f"[AFFILIATE_BANK_UPDATE] Updated bank for affiliate {target_aff_id}: {clean_bank} - {clean_account} ({clean_holder})")
+
+    return {
+        "success": True,
+        "status": "success",
+        "message": "Rekening pencairan komisi berhasil diperbarui.",
+        "affiliate": updated_aff,
+        "bank_account": {
+            "bank_name": clean_bank,
+            "account_number": clean_account,
+            "account_holder": clean_holder,
+        }
+    }
+
+
 # ============================================================================
 # aiohttp Handlers & Registrar (Dual-Runner Railway Compliance)
 # ============================================================================
@@ -600,8 +725,8 @@ try:
     async def aiohttp_screening(request: web.Request) -> web.Response:
         try:
             body = await request.json()
-            payload = AffiliateScreeningUpdateRequest(**body)
-            result = await update_screening_qualification(payload)
+            payload = AffiliateScreeningRequest(**body)
+            result = await submit_affiliate_screening(payload)
             return _aiohttp_affiliate_json_response(result, status_code=200, request=request)
         except HTTPException as he:
             return _aiohttp_affiliate_json_response({"status": "error", "detail": he.detail}, status_code=he.status_code, request=request)
@@ -609,8 +734,28 @@ try:
             logger.error(f"[aiohttp Affiliate Screening Error] {e}", exc_info=True)
             return _aiohttp_affiliate_json_response({"status": "error", "detail": str(e)}, status_code=400, request=request)
 
+    
+    async def aiohttp_update_payout_account(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            payload = UpdatePayoutAccountRequest(**body)
+            result = await update_affiliate_payout_account(payload)
+            return _aiohttp_affiliate_json_response(result, status_code=200, request=request)
+        except HTTPException as he:
+            return _aiohttp_affiliate_json_response({"status": "error", "detail": he.detail, "message": he.detail}, status_code=he.status_code, request=request)
+        except Exception as e:
+            logger.error(f"[aiohttp Affiliate Update Payout Account Error] {e}", exc_info=True)
+            return _aiohttp_affiliate_json_response({"status": "error", "detail": str(e), "message": str(e)}, status_code=400, request=request)
+
     def register_affiliate_auth_routes(app: web.Application):
-        """Mendaftarkan rute auth affiliate ke aiohttp web server."""
+        """Mendaftarkan rute auth affiliate ke aiohttp web server dengan proteksi duplikasi penuh."""
+        existing = set()
+        for r in app.router.routes():
+            if r.resource:
+                canon = getattr(r.resource, "canonical", None)
+                if canon:
+                    existing.add((r.method.upper(), canon))
+
         routes = [
             ("POST", "/api/v1/auth/affiliate/register", aiohttp_register_affiliate),
             ("OPTIONS", "/api/v1/auth/affiliate/register", aiohttp_options_affiliate),
@@ -620,13 +765,25 @@ try:
             ("OPTIONS", "/api/v1/auth/affiliate/verify-otp", aiohttp_options_affiliate),
             ("POST", "/api/v1/auth/affiliate/screening", aiohttp_screening),
             ("OPTIONS", "/api/v1/auth/affiliate/screening", aiohttp_options_affiliate),
+            ("PATCH", "/api/v1/affiliate/payout-account", aiohttp_update_payout_account),
+            ("POST", "/api/v1/affiliate/payout-account", aiohttp_update_payout_account),
+            ("OPTIONS", "/api/v1/affiliate/payout-account", aiohttp_options_affiliate),
+            ("POST", "/api/v1/auth/affiliate/update-bank", aiohttp_update_payout_account),
+            ("OPTIONS", "/api/v1/auth/affiliate/update-bank", aiohttp_options_affiliate),
+            ("PATCH", "/api/v1/auth/affiliate/payout-account", aiohttp_update_payout_account),
+            ("POST", "/api/v1/auth/affiliate/payout-account", aiohttp_update_payout_account),
         ]
         for method, path, handler in routes:
+            if (method.upper(), path) in existing:
+                continue
             if method == "POST":
                 app.router.add_post(path, handler)
             elif method == "OPTIONS":
                 app.router.add_options(path, handler)
-        logger.info("[ROUTER] Affiliate auth routes registered on aiohttp (/api/v1/auth/affiliate/*).")
+            elif method == "PATCH":
+                app.router.add_patch(path, handler)
+            existing.add((method.upper(), path))
+        logger.info("[ROUTER] Affiliate auth & payout routes registered on aiohttp.")
 
 except ImportError:
     def register_affiliate_auth_routes(app):

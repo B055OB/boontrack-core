@@ -50,7 +50,7 @@ from app.routes.d2c_order_routes import d2c_router, register_d2c_order_routes
 from app.routes.meta_oauth import meta_exchange_router
 from app.routes.shipping_webhook_routes import register_shipping_routes
 from app.routes.seller_ads_routes import register_seller_ads_routes
-from app.routes.affiliate_auth import router as affiliate_auth_router, register_affiliate_auth_routes
+from app.routes.affiliate_auth import router as affiliate_auth_router, affiliate_payout_router, register_affiliate_auth_routes
 from app.routes.meta_waba_routes import waba_router
 from app.routes.shipping_routes import router as shipping_router, logistics_router
 from app.routes.partner_routes import partner_router, manager_router
@@ -137,6 +137,7 @@ app.include_router(growth_router)
 app.include_router(d2c_router)
 app.include_router(meta_exchange_router)
 app.include_router(affiliate_auth_router)
+app.include_router(affiliate_payout_router)
 app.include_router(waba_router)
 app.include_router(shipping_router)
 app.include_router(logistics_router)

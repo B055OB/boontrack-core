@@ -431,6 +431,32 @@ class OnboardingService:
         except Exception as reg_err:
             logger.warning(f"[Onboarding Registry Note] Runtime config registration warning: {reg_err}")
 
+                # 4b. Sync Tenant Record to Supabase 'tenants' table
+        try:
+            supabase = get_supabase()
+            if supabase:
+                trial_period_end = (now + timedelta(days=7)).isoformat()
+                supabase.table("tenants").upsert({
+                    "id": str(tenant_id),
+                    "name": payload.name,
+                    "slug": tenant_slug,
+                    "tier": "SOLO_TRIAL" if plan_code == "SOLO_TRIAL" else tier_enum.value,
+                    "trial_ends_at": trial_period_end,
+                    "subscription_ends_at": trial_period_end,
+                    "created_at": now.isoformat(),
+                    "is_active": True,
+                    "metadata": {
+                        "template": template_name,
+                        "onboarding_mode": mode_enum.value,
+                        "vertical": (payload.vertical or vert_config["vertical"]).upper(),
+                        "trial_ends_at": trial_period_end,
+                        "subscription_ends_at": trial_period_end,
+                    }
+                }, on_conflict="slug").execute()
+                logger.info(f"[OnboardingService] Synced tenant '{tenant_slug}' (trial_ends_at: {trial_period_end}) to Supabase")
+        except Exception as sb_err:
+            logger.warning(f"[OnboardingService Supabase tenant sync warning]: {sb_err}")
+
         # 5. Setup entitlements and identity based on plan
         try:
             await self._setup_tenant_entitlements_and_identity(
@@ -504,6 +530,8 @@ class OnboardingService:
                             _row_tier = row.get("tier") or "STARTER"
                             _row_meta = row.get("metadata") or {}
                             _row_features = _row_meta.get("features") or {}
+                            _trial_end = row.get("trial_ends_at") or _row_meta.get("trial_ends_at")
+                            _sub_end = row.get("subscription_ends_at") or _row_meta.get("subscription_ends_at")
                             tenant_dict = {
                                 "id": str(row.get("id") or clean_slug),
                                 "name": row.get("name") or clean_slug.replace("-", " ").title(),
@@ -512,6 +540,8 @@ class OnboardingService:
                                 "features": _build_feature_flags(_row_tier, _row_features),
                                 "template": "COMMERCE_TEMPLATE",
                                 "vertical": row.get("category", "COMMERCE"),
+                                "trial_ends_at": _trial_end,
+                                "subscription_ends_at": _sub_end or _trial_end,
                                 "is_active": True,
                                 "created_at": row.get("created_at") or datetime.now(timezone.utc).isoformat(),
                             }
