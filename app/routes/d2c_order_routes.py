@@ -276,6 +276,12 @@ async def aiohttp_mark_order_paid(request):
         logger.warning(f"[Meta CAPI Warning] aiohttp task creation error: {capi_err}")
         capi_dispatched = False
 
+    try:
+        from app.services.waba_notification_service import dispatch_payment_success_notifications
+        asyncio.create_task(dispatch_payment_success_notifications(order_id=order_id))
+    except Exception as waba_err:
+        logger.warning(f"[WABA Notification Warning] for order {order_id}: {waba_err}")
+
     return web.json_response({
         "success": True,
         "order_id": str(updated_order["id"]),
@@ -288,5 +294,12 @@ async def aiohttp_mark_order_paid(request):
 
 def register_d2c_order_routes(app):
     """Mendaftarkan rute D2C orders ke aplikasi aiohttp."""
-    app.router.add_post("/api/v1/orders/{order_id}/mark-paid", aiohttp_mark_order_paid)
-    app.router.add_post("/v1/orders/{order_id}/mark-paid", aiohttp_mark_order_paid)
+    existing_posts = {
+        getattr(getattr(r, "resource", None), "canonical", None)
+        for r in app.router.routes()
+        if getattr(r, "method", None) == "POST"
+    }
+    if "/api/v1/orders/{order_id}/mark-paid" not in existing_posts:
+        app.router.add_post("/api/v1/orders/{order_id}/mark-paid", aiohttp_mark_order_paid)
+    if "/v1/orders/{order_id}/mark-paid" not in existing_posts:
+        app.router.add_post("/v1/orders/{order_id}/mark-paid", aiohttp_mark_order_paid)

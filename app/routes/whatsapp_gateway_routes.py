@@ -259,26 +259,39 @@ async def aiohttp_connection_state_handler(request):
 
 def register_whatsapp_gateway_routes(app):
     """Mendaftarkan seluruh route WhatsApp gateway (pairing, reconnect, Evolution webhook, status) ke server aiohttp."""
-    try:
-        app.router.add_post("/tenant/whatsapp/reconnect", aiohttp_tenant_reconnect_handler)
-        app.router.add_post("/api/v1/whatsapp/sessions/{tenant_slug}/pairing-code", aiohttp_pairing_code_handler)
-        app.router.add_post("/api/v1/whatsapp/pairing-code", aiohttp_pairing_code_handler)
+    existing_routes = {
+        (getattr(r, "method", "").upper(), getattr(getattr(r, "resource", None), "canonical", None))
+        for r in app.router.routes()
+    }
 
-        # Evolution API Connection State Endpoints
-        app.router.add_get("/instance/connectionState/{instance}", aiohttp_connection_state_handler)
-        app.router.add_get("/api/v1/whatsapp/instance/connectionState/{instance}", aiohttp_connection_state_handler)
+    def _safe_add_route(method: str, path: str, handler):
+        if (method.upper(), path) not in existing_routes:
+            try:
+                if method.upper() == "POST":
+                    app.router.add_post(path, handler)
+                elif method.upper() == "GET":
+                    app.router.add_get(path, handler)
+                existing_routes.add((method.upper(), path))
+            except Exception as e:
+                logger.warning(f"[register_whatsapp_gateway_routes] Skip {method} {path}: {e}")
 
-        # Evolution API Webhook Endpoints
-        app.router.add_post("/api/v1/whatsapp/webhook/evolution/{tenant_slug}", aiohttp_evolution_webhook_handler)
-        app.router.add_post("/api/v1/whatsapp/webhook/evolution/{tenant_slug}/messages-upsert", aiohttp_evolution_webhook_handler)
-        app.router.add_post("/api/v1/whatsapp/webhook/evolution", aiohttp_evolution_webhook_handler)
-        app.router.add_post("/api/v1/whatsapp/evolution/webhook", aiohttp_evolution_webhook_handler)
-        app.router.add_post("/webhook/evolution/{tenant_slug}", aiohttp_evolution_webhook_handler)
-        app.router.add_post("/webhook/evolution", aiohttp_evolution_webhook_handler)
-        app.router.add_post("/api/v1/whatsapp/inbound-process", aiohttp_inbound_process_handler)
-        logger.info("[register_whatsapp_gateway_routes] Evolution API webhook, pairing, and connectionState routes mounted to aiohttp.")
-    except Exception as reg_err:
-        logger.warning(f"[register_whatsapp_gateway_routes] Note: {reg_err}")
+    _safe_add_route("POST", "/tenant/whatsapp/reconnect", aiohttp_tenant_reconnect_handler)
+    _safe_add_route("POST", "/api/v1/whatsapp/sessions/{tenant_slug}/pairing-code", aiohttp_pairing_code_handler)
+    _safe_add_route("POST", "/api/v1/whatsapp/pairing-code", aiohttp_pairing_code_handler)
+
+    # Evolution API Connection State Endpoints
+    _safe_add_route("GET", "/instance/connectionState/{instance}", aiohttp_connection_state_handler)
+    _safe_add_route("GET", "/api/v1/whatsapp/instance/connectionState/{instance}", aiohttp_connection_state_handler)
+
+    # Evolution API Webhook Endpoints
+    _safe_add_route("POST", "/api/v1/whatsapp/webhook/evolution/{tenant_slug}", aiohttp_evolution_webhook_handler)
+    _safe_add_route("POST", "/api/v1/whatsapp/webhook/evolution/{tenant_slug}/messages-upsert", aiohttp_evolution_webhook_handler)
+    _safe_add_route("POST", "/api/v1/whatsapp/webhook/evolution", aiohttp_evolution_webhook_handler)
+    _safe_add_route("POST", "/api/v1/whatsapp/evolution/webhook", aiohttp_evolution_webhook_handler)
+    _safe_add_route("POST", "/webhook/evolution/{tenant_slug}", aiohttp_evolution_webhook_handler)
+    _safe_add_route("POST", "/webhook/evolution", aiohttp_evolution_webhook_handler)
+    _safe_add_route("POST", "/api/v1/whatsapp/inbound-process", aiohttp_inbound_process_handler)
+    logger.info("[register_whatsapp_gateway_routes] Evolution API webhook, pairing, and connectionState routes mounted to aiohttp.")
 
 
 
