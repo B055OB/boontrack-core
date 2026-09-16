@@ -95,10 +95,15 @@ class AffiliateRegisterRequest(BaseModel):
     tenant_id: Optional[str] = "onlineboost"
     manager_id: Optional[str] = None
 
-    # Data Rekening Bank untuk Payout Komisi
+    # Data Rekening Bank untuk Payout Komisi (dengan alias toleran)
     bank_name: Optional[str] = None
+    bank: Optional[str] = None
     bank_account_number: Optional[str] = None
+    account_number: Optional[str] = None
     bank_account_holder: Optional[str] = None
+    account_holder: Optional[str] = None
+    account_name: Optional[str] = None
+    payout_bank_details: Optional[Dict[str, Any]] = None
 
     # Screening & Kualifikasi (Opsional / Bypass Tahap 3)
     experience_level: Optional[str] = "BEGINNER"
@@ -141,28 +146,62 @@ def normalize_phone(phone: str) -> str:
 def save_affiliate_record(db_payload: Dict[str, Any], affiliate_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Menyimpan atau memperbarui data affiliate di Supabase.
-    Mendukung kolom migrasi 013 (bank_name, screening_status, dll) dengan fallback aman.
+    Mendukung kolom migrasi 013 (bank_name, bank_account_number, bank_account_holder, screening_status, dll)
+    dengan sinkronisasi penuh dan fallback aman.
     """
+    allowed_columns = {
+        "id", "tenant_id", "name", "phone", "phone_number", "email",
+        "referral_code", "commission_rate", "status",
+        "bank_name", "bank_account_number", "bank_account_holder",
+        "payout_bank_details", "is_bank_verified",
+        "screening_status", "experience_level", "promotion_strategy_notes",
+        "social_media_links", "portfolio_url", "rejection_reason",
+        "agreed_to_rules", "manager_id"
+    }
+
+    clean_payload = {k: v for k, v in db_payload.items() if k in allowed_columns}
+
+    # Sinkronisasi dua arah: jika payout_bank_details terisi, isi kolom individual (dan sebaliknya)
+    payout_details = clean_payload.get("payout_bank_details")
+    if isinstance(payout_details, dict):
+        if not clean_payload.get("bank_name") and payout_details.get("bank_name"):
+            clean_payload["bank_name"] = str(payout_details["bank_name"]).strip().upper()
+        if not clean_payload.get("bank_account_number") and (payout_details.get("account_number") or payout_details.get("bank_account_number")):
+            clean_payload["bank_account_number"] = str(payout_details.get("account_number") or payout_details.get("bank_account_number")).strip().replace(" ", "")
+        if not clean_payload.get("bank_account_holder") and (payout_details.get("account_holder") or payout_details.get("account_name")):
+            clean_payload["bank_account_holder"] = str(payout_details.get("account_holder") or payout_details.get("account_name")).strip().upper()
+    elif clean_payload.get("bank_name") or clean_payload.get("bank_account_number") or clean_payload.get("bank_account_holder"):
+        clean_payload["payout_bank_details"] = {
+            "bank_name": clean_payload.get("bank_name"),
+            "account_number": clean_payload.get("bank_account_number"),
+            "account_holder": clean_payload.get("bank_account_holder"),
+        }
+
+    # Definisi kunci fallback yang tetap mempertahankan data rekening bank & identitas
+    fallback_keys = {
+        "name", "phone", "phone_number", "email", "referral_code",
+        "bank_name", "bank_account_number", "bank_account_holder",
+        "payout_bank_details", "commission_rate", "status", "tenant_id", "manager_id"
+    }
+
     if affiliate_id:
         try:
-            res = supabase.table("affiliates").update(db_payload).eq("id", affiliate_id).execute()
+            res = supabase.table("affiliates").update(clean_payload).eq("id", affiliate_id).execute()
             if res.data:
                 return res.data[0]
         except Exception as e:
-            logger.warning(f"[Affiliate Save] Update with extended columns failed ({e}), using fallback")
-            core_keys = {"name", "phone", "phone_number", "referral_code", "payout_bank_details", "commission_rate", "status"}
-            fallback = {k: v for k, v in db_payload.items() if k in core_keys}
+            logger.warning(f"[Affiliate Save] Update with full columns failed ({e}), using safe fallback")
+            fallback = {k: v for k, v in clean_payload.items() if k in fallback_keys}
             res = supabase.table("affiliates").update(fallback).eq("id", affiliate_id).execute()
             return res.data[0] if res.data else {}
     else:
         try:
-            res = supabase.table("affiliates").insert(db_payload).execute()
+            res = supabase.table("affiliates").insert(clean_payload).execute()
             if res.data:
                 return res.data[0]
         except Exception as e:
-            logger.warning(f"[Affiliate Save] Insert with extended columns failed ({e}), using fallback")
-            core_keys = {"name", "phone", "phone_number", "referral_code", "payout_bank_details", "commission_rate", "status", "tenant_id", "manager_id"}
-            fallback = {k: v for k, v in db_payload.items() if k in core_keys}
+            logger.warning(f"[Affiliate Save] Insert with full columns failed ({e}), using safe fallback")
+            fallback = {k: v for k, v in clean_payload.items() if k in fallback_keys}
             res = supabase.table("affiliates").insert(fallback).execute()
             return res.data[0] if res.data else {}
     return {}
@@ -354,26 +393,47 @@ async def register_affiliate(payload: AffiliateRegisterRequest):
 
     if payload.email:
         db_payload["email"] = payload.email.strip().lower()
-    if payload.bank_name:
-        db_payload["bank_name"] = payload.bank_name.strip()
-    if payload.bank_account_number:
-        db_payload["bank_account_number"] = payload.bank_account_number.strip()
-    if payload.bank_account_holder:
-        db_payload["bank_account_holder"] = payload.bank_account_holder.strip()
+    # Ekstraksi field rekening bank dengan fallback alias lengkap
+    resolved_bank = (
+        payload.bank_name
+        or payload.bank
+        or (payload.payout_bank_details.get("bank_name") if isinstance(payload.payout_bank_details, dict) else None)
+    )
+    resolved_account_number = (
+        payload.bank_account_number
+        or payload.account_number
+        or (payload.payout_bank_details.get("account_number") if isinstance(payload.payout_bank_details, dict) else None)
+        or (payload.payout_bank_details.get("bank_account_number") if isinstance(payload.payout_bank_details, dict) else None)
+    )
+    resolved_account_holder = (
+        payload.bank_account_holder
+        or payload.account_holder
+        or payload.account_name
+        or (payload.payout_bank_details.get("account_holder") if isinstance(payload.payout_bank_details, dict) else None)
+        or (payload.payout_bank_details.get("bank_account_holder") if isinstance(payload.payout_bank_details, dict) else None)
+    )
+
+    if resolved_bank:
+        db_payload["bank_name"] = resolved_bank.strip().upper()
+    if resolved_account_number:
+        db_payload["bank_account_number"] = resolved_account_number.strip().replace(" ", "")
+    if resolved_account_holder:
+        db_payload["bank_account_holder"] = resolved_account_holder.strip().upper()
+
+    # Format backward compatible JSONB
+    if resolved_bank or resolved_account_number or resolved_account_holder:
+        db_payload["payout_bank_details"] = {
+            "bank_name": resolved_bank.strip().upper() if resolved_bank else None,
+            "account_number": resolved_account_number.strip().replace(" ", "") if resolved_account_number else None,
+            "account_holder": resolved_account_holder.strip().upper() if resolved_account_holder else None,
+        }
+
     if payload.promotion_strategy_notes or payload.promotion_plan:
         db_payload["promotion_strategy_notes"] = (payload.promotion_strategy_notes or payload.promotion_plan or "").strip()
     if payload.social_media_links:
         db_payload["social_media_links"] = payload.social_media_links
     if payload.portfolio_url:
         db_payload["portfolio_url"] = payload.portfolio_url.strip()
-
-    # Format backward compatible JSONB
-    if payload.bank_name or payload.bank_account_number or payload.bank_account_holder:
-        db_payload["payout_bank_details"] = {
-            "bank_name": payload.bank_name,
-            "account_number": payload.bank_account_number,
-            "account_holder": payload.bank_account_holder,
-        }
 
     try:
         logger.info(f"[AFFILIATE_REGISTRATION] Processing affiliate '{affiliate_name}' (phone: {phone}, bank: {payload.bank_name})")
