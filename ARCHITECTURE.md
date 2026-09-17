@@ -578,3 +578,28 @@ Navigasi sidebar (`DashboardSidebar.tsx`) pada grup `STORE ENGINE` menyematkan M
   `is_bot_active: true` dan `bot_paused: false`.
 - Webhook pesan masuk menyalurkan percakapan langsung ke Conversation Engine tanpa mewajibkan toggle manual dari pihak merchant.
 
+## 12. BoonTrack Shop Platform Affiliate & AM Engine
+
+### 12.1 Core Architectural Principles
+- **Dual-Tier System Separation**:
+  - **Platform Affiliate (BoonTrack AM Engine)**: Mengatur akuisisi merchant baru untuk berlangganan SaaS/platform BoonTrack. Memiliki hierarki manajerial (AM) dan downline (Affiliate Mitra).
+  - **Store-Level Affiliate (Merchant Level - In RFC)**: Sistem komisi mandiri internal toko agar seller dapat merekrut reseller/kreator produk fisik/digital masing-masing.
+- **Master AM Hierarchy**:
+  - Entitas `role: 'am'` membawahi pool affiliate lapangan (`role: 'affiliate'`).
+  - Master AM default saat ini: **Kang Sakti (`buzzerukm`)**.
+  - Mitra baru yang mendaftar via portal publik `/affiliate/register` secara otomatis terikat di bawah `parent_am_id` Master AM aktif.
+  - Akun mitra lapangan (seperti `ref: ob`) berstatus downline langsung di bawah Master AM.
+
+### 12.2 Economic & Security Boundary
+- **Compensation Rate**: Payout platform default 25% untuk mitra yang membawa merchant closing.
+- **Downstream Metric Aggregation**:
+  - Dashboard AM secara real-time mengagregasi total leads, toko trial, dan omzet pipeline dari seluruh sub-affiliate di bawah naungannya.
+  - Mitra biasa hanya memiliki akses visibilitas terhadap pipeline dan komisi miliknya sendiri (*isolated single-tier view*).
+- **Zero-WhatsApp-Cost Authentication**:
+  - Autentikasi portal affiliate murni menggunakan Supabase Magic Link dan Email Token via Resend (`affiliate@boontrack.com` / `Boon Pilot`).
+  - Saluran WhatsApp diisolasi eksklusif hanya untuk notifikasi transaksional bernilai revenue (misal: closing konversi & pencairan payout).
+
+### 12.3 Scalability & Multi-AM Expansion
+- **Control Plane Ready**:
+  - Superadmin dapat menerbitkan AM baru per regional/wilayah (provinsi/luar negeri) melalui portal admin.
+  - Setiap AM baru memiliki kuota dan pool sub-affiliate terisolasi tanpa merombak arsitektur inti database.

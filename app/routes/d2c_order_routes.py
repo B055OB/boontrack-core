@@ -37,6 +37,7 @@ class CheckoutRequest(BaseModel):
     total_amount: int
     is_digital: bool = True
     delivery_asset_url: Optional[str] = None
+    correlation_id: Optional[str] = Field(None, description="Trace or correlation identifier")
 
 
 # Payload ringkas untuk modal keranjang etalase cepat
@@ -46,16 +47,22 @@ class QuickQrisRequest(BaseModel):
     product_name: str
     customer_phone: str
     total_amount: int
+    correlation_id: Optional[str] = None
 
 
 @d2c_router.post("/api/v1/orders/qris-checkout", summary="Quick QRIS Creation from Storefront Cart")
 @d2c_router.post("/v1/orders/qris-checkout", summary="Quick QRIS Creation from Storefront Cart Alias")
 @d2c_router.post("/api/v1/orders/qris/create", summary="Order QRIS Creation Alias")
 @d2c_router.post("/api/v1/order/qris-checkout", summary="Order QRIS Creation Alias 2")
-async def quick_qris_checkout_endpoint(payload: QuickQrisRequest):
+async def quick_qris_checkout_endpoint(
+    payload: QuickQrisRequest,
+    x_correlation_id: Optional[str] = Header(None, alias="x-correlation-id"),
+    x_request_id: Optional[str] = Header(None, alias="x-request-id"),
+):
     """Endpoint yang dipanggil langsung saat buyer klik 'Bayar QRIS Sekarang' di etalase."""
     try:
         import os
+        resolved_corr_id = payload.correlation_id or x_correlation_id or x_request_id
         provider = os.getenv("PAYMENT_GATEWAY_PROVIDER", "").strip().lower()
         if provider == "midtrans" or (not provider and os.getenv("MIDTRANS_SERVER_KEY")):
             from app.services.midtrans_service import midtrans_service
@@ -67,7 +74,11 @@ async def quick_qris_checkout_endpoint(payload: QuickQrisRequest):
                 customer_name=payload.merchant_name or "Buyer",
                 customer_phone=payload.customer_phone,
                 tenant_id=payload.merchant_slug,
-                metadata={"product_name": payload.product_name, "tenant_slug": payload.merchant_slug}
+                metadata={
+                    "product_name": payload.product_name,
+                    "tenant_slug": payload.merchant_slug,
+                    "correlation_id": resolved_corr_id,
+                }
             )
         else:
             qris_data = await xendit_service.create_qris_invoice(
@@ -79,10 +90,12 @@ async def quick_qris_checkout_endpoint(payload: QuickQrisRequest):
         return {
             "status": "success",
             "order_id": qris_data.get("external_id"),
+            "tenant_id": payload.merchant_slug,
             "total_amount": qris_data.get("amount"),
             "qr_string": qris_data.get("qr_string"),
             "qr_code_url": qris_data.get("qr_code_url"),
-            "expires_at": qris_data.get("expires_at")
+            "expires_at": qris_data.get("expires_at"),
+            "correlation_id": resolved_corr_id,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -92,8 +105,13 @@ async def quick_qris_checkout_endpoint(payload: QuickQrisRequest):
 @d2c_router.post("/v1/orders/checkout", summary="Submit Full Web Checkout & Trigger Dual QRIS Alias")
 @d2c_router.post("/api/v1/order/checkout", summary="Submit Full Web Checkout Alias")
 @d2c_router.post("/api/v1/checkout", summary="Direct Checkout Alias")
-async def submit_checkout_endpoint(payload: CheckoutRequest):
+async def submit_checkout_endpoint(
+    payload: CheckoutRequest,
+    x_correlation_id: Optional[str] = Header(None, alias="x-correlation-id"),
+    x_request_id: Optional[str] = Header(None, alias="x-request-id"),
+):
     try:
+        resolved_corr_id = payload.correlation_id or x_correlation_id or x_request_id
         result = await create_d2c_order_and_dispatch_qris(
             merchant_slug=payload.merchant_slug,
             customer_name=payload.customer_name,
@@ -102,6 +120,7 @@ async def submit_checkout_endpoint(payload: CheckoutRequest):
             total_amount=payload.total_amount,
             is_digital=payload.is_digital,
             delivery_asset_url=payload.delivery_asset_url,
+            correlation_id=resolved_corr_id,
         )
         return {"status": "success", "data": result}
     except Exception as e:

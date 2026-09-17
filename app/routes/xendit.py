@@ -288,6 +288,65 @@ def _record_settlement_and_ledger_sync(
             )
         )
 
+        # 3b. Catat Komisi Mitra (25%) & AM Pembina (5%) ke commission_ledger
+        data_obj_inner = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+        cur.execute(
+            "SELECT affiliate_code, manager_id FROM orders WHERE id = %s LIMIT 1;",
+            (str(external_id),)
+        )
+        ord_info = cur.fetchone()
+        aff_code = (
+            (ord_info[0] if ord_info else None)
+            or payload.get("affiliate_code")
+            or data_obj_inner.get("affiliate_code")
+        )
+        mgr_id = (ord_info[1] if ord_info else None) or payload.get("manager_id") or data_obj_inner.get("manager_id")
+
+        if aff_code or mgr_id:
+            aff_rate = 25.0
+            mgr_rate = 5.0
+            aff_amount = round((amount * aff_rate) / 100.0, 2)
+            mgr_amount = round((amount * mgr_rate) / 100.0, 2)
+            net_platform = round(amount - aff_amount - mgr_amount, 2)
+
+            cur.execute(
+                """
+                INSERT INTO commission_ledger (
+                    event_type, reference_id, affiliate_id,
+                    order_id, affiliate_code, tenant_slug,
+                    gross_amount, commission_amount, payout_status,
+                    affiliate_commission_rate, affiliate_commission_amount,
+                    manager_override_rate, manager_override_amount, net_platform_revenue,
+                    status, created_at
+                ) VALUES (
+                    'ORDER_COMMISSION', %s, %s,
+                    %s, %s, %s,
+                    %s, %s, 'UNPAID',
+                    %s, %s,
+                    %s, %s, %s,
+                    'PENDING_PAYOUT', %s
+                );
+                """,
+                (
+                    str(external_id),
+                    str(aff_code or "DEFAULT"),
+                    str(external_id),
+                    str(aff_code or "DEFAULT"),
+                    tenant_id,
+                    amount,
+                    aff_amount,
+                    aff_rate,
+                    aff_amount,
+                    mgr_rate,
+                    mgr_amount,
+                    net_platform,
+                    now_utc,
+                )
+            )
+            logger.info(
+                f"[Xendit Commission Recorded] Order {external_id}: 25% (Rp{aff_amount:,.0f}) to '{aff_code}', 5% (Rp{mgr_amount:,.0f}) to AM."
+            )
+
         # 4. Update status payment_events menjadi PROCESSED
         cur.execute(
             """

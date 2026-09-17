@@ -31,8 +31,9 @@ async def create_d2c_order_and_dispatch_qris(
     total_amount: int,
     is_digital: bool = True,
     delivery_asset_url: Optional[str] = None,
+    correlation_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """1. Membuat record pesanan di Supabase.
+    """1. Membuat record pesanan di Supabase & PostgreSQL dengan trace/correlation_id.
     2. Menghasilkan QRIS Dinamis via Gateway.
     3. Mengirimkan Native QR Image + Ringkasan Pesanan ke WhatsApp Buyer.
     """
@@ -42,6 +43,11 @@ async def create_d2c_order_and_dispatch_qris(
     
     # 1. Buat Dynamic QRIS via Gateway Engine (Midtrans / Xendit)
     provider = os.getenv("PAYMENT_GATEWAY_PROVIDER", "").strip().lower()
+    meta_payload = {
+        "merchant_slug": merchant_slug,
+        "customer_name": customer_name,
+        "correlation_id": correlation_id
+    }
     if provider == "midtrans" or (not provider and os.getenv("MIDTRANS_SERVER_KEY")):
         from app.services.midtrans_service import midtrans_service
         qris_data = await midtrans_service.create_qris_charge(
@@ -50,7 +56,7 @@ async def create_d2c_order_and_dispatch_qris(
             customer_name=customer_name,
             customer_phone=clean_phone,
             tenant_id=merchant_slug,
-            metadata={"merchant_slug": merchant_slug, "customer_name": customer_name}
+            metadata=meta_payload
         )
     else:
         qris_data = await xendit_service.create_dynamic_qris(
@@ -58,7 +64,7 @@ async def create_d2c_order_and_dispatch_qris(
             amount=total_amount,
             tenant_id=merchant_slug,
             customer_phone=clean_phone,
-            metadata={"merchant_slug": merchant_slug, "customer_name": customer_name}
+            metadata=meta_payload
         )
     
     qr_string = qris_data.get("qr_string", "")
@@ -66,7 +72,44 @@ async def create_d2c_order_and_dispatch_qris(
     qr_png_bytes = generate_qris_png_bytes(qr_string) if qr_string else b""
     expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
 
-    # 2. Simpan order ke database Supabase
+    # 2. Simpan order ke database PostgreSQL (Immutable Source of Truth)
+    first_item = items[0] if items and isinstance(items, list) else {}
+    prod_id = first_item.get("product_id") or "prod_sample"
+    prod_title = first_item.get("title") or "Sample Product"
+
+    try:
+        from app.core.database import get_db_connection
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO orders (
+                id, tenant_slug, product_id, product_title, gross_amount,
+                customer_name, customer_phone, status, correlation_id, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'PENDING', %s, NOW(), NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                correlation_id = EXCLUDED.correlation_id,
+                updated_at = NOW();
+            """,
+            (
+                str(order_id),
+                merchant_slug,
+                str(prod_id),
+                str(prod_title),
+                total_amount,
+                customer_name,
+                clean_phone,
+                correlation_id
+            )
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info(f"[DB ORDER INSERT PG] Order {order_id} stored in Postgres with correlation_id '{correlation_id}'.")
+    except Exception as pg_err:
+        logger.warning(f"[DB ORDER INSERT PG WARNING] {pg_err}")
+
+    # 3. Simpan order ke database Supabase
     if supabase:
         try:
             supabase.table("orders").insert({
@@ -86,7 +129,7 @@ async def create_d2c_order_and_dispatch_qris(
         except Exception as db_err:
             logger.warning(f"[DB ORDER INSERT WARNING] {db_err}")
 
-    # 3. Format Pesan WhatsApp Invoice Summary
+    # 4. Format Pesan WhatsApp Invoice Summary
     amount_fmt = f"Rp{total_amount:,.0f}".replace(",", ".")
     caption = (
         f"Halo Kak *{customer_name}*, terima kasih telah melakukan pemesanan di *{merchant_slug}*! 🛍️\n\n"
@@ -97,7 +140,7 @@ async def create_d2c_order_and_dispatch_qris(
         f"Setelah pembayaran berhasil, bukti bayar & akses produk akan langsung dikirim ke chat ini secara otomatis."
     )
 
-    # 4. Dispatch WhatsApp Native Image QRIS ke Buyer
+    # 5. Dispatch WhatsApp Native Image QRIS ke Buyer
     if clean_phone and qr_png_bytes:
         try:
             await send_whatsapp_image(
@@ -113,11 +156,13 @@ async def create_d2c_order_and_dispatch_qris(
     return {
         "order_id": order_id,
         "merchant_slug": merchant_slug,
+        "tenant_id": merchant_slug,
         "total_amount": total_amount,
         "qr_string": qr_string,
         "qr_code_url": qr_code_url,
         "expires_at": expires_at,
-        "status": "PENDING"
+        "status": "PENDING",
+        "correlation_id": correlation_id
     }
 
 

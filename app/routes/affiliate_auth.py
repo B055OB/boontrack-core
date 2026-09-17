@@ -399,7 +399,7 @@ def save_affiliate_record(db_payload: Dict[str, Any], affiliate_id: Optional[str
         "payout_bank_details", "is_bank_verified",
         "screening_status", "experience_level", "promotion_strategy_notes",
         "social_media_links", "portfolio_url", "rejection_reason",
-        "agreed_to_rules", "manager_id"
+        "agreed_to_rules", "manager_id", "role", "parent_am_id", "region"
     }
 
     clean_payload = {k: v for k, v in db_payload.items() if k in allowed_columns}
@@ -637,6 +637,20 @@ async def register_affiliate(payload: AffiliateRegisterRequest):
     else:
         affiliate_code = f"AFF{phone[-4:]}{random.randint(10, 99)}"
 
+    # Resolve parent AM (fallback to Master AM Kang Sakti / buzzerukm)
+    resolved_parent_am_id = getattr(payload, "parent_am_id", None)
+    if not resolved_parent_am_id:
+        am_ref = getattr(payload, "am_referral_code", None) or getattr(payload, "am_pembina", None) or ""
+        if am_ref:
+            am_lookup = supabase.table("affiliates").select("id").eq("role", "am").ilike("referral_code", am_ref.strip()).execute()
+            if am_lookup.data:
+                resolved_parent_am_id = am_lookup.data[0]["id"]
+        if not resolved_parent_am_id:
+            # Fallback to master buzzerukm
+            master_lookup = supabase.table("affiliates").select("id").ilike("referral_code", "buzzerukm").execute()
+            if master_lookup.data:
+                resolved_parent_am_id = master_lookup.data[0]["id"]
+
     db_payload = {
         "phone": phone,
         "phone_number": phone,
@@ -650,6 +664,9 @@ async def register_affiliate(payload: AffiliateRegisterRequest):
         "is_bank_verified": False,
         "agreed_to_rules": bool(payload.agreed_to_rules),
         "experience_level": payload.experience_level or "BEGINNER",
+        "role": getattr(payload, "role", None) or "affiliate",
+        "parent_am_id": resolved_parent_am_id,
+        "region": getattr(payload, "region", None) or "ID-NATIONAL",
     }
 
     if payload.email:
