@@ -280,7 +280,10 @@ async def generate_cart_checkout_response(
     store_name, products = get_tenant_products_from_db(tenant_slug)
 
     if not cart_items:
-        default_item = products[0] if products else {"title": f"Pesanan {store_name}", "price": 99000}
+        if not products:
+            empty_info = f"Saat ini katalog untuk *{store_name}* belum memiliki produk aktif. Silakan hubungi admin kami ya, Kak! 🙏"
+            return empty_info, {}, b""
+        default_item = products[0]
         cart_items = [default_item]
 
     total_amount = sum(int(float(item.get("promo_price") or item.get("price") or 0)) for item in cart_items)

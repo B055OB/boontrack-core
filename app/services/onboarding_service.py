@@ -276,7 +276,13 @@ class OnboardingService:
         vert_config = get_commerce_template(payload.vertical or "DIGITAL_PRODUCTS")
 
         # Resolve product slug
-        prod_slug = payload.product.slug or slugify(payload.product.title) or f"prod-{uuid4().hex[:6]}"
+        # Resolve product slug (fresh 0 products if no product provided)
+        has_initial_product = bool(payload.product and getattr(payload.product, "title", None))
+        prod_slug = (
+            (payload.product.slug or slugify(payload.product.title) or f"prod-{uuid4().hex[:6]}")
+            if has_initial_product
+            else None
+        )
 
         # Compute hashes for anti‑abuse
         phone_raw = payload.phone or payload.admin_phone
@@ -289,8 +295,8 @@ class OnboardingService:
         logger.info(f"[OnboardingService] Assigned plan '{plan_code}' for tenant '{tenant_slug}' (duplicate={is_duplicate})")
 
         tenant_id = uuid4()
-        product_id = uuid4()
-        payout_id = uuid4()
+        product_id = uuid4() if has_initial_product else None
+        payout_id = uuid4() if (payload.payout and getattr(payload.payout, "account_number", None)) else None
         now = datetime.now(timezone.utc)
 
         # 2. Execute 1 Atomic Database Transaction via SQLAlchemy (if DB configured)
@@ -320,39 +326,41 @@ class OnboardingService:
                     session.add(tenant_record)
                     await session.flush()
 
-                    # 2. Insert Initial Product
-                    product_type_val = (
-                        ProductType[payload.product.product_type.upper()]
-                        if payload.product.product_type.upper() in ProductType.__members__
-                        else ProductType.DIGITAL_FILE
-                    )
-                    product_record = Product(
-                        id=product_id,
-                        tenant_id=tenant_record.id,
-                        title=payload.product.title,
-                        slug=prod_slug,
-                        description=payload.product.description,
-                        price=Decimal(str(payload.product.price)),
-                        product_type=product_type_val,
-                        license_status=LicenseStatus.OFFICIAL,
-                        asset_reference=payload.product.asset_reference or "default_asset_v1",
-                        is_available=payload.product.is_available,
-                        created_at=now,
-                    )
-                    session.add(product_record)
+                    # 2. Insert Initial Product (ONLY IF EXPLICITLY PROVIDED AND VALID)
+                    if has_initial_product:
+                        product_type_val = (
+                            ProductType[payload.product.product_type.upper()]
+                            if payload.product.product_type.upper() in ProductType.__members__
+                            else ProductType.DIGITAL_FILE
+                        )
+                        product_record = Product(
+                            id=product_id,
+                            tenant_id=tenant_record.id,
+                            title=payload.product.title,
+                            slug=prod_slug,
+                            description=payload.product.description,
+                            price=Decimal(str(payload.product.price)),
+                            product_type=product_type_val,
+                            license_status=LicenseStatus.OFFICIAL,
+                            asset_reference=payload.product.asset_reference or "default_asset_v1",
+                            is_available=payload.product.is_available,
+                            created_at=now,
+                        )
+                        session.add(product_record)
 
-                    # 3. Insert Tenant Payout
-                    payout_record = TenantPayout(
-                        id=payout_id,
-                        tenant_id=tenant_record.id,
-                        bank_name=payload.payout.bank_name.upper(),
-                        account_number=payload.payout.account_number,
-                        account_holder=payload.payout.account_holder,
-                        payout_email=payload.payout.payout_email or payload.admin_email,
-                        is_verified=False,
-                        created_at=now,
-                    )
-                    session.add(payout_record)
+                    # 3. Insert Tenant Payout (ONLY IF PROVIDED)
+                    if payload.payout and getattr(payload.payout, "account_number", None):
+                        payout_record = TenantPayout(
+                            id=payout_id,
+                            tenant_id=tenant_record.id,
+                            bank_name=(payload.payout.bank_name or "BCA").upper(),
+                            account_number=payload.payout.account_number,
+                            account_holder=payload.payout.account_holder,
+                            payout_email=payload.payout.payout_email or payload.admin_email,
+                            is_verified=False,
+                            created_at=now,
+                        )
+                        session.add(payout_record)
 
                     db_executed = True
                     logger.info(f"[Onboarding DB] Atomic transaction committed for tenant '{tenant_slug}' (ID: {tenant_id})")
@@ -377,33 +385,38 @@ class OnboardingService:
             "is_active": True,
             "created_at": now.isoformat(),
         }
-        product_dict = {
-            "id": str(product_id),
-            "tenant_id": str(tenant_id),
-            "title": payload.product.title,
-            "slug": prod_slug,
-            "category": getattr(payload.product, "category", None) or "Digital Course",
-            "description": payload.product.description,
-            "price": float(payload.product.price),
-            "product_type": payload.product.product_type,
-            "asset_reference": payload.product.asset_reference or "default_asset_v1",
-            "is_available": payload.product.is_available,
-            "created_at": now.isoformat(),
-        }
-        payout_dict = {
-            "id": str(payout_id),
-            "tenant_id": str(tenant_id),
-            "bank_name": payload.payout.bank_name.upper(),
-            "account_number": payload.payout.account_number,
-            "account_holder": payload.payout.account_holder,
-            "payout_email": payload.payout.payout_email or payload.admin_email,
-            "is_verified": False,
-            "created_at": now.isoformat(),
-        }
+        product_dict = None
+        if has_initial_product:
+            product_dict = {
+                "id": str(product_id),
+                "tenant_id": str(tenant_id),
+                "title": payload.product.title,
+                "slug": prod_slug,
+                "category": getattr(payload.product, "category", None) or "Digital Course",
+                "description": payload.product.description,
+                "price": float(payload.product.price),
+                "product_type": payload.product.product_type,
+                "asset_reference": payload.product.asset_reference or "default_asset_v1",
+                "is_available": payload.product.is_available,
+                "created_at": now.isoformat(),
+            }
+
+        payout_dict = None
+        if payload.payout and getattr(payload.payout, "account_number", None):
+            payout_dict = {
+                "id": str(payout_id),
+                "tenant_id": str(tenant_id),
+                "bank_name": (payload.payout.bank_name or "BCA").upper(),
+                "account_number": payload.payout.account_number,
+                "account_holder": payload.payout.account_holder,
+                "payout_email": payload.payout.payout_email or payload.admin_email,
+                "is_verified": False,
+                "created_at": now.isoformat(),
+            }
 
         self._tenants_by_slug[tenant_slug] = tenant_dict
-        self._products_by_tenant[str(tenant_id)] = product_dict
-        self._payouts_by_tenant[str(tenant_id)] = payout_dict
+        self._products_by_tenant[str(tenant_id)] = [product_dict] if product_dict else []
+        self._payouts_by_tenant[str(tenant_id)] = payout_dict or {}
 
         # 4. Auto-register in global runtime tenant configs
         try:
@@ -413,7 +426,7 @@ class OnboardingService:
                     name=payload.name,
                     slug=tenant_slug,
                     status=TenantStatus.ACTIVE,
-                    description=payload.product.description or f"Store {payload.name} ({vert_config['name']})",
+                    description=(payload.product.description if has_initial_product else None) or f"Store {payload.name} ({vert_config['name']})",
                 ),
                 persona=TenantPersona(
                     system_prompt=f"Kamu adalah asisten resmi untuk toko {payload.name}. {vert_config['system_prompt_addon']}",
@@ -703,30 +716,10 @@ class OnboardingService:
         payout = details.get("payout", {})
         products = details.get("products", [])
 
-        faq = tenant.get("faq") or [
-            {
-                "q": "Bagaimana cara akses materi digital?",
-                "a": "Link Google Drive resmi otomatis dikirimkan ke WhatsApp Anda setelah verifikasi pembayaran berhasil.",
-            },
-            {
-                "q": "Apakah materi bisa diakses selamanya?",
-                "a": "Ya, seluruh modul video, template, dan grup diskusi dapat diakses seumur hidup (lifetime access).",
-            },
-            {
-                "q": "Metode pembayaran apa saja yang didukung?",
-                "a": "Pembayaran dapat dilakukan melalui Dynamic QRIS otomatis (BCA, Mandiri, BRI, BNI, DANA, GoPay, OVO, ShopeePay).",
-            },
-        ]
-
-        trust_badges = tenant.get("trust_badges") or [
-            "100% Garansi Pembelajaran",
-            "Akses Seumur Hidup",
-            "Update Materi Berkala",
-            "Mentor Praktisi Berpengalaman",
-        ]
-
+        faq = tenant.get("faq") or []
+        trust_badges = tenant.get("trust_badges") or []
         delivery_url = tenant.get("delivery_url") or (
-            products[0].get("delivery_url") if products else "https://drive.google.com/drive/folders/suhu-ads-masterclass-2026"
+            products[0].get("delivery_url") if (products and len(products) > 0 and products[0].get("delivery_url")) else None
         )
 
         return {
@@ -944,7 +937,7 @@ class OnboardingService:
             "promo_price": float(product_data.get("promo_price")) if product_data.get("promo_price") is not None else None,
             "description": product_data.get("description", ""),
             "product_type": product_data.get("product_type", "DIGITAL_COURSE"),
-            "delivery_url": product_data.get("delivery_url") or "https://drive.google.com/drive/folders/suhu-ads-masterclass-2026",
+            "delivery_url": product_data.get("delivery_url") or None,
             "asset_reference": product_data.get("asset_reference") or prod_slug,
             "is_available": product_data.get("is_available", True),
             "image": product_data.get("image") or product_data.get("primary_image") or "",

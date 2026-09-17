@@ -43,8 +43,8 @@ class TenantOnboardRequest(BaseModel):
     affiliate_ref: Optional[str] = Field(None, max_length=64, description="Kode referral affiliasi (jika diundang oleh affiliate)")
     admin_email: Optional[str] = Field(None, description="Email kontak pemilik tenant")
     admin_phone: Optional[str] = Field(None, description="Nomor WhatsApp pemilik tenant")
-    product: ProductOnboardingPayload = Field(..., description="Spesifikasi produk pertama")
-    payout: PayoutOnboardingPayload = Field(..., description="Informasi pencairan dana (payout)")
+    product: Optional[ProductOnboardingPayload] = Field(default=None, description="Spesifikasi produk pertama (opsional)")
+    payout: Optional[PayoutOnboardingPayload] = Field(default=None, description="Informasi pencairan dana (payout, opsional)")
 
     # New fields for reverse‑trial registration (optional with safe defaults for backward compatibility)
     business_type: Optional[Literal["DIGITAL", "PHYSICAL", "FIELD_SERVICE", "PROFESSIONAL_SERVICE", "FOOD", "CREATOR_AGENCY", "RETAIL"]] = Field(default="DIGITAL", description="Tipe bisnis tenant")
