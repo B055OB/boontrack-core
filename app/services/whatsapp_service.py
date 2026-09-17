@@ -9,8 +9,7 @@ Semua implementasi telah dipindahkan ke package modular:
     ├── inbound_parser.py   (extract_meta_whatsapp_event)
     ├── commerce.py         (QRIS, catalogue, cart, checkout)
     ├── session_router.py   (DEMO_MENU_TEXT, resolve_dynamic_tenant_for_whatsapp)
-    ├── evolution.py        (Evolution API v2 adapter)
-    └── waha.py             (WAHA adapter)
+    └── evolution.py        (Evolution API v2 adapter)
 
 Semua import dari modul lain yang menggunakan:
     from app.services.whatsapp_service import X
@@ -70,11 +69,6 @@ from app.services.whatsapp import (  # noqa: F401, F403
     is_valid_whatsapp_pairing_code,
     format_whatsapp_pairing_code,
     request_evolution_pairing_code,
-    # waha
-    WAHA_URL,
-    WAHA_API_KEY,
-    get_waha_headers,
-    request_waha_pairing_code,
 )
 
 __all__ = [
@@ -129,9 +123,4 @@ __all__ = [
     "is_valid_whatsapp_pairing_code",
     "format_whatsapp_pairing_code",
     "request_evolution_pairing_code",
-    # waha
-    "WAHA_URL",
-    "WAHA_API_KEY",
-    "get_waha_headers",
-    "request_waha_pairing_code",
 ]

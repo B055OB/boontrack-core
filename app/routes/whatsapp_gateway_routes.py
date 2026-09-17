@@ -27,7 +27,6 @@ from app.services.whatsapp_service import (
     EVOLUTION_BASE_URL,
     get_evolution_headers,
     request_evolution_pairing_code,
-    request_waha_pairing_code,
     get_or_create_evolution_session,
 )
 

@@ -75,13 +75,6 @@ from app.services.whatsapp.evolution import (
     request_evolution_pairing_code,
 )
 
-# waha
-from app.services.whatsapp.waha import (
-    WAHA_URL,
-    WAHA_API_KEY,
-    get_waha_headers,
-    request_waha_pairing_code,
-)
 
 __all__ = [
     # credentials
@@ -135,9 +128,4 @@ __all__ = [
     "is_valid_whatsapp_pairing_code",
     "format_whatsapp_pairing_code",
     "request_evolution_pairing_code",
-    # waha
-    "WAHA_URL",
-    "WAHA_API_KEY",
-    "get_waha_headers",
-    "request_waha_pairing_code",
 ]
