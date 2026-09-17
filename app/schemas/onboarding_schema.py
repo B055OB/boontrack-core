@@ -3,7 +3,7 @@ Pydantic schemas for Merchant Self-Onboarding & Provisioning.
 """
 
 from decimal import Decimal
-from typing import Optional, Dict, Any, Literal
+from typing import Optional, Dict, Any, List, Literal
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -38,7 +38,7 @@ class TenantOnboardRequest(BaseModel):
     slug: Optional[str] = Field(None, min_length=2, max_length=64, description="Slug identifikasi unik URL (opsional)")
     tier: str = Field(default="STARTER", description="Tier tenant: FREE, STARTER, PRO_SCALE, ENTERPRISE")
     template: str = Field(default="COMMERCE_TEMPLATE", description="Template arsitektur: COMMERCE_TEMPLATE / RETAIL_D2C_TEMPLATE")
-    vertical: Optional[str] = Field(default="DIGITAL_PRODUCTS", description="Vertikal bisnis: DIGITAL_PRODUCTS, FASHION, BEAUTY, FNB, SERVICES")
+    vertical: Optional[str] = Field(default="DIGITAL_PRODUCTS", description="Vertikal bisnis: DIGITAL_PRODUCTS, FASHION, BEAUTY, FNB, SERVICES, CREATOR")
     onboarding_mode: str = Field(default="SELF_SERVICE", description="Mode onboarding: SELF_SERVICE, ASSISTED, ENTERPRISE")
     affiliate_ref: Optional[str] = Field(None, max_length=64, description="Kode referral affiliasi (jika diundang oleh affiliate)")
     admin_email: Optional[str] = Field(None, description="Email kontak pemilik tenant")
@@ -46,12 +46,12 @@ class TenantOnboardRequest(BaseModel):
     product: Optional[ProductOnboardingPayload] = Field(default=None, description="Spesifikasi produk pertama (opsional)")
     payout: Optional[PayoutOnboardingPayload] = Field(default=None, description="Informasi pencairan dana (payout, opsional)")
 
-    # New fields for reverse‑trial registration (optional with safe defaults for backward compatibility)
-    business_type: Optional[Literal["DIGITAL", "PHYSICAL", "FIELD_SERVICE", "PROFESSIONAL_SERVICE", "FOOD", "CREATOR_AGENCY", "RETAIL"]] = Field(default="DIGITAL", description="Tipe bisnis tenant")
+    # New fields for reverse trial registration (optional with safe defaults for backward compatibility)
+    business_type: Optional[Literal["DIGITAL", "PHYSICAL", "FIELD_SERVICE", "PROFESSIONAL_SERVICE", "FOOD", "CREATOR_AGENCY", "CREATOR", "RETAIL"]] = Field(default="DIGITAL", description="Tipe bisnis tenant")
     phone: Optional[str] = Field(default=None, description="Nomor telepon utama tenant")
     password: Optional[str] = Field(default=None, description="Password akun admin tenant")
     store_name: Optional[str] = Field(default=None, description="Nama toko yang akan ditampilkan pada UI")
-    device_fingerprint: Optional[str] = Field(default=None, description="Fingerprint unik perangkat untuk anti‑abuse guard")
+    device_fingerprint: Optional[str] = Field(default=None, description="Fingerprint unik perangkat untuk anti abuse guard")
 
 
 class TenantOnboardResponse(BaseModel):
@@ -62,8 +62,11 @@ class TenantOnboardResponse(BaseModel):
     message: str = Field(default="Tenant onboarded successfully")
     tenant_id: str
     tenant: Dict[str, Any]
-    product: Dict[str, Any]
-    payout: Dict[str, Any]
+    product: Optional[Dict[str, Any]] = None
+    products: List[Dict[str, Any]] = Field(default_factory=list)
+    payout: Optional[Dict[str, Any]] = None
+    activation_code: Optional[str] = None
+    wa_verification_token: Optional[str] = None
 
 
 class AffiliateOnboardRequest(BaseModel):
@@ -88,4 +91,3 @@ class AffiliateOnboardRequest(BaseModel):
     social_media_links: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Tautan akun medsos / channel (TikTok, IG, YT, dll)")
     portfolio_url: Optional[str] = Field(None, description="Tautan portofolio / website promosi")
     agreed_to_rules: bool = Field(False, description="Persetujuan mematuhi aturan platform & anti-spam")
-

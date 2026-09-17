@@ -543,6 +543,19 @@ async def handle_store_activation_request(
         except Exception as db_err:
             logger.error(f"[STORE ACTIVATION DB ERROR] {db_err}")
 
+    # Fallback pencarian in-memory registry jika belum/tidak tersinkron di Supabase
+    if not matched_tenant:
+        try:
+            from app.services.onboarding_service import onboarding_service
+            for t_slug, t_data in onboarding_service._tenants_by_slug.items():
+                t_meta = t_data.get("metadata") or {}
+                cand_token = str(t_meta.get("wa_verification_token") or t_data.get("wa_verification_token") or "").upper().strip()
+                if cand_token == clean_token:
+                    matched_tenant = t_data
+                    break
+        except Exception as mem_err:
+            logger.debug(f"[STORE ACTIVATION IN-MEMORY LOOKUP NOTE] {mem_err}")
+
     # Balasan pesan konfirmasi
     if matched_tenant:
         tenant_id = matched_tenant.get("id")
@@ -554,17 +567,30 @@ async def handle_store_activation_request(
         meta["whatsapp_number"] = clean_phone
         meta["wa_verified_at"] = datetime.now(timezone.utc).isoformat()
 
+        matched_tenant["status"] = "active"
+        matched_tenant["is_active"] = True
+        matched_tenant["metadata"] = meta
+
+        # Update in-memory registry
+        try:
+            from app.services.onboarding_service import onboarding_service
+            if tenant_slug and tenant_slug in onboarding_service._tenants_by_slug:
+                onboarding_service._tenants_by_slug[tenant_slug].update(matched_tenant)
+        except Exception:
+            pass
+
         update_payload = {
             "status": "active",
             "is_active": True,
             "metadata": meta,
         }
 
-        try:
-            supabase.table("tenants").update(update_payload).eq("id", tenant_id).execute()
-            logger.info(f"[STORE ACTIVATION] Tenant '{tenant_slug}' (ID: {tenant_id}) activated successfully!")
-        except Exception as update_err:
-            logger.error(f"[STORE ACTIVATION UPDATE ERROR] {update_err}")
+        if supabase:
+            try:
+                supabase.table("tenants").update(update_payload).eq("id", tenant_id).execute()
+                logger.info(f"[STORE ACTIVATION] Tenant '{tenant_slug}' (ID: {tenant_id}) activated successfully!")
+            except Exception as update_err:
+                logger.error(f"[STORE ACTIVATION UPDATE ERROR] {update_err}")
 
         # Sinkronisasi ke store_registrations jika tabel tersedia
         try:

@@ -284,6 +284,10 @@ class OnboardingService:
             else None
         )
 
+        # Generate official WABA activation token & code
+        wa_verification_token = f"BT-{uuid4().hex[:4].upper()}"
+        activation_code = f"AKTIVASI {wa_verification_token}"
+
         # Compute hashes for anti‑abuse
         phone_raw = payload.phone or payload.admin_phone
         phone_hash = hashlib.sha256(phone_raw.encode()).hexdigest() if phone_raw else None
@@ -320,7 +324,7 @@ class OnboardingService:
                         onboarding_mode=mode_enum,
                         template=template_name,
                         affiliate_ref=payload.affiliate_ref,
-                        is_active=True,
+                        is_active=False,
                         created_at=now,
                     )
                     session.add(tenant_record)
@@ -382,8 +386,20 @@ class OnboardingService:
             "affiliate_ref": payload.affiliate_ref,
             "admin_email": payload.admin_email,
             "admin_phone": payload.admin_phone,
-            "is_active": True,
+            "is_active": False,
+            "status": "pending_wa_verification",
+            "activation_code": activation_code,
+            "wa_verification_token": wa_verification_token,
             "created_at": now.isoformat(),
+            "metadata": {
+                "template": template_name,
+                "onboarding_mode": mode_enum.value,
+                "vertical": (payload.vertical or vert_config["vertical"]).upper(),
+                "wa_verification_token": wa_verification_token,
+                "activation_code": activation_code,
+                "wa_verification_status": "pending",
+                "is_verified": False,
+            },
         }
         product_dict = None
         if has_initial_product:
@@ -462,13 +478,18 @@ class OnboardingService:
                     "trial_ends_at": trial_period_end,
                     "subscription_ends_at": trial_period_end,
                     "created_at": now.isoformat(),
-                    "is_active": True,
+                    "is_active": False,
+                    "status": "pending_wa_verification",
                     "metadata": {
                         "template": template_name,
                         "onboarding_mode": mode_enum.value,
                         "vertical": (payload.vertical or vert_config["vertical"]).upper(),
                         "trial_ends_at": trial_period_end,
                         "subscription_ends_at": trial_period_end,
+                        "wa_verification_token": wa_verification_token,
+                        "activation_code": activation_code,
+                        "wa_verification_status": "pending",
+                        "is_verified": False,
                     }
                 }, on_conflict="slug").execute()
                 logger.info(f"[OnboardingService] Synced tenant '{tenant_slug}' (trial_ends_at: {trial_period_end}) to Supabase")
@@ -486,13 +507,51 @@ class OnboardingService:
         except Exception as e:
             logger.warning(f"[OnboardingService] Entitlement setup failed: {e}")
 
+        products_list = [product_dict] if product_dict else []
         return {
             "status": "SUCCESS",
             "message": "Tenant onboarded successfully",
             "tenant_id": str(tenant_id),
             "tenant": tenant_dict,
             "product": product_dict,
+            "products": products_list,
             "payout": payout_dict,
+            "activation_code": activation_code,
+            "wa_verification_token": wa_verification_token,
+        }
+
+    def get_activation_token_by_slug(self, slug: str) -> Optional[Dict[str, Any]]:
+        """Retrieves or generates WABA activation token for tenant."""
+        clean_slug = slugify(slug)
+        tenant_dict = self._tenants_by_slug.get(clean_slug)
+        if not tenant_dict:
+            details = self.get_tenant_details_by_slug(clean_slug)
+            if details and details.get("tenant"):
+                tenant_dict = details["tenant"]
+
+        if not tenant_dict:
+            return None
+
+        meta = tenant_dict.get("metadata") or {}
+        token = tenant_dict.get("wa_verification_token") or meta.get("wa_verification_token")
+        if not token:
+            token = f"BT-{uuid4().hex[:4].upper()}"
+            tenant_dict["wa_verification_token"] = token
+            if "metadata" not in tenant_dict:
+                tenant_dict["metadata"] = {}
+            tenant_dict["metadata"]["wa_verification_token"] = token
+
+        act_code = tenant_dict.get("activation_code") or meta.get("activation_code") or f"AKTIVASI {token}"
+        tenant_dict["activation_code"] = act_code
+        if "metadata" in tenant_dict:
+            tenant_dict["metadata"]["activation_code"] = act_code
+
+        return {
+            "status": "SUCCESS",
+            "slug": clean_slug,
+            "activation_code": act_code,
+            "wa_verification_token": token,
+            "is_active": tenant_dict.get("is_active", False),
         }
 
     def get_tenant_by_slug(self, slug: str) -> Optional[Dict[str, Any]]:
@@ -560,7 +619,8 @@ class OnboardingService:
                                 "vertical": row.get("category", "COMMERCE"),
                                 "trial_ends_at": _trial_end,
                                 "subscription_ends_at": _sub_end or _trial_end,
-                                "is_active": True,
+                                "is_active": row.get("is_active") if row.get("is_active") is not None else False,
+                                "status": row.get("status", "pending_wa_verification"),
                                 "created_at": row.get("created_at") or datetime.now(timezone.utc).isoformat(),
                             }
                     except Exception as e:
@@ -626,6 +686,10 @@ class OnboardingService:
                     p_meta = meta.get("persona") or {}
 
                     # --- Dynamic tier & feature flags ---
+                    if "is_active" in row and row.get("is_active") is not None:
+                        tenant_dict["is_active"] = row["is_active"]
+                    if "status" in row and row.get("status") is not None:
+                        tenant_dict["status"] = row["status"]
                     live_tier = row.get("tier") or tenant_dict.get("tier") or "STARTER"
                     live_features_raw = meta.get("features") or {}
                     live_features = _build_feature_flags(live_tier, live_features_raw)

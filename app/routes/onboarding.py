@@ -75,6 +75,26 @@ async def onboard_tenant_endpoint(
 
 
 @onboarding_router.get(
+    "/{slug}/activation-token",
+    summary="Get Tenant WABA Activation Token by Slug",
+)
+@onboarding_router.post(
+    "/{slug}/activation-token",
+    summary="Request or Regenerate Tenant WABA Activation Token by Slug",
+)
+async def get_tenant_activation_token_endpoint(slug: str):
+    """Retrieves the official Meta WABA activation token (e.g. 'AKTIVASI BT-XXXX') for merchant activation."""
+    clean_slug = str(slug).strip().lower()
+    token_info = onboarding_service.get_activation_token_by_slug(clean_slug)
+    if not token_info:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Activation token for tenant '{slug}' not found",
+        )
+    return token_info
+
+
+@onboarding_router.get(
     "/{slug}",
     summary="Get Tenant Profile, Catalog Products & Persona by Slug",
 )
