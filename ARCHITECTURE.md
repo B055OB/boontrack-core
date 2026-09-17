@@ -392,7 +392,7 @@ Platform menyediakan dua mekanisme penautan perangkat WhatsApp bagi tenant secar
 
 ### 9.4 Architectural Isolation: BoonTrack Shop vs BoonTrack Career
 - **BoonTrack Shop (Multi-Tenant Gateway)**:
-  - Setiap merchant memiliki 1 instance session mandiri di Evolution API (`instance_name = tenant_slug`).
+  - Setiap merchant memiliki sesi mandiri di Evolution API yang dipetakan via tabel `whatsapp_connections` (dilarang menebak via slug toko).
   - Mengisolasi webhook katalog, penerimaan order, dan obrolan pelanggan per toko.
 - **BoonTrack Career (Single-Pipeline Dedicated)**:
   - Menggunakan 1 nomor WhatsApp sistem tersentralisasi khusus untuk evaluasi CV ATS, intake pendaftaran, dan review kandidat.
@@ -603,3 +603,46 @@ Navigasi sidebar (`DashboardSidebar.tsx`) pada grup `STORE ENGINE` menyematkan M
 - **Control Plane Ready**:
   - Superadmin dapat menerbitkan AM baru per regional/wilayah (provinsi/luar negeri) melalui portal admin.
   - Setiap AM baru memiliki kuota dan pool sub-affiliate terisolasi tanpa merombak arsitektur inti database.
+
+---
+
+## WhatsApp Gateway & Multi-Tenant Connection Architecture
+
+### 1. Core Principle (Mapping Authority)
+- **Tenant Identity ≠ Gateway Instance Identity**:
+  - `tenant_id` atau `tenant_slug` adalah entitas bisnis internal, bukan nama instans koneksi pada WhatsApp Gateway (Evolution API).
+  - Frontend/Client **DILARANG KERAS** menebak, mengasumsikan, atau membuat nama instance Evolution API secara mandiri via slug toko (misal: dilarang mengasumsikan instance = `${tenant.slug}`).
+  - Resolusi instans dan routing pesan WAJIB selalu melalui backend API resmi (`/api/v1/whatsapp/...`).
+- **Single Source of Truth (`whatsapp_connections`)**:
+  - Sumber kebenaran tunggal untuk seluruh metadata koneksi WhatsApp adalah database, khususnya tabel `whatsapp_connections`.
+  - Seluruh parameter instance (nama instance, gateway provider, nomor telepon terikat, status koneksi, dan endpoint) dikelola dan dipetakan langsung dari tabel `whatsapp_connections`.
+  - Backend resolver (`get_or_create_evolution_session`, `resolve_dynamic_tenant_for_whatsapp`, dan webhook ingress) menggunakan tabel ini sebagai otoritas tunggal pemetaan komunikasi masuk dan keluar.
+
+### 2. Connection Modes
+Sistem mendukung 3 mode koneksi WhatsApp sesuai kapabilitas dan peruntukan layanan:
+1. **SHARED (Shared Multi-Tenant Gateway)**:
+   - **Deskripsi**: Default MVP/Starter via single gateway `"boontrack-gateway"` (atau nomor transaksional resmi sistem).
+   - **Peran**: Dikhususkan untuk notifikasi transaksional/outbound satu arah (order confirmation, OTP login/verifikasi, link pembayaran, dan konfirmasi lunas).
+   - **Karakteristik**: Berbiaya efisien, tanpa memerlukan pairing nomor pribadi merchant, namun tidak melayani percakapan 2-way bot toko.
+2. **DEDICATED (Dedicated Baileys Instance)**:
+   - **Deskripsi**: Instance Baileys tersendiri per-tenant untuk nomor toko pribadi merchant.
+   - **Peran**: Mendukung komunikasi 2 arah (2-way chat), penerimaan pesan masuk real-time (inbound webhook), serta eksekusi AI Assistant (Conversational Engine / BoonPilot).
+   - **Provisioning**: Dibuat secara dinamis via Evolution API v2 melalui alur scan QR code atau pairing code 8-digit, dan dicatat permanen di `whatsapp_connections`.
+3. **OFFICIAL (Meta Cloud API / WABA)**:
+   - **Deskripsi**: Jalur resmi Meta Cloud API (WhatsApp Business Account / WABA) untuk skala Enterprise.
+   - **Peran**: Notifikasi massal berskala besar (broadcast), verifikasi centang hijau (Official Business Account), SLA tinggi, dan jaminan bebas blokir Baileys.
+   - **Routing**: Dikelola melalui credentials resmi Meta (`PHONE_NUMBER_ID`, `WABA_ID`, `ACCESS_TOKEN`).
+
+### 3. Infrastructure & Scaling Guardrails (ADR)
+Pedoman keputusan arsitektur dan batasan teknis operasional infrastruktur WhatsApp Gateway:
+1. **Pragmatic Hosting & Market Validation (Railway Hobby Plan Guardrail)**:
+   - Infrastruktur Evolution API tetap beroperasi di Railway (Hobby Plan) untuk fase validasi pasar dan pre-launch.
+   - **ADR Rule**: Tidak melakukan migrasi ke VPS mandiri (misal: Hetzner/DigitalOcean dengan Coolify/Docker Swarm) sebelum terdapat kebutuhan nyata (>20-30 dedicated instances aktif). Prioritas utama adalah menekan overhead operasional dan fokus pada konversi bisnis.
+2. **Larangan Sleep / Lazy Socket untuk Nomor Conversational**:
+   - **Guardrail**: Dilarang memutus socket idle (*sleep/lazy disconnect*) jika nomor toko menerima pesan masuk atau menjalankan bot AI. Memutus socket Baileys secara sepihak akan mematikan real-time inbound webhook pelanggan.
+   - **Pemisahan Lifecycle Kelas Koneksi**:
+     - **Class 1 (Always-On Conversational)**: Instance yang melayani 2-way chat, AI bot, dan customer service wajib berstatus *Always-On* dengan koneksi socket persisten.
+     - **Class 2 (Notification-Only / Outbound)**: Instance yang murni digunakan untuk pengiriman pesan transaksional/broadcast berkala dapat menerapkan kebijakan socket hemat sumber daya.
+3. **Gateway Pool Blueprint (Multi-Server Readiness)**:
+   - Skalabilitas multi-server masa depan dirancang berbasis *Gateway Nodes Registry*.
+   - Tabel koneksi mendukung pencatatan node gateway (`gateway_node_url`, `api_key`) sehingga penambahan server kontainer Evolution API baru di masa depan tidak akan mengubah kontrak antarmuka (*interface contract*) pada Core backend maupun Inbox frontend.

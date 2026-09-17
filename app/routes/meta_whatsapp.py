@@ -191,6 +191,19 @@ async def handle_whatsapp_webhook(request: Request):
     clean_text = incoming_text.strip().lower()
     text_lower = clean_text
 
+    # P0 Store Activation Interceptor
+    activation_match = re.search(r"^AKTIVASI\s+(BT-[A-Za-z0-9]+)", incoming_text.strip(), re.IGNORECASE)
+    if activation_match:
+        from app.routes.whatsapp_gateway_routes import handle_store_activation_request
+        token = activation_match.group(1).upper().strip()
+        act_res = await handle_store_activation_request(
+            token=token,
+            sender_phone=clean_phone or from_phone,
+            instance_name="boontrack-gateway",
+            raw_text=incoming_text
+        )
+        return JSONResponse(status_code=200, content=act_res)
+
     if clean_phone and phone_id:
         user_phone_number_id_sessions[clean_phone] = phone_id
 
@@ -342,32 +355,11 @@ async def handle_whatsapp_webhook(request: Request):
             return JSONResponse(status_code=200, content={"status": "success", "tenant": "onlineboost", "reply": "[Katalog OnlineBoost Dispatched]"})
 
         elif selected_slug == "ombudi":
-            ombudi_buttons = [
-                {"id": "menu_zoom_booster", "title": "🚀 Zoom Booster"},
-                {"id": "menu_sedekah_berjamaah", "title": "🤲 Sedekah"},
-                {"id": "menu_daftar_kelas", "title": "Daftar Kelas Online"}
-            ]
+            # Legacy Om Budi Zoom Booster disabled on BoonTrack Shop shared gateway
+            welcome_shop = "Halo! Selamat datang di BoonTrack Shop. Silakan kunjungi https://shop.boontrack.com untuk mengakses layanan toko."
             if from_phone:
-                try:
-                    await send_whatsapp_buttons(
-                        to_phone=from_phone,
-                        body_text=greeting,
-                        buttons=ombudi_buttons,
-                        footer_text="Pilih menu di bawah untuk lanjut:",
-                        tenant_id="ombudi",
-                        phone_number_id=phone_id,
-                    )
-                except Exception:
-                    await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="ombudi", phone_number_id=phone_id)
-            safe_log_to_supabase_messages(
-                sender="bot",
-                text=greeting,
-                tenant_id="ombudi",
-                channel="whatsapp",
-                user_phone=from_phone,
-                user_name=contact_name,
-            )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": "ombudi", "reply": greeting})
+                await send_whatsapp_text(to_phone=from_phone, text=welcome_shop, tenant_id="boontrack-shop", phone_number_id=phone_id)
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-shop", "reply": welcome_shop})
 
         elif selected_slug in ("growthplus", "proscale"):
             if from_phone:

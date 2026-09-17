@@ -114,7 +114,7 @@ def resolve_tenant_id_from_phone_id(phone_id: str) -> str:
         return "boontrack-career"
     elif clean_id == ADUAN_SANDBOX_PHONE_ID:
         return "aduan-sandbox"
-    return "om_budi"
+    return "boontrack-holding"
 
 
 # --- 4. Helper Outbound WA Dinamis Multi-Tenant ---
@@ -427,6 +427,19 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         clean_text = incoming_text.strip().lower()
         text_lower = clean_text
 
+        # P0 Store Activation Interceptor
+        activation_match = re.search(r"^AKTIVASI\s+(BT-[A-Za-z0-9]+)", incoming_text.strip(), re.IGNORECASE)
+        if activation_match:
+            from app.routes.whatsapp_gateway_routes import handle_store_activation_request
+            token = activation_match.group(1).upper().strip()
+            act_res = await handle_store_activation_request(
+                token=token,
+                sender_phone=clean_phone or from_phone,
+                instance_name="boontrack-gateway",
+                raw_text=incoming_text
+            )
+            return web.json_response(act_res)
+
         # Inisialisasi default button untuk mencegah UnboundLocalError
         button_id = ""
         clean_btn = ""
@@ -644,27 +657,13 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 }, status=200)
 
             elif selected_slug == "ombudi":
-                welcome_ombudi = DEMO_TENANT_GREETINGS.get("ombudi", "🛒 *Selamat Datang di Om Budi Channel!*")
-                ombudi_buttons = [
-                    {"id": "menu_zoom_booster", "title": "🚀 Zoom Booster"},
-                    {"id": "menu_sedekah_berjamaah", "title": "🤲 Sedekah"},
-                    {"id": "menu_daftar_kelas", "title": "Daftar Kelas Online"}
-                ]
-                await send_wa_buttons(from_phone, welcome_ombudi, ombudi_buttons, phone_id)
-                safe_log_to_supabase_messages(
-                    sender="bot",
-                    text=welcome_ombudi,
-                    tenant_id="ombudi",
-                    channel="whatsapp",
-                    user_phone=from_phone,
-                    user_name=contact_name,
-                    user_id=from_phone,
-                    conversation_id=from_phone,
-                )
+                # Legacy Om Budi Zoom Booster disabled on BoonTrack Shop shared gateway
+                welcome_shop = "Halo! Selamat datang di BoonTrack Shop. Silakan kunjungi https://shop.boontrack.com untuk mengakses layanan toko."
+                await send_wa_text(from_phone, welcome_shop, phone_id)
                 return web.json_response({
                     "status": "success",
-                    "tenant": "ombudi",
-                    "reply": welcome_ombudi,
+                    "tenant": "boontrack-shop",
+                    "reply": welcome_shop,
                     "is_new_binding": True
                 }, status=200)
 
@@ -732,9 +731,10 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
                 # 2. Interactive Persona / Custom Chat Assistant Capability
                 elif (
-                    has_capability(resolved_ctx, "interactive_consultation")
+                    (has_capability(resolved_ctx, "interactive_consultation")
                     or resolved_ctx.template_code == "OM_BUDI"
-                    or resolved_ctx.slug in ("om_budi", "ombudi")
+                    or resolved_ctx.slug in ("om_budi", "ombudi"))
+                    and resolved_ctx.slug not in ("boontrack-gateway", "boontrack-holding", "boontrack-shop")
                 ):
                     from app.tenants.om_budi.service import om_budi_service
 

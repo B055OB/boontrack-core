@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 DEMO_MENU_TEXT = (
     "Halo! Selamat datang di *Portal Pengujian Ekosistem BoonTrack* 🚀\n\n"
     "Silakan pilih demo asisten/merchant yang ingin Anda uji coba:\n"
-    "1️⃣ *Om Budi Channel* (slug: ombudi / retail showcase)\n"
+    "1️⃣ *BoonTrack Shop* (slug: boontrack-shop / Showcase Storefront & Shared Gateway)\n"
     "2️⃣ *Tier Growth+* (slug: growthplus / Unofficial WhatsApp + Ads Tracking Meta CAPI & TikTok)\n"
     "3️⃣ *Tier ProScale* (slug: proscale / Official Meta Cloud WABA + Omnichannel & BoonPilot AI)\n"
     "4️⃣ *OnlineBoost* (slug: onlineboost / Digital Marketing & Course Vault)\n\n"
@@ -34,13 +34,13 @@ DEMO_MENU_TEXT = (
 
 DEMO_TENANT_GREETINGS: Dict[str, str] = {
     "ombudi": (
-        "🛒 *Selamat Datang di Om Budi Channel!*\n\n"
-        "Showcase ritel & produk UMKM terpercaya. Layanan pelanggan cepat dan produk berkualitas siap kirim.\n\n"
+        "🛍️ *Selamat Datang di BoonTrack Shop!*\n\n"
+        "Showcase storefront ritel & produk UMKM terpercaya. Layanan pelanggan cepat dan produk berkualitas siap kirim.\n\n"
         "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
     ),
-    "om-budi": (
-        "🛒 *Selamat Datang di Om Budi Channel!*\n\n"
-        "Showcase ritel & produk UMKM terpercaya. Layanan pelanggan cepat dan produk berkualitas siap kirim.\n\n"
+    "boontrack-shop": (
+        "🛍️ *Selamat Datang di BoonTrack Shop!*\n\n"
+        "Showcase storefront ritel & produk UMKM terpercaya. Layanan pelanggan cepat dan produk berkualitas siap kirim.\n\n"
         "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
     ),
     "growthplus": (

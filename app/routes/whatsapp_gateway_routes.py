@@ -9,9 +9,11 @@ Handles:
 """
 
 import os
+import re
 import base64
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
@@ -28,6 +30,7 @@ from app.services.whatsapp_service import (
     get_evolution_headers,
     request_evolution_pairing_code,
     get_or_create_evolution_session,
+    get_supabase,
 )
 
 from app.services.ai_engine import commerce_ai_engine
@@ -290,6 +293,8 @@ def register_whatsapp_gateway_routes(app):
     _safe_add_route("POST", "/webhook/evolution/{tenant_slug}", aiohttp_evolution_webhook_handler)
     _safe_add_route("POST", "/webhook/evolution", aiohttp_evolution_webhook_handler)
     _safe_add_route("POST", "/api/v1/whatsapp/inbound-process", aiohttp_inbound_process_handler)
+    _safe_add_route("POST", "/api/v1/whatsapp/sync-gateway-webhook", aiohttp_sync_gateway_webhook_handler)
+    _safe_add_route("GET", "/api/v1/whatsapp/sync-gateway-webhook", aiohttp_sync_gateway_webhook_handler)
     logger.info("[register_whatsapp_gateway_routes] Evolution API webhook, pairing, and connectionState routes mounted to aiohttp.")
 
 
@@ -489,6 +494,160 @@ async def process_inbound_message(payload: InboundPayload):
 
 
 # ============================================================================
+# BOONTRACK STORE ACTIVATION HANDLER
+# ============================================================================
+
+async def handle_store_activation_request(
+    token: str,
+    sender_phone: str,
+    instance_name: str = "boontrack-gateway",
+    raw_text: str = ""
+) -> Dict[str, Any]:
+    """
+    Menangani aktivasi pendaftaran toko BoonTrack via WhatsApp:
+    1. Parsing token (BT-XXXX) dan nomor HP pengirim (format E.164 / 62xxx).
+    2. Mencari record pendaftaran di tabel tenants (atau store_registrations).
+    3. Update status verifikasi:
+       - status = 'active'
+       - is_active = True
+       - metadata.wa_verification_status = 'verified'
+       - metadata.is_verified = True
+       - metadata.phone = sender_phone
+       - metadata.whatsapp_number = sender_phone
+       - metadata.wa_verified_at = timestamp
+    4. Mengirimkan balasan konfirmasi via Evolution API:
+       'Verifikasi Berhasil! Toko BoonTrack Anda telah aktif. Silakan kembali ke browser untuk melanjutkan ke Dashboard.'
+    """
+    clean_token = token.upper().strip()
+    clean_phone = normalize_phone_number(sender_phone) or re.sub(r"\D", "", sender_phone)
+
+    logger.info(f"[STORE ACTIVATION] Processing activation: token='{clean_token}', phone='{clean_phone}', instance='{instance_name}'")
+
+    supabase = get_supabase()
+    matched_tenant = None
+
+    if supabase:
+        try:
+            # 1. Cari berdasarkan metadata->>wa_verification_token
+            res = supabase.table("tenants").select("*").filter("metadata->>wa_verification_token", "eq", clean_token).execute()
+            if res and res.data and len(res.data) > 0:
+                matched_tenant = res.data[0]
+            else:
+                # 2. Fallback pencarian fleksibel untuk status pending
+                all_pending = supabase.table("tenants").select("*").in_("status", ["pending_wa_verification", "pending", "trial"]).limit(50).execute()
+                for t in (all_pending.data or []):
+                    t_meta = t.get("metadata") or {}
+                    if str(t_meta.get("wa_verification_token") or "").upper().strip() == clean_token:
+                        matched_tenant = t
+                        break
+        except Exception as db_err:
+            logger.error(f"[STORE ACTIVATION DB ERROR] {db_err}")
+
+    # Balasan pesan konfirmasi
+    if matched_tenant:
+        tenant_id = matched_tenant.get("id")
+        tenant_slug = matched_tenant.get("slug")
+        meta = matched_tenant.get("metadata") or {}
+        meta["wa_verification_status"] = "verified"
+        meta["is_verified"] = True
+        meta["phone"] = clean_phone
+        meta["whatsapp_number"] = clean_phone
+        meta["wa_verified_at"] = datetime.now(timezone.utc).isoformat()
+
+        update_payload = {
+            "status": "active",
+            "is_active": True,
+            "metadata": meta,
+        }
+
+        try:
+            supabase.table("tenants").update(update_payload).eq("id", tenant_id).execute()
+            logger.info(f"[STORE ACTIVATION] Tenant '{tenant_slug}' (ID: {tenant_id}) activated successfully!")
+        except Exception as update_err:
+            logger.error(f"[STORE ACTIVATION UPDATE ERROR] {update_err}")
+
+        # Sinkronisasi ke store_registrations jika tabel tersedia
+        try:
+            supabase.table("store_registrations").update({
+                "status": "verified",
+                "is_verified": True,
+                "whatsapp_number": clean_phone,
+                "verified_at": datetime.now(timezone.utc).isoformat()
+            }).eq("verification_token", clean_token).execute()
+        except Exception:
+            pass
+
+        success_msg = "Verifikasi Berhasil! Toko BoonTrack Anda telah aktif. Silakan kembali ke browser untuk melanjutkan ke Dashboard."
+
+        # Kirim balasan via Evolution API
+        reply_instance = instance_name or "boontrack-gateway"
+        send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{reply_instance}"
+        headers = get_evolution_headers()
+        send_payload = {
+            "number": clean_phone,
+            "text": success_msg,
+            "textMessage": {"text": success_msg},
+            "options": {"delay": 500, "presence": "composing"}
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(send_url, headers=headers, json=send_payload)
+                logger.info(f"[STORE ACTIVATION DISPATCH] Sent to {clean_phone} via {reply_instance}: {resp.status_code}")
+        except Exception as send_err:
+            logger.error(f"[STORE ACTIVATION DISPATCH ERROR] {send_err}")
+
+        # Catat ke messages & telemetry
+        from app.services.telemetry_service import track_whatsapp_message
+        track_whatsapp_message("OUTBOUND", tenant_id=tenant_slug or "boontrack-shop", session_id=clean_phone, classification="activation_success")
+        asyncio.create_task(log_to_supabase_messages(
+            sender="bot",
+            text=success_msg,
+            tenant_id=tenant_slug or "boontrack-shop",
+            channel="whatsapp",
+            user_phone=clean_phone,
+            user_name="Owner Toko",
+        ))
+
+        return {
+            "status": "success",
+            "action": "store_activation",
+            "verified": True,
+            "tenant_slug": tenant_slug,
+            "token": clean_token,
+            "reply": success_msg
+        }
+    else:
+        logger.warning(f"[STORE ACTIVATION] Token '{clean_token}' not found in database.")
+        not_found_msg = (
+            f"Kode verifikasi {clean_token} tidak ditemukan atau pendaftaran sudah kadaluarsa. "
+            f"Silakan periksa kembali tautan verifikasi di browser Anda."
+        )
+        reply_instance = instance_name or "boontrack-gateway"
+        send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{reply_instance}"
+        headers = get_evolution_headers()
+        send_payload = {
+            "number": clean_phone,
+            "text": not_found_msg,
+            "textMessage": {"text": not_found_msg},
+            "options": {"delay": 500, "presence": "composing"}
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                await client.post(send_url, headers=headers, json=send_payload)
+        except Exception as send_err:
+            logger.error(f"[STORE ACTIVATION DISPATCH ERROR] {send_err}")
+
+        return {
+            "status": "not_found",
+            "action": "store_activation",
+            "verified": False,
+            "token": clean_token,
+            "reply": not_found_msg
+        }
+
+
+# ============================================================================
 # EVOLUTION API WEBHOOK LISTENER (MESSAGES_UPSERT)
 # ============================================================================
 
@@ -613,6 +772,53 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
 
     logger.info(f"[EVOLUTION WEBHOOK] Inbound message for tenant '{resolved_tenant}' from {sender_phone} ({sender_name}): '{incoming_text}'")
 
+    # ------------------------------------------------------------------------
+    # P0 ACTIVATION KEYWORD PARSER (BOONTRACK STORE ACTIVATION)
+    # Format: AKTIVASI BT-XXXX (case-insensitive, whitespace-tolerant)
+    # ------------------------------------------------------------------------
+    activation_match = re.search(r"^AKTIVASI\s+(BT-[A-Za-z0-9]+)", incoming_text.strip(), re.IGNORECASE)
+    if activation_match:
+        token = activation_match.group(1).upper().strip()
+        logger.info(f"[EVOLUTION WEBHOOK] Intercepted store activation token '{token}' from {sender_phone} on instance '{raw_instance}'")
+        activation_res = await handle_store_activation_request(
+            token=token,
+            sender_phone=sender_phone,
+            instance_name=raw_instance or "boontrack-gateway",
+            raw_text=incoming_text
+        )
+        return activation_res
+
+    # ------------------------------------------------------------------------
+    # BOONTRACK-GATEWAY SHARED NOTIFICATION GATEWAY ISOLATION
+    # Dilarang mengeksekusi bot persona lama (Om Budi / Zoom Booster) atau katalog dummy pada gateway sistem
+    # ------------------------------------------------------------------------
+    if raw_instance == "boontrack-gateway" or resolved_tenant in ("boontrack-gateway", "boontrack-holding"):
+        logger.info(f"[SHARED GATEWAY] Non-activation inbound message on boontrack-gateway from {sender_phone}: '{incoming_text}'")
+        shared_msg = (
+            "Halo! Ini adalah nomor layanan resmi verifikasi & notifikasi sistem BoonTrack Shop 🛍️\n\n"
+            "Nomor ini digunakan khusus untuk verifikasi pendaftaran toko dan pengiriman notifikasi transaksional.\n\n"
+            "Untuk bantuan atau mengelola toko Anda, silakan kunjungi https://shop.boontrack.com"
+        )
+        send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{raw_instance or 'boontrack-gateway'}"
+        headers = get_evolution_headers()
+        send_payload = {
+            "number": sender_phone,
+            "text": shared_msg,
+            "textMessage": {"text": shared_msg},
+            "options": {"delay": 500, "presence": "composing"}
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                await client.post(send_url, headers=headers, json=send_payload)
+        except Exception as err:
+            logger.error(f"[SHARED GATEWAY DISPATCH ERROR] {err}")
+
+        return {
+            "status": "success",
+            "tenant": "boontrack-gateway",
+            "reply": shared_msg,
+        }
+
     # Log pesan masuk ke Supabase & Telemetry
     from app.services.telemetry_service import track_whatsapp_message
     track_whatsapp_message("INBOUND", tenant_id=resolved_tenant, session_id=sender_phone, classification="inbound_gateway")
@@ -638,7 +844,8 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     # Kirim balasan via Evolution API sendText jika ada balasan terbentuk
     if reply_text:
         track_whatsapp_message("OUTBOUND", tenant_id=resolved_tenant, session_id=sender_phone, classification="outbound_gateway")
-        instance_name = f"tenant_{resolved_tenant.replace('-', '_')}"
+        # Gunakan raw_instance langsung jika tersedia, agar membalas ke instans yang benar
+        instance_name = raw_instance or (f"tenant_{resolved_tenant.replace('-', '_')}" if not resolved_tenant.startswith("tenant_") else resolved_tenant)
         send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{instance_name}"
         headers = get_evolution_headers()
         send_payload = {
@@ -709,3 +916,77 @@ async def aiohttp_inbound_process_handler(request):
     except Exception as e:
         from aiohttp import web
         return web.json_response({"status": "error", "message": str(e)}, status=400)
+
+
+async def perform_sync_gateway_webhook(public_base_url: Optional[str] = None) -> Dict[str, Any]:
+    backend_url = os.getenv("BACKEND_WEBHOOK_URL") or os.getenv("FASTAPI_BASE_URL") or public_base_url or "https://api.boontrack.com"
+    target_instance = "boontrack-gateway"
+    webhook_url = f"{backend_url.rstrip('/')}/api/v1/whatsapp/webhook/evolution/{target_instance}"
+    headers = get_evolution_headers()
+
+    payload = {
+        "webhook": {
+            "enabled": True,
+            "url": webhook_url,
+            "byEvents": False,
+            "base64": True,
+            "events": ["MESSAGES_UPSERT"]
+        }
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(f"{EVOLUTION_BASE_URL}/webhook/set/{target_instance}", headers=headers, json=payload)
+            success = resp.status_code in (200, 201)
+            details = resp.json() if success else resp.text
+
+            # Update whatsapp_connections in Supabase
+            try:
+                sb = get_supabase()
+                if sb:
+                    sb.table("whatsapp_connections").upsert({
+                        "instance_name": target_instance,
+                        "tenant_id": "boontrack-holding",
+                        "tenant_slug": target_instance,
+                        "provider": "EVOLUTION",
+                        "channel_type": "BAILEYS",
+                        "status": "open",
+                        "gateway_node_url": webhook_url,
+                        "metadata": {
+                            "mode": "SHARED",
+                            "purpose": "SHARED_GATEWAY",
+                            "webhook_url": webhook_url,
+                            "events": ["MESSAGES_UPSERT"]
+                        }
+                    }, on_conflict="instance_name").execute()
+            except Exception as db_err:
+                logger.warning(f"[perform_sync_gateway_webhook] Error saving to DB: {db_err}")
+
+            return {
+                "success": success,
+                "status_code": resp.status_code,
+                "instance": target_instance,
+                "webhook_url": webhook_url,
+                "details": details
+            }
+    except Exception as e:
+        logger.error(f"[perform_sync_gateway_webhook] Exception: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.post("/sync-gateway-webhook", summary="Sync Evolution Webhook for boontrack-gateway")
+@router.get("/sync-gateway-webhook", summary="Sync Evolution Webhook for boontrack-gateway")
+async def sync_gateway_webhook_fastapi(request: Request):
+    base_url = str(request.base_url).rstrip("/")
+    res = await perform_sync_gateway_webhook(base_url)
+    return res
+
+
+async def aiohttp_sync_gateway_webhook_handler(request):
+    from aiohttp import web
+    base_url = str(request.url.origin())
+    res = await perform_sync_gateway_webhook(base_url)
+    return web.json_response(res)
