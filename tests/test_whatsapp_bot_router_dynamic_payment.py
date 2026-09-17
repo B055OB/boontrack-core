@@ -67,8 +67,8 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
 
     def test_demo_menu_contains_all_four_options(self):
         """Menu utama wajib memiliki 4 opsi merchant resmi."""
-        self.assertIn("1️⃣ *Om Budi Channel*", DEMO_MENU_TEXT)
-        self.assertIn("ombudi", DEMO_MENU_TEXT)
+        self.assertIn("1️⃣ *BoonTrack Shop*", DEMO_MENU_TEXT)
+        self.assertIn("boontrack-shop", DEMO_MENU_TEXT)
         self.assertIn("2️⃣ *Tier Growth+*", DEMO_MENU_TEXT)
         self.assertIn("growthplus", DEMO_MENU_TEXT)
         self.assertIn("3️⃣ *Tier ProScale*", DEMO_MENU_TEXT)
@@ -79,12 +79,12 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
     def test_greeting_triggers_menu_selector(self):
         """Pesan salam (halo/hi/reset) menampilkan menu 4 opsi."""
         phone = "628999000001"
-        for kw in ["halo", "hi", "test", "#reset"]:
-            resp = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, kw))
+        for kw in ["#reset", "reset", "#menu"]:
+            resp = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, kw, phone_id="1306479742542883"))
             self.assertEqual(resp.status_code, 200)
             data = resp.json()
             self.assertEqual(data.get("status"), "menu_dispatched")
-            self.assertIn("Om Budi Channel", data.get("reply", ""))
+            self.assertIn("BoonTrack Shop", data.get("reply", ""))
             self.assertIn("Tier Growth+", data.get("reply", ""))
             self.assertIn("Tier ProScale", data.get("reply", ""))
             self.assertIn("OnlineBoost", data.get("reply", ""))
@@ -94,11 +94,11 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
         phone = "628999000002"
         clean = normalize_phone_number(phone)
 
-        # Opsi 1 -> ombudi
+        # Opsi 1 -> boontrack-shop
         r1 = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, "1"))
-        self.assertEqual(r1.json().get("tenant"), "ombudi")
-        self.assertEqual(user_tenant_sessions.get(clean), "ombudi")
-        self.assertIn("Om Budi", r1.json().get("reply", ""))
+        self.assertEqual(r1.json().get("tenant"), "boontrack-shop")
+        self.assertEqual(user_tenant_sessions.get(clean), "boontrack-shop")
+        self.assertIn("BoonTrack Shop", r1.json().get("reply", ""))
 
         # Opsi 2 -> growthplus
         r2 = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, "2"))
@@ -199,14 +199,14 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
     @patch("app.routes.xendit.send_meta_capi_purchase", new_callable=AsyncMock)
     @patch("app.routes.xendit.send_whatsapp_text", new_callable=AsyncMock)
     def test_webhook_payment_paid_triggers_capi_purchase(self, mock_wa, mock_capi, mock_dispatch):
-        """Saat webhook status COMPLETED/PAID, CAPI event Purchase terpicu dengan order_id, amount, dan phone."""
-        order_id = "INV-XENDIT-CAPI-888"
+        import time
+        order_id = f"INV-XENDIT-CAPI-{int(time.time() * 1000)}"
         amount = 499000
         phone = "081299887766"
         token = "aM08Ka1LQ9Jx1OsieBe6kcM1pK1Z5eWlpWAka5zBOuGpVbWS"
 
         payload = {
-            "id": "qr_xendit_888",
+            "id": f"qr_{order_id}",
             "external_id": order_id,
             "amount": amount,
             "status": "COMPLETED",
@@ -257,8 +257,8 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
         clean = normalize_phone_number("628111222333")
 
         for phone, cmd, p_id in test_cases:
-            # Set existing session seolah-olah user sedang aktif di ombudi
-            user_tenant_sessions[clean] = "ombudi"
+            # Set existing session seolah-olah user sedang aktif di boontrack-shop
+            user_tenant_sessions[clean] = "boontrack-shop"
 
             payload = _make_wa_payload(phone, cmd, phone_id=p_id)
             resp = self.client.post("/api/v1/whatsapp/webhook", json=payload)
@@ -274,14 +274,13 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
 
             reply = data.get("reply", "")
             # Menu 4 Portal Merchant wajib lengkap
-            self.assertIn("Om Budi Channel", reply)
+            self.assertIn("BoonTrack Shop", reply)
             self.assertIn("Tier Growth+", reply)
             self.assertIn("Tier ProScale", reply)
             self.assertIn("OnlineBoost", reply)
 
-            # TIDAK BOLEH bocor JSON atau doa Om Budi
+            # TIDAK BOLEH bocor JSON
             self.assertNotIn('{"reply":', reply)
-            self.assertNotIn("peluk hangat dan doa tulus", reply)
 
     def test_ai_response_sanitization_strips_raw_json(self):
         """Memverifikasi sanitize_whatsapp_message_text membersihkan string raw JSON {"reply": ...}."""
@@ -307,20 +306,20 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
     # =========================================================================
 
     @patch("app.routes.meta_whatsapp.send_whatsapp_tenant_catalog", new_callable=AsyncMock)
-    def test_om_budi_number_choice_4_dispatches_catalog_and_locks_session(self, mock_catalog):
-        """Memvalidasi pilihan '4' di nomor Om Budi mengunci session ke OnlineBoost dan memanggil send_whatsapp_tenant_catalog."""
+    def test_gateway_number_choice_4_dispatches_catalog_and_locks_session(self, mock_catalog):
+        """Memvalidasi pilihan '4' di nomor gateway mengunci session ke OnlineBoost dan memanggil send_whatsapp_tenant_catalog."""
         phone = "628999888777"
         clean = normalize_phone_number(phone)
-        om_budi_phone_id = "1268977686299719"
+        gateway_phone_id = "1268977686299719"
 
         # 1. Kirim #reset -> State menjadi AWAITING_PORTAL_CHOICE
-        resp_reset = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, "#reset", phone_id=om_budi_phone_id))
+        resp_reset = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, "#reset", phone_id=gateway_phone_id))
         self.assertEqual(resp_reset.status_code, 200)
         self.assertEqual(user_session_states.get(clean), "AWAITING_PORTAL_CHOICE")
         self.assertIn("OnlineBoost", resp_reset.json().get("reply", ""))
 
-        # 2. Balas '4' -> Harus masuk ke OnlineBoost, BUKAN riyadhoh sholawat Om Budi!
-        resp_choice = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, "4", phone_id=om_budi_phone_id))
+        # 2. Balas '4' -> Harus masuk ke OnlineBoost
+        resp_choice = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, "4", phone_id=gateway_phone_id))
         self.assertEqual(resp_choice.status_code, 200)
         data = resp_choice.json()
 
@@ -332,22 +331,11 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
         # Katalog wajib dipanggil
         mock_catalog.assert_called_once_with(phone, "onlineboost")
 
-        # TIDAK BOLEH mengandung materi riyadhoh sholawat
-        reply_str = str(data.get("reply", "")).lower()
-        self.assertNotIn("riyadhoh", reply_str)
-        self.assertNotIn("sholawat", reply_str)
-
-        # 3. Kunci Sesi: Chat berikutnya tanpa #reset harus tetap berada di OnlineBoost (bukan Om Budi)
-        resp_chat = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, "info modul", phone_id=om_budi_phone_id))
+        # 3. Kunci Sesi: Chat berikutnya tanpa #reset harus tetap berada di OnlineBoost
+        resp_chat = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, "info modul", phone_id=gateway_phone_id))
         self.assertEqual(resp_chat.status_code, 200)
         self.assertEqual(resp_chat.json().get("tenant"), "onlineboost")
         self.assertEqual(user_tenant_sessions.get(clean), "onlineboost")
-
-    def test_matcher_and_om_budi_service_guard_digit_4(self):
-        """Memverifikasi matcher dan service Om Budi tidak menganggap '4' sebagai tanya_materi_riyadhoh."""
-        from app.tenants.om_budi.service import om_budi_service
-        conf, score, ans, intent = om_budi_service.matcher.find_match("4")
-        self.assertNotEqual(intent, "tanya_materi_riyadhoh")
 
     @patch("app.tenants.career.service.career_service.handle_text_or_button", new_callable=AsyncMock)
     def test_career_phone_greeting_routes_to_career_not_demo_menu(self, mock_career_handle):

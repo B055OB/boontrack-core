@@ -33,11 +33,6 @@ DEMO_MENU_TEXT = (
 )
 
 DEMO_TENANT_GREETINGS: Dict[str, str] = {
-    "ombudi": (
-        "🛍️ *Selamat Datang di BoonTrack Shop!*\n\n"
-        "Showcase storefront ritel & produk UMKM terpercaya. Layanan pelanggan cepat dan produk berkualitas siap kirim.\n\n"
-        "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
-    ),
     "boontrack-shop": (
         "🛍️ *Selamat Datang di BoonTrack Shop!*\n\n"
         "Showcase storefront ritel & produk UMKM terpercaya. Layanan pelanggan cepat dan produk berkualitas siap kirim.\n\n"
@@ -108,11 +103,10 @@ def resolve_dynamic_tenant_for_whatsapp(
     # JALUR NOMOR OM BUDI / DEMO NUMBER (SANDBOX)
     # =========================================================================
     option_map = {
-        "1": "ombudi",
-        "ombudi": "ombudi",
-        "om budi": "ombudi",
-        "om-budi": "ombudi",
-        "retail": "ombudi",
+        "1": "boontrack-shop",
+        "boontrack-shop": "boontrack-shop",
+        "shop": "boontrack-shop",
+        "retail": "boontrack-shop",
         "2": "growthplus",
         "growth": "growthplus",
         "growthplus": "growthplus",
@@ -154,7 +148,7 @@ def resolve_dynamic_tenant_for_whatsapp(
 
     from app.services.session_store import get_user_tenant_session, set_user_tenant_session
     locked_tenant = get_user_tenant_session(clean_phone, text)
-    if locked_tenant and locked_tenant in ("onlineboost", "growthplus", "proscale", "ombudi"):
+    if locked_tenant and locked_tenant in ("onlineboost", "growthplus", "proscale", "boontrack-shop"):
         return locked_tenant, False
 
     match = re.search(
@@ -173,10 +167,10 @@ def resolve_dynamic_tenant_for_whatsapp(
         return target_slug, True
 
     if text_lower in ("halo", "hi", "p", "test", "tes", "hai", "start", "info"):
-        return "__MENU__", False
+        return "boontrack-shop", False
 
     if clean_phone_id == "1268977686299719":
-        return "om_budi", False
+        return "boontrack-shop", False
 
     try:
         from app.services.onboarding_service import onboarding_service

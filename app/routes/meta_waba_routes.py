@@ -31,7 +31,6 @@ VERIFY_TOKENS = [
     os.getenv("WHATSAPP_VERIFY_TOKEN", "boontrack_master_verify_token_2026"),
     "boontrack-secure-verify-token",
     "boontrack_master_verify_token_2026",
-    "om_budi_secure_token_2026",
     "boontrack_career_token",
 ]
 

@@ -4,6 +4,7 @@ FastAPI Router for Meta WhatsApp Cloud API Webhook with Deterministic Tenant Iso
 """
 
 import os
+import re
 import logging
 import urllib.parse
 from typing import Dict, Any, Optional
@@ -71,18 +72,16 @@ VERIFY_TOKENS = [
     "boontrack_verify_secret",
     "boontrack-secure-verify-token",
     "boontrack_master_verify_token_2026",
-    "om_budi_secure_token_2026",
     "boontrack_career_token",
 ]
 
 _COMMERCE_DEMO_TRIGGERS = {"#reset", "reset", "menu", "#menu", "demo"}
 
 _MENU_OPTION_MAP: Dict[str, str] = {
-    "1": "ombudi",
-    "ombudi": "ombudi",
-    "om budi": "ombudi",
-    "om-budi": "ombudi",
-    "retail": "ombudi",
+    "1": "boontrack-shop",
+    "boontrack-shop": "boontrack-shop",
+    "shop": "boontrack-shop",
+    "retail": "boontrack-shop",
     "2": "growthplus",
     "growthplus": "growthplus",
     "growth+": "growthplus",
@@ -261,7 +260,6 @@ async def handle_whatsapp_webhook(request: Request):
     # =========================================================================
     # P0 INTERCEPT: COMMAND #RESET / RESET / MENU UTAMA
     # =========================================================================
-    import re
     clean_kw = re.sub(r"[^\w#]", "", clean_text)
     is_explicit_reset = (
         clean_kw in ["#reset", "reset"]
@@ -354,8 +352,7 @@ async def handle_whatsapp_webhook(request: Request):
             )
             return JSONResponse(status_code=200, content={"status": "success", "tenant": "onlineboost", "reply": "[Katalog OnlineBoost Dispatched]"})
 
-        elif selected_slug == "ombudi":
-            # Legacy Om Budi Zoom Booster disabled on BoonTrack Shop shared gateway
+        elif selected_slug in ("boontrack-shop", "shop"):
             welcome_shop = "Halo! Selamat datang di BoonTrack Shop. Silakan kunjungi https://shop.boontrack.com untuk mengakses layanan toko."
             if from_phone:
                 await send_whatsapp_text(to_phone=from_phone, text=welcome_shop, tenant_id="boontrack-shop", phone_number_id=phone_id)
@@ -363,7 +360,7 @@ async def handle_whatsapp_webhook(request: Request):
 
         elif selected_slug in ("growthplus", "proscale"):
             if from_phone:
-                await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="ombudi", phone_number_id=phone_id)
+                await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="shop", phone_number_id=phone_id)
             safe_log_to_supabase_messages(
                 sender="bot",
                 text=greeting,
@@ -429,44 +426,36 @@ async def handle_whatsapp_webhook(request: Request):
                 )
                 return JSONResponse(status_code=200, content={"status": "success", "tenant": resolved_context.slug, "reply": "Career message handled"})
 
-        # 2. Interactive Persona / Custom Chat Assistant Capability
+        # 2. BoonTrack Platform Gateway Handling (System Transaksional / Helpdesk)
         elif (
-            has_capability(resolved_context, "interactive_consultation")
-            or resolved_context.template_code == "OM_BUDI"
-            or resolved_context.slug in ("ombudi", "om_budi")
-        ):
-            from app.tenants.om_budi.service import om_budi_service
-            res = await om_budi_service.handle_incoming_message(
-                phone_number=from_phone,
-                message_text=incoming_text,
-                button_id=event.get("button_id"),
-                user_name=contact_name,
+            active_locked_tenant not in ("onlineboost", "growthplus", "proscale")
+            and (
+                phone_id in (os.getenv("WHATSAPP_PHONE_NUMBER_ID"), os.getenv("PHONE_NUMBER_ID"), "1268977686299719")
+                or (
+                    resolved_context.slug in ("boontrack-holding", "boontrack-shop", "shop", "boontrack-gateway")
+                    and tenant_slug != "__MENU__"
+                    and clean_text not in _COMMERCE_DEMO_TRIGGERS
+                )
             )
-            reply_text = sanitize_whatsapp_message_text(res.get("reply", ""))
-            buttons = res.get("buttons") or res.get("nav_buttons")
-            if buttons and len(buttons) <= 3 and len(reply_text) <= 1000:
-                try:
-                    await send_whatsapp_buttons(
-                        to_phone=from_phone,
-                        body_text=reply_text,
-                        buttons=buttons,
-                        tenant_id=resolved_context.slug,
-                        phone_number_id=phone_id,
-                    )
-                except Exception:
-                    await send_whatsapp_text(to_phone=from_phone, text=reply_text, tenant_id=resolved_context.slug, phone_number_id=phone_id)
-            elif reply_text and from_phone:
-                await send_whatsapp_text(to_phone=from_phone, text=reply_text, tenant_id=resolved_context.slug, phone_number_id=phone_id)
-
+        ):
+            system_reply = (
+                "Halo! Terima kasih telah menghubungi WhatsApp Resmi *BoonTrack Core Platform* 🛍️\n\n"
+                "Nomor ini merupakan saluran resmi sistem otomatis dan notifikasi transaksional BoonTrack.\n\n"
+                "• *Aktivasi Toko*: Balas dengan format *AKTIVASI BT-XXXX* (contoh: *AKTIVASI BT-1234*).\n"
+                "• *Pusat Bantuan*: Kunjungi *https://boontrack.com* untuk informasi dan bantuan layanan.\n\n"
+                "_Pesan otomatis dari BoonTrack Core Gateway._"
+            )
+            if from_phone:
+                await send_whatsapp_text(to_phone=from_phone, text=system_reply, tenant_id="shop", phone_number_id=phone_id)
             safe_log_to_supabase_messages(
                 sender="bot",
-                text=reply_text or "",
-                tenant_id=resolved_context.slug,
+                text=system_reply,
+                tenant_id="boontrack-shop",
                 channel="whatsapp",
                 user_phone=from_phone,
                 user_name=contact_name,
             )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": resolved_context.slug, "reply": reply_text})
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-shop", "reply": system_reply})
 
     # =========================================================================
     # JALUR TOKO DEMO (ONLINEBOOST, GROWTH+, PROSCALE)
@@ -475,7 +464,7 @@ async def handle_whatsapp_webhook(request: Request):
         if clean_phone:
             reset_whatsapp_user_session(clean_phone)
         if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, tenant_id="ombudi", phone_number_id=phone_id)
+            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, tenant_id="shop", phone_number_id=phone_id)
         return JSONResponse(status_code=200, content={"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT})
 
     active_tenant = get_user_tenant_session(clean_phone, incoming_text) or "onlineboost"
@@ -504,7 +493,7 @@ async def handle_whatsapp_webhook(request: Request):
             # 1. KIRIM TEKS RINCIAN INVOICE & LINK BAYAR INSTAN TERLEBIH DAHULU (USER LANGSUNG MENERIMA RESPON)
             if from_phone and reply:
                 try:
-                    await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="ombudi", phone_number_id=phone_id)
+                    await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="shop", phone_number_id=phone_id)
                 except Exception as txt_err:
                     logger.warning(f"[META WA] Error sending fast-track invoice text: {txt_err}")
 
@@ -522,11 +511,11 @@ async def handle_whatsapp_webhook(request: Request):
                         file_bytes=qr_bytes,
                         filename="qris_code.png",
                         mime_type="image/png",
-                        tenant_id="ombudi",
+                        tenant_id="shop",
                         phone_number_id=phone_id,
                     )
                     if media_id:
-                        token, p_id, version = get_wa_credentials("ombudi", phone_number_id=phone_id)
+                        token, p_id, version = get_wa_credentials("shop", phone_number_id=phone_id)
                         if token and p_id:
                             msg_url = f"https://graph.facebook.com/{version}/{p_id}/messages"
                             headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -550,7 +539,7 @@ async def handle_whatsapp_webhook(request: Request):
                         to_phone=from_phone,
                         image_url=qr_code_url,
                         caption=qr_caption,
-                        tenant_id="ombudi",
+                        tenant_id="shop",
                         phone_number_id=phone_id,
                     )
                     if link_resp and getattr(link_resp, "status_code", 200) in (200, 201):
@@ -579,7 +568,7 @@ async def handle_whatsapp_webhook(request: Request):
             logger.error(f"[FAST TRACK CHECKOUT ERROR] {e}")
             fallback_msg = "Maaf, sistem sedang memproses antrean invoice QRIS. Silakan ketik *Beli* sekali lagi ya Kak! 🙏"
             if from_phone:
-                await send_whatsapp_text(to_phone=from_phone, text=fallback_msg, tenant_id="ombudi", phone_number_id=phone_id)
+                await send_whatsapp_text(to_phone=from_phone, text=fallback_msg, tenant_id="shop", phone_number_id=phone_id)
             return JSONResponse(status_code=200, content={"status": "error", "tenant": active_tenant, "error": str(e)})
 
     # -------------------------------------------------------------------------
@@ -592,7 +581,7 @@ async def handle_whatsapp_webhook(request: Request):
             await send_whatsapp_tenant_catalog(
                 phone=from_phone,
                 tenant_slug=active_tenant,
-                tenant_id="ombudi",
+                tenant_id="shop",
                 phone_number_id=phone_id,
             )
         return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "action": "view_catalog"})
@@ -614,7 +603,7 @@ async def handle_whatsapp_webhook(request: Request):
                     to_phone=from_phone,
                     body_text=cart_msg,
                     buttons=cart_empty_btns,
-                    tenant_id="ombudi",
+                    tenant_id="shop",
                     phone_number_id=phone_id,
                 )
             return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "action": "empty_cart"})
@@ -639,7 +628,7 @@ async def handle_whatsapp_webhook(request: Request):
                 to_phone=from_phone,
                 body_text=cart_summary,
                 buttons=cart_filled_btns,
-                tenant_id="ombudi",
+                tenant_id="shop",
                 phone_number_id=phone_id,
             )
         return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "action": "view_cart"})
@@ -655,7 +644,7 @@ async def handle_whatsapp_webhook(request: Request):
             await send_whatsapp_text(
                 to_phone=from_phone,
                 text=prompt_intro,
-                tenant_id="ombudi",
+                tenant_id="shop",
                 phone_number_id=phone_id,
             )
         return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "action": "ask_ai_prompt"})
@@ -674,7 +663,7 @@ async def handle_whatsapp_webhook(request: Request):
             await send_whatsapp_text(
                 to_phone=from_phone,
                 text=custom_auto_reply,
-                tenant_id="ombudi",
+                tenant_id="shop",
                 phone_number_id=phone_id,
             )
         safe_log_to_supabase_messages(
@@ -799,18 +788,18 @@ async def handle_whatsapp_webhook(request: Request):
                     body_text=reply,
                     buttons=checkout_buttons,
                     footer_text="Pilih aksi di bawah untuk lanjut:",
-                    tenant_id="ombudi",
+                    tenant_id="shop",
                     phone_number_id=phone_id,
                 )
                 btn_sent = True
             except Exception as b_err:
                 logger.warning(f"[WA BUTTON DISPATCH FAILED] {b_err}")
         if not btn_sent and reply and from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="ombudi", phone_number_id=phone_id)
+            await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="shop", phone_number_id=phone_id)
     else:
         # JANGAN kirim tombol checkout sama sekali (hanya kirim teks percakapan natural)
         if reply and from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="ombudi", phone_number_id=phone_id)
+            await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="shop", phone_number_id=phone_id)
 
     # Simpan kembali state ke context_json via dump_customer_state dan update ke session database
     try:

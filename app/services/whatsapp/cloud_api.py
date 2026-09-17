@@ -98,9 +98,9 @@ async def log_to_supabase_messages(
         if not content and media_url:
             content = "[Gambar]"
 
-        raw_tenant = str(tenant_id or "boontrack-career").strip().lower()
-        if raw_tenant in ["om_budi", "om-budi", "1268977686299719"]:
-            clean_tenant = "om-budi"
+        raw_tenant = str(tenant_id or "shop").strip().lower()
+        if raw_tenant in ["shop", "boontrack-shop", "boontrack_shop", "boontrack-holding", "1268977686299719"]:
+            clean_tenant = "boontrack-shop"
         elif raw_tenant in ["aduan", "aduan-sandbox", "aduan_sandbox", "1306479742542883"]:
             clean_tenant = "aduan-sandbox"
         elif raw_tenant in ["boontrack-career", "boontrack_career", "career", "1340866379104241", "00000000-0000-0000-0000-000000000000"]:
@@ -224,7 +224,7 @@ async def send_whatsapp_text(
     to_phone: str,
     text: str,
     preview_url: bool = False,
-    tenant_id: str = "boontrack-career",
+    tenant_id: str = "shop",
     phone_number_id: Optional[str] = None,
     access_token: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
@@ -281,7 +281,7 @@ async def send_whatsapp_text(
 async def send_otp_whatsapp(
     to_phone: str,
     otp_code: str,
-    tenant_id: str = "boontrack-career",
+    tenant_id: str = "shop",
     phone_number_id: Optional[str] = None,
     access_token: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
@@ -295,7 +295,7 @@ async def send_otp_whatsapp(
         f"Kode OTP Anda: *{otp_code}*\n\n"
         "• Berlaku selama *5 menit*.\n"
         "• Jangan berikan kode ini kepada siapa pun demi keamanan akun Anda.\n\n"
-        "_Pesan otomatis dari Meta Cloud API Gateway BoonTrack Career._"
+        "_Pesan otomatis dari Meta Cloud API Gateway BoonTrack System._"
     )
     return await send_whatsapp_text(clean_phone, msg, tenant_id=tenant_id, phone_number_id=phone_number_id, access_token=access_token)
 
@@ -303,7 +303,7 @@ async def send_otp_whatsapp(
 async def send_ereceipt_whatsapp(
     to_phone: str,
     order_data: Dict[str, Any],
-    tenant_id: str = "boontrack-career",
+    tenant_id: str = "shop",
     phone_number_id: Optional[str] = None,
     access_token: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:

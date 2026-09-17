@@ -495,7 +495,7 @@ class OnboardingService:
 
         # 2. Check LOADED_CONFIG_TENANTS for dynamic commerce tenants
         for slug in reversed(list(LOADED_CONFIG_TENANTS.keys())):
-            if slug in ("atmosfitnes", "career", "boontrack-career", "om_budi", "bale_pananggeuhan", "pelayanan_publik"):
+            if slug in ("atmosfitnes", "career", "boontrack-career", "bale_pananggeuhan", "pelayanan_publik"):
                 continue
             return slug
 

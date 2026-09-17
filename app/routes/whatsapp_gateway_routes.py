@@ -579,21 +579,15 @@ async def handle_store_activation_request(
 
         success_msg = "Verifikasi Berhasil! Toko BoonTrack Anda telah aktif. Silakan kembali ke browser untuk melanjutkan ke Dashboard."
 
-        # Kirim balasan via Evolution API
-        reply_instance = instance_name or "boontrack-gateway"
-        send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{reply_instance}"
-        headers = get_evolution_headers()
-        send_payload = {
-            "number": clean_phone,
-            "text": success_msg,
-            "textMessage": {"text": success_msg},
-            "options": {"delay": 500, "presence": "composing"}
-        }
-
+        # Kirim balasan konfirmasi resmi via Meta Cloud API (WABA)
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.post(send_url, headers=headers, json=send_payload)
-                logger.info(f"[STORE ACTIVATION DISPATCH] Sent to {clean_phone} via {reply_instance}: {resp.status_code}")
+            from app.services.whatsapp.cloud_api import send_whatsapp_text
+            await send_whatsapp_text(
+                to_phone=clean_phone,
+                text=success_msg,
+                tenant_id="shop",
+            )
+            logger.info(f"[STORE ACTIVATION DISPATCH] Sent to {clean_phone} via Meta Cloud API")
         except Exception as send_err:
             logger.error(f"[STORE ACTIVATION DISPATCH ERROR] {send_err}")
 
@@ -623,18 +617,14 @@ async def handle_store_activation_request(
             f"Kode verifikasi {clean_token} tidak ditemukan atau pendaftaran sudah kadaluarsa. "
             f"Silakan periksa kembali tautan verifikasi di browser Anda."
         )
-        reply_instance = instance_name or "boontrack-gateway"
-        send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{reply_instance}"
-        headers = get_evolution_headers()
-        send_payload = {
-            "number": clean_phone,
-            "text": not_found_msg,
-            "textMessage": {"text": not_found_msg},
-            "options": {"delay": 500, "presence": "composing"}
-        }
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                await client.post(send_url, headers=headers, json=send_payload)
+            from app.services.whatsapp.cloud_api import send_whatsapp_text
+            await send_whatsapp_text(
+                to_phone=clean_phone,
+                text=not_found_msg,
+                tenant_id="shop",
+            )
+            logger.info(f"[STORE ACTIVATION DISPATCH] Error reply sent to {clean_phone} via Meta Cloud API")
         except Exception as send_err:
             logger.error(f"[STORE ACTIVATION DISPATCH ERROR] {send_err}")
 

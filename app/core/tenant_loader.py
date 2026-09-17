@@ -28,7 +28,7 @@ TENANT_CONFIG_DIR = os.getenv(
 LOADED_CONFIG_TENANTS: Dict[str, TenantConfig] = {}
 
 TENANT_REGISTRY: Dict[str, Dict[str, Any]] = {
-    # Legacy tenant modules (gym, career, om_budi) deprecated in Phase E.
+    # Legacy tenant modules deprecated in Phase E.
     # Routing is now handled centrally via TenantRuntimeContext and dynamic capabilities.
     "reader": {
         "name": "Android Reader",
@@ -427,7 +427,7 @@ def sanitize_error_summary(err_str: Optional[str]) -> Optional[str]:
 
 
 def get_tenant_statuses() -> Dict[str, str]:
-    """Mengembalikan ringkasan status per-tenant (misal: {'career': 'active', 'om_budi': 'active'})."""
+    """Mengembalikan ringkasan status per-tenant (misal: {'career': 'active', 'shop': 'active'})."""
     if not TENANT_STATUS:
         return {k: "pending" for k in TENANT_REGISTRY}
     return {k: v.get("status", "unknown") for k, v in TENANT_STATUS.items()}

@@ -56,7 +56,6 @@ VERIFY_TOKENS = [
     os.getenv("META_WEBHOOK_VERIFY_TOKEN", "boontrack-secure-verify-token"),
     "boontrack_verify_secret",
     "boontrack_master_verify_token_2026",
-    "om_budi_secure_token_2026",
     "boontrack_career_token",
     "boontrack_wa_secret_token",
     "boontrack_aduan_token"
@@ -64,24 +63,20 @@ VERIFY_TOKENS = [
 
 
 # --- 2. Konfigurasi Phone Number ID Tenant ---
-OM_BUDI_PHONE_NUMBER_ID = "1268977686299719"       # Produksi Om Budi
-CAREER_PHONE_NUMBER_ID = "1340866379104241"        # Produksi Career Assistant
-ADUAN_SANDBOX_PHONE_ID = "1306479742542883"        # Sandbox / Uji Coba Diskominfo Aduan
+BOONTRACK_GATEWAY_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID") or "1268977686299719"
+CAREER_PHONE_NUMBER_ID = os.getenv("CAREER_PHONE_NUMBER_ID", "1340866379104241")        # Produksi Career Assistant
+ADUAN_SANDBOX_PHONE_ID = os.getenv("ADUAN_SANDBOX_PHONE_ID", "1306479742542883")        # Sandbox / Uji Coba Diskominfo Aduan
 
 # --- 3. Access Tokens Resolver (Dengan Fallback ke WHATSAPP_TOKEN) ---
 PERMANENT_META_TOKEN = "EAANbiVgBfGQBSQkvsZBc8JmqdEZBJWSrZAWR1gnJep0lkyZAv4O02LKEwjoNAc8lNOvaEeKhtb6pcr45S8wtd5CrSKdoMwEq6A1eJV4Yb140DBOMbmj3wLzo0Y7fZBrus25EJ0xeqXlPbDisP6d4DmZAGkvbJ7hnKfFih3G7L7mn6g56OQVU42dZByNSHNEiwZDZD"
 
-OM_BUDI_ACCESS_TOKEN = os.getenv(
-    "OM_BUDI_ACCESS_TOKEN",
-    os.getenv("WHATSAPP_TOKEN", PERMANENT_META_TOKEN)
-)
 CAREER_ACCESS_TOKEN = os.getenv(
     "CAREER_ACCESS_TOKEN",
-    os.getenv("WHATSAPP_TOKEN", OM_BUDI_ACCESS_TOKEN)
+    os.getenv("WHATSAPP_ACCESS_TOKEN") or os.getenv("WHATSAPP_TOKEN", PERMANENT_META_TOKEN)
 )
 ADUAN_SANDBOX_ACCESS_TOKEN = os.getenv(
     "ADUAN_ACCESS_TOKEN",
-    os.getenv("WHATSAPP_TOKEN", OM_BUDI_ACCESS_TOKEN)
+    os.getenv("WHATSAPP_ACCESS_TOKEN") or os.getenv("WHATSAPP_TOKEN", PERMANENT_META_TOKEN)
 )
 
 ALLOWED_IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/jpg"]
@@ -91,13 +86,13 @@ def resolve_tenant_token(phone_id: str) -> str:
     """Mengambil access token yang tepat sesuai Phone Number ID."""
     clean_id = str(phone_id or "").strip()
     if clean_id == CAREER_PHONE_NUMBER_ID:
-        tok = os.getenv("CAREER_ACCESS_TOKEN") or os.getenv("WHATSAPP_TOKEN") or PERMANENT_META_TOKEN
+        tok = os.getenv("CAREER_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN") or os.getenv("WHATSAPP_TOKEN") or PERMANENT_META_TOKEN
         return tok.strip()
     elif clean_id == ADUAN_SANDBOX_PHONE_ID:
-        tok = os.getenv("ADUAN_ACCESS_TOKEN") or os.getenv("WHATSAPP_TOKEN") or PERMANENT_META_TOKEN
+        tok = os.getenv("ADUAN_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN") or os.getenv("WHATSAPP_TOKEN") or PERMANENT_META_TOKEN
         return tok.strip()
     tok = (
-        os.getenv("OM_BUDI_ACCESS_TOKEN")
+        os.getenv("WHATSAPP_ACCESS_TOKEN")
         or os.getenv("WHATSAPP_TOKEN")
         or os.getenv("META_WA_TOKEN")
         or os.getenv("WA_TOKEN")
@@ -121,7 +116,7 @@ def resolve_tenant_id_from_phone_id(phone_id: str) -> str:
 async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
     from app.services.whatsapp_service import sanitize_whatsapp_message_text
     clean_id_match = re.findall(r"\d+", str(phone_id or ""))
-    clean_id = clean_id_match[0] if clean_id_match else (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or OM_BUDI_PHONE_NUMBER_ID)
+    clean_id = clean_id_match[0] if clean_id_match else BOONTRACK_GATEWAY_PHONE_NUMBER_ID
     token = resolve_tenant_token(clean_id)
 
     # Telemetry Outbound Counter Hook
@@ -156,7 +151,7 @@ async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
 async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Dict[str, str]], phone_id: str):
     from app.services.whatsapp_service import sanitize_whatsapp_message_text
     clean_id_match = re.findall(r"\d+", str(phone_id or ""))
-    clean_id = clean_id_match[0] if clean_id_match else (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or OM_BUDI_PHONE_NUMBER_ID)
+    clean_id = clean_id_match[0] if clean_id_match else BOONTRACK_GATEWAY_PHONE_NUMBER_ID
     token = resolve_tenant_token(clean_id)
 
     # Telemetry Outbound Counter Hook
@@ -212,7 +207,7 @@ async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any = 
         image_url_or_path_or_bytes = image_url_or_path
 
     clean_id_match = re.findall(r"\d+", str(phone_id or ""))
-    clean_id = clean_id_match[0] if clean_id_match else (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or OM_BUDI_PHONE_NUMBER_ID)
+    clean_id = clean_id_match[0] if clean_id_match else BOONTRACK_GATEWAY_PHONE_NUMBER_ID
     token = resolve_tenant_token(clean_id)
 
     clean_phone = normalize_phone_number(recipient_phone) or "".join(filter(str.isdigit, str(recipient_phone)))
@@ -345,7 +340,6 @@ async def send_wa_list_menu(recipient_phone: str, body_text: str, button_text: s
 
 # --- 5. Webhook GET: Verifikasi Meta ---
 @central_wa_routes.get("/webhook/whatsapp")
-@central_wa_routes.get("/api/v1/tenants/om_budi/webhook/whatsapp")
 @central_wa_routes.get("/api/whatsapp/webhook")
 @central_wa_routes.get("/api/v1/whatsapp/webhook")
 async def verify_webhook(request: web.Request) -> web.Response:
@@ -365,7 +359,6 @@ async def verify_webhook(request: web.Request) -> web.Response:
 
 # --- 6. Webhook POST: Dispatcher Pesan Terisolasi ---
 @central_wa_routes.post("/webhook/whatsapp")
-@central_wa_routes.post("/api/v1/tenants/om_budi/webhook/whatsapp")
 @central_wa_routes.post("/api/whatsapp/webhook")
 @central_wa_routes.post("/api/v1/whatsapp/webhook")
 async def handle_incoming_webhook(request: web.Request) -> web.Response:
@@ -378,14 +371,10 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
     if isinstance(data, dict):
         evo_event = str(data.get("event") or "").lower()
         has_evo_data = isinstance(data.get("data"), dict) and "key" in data.get("data", {})
-        if evo_event in ("messages.upsert", "messages_upsert") or has_evo_data or ("instance" in data and "data" in data):
-            try:
-                from app.routes.whatsapp_gateway_routes import process_evolution_webhook_payload
-                res = await process_evolution_webhook_payload(data)
-                return web.json_response(res)
-            except Exception as evo_delegate_err:
-                logger.error(f"[CENTRAL WA] Error delegating to Evolution webhook: {evo_delegate_err}")
-                return web.json_response({"status": "error", "message": str(evo_delegate_err)}, status=500)
+        if evo_event in ("messages.upsert", "messages_upsert") or has_evo_data:
+            from app.routes.whatsapp_gateway_routes import handle_evolution_inbound_webhook
+            logger.info("[CENTRAL WA ROUTER] Evolution API payload received -> forwarded to universal gateway router")
+            return await handle_evolution_inbound_webhook(request)
 
     # Pemeriksaan payload Meta webhook: jika hanya berisi 'statuses' tanpa 'messages', segera hentikan eksekusi
     has_statuses = False
@@ -408,17 +397,12 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         logger.info("[CENTRAL WA] Webhook payload contains only statuses without messages. Execution halted.")
         return web.Response(text="STATUS_IGNORED", status=200)
 
+    event = extract_meta_whatsapp_event(data)
+
+    if event.get("is_status") or not event.get("is_message"):
+        return web.Response(text="STATUS_IGNORED", status=200)
+
     try:
-        event = extract_meta_whatsapp_event(data)
-
-        # 6.1. Abaikan status delivery / read receipts
-        if event["is_status"]:
-            return web.Response(text="STATUS_IGNORED", status=200)
-
-        if not event["is_message"]:
-            return web.Response(text="STATUS_IGNORED", status=200)
-
-        phone_id = str(event.get("phone_id") or "").strip() or (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or OM_BUDI_PHONE_NUMBER_ID)
         from_phone = str(event.get("from_phone") or "").strip()
         clean_phone = normalize_phone_number(from_phone) or re.sub(r"\D", "", from_phone)
         msg_type = str(event.get("msg_type") or "text").strip()
@@ -427,6 +411,8 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         clean_text = incoming_text.strip().lower()
         text_lower = clean_text
 
+        phone_id = str(event.get("phone_id") or "").strip() or BOONTRACK_GATEWAY_PHONE_NUMBER_ID
+        
         # P0 Store Activation Interceptor
         activation_match = re.search(r"^AKTIVASI\s+(BT-[A-Za-z0-9]+)", incoming_text.strip(), re.IGNORECASE)
         if activation_match:
@@ -611,11 +597,10 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
         # P0 INTERCEPT: Menu Selection 1, 2, 3, 4 (PRIORITAS SEBELUM OM BUDI / RIYADHOH / CAREER)
         _CENTRAL_MENU_MAP = {
-            "1": "ombudi",
-            "ombudi": "ombudi",
-            "om budi": "ombudi",
-            "om-budi": "ombudi",
-            "retail": "ombudi",
+            "1": "boontrack-shop",
+            "boontrack-shop": "boontrack-shop",
+            "shop": "boontrack-shop",
+            "retail": "boontrack-shop",
             "2": "growthplus",
             "growthplus": "growthplus",
             "growth+": "growthplus",
@@ -656,8 +641,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     "is_new_binding": True
                 }, status=200)
 
-            elif selected_slug == "ombudi":
-                # Legacy Om Budi Zoom Booster disabled on BoonTrack Shop shared gateway
+            elif selected_slug in ("boontrack-shop", "shop"):
                 welcome_shop = "Halo! Selamat datang di BoonTrack Shop. Silakan kunjungi https://shop.boontrack.com untuk mengakses layanan toko."
                 await send_wa_text(from_phone, welcome_shop, phone_id)
                 return web.json_response({
@@ -729,103 +713,30 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     except Exception as e:
                         logger.error(f"[WHATSAPP CENTRAL] Career router error: {e}")
 
-                # 2. Interactive Persona / Custom Chat Assistant Capability
+                # 2. BoonTrack Platform Gateway Handling (System Transaksional / Helpdesk)
                 elif (
-                    (has_capability(resolved_ctx, "interactive_consultation")
-                    or resolved_ctx.template_code == "OM_BUDI"
-                    or resolved_ctx.slug in ("om_budi", "ombudi"))
-                    and resolved_ctx.slug not in ("boontrack-gateway", "boontrack-holding", "boontrack-shop")
+                    resolved_ctx.slug in ("boontrack-holding", "boontrack-shop", "shop", "boontrack-gateway")
+                    or phone_id in (BOONTRACK_GATEWAY_PHONE_NUMBER_ID, "1268977686299719")
                 ):
-                    from app.tenants.om_budi.service import om_budi_service
-
-                    safe_log_to_supabase_messages(
-                        sender="user",
-                        text=incoming_text or f"[{msg_type}]",
-                        tenant_id=resolved_ctx.slug,
-                        channel="whatsapp",
-                        user_phone=from_phone,
-                        user_name=contact_name,
-                        user_id=from_phone,
-                        conversation_id=from_phone,
-                        metadata={
-                            "button_id": button_id,
-                            "phone_number_id": phone_id,
-                            "msg_type": msg_type
-                        }
+                    system_reply = (
+                        "Halo! Terima kasih telah menghubungi WhatsApp Resmi *BoonTrack Core Platform* 🛍️\n\n"
+                        "Nomor ini merupakan saluran resmi sistem otomatis dan notifikasi transaksional BoonTrack.\n\n"
+                        "• *Aktivasi Toko*: Balas dengan format *AKTIVASI BT-XXXX* (contoh: *AKTIVASI BT-1234*).\n"
+                        "• *Pusat Bantuan*: Kunjungi *https://boontrack.com* untuk informasi dan bantuan layanan.\n\n"
+                        "_Pesan otomatis dari BoonTrack Core Gateway._"
                     )
-
-                    res = await om_budi_service.handle_incoming_message(
-                        phone_number=from_phone,
-                        message_text=incoming_text,
-                        button_id=button_id,
-                        user_name=contact_name,
-                        image_bytes=image_bytes,
-                        image_mime=image_mime
-                    )
-
-                    res_type = res.get("type", "text")
-                    reply_text = res.get("reply", "")
-                    buttons = res.get("buttons") or res.get("nav_buttons")
-
-                    if res_type == "image":
-                        img_src = (
-                            res.get("image_url")
-                            or res.get("image_link")
-                            or (res.get("image", {}).get("link") if isinstance(res.get("image"), dict) else None)
-                            or res.get("image_path")
-                            or res.get("image")
-                        )
-                        caption_text = res.get("reply", "") or res.get("caption", "")
-                        await send_wa_image(
-                            recipient_phone=from_phone,
-                            image_url_or_path_or_bytes=img_src,
-                            caption=caption_text,
-                            phone_id=phone_id
-                        )
-                        if buttons:
-                            await send_wa_buttons(
-                                from_phone,
-                                "👇 *Pilih menu untuk melanjutkan:*",
-                                buttons,
-                                phone_id
-                            )
-                    elif res_type == "list":
-                        await send_wa_list_menu(
-                            from_phone,
-                            reply_text,
-                            res.get("button_text", "Pilih Menu"),
-                            res.get("sections", []),
-                            phone_id
-                        )
-                    elif res_type == "buttons" and len(reply_text) <= 1000:
-                        await send_wa_buttons(from_phone, reply_text, buttons or [], phone_id)
-                    else:
-                        await send_wa_text(from_phone, reply_text, phone_id)
-                        if buttons:
-                            await send_wa_buttons(
-                                from_phone,
-                                "👇 *Pilih menu untuk melanjutkan:*",
-                                buttons,
-                                phone_id
-                            )
-
+                    await send_wa_text(from_phone, system_reply, phone_id)
                     safe_log_to_supabase_messages(
                         sender="bot",
-                        text=reply_text,
-                        tenant_id=resolved_ctx.slug,
+                        text=system_reply,
+                        tenant_id="boontrack-shop",
                         channel="whatsapp",
                         user_phone=from_phone,
                         user_name=contact_name,
                         user_id=from_phone,
                         conversation_id=from_phone,
-                        metadata={
-                            "res_type": res_type,
-                            "phone_number_id": phone_id,
-                            "buttons": buttons
-                        }
                     )
-
-                    return web.json_response({"status": "success", "tenant": resolved_ctx.slug}, status=200)
+                    return web.json_response({"status": "success", "tenant": "boontrack-shop", "reply": system_reply}, status=200)
 
         # 6.6. Dynamic Tenant Resolution with Top-Level Demo Menu Interceptor
         from app.services.ai_engine import commerce_ai_engine
@@ -971,7 +882,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         # ---------------------------------------------------------------
         _MENU_TRIGGER_KEYWORDS = {"halo", "hi", "p", "test", "tes", "hai", "start", "info", "menu", "demo", "#reset", "reset"}
         _MENU_OPTION_MAP = {
-            "1": "ombudi",
+            "1": "boontrack-shop",
             "2": "growthplus",
             "3": "proscale",
             "4": "onlineboost",

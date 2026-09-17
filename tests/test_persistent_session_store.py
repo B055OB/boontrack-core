@@ -88,30 +88,10 @@ async def test_session_repository_integration():
     restored_session = await repo.get_or_create(user_id=phone, channel="whatsapp")
     assert restored_session.context_json.get("last_stage") == "CONSIDERATION"
 
+
     # Clean up
     SessionRepository.clear_user_session(phone)
 
-
-@pytest.mark.asyncio
-async def test_om_budi_safeguard_against_demo_keywords():
-    from app.tenants.om_budi.service import om_budi_service
-    phone = "6287711223344"
-    clear_user_tenant_session(phone)
-
-    # Send message with demo intent to Om Budi service directly
-    res = await om_budi_service.handle_incoming_message(
-        phone_number=phone,
-        message_text="Bisa minta silabus paid traffic dan materi suhu ads?",
-        button_id="",
-        user_name="Budi Demo"
-    )
-
-    reply = res.get("reply", "")
-    # Must NOT reply with 6 materi utama rejection
-    assert "tidak termasuk dalam" not in reply
-    assert "OnlineBoost" in reply or "Katalog" in reply
-    # Session must be restored to onlineboost
-    assert get_user_tenant_session(phone) == "onlineboost"
 
     # Clean up
     clear_user_tenant_session(phone)

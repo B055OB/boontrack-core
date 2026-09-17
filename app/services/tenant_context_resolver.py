@@ -305,8 +305,8 @@ class TenantContextResolver:
             slug_aliases = {
                 "boontrack-career": "career",
                 "boontrack_career": "career",
-                "ombudi": "om_budi",
-                "om-budi": "om_budi",
+                "boontrack-shop": "boontrack-holding",
+                "shop": "boontrack-holding",
             }
             if clean_slug in slug_aliases:
                 alias_target = slug_aliases[clean_slug]
@@ -362,14 +362,14 @@ class TenantContextResolver:
 
         # Standard environment phone number ID mapping
         career_phone_id = os.getenv("CAREER_PHONE_NUMBER_ID", "1340866379104241").strip()
-        om_budi_phone_id = os.getenv("OM_BUDI_PHONE_NUMBER_ID", "1268977686299719").strip()
+        shop_phone_id = (os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID") or "1268977686299719").strip()
         aduan_phone_id = os.getenv("ADUAN_SANDBOX_PHONE_ID", "1306479742542883").strip()
 
         target_slug = None
         if clean_phone_id in (career_phone_id, "1340866379104241"):
             target_slug = "career"
-        elif clean_phone_id in (om_budi_phone_id, "1268977686299719"):
-            target_slug = "om_budi"
+        elif clean_phone_id in (shop_phone_id, "1268977686299719"):
+            target_slug = "boontrack-holding"
         elif clean_phone_id in (aduan_phone_id, "1306479742542883"):
             target_slug = "pelayanan_publik"
 

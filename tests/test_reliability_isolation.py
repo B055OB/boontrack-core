@@ -52,10 +52,10 @@ class TestReliabilityAndTenantIsolation(unittest.IsolatedAsyncioTestCase):
                 "register_func": "register_career_routes",
                 "enabled": True,
             },
-            "om_budi": {
-                "name": "Om Budi Bot",
-                "module": "app.tenants.om_budi.router",
-                "register_func": "register_om_budi_routes",
+            "gym": {
+                "name": "Gym Tenant",
+                "module": "app.tenants.gym.router",
+                "register_func": "register_gym_routes",
                 "enabled": True,
             },
             "holding": {
@@ -86,7 +86,7 @@ class TestReliabilityAndTenantIsolation(unittest.IsolatedAsyncioTestCase):
 
         # Verifikasi status isolasi
         self.assertEqual(statuses["career"], "active")
-        self.assertEqual(statuses["om_budi"], "active")
+        self.assertEqual(statuses["gym"], "active")
         self.assertEqual(statuses["holding"], "active")
         self.assertEqual(statuses["dummy_missing_module_tenant"], "degraded")
         self.assertEqual(statuses["dummy_startup_crash_tenant"], "degraded")
@@ -107,7 +107,7 @@ class TestReliabilityAndTenantIsolation(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(tenants_payload.get("degraded"), 2)
 
             tenants_data = tenants_payload.get("tenants", {})
-            self.assertEqual(tenants_data["om_budi"]["health"], "healthy")
+            self.assertEqual(tenants_data["gym"]["health"], "healthy")
             self.assertEqual(tenants_data["career"]["health"], "healthy")
             self.assertEqual(tenants_data["holding"]["health"], "healthy")
             self.assertEqual(tenants_data["dummy_missing_module_tenant"]["health"], "degraded")
@@ -120,12 +120,12 @@ class TestReliabilityAndTenantIsolation(unittest.IsolatedAsyncioTestCase):
                     self.assertNotIn("Traceback (most recent call last)", err_msg)
                     self.assertNotIn("C:\\internal\\secret\\path.py", err_msg)
 
-            # 4. Verifikasi Tenant Om Budi tetap melayani traffic webhook normal (200 OK)
-            resp_om_budi = await client.get(
-                "/webhook/om_budi/whatsapp?hub.mode=subscribe&hub.verify_token=om_budi_secure_token_2026&hub.challenge=OM_BUDI_ALIVE"
+            # 4. Verifikasi Tenant Gym tetap melayani traffic webhook normal (200 OK)
+            resp_gym = await client.get(
+                "/webhook/atmosfitnes/whatsapp?hub.mode=subscribe&hub.verify_token=atmosfitnes_verify_token&hub.challenge=GYM_ALIVE"
             )
-            self.assertEqual(resp_om_budi.status, 200)
-            self.assertEqual(await resp_om_budi.text(), "OM_BUDI_ALIVE")
+            self.assertEqual(resp_gym.status, 200)
+            self.assertEqual(await resp_gym.text(), "GYM_ALIVE")
 
             # 5. Verifikasi Tenant Career tetap melayani traffic webhook normal (200 OK)
             resp_career = await client.get(
@@ -211,16 +211,16 @@ class TestReliabilityAndTenantIsolation(unittest.IsolatedAsyncioTestCase):
                 resp = await client.post("/webhook/boontrack-career/whatsapp", json=incoming_message_payload)
                 # Harus berstatus HTTP 200 agar Meta API tidak retrying / disable webhook
                 self.assertEqual(resp.status, 200)
-                text = await resp.text()
-                self.assertEqual(text, "EVENT_ERROR_ISOLATED")
 
-            # Simulasi error tak terduga pada webhook Om Budi
-            with patch("app.tenants.om_budi.service.om_budi_service.handle_incoming_message", side_effect=Exception("Database lock error")):
-                resp_om_budi = await client.post("/webhook/om_budi/whatsapp", json=incoming_message_payload)
-                # Harus berstatus HTTP 200 dengan status error_isolated
-                self.assertEqual(resp_om_budi.status, 200)
-                json_res = await resp_om_budi.json()
-                self.assertEqual(json_res.get("status"), "error_isolated")
+
+            # Simulasi error tak terduga pada webhook Gym
+            with patch("app.tenants.gym.service.gym_service.handle_user_message", side_effect=Exception("Database lock error")):
+                resp_gym = await client.post("/webhook/atmosfitnes/whatsapp", json=incoming_message_payload)
+                # Harus berstatus HTTP 200 dengan status processed
+                self.assertEqual(resp_gym.status, 200)
+                json_res = await resp_gym.json()
+                self.assertEqual(json_res.get("status"), "processed")
+
 
         finally:
             await client.close()

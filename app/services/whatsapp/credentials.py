@@ -106,18 +106,6 @@ def reset_whatsapp_user_session(phone: str) -> None:
         pass
 
     try:
-        import sys
-        if "app.tenants.om_budi.service" in sys.modules:
-            mod = sys.modules["app.tenants.om_budi.service"]
-            obs = getattr(mod, "om_budi_service", None)
-            if obs and hasattr(obs, "user_sessions"):
-                obs.user_sessions.pop(clean_phone, None)
-                if raw_phone:
-                    obs.user_sessions.pop(raw_phone, None)
-    except Exception:
-        pass
-
-    try:
         from app.services.cv_state_engine import GLOBAL_USER_STATES
         GLOBAL_USER_STATES.pop(clean_phone, None)
         if raw_phone:
@@ -149,12 +137,13 @@ def set_user_session(phone: str, tenant_slug: str, state: str = "ACTIVE", contex
 # ---------------------------------------------------------------------------
 
 def get_wa_credentials(
-    tenant_id: str = "boontrack-career",
+    tenant_id: str = "shop",
     phone_number_id: Optional[str] = None,
     access_token: Optional[str] = None,
 ) -> Tuple[str, str, str]:
     default_token = (
-        os.getenv("WHATSAPP_TOKEN")
+        os.getenv("WHATSAPP_ACCESS_TOKEN")
+        or os.getenv("WHATSAPP_TOKEN")
         or os.getenv("META_WA_TOKEN")
         or os.getenv("WA_TOKEN")
         or os.getenv("META_WA_ACCESS_TOKEN")
@@ -170,7 +159,7 @@ def get_wa_credentials(
         resolved_phone_id = str(phone_number_id).strip()
 
         # Guard: cegah nomor Career membalas di toko showcase / retail / shop
-        if clean_tenant in ["shop", "boontrack", "boontrack-shop", "boontrack-holding", "ombudi", "om-budi", "om_budi", "onlineboost", "growthplus", "proscale"] and resolved_phone_id == "1340866379104241":
+        if clean_tenant in ["shop", "boontrack", "boontrack-shop", "boontrack-holding", "onlineboost", "growthplus", "proscale"] and resolved_phone_id == "1340866379104241":
             resolved_phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID") or "1268977686299719"
 
         resolved_token = str(access_token).strip() if access_token else default_token
@@ -184,7 +173,7 @@ def get_wa_credentials(
         return (resolved_token or default_token).strip(), resolved_phone_id, version
 
     # Priority 2: Tenant-based resolution
-    if clean_tenant in ["shop", "boontrack", "boontrack-shop", "boontrack-holding", "ombudi", "om-budi", "om_budi", "onlineboost", "growthplus", "proscale"]:
+    if clean_tenant in ["shop", "boontrack", "boontrack-shop", "boontrack-holding", "onlineboost", "growthplus", "proscale"]:
         phone_id = (os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID") or "").strip() or "1268977686299719"
         token = (os.getenv("WHATSAPP_TOKEN") or "").strip() or default_token
         return token.strip(), str(phone_id).strip(), version

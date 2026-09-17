@@ -89,8 +89,6 @@ def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, A
         clean_slug.replace("_", "-"),
         clean_slug.replace("-", "_"),
     ]
-    if clean_slug in ("ombudi", "om-budi", "om_budi"):
-        candidate_slugs.extend(["om-budi", "ombudi", "om_budi"])
 
     details = onboarding_service.get_tenant_details_by_slug(clean_slug) or {}
     store_name = details.get("tenant", {}).get("name") or clean_slug.replace("-", " ").replace("_", " ").title()

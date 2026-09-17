@@ -7,12 +7,6 @@ import os
 import unittest
 from pathlib import Path
 from app.tenants.base import BaseTenantService
-from app.tenants.om_budi import (
-    OmBudiService,
-    om_budi_service,
-    TENANT_ID as OM_BUDI_TENANT_ID,
-    TENANT_NAME as OM_BUDI_TENANT_NAME,
-)
 from app.tenants.pelayanan_publik import (
     PelayananPublikService,
     pelayanan_publik_service,
@@ -45,7 +39,7 @@ class TestTenantArchitecture(unittest.IsolatedAsyncioTestCase):
         subdirs = [d.name for d in tenants_dir.iterdir() if d.is_dir() and not d.name.startswith("__")]
         self.assertIn("career", subdirs)
         self.assertIn("gym", subdirs)
-        self.assertIn("om_budi", subdirs)
+        self.assertNotIn("om_budi", subdirs)
         self.assertIn("pelayanan_publik", subdirs)
         self.assertIn("bale_pananggeuhan", subdirs)
         self.assertNotIn("digilife_indra", subdirs)
@@ -58,14 +52,6 @@ class TestTenantArchitecture(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(TypeError):
             IncompleteTenant()
 
-    def test_om_budi_service_inherits_base_tenant(self):
-        """Memverifikasi OmBudiService mengimplementasikan BaseTenantService."""
-        self.assertIsInstance(om_budi_service, BaseTenantService)
-        self.assertEqual(om_budi_service.tenant_id, OM_BUDI_TENANT_ID)
-        self.assertEqual(om_budi_service.tenant_name, OM_BUDI_TENANT_NAME)
-        info = om_budi_service.get_info()
-        self.assertEqual(info["tenant_id"], "om_budi")
-        self.assertTrue(info["is_active"])
 
     async def test_pelayanan_publik_service_inquiries(self):
         """Memverifikasi modul B2G pilot Pelayanan Publik (melayani pelayananpublik.boontrack.com)."""

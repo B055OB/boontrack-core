@@ -13,32 +13,42 @@ WA_ENGINE_API_KEY = os.getenv("WA_ENGINE_API_KEY", "boontrack_secret_engine_key_
 
 
 async def send_whatsapp_message(tenant_slug: str, recipient_phone: str, message_text: str):
-    """Mengirim pesan WA via instance toko dengan smart delay 2 detik."""
+    """Mengirim pesan notifikasi sistem WA via Meta Cloud API resmi WABA."""
     clean_phone = "".join(filter(str.isdigit, recipient_phone))
     if clean_phone.startswith("0"):
         clean_phone = "62" + clean_phone[1:]
 
-    instance_name = f"boontrack_shop_{tenant_slug.strip().lower()}"
-    
-    # Anti-banned human jitter delay
-    await asyncio.sleep(2.0)
+    try:
+        from app.services.whatsapp.cloud_api import send_whatsapp_text
+        res = await send_whatsapp_text(
+            to_phone=clean_phone,
+            text=message_text,
+            tenant_id="shop",
+        )
+        if res:
+            logger.info(f"[WA MSG SENT VIA WABA] Store: {tenant_slug} -> {clean_phone}")
+            return True
+    except Exception as waba_err:
+        logger.warning(f"[WA WABA SEND ERROR] {waba_err}")
 
+    # Fallback to local gateway if available
+    instance_name = f"boontrack_shop_{tenant_slug.strip().lower()}"
     try:
         headers = {"apikey": WA_ENGINE_API_KEY}
         payload = {
             "number": clean_phone,
             "text": message_text
         }
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 f"{WA_ENGINE_BASE_URL}/message/sendText/{instance_name}",
                 headers=headers,
                 json=payload
             )
-            logger.info(f"[WA MSG SENT] Store: {tenant_slug} -> {clean_phone} | Status: {resp.status_code}")
+            logger.info(f"[WA MSG SENT FALLBACK] Store: {tenant_slug} -> {clean_phone} | Status: {resp.status_code}")
             return resp.status_code in (200, 201)
     except Exception as e:
-        logger.warning(f"[WA MSG FALLBACK/OFFLINE] {e}")
+        logger.warning(f"[WA MSG FALLBACK OFFLINE] {e}")
         return False
 
 

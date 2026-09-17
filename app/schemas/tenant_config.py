@@ -13,7 +13,7 @@ class TenantStatus(str, Enum):
 class TenantIdentity(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    tenant_id: str = Field(..., description="ID unik tenant (misal: 'om_budi', 'boontrack-career')")
+    tenant_id: str = Field(..., description="ID unik tenant (misal: 'boontrack-shop', 'boontrack-career')")
     name: str = Field(..., description="Nama resmi tenant atau brand")
     slug: Optional[str] = Field(None, description="Slug URL / identifier ramah URL")
     status: TenantStatus = Field(default=TenantStatus.ACTIVE, description="Status operasional tenant")

@@ -5,13 +5,9 @@ from app.services.payment_verification_service import (
     VALID_RECEIVER_KEYWORDS,
     MIN_KELAS_ONLINE_AMOUNT
 )
-from app.tenants.om_budi.service import om_budi_service
-
 
 class TestPaymentVerificationService(unittest.IsolatedAsyncioTestCase):
 
-    def setUp(self):
-        om_budi_service.user_sessions.clear()
 
     # ==========================================
     # 1. Parameter 1: Validasi Nama Penerima
@@ -151,94 +147,6 @@ class TestPaymentVerificationService(unittest.IsolatedAsyncioTestCase):
         res_kanz = payment_verification_service.verify_receipt_ocr_data(ocr_kanz, "kelas_online")
         self.assertFalse(res_kanz["is_valid"])
         self.assertEqual(res_kanz["reason"], "INVALID_RECEIVER")
-
-    # ==========================================
-    # 5. Integrasi End-to-End dengan OmBudiService
-    # ==========================================
-    @patch("app.services.receipt_ocr_service.analyze_receipt_image", new_callable=AsyncMock)
-    async def test_om_budi_service_ocr_flow_valid_kelas_online(self, mock_ocr):
-        """Memvalidasi upload struk Rp100.000 ke Budi Yulianto di OmBudiService mengaktifkan alumni/member."""
-        mock_ocr.return_value = {
-            "is_valid_receipt": True,
-            "nominal": 100000,
-            "bank_source": "BSI / Mandiri (Budi Yulianto)",
-            "reference_no_rrn": "RRN-123456"
-        }
-
-        # Masuk sesi kelas online terlebih dahulu
-        await om_budi_service.handle_incoming_message(
-            phone_number="081234567890",
-            message_text="",
-            button_id="btn_kelas_bank"
-        )
-
-        # Upload gambar struk
-        res = await om_budi_service.handle_incoming_message(
-            phone_number="081234567890",
-            message_text="",
-            user_name="Bapak Herman",
-            image_bytes=b"dummy_image_bytes"
-        )
-
-        self.assertEqual(res.get("type"), "buttons")
-        reply = res.get("reply", "")
-        self.assertIn("Rp100,000", reply)
-        self.assertIn("Budi Yulianto", reply)
-        self.assertIn("Status keanggotaan Kelas Bimbingan Anda telah *AKTIF*", reply)
-
-    @patch("app.services.receipt_ocr_service.analyze_receipt_image", new_callable=AsyncMock)
-    async def test_om_budi_service_ocr_flow_reject_kanz_store(self, mock_ocr):
-        """Memvalidasi upload struk dengan merchant KANZ STORE di OmBudiService ditolak secara spesifik."""
-        mock_ocr.return_value = {
-            "is_valid_receipt": True,
-            "nominal": 100000,
-            "bank_source": "KANZ STORE",
-            "reference_no_rrn": "RRN-99999"
-        }
-
-        res = await om_budi_service.handle_incoming_message(
-            phone_number="081234567890",
-            message_text="",
-            user_name="Bapak Herman",
-            image_bytes=b"dummy_image_bytes"
-        )
-
-        self.assertEqual(res.get("type"), "buttons")
-        reply = res.get("reply", "")
-        self.assertIn("Bukti Pembayaran Ditolak", reply)
-        self.assertIn("KANZ STORE", reply)
-        self.assertIn("OM BUDI CHANNEL", reply)
-
-    @patch("app.services.receipt_ocr_service.analyze_receipt_image", new_callable=AsyncMock)
-    async def test_om_budi_service_ocr_flow_reject_insufficient_kelas_amount(self, mock_ocr):
-        """Memvalidasi upload struk Rp50.000 saat di Sesi Kelas Online ditolak karena kurang dari Rp100.000."""
-        mock_ocr.return_value = {
-            "is_valid_receipt": True,
-            "nominal": 50000,
-            "bank_source": "OM BUDI CHANNEL",
-            "reference_no_rrn": "RRN-55555"
-        }
-
-        # Masuk sesi kelas online
-        await om_budi_service.handle_incoming_message(
-            phone_number="081234567890",
-            message_text="",
-            button_id="btn_kelas_qris"
-        )
-
-        # Upload gambar struk
-        res = await om_budi_service.handle_incoming_message(
-            phone_number="081234567890",
-            message_text="",
-            user_name="Bapak Herman",
-            image_bytes=b"dummy_image_bytes"
-        )
-
-        self.assertEqual(res.get("type"), "buttons")
-        reply = res.get("reply", "")
-        self.assertIn("Nominal Belum Mencukupi", reply)
-        self.assertIn("Rp50,000", reply)
-        self.assertIn("Rp100.000", reply)
 
 
 if __name__ == "__main__":

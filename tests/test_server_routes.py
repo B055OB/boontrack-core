@@ -42,23 +42,6 @@ class TestModularServerRoutes(AioHTTPTestCase):
         data = await resp.json()
         self.assertEqual(data.get("status"), "error")
 
-    @unittest_run_loop
-    async def test_om_budi_webhook_verification(self):
-        # GET with valid token
-        resp = await self.client.request(
-            "GET",
-            "/webhook/om_budi/whatsapp?hub.mode=subscribe&hub.verify_token=om_budi_secure_token_2026&hub.challenge=CHALLENGE_ACCEPTED"
-        )
-        self.assertEqual(resp.status, 200)
-        text = await resp.text()
-        self.assertEqual(text, "CHALLENGE_ACCEPTED")
-
-        # GET with invalid token
-        resp_invalid = await self.client.request(
-            "GET",
-            "/webhook/om_budi/whatsapp?hub.mode=subscribe&hub.verify_token=wrong_token"
-        )
-        self.assertEqual(resp_invalid.status, 403)
 
     @unittest_run_loop
     async def test_dana_webhook_not_dana(self):

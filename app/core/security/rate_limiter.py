@@ -13,10 +13,10 @@ class WhatsAppRateLimiter:
         self.window_seconds = window_seconds
         self.history = defaultdict(list)
 
-    def is_allowed(self, phone_number: str, tenant_id: str = "om_budi", is_button: bool = False) -> Tuple[bool, int]:
+    def is_allowed(self, phone_number: str, tenant_id: str = "shop", is_button: bool = False) -> Tuple[bool, int]:
         """
         Cek batas request nomor HP.
-        Tenant non-publik (seperti om_budi, career, commerce) atau klik tombol interaktif otomatis lolos (bypass).
+        Tenant non-publik (seperti career, commerce) atau klik tombol interaktif otomatis lolos (bypass).
         """
         # Bypass penuh jika bukan pelayanan publik atau berupa interaksi tombol
         if tenant_id not in PUBLIC_SERVICE_TENANTS or is_button:
