@@ -1,69 +1,46 @@
-"""
+r"""
 app/routes/meta_whatsapp.py
-FastAPI Router for Meta WhatsApp Cloud API Webhook with Deterministic Tenant Isolation & OnlineBoost Storefront.
+FastAPI Router for Meta WhatsApp Cloud API Official Gateway (+6285179555449).
+
+KUNCI MUTLAK:
+Nomor resmi WABA ini HANYA difungsikan sebagai Gateway Notifikasi & Aktivasi Sistem.
+Seluruh chatbot percakapan, menu selector, AI engine, dan session engine dimatikan total.
+
+Inbound Logic:
+1. Regex match r"^AKTIVASI\s+(BT-[A-Za-z0-9]+)":
+   - Memvalidasi token tenant di DB Supabase.
+   - Mengaktifkan status tenant menjadi 'active'.
+   - Mengirimkan balasan konfirmasi via Meta Cloud API resmi WABA.
+2. Pesan teks lain (halo, tes, angka, emoji, status, dsb):
+   - DROP / PASS (mengembalikan HTTP 200 tanpa mengirim balasan apa pun).
+   - ZERO BOT RESPONSE.
 """
 
 import os
 import re
 import logging
-import urllib.parse
-from typing import Dict, Any, Optional
+from typing import Optional
 from fastapi import APIRouter, Request, Response, Query
 from fastapi.responses import JSONResponse
 
 from app.services.whatsapp_service import (
     extract_meta_whatsapp_event,
-    resolve_dynamic_tenant_for_whatsapp,
-    reset_whatsapp_user_session,
-    sanitize_whatsapp_message_text,
-    send_whatsapp_text,
-    send_whatsapp_buttons,
-    send_whatsapp_image_link,
-    send_whatsapp_tenant_catalog,
-    get_tenant_products_from_db,
+    normalize_phone_number,
     user_tenant_sessions,
     user_session_states,
-    user_phone_number_id_sessions,
     user_cart_sessions,
-    safe_log_to_supabase_messages,
-    normalize_phone_number,
-    get_wa_credentials,
-    generate_fast_track_checkout_response,
-    is_closing_buy_intent,
-    DEMO_MENU_TEXT,
-    DEMO_TENANT_GREETINGS,
-)
-from datetime import datetime, timezone
-import asyncio
-from app.modules.tracking import capi_dispatcher
-from app.services.session_store import (
-    get_user_tenant_session,
-    set_user_tenant_session,
-    clear_user_tenant_session,
-    detect_demo_intent_keyword,
-    get_user_session_context,
-    update_user_session_context,
-)
-from app.services.onboarding_service import onboarding_service
-from app.services.ai_engine import commerce_ai_engine
-from app.services.agent_service import process_incoming_message
-from app.repositories.session_repository import SessionRepository
-from app.modules.conversation import (
-    load_customer_state,
-    dump_customer_state,
-    extract_signals,
-    determine_strategy,
-    get_system_prompt_for_mode,
-    validate_action,
-    TenantDBAdapter,
 )
 
-logger = logging.getLogger("META_WHATSAPP_ROUTER")
+logger = logging.getLogger("META_WHATSAPP_GATEWAY")
 
-_conversation_session_repo = SessionRepository()
+# =============================================================================
+# Matikan & Kosongkan Seluruh Memory Session Engine
+# =============================================================================
+user_session_states.clear()
+user_cart_sessions.clear()
+user_tenant_sessions.clear()
 
-
-meta_whatsapp_router = APIRouter(tags=["Meta WhatsApp Webhook"])
+meta_whatsapp_router = APIRouter(tags=["Meta WhatsApp Official Gateway"])
 router = meta_whatsapp_router
 
 VERIFY_TOKENS = [
@@ -72,30 +49,7 @@ VERIFY_TOKENS = [
     "boontrack_verify_secret",
     "boontrack-secure-verify-token",
     "boontrack_master_verify_token_2026",
-    "boontrack_career_token",
 ]
-
-_COMMERCE_DEMO_TRIGGERS = {"#reset", "reset", "menu", "#menu", "demo"}
-
-_MENU_OPTION_MAP: Dict[str, str] = {
-    "1": "boontrack-shop",
-    "boontrack-shop": "boontrack-shop",
-    "shop": "boontrack-shop",
-    "retail": "boontrack-shop",
-    "2": "growthplus",
-    "growthplus": "growthplus",
-    "growth+": "growthplus",
-    "tier growth+": "growthplus",
-    "3": "proscale",
-    "proscale": "proscale",
-    "tier proscale": "proscale",
-    "4": "onlineboost",
-    "onlineboost": "onlineboost",
-    "digital": "onlineboost",
-    "course": "onlineboost",
-    "suhu-ads-masterclass": "onlineboost",
-    "suhu ads": "onlineboost",
-}
 
 
 # =============================================================================
@@ -111,33 +65,39 @@ async def verify_webhook_handshake(
     hub_verify_token: Optional[str] = Query(None, alias="hub.verify_token"),
     hub_challenge: Optional[str] = Query(None, alias="hub.challenge"),
 ):
+    """Verifikasi webhook handshake resmi Meta Cloud API."""
     verify_token = os.getenv("WHATSAPP_VERIFY_TOKEN", "boontrack_verify_secret")
     mode = hub_mode or request.query_params.get("mode")
     token = hub_verify_token or request.query_params.get("token") or request.query_params.get("verify_token")
     challenge = hub_challenge or request.query_params.get("challenge")
 
     if mode == "subscribe" and (token == verify_token or token in VERIFY_TOKENS):
-        logger.info("[META WA] Webhook handshake verified successfully.")
+        logger.info("[META WABA GATEWAY] Webhook handshake verified successfully.")
         return Response(content=str(challenge or ""), media_type="text/plain", status_code=200)
 
-    logger.warning(f"[META WA] Handshake token mismatch: {token}")
+    logger.warning(f"[META WABA GATEWAY] Handshake token mismatch: {token}")
     return Response(content="Verification token mismatch", media_type="text/plain", status_code=403)
 
 
 # =============================================================================
-# 2. POST Message Ingestion & Safe Multi-Tenant Routing
+# 2. POST Inbound Receiver (LOCKED ONLY FOR STORE ACTIVATION)
 # =============================================================================
 
 @meta_whatsapp_router.post("/api/v1/whatsapp/webhook", summary="Meta WhatsApp Inbound Receiver")
 @meta_whatsapp_router.post("/webhook/whatsapp", summary="Meta WhatsApp Inbound Receiver Alias")
 @meta_whatsapp_router.post("/api/whatsapp/webhook", summary="Meta WhatsApp Inbound Receiver Alias 2")
 async def handle_whatsapp_webhook(request: Request):
+    """
+    Inbound Receiver Tunggal Meta WABA Gateway:
+    - JIKA format pesan: AKTIVASI BT-XXXX -> Proses verifikasi database & balas konfirmasi sukses via Meta WABA.
+    - JIKA pesan teks lainnya: DROP / PASS tanpa membalas apa pun (HTTP 200 OK).
+    """
     try:
         data = await request.json()
     except Exception:
         return JSONResponse(status_code=200, content={"status": "error", "message": "Invalid JSON format"})
 
-    # Pemeriksaan payload Meta webhook: jika hanya berisi 'statuses' tanpa 'messages', segera hentikan eksekusi
+    # Abaikan event jika hanya memuat 'statuses' (delivery receipts / read receipts)
     has_statuses = False
     has_messages = False
     if isinstance(data, dict):
@@ -155,7 +115,6 @@ async def handle_whatsapp_webhook(request: Request):
                                 has_statuses = True
 
     if has_statuses and not has_messages:
-        logger.info("[META WA] Webhook payload contains only statuses without messages. Execution halted.")
         return Response(content="STATUS_IGNORED", status_code=200, media_type="text/plain")
 
     event = extract_meta_whatsapp_event(data)
@@ -165,36 +124,16 @@ async def handle_whatsapp_webhook(request: Request):
 
     from_phone = event.get("from_phone", "")
     incoming_text = (event.get("text") or "").strip()
-    contact_name = event.get("contact_name") or "Kakak"
     clean_phone = normalize_phone_number(from_phone)
-    # Inisialisasi default button untuk mencegah UnboundLocalError
-    button_id = ""
-    clean_btn = ""
-    raw_msg = event.get("raw_msg") or {}
-    if event.get("button_id"):
-        button_id = str(event.get("button_id") or "").strip()
-        clean_btn = button_id.lower()
-    elif raw_msg.get("type") == "interactive":
-        interactive = raw_msg.get("interactive", {})
-        button_reply = interactive.get("button_reply", {})
-        button_id = str(button_reply.get("id", "")).strip()
-        clean_btn = button_id.lower()
-    elif raw_msg.get("type") == "button":
-        button_id = str(raw_msg.get("button", {}).get("payload", "")).strip()
-        clean_btn = button_id.lower()
-    
-    phone_id = str(event.get("phone_id") or "").strip()
-    if not phone_id:
-        phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID") or "1268977686299719"
 
-    clean_text = incoming_text.strip().lower()
-    text_lower = clean_text
-
-    # P0 Store Activation Interceptor
-    activation_match = re.search(r"^AKTIVASI\s+(BT-[A-Za-z0-9]+)", incoming_text.strip(), re.IGNORECASE)
+    # -------------------------------------------------------------------------
+    # PARSER TUNGGAL: AKTIVASI TOKO (r"^AKTIVASI\s+(BT-[A-Za-z0-9]+)")
+    # -------------------------------------------------------------------------
+    activation_match = re.search(r"^AKTIVASI\s+(BT-[A-Za-z0-9]+)", incoming_text, re.IGNORECASE)
     if activation_match:
         from app.routes.whatsapp_gateway_routes import handle_store_activation_request
         token = activation_match.group(1).upper().strip()
+        logger.info(f"[META WABA GATEWAY] 🔑 Processing Store Activation: token='{token}', phone='{clean_phone or from_phone}'")
         act_res = await handle_store_activation_request(
             token=token,
             sender_phone=clean_phone or from_phone,
@@ -203,632 +142,11 @@ async def handle_whatsapp_webhook(request: Request):
         )
         return JSONResponse(status_code=200, content=act_res)
 
-    if clean_phone and phone_id:
-        user_phone_number_id_sessions[clean_phone] = phone_id
-
-    career_phone_id = os.getenv("CAREER_PHONE_NUMBER_ID", "1340866379104241")
-    is_career_phone = (phone_id == "1340866379104241" or phone_id == career_phone_id)
-
-    # =========================================================================
-    # CTWA CAPTURE: Tangkap referral iklan Meta Ads (Click-to-WhatsApp)
-    # =========================================================================
-    target_tenant = get_user_tenant_session(clean_phone) or ""
-    referral = event.get("referral")
-    if not referral and isinstance(data, dict):
-        try:
-            referral = data.get("entry", [{}])[0].get("changes", [{}])[0].get("value", {}).get("messages", [{}])[0].get("referral")
-        except Exception:
-            referral = None
-
-    if referral and isinstance(referral, dict):
-        msg_ts = event.get("timestamp") or (raw_msg.get("timestamp") if isinstance(raw_msg, dict) else None)
-        occurred_at = None
-        if msg_ts:
-            try:
-                occurred_at = datetime.fromtimestamp(int(msg_ts), tz=timezone.utc)
-            except Exception:
-                occurred_at = datetime.now(timezone.utc)
-
-        target_tenant = get_user_tenant_session(clean_phone) or "onlineboost"
-        captured_clid = await capi_dispatcher.capture_ctwa_referral(
-            tenant_id=target_tenant,
-            session_id=clean_phone or from_phone,
-            referral_data=referral,
-            occurred_at=occurred_at,
-            conversation_id=event.get("message_id"),
-        )
-        if captured_clid:
-            update_user_session_context(clean_phone, {"ctwa_clid": captured_clid})
-            logger.info(f"[META WA CTWA] Captured ctwa_clid for {clean_phone}: {captured_clid}")
-
-    # =========================================================================
-    # STRICT ISOLATION: DYNAMIC RESOLUTION FOR PROFESSIONAL / CAREER SERVICE
-    # =========================================================================
-    from app.services.tenant_context_resolver import tenant_context_resolver, has_capability
-    runtime_context = await tenant_context_resolver.resolve_by_phone_number_id(phone_id)
-    if not runtime_context and target_tenant:
-        runtime_context = await tenant_context_resolver.resolve_tenant(target_tenant)
-
-    is_consultation_phone = bool(
-        runtime_context and (
-            has_capability(runtime_context, "consultation")
-            or has_capability(runtime_context, "career_services")
-            or runtime_context.business_type == "PROFESSIONAL_SERVICE"
-        )
+    # -------------------------------------------------------------------------
+    # ZERO BOT GUARD: Seluruh pesan non-aktivasi di-DROP tanpa balasan apa pun
+    # -------------------------------------------------------------------------
+    logger.info(
+        f"[META WABA GATEWAY] Non-activation inbound message dropped (No Bot Active). "
+        f"Sender: {clean_phone or from_phone} | Message: '{incoming_text}'"
     )
-
-    # =========================================================================
-    # P0 INTERCEPT: COMMAND #RESET / RESET / MENU UTAMA
-    # =========================================================================
-    clean_kw = re.sub(r"[^\w#]", "", clean_text)
-    is_explicit_reset = (
-        clean_kw in ["#reset", "reset"]
-        or clean_text.startswith("#reset")
-        or clean_text.startswith("# reset")
-        or "#reset" in clean_text
-    )
-    is_reset = is_explicit_reset if is_career_phone else (
-        is_explicit_reset
-        or clean_kw in ["reset", "menu", "demo"]
-        or clean_text in ["#reset", "reset", "menu utama", "#menu", "menu", "demo", "# reset", "start", "#start"]
-        or clean_btn in ["btn_menu_reset", "reset"]
-    )
-
-    if is_reset:
-        logger.info(f"[META WA ROUTER] Reset command detected from {clean_phone} (is_career={is_career_phone}).")
-        reset_whatsapp_user_session(clean_phone)
-        if from_phone:
-            reset_whatsapp_user_session(from_phone)
-
-        if clean_phone:
-            user_session_states[clean_phone] = "AWAITING_PORTAL_CHOICE"
-            if phone_id:
-                user_phone_number_id_sessions[clean_phone] = phone_id
-        if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, tenant_id="shop", phone_number_id=phone_id)
-        safe_log_to_supabase_messages(
-            sender="bot",
-            text=DEMO_MENU_TEXT,
-            tenant_id="__MENU__",
-            channel="whatsapp",
-            user_phone=from_phone,
-            user_name=contact_name,
-        )
-        return JSONResponse(status_code=200, content={"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT})
-
-    # =========================================================================
-    # STRICT ISOLATION: DYNAMIC RESOLUTION FOR CAREER ASSISTANT
-    # =========================================================================
-    if is_career_phone or is_consultation_phone:
-        from app.tenants.career.service import career_service
-        msg_type = event.get("msg_type", "text")
-        t_slug = "boontrack-career"
-        if msg_type == "image":
-            await career_service.handle_image(
-                sender_wa_id=from_phone,
-                display_name=contact_name,
-                media_id=event.get("media_id")
-            )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": t_slug})
-        elif msg_type == "document":
-            await career_service.handle_document(
-                sender_wa_id=from_phone,
-                display_name=contact_name,
-                media_id=event.get("media_id"),
-                filename=event.get("media_filename") or "document.pdf"
-            )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": t_slug})
-        else:
-            await career_service.handle_text_or_button(
-                sender_wa_id=from_phone,
-                display_name=contact_name,
-                user_text=incoming_text,
-                button_id=button_id
-            )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": t_slug})
-
-    # =========================================================================
-    # P0 INTERCEPT: MENU SELECTION 1, 2, 3, 4
-    # =========================================================================
-    if clean_text in _MENU_OPTION_MAP or (user_session_states.get(clean_phone) == "AWAITING_PORTAL_CHOICE" and clean_text in _MENU_OPTION_MAP):
-        selected_slug = _MENU_OPTION_MAP[clean_text]
-        if clean_phone:
-            set_user_tenant_session(clean_phone, selected_slug)
-            if phone_id:
-                user_phone_number_id_sessions[clean_phone] = phone_id
-        
-        greeting = DEMO_TENANT_GREETINGS.get(selected_slug, f"🎉 Anda kini terhubung dengan *{selected_slug}*.")
-
-        if selected_slug == "onlineboost":
-            if from_phone:
-                await send_whatsapp_tenant_catalog(from_phone, "onlineboost")
-            safe_log_to_supabase_messages(
-                sender="bot",
-                text="[Katalog OnlineBoost Dispatched]",
-                tenant_id="onlineboost",
-                channel="whatsapp",
-                user_phone=from_phone,
-                user_name=contact_name,
-            )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": "onlineboost", "reply": "[Katalog OnlineBoost Dispatched]"})
-
-        elif selected_slug in ("boontrack-shop", "shop"):
-            welcome_shop = "Halo! Selamat datang di BoonTrack Shop. Silakan kunjungi https://shop.boontrack.com untuk mengakses layanan toko."
-            if from_phone:
-                await send_whatsapp_text(to_phone=from_phone, text=welcome_shop, tenant_id="boontrack-shop", phone_number_id=phone_id)
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-shop", "reply": welcome_shop})
-
-        elif selected_slug in ("growthplus", "proscale"):
-            if from_phone:
-                await send_whatsapp_text(to_phone=from_phone, text=greeting, tenant_id="shop", phone_number_id=phone_id)
-            safe_log_to_supabase_messages(
-                sender="bot",
-                text=greeting,
-                tenant_id=selected_slug,
-                channel="whatsapp",
-                user_phone=from_phone,
-                user_name=contact_name,
-            )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": selected_slug, "reply": greeting})
-
-    # Resolusi Tenant Dinamis
-    tenant_slug, is_new_bind = resolve_dynamic_tenant_for_whatsapp(
-        phone_id=phone_id,
-        from_phone=from_phone,
-        message_text=incoming_text,
-    )
-
-    if tenant_slug in ("suhu-ads-masterclass", "suhu_ads"):
-        tenant_slug = "onlineboost"
-
-    # =========================================================================
-    # JALUR PRODUKSI: CAREER ATAU OM BUDI LAMA
-    # =========================================================================
-    active_locked_tenant = get_user_tenant_session(clean_phone, incoming_text)
-    if active_locked_tenant in ("onlineboost", "growthplus", "proscale"):
-        tenant_slug = active_locked_tenant
-
-    # Resolusi konteks runtime berbasis database dan capabilities
-    resolved_context = await tenant_context_resolver.resolve_tenant(tenant_slug)
-    if not resolved_context and phone_id:
-        resolved_context = await tenant_context_resolver.resolve_by_phone_number_id(phone_id)
-
-    if resolved_context:
-        # 1. Professional Service / Career Assistant Capability
-        if (
-            has_capability(resolved_context, "career_services")
-            or has_capability(resolved_context, "consultation")
-            or resolved_context.business_type == "PROFESSIONAL_SERVICE"
-        ):
-            from app.tenants.career.service import career_service
-            msg_type = event.get("msg_type", "text")
-            if msg_type == "image":
-                await career_service.handle_image(
-                    sender_wa_id=from_phone,
-                    display_name=contact_name,
-                    media_id=event.get("media_id")
-                )
-                return JSONResponse(status_code=200, content={"status": "success", "tenant": resolved_context.slug, "reply": "Career image handled"})
-            elif msg_type == "document":
-                await career_service.handle_document(
-                    sender_wa_id=from_phone,
-                    display_name=contact_name,
-                    media_id=event.get("media_id"),
-                    filename=event.get("media_filename") or "document.pdf"
-                )
-                return JSONResponse(status_code=200, content={"status": "success", "tenant": resolved_context.slug, "reply": "Career document handled"})
-            else:
-                await career_service.handle_text_or_button(
-                    sender_wa_id=from_phone,
-                    display_name=contact_name,
-                    user_text=incoming_text,
-                    button_id=event.get("button_id") or ""
-                )
-                return JSONResponse(status_code=200, content={"status": "success", "tenant": resolved_context.slug, "reply": "Career message handled"})
-
-        # 2. BoonTrack Platform Gateway Handling (System Transaksional / Helpdesk)
-        elif (
-            active_locked_tenant not in ("onlineboost", "growthplus", "proscale")
-            and (
-                phone_id in (os.getenv("WHATSAPP_PHONE_NUMBER_ID"), os.getenv("PHONE_NUMBER_ID"), "1268977686299719")
-                or (
-                    resolved_context.slug in ("boontrack-holding", "boontrack-shop", "shop", "boontrack-gateway")
-                    and tenant_slug != "__MENU__"
-                    and clean_text not in _COMMERCE_DEMO_TRIGGERS
-                )
-            )
-        ):
-            system_reply = (
-                "Halo! Terima kasih telah menghubungi WhatsApp Resmi *BoonTrack Core Platform* 🛍️\n\n"
-                "Nomor ini merupakan saluran resmi sistem otomatis dan notifikasi transaksional BoonTrack.\n\n"
-                "• *Aktivasi Toko*: Balas dengan format *AKTIVASI BT-XXXX* (contoh: *AKTIVASI BT-1234*).\n"
-                "• *Pusat Bantuan*: Kunjungi *https://boontrack.com* untuk informasi dan bantuan layanan.\n\n"
-                "_Pesan otomatis dari BoonTrack Core Gateway._"
-            )
-            if from_phone:
-                await send_whatsapp_text(to_phone=from_phone, text=system_reply, tenant_id="shop", phone_number_id=phone_id)
-            safe_log_to_supabase_messages(
-                sender="bot",
-                text=system_reply,
-                tenant_id="boontrack-shop",
-                channel="whatsapp",
-                user_phone=from_phone,
-                user_name=contact_name,
-            )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": "boontrack-shop", "reply": system_reply})
-
-    # =========================================================================
-    # JALUR TOKO DEMO (ONLINEBOOST, GROWTH+, PROSCALE)
-    # =========================================================================
-    if tenant_slug == "__MENU__" or clean_text in _COMMERCE_DEMO_TRIGGERS or button_id == "btn_menu_reset":
-        if clean_phone:
-            reset_whatsapp_user_session(clean_phone)
-        if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, tenant_id="shop", phone_number_id=phone_id)
-        return JSONResponse(status_code=200, content={"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT})
-
-    active_tenant = get_user_tenant_session(clean_phone, incoming_text) or "onlineboost"
-
-    # -------------------------------------------------------------------------
-    # 1. FAST-TRACK QRIS CHECKOUT
-    # -------------------------------------------------------------------------
-    is_qris_buy_action = (
-        button_id in {"btn_buy_now", "buy_now", "order_now", "qris_buy", "beli_qris", "btn_checkout_cart"}
-        or "beli & bayar qris" in text_lower
-        or "bayar qris" in text_lower
-        or text_lower in {"beli", "beli 1", "bayar"}
-    )
-
-    if is_qris_buy_action and active_tenant not in ("bale_pananggeuhan", "pelayanan_publik"):
-        try:
-            reply, invoice, qr_bytes = await generate_fast_track_checkout_response(
-                tenant_slug=active_tenant,
-                from_phone=from_phone,
-                contact_name=contact_name,
-            )
-
-            qr_string = invoice.get("qr_string", "")
-            qr_code_url = invoice.get("qr_code_url") or f"https://quickchart.io/qr?text={urllib.parse.quote(qr_string)}&size=600&margin=4&ecLevel=M"
-
-            # 1. KIRIM TEKS RINCIAN INVOICE & LINK BAYAR INSTAN TERLEBIH DAHULU (USER LANGSUNG MENERIMA RESPON)
-            if from_phone and reply:
-                try:
-                    await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="shop", phone_number_id=phone_id)
-                except Exception as txt_err:
-                    logger.warning(f"[META WA] Error sending fast-track invoice text: {txt_err}")
-
-            # 2. KIRIM GAMBAR KODE QRIS DENGAN CAPTION RINGKAS (< 1024 CHAR)
-            qr_caption = (
-                f"Kode QRIS Pembayaran ({invoice.get('external_id', 'INVOICE')})\n"
-                f"Scan gambar QR di atas via m-Banking atau E-Wallet untuk menyelesaikan pembayaran. 💳"
-            )
-
-            image_delivered = False
-            try:
-                from app.services.whatsapp_service import upload_whatsapp_media
-                if qr_bytes and len(qr_bytes) > 100:
-                    media_id = await upload_whatsapp_media(
-                        file_bytes=qr_bytes,
-                        filename="qris_code.png",
-                        mime_type="image/png",
-                        tenant_id="shop",
-                        phone_number_id=phone_id,
-                    )
-                    if media_id:
-                        token, p_id, version = get_wa_credentials("shop", phone_number_id=phone_id)
-                        if token and p_id:
-                            msg_url = f"https://graph.facebook.com/{version}/{p_id}/messages"
-                            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-                            payload = {
-                                "messaging_product": "whatsapp",
-                                "recipient_type": "individual",
-                                "to": clean_phone,
-                                "type": "image",
-                                "image": {"id": str(media_id), "caption": qr_caption}
-                            }
-                            async with httpx.AsyncClient(timeout=30.0) as client:
-                                m_res = await client.post(msg_url, headers=headers, json=payload)
-                                if m_res.status_code in (200, 201):
-                                    image_delivered = True
-                                    logger.info(f"[META WA] QR image binary delivered successfully to {clean_phone}")
-                                else:
-                                    logger.warning(f"[META WA] Outbound media_id message FAILED ({m_res.status_code}): {m_res.text}")
-
-                if not image_delivered and qr_code_url:
-                    link_resp = await send_whatsapp_image_link(
-                        to_phone=from_phone,
-                        image_url=qr_code_url,
-                        caption=qr_caption,
-                        tenant_id="shop",
-                        phone_number_id=phone_id,
-                    )
-                    if link_resp and getattr(link_resp, "status_code", 200) in (200, 201):
-                        image_delivered = True
-                        logger.info(f"[META WA] QR image URL link delivered successfully to {from_phone}")
-            except Exception as err:
-                logger.error(f"[META WA IMAGE DISPATCH ERROR] {err}", exc_info=True)
-
-            try:
-                session_key = f"{active_tenant}:{clean_phone}"
-                wa_session = await _conversation_session_repo.get_or_create(user_id=session_key, channel="whatsapp")
-                c_state = load_customer_state(session_id=clean_phone, tenant_id=active_tenant, raw_context=wa_session.context_json or {})
-                c_state.stage = "CLOSED"
-                wa_session.context_json = dump_customer_state(c_state, wa_session.context_json or {})
-                await _conversation_session_repo.save(wa_session)
-            except Exception as se:
-                logger.debug(f"[SESSION SAVE ERROR] {se}")
-
-            return JSONResponse(status_code=200, content={
-                "status": "qris_dispatched",
-                "tenant": active_tenant,
-                "invoice_id": invoice.get("external_id"),
-            })
-
-        except Exception as e:
-            logger.error(f"[FAST TRACK CHECKOUT ERROR] {e}")
-            fallback_msg = "Maaf, sistem sedang memproses antrean invoice QRIS. Silakan ketik *Beli* sekali lagi ya Kak! 🙏"
-            if from_phone:
-                await send_whatsapp_text(to_phone=from_phone, text=fallback_msg, tenant_id="shop", phone_number_id=phone_id)
-            return JSONResponse(status_code=200, content={"status": "error", "tenant": active_tenant, "error": str(e)})
-
-    # -------------------------------------------------------------------------
-    # 2. HANDLER TOMBOL INTERAKTIF 1, 2, 3
-    # -------------------------------------------------------------------------
-
-# Tombol 1: Daftar / Rincian Produk
-    if button_id in {"btn_view_service", "btn_catalog", "btn_view_catalog"} or "daftar produk" in text_lower or text_lower == "katalog":
-        if from_phone:
-            await send_whatsapp_tenant_catalog(
-                phone=from_phone,
-                tenant_slug=active_tenant,
-                tenant_id="shop",
-                phone_number_id=phone_id,
-            )
-        return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "action": "view_catalog"})
-
-    # Tombol 2: Keranjang Belanja
-    if button_id in {"btn_view_cart", "btn_cart"} or "keranjang" in text_lower:
-        items = user_cart_sessions.get(clean_phone, [])
-        if not items:
-            cart_msg = (
-                "🛒 *Keranjang Belanja Anda Kosong*\n\n"
-                "Silakan pilih produk dari katalog terlebih dahulu dengan mengetik *Beli* atau klik tombol di bawah:"
-            )
-            cart_empty_btns = [
-                {"id": "btn_view_service", "title": "🛍️ Daftar Produk"},
-                {"id": "btn_ask_ai", "title": "💬 Tanya Produk (AI)"},
-            ]
-            if from_phone:
-                await send_whatsapp_buttons(
-                    to_phone=from_phone,
-                    body_text=cart_msg,
-                    buttons=cart_empty_btns,
-                    tenant_id="shop",
-                    phone_number_id=phone_id,
-                )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "action": "empty_cart"})
-
-        item_lines = [
-            f"• *{it.get('title') or it.get('name')}* (Rp{int(float(it.get('promo_price') or it.get('price') or 0)):,})".replace(",", ".")
-            for it in items
-        ]
-        total_bill = sum(int(float(it.get('promo_price') or it.get('price') or 0)) for it in items)
-        cart_summary = (
-            f"🛒 *KERANJANG BELANJA ANDA ({len(items)} Item)*\n\n"
-            + "\n".join(item_lines)
-            + f"\n\n💰 *Total:* Rp{total_bill:,}".replace(",", ".")
-            + "\n\nKetik *Beli* untuk langsung bayar via Dynamic QRIS."
-        )
-        cart_filled_btns = [
-            {"id": "btn_buy_now", "title": "💳 Bayar QRIS"},
-            {"id": "btn_view_service", "title": "🛍️ Tambah Produk"},
-        ]
-        if from_phone:
-            await send_whatsapp_buttons(
-                to_phone=from_phone,
-                body_text=cart_summary,
-                buttons=cart_filled_btns,
-                tenant_id="shop",
-                phone_number_id=phone_id,
-            )
-        return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "action": "view_cart"})
-
-    # Tombol 3: Tanya Produk (LLM Contextual Agent)
-    if button_id in {"btn_ask_ai", "ask_ai"} or "tanya produk" in text_lower:
-        prompt_intro = (
-            "🤖 *BoonPilot AI Assistant*\n\n"
-            f"Ada yang ingin ditanyakan seputar materi ecourse atau paket layanan di *{active_tenant.upper()}*?\n\n"
-            "Ketik langsung pertanyaan Kakak (misal: _'Apa materi yang dipelajari di Ecourse CPM?'_), asisten AI kami siap menjawab! ✨"
-        )
-        if from_phone:
-            await send_whatsapp_text(
-                to_phone=from_phone,
-                text=prompt_intro,
-                tenant_id="shop",
-                phone_number_id=phone_id,
-            )
-        return JSONResponse(status_code=200, content={"status": "success", "tenant": active_tenant, "action": "ask_ai_prompt"})
-
-    # -------------------------------------------------------------------------
-    # 2.5 CUSTOM KEYWORD AUTO-REPLY RULES PER TENANT
-    # -------------------------------------------------------------------------
-    from app.services.auto_reply_service import find_tenant_auto_reply
-    custom_auto_reply = await find_tenant_auto_reply(
-        tenant_slug=active_tenant,
-        user_message=incoming_text,
-    )
-    if custom_auto_reply:
-        logger.info(f"[META WA AUTO-REPLY] Matched custom keyword rule for '{active_tenant}' from '{from_phone}'")
-        if from_phone:
-            await send_whatsapp_text(
-                to_phone=from_phone,
-                text=custom_auto_reply,
-                tenant_id="shop",
-                phone_number_id=phone_id,
-            )
-        safe_log_to_supabase_messages(
-            sender="bot",
-            text=custom_auto_reply,
-            tenant_id=active_tenant,
-            channel="whatsapp",
-            user_phone=from_phone,
-            user_name=contact_name,
-        )
-        return JSONResponse(status_code=200, content={
-            "status": "auto_reply_matched",
-            "tenant": active_tenant,
-            "reply": custom_auto_reply
-        })
-
-    # -------------------------------------------------------------------------
-    # 3. 3-LAYER CONVERSATIONAL COMMERCE ENGINE (LAYER 1 -> 2 -> 3 + VALIDATOR)
-    # -------------------------------------------------------------------------
-    session_key = f"{active_tenant}:{clean_phone}"
-    wa_session = await _conversation_session_repo.get_or_create(user_id=session_key, channel="whatsapp")
-    raw_context = wa_session.context_json or {}
-    customer_state = load_customer_state(session_id=clean_phone, tenant_id=active_tenant, raw_context=raw_context)
-
-    # a. Layer 1: Signal Extraction
-    intent = extract_signals(incoming_text, customer_state)
-
-    # b. Layer 2: Strategy Determination
-    nba = determine_strategy(customer_state, intent)
-
-    # c. Data Fetching
-    store_name, products = get_tenant_products_from_db(active_tenant)
-    if not customer_state.target_product_ids and products:
-        first_pid = str(products[0].get("id") or products[0].get("slug") or "")
-        if first_pid:
-            customer_state.target_product_ids.append(first_pid)
-
-    product_context = ""
-    if products:
-        p_summaries = []
-        for p in products[:5]:
-            p_name = p.get("title") or p.get("name") or "Produk"
-            p_price = int(float(p.get("promo_price") or p.get("price") or 0))
-            p_desc = (p.get("description") or "").strip()
-            p_summaries.append(f"- {p_name} (Harga Resmi: Rp{p_price:,}): {p_desc}".replace(",", "."))
-        product_context = "\n".join(p_summaries)
-
-    # d. Layer 3: Generator Prompt Mode
-    mode_prompt = get_system_prompt_for_mode(nba, product_context)
-
-    logger.info(f"[META WA 3-LAYER] Executing conversation engine for tenant={active_tenant}, user={from_phone}")
-    try:
-        reply = await commerce_ai_engine.generate_commerce_response(
-            tenant_slug=active_tenant,
-            user_message=incoming_text,
-            user_phone=from_phone,
-            user_name=contact_name,
-            button_id=event.get("button_id"),
-            mode_prompt=mode_prompt,
-        )
-        if not reply:
-            reply = await process_incoming_message(
-                tenant_slug=active_tenant,
-                message=incoming_text,
-                user_phone=from_phone,
-                user_name=contact_name,
-                button_id=event.get("button_id"),
-            )
-    except Exception as ai_err:
-        logger.error(f"[META WA AI GENERATION ERROR] Error calling commerce_ai_engine: {ai_err}", exc_info=True)
-        reply = None
-
-    if not reply:
-        reply = (
-            f"Halo Kak! Senang bisa membantu di *{store_name}*. "
-            "Untuk pemula di dunia digital marketing, kami sangat menyarankan paket dasar praktis kami. "
-            "Ketik *Katalog* untuk melihat kurikulum ecourse lengkap atau langsung tanyakan materi yang ingin dipelajari ya Kak! ✨"
-        )
-
-    # e. Validator Guardrail
-    db_session = TenantDBAdapter(products)
-    action_result = validate_action(customer_state, db_session)
-
-    # 3. Dispatch Balasan & State Persistence
-    reply = sanitize_whatsapp_message_text(reply)
-
-    if action_result.get("allow_button") is True:
-        # CAPI: Dispatch InitiateCheckout event
-        try:
-            sess_ctx = get_user_session_context(clean_phone)
-            clid = sess_ctx.get("ctwa_clid") or (customer_state.metadata.get("ctwa_clid") if customer_state.metadata else None)
-            total_amt = 0.0
-            prod_ids = customer_state.target_product_ids or []
-            if products:
-                matching_p = next((p for p in products if str(p.get("id") or p.get("slug")) in prod_ids), None)
-                if matching_p:
-                    total_amt = float(matching_p.get("promo_price") or matching_p.get("price") or 0.0)
-                if total_amt <= 0:
-                    total_amt = float(products[0].get("promo_price") or products[0].get("price") or 0.0)
-            asyncio.create_task(
-                capi_dispatcher.dispatch_initiate_checkout(
-                    tenant_id=active_tenant,
-                    phone=clean_phone,
-                    total_amount=total_amt,
-                    product_ids=prod_ids,
-                    ctwa_clid=clid,
-                )
-            )
-        except Exception as capi_err:
-            logger.warning(f"[CAPI INITIATE CHECKOUT DISPATCH ERROR] {capi_err}")
-
-        # Kirim tombol interaktif transaksi / Checkout QRIS
-        checkout_buttons = [
-            {"id": "btn_buy_now", "title": "💳 Beli Sekarang (QR)"},
-            {"id": "btn_view_service", "title": "🛍️ Lihat Produk Lain"},
-        ]
-        btn_sent = False
-        if from_phone and len(reply) <= 1000:
-            try:
-                await send_whatsapp_buttons(
-                    to_phone=from_phone,
-                    body_text=reply,
-                    buttons=checkout_buttons,
-                    footer_text="Pilih aksi di bawah untuk lanjut:",
-                    tenant_id="shop",
-                    phone_number_id=phone_id,
-                )
-                btn_sent = True
-            except Exception as b_err:
-                logger.warning(f"[WA BUTTON DISPATCH FAILED] {b_err}")
-        if not btn_sent and reply and from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="shop", phone_number_id=phone_id)
-    else:
-        # JANGAN kirim tombol checkout sama sekali (hanya kirim teks percakapan natural)
-        if reply and from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=reply, tenant_id="shop", phone_number_id=phone_id)
-
-    # Simpan kembali state ke context_json via dump_customer_state dan update ke session database
-    try:
-        wa_session.context_json = dump_customer_state(customer_state, wa_session.context_json or {})
-        await _conversation_session_repo.save(wa_session)
-    except Exception as save_err:
-        logger.warning(f"[META WA SESSION SAVE ERROR] {save_err}")
-
-    try:
-        safe_log_to_supabase_messages(
-            sender="bot",
-            text=reply or "",
-            tenant_id=active_tenant,
-            channel="whatsapp",
-            user_phone=from_phone,
-            user_name=contact_name,
-            metadata={
-                "conversation_engine_stage": customer_state.stage,
-                "next_best_action": nba,
-                "allow_button": action_result.get("allow_button", False),
-            },
-        )
-    except Exception as log_err:
-        logger.debug(f"[META WA SUPABASE LOG NOTE] {log_err}")
-
-    return JSONResponse(status_code=200, content={
-        "status": "success",
-        "tenant": active_tenant,
-        "reply": reply,
-        "stage": customer_state.stage,
-        "allow_button": action_result.get("allow_button", False),
-    })
+    return Response(content="IGNORED", status_code=200, media_type="text/plain")

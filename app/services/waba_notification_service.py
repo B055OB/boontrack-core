@@ -40,8 +40,9 @@ WABA_ACCESS_TOKEN: str = (
 WABA_PHONE_NUMBER_ID: str = (
     os.getenv("WABA_PHONE_NUMBER_ID")
     or os.getenv("META_WA_PHONE_NUMBER_ID")
+    or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
     or os.getenv("PHONE_NUMBER_ID")
-    or ""
+    or "1268977686299719"
 ).strip()
 
 SUPER_ADMIN_WA_PHONE: str = os.getenv("SUPER_ADMIN_WA_PHONE", "").strip()

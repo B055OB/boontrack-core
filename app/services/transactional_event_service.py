@@ -13,7 +13,7 @@ WA_ENGINE_API_KEY = os.getenv("WA_ENGINE_API_KEY", "boontrack_secret_engine_key_
 
 
 async def send_whatsapp_message(tenant_slug: str, recipient_phone: str, message_text: str):
-    """Mengirim pesan notifikasi sistem WA via Meta Cloud API resmi WABA."""
+    """Mengirim pesan notifikasi sistem WA via Meta Cloud API resmi WABA (+6285179555449)."""
     clean_phone = "".join(filter(str.isdigit, recipient_phone))
     if clean_phone.startswith("0"):
         clean_phone = "62" + clean_phone[1:]
@@ -26,30 +26,13 @@ async def send_whatsapp_message(tenant_slug: str, recipient_phone: str, message_
             tenant_id="shop",
         )
         if res:
-            logger.info(f"[WA MSG SENT VIA WABA] Store: {tenant_slug} -> {clean_phone}")
+            logger.info(f"[WA SYSTEM NOTIF SENT VIA META WABA] Store: {tenant_slug} -> {clean_phone}")
             return True
     except Exception as waba_err:
-        logger.warning(f"[WA WABA SEND ERROR] {waba_err}")
+        logger.error(f"[WA SYSTEM NOTIF META WABA ERROR] {waba_err}", exc_info=True)
 
-    # Fallback to local gateway if available
-    instance_name = f"boontrack_shop_{tenant_slug.strip().lower()}"
-    try:
-        headers = {"apikey": WA_ENGINE_API_KEY}
-        payload = {
-            "number": clean_phone,
-            "text": message_text
-        }
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"{WA_ENGINE_BASE_URL}/message/sendText/{instance_name}",
-                headers=headers,
-                json=payload
-            )
-            logger.info(f"[WA MSG SENT FALLBACK] Store: {tenant_slug} -> {clean_phone} | Status: {resp.status_code}")
-            return resp.status_code in (200, 201)
-    except Exception as e:
-        logger.warning(f"[WA MSG FALLBACK OFFLINE] {e}")
-        return False
+    return False
+
 
 
 async def trigger_order_created(payload: Dict[str, Any]):
