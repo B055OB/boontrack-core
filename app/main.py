@@ -56,6 +56,7 @@ from app.routes.shipping_routes import router as shipping_router, logistics_rout
 from app.routes.partner_routes import partner_router, manager_router
 from app.routes.analytics_fastapi_routes import router as analytics_router
 from app.routes.boonpilot_routes import router as boonpilot_router
+from app.routes.billing_routes import billing_router
 from app.routes.store_chat_routes import router as store_chat_router, handle_store_chat, StoreChatRequest
 from app.routes.media_routes import media_router, general_upload_router, register_media_routes
 from app.routes.product_routes import product_router, product_singular_router, register_product_routes
@@ -158,6 +159,7 @@ app.include_router(partner_router)
 app.include_router(manager_router)
 app.include_router(analytics_router)
 app.include_router(boonpilot_router)
+app.include_router(billing_router)
 app.include_router(store_chat_router)
 app.include_router(media_router)
 app.include_router(general_upload_router)

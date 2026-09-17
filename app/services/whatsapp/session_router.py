@@ -19,53 +19,13 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Demo portal constants
+# Demo portal constants (DEACTIVATED)
+# Seluruh chatbot percakapan demo telah dinonaktifkan total.
+# Nomor resmi WABA (+6285179555449) hanya melayani Gateway Notifikasi & Aktivasi Sistem.
 # ---------------------------------------------------------------------------
 
-DEMO_MENU_TEXT = (
-    "Halo! Selamat datang di *Portal Pengujian Ekosistem BoonTrack* 🚀\n\n"
-    "Silakan pilih demo asisten/merchant yang ingin Anda uji coba:\n"
-    "1️⃣ *BoonTrack Shop* (slug: boontrack-shop / Showcase Storefront & Shared Gateway)\n"
-    "2️⃣ *Tier Growth+* (slug: growthplus / Unofficial WhatsApp + Ads Tracking Meta CAPI & TikTok)\n"
-    "3️⃣ *Tier ProScale* (slug: proscale / Official Meta Cloud WABA + Omnichannel & BoonPilot AI)\n"
-    "4️⃣ *OnlineBoost* (slug: onlineboost / Digital Marketing & Course Vault)\n\n"
-    "Balas dengan mengetik angka *1*, *2*, *3*, atau *4* (atau ketik *#reset* kapan saja untuk ganti toko)."
-)
-
-DEMO_TENANT_GREETINGS: Dict[str, str] = {
-    "boontrack-shop": (
-        "🛍️ *Selamat Datang di BoonTrack Shop!*\n\n"
-        "Showcase storefront ritel & produk UMKM terpercaya. Layanan pelanggan cepat dan produk berkualitas siap kirim.\n\n"
-        "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
-    ),
-    "growthplus": (
-        "⚡ *Selamat Datang di Tier Growth+ BoonTrack!*\n\n"
-        "Paket scale-up bisnis via Unofficial WhatsApp Gateway terintegrasi Server-Side Ads Tracking Meta CAPI & TikTok Pixel.\n\n"
-        "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
-    ),
-    "proscale": (
-        "🏢 *Selamat Datang di Tier ProScale Enterprise!*\n\n"
-        "Solusi Official Meta Cloud WABA verified, Omnichannel Inbox multi-CS, dan BoonPilot AI Copilot 24/7.\n\n"
-        "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
-    ),
-    "onlineboost": (
-        "🚀 *Selamat datang di OnlineBoost Digital Hub*\n\n"
-        "Digital Marketing & Course Vault: Koleksi Ecourse Paid Traffic, Strategi YouTube AI, dan Masterclass scale-up bisnis.\n\n"
-        "Ketik *Katalog* untuk memilih paket materi langsung atau ketik *Beli* untuk checkout cepat."
-    ),
-    "bale_pananggeuhan": (
-        "🏛️ *Sampurasun! Selamat Datang di Balé Pananggeuhan*\n\n"
-        "Layanan Aspirasi & Pengaduan Online Warga Jawa Barat.\n"
-        "Silakan sampaikan laporan fasilitas umum, aduan warga, atau pengurusan administrasi kependudukan Anda.\n\n"
-        "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
-    ),
-    "atmosfitnes": (
-        "🏋️ *Selamat Datang di Prima Fit Gym (Atmosfitnes)!*\n\n"
-        "Asisten reservasi dan keanggotaan fitness modern.\n"
-        "Ada yang bisa kami bantu seputar paket membership, jadwal kelas, atau akses fasilitas turnstile?\n\n"
-        "_Ketik #reset kapan saja untuk kembali ke menu pilihan demo toko._"
-    ),
-}
+DEMO_MENU_TEXT = ""
+DEMO_TENANT_GREETINGS: Dict[str, str] = {}
 
 
 # ---------------------------------------------------------------------------

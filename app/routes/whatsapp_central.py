@@ -426,6 +426,16 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             )
             return web.json_response(act_res)
 
+        # -------------------------------------------------------------------------
+        # ZERO BOT GUARD: Seluruh pesan non-aktivasi di-DROP INSTAN (HTTP 200 IGNORED)
+        # JANGAN PERNAH PANGGIL FUNGSI send_wa_text / DEMO MENU APAPUN!
+        # -------------------------------------------------------------------------
+        logger.info(
+            f"[CENTRAL WA GATEWAY] Non-activation inbound message dropped (No Bot Active). "
+            f"Sender: {clean_phone or from_phone} | Message: '{incoming_text}'"
+        )
+        return web.Response(text="IGNORED", status_code=200)
+
         # Inisialisasi default button untuk mencegah UnboundLocalError
         button_id = ""
         clean_btn = ""

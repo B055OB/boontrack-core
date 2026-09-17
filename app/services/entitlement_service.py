@@ -36,6 +36,8 @@ class TenantCapabilities(BaseModel):
     shipping: bool = False
     meta_capi: bool = False
     multi_cs: bool = False
+    powertools: bool = False
+    affiliate: bool = False
 
 
 class TenantLimits(BaseModel):
@@ -64,6 +66,7 @@ _PLAN_DEFAULTS: Dict[str, Dict[str, Any]] = {
             "catalog": True, "orders": True, "qris": True,
             "ai_bot": True, "shipping": True,
             "meta_capi": True, "multi_cs": False,
+            "powertools": True, "affiliate": False,
         },
         "limits": {"order_quota": 100, "ai_conversations": 250},
     },
@@ -72,6 +75,7 @@ _PLAN_DEFAULTS: Dict[str, Dict[str, Any]] = {
             "catalog": True, "orders": True, "qris": True,
             "ai_bot": False, "shipping": False,
             "meta_capi": False, "multi_cs": False,
+            "powertools": False, "affiliate": False,
         },
         "limits": {"order_quota": 50, "ai_conversations": 0},
     },
@@ -80,6 +84,7 @@ _PLAN_DEFAULTS: Dict[str, Dict[str, Any]] = {
             "catalog": True, "orders": True, "qris": True,
             "ai_bot": True, "shipping": True,
             "meta_capi": False, "multi_cs": False,
+            "powertools": False, "affiliate": False,
         },
         "limits": {"order_quota": 0, "ai_conversations": 250},
     },
@@ -88,6 +93,7 @@ _PLAN_DEFAULTS: Dict[str, Dict[str, Any]] = {
             "catalog": True, "orders": True, "qris": True,
             "ai_bot": True, "shipping": True,
             "meta_capi": True, "multi_cs": False,
+            "powertools": True, "affiliate": False,
         },
         "limits": {"order_quota": 0, "ai_conversations": 500},
     },
@@ -96,6 +102,7 @@ _PLAN_DEFAULTS: Dict[str, Dict[str, Any]] = {
             "catalog": True, "orders": True, "qris": True,
             "ai_bot": True, "shipping": True,
             "meta_capi": True, "multi_cs": True,
+            "powertools": True, "affiliate": True,
         },
         "limits": {"order_quota": 0, "ai_conversations": 1000},
     },
@@ -151,10 +158,10 @@ class TenantContextResolver:
         """
         clean_slug = str(tenant_slug or "").strip().lower()
         if not clean_slug:
-            logger.warning("[ENTITLEMENT] Empty tenant_slug → fallback FREE")
+            logger.warning("[ENTITLEMENT] Empty tenant_slug -> fallback FREE")
             return _static_context("unknown", "FREE")
 
-        # ── Path 1: Baca dari Supabase ──────────────────────────────────────
+        # Path 1: Baca dari Supabase
         if supabase_client is not None:
             try:
                 row = (
@@ -216,9 +223,9 @@ class TenantContextResolver:
                     )
 
             except Exception as exc:
-                logger.error(f"[ENTITLEMENT] DB error untuk {clean_slug}: {exc} → fallback statis")
+                logger.error(f"[ENTITLEMENT] DB error untuk {clean_slug}: {exc} -> fallback statis")
 
-        # ── Path 2: Fallback statis ─────────────────────────────────────────
+        # Path 2: Fallback statis
         logger.info(f"[ENTITLEMENT] Fallback statis FREE untuk tenant: {clean_slug}")
         return _static_context(clean_slug, "FREE")
 
