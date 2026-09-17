@@ -1,25 +1,13 @@
 """
-app/services/whatsapp_service.py  ← FACADE (Zero Breaking Changes)
----------------------------------------------------------------------
-File ini dipertahankan sebagai facade tipis untuk backward compatibility.
-Semua implementasi telah dipindahkan ke package modular:
-  app/services/whatsapp/
-    ├── credentials.py      (Supabase, phone normalisation, session maps, WA credentials)
-    ├── cloud_api.py        (Meta Cloud API send/upload functions, Supabase logging)
-    ├── inbound_parser.py   (extract_meta_whatsapp_event)
-    ├── commerce.py         (QRIS, catalogue, cart, checkout)
-    ├── session_router.py   (DEMO_MENU_TEXT, resolve_dynamic_tenant_for_whatsapp)
-    ├── evolution.py        (Evolution API v2 adapter)
-    └── waha.py             (WAHA adapter)
-
-Semua import dari modul lain yang menggunakan:
-    from app.services.whatsapp_service import X
-tetap berfungsi tanpa perubahan.
+app/services/whatsapp/__init__.py
+------------------------------------------
+Package init - re-export semua public symbol dari sub-modul.
+Importers yang menggunakan `from app.services.whatsapp import X`
+akan mendapatkan symbol yang sama.
 """
 
-# Re-export semua public symbols dari package modular
-from app.services.whatsapp import (  # noqa: F401, F403
-    # credentials
+# credentials
+from app.services.whatsapp.credentials import (
     get_supabase,
     normalize_phone_number,
     user_tenant_sessions,
@@ -31,7 +19,10 @@ from app.services.whatsapp import (  # noqa: F401, F403
     set_user_session,
     get_wa_credentials,
     _get_auth_headers,
-    # cloud_api
+)
+
+# cloud_api
+from app.services.whatsapp.cloud_api import (
     sanitize_whatsapp_message_text,
     log_to_supabase_messages,
     safe_log_to_supabase_messages,
@@ -45,9 +36,15 @@ from app.services.whatsapp import (  # noqa: F401, F403
     send_whatsapp_image,
     send_whatsapp_document,
     download_whatsapp_media_by_id,
-    # inbound_parser
+)
+
+# inbound_parser
+from app.services.whatsapp.inbound_parser import (
     extract_meta_whatsapp_event,
-    # commerce
+)
+
+# commerce
+from app.services.whatsapp.commerce import (
     BUY_INTENTS,
     is_closing_buy_intent,
     generate_qris_image_bytes,
@@ -57,11 +54,17 @@ from app.services.whatsapp import (  # noqa: F401, F403
     add_product_to_cart,
     generate_cart_checkout_response,
     generate_fast_track_checkout_response,
-    # session_router
+)
+
+# session_router
+from app.services.whatsapp.session_router import (
     DEMO_MENU_TEXT,
     DEMO_TENANT_GREETINGS,
     resolve_dynamic_tenant_for_whatsapp,
-    # evolution
+)
+
+# evolution
+from app.services.whatsapp.evolution import (
     EVOLUTION_BASE_URL,
     EVOLUTION_API_KEY,
     get_evolution_headers,
@@ -70,7 +73,10 @@ from app.services.whatsapp import (  # noqa: F401, F403
     is_valid_whatsapp_pairing_code,
     format_whatsapp_pairing_code,
     request_evolution_pairing_code,
-    # waha
+)
+
+# waha
+from app.services.whatsapp.waha import (
     WAHA_URL,
     WAHA_API_KEY,
     get_waha_headers,
