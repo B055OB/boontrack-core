@@ -51,15 +51,10 @@ META_BASE_URL: str = f"https://graph.facebook.com/{META_GRAPH_VERSION}"
 
 # ---------------------------------------------------------------------------
 # [SAFETY GUARD] Blocklist nomor/ID yang dinonaktifkan sementara
-# Tambahkan entri baru di sini ketika ada nomor yang perlu dihold.
+# Nomor resmi Shop +6285139555449 (Phone ID: 1268977686299719) telah diaktifkan kembali.
 # ---------------------------------------------------------------------------
-_DEACTIVATED_PHONE_IDS: frozenset = frozenset({
-    "1268977686299719",   # [DEACTIVATED 2026-09-16] Om Budi WABA — pending penggantian
-})
-_DEACTIVATED_PHONES: frozenset = frozenset({
-    "6285139555449",      # [DEACTIVATED 2026-09-16] +62 851-3955-5449 Om Budi
-    "85139555449",        # format alternatif tanpa leading 0
-})
+_DEACTIVATED_PHONE_IDS: frozenset = frozenset()
+_DEACTIVATED_PHONES: frozenset = frozenset()
 
 
 def _is_blocked_sender(phone_number_id: str) -> bool:

@@ -1017,30 +1017,30 @@ def get_wa_credentials(tenant_id: str = "boontrack-career", phone_number_id: Opt
     )
     version = os.getenv("META_GRAPH_VERSION", "v20.0")
 
-    clean_tenant = str(tenant_id).lower().strip() if tenant_id else "ombudi"
+    clean_tenant = str(tenant_id).lower().strip() if tenant_id else "shop"
 
     # Priority 1: Explicit overrides from webhook payload
     if phone_number_id and str(phone_number_id).strip():
         resolved_phone_id = str(phone_number_id).strip()
         
-        # Guard: cegah nomor Career membalas di toko showcase / retail
-        if clean_tenant in ["ombudi", "om-budi", "om_budi", "onlineboost", "growthplus", "proscale"] and resolved_phone_id == "1340866379104241":
-            resolved_phone_id = os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "1268977686299719"
+        # Guard: cegah nomor Career membalas di toko showcase / retail / shop
+        if clean_tenant in ["shop", "boontrack", "boontrack-shop", "boontrack-holding", "ombudi", "om-budi", "om_budi", "onlineboost", "growthplus", "proscale"] and resolved_phone_id == "1340866379104241":
+            resolved_phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID") or "1268977686299719"
 
         resolved_token = str(access_token).strip() if access_token else default_token
         if not access_token:
             if resolved_phone_id == (os.getenv("CAREER_PHONE_NUMBER_ID") or "1340866379104241"):
                 resolved_token = (os.getenv("CAREER_ACCESS_TOKEN") or "").strip() or default_token
-            elif resolved_phone_id == (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "1268977686299719"):
-                resolved_token = (os.getenv("OM_BUDI_ACCESS_TOKEN") or "").strip() or default_token
-            elif resolved_phone_id == (os.getenv("PHONE_NUMBER_ID") or "1306479742542883"):
+            elif resolved_phone_id == (os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID") or "1268977686299719"):
+                resolved_token = default_token
+            elif resolved_phone_id == (os.getenv("ADUAN_SANDBOX_PHONE_ID") or "1306479742542883"):
                 resolved_token = (os.getenv("ADUAN_ACCESS_TOKEN") or "").strip() or default_token
         return (resolved_token or default_token).strip(), resolved_phone_id, version
 
     # Priority 2: Tenant-based resolution
-    if clean_tenant in ["ombudi", "om-budi", "om_budi", "onlineboost", "growthplus", "proscale"]:
-        phone_id = (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "").strip() or "1268977686299719"
-        token = (os.getenv("OM_BUDI_ACCESS_TOKEN") or "").strip() or default_token
+    if clean_tenant in ["shop", "boontrack", "boontrack-shop", "boontrack-holding", "ombudi", "om-budi", "om_budi", "onlineboost", "growthplus", "proscale"]:
+        phone_id = (os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID") or "").strip() or "1268977686299719"
+        token = (os.getenv("WHATSAPP_TOKEN") or "").strip() or default_token
         return token.strip(), str(phone_id).strip(), version
 
     if clean_tenant in ["boontrack-career", "career"]:
@@ -1049,11 +1049,11 @@ def get_wa_credentials(tenant_id: str = "boontrack-career", phone_number_id: Opt
         return token.strip(), str(phone_id).strip(), version
 
     if clean_tenant in ["aduan", "aduan-sandbox", "sandbox"]:
-        phone_id = (os.getenv("PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID") or "").strip() or "1306479742542883"
+        phone_id = (os.getenv("ADUAN_SANDBOX_PHONE_ID") or os.getenv("PHONE_NUMBER_ID") or "").strip() or "1306479742542883"
         token = (os.getenv("ADUAN_ACCESS_TOKEN") or "").strip() or default_token
         return token.strip(), str(phone_id).strip(), version
 
-    phone_id = (os.getenv("OM_BUDI_PHONE_NUMBER_ID") or "").strip() or "1268977686299719"
+    phone_id = (os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID") or "").strip() or "1268977686299719"
     return default_token.strip(), str(phone_id).strip(), version
 
 def _get_auth_headers(token: str) -> Dict[str, str]:

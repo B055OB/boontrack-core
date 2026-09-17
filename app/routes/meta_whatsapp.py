@@ -186,7 +186,7 @@ async def handle_whatsapp_webhook(request: Request):
     
     phone_id = str(event.get("phone_id") or "").strip()
     if not phone_id:
-        phone_id = os.getenv("OM_BUDI_PHONE_NUMBER_ID", "1268977686299719")
+        phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID") or "1268977686299719"
 
     clean_text = incoming_text.strip().lower()
     text_lower = clean_text
@@ -200,6 +200,7 @@ async def handle_whatsapp_webhook(request: Request):
     # =========================================================================
     # CTWA CAPTURE: Tangkap referral iklan Meta Ads (Click-to-WhatsApp)
     # =========================================================================
+    target_tenant = get_user_tenant_session(clean_phone) or ""
     referral = event.get("referral")
     if not referral and isinstance(data, dict):
         try:
@@ -244,34 +245,6 @@ async def handle_whatsapp_webhook(request: Request):
         )
     )
 
-    if is_consultation_phone or (is_career_phone and not runtime_context):
-        from app.tenants.career.service import career_service
-        msg_type = event.get("msg_type", "text")
-        t_slug = runtime_context.slug if runtime_context else "career"
-        if msg_type == "image":
-            await career_service.handle_image(
-                sender_wa_id=from_phone,
-                display_name=contact_name,
-                media_id=event.get("media_id")
-            )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": t_slug})
-        elif msg_type == "document":
-            await career_service.handle_document(
-                sender_wa_id=from_phone,
-                display_name=contact_name,
-                media_id=event.get("media_id"),
-                filename=event.get("media_filename") or "document.pdf"
-            )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": t_slug})
-        else:
-            await career_service.handle_text_or_button(
-                sender_wa_id=from_phone,
-                display_name=contact_name,
-                user_text=incoming_text,
-                button_id=button_id
-            )
-            return JSONResponse(status_code=200, content={"status": "success", "tenant": t_slug})
-
     # =========================================================================
     # P0 INTERCEPT: COMMAND #RESET / RESET / MENU UTAMA
     # =========================================================================
@@ -301,7 +274,7 @@ async def handle_whatsapp_webhook(request: Request):
             if phone_id:
                 user_phone_number_id_sessions[clean_phone] = phone_id
         if from_phone:
-            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, tenant_id="ombudi", phone_number_id=phone_id)
+            await send_whatsapp_text(to_phone=from_phone, text=DEMO_MENU_TEXT, tenant_id="shop", phone_number_id=phone_id)
         safe_log_to_supabase_messages(
             sender="bot",
             text=DEMO_MENU_TEXT,
@@ -311,6 +284,37 @@ async def handle_whatsapp_webhook(request: Request):
             user_name=contact_name,
         )
         return JSONResponse(status_code=200, content={"status": "menu_dispatched", "tenant": "__MENU__", "reply": DEMO_MENU_TEXT})
+
+    # =========================================================================
+    # STRICT ISOLATION: DYNAMIC RESOLUTION FOR CAREER ASSISTANT
+    # =========================================================================
+    if is_career_phone or is_consultation_phone:
+        from app.tenants.career.service import career_service
+        msg_type = event.get("msg_type", "text")
+        t_slug = "boontrack-career"
+        if msg_type == "image":
+            await career_service.handle_image(
+                sender_wa_id=from_phone,
+                display_name=contact_name,
+                media_id=event.get("media_id")
+            )
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": t_slug})
+        elif msg_type == "document":
+            await career_service.handle_document(
+                sender_wa_id=from_phone,
+                display_name=contact_name,
+                media_id=event.get("media_id"),
+                filename=event.get("media_filename") or "document.pdf"
+            )
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": t_slug})
+        else:
+            await career_service.handle_text_or_button(
+                sender_wa_id=from_phone,
+                display_name=contact_name,
+                user_text=incoming_text,
+                button_id=button_id
+            )
+            return JSONResponse(status_code=200, content={"status": "success", "tenant": t_slug})
 
     # =========================================================================
     # P0 INTERCEPT: MENU SELECTION 1, 2, 3, 4

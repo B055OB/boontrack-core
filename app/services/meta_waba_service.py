@@ -36,15 +36,10 @@ STATUS_RANK = {
 
 # ---------------------------------------------------------------------------
 # [SAFETY GUARD] Blocklist Phone ID & nomor yang dinonaktifkan sementara.
-# Sync dengan waba_notification_service._DEACTIVATED_PHONE_IDS
+# Nomor resmi Shop +6285139555449 (Phone ID: 1268977686299719) telah diaktifkan kembali.
 # ---------------------------------------------------------------------------
-_DEACTIVATED_SENDER_IDS: frozenset = frozenset({
-    "1268977686299719",   # [DEACTIVATED 2026-09-16] Om Budi WABA +6285139555449 — pending replacement
-})
-_DEACTIVATED_RECIPIENT_PHONES: frozenset = frozenset({
-    "6285139555449",
-    "85139555449",
-})
+_DEACTIVATED_SENDER_IDS: frozenset = frozenset()
+_DEACTIVATED_RECIPIENT_PHONES: frozenset = frozenset()
 
 
 def _waba_sender_is_blocked(phone_number_id: str) -> bool:
