@@ -737,6 +737,20 @@ class OnboardingService:
                         "bot_strategy": bot_strategy_val,
                         "faq": ai_k.get("faq") or [],
                     }
+
+                    tenant_dict["metadata"] = meta
+
+                    # Fallback: jika products masih kosong, baca dari tenants.metadata -> 'products'
+                    if not products:
+                        meta_prods = meta.get("products")
+                        if meta_prods and isinstance(meta_prods, list):
+                            products = [p for p in meta_prods if p and isinstance(p, dict)]
+                            if t_id:
+                                self._products_by_tenant[t_id] = products
+                        elif meta.get("product") and isinstance(meta["product"], dict):
+                            products = [meta["product"]]
+                            if t_id:
+                                self._products_by_tenant[t_id] = products
             except Exception as db_err:
                 logger.debug(f"[OnboardingService Supabase detail lookup note] {db_err}")
 
@@ -1063,6 +1077,39 @@ class OnboardingService:
         prods = self._products_by_tenant.get(t_id, [])
         if not isinstance(prods, list):
             prods = [prods] if prods else []
+
+        supabase = get_supabase()
+
+        # 1. Jika in-memory kosong, coba ambil dari tabel products di Supabase
+        if not prods and supabase and t_id:
+            try:
+                p_res = supabase.table("products").select("*").eq("tenant_id", t_id).execute()
+                if p_res and p_res.data:
+                    prods = p_res.data
+                    self._products_by_tenant[t_id] = prods
+            except Exception as db_err:
+                logger.debug(f"[get_tenant_products db fetch note]: {db_err}")
+
+        # 2. Fallback: jika tabel products kosong, baca fallback produk dari kolom JSONB tenants.metadata -> 'products'
+        if not prods:
+            tenant_meta = details.get("tenant", {}).get("metadata") or {}
+            meta_prods = tenant_meta.get("products")
+
+            if not meta_prods and supabase:
+                try:
+                    t_res = supabase.table("tenants").select("metadata").eq("slug", clean_slug).execute()
+                    if t_res and t_res.data and t_res.data[0].get("metadata"):
+                        meta_prods = t_res.data[0]["metadata"].get("products")
+                except Exception as meta_err:
+                    logger.debug(f"[get_tenant_products metadata query note]: {meta_err}")
+
+            if meta_prods and isinstance(meta_prods, list):
+                prods = [p for p in meta_prods if p and isinstance(p, dict)]
+                self._products_by_tenant[t_id] = prods
+            elif tenant_meta.get("product") and isinstance(tenant_meta["product"], dict):
+                prods = [tenant_meta["product"]]
+                self._products_by_tenant[t_id] = prods
+
         return prods
 
     def clear_state(self) -> None:
