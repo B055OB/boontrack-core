@@ -667,18 +667,88 @@ async def handle_store_activation_request(
 # EVOLUTION API WEBHOOK LISTENER (MESSAGES_UPSERT)
 # ============================================================================
 
+async def _handle_connection_update_event(payload: Dict[str, Any], tenant_slug: Optional[str]) -> Dict[str, Any]:
+    """
+    Menangani event CONNECTION_UPDATE dari Evolution API.
+    Memperbarui kolom is_connected di tabel whatsapp_connections berdasarkan status instance:
+    - 'open'          -> is_connected = True
+    - 'close' / 'disconnected' / 'refused' -> is_connected = False
+    """
+    instance_name = str(payload.get("instance") or "").strip()
+    data = payload.get("data") or {}
+    if isinstance(data, list) and data:
+        data = data[0]
+    if not isinstance(data, dict):
+        data = {}
+
+    state = str(
+        data.get("state")
+        or data.get("connection")
+        or payload.get("state")
+        or ""
+    ).lower().strip()
+
+    if not state:
+        logger.debug(f"[CONNECTION_UPDATE] Ignoring payload without state for instance '{instance_name}'")
+        return {"status": "ignored", "reason": "no_state_field"}
+
+    is_connected = state == "open"
+    resolved_slug = (
+        tenant_slug
+        or instance_name.replace("tenant_", "").replace("_", "-").lower()
+        or "unknown"
+    )
+
+    logger.info(
+        f"[CONNECTION_UPDATE] Instance '{instance_name}' tenant '{resolved_slug}' "
+        f"state='{state}' -> is_connected={is_connected}"
+    )
+
+    try:
+        sb = get_supabase()
+        if sb and instance_name:
+            sb.table("whatsapp_connections").update({
+                "is_connected": is_connected,
+                "status": state,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("instance_name", instance_name).execute()
+            logger.info(
+                f"[CONNECTION_UPDATE] DB updated: instance='{instance_name}' is_connected={is_connected}"
+            )
+    except Exception as db_err:
+        logger.error(f"[CONNECTION_UPDATE DB ERROR] {db_err}")
+
+    return {
+        "status": "connection_update_processed",
+        "instance": instance_name,
+        "tenant": resolved_slug,
+        "state": state,
+        "is_connected": is_connected,
+    }
+
+
 async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug: Optional[str] = None) -> Dict[str, Any]:
     """
-    Core Ingestion Logic untuk event MESSAGES_UPSERT dari Evolution API (Baileys Engine):
-    1. Validasi event: Hanya proses 'messages.upsert'.
-    2. Filter Self-Message: fromMe == True di-skip agar bot tidak membalas chatnya sendiri.
-    3. Filter Grup & Broadcast: Abaikan remoteJid berakhiran '@g.us' atau '@broadcast'.
-    4. Ekstraksi Pengirim: remoteJid (buang suffix @s.whatsapp.net / @c.us).
-    5. Ekstraksi Teks Berjenjang: conversation -> extendedTextMessage.text -> imageMessage.caption -> videoMessage.caption -> buttons/list reply.
-    6. Pemrosesan AI Commerce & balasan otomatis via Evolution API sendText:
-       Payload wajib menyediakan 'text' (Evolution API v2 Baileys contract) dan 'textMessage'.
+    Core Ingestion Logic untuk webhook Evolution API (Baileys Engine).
+
+    Event yang ditangani:
+    - CONNECTION_UPDATE  : Memperbarui status is_connected di database.
+    - MESSAGES_UPSERT    : Memproses pesan masuk & mengirim balasan AI Commerce.
+
+    ISOLATION GUARANTEE (tenant webhook):
+    - Webhook endpoint /webhook/evolution/{tenant_slug} HANYA memproses pesan
+      dalam lingkup tenant tersebut.
+    - Endpoint ini TIDAK PERNAH memanggil resolve_dynamic_tenant_for_whatsapp()
+      maupun memicu pesan template platform sistem (DEMO_MENU_TEXT, menu sambutan
+      platform). Semua routing diselesaikan dari tenant_slug path parameter atau
+      nama instance Evolution API.
     """
     event = str(payload.get("event") or "").lower()
+
+    # --- Handler CONNECTION_UPDATE ---
+    if event in ("connection.update", "connection_update"):
+        return await _handle_connection_update_event(payload, tenant_slug)
+
     if event and event not in ("messages.upsert", "messages_upsert"):
         return {"status": "ignored", "event": event}
 

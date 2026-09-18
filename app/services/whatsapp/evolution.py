@@ -129,7 +129,7 @@ async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> D
                             "url": f"{backend_url}/api/v1/whatsapp/webhook/evolution/{tenant_slug}",
                             "byEvents": False,
                             "base64": True,
-                            "events": ["MESSAGES_UPSERT"]
+                            "events": ["MESSAGES_UPSERT", "CONNECTION_UPDATE"]
                         }
                     }
                 )
