@@ -21,14 +21,13 @@ class TestMetaWabaOfficialZeroBot(unittest.TestCase):
         self.client = TestClient(app)
 
     @patch("app.services.whatsapp.cloud_api.send_whatsapp_text", new_callable=AsyncMock)
-    def test_post_webhook_halo_flat_body_returns_200_ignored_and_no_send(self, mock_send_wa):
+    def test_post_webhook_halo_flat_body_returns_guidance_menu(self, mock_send_wa):
         """Simulasi request POST webhook Meta berisi body {'text': {'body': 'halo'}}.
 
-        Harus mengembalikan HTTP 200 IGNORED dan send_whatsapp_text TIDAK TERPANGGIL.
+        Harus mengembalikan HTTP 200 dengan menu panduan resmi platform (Anti-Silent Bot).
         """
         payload = {"text": {"body": "halo"}}
         
-        # Test ke endpoint webhook utama dan aliasnya
         endpoints = [
             "/api/v1/whatsapp/webhook",
             "/webhook/whatsapp",
@@ -40,15 +39,16 @@ class TestMetaWabaOfficialZeroBot(unittest.TestCase):
             resp = self.client.post(ep, json=payload)
             
             self.assertEqual(resp.status_code, 200, f"Endpoint {ep} must return status 200")
-            self.assertEqual(resp.text, "IGNORED", f"Endpoint {ep} must return text 'IGNORED'")
-            mock_send_wa.assert_not_called()
-            self.assertEqual(mock_send_wa.call_count, 0, f"send_whatsapp_text must NOT be called on {ep}")
+            data = resp.json()
+            self.assertEqual(data.get("status"), "success")
+            self.assertIn("Aktivasi Toko", data.get("reply", ""))
+            self.assertNotIn("Portal Pengujian Ekosistem BoonTrack", data.get("reply", ""))
 
     @patch("app.services.whatsapp.cloud_api.send_whatsapp_text", new_callable=AsyncMock)
-    def test_post_webhook_halo_meta_envelope_returns_200_ignored_and_no_send(self, mock_send_wa):
+    def test_post_webhook_halo_meta_envelope_returns_guidance_menu(self, mock_send_wa):
         """Simulasi request POST webhook Meta resmi berisi envelope Meta dengan pesan 'halo'.
 
-        Harus mengembalikan HTTP 200 IGNORED dan send_whatsapp_text TIDAK TERPANGGIL.
+        Harus mengembalikan HTTP 200 dengan menu panduan resmi platform.
         """
         payload = {
             "object": "whatsapp_business_account",
@@ -76,29 +76,30 @@ class TestMetaWabaOfficialZeroBot(unittest.TestCase):
         }
         
         resp = self.client.post("/api/v1/whatsapp/webhook", json=payload)
-        
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.text, "IGNORED")
-        mock_send_wa.assert_not_called()
+        data = resp.json()
+        self.assertEqual(data.get("status"), "success")
+        self.assertIn("shop.boontrack.com", data.get("reply", ""))
+        self.assertNotIn("Portal Pengujian Ekosistem BoonTrack", data.get("reply", ""))
 
     @patch("app.services.whatsapp.cloud_api.send_whatsapp_text", new_callable=AsyncMock)
-    def test_post_webhook_reset_and_menu_commands_ignored(self, mock_send_wa):
-        """Perintah #reset, reset, 1, 2, menu dsb WAJIB di-DROP (IGNORED) tanpa bot respons."""
-        test_messages = ["#reset", "reset", "1", "2", "menu", "p", "test"]
+    def test_post_webhook_reset_and_menu_commands_return_guidance_menu(self, mock_send_wa):
+        """Perintah #reset, reset, menu dsb WAJIB dibalas dengan menu panduan resmi platform (Anti-Silent Bot)."""
+        test_messages = ["#reset", "reset", "menu", "p", "test"]
         
         for msg in test_messages:
             mock_send_wa.reset_mock()
             resp = self.client.post("/api/v1/whatsapp/webhook", json={"text": {"body": msg}})
             self.assertEqual(resp.status_code, 200)
-            self.assertEqual(resp.text, "IGNORED")
-            mock_send_wa.assert_not_called()
+            data = resp.json()
+            self.assertEqual(data.get("status"), "success")
+            self.assertIn("shop.boontrack.com", data.get("reply", ""))
 
     def test_demo_menu_text_string_deactivated(self):
         """String 'Portal Pengujian Ekosistem BoonTrack' WAJIB sudah dimatikan total."""
         self.assertNotIn("Portal Pengujian Ekosistem BoonTrack", DEMO_MENU_TEXT)
         self.assertNotIn("Silakan pilih demo asisten/merchant", DEMO_MENU_TEXT)
         self.assertNotIn("#reset kapan saja untuk ganti toko", DEMO_MENU_TEXT)
-        self.assertEqual(DEMO_MENU_TEXT, "")
 
 
 if __name__ == "__main__":

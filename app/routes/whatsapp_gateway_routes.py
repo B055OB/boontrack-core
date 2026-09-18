@@ -603,7 +603,10 @@ async def handle_store_activation_request(
         except Exception:
             pass
 
-        success_msg = "Verifikasi Berhasil! Toko BoonTrack Anda telah aktif. Silakan kembali ke browser untuk melanjutkan ke Dashboard."
+        success_msg = (
+            "Selamat! Nomor WhatsApp Anda berhasil diverifikasi untuk akun BoonTrack. "
+            "Silakan lanjutkan pengaturan toko Anda di browser."
+        )
 
         # Kirim balasan konfirmasi resmi via Meta Cloud API (WABA)
         try:
@@ -873,9 +876,10 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     # P0 ACTIVATION KEYWORD PARSER (BOONTRACK STORE ACTIVATION)
     # Format: AKTIVASI BT-XXXX (case-insensitive, whitespace-tolerant)
     # ------------------------------------------------------------------------
-    activation_match = re.search(r"^AKTIVASI\s+(BT-[A-Za-z0-9]+)", incoming_text.strip(), re.IGNORECASE)
+    activation_match = re.search(r'AKTIVASI\s+BT-?([A-Za-z0-9]+)', incoming_text, re.IGNORECASE)
     if activation_match:
-        token = activation_match.group(1).upper().strip()
+        token_suffix = activation_match.group(1).upper().strip()
+        token = f"BT-{token_suffix}"
         logger.info(f"[EVOLUTION WEBHOOK] Intercepted store activation token '{token}' from {sender_phone} on instance '{raw_instance}'")
         activation_res = await handle_store_activation_request(
             token=token,

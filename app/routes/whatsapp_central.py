@@ -68,16 +68,25 @@ CAREER_PHONE_NUMBER_ID = os.getenv("CAREER_PHONE_NUMBER_ID", "1340866379104241")
 ADUAN_SANDBOX_PHONE_ID = os.getenv("ADUAN_SANDBOX_PHONE_ID", "1306479742542883")        # Sandbox / Uji Coba Diskominfo Aduan
 
 # --- 3. Access Tokens Resolver (Dengan Fallback ke WHATSAPP_TOKEN) ---
-PERMANENT_META_TOKEN = "EAANbiVgBfGQBSQkvsZBc8JmqdEZBJWSrZAWR1gnJep0lkyZAv4O02LKEwjoNAc8lNOvaEeKhtb6pcr45S8wtd5CrSKdoMwEq6A1eJV4Yb140DBOMbmj3wLzo0Y7fZBrus25EJ0xeqXlPbDisP6d4DmZAGkvbJ7hnKfFih3G7L7mn6g56OQVU42dZByNSHNEiwZDZD"
+PERMANENT_META_TOKEN = (
+    os.getenv("WHATSAPP_ACCESS_TOKEN")
+    or os.getenv("WHATSAPP_TOKEN")
+    or os.getenv("META_WA_TOKEN")
+    or ""
+).strip()
 
-CAREER_ACCESS_TOKEN = os.getenv(
-    "CAREER_ACCESS_TOKEN",
-    os.getenv("WHATSAPP_ACCESS_TOKEN") or os.getenv("WHATSAPP_TOKEN", PERMANENT_META_TOKEN)
-)
-ADUAN_SANDBOX_ACCESS_TOKEN = os.getenv(
-    "ADUAN_ACCESS_TOKEN",
-    os.getenv("WHATSAPP_ACCESS_TOKEN") or os.getenv("WHATSAPP_TOKEN", PERMANENT_META_TOKEN)
-)
+CAREER_ACCESS_TOKEN = (
+    os.getenv("CAREER_ACCESS_TOKEN")
+    or os.getenv("WHATSAPP_ACCESS_TOKEN")
+    or os.getenv("WHATSAPP_TOKEN")
+    or ""
+).strip()
+ADUAN_SANDBOX_ACCESS_TOKEN = (
+    os.getenv("ADUAN_ACCESS_TOKEN")
+    or os.getenv("WHATSAPP_ACCESS_TOKEN")
+    or os.getenv("WHATSAPP_TOKEN")
+    or ""
+).strip()
 
 ALLOWED_IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/jpg"]
 
@@ -416,30 +425,11 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         clean_text = incoming_text.strip().lower()
         text_lower = clean_text
 
-        phone_id = str(event.get("phone_id") or "").strip() or BOONTRACK_GATEWAY_PHONE_NUMBER_ID
-        
-        # P0 Store Activation Interceptor
-        activation_match = re.search(r"^AKTIVASI\s+(BT-[A-Za-z0-9]+)", incoming_text.strip(), re.IGNORECASE)
-        if activation_match:
-            from app.routes.whatsapp_gateway_routes import handle_store_activation_request
-            token = activation_match.group(1).upper().strip()
-            act_res = await handle_store_activation_request(
-                token=token,
-                sender_phone=clean_phone or from_phone,
-                instance_name="boontrack-gateway",
-                raw_text=incoming_text
-            )
-            return web.json_response(act_res)
-
-        # -------------------------------------------------------------------------
-        # ZERO BOT GUARD: Seluruh pesan non-aktivasi di-DROP INSTAN (HTTP 200 IGNORED)
-        # JANGAN PERNAH PANGGIL FUNGSI send_wa_text / DEMO MENU APAPUN!
-        # -------------------------------------------------------------------------
-        logger.info(
-            f"[CENTRAL WA GATEWAY] Non-activation inbound message dropped (No Bot Active). "
-            f"Sender: {clean_phone or from_phone} | Message: '{incoming_text}'"
-        )
-        return web.Response(text="IGNORED", status_code=200)
+        # P0 Deterministic TrafficSplitter Gateway (P0 Hardening Gate & Webhook Isolation)
+        from app.whatsapp.traffic_splitter import TrafficSplitter
+        status_code, split_res, trace = await TrafficSplitter.split_and_dispatch(data)
+        logger.info(f"[CENTRAL WA GATEWAY] Dispatched via TrafficSplitter -> HTTP {status_code}: {split_res.get('status')}")
+        return web.json_response(split_res, status=status_code)
 
         # Inisialisasi default button untuk mencegah UnboundLocalError
         button_id = ""

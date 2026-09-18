@@ -117,69 +117,9 @@ async def handle_whatsapp_webhook(request: Request):
     if has_statuses and not has_messages:
         return Response(content="STATUS_IGNORED", status_code=200, media_type="text/plain")
 
-    # Ekstraksi pesan teks dan status dari berbagai format payload (flat test payload maupun envelope resmi Meta)
-    incoming_text = ""
-    from_phone = ""
+    # Delegasikan ke Deterministic TrafficSplitter (P0 Hardening Gate & Webhook Isolation)
+    from app.whatsapp.traffic_splitter import TrafficSplitter
 
-    if isinstance(data, dict):
-        # 1. Format langsung flat: {"text": {"body": "halo"}} atau {"text": "halo"}
-        text_field = data.get("text")
-        if isinstance(text_field, dict):
-            incoming_text = str(text_field.get("body", "")).strip()
-        elif isinstance(text_field, str):
-            incoming_text = text_field.strip()
-
-        # 2. Format list messages langsung: {"messages": [{"text": {"body": "halo"}}]}
-        messages_field = data.get("messages")
-        if not incoming_text and isinstance(messages_field, list) and len(messages_field) > 0:
-            first_msg = messages_field[0]
-            if isinstance(first_msg, dict):
-                msg_text = first_msg.get("text")
-                if isinstance(msg_text, dict):
-                    incoming_text = str(msg_text.get("body", "")).strip()
-                elif isinstance(msg_text, str):
-                    incoming_text = msg_text.strip()
-                if "from" in first_msg:
-                    from_phone = str(first_msg.get("from", "")).strip()
-
-        if not from_phone:
-            from_phone = str(data.get("from", data.get("from_phone", ""))).strip()
-
-    # 3. Format envelope resmi Meta Cloud API via extract_meta_whatsapp_event
-    event = extract_meta_whatsapp_event(data)
-    if not incoming_text and event.get("is_message"):
-        incoming_text = (event.get("text") or "").strip()
-    if not from_phone and event.get("from_phone"):
-        from_phone = str(event.get("from_phone", "")).strip()
-
-    # 4. Status murni filter (delivery/read receipts tanpa ada teks pesan sama sekali)
-    if (event.get("is_status") or (has_statuses and not has_messages)) and not incoming_text:
-        return Response(content="STATUS_IGNORED", status_code=200, media_type="text/plain")
-
-    clean_phone = normalize_phone_number(from_phone)
-
-    # -------------------------------------------------------------------------
-    # PARSER TUNGGAL: AKTIVASI TOKO (r"^AKTIVASI\s+(BT-[A-Za-z0-9]+)")
-    # -------------------------------------------------------------------------
-    activation_match = re.search(r"^AKTIVASI\s+(BT-[A-Za-z0-9]+)", incoming_text, re.IGNORECASE)
-    if activation_match:
-        from app.routes.whatsapp_gateway_routes import handle_store_activation_request
-        token = activation_match.group(1).upper().strip()
-        logger.info(f"[META WABA GATEWAY] 🔑 Processing Store Activation: token='{token}', phone='{clean_phone or from_phone}'")
-        act_res = await handle_store_activation_request(
-            token=token,
-            sender_phone=clean_phone or from_phone,
-            instance_name="boontrack-gateway",
-            raw_text=incoming_text
-        )
-        return JSONResponse(status_code=200, content=act_res)
-
-    # -------------------------------------------------------------------------
-    # ZERO BOT GUARD: Seluruh pesan non-aktivasi di-DROP INSTAN (HTTP 200 IGNORED)
-    # JANGAN PERNAH PANGGIL FUNGSI send_whatsapp_* APA PUN!
-    # -------------------------------------------------------------------------
-    logger.info(
-        f"[META WABA GATEWAY] Non-activation inbound message dropped (No Bot Active). "
-        f"Sender: {clean_phone or from_phone} | Message: '{incoming_text}'"
-    )
-    return Response(content="IGNORED", status_code=200, media_type="text/plain")
+    http_status, result_payload, trace = await TrafficSplitter.split_and_dispatch(data)
+    logger.info(f"[META WABA GATEWAY] TrafficSplitter completed with HTTP {http_status}: {result_payload.get('status')}")
+    return JSONResponse(status_code=http_status, content=result_payload)

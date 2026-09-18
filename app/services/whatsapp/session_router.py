@@ -19,12 +19,18 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Demo portal constants (DEACTIVATED)
-# Seluruh chatbot percakapan demo telah dinonaktifkan total.
-# Nomor resmi WABA (+6285179555449) hanya melayani Gateway Notifikasi & Aktivasi Sistem.
+# Platform Guidance Constants
 # ---------------------------------------------------------------------------
 
-DEMO_MENU_TEXT = ""
+MAIN_GUIDANCE_MENU_TEXT = (
+    "Halo! Selamat datang di Layanan Otomatis BoonTrack 🛍️\n\n"
+    "Berikut panduan layanan kami:\n"
+    "• *Aktivasi Toko*: Ketik *AKTIVASI BT-XXXX* sesuai kode verifikasi dari browser.\n"
+    "• *Pengaturan Toko*: Kunjungi https://shop.boontrack.com\n"
+    "• *Bantuan CS & Layanan*: Silakan sampaikan pesan atau pertanyaan Anda di sini.\n\n"
+    "Ada yang bisa kami bantu seputar toko atau produk Anda hari ini?"
+)
+DEMO_MENU_TEXT = MAIN_GUIDANCE_MENU_TEXT
 DEMO_TENANT_GREETINGS: Dict[str, str] = {}
 
 
@@ -131,13 +137,19 @@ def resolve_dynamic_tenant_for_whatsapp(
     # Pesan dari Evolution webhook sudah membawa tenant_slug eksplisit dari URL path.
     # Fungsi ini seharusnya hanya dipanggil untuk WABA demo portal jika ada session aktif.
     # Jika tidak ada session, kembalikan None agar handler upstream bisa memutuskan.
-    if text_lower in ("halo", "hi", "p", "test", "tes", "hai", "start", "info"):
-        # Jangan fallback ke demo tenant - kembalikan None agar tidak ada respons spurious
-        return "__NO_TENANT__", False
+    # STATE GUARD (Anti-Silent Bot):
+    # Jika pesan umum (seperti "halo", "menu", "info", dll.) masuk dan state obrolan tidak terdefinisi,
+    # bot wajib membalas dengan pesan menu panduan utama alih-alih mengabaikan pesan atau silent bot.
+    if text_lower in ("halo", "hi", "p", "test", "tes", "hai", "start", "info", "menu", "help", "bantuan"):
+        from app.services.session_store import get_user_tenant_session
+        locked_tenant = get_user_tenant_session(clean_phone, text) if clean_phone else None
+        if locked_tenant and locked_tenant not in ("__NO_TENANT__", "__MENU__"):
+            return locked_tenant, False
+        logger.info(f"[DYNAMIC TENANT WA] General greeting/menu '{text_lower}' from {clean_phone} -> dispatching guidance menu (__MENU__)")
+        return "__MENU__", False
 
     if clean_phone_id == "1268977686299719":
-        # Phone ID ini sudah tidak digunakan sebagai routing signal
-        return "__NO_TENANT__", False
+        return "__MENU__", False
 
     try:
         from app.services.onboarding_service import onboarding_service
@@ -149,4 +161,4 @@ def resolve_dynamic_tenant_for_whatsapp(
     except Exception as e:
         logger.warning(f"[DYNAMIC TENANT WA] Failed to query latest commerce tenant: {e}")
 
-    return "onlineboost", False
+    return "__MENU__", False

@@ -10,12 +10,11 @@ VERIFY_TOKEN = (
     or "boontrack_career_token"
 )
 
-PERMANENT_META_TOKEN = "EAANbiVgBfGQBSQkvsZBc8JmqdEZBJWSrZAWR1gnJep0lkyZAv4O02LKEwjoNAc8lNOvaEeKhtb6pcr45S8wtd5CrSKdoMwEq6A1eJV4Yb140DBOMbmj3wLzo0Y7fZBrus25EJ0xeqXlPbDisP6d4DmZAGkvbJ7hnKfFih3G7L7mn6g56OQVU42dZByNSHNEiwZDZD"
-
-CAREER_ACCESS_TOKEN = os.getenv(
-    "CAREER_ACCESS_TOKEN",
-    os.getenv("WHATSAPP_TOKEN", PERMANENT_META_TOKEN)
-)
+CAREER_ACCESS_TOKEN = (
+    os.getenv("CAREER_ACCESS_TOKEN")
+    or os.getenv("WHATSAPP_TOKEN")
+    or ""
+).strip()
 
 # Developer & Admin Whitelist Bypass (Auto-Unlock Career Pro & Decision Engine)
 CAREER_VIP_WHITELIST = {
