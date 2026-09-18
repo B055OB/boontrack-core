@@ -234,6 +234,7 @@ class PlatformWebhookRouter:
 
         supabase = get_supabase()
         matched_tenant = None
+        is_from_db = False
 
         # Param 1 & 3: Pencarian pending_registration berdasarkan activation_code & token
         if supabase:
@@ -246,6 +247,7 @@ class PlatformWebhookRouter:
                 )
                 if res and res.data and len(res.data) > 0:
                     matched_tenant = res.data[0]
+                    is_from_db = True
                     trace.log_step("ActivationAuth.DBLookup", f"Found tenant '{matched_tenant.get('slug')}' by metadata token")
                 else:
                     # Fallback check variants
@@ -261,12 +263,28 @@ class PlatformWebhookRouter:
                         cand_token = str(t_meta.get("wa_verification_token") or "").upper().strip()
                         if cand_token in (canonical_token, token_suffix, f"BT{token_suffix}"):
                             matched_tenant = t
+                            is_from_db = True
                             trace.log_step("ActivationAuth.DBLookup", f"Found pending tenant '{t.get('slug')}' by suffix")
                             break
             except Exception as db_err:
                 trace.log_step("ActivationAuth.DBError", str(db_err))
+                # BOUNDARY DEGRADASI DB OUTAGE (P0.5 CTO DIRECTIVE):
+                # In-memory registry HANYA boleh dipakai untuk routing dispatcher phone_number_id.
+                # Jika koneksi DB terputus saat mengeksekusi _process_activation() atau settlement payment,
+                # JANGAN PERNAH gunakan asumsi memory cache. Wajib melempar controlled failure agar
+                # provider Meta melakukan retry sah ketika DB pulih.
+                logger.error(f"[ActivationAuth] Database outage during activation lookup: {db_err}")
+                trace.early_return = True
+                trace.response_status = 503
+                res = {
+                    "status": "error",
+                    "error": "DATABASE_UNAVAILABLE",
+                    "message": "Database is temporarily unreachable during business authorization. Controlled failure returned for Meta retry.",
+                }
+                trace.response_payload = res
+                return res
 
-        # Fallback pencarian in-memory onboarding registry
+        # Fallback pencarian in-memory onboarding registry jika tidak ditemukan di DB (testing / dev mock)
         if not matched_tenant:
             try:
                 from app.services.onboarding_service import onboarding_service
@@ -275,7 +293,7 @@ class PlatformWebhookRouter:
                     cand_token = str(t_meta.get("wa_verification_token") or t_data.get("wa_verification_token") or "").upper().strip()
                     if cand_token in (canonical_token, token_suffix, f"BT{token_suffix}"):
                         matched_tenant = t_data
-                        trace.log_step("ActivationAuth.MemoryLookup", f"Found tenant '{t_slug}' in onboarding_service")
+                        trace.log_step("ActivationAuth.MemoryLookup", f"Found tenant '{t_slug}' in onboarding_service (Test/No-DB mode)")
                         break
             except Exception as mem_err:
                 trace.log_step("ActivationAuth.MemoryLookupError", str(mem_err))
@@ -315,32 +333,27 @@ class PlatformWebhookRouter:
             trace.response_payload = res
             return res
 
-        # Param 5: Validasi Status == PENDING_ACTIVATION
+        # Param 5: Validasi Status == PENDING_ACTIVATION (Idempotency Check)
         current_status = str(matched_tenant.get("status") or "").lower().strip()
         allowed_pending = ["pending_wa_verification", "pending", "pending_activation", "trial"]
         if current_status not in allowed_pending and not matched_tenant.get("is_active") is False:
-            trace.log_step("ActivationAuth.StatusCheck", f"Tenant already active or status '{current_status}' (Param 5 Check)")
+            trace.log_step("ActivationAuth.StatusCheck", f"Tenant already active or status '{current_status}' (Idempotency Hit)")
             already_active_msg = "Nomor WhatsApp Anda sudah terverifikasi sebelumnya. Silakan lanjutkan pengaturan toko di browser."
-            if is_user_initiated:
-                try:
-                    await send_whatsapp_text(to_phone=clean_phone, text=already_active_msg, tenant_id="shop", phone_number_id=phone_number_id)
-                    trace.log_step("MessagingWindow.Dispatch", "Dispatched already-active reply within user-initiated window")
-                except Exception:
-                    pass
-            else:
-                trace.log_step("MessagingWindow.Suppressed", "Free-form already-active reply suppressed: not user-initiated")
+            # Idempotency hit: status sudah terpenuhi, tidak boleh mengeksekusi ulang pengiriman pesan WA atau mutasi ganda
+            trace.log_step("MessagingWindow.Suppressed", "Free-form message suppressed: idempotency hit on replay")
 
             trace.early_return = True
             trace.response_status = 200
             res = {
                 "status": "success",
                 "action": "store_activation",
+                "idempotency_hit": True,
                 "verified": True,
                 "tenant_slug": matched_tenant.get("slug"),
                 "token": canonical_token,
                 "reply": already_active_msg,
-                "free_form_dispatched": is_user_initiated,
-                "messaging_window": "USER_INITIATED" if is_user_initiated else "NON_USER_INITIATED_SUPPRESSED",
+                "free_form_dispatched": False,
+                "messaging_window": "IDEMPOTENT_SUPPRESSED",
             }
             trace.response_payload = res
             return res
@@ -383,7 +396,7 @@ class PlatformWebhookRouter:
                 trace.log_step("ActivationAuth.ExpiryParseWarn", str(parse_err))
 
         # =====================================================================
-        # SELURUH 5 PARAMETER TERPENUHI: AKTIFKAN TENANT & SEGERA RETURN 200 OK
+        # SELURUH 5 PARAMETER TERPENUHI: AKTIFKAN TENANT SECARA ATOMIK
         # =====================================================================
         tenant_id = matched_tenant.get("id")
         tenant_slug = matched_tenant.get("slug")
@@ -398,17 +411,54 @@ class PlatformWebhookRouter:
         matched_tenant["is_active"] = True
         matched_tenant["metadata"] = meta
 
-        # 1. Update DB Supabase
-        if supabase and tenant_id:
+        # 1. Update DB Supabase dengan Klausa Atomik (hanya untuk record basis data)
+        # UPDATE tenants SET status = 'active', is_verified = true WHERE id = :id AND status IN (...)
+        if supabase and is_from_db and tenant_id:
             try:
-                supabase.table("tenants").update({
-                    "status": "active",
-                    "is_active": True,
-                    "metadata": meta,
-                }).eq("id", tenant_id).execute()
-                trace.log_step("ActivationAuth.DBUpdate", f"Tenant '{tenant_slug}' marked active in DB")
+                update_res = (
+                    supabase.table("tenants")
+                    .update({
+                        "status": "active",
+                        "is_active": True,
+                        "metadata": meta,
+                    })
+                    .eq("id", tenant_id)
+                    .in_("status", allowed_pending)
+                    .execute()
+                )
+                # Evaluasi rows affected: jika rows affected == 0 (artinya sudah pernah diaktifkan / concurrent win),
+                # anggap sebagai idempotency hit: return sukses tanpa eksekusi side-effect ulang.
+                if update_res and update_res.data is not None and len(update_res.data) == 0:
+                    trace.log_step("ActivationAuth.IdempotencyHit", f"Atomic update returned 0 rows for '{tenant_slug}' (already active). Duplicate side-effects suppressed.")
+                    trace.early_return = True
+                    trace.response_status = 200
+                    res = {
+                        "status": "success",
+                        "action": "store_activation",
+                        "idempotency_hit": True,
+                        "verified": True,
+                        "tenant_slug": tenant_slug,
+                        "token": canonical_token,
+                        "reply": "Nomor WhatsApp Anda sudah terverifikasi sebelumnya. Silakan lanjutkan pengaturan toko di browser.",
+                        "free_form_dispatched": False,
+                        "messaging_window": "IDEMPOTENT_SUPPRESSED",
+                    }
+                    trace.response_payload = res
+                    return res
+
+                trace.log_step("ActivationAuth.DBUpdate", f"Tenant '{tenant_slug}' marked active in DB (Atomic 1 row updated)")
             except Exception as upd_err:
                 trace.log_step("ActivationAuth.DBUpdateError", str(upd_err))
+                logger.error(f"[ActivationAuth] Database write failed during activation commit: {upd_err}")
+                trace.early_return = True
+                trace.response_status = 503
+                res = {
+                    "status": "error",
+                    "error": "DATABASE_UNAVAILABLE",
+                    "message": "Database write failed during activation commit. Controlled failure returned for Meta retry.",
+                }
+                trace.response_payload = res
+                return res
 
         # 2. Update store_registrations table jika ada
         if supabase:
@@ -693,7 +743,7 @@ class TrafficSplitter:
                 raw_msg=first_msg,
                 trace=trace,
             )
-            return 200, result, trace
+            return trace.response_status or 200, result, trace
 
         # =====================================================================
         # ROUTE B: TENANT_SALES (Tenant Resolver)

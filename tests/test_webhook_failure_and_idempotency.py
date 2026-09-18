@@ -146,15 +146,16 @@ class TestWebhookFailureAndIdempotency(unittest.TestCase):
         self.assertEqual(resp2.json().get("action"), "transactional_notification_logged")
 
     # =========================================================================
-    # 2. DATABASE OUTAGE & TIMEOUT RESILIENCE (GRACEFUL DEGRADATION)
+    # 2. DATABASE OUTAGE & TIMEOUT RESILIENCE (CONTROLLED FAILURE FOR META RETRY)
     # =========================================================================
     @patch("app.whatsapp.traffic_splitter.send_whatsapp_text", new_callable=AsyncMock)
     @patch("app.whatsapp.traffic_splitter.get_supabase")
-    def test_database_outage_graceful_fallback(self, mock_get_supabase, mock_send_wa):
+    def test_database_outage_returns_controlled_failure_for_meta_retry(self, mock_get_supabase, mock_send_wa):
         """
-        Saat database Supabase mengalami outage atau timeout:
-        Gateway harus tetap tangguh, tidak melempar HTTP 500 uncaught exception,
-        dan menggunakan in-memory onboarding fallback jika tersedia.
+        Boundary Degradasi DB Outage (CTO Directive P0.5):
+        - In-memory registry HANYA boleh dipakai untuk routing dispatcher phone_number_id.
+        - Jika koneksi DB terputus saat _process_activation(), JANGAN PERNAH gunakan asumsi memory cache.
+        - Wajib melempar controlled failure (HTTP 503 DATABASE_UNAVAILABLE) agar Meta melakukan retry sah.
         """
         mock_send_wa.return_value = True
 
@@ -169,7 +170,7 @@ class TestWebhookFailureAndIdempotency(unittest.TestCase):
         mock_db.table.return_value = mock_table
         mock_get_supabase.return_value = mock_db
 
-        # Sediakan fallback record di onboarding_service memory
+        # Ada data di in-memory, tetapi TIDAK BOLEH dipakai saat DB terputus
         onboarding_service._tenants_by_slug["store-db-fallback"] = {
             "id": "t-db-fail-01",
             "slug": "store-db-fallback",
@@ -208,12 +209,166 @@ class TestWebhookFailureAndIdempotency(unittest.TestCase):
         }
 
         resp = self.client.post("/api/v1/whatsapp/webhook", json=payload)
-        # Gateway TIDAK BOLEH crash 500! Harus tetap mengembalikan 200 OK
+        # Gateway WAJIB mengembalikan HTTP 503 agar Meta Cloud API menjadwalkan retry
+        self.assertEqual(resp.status_code, 503)
+        data = resp.json()
+        self.assertEqual(data.get("status"), "error")
+        self.assertEqual(data.get("error"), "DATABASE_UNAVAILABLE")
+        mock_send_wa.assert_not_called()
+
+    # =========================================================================
+    # 2B. ATOMIC STATUS TRANSITION & CRASH-AFTER-COMMIT RECOVERY (CTO P0.5)
+    # =========================================================================
+    @patch("app.whatsapp.traffic_splitter.send_whatsapp_text", new_callable=AsyncMock)
+    @patch("app.whatsapp.traffic_splitter.get_supabase")
+    def test_atomic_status_transition_idempotency_hit_on_zero_rows(self, mock_get_supabase, mock_send_wa):
+        """
+        Klausa Atomik: UPDATE ... WHERE id = :id AND status IN ('pending_wa_verification', ...)
+        Jika rows affected == 0 (artinya sudah diupdate oleh request lain atau sebelumnya),
+        sistem menganggapnya sebagai idempotency hit: return 200 OK tanpa eksekusi side-effect ulang.
+        """
+        mock_send_wa.return_value = True
+
+        mock_db = MagicMock()
+        mock_table = MagicMock()
+        
+        # Select lookup returns pending tenant
+        mock_select = MagicMock()
+        mock_filter = MagicMock()
+        mock_filter.execute.return_value = MagicMock(data=[{
+            "id": "t-atomic-01",
+            "slug": "store-atomic-test",
+            "status": "pending_wa_verification",
+            "is_active": False,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "metadata": {
+                "wa_verification_token": "BT-3344",
+                "phone": self.sender_phone,
+                "is_verified": False,
+            }
+        }])
+        mock_select.filter.return_value = mock_filter
+        mock_table.select.return_value = mock_select
+
+        # Update returns 0 rows affected (concurrent race won by another worker)
+        mock_update = MagicMock()
+        mock_eq = MagicMock()
+        mock_in = MagicMock()
+        mock_in.execute.return_value = MagicMock(data=[])  # 0 rows updated!
+        mock_eq.in_.return_value = mock_in
+        mock_update.eq.return_value = mock_eq
+        mock_table.update.return_value = mock_update
+
+        mock_db.table.return_value = mock_table
+        mock_get_supabase.return_value = mock_db
+
+        payload = {
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "id": "platform_waba",
+                "changes": [{
+                    "value": {
+                        "messaging_product": "whatsapp",
+                        "metadata": {
+                            "phone_number_id": self.platform_phone_id,
+                            "display_phone_number": "6285179555449"
+                        },
+                        "messages": [{
+                            "from": self.sender_phone,
+                            "id": "wamid.ATOMIC_ZERO_ROWS",
+                            "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
+                            "type": "text",
+                            "text": {"body": "AKTIVASI BT-3344"}
+                        }]
+                    },
+                    "field": "messages"
+                }]
+            }]
+        }
+
+        resp = self.client.post("/api/v1/whatsapp/webhook", json=payload)
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data.get("status"), "success")
-        self.assertEqual(data.get("verified"), True)
-        self.assertEqual(data.get("tenant_slug"), "store-db-fallback")
+        self.assertEqual(data.get("idempotency_hit"), True)
+        self.assertEqual(data.get("free_form_dispatched"), False)
+        # Side-effects (WhatsApp message) TIDAK boleh dikirim ulang!
+        mock_send_wa.assert_not_called()
+
+    @patch("app.whatsapp.traffic_splitter.send_whatsapp_text", new_callable=AsyncMock)
+    @patch("app.whatsapp.traffic_splitter.get_supabase")
+    def test_crash_after_commit_idempotent_recovery(self, mock_get_supabase, mock_send_wa):
+        """
+        Skenario Crash-After-Commit (CTO Requirement 3):
+        - Request 1: DB commit sukses mengubah status menjadi 'active', namun disimulasikan crash
+          (misal: network putus / exception sengaja dilempar setelah commit sebelum cache diset).
+        - Request 2: Datang kembali setelah lock release/expired (Meta retry).
+          Sistem membaca DB yang sudah berstatus 'active', mendeteksi status sudah terpenuhi,
+          mengembalikan HTTP 200 OK (idempotency hit), dan TIDAK mengeksekusi ulang pengiriman pesan WA
+          maupun mutasi ganda di DB.
+        """
+        mock_send_wa.return_value = True
+
+        mock_db = MagicMock()
+        mock_table = MagicMock()
+        
+        # Simulasikan DB state saat Request 2 tiba: status sudah 'active' (berhasil di-commit di Request 1)
+        mock_select = MagicMock()
+        mock_filter = MagicMock()
+        mock_filter.execute.return_value = MagicMock(data=[{
+            "id": "t-crash-recovery-01",
+            "slug": "store-crash-recovery",
+            "status": "active",  # Already committed in Request 1
+            "is_active": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "metadata": {
+                "wa_verification_token": "BT-5566",
+                "phone": self.sender_phone,
+                "is_verified": True,
+            }
+        }])
+        mock_select.filter.return_value = mock_filter
+        mock_table.select.return_value = mock_select
+        mock_db.table.return_value = mock_table
+        mock_get_supabase.return_value = mock_db
+
+        payload_retry = {
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "id": "platform_waba",
+                "changes": [{
+                    "value": {
+                        "messaging_product": "whatsapp",
+                        "metadata": {
+                            "phone_number_id": self.platform_phone_id,
+                            "display_phone_number": "6285179555449"
+                        },
+                        "messages": [{
+                            "from": self.sender_phone,
+                            "id": "wamid.CRASH_RETRY_MSG",
+                            "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
+                            "type": "text",
+                            "text": {"body": "AKTIVASI BT-5566"}
+                        }]
+                    },
+                    "field": "messages"
+                }]
+            }]
+        }
+
+        # Request 2 (Retry setelah crash Request 1)
+        resp2 = self.client.post("/api/v1/whatsapp/webhook", json=payload_retry)
+        self.assertEqual(resp2.status_code, 200)
+        data2 = resp2.json()
+
+        # Idempotency hit: status success, tetapi TIDAK kirim WA ulang & TIDAK mutasi ulang
+        self.assertEqual(data2.get("status"), "success")
+        self.assertEqual(data2.get("idempotency_hit"), True)
+        self.assertEqual(data2.get("free_form_dispatched"), False)
+        self.assertEqual(data2.get("messaging_window"), "IDEMPOTENT_SUPPRESSED")
+        mock_send_wa.assert_not_called()
+        # Mutasi update ke DB TIDAK dipanggil sama sekali di Request 2
+        mock_table.update.assert_not_called()
 
     # =========================================================================
     # 3. EXPIRED ACTIVATION TOKEN REJECTION (TOKEN EXPIRY DOMAIN)
