@@ -17,6 +17,7 @@ from app.services.whatsapp_service import (
 )
 from app.services.xendit_service import xendit_service
 from app.services.qris_generator import generate_qris_png_bytes
+from app.core.tracing import log_structured_event, set_trace_context, get_trace_context
 
 logger = logging.getLogger("CHECKOUT_FLOW_SERVICE")
 
@@ -40,13 +41,25 @@ async def create_d2c_order_and_dispatch_qris(
     supabase = get_supabase()
     clean_phone = normalize_phone_number(customer_phone)
     order_id = f"ORD-{merchant_slug.upper()[:6]}-{int(datetime.now().timestamp())}"
+    active_corr = correlation_id or order_id
     
+    set_trace_context(correlation_id=active_corr, tenant_id=merchant_slug)
+    log_structured_event(
+        service="checkout_flow",
+        event_type="INBOUND_CHECKOUT",
+        entity_type="order",
+        entity_id=order_id,
+        status="SUCCESS",
+        tenant_id=merchant_slug,
+        correlation_id=active_corr,
+    )
+
     # 1. Buat Dynamic QRIS via Gateway Engine (Midtrans / Xendit)
     provider = os.getenv("PAYMENT_GATEWAY_PROVIDER", "").strip().lower()
     meta_payload = {
         "merchant_slug": merchant_slug,
         "customer_name": customer_name,
-        "correlation_id": correlation_id
+        "correlation_id": active_corr
     }
     if provider == "midtrans" or (not provider and os.getenv("MIDTRANS_SERVER_KEY")):
         from app.services.midtrans_service import midtrans_service
@@ -153,6 +166,28 @@ async def create_d2c_order_and_dispatch_qris(
             logger.warning(f"[WA QRIS Dispatch Warning] {wa_err}")
             await send_whatsapp_text(to_phone=clean_phone, text=caption, tenant_id=merchant_slug)
 
+        log_structured_event(
+            service="whatsapp_delivery",
+            event_type="WA_QRIS_DISPATCHED",
+            entity_type="message",
+            entity_id=order_id,
+            status="SUCCESS",
+            provider="meta",
+            tenant_id=merchant_slug,
+            correlation_id=active_corr,
+        )
+
+    log_structured_event(
+        service="checkout_flow",
+        event_type="QRIS_GENERATED",
+        entity_type="payment",
+        entity_id=order_id,
+        status="SUCCESS",
+        provider=provider or "xendit",
+        tenant_id=merchant_slug,
+        correlation_id=active_corr,
+    )
+
     return {
         "order_id": order_id,
         "merchant_slug": merchant_slug,
@@ -162,7 +197,7 @@ async def create_d2c_order_and_dispatch_qris(
         "qr_code_url": qr_code_url,
         "expires_at": expires_at,
         "status": "PENDING",
-        "correlation_id": correlation_id
+        "correlation_id": active_corr
     }
 
 
@@ -207,11 +242,13 @@ async def reconcile_payment_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
     if event_id:
         PROCESSED_WEBHOOK_EVENTS.add(event_id)
 
+    merchant = (order_data or {}).get("tenant_slug") or payload.get("tenant_slug") or "default"
+
     # Kirim WhatsApp E-Receipt & Akses Produk Otomatis
     if order_data:
         buyer_phone = order_data.get("customer_phone")
         buyer_name = order_data.get("customer_name", "Kakak")
-        merchant = order_data.get("tenant_slug", "Store")
+        merchant = order_data.get("tenant_slug", merchant)
         is_digital = order_data.get("is_digital", True)
         asset_url = order_data.get("delivery_asset_url") or "https://drive.google.com"
 
@@ -231,5 +268,25 @@ async def reconcile_payment_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
 
         if buyer_phone:
             await send_whatsapp_text(to_phone=buyer_phone, text=fulfillment_msg, tenant_id=merchant)
+            log_structured_event(
+                service="whatsapp_delivery",
+                event_type="WA_NOTIF_DISPATCHED",
+                entity_type="message",
+                entity_id=str(external_id),
+                status="SUCCESS",
+                provider="meta",
+                tenant_id=merchant,
+                correlation_id=str(external_id),
+            )
+
+    log_structured_event(
+        service="checkout_flow",
+        event_type="ORDER_SETTLED",
+        entity_type="order",
+        entity_id=str(external_id),
+        status="SUCCESS",
+        tenant_id=merchant,
+        correlation_id=str(external_id),
+    )
 
     return {"status": "success", "order_id": external_id}

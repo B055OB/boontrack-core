@@ -75,6 +75,8 @@ supabase_url = os.getenv("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY", "")
 supabase_client: Client = create_client(supabase_url, supabase_key)
 
+from app.core.tracing import TracingMiddleware
+
 # ============================================================================
 # FastAPI Application Entrypoint (Uvicorn / ASGI compatible)
 # ============================================================================
@@ -84,6 +86,8 @@ app = FastAPI(
     description="Unified Multi-Tenant Core Engine & IoT Access Control Service",
     version="1.0.0",
 )
+
+app.add_middleware(TracingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

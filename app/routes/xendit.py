@@ -36,6 +36,7 @@ from app.services.reconciliation_service import PAYMENT_INTENTS
 from app.modules.tracking import capi_dispatcher
 from app.services.session_store import get_user_session_context
 from app.services.waba_notification_service import dispatch_payment_success_notifications
+from app.core.tracing import log_structured_event, set_trace_context, get_trace_context
 
 logger = logging.getLogger("XENDIT_WEBHOOK")
 
@@ -88,6 +89,17 @@ async def send_whatsapp_payment_notification(
     except Exception as er_err:
         logger.warning(f"[Xendit WA E-Receipt Error] {er_err}")
 
+    log_structured_event(
+        service="whatsapp_delivery",
+        event_type="WA_NOTIF_DISPATCHED",
+        entity_type="message",
+        entity_id=external_id,
+        status="SUCCESS",
+        provider="meta",
+        tenant_id=tenant_id,
+        correlation_id=external_id,
+    )
+
 
 async def send_capi_task(
     external_id: str,
@@ -124,6 +136,7 @@ async def send_capi_task(
     except Exception as e:
         logger.warning(f"[Xendit Meta CAPI Note] {e}")
 
+    capi_ok = True
     try:
         await dispatch_all_capi({
             "order_id": external_id,
@@ -134,7 +147,31 @@ async def send_capi_task(
             "product_name": product_name or "Produk Digital",
         })
     except Exception as e:
+        capi_ok = False
         logger.error(f"[Xendit CAPI Error] Failed to dispatch CAPI events: {e}")
+        log_structured_event(
+            service="capi_dispatcher",
+            event_type="CAPI_FAILED",
+            entity_type="payment",
+            entity_id=external_id,
+            status="FAILED",
+            provider="meta",
+            tenant_id=tenant_id,
+            correlation_id=external_id,
+            error_code="CAPI_DISPATCH_EXCEPTION",
+        )
+
+    if capi_ok:
+        log_structured_event(
+            service="capi_dispatcher",
+            event_type="CAPI_DISPATCHED",
+            entity_type="payment",
+            entity_id=external_id,
+            status="SUCCESS",
+            provider="meta",
+            tenant_id=tenant_id,
+            correlation_id=external_id,
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -232,17 +269,23 @@ def _record_settlement_and_ledger_sync(
             (str(event_id), str(external_id), payload_json, now_utc, now_utc)
         )
 
-        # 2. Update status orders menjadi LUNAS
+        # 2. Update status orders menjadi LUNAS secara atomik
         cur.execute(
             """
             UPDATE orders 
             SET status = 'LUNAS',
                 updated_at = %s
-            WHERE id = %s;
+            WHERE id = %s AND status IN ('PENDING', 'pending', 'WAITING_PAYMENT', 'unpaid');
             """,
             (now_utc, str(external_id))
         )
         if cur.rowcount == 0:
+            cur.execute("SELECT status FROM orders WHERE id = %s LIMIT 1;", (str(external_id),))
+            existing_ord = cur.fetchone()
+            if existing_ord and str(existing_ord[0] or "").upper() in _PAID_STATUSES:
+                logger.info(f"[Xendit Atomic Check] Order '{external_id}' already LUNAS. Idempotency hit.")
+                return {"status": "ALREADY_SETTLED"}
+
             # Jika order belum ada di database, auto-insert order lunas
             cur.execute(
                 """
@@ -369,6 +412,7 @@ def _record_settlement_and_ledger_sync(
             except Exception:
                 pass
         logger.error(f"[Xendit DB Settlement Error] {e}", exc_info=True)
+        raise e
     finally:
         if cur:
             try:
@@ -444,9 +488,36 @@ async def process_xendit_webhook_core(
 
     logger.info(f"[Xendit Webhook] Processing event: {event_id} | Order: {external_id} | Amount: Rp{amount:,} | Status: {event_status}")
 
+    # Set distributed tracing context
+    inbound_trace = headers.get("x-trace-id") or headers.get("x-request-id")
+    set_trace_context(
+        trace_id=inbound_trace,
+        correlation_id=external_id,
+    )
+    log_structured_event(
+        service="xendit_webhook",
+        event_type="WEBHOOK_PAYMENT_RECEIVED",
+        entity_type="payment",
+        entity_id=external_id,
+        status="PENDING",
+        provider="xendit",
+        provider_event_id=event_id,
+        correlation_id=external_id,
+    )
+
     # 2. Fast L1 In-Memory Idempotency Check
     if external_id and xendit_service.is_settled(external_id):
         logger.info(f"[Xendit Webhook L1 Hit] Order '{external_id}' already marked settled in-memory. Returning 200 OK.")
+        log_structured_event(
+            service="xendit_webhook",
+            event_type="IDEMPOTENCY_HIT",
+            entity_type="payment",
+            entity_id=external_id,
+            status="SUCCESS",
+            provider="xendit",
+            provider_event_id=event_id,
+            correlation_id=external_id,
+        )
         return {
             "http_status": 200,
             "response": {
@@ -461,6 +532,16 @@ async def process_xendit_webhook_core(
     if db_check:
         xendit_service.mark_settled(external_id)
         logger.info(f"[Xendit Webhook DB Hit] Event '{event_id}' / Order '{external_id}' already processed in DB. Returning 200 OK.")
+        log_structured_event(
+            service="xendit_webhook",
+            event_type="IDEMPOTENCY_HIT",
+            entity_type="payment",
+            entity_id=external_id,
+            status="SUCCESS",
+            provider="xendit",
+            provider_event_id=event_id,
+            correlation_id=external_id,
+        )
         return {
             "http_status": 200,
             "response": {
@@ -517,21 +598,78 @@ async def process_xendit_webhook_core(
         or ("onlineboost" if (amount == 1000 or product_slug == "cpm-24jam") else "boontrack-career")
     )
 
-    # 6. Mark In-Memory Settled (L1 Lock)
+    # 6. Context Tracing Tenant Binding
+    set_trace_context(tenant_id=tenant_id)
+
+    # 7. Record Settlement & Financial Ledger in PostgreSQL
+    try:
+        settle_res = await asyncio.to_thread(
+            _record_settlement_and_ledger_sync,
+            event_id=event_id,
+            external_id=external_id,
+            tenant_id=tenant_id,
+            amount=amount,
+            payload=payload,
+            customer_phone=customer_phone,
+            customer_email=customer_email,
+            product_name=product_name,
+        )
+        if isinstance(settle_res, dict) and settle_res.get("status") == "ALREADY_SETTLED":
+            log_structured_event(
+                service="xendit_webhook",
+                event_type="IDEMPOTENCY_HIT",
+                entity_type="payment",
+                entity_id=external_id,
+                status="SUCCESS",
+                provider="xendit",
+                provider_event_id=event_id,
+                tenant_id=tenant_id,
+                correlation_id=external_id,
+            )
+            return {
+                "http_status": 200,
+                "response": {
+                    "status": "ALREADY_PROCESSED",
+                    "message": f"Transaction '{external_id}' has already been settled in database",
+                    "idempotent": True,
+                }
+            }
+    except Exception as db_err:
+        log_structured_event(
+            service="xendit_webhook",
+            event_type="DATABASE_OUTAGE_ERROR",
+            entity_type="payment",
+            entity_id=external_id,
+            status="FAILED",
+            provider="xendit",
+            provider_event_id=event_id,
+            tenant_id=tenant_id,
+            correlation_id=external_id,
+            error_code="DATABASE_UNAVAILABLE",
+        )
+        return {
+            "http_status": 503,
+            "response": {
+                "status": "FAILED",
+                "error": "DATABASE_UNAVAILABLE",
+                "detail": str(db_err),
+            }
+        }
+
+    # Mark in-memory settled (L1 Lock) only after DB mutation succeeded
     if external_id:
         xendit_service.mark_settled(external_id)
 
-    # 7. Record Settlement & Financial Ledger in PostgreSQL
-    await asyncio.to_thread(
-        _record_settlement_and_ledger_sync,
-        event_id=event_id,
-        external_id=external_id,
+    log_structured_event(
+        service="xendit_webhook",
+        event_type="DB_MUTATION_PAID",
+        entity_type="order",
+        entity_id=external_id,
+        status="SUCCESS",
+        provider="xendit",
+        provider_event_id=event_id,
         tenant_id=tenant_id,
-        amount=amount,
-        payload=payload,
-        customer_phone=customer_phone,
-        customer_email=customer_email,
-        product_name=product_name,
+        correlation_id=external_id,
     )
 
     # 8. Decoupled Asynchronous Background Tasks (Non-blocking)
