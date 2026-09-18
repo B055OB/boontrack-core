@@ -21,6 +21,32 @@ class RotaryRoutingService:
     def _get_connection(self):
         return get_db_connection()
 
+    def _resolve_tenant_identifiers(self, tenant_identifier: str) -> List[str]:
+        """Menemukan semua identifier yang valid (slug dan id) untuk tenant guna isolasi ketat."""
+        clean = (tenant_identifier or "").strip()
+        if not clean:
+            return []
+        identifiers = [clean]
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id::text, slug FROM tenants WHERE slug = %s OR id::text = %s LIMIT 1;",
+                    (clean, clean)
+                )
+                row = cur.fetchone()
+                if row:
+                    t_id, t_slug = str(row[0]), str(row[1])
+                    if t_id not in identifiers:
+                        identifiers.append(t_id)
+                    if t_slug not in identifiers:
+                        identifiers.append(t_slug)
+        except Exception as e:
+            logger.debug(f"[RotaryRoutingService] Resolve tenant note: {e}")
+        finally:
+            conn.close()
+        return identifiers
+
     def create_agent(
         self,
         tenant_id: str,
@@ -30,11 +56,12 @@ class RotaryRoutingService:
         role: str = "agent",
         presence: str = "offline",
         max_active_chats: int = 10,
+        is_active: bool = True,
     ) -> Dict[str, Any]:
-        """Membuat agen CS baru untuk tenant tertentu."""
+        """Membuat agen CS / anggota tim baru untuk tenant tertentu."""
         role_val = role.lower().strip()
-        if role_val not in ("admin", "agent"):
-            raise ValueError("Role harus 'admin' atau 'agent'")
+        if role_val not in ("owner", "supervisor", "agent", "admin"):
+            raise ValueError("Role harus 'owner', 'supervisor', atau 'agent'")
 
         presence_val = presence.lower().strip()
         if presence_val not in ("active", "break", "offline"):
@@ -45,16 +72,195 @@ class RotaryRoutingService:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     """
-                    INSERT INTO cs_agents (tenant_id, name, phone, email, role, presence, max_active_chats)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id, tenant_id, name, phone, email, role, presence, max_active_chats, created_at, updated_at;
+                    INSERT INTO cs_agents (tenant_id, name, phone, email, role, presence, max_active_chats, is_active)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id, tenant_id, name, phone, email, role, presence, max_active_chats, is_active, created_at, updated_at;
                     """,
-                    (tenant_id, name, phone, email, role_val, presence_val, max_active_chats)
+                    (tenant_id, name, phone, email, role_val, presence_val, max_active_chats, is_active)
                 )
                 agent = dict(cur.fetchone())
                 conn.commit()
                 agent["id"] = str(agent["id"])
                 return agent
+        finally:
+            conn.close()
+
+    def get_agent(self, agent_id: str, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Mengambil detail agen dengan pengecekan isolasi tenant."""
+        conn = self._get_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                if tenant_id:
+                    tenant_ids = self._resolve_tenant_identifiers(tenant_id)
+                    cur.execute(
+                        """
+                        SELECT a.id, a.tenant_id, a.name, a.phone, a.email, a.role, a.presence, a.max_active_chats,
+                               a.is_active, a.created_at, a.updated_at,
+                               COALESCE(COUNT(c.id) FILTER (WHERE c.status = 'assigned'), 0)::int AS active_chats
+                        FROM cs_agents a
+                        LEFT JOIN conversations c ON c.assigned_agent_id = a.id
+                        WHERE a.id = %s AND a.tenant_id = ANY(%s)
+                        GROUP BY a.id;
+                        """,
+                        (agent_id, tenant_ids)
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT a.id, a.tenant_id, a.name, a.phone, a.email, a.role, a.presence, a.max_active_chats,
+                               a.is_active, a.created_at, a.updated_at,
+                               COALESCE(COUNT(c.id) FILTER (WHERE c.status = 'assigned'), 0)::int AS active_chats
+                        FROM cs_agents a
+                        LEFT JOIN conversations c ON c.assigned_agent_id = a.id
+                        WHERE a.id = %s
+                        GROUP BY a.id;
+                        """,
+                        (agent_id,)
+                    )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                item = dict(row)
+                item["id"] = str(item["id"])
+                return item
+        finally:
+            conn.close()
+
+    def update_agent(self, agent_id: str, tenant_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Memperbarui atribut anggota tim (role, max_active_chats, presence, is_active, name, dll.)
+        dengan jaminan isolasi tenant ketat.
+        """
+        tenant_ids = self._resolve_tenant_identifiers(tenant_id)
+        if not tenant_ids:
+            tenant_ids = [tenant_id]
+
+        set_clauses = []
+        params = []
+
+        allowed_keys = ("name", "phone", "email", "role", "presence", "max_active_chats", "is_active")
+        for k in allowed_keys:
+            if k not in updates or updates[k] is None:
+                continue
+            v = updates[k]
+            if k == "role":
+                role_val = str(v).lower().strip()
+                if role_val not in ("owner", "supervisor", "agent", "admin"):
+                    raise ValueError("Role harus 'owner', 'supervisor', atau 'agent'")
+                set_clauses.append("role = %s")
+                params.append(role_val)
+            elif k == "presence":
+                presence_val = str(v).lower().strip()
+                if presence_val not in ("active", "break", "offline"):
+                    raise ValueError("Presence harus 'active', 'break', atau 'offline'")
+                set_clauses.append("presence = %s")
+                params.append(presence_val)
+            elif k == "max_active_chats":
+                val = int(v)
+                if val < 1:
+                    raise ValueError("max_active_chats minimal 1")
+                set_clauses.append("max_active_chats = %s")
+                params.append(val)
+            elif k == "is_active":
+                val = bool(v)
+                set_clauses.append("is_active = %s")
+                params.append(val)
+                if not val:
+                    set_clauses.append("presence = 'offline'")
+            elif k in ("name", "phone", "email"):
+                set_clauses.append(f"{k} = %s")
+                params.append(str(v).strip() if v else None)
+
+        if not set_clauses:
+            agent = self.get_agent(agent_id, tenant_id)
+            if not agent:
+                raise ValueError(f"Agent with ID {agent_id} not found for this tenant.")
+            return agent
+
+        set_clauses.append("updated_at = NOW()")
+        params.extend([agent_id, tenant_ids])
+
+        conn = self._get_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                query = f"""
+                    UPDATE cs_agents
+                    SET {", ".join(set_clauses)}
+                    WHERE id = %s AND a_tenant_id_match:
+                """
+                # Use tenant_id = ANY(%s)
+                query = f"""
+                    UPDATE cs_agents
+                    SET {", ".join(set_clauses)}
+                    WHERE id = %s AND tenant_id = ANY(%s)
+                    RETURNING id, tenant_id, name, phone, email, role, presence, max_active_chats, is_active, updated_at;
+                """
+                cur.execute(query, tuple(params))
+                row = cur.fetchone()
+                if not row:
+                    raise ValueError(f"Agent with ID {agent_id} not found for this tenant.")
+                conn.commit()
+                res = dict(row)
+                res["id"] = str(res["id"])
+                return res
+        finally:
+            conn.close()
+
+    def delete_agent(self, agent_id: str, tenant_id: str, hard_delete: bool = False) -> Dict[str, Any]:
+        """
+        Menonaktifkan (soft delete) atau menghapus permanen akses anggota tim
+        dengan jaminan isolasi tenant ketat.
+        """
+        tenant_ids = self._resolve_tenant_identifiers(tenant_id)
+        if not tenant_ids:
+            tenant_ids = [tenant_id]
+
+        conn = self._get_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                if hard_delete:
+                    cur.execute(
+                        """
+                        DELETE FROM cs_agents
+                        WHERE id = %s AND tenant_id = ANY(%s)
+                        RETURNING id, tenant_id, name, email;
+                        """,
+                        (agent_id, tenant_ids)
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        raise ValueError(f"Agent with ID {agent_id} not found for this tenant.")
+                    conn.commit()
+                    return {
+                        "success": True,
+                        "deleted": True,
+                        "hard_delete": True,
+                        "agent_id": str(row["id"]),
+                        "message": f"Anggota tim {row['name']} berhasil dihapus permanen."
+                    }
+                else:
+                    cur.execute(
+                        """
+                        UPDATE cs_agents
+                        SET is_active = FALSE, presence = 'offline', updated_at = NOW()
+                        WHERE id = %s AND tenant_id = ANY(%s)
+                        RETURNING id, tenant_id, name, email, is_active, presence;
+                        """,
+                        (agent_id, tenant_ids)
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        raise ValueError(f"Agent with ID {agent_id} not found for this tenant.")
+                    conn.commit()
+                    return {
+                        "success": True,
+                        "deleted": True,
+                        "hard_delete": False,
+                        "agent_id": str(row["id"]),
+                        "is_active": False,
+                        "presence": "offline",
+                        "message": f"Akses anggota tim {row['name']} berhasil dinonaktifkan."
+                    }
         finally:
             conn.close()
 
@@ -86,25 +292,31 @@ class RotaryRoutingService:
         finally:
             conn.close()
 
-    def get_tenant_agents(self, tenant_id: str) -> List[Dict[str, Any]]:
+    def get_tenant_agents(self, tenant_id: str, include_inactive: bool = True) -> List[Dict[str, Any]]:
         """Mengambil seluruh agen pada tenant berserta jumlah chat aktif masing-masing."""
+        tenant_ids = self._resolve_tenant_identifiers(tenant_id)
+        if not tenant_ids:
+            tenant_ids = [tenant_id]
+
         conn = self._get_connection()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    """
+                query = """
                     SELECT 
                         a.id, a.tenant_id, a.name, a.phone, a.email, a.role, a.presence, a.max_active_chats,
-                        a.created_at, a.updated_at,
+                        a.is_active, a.created_at, a.updated_at,
                         COALESCE(COUNT(c.id) FILTER (WHERE c.status = 'assigned'), 0)::int AS active_chats
                     FROM cs_agents a
                     LEFT JOIN conversations c ON c.assigned_agent_id = a.id
-                    WHERE a.tenant_id = %s
+                    WHERE a.tenant_id = ANY(%s)
+                """
+                if not include_inactive:
+                    query += " AND a.is_active IS TRUE"
+                query += """
                     GROUP BY a.id
                     ORDER BY a.name ASC;
-                    """,
-                    (tenant_id,)
-                )
+                """
+                cur.execute(query, (tenant_ids,))
                 rows = cur.fetchall()
                 result = []
                 for r in rows:
@@ -166,6 +378,10 @@ class RotaryRoutingService:
                         "error": f"Conversation {conversation_id} not found."
                     }
 
+                tenant_ids = self._resolve_tenant_identifiers(tenant_id)
+                if not tenant_ids:
+                    tenant_ids = [tenant_id]
+
                 # 2. Cari agen aktif dengan kapasitas tersisa
                 cur.execute(
                     """
@@ -174,13 +390,13 @@ class RotaryRoutingService:
                         COALESCE(COUNT(c.id) FILTER (WHERE c.status = 'assigned'), 0)::int AS active_chats
                     FROM cs_agents a
                     LEFT JOIN conversations c ON c.assigned_agent_id = a.id
-                    WHERE a.tenant_id = %s AND a.presence = 'active'
+                    WHERE a.tenant_id = ANY(%s) AND a.presence = 'active' AND a.is_active IS TRUE
                     GROUP BY a.id
                     HAVING COALESCE(COUNT(c.id) FILTER (WHERE c.status = 'assigned'), 0) < a.max_active_chats
                     ORDER BY active_chats ASC, a.updated_at ASC, a.id ASC
                     LIMIT 1;
                     """,
-                    (tenant_id,)
+                    (tenant_ids,)
                 )
                 selected_agent = cur.fetchone()
 

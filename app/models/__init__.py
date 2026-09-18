@@ -43,6 +43,7 @@ from app.models.local_service import (
 )
 
 from app.models.tenant_prospect import TenantProspect
+from app.models.team import TenantTeamMember, CSAgent, TeamMemberRole, AgentPresence
 
 __all__ = [
     # Control Plane & Onboarding Exports
@@ -96,5 +97,10 @@ __all__ = [
     "TenantConversionRule",
     "BookingReminder",
     "ReaderNotification",
+    # Multi-User Team Access Exports
+    "TenantTeamMember",
+    "CSAgent",
+    "TeamMemberRole",
+    "AgentPresence",
 ]
 

@@ -852,7 +852,18 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         return {"status": "ignored_empty_text"}
 
     raw_instance = str(payload.get("instance") or "").strip()
-    clean_slug = (tenant_slug or raw_instance or "onlineboost").strip()
+
+    # STRICT TENANT ISOLATION: tenant_slug dari URL path /webhook/evolution/{tenant_slug}
+    # diprioritaskan penuh. Fallback ke instance name jika slug tidak disediakan.
+    # DILARANG fallback ke hardcoded demo tenant (boontrack-shop, onlineboost, dll).
+    if tenant_slug and tenant_slug.strip():
+        clean_slug = tenant_slug.strip()
+    elif raw_instance and raw_instance.strip():
+        clean_slug = raw_instance.strip()
+    else:
+        logger.warning("[EVOLUTION WEBHOOK] No tenant_slug or instance in payload. Returning ignored.")
+        return {"status": "ignored_no_tenant"}
+
     resolved_tenant = clean_slug.replace("tenant_", "").replace("_", "-").lower()
     sender_name = str(data.get("pushName") or payload.get("pushName") or "Pelanggan").strip()
 
@@ -917,6 +928,14 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         user_name=sender_name,
         media_url=media_url,
     ))
+
+    # [TENANT LOCK] Kunci sender_phone ke resolved_tenant di sesi memori
+    # agar tidak tersedot ke fallback session_router atau boontrack-shop
+    try:
+        from app.services.whatsapp.credentials import set_user_session
+        set_user_session(sender_phone, resolved_tenant)
+    except Exception as _lock_err:
+        logger.debug(f"[EVOLUTION WEBHOOK] session lock skipped: {_lock_err}")
 
     # Jalankan pemrosesan inbound AI
     inbound_res = await process_inbound_message(InboundPayload(
@@ -989,6 +1008,15 @@ async def aiohttp_evolution_webhook_handler(request):
     res = await process_evolution_webhook_payload(payload, tenant_slug)
     from aiohttp import web
     return web.json_response(res)
+
+
+# ---------------------------------------------------------------------------
+# ALIAS: handle_evolution_inbound_webhook
+# Dibutuhkan oleh whatsapp_central.py untuk menangani payload Evolution API
+# yang masuk melalui jalur /webhook/whatsapp (shared Meta endpoint).
+# Tenant slug dalam kasus ini diambil dari payload['instance'].
+# ---------------------------------------------------------------------------
+handle_evolution_inbound_webhook = aiohttp_evolution_webhook_handler
 
 
 async def aiohttp_inbound_process_handler(request):

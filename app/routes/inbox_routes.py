@@ -40,6 +40,25 @@ class CreateAgentRequest(BaseModel):
     role: str = "agent"
     presence: str = "offline"
     max_active_chats: int = 10
+    is_active: bool = True
+
+class CreateTenantAgentRequest(BaseModel):
+    name: str
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    role: str = "agent"  # 'owner' | 'supervisor' | 'agent' | 'admin'
+    presence: str = "offline"  # 'active' | 'break' | 'offline'
+    max_active_chats: int = 10
+    is_active: bool = True
+
+class UpdateTenantAgentRequest(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None  # 'owner' | 'supervisor' | 'agent' | 'admin'
+    presence: Optional[str] = None  # 'active' | 'break' | 'offline'
+    max_active_chats: Optional[int] = None
+    is_active: Optional[bool] = None
 
 class UpdateAgentPresenceRequest(BaseModel):
     presence: str  # 'active' | 'break' | 'offline'
@@ -208,7 +227,8 @@ async def create_agent(req: CreateAgentRequest):
             email=req.email,
             role=req.role,
             presence=req.presence,
-            max_active_chats=req.max_active_chats
+            max_active_chats=req.max_active_chats,
+            is_active=req.is_active
         )
         return {"success": True, "agent": agent}
     except ValueError as ve:
@@ -231,6 +251,137 @@ async def update_agent_presence(agent_id: str, req: UpdateAgentPresenceRequest):
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.error(f"[Inbox Update Presence Error] {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =====================================================================
+# Multi-User / Team Access Tenant Endpoints (Opsi B)
+# =====================================================================
+
+@router.get("/{tenant_slug}/agents", summary="List Tenant Team Members / Agents")
+async def list_tenant_agents(
+    tenant_slug: str,
+    include_inactive: bool = Query(True, description="Sertakan anggota tim yang dinonaktifkan")
+):
+    """
+    Daftar seluruh anggota tim toko (Owner, Supervisor, CS Agent)
+    beserta status presence, beban chat aktif, role, dan status aktifnya.
+    Terisolasi ketat per tenant_slug.
+    """
+    try:
+        agents = rotary_routing_service.get_tenant_agents(tenant_slug, include_inactive=include_inactive)
+        return {
+            "success": True,
+            "tenant_slug": tenant_slug,
+            "count": len(agents),
+            "agents": agents
+        }
+    except Exception as e:
+        logger.error(f"[Inbox List Tenant Agents Error] {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{tenant_slug}/agents", summary="Create Tenant Team Member / Agent")
+async def create_tenant_agent(tenant_slug: str, req: CreateTenantAgentRequest):
+    """
+    Menambahkan anggota tim operasional baru (Owner, Supervisor, CS Agent)
+    untuk toko tertentu.
+    """
+    try:
+        agent = rotary_routing_service.create_agent(
+            tenant_id=tenant_slug,
+            name=req.name,
+            phone=req.phone,
+            email=req.email,
+            role=req.role,
+            presence=req.presence,
+            max_active_chats=req.max_active_chats,
+            is_active=req.is_active
+        )
+        return {
+            "success": True,
+            "tenant_slug": tenant_slug,
+            "agent": agent
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"[Inbox Create Tenant Agent Error] {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/{tenant_slug}/agents/{agent_id}", summary="Update Tenant Team Member")
+async def update_tenant_agent(
+    tenant_slug: str,
+    agent_id: str,
+    req: UpdateTenantAgentRequest
+):
+    """
+    Memperbarui konfigurasi anggota tim toko (role, max_active_chats, presence, is_active).
+    Wajib validasi isolasi tenant: agent_id harus milik tenant_slug tersebut.
+    """
+    try:
+        existing = rotary_routing_service.get_agent(agent_id, tenant_id=tenant_slug)
+        if not existing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Anggota tim dengan ID {agent_id} tidak ditemukan untuk tenant '{tenant_slug}'."
+            )
+
+        updates = req.model_dump(exclude_unset=True)
+        updated = rotary_routing_service.update_agent(
+            agent_id=agent_id,
+            tenant_id=tenant_slug,
+            updates=updates
+        )
+        return {
+            "success": True,
+            "tenant_slug": tenant_slug,
+            "agent": updated
+        }
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"[Inbox Update Tenant Agent Error] {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{tenant_slug}/agents/{agent_id}", summary="Delete / Deactivate Tenant Team Member")
+async def delete_tenant_agent(
+    tenant_slug: str,
+    agent_id: str,
+    hard_delete: bool = Query(False, description="Hapus permanen dari database jika True, nonaktifkan jika False")
+):
+    """
+    Menonaktifkan (default soft-delete) atau menghapus permanen akses anggota tim.
+    Wajib validasi isolasi tenant: agent_id harus milik tenant_slug tersebut.
+    """
+    try:
+        existing = rotary_routing_service.get_agent(agent_id, tenant_id=tenant_slug)
+        if not existing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Anggota tim dengan ID {agent_id} tidak ditemukan untuk tenant '{tenant_slug}'."
+            )
+
+        res = rotary_routing_service.delete_agent(
+            agent_id=agent_id,
+            tenant_id=tenant_slug,
+            hard_delete=hard_delete
+        )
+        return {
+            "success": True,
+            "tenant_slug": tenant_slug,
+            **res
+        }
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"[Inbox Delete Tenant Agent Error] {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -314,9 +465,86 @@ async def aiohttp_list_agents(request: web.Request):
         return web.json_response({"success": False, "detail": str(e)}, status=500)
 
 
+async def aiohttp_tenant_list_agents(request: web.Request):
+    tenant_slug = request.match_info.get("tenant_slug")
+    if not tenant_slug:
+        return web.json_response({"success": False, "detail": "tenant_slug path param is required."}, status=400)
+    include_inactive = request.query.get("include_inactive", "true").lower() in ("true", "1")
+    try:
+        agents = rotary_routing_service.get_tenant_agents(tenant_slug, include_inactive=include_inactive)
+        return web.json_response({"success": True, "tenant_slug": tenant_slug, "count": len(agents), "agents": agents})
+    except Exception as e:
+        return web.json_response({"success": False, "detail": str(e)}, status=500)
+
+
+async def aiohttp_tenant_create_agent(request: web.Request):
+    tenant_slug = request.match_info.get("tenant_slug")
+    if not tenant_slug:
+        return web.json_response({"success": False, "detail": "tenant_slug path param is required."}, status=400)
+    try:
+        body = await request.json()
+        agent = rotary_routing_service.create_agent(
+            tenant_id=tenant_slug,
+            name=body.get("name", ""),
+            phone=body.get("phone"),
+            email=body.get("email"),
+            role=body.get("role", "agent"),
+            presence=body.get("presence", "offline"),
+            max_active_chats=int(body.get("max_active_chats", 10)),
+            is_active=bool(body.get("is_active", True)),
+        )
+        return web.json_response({"success": True, "tenant_slug": tenant_slug, "agent": agent})
+    except ValueError as ve:
+        return web.json_response({"success": False, "detail": str(ve)}, status=400)
+    except Exception as e:
+        return web.json_response({"success": False, "detail": str(e)}, status=500)
+
+
+async def aiohttp_tenant_update_agent(request: web.Request):
+    tenant_slug = request.match_info.get("tenant_slug")
+    agent_id = request.match_info.get("agent_id")
+    if not tenant_slug or not agent_id:
+        return web.json_response({"success": False, "detail": "tenant_slug and agent_id are required."}, status=400)
+    try:
+        existing = rotary_routing_service.get_agent(agent_id, tenant_id=tenant_slug)
+        if not existing:
+            return web.json_response({"success": False, "detail": f"Agent {agent_id} not found for this tenant."}, status=404)
+        body = await request.json()
+        updated = rotary_routing_service.update_agent(agent_id=agent_id, tenant_id=tenant_slug, updates=body)
+        return web.json_response({"success": True, "tenant_slug": tenant_slug, "agent": updated})
+    except ValueError as ve:
+        return web.json_response({"success": False, "detail": str(ve)}, status=400)
+    except Exception as e:
+        return web.json_response({"success": False, "detail": str(e)}, status=500)
+
+
+async def aiohttp_tenant_delete_agent(request: web.Request):
+    tenant_slug = request.match_info.get("tenant_slug")
+    agent_id = request.match_info.get("agent_id")
+    if not tenant_slug or not agent_id:
+        return web.json_response({"success": False, "detail": "tenant_slug and agent_id are required."}, status=400)
+    hard_delete = request.query.get("hard_delete", "false").lower() in ("true", "1")
+    try:
+        existing = rotary_routing_service.get_agent(agent_id, tenant_id=tenant_slug)
+        if not existing:
+            return web.json_response({"success": False, "detail": f"Agent {agent_id} not found for this tenant."}, status=404)
+        res = rotary_routing_service.delete_agent(agent_id=agent_id, tenant_id=tenant_slug, hard_delete=hard_delete)
+        return web.json_response({"success": True, "tenant_slug": tenant_slug, **res})
+    except ValueError as ve:
+        return web.json_response({"success": False, "detail": str(ve)}, status=400)
+    except Exception as e:
+        return web.json_response({"success": False, "detail": str(e)}, status=500)
+
+
 def register_inbox_routes(app: web.Application):
     """Mendaftarkan seluruh endpoint Inbox ke runner aiohttp."""
     app.router.add_post("/api/v1/inbox/messages/send", aiohttp_send_manual_message)
     app.router.add_post("/api/v1/inbox/conversations/{conversation_id}/assign", aiohttp_assign_conversation)
     app.router.add_get("/api/v1/inbox/agents", aiohttp_list_agents)
+    # Team member routes
+    app.router.add_get("/api/v1/inbox/{tenant_slug}/agents", aiohttp_tenant_list_agents)
+    app.router.add_post("/api/v1/inbox/{tenant_slug}/agents", aiohttp_tenant_create_agent)
+    app.router.add_patch("/api/v1/inbox/{tenant_slug}/agents/{agent_id}", aiohttp_tenant_update_agent)
+    app.router.add_delete("/api/v1/inbox/{tenant_slug}/agents/{agent_id}", aiohttp_tenant_delete_agent)
     logger.info("[ROUTER] Inbox & Rotary Routing routes registered under /api/v1/inbox.")
+

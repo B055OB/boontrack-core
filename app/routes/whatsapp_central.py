@@ -372,9 +372,14 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         evo_event = str(data.get("event") or "").lower()
         has_evo_data = isinstance(data.get("data"), dict) and "key" in data.get("data", {})
         if evo_event in ("messages.upsert", "messages_upsert") or has_evo_data:
-            from app.routes.whatsapp_gateway_routes import handle_evolution_inbound_webhook
-            logger.info("[CENTRAL WA ROUTER] Evolution API payload received -> forwarded to universal gateway router")
-            return await handle_evolution_inbound_webhook(request)
+            try:
+                from app.routes.whatsapp_gateway_routes import handle_evolution_inbound_webhook
+                logger.info("[CENTRAL WA ROUTER] Evolution API payload received -> forwarded to universal gateway router")
+                return await handle_evolution_inbound_webhook(request)
+            except (ImportError, AttributeError) as _evo_import_err:
+                logger.warning(f"[CENTRAL WA ROUTER] handle_evolution_inbound_webhook not found: {_evo_import_err}. Dropping Evolution payload.")
+                from aiohttp import web as _aio_web
+                return _aio_web.json_response({"status": "ignored_evolution_no_handler"}, status=200)
 
     # Pemeriksaan payload Meta webhook: jika hanya berisi 'statuses' tanpa 'messages', segera hentikan eksekusi
     has_statuses = False
@@ -992,6 +997,13 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             from_phone=from_phone,
             message_text=incoming_text,
         )
+
+        # Guard: jika resolver mengembalikan sentinel __NO_TENANT__, drop pesan
+        if tenant_slug == "__NO_TENANT__" or not tenant_slug:
+            logger.info(
+                f"[CENTRAL WA] Resolver returned no tenant for {from_phone}. Message dropped silently."
+            )
+            return web.json_response({"status": "ignored_no_tenant"}, status=200)
 
         details = onboarding_service.get_tenant_details_by_slug(tenant_slug)
         store_name = details.get("tenant", {}).get("name", tenant_slug) if details else tenant_slug

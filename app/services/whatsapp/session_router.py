@@ -126,11 +126,18 @@ def resolve_dynamic_tenant_for_whatsapp(
         logger.info(f"[DYNAMIC TENANT WA] Bound sender {clean_phone} to store '{target_slug}' via onboarding message")
         return target_slug, True
 
+    # CATATAN: Fallback ke "boontrack-shop" untuk pesan greeting ("halo", "hi", dll)
+    # telah DIHAPUS per arsitektur multi-tenant.
+    # Pesan dari Evolution webhook sudah membawa tenant_slug eksplisit dari URL path.
+    # Fungsi ini seharusnya hanya dipanggil untuk WABA demo portal jika ada session aktif.
+    # Jika tidak ada session, kembalikan None agar handler upstream bisa memutuskan.
     if text_lower in ("halo", "hi", "p", "test", "tes", "hai", "start", "info"):
-        return "boontrack-shop", False
+        # Jangan fallback ke demo tenant - kembalikan None agar tidak ada respons spurious
+        return "__NO_TENANT__", False
 
     if clean_phone_id == "1268977686299719":
-        return "boontrack-shop", False
+        # Phone ID ini sudah tidak digunakan sebagai routing signal
+        return "__NO_TENANT__", False
 
     try:
         from app.services.onboarding_service import onboarding_service
