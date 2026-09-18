@@ -136,12 +136,22 @@ class PlatformWebhookRouter:
         activation_match = cls.ACTIVATION_REGEX.search(clean_text)
         if activation_match:
             trace.log_step("ActivationInterceptor", f"Matched activation format with token suffix '{activation_match.group(1)}'")
+            # Deteksi apakah pesan diinisiasi oleh pengguna (user-initiated inbound message).
+            # Mengacu pada regulasi Meta WhatsApp Business API:
+            # - Inbound user message membuka 24-hour Customer Service Messaging Window.
+            # - Free-form message (non-template) HANYA diizinkan di dalam jendela ini.
+            is_user_initiated = bool(
+                sender_phone
+                and (raw_msg.get("from") or raw_msg.get("id") or raw_msg.get("type"))
+            )
             return await cls._process_activation(
                 token_suffix=activation_match.group(1).upper().strip(),
                 sender_phone=sender_phone,
                 phone_number_id=phone_number_id,
                 raw_text=clean_text,
                 trace=trace,
+                is_user_initiated=is_user_initiated,
+                raw_msg=raw_msg,
             )
 
         # =====================================================================
@@ -195,18 +205,32 @@ class PlatformWebhookRouter:
         phone_number_id: str,
         raw_text: str,
         trace: WebhookExecutionTrace,
+        is_user_initiated: bool = True,
+        raw_msg: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Otorisasi 5 Parameter:
         1. activation_code: BT-xxxx
         2. sender_phone: nomor pengirim terverifikasi
         3. pending_registration: record registrasi tenant ditemukan
-        4. expiry: pendaftaran belum kadaluarsa (< 48 jam)
+        4. expiry (Token Expiry): pendaftaran belum kadaluarsa (< 48 jam)
         5. status: status pendaftaran PENDING_ACTIVATION / pending_wa_verification / pending / trial
+
+        Pemisahan Konseptual Messaging Window vs Token Expiry:
+        - Token Expiry (Domain Keamanan Platform):
+          Menentukan validitas keamanan kode verifikasi BT-xxxx (< 48 jam dari pembuatan).
+        - Messaging Window (Domain Kebijakan Meta WABA):
+          Pengiriman pesan konfirmasi bebas biaya (free-form message) HANYA dieksekusi
+          saat user yang menginisiasi pesan (user-initiated inbound message) dalam batas 24-hour service window.
+          Jika aktivasi dipicu oleh sistem/admin/background tanpa user-initiated inbound,
+          pengiriman pesan bebas biaya ditahan (suppressed) untuk mencegah pelanggaran Meta Error #131047.
         """
         canonical_token = f"BT-{token_suffix}"
         clean_phone = normalize_phone_number(sender_phone) or re.sub(r"\D", "", sender_phone)
-        trace.log_step("ActivationAuth.Input", f"Token='{canonical_token}', Sender='{clean_phone}'")
+        trace.log_step(
+            "ActivationAuth.Input",
+            f"Token='{canonical_token}', Sender='{clean_phone}', UserInitiated={is_user_initiated}"
+        )
 
         supabase = get_supabase()
         matched_tenant = None
@@ -263,15 +287,20 @@ class PlatformWebhookRouter:
                 f"Kode verifikasi {canonical_token} tidak ditemukan. "
                 "Pastikan Anda memasukkan kode yang tertera di browser pendaftaran BoonTrack."
             )
-            try:
-                await send_whatsapp_text(
-                    to_phone=clean_phone,
-                    text=fail_msg,
-                    tenant_id="shop",
-                    phone_number_id=phone_number_id,
-                )
-            except Exception:
-                pass
+            if is_user_initiated:
+                try:
+                    await send_whatsapp_text(
+                        to_phone=clean_phone,
+                        text=fail_msg,
+                        tenant_id="shop",
+                        phone_number_id=phone_number_id,
+                    )
+                    trace.log_step("MessagingWindow.Dispatch", "Dispatched fail reply within user-initiated window")
+                except Exception:
+                    pass
+            else:
+                trace.log_step("MessagingWindow.Suppressed", "Free-form fail reply suppressed: not user-initiated")
+
             trace.early_return = True
             trace.response_status = 200
             res = {
@@ -280,6 +309,8 @@ class PlatformWebhookRouter:
                 "verified": False,
                 "token": canonical_token,
                 "reply": fail_msg,
+                "free_form_dispatched": is_user_initiated,
+                "messaging_window": "USER_INITIATED" if is_user_initiated else "NON_USER_INITIATED_SUPPRESSED",
             }
             trace.response_payload = res
             return res
@@ -290,10 +321,15 @@ class PlatformWebhookRouter:
         if current_status not in allowed_pending and not matched_tenant.get("is_active") is False:
             trace.log_step("ActivationAuth.StatusCheck", f"Tenant already active or status '{current_status}' (Param 5 Check)")
             already_active_msg = "Nomor WhatsApp Anda sudah terverifikasi sebelumnya. Silakan lanjutkan pengaturan toko di browser."
-            try:
-                await send_whatsapp_text(to_phone=clean_phone, text=already_active_msg, tenant_id="shop", phone_number_id=phone_number_id)
-            except Exception:
-                pass
+            if is_user_initiated:
+                try:
+                    await send_whatsapp_text(to_phone=clean_phone, text=already_active_msg, tenant_id="shop", phone_number_id=phone_number_id)
+                    trace.log_step("MessagingWindow.Dispatch", "Dispatched already-active reply within user-initiated window")
+                except Exception:
+                    pass
+            else:
+                trace.log_step("MessagingWindow.Suppressed", "Free-form already-active reply suppressed: not user-initiated")
+
             trace.early_return = True
             trace.response_status = 200
             res = {
@@ -303,11 +339,13 @@ class PlatformWebhookRouter:
                 "tenant_slug": matched_tenant.get("slug"),
                 "token": canonical_token,
                 "reply": already_active_msg,
+                "free_form_dispatched": is_user_initiated,
+                "messaging_window": "USER_INITIATED" if is_user_initiated else "NON_USER_INITIATED_SUPPRESSED",
             }
             trace.response_payload = res
             return res
 
-        # Param 4: Expiry Check (Maksimal 48 jam dari pembuatan)
+        # Param 4: Token Expiry Check (Domain Keamanan Platform: Maksimal 48 jam dari pembuatan)
         created_str = matched_tenant.get("created_at")
         if created_str:
             try:
@@ -318,10 +356,15 @@ class PlatformWebhookRouter:
                 if datetime.now(timezone.utc) - created_dt > timedelta(hours=48):
                     trace.log_step("ActivationAuth.Expired", f"Registration expired (Created: {created_str}) (Param 4 Failed)")
                     exp_msg = f"Kode verifikasi {canonical_token} sudah kadaluarsa (melebihi 48 jam). Silakan lakukan pendaftaran ulang."
-                    try:
-                        await send_whatsapp_text(to_phone=clean_phone, text=exp_msg, tenant_id="shop", phone_number_id=phone_number_id)
-                    except Exception:
-                        pass
+                    if is_user_initiated:
+                        try:
+                            await send_whatsapp_text(to_phone=clean_phone, text=exp_msg, tenant_id="shop", phone_number_id=phone_number_id)
+                            trace.log_step("MessagingWindow.Dispatch", "Dispatched expired reply within user-initiated window")
+                        except Exception:
+                            pass
+                    else:
+                        trace.log_step("MessagingWindow.Suppressed", "Free-form expired reply suppressed: not user-initiated")
+
                     trace.early_return = True
                     trace.response_status = 200
                     res = {
@@ -329,7 +372,10 @@ class PlatformWebhookRouter:
                         "reason": "REGISTRATION_EXPIRED",
                         "verified": False,
                         "token": canonical_token,
+                        "token_expired": True,
                         "reply": exp_msg,
+                        "free_form_dispatched": is_user_initiated,
+                        "messaging_window": "USER_INITIATED" if is_user_initiated else "NON_USER_INITIATED_SUPPRESSED",
                     }
                     trace.response_payload = res
                     return res
@@ -390,16 +436,30 @@ class PlatformWebhookRouter:
         )
 
         # 4. Kirim balasan konfirmasi sukses resmi via Meta WABA
-        try:
-            await send_whatsapp_text(
-                to_phone=clean_phone,
-                text=success_reply,
-                tenant_id="shop",
-                phone_number_id=phone_number_id,
+        # Pemisahan Konseptual Messaging Window vs Token Expiry:
+        # Pengiriman pesan konfirmasi bebas biaya (free-form message) HANYA dieksekusi
+        # saat user yang menginisiasi pesan (user-initiated inbound message).
+        free_form_dispatched = False
+        if is_user_initiated:
+            try:
+                await send_whatsapp_text(
+                    to_phone=clean_phone,
+                    text=success_reply,
+                    tenant_id="shop",
+                    phone_number_id=phone_number_id,
+                )
+                free_form_dispatched = True
+                trace.log_step(
+                    "MessagingWindow.DispatchSuccess",
+                    f"User-initiated inbound confirmed. Free-form confirmation sent to {clean_phone} within messaging window."
+                )
+            except Exception as send_err:
+                trace.log_step("ActivationAuth.DispatchError", str(send_err))
+        else:
+            trace.log_step(
+                "MessagingWindow.Suppressed",
+                f"Non-user-initiated activation for {clean_phone}. Free-form message suppressed to comply with Meta 24-hour window policy."
             )
-            trace.log_step("ActivationAuth.DispatchSuccess", f"Confirmation sent to {clean_phone}")
-        except Exception as send_err:
-            trace.log_step("ActivationAuth.DispatchError", str(send_err))
 
         # 5. EARLY RETURN 200 OK — STOP PIPELINE SEKETIKA!
         # JANGAN BIARKAN MENYENTUH CONVERSATION ENGINE, CATALOG, ATAU CS ROTARY QUEUE!
@@ -412,6 +472,8 @@ class PlatformWebhookRouter:
             "tenant_slug": tenant_slug,
             "token": canonical_token,
             "reply": success_reply,
+            "free_form_dispatched": free_form_dispatched,
+            "messaging_window": "USER_INITIATED_ACTIVE" if is_user_initiated else "NON_USER_INITIATED_SUPPRESSED",
         }
         trace.response_payload = res
         trace.log_step("ActivationAuth.Complete", "Early return 200 OK executed. Pipeline halted.")
@@ -651,18 +713,18 @@ class TrafficSplitter:
             return 200, result, trace
 
         # =====================================================================
-        # ROUTE C: UNKNOWN / UNMAPPED PHONE NUMBER ID
-        # Jangan pernah alirkan ke public service! Return 404 / 400.
+        # ROUTE C: UNKNOWN / UNMAPPED PHONE NUMBER ID (SAFE ACKNOWLEDGMENT)
+        # Cegah Meta retry storm: kirim respons aman HTTP 200 OK
         # =====================================================================
-        trace.log_step("TrafficSplitter.Unmapped", f"Unknown phone_number_id: '{incoming_phone_id}'. Pipeline rejected.")
+        logger.warning(f"[TrafficSplitter] Dropping event for unknown phone_id: {incoming_phone_id}")
+        trace.log_step("TrafficSplitter.Unmapped", f"Unknown phone_number_id: '{incoming_phone_id}'. Dropped safely with 200 OK.")
         trace.route_type = "UNMAPPED_REJECTED"
         trace.early_return = True
-        trace.response_status = 404
+        trace.response_status = 200
         unmapped_res = {
-            "status": "error",
-            "error": "UNMAPPED_PHONE_NUMBER_ID",
-            "message": f"Phone number ID '{incoming_phone_id}' is not registered on BoonTrack platform or tenants.",
+            "status": "IGNORED_UNMAPPED",
             "phone_number_id": incoming_phone_id,
+            "message": f"Phone number ID '{incoming_phone_id}' is not registered on BoonTrack platform or tenants.",
         }
         trace.response_payload = unmapped_res
-        return 404, unmapped_res, trace
+        return 200, unmapped_res, trace

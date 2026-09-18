@@ -434,6 +434,112 @@ class TestWebhookHardeningAndIsolation(unittest.TestCase):
         self.assertIn("Beta Sneaker", data_b.get("reply"))
         self.assertNotIn("Alpha", data_b.get("reply"))
 
+    # =========================================================================
+    # i. Safe Webhook Acknowledgment untuk Unmapped Phone ID (Anti-Retry Storm)
+    # =========================================================================
+    @patch("app.services.tenant_context_resolver.tenant_context_resolver.resolve_by_phone_number_id", new_callable=AsyncMock)
+    def test_unmapped_phone_id_safe_acknowledgment_prevents_retry_storm(self, mock_resolve_tenant):
+        mock_resolve_tenant.return_value = None
+        unmapped_phone_id = "777666555444"
+
+        payload = {
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "id": "unmapped_waba",
+                "changes": [{
+                    "value": {
+                        "messaging_product": "whatsapp",
+                        "metadata": {
+                            "phone_number_id": unmapped_phone_id,
+                            "display_phone_number": "628999999999"
+                        },
+                        "contacts": [{"profile": {"name": "Stranger"}, "wa_id": "628199999999"}],
+                        "messages": [{
+                            "from": "628199999999",
+                            "id": "wamid.UNMAPPED_MSG",
+                            "timestamp": "1741350000",
+                            "type": "text",
+                            "text": {"body": "halo"}
+                        }]
+                    },
+                    "field": "messages"
+                }]
+            }]
+        }
+
+        # Must return HTTP 200 OK with IGNORED_UNMAPPED (never 400/404)
+        resp = self.client.post("/api/v1/whatsapp/webhook", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data.get("status"), "IGNORED_UNMAPPED")
+        self.assertEqual(data.get("phone_number_id"), unmapped_phone_id)
+
+    # =========================================================================
+    # j. Pemisahan Konseptual Messaging Window vs Token Expiry
+    # =========================================================================
+    @patch("app.whatsapp.traffic_splitter.send_whatsapp_text", new_callable=AsyncMock)
+    def test_messaging_window_vs_token_expiry_separation(self, mock_send_wa):
+        import asyncio
+        from app.whatsapp.traffic_splitter import WebhookExecutionTrace, PlatformWebhookRouter
+        from app.services.onboarding_service import onboarding_service
+
+        mock_send_wa.return_value = True
+
+        # Register pending tenant
+        onboarding_service._tenants_by_slug["store-window-test"] = {
+            "id": "t-window-id",
+            "slug": "store-window-test",
+            "status": "pending_wa_verification",
+            "is_active": False,
+            "created_at": "2026-09-18T10:00:00+00:00",
+            "metadata": {
+                "wa_verification_token": "BT-8899",
+                "phone": "6281234568899",
+                "is_verified": False,
+            }
+        }
+
+        trace_non_user = WebhookExecutionTrace("msg_non_user", self.platform_phone_id, "6281234568899", "BT-8899")
+
+        # Test Case 1: Non-user-initiated activation (e.g. backend sync / admin trigger)
+        # Token valid & unexpired (< 48h), but NOT user-initiated: free-form message must be suppressed!
+        res_non_user = asyncio.run(PlatformWebhookRouter._process_activation(
+            token_suffix="8899",
+            sender_phone="6281234568899",
+            phone_number_id=self.platform_phone_id,
+            raw_text="AKTIVASI BT-8899",
+            trace=trace_non_user,
+            is_user_initiated=False,
+        ))
+
+        self.assertEqual(res_non_user.get("status"), "success")
+        self.assertEqual(res_non_user.get("verified"), True)
+        self.assertEqual(res_non_user.get("free_form_dispatched"), False)
+        self.assertEqual(res_non_user.get("messaging_window"), "NON_USER_INITIATED_SUPPRESSED")
+        mock_send_wa.assert_not_called()
+
+        # Reset tenant to pending for user-initiated test
+        onboarding_service._tenants_by_slug["store-window-test"]["status"] = "pending_wa_verification"
+        onboarding_service._tenants_by_slug["store-window-test"]["is_active"] = False
+
+        # Test Case 2: User-initiated inbound message
+        # Token valid & user initiated -> free-form message IS dispatched within 24h window
+        trace_user = WebhookExecutionTrace("msg_user", self.platform_phone_id, "6281234568899", "BT-8899")
+        res_user = asyncio.run(PlatformWebhookRouter._process_activation(
+            token_suffix="8899",
+            sender_phone="6281234568899",
+            phone_number_id=self.platform_phone_id,
+            raw_text="AKTIVASI BT-8899",
+            trace=trace_user,
+            is_user_initiated=True,
+        ))
+
+        self.assertEqual(res_user.get("status"), "success")
+        self.assertEqual(res_user.get("verified"), True)
+        self.assertEqual(res_user.get("free_form_dispatched"), True)
+        self.assertEqual(res_user.get("messaging_window"), "USER_INITIATED_ACTIVE")
+        mock_send_wa.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
