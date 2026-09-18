@@ -646,3 +646,165 @@ Pedoman keputusan arsitektur dan batasan teknis operasional infrastruktur WhatsA
 3. **Gateway Pool Blueprint (Multi-Server Readiness)**:
    - Skalabilitas multi-server masa depan dirancang berbasis *Gateway Nodes Registry*.
    - Tabel koneksi mendukung pencatatan node gateway (`gateway_node_url`, `api_key`) sehingga penambahan server kontainer Evolution API baru di masa depan tidak akan mengubah kontrak antarmuka (*interface contract*) pada Core backend maupun Inbox frontend.
+
+---
+
+## 13. Webhook Boundary Isolation, Idempotency & Distributed Tracing Standard (Production Contract)
+
+> **Architectural Status**: 🔒 **FROZEN & CERTIFIED (P0, P0.5, P1 E2E)**  
+> **Core Principle**: *"phone_number_id determines domain authority. Message text, tenant slug, and AI intents NEVER determine routing boundaries."*
+
+### 13.1 Deterministic Traffic Splitter & Domain Isolation (P0 Contract)
+Setiap webhook inbound dari Meta Cloud API disaring di layer gerbang terdepan (`TrafficSplitter`) menggunakan atribut `metadata.phone_number_id` server-side registry secara deterministik:
+
+```text
+                    META WEBHOOK INBOUND
+                             │
+                             ▼
+                     TrafficSplitter
+                             │
+                      phone_number_id
+                             │
+              ┌──────────────┴──────────────┐
+              ▼                             ▼
+     PLATFORM_PHONE_NUMBER_ID          TENANT PHONE
+              │                             │
+              ▼                             ▼
+     PlatformWebhookRouter          TenantWebhookRouter
+              │                             │
+       ┌──────┼──────┐             ┌────────┼────────┐
+       ▼      ▼      ▼             ▼        ▼        ▼
+    Activation Payment Support   Catalog   Order     CS
+       │
+       ▼
+    EARLY RETURN 200 OK
+```
+
+Platform WABA Routing (PLATFORM_TRANSACTIONAL):
+
+Terikat mutlak pada PLATFORM_PHONE_NUMBER_ID (1268977686299719 / nomor resmi 0851-7955-5449).
+
+Khusus melayani: System Commands registrasi (AKTIVASI BT-xxxx), notifikasi pembayaran platform, dan panduan sistem resmi (GLOBAL_FALLBACK_PLATFORM).
+
+Terisolasi 100% dari Conversation Engine, katalog toko, keranjang belanja, dan antrean CS merchant.
+
+Tenant WABA Routing (TENANT_SALES):
+
+Terikat pada nomor telepon tenant yang terdaftar di database whatsapp_connections / metadata toko.
+
+Mengalir ke TenantRuntimeContext, Conversation Engine (LLM/State Machine), katalog produk, dan CS multi-seat.
+
+Anti-Retry Storm & Safe Acknowledgment (P1 Rule):
+
+Jika phone_number_id yang masuk tidak dikenali di platform maupun tenant, backend DILARANG melempar HTTP 404/400 (yang memicu pengulangan kirim dari Meta berhari-hari).
+
+Backend wajib mencatat log audit peringatan dan mengembalikan HTTP 200 OK dengan respons aman {"status": "IGNORED_UNMAPPED"}.
+
+Pemisahan Konseptual Messaging Window vs Token Expiry (P1 Rule):
+
+Token Expiry (Domain Bisnis - 48 Jam): Mengatur masa berlaku token BT-xxxx untuk otorisasi status registrasi tenant di database.
+
+Messaging Window (Domain Kebijakan Provider - 24 Jam): Pengiriman pesan teks konfirmasi bebas biaya (free-form message) HANYA diizinkan jika dipicu oleh pesan inbound pengguna (is_user_initiated = True). Aktivasi di luar interaksi pengguna menahan pengiriman pesan bebas biaya guna mencegah penolakan Meta Error #131047.
+
+System Command Early-Return:
+
+Format AKTIVASI BT-xxxx diperlakukan sebagai perintah sistem deterministik, bukan entitas percakapan bot.
+
+Setelah 5-parameter check (token, pengirim, status registrasi, masa berlaku 48 jam, status belum aktif) terpenuhi, sistem langsung mengembalikan status Early Return 200 OK dan menghentikan pipeline.
+
+13.2 Idempotency Layer & Database Defense-in-Depth (P0.5 Contract)
+Sistem menolak ketergantungan mutlak pada Redis/in-memory lock semata. Kepastian effectively-once side effect dikunci melalui kombinasi lapisan ganda (defense-in-depth):
+
+Deduplication Key Hierarchy:
+
+Primary Identity: idemp:wamid:{provider_message_id} (berbasis ID resmi pesan Meta wamid).
+
+Fallback Identity: SHA-256 hash dari sender_phone + raw_text + timestamp dengan jendela kedaluwarsa terbatas (bounded dedup window).
+
+Two-Phase Lock (2PL) Concurrency Control:
+
+Fase 1 (Acquire): Atomic SETNX status IN_PROGRESS (timeout 60 detik). Jika ditemukan entri berstatus COMPLETED, sistem seketika melakukan Early Return 200 OK mengembalikan respons ter-cache tanpa mengeksekusi efek samping ulang.
+
+Fase 2 (Commit/Release): Menyimpan hasil eksekusi (TTL 24 jam). Jika terjadi kegagalan tak terduga (unhandled exception), lock dilepaskan agar pengiriman ulang Meta yang sah dapat diproses.
+
+Database Integrity & Uniqueness Boundary (Pagar Terakhir):
+
+Constraint unik UNIQUE (verification_token) dan composite index (whatsapp_number, verification_token) pada tabel registrasi.
+
+Transisi status wajib atomik:
+
+```sql
+UPDATE tenants 
+SET status = 'active', is_verified = true, wa_verified_at = :now 
+WHERE id = :tenant_id AND status = 'pending_wa_verification';
+```
+
+Idempotency Hit (0 Rows Affected): Jika baris terpengaruh bernilai 0 (karena sudah berstatus active), operasi diperlakukan sebagai keberhasilan idempoten: sistem merespons sukses tanpa mengeksekusi mutasi ulang ke database dan tanpa mengirim ulang pesan WhatsApp.
+
+Crash-After-Commit Recovery Authority:
+
+Jika proses backend mati/crash tepat setelah transaksi database berhasil dicatat namun sebelum status cache diubah menjadi COMPLETED, pengiriman ulang dari Meta diverifikasi langsung ke status database terkini. Database state bertindak sebagai otoritas pemulihan (recovery authority) tertinggi.
+
+Strict DB Outage Degradation Boundary:
+
+In-memory fallback/cache HANYA diperbolehkan untuk resolusi perutean (routing availability).
+
+Otorisasi bisnis, pengesahan akun, pemotongan kuota, dan transaksi finansial WAJIB memverifikasi database langsung (source of truth).
+
+Jika koneksi database terputus, sistem wajib mengeksekusi kegagalan terkontrol (HTTP 503 DATABASE_UNAVAILABLE) agar provider melakukan exponential retry, dilarang mengasumsikan keberhasilan berbasis memori lokal yang berpotensi stale.
+
+13.3 Distributed Tracing & Observability Taxonomy (Production Standard)
+Sistem observability dirancang untuk memantau kebenaran bisnis (business truth), bukan sekadar metrik infrastruktur (CPU/RAM). Seluruh siklus hidup pesan dan transaksi wajib membawa taksonomi identitas terpisah:
+
+1. Identitas Taksonomi Konteks
+trace_id: UUID tunggal untuk satu siklus eksekusi request/runtime flow (contextvars).
+
+correlation_id: Identifier payung yang mengaitkan seluruh siklus bisnis dari hulu ke hilir (mulai dari chat masuk, pembuatan order, checkout, QRIS, settlement pembayaran, hingga dispatch WhatsApp dan Meta CAPI).
+
+order_id: Identitas unik entitas pesanan bisnis internal.
+
+payment_id: Identitas mutasi/transaksi pembayaran internal.
+
+wamid: Identitas spesifik pesan yang diterbitkan Meta WhatsApp.
+
+provider_event_id: Identitas unik event yang diterbitkan oleh payment gateway (Midtrans/Tripay/Xendit) atau agregator kurir.
+
+2. Skema Log JSON Terstruktur (Mandatory Production Log)
+Setiap event operasional wajib mencatat format log terstruktur yang terisolasi dalam cakupan tenant_id:
+
+```json
+{
+  "timestamp": "ISO-8601",
+  "trace_id": "...",
+  "correlation_id": "...",
+  "tenant_id": "...",
+  "service": "payment_gateway",
+  "event_type": "PAYMENT_SETTLEMENT_PROCESSED",
+  "entity_type": "order",
+  "entity_id": "ORD-1769617304114-7271",
+  "provider": "xendit",
+  "provider_event_id": "67cb123...",
+  "status": "SUCCESS",
+  "duration_ms": 142,
+  "error_code": null
+}
+```
+
+13.4 Production E2E Certification Gates
+Setiap rilis operasional wajib memvalidasi integritas alur menyeluruh melalui 8 skenario pengujian:
+
+Happy Path Flow: Inbound WA -> Product Intent -> Checkout -> QRIS Generation -> Payment Webhook -> Atomic LUNAS Transition -> Outbound WA Notification -> Meta CAPI Purchase.
+
+Duplicate Inbound & Webhooks: Mengirimkan webhook transaksi identik secara berulang menghasilkan status HTTP 200 OK dengan tepat satu kali eksekusi efek samping (single side-effect).
+
+Delayed Webhook Recovery: Penanganan event pembayaran yang tiba terlambat tetap memperbarui transaksi secara benar tanpa false rejection.
+
+Provider Error & Timeout Resilience: Penanganan kegagalan gateway eksternal via fallback generator tanpa merusak state transaksi.
+
+Database Outage Graceful Handling: Kegagalan database pada alur finansial wajib menghasilkan kegagalan terkontrol (HTTP 503 DATABASE_UNAVAILABLE) tanpa mutasi parsial dan tanpa asumsi sukses di in-memory cache.
+
+Decoupled CAPI Failure Isolation: Kegagalan API Meta CAPI (HTTP 5xx/Timeout) tidak boleh membatalkan status pelunasan transaksi pesanan; transaksi tetap LUNAS dan WA tetap terkirim.
+
+Tenant Isolation Audit: Log, data transaksi, dan context trace Tenant A terisolasi mutlak dan kedap 100% dari Tenant B.
+
+Worker & Service Restart Reconciliation: Event yang tertahan saat restart layanan backend dapat dilanjutkan atau direkonsiliasi secara aman dan idempotent.
