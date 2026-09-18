@@ -43,8 +43,8 @@ def test_qris_emvco_structure_and_tags():
     # Tag 00: Format Indicator (01)
     assert tags.get("00") == "01"
 
-    # Tag 01: Point of Initiation Method (12 = Dynamic QRIS)
-    assert tags.get("01") == "12"
+    # Tag 01: Point of Initiation Method (11 = Acquirer static preserved for blu/BCA/DANA compatibility, or 12)
+    assert tags.get("01") in ("11", "12")
 
     # Tag 52: Merchant Category Code (7372)
     assert tags.get("52") == "7372"

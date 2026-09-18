@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import random
 import urllib.parse
 from typing import Optional
@@ -33,57 +34,76 @@ def generate_unique_code(min_val: int = 100, max_val: int = 999) -> int:
 
 
 def generate_dynamic_qris_payload(static_payload: str, amount: int, invoice_id: str = "") -> str:
-    """Mengubah master static QRIS menjadi Dynamic QRIS standar EMVCo resmi Bank Indonesia.
+    """Mengubah master static QRIS menjadi Dynamic QRIS standar EMVCo resmi Bank Indonesia (ASPI).
     
-    Menyusun:
-    - Tag 00: 01 (EMVCo payload format indicator)
-    - Tag 01: 12 (Dynamic QRIS)
-    - Tag 52: MCC (7372)
-    - Tag 53: 360 (IDR)
-    - Tag 54: Nominal pembayaran
-    - Tag 58: ID (Indonesia)
-    - Tag 59: Merchant Name
-    - Tag 60: Merchant City
-    - Tag 61: Postal Code
-    - Tag 62: Additional Data Field (Invoice / Reference ID) jika tersedia
-    - Tag 63: 6304 + CRC16-CCITT Checksum
+    1. Format Tag 01 (Wajib Dinamis):
+       Jika payload diawali '000201010211', ganti menjadi '000201010212'.
+    2. Pembersihan Tag 54 Lama (Anti-Duplikasi):
+       Hapus tag 54 yang mungkin sudah ada sebelumnya sebelum menyisipkan yang baru.
+    3. Penempatan Tag 54:
+       Format f"54{len(amt_str):02d}{amt_str}" disisipkan tepat sebelum "5802ID" (atau "5802").
+       Tag 62 asli bawaan acquirer (misal 62070703A01) dipertahankan apa adanya.
+    4. Hitung Ulang CRC16-CCITT:
+       Hitung ulang CRC16 hingga '6304' dengan poly 0x1021, init 0xFFFF (UPPERCASE 4 digit).
     """
     clean_str = (static_payload or "").strip()
     if not clean_str.startswith("000201") or "5802ID" not in clean_str or "5303360" not in clean_str:
         clean_str = STANDARD_MASTER_QRIS
 
-    # 1. Hapus Tag 63 (CRC) lama jika ada
+    # 1. Hapus Tag 63 (CRC lama) di belakang string
     if "6304" in clean_str:
         idx_63 = clean_str.rfind("6304")
         raw = clean_str[:idx_63]
     else:
         raw = clean_str[:-4] if len(clean_str) > 4 else clean_str
 
-    # 2. Ubah Tag 01 Point of Initiation Method menjadi Dinamis (010211 -> 010212)
-    raw = raw.replace("010211", "010212", 1)
+    # 2. Format Tag 01 (Wajib Dinamis):
+    # Jika payload diawali "000201010211", ganti menjadi "000201010212"
+    if raw.startswith("000201010211"):
+        raw = "000201010212" + raw[12:]
+    elif "010211" in raw:
+        raw = raw.replace("010211", "010212", 1)
 
-    # 3. Format Tag 54 (Nominal)
-    str_amount = str(int(amount))
-    tag_54 = f"54{len(str_amount):02d}{str_amount}"
-
-    # 4. Sisipkan Tag 54 persis sebelum "5802ID"
+    # 3. Pembersihan Tag 54 Lama (Anti-Duplikasi) sebelum Tag 58:
     idx_58 = raw.find("5802ID")
+    if idx_58 == -1:
+        idx_58 = raw.find("5802")
+
+    if idx_58 != -1:
+        before_58 = raw[:idx_58]
+        after_58 = raw[idx_58:]
+        before_58 = re.sub(r'54\d{2}\d+', '', before_58)
+        raw = before_58 + after_58
+
+    # 4. Penempatan Tag 54:
+    amt_str = str(int(amount))
+    tag_54 = f"54{len(amt_str):02d}{amt_str}"
+
+    idx_58 = raw.find("5802ID")
+    if idx_58 == -1:
+        idx_58 = raw.find("5802")
+
     if idx_58 != -1:
         payload_body = raw[:idx_58] + tag_54 + raw[idx_58:]
     else:
         payload_body = raw + tag_54
 
-    # 5. Sisipkan Tag 62 jika invoice_id disediakan
-    if invoice_id:
+    # 5. Pertahankan Tag 62 bawaan acquirer (JANGAN ditimpa atau dimodifikasi)
+    # Hanya tambahkan Tag 62 jika invoice_id disediakan dan Tag 62 belum ada di string master
+    has_tag_62 = any(f"62{i:02d}" in payload_body for i in range(1, 100))
+    if invoice_id and not has_tag_62:
         clean_inv = str(invoice_id).strip()[:25]
         sub_01 = f"01{len(clean_inv):02d}{clean_inv}"
         tag_62 = f"62{len(sub_01):02d}{sub_01}"
         payload_body += tag_62
 
-    # 6. Hitung ulang CRC16-CCITT standar EMVCo
+    # 6. Hitung ulang CRC16-CCITT standar EMVCo (poly 0x1021, init 0xFFFF)
     full_for_crc = payload_body + "6304"
     crc = crc16_ccitt(full_for_crc)
     return full_for_crc + crc
+
+
+generate_dynamic_qris = generate_dynamic_qris_payload
 
 
 def render_qris_bytes(payload: str, box_size: int = 10, border: int = 4) -> bytes:

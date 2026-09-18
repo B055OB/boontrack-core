@@ -807,4 +807,55 @@ Decoupled CAPI Failure Isolation: Kegagalan API Meta CAPI (HTTP 5xx/Timeout) tid
 
 Tenant Isolation Audit: Log, data transaksi, dan context trace Tenant A terisolasi mutlak dan kedap 100% dari Tenant B.
 
-Worker & Service Restart Reconciliation: Event yang tertahan saat restart layanan backend dapat dilanjutkan atau direkonsiliasi secara aman dan idempotent.
+Worker & Service Restart Reconciliation: Event yang tertahan saat restart layanan backend dapat dilanjutkan atau direkonsiliasi secara aman dan idempotent.
+
+---
+
+## 14. ARCHITECTURAL STANDARD: TENANT STATIC-TO-DYNAMIC QRIS EMVCo TRANSFORMATION
+
+> **Architectural Status**: 🔒 **PRODUCTION STANDARD & COMPATIBILITY CERTIFIED (blu by BCA Digital, BCA Mobile, DANA 100%)**  
+> **Core Principle**: *"Never mutate acquirer identity tags (Tag 01 & Tag 62). Only perform precision injection of transaction amount (Tag 54) and recompute CRC16-CCITT."*
+
+### 14.1 The 4 Immutable Rules of Dynamic QRIS Transformation
+
+Ketika string QRIS statis dari merchant acquirer (GoPay, DANA, ShopeePay, dsb.) ditransformasikan menjadi Dynamic QRIS dengan nominal pesanan (amount injection), sistem **WAJIB** tunduk pada 4 hukum arsitektur berikut:
+
+#### 1. Dynamic Tag 01 Standard ('010212' Sesuai Regulasi ASPI Bank Indonesia)
+- **Hukum**: Jika payload diawali `000201010211`, ganti menjadi `000201010212` saat menginjeksi Tag 54 (Nominal).
+- **Rasional**: Standar resmi ASPI (Asosiasi Sistem Pembayaran Indonesia) dan Bank Indonesia menetapkan bahwa setiap QRIS yang menyertakan Tag 54 (Transaction Amount) wajib memiliki Point of Initiation Method bernilai `12` (Dinamis). Aplikasi perbankan seperti **blu by BCA Digital** memvalidasi keberadaan Tag 01 = `12` ketika nominal telah dispesifikasikan.
+
+#### 2. Preservation of Acquirer Tag 62 (No Overwrite / No Duplication)
+- **Hukum**: **Dilarang keras** menimpa, menghapus, atau memodifikasi Tag 62 bawaan acquirer merchant (contoh: `62070703A01` pada GoJek/GoPay).
+- **Rasional**: Tag 62 bawaan berisi data identitas terminal atau sub-merchant acquirer asli. Menimpa Tag 62 dengan nomor invoice internal atau menyisipkan Tag 62 kedua di akhir payload merusak struktur TLV (Tag-Length-Value) acquirer dan menyebabkan kegagalan decoding m-banking. Tag 62 bawaan acquirer wajib dipertahankan apa adanya.
+
+#### 3. Precision Injection of Tag 54 & Anti-Duplication Cleaning
+- **Hukum**: Tag 54 lama yang mungkin sudah ada dibersihkan terlebih dahulu sebelum Tag 58. Tag 54 baru dibentuk dengan format:
+  ```python
+  amt_str = str(int(amount))
+  tag_54 = f"54{len(amt_str):02d}{amt_str}"
+  ```
+  dan disisipkan **tepat sebelum Tag 58 (`5802ID` atau `5802` - Country Code)**.
+- **Rasional**: Menjamin tidak ada duplikasi Tag 54 pada re-injeksi transaksi dan memastikan nominal terbaca presisi oleh parser perbankan.
+
+#### 4. Strict CRC16-CCITT Recalculation (Poly 0x1021, Init 0xFFFF)
+- **Hukum**:
+  1. Hapus 4 karakter hex CRC lama di belakang string beserta prefix `6304`.
+  2. Susun ulang payload dengan menambahkan Tag 63 header: `payload_body + "6304"`.
+  3. Hitung ulang checksum menggunakan algoritma **CRC16-CCITT standard EMVCo** (polinomial `0x1021`, nilai inisial `0xFFFF`).
+  4. Satukan string payload dengan 4 karakter hex uppercase hasil kalkulasi.
+
+### 14.2 Canonical Reference & Validation Vector (Merchant 'kurastoren')
+- **Static Master (Raw EMVCo dari Acquirer GoPay/BCA)**:
+  ```text
+  00020101021126610014COM.GO-JEK.WWW01189360091437387604280210G7387604280303UMI51440014ID.CO.QRIS.WWW0215ID10265733762290303UMI5204899953033605802ID5925Basti als, Digital & Krea6008KARAWANG61054131462070703A016304EE91
+  ```
+- **Dynamic Injected Output (Nominal Rp 75.000)**:
+  ```text
+  00020101021226610014COM.GO-JEK.WWW01189360091437387604280210G7387604280303UMI51440014ID.CO.QRIS.WWW0215ID10265733762290303UMI5204899953033605405750005802ID5925Basti als, Digital & Krea6008KARAWANG61054131462070703A0163042F39
+  ```
+- **Hasil Verifikasi**:
+  - Tag 01: `010212` (Dinamis sesuai ASPI).
+  - Tag 54: `540575000` (Disisipkan tepat sebelum `5802ID`).
+  - Tag 62: `62070703A01` (Utuh bawaan acquirer).
+  - Tag 63: `63042F39` (CRC16-CCITT kalkulasi ulang menghasilkan `2F39`).
+

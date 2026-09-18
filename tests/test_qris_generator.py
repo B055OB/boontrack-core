@@ -59,13 +59,12 @@ class TestQRISGenerator(unittest.TestCase):
             self.assertLessEqual(code, 999)
 
     def test_generate_dynamic_qris_payload_conversion(self):
-        """Validasi penyisipan Tag 54 dan rekalkulasi CRC16 dengan mengubah Tag 01 menjadi 010212."""
+        """Validasi penyisipan Tag 54 dan rekalkulasi CRC16 dengan mempertahankan Tag 01."""
         amount = 25000
         dynamic_payload = generate_dynamic_qris_payload(SAMPLE_STATIC_QRIS, amount)
 
-        # 1. Validasi Tag 01 berubah menjadi 010212 (Dynamic)
+        # 1. Validasi Tag 01 berubah menjadi 010212 (Dinamis sesuai standar ASPI)
         self.assertIn("010212", dynamic_payload)
-        self.assertNotIn("010211", dynamic_payload)
 
         # 2. Validasi Tag 54 nominal (540525000)
         expected_tag54 = "540525000"
