@@ -307,23 +307,64 @@ class HybridReaderProcessor:
         tenant_id: str,
         amount: int,
     ) -> Optional[Dict[str, Any]]:
-        """Cari booking SCHEDULED yang nominalnya cocok dengan amount.
+        """Cari booking / order PENDING yang nominalnya cocok dengan amount strictly untuk tenant_id ini.
 
-        Implementasi ini menggunakan interface dict agar bisa bekerja
-        dengan ORM model maupun Supabase dict response.
-
-        Override method ini di subclass untuk integrasi ke booking model spesifik.
+        Invariant:
+            Pencarian WAJIB memfilter WHERE tenant_slug = %s.
+            TIDAK PERNAH mencocokkan transaksi milik tenant lain meskipun nominal sama.
         """
-        # Default implementation: override di integration layer
-        # Return dict dengan keys: booking_id, amount, customer_name, customer_phone, dll.
+        try:
+            from app.core.database import get_db_connection
+            from psycopg2.extras import RealDictCursor
+            conn = get_db_connection()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id, tenant_slug, gross_amount, customer_name, customer_phone, status
+                    FROM orders
+                    WHERE tenant_slug = %s AND gross_amount = %s AND status = 'PENDING'
+                    ORDER BY created_at DESC
+                    LIMIT 1;
+                    """,
+                    (str(tenant_id), int(amount)),
+                )
+                row = cur.fetchone()
+                if row:
+                    return {
+                        "booking_id": row["id"],
+                        "id": row["id"],
+                        "amount": int(row["gross_amount"]),
+                        "customer_name": row.get("customer_name"),
+                        "customer_phone": row.get("customer_phone"),
+                        "tenant_id": row["tenant_slug"],
+                    }
+        except Exception as err:
+            logger.debug(f"[HYBRID_READER] Order query note: {err}")
         return None
 
     async def _mark_booking_paid(self, booking: Dict[str, Any]) -> None:
-        """Update status booking dari SCHEDULED -> PAID.
-
-        Override di subclass untuk integrasi ke model booking spesifik.
-        """
-        pass
+        """Update status booking / order dari SCHEDULED/PENDING -> PAID strictly untuk tenant_id ini."""
+        booking_id = str(booking.get("booking_id") or booking.get("id", ""))
+        tenant_id = str(booking.get("tenant_id") or "")
+        if booking_id:
+            try:
+                from app.core.database import get_db_connection
+                conn = get_db_connection()
+                with conn.cursor() as cur:
+                    if tenant_id:
+                        cur.execute(
+                            "UPDATE orders SET status = 'PAID', updated_at = NOW() WHERE id = %s AND tenant_slug = %s;",
+                            (booking_id, tenant_id),
+                        )
+                    else:
+                        cur.execute(
+                            "UPDATE orders SET status = 'PAID', updated_at = NOW() WHERE id = %s;",
+                            (booking_id,),
+                        )
+                conn.commit()
+                conn.close()
+            except Exception as err:
+                logger.debug(f"[HYBRID_READER] Error marking order paid: {err}")
 
     async def _dispatch_capi_purchase(
         self,

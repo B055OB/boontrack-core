@@ -111,6 +111,28 @@ async def create_dynamic_qris_endpoint(payload: CreateDynamicQRISRequest = Body(
     target_tenant = payload.tenant_slug or payload.tenant_id or "commerce"
     order_id = payload.external_id or f"INV-{uuid4().hex[:8].upper()}"
 
+    from app.services.tenant_context_resolver import tenant_context_resolver
+    from app.services.payment.factory import PaymentAdapterFactory
+    from app.services.payment.manual_adapter import ManualTransferAdapter
+
+    tenant_ctx = await tenant_context_resolver.resolve_context(target_tenant)
+    if not tenant_ctx and target_tenant not in ("commerce", "default"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="MERCHANT_QRIS_NOT_CONFIGURED",
+        )
+    if tenant_ctx:
+        pcfg = (tenant_ctx.metadata if tenant_ctx else {}).get("payment_config") or {}
+        adapter = PaymentAdapterFactory.resolve(tenant_ctx)
+        if isinstance(adapter, ManualTransferAdapter):
+            static_payload = pcfg.get("static_qris_payload") or ""
+            qr_code_url = adapter.qris_image_url or pcfg.get("qris_image_url") or ""
+            if not static_payload and not qr_code_url:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="MERCHANT_QRIS_NOT_CONFIGURED",
+                )
+
     provider = os.getenv("PAYMENT_GATEWAY_PROVIDER", "").strip().lower()
     if provider == "midtrans" or (not provider and os.getenv("MIDTRANS_SERVER_KEY")):
         res = await midtrans_service.create_qris_charge(

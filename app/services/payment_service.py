@@ -57,10 +57,23 @@ class PaymentService:
         Returns:
             Dict berisi detail order, dynamic_payload, qr_bytes / qr_image_bytes (PNG), dan status 'PENDING'.
         """
-        # 1. Ambil master static string resmi dari environment
-        master_static = os.getenv("BOONTRACK_STATIC_QRIS", "").strip()
+        # 1. Ambil master static string resmi dari tenant config / meta
+        master_static = (meta or {}).get("static_qris_payload") or ""
         if not master_static:
-            master_static = "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI5204737253033605802ID5909BoonTrack6012Kab. Bandung61054028663048DC1"
+            try:
+                from app.services.tenant_context_resolver import tenant_context_resolver
+                ctx = tenant_context_resolver.get_cached(tenant_id)
+                if ctx and ctx.metadata:
+                    pcfg = ctx.metadata.get("payment_config") or {}
+                    master_static = pcfg.get("static_qris_payload") or ""
+            except Exception:
+                pass
+
+        if not master_static and tenant_id in ("boontrack", "boontrack-career", "platform"):
+            master_static = os.getenv("BOONTRACK_STATIC_QRIS", "").strip()
+
+        if not master_static:
+            raise ValueError(f"MERCHANT_QRIS_NOT_CONFIGURED for tenant '{tenant_id}'")
 
         # 2. Generate 3-digit unik acak (rentang 100 - 999)
         unique_code = generate_unique_code(100, 999)

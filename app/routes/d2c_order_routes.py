@@ -64,9 +64,47 @@ async def quick_qris_checkout_endpoint(
         import os
         resolved_corr_id = payload.correlation_id or x_correlation_id or x_request_id
         provider = os.getenv("PAYMENT_GATEWAY_PROVIDER", "").strip().lower()
-        if provider == "midtrans" or (not provider and os.getenv("MIDTRANS_SERVER_KEY")):
+        from app.services.tenant_context_resolver import tenant_context_resolver
+        from app.services.payment.factory import PaymentAdapterFactory
+        from app.services.payment.manual_adapter import ManualTransferAdapter
+        from uuid import uuid4
+
+        tenant_ctx = await tenant_context_resolver.resolve_context(payload.merchant_slug)
+        if not tenant_ctx:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="MERCHANT_QRIS_NOT_CONFIGURED",
+            )
+
+        adapter = PaymentAdapterFactory.resolve(tenant_ctx)
+        is_manual = isinstance(adapter, ManualTransferAdapter)
+        pcfg = (tenant_ctx.metadata if tenant_ctx else {}).get("payment_config") or {}
+
+        if is_manual:
+            static_payload = pcfg.get("static_qris_payload") or ""
+            qr_code_url = adapter.qris_image_url or pcfg.get("qris_image_url") or ""
+            if not static_payload and not qr_code_url:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="MERCHANT_QRIS_NOT_CONFIGURED",
+                )
+
+            order_id = f"INV-{payload.merchant_slug.upper()[:6]}-{uuid4().hex[:6].upper()}"
+            qr_string = ""
+            if static_payload:
+                from app.utils.qris_generator import generate_dynamic_qris_payload, get_qr_code_image_url
+                qr_string = generate_dynamic_qris_payload(static_payload, payload.total_amount, invoice_id=order_id)
+                if not qr_code_url:
+                    qr_code_url = get_qr_code_image_url(qr_string, size=600)
+            qris_data = {
+                "external_id": order_id,
+                "amount": payload.total_amount,
+                "qr_string": qr_string,
+                "qr_code_url": qr_code_url,
+                "expires_at": "",
+            }
+        elif provider == "midtrans" or (not provider and os.getenv("MIDTRANS_SERVER_KEY")):
             from app.services.midtrans_service import midtrans_service
-            from uuid import uuid4
             order_id = f"INV-{payload.merchant_slug.upper()[:6]}-{uuid4().hex[:6].upper()}"
             qris_data = await midtrans_service.create_qris_charge(
                 order_id=order_id,
@@ -97,6 +135,8 @@ async def quick_qris_checkout_endpoint(
             "expires_at": qris_data.get("expires_at"),
             "correlation_id": resolved_corr_id,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -122,7 +162,8 @@ async def submit_checkout_endpoint(
             delivery_asset_url=payload.delivery_asset_url,
             correlation_id=resolved_corr_id,
         )
-        return {"status": "success", "data": result}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -223,6 +264,27 @@ async def mark_order_paid_endpoint(
     except Exception as capi_err:
         logger.warning(f"[Meta CAPI Warning] Background task creation error for order {order_id}: {capi_err}")
 
+    # Structured observability trace for manual mark-paid
+    from app.core.tracing import log_structured_event, set_trace_context
+    tenant_slug = str(updated_order.get("tenant_slug") or "")
+    corr_id = order.get("correlation_id") or order_id
+    set_trace_context(correlation_id=corr_id, tenant_id=tenant_slug)
+    log_structured_event(
+        service="order_management",
+        event_type="ORDER_MANUALLY_MARKED_PAID",
+        entity_type="order",
+        entity_id=order_id,
+        status="SUCCESS",
+        tenant_id=tenant_slug,
+        correlation_id=corr_id,
+        extra_metadata={
+            "previous_status": current_status,
+            "new_status": "PAID",
+            "agent_id": payload.agent_id if payload else None,
+            "notes": payload.notes if payload else None,
+        }
+    )
+
     return {
         "success": True,
         "order_id": str(updated_order["id"]),
@@ -232,6 +294,123 @@ async def mark_order_paid_endpoint(
         "customer_phone": updated_order.get("customer_phone"),
         "capi_dispatched": capi_dispatched,
         "message": "Pesanan berhasil ditandai LUNAS dan event konversi Purchase telah di-dispatch ke Meta CAPI."
+    }
+
+
+class UpdateOrderStatusRequest(BaseModel):
+    status: str = Field(..., description="Status baru pesanan: PAID, LUNAS, PENDING, WAITING_PAYMENT, CANCELLED")
+    notes: Optional[str] = Field(None, description="Catatan internal seller / admin")
+    agent_id: Optional[str] = Field(None, description="Identitas seller / admin yang mengubah status")
+
+
+@d2c_router.patch("/api/v1/orders/{order_id}/status", summary="Manual Order Status Update by Seller/Admin")
+@d2c_router.patch("/v1/orders/{order_id}/status", summary="Manual Order Status Update Alias")
+async def update_order_status_endpoint(
+    order_id: str,
+    payload: UpdateOrderStatusRequest,
+    x_correlation_id: Optional[str] = Header(None, alias="x-correlation-id"),
+):
+    """
+    Endpoint mutasi status manual oleh seller / CS saat mengecek rekening pribadi:
+    1. Membaca data pesanan dari PostgreSQL & Supabase.
+    2. Menormalisasi status (LUNAS -> PAID, dsb).
+    3. Mengupdate status di database.
+    4. Mencatat log observabilitas terstruktur (log_structured_event).
+    5. Men-dispatch event Purchase ke Meta CAPI jika status berubah menjadi PAID.
+    """
+    from datetime import datetime, timezone
+    from app.core.tracing import log_structured_event, set_trace_context
+    from app.services.whatsapp_service import get_supabase
+
+    raw_status = str(payload.status or "").strip().upper()
+    normalized_status = "PAID" if raw_status in ("PAID", "LUNAS", "SETTLED", "SUCCESS") else raw_status
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM orders WHERE id = %s;", (order_id,))
+            order = cur.fetchone()
+            if not order:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Pesanan dengan ID '{order_id}' tidak ditemukan."
+                )
+
+            current_status = str(order.get("status") or "").upper()
+            tenant_slug = str(order.get("tenant_slug") or "")
+            corr_id = x_correlation_id or order.get("correlation_id") or order_id
+            set_trace_context(correlation_id=corr_id, tenant_id=tenant_slug)
+
+            cur.execute(
+                """
+                UPDATE orders 
+                SET status = %s, updated_at = NOW()
+                WHERE id = %s
+                RETURNING id, tenant_slug, product_title, gross_amount, customer_name, customer_phone, customer_email, fbclid, status, updated_at;
+                """,
+                (normalized_status, order_id)
+            )
+            updated_order = dict(cur.fetchone())
+            conn.commit()
+    finally:
+        conn.close()
+
+    # Sync Supabase
+    supabase = get_supabase()
+    if supabase:
+        try:
+            supabase.table("orders").update({
+                "status": normalized_status,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }).eq("id", order_id).execute()
+        except Exception as sb_err:
+            logger.warning(f"[Supabase Status Update Note] {sb_err}")
+
+    # Structured observability trace
+    log_structured_event(
+        service="order_management",
+        event_type="ORDER_STATUS_MANUALLY_MUTATED",
+        entity_type="order",
+        entity_id=order_id,
+        status="SUCCESS",
+        tenant_id=tenant_slug,
+        correlation_id=corr_id,
+        extra_metadata={
+            "previous_status": current_status,
+            "new_status": normalized_status,
+            "agent_id": payload.agent_id,
+            "notes": payload.notes
+        }
+    )
+
+    # Dispatch Meta CAPI if marked PAID
+    capi_dispatched = False
+    if normalized_status == "PAID" and current_status != "PAID":
+        try:
+            asyncio.create_task(
+                send_meta_capi_purchase(
+                    external_id=str(updated_order["id"]),
+                    value=float(updated_order["gross_amount"]),
+                    currency="IDR",
+                    phone=updated_order.get("customer_phone"),
+                    email=updated_order.get("customer_email"),
+                    fbclid=updated_order.get("fbclid"),
+                    user_id=updated_order.get("customer_phone")
+                )
+            )
+            capi_dispatched = True
+        except Exception as capi_err:
+            logger.warning(f"[Meta CAPI Warning] Error dispatching CAPI for {order_id}: {capi_err}")
+
+    return {
+        "success": True,
+        "order_id": str(updated_order["id"]),
+        "previous_status": current_status,
+        "status": normalized_status,
+        "gross_amount": float(updated_order["gross_amount"]),
+        "tenant_slug": tenant_slug,
+        "capi_dispatched": capi_dispatched,
+        "message": f"Status pesanan '{order_id}' berhasil diubah dari {current_status} ke {normalized_status}."
     }
 
 

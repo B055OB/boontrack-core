@@ -54,14 +54,52 @@ async def create_d2c_order_and_dispatch_qris(
         correlation_id=active_corr,
     )
 
-    # 1. Buat Dynamic QRIS via Gateway Engine (Midtrans / Xendit)
+    # 1. Resolve Tenant Context & Payment Provider (Manual Transfer vs Gateway)
+    from app.services.tenant_context_resolver import tenant_context_resolver
+    from app.services.payment.factory import PaymentAdapterFactory
+    from app.services.payment.manual_adapter import ManualTransferAdapter
+
+    tenant_ctx = await tenant_context_resolver.resolve_context(merchant_slug)
+    if not tenant_ctx:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=422,
+            detail="MERCHANT_QRIS_NOT_CONFIGURED",
+        )
+
+    adapter = PaymentAdapterFactory.resolve(tenant_ctx)
+    is_manual = isinstance(adapter, ManualTransferAdapter)
+    pcfg = (tenant_ctx.metadata if tenant_ctx else {}).get("payment_config") or {}
+
     provider = os.getenv("PAYMENT_GATEWAY_PROVIDER", "").strip().lower()
     meta_payload = {
         "merchant_slug": merchant_slug,
         "customer_name": customer_name,
         "correlation_id": active_corr
     }
-    if provider == "midtrans" or (not provider and os.getenv("MIDTRANS_SERVER_KEY")):
+
+    if is_manual:
+        static_payload = pcfg.get("static_qris_payload") or ""
+        qr_code_url = adapter.qris_image_url or pcfg.get("qris_image_url") or ""
+        if not static_payload and not qr_code_url:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=422,
+                detail="MERCHANT_QRIS_NOT_CONFIGURED",
+            )
+
+        qr_string = ""
+        if static_payload:
+            from app.utils.qris_generator import generate_dynamic_qris_payload
+            qr_string = generate_dynamic_qris_payload(static_payload, total_amount, invoice_id=order_id)
+            qr_png_bytes = generate_qris_png_bytes(qr_string)
+            if not qr_code_url:
+                from app.utils.qris_generator import get_qr_code_image_url
+                qr_code_url = get_qr_code_image_url(qr_string, size=600)
+        else:
+            qr_png_bytes = b""
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+    elif provider == "midtrans" or (not provider and os.getenv("MIDTRANS_SERVER_KEY")):
         from app.services.midtrans_service import midtrans_service
         qris_data = await midtrans_service.create_qris_charge(
             order_id=order_id,
@@ -71,6 +109,10 @@ async def create_d2c_order_and_dispatch_qris(
             tenant_id=merchant_slug,
             metadata=meta_payload
         )
+        qr_string = qris_data.get("qr_string", "")
+        qr_code_url = qris_data.get("qr_code_url", "")
+        qr_png_bytes = generate_qris_png_bytes(qr_string) if qr_string else b""
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
     else:
         qris_data = await xendit_service.create_dynamic_qris(
             external_id=order_id,
@@ -79,11 +121,10 @@ async def create_d2c_order_and_dispatch_qris(
             customer_phone=clean_phone,
             metadata=meta_payload
         )
-    
-    qr_string = qris_data.get("qr_string", "")
-    qr_code_url = qris_data.get("qr_code_url", "")
-    qr_png_bytes = generate_qris_png_bytes(qr_string) if qr_string else b""
-    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+        qr_string = qris_data.get("qr_string", "")
+        qr_code_url = qris_data.get("qr_code_url", "")
+        qr_png_bytes = generate_qris_png_bytes(qr_string) if qr_string else b""
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
 
     # 2. Simpan order ke database PostgreSQL (Immutable Source of Truth)
     first_item = items[0] if items and isinstance(items, list) else {}
@@ -122,48 +163,61 @@ async def create_d2c_order_and_dispatch_qris(
     except Exception as pg_err:
         logger.warning(f"[DB ORDER INSERT PG WARNING] {pg_err}")
 
-    # 3. Simpan order ke database Supabase
+    # 3. Simpan order ke database Supabase (Aligned with DB schema & Idempotent Upsert)
     if supabase:
         try:
-            supabase.table("orders").insert({
-                "order_id": order_id,
+            supabase.table("orders").upsert({
+                "id": str(order_id),
                 "tenant_slug": merchant_slug,
+                "product_id": str(prod_id),
+                "product_title": str(prod_title),
+                "gross_amount": total_amount,
                 "customer_name": customer_name,
                 "customer_phone": clean_phone,
-                "items": items,
-                "total_amount": total_amount,
                 "status": "PENDING",
-                "qr_string": qr_string,
-                "is_digital": is_digital,
-                "delivery_asset_url": delivery_asset_url,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "expires_at": expires_at,
+                "correlation_id": correlation_id,
             }).execute()
         except Exception as db_err:
             logger.warning(f"[DB ORDER INSERT WARNING] {db_err}")
 
     # 4. Format Pesan WhatsApp Invoice Summary
     amount_fmt = f"Rp{total_amount:,.0f}".replace(",", ".")
-    caption = (
-        f"Halo Kak *{customer_name}*, terima kasih telah melakukan pemesanan di *{merchant_slug}*! 🛍️\n\n"
-        f"📄 *No. Pesanan:* `{order_id}`\n"
-        f"💰 *Total Tagihan:* *{amount_fmt}*\n"
-        f"⏱️ *Batas Waktu Bayar:* 15 Menit\n\n"
-        f"Silakan scan kode QRIS di atas melalui m-Banking atau E-Wallet pilihan Anda.\n"
-        f"Setelah pembayaran berhasil, bukti bayar & akses produk akan langsung dikirim ke chat ini secara otomatis."
-    )
+    if is_manual:
+        bank_details = f"🏦 *Bank:* {adapter.bank_name}\n🔢 *No. Rekening:* `{adapter.account_number}`\n👤 *Atas Nama:* {adapter.account_holder}"
+        caption = (
+            f"Halo Kak *{customer_name}*, terima kasih telah melakukan pemesanan di *{merchant_slug}*! 🛍️\n\n"
+            f"📄 *No. Pesanan:* `{order_id}`\n"
+            f"💰 *Total Tagihan:* *{amount_fmt}*\n\n"
+            f"Silakan lakukan pembayaran melalui transfer manual ke rekening berikut:\n"
+            f"{bank_details}\n\n"
+            f"Atau scan kode QRIS toko yang tertera.\n\n"
+            f"Setelah transfer, silakan kirimkan foto/tangkapan layar bukti pembayaran ke chat ini untuk verifikasi. 🙏"
+        )
+    else:
+        caption = (
+            f"Halo Kak *{customer_name}*, terima kasih telah melakukan pemesanan di *{merchant_slug}*! 🛍️\n\n"
+            f"📄 *No. Pesanan:* `{order_id}`\n"
+            f"💰 *Total Tagihan:* *{amount_fmt}*\n"
+            f"⏱️ *Batas Waktu Bayar:* 15 Menit\n\n"
+            f"Silakan scan kode QRIS di atas melalui m-Banking atau E-Wallet pilihan Anda.\n"
+            f"Setelah pembayaran berhasil, bukti bayar & akses produk akan langsung dikirim ke chat ini secara otomatis."
+        )
 
-    # 5. Dispatch WhatsApp Native Image QRIS ke Buyer
-    if clean_phone and qr_png_bytes:
-        try:
-            await send_whatsapp_image(
-                to_phone=clean_phone,
-                image_path_or_bytes=qr_png_bytes,
-                caption=caption,
-                tenant_id=merchant_slug
-            )
-        except Exception as wa_err:
-            logger.warning(f"[WA QRIS Dispatch Warning] {wa_err}")
+    # 5. Dispatch WhatsApp Native Image QRIS / Static QR ke Buyer
+    img_to_send = qr_png_bytes or qr_code_url
+    if clean_phone:
+        if img_to_send:
+            try:
+                await send_whatsapp_image(
+                    to_phone=clean_phone,
+                    image_path_or_bytes=img_to_send,
+                    caption=caption,
+                    tenant_id=merchant_slug
+                )
+            except Exception as wa_err:
+                logger.warning(f"[WA QRIS Dispatch Warning] {wa_err}")
+                await send_whatsapp_text(to_phone=clean_phone, text=caption, tenant_id=merchant_slug)
+        else:
             await send_whatsapp_text(to_phone=clean_phone, text=caption, tenant_id=merchant_slug)
 
         log_structured_event(
@@ -183,7 +237,7 @@ async def create_d2c_order_and_dispatch_qris(
         entity_type="payment",
         entity_id=order_id,
         status="SUCCESS",
-        provider=provider or "xendit",
+        provider="manual" if is_manual else (provider or "xendit"),
         tenant_id=merchant_slug,
         correlation_id=active_corr,
     )
@@ -197,7 +251,8 @@ async def create_d2c_order_and_dispatch_qris(
         "qr_code_url": qr_code_url,
         "expires_at": expires_at,
         "status": "PENDING",
-        "correlation_id": active_corr
+        "correlation_id": active_corr,
+        "payment_method": "MANUAL_TRANSFER" if is_manual else "QRIS_DYNAMIC",
     }
 
 

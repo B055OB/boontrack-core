@@ -89,7 +89,12 @@ async def handle_reader_notification(request: web.Request) -> web.Response:
             status=400,
         )
 
-    tenant_id = str(payload.get("tenant_id") or "").strip()
+    tenant_id = str(
+        payload.get("tenant_id")
+        or request.headers.get("X-Tenant-Id")
+        or request.headers.get("x-tenant-id")
+        or ""
+    ).strip()
     if not tenant_id:
         return web.json_response(
             {"received": False, "error": "missing_tenant_id"},

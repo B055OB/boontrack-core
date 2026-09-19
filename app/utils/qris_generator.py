@@ -48,7 +48,7 @@ def generate_dynamic_qris_payload(static_payload: str, amount: int, invoice_id: 
     """
     clean_str = (static_payload or "").strip()
     if not clean_str.startswith("000201") or "5802ID" not in clean_str or "5303360" not in clean_str:
-        clean_str = STANDARD_MASTER_QRIS
+        raise ValueError("MERCHANT_QRIS_NOT_CONFIGURED: Invalid or missing static QRIS payload")
 
     # 1. Hapus Tag 63 (CRC lama) di belakang string
     if "6304" in clean_str:
@@ -110,7 +110,7 @@ def render_qris_bytes(payload: str, box_size: int = 10, border: int = 4) -> byte
     """Render matriks QR ke in-memory byte buffer (io.BytesIO) PNG resolusi tinggi (>= 500x500 px)."""
     clean_payload = (payload or "").strip()
     if not clean_payload.startswith("000201"):
-        clean_payload = STANDARD_MASTER_QRIS
+        raise ValueError("MERCHANT_QRIS_NOT_CONFIGURED: Invalid or missing QRIS payload to render")
 
     try:
         qr = qrcode.QRCode(

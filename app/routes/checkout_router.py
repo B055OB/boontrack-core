@@ -5,9 +5,13 @@ Dual Delivery Checkout Endpoint.
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 import os
+from datetime import datetime
 from app.utils.phone_sanitizer import sanitize_phone_number
 from app.services.whatsapp_dispatcher import dispatch_whatsapp_qris
 from app.services.xendit_service import xendit_service
+from app.services.tenant_context_resolver import tenant_context_resolver
+from app.services.payment.factory import PaymentAdapterFactory
+from app.services.payment.manual_adapter import ManualTransferAdapter
 
 checkout_api_router = APIRouter(prefix="/v1/orders", tags=["Checkout"])
 
@@ -26,15 +30,43 @@ async def handle_qris_checkout(payload: CreateOrderRequest, background_tasks: Ba
 
     order_id = f"ORD-{payload.merchant_slug.upper()[:4]}-{int(datetime.now().timestamp())}"
 
-    # 1. Buat transaksi QRIS dinamis via Payment Gateway
-    qris_res = await xendit_service.create_dynamic_qris(
-        external_id=order_id,
-        amount=payload.total_amount,
-        tenant_id=payload.merchant_slug,
-        customer_phone=clean_phone
-    )
+    # 1. Resolve tenant context & payment method
+    tenant_ctx = await tenant_context_resolver.resolve_context(payload.merchant_slug)
+    if not tenant_ctx:
+        raise HTTPException(
+            status_code=422,
+            detail="MERCHANT_QRIS_NOT_CONFIGURED"
+        )
+    adapter = PaymentAdapterFactory.resolve(tenant_ctx)
+    pcfg = (tenant_ctx.metadata if tenant_ctx else {}).get("payment_config") or {}
 
-    qris_image_url = qris_res.get("qr_code_url") or qris_res.get("qr_string_image_url")
+    if isinstance(adapter, ManualTransferAdapter):
+        static_payload = pcfg.get("static_qris_payload") or ""
+        qris_image_url = adapter.qris_image_url or pcfg.get("qris_image_url") or ""
+        if not static_payload and not qris_image_url:
+            raise HTTPException(
+                status_code=422,
+                detail="MERCHANT_QRIS_NOT_CONFIGURED"
+            )
+        qr_string = ""
+        if static_payload:
+            from app.utils.qris_generator import generate_dynamic_qris_payload, get_qr_code_image_url
+            qr_string = generate_dynamic_qris_payload(static_payload, payload.total_amount, invoice_id=order_id)
+            if not qris_image_url:
+                qris_image_url = get_qr_code_image_url(qr_string, size=600)
+        qris_res = {
+            "qr_code_url": qris_image_url,
+            "qr_string": qr_string,
+        }
+    else:
+        # Buat transaksi QRIS dinamis via Payment Gateway
+        qris_res = await xendit_service.create_dynamic_qris(
+            external_id=order_id,
+            amount=payload.total_amount,
+            tenant_id=payload.merchant_slug,
+            customer_phone=clean_phone
+        )
+        qris_image_url = qris_res.get("qr_code_url") or qris_res.get("qr_string_image_url")
     wa_token = os.getenv("META_WA_TOKEN", "")
     wa_phone_id = os.getenv("META_WA_PHONE_NUMBER_ID", "")
 

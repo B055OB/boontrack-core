@@ -124,9 +124,15 @@ class GenericTenantEngine:
                 total_amount = base_price + unique_code
                 master_static = (
                     tenant_config.payment_config.static_qris_payload
-                    or os.getenv("BOONTRACK_STATIC_QRIS", "")
+                    if tenant_config.payment_config else ""
                 )
-                
+                if not master_static:
+                    logger.error(f"[{tenant_id}] MERCHANT_QRIS_NOT_CONFIGURED: No static_qris_payload in DB")
+                    return (
+                        "⚠️ Konfigurasi QRIS toko ini belum dikonfigurasi oleh pemilik toko (MERCHANT_QRIS_NOT_CONFIGURED). "
+                        "Silakan hubungi admin toko."
+                    )
+
                 dynamic_qris_string = get_dynamic_qris_string(total_amount, master_static)
                 qr_url = get_quickchart_qr_url(dynamic_qris_string)
 
