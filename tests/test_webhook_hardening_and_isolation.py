@@ -68,7 +68,7 @@ class TestWebhookHardeningAndIsolation(unittest.TestCase):
                         "messaging_product": "whatsapp",
                         "metadata": {
                             "phone_number_id": self.platform_phone_id,
-                            "display_phone_number": "6285179555449"
+                            "display_phone_number": "6285139555449"
                         },
                         "contacts": [{"profile": {"name": "Owner Toko"}, "wa_id": "6281234567170"}],
                         "messages": [{
@@ -163,7 +163,7 @@ class TestWebhookHardeningAndIsolation(unittest.TestCase):
                         "messaging_product": "whatsapp",
                         "metadata": {
                             "phone_number_id": self.platform_phone_id,
-                            "display_phone_number": "6285179555449"
+                            "display_phone_number": "6285139555449"
                         },
                         "contacts": [{"profile": {"name": "Calon Merchant"}, "wa_id": "6281999888777"}],
                         "messages": [{
@@ -303,7 +303,7 @@ class TestWebhookHardeningAndIsolation(unittest.TestCase):
                         "messaging_product": "whatsapp",
                         "metadata": {
                             "phone_number_id": self.platform_phone_id,
-                            "display_phone_number": "6285179555449"
+                            "display_phone_number": "6285139555449"
                         },
                         "contacts": [{"profile": {"name": "Payment Gateway"}, "wa_id": "6281999888000"}],
                         "messages": [{
@@ -343,7 +343,7 @@ class TestWebhookHardeningAndIsolation(unittest.TestCase):
                         "messaging_product": "whatsapp",
                         "metadata": {
                             "phone_number_id": self.platform_phone_id,
-                            "display_phone_number": "6285179555449"
+                            "display_phone_number": "6285139555449"
                         },
                         "contacts": [{"profile": {"name": "Unknown"}, "wa_id": "628555444333"}],
                         "messages": [{

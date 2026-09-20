@@ -49,7 +49,7 @@ async def chat_with_boonpilot(payload: BoonPilotChatRequest):
     """
     Endpoint interaksi utama BoonPilot Copilot dengan Scope Lock:
     - Menolak arbitrary tenant_id dari client jika tidak cocok dengan konteks runtime.
-    - Menolak akses atau perutean ke nomor WABA resmi platform (+6285179555449).
+    - Menolak akses atau perutean ke nomor WABA resmi platform (+6285139555449).
     - Menghitung prorata billing dan komisi affiliate secara otoritatif dari backend (No LLM Business Truth).
     - Menyaring menu navigasi/button secara dinamis berbasis entitlement.
     """

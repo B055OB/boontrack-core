@@ -1,6 +1,6 @@
 r"""
 app/routes/meta_whatsapp.py
-FastAPI Router for Meta WhatsApp Cloud API Official Gateway (+6285179555449).
+FastAPI Router for Meta WhatsApp Cloud API Official Gateway (+6285139555449).
 
 KUNCI MUTLAK:
 Nomor resmi WABA ini HANYA difungsikan sebagai Gateway Notifikasi & Aktivasi Sistem.

@@ -12,7 +12,7 @@ Kepatuhan Kontrak ARCHITECTURE.md:
     ENTERPRISE    : Rp 499.000 / bln (Team Scale)
 - Bab 13.1: Domain Authority WABA Resmi Platform (PLATFORM_TRANSACTIONAL via Meta Cloud API):
     PLATFORM_PHONE_NUMBER_ID: 1268977686299719
-    Nomor Resmi Platform: 0851-7955-5449 / +6285179555449
+    Nomor Resmi Platform: 0851-3955-5449 / +6285139555449
     Terisolasi mutlak dari percakapan bot/katalog/CS toko merchant.
 - Bab 13.2 & 13.3: Strict Idempotency & Observability Logging (Structured JSON).
 - Bab 16: Computational Division (Heavy compute/scheduled worker berada di backend Railway boontrack-core).
@@ -73,8 +73,8 @@ logger = logging.getLogger("SUBSCRIPTION_REMINDER_WORKER")
 # ---------------------------------------------------------------------------
 
 PLATFORM_PHONE_NUMBER_ID = os.getenv("PLATFORM_PHONE_NUMBER_ID") or "1268977686299719"
-PLATFORM_OFFICIAL_PHONE = "0851-7955-5449"
-PLATFORM_OFFICIAL_PHONE_E164 = "6285179555449"
+PLATFORM_OFFICIAL_PHONE = "0851-3955-5449"
+PLATFORM_OFFICIAL_PHONE_E164 = "6285139555449"
 
 CANONICAL_TIERS = {
     "CHECKOUT_LITE": {"label": "Checkout Lite", "price": 59000},

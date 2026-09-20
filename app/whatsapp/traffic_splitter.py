@@ -5,7 +5,7 @@ Deterministic Traffic Splitter & Webhook Isolation Gateway (P0 Hardening Gate).
 
 Separates Meta WhatsApp Webhook traffic strictly into two isolated pipelines:
 1. PLATFORM_TRANSACTIONAL (PlatformWebhookRouter):
-   - Handles official platform WABA traffic (+6285179555449 / PLATFORM_PHONE_NUMBER_ID).
+   - Handles official platform WABA traffic (+6285139555449 / PLATFORM_PHONE_NUMBER_ID).
    - High-Priority Activation Interceptor (5-parameter authorization).
    - Early return 200 OK (halts pipeline immediately before conversation engine/CS queue).
    - Platform transactional alerts / payment confirmations.
@@ -274,7 +274,7 @@ class WebhookExecutionTrace:
 # ---------------------------------------------------------------------------
 class PlatformWebhookRouter:
     """
-    Router khusus untuk nomor Platform WABA (+6285179555449).
+    Router khusus untuk nomor Platform WABA (+6285139555449).
     Hanya melayani aktivasi sistem dan transactional alerts/payment notification.
     """
 
@@ -818,7 +818,7 @@ class TenantWebhookRouter:
             trace.log_step("TenantBoundaryGuard", "Platform activation keyword rejected on tenant number")
             tenant_reject_msg = (
                 "Pesan aktivasi akun toko BoonTrack hanya dapat diverifikasi melalui "
-                "nomor resmi platform BoonTrack (+62 851-7955-5449). "
+                "nomor resmi platform BoonTrack (+62 851-3955-5449). "
                 "Silakan kirimkan kode verifikasi Anda ke nomor resmi platform."
             )
             try:

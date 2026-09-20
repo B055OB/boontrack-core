@@ -6,7 +6,7 @@ Memverifikasi:
    - Tenant tanpa CAPI tidak menerima menu CAPI.
    - Tenant tanpa entitlement affiliate tidak menerima menu Affiliate.
    - Tenant dengan CAPI & Affiliate menerima opsi yang relevan.
-3. WhatsApp Isolation: Memastikan isolasi ketat terhadap nomor resmi WABA platform (+6285179555449).
+3. WhatsApp Isolation: Memastikan isolasi ketat terhadap nomor resmi WABA platform (+6285139555449).
 4. No LLM Business Truth: Memastikan pertanyaan harga, prorata, dan komisi dilayani langsung oleh engine backend.
 """
 
@@ -151,26 +151,26 @@ async def test_boonpilot_capability_resolver_dynamic_menu_filtering():
 async def test_whatsapp_isolation_guard():
     """
     Test 3: Memverifikasi WhatsApp Isolation:
-    Pastikan BoonPilot TIDAK MEMILIKI akses ke router inbound/outbound nomor WABA resmi platform (+6285179555449).
+    Pastikan BoonPilot TIDAK MEMILIKI akses ke router inbound/outbound nomor WABA resmi platform (+6285139555449).
     """
     # 1. Langsung panggil guard assertion dengan nomor WABA resmi platform
     with pytest.raises(PermissionError) as exc_info:
-        assert_whatsapp_isolation("+6285179555449")
+        assert_whatsapp_isolation("+6285139555449")
     assert "Akses ditolak: BoonPilot terisolasi secara ketat" in str(exc_info.value)
 
     # Format variasi nomor (tanpa plus, spasi, dsb)
     with pytest.raises(PermissionError):
-        assert_whatsapp_isolation("6285179555449")
+        assert_whatsapp_isolation("6285139555449")
 
     with pytest.raises(PermissionError):
-        assert_whatsapp_isolation("085179555449")
+        assert_whatsapp_isolation("085139555449")
 
     # 2. Panggil via chat entrypoint
     with pytest.raises(PermissionError):
         await boonpilot_service.chat(
             tenant_slug="onlineboost",
             message="Kirim pesan lewat WABA",
-            target_whatsapp_phone="+6285179555449",
+            target_whatsapp_phone="+6285139555449",
         )
 
     # Nomor merchant biasa diizinkan tanpa error

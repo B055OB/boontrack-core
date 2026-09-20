@@ -9,7 +9,7 @@ Architectural Guarantees:
    - Opsi CAPI / Powertools HANYA tampil jika tier memiliki fitur tersebut.
    - Fitur/FAQ Affiliate HANYA dirender jika tenant memiliki program affiliate aktif.
 3. WhatsApp Isolation:
-   BoonPilot steril 100% dan TIDAK MEMILIKI akses ke router nomor resmi WABA platform (+6285179555449).
+   BoonPilot steril 100% dan TIDAK MEMILIKI akses ke router nomor resmi WABA platform (+6285139555449).
 4. No LLM Business Truth:
    Untuk pertanyaan harga, prorata, komisi, dan status langganan, BoonPilot wajib memanggil tool/API backend resmi
    dan menyajikan data mentah tersebut tanpa reka hitung mandiri oleh LLM.
@@ -36,17 +36,17 @@ logger = logging.getLogger("BOONPILOT_SERVICE")
 ACTION_PROPOSAL_TTL_SECONDS = 600
 
 # Nomor Resmi WABA Platform yang wajib 100% steril dan terisolasi dari BoonPilot
-OFFICIAL_PLATFORM_WABA_NUMBER = "+6285179555449"
+OFFICIAL_PLATFORM_WABA_NUMBER = "+6285139555449"
 
 
 def assert_whatsapp_isolation(target_or_sender_phone: Optional[str] = None):
     """
     Scope Lock Guard: Memastikan BoonPilot TIDAK MEMILIKI akses ke router inbound/outbound
-    nomor WABA resmi platform (+6285179555449). Jalur resmi WABA steril khusus aktivasi & notifikasi sistem.
+    nomor WABA resmi platform (+6285139555449). Jalur resmi WABA steril khusus aktivasi & notifikasi sistem.
     """
     if target_or_sender_phone:
         clean_phone = re.sub(r"\D", "", str(target_or_sender_phone))
-        if "6285179555449" in clean_phone or "85179555449" in clean_phone:
+        if "6285139555449" in clean_phone or "85139555449" in clean_phone:
             raise PermissionError(
                 "Akses ditolak: BoonPilot terisolasi secara ketat dan dilarang "
                 f"mengakses atau merutekan pesan melalui nomor WABA resmi platform ({OFFICIAL_PLATFORM_WABA_NUMBER})."
@@ -487,7 +487,7 @@ class BoonPilotService:
     ) -> Dict[str, Any]:
         """
         Interaksi Utama BoonPilot Copilot dengan Scope Lock:
-        1. Verifikasi WhatsApp Isolation: Tolak jika merujuk ke nomor WABA resmi platform (+6285179555449).
+        1. Verifikasi WhatsApp Isolation: Tolak jika merujuk ke nomor WABA resmi platform (+6285139555449).
         2. Resolusi TenantRuntimeContext: Pastikan tenant terdaftar secara resmi di database/entitlement.
         3. Isolasi Tenant & RBAC: Tolak arbitrary untrusted_client_tenant_id yang tidak cocok.
         4. No LLM Business Truth: Kalkulasi harga, prorata upgrade, dan komisi dieksekusi langsung oleh engine backend.

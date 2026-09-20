@@ -76,7 +76,7 @@ class TestWebhookFailureAndIdempotency(unittest.TestCase):
                         "messaging_product": "whatsapp",
                         "metadata": {
                             "phone_number_id": self.platform_phone_id,
-                            "display_phone_number": "6285179555449"
+                            "display_phone_number": "6285139555449"
                         },
                         "contacts": [{"profile": {"name": "Merchant Owner"}, "wa_id": self.sender_phone}],
                         "messages": [{
@@ -123,7 +123,7 @@ class TestWebhookFailureAndIdempotency(unittest.TestCase):
                         "messaging_product": "whatsapp",
                         "metadata": {
                             "phone_number_id": self.platform_phone_id,
-                            "display_phone_number": "6285179555449"
+                            "display_phone_number": "6285139555449"
                         },
                         "messages": [{
                             "from": "6281999888000",
@@ -193,7 +193,7 @@ class TestWebhookFailureAndIdempotency(unittest.TestCase):
                         "messaging_product": "whatsapp",
                         "metadata": {
                             "phone_number_id": self.platform_phone_id,
-                            "display_phone_number": "6285179555449"
+                            "display_phone_number": "6285139555449"
                         },
                         "messages": [{
                             "from": self.sender_phone,
@@ -271,7 +271,7 @@ class TestWebhookFailureAndIdempotency(unittest.TestCase):
                         "messaging_product": "whatsapp",
                         "metadata": {
                             "phone_number_id": self.platform_phone_id,
-                            "display_phone_number": "6285179555449"
+                            "display_phone_number": "6285139555449"
                         },
                         "messages": [{
                             "from": self.sender_phone,
@@ -341,7 +341,7 @@ class TestWebhookFailureAndIdempotency(unittest.TestCase):
                         "messaging_product": "whatsapp",
                         "metadata": {
                             "phone_number_id": self.platform_phone_id,
-                            "display_phone_number": "6285179555449"
+                            "display_phone_number": "6285139555449"
                         },
                         "messages": [{
                             "from": self.sender_phone,
@@ -404,7 +404,7 @@ class TestWebhookFailureAndIdempotency(unittest.TestCase):
                         "messaging_product": "whatsapp",
                         "metadata": {
                             "phone_number_id": self.platform_phone_id,
-                            "display_phone_number": "6285179555449"
+                            "display_phone_number": "6285139555449"
                         },
                         "messages": [{
                             "from": self.sender_phone,

@@ -687,7 +687,7 @@ Setiap webhook inbound dari Meta Cloud API disaring di layer gerbang terdepan (`
 
 Platform WABA Routing (PLATFORM_TRANSACTIONAL):
 
-Terikat mutlak pada PLATFORM_PHONE_NUMBER_ID (1268977686299719 / nomor resmi 0851-7955-5449).
+Terikat mutlak pada PLATFORM_PHONE_NUMBER_ID (1268977686299719 / nomor resmi 0851-3955-5449).
 
 Khusus melayani: System Commands registrasi (AKTIVASI BT-xxxx), notifikasi pembayaran platform, dan panduan sistem resmi (GLOBAL_FALLBACK_PLATFORM).
 

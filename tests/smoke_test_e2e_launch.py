@@ -69,7 +69,7 @@ class TestSmokeE2ELaunch(unittest.TestCase):
     @patch("app.services.whatsapp.cloud_api.send_whatsapp_text", new_callable=AsyncMock)
     def test_smoke_e2e_registration_and_activation_flow(self, mock_send_wa):
         """Menjalankan siklus 4 langkah registrasi toko baru hingga aktivasi resmi WABA."""
-        test_phone = "6285179555449"
+        test_phone = "6285139555449"
         test_slug = "test-bersih"
         test_name = "Test Toko Bersih"
 
@@ -133,7 +133,7 @@ class TestSmokeE2ELaunch(unittest.TestCase):
                     "value": {
                         "messaging_product": "whatsapp",
                         "metadata": {
-                            "display_phone_number": "6285179555449",
+                            "display_phone_number": "6285139555449",
                             "phone_number_id": "1268977686299719"
                         },
                         "contacts": [{"profile": {"name": test_name}, "wa_id": test_phone}],
@@ -178,7 +178,7 @@ class TestSmokeE2ELaunch(unittest.TestCase):
                     "value": {
                         "messaging_product": "whatsapp",
                         "metadata": {
-                            "display_phone_number": "6285179555449",
+                            "display_phone_number": "6285139555449",
                             "phone_number_id": "1268977686299719"
                         },
                         "contacts": [{"profile": {"name": test_name}, "wa_id": test_phone}],
@@ -207,7 +207,7 @@ class TestSmokeE2ELaunch(unittest.TestCase):
 def run_standalone_smoke_test():
     """Fungsi eksekusi langsung via terminal dengan log terperinci."""
     client = TestClient(app)
-    test_phone = "6285179555449"
+    test_phone = "6285139555449"
     test_slug = "test-bersih"
     test_name = "Test Toko Bersih"
 
@@ -278,7 +278,7 @@ def run_standalone_smoke_test():
                     "value": {
                         "messaging_product": "whatsapp",
                         "metadata": {
-                            "display_phone_number": "6285179555449",
+                            "display_phone_number": "6285139555449",
                             "phone_number_id": "1268977686299719"
                         },
                         "contacts": [{"profile": {"name": test_name}, "wa_id": test_phone}],
@@ -324,7 +324,7 @@ def run_standalone_smoke_test():
                     "value": {
                         "messaging_product": "whatsapp",
                         "metadata": {
-                            "display_phone_number": "6285179555449",
+                            "display_phone_number": "6285139555449",
                             "phone_number_id": "1268977686299719"
                         },
                         "contacts": [{"profile": {"name": test_name}, "wa_id": test_phone}],

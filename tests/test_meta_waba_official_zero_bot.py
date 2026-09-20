@@ -2,7 +2,7 @@
 tests/test_meta_waba_official_zero_bot.py
 -----------------------------------------
 Test suite membuktikan bahwa:
-1. Webhook Meta resmi (+6285179555449) TIDAK LAGI membalas pesan teks umum seperti 'halo', 'reset', '1', dsb.
+1. Webhook Meta resmi (+6285139555449) TIDAK LAGI membalas pesan teks umum seperti 'halo', 'reset', '1', dsb.
 2. Request POST dengan body {"text": {"body": "halo"}} menghasilkan response 200 IGNORED.
 3. send_whatsapp_text TIDAK TERPANGGIL sama sekali (0 calls).
 4. Template string "Portal Pengujian Ekosistem BoonTrack" telah dimatikan total.
@@ -58,7 +58,7 @@ class TestMetaWabaOfficialZeroBot(unittest.TestCase):
                     "value": {
                         "messaging_product": "whatsapp",
                         "metadata": {
-                            "display_phone_number": "6285179555449",
+                            "display_phone_number": "6285139555449",
                             "phone_number_id": "1268977686299719"
                         },
                         "contacts": [{"profile": {"name": "Pelanggan"}, "wa_id": "6281234567890"}],

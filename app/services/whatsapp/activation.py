@@ -3,7 +3,7 @@
 Layanan pencarian dan verifikasi kode aktivasi toko via WhatsApp (AKTIVASI BT-XXXX).
 
 Menghubungkan kode unik dari browser registrasi (shop.boontrack.com/register)
-dengan bot WhatsApp resmi BoonTrack (+6285179555449).
+dengan bot WhatsApp resmi BoonTrack (+6285139555449).
 """
 
 import re
