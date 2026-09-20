@@ -48,21 +48,8 @@ class CommerceCatalogService:
             finally:
                 await conn.close()
         except Exception as e:
-            logger.debug(f"[Catalog Fallback] DB unavailable ({e}), using in-memory catalog cache")
-            res = []
-            clean_q = query.strip().lower()
-            for item in SEED_ITEMS:
-                if not clean_q or clean_q in item["title"].lower() or clean_q in item["keywords"].lower() or clean_q in item["category"].lower() or clean_q in item["product_code"].lower():
-                    res.append({
-                        "product_code": item["product_code"],
-                        "title": item["title"],
-                        "category": item["category"],
-                        "price": item["price"],
-                        "keywords": item["keywords"]
-                    })
-                    if len(res) >= limit:
-                        break
-            return res
+            logger.warning(f"[Catalog Search] Database unavailable ({e}) - returning empty clean catalog per ARCHITECTURE.md")
+            return []
 
     @classmethod
     async def get_product_by_code(cls, tenant_id: str, product_code: str) -> Optional[Dict[str, Any]]:
@@ -78,9 +65,5 @@ class CommerceCatalogService:
             finally:
                 await conn.close()
         except Exception as e:
-            logger.debug(f"[Catalog Fallback] DB unavailable ({e}), using in-memory catalog cache")
-            clean_code = str(product_code or "").strip().upper()
-            for item in SEED_ITEMS:
-                if item["product_code"].upper() == clean_code:
-                    return dict(item)
+            logger.warning(f"[Catalog Lookup] Database unavailable ({e}) - returning None per ARCHITECTURE.md")
             return None

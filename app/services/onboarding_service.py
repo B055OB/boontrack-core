@@ -250,16 +250,16 @@ class OnboardingService:
         if tenant_slug in self._tenants_by_slug or tenant_slug in LOADED_CONFIG_TENANTS:
             raise TenantSlugAlreadyExistsError(f"Tenant with slug '{tenant_slug}' already exists")
 
-        # Resolve tier
+        # Resolve tier (Strict ARCHITECTURE.md: Free Trial & Promo default to PRO_SCALE / Ads Performance)
         tier_str = payload.tier.upper().replace("-", "_").replace(" ", "_")
-        if tier_str in ("ADS_PERFORMANCE", "PROSCALE", "PRO_SCALE"):
+        if tier_str in ("ADS_PERFORMANCE", "PROSCALE", "PRO_SCALE", "TRIAL", "FREE_TRIAL"):
             tier_enum = TenantTier.PRO_SCALE
         elif tier_str in ("TEAM_SCALE", "ENTERPRISE", "CUSTOM_ENTERPRISE"):
             tier_enum = TenantTier.ENTERPRISE
         elif tier_str in TenantTier.__members__:
             tier_enum = TenantTier[tier_str]
         else:
-            tier_enum = TenantTier.STARTER
+            tier_enum = TenantTier.PRO_SCALE
 
         # Resolve template & alias (RETAIL_D2C_TEMPLATE -> COMMERCE_TEMPLATE)
         raw_template = (payload.template or "COMMERCE_TEMPLATE").strip()
@@ -293,9 +293,9 @@ class OnboardingService:
         phone_hash = hashlib.sha256(phone_raw.encode()).hexdigest() if phone_raw else None
         device_fp_hash = hashlib.sha256(payload.device_fingerprint.encode()).hexdigest() if payload.device_fingerprint else None
 
-        # Determine initial plan based on existing identity
+        # Determine initial plan based on existing identity (Ads Performance 7-Day Trial)
         is_duplicate = await self._identity_exists(phone_hash, device_fp_hash) if phone_hash else False
-        plan_code = "FREE" if is_duplicate else "SOLO_TRIAL"
+        plan_code = "FREE" if is_duplicate else "ADS_PERF"
         logger.info(f"[OnboardingService] Assigned plan '{plan_code}' for tenant '{tenant_slug}' (duplicate={is_duplicate})")
 
         tenant_id = uuid4()
@@ -331,7 +331,12 @@ class OnboardingService:
                     await session.flush()
 
                     # 2. Insert Initial Product (ONLY IF EXPLICITLY PROVIDED AND VALID)
-                    if has_initial_product:
+                    # Clean State Invariant: Jangan suntikkan produk mock/dummy ke toko produksi baru
+                    is_mock_item = bool(
+                        payload.product.title.strip().lower() in ("produk uji coba", "tes produk", "sample product", "dummy product", payload.name.strip().lower())
+                        or "uji coba" in payload.product.title.lower()
+                    ) if has_initial_product else False
+                    if has_initial_product and not is_mock_item:
                         product_type_val = (
                             ProductType[payload.product.product_type.upper()]
                             if payload.product.product_type.upper() in ProductType.__members__
@@ -474,7 +479,7 @@ class OnboardingService:
                     "id": str(tenant_id),
                     "name": payload.name,
                     "slug": tenant_slug,
-                    "tier": "SOLO_TRIAL" if plan_code == "SOLO_TRIAL" else tier_enum.value,
+                    "tier": tier_enum.value,
                     "trial_ends_at": trial_period_end,
                     "subscription_ends_at": trial_period_end,
                     "created_at": now.isoformat(),
@@ -484,12 +489,20 @@ class OnboardingService:
                         "template": template_name,
                         "onboarding_mode": mode_enum.value,
                         "vertical": (payload.vertical or vert_config["vertical"]).upper(),
-                        "trial_ends_at": trial_period_end,
+                        "tier": tier_enum.value,
+                        "plan_tier": tier_enum.value,
+                        "selected_plan": "Ads Performance Trial" if tier_enum == TenantTier.PRO_SCALE else ("Team Scale" if tier_enum == TenantTier.ENTERPRISE else "Paket Solo"),
+                        "subscription_status": "trial" if tier_enum == TenantTier.PRO_SCALE else "active",
+                        "is_trial": True if tier_enum == TenantTier.PRO_SCALE else False,
+                        "trial_days": 7 if tier_enum == TenantTier.PRO_SCALE else 0,
+                        "trial_ends_at": trial_period_end if tier_enum == TenantTier.PRO_SCALE else None,
                         "subscription_ends_at": trial_period_end,
                         "wa_verification_token": wa_verification_token,
                         "activation_code": activation_code,
                         "wa_verification_status": "pending",
                         "is_verified": False,
+                        "products": [],
+                        "product": None,
                     }
                 }, on_conflict="slug").execute()
                 logger.info(f"[OnboardingService] Synced tenant '{tenant_slug}' (trial_ends_at: {trial_period_end}) to Supabase")
