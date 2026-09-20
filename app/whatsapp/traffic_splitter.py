@@ -22,6 +22,8 @@ Separates Meta WhatsApp Webhook traffic strictly into two isolated pipelines:
 
 import os
 import re
+import time
+import json
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, Tuple, List
@@ -32,6 +34,7 @@ from app.services.whatsapp_service import (
 )
 from app.services.whatsapp.cloud_api import send_whatsapp_text
 from app.services.tenant_context_resolver import tenant_context_resolver, TenantRuntimeContext
+
 
 logger = logging.getLogger("WABA_TRAFFIC_SPLITTER")
 
@@ -62,6 +65,84 @@ def get_tenant_fallback_message(store_name: str, tenant_slug: str) -> str:
         f"🛍️ *Katalog Online*: https://shop.boontrack.com/{tenant_slug}\n"
         "Silakan ketik produk atau informasi yang ingin Kakak ketahui!"
     )
+
+
+# ---------------------------------------------------------------------------
+# WAMID Idempotency Cache (Hybrid Redis + In-Memory, TTL 5 menit)
+# ---------------------------------------------------------------------------
+class WamidIdempotencyCache:
+    """
+    Hybrid idempotency cache untuk wamid (Meta Message ID).
+    Mencegah double-processing pada webhook retry dari Meta.
+
+    Strategi:
+    - Jika Redis tersedia: SETNX + EXPIRE (atomic, TTL 5 menit).
+    - Fallback: dict in-memory dengan expire_at timestamp.
+    - Singleton module-level _wamid_cache digunakan oleh TrafficSplitter.
+    """
+
+    WAMID_TTL_SECONDS = 300  # 5 menit
+    KEY_PREFIX = "wamid:dedup:"
+
+    def __init__(self):
+        self._memory: Dict[str, float] = {}  # wamid -> expire_at (epoch)
+        self._redis = None
+        try:
+            import redis as _redis_lib
+            _redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+            client = _redis_lib.Redis.from_url(
+                _redis_url,
+                decode_responses=True,
+                socket_timeout=0.5,
+                socket_connect_timeout=0.5,
+            )
+            client.ping()
+            self._redis = client
+            logger.info("[WamidCache] Connected to Redis for idempotency cache.")
+        except Exception as _e:
+            logger.info(f"[WamidCache] Redis unavailable ({_e}), using in-memory fallback.")
+
+    def is_duplicate(self, wamid: str) -> bool:
+        """
+        Returns True jika wamid sudah pernah diproses (idempotency hit).
+        Jika belum ada, catat wamid ini dan return False.
+        """
+        if not wamid or wamid.startswith("trace_"):
+            # wamid sintetis (trace_xxx) = bukan pesan sungguhan, jangan cache
+            return False
+
+        key = f"{self.KEY_PREFIX}{wamid}"
+
+        # --- Cek Redis ---
+        if self._redis:
+            try:
+                # SETNX: set jika belum ada, return 1 jika berhasil set (baru), 0 jika sudah ada
+                was_set = self._redis.setnx(key, "1")
+                if was_set:
+                    self._redis.expire(key, self.WAMID_TTL_SECONDS)
+                    return False  # Baru diproses
+                else:
+                    return True   # Duplikat
+            except Exception as _re:
+                logger.warning(f"[WamidCache] Redis error during dedup check: {_re}")
+                # Fallback ke memory jika Redis error
+
+        # --- Fallback In-Memory ---
+        now = time.time()
+        # Bersihkan entry kadaluarsa (light sweep)
+        expired = [k for k, exp in self._memory.items() if exp < now]
+        for k in expired:
+            self._memory.pop(k, None)
+
+        if key in self._memory:
+            return True  # Duplikat
+
+        self._memory[key] = now + self.WAMID_TTL_SECONDS
+        return False  # Baru
+
+
+# Singleton module-level
+_wamid_cache = WamidIdempotencyCache()
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +210,36 @@ class PlatformWebhookRouter:
         trace.target_tenant = "boontrack-platform"
         trace.log_step("PlatformWebhookRouter.handle", f"Entered platform pipeline for phone {sender_phone}")
 
+        # =====================================================================
+        # SECONDARY GUARD (Defense-in-Depth): Blokir teks kosong
+        # Ini adalah lini pertahanan kedua — seharusnya sudah diblokir di
+        # TrafficSplitter.split_and_dispatch() sebelum sampai ke sini.
+        # Namun jika lolos (e.g., test mock / future code path), guard ini
+        # memastikan GLOBAL_FALLBACK_PLATFORM TIDAK pernah dikirim untuk
+        # event tanpa teks nyata dari user.
+        # =====================================================================
         clean_text = incoming_text.strip()
+        if not clean_text:
+            trace.log_step(
+                "PlatformSecondaryGuard",
+                "BLOCKED: incoming_text is empty after strip — not a genuine user text message. "
+                "Aborting pipeline. No GLOBAL_FALLBACK_PLATFORM dispatched."
+            )
+            logger.warning(
+                f"[PlatformWebhookRouter] Secondary guard triggered for empty text "
+                f"(phone_id={phone_number_id}, sender={sender_phone}). "
+                "Event ignored safely."
+            )
+            trace.early_return = True
+            trace.response_status = 200
+            res = {
+                "status": "ignored",
+                "reason": "EMPTY_TEXT_SECONDARY_GUARD",
+                "purpose": "PLATFORM_TRANSACTIONAL",
+                "message": "Non-text or empty-body event blocked at secondary defense layer.",
+            }
+            trace.response_payload = res
+            return res
 
         # =====================================================================
         # 1. ACTIVATION INTERCEPTOR (P0 LAYER TERATAS)
@@ -783,8 +893,87 @@ class TrafficSplitter:
         trace.log_step("TrafficSplitter.Inbound", f"Extracted Phone ID: '{incoming_phone_id}'")
 
         # =====================================================================
+        # EARLY BAIL-OUT GATE (P0 Guardrails — sebelum routing ke Router mana pun)
+        # Cegah false-trigger GLOBAL_FALLBACK dari status event, empty payload,
+        # non-text message, atau duplicate retry dari Meta.
+        # =====================================================================
+
+        # --- L1: Status Event Guard ---
+        # Meta mengirim `statuses` (sent/delivered/read) sebagai event terpisah
+        # yang TIDAK mengandung `messages`. Langsung abaikan.
+        statuses = value.get("statuses") or []
+        if statuses:
+            first_status = statuses[0] if statuses else {}
+            status_type = str(first_status.get("status") or "").lower()
+            trace.log_step(
+                "EarlyBailOut.L1",
+                f"IGNORED_STATUS_EVENT: type='{status_type}' wamid='{first_status.get('id', 'unknown')}'"
+            )
+            logger.info(
+                f"[TrafficSplitter] L1 Bail-Out: Status callback '{status_type}' ignored "
+                f"(phone_id={incoming_phone_id}). No reply dispatched."
+            )
+            return 200, {"status": "ignored", "reason": "IGNORED_STATUS_EVENT", "event": status_type}, trace
+
+        # --- L2: Empty Messages Guard ---
+        # Payload hanya berisi metadata (ping, handshake kosong) tanpa pesan nyata.
+        if not messages:
+            trace.log_step(
+                "EarlyBailOut.L2",
+                "IGNORED_EMPTY_PAYLOAD: messages[] is empty — metadata ping or empty handshake."
+            )
+            logger.info(
+                f"[TrafficSplitter] L2 Bail-Out: Empty messages[] for phone_id={incoming_phone_id}. Ignored."
+            )
+            return 200, {"status": "ignored", "reason": "IGNORED_EMPTY_PAYLOAD"}, trace
+
+        # --- L3: WAMID Idempotency Guard ---
+        # Cegah pemrosesan ulang pada Meta webhook retry (retry storm).
+        # wamid sintetis (trace_xxx) dilewati oleh WamidIdempotencyCache.is_duplicate().
+        if _wamid_cache.is_duplicate(msg_id):
+            trace.log_step(
+                "EarlyBailOut.L3",
+                f"IGNORED_DUPLICATE_WAMID: wamid='{msg_id}' already processed (idempotency hit)."
+            )
+            logger.warning(
+                f"[TrafficSplitter] L3 Bail-Out: Duplicate wamid='{msg_id}' from Meta retry "
+                f"(phone_id={incoming_phone_id}). Ignored safely."
+            )
+            return 200, {"status": "ignored", "reason": "IGNORED_DUPLICATE_WAMID", "wamid": msg_id}, trace
+
+        # --- L4: Non-Text Message Type Guard ---
+        # Hanya pesan tipe `text` yang boleh memicu balasan.
+        # Abaikan: reaction, sticker, image, audio, document, video, location, contacts, unsupported, etc.
+        ALLOWED_TEXT_TYPES = {"text", "interactive", "button"}
+        if msg_type and msg_type not in ALLOWED_TEXT_TYPES:
+            trace.log_step(
+                "EarlyBailOut.L4",
+                f"IGNORED_NON_TEXT: msg_type='{msg_type}' is not a text-bearing message type."
+            )
+            logger.info(
+                f"[TrafficSplitter] L4 Bail-Out: Non-text message type='{msg_type}' "
+                f"from {sender_phone} (phone_id={incoming_phone_id}). No reply dispatched."
+            )
+            return 200, {"status": "ignored", "reason": "IGNORED_NON_TEXT", "msg_type": msg_type}, trace
+
+        # --- L5: Empty Body Guard ---
+        # Pesan bertipe teks tapi body kosong (misal: template button handshake kosong).
+        # Nomor platform DILARANG auto-reply pada payload kosong.
+        if not incoming_text:
+            trace.log_step(
+                "EarlyBailOut.L5",
+                f"IGNORED_EMPTY_TEXT: msg_type='{msg_type}' but resolved text body is empty."
+            )
+            logger.info(
+                f"[TrafficSplitter] L5 Bail-Out: msg_type='{msg_type}' but empty text body "
+                f"from {sender_phone} (phone_id={incoming_phone_id}). No reply dispatched."
+            )
+            return 200, {"status": "ignored", "reason": "IGNORED_EMPTY_TEXT", "msg_type": msg_type}, trace
+
+        # =====================================================================
         # ROUTE A: PLATFORM_TRANSACTIONAL
         # =====================================================================
+        # Hanya dijangkau jika: ada pesan, wamid unik, msg_type diizinkan, dan teks tidak kosong.
         platform_id = str(PLATFORM_PHONE_NUMBER_ID).strip()
         if incoming_phone_id in (platform_id, "1268977686299719"):
             trace.log_step("TrafficSplitter.Route", f"Matched PLATFORM_PHONE_NUMBER_ID ({incoming_phone_id}) -> PlatformWebhookRouter")
