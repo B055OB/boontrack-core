@@ -953,6 +953,10 @@ Endpoint penerima webhook notifikasi di Next.js (`/api/v1/reader/notification`) 
    - Kolom yang diperbarui: `status = 'PAID'`, `payment_status = 'PAID'`, `order_status = 'PAID'`, `paid_at = NOW()`, `updated_at = NOW()`.
    - Metadata perangkat pembaca (`reader_device`) di tabel `tenants` otomatis mencatat timestamp `last_active_at` sebagai indikator status kesehatan koneksi alat kasir.
 
+4. **Ekstraksi Nominal Presisi IDR & Realtime Polling Gateway**:
+   - **Pembersihan Nominal IDR**: Pembersihan nominal IDR wajib menghapus pemisah ribuan titik (`.replace(/\./g, '')`) sebelum di-cast ke integer agar string seperti `'1.615'` tidak terpotong menjadi `'615'`. Hal ini krusial untuk notifikasi bank/e-wallet Indonesia yang menggunakan titik sebagai pemisah ribuan.
+   - **Endpoint Polling Status Resmi**: Client-side checkout memantau status pesanan secara realtime melalui gateway resmi `/api/orders/[orderId]/status` yang dipantau setiap 2 detik oleh `page.tsx` & `CheckoutModal.tsx`, dengan `clearInterval` otomatis saat status terbaca `PAID` atau saat halaman ditinggalkan untuk transisi instan ke layar sukses tanpa reload manual.
+
 ---
 
 ## 16. COMPUTATIONAL DIVISION & RUNTIME BOUNDARIES (PEMBAGIAN PERAN KOMPUTASI)
@@ -985,46 +989,8 @@ Untuk menjamin kepatuhan penuh terhadap regulasi Bank Indonesia, OJK, dan undang
   2. BoonTrack **TIDAK** memotong biaya admin/komisi per transaksi secara langsung dari saldo mutasi kasir.
   3. BoonTrack **BUKAN** dompet digital (*e-wallet*), bukan penyedia transfer dana pihak ketiga, dan bukan acquirer QRIS.
   4. Posisi hukum BoonTrack Reader murni sebagai **asisten pencatat akuntansi kasir otomatis** (pengganti peran manusia yang memeriksa notifikasi SMS/mutasi bank di kasir dan mencatat centang lunas di buku kas internal toko).
-
----
-
-## Automated Multi-Store Payment Gateway Architecture (BoonTrack Reader & Instant Checkout)
-
-Dokumentasi arsitektur sistem verifikasi pembayaran otomatis zero-fee multi-tenant menggunakan aplikasi Android notification listener dan Next.js checkout web.
-
-### 1. Overview Sistem
-Sistem ini menggantikan payment gateway konvensional bertarif admin dengan memanfaatkan mutasi instan e-wallet/perbankan (DANA Bisnis, BCA, QRIS) melalui Android Service listener, diverifikasi secara terpusat oleh Supabase, dan dipantau realtime oleh klien web via polling otomatis.
-
-```
-[ Customer ]
-│
-▼ (1. Checkout Order + Unique Nominal)
-[ Next.js Web Frontend ] ─────────► [ Supabase DB ] (Order: PENDING)
-│                                    ▲
-│ (Polling Status / 2s)              │
-│                                    │ (4. Update Order: PAID)
-▼                                    │
-[ QRIS Dynamic Display ]            [ Backend Webhook API ]
-│                                    ▲
-▼ (2. Transfer IDR)                  │ (3. Forward Mutation Payload)
-[ Bank / E-Wallet ] ────────► [ Android Device (BoonTrack Reader) ]
-(NotificationListenerService)
-```
-
-### 2. Komponen Utama
-- **Android Reader (BoonTrack Reader)**:
-  - `NotificationCatchService.kt`: Menangkap payload notifikasi sistem DANA Bisnis/BCA.
-  - `MainActivity.kt`: Setup listener & payload multi-tenant store (`tenants`).
-  - *OS Protection (Infinix XOS)*: Auto-start On, Battery Optimization: Unrestricted, App Locked di Recent Apps, auto-revoke permission Off.
-- **Backend & Webhook API**:
-  - `/api/v1/reader/notification`: Regex pembersih format ribuan IDR (`.replace(/\./g, '')`), matching multi-store aktif, dan update order menjadi `PAID`.
-  - `/api/orders/[orderId]/status`: Gateway polling realtime pembaca status tabel pesanan di Supabase.
-- **Frontend Checkout**:
-  - `app/checkout/[order_id]/page.tsx` & `app/components/CheckoutModal.tsx`: Polling `setInterval` 2s dengan `clearInterval` otomatis saat unmount atau saat status berubah menjadi `PAID` (transisi otomatis ke layar sukses tanpa reload).
-
-### 3. Alur Transaksi
-1. Customer checkout order unik (contoh: `Rp 1.774`) status `PENDING`.
-2. Customer transfer via QRIS/DANA Bisnis.
-3. Notifikasi HP ditangkap `NotificationCatchService` dan dikirim via POST.
-4. Backend mencocokkan nominal integer `1774` dan ubah status jadi `PAID`.
-5. Frontend polling mendeteksi `PAID` dan langsung redirect ke halaman "Pembayaran Berhasil".
+- **OS Background Resilience (Infinix / XOS Guard)**:
+  1. Wajib menyalakan **Auto-start** pada pengaturan manajemen aplikasi HP kasir.
+  2. Setel konsumsi baterai ke mode **Unrestricted** (Tanpa Batasan Penghemat Baterai).
+  3. **Kunci aplikasi di Recent Apps** (ikon gembok) agar service listener tidak dihentikan paksa oleh pembersih memori sistem.
+  4. Nonaktifkan opsi **'Hapus izin jika aplikasi tidak digunakan'** (*Auto-revoke permissions: Off*) agar izin Notification Access tetap aktif permanen.
