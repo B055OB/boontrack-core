@@ -327,6 +327,8 @@ class RotaryRoutingService:
         finally:
             conn.close()
 
+    list_agents = get_tenant_agents
+
     def get_conversation(self, conversation_id: str) -> Optional[Dict[str, Any]]:
         """Mengambil data percakapan berdasarkan ID."""
         conn = self._get_connection()
@@ -698,4 +700,7 @@ class RotaryRoutingService:
             conn.close()
 
 rotary_routing_service = RotaryRoutingService()
+
+def get_rotary_routing_service() -> RotaryRoutingService:
+    return rotary_routing_service
 
