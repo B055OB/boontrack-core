@@ -49,13 +49,97 @@ PLATFORM_PHONE_NUMBER_ID = (
 ).strip()
 
 GLOBAL_FALLBACK_PLATFORM = (
-    "Halo! Selamat datang di Layanan Resmi BoonTrack 🛍️\n\n"
-    "Berikut beberapa bantuan yang dapat kami berikan:\n"
-    "• *Aktivasi Toko*: Ketik *AKTIVASI BT-XXXX* sesuai kode verifikasi dari browser.\n"
-    "• *Pengaturan Toko*: Kunjungi https://shop.boontrack.com\n"
-    "• *Bantuan CS & Integrasi*: Silakan sampaikan pertanyaan Anda di sini.\n\n"
-    "Ada yang bisa kami bantu hari ini?"
+    "Halo! Layanan resmi BoonTrack siap membantu. "
+    "Untuk aktivasi akun ketik: AKTIVASI BT-XXXX. "
+    "Info lengkap kunjungi https://shop.boontrack.com"
 )
+
+# ---------------------------------------------------------------------------
+# BoonPilot Concierge — AI Knowledge Concierge (Anti-Halusinasi, temperature=0.1)
+# ---------------------------------------------------------------------------
+CONCIERGE_SYSTEM_PROMPT = """\
+Anda adalah BoonPilot Concierge, asisten representatif resmi BoonTrack Shop.
+Tugas Anda HANYA menjawab pertanyaan umum calon merchant seputar BoonTrack Shop berdasarkan FAKTA RESMI berikut:
+
+[FAKTA RESMI BOONTRACK SHOP]
+- BoonTrack Shop adalah platform e-commerce direct-to-consumer terotomatisasi untuk merchant, terintegrasi langsung dengan WhatsApp, storefront online mandiri, dan integrasi Meta/TikTok Server-Side CAPI.
+- Fitur Utama: Dynamic QRIS standar 0% MDR, notifikasi pesanan real-time via WhatsApp, manajemen katalog/stok fisik & digital, dan pelacakan transaksi otomatis via Reader APK.
+- Pilihan Paket Langganan:
+  1. Paket Checkout Lite (Entry): Rp 59.000/bln (Single page checkout cepat, 1 produk, Dynamic QRIS, basic pixel).
+  2. Paket Solo: Rp 199.000/bln (Katalog multi-produk tanpa batas, kalkulasi ongkir ekspedisi otomatis JNE/J&T/SiCepat, Dynamic QRIS 0% MDR, branding/tema toko sendiri, verifikasi bank manual).
+  3. Paket Ads Performance: Rp 299.000/bln (Semua fitur Solo + Meta & TikTok Server-Side CAPI, automasi mutasi rekening via Reader APK, konfirmasi instan 1 klik. Tersedia Free Trial 7 Hari).
+  4. Paket Team Scale: Rp 499.000/bln (Multi-CS inbox, akses knowledge base AI bot toko skala penuh, tim besar).
+- Pendaftaran: Kunjungi https://shop.boontrack.com/register
+- Format Aktivasi Toko: Pengguna yang sedang mendaftar harus membalas dengan format: AKTIVASI BT-XXXX (sesuai kode di browser).
+
+[ATURAN KETAT / ZERO HALLUCINATION]
+- HANYA gunakan fakta di atas. JANGAN PERNAH mengarang diskon, promo harga, atau fitur yang tidak tertulis.
+- Jawab secara ringkas, ramah, dan profesional (maksimal 2-3 paragraf pendek).
+- Jika pertanyaan di luar konteks BoonTrack Shop, jawab dengan sopan: "Mohon maaf, saya hanya dapat membantu memberikan informasi resmi seputar layanan dan paket BoonTrack Shop."
+- Di akhir jawaban informatif, selalu sertakan arahan singkat untuk mendaftar di https://shop.boontrack.com/register atau ketik AKTIVASI BT-XXXX jika sedang memverifikasi akun.
+"""
+
+# Pesan fallback statis jika Gemini API timeout / gagal
+_CONCIERGE_STATIC_FALLBACK = (
+    "Halo! Layanan resmi BoonTrack siap membantu. "
+    "Untuk aktivasi akun ketik: AKTIVASI BT-XXXX. "
+    "Info lengkap kunjungi https://shop.boontrack.com"
+)
+
+
+async def generate_concierge_reply(incoming_text: str) -> str:
+    """
+    AI Knowledge Concierge untuk nomor platform BoonTrack.
+    Menggunakan google-genai SDK dengan temperature=0.1 (strict factual, anti-improvisasi).
+    Grounded sepenuhnya dengan CONCIERGE_SYSTEM_PROMPT — ZERO hallucination.
+
+    Routing Hybrid:
+    - Pesan aktivasi (AKTIVASI BT-XXXX) TIDAK masuk ke sini (sudah dicegat
+      oleh ActivationInterceptor di PlatformWebhookRouter.handle()).
+    - Semua pertanyaan umum merchant masuk ke LLM concierge.
+
+    Fallback: jika API gagal/timeout (> 8 detik), kirim _CONCIERGE_STATIC_FALLBACK.
+    """
+    try:
+        import asyncio as _asyncio
+        from google import genai as _genai
+        from google.genai import types as _genai_types
+
+        _api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if not _api_key:
+            logger.warning("[BoonPilotConcierge] GEMINI_API_KEY not set — using static fallback.")
+            return _CONCIERGE_STATIC_FALLBACK
+
+        _model = os.getenv("AI_PRIMARY_MODEL", "gemini-2.0-flash").strip()
+        _client = _genai.Client(api_key=_api_key)
+        _config = _genai_types.GenerateContentConfig(
+            temperature=0.1,
+            system_instruction=CONCIERGE_SYSTEM_PROMPT,
+        )
+
+        # Run blocking SDK call in thread pool (non-blocking untuk event loop aiohttp/asyncio)
+        response = await _asyncio.wait_for(
+            _asyncio.to_thread(
+                _client.models.generate_content,
+                model=_model,
+                contents=incoming_text,
+                config=_config,
+            ),
+            timeout=8.0,  # 8 detik timeout — cegah hanging webhook Meta
+        )
+
+        reply = (response.text or "").strip()
+        if not reply:
+            logger.warning("[BoonPilotConcierge] Gemini returned empty response — using static fallback.")
+            return _CONCIERGE_STATIC_FALLBACK
+
+        logger.info(f"[BoonPilotConcierge] Generated concierge reply ({len(reply)} chars).")
+        return reply
+
+    except Exception as _err:
+        logger.error(f"[BoonPilotConcierge] API error: {_err} — using static fallback.")
+        return _CONCIERGE_STATIC_FALLBACK
+
 
 def get_tenant_fallback_message(store_name: str, tenant_slug: str) -> str:
     clean_name = store_name or tenant_slug.replace("-", " ").title()
@@ -283,27 +367,34 @@ class PlatformWebhookRouter:
             return res
 
         # =====================================================================
-        # 3. STATE GUARD (ANTI-SILENT BOT): GLOBAL_FALLBACK_PLATFORM
+        # 3. CONCIERGE STATE GUARD (AI Knowledge Concierge — Anti-Halusinasi)
+        # Menggantikan GLOBAL_FALLBACK_PLATFORM statis dengan jawaban luwes
+        # yang di-ground pada fakta resmi BoonTrack. Aktivasi deterministik
+        # sudah ditangani di Section 1, jadi pesan di sini dijamin bukan
+        # format aktivasi — aman dilempar ke LLM concierge.
         # =====================================================================
-        trace.log_step("StateGuard", "General message on platform number -> dispatching GLOBAL_FALLBACK_PLATFORM")
+        trace.log_step("ConciergeStateGuard", f"General inquiry: '{clean_text[:60]}...' -> BoonPilot Concierge")
+
+        concierge_reply = await generate_concierge_reply(clean_text)
+
         try:
             await send_whatsapp_text(
                 to_phone=sender_phone,
-                text=GLOBAL_FALLBACK_PLATFORM,
+                text=concierge_reply,
                 tenant_id="shop",
                 phone_number_id=phone_number_id,
             )
-            trace.log_step("StateGuard.Dispatch", "Dispatched GLOBAL_FALLBACK_PLATFORM successfully")
+            trace.log_step("ConciergeStateGuard.Dispatch", f"BoonPilot Concierge reply dispatched ({len(concierge_reply)} chars)")
         except Exception as err:
-            trace.log_step("StateGuard.DispatchError", str(err))
+            trace.log_step("ConciergeStateGuard.DispatchError", str(err))
 
         trace.early_return = True
         trace.response_status = 200
         res = {
             "status": "success",
             "purpose": "PLATFORM_TRANSACTIONAL",
-            "action": "global_fallback_dispatched",
-            "reply": GLOBAL_FALLBACK_PLATFORM,
+            "action": "concierge_reply_dispatched",
+            "reply": concierge_reply,
         }
         trace.response_payload = res
         return res
