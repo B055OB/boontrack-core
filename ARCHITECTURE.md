@@ -953,9 +953,9 @@ Endpoint penerima webhook notifikasi di Next.js (`/api/v1/reader/notification`) 
    - Kolom yang diperbarui: `status = 'PAID'`, `payment_status = 'PAID'`, `order_status = 'PAID'`, `paid_at = NOW()`, `updated_at = NOW()`.
    - Metadata perangkat pembaca (`reader_device`) di tabel `tenants` otomatis mencatat timestamp `last_active_at` sebagai indikator status kesehatan koneksi alat kasir.
 
-4. **Ekstraksi Nominal Presisi IDR & Realtime Polling Gateway**:
-   - **Pembersihan Nominal IDR**: Pembersihan nominal IDR wajib menghapus pemisah ribuan titik (`.replace(/\./g, '')`) sebelum di-cast ke integer agar string seperti `'1.615'` tidak terpotong menjadi `'615'`. Hal ini krusial untuk notifikasi bank/e-wallet Indonesia yang menggunakan titik sebagai pemisah ribuan.
-   - **Endpoint Polling Status Resmi**: Client-side checkout memantau status pesanan secara realtime melalui gateway resmi `/api/orders/[orderId]/status` yang dipantau setiap 2 detik oleh `page.tsx` & `CheckoutModal.tsx`, dengan `clearInterval` otomatis saat status terbaca `PAID` atau saat halaman ditinggalkan untuk transisi instan ke layar sukses tanpa reload manual.
+4. **Ekstraksi Nominal via Regex & Polling**:
+   - **Pembersihan Nominal IDR**: Pembersihan nominal IDR wajib menghapus pemisah ribuan titik (`.replace(/\./g, '')`) sebelum di-cast ke integer agar string seperti `'1.615'` tidak terpotong menjadi `'615'`.
+   - **Polling Status Order Resmi**: Endpoint `/api/orders/[orderId]/status` dipantau setiap 2000 ms oleh frontend (`page.tsx` & `CheckoutModal.tsx`) hingga status menjadi 'PAID'.
 
 ---
 
@@ -989,7 +989,7 @@ Untuk menjamin kepatuhan penuh terhadap regulasi Bank Indonesia, OJK, dan undang
   2. BoonTrack **TIDAK** memotong biaya admin/komisi per transaksi secara langsung dari saldo mutasi kasir.
   3. BoonTrack **BUKAN** dompet digital (*e-wallet*), bukan penyedia transfer dana pihak ketiga, dan bukan acquirer QRIS.
   4. Posisi hukum BoonTrack Reader murni sebagai **asisten pencatat akuntansi kasir otomatis** (pengganti peran manusia yang memeriksa notifikasi SMS/mutasi bank di kasir dan mencatat centang lunas di buku kas internal toko).
-- **OS Background Resilience (Infinix / XOS Guard)**:
+- **OS Background Resilience (Infinix / XOS Guard)**: Untuk menjaga NotificationListenerService tetap aktif di latar belakang, perangkat kasir wajib menyalakan Auto-start, mengatur optimasi baterai ke 'Unrestricted / Tanpa Batasan', mengunci aplikasi di Recent Apps (gembok), dan menonaktifkan fitur 'Hapus izin jika aplikasi tidak digunakan'.
   1. Wajib menyalakan **Auto-start** pada pengaturan manajemen aplikasi HP kasir.
   2. Setel konsumsi baterai ke mode **Unrestricted** (Tanpa Batasan Penghemat Baterai).
   3. **Kunci aplikasi di Recent Apps** (ikon gembok) agar service listener tidak dihentikan paksa oleh pembersih memori sistem.
