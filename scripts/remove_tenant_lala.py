@@ -60,18 +60,19 @@ def normalize_phone(raw: str) -> str:
     return cleaned
 
 def get_supabase_client() -> Client:
+    sb_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    sb_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
     env_paths = [
+        r"c:\boontrack-inbox\.env.local",
+        r"c:\boontrack-core\.env",
+        r"c:\boontrack-inbox\.env",
         os.path.join(CORE_ROOT, ".env"),
         os.path.join(CURRENT_DIR, ".env"),
-        r"c:\boontrack-core\.env",
-        r"c:\boontrack-inbox\.env.local",
-        r"c:\boontrack-inbox\.env",
     ]
-    sb_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-    sb_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
 
     for path in env_paths:
-        if (not sb_url or not sb_key) and os.path.exists(path):
+        if os.path.exists(path):
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     for line in f:
@@ -83,10 +84,16 @@ def get_supabase_client() -> Client:
                         v = v.strip().strip("'\"")
                         if k in ("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL") and not sb_url:
                             sb_url = v
-                        elif k in ("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_KEY", "SUPABASE_KEY") and not sb_key:
+                        elif k in ("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_KEY") and v.startswith("sb_secret_"):
+                            sb_key = v
+                        elif k in ("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_KEY") and not sb_key:
                             sb_key = v
             except Exception:
                 pass
+
+    if not sb_key:
+        # Fallback to SUPABASE_KEY only if service key not found
+        sb_key = os.getenv("SUPABASE_KEY")
 
     if not sb_url or not sb_key:
         raise RuntimeError("Supabase URL and Service Role Key not found in environment!")
