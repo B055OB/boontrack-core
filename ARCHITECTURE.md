@@ -985,3 +985,46 @@ Untuk menjamin kepatuhan penuh terhadap regulasi Bank Indonesia, OJK, dan undang
   2. BoonTrack **TIDAK** memotong biaya admin/komisi per transaksi secara langsung dari saldo mutasi kasir.
   3. BoonTrack **BUKAN** dompet digital (*e-wallet*), bukan penyedia transfer dana pihak ketiga, dan bukan acquirer QRIS.
   4. Posisi hukum BoonTrack Reader murni sebagai **asisten pencatat akuntansi kasir otomatis** (pengganti peran manusia yang memeriksa notifikasi SMS/mutasi bank di kasir dan mencatat centang lunas di buku kas internal toko).
+
+---
+
+## Automated Multi-Store Payment Gateway Architecture (BoonTrack Reader & Instant Checkout)
+
+Dokumentasi arsitektur sistem verifikasi pembayaran otomatis zero-fee multi-tenant menggunakan aplikasi Android notification listener dan Next.js checkout web.
+
+### 1. Overview Sistem
+Sistem ini menggantikan payment gateway konvensional bertarif admin dengan memanfaatkan mutasi instan e-wallet/perbankan (DANA Bisnis, BCA, QRIS) melalui Android Service listener, diverifikasi secara terpusat oleh Supabase, dan dipantau realtime oleh klien web via polling otomatis.
+
+```
+[ Customer ]
+│
+▼ (1. Checkout Order + Unique Nominal)
+[ Next.js Web Frontend ] ─────────► [ Supabase DB ] (Order: PENDING)
+│                                    ▲
+│ (Polling Status / 2s)              │
+│                                    │ (4. Update Order: PAID)
+▼                                    │
+[ QRIS Dynamic Display ]            [ Backend Webhook API ]
+│                                    ▲
+▼ (2. Transfer IDR)                  │ (3. Forward Mutation Payload)
+[ Bank / E-Wallet ] ────────► [ Android Device (BoonTrack Reader) ]
+(NotificationListenerService)
+```
+
+### 2. Komponen Utama
+- **Android Reader (BoonTrack Reader)**:
+  - `NotificationCatchService.kt`: Menangkap payload notifikasi sistem DANA Bisnis/BCA.
+  - `MainActivity.kt`: Setup listener & payload multi-tenant store (`tenants`).
+  - *OS Protection (Infinix XOS)*: Auto-start On, Battery Optimization: Unrestricted, App Locked di Recent Apps, auto-revoke permission Off.
+- **Backend & Webhook API**:
+  - `/api/v1/reader/notification`: Regex pembersih format ribuan IDR (`.replace(/\./g, '')`), matching multi-store aktif, dan update order menjadi `PAID`.
+  - `/api/orders/[orderId]/status`: Gateway polling realtime pembaca status tabel pesanan di Supabase.
+- **Frontend Checkout**:
+  - `app/checkout/[order_id]/page.tsx` & `app/components/CheckoutModal.tsx`: Polling `setInterval` 2s dengan `clearInterval` otomatis saat unmount atau saat status berubah menjadi `PAID` (transisi otomatis ke layar sukses tanpa reload).
+
+### 3. Alur Transaksi
+1. Customer checkout order unik (contoh: `Rp 1.774`) status `PENDING`.
+2. Customer transfer via QRIS/DANA Bisnis.
+3. Notifikasi HP ditangkap `NotificationCatchService` dan dikirim via POST.
+4. Backend mencocokkan nominal integer `1774` dan ubah status jadi `PAID`.
+5. Frontend polling mendeteksi `PAID` dan langsung redirect ke halaman "Pembayaran Berhasil".
