@@ -38,5 +38,13 @@ async def get_campaign_attributions(
     if not target_slug:
         return []
 
+    from app.services.entitlement_service import tenant_context_resolver
+    ctx = await tenant_context_resolver.resolve(target_slug)
+    if not tenant_context_resolver.can_use(ctx, "analytics.advanced"):
+        raise HTTPException(
+            status_code=403,
+            detail="FEATURE_NOT_ENTITLED",
+        )
+
     data = await campaign_analytics_service.get_campaign_attributions(target_slug)
     return data

@@ -75,6 +75,14 @@ from app.services.whatsapp.evolution import (
     request_evolution_pairing_code,
 )
 
+# activation
+from app.services.whatsapp.activation import (
+    normalize_activation_code,
+    find_tenant_by_activation_code,
+    ALLOWED_PENDING_STATUSES,
+)
+
+
 
 __all__ = [
     # credentials
@@ -128,4 +136,9 @@ __all__ = [
     "is_valid_whatsapp_pairing_code",
     "format_whatsapp_pairing_code",
     "request_evolution_pairing_code",
+    # activation
+    "normalize_activation_code",
+    "find_tenant_by_activation_code",
+    "ALLOWED_PENDING_STATUSES",
 ]
+

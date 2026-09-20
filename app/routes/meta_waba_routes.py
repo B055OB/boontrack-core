@@ -140,6 +140,15 @@ async def send_meta_broadcast_template(
     dispatches sending asynchronously with rate limiting, and records delivery logs.
     """
     tenant_id = payload.tenant_id or "boontrack-career"
+
+    from app.services.entitlement_service import tenant_context_resolver
+    ctx = await tenant_context_resolver.resolve(tenant_id)
+    if not tenant_context_resolver.can_use(ctx, "broadcast"):
+        raise HTTPException(
+            status_code=403,
+            detail="FEATURE_NOT_ENTITLED",
+        )
+
     default_phone, default_token = meta_waba_dispatcher.get_default_credentials(tenant_id)
 
     phone_id = (payload.phone_number_id or default_phone or "").strip()

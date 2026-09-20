@@ -113,7 +113,8 @@ class PlatformWebhookRouter:
     Hanya melayani aktivasi sistem dan transactional alerts/payment notification.
     """
 
-    ACTIVATION_REGEX = re.compile(r"^AKTIVASI\s+BT-([A-Za-z0-9]{4})$", re.IGNORECASE)
+    ACTIVATION_REGEX = re.compile(r"^AKTIVASI\s+(?:BT-)?([A-Za-z0-9]+)[\.\s]*$", re.IGNORECASE)
+
 
     @classmethod
     async def handle(
@@ -239,33 +240,77 @@ class PlatformWebhookRouter:
         # Param 1 & 3: Pencarian pending_registration berdasarkan activation_code & token
         if supabase:
             try:
-                res = (
-                    supabase.table("tenants")
-                    .select("*")
-                    .filter("metadata->>wa_verification_token", "eq", canonical_token)
-                    .execute()
-                )
-                if res and res.data and len(res.data) > 0:
-                    matched_tenant = res.data[0]
-                    is_from_db = True
-                    trace.log_step("ActivationAuth.DBLookup", f"Found tenant '{matched_tenant.get('slug')}' by metadata token")
-                else:
-                    # Fallback check variants
+                candidate_tenants = []
+                # 1. Direct match: metadata->>wa_verification_token
+                for token_val in [canonical_token, token_suffix, canonical_token.lower()]:
+                    res = (
+                        supabase.table("tenants")
+                        .select("*")
+                        .filter("metadata->>wa_verification_token", "eq", token_val)
+                        .execute()
+                    )
+                    if res and res.data:
+                        candidate_tenants.extend(res.data)
+                        break
+
+                # 2. Aliases lookup: metadata->>code, metadata->>token
+                if not candidate_tenants:
+                    for col_name in ["code", "token"]:
+                        res = (
+                            supabase.table("tenants")
+                            .select("*")
+                            .filter(f"metadata->>{col_name}", "eq", canonical_token)
+                            .execute()
+                        )
+                        if res and res.data:
+                            candidate_tenants.extend(res.data)
+                            break
+
+                # 3. Fallback scan pada tenants pending/unverified
+                if not candidate_tenants:
                     all_pending = (
                         supabase.table("tenants")
                         .select("*")
-                        .in_("status", ["pending_wa_verification", "pending", "pending_activation", "trial"])
+                        .in_("status", ["PENDING", "pending", "pending_wa_verification", "pending_activation", "unverified", "trial"])
                         .limit(50)
                         .execute()
                     )
                     for t in (all_pending.data or []):
                         t_meta = t.get("metadata") or {}
-                        cand_token = str(t_meta.get("wa_verification_token") or "").upper().strip()
-                        if cand_token in (canonical_token, token_suffix, f"BT{token_suffix}"):
-                            matched_tenant = t
-                            is_from_db = True
-                            trace.log_step("ActivationAuth.DBLookup", f"Found pending tenant '{t.get('slug')}' by suffix")
-                            break
+                        cand_tokens = [
+                            str(t_meta.get("wa_verification_token") or "").upper().strip(),
+                            str(t_meta.get("code") or "").upper().strip(),
+                            str(t_meta.get("token") or "").upper().strip(),
+                            str(t_meta.get("activation_code") or "").upper().strip(),
+                        ]
+                        if any(ct in (canonical_token, token_suffix, f"BT{token_suffix}", f"AKTIVASI {canonical_token}") for ct in cand_tokens if ct):
+                            candidate_tenants.append(t)
+
+                if candidate_tenants:
+                    is_from_db = True
+                    def candidate_rank(cand_t):
+                        c_meta = cand_t.get("metadata") or {}
+                        c_status = str(cand_t.get("status") or "").lower().strip()
+                        is_pending = c_status in ["pending", "pending_wa_verification", "pending_activation", "unverified", "trial"] or cand_t.get("is_active") is False
+                        c_phones = [
+                            normalize_phone_number(c_meta.get("phone")),
+                            normalize_phone_number(c_meta.get("whatsapp_number")),
+                            normalize_phone_number(c_meta.get("wa_number")),
+                            normalize_phone_number(cand_t.get("admin_phone")),
+                        ]
+                        phone_matched = clean_phone and (clean_phone in [p for p in c_phones if p])
+                        if is_pending and phone_matched:
+                            return 0
+                        if is_pending:
+                            return 1
+                        if phone_matched:
+                            return 2
+                        return 3
+
+                    candidate_tenants.sort(key=candidate_rank)
+                    matched_tenant = candidate_tenants[0]
+                    trace.log_step("ActivationAuth.DBLookup", f"Selected best matching tenant '{matched_tenant.get('slug')}' (status='{matched_tenant.get('status')}')")
+
             except Exception as db_err:
                 trace.log_step("ActivationAuth.DBError", str(db_err))
                 # BOUNDARY DEGRADASI DB OUTAGE (P0.5 CTO DIRECTIVE):
@@ -290,13 +335,19 @@ class PlatformWebhookRouter:
                 from app.services.onboarding_service import onboarding_service
                 for t_slug, t_data in onboarding_service._tenants_by_slug.items():
                     t_meta = t_data.get("metadata") or {}
-                    cand_token = str(t_meta.get("wa_verification_token") or t_data.get("wa_verification_token") or "").upper().strip()
-                    if cand_token in (canonical_token, token_suffix, f"BT{token_suffix}"):
+                    cand_tokens = [
+                        str(t_meta.get("wa_verification_token") or t_data.get("wa_verification_token") or "").upper().strip(),
+                        str(t_meta.get("code") or t_data.get("code") or "").upper().strip(),
+                        str(t_meta.get("token") or t_data.get("token") or "").upper().strip(),
+                        str(t_meta.get("activation_code") or t_data.get("activation_code") or "").upper().strip(),
+                    ]
+                    if any(ct in (canonical_token, token_suffix, f"BT{token_suffix}", f"AKTIVASI {canonical_token}") for ct in cand_tokens if ct):
                         matched_tenant = t_data
                         trace.log_step("ActivationAuth.MemoryLookup", f"Found tenant '{t_slug}' in onboarding_service (Test/No-DB mode)")
                         break
             except Exception as mem_err:
                 trace.log_step("ActivationAuth.MemoryLookupError", str(mem_err))
+
 
         # Jika pendaftaran tidak ditemukan sama sekali
         if not matched_tenant:
@@ -335,7 +386,7 @@ class PlatformWebhookRouter:
 
         # Param 5: Validasi Status == PENDING_ACTIVATION (Idempotency Check)
         current_status = str(matched_tenant.get("status") or "").lower().strip()
-        allowed_pending = ["pending_wa_verification", "pending", "pending_activation", "trial"]
+        allowed_pending = ["pending_wa_verification", "pending", "pending_activation", "unverified", "trial"]
         if current_status not in allowed_pending and not matched_tenant.get("is_active") is False:
             trace.log_step("ActivationAuth.StatusCheck", f"Tenant already active or status '{current_status}' (Idempotency Hit)")
             already_active_msg = "Nomor WhatsApp Anda sudah terverifikasi sebelumnya. Silakan lanjutkan pengaturan toko di browser."
@@ -423,8 +474,9 @@ class PlatformWebhookRouter:
                         "metadata": meta,
                     })
                     .eq("id", tenant_id)
-                    .in_("status", allowed_pending)
+                    .in_("status", ["PENDING", "pending", "pending_wa_verification", "pending_activation", "unverified", "trial"])
                     .execute()
+
                 )
                 # Evaluasi rows affected: jika rows affected == 0 (artinya sudah pernah diaktifkan / concurrent win),
                 # anggap sebagai idempotency hit: return sukses tanpa eksekusi side-effect ulang.

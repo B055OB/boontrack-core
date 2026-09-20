@@ -318,15 +318,25 @@ class HybridReaderProcessor:
             from psycopg2.extras import RealDictCursor
             conn = get_db_connection()
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Resolve UUID to slug if tenant_id is UUID format
+                resolved_slug = str(tenant_id).strip()
+                import re
+                if re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', resolved_slug, re.I):
+                    cur.execute("SELECT slug FROM tenants WHERE id::text = %s LIMIT 1;", (resolved_slug,))
+                    t_row = cur.fetchone()
+                    if t_row and t_row.get("slug"):
+                        resolved_slug = t_row["slug"]
+
                 cur.execute(
                     """
                     SELECT id, tenant_slug, gross_amount, customer_name, customer_phone, status
                     FROM orders
-                    WHERE tenant_slug = %s AND gross_amount = %s AND status = 'PENDING'
+                    WHERE (tenant_slug = %s OR tenant_slug = %s OR tenant_id::text = %s)
+                      AND gross_amount = %s AND status = 'PENDING'
                     ORDER BY created_at DESC
                     LIMIT 1;
                     """,
-                    (str(tenant_id), int(amount)),
+                    (resolved_slug, str(tenant_id), str(tenant_id), int(amount)),
                 )
                 row = cur.fetchone()
                 if row:

@@ -35,7 +35,11 @@ from app.routes.chat import chat_router
 from app.routes.tenant_routes import tenant_router, tenant_singular_router, commerce_products_router, legacy_tenant_router
 
 from app.routes.shop_gateway_routes import shop_gateway_fastapi_router, register_shop_gateway_routes
-from app.routes.shop_subscription_routes import shop_subscription_fastapi_router, register_shop_subscription_routes
+from app.routes.shop_subscription_routes import (
+    shop_subscription_fastapi_router,
+    subscription_fastapi_router,
+    register_shop_subscription_routes
+)
 from app.routes.shop_event_routes import shop_event_fastapi_router, register_shop_event_routes
 from app.api.webhook_payment import router as webhook_payment_router, register_webhook_payment_routes
 from app.services.payout_service import PayoutService
@@ -124,6 +128,33 @@ async def affiliate_cache_control_middleware(request: Request, call_next):
         response.headers["Cache-Control"] = "private, no-store, no-cache, must-revalidate"
     return response
 
+
+@app.middleware("http")
+async def entitlement_enforcement_middleware(request: Request, call_next):
+    """
+    Middleware Guard: Memastikan tenant berstatus CHECKOUT_LITE (atau plan yang tidak entitled)
+    tidak dapat mengakses fitur terlarang seperti /api/v1/analytics/* dan /api/v1/broadcast/*.
+    Mengembalikan HTTP 403 FEATURE_NOT_ENTITLED.
+    """
+    path = request.url.path
+    if path.startswith("/api/v1/analytics") or path.startswith("/api/v1/broadcast"):
+        tenant_slug = (
+            request.query_params.get("tenant_slug")
+            or request.query_params.get("tenant_id")
+            or request.headers.get("x-tenant-slug")
+            or request.headers.get("x-tenant-id")
+        )
+        if tenant_slug:
+            from app.services.entitlement_service import tenant_context_resolver
+            from fastapi.responses import JSONResponse
+            ctx = await tenant_context_resolver.resolve(tenant_slug)
+            if path.startswith("/api/v1/analytics") and not tenant_context_resolver.can_use(ctx, "analytics.advanced"):
+                return JSONResponse(status_code=403, content={"detail": "FEATURE_NOT_ENTITLED"})
+            if path.startswith("/api/v1/broadcast") and not tenant_context_resolver.can_use(ctx, "broadcast"):
+                return JSONResponse(status_code=403, content={"detail": "FEATURE_NOT_ENTITLED"})
+
+    return await call_next(request)
+
 # Register Routers ke FastAPI
 app.include_router(gym_router, prefix="/api/v1/gym")
 app.include_router(gym_admin_router)
@@ -141,6 +172,7 @@ app.include_router(commerce_products_router)
 app.include_router(legacy_tenant_router)
 app.include_router(shop_gateway_fastapi_router)
 app.include_router(shop_subscription_fastapi_router)
+app.include_router(subscription_fastapi_router)
 app.include_router(shop_event_fastapi_router)
 app.include_router(webhook_payment_router)
 

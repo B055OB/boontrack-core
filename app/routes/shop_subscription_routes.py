@@ -15,6 +15,7 @@ shop_subscription_aiohttp_routes = web.RouteTableDef()
 
 # Router FastAPI
 shop_subscription_fastapi_router = APIRouter(prefix="/api/v1/shop/subscriptions", tags=["Shop Subscriptions"])
+subscription_fastapi_router = APIRouter(prefix="/api/v1/subscription", tags=["Subscriptions"])
 
 
 # --- Helper Sanitasi Slug ---
@@ -69,6 +70,21 @@ async def check_slug_availability_logic(slug: str):
         return {"available": True, "slug": clean_slug, "message": "Nama toko siap digunakan."}, 200
 
 
+# --- Shared Preview Upgrade Logic ---
+async def preview_upgrade_logic(target_tier: str = "PRO_SCALE", tenant_id: Optional[str] = None):
+    """Menghitung preview prorata upgrade paket untuk toko."""
+    from app.services.subscription_service import calculate_upgrade_proration
+    clean_tenant = str(tenant_id or "onlineboost").strip()
+    proration = calculate_upgrade_proration(clean_tenant, target_tier)
+    res_dict = dict(proration)
+    return {
+        "status": "success",
+        "tenant_id": clean_tenant,
+        "data": res_dict,
+        **res_dict
+    }
+
+
 # --- Shared Webhook Logic ---
 async def handle_xendit_subscription_webhook_logic(payload: dict):
     status = str(payload.get("status", "")).upper()
@@ -80,7 +96,9 @@ async def handle_xendit_subscription_webhook_logic(payload: dict):
 
         if not tenant_slug and external_id.startswith("sub_"):
             parts = external_id.split("_")
-            if len(parts) >= 2 and parts[1]:
+            if external_id.startswith("sub_upgrade_") and len(parts) >= 3 and parts[2]:
+                tenant_slug = sanitize_slug(parts[2])
+            elif len(parts) >= 2 and parts[1]:
                 tenant_slug = sanitize_slug(parts[1])
 
         if not tenant_slug:
@@ -90,12 +108,18 @@ async def handle_xendit_subscription_webhook_logic(payload: dict):
                 "reason": "Missing tenant_slug in metadata and external_id"
             }, 200
 
-        plan_tier = metadata.get("plan_tier") or "solo"
+        plan_tier = metadata.get("plan_tier") or metadata.get("target_tier") or "solo"
         affiliate_id = metadata.get("affiliate_id")
         am_id = metadata.get("am_id")
         paid_amount = payload.get("amount") or metadata.get("amount")
+        is_upgrade = bool(
+            metadata.get("is_upgrade") or 
+            metadata.get("type") == "SUBSCRIPTION_UPGRADE" or 
+            external_id.startswith("sub_upgrade_")
+        )
+        target_valid_until = metadata.get("new_valid_until")
 
-        logger.info(f"[XENDIT WEBHOOK PROCESS] Mengaktifkan tenant: {tenant_slug}, Plan: {plan_tier}, Amount: {paid_amount}, Inv: {external_id}")
+        logger.info(f"[XENDIT WEBHOOK PROCESS] Mengaktifkan tenant: {tenant_slug}, Plan: {plan_tier}, Amount: {paid_amount}, Inv: {external_id}, Upgrade: {is_upgrade}")
 
         result = await process_successful_subscription(
             tenant_slug=tenant_slug,
@@ -103,7 +127,9 @@ async def handle_xendit_subscription_webhook_logic(payload: dict):
             xendit_invoice_id=external_id,
             affiliate_id=affiliate_id,
             am_id=am_id,
-            paid_amount=paid_amount
+            paid_amount=paid_amount,
+            is_upgrade=is_upgrade,
+            target_valid_until=target_valid_until
         )
         return result, 200
 
@@ -122,12 +148,22 @@ class CreateSubPayload(BaseModel):
     referral_code: Optional[str] = None
     affiliate_id: Optional[str] = None
     am_id: Optional[str] = None
+    is_upgrade: Optional[bool] = False
 
 
 # --- Shared Create Subscription & Merchant Persistence Logic ---
 async def create_subscription_logic(payload: CreateSubPayload):
     clean_slug = sanitize_slug(payload.tenant_slug)
     supabase = get_supabase()
+
+    # Hitung nilai prorata jika mode upgrade
+    proration_info = None
+    if payload.is_upgrade:
+        from app.services.subscription_service import calculate_upgrade_proration
+        proration_info = calculate_upgrade_proration(clean_slug, payload.plan_tier)
+        invoice_amount = payload.amount or proration_info.get("final_upgrade_amount")
+    else:
+        invoice_amount = payload.amount
 
     if supabase:
         try:
@@ -165,7 +201,7 @@ async def create_subscription_logic(payload: CreateSubPayload):
             # Tepat setelah proses insert/commit merchant ke database berhasil, kirim email onboarding
             user_email = payload.customer_email
             user_name = payload.merchant_name or "Owner"
-            if user_email and user_email != "merchant@boontrack.com":
+            if user_email and user_email != "merchant@boontrack.com" and not payload.is_upgrade:
                 try:
                     from app.services.email_service import email_service
                     await email_service.send_merchant_welcome_email(
@@ -185,11 +221,28 @@ async def create_subscription_logic(payload: CreateSubPayload):
         customer_email=payload.customer_email or "merchant@boontrack.com",
         affiliate_id=payload.referral_code or payload.affiliate_id,
         am_id=payload.am_id,
-        amount=payload.amount
+        amount=invoice_amount,
+        is_upgrade=bool(payload.is_upgrade),
+        proration_data=dict(proration_info) if proration_info else None
     )
 
 
 # --- Aiohttp Endpoints ---
+
+@shop_subscription_aiohttp_routes.get("/api/v1/subscription/preview-upgrade")
+@shop_subscription_aiohttp_routes.get("/api/v1/shop/subscriptions/preview-upgrade")
+async def aiohttp_preview_upgrade(request: web.Request) -> web.Response:
+    target_tier = request.query.get("target_tier", "PRO_SCALE")
+    tenant_id = (
+        request.query.get("tenant_id") or
+        request.query.get("tenant") or
+        request.query.get("tenant_slug") or
+        request.headers.get("x-tenant-id") or
+        request.headers.get("x-tenant-slug")
+    )
+    res = await preview_upgrade_logic(target_tier=target_tier, tenant_id=tenant_id)
+    return web.json_response(res, status=200)
+
 
 @shop_subscription_aiohttp_routes.get("/api/v1/shop/subscriptions/check-slug/{slug}")
 async def aiohttp_check_slug(request: web.Request) -> web.Response:
@@ -227,6 +280,28 @@ def register_shop_subscription_routes(app: web.Application):
 
 
 # --- FastAPI Endpoints ---
+
+@subscription_fastapi_router.get("/preview-upgrade")
+async def fastapi_subscription_preview_upgrade(
+    target_tier: str = "PRO_SCALE",
+    tenant: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    tenant_slug: Optional[str] = None
+):
+    selected = tenant_id or tenant or tenant_slug
+    return await preview_upgrade_logic(target_tier=target_tier, tenant_id=selected)
+
+
+@shop_subscription_fastapi_router.get("/preview-upgrade")
+async def fastapi_shop_preview_upgrade(
+    target_tier: str = "PRO_SCALE",
+    tenant: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    tenant_slug: Optional[str] = None
+):
+    selected = tenant_id or tenant or tenant_slug
+    return await preview_upgrade_logic(target_tier=target_tier, tenant_id=selected)
+
 
 @shop_subscription_fastapi_router.get("/check-slug/{slug}")
 async def fastapi_check_slug(slug: str):
