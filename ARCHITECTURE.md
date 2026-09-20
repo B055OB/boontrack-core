@@ -858,4 +858,130 @@ Ketika string QRIS statis dari merchant acquirer (GoPay, DANA, ShopeePay, dsb.) 
   - Tag 54: `540575000` (Disisipkan tepat sebelum `5802ID`).
   - Tag 62: `62070703A01` (Utuh bawaan acquirer).
   - Tag 63: `63042F39` (CRC16-CCITT kalkulasi ulang menghasilkan `2F39`).
-
+
+### 14.3 Visual QRIS Decoding via html5-qrcode & EMVCo Standard Specifications
+
+Untuk mempermudah merchant yang memiliki barcode statis cetak fisik dari acquirer (DANA Bisnis, GoPay Usaha, BCA QRIS, dll.), sistem menyediakan fitur decoding visual langsung di browser:
+
+1. **Client-Side Decoding via html5-qrcode**:
+   - Saat merchant mengunggah file gambar QRIS di dashboard toko (`/dashboard`), client mengeksekusi library `html5-qrcode` (`Html5Qrcode.scanFile(file, false)`).
+   - Decoding berlangsung 100% di sisi browser merchant tanpa membebani server backend.
+   - Hasil ekstraksi berupa raw EMVCo payload string yang divalidasi keutuhannya (wajib diawali `000201` dan lolos validasi checksum CRC16 Tag 63).
+   - String mentah disimpan ke database Supabase pada kolom `tenants.metadata.payment_settings.qris_raw` bersama dengan URL gambar publik di Cloudflare R2 / Supabase Storage.
+
+2. **Tabel Spesifikasi EMVCo Tag QRIS Dinamis BoonTrack**:
+   | Tag EMVCo | Nama Atribut | Nilai Standar BoonTrack | Fungsi & Aturan Regulasi ASPI / BI |
+   | :--- | :--- | :--- | :--- |
+   | **Tag 01** | Point of Initiation Method | `12` (Dynamic) | Wajib bernilai `12` jika transaksi membawa nominal unik (Tag 54). Menghindari penolakan decoding m-banking (blu BCA, Livin, dll.). |
+   | **Tag 53** | Transaction Currency Code | `360` | Kode mata uang resmi Rupiah Indonesia (ISO 4217). |
+   | **Tag 54** | Transaction Amount | Nominal Dinamis (contoh: `54041125`) | Nilai total tagihan pesanan setelah ditambah/dikurangi kode unik acak downward 1-999. |
+   | **Tag 58** | Country Code | `ID` | Kode negara Republik Indonesia (ISO 3166-1 alpha-2). |
+   | **Tag 62** | Additional Data Field | *Preserved as-is* | Dilarang keras menimpa data bawaan terminal acquirer. Wajib dipertahankan utuh. |
+   | **Tag 63** | CRC16 Checksum | 4 digit hex uppercase (contoh: `63042F39`) | Dihitung menggunakan polinomial `0x1021` dengan initial value `0xFFFF`. |
+
+---
+
+## 15. END-TO-END HYBRID COMMERCE ARCHITECTURE & DATA FLOW
+
+Platform BoonTrack menerapkan arsitektur *Hybrid Event-Driven Commerce* yang menghubungkan antarmuka pembeli (Next.js), sistem perbankan nasional (QRIS EMVCo), perangkat kasir lokal (Android Reader APK), shared state database (Supabase), dan background intelligence engine (FastAPI Core).
+
+### 15.1 Diagram Alur Transaksi & Settlement (Mermaid Sequence)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Buyer as Pembeli (Browser / Storefront)
+    participant Vercel as Vercel Edge / Next.js (shop.boontrack.com)
+    participant Supabase as Supabase Database (Orders State Store)
+    actor Bank as Jaringan Bank / E-Wallet (BCA, DANA, GoPay)
+    participant Android as HP Kasir Android (BoonTrack Reader APK)
+    participant Core as BoonTrack Core (FastAPI / Railway Worker)
+
+    Buyer->>Vercel: 1. Checkout Pesanan (Pilih Produk & Buat Pesanan)
+    Vercel->>Vercel: 2. Hitung Nominal + Generate Dynamic QRIS EMVCo (Tag 54)
+    Vercel->>Supabase: 3. Insert Order (status: 'PENDING', gross_amount: 1125)
+    Vercel-->>Buyer: 4. Render Dynamic QRIS & Mulai Polling Status (Interval 2000ms)
+
+    Buyer->>Bank: 5. Scan QRIS & Bayar Rp 1.125 via M-Banking / E-Wallet
+    Bank-->>Android: 6. Push Notifikasi Mutasi ("Pembayaran Masuk - Rp1.125 diterima DANA Bisnis")
+
+    Android->>Vercel: 7. POST /api/v1/reader/notification (Payload: text, tenant_id, package_name)
+
+    rect rgb(240, 248, 255)
+    note over Vercel,Supabase: 3x Retry Buffer Loop (Jeda 1.5s) Anti-Race Condition
+    Vercel->>Vercel: 8. Ekstraksi Nominal via Regex (Rp1.125 -> 1125)
+    Vercel->>Supabase: 9. Query Candidate Order Pending (Jalur 1: Tenant -> Jalur 2: Global Fallback -> Jalur 3: Toleransi)
+    alt Order Belum Ditemukan & Attempt <= 3
+        Vercel->>Vercel: Jeda buffer 1500ms lalu ulangi query (mengatasi jeda insert checkout)
+    end
+    Vercel->>Supabase: 10. Update Atomic: status='PAID', payment_status='PAID', paid_at=NOW()
+    Vercel->>Supabase: 11. Update Heartbeat: tenants.metadata.reader_device (status='CONNECTED')
+    end
+
+    Vercel-->>Android: 12. Response HTTP 200 OK (matched: true, order_id)
+
+    Buyer->>Vercel: 13. Polling Request (/api/orders?tenant=xxx atau /checkout/[id])
+    Vercel-->>Buyer: 14. Response Status 'PAID'
+    Buyer->>Buyer: 15. Auto-redirect ke Invoice Sukses + Trigger Meta Pixel/CAPI Purchase (Deduplicated)
+
+    Supabase->>Core: 16. Event Dispatch / Realtime Trigger (Order Lunas)
+    Core->>Core: 17. Eksekusi Fulfillment (Akses Kelas / Konten Digital / Slot Jadwal)
+    Core-->>Buyer: 18. Kirim Notifikasi WhatsApp Otomatis (WA Bot / Evolution API)
+```
+
+### 15.2 Ingestion Webhook & 3x Retry Buffer Resilience
+
+Endpoint penerima webhook notifikasi di Next.js (`/api/v1/reader/notification`) dirancang untuk tahan terhadap fluktuasi latensi jaringan seluler:
+
+1. **Pencegahan Race Condition (3x Retry Buffer Loop)**:
+   - **Kasus Nyata**: Pembeli melakukan transfer QRIS begitu cepat atau sinyal seluler pembeli mengalami delay saat melakukan insert order ke Supabase, sehingga push notifikasi bank tiba di HP Reader dan diteruskan ke server *sebelum* proses insert order dari browser pembeli selesai dicatat di database.
+   - **Solusi Arsitektur**: Handler webhook menerapkan loop toleransi:
+     ```typescript
+     const MAX_RETRIES = 3;
+     const RETRY_DELAY_MS = 1500;
+     // Total toleransi waktu tunggu: 4.5 detik
+     ```
+   - Jika pada percobaan pertama pesanan berstatus `PENDING` belum ditemukan, server tidak langsung menolak transaksi, melainkan menunggu jeda buffer 1.5 detik sebelum mencoba query ulang ke database.
+
+2. **Strategi 3-Tier Order Matching**:
+   - **Jalur 1 (Tenant Exact Amount)**: Mencocokkan nominal dengan pesanan pending pada tenant spesifik. Kueri dipagari validasi format UUID untuk menghindari error syntax PostgreSQL `22P02`.
+   - **Jalur 2 (Global Exact Amount Fallback)**: Jika konfigurasi tenant di HP Reader tidak cocok (misal HP terdaftar sebagai `buzzerukm` namun toko yang melayani transaksi adalah `hellohijau`), keunikan kode unik transaksi 3 digit menjamin pencocokan global tetap akurat 100% tanpa salah sasaran.
+   - **Jalur 3 (Unique Code Tolerance Match)**: Jika nominal yang tersimpan di order adalah harga dasar sebelum diskon kode unik, sistem menghitung selisih toleransi (1 s/d 999).
+
+3. **Atomic State Mutation & Audit Trail**:
+   - Mutasi status pesanan dilakukan secara atomik menggunakan `SUPABASE_SERVICE_ROLE_KEY` untuk melewati batasan Row Level Security (RLS) publik.
+   - Kolom yang diperbarui: `status = 'PAID'`, `payment_status = 'PAID'`, `order_status = 'PAID'`, `paid_at = NOW()`, `updated_at = NOW()`.
+   - Metadata perangkat pembaca (`reader_device`) di tabel `tenants` otomatis mencatat timestamp `last_active_at` sebagai indikator status kesehatan koneksi alat kasir.
+
+---
+
+## 16. COMPUTATIONAL DIVISION & RUNTIME BOUNDARIES (PEMBAGIAN PERAN KOMPUTASI)
+
+Ekosistem BoonTrack membagi beban komputasi secara tegas ke dalam 3 tier infrastruktur sesuai karakteristik beban kerja:
+
+| Tier Komputasi | Infrastruktur / Engine | Peran & Tanggung Jawab Utama | Alasan Arsitektural & SLA |
+| :--- | :--- | :--- | :--- |
+| **Edge & Presentation** | **Vercel** (Next.js 16 App Router) | • Storefront publik & landing page toko<br>• Client checkout & render QRIS dinamis<br>• Edge caching & SSR UI rendering<br>• Fast payment webhook ingestion (`/api/v1/reader/notification`)<br>• Client-side polling invoice status | **Latensi Ultra-Rendah (<100ms)**:<br>Serverless Edge menjamin penerimaan mutasi kasir instan tanpa cold-start lambat dan melayani ribuan pembeli checkout secara bersamaan tanpa scaling bottleneck. |
+| **State Store & Source of Truth** | **Supabase** (PostgreSQL 15+ Managed) | • Shared transactional ledger (`orders` table)<br>• Single source of truth seluruh transaksi platform<br>• Row Level Security (RLS) isolasi data antar toko<br>• Tenant registry, catalog, & user identity<br>• Elevated operations via `SUPABASE_SERVICE_ROLE_KEY` | **ACID Compliance & Integritas Finansial**:<br>Mencegah data race, menjamin konsistensi status order, dan menjadi titik temu independen antara frontend Next.js dan backend FastAPI. |
+| **Heavy Processing & AI Core** | **Railway** (FastAPI + aiohttp runner - `boontrack-core`) | • Heavy AI Reasoning (Gemini LLM & BoonPilot)<br>• Semantic vector search & RAG katalog<br>• Background workers & long-running scheduled tasks<br>• Integrasi WhatsApp WABA & Evolution API bridge<br>• Kalkulasi komisi afiliasi & audit entitlement | **Persistent Compute & Asynchronous Queue**:<br>Proses AI dan worker jangka panjang tidak cocok dijalankan di serverless function yang memiliki batas timeout eksekusi (Vercel max 15-60s). |
+
+---
+
+## 17. REGULATORY & LEGAL DEFENSIVE POSITIONING
+
+Untuk menjamin kepatuhan penuh terhadap regulasi Bank Indonesia, OJK, dan undang-undang sistem pembayaran nasional, BoonTrack menerapkan arsitektur pemisahan legalitas (*dual-track payment architecture*):
+
+### 17.1 Platform Subscriptions & Public SaaS (PJP Kategori 1 Official Partner)
+- **Cakupan**: Pembayaran biaya langganan software BoonTrack oleh merchant (`shop_subscriptions`), upgrade tier (`STARTER`, `PRO_SCALE`, `ENTERPRISE`), dan penagihan add-on platform.
+- **Kepatuhan Regulasi**: Diproses 100% secara resmi melalui mitra Penyelenggara Jasa Pembayaran (PJP) Berlisensi Bank Indonesia Kategori 1 (**PT Sinar Digital Terdepan / Xendit**).
+- BoonTrack tidak bertindak sebagai payment gateway publik independen tanpa izin; seluruh dana langganan SaaS disalurkan melalui rekening escrow dan gateway berlisensi resmi.
+
+### 17.2 Merchant Store Direct-Settlement (BoonTrack Reader APK)
+- **Cakupan**: Transaksi penjualan produk/jasa antara pembeli akhir (*end-buyer*) dengan toko milik merchant.
+- **Definisi Perangkat Lunak**: BoonTrack Reader adalah modul utilitas lokal perangkat keras Android (*local client-side device automation tool*) yang memanfaatkan API resmi sistem operasi Android (`NotificationListenerService`).
+- **Direct-to-Merchant Settlement**: Dana transaksi pembeli masuk **100% secara langsung ke rekening bank atau e-wallet milik merchant sendiri** (BCA, DANA Bisnis, GoPay Usaha, Mandiri, dsb.).
+- **Jaminan Non-Custodial & Zero Fund Holding**:
+  1. BoonTrack **TIDAK PERNAH** menampung, mengendapkan, menguasai, atau memfasilitasi penampungan dana (*escrow*) milik pembeli atau merchant.
+  2. BoonTrack **TIDAK** memotong biaya admin/komisi per transaksi secara langsung dari saldo mutasi kasir.
+  3. BoonTrack **BUKAN** dompet digital (*e-wallet*), bukan penyedia transfer dana pihak ketiga, dan bukan acquirer QRIS.
+  4. Posisi hukum BoonTrack Reader murni sebagai **asisten pencatat akuntansi kasir otomatis** (pengganti peran manusia yang memeriksa notifikasi SMS/mutasi bank di kasir dan mencatat centang lunas di buku kas internal toko).
