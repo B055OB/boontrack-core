@@ -442,19 +442,23 @@ async def generate_fast_track_checkout_response(
     invoice["qr_code_url"] = qr_code_url
 
     amount_fmt = f"Rp{amount:,.0f}".replace(",", ".")
+    prod_slug = str((selected_product or {}).get("slug") or (selected_product or {}).get("id") or "").strip()
+    prod_checkout_url = f"https://shop.boontrack.com/{clean_slug}/p/{prod_slug}" if prod_slug else f"https://shop.boontrack.com/{clean_slug}"
 
     caption = (
-        f"Berikut Rincian Tagihan Pembayaran Anda 💳\n\n"
-        f"📌 *Nama Produk:* {product_name}\n"
-        f"💰 *Total Tagihan:* {amount_fmt}\n"
-        f"📄 *No. Invoice / Kode Bayar:* `{external_id}`\n"
-        f"⏱️ *Masa Berlaku:* 15 Menit\n\n"
-        f"🔗 *Link Pembayaran Resmi Xendit:*\n"
+        f"Berikut Rincian Tagihan Pembayaran Anda \U0001f4b3\n\n"
+        f"\U0001f4e6 *Nama Produk:* {product_name}\n"
+        f"\U0001f4b0 *Total Tagihan:* {amount_fmt}\n"
+        f"\U0001f516 *No. Invoice / Kode Bayar:* `{external_id}`\n"
+        f"\u23f1\ufe0f *Masa Berlaku:* 15 Menit\n\n"
+        f"\U0001f517 *Link Pembayaran Instan (Xendit / QRIS):*\n"
         f"{invoice_url}\n\n"
-        f"📱 *Petunjuk Pembayaran:*\n"
-        f"1. Klik link pembayaran resmi Xendit di atas.\n"
+        f"\U0001f6d2 *Link Checkout Web Resmi Toko:*\n"
+        f"{prod_checkout_url}\n\n"
+        f"\U0001f4dd *Petunjuk Pembayaran:*\n"
+        f"1. Klik link pembayaran resmi di atas.\n"
         f"2. Pilih metode bayar QRIS atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
-        f"3. Selesaikan transaksi langsung di halaman pembayaran resmi Xendit.\n\n"
-        f"_Akses materi & layanan akan otomatis aktif setelah pembayaran berhasil terverifikasi._ 🚀"
+        f"3. Selesaikan transaksi langsung di halaman pembayaran resmi.\n\n"
+        f"_Akses materi & layanan akan otomatis aktif setelah pembayaran berhasil terverifikasi._ \u2728"
     )
     return caption, invoice, qr_bytes

@@ -285,10 +285,17 @@ class UnifiedConversationEngine:
                 p_title = p.get("title") or p.get("name") or f"Item {idx}"
                 p_price = float(p.get("promo_price") or p.get("price") or 0)
                 promo_txt = f" (Promo: Rp{p_price:,.0f})" if p.get("promo_price") else ""
-                catalog_lines.append(f"{idx}. {p_title} - Rp{p_price:,.0f}{promo_txt}")
+                p_slug = str(p.get("slug") or p.get("id") or "").strip()
+                p_url = f"https://shop.boontrack.com/{clean_slug}/p/{p_slug}" if p_slug else f"https://shop.boontrack.com/{clean_slug}"
+                catalog_lines.append(f"{idx}. {p_title} - Rp{p_price:,.0f}{promo_txt}\n   Link Checkout: {p_url}")
             
-            catalog_summary = "\n".join(catalog_lines)
-            reply = f"Berikut daftar produk & layanan resmi *{store_name}*:\n\n{catalog_summary}\n\nAda item yang ingin Kakak tanyakan lebih lanjut atau langsung dipesan?"
+            catalog_summary = "\n\n".join(catalog_lines)
+            reply = (
+                f"Berikut daftar produk & layanan resmi *{store_name}*:\n\n"
+                f"{catalog_summary}\n\n"
+                f"🌐 Toko Resmi: https://shop.boontrack.com/{clean_slug}\n\n"
+                f"Ada item yang ingin Kakak tanyakan lebih lanjut atau langsung dipesan?"
+            )
             return {
                 "success": True,
                 "reply": reply,

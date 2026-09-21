@@ -379,6 +379,70 @@ async def process_inbound_message(payload: InboundPayload):
             logger.info(f"[GROWTH GATEWAY MENU] Handled by Numbered Menu Flow for '{clean_phone}'")
             reply = menu_reply
 
+    # 2.5 Native Checkout / Lead Collection State Machine
+    # Tangkap data email & nama calon pembeli yang dikirim di chat WhatsApp
+    email_match = re.search(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', incoming_text)
+    if not reply and email_match:
+        extracted_email = email_match.group(0).lower().strip()
+        name_match = re.search(r'(?:nama|name)\s*[:=]\s*([^\n,]+)', incoming_text, re.IGNORECASE)
+        extracted_name = name_match.group(1).strip() if name_match else (contact_name or "Kakak")
+        logger.info(f"[NATIVE LEAD COLLECTION] Captured lead for '{tenant_slug}': name='{extracted_name}', email='{extracted_email}', phone='{clean_phone}'")
+
+        # Persist lead ke Supabase
+        try:
+            sb = get_supabase()
+            if sb:
+                lead_data = {
+                    "tenant_slug": tenant_slug,
+                    "customer_name": extracted_name,
+                    "customer_phone": clean_phone,
+                    "customer_email": extracted_email,
+                    "status": "QUALIFIED",
+                    "source": "whatsapp_native_checkout",
+                }
+                sb.table("leads").insert(lead_data).execute()
+        except Exception as _lead_db_err:
+            logger.debug(f"[NATIVE LEAD DB WARN] {_lead_db_err}")
+
+        # Dapatkan rincian produk toko
+        from app.services.whatsapp.commerce import get_tenant_products_from_db, generate_fast_track_checkout_response
+        store_name, products = get_tenant_products_from_db(tenant_slug)
+        sel_prod = products[0] if products else {}
+        prod_title = sel_prod.get("title") or sel_prod.get("name") or f"Layanan {store_name}"
+        prod_price = float(sel_prod.get("promo_price") or sel_prod.get("price") or 0)
+        prod_slug = str(sel_prod.get("slug") or sel_prod.get("id") or "").strip()
+        prod_checkout_url = f"https://shop.boontrack.com/{tenant_slug}/p/{prod_slug}" if prod_slug else f"https://shop.boontrack.com/{tenant_slug}"
+
+        try:
+            fast_reply, invoice, _ = await generate_fast_track_checkout_response(
+                tenant_slug=tenant_slug,
+                from_phone=clean_phone,
+                contact_name=extracted_name,
+            )
+            pay_link = invoice.get("invoice_url") or prod_checkout_url
+            reply = (
+                f"Terima kasih Kak *{extracted_name}*! 🙏\n\n"
+                f"Data pendaftaran Kakak telah kami catat:\n"
+                f"• *Nama:* {extracted_name}\n"
+                f"• *Email:* {extracted_email}\n"
+                f"• *Paket:* {prod_title} (Rp{prod_price:,.0f})\n\n"
+                f"Silakan selesaikan pembayaran melalui tautan resmi berikut:\n"
+                f"👉 *Link Pembayaran Instan QRIS:*\n{pay_link}\n\n"
+                f"🛒 *Link Storefront / Web Checkout:*\n{prod_checkout_url}\n\n"
+                f"_Setelah pembayaran terverifikasi, link akses materi & member area akan dikirimkan otomatis ke email Kakak._ ✨"
+            )
+        except Exception as _inv_err:
+            reply = (
+                f"Terima kasih Kak *{extracted_name}*! 🙏\n\n"
+                f"Data pendaftaran Kakak telah kami catat:\n"
+                f"• *Nama:* {extracted_name}\n"
+                f"• *Email:* {extracted_email}\n"
+                f"• *Paket:* {prod_title} (Rp{prod_price:,.0f})\n\n"
+                f"Untuk menyelesaikan transaksi dan pembayaran via QRIS otomatis, silakan klik link resmi kami:\n"
+                f"👉 {prod_checkout_url}\n\n"
+                f"_Akses materi akan otomatis aktif setelah pembayaran berhasil._ ✨"
+            )
+
     # 3. Pipeline Auto-Reply: Deteksi Checkout & Pembelian Cepat
     if not reply:
         if resolved_strategy == "trust_builder":
