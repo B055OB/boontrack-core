@@ -473,14 +473,15 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 except Exception:
                     occurred_at = datetime.now(timezone.utc)
 
-            t_slug = get_user_tenant_session(clean_phone) or "onlineboost"
-            captured_clid = await capi_dispatcher.capture_ctwa_referral(
-                tenant_id=t_slug,
-                session_id=clean_phone or from_phone,
-                referral_data=referral,
-                occurred_at=occurred_at,
-                conversation_id=event.get("message_id"),
-            )
+            t_slug = get_user_tenant_session(clean_phone) or ""
+            if t_slug:
+                captured_clid = await capi_dispatcher.capture_ctwa_referral(
+                    tenant_id=t_slug,
+                    session_id=clean_phone or from_phone,
+                    referral_data=referral,
+                    occurred_at=occurred_at,
+                    conversation_id=event.get("message_id"),
+                )
             if captured_clid:
                 update_user_session_context(clean_phone, {"ctwa_clid": captured_clid})
                 logger.info(f"[CENTRAL WA CTWA] Captured ctwa_clid for {clean_phone}: {captured_clid}")
@@ -629,12 +630,12 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 set_user_tenant_session(clean_phone, selected_slug)
             logger.info(f"[CENTRAL WA ROUTER] User {clean_phone} selected '{clean_text}' -> locked to '{selected_slug}'")
 
-            if selected_slug == "onlineboost":
-                await send_whatsapp_tenant_catalog(from_phone, "onlineboost")
+            if selected_slug and selected_slug not in ("boontrack-shop", "shop"):
+                await send_whatsapp_tenant_catalog(from_phone, selected_slug)
                 safe_log_to_supabase_messages(
                     sender="bot",
-                    text="[Katalog OnlineBoost Dispatched]",
-                    tenant_id="onlineboost",
+                    text=f"[Katalog {selected_slug} Dispatched]",
+                    tenant_id=selected_slug,
                     channel="whatsapp",
                     user_phone=from_phone,
                     user_name=contact_name,
@@ -643,8 +644,8 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 )
                 return web.json_response({
                     "status": "success",
-                    "tenant": "onlineboost",
-                    "reply": "[Katalog OnlineBoost Dispatched]",
+                    "tenant": selected_slug,
+                    "reply": f"[Katalog {selected_slug} Dispatched]",
                     "is_new_binding": True
                 }, status=200)
 
@@ -700,7 +701,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
         # 6.5. Dispatching Dinamis Berbasis Runtime Context & Capabilities
         active_locked_tenant = get_user_tenant_session(clean_phone, incoming_text)
-        is_demo_locked = bool(active_locked_tenant and active_locked_tenant in ("onlineboost", "growthplus", "proscale"))
+        is_demo_locked = bool(active_locked_tenant and active_locked_tenant in ("growthplus", "proscale"))
 
         if not is_demo_locked:
             resolved_ctx = await tenant_context_resolver.resolve_by_phone_number_id(phone_id)
@@ -751,7 +752,16 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
         text_lower = (incoming_text or "").strip().lower()
         clean_btn = str(button_id or "").strip().lower()
-        active_session_tenant = get_user_tenant_session(clean_phone, incoming_text) or "onlineboost"
+        active_session_tenant = get_user_tenant_session(clean_phone, incoming_text) or ""
+        if not active_session_tenant:
+            logger.warning(f"[CENTRAL WA] No active tenant session for {clean_phone}")
+            welcome_msg = (
+                "Halo! Selamat datang di BoonTrack.\n\n"
+                "Untuk terhubung langsung dengan katalog toko, "
+                "silakan kirim pesan melalui tautan resmi toko tersebut."
+            )
+            await send_wa_text(from_phone, welcome_msg, phone_id)
+            return web.json_response({"status": "no_tenant", "reply": welcome_msg}, status=200)
 
 
         # ---------------------------------------------------------------

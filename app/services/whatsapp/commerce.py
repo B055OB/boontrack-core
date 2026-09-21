@@ -134,14 +134,7 @@ def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, A
             except Exception as e:
                 logger.warning(f"[DB PRODUCTS FETCH ERROR] {e}")
 
-    if products:
-        def _cpm_priority(x):
-            s = str(x.get("slug") or "").lower()
-            t = str(x.get("title") or x.get("name") or "").lower()
-            if "cpm-24jam" in s or "cpm-24-jam" in s or "modul-praktis-cpm" in s or "cpm 24 jam" in t:
-                return 0
-            return 1
-        products.sort(key=_cpm_priority)
+    # Mengikuti urutan produk murni dari database Supabase (Zero Hardcoding Policy)
 
     return store_name, products
 
@@ -181,7 +174,7 @@ def build_tenant_catalog_sections(tenant_slug: str) -> Tuple[str, List[Dict[str,
 
 async def send_whatsapp_tenant_catalog(
     phone: str,
-    tenant_slug: str = "onlineboost",
+    tenant_slug: str = "",
     tenant_id: Optional[str] = None,
     phone_number_id: Optional[str] = None,
     access_token: Optional[str] = None,
@@ -333,6 +326,27 @@ async def generate_cart_checkout_response(
     prod_slug = str(cart_items[0].get("slug") or cart_items[0].get("id") or "").strip() if cart_items else ""
     prod_checkout_url = f"https://shop.boontrack.com/{clean_slug}/p/{prod_slug}" if prod_slug else f"https://shop.boontrack.com/{clean_slug}"
 
+    # Auto-decode gambar QRIS statis jika string mentah belum ada di database
+    if not raw_qris_string and seller_qris_image:
+        try:
+            from app.utils.qris_generator import decode_qris_image
+            decoded_qris = decode_qris_image(str(seller_qris_image).strip())
+            if decoded_qris and decoded_qris.startswith("000201"):
+                raw_qris_string = decoded_qris
+                logger.info(f"[AUTO-DECODE QRIS SUCCESS] Decoded raw EMVCo payload from image for tenant '{clean_slug}'")
+                try:
+                    from app.services.whatsapp_service import get_supabase
+                    sb = get_supabase()
+                    if sb and clean_slug:
+                        ps = tenant_meta.get("payment_settings") or {}
+                        ps["qris_raw"] = decoded_qris
+                        tenant_meta["payment_settings"] = ps
+                        sb.table("tenants").update({"metadata": tenant_meta}).eq("slug", clean_slug).execute()
+                except Exception:
+                    pass
+        except Exception as _dec_err:
+            logger.debug(f"[AUTO-DECODE NOTE] {_dec_err}")
+
     dynamic_qr_payload = ""
     if raw_qris_string:
         try:
@@ -417,23 +431,21 @@ async def generate_fast_track_checkout_response(
             p_slug = str(p.get("slug") or "").lower()
             p_id = str(p.get("id") or "").lower()
             p_title = str(p.get("title") or p.get("name") or "").lower()
-            if clean_key in p_id or clean_key in p_slug or clean_key in p_title or ("cpm" in clean_key and ("cpm" in p_slug or "cpm" in p_title)):
+            if clean_key in p_id or clean_key in p_slug or clean_key in p_title:
                 selected_product = p
                 break
 
     if not selected_product and products:
         selected_product = products[0]
 
-    if selected_product:
-        product_name = str(selected_product.get("title") or selected_product.get("name") or f"Produk {store_name}")
-        base_amount = int(float(selected_product.get("promo_price") or selected_product.get("price") or 1000))
-    else:
-        product_name = "Modul Praktis CPM 24 Jam"
-        base_amount = 1000
+    if not selected_product:
+        empty_msg = f"Saat ini katalog produk untuk *{store_name}* sedang disiapkan oleh admin toko. Silakan hubungi admin kami ya, Kak! 🙏"
+        return empty_msg, {}, b""
 
-    if "cpm" in product_name.lower() or (product_key and "cpm" in str(product_key).lower()) or (clean_slug == "onlineboost" and not product_key):
-        product_name = "Modul Praktis CPM 24 Jam"
-        base_amount = 1000
+    product_name = str(selected_product.get("title") or selected_product.get("name") or f"Produk {store_name}")
+    base_amount = int(float(selected_product.get("promo_price") or selected_product.get("price") or 0))
+    if base_amount <= 0:
+        base_amount = 1000  # Minimal nominal transaksi QRIS
 
     # Injeksi 3-digit kode unik acak untuk rekonsiliasi mutasi otomatis
     unique_code = random.randint(100, 999)
@@ -482,11 +494,32 @@ async def generate_fast_track_checkout_response(
     prod_slug = str((selected_product or {}).get("slug") or (selected_product or {}).get("id") or "").strip()
     prod_checkout_url = f"https://shop.boontrack.com/{clean_slug}/p/{prod_slug}" if prod_slug else f"https://shop.boontrack.com/{clean_slug}"
 
+    # Auto-decode gambar QRIS statis jika string mentah belum ada di database
+    if not raw_qris_string and seller_qris_image:
+        try:
+            from app.utils.qris_generator import decode_qris_image
+            decoded_qris = decode_qris_image(str(seller_qris_image).strip())
+            if decoded_qris and decoded_qris.startswith("000201"):
+                raw_qris_string = decoded_qris
+                logger.info(f"[AUTO-DECODE QRIS SUCCESS] Decoded raw EMVCo payload from image for tenant '{clean_slug}'")
+                try:
+                    from app.services.whatsapp_service import get_supabase
+                    sb = get_supabase()
+                    if sb and clean_slug:
+                        ps = tenant_meta.get("payment_settings") or {}
+                        ps["qris_raw"] = decoded_qris
+                        tenant_meta["payment_settings"] = ps
+                        sb.table("tenants").update({"metadata": tenant_meta}).eq("slug", clean_slug).execute()
+                except Exception:
+                    pass
+        except Exception as _dec_err:
+            logger.debug(f"[AUTO-DECODE NOTE] {_dec_err}")
+
     dynamic_qr_payload = ""
     if raw_qris_string:
         try:
             from app.utils.qris_generator import generate_dynamic_qris_payload
-            dynamic_qr_payload = generate_dynamic_qris_payload(raw_qris_string, amount, external_id)
+            dynamic_qr_payload = generate_dynamic_qris_payload(raw_qris_string, total_amount, external_id)
         except Exception as dyn_err:
             logger.warning(f"[DYNAMIC QRIS WARN] {dyn_err}")
             dynamic_qr_payload = raw_qris_string

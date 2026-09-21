@@ -49,13 +49,14 @@ class SessionRepository:
         try:
             from app.services.session_store import set_user_tenant_session, get_user_tenant_session
             clean_phone = str(session.user_id).replace("+", "").replace("-", "").strip()
-            current_tenant = get_user_tenant_session(clean_phone) or "onlineboost"
-            set_user_tenant_session(
-                phone=clean_phone,
-                tenant_slug=current_tenant,
-                state=getattr(session, "state", "ACTIVE"),
-                context=getattr(session, "context_json", {})
-            )
+            current_tenant = get_user_tenant_session(clean_phone) or getattr(session, "tenant_id", None) or ""
+            if current_tenant:
+                set_user_tenant_session(
+                    phone=clean_phone,
+                    tenant_slug=current_tenant,
+                    state=getattr(session, "state", "ACTIVE"),
+                    context=getattr(session, "context_json", {})
+                )
         except Exception as e:
             logger.debug(f"[SESSION REPO PERSIST ERROR] {e}")
 

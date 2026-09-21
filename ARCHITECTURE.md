@@ -1068,7 +1068,10 @@ Sesuai arahan audit finansial CFO (Chief Financial Officer), akun merchant dalam
 
 ---
 
-## 21. STANDAR TRANSAKSI WHATSAPP & CHECKOUT MULTI-TENANT
+## 21. STANDAR TRANSAKSI WHATSAPP & CHECKOUT MULTI-TENANT (GLOBAL PLATFORM STANDARD)
+
+> **Architectural Status**: 🔒 **FROZEN & MANDATORY GLOBAL STANDARD (ALL TENANTS)**  
+> **Core Invariant**: Seluruh arsitektur transaksi WhatsApp, penangkapan lead (State Machine), Dynamic QRIS Downward, Universal Webhook, dan Meta CAPI adalah **STANDAR GLOBAL PLATFORM yang berlaku universal untuk SEMUA TENANT** (baik tenant existing seperti `buzzerukm` maupun seluruh tenant baru yang mendaftar). Dilarang keras membuat logika khusus berbasis hardcoded slug (`buzzerukm`, `onlineboost`, dsb.).
 
 ### 21.1 Invariant Grounding & Kebijakan Anti-Halusinasi Tautan (Zero URL Hallucination)
 1. **Larangan Mutlak Halusinasi Tautan**:
@@ -1117,6 +1120,9 @@ Sesuai arahan audit finansial CFO (Chief Financial Officer), akun merchant dalam
    - Matriks QR dinamis dirender menjadi gambar PNG beresolusi tinggi 600x600 px melalui generator QuickChart:
      `https://quickchart.io/qr?text={encoded_dynamic_payload}&size=600&margin=4&ecLevel=M`
    - Gambar dikirimkan ke pembeli melalui endpoint media WhatsApp (`sendMedia`) dengan caption rincian tagihan nominal tepat (`Rp 99.175`), detail diskon kode unik (`825`), dan instruksi transfer.
+5. **Auto-Decode Gambar QRIS Statis (Zero Manual Intervention)**:
+   - Jika kolom `tenants.metadata.payment_settings.qris_raw` belum terisi namun merchant telah mengunggah file gambar QRIS (`qris_image_url` / `seller_qris_image`), sistem secara otomatis menjalankan engine auto-decode berbasis OpenCV (`cv2.QRCodeDetector`) on-the-fly untuk mengekstrak string EMVCo mentah, lalu menyimpannya ke database Supabase secara asinkron.
+   - Jika berkas gambar buram atau decoding gagal, sistem mengeksekusi graceful fallback dengan langsung mengirimkan file gambar statis asli milik merchant agar alur transaksi pembeli tidak pernah terputus.
 
 ### 21.4 Universal Webhook Dispatch (Unofficial & Official Gateway)
 1. **Multi-Channel Transaction Dispatch**:
@@ -1158,3 +1164,32 @@ Sesuai arahan audit finansial CFO (Chief Financial Officer), akun merchant dalam
      - Alamat Email: `hash_sha256(email)`
      - Nama Depan: `hash_sha256(first_name)`
    - Custom Data memuat nominal persis transaksi (`value`: `total_amount`), `currency: "IDR"`, `content_ids: [order_id]`, dan `content_name`.
+
+### 21.6 Defaulting Onboarding Tenant Baru (Zero-Configuration Readiness)
+1. **Inisialisasi Otomatis Metadata Pendaftaran**:
+   - Setiap registrasi tenant baru (melalui `onboarding_service.py` di Core maupun API route `tenants/onboard` di Next.js) wajib secara otomatis men-seed konfigurasi standar transaksi:
+     ```json
+     {
+       "payment_settings": {
+         "qris_raw": null,
+         "qris": null,
+         "is_qris_active": true,
+         "provider": "SELLER_NATIVE_QRIS"
+       },
+       "payment_config": {
+         "mode": "SELLER_NATIVE_QRIS",
+         "provider": "SELLER_NATIVE_QRIS",
+         "enable_qris": true,
+         "unique_code_system": "DOWNWARD"
+       },
+       "is_bot_active": true,
+       "bot_paused": false,
+       "bot_persona": {
+         "tone": "ramah, profesional, solutif",
+         "rule": "ZERO_URL_HALLUCINATION",
+         "lead_collection": "NATIVE_STATE_MACHINE"
+       }
+     }
+     ```
+2. **Zero Manual Setup Invariant**:
+   - Toko baru langsung siap menerima order dan merender Dynamic QRIS seketika setelah seller mengunggah gambar QRIS atau memasukkan string QRIS tanpa perlu mengonfigurasi payment gateway pihak ketiga.

@@ -185,7 +185,9 @@ class UnifiedConversationEngine:
         6. Interceptor tombol cepat & booking jasa.
         7. LLM inference deterministik (temperature: 0.0).
         """
-        clean_slug = str(tenant_slug or "onlineboost").strip().lower()
+        clean_slug = str(tenant_slug or "").strip().lower()
+        if not clean_slug:
+            return {"reply_text": "Halo! Silakan hubungi admin toko melalui tautan resmi kami.", "buttons": []}
         q = (message or "").strip()
         q_lower = q.lower()
 

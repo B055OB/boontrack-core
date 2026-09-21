@@ -69,8 +69,11 @@ def clean_evolution_base64_qr(raw_base64: Optional[str]) -> Optional[str]:
     return val
 
 
-async def get_or_create_evolution_session(tenant_slug: str = "onlineboost") -> Dict[str, Any]:
-    instance_name = f"tenant_{tenant_slug.replace('-', '_')}"
+async def get_or_create_evolution_session(tenant_slug: str = "") -> Dict[str, Any]:
+    clean_tenant = (tenant_slug or "").strip().lower()
+    if not clean_tenant:
+        return {"success": False, "error": "tenant_slug is required"}
+    instance_name = f"tenant_{clean_tenant.replace('-', '_')}"
     headers = get_evolution_headers()
 
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -224,7 +227,9 @@ async def request_evolution_pairing_code(tenant_slug: str, phone: str) -> Dict[s
     4. Sesuai Section 0 Poin 12 & Section 9 ARCHITECTURE.md: Dilarang keras fallback acak.
        Jika Evolution API error atau belum mengembalikan pairingCode, kembalikan respons error transparan.
     """
-    clean_tenant = (tenant_slug or "onlineboost").strip().lower()
+    clean_tenant = (tenant_slug or "").strip().lower()
+    if not clean_tenant:
+        return {"success": False, "error": "tenant_slug is required"}
     clean_phone = normalize_phone_number(phone)
     if not clean_phone or len(clean_phone) < 9:
         return {

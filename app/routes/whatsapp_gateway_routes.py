@@ -59,7 +59,9 @@ async def connect_growth_session(tenant_slug: str):
     """
     Meminta QR code live socket Evolution API v2 (Production WhatsApp Gateway resmi).
     """
-    clean_tenant = (tenant_slug or "onlineboost").strip().lower()
+    clean_tenant = (tenant_slug or "").strip().lower()
+    if not clean_tenant:
+        raise HTTPException(status_code=400, detail="tenant_slug is required")
 
     try:
         from app.services.whatsapp_service import get_or_create_evolution_session
@@ -118,7 +120,9 @@ async def get_whatsapp_pairing_code_endpoint(
     """
     Menghasilkan kode pairing 8 digit resmi WhatsApp via Evolution API v2 di Railway.
     """
-    slug = tenant_slug or payload.tenant or payload.tenant_slug or "onlineboost"
+    slug = (tenant_slug or payload.tenant or payload.tenant_slug or "").strip().lower()
+    if not slug:
+        return JSONResponse(status_code=400, content={"success": False, "error": "tenant_slug is required"})
     res = await request_evolution_pairing_code(slug, payload.phone)
     if not res.get("success"):
         return JSONResponse(
@@ -130,7 +134,9 @@ async def get_whatsapp_pairing_code_endpoint(
 
 @router.get("/evolution/test", summary="Test Evolution API pairing & connect live")
 @router.post("/evolution/test", summary="Test Evolution API pairing & connect live")
-async def test_evolution_pairing_endpoint(phone: Optional[str] = "6281237450222", session: Optional[str] = "onlineboost"):
+async def test_evolution_pairing_endpoint(phone: Optional[str] = "6281237450222", session: Optional[str] = None):
+    if not session:
+        return {"success": False, "error": "session parameter is required"}
     """
     Diagnostic probe endpoint to test direct pairing code request to Evolution API v2 on Railway.
     """
@@ -200,7 +206,9 @@ async def tenant_whatsapp_reconnect_legacy(request: Request):
     except Exception:
         pass
 
-    tenant = body.get("tenant") or body.get("tenant_slug") or "onlineboost"
+    tenant = (body.get("tenant") or body.get("tenant_slug") or "").strip().lower()
+    if not tenant:
+        return {"success": False, "error": "tenant parameter is required"}
     phone = body.get("phone") or body.get("phone_number") or body.get("phoneNumber")
 
     if phone:
@@ -216,7 +224,9 @@ async def aiohttp_pairing_code_handler(request):
         body = await request.json()
     except Exception:
         body = {}
-    tenant_slug = request.match_info.get("tenant_slug") or body.get("tenant") or body.get("tenant_slug") or "onlineboost"
+    tenant_slug = (request.match_info.get("tenant_slug") or body.get("tenant") or body.get("tenant_slug") or "").strip().lower()
+    if not tenant_slug:
+        return web.json_response({"success": False, "error": "tenant_slug is required"}, status=400)
     phone = body.get("phone") or body.get("phone_number") or body.get("phoneNumber") or request.query.get("phone") or ""
     result = await request_evolution_pairing_code(tenant_slug, str(phone))
     return web.json_response(result)
@@ -228,7 +238,9 @@ async def aiohttp_tenant_reconnect_handler(request):
         body = await request.json()
     except Exception:
         body = {}
-    tenant = body.get("tenant") or body.get("tenant_slug") or "onlineboost"
+    tenant = (body.get("tenant") or body.get("tenant_slug") or "").strip().lower()
+    if not tenant:
+        return web.json_response({"success": False, "error": "tenant parameter is required"}, status=400)
     phone = body.get("phone") or body.get("phone_number") or body.get("phoneNumber")
     if phone:
         res = await request_evolution_pairing_code(tenant, str(phone))
@@ -240,7 +252,9 @@ async def aiohttp_tenant_reconnect_handler(request):
 async def aiohttp_connection_state_handler(request):
     try:
         from aiohttp import web
-        instance = request.match_info.get("instance") or "onlineboost"
+        instance = (request.match_info.get("instance") or "").strip()
+        if not instance:
+            return web.json_response({"success": False, "error": "instance parameter is required"}, status=400)
         clean_instance = instance.strip()
         if not clean_instance.startswith("tenant_") and not clean_instance.startswith("instance_"):
             clean_instance = f"tenant_{clean_instance.replace('-', '_')}"
@@ -333,15 +347,21 @@ async def process_inbound_message(payload: InboundPayload):
     3. Mengembalikan reply_text ke worker BoonTrack WhatsApp Engine untuk di-dispatch via sock.sendMessage.
     """
     # 1. Validasi & Normalisasi Tenant Routing
+    clean_phone = normalize_phone_number(payload.sender_phone)
     raw_tenant = str(payload.tenant_slug or "").strip().lower()
     if not raw_tenant or raw_tenant in ("default", "null", "undefined", "none"):
-        tenant_slug = "onlineboost"
-    elif raw_tenant in ("suhu-ads-masterclass", "suhu_ads"):
-        tenant_slug = "onlineboost"
+        from app.services.whatsapp.credentials import get_user_session
+        tenant_slug = get_user_session(clean_phone, payload.message_body or "") or ""
     else:
         tenant_slug = raw_tenant
 
-    clean_phone = normalize_phone_number(payload.sender_phone)
+    if not tenant_slug:
+        logger.warning(f"[GATEWAY] No tenant resolved for incoming message from {clean_phone}")
+        return {
+            "status": "error",
+            "message": "Tenant tidak dikenali. Silakan hubungi admin toko.",
+            "reply_text": "Halo! Silakan hubungi admin toko melalui link resmi kami.",
+        }
     incoming_text = payload.message_body.strip()
     contact_name = extract_customer_name(incoming_text, fallback=payload.sender_name or "Kakak")
     text_lower = incoming_text.lower()

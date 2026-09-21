@@ -404,6 +404,25 @@ class OnboardingService:
                 "activation_code": activation_code,
                 "wa_verification_status": "pending",
                 "is_verified": False,
+                "is_bot_active": True,
+                "bot_paused": False,
+                "payment_settings": {
+                    "qris_raw": None,
+                    "qris": None,
+                    "is_qris_active": True,
+                    "provider": "SELLER_NATIVE_QRIS",
+                },
+                "payment_config": {
+                    "mode": "SELLER_NATIVE_QRIS",
+                    "provider": "SELLER_NATIVE_QRIS",
+                    "enable_qris": True,
+                    "unique_code_system": "DOWNWARD",
+                },
+                "bot_persona": {
+                    "tone": "ramah, profesional, solutif",
+                    "rule": "ZERO_URL_HALLUCINATION",
+                    "lead_collection": "NATIVE_STATE_MACHINE",
+                },
             },
         }
         product_dict = None
@@ -503,6 +522,25 @@ class OnboardingService:
                         "is_verified": False,
                         "products": [],
                         "product": None,
+                        "is_bot_active": True,
+                        "bot_paused": False,
+                        "payment_settings": {
+                            "qris_raw": None,
+                            "qris": None,
+                            "is_qris_active": True,
+                            "provider": "SELLER_NATIVE_QRIS",
+                        },
+                        "payment_config": {
+                            "mode": "SELLER_NATIVE_QRIS",
+                            "provider": "SELLER_NATIVE_QRIS",
+                            "enable_qris": True,
+                            "unique_code_system": "DOWNWARD",
+                        },
+                        "bot_persona": {
+                            "tone": "ramah, profesional, solutif",
+                            "rule": "ZERO_URL_HALLUCINATION",
+                            "lead_collection": "NATIVE_STATE_MACHINE",
+                        },
                     }
                 }, on_conflict="slug").execute()
                 logger.info(f"[OnboardingService] Synced tenant '{tenant_slug}' (trial_ends_at: {trial_period_end}) to Supabase")

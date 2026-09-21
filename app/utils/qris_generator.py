@@ -3,7 +3,7 @@ import os
 import re
 import random
 import urllib.parse
-from typing import Optional
+from typing import Optional, Union
 from PIL import Image
 import qrcode
 from qrcode.constants import ERROR_CORRECT_M
@@ -195,3 +195,53 @@ def save_dynamic_qris_temp_file(
 
 
 generate_qris_image_bytes = render_qris_bytes
+
+
+def decode_qris_image(image_source: Union[str, bytes, io.BytesIO]) -> Optional[str]:
+    """Auto-decode QR Code dari URL gambar publik (http/https), path file lokal,
+    atau byte stream buffer menggunakan OpenCV (cv2.QRCodeDetector) dan PIL.
+    
+    Mengembalikan raw EMVCo payload string (wajib diawali '000201') jika valid,
+    atau None jika decoding gagal atau bukan barcode QRIS.
+    """
+    if not image_source:
+        return None
+    try:
+        img_bytes = None
+        if isinstance(image_source, bytes):
+            img_bytes = image_source
+        elif isinstance(image_source, io.BytesIO):
+            img_bytes = image_source.getvalue()
+        elif isinstance(image_source, str):
+            src = image_source.strip()
+            if src.startswith(("http://", "https://")):
+                import urllib.request
+                req = urllib.request.Request(src, headers={"User-Agent": "Mozilla/5.0 (BoonTrack QRIS Decoder)"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    img_bytes = resp.read()
+            elif os.path.exists(src):
+                with open(src, "rb") as f:
+                    img_bytes = f.read()
+
+        if not img_bytes:
+            return None
+
+        pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        import numpy as np
+        import cv2
+
+        np_arr = np.array(pil_img)
+        detector = cv2.QRCodeDetector()
+        data, _, _ = detector.detectAndDecode(np_arr)
+        if data and data.strip().startswith("000201"):
+            return data.strip()
+
+        # Fallback ke Grayscale jika deteksi awal belum berhasil
+        gray = cv2.cvtColor(np_arr, cv2.COLOR_RGB2GRAY)
+        data, _, _ = detector.detectAndDecode(gray)
+        if data and data.strip().startswith("000201"):
+            return data.strip()
+
+        return None
+    except Exception:
+        return None
