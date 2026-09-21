@@ -61,6 +61,10 @@ DEFAULT_CAPABILITIES_BY_VERTICAL: Dict[str, Dict[str, Any]] = {
         "qris": True,
         "capi": True,
         "variants": True,
+        "digital_fulfillment": False,
+        "booking": False,
+        "dine_in": False,
+        "takeaway": False,
     },
     "DIGITAL": {
         "catalog": True,
@@ -70,6 +74,9 @@ DEFAULT_CAPABILITIES_BY_VERTICAL: Dict[str, Dict[str, Any]] = {
         "capi": True,
         "shipping": False,
         "variants": False,
+        "booking": False,
+        "dine_in": False,
+        "takeaway": False,
     },
     "FIELD_SERVICE": {
         "catalog": True,
@@ -78,6 +85,8 @@ DEFAULT_CAPABILITIES_BY_VERTICAL: Dict[str, Dict[str, Any]] = {
         "service_area": True,
         "qris": True,
         "shipping": False,
+        "digital_fulfillment": False,
+        "dine_in": False,
     },
     "PROFESSIONAL_SERVICE": {
         "catalog": True,
@@ -85,6 +94,8 @@ DEFAULT_CAPABILITIES_BY_VERTICAL: Dict[str, Dict[str, Any]] = {
         "consultation": True,
         "qris": True,
         "shipping": False,
+        "digital_fulfillment": False,
+        "dine_in": False,
     },
     "CREATOR": {
         "catalog": True,
@@ -92,6 +103,8 @@ DEFAULT_CAPABILITIES_BY_VERTICAL: Dict[str, Dict[str, Any]] = {
         "tipping": True,
         "qris": True,
         "capi": True,
+        "shipping": False,
+        "dine_in": False,
     },
     "FOOD_BEVERAGE": {
         "catalog": True,
@@ -99,6 +112,10 @@ DEFAULT_CAPABILITIES_BY_VERTICAL: Dict[str, Dict[str, Any]] = {
         "takeaway": True,
         "delivery": True,
         "qris": True,
+        "capi": True,
+        "shipping": False,
+        "digital_fulfillment": False,
+        "booking": False,
     },
     "MEMBERSHIP": {
         "membership": True,
@@ -107,6 +124,8 @@ DEFAULT_CAPABILITIES_BY_VERTICAL: Dict[str, Dict[str, Any]] = {
         "pos": True,
         "qris": True,
         "shipping": False,
+        "digital_fulfillment": False,
+        "dine_in": False,
     },
     "B2G": {
         "public_service": True,
@@ -114,6 +133,7 @@ DEFAULT_CAPABILITIES_BY_VERTICAL: Dict[str, Dict[str, Any]] = {
         "document_intake": True,
         "qris": False,
         "shipping": False,
+        "digital_fulfillment": False,
     },
 }
 
@@ -198,11 +218,12 @@ def build_context_from_dict(row: Dict[str, Any]) -> TenantRuntimeContext:
         or "DEFAULT"
     ).strip().upper()
 
-    # Capabilities: baseline preset digabung override spesifik dari database
-    capabilities = dict(DEFAULT_CAPABILITIES_BY_VERTICAL.get(business_type, {}))
+    # Capabilities: baseline preset digabung override spesifik dari database (deepcopy untuk isolasi mutlak)
+    import copy
+    capabilities = copy.deepcopy(DEFAULT_CAPABILITIES_BY_VERTICAL.get(business_type, {}))
     db_caps = row.get("capabilities") or meta.get("capabilities") or {}
     if isinstance(db_caps, dict):
-        capabilities.update(db_caps)
+        capabilities.update(copy.deepcopy(db_caps))
 
     # AI Persona
     ai_persona = (
@@ -246,16 +267,19 @@ class TenantContextResolver:
         if time.time() > expiry:
             self._cache.pop(key, None)
             return None
-        return ctx
+        import copy
+        return copy.deepcopy(ctx)
 
     def set_cached(self, key: str, ctx: TenantRuntimeContext, ttl: Optional[int] = None) -> None:
+        import copy
+        safe_ctx = copy.deepcopy(ctx)
         expiry = time.time() + (ttl or self._cache_ttl)
         clean_key = key.lower().strip()
-        self._cache[clean_key] = (ctx, expiry)
-        if ctx.tenant_id:
-            self._cache[ctx.tenant_id.lower().strip()] = (ctx, expiry)
-        if ctx.slug:
-            self._cache[ctx.slug.lower().strip()] = (ctx, expiry)
+        self._cache[clean_key] = (safe_ctx, expiry)
+        if safe_ctx.tenant_id:
+            self._cache[safe_ctx.tenant_id.lower().strip()] = (safe_ctx, expiry)
+        if safe_ctx.slug:
+            self._cache[safe_ctx.slug.lower().strip()] = (safe_ctx, expiry)
 
     def invalidate_cache(self, slug_or_id: str) -> None:
         self._cache.pop(slug_or_id.lower().strip(), None)

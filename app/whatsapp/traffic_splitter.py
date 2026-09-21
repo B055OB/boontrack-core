@@ -58,55 +58,105 @@ GLOBAL_FALLBACK_PLATFORM = (
 # BoonPilot Concierge — AI Knowledge Concierge (Anti-Halusinasi, temperature=0.1)
 # ---------------------------------------------------------------------------
 CONCIERGE_SYSTEM_PROMPT = """\
-Anda adalah BoonPilot Concierge, asisten representatif resmi BoonTrack Shop.
-Tugas Anda HANYA menjawab pertanyaan umum calon merchant seputar BoonTrack Shop berdasarkan FAKTA RESMI berikut:
+Anda adalah BoonPilot Concierge, asisten representatif resmi platform BoonTrack Shop.
+Tugas Anda HANYA menjawab pertanyaan umum calon merchant dan pengguna seputar BoonTrack Shop berdasarkan FAKTA RESMI berikut:
 
-[KELEBIHAN UTAMA BOONTRACK SHOP]
-1. Checkout Instan via WhatsApp & Web: Proses pemesanan cepat dan mudah tanpa ribet formulir panjang atau login akun berbelit.
-2. Integrasi QRIS Otomatis: Verifikasi pembayaran otomatis secara real-time tanpa perlu kirim atau periksa bukti transfer manual (0% fee platform).
-3. Integrasi Meta CAPI & Google Tag Manager (GTM) Bawaan: Tracking engine server-side terintegrasi lengkap dengan sanitasi PII (Personal Identifiable Information) demi pelacakan iklan yang akurat, presisi, dan aman regulasi privasi.
-4. Perlindungan Kuota Trial & Sistem Multi-Tenant Terisolasi: Sistem multi-tenant yang aman dan stabil dengan isolasi data antar-toko yang ketat (zero cross-tenant data leakage) serta perlindungan kuota trial yang adil.
+[KELEBIHAN BOONTRACK SHOP]
+1. Checkout Instan Terintegrasi WhatsApp & Web: Transaksi belanja cepat dan instan tanpa hambatan formulir panjang atau registrasi akun yang rumit.
+2. Auto-Verifikasi Pembayaran QRIS Real-Time: Verifikasi transaksi otomatis seketika tanpa upload bukti transfer manual (0% platform fee).
+3. Server-Side Tracking Bawaan (Meta CAPI & GTM DataLayer): Tracking engine server-side terintegrasi lengkap dengan PII sanitization demi akurasi iklan optimal dan kepatuhan privasi data.
+4. Perlindungan Kuota Trial Cerdas & Arsitektur Database Multi-Tenant: Sistem isolasi multi-tenant yang aman dan terisolasi mutlak (zero cross-tenant data leakage) serta perlindungan kuota trial cerdas (CFO Hard-Cap Guardrail).
 
-[RINCIAN FITUR PER PAKET LAYANAN]
+[FITUR PER PAKET LAYANAN]
 1. Paket Trial (Uji Coba Gratis):
-   - Kuota 30 Pesanan Masuk.
+   - Kuota 30 Pesanan Masuk (Order Quota).
    - Kuota 50 Interaksi AI Chatbot.
    - Kuota 15 Notifikasi Pesanan WhatsApp.
-   - Integrasi dasar QRIS dinamis & Meta CAPI.
-2. Paket Starter / Pro (Berbayar):
-   - Kuota transaksi tanpa batas / kuota lebih besar sesuai skala bisnis.
-   - Prioritas broadcast dan notifikasi WhatsApp berkecepatan tinggi tanpa antrean lambat.
-   - AI agent interaktif kustom (BoonPilot Copilot) yang dapat disesuaikan persona tokonya.
-   - Analitik iklan lanjutan (Meta CAPI server-side, TikTok Events API, dan GTM container).
-   - Dukungan integrasi akun Whitelist Ads resmi (portal pendaftaran: https://buzzerukm.adsolution.co.id/register).
+   - QRIS dinamis otomatis dan pelacakan dasar.
+2. Paket Berbayar (Starter / Pro):
+   - Kuota transaksi & interaksi tanpa batas / kuota masif sesuai skala bisnis.
+   - Broadcast WhatsApp prioritas berkecepatan tinggi tanpa antrean lambat.
+   - Custom AI Persona (BoonPilot Copilot) yang disesuaikan dengan karakter brand toko.
+   - Analitik performa iklan mendalam (Meta CAPI, TikTok Events API, GTM DataLayer container).
+   - Akses pendaftaran Akun Whitelist Ads FB resmi (https://buzzerukm.adsolution.co.id/register).
 
 [PANDUAN PENGGUNA BARU (ONBOARDING GUIDE)]
-Jika pengguna atau calon merchant baru merasa bingung cara pakai atau cara memulai, arahkan mereka secara ramah:
-1. Gunakan asisten "BoonPilot" di dashboard untuk panduan interaktif langsung langkah demi langkah.
-2. Atau ikuti 6 Langkah Panduan Cepat (Quickstart Checklist) di halaman utama dashboard:
-   - Langkah 1: Atur Profil & Nama Toko (lengkapi identitas, nama brand, dan logo toko).
-   - Langkah 2: Tambahkan Produk Perdana (unggah foto, tentukan harga, deskripsi, dan stok).
-   - Langkah 3: Hubungkan Nomor WhatsApp Bisnis (sambungkan WA untuk auto-reply dan notifikasi pesanan).
-   - Langkah 4: Hubungkan Akun Pembayaran (QRIS) (aktifkan QRIS dinamis untuk verifikasi pembayaran otomatis).
-   - Langkah 5: Pasang Pixel/Meta CAPI (jika beriklan untuk pelacakan konversi Meta/TikTok/GTM).
-   - Langkah 6: Lakukan Transaksi Uji Coba & Bagikan Link Katalog ke calon pembeli.
+Jika merchant atau pengguna baru bingung cara memulai, arahkan mereka ke asisten interaktif "BoonPilot" di sudut kanan bawah dashboard atau minta mereka menuntaskan "6 Langkah Cepat di Dashboard":
+1. Lengkapi Profil & Nama Toko (atur identitas, nama brand, dan logo toko).
+2. Masukkan Produk Perdana (unggah foto, tentukan harga, deskripsi, dan stok).
+3. Hubungkan Nomor WhatsApp Bisnis (integrasikan WA untuk auto-reply dan notifikasi pesanan).
+4. Aktivasi Akun Pembayaran (QRIS) (aktifkan QRIS dinamis untuk verifikasi pembayaran real-time).
+5. Pasang Pixel / Meta CAPI / GTM di menu Ads Tracking Pro (untuk pelacakan konversi iklan server-side).
+6. Jalankan Transaksi Uji Coba & Sebarkan Link Toko ke calon pelanggan.
 
 - Pendaftaran Toko Baru: Kunjungi https://shop.boontrack.com/register
 - Format Aktivasi Toko: Pengguna yang sedang mendaftar harus membalas dengan format: AKTIVASI BT-XXXX (sesuai kode verifikasi di browser).
 
 [ATURAN KETAT / ZERO HALLUCINATION]
-- HANYA gunakan fakta di atas. JANGAN PERNAH mengarang diskon, promo harga, atau fitur yang tidak tertulis.
+- HANYA gunakan fakta resmi di atas. JANGAN PERNAH mengarang diskon, harga tidak resmi, atau fitur di luar dokumen.
 - Jawab secara ringkas, ramah, dan profesional (maksimal 2-3 paragraf pendek).
-- Jika pertanyaan di luar konteks BoonTrack Shop, jawab dengan sopan: "Mohon maaf, saya hanya dapat membantu memberikan informasi resmi seputar layanan dan paket BoonTrack Shop."
+- Jika pertanyaan di luar konteks BoonTrack Shop, jawab dengan sopan: "Mohon maaf, saya hanya dapat membantu memberikan informasi resmi seputar layanan, paket, dan panduan BoonTrack Shop."
 - Di akhir jawaban informatif, selalu sertakan arahan singkat untuk mendaftar di https://shop.boontrack.com/register atau ketik AKTIVASI BT-XXXX jika sedang memverifikasi akun.
 """
 
-# Pesan fallback statis jika Gemini API timeout / gagal
+# Knowledge Base Dictionary Resmi untuk deterministik & fallback offline
+OFFICIAL_KNOWLEDGE_BASE: Dict[str, str] = {
+    "kelebihan": (
+        "🌟 *Kelebihan Utama BoonTrack Shop:*\n\n"
+        "1. *Checkout Instan Terintegrasi WhatsApp & Web*: Belanja instan tanpa hambatan formulir panjang atau registrasi akun berbelit.\n"
+        "2. *Auto-Verifikasi Pembayaran QRIS Real-Time*: Verifikasi transaksi otomatis tanpa perlu upload bukti transfer manual (0% fee platform).\n"
+        "3. *Server-Side Tracking Bawaan (Meta CAPI & GTM DataLayer)*: Pelacakan konversi iklan optimal dengan PII sanitization demi kepatuhan privasi data.\n"
+        "4. *Perlindungan Kuota Trial Cerdas & Isolasi Multi-Tenant*: Arsitektur database multi-tenant yang aman dan terisolasi mutlak (zero cross-tenant data leakage).\n\n"
+        "Info & pendaftaran: https://shop.boontrack.com/register"
+    ),
+    "paket": (
+        "💼 *Pilihan Paket Layanan BoonTrack Shop:*\n\n"
+        "1. *Paket Trial (Gratis)*:\n"
+        "• 30 Pesanan Masuk (Order Quota)\n"
+        "• 50 Interaksi AI Chatbot\n"
+        "• 15 Notifikasi WA Otomatis\n"
+        "• QRIS dinamis otomatis & pelacakan dasar\n\n"
+        "2. *Paket Berbayar (Starter / Pro)*:\n"
+        "• Kuota transaksi & interaksi tanpa batas / kuota masif\n"
+        "• Broadcast WhatsApp prioritas tanpa antrean\n"
+        "• Custom AI Persona sesuai karakter toko\n"
+        "• Analitik performa iklan mendalam (Meta CAPI & GTM)\n"
+        "• Akses Whitelist Ads FB (https://buzzerukm.adsolution.co.id/register)\n\n"
+        "Info lengkap: https://shop.boontrack.com/register"
+    ),
+    "onboarding": (
+        "🚀 *Panduan Pengguna Baru (Onboarding Guide):*\n\n"
+        "Jika Kakak bingung cara memulai, silakan klik asisten interaktif *\"BoonPilot\"* di sudut kanan bawah dashboard atau tuntaskan *6 Langkah Cepat di Dashboard*:\n"
+        "1. Lengkapi Profil & Nama Toko\n"
+        "2. Masukkan Produk Perdana\n"
+        "3. Hubungkan Nomor WhatsApp Bisnis\n"
+        "4. Aktivasi Akun Pembayaran (QRIS)\n"
+        "5. Pasang Pixel / Meta CAPI / GTM di menu Ads Tracking Pro\n"
+        "6. Jalankan Transaksi Uji Coba & Sebarkan Link Toko\n\n"
+        "Mulai sekarang di: https://shop.boontrack.com/register"
+    ),
+}
+
+# Pesan fallback statis default jika query tidak spesifik
 _CONCIERGE_STATIC_FALLBACK = (
     "Halo! Layanan resmi BoonTrack siap membantu. "
     "Untuk aktivasi akun ketik: AKTIVASI BT-XXXX. "
     "Info lengkap kunjungi https://shop.boontrack.com"
 )
+
+
+def get_static_concierge_response(incoming_text: str) -> str:
+    """Mencari jawaban resmi deterministik dari OFFICIAL_KNOWLEDGE_BASE berdasarkan kata kunci."""
+    lower = incoming_text.lower().strip()
+    if any(k in lower for k in ("kelebihan", "keunggulan", "kenapa", "mengapa", "benefit", "fitur utama", "unggul", "fitur")):
+        if any(p in lower for p in ("paket", "harga", "biaya", "trial", "starter", "pro")):
+            return OFFICIAL_KNOWLEDGE_BASE["paket"]
+        return OFFICIAL_KNOWLEDGE_BASE["kelebihan"]
+    if any(k in lower for k in ("paket", "harga", "biaya", "trial", "starter", "pro", "berbayar", "kuota", "langganan")):
+        return OFFICIAL_KNOWLEDGE_BASE["paket"]
+    if any(k in lower for k in ("cara mulai", "mulai", "onboarding", "panduan", "langkah", "bingung", "cara pakai", "dashboard", "tahap", "setting", "atur")):
+        return OFFICIAL_KNOWLEDGE_BASE["onboarding"]
+    return _CONCIERGE_STATIC_FALLBACK
 
 
 async def generate_concierge_reply(incoming_text: str) -> str:
@@ -120,7 +170,7 @@ async def generate_concierge_reply(incoming_text: str) -> str:
       oleh ActivationInterceptor di PlatformWebhookRouter.handle()).
     - Semua pertanyaan umum merchant masuk ke LLM concierge.
 
-    Fallback: jika API gagal/timeout (> 8 detik), kirim _CONCIERGE_STATIC_FALLBACK.
+    Fallback: jika API gagal/timeout (> 8 detik), gunakan OFFICIAL_KNOWLEDGE_BASE sesuai topik.
     """
     try:
         import asyncio as _asyncio
@@ -129,8 +179,8 @@ async def generate_concierge_reply(incoming_text: str) -> str:
 
         _api_key = os.getenv("GEMINI_API_KEY", "").strip()
         if not _api_key:
-            logger.warning("[BoonPilotConcierge] GEMINI_API_KEY not set — using static fallback.")
-            return _CONCIERGE_STATIC_FALLBACK
+            logger.warning("[BoonPilotConcierge] GEMINI_API_KEY not set — using official knowledge base fallback.")
+            return get_static_concierge_response(incoming_text)
 
         _model = os.getenv("AI_PRIMARY_MODEL", "gemini-2.0-flash").strip()
         _client = _genai.Client(api_key=_api_key)
@@ -152,15 +202,15 @@ async def generate_concierge_reply(incoming_text: str) -> str:
 
         reply = (response.text or "").strip()
         if not reply:
-            logger.warning("[BoonPilotConcierge] Gemini returned empty response — using static fallback.")
-            return _CONCIERGE_STATIC_FALLBACK
+            logger.warning("[BoonPilotConcierge] Gemini returned empty response — using knowledge base fallback.")
+            return get_static_concierge_response(incoming_text)
 
         logger.info(f"[BoonPilotConcierge] Generated concierge reply ({len(reply)} chars).")
         return reply
 
     except Exception as _err:
-        logger.error(f"[BoonPilotConcierge] API error: {_err} — using static fallback.")
-        return _CONCIERGE_STATIC_FALLBACK
+        logger.error(f"[BoonPilotConcierge] API error: {_err} — using official knowledge base fallback.")
+        return get_static_concierge_response(incoming_text)
 
 
 def get_tenant_fallback_message(store_name: str, tenant_slug: str) -> str:
