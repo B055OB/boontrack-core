@@ -868,6 +868,32 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         return {"status": "ignored_no_tenant"}
 
     resolved_tenant = clean_slug.replace("tenant_", "").replace("_", "-").lower()
+
+    # Dynamic Tenant Resolution via whatsapp_connections (Single Source of Truth)
+    # Jika instance adalah boontrack-gateway atau tenant belum spesifik,
+    # cari mapping merchant aktif di whatsapp_connections
+    if resolved_tenant in ("boontrack-gateway", "boontrack-holding"):
+        try:
+            sb = get_supabase()
+            if sb:
+                target_inst = raw_instance or clean_slug
+                conn_res = sb.table("whatsapp_connections").select("tenant_id, tenant_slug, metadata").eq("instance_name", target_inst).neq("tenant_id", "boontrack-holding").order("created_at", desc=True).limit(1).execute()
+                if conn_res.data and len(conn_res.data) > 0:
+                    found_slug = conn_res.data[0].get("tenant_slug") or conn_res.data[0].get("tenant_id")
+                    if found_slug:
+                        resolved_tenant = found_slug.lower().strip()
+                        logger.info(f"[EVOLUTION WEBHOOK] Dynamically resolved tenant from whatsapp_connections instance '{target_inst}' -> '{resolved_tenant}'")
+                else:
+                    # Fallback cek active_merchant_slug di metadata gateway
+                    gw_res = sb.table("whatsapp_connections").select("metadata").eq("instance_name", "boontrack-gateway").limit(1).execute()
+                    if gw_res.data and len(gw_res.data) > 0:
+                        active_slug = gw_res.data[0].get("metadata", {}).get("active_merchant_slug")
+                        if active_slug:
+                            resolved_tenant = str(active_slug).lower().strip()
+                            logger.info(f"[EVOLUTION WEBHOOK] Dynamically resolved tenant from gateway active_merchant_slug -> '{resolved_tenant}'")
+        except Exception as _res_err:
+            logger.warning(f"[EVOLUTION WEBHOOK] Dynamic tenant resolution error: {_res_err}")
+
     sender_name = str(data.get("pushName") or payload.get("pushName") or "Pelanggan").strip()
 
     logger.info(f"[EVOLUTION WEBHOOK] Inbound message for tenant '{resolved_tenant}' from {sender_phone} ({sender_name}): '{incoming_text}'")
@@ -891,9 +917,9 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
 
     # ------------------------------------------------------------------------
     # BOONTRACK-GATEWAY SHARED NOTIFICATION GATEWAY ISOLATION
-    # Dilarang mengeksekusi bot persona lama (Om Budi / Zoom Booster) atau katalog dummy pada gateway sistem
+    # Dilarang mengeksekusi bot persona lama pada gateway sistem yang TIDAK terikat ke toko manapun
     # ------------------------------------------------------------------------
-    if raw_instance == "boontrack-gateway" or resolved_tenant in ("boontrack-gateway", "boontrack-holding"):
+    if resolved_tenant in ("boontrack-gateway", "boontrack-holding"):
         logger.info(f"[SHARED GATEWAY] Non-activation inbound message on boontrack-gateway from {sender_phone}: '{incoming_text}'")
         shared_msg = (
             "Halo! Ini adalah nomor layanan resmi verifikasi & notifikasi sistem BoonTrack Shop 🛍️\n\n"
