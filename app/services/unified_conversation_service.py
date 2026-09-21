@@ -102,9 +102,9 @@ def normalize_business_category(category_input: Optional[str]) -> str:
 
 
 def get_welcome_buttons_for_category(category: str) -> List[str]:
-    """Mengambil 3 welcome buttons statis sesuai kategori bisnis."""
+    """Mengambil 3 welcome buttons statis sesuai kategori bisnis (returns isolated list copy)."""
     canon_cat = normalize_business_category(category)
-    return CATEGORY_WELCOME_BUTTONS.get(canon_cat, CATEGORY_WELCOME_BUTTONS["PHYSICAL"])
+    return list(CATEGORY_WELCOME_BUTTONS.get(canon_cat, CATEGORY_WELCOME_BUTTONS["PHYSICAL"]))
 
 
 class UnifiedConversationEngine:

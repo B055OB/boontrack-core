@@ -23,11 +23,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 MAIN_GUIDANCE_MENU_TEXT = (
-    "Halo! Selamat datang di Layanan Otomatis BoonTrack 🛍️\n\n"
-    "Berikut panduan layanan kami:\n"
+    "Halo! Selamat datang di Layanan Resmi BoonTrack 🛍️\n\n"
+    "Berikut informasi dan panduan layanan kami:\n"
     "• *Aktivasi Toko*: Ketik *AKTIVASI BT-XXXX* sesuai kode verifikasi dari browser.\n"
-    "• *Pengaturan Toko*: Kunjungi https://shop.boontrack.com\n"
-    "• *Bantuan CS & Layanan*: Silakan sampaikan pesan atau pertanyaan Anda di sini.\n\n"
+    "• *Panduan Pengguna Baru*: Buka asisten *BoonPilot* di dashboard toko Anda atau ikuti 6 Langkah Cepat (Profil, Produk, WA Bisnis, QRIS, Pixel/CAPI, Uji Coba).\n"
+    "• *Kelebihan BoonTrack*: Checkout instan WA & Web, QRIS otomatis real-time tanpa bukti transfer, Meta CAPI & GTM bawaan (sanitasi PII), dan sistem aman terisolasi.\n"
+    "• *Pilihan Paket*: Trial (30 Order, 50 AI Chatbot, 15 Notifikasi WA) & Paket Starter/Pro (kuota lebih besar, prioritas WA, Whitelist Ads).\n"
+    "• *Dashboard Toko*: Kunjungi https://shop.boontrack.com\n\n"
     "Ada yang bisa kami bantu seputar toko atau produk Anda hari ini?"
 )
 DEMO_MENU_TEXT = MAIN_GUIDANCE_MENU_TEXT
