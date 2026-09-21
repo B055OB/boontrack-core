@@ -1,3 +1,4 @@
+import random
 """
 app/services/whatsapp/commerce.py
 --------------------------------------
@@ -53,7 +54,7 @@ def is_closing_buy_intent(text: str, button_id: Optional[str] = None) -> bool:
 # ---------------------------------------------------------------------------
 
 def generate_qris_image_bytes(qr_string: str) -> bytes:
-    """Renders QR code PNG directly from official Xendit qr_string without local DANA Bisnis generator."""
+    """Renders QR code PNG directly from raw QRIS string."""
     if not qr_string or not isinstance(qr_string, str):
         return b""
     try:
@@ -133,14 +134,7 @@ def get_tenant_products_from_db(tenant_slug: str) -> Tuple[str, List[Dict[str, A
             except Exception as e:
                 logger.warning(f"[DB PRODUCTS FETCH ERROR] {e}")
 
-    if products:
-        def _cpm_priority(x):
-            s = str(x.get("slug") or "").lower()
-            t = str(x.get("title") or x.get("name") or "").lower()
-            if "cpm-24jam" in s or "cpm-24-jam" in s or "modul-praktis-cpm" in s or "cpm 24 jam" in t:
-                return 0
-            return 1
-        products.sort(key=_cpm_priority)
+    # Mengikuti urutan produk murni dari database Supabase (Zero Hardcoding Policy)
 
     return store_name, products
 
@@ -180,7 +174,7 @@ def build_tenant_catalog_sections(tenant_slug: str) -> Tuple[str, List[Dict[str,
 
 async def send_whatsapp_tenant_catalog(
     phone: str,
-    tenant_slug: str = "onlineboost",
+    tenant_slug: str = "",
     tenant_id: Optional[str] = None,
     phone_number_id: Optional[str] = None,
     access_token: Optional[str] = None,
@@ -270,14 +264,12 @@ async def generate_cart_checkout_response(
     tenant_slug: str,
     from_phone: str,
     contact_name: str = "Kakak",
-    gateway: str = "xendit",
+    gateway: str = "seller_qris",
 ) -> Tuple[str, Dict[str, Any], bytes]:
-    import urllib.parse
-    from app.services.xendit_service import xendit_service
-
     clean_phone = normalize_phone_number(from_phone)
+    clean_slug = str(tenant_slug or "").strip().lower()
     cart_items = user_cart_sessions.get(clean_phone, [])
-    store_name, products = get_tenant_products_from_db(tenant_slug)
+    store_name, products = get_tenant_products_from_db(clean_slug)
 
     if not cart_items:
         if not products:
@@ -286,75 +278,137 @@ async def generate_cart_checkout_response(
         default_item = products[0]
         cart_items = [default_item]
 
-    total_amount = sum(int(float(item.get("promo_price") or item.get("price") or 0)) for item in cart_items)
+    base_amount = sum(int(float(item.get("promo_price") or item.get("price") or 0)) for item in cart_items)
+    unique_code = random.randint(100, 999)
+    total_amount = max(1, base_amount - unique_code)
     item_titles = ", ".join([str(item.get("title") or item.get("name")) for item in cart_items])
     product_summary = f"Order {len(cart_items)} Items ({item_titles[:35]}...)" if len(item_titles) > 35 else item_titles
 
-    clean_gateway = str(gateway or "xendit").strip().lower()
-    if clean_gateway == "dana_bisnis":
-        from app.utils.qris_generator import get_dynamic_qris_string, get_qr_code_image_url
-        clean_inv_slug = str(tenant_slug).replace("_", "-").lower()[:8]
-        external_id = f"INV-{clean_inv_slug.upper()}-{uuid.uuid4().hex[:6].upper()}"
-        qr_string = get_dynamic_qris_string(amount=total_amount, invoice_id=external_id)
-        invoice = {
-            "external_id": external_id,
-            "amount": total_amount,
-            "qr_string": qr_string,
-            "qr_code_url": get_qr_code_image_url(qr_string),
-            "status": "ACTIVE",
-            "provider": "DANA_BISNIS",
-            "tenant_id": tenant_slug,
-        }
-    else:
+    # -----------------------------------------------------------------------
+    # SELLER NATIVE QRIS CHECKOUT ENGINE (Manual Upload / Acquirer Mandiri)
+    # Default standard for all tenants: no third-party payment gateway
+    # -----------------------------------------------------------------------
+    from app.services.onboarding_service import onboarding_service
+    tenant_details = onboarding_service.get_tenant_details_by_slug(clean_slug) or {}
+    tenant_obj = tenant_details.get("tenant", {}) if tenant_details else {}
+    tenant_meta = tenant_details.get("metadata") or tenant_obj.get("metadata") or {}
+
+    seller_qris_image = (
+        tenant_meta.get("qris_image_url")
+        or tenant_meta.get("qris_image")
+        or tenant_meta.get("qris_url")
+        or (tenant_meta.get("payment_settings", {}) or {}).get("qris")
+        or (tenant_meta.get("payment_config", {}) or {}).get("qris_image_url")
+        or (tenant_meta.get("qris", {}) or {}).get("image_url")
+    )
+    raw_qris_string = (
+        (tenant_meta.get("payment_settings") or {}).get("qris_raw")
+        or (tenant_meta.get("payment_settings") or {}).get("raw_qris_string")
+        or (tenant_meta.get("payment_config") or {}).get("raw_qris_string")
+        or (tenant_meta.get("payment_config") or {}).get("qris_content")
+        or (tenant_meta.get("payment_config") or {}).get("qris_payload")
+        or tenant_meta.get("raw_qris_string")
+        or tenant_meta.get("qris_static_string")
+        or tenant_meta.get("static_qris_payload")
+        or (tenant_meta.get("qris", {}) or {}).get("static_qr")
+    )
+    merchant_qris_name = (
+        (tenant_meta.get("qris", {}) or {}).get("merchant_name")
+        or tenant_meta.get("merchant_name")
+        or store_name
+    )
+    bank_info = tenant_meta.get("bank") or (tenant_meta.get("payment_settings", {}) or {}).get("bank")
+
+    clean_inv_slug = str(clean_slug).replace("_", "-").lower()[:8]
+    external_id = f"INV-{clean_inv_slug.upper()}-{uuid.uuid4().hex[:6].upper()}"
+
+    amount_fmt = f"Rp{total_amount:,.0f}".replace(",", ".")
+    prod_slug = str(cart_items[0].get("slug") or cart_items[0].get("id") or "").strip() if cart_items else ""
+    prod_checkout_url = f"https://shop.boontrack.com/{clean_slug}/p/{prod_slug}" if prod_slug else f"https://shop.boontrack.com/{clean_slug}"
+
+    # Auto-decode gambar QRIS statis jika string mentah belum ada di database
+    if not raw_qris_string and seller_qris_image:
         try:
-            invoice = await xendit_service.create_qris_invoice(
-                tenant_slug=tenant_slug,
-                amount=total_amount,
-                product_name=product_summary,
-                customer_phone=clean_phone,
-            )
-        except Exception as e:
-            import traceback
-            logger.error(f"[CHECKOUT_EXCEPTION] {str(e)}\n{traceback.format_exc()}")
-            raise e
+            from app.utils.qris_generator import decode_qris_image
+            decoded_qris = decode_qris_image(str(seller_qris_image).strip())
+            if decoded_qris and decoded_qris.startswith("000201"):
+                raw_qris_string = decoded_qris
+                logger.info(f"[AUTO-DECODE QRIS SUCCESS] Decoded raw EMVCo payload from image for tenant '{clean_slug}'")
+                try:
+                    from app.services.whatsapp_service import get_supabase
+                    sb = get_supabase()
+                    if sb and clean_slug:
+                        ps = tenant_meta.get("payment_settings") or {}
+                        ps["qris_raw"] = decoded_qris
+                        tenant_meta["payment_settings"] = ps
+                        sb.table("tenants").update({"metadata": tenant_meta}).eq("slug", clean_slug).execute()
+                except Exception:
+                    pass
+        except Exception as _dec_err:
+            logger.debug(f"[AUTO-DECODE NOTE] {_dec_err}")
+
+    dynamic_qr_payload = ""
+    if raw_qris_string:
+        try:
+            from app.utils.qris_generator import generate_dynamic_qris_payload
+            dynamic_qr_payload = generate_dynamic_qris_payload(raw_qris_string, total_amount, external_id)
+        except Exception as dyn_err:
+            logger.warning(f"[DYNAMIC QRIS WARN] {dyn_err}")
+            dynamic_qr_payload = raw_qris_string
+
+    # Dynamic QRIS Generator: Injeksi nominal EMVCo Tag 54 dan hasilkan direct image PNG
+    if dynamic_qr_payload and dynamic_qr_payload.startswith("000201"):
+        from app.utils.qris_generator import get_quickchart_qr_url
+        qr_img_target = get_quickchart_qr_url(dynamic_qr_payload)
+    else:
+        qr_img_target = str(seller_qris_image or "").strip()
+    qr_bytes = generate_qris_image_bytes(dynamic_qr_payload or raw_qris_string or "") if (dynamic_qr_payload or raw_qris_string) else b""
 
     if clean_phone:
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
 
-    qr_string = str(invoice.get("qr_string") or "").strip()
-    external_id = invoice.get("external_id", "-")
-    invoice_url = invoice.get("invoice_url") or f"https://checkout.xendit.co/web/{external_id}"
-    invoice["invoice_url"] = invoice_url
-    invoice["web_pay_url"] = invoice_url
+    base_fmt = f"Rp{base_amount:,.0f}".replace(",", ".")
+    invoice = {
+        "external_id": external_id,
+        "order_id": external_id,
+        "amount": total_amount,
+        "base_amount": base_amount,
+        "unique_code": unique_code,
+        "product_name": product_summary,
+        "provider": "SELLER_NATIVE_QRIS",
+        "status": "PENDING",
+        "is_manual": True,
+        "qr_string": dynamic_qr_payload or raw_qris_string or "",
+        "qr_code_url": qr_img_target,
+        "media_url": qr_img_target,
+        "image_url": qr_img_target,
+        "web_pay_url": prod_checkout_url,
+        "merchant_name": merchant_qris_name,
+        "tenant_id": clean_slug,
+    }
 
-    qr_string = str(invoice.get("qr_string") or "").strip()
-    qr_data = qr_string or invoice_url
-    qr_bytes = generate_qris_image_bytes(qr_data) if qr_data else b""
-    qr_code_url = invoice.get("qr_code_url") or f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=16&format=png&data={urllib.parse.quote(qr_data)}"
-    invoice["qr_code_url"] = qr_code_url
-
-    items_detail = "\n".join([
-        f"• *{item.get('title') or item.get('name')}* (Rp {int(float(item.get('promo_price') or item.get('price') or 0)):,})".replace(",", ".")
-        for item in cart_items
-    ])
-
-    amount_fmt = f"Rp{total_amount:,.0f}".replace(",", ".")
+    bank_str = ""
+    if isinstance(bank_info, dict) and bank_info.get("name") and bank_info.get("holder"):
+        b_acc = str(bank_info.get("account") or "").strip()
+        acc_display = f"• No. Rek: `{b_acc}`\n" if b_acc and b_acc != "-" else ""
+        bank_str = f"\n🏦 *Alternatif Transfer Bank:*\n• Bank: {bank_info.get('name')}\n• Penerima: {bank_info.get('holder')}\n{acc_display}"
 
     caption = (
-        f"Berikut Rincian Tagihan Pembayaran Pesanan Anda 💳\n\n"
-        f"📦 *Rincian Belanja:*\n{items_detail}\n\n"
+        f"Berikut Rincian Tagihan & Barcode QRIS Pembayaran 💳\n\n"
+        f"📦 *Nama Pesanan:* {product_summary}\n"
         f"💰 *Total Tagihan:* {amount_fmt}\n"
-        f"📄 *No. Invoice / Kode Bayar:* `{external_id}`\n"
-        f"⏱️ *Masa Berlaku:* 15 Menit\n\n"
-        f"🔗 *Link Pembayaran Resmi Xendit:*\n"
-        f"{invoice_url}\n\n"
-        f"📱 *Petunjuk Pembayaran:*\n"
-        f"1. Klik link pembayaran resmi Xendit di atas.\n"
-        f"2. Pilih metode bayar QRIS atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
-        f"3. Selesaikan transaksi langsung di halaman pembayaran resmi Xendit.\n\n"
-        f"_Notifikasi dan link akses produk akan otomatis dikirimkan setelah pembayaran berhasil._ 🚀"
-    ).replace(",", ".")
-
+        f"_(Harga: {base_fmt} - Diskon Kode Unik: {unique_code})_\n"
+        f"🏪 *Merchant QRIS:* {merchant_qris_name}\n"
+        f"🔖 *No. Pesanan:* `{external_id}`\n"
+        f"⏱️ *Masa Berlaku:* 24 Jam\n"
+        f"{bank_str}\n"
+        f"📲 *Petunjuk Pembayaran:*\n"
+        f"1. Scan barcode QRIS toko di atas menggunakan aplikasi M-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
+        f"2. *PENTING:* Pastikan nominal transfer tepat sebesar *{amount_fmt}* (hingga 3 digit kode unik terakhir) agar pembayaran terverifikasi otomatis.\n"
+        f"3. Setelah transfer berhasil, *mohon kirimkan screenshot / bukti transfer pembayaran ke chat WhatsApp ini* agar pesanan & akses Kakak langsung kami proses & aktifkan! ✨\n\n"
+        f"🛒 *Link Storefront Toko:*\n"
+        f"{prod_checkout_url}"
+    )
     user_cart_sessions.pop(clean_phone, None)
     return caption, invoice, qr_bytes
 
@@ -364,11 +418,8 @@ async def generate_fast_track_checkout_response(
     from_phone: str,
     contact_name: str = "Kakak",
     product_key: Optional[str] = None,
-    gateway: str = "xendit",
+    gateway: str = "seller_qris",
 ) -> Tuple[str, Dict[str, Any], bytes]:
-    import urllib.parse
-    from app.services.xendit_service import xendit_service
-
     clean_phone = normalize_phone_number(from_phone)
     clean_slug = str(tenant_slug or "").strip().lower()
     store_name, products = get_tenant_products_from_db(clean_slug)
@@ -380,81 +431,151 @@ async def generate_fast_track_checkout_response(
             p_slug = str(p.get("slug") or "").lower()
             p_id = str(p.get("id") or "").lower()
             p_title = str(p.get("title") or p.get("name") or "").lower()
-            if clean_key in p_id or clean_key in p_slug or clean_key in p_title or ("cpm" in clean_key and ("cpm" in p_slug or "cpm" in p_title)):
+            if clean_key in p_id or clean_key in p_slug or clean_key in p_title:
                 selected_product = p
                 break
 
     if not selected_product and products:
         selected_product = products[0]
 
-    if selected_product:
-        product_name = str(selected_product.get("title") or selected_product.get("name") or f"Produk {store_name}")
-        amount = int(float(selected_product.get("promo_price") or selected_product.get("price") or 1000))
-    else:
-        product_name = "Modul Praktis CPM 24 Jam"
-        amount = 1000
+    if not selected_product:
+        empty_msg = f"Saat ini katalog produk untuk *{store_name}* sedang disiapkan oleh admin toko. Silakan hubungi admin kami ya, Kak! 🙏"
+        return empty_msg, {}, b""
 
-    if "cpm" in product_name.lower() or (product_key and "cpm" in str(product_key).lower()) or (clean_slug == "onlineboost" and not product_key):
-        product_name = "Modul Praktis CPM 24 Jam"
-        amount = 1000
+    product_name = str(selected_product.get("title") or selected_product.get("name") or f"Produk {store_name}")
+    base_amount = int(float(selected_product.get("promo_price") or selected_product.get("price") or 0))
+    if base_amount <= 0:
+        base_amount = 1000  # Minimal nominal transaksi QRIS
 
-    clean_gateway = str(gateway or "xendit").strip().lower()
-    if clean_gateway == "dana_bisnis":
-        from app.utils.qris_generator import get_dynamic_qris_string, get_qr_code_image_url
-        clean_inv_slug = str(clean_slug).replace("_", "-").lower()[:8]
-        external_id = f"INV-{clean_inv_slug.upper()}-{uuid.uuid4().hex[:6].upper()}"
-        qr_string = get_dynamic_qris_string(amount=amount, invoice_id=external_id)
-        invoice = {
-            "external_id": external_id,
-            "amount": amount,
-            "qr_string": qr_string,
-            "qr_code_url": get_qr_code_image_url(qr_string),
-            "status": "ACTIVE",
-            "provider": "DANA_BISNIS",
-            "tenant_id": clean_slug,
-        }
-    else:
+    # Injeksi 3-digit kode unik acak untuk rekonsiliasi mutasi otomatis
+    unique_code = random.randint(100, 999)
+    total_amount = max(1, base_amount - unique_code)
+    amount = total_amount
+
+    # -----------------------------------------------------------------------
+    # SELLER NATIVE QRIS CHECKOUT ENGINE (Manual Upload / Acquirer Mandiri)
+    # Default standard for all tenants: no third-party payment gateway
+    # -----------------------------------------------------------------------
+    from app.services.onboarding_service import onboarding_service
+    tenant_details = onboarding_service.get_tenant_details_by_slug(clean_slug) or {}
+    tenant_obj = tenant_details.get("tenant", {}) if tenant_details else {}
+    tenant_meta = tenant_details.get("metadata") or tenant_obj.get("metadata") or {}
+
+    seller_qris_image = (
+        tenant_meta.get("qris_image_url")
+        or tenant_meta.get("qris_image")
+        or tenant_meta.get("qris_url")
+        or (tenant_meta.get("payment_settings", {}) or {}).get("qris")
+        or (tenant_meta.get("payment_config", {}) or {}).get("qris_image_url")
+        or (tenant_meta.get("qris", {}) or {}).get("image_url")
+    )
+    raw_qris_string = (
+        (tenant_meta.get("payment_settings") or {}).get("qris_raw")
+        or (tenant_meta.get("payment_settings") or {}).get("raw_qris_string")
+        or (tenant_meta.get("payment_config") or {}).get("raw_qris_string")
+        or (tenant_meta.get("payment_config") or {}).get("qris_content")
+        or (tenant_meta.get("payment_config") or {}).get("qris_payload")
+        or tenant_meta.get("raw_qris_string")
+        or tenant_meta.get("qris_static_string")
+        or tenant_meta.get("static_qris_payload")
+        or (tenant_meta.get("qris", {}) or {}).get("static_qr")
+    )
+    merchant_qris_name = (
+        (tenant_meta.get("qris", {}) or {}).get("merchant_name")
+        or tenant_meta.get("merchant_name")
+        or store_name
+    )
+    bank_info = tenant_meta.get("bank") or (tenant_meta.get("payment_settings", {}) or {}).get("bank")
+
+    clean_inv_slug = str(clean_slug).replace("_", "-").lower()[:8]
+    external_id = f"INV-{clean_inv_slug.upper()}-{uuid.uuid4().hex[:6].upper()}"
+
+    amount_fmt = f"Rp{amount:,.0f}".replace(",", ".")
+    prod_slug = str((selected_product or {}).get("slug") or (selected_product or {}).get("id") or "").strip()
+    prod_checkout_url = f"https://shop.boontrack.com/{clean_slug}/p/{prod_slug}" if prod_slug else f"https://shop.boontrack.com/{clean_slug}"
+
+    # Auto-decode gambar QRIS statis jika string mentah belum ada di database
+    if not raw_qris_string and seller_qris_image:
         try:
-            invoice = await xendit_service.create_qris_invoice(
-                tenant_slug=clean_slug,
-                amount=amount,
-                product_name=product_name,
-                customer_phone=clean_phone,
-            )
-        except Exception as e:
-            import traceback
-            logger.error(f"[CHECKOUT_EXCEPTION] {str(e)}\n{traceback.format_exc()}")
-            raise e
+            from app.utils.qris_generator import decode_qris_image
+            decoded_qris = decode_qris_image(str(seller_qris_image).strip())
+            if decoded_qris and decoded_qris.startswith("000201"):
+                raw_qris_string = decoded_qris
+                logger.info(f"[AUTO-DECODE QRIS SUCCESS] Decoded raw EMVCo payload from image for tenant '{clean_slug}'")
+                try:
+                    from app.services.whatsapp_service import get_supabase
+                    sb = get_supabase()
+                    if sb and clean_slug:
+                        ps = tenant_meta.get("payment_settings") or {}
+                        ps["qris_raw"] = decoded_qris
+                        tenant_meta["payment_settings"] = ps
+                        sb.table("tenants").update({"metadata": tenant_meta}).eq("slug", clean_slug).execute()
+                except Exception:
+                    pass
+        except Exception as _dec_err:
+            logger.debug(f"[AUTO-DECODE NOTE] {_dec_err}")
+
+    dynamic_qr_payload = ""
+    if raw_qris_string:
+        try:
+            from app.utils.qris_generator import generate_dynamic_qris_payload
+            dynamic_qr_payload = generate_dynamic_qris_payload(raw_qris_string, total_amount, external_id)
+        except Exception as dyn_err:
+            logger.warning(f"[DYNAMIC QRIS WARN] {dyn_err}")
+            dynamic_qr_payload = raw_qris_string
+
+    # Dynamic QRIS Generator: Injeksi nominal EMVCo Tag 54 dan hasilkan direct image PNG
+    if dynamic_qr_payload and dynamic_qr_payload.startswith("000201"):
+        from app.utils.qris_generator import get_quickchart_qr_url
+        qr_img_target = get_quickchart_qr_url(dynamic_qr_payload)
+    else:
+        qr_img_target = str(seller_qris_image or "").strip()
+    qr_bytes = generate_qris_image_bytes(dynamic_qr_payload or raw_qris_string or "") if (dynamic_qr_payload or raw_qris_string) else b""
 
     if clean_phone:
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
 
-    external_id = invoice.get("external_id", "-")
-    invoice_url = invoice.get("invoice_url") or f"https://checkout.xendit.co/web/{external_id}"
-    invoice["invoice_url"] = invoice_url
-    invoice["web_pay_url"] = invoice_url
+    base_fmt = f"Rp{base_amount:,.0f}".replace(",", ".")
+    invoice = {
+        "external_id": external_id,
+        "order_id": external_id,
+        "amount": total_amount,
+        "base_amount": base_amount,
+        "unique_code": unique_code,
+        "product_name": product_name,
+        "provider": "SELLER_NATIVE_QRIS",
+        "status": "PENDING",
+        "is_manual": True,
+        "qr_string": dynamic_qr_payload or raw_qris_string or "",
+        "qr_code_url": qr_img_target,
+        "media_url": qr_img_target,
+        "image_url": qr_img_target,
+        "web_pay_url": prod_checkout_url,
+        "merchant_name": merchant_qris_name,
+        "tenant_id": clean_slug,
+    }
 
-    qr_string = str(invoice.get("qr_string") or "").strip()
-    qr_data = qr_string or invoice_url
-
-    qr_bytes = generate_qris_image_bytes(qr_data) if qr_data else b""
-    qr_code_url = invoice.get("qr_code_url") or f"https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=16&format=png&data={urllib.parse.quote(qr_data)}"
-    invoice["qr_code_url"] = qr_code_url
-
-    amount_fmt = f"Rp{amount:,.0f}".replace(",", ".")
+    bank_str = ""
+    if isinstance(bank_info, dict) and bank_info.get("name") and bank_info.get("holder"):
+        b_acc = str(bank_info.get("account") or "").strip()
+        acc_display = f"• No. Rek: `{b_acc}`\n" if b_acc and b_acc != "-" else ""
+        bank_str = f"\n🏦 *Alternatif Transfer Bank:*\n• Bank: {bank_info.get('name')}\n• Penerima: {bank_info.get('holder')}\n{acc_display}"
 
     caption = (
-        f"Berikut Rincian Tagihan Pembayaran Anda 💳\n\n"
-        f"📌 *Nama Produk:* {product_name}\n"
+        f"Berikut Rincian Tagihan & Barcode QRIS Pembayaran 💳\n\n"
+        f"📦 *Nama Produk:* {product_name}\n"
         f"💰 *Total Tagihan:* {amount_fmt}\n"
-        f"📄 *No. Invoice / Kode Bayar:* `{external_id}`\n"
-        f"⏱️ *Masa Berlaku:* 15 Menit\n\n"
-        f"🔗 *Link Pembayaran Resmi Xendit:*\n"
-        f"{invoice_url}\n\n"
-        f"📱 *Petunjuk Pembayaran:*\n"
-        f"1. Klik link pembayaran resmi Xendit di atas.\n"
-        f"2. Pilih metode bayar QRIS atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
-        f"3. Selesaikan transaksi langsung di halaman pembayaran resmi Xendit.\n\n"
-        f"_Akses materi & layanan akan otomatis aktif setelah pembayaran berhasil terverifikasi._ 🚀"
+        f"_(Harga: {base_fmt} - Diskon Kode Unik: {unique_code})_\n"
+        f"🏪 *Merchant QRIS:* {merchant_qris_name}\n"
+        f"🔖 *No. Pesanan:* `{external_id}`\n"
+        f"⏱️ *Masa Berlaku:* 24 Jam\n"
+        f"{bank_str}\n"
+        f"📲 *Petunjuk Pembayaran:*\n"
+        f"1. Scan barcode QRIS toko di atas menggunakan aplikasi M-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
+        f"2. *PENTING:* Pastikan nominal pembayaran tepat sebesar *{amount_fmt}* (hingga 3 digit kode unik terakhir) agar verifikasi otomatis berjalan lancar.\n"
+        f"3. Setelah transfer berhasil, *mohon kirimkan bukti transfer / screenshot pembayaran ke chat ini* agar akses materi langsung kami aktifkan. ✨\n\n"
+        f"🛒 *Link Storefront / Web Checkout Toko:*\n"
+        f"{prod_checkout_url}"
     )
+    user_cart_sessions.pop(clean_phone, None)
     return caption, invoice, qr_bytes

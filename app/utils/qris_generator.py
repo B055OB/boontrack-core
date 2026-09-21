@@ -3,7 +3,7 @@ import os
 import re
 import random
 import urllib.parse
-from typing import Optional
+from typing import Optional, Union
 from PIL import Image
 import qrcode
 from qrcode.constants import ERROR_CORRECT_M
@@ -88,16 +88,12 @@ def generate_dynamic_qris_payload(static_payload: str, amount: int, invoice_id: 
     else:
         payload_body = raw + tag_54
 
-    # 5. Pertahankan Tag 62 bawaan acquirer (JANGAN ditimpa atau dimodifikasi)
-    # Hanya tambahkan Tag 62 jika invoice_id disediakan dan Tag 62 belum ada di string master
-    has_tag_62 = any(f"62{i:02d}" in payload_body for i in range(1, 100))
-    if invoice_id and not has_tag_62:
-        clean_inv = str(invoice_id).strip()[:25]
-        sub_01 = f"01{len(clean_inv):02d}{clean_inv}"
-        tag_62 = f"62{len(sub_01):02d}{sub_01}"
-        payload_body += tag_62
+    # Rule 2 (Kritis - ARCHITECTURE.md Bagian 14.1):
+    # Wajib PERTAHANKAN Tag 62 bawaan acquirer merchant apa adanya!
+    # DILARANG KERAS menimpa atau menyisipkan nomor invoice INV-xxx ke Tag 62 karena merusak struktur decoding m-banking.
+    # Tag 62 bawaan acquirer dipertahankan apa adanya tanpa modifikasi atau penambahan.
 
-    # 6. Hitung ulang CRC16-CCITT standar EMVCo (poly 0x1021, init 0xFFFF)
+    # Rule 4: Hitung ulang CRC16-CCITT standar EMVCo (poly 0x1021, init 0xFFFF)
     full_for_crc = payload_body + "6304"
     crc = crc16_ccitt(full_for_crc)
     return full_for_crc + crc
@@ -199,3 +195,53 @@ def save_dynamic_qris_temp_file(
 
 
 generate_qris_image_bytes = render_qris_bytes
+
+
+def decode_qris_image(image_source: Union[str, bytes, io.BytesIO]) -> Optional[str]:
+    """Auto-decode QR Code dari URL gambar publik (http/https), path file lokal,
+    atau byte stream buffer menggunakan OpenCV (cv2.QRCodeDetector) dan PIL.
+    
+    Mengembalikan raw EMVCo payload string (wajib diawali '000201') jika valid,
+    atau None jika decoding gagal atau bukan barcode QRIS.
+    """
+    if not image_source:
+        return None
+    try:
+        img_bytes = None
+        if isinstance(image_source, bytes):
+            img_bytes = image_source
+        elif isinstance(image_source, io.BytesIO):
+            img_bytes = image_source.getvalue()
+        elif isinstance(image_source, str):
+            src = image_source.strip()
+            if src.startswith(("http://", "https://")):
+                import urllib.request
+                req = urllib.request.Request(src, headers={"User-Agent": "Mozilla/5.0 (BoonTrack QRIS Decoder)"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    img_bytes = resp.read()
+            elif os.path.exists(src):
+                with open(src, "rb") as f:
+                    img_bytes = f.read()
+
+        if not img_bytes:
+            return None
+
+        pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        import numpy as np
+        import cv2
+
+        np_arr = np.array(pil_img)
+        detector = cv2.QRCodeDetector()
+        data, _, _ = detector.detectAndDecode(np_arr)
+        if data and data.strip().startswith("000201"):
+            return data.strip()
+
+        # Fallback ke Grayscale jika deteksi awal belum berhasil
+        gray = cv2.cvtColor(np_arr, cv2.COLOR_RGB2GRAY)
+        data, _, _ = detector.detectAndDecode(gray)
+        if data and data.strip().startswith("000201"):
+            return data.strip()
+
+        return None
+    except Exception:
+        return None

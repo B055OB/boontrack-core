@@ -59,7 +59,9 @@ async def connect_growth_session(tenant_slug: str):
     """
     Meminta QR code live socket Evolution API v2 (Production WhatsApp Gateway resmi).
     """
-    clean_tenant = (tenant_slug or "onlineboost").strip().lower()
+    clean_tenant = (tenant_slug or "").strip().lower()
+    if not clean_tenant:
+        raise HTTPException(status_code=400, detail="tenant_slug is required")
 
     try:
         from app.services.whatsapp_service import get_or_create_evolution_session
@@ -118,7 +120,9 @@ async def get_whatsapp_pairing_code_endpoint(
     """
     Menghasilkan kode pairing 8 digit resmi WhatsApp via Evolution API v2 di Railway.
     """
-    slug = tenant_slug or payload.tenant or payload.tenant_slug or "onlineboost"
+    slug = (tenant_slug or payload.tenant or payload.tenant_slug or "").strip().lower()
+    if not slug:
+        return JSONResponse(status_code=400, content={"success": False, "error": "tenant_slug is required"})
     res = await request_evolution_pairing_code(slug, payload.phone)
     if not res.get("success"):
         return JSONResponse(
@@ -130,7 +134,9 @@ async def get_whatsapp_pairing_code_endpoint(
 
 @router.get("/evolution/test", summary="Test Evolution API pairing & connect live")
 @router.post("/evolution/test", summary="Test Evolution API pairing & connect live")
-async def test_evolution_pairing_endpoint(phone: Optional[str] = "6281237450222", session: Optional[str] = "onlineboost"):
+async def test_evolution_pairing_endpoint(phone: Optional[str] = "6281237450222", session: Optional[str] = None):
+    if not session:
+        return {"success": False, "error": "session parameter is required"}
     """
     Diagnostic probe endpoint to test direct pairing code request to Evolution API v2 on Railway.
     """
@@ -200,7 +206,9 @@ async def tenant_whatsapp_reconnect_legacy(request: Request):
     except Exception:
         pass
 
-    tenant = body.get("tenant") or body.get("tenant_slug") or "onlineboost"
+    tenant = (body.get("tenant") or body.get("tenant_slug") or "").strip().lower()
+    if not tenant:
+        return {"success": False, "error": "tenant parameter is required"}
     phone = body.get("phone") or body.get("phone_number") or body.get("phoneNumber")
 
     if phone:
@@ -216,7 +224,9 @@ async def aiohttp_pairing_code_handler(request):
         body = await request.json()
     except Exception:
         body = {}
-    tenant_slug = request.match_info.get("tenant_slug") or body.get("tenant") or body.get("tenant_slug") or "onlineboost"
+    tenant_slug = (request.match_info.get("tenant_slug") or body.get("tenant") or body.get("tenant_slug") or "").strip().lower()
+    if not tenant_slug:
+        return web.json_response({"success": False, "error": "tenant_slug is required"}, status=400)
     phone = body.get("phone") or body.get("phone_number") or body.get("phoneNumber") or request.query.get("phone") or ""
     result = await request_evolution_pairing_code(tenant_slug, str(phone))
     return web.json_response(result)
@@ -228,7 +238,9 @@ async def aiohttp_tenant_reconnect_handler(request):
         body = await request.json()
     except Exception:
         body = {}
-    tenant = body.get("tenant") or body.get("tenant_slug") or "onlineboost"
+    tenant = (body.get("tenant") or body.get("tenant_slug") or "").strip().lower()
+    if not tenant:
+        return web.json_response({"success": False, "error": "tenant parameter is required"}, status=400)
     phone = body.get("phone") or body.get("phone_number") or body.get("phoneNumber")
     if phone:
         res = await request_evolution_pairing_code(tenant, str(phone))
@@ -240,7 +252,9 @@ async def aiohttp_tenant_reconnect_handler(request):
 async def aiohttp_connection_state_handler(request):
     try:
         from aiohttp import web
-        instance = request.match_info.get("instance") or "onlineboost"
+        instance = (request.match_info.get("instance") or "").strip()
+        if not instance:
+            return web.json_response({"success": False, "error": "instance parameter is required"}, status=400)
         clean_instance = instance.strip()
         if not clean_instance.startswith("tenant_") and not clean_instance.startswith("instance_"):
             clean_instance = f"tenant_{clean_instance.replace('-', '_')}"
@@ -300,6 +314,31 @@ def register_whatsapp_gateway_routes(app):
 
 
 @router.post("/inbound-process")
+def extract_customer_name(text: str, fallback: str = "Kakak") -> str:
+    """
+    Ekstraksi nama pembeli secara cerdas & tangguh dari isi pesan percakapan.
+    Mendukung variasi: 'Nama Lengkap: Aldi', 'Nama Asli: Aldi', 'Nama: Aldi', 'Full Name: Aldi'.
+    Menghilangkan bug pushName WhatsApp (seperti 'hijau', 'admin', 'user') agar tidak disapa salah.
+    """
+    clean_text = str(text or "")
+    pattern = re.compile(
+        r"(?:nama\s+lengkap|nama\s+asli|nama\s+saya|full\s*name|nama|name)\s*[:=\-]?\s*([a-zA-Z\s\.'\-]+?)(?:[\n,;.]|\s+email|\s+no|\s+hp|\s+wa|$)",
+        re.IGNORECASE
+    )
+    m = pattern.search(clean_text)
+    if m:
+        val = m.group(1).strip().strip(".,;:-").strip()
+        if val and len(val) >= 2 and val.lower() not in ("lengkap", "asli", "saya", "kamu", "anda", "toko", "admin"):
+            return val.title()
+
+    fb = str(fallback or "").strip()
+    if not fb or fb.lower() in ("pelanggan", "kakak", "hijau", "merah", "biru", "user", "guest", "test", "tester", "admin", "owner", "customer"):
+        return "Kakak"
+    if re.match(r"^[\d\+\s\-]+$", fb):
+        return "Kakak"
+    return fb
+
+
 async def process_inbound_message(payload: InboundPayload):
     """
     Memproses logika pesan masuk BoonTrack WhatsApp Engine (Growth Plan):
@@ -308,17 +347,23 @@ async def process_inbound_message(payload: InboundPayload):
     3. Mengembalikan reply_text ke worker BoonTrack WhatsApp Engine untuk di-dispatch via sock.sendMessage.
     """
     # 1. Validasi & Normalisasi Tenant Routing
+    clean_phone = normalize_phone_number(payload.sender_phone)
     raw_tenant = str(payload.tenant_slug or "").strip().lower()
     if not raw_tenant or raw_tenant in ("default", "null", "undefined", "none"):
-        tenant_slug = "onlineboost"
-    elif raw_tenant in ("suhu-ads-masterclass", "suhu_ads"):
-        tenant_slug = "onlineboost"
+        from app.services.whatsapp.credentials import get_user_session
+        tenant_slug = get_user_session(clean_phone, payload.message_body or "") or ""
     else:
         tenant_slug = raw_tenant
 
-    clean_phone = normalize_phone_number(payload.sender_phone)
-    contact_name = payload.sender_name or "Pelanggan"
+    if not tenant_slug:
+        logger.warning(f"[GATEWAY] No tenant resolved for incoming message from {clean_phone}")
+        return {
+            "status": "error",
+            "message": "Tenant tidak dikenali. Silakan hubungi admin toko.",
+            "reply_text": "Halo! Silakan hubungi admin toko melalui link resmi kami.",
+        }
     incoming_text = payload.message_body.strip()
+    contact_name = extract_customer_name(incoming_text, fallback=payload.sender_name or "Kakak")
     text_lower = incoming_text.lower()
 
     # Log Terminal Detail Poin 3: Saat pesan masuk diterima
@@ -332,6 +377,7 @@ async def process_inbound_message(payload: InboundPayload):
     )
 
     reply: Optional[str] = None
+    reply_media_url: Optional[str] = None
 
     # Resolve Bot Strategy for this tenant
     store_details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
@@ -379,6 +425,99 @@ async def process_inbound_message(payload: InboundPayload):
             logger.info(f"[GROWTH GATEWAY MENU] Handled by Numbered Menu Flow for '{clean_phone}'")
             reply = menu_reply
 
+    # 2.5 Native Checkout / Lead Collection State Machine
+    # Tangkap data email & nama calon pembeli yang dikirim di chat WhatsApp
+    email_match = re.search(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', incoming_text)
+    if not reply and email_match:
+        extracted_email = email_match.group(0).lower().strip()
+        name_match = re.search(r'(?:nama|name)\s*[:=]\s*([^\n,]+)', incoming_text, re.IGNORECASE)
+        extracted_name = name_match.group(1).strip() if name_match else (contact_name or "Kakak")
+        logger.info(f"[NATIVE LEAD COLLECTION] Captured lead for '{tenant_slug}': name='{extracted_name}', email='{extracted_email}', phone='{clean_phone}'")
+
+        # Persist lead ke Supabase
+        try:
+            sb = get_supabase()
+            if sb:
+                lead_data = {
+                    "tenant_slug": tenant_slug,
+                    "customer_name": extracted_name,
+                    "customer_phone": clean_phone,
+                    "customer_email": extracted_email,
+                    "status": "QUALIFIED",
+                    "source": "whatsapp_native_checkout",
+                }
+                sb.table("leads").insert(lead_data).execute()
+        except Exception as _lead_db_err:
+            logger.debug(f"[NATIVE LEAD DB WARN] {_lead_db_err}")
+
+        # Dapatkan rincian produk toko
+        from app.services.whatsapp.commerce import get_tenant_products_from_db, generate_fast_track_checkout_response
+        store_name, products = get_tenant_products_from_db(tenant_slug)
+        sel_prod = products[0] if products else {}
+        prod_title = sel_prod.get("title") or sel_prod.get("name") or f"Layanan {store_name}"
+        prod_price = float(sel_prod.get("promo_price") or sel_prod.get("price") or 0)
+        prod_slug = str(sel_prod.get("slug") or sel_prod.get("id") or "").strip()
+        prod_checkout_url = f"https://shop.boontrack.com/{tenant_slug}/p/{prod_slug}" if prod_slug else f"https://shop.boontrack.com/{tenant_slug}"
+
+        try:
+            fast_reply, invoice, _ = await generate_fast_track_checkout_response(
+                tenant_slug=tenant_slug,
+                from_phone=clean_phone,
+                contact_name=extracted_name,
+            )
+            is_seller_qris = invoice.get("provider") == "SELLER_NATIVE_QRIS" or invoice.get("is_manual") is True
+            qris_media_target = invoice.get("media_url") or invoice.get("qr_code_url") or invoice.get("image_url")
+
+            # Universal Webhook & Meta CAPI Event Dispatch
+            try:
+                from app.services.whatsapp.transaction_dispatcher import dispatch_checkout_events
+                asyncio.create_task(dispatch_checkout_events(
+                    tenant_slug=tenant_slug,
+                    invoice=invoice,
+                    buyer_name=extracted_name,
+                    buyer_email=extracted_email,
+                    buyer_phone=clean_phone,
+                    gateway_channel="unofficial_evolution",
+                ))
+            except Exception as _ev_err:
+                logger.warning(f"[CHECKOUT EVENTS DISPATCH WARN] {_ev_err}")
+
+            if is_seller_qris:
+                reply = (
+                    f"Terima kasih Kak *{extracted_name}*! 🙏\n\n"
+                    f"Data pendaftaran Kakak telah kami catat:\n"
+                    f"• *Nama:* {extracted_name}\n"
+                    f"• *Email:* {extracted_email}\n"
+                    f"• *Paket:* {prod_title} (Rp{prod_price:,.0f})\n\n"
+                    f"{fast_reply}"
+                )
+                if qris_media_target:
+                    reply_media_url = qris_media_target
+            else:
+                pay_link = invoice.get("invoice_url") or prod_checkout_url
+                reply = (
+                    f"Terima kasih Kak *{extracted_name}*! 🙏\n\n"
+                    f"Data pendaftaran Kakak telah kami catat:\n"
+                    f"• *Nama:* {extracted_name}\n"
+                    f"• *Email:* {extracted_email}\n"
+                    f"• *Paket:* {prod_title} (Rp{prod_price:,.0f})\n\n"
+                    f"Silakan selesaikan pembayaran melalui tautan resmi berikut:\n"
+                    f"👉 *Link Pembayaran Instan QRIS:*\n{pay_link}\n\n"
+                    f"🛒 *Link Storefront / Web Checkout:*\n{prod_checkout_url}\n\n"
+                    f"_Setelah pembayaran terverifikasi, link akses materi & member area akan dikirimkan otomatis ke email Kakak._ ✨"
+                )
+        except Exception as _inv_err:
+            reply = (
+                f"Terima kasih Kak *{extracted_name}*! 🙏\n\n"
+                f"Data pendaftaran Kakak telah kami catat:\n"
+                f"• *Nama:* {extracted_name}\n"
+                f"• *Email:* {extracted_email}\n"
+                f"• *Paket:* {prod_title} (Rp{prod_price:,.0f})\n\n"
+                f"Untuk menyelesaikan transaksi dan pembayaran via QRIS otomatis, silakan klik link resmi kami:\n"
+                f"👉 {prod_checkout_url}\n\n"
+                f"_Akses materi akan otomatis aktif setelah pembayaran berhasil._ ✨"
+            )
+
     # 3. Pipeline Auto-Reply: Deteksi Checkout & Pembelian Cepat
     if not reply:
         if resolved_strategy == "trust_builder":
@@ -411,6 +550,20 @@ async def process_inbound_message(payload: InboundPayload):
                 )
                 if fast_reply:
                     reply = fast_reply
+                    if invoice and (invoice.get("media_url") or invoice.get("qr_code_url")):
+                        reply_media_url = invoice.get("media_url") or invoice.get("qr_code_url")
+                    try:
+                        from app.services.whatsapp.transaction_dispatcher import dispatch_checkout_events
+                        asyncio.create_task(dispatch_checkout_events(
+                            tenant_slug=tenant_slug,
+                            invoice=invoice,
+                            buyer_name=contact_name,
+                            buyer_email="",
+                            buyer_phone=clean_phone,
+                            gateway_channel="unofficial_evolution",
+                        ))
+                    except Exception as _ev_err:
+                        logger.warning(f"[CHECKOUT EVENTS DISPATCH WARN] {_ev_err}")
             except Exception as ft_err:
                 logger.warning(f"[GROWTH FAST TRACK WARN] {ft_err}")
 
@@ -489,7 +642,8 @@ async def process_inbound_message(payload: InboundPayload):
         "bot_strategy": resolved_strategy,
         "current_state": session.current_state,
         "selected_product_id": session.selected_product_id,
-        "reply_text": reply
+        "reply_text": reply,
+        "media_url": reply_media_url
     }
 
 
@@ -894,7 +1048,13 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         except Exception as _res_err:
             logger.warning(f"[EVOLUTION WEBHOOK] Dynamic tenant resolution error: {_res_err}")
 
-    sender_name = str(data.get("pushName") or payload.get("pushName") or "Pelanggan").strip()
+        raw_push = str(data.get("pushName") or payload.get("pushName") or "").strip()
+    if raw_push.lower() in ("hijau", "user", "guest", "admin", "customer", "pelanggan", "tester", "test") or re.match(r'^[\d\+\s\-]+$', raw_push):
+        sender_name = "Kakak"
+    elif raw_push:
+        sender_name = raw_push
+    else:
+        sender_name = "Kakak"
 
     logger.info(f"[EVOLUTION WEBHOOK] Inbound message for tenant '{resolved_tenant}' from {sender_phone} ({sender_name}): '{incoming_text}'")
 
@@ -976,10 +1136,42 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     ))
     reply_text = inbound_res.get("reply_text")
 
-    # Kirim balasan via Evolution API sendText jika ada balasan terbentuk
-    if reply_text:
+    reply_media_to_send = inbound_res.get("media_url")
+
+    # Kirim balasan via Evolution API (sendMedia jika ada gambar QRIS toko, sendText jika teks)
+    if reply_media_to_send:
+        track_whatsapp_message("OUTBOUND_MEDIA", tenant_id=resolved_tenant, session_id=sender_phone, classification="outbound_gateway")
+        instance_name = raw_instance or (f"tenant_{resolved_tenant.replace('-', '_')}" if not resolved_tenant.startswith("tenant_") else resolved_tenant)
+        send_media_url = f"{EVOLUTION_BASE_URL}/message/sendMedia/{instance_name}"
+        headers = get_evolution_headers()
+        is_png = "quickchart.io" in reply_media_to_send.lower() or ".png" in reply_media_to_send.lower() or "qrserver" in reply_media_to_send.lower()
+        media_ext = ".png" if is_png else (".webp" if ".webp" in reply_media_to_send.lower() else ".jpg")
+        media_mime = "image/png" if is_png else ("image/webp" if media_ext == ".webp" else "image/jpeg")
+        send_media_payload = {
+            "number": sender_phone,
+            "mediatype": "image",
+            "mimetype": media_mime,
+            "caption": reply_text or "",
+            "media": reply_media_to_send,
+            "fileName": f"qris_dinamis{media_ext}",
+            "options": {"delay": 1200, "presence": "composing"}
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                res = await client.post(send_media_url, headers=headers, json=send_media_payload)
+                logger.info(f"[EVOLUTION SEND MEDIA STATUS] Dispatched to {sender_phone} via {instance_name}: {res.status_code}")
+                if res.status_code not in (200, 201):
+                    logger.warning(f"[EVOLUTION SEND MEDIA WARNING] Fallback to sendText: {res.text[:200]}")
+                    await client.post(f"{EVOLUTION_BASE_URL}/message/sendText/{instance_name}", headers=headers, json={
+                        "number": sender_phone,
+                        "text": reply_text,
+                        "textMessage": {"text": reply_text},
+                        "options": {"delay": 500, "presence": "composing"}
+                    })
+        except Exception as media_err:
+            logger.error(f"[EVOLUTION SEND MEDIA ERROR] {media_err}")
+    elif reply_text:
         track_whatsapp_message("OUTBOUND", tenant_id=resolved_tenant, session_id=sender_phone, classification="outbound_gateway")
-        # Gunakan raw_instance langsung jika tersedia, agar membalas ke instans yang benar
         instance_name = raw_instance or (f"tenant_{resolved_tenant.replace('-', '_')}" if not resolved_tenant.startswith("tenant_") else resolved_tenant)
         send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{instance_name}"
         headers = get_evolution_headers()

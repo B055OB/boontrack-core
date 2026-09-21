@@ -111,9 +111,7 @@ class CommerceAIEngine:
             or f"Asisten {store_name}"
         )
         tone = persona.get("tone") or ai_k.get("tone") or "Ramah, solutif, dan profesional"
-        custom_system_prompt = persona.get("system_prompt") or ai_k.get("system_prompt") or tenant.get("system_prompt")
-
-        # Format Daftar Produk / Layanan / Tarif Riil dari Database
+        custom_system_prompt = persona.get("system_prompt") or ai_k.get("system_prompt") or tenant.get("system_prompt")        # Format Daftar Produk / Layanan / Tarif Riil dari Database dengan URL Resmi
         product_lines: List[str] = []
         if products:
             for idx, p in enumerate(products, 1):
@@ -121,10 +119,40 @@ class CommerceAIEngine:
                 price = p.get("promo_price") or p.get("price") or 0
                 desc = p.get("description") or p.get("variants") or "Layanan resmi terverifikasi"
                 promo_suffix = f" (Promo: Rp{float(p.get('promo_price')):,.0f})" if p.get("promo_price") else ""
-                product_lines.append(f"{idx}. {title} - Rp{float(price):,.0f}{promo_suffix} | {desc}")
-            catalog_text = "\n".join(product_lines)
+                p_slug = str(p.get("slug") or p.get("id") or "").strip()
+                p_url = f"https://shop.boontrack.com/{tenant_slug}/p/{p_slug}" if p_slug else f"https://shop.boontrack.com/{tenant_slug}"
+                product_lines.append(
+                    f"{idx}. {title} - Rp{float(price):,.0f}{promo_suffix}\n"
+                    f"   Deskripsi: {desc}\n"
+                    f"   Link Checkout Web Resmi: {p_url}"
+                )
+            catalog_text = "\n\n".join(product_lines)
         else:
-            catalog_text = f"1. Layanan Utama {store_name}"
+            catalog_text = f"1. Layanan Utama {store_name}\n   Link Checkout Web Resmi: https://shop.boontrack.com/{tenant_slug}"
+
+        guardrail_and_checkout_rules = (
+            f"INFORMASI RESMI TOKO & TAUTAN WEB:\n"
+            f"- Website Toko Resmi: https://shop.boontrack.com/{tenant_slug}\n\n"
+            f"ATURAN MUTLAK ZERO-HALLUCINATION & KEAMANAN TAUTAN (URL GUARDRAIL):\n"
+            f"1. DILARANG KERAS mengarang, memodifikasi, atau membagikan link/URL eksternal fiktif (seperti domain sendiri .com fiktif, blog fiktif, linktree, atau landing page palsu seperti {tenant_slug}.com atau buzzerukm.com).\n"
+            f"2. HANYA gunakan link resmi toko yang ada di daftar katalog di atas (format resmi: https://shop.boontrack.com/{tenant_slug}/p/... atau https://shop.boontrack.com/{tenant_slug}).\n"
+            f"3. Dilarang mengarang harga, paket, diskon, atau layanan di luar daftar tarif database di atas.\n"
+            f"4. Jika ada pertanyaan teknis di luar alur, jawab singkat dan tarik kembali pelanggan ke alur transaksi.\n\n"
+            f"ALUR PENDAFTARAN & CHECKOUT WHATSAPP (NATIVE LEAD COLLECTION):\n"
+            f"Ketika calon pembeli menyatakan ingin membeli, mengambil paket, mendaftar, atau bertanya cara daftarnya (contoh: 'mau ambil yang 7-Day Sprint kak, gimana cara daftarnya?', 'mau beli', 'mau daftar', 'cara daftarnya kak'):\n"
+            f"1. Sambut dengan ramah dan konfirmasi nama paket yang dipilih beserta harganya yang sesuai database resmi.\n"
+            f"2. LANGSUNG minta data diri pembeli di chat WhatsApp untuk penyiapan akses/pendaftaran dengan format ramah:\n"
+            f"   'Boleh dibantu kirimkan data dirinya ya Kak untuk penyiapan akses:\n"
+            f"   • *Nama Lengkap:*\n"
+            f"   • *Alamat Email:* (untuk pengiriman link akses materi & member area)'\n"
+            f"3. Sertakan pula Link Checkout Web Resmi produk tersebut dari katalog di atas untuk opsi jika pembeli ingin langsung transaksi & bayar instan via QRIS di web.\n\n"
+            f"KETIKA PEMBELI MENGIRIMKAN DATA DIRI (NAMA DAN/ATAU EMAIL):\n"
+            f"1. Ucapkan terima kasih dan konfirmasi bahwa data pendaftaran telah dicatat untuk penyiapan akses materi.\n"
+            f"2. Arahkan untuk menyelesaikan pembayaran dengan menyertakan Link Checkout Web Resmi produk bersangkutan atau instruksi pembayaran QRIS.\n\n"
+            f"FORMAT RESPON:\n"
+            f"Respon WAJIB berupa JSON Object dengan struktur:\n"
+            f'{{\n  "reply": "<teks balasan kepada calon pembeli>",\n  "quick_actions": ["<aksi 1>", "<aksi 2>"]\n}}\n'
+        )
 
         # Jika merchant mengatur custom system prompt di dashboard
         if custom_system_prompt and custom_system_prompt.strip() and not custom_system_prompt.startswith("Kamu adalah asisten resmi"):
@@ -137,7 +165,8 @@ class CommerceAIEngine:
                 f"- Gaya Komunikasi / Tone: {tone}\n"
                 f"- Sapaan Pembuka Wajib: {welcome}\n\n"
                 f"KATALOG & TARIF RESMI (DARI DATABASE):\n"
-                f"{catalog_text}\n"
+                f"{catalog_text}\n\n"
+                f"{guardrail_and_checkout_rules}"
             )
 
         prompt = (
@@ -150,11 +179,7 @@ class CommerceAIEngine:
             f"{strategy_rules}\n\n"
             f"KATALOG & TARIF RESMI DARI DATABASE (JANGAN MENGARANG HARGA LAIN):\n"
             f"{catalog_text}\n\n"
-            f"ATURAN MUTLAK:\n"
-            f"1. Dilarang mengarang harga atau layanan di luar daftar tarif database di atas.\n"
-            f"2. Jika ada pertanyaan teknis di luar alur, jawab singkat dan tarik kembali pelanggan ke alur transaksi.\n"
-            f"3. Respon WAJIB berupa JSON Object dengan struktur:\n"
-            f'{{\n  "reply": "<teks balasan kepada calon pembeli>",\n  "quick_actions": ["<aksi 1>", "<aksi 2>"]\n}}\n'
+            f"{guardrail_and_checkout_rules}"
         )
         return prompt
 

@@ -122,15 +122,54 @@ async def create_dynamic_qris_endpoint(payload: CreateDynamicQRISRequest = Body(
             detail="MERCHANT_QRIS_NOT_CONFIGURED",
         )
     if tenant_ctx:
-        pcfg = (tenant_ctx.metadata if tenant_ctx else {}).get("payment_config") or {}
+        t_meta = tenant_ctx.metadata or {}
+        pcfg = t_meta.get("payment_config") or {}
+        psettings = t_meta.get("payment_settings") or {}
         adapter = PaymentAdapterFactory.resolve(tenant_ctx)
+
+        # 100% Bagian 14: Prioritaskan string QRIS mentah asli tenant (tenants.metadata.payment_settings.qris_raw)
+        static_payload = (
+            psettings.get("qris_raw")
+            or psettings.get("raw_qris_string")
+            or t_meta.get("qris_raw")
+            or t_meta.get("raw_qris_string")
+            or pcfg.get("static_qris_payload")
+            or pcfg.get("raw_qris_string")
+            or pcfg.get("qris_content")
+            or (t_meta.get("qris") or {}).get("static_qr")
+            or ""
+        )
+
+        if static_payload and str(static_payload).strip().startswith("000201"):
+            from app.utils.qris_generator import generate_dynamic_qris_payload, get_quickchart_qr_url
+            dynamic_payload = generate_dynamic_qris_payload(str(static_payload).strip(), payload.amount)
+            qr_code_url = get_quickchart_qr_url(dynamic_payload)
+            return CreateDynamicQRISResponse(
+                status="ACTIVE",
+                external_id=order_id,
+                amount=payload.amount,
+                qr_string=dynamic_payload,
+                qr_code_url=qr_code_url,
+                expired_at="",
+                tenant_id=target_tenant,
+            )
+
         if isinstance(adapter, ManualTransferAdapter):
-            static_payload = pcfg.get("static_qris_payload") or ""
-            qr_code_url = adapter.qris_image_url or pcfg.get("qris_image_url") or ""
+            qr_code_url = adapter.qris_image_url or pcfg.get("qris_image_url") or psettings.get("qris") or ""
             if not static_payload and not qr_code_url:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="MERCHANT_QRIS_NOT_CONFIGURED",
+                )
+            if qr_code_url:
+                return CreateDynamicQRISResponse(
+                    status="ACTIVE",
+                    external_id=order_id,
+                    amount=payload.amount,
+                    qr_string=qr_code_url,
+                    qr_code_url=qr_code_url,
+                    expired_at="",
+                    tenant_id=target_tenant,
                 )
 
     provider = os.getenv("PAYMENT_GATEWAY_PROVIDER", "").strip().lower()
