@@ -248,6 +248,6 @@ async def test_tenant_webhook_router_blocks_when_trial_ai_limit_exceeded():
     assert res["status"] == "error"
     assert res["error_code"] == "TRIAL_LIMIT_EXCEEDED"
     assert trace.early_return is True
-    assert "kuota interaksi AI" in res["reply"]
+    assert "kuota pesan interaksi otomatis" in res["reply"] or "paket trial" in res["reply"]
 
     trial_guardrail.reset(tenant_slug)
