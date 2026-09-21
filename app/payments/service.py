@@ -97,6 +97,43 @@ class PaymentCoreService:
         )
         self._payment_events.append(event)
         if not self.in_memory_mode:
+            # 1. PostgreSQL Persistence (Primary Database Ledger)
+            try:
+                import json
+                from app.core.database import get_db_connection
+                conn = get_db_connection()
+                cur = conn.cursor()
+                payload_json = json.dumps(event.raw_payload or {}, default=str)
+                cur.execute(
+                    """
+                    INSERT INTO payment_events (
+                        id, provider, event_id, reference_id, event_type, payload, status,
+                        order_id, provider_event_id, amount, raw_payload, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, 'PROCESSED', %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO NOTHING;
+                    """,
+                    (
+                        str(event.id),
+                        event.provider.upper(),
+                        str(event.provider_event_id or event.id),
+                        str(event.order_id or ""),
+                        event.event_type,
+                        payload_json,
+                        str(event.order_id or ""),
+                        str(event.provider_event_id or ""),
+                        event.amount,
+                        payload_json,
+                        event.created_at,
+                        event.created_at,
+                    )
+                )
+                conn.commit()
+                cur.close()
+                conn.close()
+            except Exception as pg_e:
+                logger.debug(f"[PaymentCore] Postgres payment_events insert note: {pg_e}")
+
+            # 2. Supabase Sync (Secondary/Read Replica)
             supabase = get_supabase()
             if supabase:
                 try:

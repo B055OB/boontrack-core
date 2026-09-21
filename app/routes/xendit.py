@@ -210,7 +210,7 @@ def _check_db_idempotency_sync(event_id: str, external_id: str) -> Optional[Dict
                         """
                         INSERT INTO payment_events (provider, event_id, reference_id, event_type, status, created_at, updated_at)
                         VALUES ('XENDIT', %s, %s, 'REPLAY', 'PROCESSED_DUPLICATE_ORDER', NOW(), NOW())
-                        ON CONFLICT (event_id) DO UPDATE SET status = 'PROCESSED_DUPLICATE_ORDER', updated_at = NOW();
+                        ON CONFLICT (event_id) DO NOTHING;
                         """,
                         (str(event_id), str(external_id))
                     )
@@ -256,17 +256,28 @@ def _record_settlement_and_ledger_sync(
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # 1. Catat payment_events dengan status PROCESSING
+        # 1. Catat payment_events dengan status PROCESSED secara Append-Only (Immutable Audit Ledger)
         cur.execute(
             """
-            INSERT INTO payment_events (provider, event_id, reference_id, event_type, payload, status, created_at, updated_at)
-            VALUES ('XENDIT', %s, %s, 'PAYMENT_SETTLED', %s, 'PROCESSING', %s, %s)
-            ON CONFLICT (event_id) DO UPDATE SET
-                payload = EXCLUDED.payload,
-                status = 'PROCESSING',
-                updated_at = EXCLUDED.updated_at;
+            INSERT INTO payment_events (
+                provider, event_id, reference_id, event_type, payload, status, processed_at, created_at, updated_at,
+                order_id, provider_event_id, amount, raw_payload
+            )
+            VALUES ('XENDIT', %s, %s, 'PAYMENT_SETTLED', %s, 'PROCESSED', %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (event_id) DO NOTHING;
             """,
-            (str(event_id), str(external_id), payload_json, now_utc, now_utc)
+            (
+                str(event_id),
+                str(external_id),
+                payload_json,
+                now_utc,
+                now_utc,
+                now_utc,
+                str(external_id),
+                str(event_id),
+                amount,
+                payload_json,
+            )
         )
 
         # 2. Update status orders menjadi LUNAS secara atomik
@@ -390,17 +401,6 @@ def _record_settlement_and_ledger_sync(
                 f"[Xendit Commission Recorded] Order {external_id}: 25% (Rp{aff_amount:,.0f}) to '{aff_code}', 5% (Rp{mgr_amount:,.0f}) to AM."
             )
 
-        # 4. Update status payment_events menjadi PROCESSED
-        cur.execute(
-            """
-            UPDATE payment_events
-            SET status = 'PROCESSED',
-                processed_at = %s,
-                updated_at = %s
-            WHERE event_id = %s;
-            """,
-            (now_utc, now_utc, str(event_id))
-        )
 
         conn.commit()
         logger.info(f"[Xendit Ledger Recorded] Event {event_id} & Order {external_id} saved to DB and financial_ledger.")
