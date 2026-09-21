@@ -287,7 +287,7 @@ async def generate_cart_checkout_response(
 
     base_amount = sum(int(float(item.get("promo_price") or item.get("price") or 0)) for item in cart_items)
     unique_code = random.randint(100, 999)
-    total_amount = base_amount + unique_code
+    total_amount = max(1, base_amount - unique_code)
     item_titles = ", ".join([str(item.get("title") or item.get("name")) for item in cart_items])
     product_summary = f"Order {len(cart_items)} Items ({item_titles[:35]}...)" if len(item_titles) > 35 else item_titles
 
@@ -309,11 +309,14 @@ async def generate_cart_checkout_response(
         or (tenant_meta.get("qris", {}) or {}).get("image_url")
     )
     raw_qris_string = (
-        tenant_meta.get("raw_qris_string")
+        (tenant_meta.get("payment_settings") or {}).get("qris_raw")
+        or (tenant_meta.get("payment_settings") or {}).get("raw_qris_string")
+        or (tenant_meta.get("payment_config") or {}).get("raw_qris_string")
+        or (tenant_meta.get("payment_config") or {}).get("qris_content")
+        or (tenant_meta.get("payment_config") or {}).get("qris_payload")
+        or tenant_meta.get("raw_qris_string")
         or tenant_meta.get("qris_static_string")
         or tenant_meta.get("static_qris_payload")
-        or tenant_meta.get("qris_payload")
-        or tenant_meta.get("qris_content")
         or (tenant_meta.get("qris", {}) or {}).get("static_qr")
     )
     merchant_qris_name = (
@@ -380,7 +383,7 @@ async def generate_cart_checkout_response(
         f"Berikut Rincian Tagihan & Barcode QRIS Pembayaran 💳\n\n"
         f"📦 *Nama Pesanan:* {product_summary}\n"
         f"💰 *Total Tagihan:* {amount_fmt}\n"
-        f"_(Harga: {base_fmt} + Kode Unik: {unique_code})_\n"
+        f"_(Harga: {base_fmt} - Diskon Kode Unik: {unique_code})_\n"
         f"🏪 *Merchant QRIS:* {merchant_qris_name}\n"
         f"🔖 *No. Pesanan:* `{external_id}`\n"
         f"⏱️ *Masa Berlaku:* 24 Jam\n"
@@ -434,7 +437,7 @@ async def generate_fast_track_checkout_response(
 
     # Injeksi 3-digit kode unik acak untuk rekonsiliasi mutasi otomatis
     unique_code = random.randint(100, 999)
-    total_amount = base_amount + unique_code
+    total_amount = max(1, base_amount - unique_code)
     amount = total_amount
 
     # -----------------------------------------------------------------------
@@ -455,11 +458,14 @@ async def generate_fast_track_checkout_response(
         or (tenant_meta.get("qris", {}) or {}).get("image_url")
     )
     raw_qris_string = (
-        tenant_meta.get("raw_qris_string")
+        (tenant_meta.get("payment_settings") or {}).get("qris_raw")
+        or (tenant_meta.get("payment_settings") or {}).get("raw_qris_string")
+        or (tenant_meta.get("payment_config") or {}).get("raw_qris_string")
+        or (tenant_meta.get("payment_config") or {}).get("qris_content")
+        or (tenant_meta.get("payment_config") or {}).get("qris_payload")
+        or tenant_meta.get("raw_qris_string")
         or tenant_meta.get("qris_static_string")
         or tenant_meta.get("static_qris_payload")
-        or tenant_meta.get("qris_payload")
-        or tenant_meta.get("qris_content")
         or (tenant_meta.get("qris", {}) or {}).get("static_qr")
     )
     merchant_qris_name = (
@@ -526,7 +532,7 @@ async def generate_fast_track_checkout_response(
         f"Berikut Rincian Tagihan & Barcode QRIS Pembayaran 💳\n\n"
         f"📦 *Nama Produk:* {product_name}\n"
         f"💰 *Total Tagihan:* {amount_fmt}\n"
-        f"_(Harga: {base_fmt} + Kode Unik: {unique_code})_\n"
+        f"_(Harga: {base_fmt} - Diskon Kode Unik: {unique_code})_\n"
         f"🏪 *Merchant QRIS:* {merchant_qris_name}\n"
         f"🔖 *No. Pesanan:* `{external_id}`\n"
         f"⏱️ *Masa Berlaku:* 24 Jam\n"

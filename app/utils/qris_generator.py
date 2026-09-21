@@ -88,16 +88,12 @@ def generate_dynamic_qris_payload(static_payload: str, amount: int, invoice_id: 
     else:
         payload_body = raw + tag_54
 
-    # 5. Pertahankan Tag 62 bawaan acquirer (JANGAN ditimpa atau dimodifikasi)
-    # Hanya tambahkan Tag 62 jika invoice_id disediakan dan Tag 62 belum ada di string master
-    has_tag_62 = any(f"62{i:02d}" in payload_body for i in range(1, 100))
-    if invoice_id and not has_tag_62:
-        clean_inv = str(invoice_id).strip()[:25]
-        sub_01 = f"01{len(clean_inv):02d}{clean_inv}"
-        tag_62 = f"62{len(sub_01):02d}{sub_01}"
-        payload_body += tag_62
+    # Rule 2 (Kritis - ARCHITECTURE.md Bagian 14.1):
+    # Wajib PERTAHANKAN Tag 62 bawaan acquirer merchant apa adanya!
+    # DILARANG KERAS menimpa atau menyisipkan nomor invoice INV-xxx ke Tag 62 karena merusak struktur decoding m-banking.
+    # Tag 62 bawaan acquirer dipertahankan apa adanya tanpa modifikasi atau penambahan.
 
-    # 6. Hitung ulang CRC16-CCITT standar EMVCo (poly 0x1021, init 0xFFFF)
+    # Rule 4: Hitung ulang CRC16-CCITT standar EMVCo (poly 0x1021, init 0xFFFF)
     full_for_crc = payload_body + "6304"
     crc = crc16_ccitt(full_for_crc)
     return full_for_crc + crc
