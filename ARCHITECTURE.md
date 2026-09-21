@@ -1095,22 +1095,28 @@ Sesuai arahan audit finansial CFO (Chief Financial Officer), akun merchant dalam
      - State obrolan bertransisi menjadi `AWAITING_PAYMENT`.
      - Sistem langsung menerbitkan rincian pesanan dan gambar barcode pembayaran QRIS secara otomatis (Fast-Track Checkout).
 
-### 21.3 Dynamic QRIS Generation (+ 3-Digit Kode Unik & EMVCo Tag 54 Injection)
+### 21.3 Dynamic QRIS Generation (+ 3-Digit Kode Unik Downward & EMVCo Tag 54 Injection Sesuai Bagian 14)
 1. **Larangan Mengirim File Gambar Mentah (.webp)**:
    - Sistem dilarang keras mengirimkan gambar QRIS mentah statis (`.webp` upload seller).
    - Sistem wajib mengonversi payload string QRIS toko menjadi **Dynamic QRIS Standar EMVCo Bank Indonesia (ASPI)** on-the-fly.
-2. **Injeksi 3-Digit Kode Unik**:
-   - Sistem mengenerate kode unik acak 3 digit (rentang 100 - 999), contoh: `unique_code = 347`.
-   - Nominal transaksi dihitung dari: `total_amount = base_amount - unique_code (DOWNWARD)` (contoh: Rp100.000 + 347 = Rp100.347) untuk membedakan tiket mutasi pembayaran di rekening seller.
-3. **Struktur EMVCo Dynamic Payload**:
-   - **Tag 01 (Point of Initiation Method)**: Wajib diubah menjadi `010212` (Dynamic QRIS).
-   - **Tag 54 (Transaction Amount)**: Diinjeksi dengan nominal persis beserta kode unik: `f"54{len(amt):02d}{amt}"` tepat sebelum Tag 58 (`5802ID`).
-   - **Tag 62 (Additional Data Field)**: Menyertakan invoice/order ID (`INV-...`).
-   - **Tag 63 (Checksum)**: Dihitung ulang menggunakan algoritma CRC16-CCITT (polynomial `0x1021`, initial `0xFFFF`).
+2. **Sistem Kode Unik Downward (Pengurangan / Diskon)**:
+   - Dashboard menggunakan sistem **DOWNWARD** (pengurangan / diskon kode unik). Dilarang menambahkan ke atas.
+   - Rumus: `total_amount = base_amount - unique_code` (contoh: Rp100.000 - 825 = Rp99.175).
+   - Nominal Tag 54 dan caption obrolan disesuaikan dengan nominal hasil pengurangan tersebut.
+3. **Pematuhan 4 Aturan Bagian 14.1 (Jangan Langgar Acquirer Tag 62)**:
+   - **Sumber Data Tunggal**: Ambil string QRIS mentah ASLI milik tenant dari database (`tenants.metadata.payment_settings.qris_raw`). Dilarang memakai template mock LinkAja.
+   - **Rule 1 (Tag 01 Dynamic)**: Wajib ubah Tag 01 dari `'010211'` (Statis) menjadi `'010212'` (Dinamis).
+   - **Rule 2 (Preservasi Tag 62 - Kritis)**: Wajib PERTAHANKAN Tag 62 bawaan acquirer merchant apa adanya! DILARANG KERAS menimpa atau menyisipkan nomor invoice `INV-xxx` ke Tag 62 karena merusak struktur decoding m-banking (blu BCA, Livin Mandiri, dsb.).
+   - **Rule 3 (Injeksi Tag 54 Presisi)**: Bersihkan Tag 54 lama (jika ada) sebelum Tag 58, lalu sisipkan Tag 54 baru tepat sebelum Tag 58 (`'5802ID'` atau `'5802'`):
+     ```python
+     amt_str = str(int(amount))  # contoh: '99175'
+     tag_54 = f"54{len(amt_str):02d}{amt_str}"  # '540599175'
+     ```
+   - **Rule 4 (Kalkulasi Ulang CRC16-CCITT)**: Buang 4 karakter hex CRC lama beserta prefix `'6304'`, tambahkan `'6304'` di ujung string, lalu hitung ulang CRC16-CCITT (polinomial `0x1021`, nilai inisial `0xFFFF`) menghasilkan 4 karakter hex uppercase.
 4. **Rendering & Pengiriman via WhatsApp Media (`sendMedia`)**:
    - Matriks QR dinamis dirender menjadi gambar PNG beresolusi tinggi 600x600 px melalui generator QuickChart:
      `https://quickchart.io/qr?text={encoded_dynamic_payload}&size=600&margin=4&ecLevel=M`
-   - Gambar dikirimkan ke pembeli melalui endpoint media WhatsApp (`sendMedia`) dengan caption rincian tagihan nominal tepat (`Rp 100.347`), detail kode unik, dan instruksi transfer.
+   - Gambar dikirimkan ke pembeli melalui endpoint media WhatsApp (`sendMedia`) dengan caption rincian tagihan nominal tepat (`Rp 99.175`), detail diskon kode unik (`825`), dan instruksi transfer.
 
 ### 21.4 Universal Webhook Dispatch (Unofficial & Official Gateway)
 1. **Multi-Channel Transaction Dispatch**:
@@ -1126,9 +1132,9 @@ Sesuai arahan audit finansial CFO (Chief Financial Officer), akun merchant dalam
        "tenant_slug": "buzzerukm",
        "order_id": "INV-BUZZERUK-XXXXXX",
        "product_name": "7-Day Sprint CTWA Mastery...",
-       "total_amount": 100347,
+       "total_amount": 99175,
        "base_amount": 100000,
-       "unique_code": 347,
+       "unique_code": 825,
        "buyer_name": "Aldi",
        "buyer_email": "aldi@gmail.com",
        "buyer_phone": "628123456789",
