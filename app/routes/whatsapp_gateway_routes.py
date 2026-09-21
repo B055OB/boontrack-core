@@ -300,6 +300,31 @@ def register_whatsapp_gateway_routes(app):
 
 
 @router.post("/inbound-process")
+def extract_customer_name(text: str, fallback: str = "Kakak") -> str:
+    """
+    Ekstraksi nama pembeli secara cerdas & tangguh dari isi pesan percakapan.
+    Mendukung variasi: 'Nama Lengkap: Aldi', 'Nama Asli: Aldi', 'Nama: Aldi', 'Full Name: Aldi'.
+    Menghilangkan bug pushName WhatsApp (seperti 'hijau', 'admin', 'user') agar tidak disapa salah.
+    """
+    clean_text = str(text or "")
+    pattern = re.compile(
+        r"(?:nama\s+lengkap|nama\s+asli|nama\s+saya|full\s*name|nama|name)\s*[:=\-]?\s*([a-zA-Z\s\.'\-]+?)(?:[\n,;.]|\s+email|\s+no|\s+hp|\s+wa|$)",
+        re.IGNORECASE
+    )
+    m = pattern.search(clean_text)
+    if m:
+        val = m.group(1).strip().strip(".,;:-").strip()
+        if val and len(val) >= 2 and val.lower() not in ("lengkap", "asli", "saya", "kamu", "anda", "toko", "admin"):
+            return val.title()
+
+    fb = str(fallback or "").strip()
+    if not fb or fb.lower() in ("pelanggan", "kakak", "hijau", "merah", "biru", "user", "guest", "test", "tester", "admin", "owner", "customer"):
+        return "Kakak"
+    if re.match(r"^[\d\+\s\-]+$", fb):
+        return "Kakak"
+    return fb
+
+
 async def process_inbound_message(payload: InboundPayload):
     """
     Memproses logika pesan masuk BoonTrack WhatsApp Engine (Growth Plan):
@@ -317,8 +342,8 @@ async def process_inbound_message(payload: InboundPayload):
         tenant_slug = raw_tenant
 
     clean_phone = normalize_phone_number(payload.sender_phone)
-    contact_name = payload.sender_name or "Pelanggan"
     incoming_text = payload.message_body.strip()
+    contact_name = extract_customer_name(incoming_text, fallback=payload.sender_name or "Kakak")
     text_lower = incoming_text.lower()
 
     # Log Terminal Detail Poin 3: Saat pesan masuk diterima
@@ -423,6 +448,20 @@ async def process_inbound_message(payload: InboundPayload):
             is_seller_qris = invoice.get("provider") == "SELLER_NATIVE_QRIS" or invoice.get("is_manual") is True
             qris_media_target = invoice.get("media_url") or invoice.get("qr_code_url") or invoice.get("image_url")
 
+            # Universal Webhook & Meta CAPI Event Dispatch
+            try:
+                from app.services.whatsapp.transaction_dispatcher import dispatch_checkout_events
+                asyncio.create_task(dispatch_checkout_events(
+                    tenant_slug=tenant_slug,
+                    invoice=invoice,
+                    buyer_name=extracted_name,
+                    buyer_email=extracted_email,
+                    buyer_phone=clean_phone,
+                    gateway_channel="unofficial_evolution",
+                ))
+            except Exception as _ev_err:
+                logger.warning(f"[CHECKOUT EVENTS DISPATCH WARN] {_ev_err}")
+
             if is_seller_qris:
                 reply = (
                     f"Terima kasih Kak *{extracted_name}*! 🙏\n\n"
@@ -493,6 +532,18 @@ async def process_inbound_message(payload: InboundPayload):
                     reply = fast_reply
                     if invoice and (invoice.get("media_url") or invoice.get("qr_code_url")):
                         reply_media_url = invoice.get("media_url") or invoice.get("qr_code_url")
+                    try:
+                        from app.services.whatsapp.transaction_dispatcher import dispatch_checkout_events
+                        asyncio.create_task(dispatch_checkout_events(
+                            tenant_slug=tenant_slug,
+                            invoice=invoice,
+                            buyer_name=contact_name,
+                            buyer_email="",
+                            buyer_phone=clean_phone,
+                            gateway_channel="unofficial_evolution",
+                        ))
+                    except Exception as _ev_err:
+                        logger.warning(f"[CHECKOUT EVENTS DISPATCH WARN] {_ev_err}")
             except Exception as ft_err:
                 logger.warning(f"[GROWTH FAST TRACK WARN] {ft_err}")
 
@@ -977,7 +1028,13 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         except Exception as _res_err:
             logger.warning(f"[EVOLUTION WEBHOOK] Dynamic tenant resolution error: {_res_err}")
 
-    sender_name = str(data.get("pushName") or payload.get("pushName") or "Pelanggan").strip()
+        raw_push = str(data.get("pushName") or payload.get("pushName") or "").strip()
+    if raw_push.lower() in ("hijau", "user", "guest", "admin", "customer", "pelanggan", "tester", "test") or re.match(r'^[\d\+\s\-]+$', raw_push):
+        sender_name = "Kakak"
+    elif raw_push:
+        sender_name = raw_push
+    else:
+        sender_name = "Kakak"
 
     logger.info(f"[EVOLUTION WEBHOOK] Inbound message for tenant '{resolved_tenant}' from {sender_phone} ({sender_name}): '{incoming_text}'")
 
@@ -1067,15 +1124,16 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         instance_name = raw_instance or (f"tenant_{resolved_tenant.replace('-', '_')}" if not resolved_tenant.startswith("tenant_") else resolved_tenant)
         send_media_url = f"{EVOLUTION_BASE_URL}/message/sendMedia/{instance_name}"
         headers = get_evolution_headers()
-        media_ext = ".webp" if ".webp" in reply_media_to_send.lower() else (".png" if ".png" in reply_media_to_send.lower() else ".jpg")
-        media_mime = "image/webp" if media_ext == ".webp" else ("image/png" if media_ext == ".png" else "image/jpeg")
+        is_png = "quickchart.io" in reply_media_to_send.lower() or ".png" in reply_media_to_send.lower() or "qrserver" in reply_media_to_send.lower()
+        media_ext = ".png" if is_png else (".webp" if ".webp" in reply_media_to_send.lower() else ".jpg")
+        media_mime = "image/png" if is_png else ("image/webp" if media_ext == ".webp" else "image/jpeg")
         send_media_payload = {
             "number": sender_phone,
             "mediatype": "image",
             "mimetype": media_mime,
             "caption": reply_text or "",
             "media": reply_media_to_send,
-            "fileName": f"qris{media_ext}",
+            "fileName": f"qris_dinamis{media_ext}",
             "options": {"delay": 1200, "presence": "composing"}
         }
         try:

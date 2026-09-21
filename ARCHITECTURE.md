@@ -1080,33 +1080,75 @@ Sesuai arahan audit finansial CFO (Chief Financial Officer), akun merchant dalam
    - Aturan sistem (System Prompt Guardrail):
      > "JANGAN PERNAH mengarang link checkout atau domain sendiri. Hanya gunakan URL resmi dari katalog: `https://shop.boontrack.com/{tenant_slug}/p/{product_slug}`."
 
-### 21.2 Native Lead Collection & Closing State Machine
+### 21.2 Native Lead Collection & Closing State Machine (Zero "Hello hijau" Bug)
 1. **Deteksi Niat Beli (Purchase Intent)**:
    - Ketika calon pembeli menyatakan ketertarikan kuat atau ingin mendaftar (contoh: "Mau ambil paket X kak, gimana cara daftarnya?", "Saya mau beli", "Bisa order sekarang?"), conversational engine mengarahkan percakapan ke alur **Lead Collection**.
 2. **Determinasi Pengambilan Data (Nama & Email Capture)**:
-   - Bot tidak langsung melepas calon pembeli ke luar chat tanpa mengamankan data prospek.
-   - Bot meminta data pemesan secara ramah dan terstruktur:
+   - Bot meminta data pemesan secara terstruktur:
      > "Boleh dibantu info *Nama Lengkap* dan *Alamat Email* aktif Kakak untuk kami siapkan data pendaftarannya ya Kak? 🙏"
-3. **Penyimpanan State & Fast-Track Checkout**:
-   - Begitu Nama dan Email terdeteksi via ekspresi reguler atau entity extractor:
+3. **Robust Name Parsing (Zero Profile Hallucination)**:
+   - Sistem wajib mengekstrak nama pembeli secara langsung dari pesan teks menggunakan pola: `Nama Lengkap: [Nama]`, `Nama Asli: [Nama]`, `Full Name: [Nama]`, atau `Nama: [Nama]`.
+   - **Larangan Keras Bug Profil**: DILARANG menyapa pembeli menggunakan nama display/pushName WhatsApp acak seperti `"Hello hijau"` atau `"Kak hijau"`. Jika nama pembeli belum diberikan dan pushName WhatsApp tidak menyerupai nama orang (contoh: `"hijau"`, `"user"`, `"admin"`, nomor telepon), sistem wajib menggunakan sapaan sopan default: **"Kakak"**.
+4. **Penyimpanan State & Fast-Track Checkout**:
+   - Begitu Nama dan Email terdeteksi:
      - Data lead disimpan ke profil sesi obrolan (`user_lead_profiles` / CRM session).
      - State obrolan bertransisi menjadi `AWAITING_PAYMENT`.
      - Sistem langsung menerbitkan rincian pesanan dan gambar barcode pembayaran QRIS secara otomatis (Fast-Track Checkout).
 
-### 21.3 Standar Pembayaran Multi-Tenant: Seller Native QRIS (Manual Upload)
-1. **Default Checkout Toko: QRIS Mandiri (Seller Uploaded)**:
-   - Di dashboard merchant/seller saat ini, belum tersedia opsi payment gateway pihak ketiga (Xendit/Midtrans).
-   - Seluruh seller/tenant menggunakan **QRIS Mandiri (Static/Manual QRIS)** yang di-upload oleh masing-masing pemilik toko pada profil toko Supabase (`tenants.metadata.qris_image_url`).
-   - Sistem **DILARANG KERAS** memanggil endpoint payment gateway (seperti `checkout.xendit.co`) untuk transaksi pembeli pada toko tenant, guna mencegah biaya pihak ketiga yang tidak diinginkan dan kebingungan pelanggan.
-2. **Pengiriman Barcode QRIS via Media Endpoint (`sendMedia`)**:
-   - Sistem mengambil URL gambar QRIS toko langsung dari Supabase:
-     - Primary key: `tenants.metadata.qris_image_url`
-     - Fallback keys: `tenants.metadata.qris_image`, `tenants.metadata.qris_url`, `tenants.metadata.payment_settings.qris`.
-   - Engine mengirimkan gambar QRIS asli toko ke WhatsApp pembeli melalui endpoint Evolution API:
-     - `POST /message/sendMedia/{instance_name}`
-     - MIME type: `image/webp`, `image/png`, atau `image/jpeg`.
-     - Caption: Berisi nama produk, nominal pembayaran persis (`Rp 100.000`), nama merchant QRIS, alternatif rekening bank seller, dan instruksi pengiriman bukti transfer.
-   - Apabila pengiriman media gagal, sistem melakukan graceful fallback ke `sendText` dengan menyertakan tautan storefront resmi toko: `https://shop.boontrack.com/{tenant_slug}/p/{product_slug}`.
-3. **Verifikasi Manual via Bukti Transfer (Proof of Transfer)**:
-   - Setelah tagihan dan barcode QRIS dikirimkan, pembeli diinstruksikan untuk membalas chat dengan mengirimkan screenshot/bukti transfer pembayaran.
-   - Saat pembeli mengirimkan bukti transfer (gambar media atau kata kunci konfirmasi pembayaran seperti "sudah transfer", "bukti bayar"), engine mendeteksi pesan tersebut dan mengonfirmasi bahwa pembayaran sedang diverifikasi oleh tim toko.
+### 21.3 Dynamic QRIS Generation (+ 3-Digit Kode Unik & EMVCo Tag 54 Injection)
+1. **Larangan Mengirim File Gambar Mentah (.webp)**:
+   - Sistem dilarang keras mengirimkan gambar QRIS mentah statis (`.webp` upload seller).
+   - Sistem wajib mengonversi payload string QRIS toko menjadi **Dynamic QRIS Standar EMVCo Bank Indonesia (ASPI)** on-the-fly.
+2. **Injeksi 3-Digit Kode Unik**:
+   - Sistem mengenerate kode unik acak 3 digit (rentang 100 - 999), contoh: `unique_code = 347`.
+   - Nominal transaksi dihitung dari: `total_amount = base_amount + unique_code` (contoh: Rp100.000 + 347 = Rp100.347) untuk membedakan tiket mutasi pembayaran di rekening seller.
+3. **Struktur EMVCo Dynamic Payload**:
+   - **Tag 01 (Point of Initiation Method)**: Wajib diubah menjadi `010212` (Dynamic QRIS).
+   - **Tag 54 (Transaction Amount)**: Diinjeksi dengan nominal persis beserta kode unik: `f"54{len(amt):02d}{amt}"` tepat sebelum Tag 58 (`5802ID`).
+   - **Tag 62 (Additional Data Field)**: Menyertakan invoice/order ID (`INV-...`).
+   - **Tag 63 (Checksum)**: Dihitung ulang menggunakan algoritma CRC16-CCITT (polynomial `0x1021`, initial `0xFFFF`).
+4. **Rendering & Pengiriman via WhatsApp Media (`sendMedia`)**:
+   - Matriks QR dinamis dirender menjadi gambar PNG beresolusi tinggi 600x600 px melalui generator QuickChart:
+     `https://quickchart.io/qr?text={encoded_dynamic_payload}&size=600&margin=4&ecLevel=M`
+   - Gambar dikirimkan ke pembeli melalui endpoint media WhatsApp (`sendMedia`) dengan caption rincian tagihan nominal tepat (`Rp 100.347`), detail kode unik, dan instruksi transfer.
+
+### 21.4 Universal Webhook Dispatch (Unofficial & Official Gateway)
+1. **Multi-Channel Transaction Dispatch**:
+   - Webhook transaksi (`ORDER_PENDING` / `INVOICE_CREATED`) wajib ditembakkan secara universal pada kedua gateway:
+     - **Jalur Unofficial**: Baileys / Evolution API (`whatsapp_gateway_routes.py`).
+     - **Jalur Official**: Meta Cloud API / WABA resmi (`whatsapp_central.py`).
+2. **Spesifikasi Kontrak Payload Webhook**:
+   - Setiap event memuat atribut lengkap:
+     ```json
+     {
+       "event": "ORDER_PENDING",
+       "event_type": "INVOICE_CREATED",
+       "tenant_slug": "buzzerukm",
+       "order_id": "INV-BUZZERUK-XXXXXX",
+       "product_name": "7-Day Sprint CTWA Mastery...",
+       "total_amount": 100347,
+       "base_amount": 100000,
+       "unique_code": 347,
+       "buyer_name": "Aldi",
+       "buyer_email": "aldi@gmail.com",
+       "buyer_phone": "628123456789",
+       "gateway_channel": "unofficial_evolution",
+       "status": "PENDING",
+       "currency": "IDR",
+       "created_at": "2026-09-21T15:14:00Z"
+     }
+     ```
+3. **Persistensi Order Ledger**:
+   - Data transaksi langsung dicatat ke tabel `orders` database Supabase, dan jika merchant mengonfigurasi `metadata.webhook_url`, payload ditembakkan secara asinkron via HTTP POST.
+
+### 21.5 Meta Conversions API (CAPI) Integration
+1. **Trigger Tahap Checkout**:
+   - Saat QRIS dinamis berhasil diterbitkan ke pembeli via WhatsApp, sistem langsung menembakkan event `InitiateCheckout` ke Meta Conversions API (CAPI).
+2. **Kredensial Dinamis Multi-Tenant**:
+   - Pixel ID dan CAPI Access Token dibaca dari metadata tenant (`tenants.metadata.pixel_id`, `tenants.metadata.capi_token` atau objek `tracking`/`meta_config`), dengan fallback ke platform default credentials.
+3. **Enkripsi Privasi SHA-256 (Zero PII Leakage)**:
+   - Seluruh data pemesan di-hash dengan SHA-256 lowercase sebelum keluar dari server:
+     - Nomor Telepon E.164 (`628xxx` tanpa `+`): `hash_sha256(phone)`
+     - Alamat Email: `hash_sha256(email)`
+     - Nama Depan: `hash_sha256(first_name)`
+   - Custom Data memuat nominal persis transaksi (`value`: `total_amount`), `currency: "IDR"`, `content_ids: [order_id]`, dan `content_name`.

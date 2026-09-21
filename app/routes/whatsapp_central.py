@@ -420,8 +420,10 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         from_phone = str(event.get("from_phone") or "").strip()
         clean_phone = normalize_phone_number(from_phone) or re.sub(r"\D", "", from_phone)
         msg_type = str(event.get("msg_type") or "text").strip()
-        contact_name = str(event.get("contact_name") or "Kakak").strip()
         incoming_text = str(event.get("text") or "").strip()
+        raw_contact_name = str(event.get("contact_name") or "Kakak").strip()
+        from app.services.whatsapp.transaction_dispatcher import extract_customer_name
+        contact_name = extract_customer_name(incoming_text, fallback=raw_contact_name)
         clean_text = incoming_text.strip().lower()
         text_lower = clean_text
 
@@ -823,6 +825,18 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     from_phone=from_phone,
                     contact_name=contact_name
                 )
+                try:
+                    from app.services.whatsapp.transaction_dispatcher import dispatch_checkout_events
+                    asyncio.create_task(dispatch_checkout_events(
+                        tenant_slug=active_session_tenant,
+                        invoice=invoice,
+                        buyer_name=contact_name,
+                        buyer_email="",
+                        buyer_phone=from_phone,
+                        gateway_channel="official_meta_waba",
+                    ))
+                except Exception as _ev_err:
+                    logger.warning(f"[CHECKOUT EVENTS DISPATCH WARN] {_ev_err}")
 
                 # 1. KIRIM TEKS RINCIAN INVOICE & LINK BAYAR INSTAN TERLEBIH DAHULU (USER LANGSUNG MENERIMA RESPON)
                 await send_wa_text(from_phone, reply_text, phone_id)

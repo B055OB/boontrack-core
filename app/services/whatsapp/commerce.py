@@ -1,3 +1,4 @@
+import random
 """
 app/services/whatsapp/commerce.py
 --------------------------------------
@@ -284,7 +285,9 @@ async def generate_cart_checkout_response(
         default_item = products[0]
         cart_items = [default_item]
 
-    total_amount = sum(int(float(item.get("promo_price") or item.get("price") or 0)) for item in cart_items)
+    base_amount = sum(int(float(item.get("promo_price") or item.get("price") or 0)) for item in cart_items)
+    unique_code = random.randint(100, 999)
+    total_amount = base_amount + unique_code
     item_titles = ", ".join([str(item.get("title") or item.get("name")) for item in cart_items])
     product_summary = f"Order {len(cart_items)} Items ({item_titles[:35]}...)" if len(item_titles) > 35 else item_titles
 
@@ -333,20 +336,30 @@ async def generate_cart_checkout_response(
             from app.utils.qris_generator import generate_dynamic_qris_payload
             dynamic_qr_payload = generate_dynamic_qris_payload(raw_qris_string, total_amount, external_id)
         except Exception as dyn_err:
-            logger.debug(f"[DYNAMIC QRIS WARN] {dyn_err}")
+            logger.warning(f"[DYNAMIC QRIS WARN] {dyn_err}")
             dynamic_qr_payload = raw_qris_string
 
-    qr_img_target = str(seller_qris_image or "").strip()
+    # Dynamic QRIS Generator: Injeksi nominal EMVCo Tag 54 dan hasilkan direct image PNG
+    if dynamic_qr_payload and dynamic_qr_payload.startswith("000201"):
+        from app.utils.qris_generator import get_quickchart_qr_url
+        qr_img_target = get_quickchart_qr_url(dynamic_qr_payload)
+    else:
+        qr_img_target = str(seller_qris_image or "").strip()
     qr_bytes = generate_qris_image_bytes(dynamic_qr_payload or raw_qris_string or "") if (dynamic_qr_payload or raw_qris_string) else b""
 
     if clean_phone:
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
 
+    base_fmt = f"Rp{base_amount:,.0f}".replace(",", ".")
     invoice = {
         "external_id": external_id,
+        "order_id": external_id,
         "amount": total_amount,
+        "base_amount": base_amount,
+        "unique_code": unique_code,
+        "product_name": product_summary,
         "provider": "SELLER_NATIVE_QRIS",
-        "status": "ACTIVE",
+        "status": "PENDING",
         "is_manual": True,
         "qr_string": dynamic_qr_payload or raw_qris_string or "",
         "qr_code_url": qr_img_target,
@@ -367,13 +380,14 @@ async def generate_cart_checkout_response(
         f"Berikut Rincian Tagihan & Barcode QRIS Pembayaran 💳\n\n"
         f"📦 *Nama Pesanan:* {product_summary}\n"
         f"💰 *Total Tagihan:* {amount_fmt}\n"
+        f"_(Harga: {base_fmt} + Kode Unik: {unique_code})_\n"
         f"🏪 *Merchant QRIS:* {merchant_qris_name}\n"
         f"🔖 *No. Pesanan:* `{external_id}`\n"
         f"⏱️ *Masa Berlaku:* 24 Jam\n"
         f"{bank_str}\n"
         f"📲 *Petunjuk Pembayaran:*\n"
         f"1. Scan barcode QRIS toko di atas menggunakan aplikasi M-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
-        f"2. Pastikan nominal transfer tepat sebesar *{amount_fmt}*.\n"
+        f"2. *PENTING:* Pastikan nominal transfer tepat sebesar *{amount_fmt}* (hingga 3 digit kode unik terakhir) agar pembayaran terverifikasi otomatis.\n"
         f"3. Setelah transfer berhasil, *mohon kirimkan screenshot / bukti transfer pembayaran ke chat WhatsApp ini* agar pesanan & akses Kakak langsung kami proses & aktifkan! ✨\n\n"
         f"🛒 *Link Storefront Toko:*\n"
         f"{prod_checkout_url}"
@@ -409,14 +423,19 @@ async def generate_fast_track_checkout_response(
 
     if selected_product:
         product_name = str(selected_product.get("title") or selected_product.get("name") or f"Produk {store_name}")
-        amount = int(float(selected_product.get("promo_price") or selected_product.get("price") or 1000))
+        base_amount = int(float(selected_product.get("promo_price") or selected_product.get("price") or 1000))
     else:
         product_name = "Modul Praktis CPM 24 Jam"
-        amount = 1000
+        base_amount = 1000
 
     if "cpm" in product_name.lower() or (product_key and "cpm" in str(product_key).lower()) or (clean_slug == "onlineboost" and not product_key):
         product_name = "Modul Praktis CPM 24 Jam"
-        amount = 1000
+        base_amount = 1000
+
+    # Injeksi 3-digit kode unik acak untuk rekonsiliasi mutasi otomatis
+    unique_code = random.randint(100, 999)
+    total_amount = base_amount + unique_code
+    amount = total_amount
 
     # -----------------------------------------------------------------------
     # SELLER NATIVE QRIS CHECKOUT ENGINE (Manual Upload / Acquirer Mandiri)
@@ -463,20 +482,30 @@ async def generate_fast_track_checkout_response(
             from app.utils.qris_generator import generate_dynamic_qris_payload
             dynamic_qr_payload = generate_dynamic_qris_payload(raw_qris_string, amount, external_id)
         except Exception as dyn_err:
-            logger.debug(f"[DYNAMIC QRIS WARN] {dyn_err}")
+            logger.warning(f"[DYNAMIC QRIS WARN] {dyn_err}")
             dynamic_qr_payload = raw_qris_string
 
-    qr_img_target = str(seller_qris_image or "").strip()
+    # Dynamic QRIS Generator: Injeksi nominal EMVCo Tag 54 dan hasilkan direct image PNG
+    if dynamic_qr_payload and dynamic_qr_payload.startswith("000201"):
+        from app.utils.qris_generator import get_quickchart_qr_url
+        qr_img_target = get_quickchart_qr_url(dynamic_qr_payload)
+    else:
+        qr_img_target = str(seller_qris_image or "").strip()
     qr_bytes = generate_qris_image_bytes(dynamic_qr_payload or raw_qris_string or "") if (dynamic_qr_payload or raw_qris_string) else b""
 
     if clean_phone:
         user_session_states[clean_phone] = "AWAITING_PAYMENT"
 
+    base_fmt = f"Rp{base_amount:,.0f}".replace(",", ".")
     invoice = {
         "external_id": external_id,
-        "amount": amount,
+        "order_id": external_id,
+        "amount": total_amount,
+        "base_amount": base_amount,
+        "unique_code": unique_code,
+        "product_name": product_name,
         "provider": "SELLER_NATIVE_QRIS",
-        "status": "ACTIVE",
+        "status": "PENDING",
         "is_manual": True,
         "qr_string": dynamic_qr_payload or raw_qris_string or "",
         "qr_code_url": qr_img_target,
@@ -497,13 +526,14 @@ async def generate_fast_track_checkout_response(
         f"Berikut Rincian Tagihan & Barcode QRIS Pembayaran 💳\n\n"
         f"📦 *Nama Produk:* {product_name}\n"
         f"💰 *Total Tagihan:* {amount_fmt}\n"
+        f"_(Harga: {base_fmt} + Kode Unik: {unique_code})_\n"
         f"🏪 *Merchant QRIS:* {merchant_qris_name}\n"
         f"🔖 *No. Pesanan:* `{external_id}`\n"
         f"⏱️ *Masa Berlaku:* 24 Jam\n"
         f"{bank_str}\n"
         f"📲 *Petunjuk Pembayaran:*\n"
         f"1. Scan barcode QRIS toko di atas menggunakan aplikasi M-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
-        f"2. Pastikan nominal pembayaran tepat sebesar *{amount_fmt}*.\n"
+        f"2. *PENTING:* Pastikan nominal pembayaran tepat sebesar *{amount_fmt}* (hingga 3 digit kode unik terakhir) agar verifikasi otomatis berjalan lancar.\n"
         f"3. Setelah transfer berhasil, *mohon kirimkan bukti transfer / screenshot pembayaran ke chat ini* agar akses materi langsung kami aktifkan. ✨\n\n"
         f"🛒 *Link Storefront / Web Checkout Toko:*\n"
         f"{prod_checkout_url}"
