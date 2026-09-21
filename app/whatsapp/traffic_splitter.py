@@ -145,9 +145,13 @@ def get_tenant_fallback_message(store_name: str, tenant_slug: str) -> str:
     clean_name = store_name or tenant_slug.replace("-", " ").title()
     return (
         f"Halo! Selamat datang di *{clean_name}* 👋\n\n"
-        "Terima kasih telah menghubungi kami. Kami siap melayani pesanan dan pertanyaan Kakak.\n\n"
-        f"🛍️ *Katalog Online*: https://shop.boontrack.com/{tenant_slug}\n"
-        "Silakan ketik produk atau informasi yang ingin Kakak ketahui!"
+        "Terima kasih telah menghubungi kami. Tim kami siap melayani pesanan dan pertanyaan Kakak.\n\n"
+        f"🛍️ *Katalog Produk*: https://shop.boontrack.com/{tenant_slug}\n\n"
+        "📌 *Panduan Bantuan Cepat:*\n"
+        "• Ketik *Menu* — melihat katalog & pilihan produk\n"
+        "• Ketik *Status* — memeriksa status pesanan terakhir\n"
+        "• Ketik *Bantuan* atau *CS* — terhubung langsung dengan Customer Service kami\n\n"
+        "Ada yang bisa kami bantu seputar produk atau pesanan Kakak hari ini?"
     )
 
 
@@ -888,8 +892,8 @@ class TenantWebhookRouter:
                 except TrialLimitExceededException as limit_exc:
                     trace.log_step("TrialGuardrail.Exceeded", f"AI interaction trial quota exceeded for {tenant_slug} (50 limit)")
                     limit_msg = (
-                        "Mohon maaf, batas kuota interaksi AI akun uji coba (trial) toko ini telah tercapai. "
-                        "Silakan hubungi admin toko untuk memperbarui paket langganan."
+                        "Mohon maaf, kuota pesan interaksi otomatis toko saat ini telah mencapai batas paket trial. "
+                        "Silakan hubungi admin toko atau upgrade paket layanan untuk melanjutkan."
                     )
                     try:
                         await send_whatsapp_text(
