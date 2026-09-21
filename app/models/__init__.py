@@ -26,7 +26,7 @@ from app.models.campaign import CampaignAttribution
 from app.models.attribution import MarketingAttribution
 from app.models.tracking_config import TenantMetaConfig
 from app.models.event_ledger import EventLedger
-from app.models.payment_event import PaymentEvent
+from app.models.payment_event import PaymentEvent, ImmutableLogViolationException
 
 # Sprint LOCAL_SERVICE_V1 Models
 from app.models.local_service import (
@@ -87,6 +87,7 @@ __all__ = [
     "TenantMetaConfig",
     "EventLedger",
     "PaymentEvent",
+    "ImmutableLogViolationException",
     # LOCAL_SERVICE_V1 Exports
     "BusinessVertical",
     "ConversionTriggerEvent",

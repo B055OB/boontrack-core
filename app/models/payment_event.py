@@ -34,3 +34,29 @@ class PaymentEvent(Base):
         kwargs.setdefault("raw_payload", {})
         kwargs.setdefault("created_at", datetime.now(timezone.utc))
         super().__init__(**kwargs)
+
+
+class ImmutableLogViolationException(Exception):
+    """Exception raised when UPDATE or DELETE is attempted on append-only audit tables."""
+    error_code = "IMMUTABLE_LOG_VIOLATION"
+
+    def __init__(self, message: str = "IMMUTABLE_LOG_VIOLATION: Table 'payment_events' is append-only. Mutation or deletion is strictly forbidden."):
+        self.error_code = "IMMUTABLE_LOG_VIOLATION"
+        super().__init__(message)
+
+
+from sqlalchemy import event
+
+
+@event.listens_for(PaymentEvent, "before_update")
+def _prevent_payment_event_update(mapper, connection, target):
+    raise ImmutableLogViolationException(
+        "IMMUTABLE_LOG_VIOLATION: Table 'payment_events' is append-only. UPDATE operations are strictly prohibited."
+    )
+
+
+@event.listens_for(PaymentEvent, "before_delete")
+def _prevent_payment_event_delete(mapper, connection, target):
+    raise ImmutableLogViolationException(
+        "IMMUTABLE_LOG_VIOLATION: Table 'payment_events' is append-only. DELETE operations are strictly prohibited."
+    )

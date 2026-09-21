@@ -214,33 +214,47 @@ async def create_d2c_order_and_dispatch_qris(
             f"Setelah pembayaran berhasil, bukti bayar & akses produk akan langsung dikirim ke chat ini secara otomatis."
         )
 
-    # 5. Dispatch WhatsApp Native Image QRIS / Static QR ke Buyer
+    # 5. Dispatch WhatsApp Native Image QRIS / Static QR ke Buyer (Decoupled & Resilient)
     img_to_send = qr_png_bytes or qr_code_url
     if clean_phone:
-        if img_to_send:
-            try:
-                await send_whatsapp_image(
-                    to_phone=clean_phone,
-                    image_path_or_bytes=img_to_send,
-                    caption=caption,
-                    tenant_id=merchant_slug
-                )
-            except Exception as wa_err:
-                logger.warning(f"[WA QRIS Dispatch Warning] {wa_err}")
+        try:
+            if img_to_send:
+                try:
+                    await send_whatsapp_image(
+                        to_phone=clean_phone,
+                        image_path_or_bytes=img_to_send,
+                        caption=caption,
+                        tenant_id=merchant_slug
+                    )
+                except Exception as wa_err:
+                    logger.warning(f"[WA QRIS Dispatch Warning] {wa_err}")
+                    await send_whatsapp_text(to_phone=clean_phone, text=caption, tenant_id=merchant_slug)
+            else:
                 await send_whatsapp_text(to_phone=clean_phone, text=caption, tenant_id=merchant_slug)
-        else:
-            await send_whatsapp_text(to_phone=clean_phone, text=caption, tenant_id=merchant_slug)
 
-        log_structured_event(
-            service="whatsapp_delivery",
-            event_type="WA_QRIS_DISPATCHED",
-            entity_type="message",
-            entity_id=order_id,
-            status="SUCCESS",
-            provider="meta",
-            tenant_id=merchant_slug,
-            correlation_id=active_corr,
-        )
+            log_structured_event(
+                service="whatsapp_delivery",
+                event_type="WA_QRIS_DISPATCHED",
+                entity_type="message",
+                entity_id=order_id,
+                status="SUCCESS",
+                provider="meta",
+                tenant_id=merchant_slug,
+                correlation_id=active_corr,
+            )
+        except Exception as wa_outage_err:
+            logger.error(f"[WA Dispatch Outage Isolated] WhatsApp API down: {wa_outage_err}")
+            log_structured_event(
+                service="whatsapp_delivery",
+                event_type="WA_DISPATCH_OUTAGE",
+                entity_type="message",
+                entity_id=order_id,
+                status="FAILED",
+                error_code="EXTERNAL_API_DOWN",
+                provider="meta",
+                tenant_id=merchant_slug,
+                correlation_id=active_corr,
+            )
 
     log_structured_event(
         service="checkout_flow",
@@ -333,17 +347,31 @@ async def reconcile_payment_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
             )
 
         if buyer_phone:
-            await send_whatsapp_text(to_phone=buyer_phone, text=fulfillment_msg, tenant_id=merchant)
-            log_structured_event(
-                service="whatsapp_delivery",
-                event_type="WA_NOTIF_DISPATCHED",
-                entity_type="message",
-                entity_id=str(external_id),
-                status="SUCCESS",
-                provider="meta",
-                tenant_id=merchant,
-                correlation_id=str(external_id),
-            )
+            try:
+                await send_whatsapp_text(to_phone=buyer_phone, text=fulfillment_msg, tenant_id=merchant)
+                log_structured_event(
+                    service="whatsapp_delivery",
+                    event_type="WA_NOTIF_DISPATCHED",
+                    entity_type="message",
+                    entity_id=str(external_id),
+                    status="SUCCESS",
+                    provider="meta",
+                    tenant_id=merchant,
+                    correlation_id=str(external_id),
+                )
+            except Exception as wa_settle_err:
+                logger.error(f"[WA Settlement Outage Isolated] Dispatch failed: {wa_settle_err}")
+                log_structured_event(
+                    service="whatsapp_delivery",
+                    event_type="WA_NOTIF_FAILED",
+                    entity_type="message",
+                    entity_id=str(external_id),
+                    status="FAILED",
+                    error_code="EXTERNAL_API_DOWN",
+                    provider="meta",
+                    tenant_id=merchant,
+                    correlation_id=str(external_id),
+                )
 
     log_structured_event(
         service="checkout_flow",

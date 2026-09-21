@@ -57,15 +57,41 @@ class TrialLimitExceededException(Exception):
         }
 
 
+import threading
+import asyncio
+
 class TrialGuardrailService:
     """
     Service pengawas batas keras operasional akun trial.
     Mencegah eksploitasi API eksternal (LLM token & WhatsApp WABA) serta pesanan berlebih.
+    Dilengkapi thread-safe / coroutine-safe atomic locking untuk mencegah race conditions.
     """
 
     def __init__(self):
         self._order_counts: Dict[str, int] = {}
         self._ai_counts: Dict[str, int] = {}
+        self._sync_lock = threading.Lock()
+
+    def acquire_order_slot(self, tenant_id: str, is_trial: bool = False) -> int:
+        """
+        Atomic Check-and-Increment: Menjamin konsistensi transaksi konkuren tanpa race condition.
+        Jika kuota habis (>=30), raise TrialLimitExceededException. Jika berhasil, return total pemakaian.
+        """
+        with self._sync_lock:
+            if is_trial:
+                used = self.get_order_count(tenant_id)
+                if used >= CFO_TRIAL_MAX_ORDERS:
+                    raise TrialLimitExceededException(
+                        tenant_id=tenant_id,
+                        quota_type="orders",
+                        current_usage=used,
+                        limit=CFO_TRIAL_MAX_ORDERS,
+                    )
+            return self.record_order(tenant_id)
+
+    async def acquire_order_slot_async(self, tenant_id: str, is_trial: bool = False) -> int:
+        """Async variant of acquire_order_slot."""
+        return self.acquire_order_slot(tenant_id, is_trial=is_trial)
 
     def get_order_count(self, tenant_id: str) -> int:
         """Mengambil jumlah pesanan tenant."""
