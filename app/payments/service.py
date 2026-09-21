@@ -23,6 +23,7 @@ from app.payments.schemas import (
     PaymentIntentResponse,
     WebhookEventPayload,
     SettlementRecord,
+    PaymentEventResponse,
 )
 from app.payments.base_provider import BasePaymentProvider
 from app.payments.qris_adapter import QRISPaymentAdapter
@@ -72,6 +73,48 @@ class PaymentCoreService:
         self._settlements_by_intent: Dict[str, SettlementRecord] = {}        # intent_id -> SettlementRecord
         self._idempotency_keys: Set[str] = set()
         self._tenant_callbacks: Dict[str, List[TenantCallback]] = {}
+        self._payment_events: List[PaymentEventResponse] = []
+
+    async def record_payment_event(
+        self,
+        tenant_id: str,
+        provider: str,
+        event_type: str,
+        order_id: Optional[str] = None,
+        provider_event_id: Optional[str] = None,
+        amount: Optional[Any] = None,
+        raw_payload: Optional[Dict[str, Any]] = None,
+    ) -> PaymentEventResponse:
+        """Provider-neutral audit ledger for all incoming/outgoing payment events."""
+        event = PaymentEventResponse(
+            tenant_id=tenant_id,
+            order_id=order_id,
+            provider=provider,
+            provider_event_id=provider_event_id,
+            event_type=event_type,
+            amount=amount,
+            raw_payload=raw_payload or {},
+        )
+        self._payment_events.append(event)
+        if not self.in_memory_mode:
+            supabase = get_supabase()
+            if supabase:
+                try:
+                    payload = {
+                        "id": str(event.id),
+                        "tenant_id": event.tenant_id,
+                        "order_id": event.order_id,
+                        "provider": event.provider,
+                        "provider_event_id": event.provider_event_id,
+                        "event_type": event.event_type,
+                        "amount": float(event.amount) if event.amount is not None else None,
+                        "raw_payload": event.raw_payload,
+                        "created_at": event.created_at.isoformat(),
+                    }
+                    supabase.table("payment_events").insert(payload).execute()
+                except Exception as e:
+                    logger.warning(f"[PaymentCore] Supabase payment_events insert note: {e}")
+        return event
 
     def register_provider(self, provider_type: PaymentProviderType, provider: BasePaymentProvider) -> None:
         """Registers or overrides a payment provider."""
@@ -120,6 +163,13 @@ class PaymentCoreService:
         provider = self.providers.get(provider_type)
         if not provider:
             raise ValueError(f"Unsupported payment provider: {provider_type}")
+
+        # 0. CFO Hard-Cap Guardrail check for trial accounts
+        is_trial = bool((intent_data.metadata or {}).get("is_trial"))
+        if is_trial:
+            from app.core.trial_guardrail import trial_guardrail
+            trial_guardrail.check_order_quota(intent_data.tenant_id, is_trial=True)
+            trial_guardrail.record_order(intent_data.tenant_id)
 
         # 1. Alokasi nominal dan kode verifikasi
         if provider_type == PaymentProviderType.DUITKU:
@@ -194,6 +244,20 @@ class PaymentCoreService:
             f"[PaymentCore] Created intent '{intent.order_id}' for tenant '{intent.tenant_id}' "
             f"via {provider_type.value} (Total: Rp{total_amount:,})"
         )
+
+        try:
+            await self.record_payment_event(
+                tenant_id=intent.tenant_id,
+                order_id=intent.order_id,
+                provider=provider_type.value.lower(),
+                provider_event_id=intent.id,
+                event_type="PAYMENT_INTENT_CREATED",
+                amount=total_amount,
+                raw_payload={"intent_id": intent.id, "unique_code": unique_code, "status": intent.status.value},
+            )
+        except Exception as e:
+            logger.warning(f"[PaymentCore] Failed to record payment_event on intent create: {e}")
+
         return intent
 
     async def process_webhook_settlement(
@@ -307,6 +371,19 @@ class PaymentCoreService:
                     await res
             except Exception as cb_err:
                 logger.error(f"[PaymentCore] Tenant callback exception ({matched_intent.tenant_id}): {cb_err}", exc_info=True)
+
+        try:
+            await self.record_payment_event(
+                tenant_id=matched_intent.tenant_id,
+                order_id=matched_intent.order_id,
+                provider=webhook.provider.lower(),
+                provider_event_id=webhook.provider_ref,
+                event_type="PAYMENT_SETTLED",
+                amount=webhook.amount,
+                raw_payload=webhook.raw_payload or {},
+            )
+        except Exception as e:
+            logger.warning(f"[PaymentCore] Failed to record payment_event on settlement: {e}")
 
         return settlement
 

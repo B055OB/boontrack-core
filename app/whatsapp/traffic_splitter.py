@@ -865,14 +865,55 @@ class TenantWebhookRouter:
 
         if is_general_inquiry and not is_catalog_inquiry:
             # Fallback menu ramah untuk toko merchant
+            _meta = getattr(tenant_context, "metadata", None) or {}
             store_name = (
-                tenant_context.metadata.get("name")
-                or tenant_context.metadata.get("business_name")
-                or tenant_context.slug.replace("-", " ").title()
+                _meta.get("name")
+                or _meta.get("business_name")
+                or getattr(tenant_context, "slug", tenant_slug).replace("-", " ").title()
             )
             reply_text = get_tenant_fallback_message(store_name, tenant_slug)
             trace.log_step("StateGuard.TenantFallback", f"Generated fallback greeting for store '{store_name}'")
         else:
+            t_meta = getattr(tenant_context, "metadata", None) or {}
+            is_trial = (
+                getattr(tenant_context, "is_trial", False)
+                or (isinstance(t_meta, dict) and t_meta.get("is_trial") is True)
+                or getattr(tenant_context, "status", "") == "TRIALING"
+            )
+            if is_trial:
+                from app.core.trial_guardrail import trial_guardrail, TrialLimitExceededException
+                try:
+                    trial_guardrail.check_ai_interaction_quota(tenant_slug, is_trial=True)
+                    trial_guardrail.record_ai_interaction(tenant_slug)
+                except TrialLimitExceededException as limit_exc:
+                    trace.log_step("TrialGuardrail.Exceeded", f"AI interaction trial quota exceeded for {tenant_slug} (50 limit)")
+                    limit_msg = (
+                        "Mohon maaf, batas kuota interaksi AI akun uji coba (trial) toko ini telah tercapai. "
+                        "Silakan hubungi admin toko untuk memperbarui paket langganan."
+                    )
+                    try:
+                        await send_whatsapp_text(
+                            to_phone=sender_phone,
+                            text=limit_msg,
+                            tenant_id=tenant_slug,
+                            phone_number_id=phone_number_id,
+                        )
+                    except Exception:
+                        pass
+                    res = {
+                        "status": "error",
+                        "error_code": "TRIAL_LIMIT_EXCEEDED",
+                        "reason": "TRIAL_LIMIT_EXCEEDED",
+                        "detail": limit_exc.to_dict(),
+                        "purpose": "TENANT_SALES",
+                        "tenant": tenant_slug,
+                        "reply": limit_msg,
+                    }
+                    trace.early_return = True
+                    trace.response_status = 200
+                    trace.response_payload = res
+                    return res
+
             # 3. Route to Conversation Engine / AI Commerce Engine
             trace.log_step("ConversationEngine", f"Routing message '{clean_text}' to AI Commerce Engine for {tenant_slug}")
             try:
@@ -888,10 +929,11 @@ class TenantWebhookRouter:
 
             # Automated fallback bot jika AI belum menghasilkan jawaban
             if not reply_text:
+                _meta = getattr(tenant_context, "metadata", None) or {}
                 store_name = (
-                    tenant_context.metadata.get("name")
-                    or tenant_context.metadata.get("business_name")
-                    or tenant_context.slug.replace("-", " ").title()
+                    _meta.get("name")
+                    or _meta.get("business_name")
+                    or getattr(tenant_context, "slug", tenant_slug).replace("-", " ").title()
                 )
                 reply_text = get_tenant_fallback_message(store_name, tenant_slug)
                 trace.log_step("FallbackBot", "AI empty -> using automated tenant fallback bot")
