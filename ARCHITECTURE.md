@@ -1065,3 +1065,48 @@ Sesuai arahan audit finansial CFO (Chief Financial Officer), akun merchant dalam
      }
      ```
    - Memberikan transparansi penuh bagi pemilik toko untuk segera melakukan upgrade ke paket berbayar resmi (`CHECKOUT_LITE`, `STARTER`, `PRO_SCALE`, atau `ENTERPRISE`).
+
+---
+
+## 21. STANDAR TRANSAKSI WHATSAPP & CHECKOUT MULTI-TENANT
+
+### 21.1 Invariant Grounding & Kebijakan Anti-Halusinasi Tautan (Zero URL Hallucination)
+1. **Larangan Mutlak Halusinasi Tautan**:
+   - Model AI/LLM dilarang keras mengarang, mereka-reka, atau memprediksi URL eksternal fiktif (contoh terlarang: `https://[tenant].com/...` atau URL website yang tidak terdaftar di database).
+   - Seluruh URL toko/produk yang dikirimkan ke pembeli **WAJIB** bersumber 100% dari Single Source of Truth (Database Supabase: tabel `tenants` dan `products`).
+2. **Deterministic Context Injection**:
+   - Context engine WhatsApp & AI Gateway wajib menyuntikkan URL resmi produk secara terstruktur ke dalam prompt grounding:
+     - Format resmi: `https://shop.boontrack.com/{tenant_slug}/p/{product_slug}`
+   - Aturan sistem (System Prompt Guardrail):
+     > "JANGAN PERNAH mengarang link checkout atau domain sendiri. Hanya gunakan URL resmi dari katalog: `https://shop.boontrack.com/{tenant_slug}/p/{product_slug}`."
+
+### 21.2 Native Lead Collection & Closing State Machine
+1. **Deteksi Niat Beli (Purchase Intent)**:
+   - Ketika calon pembeli menyatakan ketertarikan kuat atau ingin mendaftar (contoh: "Mau ambil paket X kak, gimana cara daftarnya?", "Saya mau beli", "Bisa order sekarang?"), conversational engine mengarahkan percakapan ke alur **Lead Collection**.
+2. **Determinasi Pengambilan Data (Nama & Email Capture)**:
+   - Bot tidak langsung melepas calon pembeli ke luar chat tanpa mengamankan data prospek.
+   - Bot meminta data pemesan secara ramah dan terstruktur:
+     > "Boleh dibantu info *Nama Lengkap* dan *Alamat Email* aktif Kakak untuk kami siapkan data pendaftarannya ya Kak? 🙏"
+3. **Penyimpanan State & Fast-Track Checkout**:
+   - Begitu Nama dan Email terdeteksi via ekspresi reguler atau entity extractor:
+     - Data lead disimpan ke profil sesi obrolan (`user_lead_profiles` / CRM session).
+     - State obrolan bertransisi menjadi `AWAITING_PAYMENT`.
+     - Sistem langsung menerbitkan rincian pesanan dan gambar barcode pembayaran QRIS secara otomatis (Fast-Track Checkout).
+
+### 21.3 Standar Pembayaran Multi-Tenant: Seller Native QRIS (Manual Upload)
+1. **Default Checkout Toko: QRIS Mandiri (Seller Uploaded)**:
+   - Di dashboard merchant/seller saat ini, belum tersedia opsi payment gateway pihak ketiga (Xendit/Midtrans).
+   - Seluruh seller/tenant menggunakan **QRIS Mandiri (Static/Manual QRIS)** yang di-upload oleh masing-masing pemilik toko pada profil toko Supabase (`tenants.metadata.qris_image_url`).
+   - Sistem **DILARANG KERAS** memanggil endpoint payment gateway (seperti `checkout.xendit.co`) untuk transaksi pembeli pada toko tenant, guna mencegah biaya pihak ketiga yang tidak diinginkan dan kebingungan pelanggan.
+2. **Pengiriman Barcode QRIS via Media Endpoint (`sendMedia`)**:
+   - Sistem mengambil URL gambar QRIS toko langsung dari Supabase:
+     - Primary key: `tenants.metadata.qris_image_url`
+     - Fallback keys: `tenants.metadata.qris_image`, `tenants.metadata.qris_url`, `tenants.metadata.payment_settings.qris`.
+   - Engine mengirimkan gambar QRIS asli toko ke WhatsApp pembeli melalui endpoint Evolution API:
+     - `POST /message/sendMedia/{instance_name}`
+     - MIME type: `image/webp`, `image/png`, atau `image/jpeg`.
+     - Caption: Berisi nama produk, nominal pembayaran persis (`Rp 100.000`), nama merchant QRIS, alternatif rekening bank seller, dan instruksi pengiriman bukti transfer.
+   - Apabila pengiriman media gagal, sistem melakukan graceful fallback ke `sendText` dengan menyertakan tautan storefront resmi toko: `https://shop.boontrack.com/{tenant_slug}/p/{product_slug}`.
+3. **Verifikasi Manual via Bukti Transfer (Proof of Transfer)**:
+   - Setelah tagihan dan barcode QRIS dikirimkan, pembeli diinstruksikan untuk membalas chat dengan mengirimkan screenshot/bukti transfer pembayaran.
+   - Saat pembeli mengirimkan bukti transfer (gambar media atau kata kunci konfirmasi pembayaran seperti "sudah transfer", "bukti bayar"), engine mendeteksi pesan tersebut dan mengonfirmasi bahwa pembayaran sedang diverifikasi oleh tim toko.

@@ -332,6 +332,7 @@ async def process_inbound_message(payload: InboundPayload):
     )
 
     reply: Optional[str] = None
+    reply_media_url: Optional[str] = None
 
     # Resolve Bot Strategy for this tenant
     store_details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
@@ -419,18 +420,33 @@ async def process_inbound_message(payload: InboundPayload):
                 from_phone=clean_phone,
                 contact_name=extracted_name,
             )
-            pay_link = invoice.get("invoice_url") or prod_checkout_url
-            reply = (
-                f"Terima kasih Kak *{extracted_name}*! 🙏\n\n"
-                f"Data pendaftaran Kakak telah kami catat:\n"
-                f"• *Nama:* {extracted_name}\n"
-                f"• *Email:* {extracted_email}\n"
-                f"• *Paket:* {prod_title} (Rp{prod_price:,.0f})\n\n"
-                f"Silakan selesaikan pembayaran melalui tautan resmi berikut:\n"
-                f"👉 *Link Pembayaran Instan QRIS:*\n{pay_link}\n\n"
-                f"🛒 *Link Storefront / Web Checkout:*\n{prod_checkout_url}\n\n"
-                f"_Setelah pembayaran terverifikasi, link akses materi & member area akan dikirimkan otomatis ke email Kakak._ ✨"
-            )
+            is_seller_qris = invoice.get("provider") == "SELLER_NATIVE_QRIS" or invoice.get("is_manual") is True
+            qris_media_target = invoice.get("media_url") or invoice.get("qr_code_url") or invoice.get("image_url")
+
+            if is_seller_qris:
+                reply = (
+                    f"Terima kasih Kak *{extracted_name}*! 🙏\n\n"
+                    f"Data pendaftaran Kakak telah kami catat:\n"
+                    f"• *Nama:* {extracted_name}\n"
+                    f"• *Email:* {extracted_email}\n"
+                    f"• *Paket:* {prod_title} (Rp{prod_price:,.0f})\n\n"
+                    f"{fast_reply}"
+                )
+                if qris_media_target:
+                    reply_media_url = qris_media_target
+            else:
+                pay_link = invoice.get("invoice_url") or prod_checkout_url
+                reply = (
+                    f"Terima kasih Kak *{extracted_name}*! 🙏\n\n"
+                    f"Data pendaftaran Kakak telah kami catat:\n"
+                    f"• *Nama:* {extracted_name}\n"
+                    f"• *Email:* {extracted_email}\n"
+                    f"• *Paket:* {prod_title} (Rp{prod_price:,.0f})\n\n"
+                    f"Silakan selesaikan pembayaran melalui tautan resmi berikut:\n"
+                    f"👉 *Link Pembayaran Instan QRIS:*\n{pay_link}\n\n"
+                    f"🛒 *Link Storefront / Web Checkout:*\n{prod_checkout_url}\n\n"
+                    f"_Setelah pembayaran terverifikasi, link akses materi & member area akan dikirimkan otomatis ke email Kakak._ ✨"
+                )
         except Exception as _inv_err:
             reply = (
                 f"Terima kasih Kak *{extracted_name}*! 🙏\n\n"
@@ -475,6 +491,8 @@ async def process_inbound_message(payload: InboundPayload):
                 )
                 if fast_reply:
                     reply = fast_reply
+                    if invoice and (invoice.get("media_url") or invoice.get("qr_code_url")):
+                        reply_media_url = invoice.get("media_url") or invoice.get("qr_code_url")
             except Exception as ft_err:
                 logger.warning(f"[GROWTH FAST TRACK WARN] {ft_err}")
 
@@ -553,7 +571,8 @@ async def process_inbound_message(payload: InboundPayload):
         "bot_strategy": resolved_strategy,
         "current_state": session.current_state,
         "selected_product_id": session.selected_product_id,
-        "reply_text": reply
+        "reply_text": reply,
+        "media_url": reply_media_url
     }
 
 
@@ -1040,10 +1059,41 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     ))
     reply_text = inbound_res.get("reply_text")
 
-    # Kirim balasan via Evolution API sendText jika ada balasan terbentuk
-    if reply_text:
+    reply_media_to_send = inbound_res.get("media_url")
+
+    # Kirim balasan via Evolution API (sendMedia jika ada gambar QRIS toko, sendText jika teks)
+    if reply_media_to_send:
+        track_whatsapp_message("OUTBOUND_MEDIA", tenant_id=resolved_tenant, session_id=sender_phone, classification="outbound_gateway")
+        instance_name = raw_instance or (f"tenant_{resolved_tenant.replace('-', '_')}" if not resolved_tenant.startswith("tenant_") else resolved_tenant)
+        send_media_url = f"{EVOLUTION_BASE_URL}/message/sendMedia/{instance_name}"
+        headers = get_evolution_headers()
+        media_ext = ".webp" if ".webp" in reply_media_to_send.lower() else (".png" if ".png" in reply_media_to_send.lower() else ".jpg")
+        media_mime = "image/webp" if media_ext == ".webp" else ("image/png" if media_ext == ".png" else "image/jpeg")
+        send_media_payload = {
+            "number": sender_phone,
+            "mediatype": "image",
+            "mimetype": media_mime,
+            "caption": reply_text or "",
+            "media": reply_media_to_send,
+            "fileName": f"qris{media_ext}",
+            "options": {"delay": 1200, "presence": "composing"}
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                res = await client.post(send_media_url, headers=headers, json=send_media_payload)
+                logger.info(f"[EVOLUTION SEND MEDIA STATUS] Dispatched to {sender_phone} via {instance_name}: {res.status_code}")
+                if res.status_code not in (200, 201):
+                    logger.warning(f"[EVOLUTION SEND MEDIA WARNING] Fallback to sendText: {res.text[:200]}")
+                    await client.post(f"{EVOLUTION_BASE_URL}/message/sendText/{instance_name}", headers=headers, json={
+                        "number": sender_phone,
+                        "text": reply_text,
+                        "textMessage": {"text": reply_text},
+                        "options": {"delay": 500, "presence": "composing"}
+                    })
+        except Exception as media_err:
+            logger.error(f"[EVOLUTION SEND MEDIA ERROR] {media_err}")
+    elif reply_text:
         track_whatsapp_message("OUTBOUND", tenant_id=resolved_tenant, session_id=sender_phone, classification="outbound_gateway")
-        # Gunakan raw_instance langsung jika tersedia, agar membalas ke instans yang benar
         instance_name = raw_instance or (f"tenant_{resolved_tenant.replace('-', '_')}" if not resolved_tenant.startswith("tenant_") else resolved_tenant)
         send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{instance_name}"
         headers = get_evolution_headers()
