@@ -160,7 +160,7 @@ _PLAN_DEFAULTS: Dict[str, Dict[str, Any]] = {
             "tracking": {"meta": True, "capi": True},
             "analytics": {"advanced": True},
         },
-        "limits": {"order_quota": 100, "ai_conversations": 250, "max_active_products": 0, "shipping_providers_max": 0},
+        "limits": {"order_quota": 30, "ai_conversations": 50, "max_active_products": 0, "shipping_providers_max": 0},
     },
     "FREE": {
         "capabilities": {
