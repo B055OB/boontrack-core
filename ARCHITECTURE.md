@@ -124,9 +124,13 @@ Ekosistem BoonTrack (frontend registrasi, gateway onboarding, billing Xendit, da
 
 > **Database & Schema Invariant**: Kolom `tenants.tier` di database PostgreSQL Supabase dan SQLAlchemy Core WAJIB menggunakan nilai enum kanonikal: `'CHECKOUT_LITE'`, `'STARTER'`, `'PRO_SCALE'`, atau `'ENTERPRISE'`.
 
-- **Cost-Guarding Enforcement**:
+- **Cost-Guarding Enforcement (CFO Hard-Cap Guardrails)**:
   - Membedakan fitur berbiaya marjinal rendah (Storefront, Katalog, Input Pesanan) dengan fitur berbiaya variabel pihak ketiga (AI Bot Token, Sesi WhatsApp).
   - Ketika akun berada di status tanpa entitlement bot (misal: mode dasar atau promo habis), backend worker wajib menonaktifkan panggilan ke AI/WhatsApp secara otomatis tanpa merusak data katalog dan riwayat pesanan.
+  - **Batas Keras Akun Trial (`is_trial = True`)**:
+    * **Maksimal 30 Order**: Pembuatan order dihentikan otomatis begitu mencapai batas keras 30 pesanan.
+    * **Maksimal 50 Interaksi AI / WhatsApp**: Interaksi LLM dan dispatch bot WABA dihentikan begitu mencapai 50 pesan.
+    * **Structured Error Contract**: Mengembalikan exception `TrialLimitExceededException` dengan kode error terstandarisasi `TRIAL_LIMIT_EXCEEDED` untuk memaksa upgrade paket.
 - **Identity & Fraud Guard**: Pencegahan eksploitasi promo berulang berbasis identitas bernilai riil (verifikasi nomor WhatsApp unik dan rekening payout bank).
 
 ---
@@ -999,3 +1003,65 @@ Untuk menjamin kepatuhan penuh terhadap regulasi Bank Indonesia, OJK, dan undang
   2. Setel konsumsi baterai ke mode **Unrestricted** (Tanpa Batasan Penghemat Baterai).
   3. **Kunci aplikasi di Recent Apps** (ikon gembok) agar service listener tidak dihentikan paksa oleh pembersih memori sistem.
   4. Nonaktifkan opsi **'Hapus izin jika aplikasi tidak digunakan'** (*Auto-revoke permissions: Off*) agar izin Notification Access tetap aktif permanen.
+
+### 17.3 Provider-Neutral Payment Events Audit Ledger (`payment_events`)
+Untuk menjamin transparansi finansial, audit mutasi real-time, dan pencegahan sengketa transaksi, seluruh event mutasi pembayaran wajib dicatat ke tabel audit `payment_events` yang bersifat provider-neutral.
+
+1. **Skema Tabel Database PostgreSQL**:
+   ```sql
+   CREATE TABLE payment_events (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       tenant_id VARCHAR(64) NOT NULL,
+       order_id VARCHAR(64),
+       provider VARCHAR(64) NOT NULL,
+       provider_event_id VARCHAR(128),
+       event_type VARCHAR(64) NOT NULL,
+       amount NUMERIC(14, 2),
+       raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+   );
+
+   CREATE INDEX idx_payment_events_tenant ON payment_events(tenant_id);
+   CREATE INDEX idx_payment_events_order ON payment_events(order_id);
+   CREATE INDEX idx_payment_events_provider_ref ON payment_events(provider, provider_event_id);
+   ```
+
+2. **Karakteristik & Invarian**:
+   - **Provider-Neutral Contract**: Merekam format identik untuk seluruh penyedia gateway maupun reader mutasi kasir (`xendit`, `duitku`, `midtrans`, `qris_dynamic`, `dana_reader`).
+   - **Immutable Audit Trail**: Event yang tersimpan tidak boleh dimutasi atau dihapus (`APPEND-ONLY`).
+   - **Payload Preservation**: Payload mentah (`raw_payload`) disimpan utuh dalam format JSON/JSONB untuk kepentingan debugging dan audit rekonsiliasi.
+
+### 17.4 CFO Hard-Cap Guardrail Architecture (Trial Quota Protection)
+Sesuai arahan audit finansial CFO (Chief Financial Officer), akun merchant dalam masa uji coba (`is_trial = True` atau plan `SOLO_TRIAL`) dibatasi oleh **Hard-Cap Guardrail** untuk memitigasi kerugian operasional akibat konsumsi token LLM dan traffic pesan WhatsApp Cloud API.
+
+1. **Batas Keras Trial**:
+   - **Pesanan (Orders)**: Maksimal **30 order**. Upaya pembuatan order ke-31 akan langsung diblokir.
+   - **Interaksi AI / WhatsApp**: Maksimal **50 interaksi**. Panggilan ke AI Commerce Engine atau balasan otomatis WhatsApp dihentikan setelah interaksi ke-50.
+
+2. **Kontrak Penolakan Terstruktur**:
+   - Jika limit tercapai, sistem melempar exception:
+     ```python
+     class TrialLimitExceededException(Exception):
+         error_code = "TRIAL_LIMIT_EXCEEDED"
+         tenant_id: str
+         quota_type: str  # 'orders' | 'ai_interactions'
+         current_usage: int
+         limit: int
+     ```
+   - Respon API / Webhook mengembalikan kode error terstandarisasi:
+     ```json
+     {
+       "status": "error",
+       "error_code": "TRIAL_LIMIT_EXCEEDED",
+       "reason": "TRIAL_LIMIT_EXCEEDED",
+       "detail": {
+         "error_code": "TRIAL_LIMIT_EXCEEDED",
+         "tenant_id": "merchant_slug",
+         "quota_type": "orders",
+         "current_usage": 30,
+         "limit": 30,
+         "message": "CFO Guardrail: Batas kuota trial tercapai untuk tenant 'merchant_slug'. Kuota orders: 30/30. Silakan upgrade paket langganan untuk melanjutkan."
+       }
+     }
+     ```
+   - Memberikan transparansi penuh bagi pemilik toko untuk segera melakukan upgrade ke paket berbayar resmi (`CHECKOUT_LITE`, `STARTER`, `PRO_SCALE`, atau `ENTERPRISE`).

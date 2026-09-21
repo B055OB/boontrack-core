@@ -6,11 +6,11 @@ from app.modules.commerce.delivery import DigitalDeliveryService
 
 class CommerceService:
     @classmethod
-    async def process_checkout(cls, tenant_id: str, product_code: str, buyer_id: str) -> Optional[Dict[str, Any]]:
+    async def process_checkout(cls, tenant_id: str, product_code: str, buyer_id: str, is_trial: bool = False) -> Optional[Dict[str, Any]]:
         product = await CommerceCatalogService.get_product_by_code(tenant_id, product_code)
         if not product:
             return None
-        return CommerceOrderService.create_order(tenant_id, product, buyer_id)
+        return CommerceOrderService.create_order(tenant_id, product, buyer_id, is_trial=is_trial)
 
     @classmethod
     async def handle_successful_payment(cls, tenant_id: str, order: Dict[str, Any], delivery_adapter: str = "google_drive") -> Dict[str, Any]:

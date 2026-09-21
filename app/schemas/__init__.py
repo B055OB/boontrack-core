@@ -41,6 +41,11 @@ from app.schemas.boonpilot import (
     KnowledgeProposalItem,
     BusinessConfigurationProposal,
 )
+from app.schemas.payment_event import (
+    PaymentEventBase,
+    PaymentEventCreate,
+    PaymentEventResponse,
+)
 
 __all__ = [
     "TenantConfig",
@@ -80,6 +85,9 @@ __all__ = [
     "KnowledgeSemanticCategory",
     "KnowledgeProposalItem",
     "BusinessConfigurationProposal",
+    "PaymentEventBase",
+    "PaymentEventCreate",
+    "PaymentEventResponse",
 ]
 
 

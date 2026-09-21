@@ -67,6 +67,17 @@ async def create_d2c_order_and_dispatch_qris(
             detail="MERCHANT_QRIS_NOT_CONFIGURED",
         )
 
+    # 1.5 CFO Hard-Cap Guardrail for trial accounts (Max 30 orders)
+    is_trial = (
+        getattr(tenant_ctx, "is_trial", False)
+        or (bool(tenant_ctx.metadata) and tenant_ctx.metadata.get("is_trial") is True)
+        or getattr(tenant_ctx, "status", "") == "TRIALING"
+    )
+    if is_trial:
+        from app.core.trial_guardrail import trial_guardrail
+        trial_guardrail.check_order_quota(merchant_slug, is_trial=True)
+        trial_guardrail.record_order(merchant_slug)
+
     adapter = PaymentAdapterFactory.resolve(tenant_ctx)
     is_manual = isinstance(adapter, ManualTransferAdapter)
     pcfg = (tenant_ctx.metadata if tenant_ctx else {}).get("payment_config") or {}
