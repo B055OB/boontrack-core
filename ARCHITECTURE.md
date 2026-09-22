@@ -820,6 +820,43 @@ Worker & Service Restart Reconciliation: Event yang tertahan saat restart layana
 
 ---
 
+### 13.5 Hard Ingress Boundary, Zero-Trust Tenant Routing & Outbound Ownership Chain (P0 Security Mandate)
+
+Untuk mencegah kebocoran sesi percakapan silang antar-tenant (cross-tenant leak) dan transmisi pesan bot tidak sah ke nomor WhatsApp pribadi/unregistered, berlaku kontrak keamanan P0 absolut:
+
+1. **Ingress Hard Boundary & Zero-Trust Resolution**:
+   - **DILARANG KERAS** menggunakan fallback default (seperti `or "buzzerukm"`, `get_default_tenant()`, `tenants[0]`, atau penebakan prefix string `tenant_<slug>`).
+   - Setiap webhook ingress Evolution API wajib mengekstrak `instance_name` dan melakukan exact match lookup ke tabel `whatsapp_connections`.
+   - **Fail-Closed Dropping**: Jika instance tidak terdaftar / unmapped di `whatsapp_connections`, sistem wajib mencatat log `[SECURITY_UNMAPPED_WHATSAPP_INSTANCE]`, menghentikan pemrosesan secara total tanpa memanggil AI / LLM / Outbound, dan langsung mengembalikan HTTP 200 (ACK transport saja) dengan `{"status": "ignored", "reason": "SECURITY_UNMAPPED_WHATSAPP_INSTANCE"}`.
+   - **Strict URL Scope Validation**: Jika webhook ingress dipanggil dengan URL path parameter `tenant_slug`, nilainya wajib cocok 100% dengan `tenant_id` dari koneksi database. Jika terjadi inkonsistensi, sistem langsung mereject `{"status": "ignored", "reason": "tenant_mismatch"}`.
+   - **Self-Message Dropping**: Pesan dengan `fromMe == True` langsung di-drop di boundary layer (`{"status": "dropped", "reason": "from_me"}`) guna mencegah infinite reply loop.
+
+2. **Validasi Dedicated vs Shared Gateway**:
+   - Percakapan interaktif 2-way AI Commerce hanya diizinkan pada koneksi bertipe `DEDICATED` yang valid dan terverifikasi.
+   - Koneksi bertipe `SHARED` hanya diizinkan untuk transmisi notifikasi transaksional sistem 1 arah. Jika ada pesan masuk ke instance `SHARED`, pesan langsung ditolak pada boundary ingress: `{"status": "ignored", "reason": "shared_gateway_inbound_not_allowed"}`.
+
+3. **Outbound Ownership Chain Guard**:
+   - Sebelum setiap pemanggilan fungsi dispatch pengiriman pesan (`send_text`, `send_media`, Evolution API request, atau Meta Cloud API request), sistem wajib memvalidasi rantai kepemilikan (ownership chain):
+     ```python
+     if not connection or connection.tenant_id != command.tenant_id:
+         logger.error(f"[SECURITY_OUTBOUND_VIOLATION] Connection tenant {connection.tenant_id} != command tenant {command.tenant_id}")
+         return {"status": "dropped", "reason": "tenant_mismatch"}
+     if tenant.bot_paused or not tenant.is_bot_active:
+         return {"status": "dropped", "reason": "bot_disabled"}
+     ```
+   - Jika `bot_paused == True` atau `is_bot_active == False` pada metadata tenant Supabase, sistem menjamin zero outbound message (CS manual mode terlindungi).
+
+4. **Runtime Containment & Certification Matrix (6/6 PASS)**:
+   - Skenario pengujian wajib terverifikasi otomatis via `tests/test_p0_runtime_isolation.py`:
+     1. *Unmapped Instance* -> Status `ignored`, reason `SECURITY_UNMAPPED_WHATSAPP_INSTANCE` (Zero AI).
+     2. *Disconnected / Non-Store Number (Mas Didit / boontrack-gateway)* -> Status `ignored`, reason `SECURITY_UNMAPPED_WHATSAPP_INSTANCE` (Zero Outbound).
+     3. *fromMe == True* -> Status `dropped`, reason `from_me` (Zero Echo).
+     4. *bot_paused == True* -> Status `dropped`, reason `bot_disabled` (CS Manual Protected).
+     5. *SHARED Gateway Inbound* -> Status `ignored`, reason `shared_gateway_inbound_not_allowed`.
+     6. *Outbound Chain Violation* -> Status `dropped`, reason `tenant_mismatch`.
+
+---
+
 ## 14. ARCHITECTURAL STANDARD: TENANT STATIC-TO-DYNAMIC QRIS EMVCo TRANSFORMATION
 
 > **Architectural Status**: 🔒 **PRODUCTION STANDARD & COMPATIBILITY CERTIFIED (blu by BCA Digital, BCA Mobile, DANA 100%)**  
