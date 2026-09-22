@@ -1078,11 +1078,18 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
         # Mode Bot Guard: Manual CS vs AI Otomatis (bot_paused)
         is_tenant_bot_paused = False
         is_phone_paused = False
+        is_checkout_lite = False
         try:
             from app.services.onboarding_service import onboarding_service
             store_details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
             tenant_info = store_details.get("tenant", {})
             is_tenant_bot_paused = bool(tenant_info.get("metadata", {}).get("bot_paused")) or bool(tenant_info.get("bot_paused"))
+            tenant_tier = str(tenant_info.get("tier") or "").strip().upper()
+            is_checkout_lite = (
+                tenant_tier == "CHECKOUT_LITE"
+                or "checkout_lite" in tenant_slug
+                or "checkout-lite" in tenant_slug
+            )
         except Exception:
             pass
 
@@ -1145,24 +1152,36 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
 
                 mode_prompt = get_system_prompt_for_mode(nba, prod_context)
 
-                logger.info(f"[CENTRAL WA 3-LAYER] Executing conversation engine for tenant={tenant_slug}, user={from_phone}")
-                reply_text = await commerce_ai_engine.generate_commerce_response(
-                    tenant_slug=tenant_slug,
-                    user_message=incoming_text,
-                    user_phone=from_phone,
-                    user_name=contact_name,
-                    button_id=button_id,
-                    mode_prompt=mode_prompt,
-                )
-                if not reply_text:
-                    from app.services.agent_service import process_incoming_message
-                    reply_text = await process_incoming_message(
+                if is_checkout_lite:
+                    logger.warning(
+                        f"[ENTITLEMENT_PROTECTION_BLOCKED] Tenant '{tenant_slug}' is on tier CHECKOUT_LITE. "
+                        "Skipping AI execution (commerce_ai_engine/LLM). Falling back to static store template."
+                    )
+                    reply_text = (
+                        f"Halo Kak! Terima kasih telah menghubungi *{store_name}*.\n\n"
+                        f"Untuk melihat katalog produk dan melakukan pemesanan langsung, silakan kunjungi link toko kami:\n"
+                        f"https://shop.boontrack.com/{tenant_slug}\n\n"
+                        f"Admin kami akan segera membalas pesan Kakak secara manual."
+                    )
+                else:
+                    logger.info(f"[CENTRAL WA 3-LAYER] Executing conversation engine for tenant={tenant_slug}, user={from_phone}")
+                    reply_text = await commerce_ai_engine.generate_commerce_response(
                         tenant_slug=tenant_slug,
-                        message=incoming_text,
+                        user_message=incoming_text,
                         user_phone=from_phone,
                         user_name=contact_name,
                         button_id=button_id,
+                        mode_prompt=mode_prompt,
                     )
+                    if not reply_text:
+                        from app.services.agent_service import process_incoming_message
+                        reply_text = await process_incoming_message(
+                            tenant_slug=tenant_slug,
+                            message=incoming_text,
+                            user_phone=from_phone,
+                            user_name=contact_name,
+                            button_id=button_id,
+                        )
 
                 if not reply_text:
                     reply_text = (

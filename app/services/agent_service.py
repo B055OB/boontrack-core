@@ -38,6 +38,20 @@ async def handle_button_or_message(
     session_id: Optional[str] = None,
 ) -> str:
     """Entrypoint helper to process incoming message or quick-reply button via CommerceAIEngine with telemetry."""
+    # Entitlement Guard for CHECKOUT_LITE
+    context_plan = getattr(context, "plan", "") or getattr(context, "tier", "")
+    if str(context_plan).upper() == "CHECKOUT_LITE" or "checkout_lite" in tenant_slug or "checkout-lite" in tenant_slug:
+        logger.warning(
+            f"[ENTITLEMENT_PROTECTION_BLOCKED] Tenant '{tenant_slug}' is on tier CHECKOUT_LITE. "
+            "Skipping AI generation in agent_service."
+        )
+        msg_text = (
+            f"Halo Kak! Terima kasih telah menghubungi *{store_name}*."
+            "\n\nKatalog & pemesanan resmi:\n"
+            f"https://shop.boontrack.com/{tenant_slug}"
+            "\n\nAdmin kami akan segera membalas pesan Kakak secara manual."
+        )
+        return msg_text
     usage_out: Dict[str, Any] = {}
     reply = await commerce_ai_engine.generate_commerce_response(
         tenant_slug=tenant_slug,

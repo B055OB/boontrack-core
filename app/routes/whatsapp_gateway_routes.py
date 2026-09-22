@@ -55,21 +55,34 @@ class InboundPayload(BaseModel):
 
 
 @router.post("/sessions/{tenant_slug}/connect")
-async def connect_growth_session(tenant_slug: str):
+@router.get("/sessions/{tenant_slug}/connect")
+@router.post("/connect")
+@router.get("/connect")
+@router.post("/api/v1/whatsapp/connect")
+@router.get("/api/v1/whatsapp/connect")
+async def connect_growth_session(
+    tenant_slug: Optional[str] = None,
+    tenant: Optional[str] = None,
+    slug: Optional[str] = None
+):
     """
     Meminta QR code live socket Evolution API v2 (Production WhatsApp Gateway resmi).
+    Setiap merchant SaaS wajib diperlakukan sebagai mode DEDICATED dengan instance_name = tenant_slug.
     """
-    clean_tenant = (tenant_slug or "").strip().lower()
-    if not clean_tenant:
+    resolved_tenant = (tenant_slug or tenant or slug or "").strip().lower()
+    if not resolved_tenant:
         raise HTTPException(status_code=400, detail="tenant_slug is required")
 
     try:
         from app.services.whatsapp_service import get_or_create_evolution_session
-        evo_data = await get_or_create_evolution_session(clean_tenant)
+        evo_data = await get_or_create_evolution_session(resolved_tenant)
         if evo_data and evo_data.get("success"):
             return {
                 "success": True,
-                "tenant_slug": clean_tenant,
+                "tenant_slug": resolved_tenant,
+                "provider": evo_data.get("provider") or "EVOLUTION",
+                "mode": evo_data.get("mode") or "DEDICATED",
+                "instance_name": evo_data.get("instance_name") or resolved_tenant,
                 "base64": evo_data.get("base64") or evo_data.get("qr_image"),
                 "code": evo_data.get("code") or evo_data.get("qr_raw"),
                 "qr_raw": evo_data.get("qr_raw") or evo_data.get("code"),
@@ -385,6 +398,22 @@ async def process_inbound_message(payload: InboundPayload):
         or "trust_builder"
     ).lower().strip()
 
+    # Entitlement / Tier Detection (ARCHITECTURE.md: CHECKOUT_LITE DILARANG menggunakan AI)
+    tenant_tier = str(tenant_info.get("tier") or "").strip().upper()
+    is_checkout_lite = (
+        tenant_tier == "CHECKOUT_LITE"
+        or "checkout_lite" in tenant_slug
+        or "checkout-lite" in tenant_slug
+    )
+    if not is_checkout_lite:
+        try:
+            from app.services.entitlement_service import tenant_context_resolver
+            ctx = await tenant_context_resolver.resolve(tenant_slug)
+            if ctx.plan == "CHECKOUT_LITE" or not tenant_context_resolver.can_use(ctx, "ai_bot"):
+                is_checkout_lite = True
+        except Exception:
+            pass
+
     # Mode Bot Guard: Manual CS vs AI Otomatis (bot_paused)
     is_tenant_bot_paused = bool(tenant_info.get("metadata", {}).get("bot_paused")) or bool(tenant_info.get("bot_paused"))
     is_phone_paused = False
@@ -415,18 +444,32 @@ async def process_inbound_message(payload: InboundPayload):
         logger.info(f"[GROWTH GATEWAY AUTO-REPLY] Matched custom keyword rule for '{tenant_slug}' from '{clean_phone}'")
         reply = custom_auto_reply
 
-    # 1.6 Unified Conversation Engine Guardrails (Greeting Awal, Safe-Guard Katalog Kosong & Produk Tak Terdaftar)
-    from app.services.unified_conversation_service import unified_conversation_engine
-    engine_res = await unified_conversation_engine.process_chat(
-        tenant_slug=tenant_slug,
-        message=incoming_text,
-        sender_id=clean_phone,
-        sender_name=contact_name,
-        channel="whatsapp",
-    )
-    # Jika trigger greeting awal, katalog kosong, atau produk di luar database
-    if engine_res.get("action") in ("SHOW_MENU", "CS_HANDOVER") or engine_res.get("unassigned_triggered"):
-        reply = engine_res.get("reply")
+    # Entitlement Guard (ARCHITECTURE.md): CHECKOUT_LITE DILARANG menggunakan Conversational AI / LLM
+    if is_checkout_lite:
+        logger.warning(
+            f"[ENTITLEMENT_PROTECTION_BLOCKED] Tenant '{tenant_slug}' is on tier CHECKOUT_LITE (ai_bot disabled). "
+            "Skipping AI pipelines and falling back to static store template."
+        )
+        store_name = store_details.get("tenant", {}).get("name", tenant_slug.upper())
+        reply = (
+            f"Halo Kak! Terima kasih telah menghubungi *{store_name}*.\n\n"
+            f"Untuk melihat katalog produk dan melakukan pemesanan langsung, silakan kunjungi link toko kami:\n"
+            f"👉 https://shop.boontrack.com/{tenant_slug}\n\n"
+            f"Admin kami akan segera membalas pesan Kakak secara manual."
+        )
+    else:
+        # 1.6 Unified Conversation Engine Guardrails (Greeting Awal, Safe-Guard Katalog Kosong & Produk Tak Terdaftar)
+        from app.services.unified_conversation_service import unified_conversation_engine
+        engine_res = await unified_conversation_engine.process_chat(
+            tenant_slug=tenant_slug,
+            message=incoming_text,
+            sender_id=clean_phone,
+            sender_name=contact_name,
+            channel="whatsapp",
+        )
+        # Jika trigger greeting awal, katalog kosong, atau produk di luar database
+        if engine_res.get("action") in ("SHOW_MENU", "CS_HANDOVER") or engine_res.get("unassigned_triggered"):
+            reply = engine_res.get("reply")
 
     # 2. Pipeline Numbered Menu Flow: Tanya Produk -> Pilih Nomor -> Testimoni / Beli / Kembali
     if not reply:

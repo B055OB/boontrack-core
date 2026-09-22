@@ -165,6 +165,28 @@ class BoonPilotService:
         context: TenantRuntimeContext,
         rbac_role: str = "MERCHANT",
     ) -> Dict[str, Any]:
+        if context.plan == "CHECKOUT_LITE" or not tenant_context_resolver.can_use(context, "ai_bot"):
+            return {
+                "tenant_id": context.tenant_id,
+                "plan": context.plan,
+                "status": "LOCKED",
+                "message": "Fitur BoonPilot AI Copilot tidak tersedia pada paket Checkout Lite.",
+                "menu": [
+                    {
+                        "id": "upgrade_starter",
+                        "label": "🚀 Upgrade ke Starter (Rp 149k/bln)",
+                        "action": "upgrade_tier_starter",
+                        "category": "BILLING",
+                    },
+                    {
+                        "id": "single_page_checkout",
+                        "label": "⚡ Single Page Checkout Form",
+                        "action": "open_single_page_checkout",
+                        "category": "CORE",
+                    },
+                ],
+                "allowed_actions": ["upgrade_tier_starter", "open_single_page_checkout"],
+            }
         """
         Capability Resolver (Dynamic Button-Driven Menu):
         Render tombol navigasi & FAQ BUKAN dari katalog statis, melainkan
@@ -514,6 +536,17 @@ class BoonPilotService:
 
         # 2. Resolve Server-Authoritative TenantRuntimeContext
         context = await tenant_context_resolver.resolve(clean_slug)
+
+        # Entitlement Guard (ARCHITECTURE.md): Blokir CHECKOUT_LITE dari fitur AI BoonPilot
+        if context.plan == "CHECKOUT_LITE" or not tenant_context_resolver.can_use(context, "ai_bot"):
+            logger.warning(
+                f"[ENTITLEMENT_BLOCKED] Tenant '{clean_slug}' (plan={context.plan}) "
+                "mencoba mengakses BoonPilot AI Copilot tetapi tidak memiliki kapabilitas 'ai_bot'."
+            )
+            raise PermissionError(
+                "Akses ditolak: Paket CHECKOUT_LITE tidak memiliki akses ke fitur AI Copilot (BoonPilot). "
+                "Silakan upgrade langganan ke paket Starter atau Pro Scale untuk mengaktifkan asisten AI."
+            )
 
         # 3. Tenant & RBAC Isolation Guard (Tolak Arbitrary client tenant_id)
         if untrusted_client_tenant_id:

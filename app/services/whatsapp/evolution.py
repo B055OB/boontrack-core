@@ -73,10 +73,24 @@ async def get_or_create_evolution_session(tenant_slug: str = "") -> Dict[str, An
     clean_tenant = (tenant_slug or "").strip().lower()
     if not clean_tenant:
         return {"success": False, "error": "tenant_slug is required"}
-    instance_name = f"tenant_{clean_tenant.replace('-', '_')}"
+
+    # 1. Resolusikan otoritas instance_name dari database whatsapp_connections
+    instance_name = clean_tenant
+    try:
+        from app.services.whatsapp_service import get_supabase
+        sb = get_supabase()
+        if sb:
+            db_res = sb.table("whatsapp_connections").select("instance_name, metadata").or_(f"tenant_id.eq.{clean_tenant},tenant_slug.eq.{clean_tenant}").order("created_at", desc=True).limit(1).execute()
+            if db_res.data and len(db_res.data) > 0:
+                registered_name = db_res.data[0].get("instance_name")
+                if registered_name and registered_name != "boontrack-gateway":
+                    instance_name = registered_name
+    except Exception as db_lookup_err:
+        logger.debug(f"[Evolution API] Lookup whatsapp_connections note: {db_lookup_err}")
+
     headers = get_evolution_headers()
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with httpx.AsyncClient(timeout=25.0) as client:
         try:
             status_res = await client.get(
                 f"{EVOLUTION_BASE_URL}/instance/connectionState/{instance_name}",
@@ -90,14 +104,39 @@ async def get_or_create_evolution_session(tenant_slug: str = "") -> Dict[str, An
                 if state == "open":
                     owner = data.get("instance", {}).get("ownerJid") or ""
                     phone_number = owner.split("@")[0] if "@" in owner else owner
+                    try:
+                        from app.services.whatsapp_service import get_supabase
+                        sb = get_supabase()
+                        if sb:
+                            sb.table("whatsapp_connections").upsert({
+                                "tenant_id": clean_tenant,
+                                "tenant_slug": clean_tenant,
+                                "instance_name": instance_name,
+                                "provider": "EVOLUTION",
+                                "channel_type": "BAILEYS",
+                                "status": "open",
+                                "phone_number": phone_number or None,
+                                "metadata": {
+                                    "mode": "DEDICATED",
+                                    "instance_name": instance_name,
+                                    "tenant_slug": clean_tenant,
+                                    "provider": "EVOLUTION"
+                                }
+                            }, on_conflict="instance_name").execute()
+                    except Exception as upsert_err:
+                        logger.debug(f"[Evolution API] Upsert whatsapp_connections open note: {upsert_err}")
+
                     return {
                         "success": True,
                         "status": "CONNECTED",
+                        "provider": "EVOLUTION",
+                        "mode": "DEDICATED",
+                        "instance_name": instance_name,
+                        "tenant_slug": clean_tenant,
                         "phone_number": phone_number or None,
                         "capabilities": {"qr_pairing": True, "pairing_code": True, "multi_agent": False}
                     }
                 elif state in ("close", "refused", "disconnected"):
-                    # Status gagal taut sebelumnya -> restart session otomatis agar soket Baileys tidak macet (stale socket)
                     logger.info(f"[Evolution API] Instance {instance_name} berstatus '{state}'. Memulai restart socket...")
                     try:
                         await client.post(f"{EVOLUTION_BASE_URL}/instance/restart/{instance_name}", headers=headers)
@@ -120,6 +159,7 @@ async def get_or_create_evolution_session(tenant_slug: str = "") -> Dict[str, An
                     headers=headers,
                     json=create_payload
                 )
+                await asyncio.sleep(1.0)
 
             backend_url = os.getenv("BACKEND_WEBHOOK_URL") or os.getenv("FASTAPI_BASE_URL", "https://api.boontrack.com").rstrip("/")
             try:
@@ -129,10 +169,10 @@ async def get_or_create_evolution_session(tenant_slug: str = "") -> Dict[str, An
                     json={
                         "webhook": {
                             "enabled": True,
-                            "url": f"{backend_url}/api/v1/whatsapp/webhook/evolution/{tenant_slug}",
+                            "url": f"{backend_url}/api/v1/whatsapp/webhook/evolution/{instance_name}",
                             "byEvents": False,
                             "base64": True,
-                            "events": ["MESSAGES_UPSERT", "CONNECTION_UPDATE"]
+                            "events": ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"]
                         }
                     }
                 )
@@ -144,11 +184,10 @@ async def get_or_create_evolution_session(tenant_slug: str = "") -> Dict[str, An
                 headers=headers
             )
 
-            # Jika respons connect belum mengembalikan base64/code atau error, bersihkan stale socket via restart
             if qr_res.status_code not in (200, 201) or (
                 qr_res.status_code in (200, 201)
-                and not qr_res.json().get("base64")
-                and not qr_res.json().get("code")
+                and not (qr_res.json().get("base64") or (qr_res.json().get("qrcode") or {}).get("base64"))
+                and not (qr_res.json().get("code") or (qr_res.json().get("qrcode") or {}).get("code"))
             ):
                 logger.info(f"[Evolution API] Connect untuk {instance_name} perlu disegarkan (status {qr_res.status_code}). Melakukan restart socket...")
                 try:
@@ -163,13 +202,38 @@ async def get_or_create_evolution_session(tenant_slug: str = "") -> Dict[str, An
 
             if qr_res.status_code in (200, 201):
                 qr_data = qr_res.json()
-                qr_raw = qr_data.get("code") or qr_data.get("pairingCode")
-                qr_base64 = qr_data.get("base64")
+                qr_raw = qr_data.get("code") or (qr_data.get("qrcode") or {}).get("code") or qr_data.get("pairingCode")
+                qr_base64 = qr_data.get("base64") or (qr_data.get("qrcode") or {}).get("base64") or qr_data.get("qr_image")
                 clean_b64 = clean_evolution_base64_qr(qr_base64)
+
+                try:
+                    from app.services.whatsapp_service import get_supabase
+                    sb = get_supabase()
+                    if sb:
+                        sb.table("whatsapp_connections").upsert({
+                            "tenant_id": clean_tenant,
+                            "tenant_slug": clean_tenant,
+                            "instance_name": instance_name,
+                            "provider": "EVOLUTION",
+                            "channel_type": "BAILEYS",
+                            "status": "connecting",
+                            "metadata": {
+                                "mode": "DEDICATED",
+                                "instance_name": instance_name,
+                                "tenant_slug": clean_tenant,
+                                "provider": "EVOLUTION"
+                            }
+                        }, on_conflict="instance_name").execute()
+                except Exception as upsert_err:
+                    logger.debug(f"[Evolution API] Upsert whatsapp_connections connecting note: {upsert_err}")
 
                 return {
                     "success": True,
                     "status": "CONNECTING",
+                    "provider": "EVOLUTION",
+                    "mode": "DEDICATED",
+                    "instance_name": instance_name,
+                    "tenant_slug": clean_tenant,
                     "code": qr_raw,
                     "qr_raw": qr_raw,
                     "base64": clean_b64,

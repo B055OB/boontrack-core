@@ -223,6 +223,20 @@ class CommerceAIEngine:
         if strategy_key not in BOT_STRATEGY_DIRECTIVES:
             strategy_key = "trust_builder"
 
+        # Entitlement Guard (ARCHITECTURE.md): CHECKOUT_LITE dilarang keras memicu LLM / AI inference
+        tenant_tier = str(tenant.get("tier") or "").strip().upper()
+        clean_slug = str(tenant_slug or "").strip().lower()
+        if (
+            tenant_tier == "CHECKOUT_LITE"
+            or "checkout_lite" in clean_slug
+            or "checkout-lite" in clean_slug
+        ):
+            logger.warning(
+                f"[ENTITLEMENT_GUARD] Blocked AI commerce response for tenant '{tenant_slug}' (tier=CHECKOUT_LITE). "
+                "LLM execution aborted."
+            )
+            return ""
+
         system_prompt = self.build_commerce_system_prompt(tenant_slug, bot_strategy=strategy_key)
         if mode_prompt:
             system_prompt = f"{mode_prompt}\n\n{system_prompt}"

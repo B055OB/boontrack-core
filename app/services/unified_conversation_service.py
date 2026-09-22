@@ -330,6 +330,35 @@ class UnifiedConversationEngine:
                 "unassigned_triggered": True,
             }
 
+        # 7. Entitlement Guard (ARCHITECTURE.md): CHECKOUT_LITE dilarang keras eksekusi LLM
+        tenant_tier = str(tenant_obj.get("tier") or "").strip().upper()
+        if (
+            tenant_tier == "CHECKOUT_LITE"
+            or "checkout_lite" in clean_slug
+            or "checkout-lite" in clean_slug
+        ):
+            logger.warning(
+                f"[ENTITLEMENT_PROTECTION_BLOCKED] Tenant '{clean_slug}' is on tier CHECKOUT_LITE. "
+                "Skipping LLM execution in unified_conversation_engine."
+            )
+            static_reply = (
+                f"Halo! Terima kasih telah menghubungi *{store_name}*.\n\n"
+                f"Untuk katalog produk dan pemesanan online, silakan kunjungi:\n"
+                f"https://shop.boontrack.com/{clean_slug}\n\n"
+                f"Pesan Anda telah diteruskan ke admin toko untuk dibantu secara manual."
+            )
+            return {
+                "success": True,
+                "reply": static_reply,
+                "reply_text": static_reply,
+                "tenant_slug": clean_slug,
+                "business_category": business_category,
+                "quick_actions": welcome_buttons,
+                "action": "CS_HANDOVER",
+                "type": "TEXT",
+                "unassigned_triggered": True,
+            }
+
         # 7. Eksekusi LLM Deterministik (temperature: 0.0) via CommerceAIEngine
         llm_reply = await commerce_ai_engine.generate_commerce_response(
             tenant_slug=clean_slug,
