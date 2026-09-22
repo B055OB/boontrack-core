@@ -1230,3 +1230,69 @@ Sesuai arahan audit finansial CFO (Chief Financial Officer), akun merchant dalam
      ```
 2. **Zero Manual Setup Invariant**:
    - Toko baru langsung siap menerima order dan merender Dynamic QRIS seketika setelah seller mengunggah gambar QRIS atau memasukkan string QRIS tanpa perlu mengonfigurasi payment gateway pihak ketiga.
+
+
+---
+
+## 22. WhatsApp Gateway & Transport Infrastructure
+
+### 22.1 Architectural Philosophy
+WhatsApp Gateway diposisikan murni sebagai **Transport Infrastructure**, bukan bagian dari domain inti bisnis. Inti value BoonTrack adalah **Commerce & Business Graph** (Order, Transaction, AI Copilot, CAPI, Fulfillment). Seluruh interaksi provider diisolasi melalui `WhatsAppProviderAdapter`.
+
+### 22.2 Connection Topology & Domain Separation
+```text
+                    BOONTRACK CORE
+                         │
+               TenantRuntimeContext
+                         │
+              WhatsAppConnectionResolver
+                         │
+             ┌───────────┴───────────┐
+             │                       │
+       PLATFORM DOMAIN         TENANT DOMAIN
+             │                       │
+      boontrack-gateway       tenant connection
+     (Transactional Only)            │
+                                     │
+                          WhatsAppProviderAdapter
+                                     │
+                        ┌────────────┴────────────┐
+                        │                         │
+                 EVOLUTION v2/BAILEYS         META WABA
+                        │                         │
+                  instance_name            phone_number_id
+```
+
+### 22.3 Invariants & Security Boundaries
+1. **Device-as-a-Resource Isolation**:
+   - 1 WhatsApp Identity/Device -> 1 Explicit Connection Ownership -> 1 Tenant Context.
+2. **Strict No-Fallback**:
+   - Tenant domain tidak pernah memiliki fallback ke instance platform (`boontrack-gateway`).
+   - Kegagalan koneksi tenant menghasilkan state deterministik (`NONE` / `PAIRING`), bukan shared socket.
+3. **Hard Ingress Boundaries**:
+   - **Baileys (Evolution v2)**: Webhook wajib memetakan `instance_name` yang terdaftar pada `whatsapp_connections`.
+   - **Meta WABA**: Webhook wajib memetakan `phone_number_id` yang terdaftar pada `whatsapp_connections`.
+   - **Rule**: Unknown provider resource -> **DROP / HTTP 200 Silent** (0 AI call, 0 DB mutation, 0 outbound).
+4. **Backend-Resolved Authority**:
+   - Client/Dashboard tidak memiliki wewenang menentukan `instance_name`, `phone_number_id`, atau access token. Backend me-resolve connection dari `TenantRuntimeContext`.
+   - **Assertion wajib sebelum kirim (outbound)**:
+     ```python
+     assert connection.tenant_id == command.tenant_id
+     assert connection.ownership_domain == "TENANT"
+     assert connection.status == "CONNECTED"
+     ```
+5. **Credential Storage**:
+   - Raw access token Meta/Baileys tidak diekspos ke publik/tabel biasa, melainkan diisolasi melalui `credential_ref`.
+
+### 22.4 Connection State Machine & Idempotency
+1. **Lifecycle States**:
+   `NONE` → `PROVISIONING` → `CREATED` → `PAIRING` → `CONNECTED` → `DISCONNECTED` → `RECONNECTING` → `LOGGED_OUT` → `PROVISIONING_FAILED`
+2. **Idempotent Provisioning**:
+   - `ensure_connection(tenant_id)` kebal terhadap spam klik/refresh bersamaan.
+3. **Database Defense**:
+   - Partial unique index di Supabase:
+     ```sql
+     CREATE UNIQUE INDEX uq_active_tenant_dedicated_conn 
+     ON whatsapp_connections (tenant_id) 
+     WHERE (ownership_domain = 'TENANT' AND tenant_id IS NOT NULL AND status NOT IN ('LOGGED_OUT', 'PROVISIONING_FAILED'));
+     ```
