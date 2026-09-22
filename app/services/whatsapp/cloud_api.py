@@ -141,9 +141,11 @@ async def log_to_supabase_messages(
                 supabase.table("conversations").upsert({
                     "id": conv_uuid,
                     "tenant_id": clean_tenant,
+                    "tenant_slug": clean_tenant,
                     "phone_number": clean_digits,
                     "contact_name": user_name or f"User {clean_digits[-4:]}",
                     "lead_state": lead_state_val,
+                    "last_message": content[:500] if content else None,
                     "updated_at": now_iso
                 }).execute()
             except Exception as conv_err:

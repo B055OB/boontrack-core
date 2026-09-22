@@ -121,15 +121,31 @@ def resolve_tenant_id_from_phone_id(phone_id: str) -> str:
     return "boontrack-holding"
 
 
-# --- 4. Helper Outbound WA Dinamis Multi-Tenant ---
-async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
+# --- 4. Helper Outbound WA Dinamis Multi-Tenant (P0 HARD GUARD) ---
+async def send_wa_text(recipient_phone: str, text: str, phone_id: str, command_tenant_id: Optional[str] = None):
+    """
+    P0 OUTBOUND OWNERSHIP CHAIN GUARD (Meta Cloud API):
+    Validasi rantai kepemilikan tenant & bot_paused sebelum pengiriman.
+    """
     from app.services.whatsapp_service import sanitize_whatsapp_message_text
     clean_id_match = re.findall(r"\d+", str(phone_id or ""))
     clean_id = clean_id_match[0] if clean_id_match else BOONTRACK_GATEWAY_PHONE_NUMBER_ID
-    token = resolve_tenant_token(clean_id)
+    conn_tenant = resolve_tenant_id_from_phone_id(clean_id)
 
-    # Telemetry Outbound Counter Hook
-    t_id = resolve_tenant_id_from_phone_id(clean_id)
+    target_tenant = (command_tenant_id or conn_tenant or "").strip().lower()
+    if command_tenant_id and conn_tenant and target_tenant != conn_tenant.lower():
+        logger.error(f"[SECURITY_OUTBOUND_VIOLATION] Connection tenant '{conn_tenant}' != command tenant '{command_tenant_id}'")
+        return {"status": "dropped", "reason": "tenant_mismatch"}
+
+    from app.services.tenant_context_resolver import tenant_context_resolver
+    runtime_ctx = await tenant_context_resolver.resolve_context(target_tenant)
+    if runtime_ctx and runtime_ctx.metadata:
+        if bool(runtime_ctx.metadata.get("bot_paused")) or not bool(runtime_ctx.metadata.get("is_bot_active", True)):
+            logger.info(f"[SECURITY_OUTBOUND_GUARD] Bot is paused/inactive for tenant '{target_tenant}'. Outbound dropped.")
+            return {"status": "dropped", "reason": "bot_disabled"}
+
+    token = resolve_tenant_token(clean_id)
+    t_id = conn_tenant
     track_whatsapp_message(direction="OUTBOUND", tenant_id=t_id, session_id=recipient_phone, classification="text")
 
     clean_text = sanitize_whatsapp_message_text(text)
@@ -155,16 +171,33 @@ async def send_wa_text(recipient_phone: str, text: str, phone_id: str):
                     logger.error(f"[CENTRAL WA] Outbound text error ({resp.status}) phone_id={clean_id}: {resp_text}")
     except Exception as e:
         logger.error(f"[CENTRAL WA] Exception sending text message: {e}", exc_info=True)
+    return {"status": "sent"}
 
 
-async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Dict[str, str]], phone_id: str):
+async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Dict[str, str]], phone_id: str, command_tenant_id: Optional[str] = None):
+    """
+    P0 OUTBOUND OWNERSHIP CHAIN GUARD (Meta Cloud API Buttons):
+    Validasi rantai kepemilikan tenant & bot_paused sebelum pengiriman.
+    """
     from app.services.whatsapp_service import sanitize_whatsapp_message_text
     clean_id_match = re.findall(r"\d+", str(phone_id or ""))
     clean_id = clean_id_match[0] if clean_id_match else BOONTRACK_GATEWAY_PHONE_NUMBER_ID
-    token = resolve_tenant_token(clean_id)
+    conn_tenant = resolve_tenant_id_from_phone_id(clean_id)
 
-    # Telemetry Outbound Counter Hook
-    t_id = resolve_tenant_id_from_phone_id(clean_id)
+    target_tenant = (command_tenant_id or conn_tenant or "").strip().lower()
+    if command_tenant_id and conn_tenant and target_tenant != conn_tenant.lower():
+        logger.error(f"[SECURITY_OUTBOUND_VIOLATION] Connection tenant '{conn_tenant}' != command tenant '{command_tenant_id}'")
+        return {"status": "dropped", "reason": "tenant_mismatch"}
+
+    from app.services.tenant_context_resolver import tenant_context_resolver
+    runtime_ctx = await tenant_context_resolver.resolve_context(target_tenant)
+    if runtime_ctx and runtime_ctx.metadata:
+        if bool(runtime_ctx.metadata.get("bot_paused")) or not bool(runtime_ctx.metadata.get("is_bot_active", True)):
+            logger.info(f"[SECURITY_OUTBOUND_GUARD] Bot is paused/inactive for tenant '{target_tenant}'. Outbound buttons dropped.")
+            return {"status": "dropped", "reason": "bot_disabled"}
+
+    token = resolve_tenant_token(clean_id)
+    t_id = conn_tenant
     track_whatsapp_message(direction="OUTBOUND", tenant_id=t_id, session_id=recipient_phone, classification="button")
 
     clean_body = sanitize_whatsapp_message_text(body_text)
@@ -172,27 +205,39 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Di
         clean_body = "Silakan pilih salah satu opsi di bawah untuk melanjutkan:"
 
     if not buttons:
-        await send_wa_text(recipient_phone, clean_body, phone_id)
+        await send_wa_text(recipient_phone, clean_body, phone_id, command_tenant_id=target_tenant)
         return
 
     if len(clean_body) > 1000:
-        await send_wa_text(recipient_phone, clean_body, phone_id)
-        clean_body = "👇 *Silakan pilih menu navigasi di bawah ini:*"
+        await send_wa_text(recipient_phone, clean_body, phone_id, command_tenant_id=target_tenant)
+        return
+
+    interactive_buttons = []
+    for btn in buttons[:3]:
+        b_id = btn.get("id") or btn.get("payload") or "btn_opt"
+        b_title = btn.get("title") or "Pilih"
+        interactive_buttons.append({
+            "type": "reply",
+            "reply": {
+                "id": b_id[:256],
+                "title": b_title[:20]
+            }
+        })
 
     url = f"https://graph.facebook.com/v20.0/{clean_id}/messages"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
-    button_rows = [{"type": "reply", "reply": {"id": b["id"], "title": b["title"][:20]}} for b in buttons[:3]]
     payload = {
         "messaging_product": "whatsapp",
+        "recipient_type": "individual",
         "to": recipient_phone,
         "type": "interactive",
         "interactive": {
             "type": "button",
-            "body": {"text": clean_body[:1024]},
-            "action": {"buttons": button_rows}
+            "body": {"text": clean_body},
+            "action": {"buttons": interactive_buttons}
         }
     }
     try:
@@ -200,14 +245,10 @@ async def send_wa_buttons(recipient_phone: str, body_text: str, buttons: List[Di
             async with session.post(url, headers=headers, json=payload) as resp:
                 resp_text = await resp.text()
                 if resp.status not in (200, 201):
-                    logger.warning(f"[CENTRAL WA] Outbound button error ({resp.status}) phone_id={clean_id}: {resp_text}")
-                    await send_wa_text(recipient_phone, clean_body, phone_id)
-                    return False
-                return True
+                    logger.error(f"[CENTRAL WA] Outbound button error ({resp.status}) phone_id={clean_id}: {resp_text}")
     except Exception as e:
-        logger.error(f"[CENTRAL WA] Exception sending buttons: {e}", exc_info=True)
-        await send_wa_text(recipient_phone, clean_body, phone_id)
-        return False
+        logger.error(f"[CENTRAL WA] Exception sending button message: {e}", exc_info=True)
+    return {"status": "sent"}
 
 
 async def send_wa_image(recipient_phone: str, image_url_or_path_or_bytes: Any = None, caption: str = "", phone_id: str = "", image_url_or_path: Any = None) -> bool:
@@ -1033,6 +1074,27 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
             conversation_id=from_phone,
             metadata={"phone_number_id": phone_id, "msg_type": msg_type, "button_id": button_id}
         )
+
+        # Mode Bot Guard: Manual CS vs AI Otomatis (bot_paused)
+        is_tenant_bot_paused = False
+        is_phone_paused = False
+        try:
+            from app.services.onboarding_service import onboarding_service
+            store_details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
+            tenant_info = store_details.get("tenant", {})
+            is_tenant_bot_paused = bool(tenant_info.get("metadata", {}).get("bot_paused")) or bool(tenant_info.get("bot_paused"))
+        except Exception:
+            pass
+
+        try:
+            from app.services.rotary_routing_service import rotary_routing_service
+            is_phone_paused = rotary_routing_service.is_bot_paused_for_phone(tenant_slug, from_phone)
+        except Exception:
+            pass
+
+        if is_tenant_bot_paused or is_phone_paused:
+            logger.info(f"[CENTRAL WA BOT PAUSED] Bot AI dijeda untuk '{tenant_slug}' (tenant_paused={is_tenant_bot_paused}, phone_paused={is_phone_paused}). Pesan tercatat di Inbox Console, balasan otomatis ditahan.")
+            return {"status": "success", "tenant": tenant_slug, "bot_paused": True}
 
         if is_new_binding and _is_onboarding_msg:
             reply_text = (

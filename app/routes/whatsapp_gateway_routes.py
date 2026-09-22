@@ -340,6 +340,7 @@ def extract_customer_name(text: str, fallback: str = "Kakak") -> str:
 
 
 async def process_inbound_message(payload: InboundPayload):
+
     """
     Memproses logika pesan masuk BoonTrack WhatsApp Engine (Growth Plan):
     1. Memetakan session ID / tenant_slug ke toko yang sesuai secara presisi.
@@ -350,18 +351,13 @@ async def process_inbound_message(payload: InboundPayload):
     clean_phone = normalize_phone_number(payload.sender_phone)
     raw_tenant = str(payload.tenant_slug or "").strip().lower()
     if not raw_tenant or raw_tenant in ("default", "null", "undefined", "none"):
-        from app.services.whatsapp.credentials import get_user_session
-        tenant_slug = get_user_session(clean_phone, payload.message_body or "") or ""
-    else:
-        tenant_slug = raw_tenant
-
-    if not tenant_slug:
-        logger.warning(f"[GATEWAY] No tenant resolved for incoming message from {clean_phone}")
+        logger.warning(f"[SECURITY_UNMAPPED_TENANT] No valid tenant_slug provided for {clean_phone}. Dropping immediately.")
         return {
             "status": "error",
-            "message": "Tenant tidak dikenali. Silakan hubungi admin toko.",
-            "reply_text": "Halo! Silakan hubungi admin toko melalui link resmi kami.",
+            "message": "Tenant tidak dikenali.",
+            "reply_text": None,
         }
+    tenant_slug = raw_tenant
     incoming_text = payload.message_body.strip()
     contact_name = extract_customer_name(incoming_text, fallback=payload.sender_name or "Kakak")
     text_lower = incoming_text.lower()
@@ -388,6 +384,25 @@ async def process_inbound_message(payload: InboundPayload):
         or store_details.get("persona", {}).get("bot_strategy")
         or "trust_builder"
     ).lower().strip()
+
+    # Mode Bot Guard: Manual CS vs AI Otomatis (bot_paused)
+    is_tenant_bot_paused = bool(tenant_info.get("metadata", {}).get("bot_paused")) or bool(tenant_info.get("bot_paused"))
+    is_phone_paused = False
+    try:
+        from app.services.rotary_routing_service import rotary_routing_service
+        is_phone_paused = rotary_routing_service.is_bot_paused_for_phone(tenant_slug, clean_phone)
+    except Exception as _b_err:
+        pass
+
+    if is_tenant_bot_paused or is_phone_paused:
+        logger.info(f"[GROWTH GATEWAY BOT PAUSED] Bot AI dijeda untuk '{tenant_slug}' (tenant_paused={is_tenant_bot_paused}, phone_paused={is_phone_paused}). CS Manual aktif, menahan balasan otomatis.")
+        return {
+            "status": "success",
+            "tenant": tenant_slug,
+            "bot_paused": True,
+            "reply_text": None,
+            "message": "Pesan masuk dicatat ke Inbox Console. Mode bot dijeda (CS Manual aktif)."
+        }
 
     # 1.5 Custom Keyword Auto-Reply Rules per Tenant
     from app.services.auto_reply_service import find_tenant_auto_reply
@@ -884,6 +899,43 @@ async def _handle_connection_update_event(payload: Dict[str, Any], tenant_slug: 
     }
 
 
+def get_connection_by_instance(instance_name: str) -> Optional[Dict[str, Any]]:
+    """
+    P0 ARSITEKTUR HARD BOUNDARY:
+    Ambil metadata koneksi secara eksak dari tabel whatsapp_connections.
+    DILARANG KERAS menebak prefix nama instance (tenant_<slug>), slug toko, atau fallback default.
+    """
+    if not instance_name or not str(instance_name).strip():
+        return None
+    clean_inst = str(instance_name).strip()
+
+    # Drop shared gateway generic names from tenant context resolution
+    if clean_inst in ("boontrack-gateway", "boontrack-holding", "default"):
+        return None
+
+    try:
+        from app.services.whatsapp_service import get_supabase
+        sb = get_supabase()
+        if not sb:
+            return None
+        res = sb.table("whatsapp_connections").select("*").eq("instance_name", clean_inst).limit(1).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+    except Exception as e:
+        logger.error(f"[SECURITY_CONN_LOOKUP_ERROR] Instance '{clean_inst}': {e}")
+    return None
+
+
+def get_tenant_by_instance(instance_name: str) -> Optional[str]:
+    """
+    Mengembalikan tenant_id / tenant_slug hanya jika terdaftar 100% di whatsapp_connections.
+    """
+    conn = get_connection_by_instance(instance_name)
+    if not conn:
+        return None
+    cand_slug = (conn.get("tenant_id") or conn.get("tenant_slug") or "").strip().lower()
+    return cand_slug if cand_slug else None
+
 async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug: Optional[str] = None) -> Dict[str, Any]:
     """
     Core Ingestion Logic untuk webhook Evolution API (Baileys Engine).
@@ -922,10 +974,15 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     key_obj = data.get("key", {}) if isinstance(data.get("key"), dict) else {}
     message_obj = data.get("message", {}) if isinstance(data.get("message"), dict) else {}
 
-    # 1. Filter Self-Message: fromMe == True di-skip
-    if key_obj.get("fromMe") is True or payload.get("fromMe") is True:
+    # 1. Filter Self-Message: fromMe == True di-skip (Drop immediately)
+    is_from_me = (
+        key_obj.get("fromMe") is True
+        or payload.get("fromMe") is True
+        or (isinstance(data, dict) and data.get("fromMe") is True)
+    )
+    if is_from_me:
         logger.info("[EVOLUTION WEBHOOK] Ignored: message fromMe is True (Self-Reply Guard)")
-        return {"status": "ignored_from_me"}
+        return {"status": "dropped", "reason": "from_me"}
 
     # 2. Filter Grup & Broadcast
     remote_jid = str(key_obj.get("remoteJid") or payload.get("sender") or "").strip()
@@ -990,7 +1047,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
             except Exception as media_err:
                 logger.warning(f"[EVOLUTION WEBHOOK] Gagal upload image ke R2: {media_err}")
 
-    # 5. Ekstraksi teks berjenjang (Conversation -> Extended Text -> Image Caption -> Video Caption -> Interactive)
+    # 5. Ekstraksi teks berjenjang
     incoming_text = (
         unwrapped_msg.get("conversation")
         or unwrapped_msg.get("extendedTextMessage", {}).get("text")
@@ -1008,47 +1065,49 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     if not incoming_text:
         return {"status": "ignored_empty_text"}
 
-    raw_instance = str(payload.get("instance") or "").strip()
+    # =========================================================================
+    # INGRESS HARD BOUNDARY (P0 SECURITY MANDATE)
+    # Hapus seluruh fallback default (or "buzzerukm", get_default_tenant(), dll).
+    # Validasi 100% eksak terhadap tabel whatsapp_connections.
+    # =========================================================================
+    instance_name = str(payload.get("instance") or "").strip()
+    if not instance_name:
+        logger.warning("[SECURITY_UNMAPPED_WHATSAPP_INSTANCE] Missing instance_name in Evolution webhook payload. Dropping immediately.")
+        return {"status": "ignored", "reason": "missing_instance"}
 
-    # STRICT TENANT ISOLATION: tenant_slug dari URL path /webhook/evolution/{tenant_slug}
-    # diprioritaskan penuh. Fallback ke instance name jika slug tidak disediakan.
-    # DILARANG fallback ke hardcoded demo tenant (boontrack-shop, onlineboost, dll).
-    if tenant_slug and tenant_slug.strip():
-        clean_slug = tenant_slug.strip()
-    elif raw_instance and raw_instance.strip():
-        clean_slug = raw_instance.strip()
-    else:
-        logger.warning("[EVOLUTION WEBHOOK] No tenant_slug or instance in payload. Returning ignored.")
-        return {"status": "ignored_no_tenant"}
+    connection = get_connection_by_instance(instance_name)
+    if not connection:
+        logger.warning(f"[SECURITY_UNMAPPED_WHATSAPP_INSTANCE] Instance '{instance_name}' is not registered in whatsapp_connections. Dropping immediately.")
+        return {"status": "ignored", "reason": "SECURITY_UNMAPPED_WHATSAPP_INSTANCE"}
 
-    resolved_tenant = clean_slug.replace("tenant_", "").replace("_", "-").lower()
+    conn_tenant_id = (connection.get("tenant_id") or connection.get("tenant_slug") or "").strip().lower()
+    if not conn_tenant_id:
+        logger.warning(f"[SECURITY_UNMAPPED_WHATSAPP_INSTANCE] Instance '{instance_name}' has empty tenant_id in whatsapp_connections. Dropping immediately.")
+        return {"status": "ignored", "reason": "SECURITY_UNMAPPED_WHATSAPP_INSTANCE"}
 
-    # Dynamic Tenant Resolution via whatsapp_connections (Single Source of Truth)
-    # Jika instance adalah boontrack-gateway atau tenant belum spesifik,
-    # cari mapping merchant aktif di whatsapp_connections
-    if resolved_tenant in ("boontrack-gateway", "boontrack-holding"):
-        try:
-            sb = get_supabase()
-            if sb:
-                target_inst = raw_instance or clean_slug
-                conn_res = sb.table("whatsapp_connections").select("tenant_id, tenant_slug, metadata").eq("instance_name", target_inst).neq("tenant_id", "boontrack-holding").order("created_at", desc=True).limit(1).execute()
-                if conn_res.data and len(conn_res.data) > 0:
-                    found_slug = conn_res.data[0].get("tenant_slug") or conn_res.data[0].get("tenant_id")
-                    if found_slug:
-                        resolved_tenant = found_slug.lower().strip()
-                        logger.info(f"[EVOLUTION WEBHOOK] Dynamically resolved tenant from whatsapp_connections instance '{target_inst}' -> '{resolved_tenant}'")
-                else:
-                    # Fallback cek active_merchant_slug di metadata gateway
-                    gw_res = sb.table("whatsapp_connections").select("metadata").eq("instance_name", "boontrack-gateway").limit(1).execute()
-                    if gw_res.data and len(gw_res.data) > 0:
-                        active_slug = gw_res.data[0].get("metadata", {}).get("active_merchant_slug")
-                        if active_slug:
-                            resolved_tenant = str(active_slug).lower().strip()
-                            logger.info(f"[EVOLUTION WEBHOOK] Dynamically resolved tenant from gateway active_merchant_slug -> '{resolved_tenant}'")
-        except Exception as _res_err:
-            logger.warning(f"[EVOLUTION WEBHOOK] Dynamic tenant resolution error: {_res_err}")
+    # URL tenant_slug validation
+    if tenant_slug and tenant_slug.strip().lower() != conn_tenant_id:
+        logger.warning(f"[SECURITY_CROSS_LEAK_PREVENTED] URL tenant '{tenant_slug}' does not match connection tenant '{conn_tenant_id}'. Dropping immediately.")
+        return {"status": "ignored", "reason": "tenant_mismatch"}
 
-        raw_push = str(data.get("pushName") or payload.get("pushName") or "").strip()
+    resolved_tenant = conn_tenant_id
+
+    # 4. VALIDASI DEDICATED VS SHARED GATEWAY:
+    # 2-way AI Commerce hanya diizinkan untuk DEDICATED connection.
+    # SHARED hanya boleh untuk notifikasi transaksional 1 arah.
+    conn_mode = str((connection.get("metadata") or {}).get("mode") or connection.get("channel_type") or "DEDICATED").upper()
+    if conn_mode == "SHARED":
+        logger.warning(f"[SECURITY_SHARED_GATEWAY] Instance '{instance_name}' is SHARED. 2-way AI Commerce not allowed. Dropping.")
+        return {"status": "ignored", "reason": "shared_gateway_inbound_not_allowed"}
+
+    # Bind tenant_id ke TenantRuntimeContext
+    from app.services.tenant_context_resolver import tenant_context_resolver
+    runtime_ctx = await tenant_context_resolver.resolve_context(resolved_tenant)
+    if not runtime_ctx:
+        logger.warning(f"[SECURITY_UNMAPPED_WHATSAPP_INSTANCE] Tenant '{resolved_tenant}' not found in tenants database. Dropping immediately.")
+        return {"status": "ignored", "reason": "tenant_not_found"}
+
+    raw_push = str(data.get("pushName") or payload.get("pushName") or "").strip()
     if raw_push.lower() in ("hijau", "user", "guest", "admin", "customer", "pelanggan", "tester", "test") or re.match(r'^[\d\+\s\-]+$', raw_push):
         sender_name = "Kakak"
     elif raw_push:
@@ -1059,52 +1118,20 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     logger.info(f"[EVOLUTION WEBHOOK] Inbound message for tenant '{resolved_tenant}' from {sender_phone} ({sender_name}): '{incoming_text}'")
 
     # ------------------------------------------------------------------------
-    # P0 ACTIVATION KEYWORD PARSER (BOONTRACK STORE ACTIVATION)
-    # Format: AKTIVASI BT-XXXX (case-insensitive, whitespace-tolerant)
+    # STORE ACTIVATION KEYWORD PARSER
     # ------------------------------------------------------------------------
     activation_match = re.search(r'AKTIVASI\s+BT-?([A-Za-z0-9]+)', incoming_text, re.IGNORECASE)
     if activation_match:
         token_suffix = activation_match.group(1).upper().strip()
         token = f"BT-{token_suffix}"
-        logger.info(f"[EVOLUTION WEBHOOK] Intercepted store activation token '{token}' from {sender_phone} on instance '{raw_instance}'")
+        logger.info(f"[EVOLUTION WEBHOOK] Store activation token '{token}' from {sender_phone} on instance '{instance_name}'")
         activation_res = await handle_store_activation_request(
             token=token,
             sender_phone=sender_phone,
-            instance_name=raw_instance or "boontrack-gateway",
+            instance_name=instance_name,
             raw_text=incoming_text
         )
         return activation_res
-
-    # ------------------------------------------------------------------------
-    # BOONTRACK-GATEWAY SHARED NOTIFICATION GATEWAY ISOLATION
-    # Dilarang mengeksekusi bot persona lama pada gateway sistem yang TIDAK terikat ke toko manapun
-    # ------------------------------------------------------------------------
-    if resolved_tenant in ("boontrack-gateway", "boontrack-holding"):
-        logger.info(f"[SHARED GATEWAY] Non-activation inbound message on boontrack-gateway from {sender_phone}: '{incoming_text}'")
-        shared_msg = (
-            "Halo! Ini adalah nomor layanan resmi verifikasi & notifikasi sistem BoonTrack Shop 🛍️\n\n"
-            "Nomor ini digunakan khusus untuk verifikasi pendaftaran toko dan pengiriman notifikasi transaksional.\n\n"
-            "Untuk bantuan atau mengelola toko Anda, silakan kunjungi https://shop.boontrack.com"
-        )
-        send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{raw_instance or 'boontrack-gateway'}"
-        headers = get_evolution_headers()
-        send_payload = {
-            "number": sender_phone,
-            "text": shared_msg,
-            "textMessage": {"text": shared_msg},
-            "options": {"delay": 500, "presence": "composing"}
-        }
-        try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                await client.post(send_url, headers=headers, json=send_payload)
-        except Exception as err:
-            logger.error(f"[SHARED GATEWAY DISPATCH ERROR] {err}")
-
-        return {
-            "status": "success",
-            "tenant": "boontrack-gateway",
-            "reply": shared_msg,
-        }
 
     # Log pesan masuk ke Supabase & Telemetry
     from app.services.telemetry_service import track_whatsapp_message
@@ -1119,8 +1146,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         media_url=media_url,
     ))
 
-    # [TENANT LOCK] Kunci sender_phone ke resolved_tenant di sesi memori
-    # agar tidak tersedot ke fallback session_router atau boontrack-shop
+    # Kunci session di memory
     try:
         from app.services.whatsapp.credentials import set_user_session
         set_user_session(sender_phone, resolved_tenant)
@@ -1135,14 +1161,34 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         sender_name=sender_name,
     ))
     reply_text = inbound_res.get("reply_text")
-
     reply_media_to_send = inbound_res.get("media_url")
 
-    # Kirim balasan via Evolution API (sendMedia jika ada gambar QRIS toko, sendText jika teks)
+    # =========================================================================
+    # 3. OUTBOUND OWNERSHIP CHAIN GUARD (P0 SECURITY MANDATE)
+    # Validasi rantai kepemilikan sebelum memanggil Evolution API outbound dispatch
+    # =========================================================================
+    conn_check_slug = (connection.get("tenant_id") or connection.get("tenant_slug") or "").strip().lower()
+    if not connection or conn_check_slug != resolved_tenant:
+        logger.error(f"[SECURITY_OUTBOUND_VIOLATION] Connection tenant '{conn_check_slug}' != command tenant '{resolved_tenant}'")
+        return {"status": "dropped", "reason": "tenant_mismatch"}
+
+    tenant_meta = runtime_ctx.metadata if runtime_ctx and runtime_ctx.metadata else {}
+    bot_paused = bool(tenant_meta.get("bot_paused"))
+    is_bot_active = bool(tenant_meta.get("is_bot_active", True))
+
+    from app.services.rotary_routing_service import rotary_routing_service
+    if rotary_routing_service.is_bot_paused_for_phone(resolved_tenant, sender_phone):
+        bot_paused = True
+
+    if bot_paused or not is_bot_active:
+        logger.info(f"[SECURITY_OUTBOUND_GUARD] Bot is paused/inactive for tenant '{resolved_tenant}' (bot_paused={bot_paused}, is_bot_active={is_bot_active}). Zero outbound dispatched.")
+        return {"status": "dropped", "reason": "bot_disabled"}
+
+    # Kirim balasan via Evolution API (sendMedia jika ada gambar, sendText jika teks)
+    target_send_instance = instance_name
     if reply_media_to_send:
         track_whatsapp_message("OUTBOUND_MEDIA", tenant_id=resolved_tenant, session_id=sender_phone, classification="outbound_gateway")
-        instance_name = raw_instance or (f"tenant_{resolved_tenant.replace('-', '_')}" if not resolved_tenant.startswith("tenant_") else resolved_tenant)
-        send_media_url = f"{EVOLUTION_BASE_URL}/message/sendMedia/{instance_name}"
+        send_media_url = f"{EVOLUTION_BASE_URL}/message/sendMedia/{target_send_instance}"
         headers = get_evolution_headers()
         is_png = "quickchart.io" in reply_media_to_send.lower() or ".png" in reply_media_to_send.lower() or "qrserver" in reply_media_to_send.lower()
         media_ext = ".png" if is_png else (".webp" if ".webp" in reply_media_to_send.lower() else ".jpg")
@@ -1159,10 +1205,10 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 res = await client.post(send_media_url, headers=headers, json=send_media_payload)
-                logger.info(f"[EVOLUTION SEND MEDIA STATUS] Dispatched to {sender_phone} via {instance_name}: {res.status_code}")
+                logger.info(f"[EVOLUTION SEND MEDIA STATUS] Dispatched to {sender_phone} via {target_send_instance}: {res.status_code}")
                 if res.status_code not in (200, 201):
                     logger.warning(f"[EVOLUTION SEND MEDIA WARNING] Fallback to sendText: {res.text[:200]}")
-                    await client.post(f"{EVOLUTION_BASE_URL}/message/sendText/{instance_name}", headers=headers, json={
+                    await client.post(f"{EVOLUTION_BASE_URL}/message/sendText/{target_send_instance}", headers=headers, json={
                         "number": sender_phone,
                         "text": reply_text,
                         "textMessage": {"text": reply_text},
@@ -1170,10 +1216,20 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
                     })
         except Exception as media_err:
             logger.error(f"[EVOLUTION SEND MEDIA ERROR] {media_err}")
+
+        # Log balasan bot (QRIS image) ke Supabase untuk Inbox Console
+        asyncio.create_task(log_to_supabase_messages(
+            sender="bot",
+            text=reply_text or "[QRIS Dinamis Dikirim]",
+            tenant_id=resolved_tenant,
+            channel="whatsapp",
+            user_phone=sender_phone,
+            user_name=sender_name,
+            media_url=reply_media_to_send,
+        ))
     elif reply_text:
         track_whatsapp_message("OUTBOUND", tenant_id=resolved_tenant, session_id=sender_phone, classification="outbound_gateway")
-        instance_name = raw_instance or (f"tenant_{resolved_tenant.replace('-', '_')}" if not resolved_tenant.startswith("tenant_") else resolved_tenant)
-        send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{instance_name}"
+        send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{target_send_instance}"
         headers = get_evolution_headers()
         send_payload = {
             "number": sender_phone,
@@ -1184,11 +1240,21 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 res = await client.post(send_url, headers=headers, json=send_payload)
-                logger.info(f"[EVOLUTION SEND STATUS] Dispatched to {sender_phone} via {instance_name}: {res.status_code}")
+                logger.info(f"[EVOLUTION SEND STATUS] Dispatched to {sender_phone} via {target_send_instance}: {res.status_code}")
                 if res.status_code not in (200, 201):
                     logger.warning(f"[EVOLUTION SEND WARNING] Response body: {res.text[:200]}")
         except Exception as send_err:
             logger.error(f"[EVOLUTION SEND ERROR] {send_err}")
+
+        # Log balasan bot (teks) ke Supabase untuk Inbox Console
+        asyncio.create_task(log_to_supabase_messages(
+            sender="bot",
+            text=reply_text,
+            tenant_id=resolved_tenant,
+            channel="whatsapp",
+            user_phone=sender_phone,
+            user_name=sender_name,
+        ))
 
     return {
         "status": "success",

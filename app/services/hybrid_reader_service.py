@@ -373,6 +373,16 @@ class HybridReaderProcessor:
                         )
                 conn.commit()
                 conn.close()
+
+                try:
+                    from app.services.order_fulfillment_service import handle_order_paid_fulfillment
+                    asyncio.create_task(handle_order_paid_fulfillment(
+                        order_id=booking_id,
+                        tenant_slug=tenant_id,
+                        agent_id="hybrid_reader"
+                    ))
+                except Exception as ful_err:
+                    logger.warning(f"[HYBRID_READER] Auto-fulfillment error: {ful_err}")
             except Exception as err:
                 logger.debug(f"[HYBRID_READER] Error marking order paid: {err}")
 

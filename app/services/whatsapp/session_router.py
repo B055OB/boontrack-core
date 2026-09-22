@@ -153,14 +153,7 @@ def resolve_dynamic_tenant_for_whatsapp(
     if clean_phone_id == "1268977686299719":
         return "__MENU__", False
 
-    try:
-        from app.services.onboarding_service import onboarding_service
-        latest_slug = onboarding_service.get_latest_commerce_tenant()
-        if latest_slug:
-            if clean_phone:
-                set_user_tenant_session(clean_phone, latest_slug)
-            return latest_slug, False
-    except Exception as e:
-        logger.warning(f"[DYNAMIC TENANT WA] Failed to query latest commerce tenant: {e}")
-
-    return "__MENU__", False
+    # ZERO-TRUST ARCHITECTURE: DILARANG KERAS fallback ke latest commerce tenant.
+    # Setiap nomor asing yang masuk tanpa session resmi toko wajib di-reject silently (__NO_TENANT__).
+    logger.info(f"[DYNAMIC TENANT WA] No tenant match for {clean_phone}. Returning __NO_TENANT__.")
+    return "__NO_TENANT__", False

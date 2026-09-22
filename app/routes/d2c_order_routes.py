@@ -242,27 +242,23 @@ async def mark_order_paid_endpoint(
     finally:
         conn.close()
 
-    # Dispatch event asinkron ke Meta CAPI
+    # Dispatch Otomasi Pasca-Bayar & Meta CAPI
     capi_dispatched = False
     try:
         asyncio.create_task(
-            send_meta_capi_purchase(
-                external_id=str(updated_order["id"]),
-                value=float(updated_order["gross_amount"]),
-                currency="IDR",
-                phone=updated_order.get("customer_phone"),
-                email=updated_order.get("customer_email"),
-                fbclid=updated_order.get("fbclid"),
-                user_id=updated_order.get("customer_phone")
+            handle_order_paid_fulfillment(
+                order_id=order_id,
+                tenant_slug=str(updated_order.get("tenant_slug") or ""),
+                agent_id=payload.agent_id if payload else None
             )
         )
         capi_dispatched = True
         logger.info(
-            f"[Meta CAPI] Dispatched Purchase event for order {order_id} "
+            f"[Auto-Fulfillment & CAPI] Dispatched fulfillment & CAPI for order {order_id} "
             f"(Value: Rp {float(updated_order['gross_amount']):,.0f}, Phone: {updated_order.get('customer_phone')})"
         )
     except Exception as capi_err:
-        logger.warning(f"[Meta CAPI Warning] Background task creation error for order {order_id}: {capi_err}")
+        logger.warning(f"[Fulfillment Warning] Background task creation error for order {order_id}: {capi_err}")
 
     # Structured observability trace for manual mark-paid
     from app.core.tracing import log_structured_event, set_trace_context
@@ -383,24 +379,20 @@ async def update_order_status_endpoint(
         }
     )
 
-    # Dispatch Meta CAPI if marked PAID
+    # Dispatch Auto-Fulfillment & Meta CAPI saat status berubah menjadi PAID
     capi_dispatched = False
     if normalized_status == "PAID" and current_status != "PAID":
         try:
             asyncio.create_task(
-                send_meta_capi_purchase(
-                    external_id=str(updated_order["id"]),
-                    value=float(updated_order["gross_amount"]),
-                    currency="IDR",
-                    phone=updated_order.get("customer_phone"),
-                    email=updated_order.get("customer_email"),
-                    fbclid=updated_order.get("fbclid"),
-                    user_id=updated_order.get("customer_phone")
+                handle_order_paid_fulfillment(
+                    order_id=order_id,
+                    tenant_slug=tenant_slug,
+                    agent_id=payload.agent_id
                 )
             )
             capi_dispatched = True
         except Exception as capi_err:
-            logger.warning(f"[Meta CAPI Warning] Error dispatching CAPI for {order_id}: {capi_err}")
+            logger.warning(f"[Fulfillment Warning] Error dispatching fulfillment for {order_id}: {capi_err}")
 
     return {
         "success": True,
@@ -501,3 +493,25 @@ def register_d2c_order_routes(app):
         app.router.add_post("/api/v1/orders/{order_id}/mark-paid", aiohttp_mark_order_paid)
     if "/v1/orders/{order_id}/mark-paid" not in existing_posts:
         app.router.add_post("/v1/orders/{order_id}/mark-paid", aiohttp_mark_order_paid)
+@d2c_router.post("/api/v1/orders/{order_id}/approve-and-deliver", summary="Approve Order & Deliver Digital Access")
+@d2c_router.post("/v1/orders/{order_id}/approve-and-deliver", summary="Approve Order & Deliver Digital Access Alias")
+async def approve_and_deliver_order_endpoint(
+    order_id: str,
+    payload: Optional[MarkPaidRequest] = None,
+):
+    """
+    Endpoint Fallback Manual: Approve & Deliver
+    1. Memvalidasi dan mengubah status pesanan ke PAID.
+    2. Mengupgrade status langganan tenant ke CHECKOUT_LITE.
+    3. Mengirimkan notifikasi dan tautan akses materi/kelas ke pembeli via WhatsApp & Supabase Inbox.
+    """
+    res = await handle_order_paid_fulfillment(
+        order_id=order_id,
+        agent_id=payload.agent_id if payload else "admin_manual"
+    )
+    if not res.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=res.get("error", "Gagal memproses persetujuan dan pengiriman akses.")
+        )
+    return res

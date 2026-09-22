@@ -103,6 +103,16 @@ async def receive_notification(
     capi_dispatched = False
     if matched_order:
         try:
+            from app.services.order_fulfillment_service import handle_order_paid_fulfillment
+            asyncio.create_task(handle_order_paid_fulfillment(
+                order_id=str(matched_order["id"]),
+                tenant_slug=resolved_tenant_id,
+                agent_id="reader_apk"
+            ))
+        except Exception as ful_err:
+            logger.warning(f"[READER_ROUTER] Auto-fulfillment error: {ful_err}")
+
+        try:
             from app.services.meta_capi_service import send_meta_capi_purchase
             await send_meta_capi_purchase(
                 order_id=matched_order["id"],
