@@ -88,6 +88,26 @@ __all__ = [
     "PaymentEventBase",
     "PaymentEventCreate",
     "PaymentEventResponse",
+    # ADR REV-1 Contracts
+    "RoleEnum",
+    "TrustedSessionContext",
+    "ActivationTokenSchema",
+    "ToolType",
+    "ToolExecutionPermission",
+    "SupportTicketState",
+    "SupportTicket",
+    "InboundRequestPayload",
 ]
+
+from app.schemas.rev1_contracts import (
+    RoleEnum,
+    TrustedSessionContext,
+    ActivationTokenSchema,
+    ToolType,
+    ToolExecutionPermission,
+    SupportTicketState,
+    SupportTicket,
+    InboundRequestPayload,
+)
 
 

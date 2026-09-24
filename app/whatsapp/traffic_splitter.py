@@ -367,9 +367,14 @@ class PlatformWebhookRouter:
         raw_msg: Dict[str, Any],
         trace: WebhookExecutionTrace,
     ) -> Dict[str, Any]:
-        trace.route_type = "PLATFORM_TRANSACTIONAL"
-        trace.target_tenant = "boontrack-platform"
-        trace.log_step("PlatformWebhookRouter.handle", f"Entered platform pipeline for phone {sender_phone}")
+        from app.whatsapp.platform_webhook_router import PlatformWebhookRouter as _NewPlatformRouter
+        return await _NewPlatformRouter.handle(
+            sender_phone=sender_phone,
+            incoming_text=incoming_text,
+            phone_number_id=phone_number_id,
+            raw_msg=raw_msg,
+            trace=trace,
+        )
 
         # =====================================================================
         # SECONDARY GUARD (Defense-in-Depth): Blokir teks kosong
