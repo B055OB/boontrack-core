@@ -1296,3 +1296,43 @@ WhatsApp Gateway diposisikan murni sebagai **Transport Infrastructure**, bukan b
      ON whatsapp_connections (tenant_id) 
      WHERE (ownership_domain = 'TENANT' AND tenant_id IS NOT NULL AND status NOT IN ('LOGGED_OUT', 'PROVISIONING_FAILED'));
      ```
+
+---
+
+## 25. WHATSAPP MULTI-PROVIDER ABSTRACTION & META WABA OWNERSHIP CONTRACT
+
+> **Architectural Status**: 🔒 **PRODUCTION CONTRACT & INVARIANT (P0 ARCHITECTURAL LOCK)**  
+> **Core Principles**:  
+> 1. *"BoonTrack Core MUST NOT couple tenant business logic to a specific WhatsApp provider."*  
+> 2. *"Meta Onboarding Creates a Connection, Not Business Authority."*
+
+### 25.1 Multi-Provider Abstraction Layer
+BoonTrack Core engine (Conversation, Catalog, Checkout, Notifications, BoonPilot) terisolasi penuh dari detail implementasi provider WhatsApp:
+* **Jalur Provider yang Didukung**:
+  - `EVOLUTION` (Unofficial / Baileys Engine): Jalur QR Code / pairing session untuk tier pemula (Starter / Solo) yang membutuhkan setup instan tanpa verifikasi dokumen legal bisnis.
+  - `META_CLOUD_API` (Official WABA / Tech Provider): Jalur resmi direct Meta Cloud API via Embedded Signup untuk tier scale (Growth / Team Scale / Enterprise).
+* **Provider Resolution Chain Wajib**:
+  `tenant_id (UUID)` → `whatsapp_connections` → `provider` → `credential_ref`  
+  *DILARANG KERAS meresolusi koneksi berdasarkan: `tenant_slug`, nomor HP, WABA Name, session name, atau AI context.*
+
+### 25.2 Strict Meta Onboarding & Ownership Boundary
+* Alur Meta Embedded Signup murni bertugas menghasilkan handshake token, `waba_id`, dan `phone_number_id`.
+* Meta onboarding yang sukses **BUKAN** berarti tenant memiliki otoritas bisnis instan di Core.
+* Backend wajib memvalidasi kepemilikan dan mengikat `phone_number_id` secara eksklusif ke `tenant_id` UUID di tabel `whatsapp_connections`.
+* `phone_number_id` adalah *Identity Provider*, bukan otoritas bisnis.
+* Dilarang keras melakukan fallback ke koneksi tenant lain saat token Meta kedaluwarsa atau lookup `phone_number_id` gagal.
+* Status koneksi invalid/expired wajib mengembalikan status `DISCONNECTED` secara terisolasi tanpa mempengaruhi tenant lain.
+
+### 25.3 Meta Provider Readiness Gate Model
+Implementasi dan ekspansi jalur Meta Tech Provider wajib melalui 10 tahapan disiplin:
+- **P0** — Business Verification (Status: VERIFIED)
+- **P1** — Meta Embedded Signup Integration (Status: ACTIVE / READY)
+- **P2** — Backend OAuth & Webhook Callback (Status: READY)
+- **P3** — WABA Ownership Binding via UUID (Status: IN PROGRESS)
+- **P4** — CoEx Verification (Status: IN PROGRESS)
+- **P5** — Tech Provider Access Verification (Status: IN PROGRESS)
+- **P6** — Tenant Isolation E2E Verification (Status: PENDING)
+- **P7** — Pilot Tenant #1: Fahami Digital (Status: STANDBY)
+- **P8** — Design Partners #2 s/d #4 Expansion (Status: PLANNED)
+- **P9** — Controlled Production Rollout (Status: PLANNED)
+
