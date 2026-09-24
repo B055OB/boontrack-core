@@ -150,19 +150,24 @@ def get_wa_credentials(
         or os.getenv("META_ACCESS_TOKEN")
         or ""
     ).strip()
-    version = os.getenv("META_GRAPH_VERSION", "v20.0")
+    version = os.getenv("META_WABA_API_VERSION") or os.getenv("META_GRAPH_VERSION") or "v26.0"
 
     clean_tenant = str(tenant_id).lower().strip() if tenant_id else "shop"
     platform_phone_id = (
-        os.getenv("PLATFORM_PHONE_NUMBER_ID")
+        os.getenv("META_WABA_PHONE_NUMBER_ID")
+        or os.getenv("PLATFORM_PHONE_NUMBER_ID")
         or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
         or os.getenv("PHONE_NUMBER_ID")
-        or ""
+        or "1365010890024026"
     ).strip()
 
     # Priority 1: Explicit overrides from webhook payload
     if phone_number_id and str(phone_number_id).strip():
         resolved_phone_id = str(phone_number_id).strip()
+
+        # Sanitize: cegah ID lama (1268977686299719) yang sudah dinonaktifkan
+        if resolved_phone_id in ("1268977686299719", ""):
+            resolved_phone_id = platform_phone_id
 
         # Guard: cegah nomor Career membalas di toko showcase / retail / shop
         if clean_tenant in ["shop", "boontrack", "boontrack-shop", "boontrack-holding", "onlineboost", "growthplus", "proscale"] and resolved_phone_id == (os.getenv("CAREER_PHONE_NUMBER_ID") or "").strip():

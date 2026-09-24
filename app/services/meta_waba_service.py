@@ -38,7 +38,7 @@ STATUS_RANK = {
 # [SAFETY GUARD] Blocklist Phone ID & nomor yang dinonaktifkan sementara.
 # Nomor resmi Shop telah diperbarui ke +6285181830080. Gunakan env META_WABA_PHONE_NUMBER_ID.
 # ---------------------------------------------------------------------------
-_DEACTIVATED_SENDER_IDS: frozenset = frozenset()
+_DEACTIVATED_SENDER_IDS: frozenset = frozenset(["1268977686299719"])
 _DEACTIVATED_RECIPIENT_PHONES: frozenset = frozenset()
 
 
@@ -69,10 +69,12 @@ class MetaGraphAPIDispatcher:
         ).strip()
 
         phone_id = (
-            os.getenv("META_WA_PHONE_NUMBER_ID")
+            os.getenv("META_WABA_PHONE_NUMBER_ID")
+            or os.getenv("META_WA_PHONE_NUMBER_ID")
+            or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
             or os.getenv("CAREER_PHONE_NUMBER_ID")
             or os.getenv("PHONE_NUMBER_ID")
-            or ""
+            or "1365010890024026"
         ).strip()
 
         # [SAFETY GUARD] Jika Phone ID yang di-resolve termasuk yang dinonaktifkan, ganti ke empty

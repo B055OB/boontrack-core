@@ -104,7 +104,8 @@ class MetaCloudApiProvider:
             phone_number_id=(
                 os.getenv("META_WABA_PHONE_NUMBER_ID")
                 or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
-                or ""
+                or os.getenv("PHONE_NUMBER_ID")
+                or "1365010890024026"
             ).strip(),
             system_user_token=(
                 os.getenv("META_SYSTEM_USER_TOKEN")

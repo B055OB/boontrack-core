@@ -36,7 +36,7 @@ from app.services.onboarding_service import onboarding_service
 class TestWebhookFailureAndIdempotency(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
-        self.platform_phone_id = str(PLATFORM_PHONE_NUMBER_ID) or "1268977686299719"
+        self.platform_phone_id = str(PLATFORM_PHONE_NUMBER_ID) or "1365010890024026"
         self.sender_phone = "6281234569999"
 
     # =========================================================================

@@ -17,14 +17,23 @@ async def dispatch_whatsapp_qris(
     total_amount: int,
     qris_image_url: str,
     wa_token: str,
-    wa_phone_number_id: str,
-    meta_graph_version: str = "v20.0"
+    wa_phone_number_id: str = "",
+    meta_graph_version: str = "v26.0"
 ) -> Dict[str, Any]:
     """Mengirim gambar QRIS dinamis dan ringkasan tagihan via WhatsApp Cloud API."""
     to_phone = sanitize_phone_number(raw_phone)
     if not to_phone:
         logger.warning(f"[WA Dispatcher] Nomor telepon tidak valid: {raw_phone}")
         return {"success": False, "reason": "invalid_phone"}
+
+    target_phone_id = (
+        wa_phone_number_id
+        or os.getenv("META_WABA_PHONE_NUMBER_ID")
+        or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+        or "1365010890024026"
+    )
+    if target_phone_id == "1268977686299719":
+        target_phone_id = os.getenv("META_WABA_PHONE_NUMBER_ID") or "1365010890024026"
 
     amount_fmt = f"{total_amount:,.0f}".replace(",", ".")
     caption_text = (
@@ -42,7 +51,8 @@ async def dispatch_whatsapp_qris(
         f"_Akses file/materi digital akan otomatis dikirim ke chat ini detik setelah pembayaran berhasil._"
     )
 
-    url = f"https://graph.facebook.com/{meta_graph_version}/{wa_phone_number_id}/messages"
+    resolved_version = os.getenv("META_WABA_API_VERSION") or os.getenv("META_GRAPH_VERSION") or meta_graph_version
+    url = f"https://graph.facebook.com/{resolved_version}/{target_phone_id}/messages"
     headers = {
         "Authorization": f"Bearer {wa_token}",
         "Content-Type": "application/json"

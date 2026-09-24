@@ -8,7 +8,12 @@ logger = logging.getLogger(__name__)
 
 # Konfigurasi Meta Graph API via Environment Variable
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
-PHONE_NUMBER_ID = os.getenv("ADUAN_SANDBOX_PHONE_ID") or os.getenv("PHONE_NUMBER_ID") or ""
+PHONE_NUMBER_ID = (
+    os.getenv("META_WABA_PHONE_NUMBER_ID")
+    or os.getenv("ADUAN_SANDBOX_PHONE_ID")
+    or os.getenv("PHONE_NUMBER_ID")
+    or "1365010890024026"
+)
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", os.getenv("VERIFY_TOKEN", "boontrack_verify_secret"))
 
 
@@ -20,7 +25,12 @@ async def send_whatsapp_message(to_number: str, message_text: str):
         logger.error("[WHATSAPP OUTBOUND] WHATSAPP_TOKEN belum diset di Environment Variables!")
         return None
 
-    phone_id = os.getenv("ADUAN_SANDBOX_PHONE_ID") or os.getenv("PHONE_NUMBER_ID") or ""
+    phone_id = (
+        os.getenv("META_WABA_PHONE_NUMBER_ID")
+        or os.getenv("ADUAN_SANDBOX_PHONE_ID")
+        or os.getenv("PHONE_NUMBER_ID")
+        or "1365010890024026"
+    )
     if not phone_id:
         logger.error("[WHATSAPP OUTBOUND] PHONE_NUMBER_ID belum diset!")
         return None

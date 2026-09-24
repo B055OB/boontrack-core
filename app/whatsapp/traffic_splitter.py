@@ -46,7 +46,7 @@ PLATFORM_PHONE_NUMBER_ID = (
     or os.getenv("PLATFORM_PHONE_NUMBER_ID")
     or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
     or os.getenv("PHONE_NUMBER_ID")
-    or ""
+    or "1365010890024026"
 ).strip()
 
 GLOBAL_FALLBACK_PLATFORM = (
@@ -1088,7 +1088,7 @@ class TrafficSplitter:
                 incoming_text = text_field.strip()
         if not sender_phone:
             sender_phone = str(payload.get("from") or payload.get("from_phone") or "6281234567890").strip()
-        if not incoming_phone_id:
+        if not incoming_phone_id or incoming_phone_id == "1268977686299719":
             incoming_phone_id = str(payload.get("phone_id") or PLATFORM_PHONE_NUMBER_ID).strip()
 
         contacts = value.get("contacts") or [{}]
@@ -1185,12 +1185,12 @@ class TrafficSplitter:
         # =====================================================================
         # Hanya dijangkau jika: ada pesan, wamid unik, msg_type diizinkan, dan teks tidak kosong.
         platform_id = str(PLATFORM_PHONE_NUMBER_ID).strip()
-        if incoming_phone_id and incoming_phone_id == platform_id:
+        if incoming_phone_id and incoming_phone_id in (platform_id, "1268977686299719"):
             trace.log_step("TrafficSplitter.Route", f"Matched PLATFORM_PHONE_NUMBER_ID ({incoming_phone_id}) -> PlatformWebhookRouter")
             result = await PlatformWebhookRouter.handle(
                 sender_phone=sender_phone,
                 incoming_text=incoming_text,
-                phone_number_id=incoming_phone_id,
+                phone_number_id=platform_id,
                 raw_msg=first_msg,
                 trace=trace,
             )

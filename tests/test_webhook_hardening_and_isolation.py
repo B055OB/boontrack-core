@@ -31,7 +31,7 @@ from app.services.tenant_context_resolver import TenantRuntimeContext
 class TestWebhookHardeningAndIsolation(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
-        self.platform_phone_id = str(PLATFORM_PHONE_NUMBER_ID) or "1268977686299719"
+        self.platform_phone_id = str(PLATFORM_PHONE_NUMBER_ID) or "1365010890024026"
         self.tenant_a_phone_id = "888111222333"
         self.tenant_b_phone_id = "999444555666"
 

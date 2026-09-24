@@ -250,7 +250,7 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
 
         test_cases = [
             ("628111222333", "#reset", "1340866379104241"),   # Career production phone ID
-            ("628111222333", "reset", "1268977686299719"),    # Om Budi production phone ID
+            ("628111222333", "reset", "1365010890024026"),    # Platform production phone ID
             ("628111222333", "menu utama", "1306479742542883"),# Sandbox phone ID
         ]
 
@@ -310,7 +310,7 @@ class TestWhatsAppBotRouterAndDynamicPayment(unittest.TestCase):
         """Memvalidasi pilihan '4' di nomor gateway mengunci session ke OnlineBoost dan memanggil send_whatsapp_tenant_catalog."""
         phone = "628999888777"
         clean = normalize_phone_number(phone)
-        gateway_phone_id = "1268977686299719"
+        gateway_phone_id = "1365010890024026"
 
         # 1. Kirim #reset -> State menjadi AWAITING_PORTAL_CHOICE
         resp_reset = self.client.post("/api/v1/whatsapp/webhook", json=_make_wa_payload(phone, "#reset", phone_id=gateway_phone_id))
