@@ -5,7 +5,7 @@ Deterministic Traffic Splitter & Webhook Isolation Gateway (P0 Hardening Gate).
 
 Separates Meta WhatsApp Webhook traffic strictly into two isolated pipelines:
 1. PLATFORM_TRANSACTIONAL (PlatformWebhookRouter):
-   - Handles official platform WABA traffic (+6285139555449 / PLATFORM_PHONE_NUMBER_ID).
+   - Handles official platform WABA traffic (+6285181830080 / PLATFORM_PHONE_NUMBER_ID via env META_WABA_PHONE_NUMBER_ID).
    - High-Priority Activation Interceptor (5-parameter authorization).
    - Early return 200 OK (halts pipeline immediately before conversation engine/CS queue).
    - Platform transactional alerts / payment confirmations.
@@ -42,10 +42,11 @@ logger = logging.getLogger("WABA_TRAFFIC_SPLITTER")
 # Platform Configuration
 # ---------------------------------------------------------------------------
 PLATFORM_PHONE_NUMBER_ID = (
-    os.getenv("PLATFORM_PHONE_NUMBER_ID")
+    os.getenv("META_WABA_PHONE_NUMBER_ID")
+    or os.getenv("PLATFORM_PHONE_NUMBER_ID")
     or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
     or os.getenv("PHONE_NUMBER_ID")
-    or "1268977686299719"
+    or ""
 ).strip()
 
 GLOBAL_FALLBACK_PLATFORM = (
@@ -350,7 +351,7 @@ class WebhookExecutionTrace:
 # ---------------------------------------------------------------------------
 class PlatformWebhookRouter:
     """
-    Router khusus untuk nomor Platform WABA (+6285139555449).
+    Router khusus untuk nomor Platform WABA (+6285181830080).
     Hanya melayani aktivasi sistem dan transactional alerts/payment notification.
     """
 
@@ -894,7 +895,7 @@ class TenantWebhookRouter:
             trace.log_step("TenantBoundaryGuard", "Platform activation keyword rejected on tenant number")
             tenant_reject_msg = (
                 "Pesan aktivasi akun toko BoonTrack hanya dapat diverifikasi melalui "
-                "nomor resmi platform BoonTrack (+62 851-3955-5449). "
+                "nomor resmi platform BoonTrack (+62 851-8183-0080). "
                 "Silakan kirimkan kode verifikasi Anda ke nomor resmi platform."
             )
             try:
@@ -1184,7 +1185,7 @@ class TrafficSplitter:
         # =====================================================================
         # Hanya dijangkau jika: ada pesan, wamid unik, msg_type diizinkan, dan teks tidak kosong.
         platform_id = str(PLATFORM_PHONE_NUMBER_ID).strip()
-        if incoming_phone_id in (platform_id, "1268977686299719"):
+        if incoming_phone_id and incoming_phone_id == platform_id:
             trace.log_step("TrafficSplitter.Route", f"Matched PLATFORM_PHONE_NUMBER_ID ({incoming_phone_id}) -> PlatformWebhookRouter")
             result = await PlatformWebhookRouter.handle(
                 sender_phone=sender_phone,

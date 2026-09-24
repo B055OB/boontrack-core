@@ -36,7 +36,7 @@ STATUS_RANK = {
 
 # ---------------------------------------------------------------------------
 # [SAFETY GUARD] Blocklist Phone ID & nomor yang dinonaktifkan sementara.
-# Nomor resmi Shop +6285139555449 (Phone ID: 1268977686299719) telah diaktifkan kembali.
+# Nomor resmi Shop telah diperbarui ke +6285181830080. Gunakan env META_WABA_PHONE_NUMBER_ID.
 # ---------------------------------------------------------------------------
 _DEACTIVATED_SENDER_IDS: frozenset = frozenset()
 _DEACTIVATED_RECIPIENT_PHONES: frozenset = frozenset()
@@ -54,8 +54,8 @@ def _waba_recipient_is_blocked(phone: str) -> bool:
 class MetaGraphAPIDispatcher:
     """Dispatcher for direct Meta WhatsApp Business Cloud API (Graph API)."""
 
-    def __init__(self, default_version: str = "v20.0"):
-        self.version = os.getenv("META_GRAPH_VERSION", default_version)
+    def __init__(self, default_version: str = "v26.0"):
+        self.version = os.getenv("META_WABA_API_VERSION") or os.getenv("META_GRAPH_VERSION", default_version)
         self.base_url = f"https://graph.facebook.com/{self.version}"
 
     def get_default_credentials(self, tenant_id: str = "boontrack-career") -> tuple[str, str]:

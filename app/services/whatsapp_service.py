@@ -73,6 +73,11 @@ from app.services.whatsapp import (  # noqa: F401, F403
     normalize_activation_code,
     find_tenant_by_activation_code,
     ALLOWED_PENDING_STATUSES,
+    # meta_cloud_api_provider (Multi-Provider Abstraction §25.1)
+    MetaCloudApiProvider,
+    MetaCloudApiConfig,
+    get_active_whatsapp_provider,
+    dispatch_text_via_active_provider,
 )
 
 
@@ -132,4 +137,9 @@ __all__ = [
     "normalize_activation_code",
     "find_tenant_by_activation_code",
     "ALLOWED_PENDING_STATUSES",
+    # meta_cloud_api_provider
+    "MetaCloudApiProvider",
+    "MetaCloudApiConfig",
+    "get_active_whatsapp_provider",
+    "dispatch_text_via_active_provider",
 ]

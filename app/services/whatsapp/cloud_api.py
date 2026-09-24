@@ -99,7 +99,8 @@ async def log_to_supabase_messages(
             content = "[Gambar]"
 
         raw_tenant = str(tenant_id or "shop").strip().lower()
-        if raw_tenant in ["shop", "boontrack-shop", "boontrack_shop", "boontrack-holding", "1268977686299719"]:
+        _platform_id = os.getenv("META_WABA_PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID") or ""
+        if raw_tenant in ["shop", "boontrack-shop", "boontrack_shop", "boontrack-holding"] or (raw_tenant == _platform_id and _platform_id):
             clean_tenant = "boontrack-shop"
         elif raw_tenant in ["aduan", "aduan-sandbox", "aduan_sandbox", "1306479742542883"]:
             clean_tenant = "aduan-sandbox"

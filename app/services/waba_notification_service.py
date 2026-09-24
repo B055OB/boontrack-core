@@ -38,11 +38,12 @@ WABA_ACCESS_TOKEN: str = (
 ).strip()
 
 WABA_PHONE_NUMBER_ID: str = (
-    os.getenv("WABA_PHONE_NUMBER_ID")
+    os.getenv("META_WABA_PHONE_NUMBER_ID")
+    or os.getenv("WABA_PHONE_NUMBER_ID")
     or os.getenv("META_WA_PHONE_NUMBER_ID")
     or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
     or os.getenv("PHONE_NUMBER_ID")
-    or "1268977686299719"
+    or ""
 ).strip()
 
 SUPER_ADMIN_WA_PHONE: str = os.getenv("SUPER_ADMIN_WA_PHONE", "").strip()
@@ -52,7 +53,7 @@ META_BASE_URL: str = f"https://graph.facebook.com/{META_GRAPH_VERSION}"
 
 # ---------------------------------------------------------------------------
 # [SAFETY GUARD] Blocklist nomor/ID yang dinonaktifkan sementara
-# Nomor resmi Shop +6285139555449 (Phone ID: 1268977686299719) telah diaktifkan kembali.
+# Nomor resmi Shop telah diperbarui ke +6285181830080. Gunakan env META_WABA_PHONE_NUMBER_ID.
 # ---------------------------------------------------------------------------
 _DEACTIVATED_PHONE_IDS: frozenset = frozenset()
 _DEACTIVATED_PHONES: frozenset = frozenset()

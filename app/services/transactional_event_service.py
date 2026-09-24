@@ -13,7 +13,7 @@ WA_ENGINE_API_KEY = os.getenv("WA_ENGINE_API_KEY", "boontrack_secret_engine_key_
 
 
 async def send_whatsapp_message(tenant_slug: str, recipient_phone: str, message_text: str):
-    """Mengirim pesan notifikasi sistem WA via Meta Cloud API resmi WABA (+6285139555449)."""
+    """Mengirim pesan notifikasi sistem WA via Meta Cloud API resmi WABA (+6285181830080)."""
     clean_phone = "".join(filter(str.isdigit, recipient_phone))
     if clean_phone.startswith("0"):
         clean_phone = "62" + clean_phone[1:]

@@ -63,7 +63,12 @@ VERIFY_TOKENS = [
 
 
 # --- 2. Konfigurasi Phone Number ID Tenant ---
-BOONTRACK_GATEWAY_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID") or "1268977686299719"
+BOONTRACK_GATEWAY_PHONE_NUMBER_ID = (
+    os.getenv("META_WABA_PHONE_NUMBER_ID")
+    or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    or os.getenv("PHONE_NUMBER_ID")
+    or ""
+).strip()
 CAREER_PHONE_NUMBER_ID = os.getenv("CAREER_PHONE_NUMBER_ID", "1340866379104241")        # Produksi Career Assistant
 ADUAN_SANDBOX_PHONE_ID = os.getenv("ADUAN_SANDBOX_PHONE_ID", "1306479742542883")        # Sandbox / Uji Coba Diskominfo Aduan
 
@@ -765,7 +770,7 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 # 2. BoonTrack Platform Gateway Handling (System Transaksional / Helpdesk)
                 elif (
                     resolved_ctx.slug in ("boontrack-holding", "boontrack-shop", "shop", "boontrack-gateway")
-                    or phone_id in (BOONTRACK_GATEWAY_PHONE_NUMBER_ID, "1268977686299719")
+                    or (BOONTRACK_GATEWAY_PHONE_NUMBER_ID and phone_id == BOONTRACK_GATEWAY_PHONE_NUMBER_ID)
                 ):
                     system_reply = (
                         "Halo! Terima kasih telah menghubungi WhatsApp Resmi *BoonTrack Core Platform* 🛍️\n\n"

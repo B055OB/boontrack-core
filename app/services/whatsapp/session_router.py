@@ -150,7 +150,8 @@ def resolve_dynamic_tenant_for_whatsapp(
         logger.info(f"[DYNAMIC TENANT WA] General greeting/menu '{text_lower}' from {clean_phone} -> dispatching guidance menu (__MENU__)")
         return "__MENU__", False
 
-    if clean_phone_id == "1268977686299719":
+    from app.whatsapp.traffic_splitter import PLATFORM_PHONE_NUMBER_ID as _PLATFORM_PHONE_ID
+    if _PLATFORM_PHONE_ID and clean_phone_id == _PLATFORM_PHONE_ID:
         return "__MENU__", False
 
     # ZERO-TRUST ARCHITECTURE: DILARANG KERAS fallback ke latest commerce tenant.

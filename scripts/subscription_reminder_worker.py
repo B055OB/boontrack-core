@@ -11,8 +11,8 @@ Kepatuhan Kontrak ARCHITECTURE.md:
     PRO_SCALE     : Rp 299.000 / bln (Ads Performance, Trial 7 Hari)
     ENTERPRISE    : Rp 499.000 / bln (Team Scale)
 - Bab 13.1: Domain Authority WABA Resmi Platform (PLATFORM_TRANSACTIONAL via Meta Cloud API):
-    PLATFORM_PHONE_NUMBER_ID: 1268977686299719
-    Nomor Resmi Platform: 0851-3955-5449 / +6285139555449
+    PLATFORM_PHONE_NUMBER_ID: dikonfigurasi via env META_WABA_PHONE_NUMBER_ID
+    Nomor Resmi Platform: 0851-8183-0080 / +6285181830080
     Terisolasi mutlak dari percakapan bot/katalog/CS toko merchant.
 - Bab 13.2 & 13.3: Strict Idempotency & Observability Logging (Structured JSON).
 - Bab 16: Computational Division (Heavy compute/scheduled worker berada di backend Railway boontrack-core).
@@ -72,9 +72,15 @@ logger = logging.getLogger("SUBSCRIPTION_REMINDER_WORKER")
 # CONSTANTS & CONTRACTS (ARCHITECTURE.md)
 # ---------------------------------------------------------------------------
 
-PLATFORM_PHONE_NUMBER_ID = os.getenv("PLATFORM_PHONE_NUMBER_ID") or "1268977686299719"
-PLATFORM_OFFICIAL_PHONE = "0851-3955-5449"
-PLATFORM_OFFICIAL_PHONE_E164 = "6285139555449"
+# Phone Number ID wajib dikonfigurasi via env META_WABA_PHONE_NUMBER_ID (tanpa hardcoded fallback ID lama)
+PLATFORM_PHONE_NUMBER_ID = (
+    os.getenv("META_WABA_PHONE_NUMBER_ID")
+    or os.getenv("PLATFORM_PHONE_NUMBER_ID")
+    or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    or ""
+).strip()
+PLATFORM_OFFICIAL_PHONE = "0851-8183-0080"
+PLATFORM_OFFICIAL_PHONE_E164 = "6285181830080"
 
 CANONICAL_TIERS = {
     "CHECKOUT_LITE": {"label": "Checkout Lite", "price": 59000},
@@ -230,7 +236,7 @@ async def dispatch_whatsapp_h1(
 ) -> Dict[str, Any]:
     """
     Kirim pesan WhatsApp WABA H-1 via Official Meta Cloud API.
-    Mematuhi Bab 13.1 (Phone Number ID 1268977686299719).
+    Mematuhi Bab 13.1 (Phone Number ID via env META_WABA_PHONE_NUMBER_ID).
     """
     clean_phone = normalize_phone_number(phone)
     if not clean_phone:

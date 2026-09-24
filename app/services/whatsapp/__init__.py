@@ -82,6 +82,15 @@ from app.services.whatsapp.activation import (
     ALLOWED_PENDING_STATUSES,
 )
 
+# meta_cloud_api_provider (Multi-Provider Abstraction §25.1)
+from app.services.whatsapp.meta_cloud_api_provider import (
+    MetaCloudApiProvider,
+    MetaCloudApiConfig,
+    get_active_whatsapp_provider,
+    dispatch_text_via_active_provider,
+)
+
+
 
 
 __all__ = [
@@ -140,5 +149,11 @@ __all__ = [
     "normalize_activation_code",
     "find_tenant_by_activation_code",
     "ALLOWED_PENDING_STATUSES",
+    # meta_cloud_api_provider (Multi-Provider Abstraction §25.1)
+    "MetaCloudApiProvider",
+    "MetaCloudApiConfig",
+    "get_active_whatsapp_provider",
+    "dispatch_text_via_active_provider",
 ]
+
 
