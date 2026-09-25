@@ -96,6 +96,56 @@ class PlatformAssistantEngine:
             "Ada yang bisa kami bantu seputar solusi orkestrasi bisnis, aktivasi akun, integrasi WhatsApp Business API, atau layanan BoonTrack Shop hari ini?"
         )
 
+    def _format_kelasbos_consulting_reply(self, data: Dict[str, Any]) -> str:
+        """
+        Formats response with Fahami Digital Concierge persona:
+        - Tone: Profesional, direct, edukatif, orientasi konsultasi bisnis.
+        - Strict Guard: Fixed prices (no modification), only AVAILABLE slots.
+        """
+        services = data.get("services", [])
+        slots = data.get("available_slots", [])
+        booking_url = data.get("booking_url", "https://shop.boontrack.com/kelasbos")
+
+        lines = [
+            "Halo! Saya *Concierge Konsultasi Bisnis Kelas Bos (Fahami Digital)*.",
+            "",
+            "Kami mendampingi pelaku bisnis, UKM, dan brand untuk scale-up melalui perbaikan funnel konversi, sistem automasi WhatsApp, dan strategi paid traffic berbasis data nyata.",
+            "",
+            "📋 *Paket Layanan Konsultasi & Mentoring Resmi:*",
+        ]
+
+        for idx, s in enumerate(services, 1):
+            price_val = int(s.get("price") or s.get("promo_price") or 0)
+            cost_str = f"Rp {price_val:,}".replace(",", ".")
+            title = s.get("title") or s.get("name")
+            desc = s.get("description", "")
+            lines.append(f"{idx}. *{title}* — {cost_str}")
+            if desc:
+                lines.append(f"   _{desc[:95]}..._" if len(desc) > 95 else f"   _{desc}_")
+
+        lines.append("")
+        lines.append("🗓️ *Jadwal Sesi Tersedia (Status: AVAILABLE):*")
+        
+        if slots:
+            # Show up to 4 available upcoming slots
+            for slot in slots[:4]:
+                s_date = str(slot.get("slot_date"))
+                s_time = slot.get("start_time")
+                lines.append(f"• Tanggal {s_date}, Pukul {s_time} WIB (Tersedia)")
+        else:
+            lines.append("• Slot konsultasi minggu ini dapat dipilih langsung melalui kalender etalase.")
+
+        lines.append("")
+        lines.append("🔒 *Alur Pemesanan & Penguncian Slot:*")
+        lines.append("1. Kunjungi etalase resmi:")
+        lines.append(f"   👉 {booking_url}")
+        lines.append("2. Pilih paket dan tentukan tanggal & jam sesi yang masih AVAILABLE.")
+        lines.append("3. Lengkapi formulir & selesaikan pembayaran QRIS untuk mengunci slot (BOOKED).")
+        lines.append("")
+        lines.append("_Catatan: Seluruh tarif layanan bersifat tetap sesuai katalog resmi dan slot sesi dikunci otomatis setelah verifikasi pembayaran._")
+
+        return "\n".join(lines).strip()
+
     async def generate_response(
         self,
         user_text: str,
@@ -112,12 +162,31 @@ class PlatformAssistantEngine:
 
         reply_body = ""
 
+        # Intent 0: Kelas Bos / Business Consulting Inquiry (Tenant Concierge)
+        kelasbos_keywords = [
+            "kelasbos", "kelas bos", "fahami", "fahami digital", "konsultasi bisnis",
+            "audit funnel", "audit bisnis", "mentoring bisnis", "jadwal konsultasi",
+            "booking kelas", "booking sesi", "scale up bisnis"
+        ]
+        is_kelasbos_context = (
+            any(kw in lower_text for kw in kelasbos_keywords) or
+            context.metadata.get("tenant_slug") == "kelasbos"
+        )
+        if is_kelasbos_context:
+            consulting_data = execute_public_tool(
+                "get_tenant_consulting_catalog_and_slots",
+                context=context,
+                tenant_slug="kelasbos"
+            )
+            reply_body = self._format_kelasbos_consulting_reply(consulting_data)
         # Intent 1: Catalog & Solutions Inquiry
         catalog_keywords = [
             "katalog", "solusi", "layanan", "fitur", "produk", "pos", "iot",
             "doorlock", "shop", "waba", "whatsapp", "paket", "harga", "kelebihan"
         ]
-        if any(kw in lower_text for kw in catalog_keywords):
+        if is_kelasbos_context:
+            pass  # Already handled above
+        elif any(kw in lower_text for kw in catalog_keywords):
             catalog_data = execute_public_tool("get_public_solution_catalog", context=context)
             reply_body = self._format_catalog_reply(catalog_data)
 

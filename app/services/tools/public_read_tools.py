@@ -250,7 +250,85 @@ def search_public_jobs(keyword: str = "") -> Dict[str, Any]:
 # 3. Tool Permissions Registry & Gateway Dispatcher
 # =============================================================================
 
+
+def get_tenant_consulting_catalog_and_slots(tenant_slug: str = "kelasbos") -> Dict[str, Any]:
+    """
+    Mengambil katalog layanan konsultasi dan jadwal sesi ketersediaan AVAILABLE
+    untuk tenant konsultasi/edukasi bisnis (misal: Kelas Bos / Fahami Digital).
+    Menjamin strict guard: Hanya mengembalikan slot yang berstatus AVAILABLE.
+    """
+    logger.info(f"[PUBLIC_TOOL] Executing get_tenant_consulting_catalog_and_slots for '{tenant_slug}'")
+    clean_slug = (tenant_slug or "kelasbos").strip().lower()
+    
+    from app.services.booking_service import booking_engine
+    available_slots = booking_engine.get_available_slots(clean_slug)
+
+    # Ambil produk resmi dari database
+    services = []
+    try:
+        conn = booking_engine._get_connection()
+        import psycopg2.extras
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, title, slug, description, price, promo_price, category, product_type
+                FROM public.products
+                WHERE is_available = true
+                  AND (tenant_id = (SELECT id::text FROM public.tenants WHERE slug = %s)
+                       OR tenant_id = %s)
+                ORDER BY price ASC;
+            """, (clean_slug, clean_slug))
+            services = [dict(r) for r in cur.fetchall()]
+        conn.close()
+    except Exception as e:
+        logger.warning(f"[PUBLIC_TOOL] Could not fetch products from DB: {e}")
+
+    # Fallback snapshot jika DB fetch kosong
+    if not services:
+        services = [
+            {
+                "title": "Konsultasi Privat 1-on-1 Scale-Up Bisnis (60 Menit)",
+                "price": 499000,
+                "promo_price": 499000,
+                "description": "Sesi konsultasi intensif bedah model bisnis, funnel konversi, dan automasi WhatsApp."
+            },
+            {
+                "title": "Audit Funnel & Sistem Otomasi Bisnis (Full Diagnostic)",
+                "price": 990000,
+                "promo_price": 990000,
+                "description": "Audit komprehensif seluruh funnel penjualan, tracking iklan (CAPI/Pixel), flow CS WhatsApp."
+            },
+            {
+                "title": "Intensive Business Mentoring & Workshop (4 Minggu)",
+                "price": 2490000,
+                "promo_price": 2490000,
+                "description": "Program pendampingan intensif 4 pekan validasi penawaran, paid traffic strategy, closing WhatsApp."
+            }
+        ]
+
+    return {
+        "status": "success",
+        "tenant_slug": clean_slug,
+        "persona_name": "Fahami Digital Concierge (Kelas Bos)",
+        "tone": "Profesional, direct, edukatif, orientasi konsultasi bisnis",
+        "services": services,
+        "available_slots": available_slots,
+        "booking_url": f"https://shop.boontrack.com/{clean_slug}",
+        "guardrails": {
+            "strict_fixed_pricing": True,
+            "no_price_modification": True,
+            "available_slots_only": True
+        }
+    }
+
+
 PUBLIC_TOOL_REGISTRY: Dict[str, ToolExecutionPermission] = {
+    "get_tenant_consulting_catalog_and_slots": ToolExecutionPermission(
+        tool_name="get_tenant_consulting_catalog_and_slots",
+        tool_type=ToolType.READ,
+        allowed_roles=PUBLIC_ASSISTANT_ALLOWED,
+        requires_tenant_scope=False,
+    ),
+
     "get_public_solution_catalog": ToolExecutionPermission(
         tool_name="get_public_solution_catalog",
         tool_type=ToolType.READ,
@@ -272,6 +350,8 @@ PUBLIC_TOOL_REGISTRY: Dict[str, ToolExecutionPermission] = {
 }
 
 PUBLIC_TOOL_FUNCTIONS: Dict[str, Callable[..., Any]] = {
+    "get_tenant_consulting_catalog_and_slots": get_tenant_consulting_catalog_and_slots,
+
     "get_public_solution_catalog": get_public_solution_catalog,
     "check_shipping_rates": check_shipping_rates,
     "search_public_jobs": search_public_jobs,
