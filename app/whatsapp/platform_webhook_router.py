@@ -1,6 +1,6 @@
 """app/whatsapp/platform_webhook_router.py
 ----------------------------------------
-Platform Webhook Router for official WABA account (+62 851-8183-0080 / Phone Number ID 1365010890024026).
+Platform Webhook Router for official WABA account (+62 851-8183-0080).
 
 ADR REV-1 Compliant 5-Lane Pipeline:
 1. Jalur 1 — Compliance Guard (Meta WABA Opt-Out Policy: STOP/BERHENTI/UNSUBSCRIBE) -> Zero LLM call, early return.

@@ -1,6 +1,12 @@
+# Environment & Secrets
 .env
+.env.local
 .env.*
 !.env.example
+scripts/tmp_*
+*.pem
+*.key
+
 __pycache__/
 *.pyc
 .vscode/

@@ -13,9 +13,12 @@ Acceptance Criteria:
 """
 
 import asyncio
+import os
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from uuid import UUID, uuid4
+
+DEFAULT_TEST_PHONE_ID = os.getenv("META_WABA_PHONE_NUMBER_ID", "test_secret_placeholder_phone_id")
 
 from app.schemas.rev1_contracts import (
     RoleEnum,
@@ -87,7 +90,7 @@ async def test_lane_1_compliance_opt_out(keyword):
     seketika dengan pesan konfirmasi opt-out resmi tanpa memanggil AI (zero LLM call).
     """
     sender = "6285181830001"
-    phone_id = "1365010890024026"
+    phone_id = DEFAULT_TEST_PHONE_ID
     trace = WebhookExecutionTrace("msg_optout", phone_id, sender, keyword)
 
     with patch.object(platform_assistant_engine, "generate_response", new_callable=AsyncMock) as mock_llm:
@@ -126,7 +129,7 @@ async def test_lane_2_deterministic_activation_success():
     melalui Onboarding / DB Service tanpa pernah masuk ke LLM context window.
     """
     sender = "6285181830002"
-    phone_id = "1365010890024026"
+    phone_id = DEFAULT_TEST_PHONE_ID
     text = "AKTIVASI BT-9911"
     trace = WebhookExecutionTrace("msg_act", phone_id, sender, text)
 
@@ -174,7 +177,7 @@ async def test_lane_2_deterministic_activation_malformed_rejected():
     dan DITOLAK seketika (zero LLM leak).
     """
     sender = "6285181830003"
-    phone_id = "1365010890024026"
+    phone_id = DEFAULT_TEST_PHONE_ID
     malformed_text = "AKTIVASI 123456"
     trace = WebhookExecutionTrace("msg_malformed", phone_id, sender, malformed_text)
 
@@ -210,7 +213,7 @@ async def test_lane_3_human_handover_escalation(escalation_text):
     Kata kunci eskalasi memicu transisi tiket ke IN_PROGRESS dan membisukan AI.
     """
     sender = "6285181830004"
-    phone_id = "1365010890024026"
+    phone_id = DEFAULT_TEST_PHONE_ID
     trace = WebhookExecutionTrace("msg_handover", phone_id, sender, escalation_text)
 
     with patch.object(platform_assistant_engine, "generate_response", new_callable=AsyncMock) as mock_llm:
@@ -281,7 +284,7 @@ async def test_lane_4_rate_limit_fail_closed_on_redis_outage():
     mencatat audit log SECURITY_FAIL_CLOSED_REDIS_ERROR, dan dilarang bypass ke AI.
     """
     sender = "6285181830006"
-    phone_id = "1365010890024026"
+    phone_id = DEFAULT_TEST_PHONE_ID
     trace = WebhookExecutionTrace("msg_redis_down", phone_id, sender, "Informasi produk")
 
     # Simulate Redis outage
@@ -314,7 +317,7 @@ async def test_lane_4_quota_exhausted_rejects_with_429():
     dan menolak permintaan (early return, zero LLM).
     """
     sender = "6285181830007"
-    phone_id = "1365010890024026"
+    phone_id = DEFAULT_TEST_PHONE_ID
     trace = WebhookExecutionTrace("msg_quota_exceeded", phone_id, sender, "Cek katalog")
 
     # Initialize rate limiter with 0 quota
@@ -351,7 +354,7 @@ async def test_lane_5_conversational_greeting_with_meta_footer():
     'Ketik 'BANTUAN' untuk berbicara langsung dengan tim representatif kami.'
     """
     sender = "6285181830008"
-    phone_id = "1365010890024026"
+    phone_id = DEFAULT_TEST_PHONE_ID
     trace = WebhookExecutionTrace("msg_greet", phone_id, sender, "Halo selamat pagi")
 
     with patch("app.whatsapp.platform_webhook_router.send_whatsapp_text", new_callable=AsyncMock) as mock_send_wa:
@@ -503,12 +506,12 @@ async def test_e2e_traffic_splitter_platform_routing():
                 "value": {
                     "messaging_product": "whatsapp",
                     "metadata": {
-                        "phone_number_id": "1365010890024026",
+                        "phone_number_id": PLATFORM_PHONE_NUMBER_ID,
                     },
                     "contacts": [{"profile": {"name": "Pelanggan"}, "wa_id": "6285181830099"}],
                     "messages": [{
                         "from": "6285181830099",
-                        "id": "wamid.OPT_OUT_E2E",
+                        "id": "wamid.test_secret_placeholder_msg_id",
                         "type": "text",
                         "text": {"body": "STOP"},
                     }],
@@ -610,7 +613,7 @@ async def test_assistant_engine_jobs_intent():
 async def test_router_empty_text_secondary_guard():
     """Router memblokir pesan dengan teks kosong / spasi."""
     sender = "6285181830088"
-    phone_id = "1365010890024026"
+    phone_id = DEFAULT_TEST_PHONE_ID
     trace = WebhookExecutionTrace("msg_empty", phone_id, sender, "   ")
 
     res = await PlatformWebhookRouter.handle(
@@ -628,7 +631,7 @@ async def test_router_empty_text_secondary_guard():
 async def test_router_activation_token_not_found():
     """Router menolak kode aktivasi yang tidak ada di pendaftaran."""
     sender = "6285181830077"
-    phone_id = "1365010890024026"
+    phone_id = DEFAULT_TEST_PHONE_ID
     text = "AKTIVASI BT-0000"
 
     with patch("app.whatsapp.platform_webhook_router.send_whatsapp_text", new_callable=AsyncMock) as mock_send:
@@ -648,7 +651,7 @@ async def test_router_activation_token_not_found():
 async def test_router_activation_idempotency_hit():
     """Router mengembalikan respons idempotency jika nomor sudah aktif."""
     sender = "6285181830066"
-    phone_id = "1365010890024026"
+    phone_id = DEFAULT_TEST_PHONE_ID
     text = "AKTIVASI BT-5555"
 
     from app.services.onboarding_service import onboarding_service
