@@ -108,166 +108,268 @@ Jika merchant atau pengguna baru bingung cara memulai, arahkan mereka ke asisten
 # BoonPilot Group Brain — Sales Representative & Konsultan Bisnis BoonTrack
 # Persona: ramah, profesional, percaya diri, solutif. Audiens: calon merchant.
 # ---------------------------------------------------------------------------
+# BoonPilot Brain — Partner Bisnis & Konsultan Resmi BoonTrack
+# Persona: hangat, santai, solutif, profesional, mengerti keluh kesah jualan online.
+# ---------------------------------------------------------------------------
 GROUP_BOONPILOT_SYSTEM_PROMPT = """\
-Peran: Anda adalah BoonPilot, Sales Representative & Konsultan Bisnis resmi dari BoonTrack.
-Audiens: Calon merchant / pemilik bisnis di grup komunitas yang sedang mempertimbangkan menggunakan BoonTrack.
+Kamu adalah BoonPilot, partner bisnis dan konsultan resmi dari BoonTrack.
+Audiens: Teman-teman pebisnis online dan UMKM di grup komunitas WhatsApp.
 
-Pedoman Menjawab:
-1. Nada bicara: Ramah, profesional, percaya diri, dan solutif.
-2. Fokus value: Jelaskan bagaimana BoonTrack mempermudah jualan online via WhatsApp, otomatisasi QRIS dinamis 0% MDR, dan etalase toko instan.
-3. Struktur jawaban:
-   - Jawab pertanyaan teknis/fitur secara lugas dan mudah dipahami orang awam.
-   - Jika ditanya harga/paket, sebutkan pilihan paket:
-       * Checkout Lite: Rp 59.000/bulan (halaman checkout + QRIS 0% MDR)
-       * Starter: Rp 199.000/bulan (storefront, bot WA, multi-ekspedisi)
-       * Ads Performance: Rp 299.000/bulan (Meta & TikTok CAPI, 2 CS Seats)
-   - Selalu akhiri dengan CTA ramah:
-       Demo/storefront -> https://shop.boontrack.com/boon
-       Daftar -> https://shop.boontrack.com/register
-4. Format: Maksimal 2-3 paragraf pendek atau poin-poin ringkas agar nyaman dibaca di HP.
-
-ATURAN KETAT:
-- Jawab HANYA seputar BoonTrack. Tolak dengan sopan jika di luar konteks.
-- JANGAN mengarang fitur, diskon, atau angka yang tidak tercantum di atas.
-- Gunakan bahasa santai tapi profesional. Hindari sapaan "Kakak" — gunakan "kamu" atau langsung ke poin.
-- Jangan kirim link berlebihan — cukup 1 link CTA yang paling relevan di akhir jawaban.
+Gaya Komunikasi:
+- Hangat, santai, solutif, dan profesional (gunakan sapaan santai seperti 'Halo kak', 'Bantu jawab ya kak', tanpa nada robot atau kaku).
+- Jangan menulis seperti brosur template atau teks hafalan. Berbicaralah seperti rekan diskusi bisnis yang mengerti masalah jualan online (capek balas chat satu-satu, pusing rekap ongkir, kepotong biaya admin QRIS).
+- Buat jawaban mengalir dalam 1-2 paragraf natural, atau sisipkan poin pendek yang mudah dibaca sambil jalan.
+- Pahami detail produk:
+  * QRIS dinamis otomatis 0% MDR (uang masuk utuh tanpa potongan merchant fee).
+  * Integrasi kurir lengkap (Biteship/Lincah) cek ongkir dan auto-generate resi dari dashboard.
+  * Notifikasi WA otomatis ke pembeli saat checkout dan bayar.
+  * Pilihan paket: Checkout Lite (Rp 59k/bln), Starter (Rp 199k/bln), Ads Performance (Rp 299k/bln).
+- Selalu tutup dengan ajakan santai untuk coba lihat demonya di https://shop.boontrack.com/boon atau coba gratis di https://shop.boontrack.com/register.
 """
 
 GROUP_BOONPILOT_KNOWLEDGE: Dict[str, str] = {
+    "kelebihan": (
+        "Halo kak! Bedanya kalau pakai BoonTrack, toko kakak serba otomatis. "
+        "Pembeli bisa langsung checkout di etalase web tanpa install aplikasi, ongkir terhitung otomatis ke seluruh Indonesia, "
+        "dan bayar via QRIS tanpa potongan MDR (0%). Begitu bayar, notifikasi WhatsApp langsung terkirim ke pembeli dan resi "
+        "bisa dicetak dari satu dashboard tanpa rekap manual lagi kak. 😊\n\n"
+        "Bisa langsung intip demonya di https://shop.boontrack.com/boon ya kak!"
+    ),
     "storefront": (
-        "🛒 *Etalase Toko BoonTrack*\n"
-        "• Buka toko online dalam menit, tanpa coding\n"
-        "• Produk, checkout, & QRIS otomatis langsung aktif\n"
-        "• Akses demo: https://shop.boontrack.com/boon"
+        "Halo kak! Di BoonTrack, kakak bisa langsung punya etalase toko online instan dalam hitungan menit tanpa perlu repot coding. "
+        "Produk, checkout otomatis, sampai pembayaran QRIS langsung siap dipakai pelanggan belanja dengan nyaman. ✨\n\n"
+        "Bisa langsung intip demonya di https://shop.boontrack.com/boon ya kak!"
     ),
     "automasi": (
-        "🤖 *Automasi WhatsApp BoonTrack:*\n"
-        "• Bot AI balas chat pelanggan 24/7 tanpa CS manual\n"
-        "• Notifikasi order & konfirmasi pembayaran otomatis\n"
-        "• Broadcast promo ke ribuan kontak sekali klik\n"
-        "🔗 Coba gratis: https://shop.boontrack.com/register"
+        "Halo kak! Dengan automasi WhatsApp BoonTrack, kakak nggak perlu capek balas chat dan rekap pesanan satu-satu lagi. "
+        "Bot AI siap bantu jawab pelanggan 24/7, plus notifikasi order dan konfirmasi pembayaran otomatis langsung terkirim ke WA pembeli. "
+        "Hemat waktu dan tenaga banget kak. 🙌\n\n"
+        "Bisa langsung coba gratis di https://shop.boontrack.com/register ya kak!"
     ),
     "dashboard": (
-        "📊 *Dashboard BoonTrack:*\n"
-        "• Manajemen pesanan & stok real-time\n"
-        "• Integrasi multi-ekspedisi (JNE, Sicepat, dll)\n"
-        "• Analytics penjualan & performa iklan (Meta CAPI)\n"
-        "🔗 Coba gratis: https://shop.boontrack.com/register"
+        "Halo kak! Dashboard BoonTrack bikin urusan operasional jadi rapi dan gampang. Pesanan dan stok tercatat otomatis, "
+        "plus sudah terintegrasi kurir lengkap (Biteship/Lincah) jadi ongkir otomatis terhitung dan resi pengiriman bisa langsung "
+        "dicetak dari satu dashboard tanpa pusing rekap manual kak. 📦\n\n"
+        "Yuk cek dan coba gratis di https://shop.boontrack.com/register ya kak!"
     ),
     "payment": (
-        "💳 *QRIS Dinamis BoonTrack — 0% MDR:*\n"
-        "• Pelanggan scan QR, pembayaran terverifikasi otomatis\n"
-        "• Tanpa upload bukti transfer manual\n"
-        "• Terintegrasi Xendit & payment gateway lainnya\n"
-        "🔗 Lihat demo: https://shop.boontrack.com/boon"
+        "Halo kak! Pembayaran di BoonTrack sudah pakai QRIS dinamis otomatis dengan 0% MDR kak — jadi uang penjualan kakak "
+        "masuk 100% utuh tanpa kepotong biaya admin merchant. Pembeli tinggal scan, dan sistem langsung verifikasi otomatis "
+        "tanpa perlu kirim bukti transfer manual. Praktis dan hemat kan kak? 💳\n\n"
+        "Bisa cek simulasinya di https://shop.boontrack.com/boon ya kak!"
     ),
     "harga": (
-        "💰 *Paket BoonTrack:*\n"
-        "• Checkout Lite: Rp 59.000/bln (checkout + QRIS 0% MDR)\n"
-        "• Starter: Rp 199.000/bln (storefront, bot WA, multi-ekspedisi)\n"
-        "• Ads Performance: Rp 299.000/bln (Meta & TikTok CAPI, 2 CS Seats)\n"
-        "🔗 Daftar & mulai gratis: https://shop.boontrack.com/register"
+        "Halo kak! Untuk pilihan paket di BoonTrack fleksibel dan terjangkau banget buat pebisnis online:\n"
+        "• Checkout Lite (Rp 59k/bln): Halaman checkout instan + QRIS dinamis 0% MDR\n"
+        "• Starter (Rp 199k/bln): Etalase toko lengkap, bot WhatsApp otomatis, & integrasi multi-ekspedisi\n"
+        "• Ads Performance (Rp 299k/bln): Server-side tracking (Meta & TikTok CAPI) + 2 CS Seats\n\n"
+        "Kakak bisa coba gratis dulu tanpa kartu kredit di https://shop.boontrack.com/register ya kak!"
     ),
     "trial": (
-        "🎁 *Trial GRATIS BoonTrack — tanpa kartu kredit:*\n"
-        "• 30 Pesanan • 50 Interaksi AI • 15 Notifikasi WA\n"
-        "Daftar sekarang & langsung aktif: https://shop.boontrack.com/register"
+        "Halo kak! Ada paket trial GRATIS kok di BoonTrack tanpa perlu kartu kredit. "
+        "Kakak langsung dapat kuota 30 pesanan masuk, 50 interaksi bot AI, dan 15 notifikasi WhatsApp otomatis. "
+        "Cocok banget buat rasain enaknya jualan serba otomatis. 😉\n\n"
+        "Bisa langsung daftar dan aktifkan sekarang di https://shop.boontrack.com/register ya kak!"
     ),
     "daftar": (
-        "🚀 *Mulai jualan dengan BoonTrack — gratis:*\n"
-        "Daftar di: https://shop.boontrack.com/register\n"
-        "Dalam menit kamu sudah punya etalase toko, bot WA, QRIS, & dashboard pesanan."
+        "Halo kak! Daftarnya mudah dan gratis kok, cukup buka https://shop.boontrack.com/register. "
+        "Dalam hitungan menit, toko online kakak sudah aktif lengkap dengan etalase, QRIS 0% MDR, dan bot WhatsApp siap pakai kak. "
+        "Ditunggu gabungnya ya kak! 🚀"
     ),
 }
 
 
 def get_static_group_boonpilot_response(incoming_text: str) -> str:
-    """Jawaban deterministik BoonPilot untuk konteks grup berdasarkan kata kunci."""
+    """Jawaban fallback statis BoonPilot untuk konteks grup dengan bahasa hangat dan manusiawi."""
     lower = incoming_text.lower().strip()
-    # Hilangkan mention trigger sebelum analisa kata kunci
-    lower = re.sub(r"@[a-z0-9_]+", "", lower).strip()
+    lower = re.sub(r"@[a-z0-9_.]+", "", lower).strip()
 
-    if any(k in lower for k in ("daftar", "register", "registrasi", "gabung", "mulai", "sign up", "signup")):
+    if any(k in lower for k in ("qris", "mdr", "potongan", "admin qris", "biaya admin", "payment", "transfer")):
+        return GROUP_BOONPILOT_KNOWLEDGE["payment"]
+    if any(k in lower for k in ("harga", "paket", "tarif", "berapa", "pricing", "langganan", "biaya langganan", "bayar berapa")):
+        return GROUP_BOONPILOT_KNOWLEDGE["harga"]
+    if any(k in lower for k in ("beda", "kelebihan", "keunggulan", "kenapa", "fitur", "apa itu", "tentang")):
+        return GROUP_BOONPILOT_KNOWLEDGE["kelebihan"]
+    if any(k in lower for k in ("daftar", "register", "registrasi", "gabung", "mulai", "sign up", "signup", "cara buka")):
         return GROUP_BOONPILOT_KNOWLEDGE["daftar"]
     if any(k in lower for k in ("trial", "gratis", "free", "coba", "uji coba")):
         return GROUP_BOONPILOT_KNOWLEDGE["trial"]
-    if any(k in lower for k in ("harga", "paket", "biaya", "tarif", "berapa", "pricing")):
-        return GROUP_BOONPILOT_KNOWLEDGE["harga"]
-    if any(k in lower for k in ("qris", "payment", "bayar", "pembayaran", "transfer", "mdr")):
-        return GROUP_BOONPILOT_KNOWLEDGE["payment"]
-    if any(k in lower for k in ("dashboard", "pesanan", "order", "ekspedisi", "pengiriman")):
+    if any(k in lower for k in ("dashboard", "pesanan", "order", "ekspedisi", "pengiriman", "resi", "ongkir", "kurir")):
         return GROUP_BOONPILOT_KNOWLEDGE["dashboard"]
-    if any(k in lower for k in ("bot", "automasi", "otomatis", "notifikasi", "broadcast", "wa bot", "auto reply")):
+    if any(k in lower for k in ("bot", "automasi", "otomatis", "notifikasi", "broadcast", "wa bot", "auto reply", "balas")):
         return GROUP_BOONPILOT_KNOWLEDGE["automasi"]
-    if any(k in lower for k in ("toko", "storefront", "shop", "katalog", "produk", "jualan", "etalase")):
+    if any(k in lower for k in ("toko", "storefront", "shop", "katalog", "produk", "jualan", "etalase", "web")):
         return GROUP_BOONPILOT_KNOWLEDGE["storefront"]
-    # Default: sales intro singkat dengan CTA
+
+    # Default fallback santai dan hangat
     return (
-        "Halo! Aku *BoonPilot*, Sales Rep resmi BoonTrack 👋\n\n"
-        "BoonTrack adalah platform toko online + automasi WhatsApp yang bantu pemilik bisnis:\n"
-        "• Buka etalase toko instan\n"
-        "• QRIS otomatis 0% MDR\n"
-        "• Bot WA balas pelanggan 24/7\n\n"
-        "🔗 Coba gratis: https://shop.boontrack.com/register"
+        "Halo kak! Aku BoonPilot, partner bisnis resmi dari BoonTrack 👋\n\n"
+        "BoonTrack bantu jualan online kakak serba otomatis: etalase toko instan, QRIS dinamis 0% MDR tanpa potongan admin, "
+        "dan bot WhatsApp yang balas chat serta rekap pesanan otomatis. Ada yang ingin kakak tanyakan seputar jualan online?\n\n"
+        "Bisa langsung intip demonya di https://shop.boontrack.com/boon atau coba gratis di https://shop.boontrack.com/register ya kak!"
     )
+
+
+def _resolve_gemini_api_key() -> str:
+    """Membaca Gemini API Key dari environment variables atau settings.json."""
+    key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_AI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if key and key.strip():
+        return key.strip()
+    try:
+        from app.core.config import settings
+        if getattr(settings, "GEMINI_API_KEY", None):
+            return settings.GEMINI_API_KEY.strip()
+    except Exception:
+        pass
+    # Roaming / Antigravity IDE settings.json fallback
+    user_settings_path = os.path.expanduser(r"~\AppData\Roaming\Antigravity IDE\User\settings.json")
+    if os.path.exists(user_settings_path):
+        try:
+            with open(user_settings_path, "r", encoding="utf-8") as f:
+                d = json.load(f)
+                val = d.get("gemini.apiKey") or d.get("google.apiKey") or d.get("antigravity.apiKey")
+                if val:
+                    return str(val).strip()
+        except Exception:
+            pass
+    return ""
+
+
+async def _call_gemini_llm(api_key: str, clean_text: str) -> Optional[str]:
+    """Eksekusi LLM Gemini dengan model terkini (gemini-3.8-flash) & prompt sistem BoonPilot."""
+    def _sync_call() -> str:
+        # Prioritas: google.genai SDK
+        try:
+            from google import genai
+            from google.genai import types
+            client = genai.Client(api_key=api_key)
+            try:
+                config = types.GenerateContentConfig(
+                    system_instruction=GROUP_BOONPILOT_SYSTEM_PROMPT,
+                    temperature=0.4,
+                    max_output_tokens=1000,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                )
+            except Exception:
+                config = types.GenerateContentConfig(
+                    system_instruction=GROUP_BOONPILOT_SYSTEM_PROMPT,
+                    temperature=0.4,
+                    max_output_tokens=1000,
+                )
+            for m in ("gemini-3.8-flash", "gemini-2.5-flash", "gemini-1.5-flash"):
+                try:
+                    res = client.models.generate_content(
+                        model=m,
+                        contents=clean_text,
+                        config=config,
+                    )
+                    txt = (res.text or "").strip()
+                    if txt:
+                        return txt
+                except Exception as _m_err:
+                    err_msg = str(_m_err).lower()
+                    if "401" in err_msg or "unauthenticated" in err_msg or "invalid authentication" in err_msg:
+                        logger.warning(f"[BOONPILOT LLM] Gemini auth error (401): {_m_err}")
+                        return ""
+                    logger.debug(f"[BOONPILOT LLM] Model {m} failed: {_m_err}")
+                    continue
+        except Exception as _genai_err:
+            err_init = str(_genai_err).lower()
+            if "401" in err_init or "unauthenticated" in err_init or "invalid authentication" in err_init:
+                logger.warning(f"[BOONPILOT LLM] Gemini client init auth error (401): {_genai_err}")
+                return ""
+            logger.debug(f"[BOONPILOT LLM] google.genai init error: {_genai_err}")
+
+        # Fallback: legacy google.generativeai
+        try:
+            import google.generativeai as legacy_genai
+            legacy_genai.configure(api_key=api_key)
+            for m in ("gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"):
+                try:
+                    model = legacy_genai.GenerativeModel(
+                        model_name=m,
+                        generation_config={"temperature": 0.4, "max_output_tokens": 800},
+                        system_instruction=GROUP_BOONPILOT_SYSTEM_PROMPT,
+                    )
+                    res = model.generate_content(clean_text)
+                    txt = (res.text or "").strip()
+                    if txt:
+                        return txt
+                except Exception:
+                    continue
+        except Exception as _leg_err:
+            logger.debug(f"[BOONPILOT LLM] google.generativeai error: {_leg_err}")
+
+        return ""
+
+    loop = asyncio.get_event_loop()
+    return await asyncio.wait_for(loop.run_in_executor(None, _sync_call), timeout=9.0)
+
+
+async def _call_openrouter_llm(api_key: str, clean_text: str) -> Optional[str]:
+    """Fallback sekunder LLM via OpenRouter API jika Gemini tidak dapat dijangkau."""
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            res = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "google/gemini-2.0-flash-001",
+                    "messages": [
+                        {"role": "system", "content": GROUP_BOONPILOT_SYSTEM_PROMPT},
+                        {"role": "user", "content": clean_text},
+                    ],
+                    "max_tokens": 800,
+                    "temperature": 0.4,
+                },
+            )
+            if res.status_code == 200:
+                data = res.json()
+                return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    except Exception as _e:
+        logger.debug(f"[BOONPILOT OPENROUTER] Error: {_e}")
+    return ""
 
 
 async def generate_group_boonpilot_reply(incoming_text: str) -> str:
     """
-    BoonPilot Group Brain: Jawaban AI ringkas & natural untuk konteks grup.
-    Menggunakan GROUP_BOONPILOT_SYSTEM_PROMPT (temperature=0.2, max_output_tokens=300).
-    Fallback: get_static_group_boonpilot_response() jika LLM gagal.
+    BoonPilot Brain: Jawaban AI luwes, natural, dan pintar untuk grup komunitas & DM.
+    PRIORITAS UTAMA: Selalu panggil LLM (Gemini / OpenRouter).
+    FALLBACK: get_static_group_boonpilot_response() HANYA jika panggilan LLM timeout/gagal.
     """
-    # Bersihkan mention sebelum dikirim ke LLM
-    clean_text = re.sub(r"@[a-zA-Z0-9_]+", "", incoming_text).strip()
+    clean_text = re.sub(r"@[a-zA-Z0-9_.]+", "", incoming_text).strip()
     if not clean_text:
         clean_text = incoming_text.strip()
 
-    # Fast-path: jika teks singkat (< 6 kata), cek deterministik dulu
-    if len(clean_text.split()) < 6:
-        static = get_static_group_boonpilot_response(clean_text)
-        default_intro = (
-            "Halo! Aku *BoonPilot*, Sales Rep resmi BoonTrack 👋\n\n"
-            "BoonTrack adalah platform toko online + automasi WhatsApp yang bantu pemilik bisnis:\n"
-            "• Buka etalase toko instan\n"
-            "• QRIS otomatis 0% MDR\n"
-            "• Bot WA balas pelanggan 24/7\n\n"
-            "🔗 Coba gratis: https://shop.boontrack.com/register"
-        )
-        if static != default_intro:
-            return static
+    # 1. Prioritas Utama: Gemini LLM (gemini-3.8-flash)
+    gemini_key = _resolve_gemini_api_key()
+    if gemini_key:
+        try:
+            reply = await _call_gemini_llm(gemini_key, clean_text)
+            if reply:
+                logger.info(f"[BOONPILOT LLM] Generated natural conversational reply via Gemini ({len(reply)} chars).")
+                return reply
+        except Exception as _llm_err:
+            logger.warning(f"[BOONPILOT LLM] Gemini error/timeout: {_llm_err}")
 
-    try:
-        import google.generativeai as genai
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_AI_API_KEY")
-        if not api_key:
-            return get_static_group_boonpilot_response(clean_text)
+    # 2. Fallback Sekunder: OpenRouter API
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    if openrouter_key:
+        try:
+            reply = await _call_openrouter_llm(openrouter_key, clean_text)
+            if reply:
+                logger.info(f"[BOONPILOT LLM] Generated reply via OpenRouter ({len(reply)} chars).")
+                return reply
+        except Exception as _or_err:
+            logger.warning(f"[BOONPILOT LLM] OpenRouter error/timeout: {_or_err}")
 
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash",
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.2,
-                max_output_tokens=300,
-            ),
-            system_instruction=GROUP_BOONPILOT_SYSTEM_PROMPT,
-        )
-        import httpx
-        async with httpx.AsyncClient() as _client:
-            response = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(
-                    None, lambda: model.generate_content(clean_text)
-                ),
-                timeout=7.0,
-            )
-        reply = (response.text or "").strip()
-        if not reply:
-            return get_static_group_boonpilot_response(clean_text)
-        logger.info(f"[GROUP_BOONPILOT] Generated group reply ({len(reply)} chars).")
-        return reply
-    except Exception as _err:
-        logger.warning(f"[GROUP_BOONPILOT] LLM error: {_err} — using static knowledge base.")
-        return get_static_group_boonpilot_response(clean_text)
+    # 3. Fallback Terakhir: Knowledge Base statis berbahasa manusiawi
+    logger.info(f"[BOONPILOT STATIC FALLBACK] Falling back to conversational static KB for: '{clean_text[:60]}'")
+    return get_static_group_boonpilot_response(clean_text)
 
 
 # Knowledge Base Dictionary Resmi untuk deterministik & fallback offline
