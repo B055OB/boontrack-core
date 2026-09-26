@@ -486,9 +486,17 @@ async def process_inbound_message(payload: InboundPayload):
         # =====================================================================
         if is_group_scope and is_boon_tenant:
             from app.whatsapp.traffic_splitter import generate_group_boonpilot_reply
-            logger.info(f"[GROUP_BOONPILOT] Routing group mention from '{clean_phone}' in group '{payload.group_jid}' to BoonPilot Group Brain.")
-            group_reply = await generate_group_boonpilot_reply(incoming_text)
-            logger.info(f"[GROUP_BOONPILOT REPLY] {group_reply[:120]}...")
+            # Strip semua token mention (@boon, @support, @boontrack, @081215567168, dll)
+            # agar BoonPilot Group Brain menerima pertanyaan bersih, bukan noise mention.
+            text_for_boonpilot = re.sub(r"@[\w.]+", "", incoming_text).strip()
+            if not text_for_boonpilot:
+                text_for_boonpilot = incoming_text.strip()
+            logger.info(
+                f"[GROUP_BOONPILOT] Routing mention from '{clean_phone}' in group '{payload.group_jid}' "
+                f"-> BoonPilot Group Brain | text_clean='{text_for_boonpilot[:80]}'"
+            )
+            group_reply = await generate_group_boonpilot_reply(text_for_boonpilot)
+            logger.info(f"[GROUP_BOONPILOT REPLY] ({len(group_reply)} chars): '{group_reply[:120]}'")
             return {
                 "status": "success",
                 "tenant_slug": tenant_slug,
@@ -513,11 +521,16 @@ async def process_inbound_message(payload: InboundPayload):
             reply = engine_res.get("reply")
 
     # 1.7 APP_SHOP_V1 Interactive Catalog Interceptor
-    if tenant_slug.lower() in ("app_shop_v1", "app-shop-v1", "app_shop", "boon", "boontrack-app-shop", "boontrack_app_shop") and any(k in text_lower for k in ("paket", "katalog", "harga", "langganan", "upgrade", "menu", "beli")):
+    # GROUP GUARD: DIBLOKIR di grup — jangan kirim kartu/banner interaktif ke grup.
+    if (
+        payload.conversation_scope != "GROUP"
+        and tenant_slug.lower() in ("app_shop_v1", "app-shop-v1", "app_shop", "boon", "boontrack-app-shop", "boontrack_app_shop")
+        and any(k in text_lower for k in ("paket", "katalog", "harga", "langganan", "upgrade", "menu", "beli"))
+    ):
         from app.services.whatsapp.evolution import send_evolution_app_shop_catalog
         target_num = payload.group_jid if (payload.conversation_scope == "GROUP" and payload.group_jid) else clean_phone
-        catalog_instance = "boontrack-app-shop" if "boontrack-app-shop" in tenant_slug.lower() else "boontrack-app-shop"
-        asyncio.create_task(send_evolution_app_shop_catalog(instance_name=catalog_instance, to_number=target_num))
+        catalog_instance = "boontrack-app-shop"
+        asyncio.create_task(send_evolution_app_shop_catalog(number=target_num, instance_name=catalog_instance))
         return {
             "status": "success",
             "action": "APP_SHOP_CATALOG_SENT",
@@ -1427,10 +1440,15 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         logger.debug(f"[EVOLUTION WEBHOOK] session lock skipped: {_lock_err}")
 
     # Jalankan pemrosesan inbound AI (gunakan canonical_slug yang mengutamakan slug 'boon')
+    # GROUP MENTION STRIP: untuk pesan grup, bersihkan token @mention dari teks sebelum
+    # dikirim ke pipeline AI agar pencarian kata kunci dan LLM menerima pertanyaan bersih.
+    message_body_for_processing = incoming_text
+    if conversation_scope == \"GROUP\":
+        message_body_for_processing = re.sub(r\"@[\\w.]+\", \"\", incoming_text).strip() or incoming_text
     inbound_res = await process_inbound_message(InboundPayload(
         tenant_slug=canonical_slug,
         sender_phone=sender_phone,
-        message_body=incoming_text,
+        message_body=message_body_for_processing,
         sender_name=sender_name,
         conversation_scope=conversation_scope,
         group_jid=group_jid,

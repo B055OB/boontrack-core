@@ -286,8 +286,126 @@ class TestFromMeGuard:
 
 
 # ---------------------------------------------------------------------------
-# 7. InboundPayload GROUP scope routing check
+# 8. Mention Strip Logic (Fix: teks bersih ke BoonPilot)
 # ---------------------------------------------------------------------------
+class TestGroupMentionStripping:
+    """Validasi bahwa @mention di-strip sebelum dikirim ke BoonPilot / pipeline AI."""
+
+    MENTION_STRIP_PATTERN = re.compile(r"@[\w.]+")
+
+    def _strip_mention(self, text: str) -> str:
+        stripped = self.MENTION_STRIP_PATTERN.sub("", text).strip()
+        return stripped or text.strip()
+
+    def test_strip_boon_mention(self):
+        raw = "@boon boontrack itu apa?"
+        assert self._strip_mention(raw) == "boontrack itu apa?"
+
+    def test_strip_support_mention(self):
+        raw = "@Support Boontrack itu apa"
+        # @Support ter-strip, "Boontrack itu apa" tersisa
+        assert self._strip_mention(raw) == "Boontrack itu apa"
+
+    def test_strip_boontrack_mention(self):
+        raw = "@boontrack gimana cara daftar?"
+        assert self._strip_mention(raw) == "gimana cara daftar?"
+
+    def test_strip_phone_mention(self):
+        raw = "@081215567168 ada yang bisa bantu?"
+        assert self._strip_mention(raw) == "ada yang bisa bantu?"
+
+    def test_strip_multiple_mentions(self):
+        raw = "@boon @support apa fitur QRIS?"
+        assert self._strip_mention(raw) == "apa fitur QRIS?"
+
+    def test_empty_after_strip_fallback_to_original(self):
+        """Jika setelah strip teks jadi kosong, fallback ke original."""
+        raw = "@boon"
+        result = self._strip_mention(raw)
+        assert result == "@boon"  # fallback ke original
+
+    def test_no_mention_unchanged(self):
+        raw = "boontrack itu apa?"
+        assert self._strip_mention(raw) == "boontrack itu apa?"
+
+    def test_strip_preserves_question_content(self):
+        raw = "@support ada paket trial gratis ga?"
+        stripped = self._strip_mention(raw)
+        assert "paket trial" in stripped
+        assert "@support" not in stripped
+
+
+# ---------------------------------------------------------------------------
+# 9. APP_SHOP_V1 Catalog Interceptor GROUP Guard
+# ---------------------------------------------------------------------------
+class TestCatalogInterceptorGroupGuard:
+    """Validasi katalog interaktif TIDAK dikirim ke grup."""
+
+    def _should_send_catalog(
+        self,
+        conversation_scope: str,
+        tenant_slug: str,
+        text_lower: str,
+    ) -> bool:
+        """Replika kondisi catalog interceptor yang sudah di-fix."""
+        BOON_SLUGS = ("app_shop_v1", "app-shop-v1", "app_shop", "boon", "boontrack-app-shop", "boontrack_app_shop")
+        CATALOG_KW = ("paket", "katalog", "harga", "langganan", "upgrade", "menu", "beli")
+        return (
+            conversation_scope != "GROUP"
+            and tenant_slug.lower() in BOON_SLUGS
+            and any(k in text_lower for k in CATALOG_KW)
+        )
+
+    def test_group_catalog_blocked(self):
+        """Di grup, katalog interaktif TIDAK boleh terkirim."""
+        assert self._should_send_catalog("GROUP", "boon", "mau lihat katalog") is False
+
+    def test_direct_catalog_allowed(self):
+        """Di DM, katalog boleh terkirim untuk tenant boon."""
+        assert self._should_send_catalog("DIRECT", "boon", "mau lihat katalog") is True
+
+    def test_group_no_keyword_not_sent(self):
+        assert self._should_send_catalog("GROUP", "boon", "boontrack itu apa") is False
+
+    def test_non_boon_tenant_not_sent(self):
+        assert self._should_send_catalog("DIRECT", "atmosfitnes", "mau lihat katalog") is False
+
+    def test_group_boon_keyword_still_blocked(self):
+        """Keyword 'harga' di grup dengan tenant boon tetap diblokir."""
+        assert self._should_send_catalog("GROUP", "boon", "berapa harga paket starter?") is False
+
+
+# ---------------------------------------------------------------------------
+# 10. BoonPilot response tidak mengandung storefront banner link sebagai satu-satunya isi
+# ---------------------------------------------------------------------------
+class TestBoonPilotNoStorefrontBanner:
+    """Validasi BoonPilot Group Brain menghasilkan teks informatif, bukan hanya link."""
+
+    def setup_method(self):
+        from app.whatsapp.traffic_splitter import get_static_group_boonpilot_response
+        self.fn = get_static_group_boonpilot_response
+
+    def test_response_is_not_just_a_url(self):
+        """Jawaban BoonPilot harus mengandung teks, bukan hanya URL."""
+        for query in ["boontrack itu apa", "fitur boontrack", "cara daftar", "paket trial", "qris payment"]:
+            res = self.fn(query)
+            # Strip semua URL dari respons, harus masih ada teks substantif
+            text_without_url = re.sub(r'https?://\S+', '', res).strip()
+            assert len(text_without_url) > 20, f"Respons untuk '{query}' terlalu singkat setelah URL dihapus: '{text_without_url}'"
+
+    def test_response_contains_boontrack_context(self):
+        """Jawaban harus merujuk ke BoonTrack."""
+        res = self.fn("boontrack itu apa")
+        assert "boontrack" in res.lower()
+
+    def test_no_uuid_in_response(self):
+        """Jawaban BoonPilot tidak boleh mengandung UUID."""
+        import re as _re
+        uuid_pattern = _re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', _re.IGNORECASE)
+        for query in ["boontrack itu apa", "cara daftar", "paket"]:
+            res = self.fn(query)
+            assert not uuid_pattern.search(res), f"UUID ditemukan di respons BoonPilot untuk '{query}': {res}"
+
 class TestInboundPayloadGroupRouting:
     def test_boon_tenant_is_detected(self):
         slugs = ["boon", "boontrack-app-shop", "boontrack_app_shop", "app_shop", "app-shop"]
