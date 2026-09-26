@@ -1443,8 +1443,8 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     # GROUP MENTION STRIP: untuk pesan grup, bersihkan token @mention dari teks sebelum
     # dikirim ke pipeline AI agar pencarian kata kunci dan LLM menerima pertanyaan bersih.
     message_body_for_processing = incoming_text
-    if conversation_scope == \"GROUP\":
-        message_body_for_processing = re.sub(r\"@[\\w.]+\", \"\", incoming_text).strip() or incoming_text
+    if conversation_scope == "GROUP":
+        message_body_for_processing = re.sub(r"@[\w.]+", "", incoming_text).strip() or incoming_text
     inbound_res = await process_inbound_message(InboundPayload(
         tenant_slug=canonical_slug,
         sender_phone=sender_phone,
