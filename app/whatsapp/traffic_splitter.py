@@ -105,59 +105,78 @@ Jika merchant atau pengguna baru bingung cara memulai, arahkan mereka ke asisten
 """
 
 # ---------------------------------------------------------------------------
-# BoonPilot Group Brain — Prompt khusus konteks grup komunitas / lead
-# Dioptimalkan: ringkas, solutif, natural, tidak verbose.
+# BoonPilot Group Brain — Sales Representative & Konsultan Bisnis BoonTrack
+# Persona: ramah, profesional, percaya diri, solutif. Audiens: calon merchant.
 # ---------------------------------------------------------------------------
 GROUP_BOONPILOT_SYSTEM_PROMPT = """\
-Anda adalah BoonPilot, asisten resmi BoonTrack yang hadir di grup WhatsApp ini.
-Jawab pertanyaan dengan RINGKAS (1–2 paragraf), SOLUTIF, dan NATURAL — seperti admin yang ramah, bukan robot.
+Peran: Anda adalah BoonPilot, Sales Representative & Konsultan Bisnis resmi dari BoonTrack.
+Audiens: Calon merchant / pemilik bisnis di grup komunitas yang sedang mempertimbangkan menggunakan BoonTrack.
 
-[KONTEKS EKOSISTEM BOONTRACK]
-• Storefront online otomatis: shop.boontrack.com/boon — merchant bisa buka toko dalam menit.
-• Automasi WhatsApp & notifikasi order: bot AI menjawab pelanggan & kirim notif pembayaran/pengiriman otomatis.
-• Dashboard manajemen pesanan, multi-ekspedisi, dan integrasi payment (QRIS dinamis, Xendit, dll).
-• Auto-Verifikasi Pembayaran QRIS Real-Time: 0% platform fee, tanpa upload bukti manual.
-• Paket Trial GRATIS: 30 pesanan, 50 interaksi AI, 15 notifikasi WA. Mulai di: shop.boontrack.com/register
+Pedoman Menjawab:
+1. Nada bicara: Ramah, profesional, percaya diri, dan solutif.
+2. Fokus value: Jelaskan bagaimana BoonTrack mempermudah jualan online via WhatsApp, otomatisasi QRIS dinamis 0% MDR, dan etalase toko instan.
+3. Struktur jawaban:
+   - Jawab pertanyaan teknis/fitur secara lugas dan mudah dipahami orang awam.
+   - Jika ditanya harga/paket, sebutkan pilihan paket:
+       * Checkout Lite: Rp 59.000/bulan (halaman checkout + QRIS 0% MDR)
+       * Starter: Rp 199.000/bulan (storefront, bot WA, multi-ekspedisi)
+       * Ads Performance: Rp 299.000/bulan (Meta & TikTok CAPI, 2 CS Seats)
+   - Selalu akhiri dengan CTA ramah:
+       Demo/storefront -> https://shop.boontrack.com/boon
+       Daftar -> https://shop.boontrack.com/register
+4. Format: Maksimal 2-3 paragraf pendek atau poin-poin ringkas agar nyaman dibaca di HP.
 
-[ATURAN KETAT]
-- Jawab HANYA seputar BoonTrack. Jika di luar konteks, tolak dengan sopan.
-- JANGAN mengarang fitur, harga, atau diskon yang tidak resmi.
-- Sertakan link relevan jika membantu (shop.boontrack.com/register atau shop.boontrack.com/boon).
-- Jangan gunakan sapaan formal "Kakak" jika konteks grup — gunakan "Kamu" atau langsung ke poin.
-- Maksimal 3 poin bullet jika menjelaskan fitur, jangan lebih panjang dari itu.
+ATURAN KETAT:
+- Jawab HANYA seputar BoonTrack. Tolak dengan sopan jika di luar konteks.
+- JANGAN mengarang fitur, diskon, atau angka yang tidak tercantum di atas.
+- Gunakan bahasa santai tapi profesional. Hindari sapaan "Kakak" — gunakan "kamu" atau langsung ke poin.
+- Jangan kirim link berlebihan — cukup 1 link CTA yang paling relevan di akhir jawaban.
 """
 
 GROUP_BOONPILOT_KNOWLEDGE: Dict[str, str] = {
     "storefront": (
-        "🛒 *Storefront BoonTrack* bisa diakses di: https://shop.boontrack.com/boon\n"
-        "Merchant bisa buka toko online lengkap dalam hitungan menit — produk, checkout, QRIS otomatis sudah siap."
+        "🛒 *Etalase Toko BoonTrack*\n"
+        "• Buka toko online dalam menit, tanpa coding\n"
+        "• Produk, checkout, & QRIS otomatis langsung aktif\n"
+        "• Akses demo: https://shop.boontrack.com/boon"
     ),
     "automasi": (
         "🤖 *Automasi WhatsApp BoonTrack:*\n"
-        "• Bot AI balas chat pelanggan 24/7\n"
+        "• Bot AI balas chat pelanggan 24/7 tanpa CS manual\n"
         "• Notifikasi order & konfirmasi pembayaran otomatis\n"
-        "• Broadcast promo ke ribuan kontak sekali klik"
+        "• Broadcast promo ke ribuan kontak sekali klik\n"
+        "🔗 Coba gratis: https://shop.boontrack.com/register"
     ),
     "dashboard": (
-        "📊 *Dashboard BoonTrack* menyediakan:\n"
+        "📊 *Dashboard BoonTrack:*\n"
         "• Manajemen pesanan & stok real-time\n"
         "• Integrasi multi-ekspedisi (JNE, Sicepat, dll)\n"
-        "• Analytics penjualan & performa iklan (Meta CAPI)"
+        "• Analytics penjualan & performa iklan (Meta CAPI)\n"
+        "🔗 Coba gratis: https://shop.boontrack.com/register"
     ),
     "payment": (
-        "💳 *Payment BoonTrack:*\n"
-        "• QRIS Dinamis otomatis — 0% platform fee\n"
-        "• Auto-verifikasi tanpa upload bukti manual\n"
-        "• Integrasi Xendit & payment gateway lainnya"
+        "💳 *QRIS Dinamis BoonTrack — 0% MDR:*\n"
+        "• Pelanggan scan QR, pembayaran terverifikasi otomatis\n"
+        "• Tanpa upload bukti transfer manual\n"
+        "• Terintegrasi Xendit & payment gateway lainnya\n"
+        "🔗 Lihat demo: https://shop.boontrack.com/boon"
+    ),
+    "harga": (
+        "💰 *Paket BoonTrack:*\n"
+        "• Checkout Lite: Rp 59.000/bln (checkout + QRIS 0% MDR)\n"
+        "• Starter: Rp 199.000/bln (storefront, bot WA, multi-ekspedisi)\n"
+        "• Ads Performance: Rp 299.000/bln (Meta & TikTok CAPI, 2 CS Seats)\n"
+        "🔗 Daftar & mulai gratis: https://shop.boontrack.com/register"
     ),
     "trial": (
-        "🎁 *Paket Trial GRATIS BoonTrack:*\n"
-        "• 30 Pesanan Masuk • 50 Interaksi AI • 15 Notifikasi WA\n"
-        "Daftar sekarang: https://shop.boontrack.com/register"
+        "🎁 *Trial GRATIS BoonTrack — tanpa kartu kredit:*\n"
+        "• 30 Pesanan • 50 Interaksi AI • 15 Notifikasi WA\n"
+        "Daftar sekarang & langsung aktif: https://shop.boontrack.com/register"
     ),
     "daftar": (
-        "🚀 Daftar toko BoonTrack gratis di: https://shop.boontrack.com/register\n"
-        "Buka toko dalam menit — langsung dapat storefront, bot WA, QRIS, & dashboard pesanan."
+        "🚀 *Mulai jualan dengan BoonTrack — gratis:*\n"
+        "Daftar di: https://shop.boontrack.com/register\n"
+        "Dalam menit kamu sudah punya etalase toko, bot WA, QRIS, & dashboard pesanan."
     ),
 }
 
@@ -172,18 +191,23 @@ def get_static_group_boonpilot_response(incoming_text: str) -> str:
         return GROUP_BOONPILOT_KNOWLEDGE["daftar"]
     if any(k in lower for k in ("trial", "gratis", "free", "coba", "uji coba")):
         return GROUP_BOONPILOT_KNOWLEDGE["trial"]
-    if any(k in lower for k in ("qris", "payment", "bayar", "pembayaran", "transfer")):
+    if any(k in lower for k in ("harga", "paket", "biaya", "tarif", "berapa", "pricing")):
+        return GROUP_BOONPILOT_KNOWLEDGE["harga"]
+    if any(k in lower for k in ("qris", "payment", "bayar", "pembayaran", "transfer", "mdr")):
         return GROUP_BOONPILOT_KNOWLEDGE["payment"]
     if any(k in lower for k in ("dashboard", "pesanan", "order", "ekspedisi", "pengiriman")):
         return GROUP_BOONPILOT_KNOWLEDGE["dashboard"]
     if any(k in lower for k in ("bot", "automasi", "otomatis", "notifikasi", "broadcast", "wa bot", "auto reply")):
         return GROUP_BOONPILOT_KNOWLEDGE["automasi"]
-    if any(k in lower for k in ("toko", "storefront", "shop", "katalog", "produk", "jualan")):
+    if any(k in lower for k in ("toko", "storefront", "shop", "katalog", "produk", "jualan", "etalase")):
         return GROUP_BOONPILOT_KNOWLEDGE["storefront"]
-    # Default: perkenalan singkat
+    # Default: sales intro singkat dengan CTA
     return (
-        "Halo! Aku BoonPilot dari BoonTrack 👋\n\n"
-        "BoonTrack adalah platform toko online + automasi WhatsApp untuk bisnis kamu.\n"
+        "Halo! Aku *BoonPilot*, Sales Rep resmi BoonTrack 👋\n\n"
+        "BoonTrack adalah platform toko online + automasi WhatsApp yang bantu pemilik bisnis:\n"
+        "• Buka etalase toko instan\n"
+        "• QRIS otomatis 0% MDR\n"
+        "• Bot WA balas pelanggan 24/7\n\n"
         "🔗 Coba gratis: https://shop.boontrack.com/register"
     )
 
