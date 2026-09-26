@@ -226,11 +226,15 @@ async def generate_group_boonpilot_reply(incoming_text: str) -> str:
     # Fast-path: jika teks singkat (< 6 kata), cek deterministik dulu
     if len(clean_text.split()) < 6:
         static = get_static_group_boonpilot_response(clean_text)
-        if static != (
-            "Halo! Aku BoonPilot dari BoonTrack 👋\n\n"
-            "BoonTrack adalah platform toko online + automasi WhatsApp untuk bisnis kamu.\n"
+        default_intro = (
+            "Halo! Aku *BoonPilot*, Sales Rep resmi BoonTrack 👋\n\n"
+            "BoonTrack adalah platform toko online + automasi WhatsApp yang bantu pemilik bisnis:\n"
+            "• Buka etalase toko instan\n"
+            "• QRIS otomatis 0% MDR\n"
+            "• Bot WA balas pelanggan 24/7\n\n"
             "🔗 Coba gratis: https://shop.boontrack.com/register"
-        ):
+        )
+        if static != default_intro:
             return static
 
     try:

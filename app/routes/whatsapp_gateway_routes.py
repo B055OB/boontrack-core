@@ -382,6 +382,7 @@ async def process_inbound_message(payload: InboundPayload):
     incoming_text = payload.message_body.strip()
     contact_name = extract_customer_name(incoming_text, fallback=payload.sender_name or "Kakak")
     text_lower = incoming_text.lower()
+    conversation_scope = (payload.conversation_scope or "DIRECT").upper()
 
     # Log Terminal Detail Poin 3: Saat pesan masuk diterima
     logger.info(
@@ -389,9 +390,46 @@ async def process_inbound_message(payload: InboundPayload):
         f"[GROWTH GATEWAY INBOUND] 📩 Pesan Masuk Diterima dari BoonTrack WhatsApp Engine!\n"
         f"  • Pengirim     : {clean_phone} (raw: {payload.sender_phone})\n"
         f"  • Tenant ID    : {tenant_slug}\n"
+        f"  • Scope        : {conversation_scope}\n"
         f"  • Isi Pesan    : \"{incoming_text}\"\n"
         f"========================================================"
     )
+
+    # =========================================================================
+    # DEDICATED SALES REPRESENTATIVE & KONSULTAN BISNIS MODE (P0 LOCK)
+    # Berlaku untuk tenant 'boon' / instance 'boontrack-app-shop' (081215567168) / GROUP:
+    # 1. BYPASS & NONAKTIFKAN alur kartu storefront, template toko Checkout Lite, dan keranjang belanja.
+    # 2. Alihkan SEMUA pesan masuk (baik GROUP mention maupun DIRECT DM) LANGSUNG ke
+    #    generate_group_boonpilot_reply(text_clean).
+    # 3. Kembalikan murni balasan teks Sales Representative tanpa media/kartu banner.
+    # =========================================================================
+    is_boon_sales_rep = (
+        tenant_slug == "boon"
+        or conversation_scope == "GROUP"
+        or "boon" in tenant_slug
+        or "app_shop" in tenant_slug
+        or "app-shop" in tenant_slug
+    )
+    if is_boon_sales_rep:
+        from app.whatsapp.traffic_splitter import generate_group_boonpilot_reply
+        text_clean = re.sub(r"@[\w.]+", "", incoming_text).strip()
+        if not text_clean:
+            text_clean = incoming_text.strip()
+        logger.info(
+            f"[BOONPILOT SALES REP] Routing message for '{tenant_slug}' ({conversation_scope}) from '{clean_phone}' "
+            f"-> BoonPilot Brain | text_clean='{text_clean[:80]}'"
+        )
+        sales_rep_reply = await generate_group_boonpilot_reply(text_clean)
+        logger.info(f"[BOONPILOT SALES REP REPLY] ({len(sales_rep_reply)} chars): '{sales_rep_reply[:120]}'")
+        return {
+            "status": "success",
+            "tenant_slug": tenant_slug,
+            "conversation_scope": conversation_scope,
+            "group_jid": payload.group_jid,
+            "bot_strategy": "boonpilot_sales_rep",
+            "reply_text": sales_rep_reply,
+            "media_url": None,
+        }
 
     reply: Optional[str] = None
     reply_media_url: Optional[str] = None
@@ -520,22 +558,8 @@ async def process_inbound_message(payload: InboundPayload):
         if engine_res.get("action") in ("SHOW_MENU", "CS_HANDOVER") or engine_res.get("unassigned_triggered"):
             reply = engine_res.get("reply")
 
-    # 1.7 APP_SHOP_V1 Interactive Catalog Interceptor
-    # GROUP GUARD: DIBLOKIR di grup — jangan kirim kartu/banner interaktif ke grup.
-    if (
-        payload.conversation_scope != "GROUP"
-        and tenant_slug.lower() in ("app_shop_v1", "app-shop-v1", "app_shop", "boon", "boontrack-app-shop", "boontrack_app_shop")
-        and any(k in text_lower for k in ("paket", "katalog", "harga", "langganan", "upgrade", "menu", "beli"))
-    ):
-        from app.services.whatsapp.evolution import send_evolution_app_shop_catalog
-        target_num = payload.group_jid if (payload.conversation_scope == "GROUP" and payload.group_jid) else clean_phone
-        catalog_instance = "boontrack-app-shop"
-        asyncio.create_task(send_evolution_app_shop_catalog(number=target_num, instance_name=catalog_instance))
-        return {
-            "status": "success",
-            "action": "APP_SHOP_CATALOG_SENT",
-            "reply_text": "Katalog Paket BoonTrack App Shop V1 telah dikirimkan via menu interaktif."
-        }
+    # 1.7 APP_SHOP_V1 Interactive Catalog Interceptor — DISABLED (Shop mode bypassed, locked to pure Sales Rep)
+    # Alur menu/katalog interaktif toko dinonaktifkan agar tidak mengirim kartu banner paket.
 
     # 2. Pipeline Numbered Menu Flow: Tanya Produk -> Pilih Nomor -> Testimoni / Beli / Kembali
     if not reply:
@@ -1445,19 +1469,49 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     message_body_for_processing = incoming_text
     if conversation_scope == "GROUP":
         message_body_for_processing = re.sub(r"@[\w.]+", "", incoming_text).strip() or incoming_text
-    inbound_res = await process_inbound_message(InboundPayload(
-        tenant_slug=canonical_slug,
-        sender_phone=sender_phone,
-        message_body=message_body_for_processing,
-        sender_name=sender_name,
-        conversation_scope=conversation_scope,
-        group_jid=group_jid,
-        participant_jid=participant_jid,
-        reply_to_message_id=reply_to_message_id,
-        ctwa_clid=ctwa_clid,
-    ))
-    reply_text = inbound_res.get("reply_text")
-    reply_media_to_send = inbound_res.get("media_url")
+
+    is_boon_instance = (
+        canonical_slug == "boon"
+        or resolved_tenant == "boon"
+        or (instance_name and "boontrack-app-shop" in instance_name.lower())
+        or conversation_scope == "GROUP"
+    )
+
+    if is_boon_instance:
+        # =====================================================================
+        # DEDICATED SALES REPRESENTATIVE & KONSULTAN BISNIS MODE (P0 LOCK)
+        # Bypass seluruh kartu storefront/greeting toko untuk instance boontrack-app-shop.
+        # Alihkan SEMUA pesan masuk (GROUP mention maupun DIRECT DM) LANGSUNG ke BoonPilot Brain.
+        # =====================================================================
+        from app.whatsapp.traffic_splitter import generate_group_boonpilot_reply
+        text_clean = re.sub(r"@[\w.]+", "", incoming_text).strip() or incoming_text
+        logger.info(
+            f"[BOONPILOT SALES REP] Webhook locked to pure Sales Rep mode for '{instance_name}' / '{canonical_slug}' "
+            f"({conversation_scope}) from '{sender_phone}' -> text_clean='{text_clean[:80]}'"
+        )
+        reply_text = await generate_group_boonpilot_reply(text_clean)
+        reply_media_to_send = None
+        inbound_res = {
+            "status": "success",
+            "tenant_slug": canonical_slug,
+            "conversation_scope": conversation_scope,
+            "reply_text": reply_text,
+            "media_url": None,
+        }
+    else:
+        inbound_res = await process_inbound_message(InboundPayload(
+            tenant_slug=canonical_slug,
+            sender_phone=sender_phone,
+            message_body=message_body_for_processing,
+            sender_name=sender_name,
+            conversation_scope=conversation_scope,
+            group_jid=group_jid,
+            participant_jid=participant_jid,
+            reply_to_message_id=reply_to_message_id,
+            ctwa_clid=ctwa_clid,
+        ))
+        reply_text = inbound_res.get("reply_text")
+        reply_media_to_send = inbound_res.get("media_url")
 
     # =========================================================================
     # 3. OUTBOUND OWNERSHIP CHAIN GUARD (P0 SECURITY MANDATE)
@@ -1494,6 +1548,13 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     target_send_instance = instance_name
 
     outbound_options: Dict[str, Any] = {"delay": 1200, "presence": "composing"}
+    if is_boon_instance or conversation_scope == "GROUP":
+        # Pastikan linkPreview dimatikan agar WhatsApp tidak menampilkan kartu tautan / banner
+        outbound_options["linkPreview"] = False
+        outbound_options["preview_url"] = False
+        outbound_options["link_preview"] = False
+        reply_media_to_send = None
+
     if conversation_scope == "GROUP" and reply_to_message_id:
         outbound_options["quoted"] = {
             "key": {
@@ -1526,12 +1587,17 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
                 logger.info(f"[EVOLUTION SEND MEDIA STATUS] Dispatched to {target_send_recipient} via {target_send_instance}: {res.status_code}")
                 if res.status_code not in (200, 201):
                     logger.warning(f"[EVOLUTION SEND MEDIA WARNING] Fallback to sendText: {res.text[:200]}")
-                    await client.post(f"{EVOLUTION_BASE_URL}/message/sendText/{target_send_instance}", headers=headers, json={
+                    fallback_send_payload = {
                         "number": target_send_recipient,
                         "text": reply_text,
                         "textMessage": {"text": reply_text},
-                        "options": outbound_options
-                    })
+                        "options": outbound_options,
+                    }
+                    if is_boon_instance or conversation_scope == "GROUP":
+                        fallback_send_payload["linkPreview"] = False
+                        fallback_send_payload["preview_url"] = False
+                        fallback_send_payload["link_preview"] = False
+                    await client.post(f"{EVOLUTION_BASE_URL}/message/sendText/{target_send_instance}", headers=headers, json=fallback_send_payload)
         except Exception as media_err:
             logger.error(f"[EVOLUTION SEND MEDIA ERROR] {media_err}")
 
@@ -1549,12 +1615,16 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         track_whatsapp_message("OUTBOUND", tenant_id=resolved_tenant, session_id=session_id_scope, classification="outbound_gateway")
         send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{target_send_instance}"
         headers = get_evolution_headers()
-        send_payload = {
+        send_payload: Dict[str, Any] = {
             "number": target_send_recipient,
             "text": reply_text,
             "textMessage": {"text": reply_text},
-            "options": outbound_options
+            "options": outbound_options,
         }
+        if is_boon_instance or conversation_scope == "GROUP":
+            send_payload["linkPreview"] = False
+            send_payload["preview_url"] = False
+            send_payload["link_preview"] = False
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 res = await client.post(send_url, headers=headers, json=send_payload)
