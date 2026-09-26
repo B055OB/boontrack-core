@@ -214,16 +214,20 @@ async def generate_concierge_reply(incoming_text: str) -> str:
         return get_static_concierge_response(incoming_text)
 
 
-def get_tenant_fallback_message(store_name: str, tenant_slug: str) -> str:
+def get_tenant_fallback_message(store_name: str, tenant_slug: str, custom_greeting: Optional[str] = None) -> str:
     clean_name = store_name or tenant_slug.replace("-", " ").title()
+    if custom_greeting and str(custom_greeting).strip():
+        text = str(custom_greeting).strip()
+        text = text.replace("[nama_toko]", clean_name).replace("{nama_toko}", clean_name).replace("{store_name}", clean_name)
+        return text
     return (
-        f"Halo! Selamat datang di *{clean_name}* 👋\n\n"
+        f"Halo! Selamat datang di *{clean_name}* \U0001f44b\n\n"
         "Terima kasih telah menghubungi kami. Tim kami siap melayani pesanan dan pertanyaan Kakak.\n\n"
-        f"🛍️ *Katalog Produk*: https://shop.boontrack.com/{tenant_slug}\n\n"
-        "📌 *Panduan Bantuan Cepat:*\n"
-        "• Ketik *Menu* — melihat katalog & pilihan produk\n"
-        "• Ketik *Status* — memeriksa status pesanan terakhir\n"
-        "• Ketik *Bantuan* atau *CS* — terhubung langsung dengan Customer Service kami\n\n"
+        f"\U0001f6cd\ufe0f *Katalog Produk*: https://shop.boontrack.com/{tenant_slug}\n\n"
+        "\U0001f4cc *Panduan Bantuan Cepat:*\n"
+        "\u2022 Ketik *Menu* \u2192 melihat katalog & pilihan produk\n"
+        "\u2022 Ketik *Status* \u2192 memeriksa status pesanan terakhir\n"
+        "\u2022 Ketik *Bantuan* atau *CS* \u2192 terhubung langsung dengan Customer Service kami\n\n"
         "Ada yang bisa kami bantu seputar produk atau pesanan Kakak hari ini?"
     )
 
@@ -953,7 +957,8 @@ class TenantWebhookRouter:
                 or _meta.get("business_name")
                 or getattr(tenant_context, "slug", tenant_slug).replace("-", " ").title()
             )
-            reply_text = get_tenant_fallback_message(store_name, tenant_slug)
+            _custom_greeting = _meta.get("greeting_message") or _meta.get("custom_greeting_message")
+            reply_text = get_tenant_fallback_message(store_name, tenant_slug, _custom_greeting)
             trace.log_step("StateGuard.TenantFallback", f"Generated fallback greeting for store '{store_name}'")
         else:
             t_meta = getattr(tenant_context, "metadata", None) or {}
@@ -1017,7 +1022,8 @@ class TenantWebhookRouter:
                     or _meta.get("business_name")
                     or getattr(tenant_context, "slug", tenant_slug).replace("-", " ").title()
                 )
-                reply_text = get_tenant_fallback_message(store_name, tenant_slug)
+                _custom_greeting = _meta.get("greeting_message") or _meta.get("custom_greeting_message")
+                reply_text = get_tenant_fallback_message(store_name, tenant_slug, _custom_greeting)
                 trace.log_step("FallbackBot", "AI empty -> using automated tenant fallback bot")
 
         # 4. Dispatch balasan ke pengguna

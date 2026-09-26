@@ -1396,6 +1396,7 @@ async def perform_sync_gateway_webhook(public_base_url: Optional[str] = None) ->
                         "provider": "EVOLUTION",
                         "channel_type": "BAILEYS",
                         "status": "open",
+                        "is_connected": True,
                         "gateway_node_url": webhook_url,
                         "metadata": {
                             "mode": "SHARED",

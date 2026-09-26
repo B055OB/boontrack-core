@@ -115,6 +115,7 @@ async def get_or_create_evolution_session(tenant_slug: str = "") -> Dict[str, An
                                 "provider": "EVOLUTION",
                                 "channel_type": "BAILEYS",
                                 "status": "open",
+                                "is_connected": True,
                                 "phone_number": phone_number or None,
                                 "metadata": {
                                     "mode": "DEDICATED",
@@ -217,6 +218,7 @@ async def get_or_create_evolution_session(tenant_slug: str = "") -> Dict[str, An
                             "provider": "EVOLUTION",
                             "channel_type": "BAILEYS",
                             "status": "connecting",
+                            "is_connected": False,
                             "metadata": {
                                 "mode": "DEDICATED",
                                 "instance_name": instance_name,

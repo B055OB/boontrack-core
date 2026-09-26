@@ -202,7 +202,28 @@ class UnifiedConversationEngine:
         welcome_buttons = get_welcome_buttons_for_category(business_category)
 
         store_name = tenant_obj.get("name") or clean_slug.replace("-", " ").title()
-        welcome_msg = persona.get("welcome_message") or ai_k.get("welcome_message") or f"Halo! Selamat datang di {store_name} 👋 Ada yang bisa kami bantu?"
+        tenant_meta = tenant_obj.get("metadata") or {}
+        if not isinstance(tenant_meta, dict):
+            tenant_meta = {}
+        custom_greeting = (
+            tenant_meta.get("greeting_message")
+            or tenant_meta.get("custom_greeting_message")
+            or details.get("greeting_message")
+            or details.get("custom_greeting_message")
+        )
+        if custom_greeting and str(custom_greeting).strip():
+            welcome_msg = (
+                str(custom_greeting).strip()
+                .replace("[nama_toko]", store_name)
+                .replace("{nama_toko}", store_name)
+                .replace("{store_name}", store_name)
+            )
+        else:
+            welcome_msg = (
+                persona.get("welcome_message")
+                or ai_k.get("welcome_message")
+                or f"Halo! Selamat datang di {store_name} 👋 Ada yang bisa kami bantu?"
+            )
 
         # 2. Ambil Katalog Produk Riil dari Database Supabase
         db_name, catalog = get_tenant_products_from_db(clean_slug)

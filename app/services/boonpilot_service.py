@@ -350,6 +350,19 @@ class BoonPilotService:
             "  Langkah 4: Hubungkan Akun Pembayaran (QRIS)\n"
             "  Langkah 5: Pasang Pixel/Meta CAPI (jika beriklan)\n"
             "  Langkah 6: Lakukan Transaksi Uji Coba & Bagikan Link Katalog\n\n"
+            "PETA NAVIGASI UI DASHBOARD TOKO (UI NAVIGATION TREE):\n"
+            "- Tab Ringkasan (Overview): Kartu Omset, Order, Grafik Penjualan, Quick Actions onboarding.\n"
+            "- Tab Katalog (Products): Tambah/Edit Produk, Kelola Stok, Atur Varian, Foto & Deskripsi.\n"
+            "- Tab Pesanan (Orders): Daftar Transaksi Masuk, Status Pembayaran (QRIS/Transfer), Update Resi Pengiriman.\n"
+            "- Tab WhatsApp (WA Gateway): QR Code WhatsApp, Status Koneksi, Pesan Sapaan Otomatis (Greeting Message), Auto-reply & Splitter.\n"
+            "- Tab Pengiriman (Shipping): Pengaturan Biteship / Kurir Toko, Titik Jemput Gudang (Origin), Ongkir Otomatis.\n"
+            "- Tab Pembayaran (Payments): Integrasi QRIS Otomatis (Xendit/Midtrans), Rekening Pencairan Toko.\n"
+            "- Tab Iklan & Pelacakan (Tracking): Meta Pixel ID, Meta CAPI Access Token, Google Tag Manager (GTM).\n"
+            "- Tab Pengaturan (Settings): Profil Toko (Nama, Logo, Deskripsi, No. WA Toko, Pesan Sapaan WhatsApp), Domain Kustom, Akun Tim.\n\n"
+            "PANDUAN NAVIGASI & KOMUNIKASI BOONPILOT UNTUK MERCHANT:\n"
+            "1. Jika merchant bertanya di mana suatu menu berada atau bagaimana cara mengatur fitur, SELALU arahkan langkah-langkah navigasi menggunakan nama Tab dan tombol yang tercantum di PETA NAVIGASI UI di atas.\n"
+            "2. Jika ditanya cara ubah sapaan / greeting WhatsApp: Arahkan langsung ke: 'Buka tab WhatsApp di dashboard > Cari bagian Pesan Sapaan Otomatis (Greeting Message) > Tulis pesan sapaan > Klik Simpan Pesan Sapaan' (atau via tab Pengaturan > sub-menu WhatsApp).\n"
+            "3. DILARANG KERAS menjelaskan arsitektur teknis backend, kode sumber (FastAPI, SQLAlchemy, route python, dsb), atau detail infrastruktur kepada merchant. Berikan panduan operasional praktis dan visual UI.\n\n"
             "Pedoman Menjawab & Guardrails:\n"
             "1. Jawab ramah, profesional, ringkas, solutif, dan bantu merchant menjalankan 6 langkah onboarding jika mereka bertanya panduan mulai.\n"
             "2. JANGAN PERNAH merespons dengan salam perkenalan berulang jika user menanyakan kapabilitas spesifik sistem atau melanjutkan percakapan.\n"
@@ -723,19 +736,55 @@ class BoonPilotService:
             }
 
         # ---------------------------------------------------------------------
-        # E. WhatsApp Automation Flow (Pencegahan Greeting Loop)
+        # E1. WhatsApp Greeting / Sapaan Customization
+        # ---------------------------------------------------------------------
+        greeting_keywords = [
+            "sapaan", "greeting", "pesan pembuka", "ubah sapaan", "ganti sapaan",
+            "sambutan", "pesan sapaan", "teks sapaan", "edit sapaan", "ubah greeting",
+            "ganti greeting", "atur sapaan", "custom greeting"
+        ]
+        if any(k in text_lower for k in greeting_keywords):
+            reply = (
+                f"Untuk mengubah teks sapaan otomatis WhatsApp toko **{tenant_name}**:\n\n"
+                "1. Buka tab **WhatsApp** di navigasi dashboard Anda.\n"
+                "2. Gulir ke bagian **Pesan Sapaan Otomatis (Greeting Message)**.\n"
+                "3. Masukkan teks sapaan yang Anda inginkan (gunakan variabel `[nama_toko]` agar otomatis menyesuaikan nama toko).\n"
+                "4. Klik tombol **Simpan Pesan Sapaan**.\n\n"
+                "📌 *Alternatif*: Anda juga dapat mengaturnya melalui tab **Pengaturan** > sub-menu **WhatsApp**."
+            )
+            data = {
+                "feature": "whatsapp_greeting",
+                "status": "CONFIGURABLE",
+                "tenant_slug": clean_slug,
+                "tenant_name": tenant_name,
+                "quick_actions": [
+                    {"label": "Buka Tab WhatsApp", "action": "navigate_tab", "tab": "whatsapp"},
+                    {"label": "Buka Tab Pengaturan", "action": "navigate_tab", "tab": "settings"},
+                ]
+            }
+            self._append_turn(sess_id, "user", message)
+            self._append_turn(sess_id, "assistant", reply)
+            return {
+                "type": "text",
+                "reply": reply,
+                "data": data,
+                "session_id": sess_id,
+            }
+
+        # ---------------------------------------------------------------------
+        # E2. WhatsApp Automation Flow (Pencegahan Greeting Loop)
         # ---------------------------------------------------------------------
         wa_keywords = [
             "whatsapp", "wa", "otomatisasi wa", "bot wa", "fitur wa",
-            "wa gateway", "alur wa", "whatsapp automation", "pesan otomatis",
+            "wa gateway", "alur wa", "whatsapp automation", "koneksi wa", "scan qr",
         ]
         if any(k in text_lower for k in wa_keywords):
             reply = (
-                f"Otomatisasi WhatsApp untuk toko {tenant_name} sudah aktif dengan alur:\n"
-                f" 1. Sambutan otomatis calon pembeli via WA.\n"
-                f" 2. Menu bernomor (1, 2, 3) untuk cek detail produk & ulasan.\n"
-                f" 3. Link checkout instan & pelacakan konversi iklan otomatis (Lead/CAPI).\n\n"
-                "Apakah Anda ingin melihat statistik chat, menguji nomor asisten, atau mengubah alur katalog?"
+                f"Fitur WhatsApp toko **{tenant_name}** terpusat di tab **WhatsApp** dashboard:\n\n"
+                "1. **Koneksi & Scan QR**: Hubungkan atau putuskan nomor WhatsApp bisnis toko.\n"
+                "2. **Pesan Sapaan Otomatis**: Kustomisasi salam pembuka saat pembeli pertama kali chat.\n"
+                "3. **Katalog & Checkout Instan**: Pembeli otomatis menerima menu produk dan link pembayaran QRIS.\n\n"
+                "Silakan buka tab **WhatsApp** di dashboard untuk mengelola koneksi dan teks sapaan toko Anda."
             )
             data = {
                 "feature": "whatsapp_automation",
@@ -743,8 +792,8 @@ class BoonPilotService:
                 "tenant_slug": clean_slug,
                 "tenant_name": tenant_name,
                 "quick_actions": [
-                    {"label": "Lihat Statistik Chat", "action": "view_chat_analytics", "path": "/dashboard/chats"},
-                    {"label": "Ubah Alur Katalog", "action": "edit_catalog_flow", "path": "/dashboard/catalog/flow"}
+                    {"label": "Buka Tab WhatsApp", "action": "navigate_tab", "tab": "whatsapp"},
+                    {"label": "Buka Tab Pengaturan", "action": "navigate_tab", "tab": "settings"}
                 ]
             }
             self._append_turn(sess_id, "user", message)
