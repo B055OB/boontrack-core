@@ -4,6 +4,7 @@ app/services/whatsapp/cloud_api.py
 Sanitasi teks AI, fungsi kirim pesan Meta Cloud API,
 upload media, OTP, e-receipt, dan message logging ke Supabase.
 """
+import os
 import io
 import json
 import re

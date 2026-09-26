@@ -1063,10 +1063,35 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         logger.warning(f"[SECURITY_UNMAPPED_WHATSAPP_INSTANCE] Instance '{instance_name}' has empty tenant_id in whatsapp_connections. Dropping immediately.")
         return {"status": "ignored", "reason": "SECURITY_UNMAPPED_WHATSAPP_INSTANCE"}
 
-    # URL tenant_slug validation
-    if tenant_slug and tenant_slug.strip().lower() != conn_tenant_id:
-        logger.warning(f"[SECURITY_CROSS_LEAK_PREVENTED] URL tenant '{tenant_slug}' does not match connection tenant '{conn_tenant_id}'. Dropping immediately.")
-        return {"status": "ignored", "reason": "tenant_mismatch"}
+    conn_slug = str(connection.get("tenant_slug") or "").strip().lower()
+    conn_inst = str(connection.get("instance_name") or "").strip().lower()
+    valid_conn_identifiers = {conn_tenant_id, conn_slug, conn_inst} - {""}
+
+    # Canonical alias set for App Shop V1 internal tenant (boon / boontrack-app-shop / UUID)
+    _APP_SHOP_V1_ALIASES = {
+        "52967979-4760-4cea-b686-cdbdb389c0e1",
+        "boon",
+        "boontrack-app-shop",
+        "boontrack_app_shop",
+        "app_shop_v1",
+        "app-shop-v1",
+        "app_shop",
+        "app-shop",
+    }
+
+    # URL tenant_slug validation — verifies URL matches tenant UUID, slug, instance_name, or App Shop aliases
+    if tenant_slug:
+        url_slug_clean = tenant_slug.strip().lower()
+        both_are_app_shop = url_slug_clean in _APP_SHOP_V1_ALIASES and bool(_APP_SHOP_V1_ALIASES.intersection(valid_conn_identifiers))
+        is_matched = both_are_app_shop or (url_slug_clean in valid_conn_identifiers)
+        if not is_matched:
+            logger.warning(
+                f"[SECURITY_CROSS_LEAK_PREVENTED] URL tenant '{url_slug_clean}' does not match "
+                f"connection identifiers {valid_conn_identifiers} (instance: '{instance_name}'). "
+                f"URL tenant in aliases: {url_slug_clean in _APP_SHOP_V1_ALIASES}. "
+                f"Dropping immediately."
+            )
+            return {"status": "ignored", "reason": "tenant_mismatch"}
 
     resolved_tenant = conn_tenant_id
 
