@@ -477,8 +477,30 @@ async def process_inbound_message(payload: InboundPayload):
             f"Admin kami akan segera membalas pesan Kakak secara manual."
         )
     else:
-        # Scope Isolation: if GROUP, isolate conversation session key so it never collides with private DM
-        conv_sender_id = f"group:{payload.group_jid}" if (payload.conversation_scope == "GROUP" and payload.group_jid) else clean_phone
+        is_group_scope = payload.conversation_scope == "GROUP" and bool(payload.group_jid)
+        is_boon_tenant = tenant_slug.lower() in ("boon", "boontrack-app-shop", "boontrack_app_shop", "app_shop", "app-shop")
+
+        # =====================================================================
+        # GROUP + BOON TENANT => BoonPilot Group Brain (early return)
+        # Pipeline checkout, lead-collection, dan menu flow DIBLOKIR di grup.
+        # =====================================================================
+        if is_group_scope and is_boon_tenant:
+            from app.whatsapp.traffic_splitter import generate_group_boonpilot_reply
+            logger.info(f"[GROUP_BOONPILOT] Routing group mention from '{clean_phone}' in group '{payload.group_jid}' to BoonPilot Group Brain.")
+            group_reply = await generate_group_boonpilot_reply(incoming_text)
+            logger.info(f"[GROUP_BOONPILOT REPLY] {group_reply[:120]}...")
+            return {
+                "status": "success",
+                "tenant_slug": tenant_slug,
+                "conversation_scope": "GROUP",
+                "group_jid": payload.group_jid,
+                "bot_strategy": "boonpilot_group",
+                "reply_text": group_reply,
+                "media_url": None,
+            }
+
+        # Scope Isolation: if GROUP (non-boon), isolate conversation session key so it never collides with private DM
+        conv_sender_id = f"group:{payload.group_jid}" if (is_group_scope) else clean_phone
         engine_res = await unified_conversation_engine.process_chat(
             tenant_slug=tenant_slug,
             message=incoming_text,
@@ -1239,16 +1261,26 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
             return {"status": "dropped", "reason": "bot_self_participant"}
 
         # b. Mention & Quoted Reply Guard:
-        # Hanya respon jika pesan memuat metadata mention @boontrack ATAU me-reply pesan dari bot.
-        # Abaikan obrolan umum grup lainnya.
-        text_lower = incoming_text.lower()
+        # Hanya respon jika pesan memuat metadata mention @boontrack / @boon / @support / nomor bot ATAU
+        # me-reply pesan dari bot. Abaikan obrolan umum grup lainnya.
+        text_lower_grp = incoming_text.lower()
+        bot_phone_clean = re.sub(r"\D", "", str(connection.get("phone_number") or bot_phone or "")).lstrip("0")
         has_mention = bool(
-            re.search(r"@boontrack\b", text_lower)
-            or re.search(r"@boontrackbot\b", text_lower)
-            or ("boontrack" in text_lower and "@" in text_lower)
+            re.search(r"@boontrack\b", text_lower_grp)
+            or re.search(r"@boontrackbot\b", text_lower_grp)
+            or re.search(r"@boon\b", text_lower_grp)
+            or re.search(r"@support\b", text_lower_grp)
+            or re.search(r"@081215567168\b", text_lower_grp)
+            or ("boontrack" in text_lower_grp and "@" in text_lower_grp)
+            or (bot_phone_clean and bot_phone_clean in text_lower_grp)
         )
         mentioned_jids = [str(j).lower() for j in (context_info.get("mentionedJid") or [])]
-        if any("boontrack" in j for j in mentioned_jids) or (bot_phone and any(bot_phone in j for j in mentioned_jids)):
+        if (
+            any("boontrack" in j for j in mentioned_jids)
+            or any("boon" in j for j in mentioned_jids)
+            or (bot_phone and any(bot_phone in j for j in mentioned_jids))
+            or (bot_phone_clean and any(bot_phone_clean in j for j in mentioned_jids))
+        ):
             has_mention = True
 
         quoted_msg = context_info.get("quotedMessage")

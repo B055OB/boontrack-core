@@ -24,6 +24,7 @@ import os
 import re
 import time
 import json
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, Tuple, List
@@ -37,6 +38,9 @@ from app.services.tenant_context_resolver import tenant_context_resolver, Tenant
 
 
 logger = logging.getLogger("WABA_TRAFFIC_SPLITTER")
+
+# Nomor WhatsApp resmi BoonTrack App Shop (boontrack-app-shop instance)
+BOT_APP_SHOP_PHONE = os.getenv("BOT_APP_SHOP_PHONE", "6281215567168").strip()
 
 # ---------------------------------------------------------------------------
 # Platform Configuration
@@ -99,6 +103,144 @@ Jika merchant atau pengguna baru bingung cara memulai, arahkan mereka ke asisten
 - Jika pertanyaan di luar konteks BoonTrack Shop, jawab dengan sopan: "Mohon maaf, saya hanya dapat membantu memberikan informasi resmi seputar layanan, paket, dan panduan BoonTrack Shop."
 - Di akhir jawaban informatif, selalu sertakan arahan singkat untuk mendaftar di https://shop.boontrack.com/register atau ketik AKTIVASI BT-XXXX jika sedang memverifikasi akun.
 """
+
+# ---------------------------------------------------------------------------
+# BoonPilot Group Brain — Prompt khusus konteks grup komunitas / lead
+# Dioptimalkan: ringkas, solutif, natural, tidak verbose.
+# ---------------------------------------------------------------------------
+GROUP_BOONPILOT_SYSTEM_PROMPT = """\
+Anda adalah BoonPilot, asisten resmi BoonTrack yang hadir di grup WhatsApp ini.
+Jawab pertanyaan dengan RINGKAS (1–2 paragraf), SOLUTIF, dan NATURAL — seperti admin yang ramah, bukan robot.
+
+[KONTEKS EKOSISTEM BOONTRACK]
+• Storefront online otomatis: shop.boontrack.com/boon — merchant bisa buka toko dalam menit.
+• Automasi WhatsApp & notifikasi order: bot AI menjawab pelanggan & kirim notif pembayaran/pengiriman otomatis.
+• Dashboard manajemen pesanan, multi-ekspedisi, dan integrasi payment (QRIS dinamis, Xendit, dll).
+• Auto-Verifikasi Pembayaran QRIS Real-Time: 0% platform fee, tanpa upload bukti manual.
+• Paket Trial GRATIS: 30 pesanan, 50 interaksi AI, 15 notifikasi WA. Mulai di: shop.boontrack.com/register
+
+[ATURAN KETAT]
+- Jawab HANYA seputar BoonTrack. Jika di luar konteks, tolak dengan sopan.
+- JANGAN mengarang fitur, harga, atau diskon yang tidak resmi.
+- Sertakan link relevan jika membantu (shop.boontrack.com/register atau shop.boontrack.com/boon).
+- Jangan gunakan sapaan formal "Kakak" jika konteks grup — gunakan "Kamu" atau langsung ke poin.
+- Maksimal 3 poin bullet jika menjelaskan fitur, jangan lebih panjang dari itu.
+"""
+
+GROUP_BOONPILOT_KNOWLEDGE: Dict[str, str] = {
+    "storefront": (
+        "🛒 *Storefront BoonTrack* bisa diakses di: https://shop.boontrack.com/boon\n"
+        "Merchant bisa buka toko online lengkap dalam hitungan menit — produk, checkout, QRIS otomatis sudah siap."
+    ),
+    "automasi": (
+        "🤖 *Automasi WhatsApp BoonTrack:*\n"
+        "• Bot AI balas chat pelanggan 24/7\n"
+        "• Notifikasi order & konfirmasi pembayaran otomatis\n"
+        "• Broadcast promo ke ribuan kontak sekali klik"
+    ),
+    "dashboard": (
+        "📊 *Dashboard BoonTrack* menyediakan:\n"
+        "• Manajemen pesanan & stok real-time\n"
+        "• Integrasi multi-ekspedisi (JNE, Sicepat, dll)\n"
+        "• Analytics penjualan & performa iklan (Meta CAPI)"
+    ),
+    "payment": (
+        "💳 *Payment BoonTrack:*\n"
+        "• QRIS Dinamis otomatis — 0% platform fee\n"
+        "• Auto-verifikasi tanpa upload bukti manual\n"
+        "• Integrasi Xendit & payment gateway lainnya"
+    ),
+    "trial": (
+        "🎁 *Paket Trial GRATIS BoonTrack:*\n"
+        "• 30 Pesanan Masuk • 50 Interaksi AI • 15 Notifikasi WA\n"
+        "Daftar sekarang: https://shop.boontrack.com/register"
+    ),
+    "daftar": (
+        "🚀 Daftar toko BoonTrack gratis di: https://shop.boontrack.com/register\n"
+        "Buka toko dalam menit — langsung dapat storefront, bot WA, QRIS, & dashboard pesanan."
+    ),
+}
+
+
+def get_static_group_boonpilot_response(incoming_text: str) -> str:
+    """Jawaban deterministik BoonPilot untuk konteks grup berdasarkan kata kunci."""
+    lower = incoming_text.lower().strip()
+    # Hilangkan mention trigger sebelum analisa kata kunci
+    lower = re.sub(r"@[a-z0-9_]+", "", lower).strip()
+
+    if any(k in lower for k in ("daftar", "register", "registrasi", "gabung", "mulai", "sign up", "signup")):
+        return GROUP_BOONPILOT_KNOWLEDGE["daftar"]
+    if any(k in lower for k in ("trial", "gratis", "free", "coba", "uji coba")):
+        return GROUP_BOONPILOT_KNOWLEDGE["trial"]
+    if any(k in lower for k in ("qris", "payment", "bayar", "pembayaran", "transfer")):
+        return GROUP_BOONPILOT_KNOWLEDGE["payment"]
+    if any(k in lower for k in ("dashboard", "pesanan", "order", "ekspedisi", "pengiriman")):
+        return GROUP_BOONPILOT_KNOWLEDGE["dashboard"]
+    if any(k in lower for k in ("bot", "automasi", "otomatis", "notifikasi", "broadcast", "wa bot", "auto reply")):
+        return GROUP_BOONPILOT_KNOWLEDGE["automasi"]
+    if any(k in lower for k in ("toko", "storefront", "shop", "katalog", "produk", "jualan")):
+        return GROUP_BOONPILOT_KNOWLEDGE["storefront"]
+    # Default: perkenalan singkat
+    return (
+        "Halo! Aku BoonPilot dari BoonTrack 👋\n\n"
+        "BoonTrack adalah platform toko online + automasi WhatsApp untuk bisnis kamu.\n"
+        "🔗 Coba gratis: https://shop.boontrack.com/register"
+    )
+
+
+async def generate_group_boonpilot_reply(incoming_text: str) -> str:
+    """
+    BoonPilot Group Brain: Jawaban AI ringkas & natural untuk konteks grup.
+    Menggunakan GROUP_BOONPILOT_SYSTEM_PROMPT (temperature=0.2, max_output_tokens=300).
+    Fallback: get_static_group_boonpilot_response() jika LLM gagal.
+    """
+    # Bersihkan mention sebelum dikirim ke LLM
+    clean_text = re.sub(r"@[a-zA-Z0-9_]+", "", incoming_text).strip()
+    if not clean_text:
+        clean_text = incoming_text.strip()
+
+    # Fast-path: jika teks singkat (< 6 kata), cek deterministik dulu
+    if len(clean_text.split()) < 6:
+        static = get_static_group_boonpilot_response(clean_text)
+        if static != (
+            "Halo! Aku BoonPilot dari BoonTrack 👋\n\n"
+            "BoonTrack adalah platform toko online + automasi WhatsApp untuk bisnis kamu.\n"
+            "🔗 Coba gratis: https://shop.boontrack.com/register"
+        ):
+            return static
+
+    try:
+        import google.generativeai as genai
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_AI_API_KEY")
+        if not api_key:
+            return get_static_group_boonpilot_response(clean_text)
+
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(
+            model_name="gemini-2.0-flash",
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.2,
+                max_output_tokens=300,
+            ),
+            system_instruction=GROUP_BOONPILOT_SYSTEM_PROMPT,
+        )
+        import httpx
+        async with httpx.AsyncClient() as _client:
+            response = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None, lambda: model.generate_content(clean_text)
+                ),
+                timeout=7.0,
+            )
+        reply = (response.text or "").strip()
+        if not reply:
+            return get_static_group_boonpilot_response(clean_text)
+        logger.info(f"[GROUP_BOONPILOT] Generated group reply ({len(reply)} chars).")
+        return reply
+    except Exception as _err:
+        logger.warning(f"[GROUP_BOONPILOT] LLM error: {_err} — using static knowledge base.")
+        return get_static_group_boonpilot_response(clean_text)
+
 
 # Knowledge Base Dictionary Resmi untuk deterministik & fallback offline
 OFFICIAL_KNOWLEDGE_BASE: Dict[str, str] = {
