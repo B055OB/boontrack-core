@@ -302,7 +302,14 @@ class PaymentCoreService:
         webhook: WebhookEventPayload,
     ) -> SettlementRecord:
         """Processes incoming settlement notification with strict idempotency and auto-dispatch."""
-        idem_key = webhook.idempotency_key or webhook.provider_ref
+        idem_key = webhook.idempotency_key or webhook.provider_ref or webhook.order_id
+        from app.core.redis import acquire_payment_lock
+        if idem_key and not acquire_payment_lock(idem_key, ttl_seconds=300):
+            logger.info(f"[PaymentCore Lock Hit] Webhook for '{idem_key}' currently locked/processing. Returning existing.")
+            existing_settlement = self._settlements_by_ref.get(webhook.provider_ref)
+            if existing_settlement:
+                return existing_settlement
+
         if idem_key in self._idempotency_keys or webhook.provider_ref in self._settlements_by_ref:
             existing_settlement = self._settlements_by_ref.get(webhook.provider_ref)
             if existing_settlement:

@@ -287,10 +287,12 @@ async def reconcile_payment_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
     external_id = payload.get("external_id") or payload.get("reference_id")
     payment_status = str(payload.get("status", "")).upper()
 
-    # Idempotency Lock
-    if event_id and event_id in PROCESSED_WEBHOOK_EVENTS:
-        logger.info(f"[WEBHOOK IDEMPOTENT] Event {event_id} already processed. Skipping.")
-        return {"status": "skipped", "reason": "duplicate_event"}
+    # Distributed Lock via Redis: SET lock:payment:webhook:{external_id} NX EX 300
+    from app.core.redis import acquire_payment_lock
+    lock_key = external_id or event_id
+    if lock_key and not acquire_payment_lock(lock_key, ttl_seconds=300):
+        logger.info(f"[WEBHOOK IDEMPOTENT LOCK] Event {lock_key} currently locked/processing. Skipping.")
+        return {"status": "skipped", "reason": "transaction_locked", "idempotent": True}
 
     if payment_status not in ("SUCCEEDED", "COMPLETED", "PAID", "SETTLED"):
         return {"status": "ignored", "payment_status": payment_status}
@@ -303,24 +305,41 @@ async def reconcile_payment_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
             res = supabase.table("orders").select("*").eq("id", external_id).execute()
             if res.data:
                 order_data = res.data[0]
-                supabase.table("orders").update({
-                    "status": "PAID",
-                    "paid_at": datetime.now(timezone.utc).isoformat()
-                }).eq("id", external_id).execute()
         except Exception:
             try:
                 res = supabase.table("orders").select("*").eq("order_id", external_id).execute()
                 if res.data:
                     order_data = res.data[0]
-                    supabase.table("orders").update({
-                        "status": "PAID",
-                        "paid_at": datetime.now(timezone.utc).isoformat()
-                    }).eq("order_id", external_id).execute()
             except Exception as e2:
                 logger.debug(f"[RECONCILE DB NOTE] {e2}")
 
-    if event_id:
-        PROCESSED_WEBHOOK_EVENTS.add(event_id)
+        # Persistent DB State Guard: If already PAID or CONFIRMED -> return ACK NO-OP
+        if order_data and str(order_data.get("status") or "").upper() in ("PAID", "SETTLED", "COMPLETED", "LUNAS", "CONFIRMED"):
+            logger.info(f"[WEBHOOK IDEMPOTENT DB] Order {external_id} already marked PAID in DB. Skipping.")
+            return {"status": "skipped", "reason": "order_already_paid", "idempotent": True}
+
+        # Single Database Transaction Settlement
+        try:
+            from app.services.checkout_service import execute_order_settlement_transaction
+            execute_order_settlement_transaction(
+                event_id=str(event_id),
+                external_id=str(external_id),
+                tenant_id=(order_data or {}).get("tenant_slug") or "default",
+                amount=int(float((order_data or {}).get("gross_amount") or payload.get("amount") or 0)),
+                payload=payload,
+                provider="CHECKOUT_FLOW",
+                customer_phone=(order_data or {}).get("customer_phone"),
+                product_name=(order_data or {}).get("product_title"),
+            )
+        except Exception as tx_err:
+            logger.warning(f"[RECONCILE DB TX Note] {tx_err}")
+            try:
+                supabase.table("orders").update({
+                    "status": "PAID",
+                    "paid_at": datetime.now(timezone.utc).isoformat()
+                }).eq("id", external_id).execute()
+            except Exception:
+                pass
 
     merchant = (order_data or {}).get("tenant_slug") or payload.get("tenant_slug") or "default"
 

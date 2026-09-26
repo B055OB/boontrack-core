@@ -420,3 +420,114 @@ async def request_evolution_pairing_code(tenant_slug: str, phone: str) -> Dict[s
                 "detail": str(conn_err),
                 "status_code": 502
             }
+
+
+# ---------------------------------------------------------------------------
+# Outgoing Message Helpers (Interactive List & Buttons for APP_SHOP_V1)
+# ---------------------------------------------------------------------------
+
+async def send_evolution_list(
+    number: str,
+    title: str,
+    description: str,
+    button_text: str,
+    sections: list,
+    instance_name: str = "app_shop_v1",
+    footer_text: str = "BoonTrack Official",
+) -> Dict[str, Any]:
+    """Sends an Interactive List message via Evolution API v2 (/message/sendList/{instance})."""
+    clean_num = normalize_phone_number(number) or number
+    headers = get_evolution_headers()
+    payload = {
+        "number": clean_num,
+        "title": title,
+        "description": description,
+        "buttonText": button_text,
+        "footerText": footer_text,
+        "sections": sections,
+    }
+    url = f"{EVOLUTION_BASE_URL}/message/sendList/{instance_name}"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            res = await client.post(url, headers=headers, json=payload)
+            if res.status_code in (200, 201):
+                return {"success": True, "data": res.json()}
+            logger.warning(f"[Evolution API sendList] Failed ({res.status_code}): {res.text}")
+            return {"success": False, "error": res.text, "status_code": res.status_code}
+        except Exception as e:
+            logger.error(f"[Evolution API sendList Error] {e}")
+            return {"success": False, "error": str(e)}
+
+
+async def send_evolution_buttons(
+    number: str,
+    title: str,
+    description: str,
+    buttons: list,
+    instance_name: str = "app_shop_v1",
+    footer: str = "BoonTrack Official",
+) -> Dict[str, Any]:
+    """Sends an Interactive Buttons message via Evolution API v2 (/message/sendButtons/{instance})."""
+    clean_num = normalize_phone_number(number) or number
+    headers = get_evolution_headers()
+    payload = {
+        "number": clean_num,
+        "title": title,
+        "description": description,
+        "footer": footer,
+        "buttons": buttons,
+    }
+    url = f"{EVOLUTION_BASE_URL}/message/sendButtons/{instance_name}"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            res = await client.post(url, headers=headers, json=payload)
+            if res.status_code in (200, 201):
+                return {"success": True, "data": res.json()}
+            logger.warning(f"[Evolution API sendButtons] Failed ({res.status_code}): {res.text}")
+            return {"success": False, "error": res.text, "status_code": res.status_code}
+        except Exception as e:
+            logger.error(f"[Evolution API sendButtons Error] {e}")
+            return {"success": False, "error": str(e)}
+
+
+async def send_evolution_app_shop_catalog(
+    number: str,
+    instance_name: str = "app_shop_v1"
+) -> Dict[str, Any]:
+    """Helper to send internal package catalog for APP_SHOP_V1 via interactive List message."""
+    sections = [
+        {
+            "title": "📦 PILIHAN PAKET BOONTRACK SHOP",
+            "rows": [
+                {
+                    "title": "Paket Checkout Lite",
+                    "description": "Rp 59.000/bln - Single page checkout, QRIS 0% fee",
+                    "rowId": "pkg_checkout_lite"
+                },
+                {
+                    "title": "Paket Starter",
+                    "description": "Rp 199.000/bln - Multi-ekspedisi, katalog & bot WA",
+                    "rowId": "pkg_starter"
+                },
+                {
+                    "title": "Paket Pro Scale",
+                    "description": "Rp 299.000/bln - Meta & TikTok CAPI + 2 CS Seats",
+                    "rowId": "pkg_pro_scale"
+                },
+                {
+                    "title": "Paket Enterprise",
+                    "description": "Rp 499.000/bln - WABA resmi, broadcast, unlimited seats",
+                    "rowId": "pkg_enterprise"
+                },
+            ]
+        }
+    ]
+    return await send_evolution_list(
+        number=number,
+        title="🛍️ Katalog Paket Resmi BoonTrack Shop",
+        description="Pilih paket langganan yang paling tepat untuk mengakselerasi penjualan tokomu:",
+        button_text="Lihat Paket",
+        sections=sections,
+        instance_name=instance_name,
+        footer_text="BoonTrack Shop V1 • Closed Economic Loop"
+    )

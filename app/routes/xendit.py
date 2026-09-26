@@ -37,6 +37,7 @@ from app.modules.tracking import capi_dispatcher
 from app.services.session_store import get_user_session_context
 from app.services.waba_notification_service import dispatch_payment_success_notifications
 from app.core.tracing import log_structured_event, set_trace_context, get_trace_context
+from app.core.redis import acquire_payment_lock, release_payment_lock
 
 logger = logging.getLogger("XENDIT_WEBHOOK")
 
@@ -401,6 +402,35 @@ def _record_settlement_and_ledger_sync(
                 f"[Xendit Commission Recorded] Order {external_id}: 25% (Rp{aff_amount:,.0f}) to '{aff_code}', 5% (Rp{mgr_amount:,.0f}) to AM."
             )
 
+        # 3c. Atomic Stock Deduction (FASE 4) if order has a specific product
+        cur.execute("SELECT product_id FROM orders WHERE id = %s LIMIT 1;", (str(external_id),))
+        p_row = cur.fetchone()
+        prod_ref = p_row[0] if p_row else None
+        if prod_ref and prod_ref not in ("prod_digital", "generic_digital", "cpm-24jam"):
+            try:
+                from app.services.checkout_service import deduct_stock_atomic
+                deduct_stock_atomic(product_id=prod_ref, quantity=1, cur=cur, conn=conn)
+            except Exception as stk_err:
+                logger.warning(f"[Xendit Settlement Stock Warning] {stk_err}")
+
+        # 3d. Entitlement Activation in the same transaction
+        try:
+            cur.execute(
+                """
+                INSERT INTO tenant_entitlements (tenant_id, feature, is_active, created_at, updated_at)
+                VALUES (
+                    (SELECT id FROM tenants WHERE slug = %s LIMIT 1),
+                    'APP_SHOP_INTERNAL_FLOW',
+                    TRUE,
+                    %s,
+                    %s
+                )
+                ON CONFLICT DO NOTHING;
+                """,
+                (tenant_id, now_utc, now_utc)
+            )
+        except Exception:
+            pass
 
         conn.commit()
         logger.info(f"[Xendit Ledger Recorded] Event {event_id} & Order {external_id} saved to DB and financial_ledger.")
@@ -504,6 +534,20 @@ async def process_xendit_webhook_core(
         provider_event_id=event_id,
         correlation_id=external_id,
     )
+
+    # 1.5 Distributed Lock via Redis: SET lock:payment:webhook:{external_id} NX EX 300
+    if external_id:
+        lock_ok = acquire_payment_lock(external_id, ttl_seconds=300)
+        if not lock_ok:
+            logger.info(f"[Xendit Webhook Lock Hit] Transaction '{external_id}' is currently locked by concurrent worker. Returning 200 OK.")
+            return {
+                "http_status": 200,
+                "response": {
+                    "status": "ALREADY_PROCESSED",
+                    "message": f"Transaction '{external_id}' is currently being processed",
+                    "idempotent": True,
+                }
+            }
 
     # 2. Fast L1 In-Memory Idempotency Check
     if external_id and xendit_service.is_settled(external_id):

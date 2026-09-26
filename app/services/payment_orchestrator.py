@@ -92,11 +92,17 @@ class PaymentOrchestrator:
 
         logger.info(f"[Payment] Incoming webhook event: {event_id} for order: {external_id}, status: {status}")
 
+        # 0. DISTRIBUTED LOCK (Redis: SET lock:payment:webhook:{external_id} NX EX 300)
+        from app.core.redis import acquire_payment_lock
+        if not acquire_payment_lock(external_id, ttl_seconds=300):
+            logger.info(f"[Payment] Concurrent lock held for {external_id}. Acknowledging NO-OP.")
+            return {"status": "ignored", "reason": "transaction_locked", "idempotent": True}
+
         # 1. IDEMPOTENCY CHECK
         existing_event = self.supabase.table("payment_events").select("id, status").eq("event_id", event_id).execute()
         if existing_event.data:
             logger.warning(f"[Payment] Duplicate event detected: {event_id}. Skipping processing.")
-            return {"status": "ignored", "reason": "event_already_processed"}
+            return {"status": "ignored", "reason": "event_already_processed", "idempotent": True}
 
         # 2. CATAT EVENT INTAKE
         self.supabase.table("payment_events").insert({
@@ -141,10 +147,15 @@ class PaymentOrchestrator:
                 order = new_order
         else:
             order = order_res.data[0]
-            if order.get("status") in ("PAID", "LUNAS"):
-                logger.warning(f"[Payment] Order {external_id} was already marked as LUNAS/PAID.")
+            current_ord_status = str(order.get("status") or "").upper()
+            if current_ord_status in ("PAID", "LUNAS", "CONFIRMED", "SETTLED"):
+                logger.warning(f"[Payment] Order {external_id} was already marked as {current_ord_status}.")
                 self.supabase.table("payment_events").update({"status": "PROCESSED_DUPLICATE_ORDER"}).eq("event_id", event_id).execute()
-                return {"status": "ignored", "reason": "order_already_paid"}
+                return {"status": "ignored", "reason": "order_already_paid", "idempotent": True}
+
+            if current_ord_status not in ("PENDING", "WAITING_PAYMENT", "UNPAID", ""):
+                logger.warning(f"[Payment] Order {external_id} state is '{current_ord_status}' (not PENDING). Rejecting.")
+                return {"status": "ignored", "reason": "non_pending_state"}
 
             # 4. UPDATE STATUS ORDER MENJADI LUNAS
             paid_at = datetime.utcnow().isoformat()
@@ -154,6 +165,15 @@ class PaymentOrchestrator:
                 "paid_at": paid_at,
                 "payment_event_id": event_id
             }).eq("id", order.get("id") or external_id).execute()
+
+            # 4b. ATOMIC STOCK DEDUCTION (FASE 4)
+            prod_ref = order.get("product_id")
+            if prod_ref and prod_ref not in ("prod_digital", "generic_digital", "cpm-24jam"):
+                try:
+                    from app.services.checkout_service import deduct_stock_atomic
+                    deduct_stock_atomic(product_id=prod_ref, quantity=1)
+                except Exception as stk_err:
+                    logger.warning(f"[Payment Stock Warning] {stk_err}")
 
         # 5. ATRIBUSI KOMISI & COMMISSION LEDGER ENTRY
         affiliate_id = order.get("affiliate_id")

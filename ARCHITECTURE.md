@@ -1336,3 +1336,97 @@ Implementasi dan ekspansi jalur Meta Tech Provider wajib melalui 10 tahapan disi
 - **P8** — Design Partners #2 s/d #4 Expansion (Status: PLANNED)
 - **P9** — Controlled Production Rollout (Status: PLANNED)
 
+---
+
+## 26. APP SHOP V1 CLOSED ECONOMIC LOOP & TRANSACTION INTEGRITY CONSTITUTION
+
+> **Architectural Status**: 🔒 **PRODUCTION CONTRACT & INVARIANT (P0 ARCHITECTURAL LOCK)**  
+> **Core Mandate**: *"Payment Idempotency adalah gate mutlak sebelum App Shop live transaksi. Sistem App Shop wajib murni sebagai Tenant Runtime (APP_SHOP_V1) di shared core, dilarang membuat file server terpisah."*
+
+### 26.1 App Shop V1 Closed Economic Loop (Zona 2 - Evolution API)
+* **Single Shared Core Runtime (`APP_SHOP_V1`)**:
+  - `APP_SHOP_V1` beroperasi murni sebagai `TenantRuntimeContext` deklaratif pada shared core engine. Dilarang keras membuat file server, runner terpisah, atau duplikasi repository.
+  - Memanfaatkan WhatsApp Gateway Zona 2 (Evolution API v2) untuk interaktivitas closed economic loop (in-app subscription, top-up kuota, renewal kuota, dan add-on paket).
+* **Interactive List & Button Menu Catalog**:
+  - Outgoing message helper memanfaatkan Evolution API v2 `/message/sendList` dan `/message/sendButtons` untuk menampilkan katalog paket resmi BoonTrack (Checkout Lite, Starter, Pro Scale, Enterprise).
+  - Mengeliminasi friction teks manual melalui selectable interactive payload IDs (`pkg_checkout_lite`, `pkg_starter`, `pkg_pro_scale`, `pkg_enterprise`).
+* **Decoupled CTWA Lead Attribution**:
+  - Parameter Click-to-WhatsApp (`ctwa_clid`) ditangkap secara deterministik pada inbound pertama (via referral context, external ad reply, atau query payload).
+  - `ctwa_clid` disimpan secara terisolasi pada session store dan tabel `leads` / `marketing_attributions`, murni terpisah dari `order_id` dan `session_id` transaksi demi menjaga akurasi Meta CAPI server-side event deduplication.
+* **Passive Mutation Reader & Core Settlement Authority**:
+  - Service `ReaderValidationService` melakukan multi-variabel matching terhadap webhook mutasi bank/QRIS:
+    1. `merchant_id` (kredensial penerima valid)
+    2. `expected_amount` (mencakup verifikasi kode unik 3 digit)
+    3. `unique_code` (kode acak deterministik transaksi)
+    4. `time_window` (maksimal 60 menit dari invoice diterbitkan)
+    5. `payment_state == 'PENDING'` (status awal wajib pending)
+  - Perangkat Reader bertindak pasif sebagai sensor deteksi mutasi; Core Engine adalah satu-satunya *Single Source of Truth* yang memiliki otoritas memvalidasi, menyinkronkan saldo, dan mengaktifkan entitlement.
+
+### 26.2 Triple-Layer Payment Idempotency (Distributed Lock + DB State Guard + Transactional Event Ledger)
+Setiap transaksi pembayaran (Xendit Invoice & Reader QRIS Mutation) dilindungi oleh 3 lapisan penjaga mutlak sebelum mutasi saldo dieksekusi:
+
+```
+Webhook Inbound (Xendit / Reader)
+           │
+           ▼
+[ Layer 1: Redis Distributed Lock ]
+SET lock:payment:webhook:{external_id} NX EX 300
+           │  ├─ Gagal didapat (Lock contention) ──► Return HTTP 409 / Conflict Retry
+           ▼  └─ Berhasil (Acquired)
+[ Layer 2: Persistent DB State Guard ]
+SELECT status FROM orders / invoices WHERE external_id = :id FOR UPDATE;
+           │  ├─ Status in ('PAID', 'CONFIRMED', 'SETTLED') ──► Early ACK (HTTP 200 NO-OP)
+           │  ├─ Status != 'PENDING' ──► Reject / Controlled Exit
+           ▼  └─ Status == 'PENDING'
+[ Layer 3: Transactional Event Ledger & Atomic Settlement ]
+BEGIN TRANSACTION;
+  1. UPDATE payment_state = 'PAID' WHERE id = :id AND status = 'PENDING';
+  2. INSERT INTO financial_event_ledger (append-only immutable ledger);
+  3. UPDATE orders SET status = 'PAID', paid_at = NOW();
+  4. UPDATE products SET stock = stock - :qty WHERE id = :p_id AND stock >= :qty; (Affected rows check!)
+  5. activate_tenant_entitlements(tenant_id, plan_tier);
+COMMIT;
+           │
+           ▼
+Release Redis Distributed Lock & Return HTTP 200 OK
+```
+
+1. **Layer 1: Redis Distributed Lock**:
+   - Webhook intake wajib mengakuisisi lock Redis: `SET lock:payment:webhook:{external_id} NX EX 300`.
+   - Mengeliminasi race conditions akibat concurrent webhook delivery atau network retry storm dari payment gateway.
+2. **Layer 2: Persistent DB State Guard**:
+   - Menggantikan Python in-memory set dengan query status berbasis database yang persisten.
+   - Status transition hanya diizinkan jika status saat ini bernilai `'PENDING'`.
+   - Jika webhook duplikat tiba dan status database sudah `'PAID'`, `'CONFIRMED'`, atau `'SETTLED'`, sistem wajib langsung mengembalikan HTTP 200 ACK (NO-OP) tanpa side effect ulang.
+3. **Layer 3: Single Atomic Database Transaction & Inventory Integrity**:
+   - Seluruh mutasi dibungkus dalam 1 blok transaksi database:
+     `Payment State Transition` -> `Financial Ledger (Append-Only)` -> `Order Paid` -> `Atomic Stock Deduction` -> `Entitlement Activation` -> `COMMIT`.
+   - **Atomic Stock Deduction Query**:
+     ```sql
+     UPDATE products 
+     SET stock = stock - :quantity 
+     WHERE id = :product_id AND stock >= :quantity;
+     ```
+     Jika affected rows bernilai 0 (stok habis), transaksi di-rollback secara utuh dengan error/status `insufficient_stock`.
+
+### 26.3 Group Chat Mention Guard & Context Isolation Architecture
+Bot komunitas WhatsApp (@boontrack) pada kanal grup (`@g.us`) diatur oleh 4 perimeter isolasi ketat:
+
+1. **Bot-Self Ignore**:
+   - Drop pesan seketika jika `fromMe == True` atau JID participant pengirim identik dengan JID bot sendiri. Mencegah infinite feedback loop antar-bot.
+2. **Mention & Quoted Reply Guard**:
+   - Pesan grup hanya diproses jika:
+     a. Teks memuat mention `@boontrack` / `@boontrackbot`, ATAU
+     b. Metadata `contextInfo.mentionedJid` mencantumkan identitas bot, ATAU
+     c. Pesan merupakan `quotedMessage` (reply) ke pesan yang dikirim oleh bot.
+   - Seluruh obrolan umum grup non-mention diabaikan seketika (`ignored_group_general_chatter`, 0 LLM call, 0 DB write).
+3. **Scope & Memory Isolation**:
+   - Menetapkan `conversation_scope = 'GROUP'`.
+   - Metadata `group_jid`, `participant_jid`, dan `reply_to_message_id` diteruskan ke engine.
+   - Session context grup diisolasi dengan session key format `group:{group_jid}`, memastikan memori percakapan grup tidak pernah bocor atau bercampur dengan sesi direct message (DM) pribadi pengguna.
+   - Balasan outbound dikirimkan langsung ke `group_jid` dengan header `quotedMessage` merujuk ke `reply_to_message_id`.
+4. **Rate Limit Throttling**:
+   - Dibatasi secara deterministik maksimal 5 respons per menit per grup JID melalui Redis sliding window.
+   - Mencegah spam mention dan menjaga kuota API dari eksploitasi di grup publik beranggotakan banyak.
+
+

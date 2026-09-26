@@ -14,7 +14,7 @@ import base64
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -52,6 +52,11 @@ class InboundPayload(BaseModel):
     message_body: str = Field(..., description="Message text extracted from BoonTrack WhatsApp Engine")
     sender_name: Optional[str] = Field("Pelanggan", description="Customer contact name")
     bot_strategy: Optional[str] = Field(None, description="Optional override bot strategy: 'trust_builder', 'balanced', 'hard_selling'")
+    conversation_scope: Optional[str] = Field("DIRECT", description="DIRECT or GROUP")
+    group_jid: Optional[str] = Field(None, description="Group JID for group conversation")
+    participant_jid: Optional[str] = Field(None, description="Participant JID in group")
+    reply_to_message_id: Optional[str] = Field(None, description="Message ID being quoted/replied to")
+    ctwa_clid: Optional[str] = Field(None, description="CTWA Click ID")
 
 
 @router.post("/sessions/{tenant_slug}/connect")
@@ -458,18 +463,29 @@ async def process_inbound_message(payload: InboundPayload):
             f"Admin kami akan segera membalas pesan Kakak secara manual."
         )
     else:
-        # 1.6 Unified Conversation Engine Guardrails (Greeting Awal, Safe-Guard Katalog Kosong & Produk Tak Terdaftar)
-        from app.services.unified_conversation_service import unified_conversation_engine
+        # Scope Isolation: if GROUP, isolate conversation session key so it never collides with private DM
+        conv_sender_id = f"group:{payload.group_jid}" if (payload.conversation_scope == "GROUP" and payload.group_jid) else clean_phone
         engine_res = await unified_conversation_engine.process_chat(
             tenant_slug=tenant_slug,
             message=incoming_text,
-            sender_id=clean_phone,
+            sender_id=conv_sender_id,
             sender_name=contact_name,
             channel="whatsapp",
         )
         # Jika trigger greeting awal, katalog kosong, atau produk di luar database
         if engine_res.get("action") in ("SHOW_MENU", "CS_HANDOVER") or engine_res.get("unassigned_triggered"):
             reply = engine_res.get("reply")
+
+    # 1.7 APP_SHOP_V1 Interactive Catalog Interceptor
+    if tenant_slug.lower() in ("app_shop_v1", "app-shop-v1", "app_shop") and any(k in text_lower for k in ("paket", "katalog", "harga", "langganan", "upgrade", "menu", "beli")):
+        from app.services.whatsapp.evolution import send_evolution_app_shop_catalog
+        target_num = payload.group_jid if (payload.conversation_scope == "GROUP" and payload.group_jid) else clean_phone
+        asyncio.create_task(send_evolution_app_shop_catalog(instance_name=tenant_slug, to_number=target_num))
+        return {
+            "status": "success",
+            "action": "APP_SHOP_CATALOG_SENT",
+            "reply_text": "Katalog Paket BoonTrack App Shop V1 telah dikirimkan via menu interaktif."
+        }
 
     # 2. Pipeline Numbered Menu Flow: Tanya Produk -> Pilih Nomor -> Testimoni / Beli / Kembali
     if not reply:
@@ -1017,6 +1033,47 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     key_obj = data.get("key", {}) if isinstance(data.get("key"), dict) else {}
     message_obj = data.get("message", {}) if isinstance(data.get("message"), dict) else {}
 
+    # =========================================================================
+    # INGRESS HARD BOUNDARY (P0 SECURITY MANDATE) & INSTANCE RESOLUTION
+    # =========================================================================
+    instance_name = str(payload.get("instance") or "").strip()
+    if not instance_name:
+        logger.warning("[SECURITY_UNMAPPED_WHATSAPP_INSTANCE] Missing instance_name in Evolution webhook payload. Dropping immediately.")
+        return {"status": "ignored", "reason": "missing_instance"}
+
+    connection = get_connection_by_instance(instance_name)
+    if not connection and instance_name.lower() in ("app_shop_v1", "app-shop-v1", "app_shop"):
+        # Shared core runtime tenant for App Shop V1
+        connection = {
+            "tenant_id": "app_shop_v1",
+            "tenant_slug": "app_shop_v1",
+            "instance_name": instance_name,
+            "mode": "DEDICATED",
+            "channel_type": "DEDICATED",
+        }
+
+    if not connection:
+        logger.warning(f"[SECURITY_UNMAPPED_WHATSAPP_INSTANCE] Instance '{instance_name}' is not registered in whatsapp_connections. Dropping immediately.")
+        return {"status": "ignored", "reason": "SECURITY_UNMAPPED_WHATSAPP_INSTANCE"}
+
+    conn_tenant_id = (connection.get("tenant_id") or connection.get("tenant_slug") or "").strip().lower()
+    if not conn_tenant_id:
+        logger.warning(f"[SECURITY_UNMAPPED_WHATSAPP_INSTANCE] Instance '{instance_name}' has empty tenant_id in whatsapp_connections. Dropping immediately.")
+        return {"status": "ignored", "reason": "SECURITY_UNMAPPED_WHATSAPP_INSTANCE"}
+
+    # URL tenant_slug validation
+    if tenant_slug and tenant_slug.strip().lower() != conn_tenant_id:
+        logger.warning(f"[SECURITY_CROSS_LEAK_PREVENTED] URL tenant '{tenant_slug}' does not match connection tenant '{conn_tenant_id}'. Dropping immediately.")
+        return {"status": "ignored", "reason": "tenant_mismatch"}
+
+    resolved_tenant = conn_tenant_id
+
+    # Validasi DEDICATED vs SHARED GATEWAY:
+    conn_mode = str((connection.get("metadata") or {}).get("mode") or connection.get("channel_type") or "DEDICATED").upper()
+    if conn_mode == "SHARED":
+        logger.warning(f"[SECURITY_SHARED_GATEWAY] Instance '{instance_name}' is SHARED. 2-way AI Commerce not allowed. Dropping.")
+        return {"status": "ignored", "reason": "shared_gateway_inbound_not_allowed"}
+
     # 1. Filter Self-Message: fromMe == True di-skip (Drop immediately)
     is_from_me = (
         key_obj.get("fromMe") is True
@@ -1027,20 +1084,17 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         logger.info("[EVOLUTION WEBHOOK] Ignored: message fromMe is True (Self-Reply Guard)")
         return {"status": "dropped", "reason": "from_me"}
 
-    # 2. Filter Grup & Broadcast
+    # 2. Filter Broadcast
     remote_jid = str(key_obj.get("remoteJid") or payload.get("sender") or "").strip()
-    if not remote_jid or remote_jid == "status@broadcast" or remote_jid.endswith("@broadcast") or remote_jid.endswith("@g.us"):
-        logger.info(f"[EVOLUTION WEBHOOK] Ignored non-personal/group JID: '{remote_jid}'")
-        return {"status": "ignored_non_personal"}
+    if not remote_jid or remote_jid == "status@broadcast" or remote_jid.endswith("@broadcast"):
+        logger.info(f"[EVOLUTION WEBHOOK] Ignored broadcast JID: '{remote_jid}'")
+        return {"status": "ignored_broadcast"}
 
-    # 3. Ekstraksi Nomor Pengirim
-    raw_sender = remote_jid.replace("@s.whatsapp.net", "").replace("@c.us", "").split("@")[0]
-    sender_phone = normalize_phone_number(raw_sender) or re.sub(r"\D", "", raw_sender)
-    if not sender_phone:
-        logger.warning(f"[EVOLUTION WEBHOOK] Could not extract valid sender phone from JID: {remote_jid}")
-        return {"status": "ignored_invalid_phone"}
+    is_group = remote_jid.endswith("@g.us")
+    participant_jid = str(key_obj.get("participant") or data.get("participant") or payload.get("participant") or "").strip()
+    reply_to_message_id = str(key_obj.get("id") or "").strip()
 
-    # 4. Unpack ephemeral / viewOnce wrappers jika ada
+    # 3. Unpack ephemeral / viewOnce wrappers jika ada
     unwrapped_msg = message_obj
     if "ephemeralMessage" in unwrapped_msg:
         unwrapped_msg = unwrapped_msg.get("ephemeralMessage", {}).get("message", {})
@@ -1057,8 +1111,12 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     is_image_message = bool(image_obj)
     media_url: Optional[str] = None
 
+    # Ekstraksi Nomor Pengirim Sementara untuk ID Media
+    raw_media_sender = (participant_jid if is_group else remote_jid).replace("@s.whatsapp.net", "").replace("@c.us", "").split("@")[0]
+    media_sender_phone = normalize_phone_number(raw_media_sender) or re.sub(r"\D", "", raw_media_sender) or "unknown"
+
     if is_image_message:
-        message_id = key_obj.get("id", f"img_{sender_phone}")
+        message_id = key_obj.get("id", f"img_{media_sender_phone}")
         raw_b64: Optional[str] = (
             data.get("base64")
             or data.get("mediaBase64")
@@ -1090,7 +1148,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
             except Exception as media_err:
                 logger.warning(f"[EVOLUTION WEBHOOK] Gagal upload image ke R2: {media_err}")
 
-    # 5. Ekstraksi teks berjenjang
+    # 4. Ekstraksi teks berjenjang
     incoming_text = (
         unwrapped_msg.get("conversation")
         or unwrapped_msg.get("extendedTextMessage", {}).get("text")
@@ -1108,40 +1166,118 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     if not incoming_text:
         return {"status": "ignored_empty_text"}
 
+    context_info = (
+        unwrapped_msg.get("extendedTextMessage", {}).get("contextInfo", {})
+        or unwrapped_msg.get("contextInfo", {})
+        or (image_obj.get("contextInfo", {}) if isinstance(image_obj, dict) else {})
+        or {}
+    )
+
     # =========================================================================
-    # INGRESS HARD BOUNDARY (P0 SECURITY MANDATE)
-    # Hapus seluruh fallback default (or "buzzerukm", get_default_tenant(), dll).
-    # Validasi 100% eksak terhadap tabel whatsapp_connections.
+    # GROUP COMMUNITY BOT GUARD (@boontrack)
     # =========================================================================
-    instance_name = str(payload.get("instance") or "").strip()
-    if not instance_name:
-        logger.warning("[SECURITY_UNMAPPED_WHATSAPP_INSTANCE] Missing instance_name in Evolution webhook payload. Dropping immediately.")
-        return {"status": "ignored", "reason": "missing_instance"}
+    bot_phone = str(connection.get("phone_number") or "").strip()
+    if is_group:
+        # a. Bot-Self Ignore: Drop jika participant adalah bot sendiri
+        if participant_jid and bot_phone and bot_phone in participant_jid:
+            logger.info(f"[GROUP GUARD] Dropped: participant is bot self ({participant_jid})")
+            return {"status": "dropped", "reason": "bot_self_participant"}
 
-    connection = get_connection_by_instance(instance_name)
-    if not connection:
-        logger.warning(f"[SECURITY_UNMAPPED_WHATSAPP_INSTANCE] Instance '{instance_name}' is not registered in whatsapp_connections. Dropping immediately.")
-        return {"status": "ignored", "reason": "SECURITY_UNMAPPED_WHATSAPP_INSTANCE"}
+        # b. Mention & Quoted Reply Guard:
+        # Hanya respon jika pesan memuat metadata mention @boontrack ATAU me-reply pesan dari bot.
+        # Abaikan obrolan umum grup lainnya.
+        text_lower = incoming_text.lower()
+        has_mention = bool(
+            re.search(r"@boontrack\b", text_lower)
+            or re.search(r"@boontrackbot\b", text_lower)
+            or ("boontrack" in text_lower and "@" in text_lower)
+        )
+        mentioned_jids = [str(j).lower() for j in (context_info.get("mentionedJid") or [])]
+        if any("boontrack" in j for j in mentioned_jids) or (bot_phone and any(bot_phone in j for j in mentioned_jids)):
+            has_mention = True
 
-    conn_tenant_id = (connection.get("tenant_id") or connection.get("tenant_slug") or "").strip().lower()
-    if not conn_tenant_id:
-        logger.warning(f"[SECURITY_UNMAPPED_WHATSAPP_INSTANCE] Instance '{instance_name}' has empty tenant_id in whatsapp_connections. Dropping immediately.")
-        return {"status": "ignored", "reason": "SECURITY_UNMAPPED_WHATSAPP_INSTANCE"}
+        quoted_msg = context_info.get("quotedMessage")
+        quoted_participant = str(context_info.get("participant") or "").strip().lower()
+        quoted_from_me = context_info.get("fromMe") is True
+        is_quoted_reply_to_bot = bool(
+            quoted_msg and (
+                quoted_from_me
+                or "boontrack" in quoted_participant
+                or (bot_phone and bot_phone in quoted_participant)
+                or (instance_name and instance_name.lower() in quoted_participant)
+            )
+        )
 
-    # URL tenant_slug validation
-    if tenant_slug and tenant_slug.strip().lower() != conn_tenant_id:
-        logger.warning(f"[SECURITY_CROSS_LEAK_PREVENTED] URL tenant '{tenant_slug}' does not match connection tenant '{conn_tenant_id}'. Dropping immediately.")
-        return {"status": "ignored", "reason": "tenant_mismatch"}
+        if not has_mention and not is_quoted_reply_to_bot:
+            logger.info(f"[GROUP COMMUNITY BOT GUARD] Ignored general chatter in group '{remote_jid}' (no @boontrack mention or bot reply)")
+            return {"status": "ignored_group_general_chatter", "group_jid": remote_jid}
 
-    resolved_tenant = conn_tenant_id
+        # d. Rate Limit: Batasi respons maksimal 5 per menit per grup JID
+        from app.core.redis import check_and_increment_group_rate
+        allowed, retry_after = check_and_increment_group_rate(remote_jid, max_requests=5, window_seconds=60)
+        if not allowed:
+            logger.warning(f"[GROUP COMMUNITY BOT GUARD] Rate limit exceeded for group {remote_jid} (max 5/min). Dropping message.")
+            return {"status": "rate_limited", "group_jid": remote_jid, "retry_after": retry_after}
 
-    # 4. VALIDASI DEDICATED VS SHARED GATEWAY:
-    # 2-way AI Commerce hanya diizinkan untuk DEDICATED connection.
-    # SHARED hanya boleh untuk notifikasi transaksional 1 arah.
-    conn_mode = str((connection.get("metadata") or {}).get("mode") or connection.get("channel_type") or "DEDICATED").upper()
-    if conn_mode == "SHARED":
-        logger.warning(f"[SECURITY_SHARED_GATEWAY] Instance '{instance_name}' is SHARED. 2-way AI Commerce not allowed. Dropping.")
-        return {"status": "ignored", "reason": "shared_gateway_inbound_not_allowed"}
+        # c. Scope Isolation
+        conversation_scope = "GROUP"
+        group_jid = remote_jid
+        raw_sender = participant_jid.replace("@s.whatsapp.net", "").replace("@c.us", "").split("@")[0]
+        sender_phone = normalize_phone_number(raw_sender) or re.sub(r"\D", "", raw_sender) or "group_member"
+    else:
+        conversation_scope = "DIRECT"
+        group_jid = None
+        participant_jid = None
+        raw_sender = remote_jid.replace("@s.whatsapp.net", "").replace("@c.us", "").split("@")[0]
+        sender_phone = normalize_phone_number(raw_sender) or re.sub(r"\D", "", raw_sender)
+        if not sender_phone:
+            logger.warning(f"[EVOLUTION WEBHOOK] Could not extract valid sender phone from JID: {remote_jid}")
+            return {"status": "ignored_invalid_phone"}
+
+    # =========================================================================
+    # CLICK-TO-WHATSAPP (CTWA) LEAD CAPTURE
+    # Tangkap parameter ctwa_clid dari inbound pertama, simpan di tabel/metadata
+    # leads sesi terpisah dari order_id dan session_id.
+    # =========================================================================
+    ctwa_clid = None
+    referral_obj = (
+        data.get("referral")
+        or payload.get("referral")
+        or unwrapped_msg.get("referral")
+        or context_info.get("externalAdReply", {})
+    )
+    if isinstance(referral_obj, dict):
+        ctwa_clid = referral_obj.get("ctwa_clid") or referral_obj.get("ctwaClid")
+        if not ctwa_clid and "sourceUrl" in referral_obj:
+            m_url = re.search(r"ctwa_clid=([^&]+)", str(referral_obj["sourceUrl"]))
+            if m_url:
+                ctwa_clid = m_url.group(1).strip()
+
+    if not ctwa_clid and incoming_text:
+        m_txt = re.search(r"ctwa_clid[=:]\s*([a-zA-Z0-9_\-]+)", incoming_text)
+        if m_txt:
+            ctwa_clid = m_txt.group(1).strip()
+
+    if ctwa_clid:
+        logger.info(f"[CTWA CAPTURED] Captured ctwa_clid='{ctwa_clid}' from {sender_phone} on tenant '{resolved_tenant}'")
+        try:
+            from app.services.session_store import update_user_session_context
+            update_user_session_context(sender_phone, {"ctwa_clid": ctwa_clid})
+        except Exception as _e_sess:
+            logger.debug(f"[CTWA SESSION STORE WARN] {_e_sess}")
+
+        try:
+            sb = get_supabase()
+            if sb:
+                sb.table("leads").insert({
+                    "tenant_slug": resolved_tenant,
+                    "customer_phone": sender_phone,
+                    "source": "ctwa_ad",
+                    "status": "QUALIFIED",
+                    "metadata": {"ctwa_clid": ctwa_clid, "captured_at": datetime.now(timezone.utc).isoformat()}
+                }).execute()
+        except Exception as _e_lead:
+            logger.debug(f"[CTWA LEADS DB WARN] {_e_lead}")
 
     # Bind tenant_id ke TenantRuntimeContext
     from app.services.tenant_context_resolver import tenant_context_resolver
@@ -1158,7 +1294,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     else:
         sender_name = "Kakak"
 
-    logger.info(f"[EVOLUTION WEBHOOK] Inbound message for tenant '{resolved_tenant}' from {sender_phone} ({sender_name}): '{incoming_text}'")
+    logger.info(f"[EVOLUTION WEBHOOK] Inbound message for tenant '{resolved_tenant}' ({conversation_scope}) from {sender_phone} ({sender_name}): '{incoming_text}'")
 
     # ------------------------------------------------------------------------
     # STORE ACTIVATION KEYWORD PARSER
@@ -1176,9 +1312,10 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         )
         return activation_res
 
-    # Log pesan masuk ke Supabase & Telemetry
+    # Log pesan masuk ke Supabase & Telemetry (Session ID terisolasi untuk grup)
+    session_id_scope = f"group:{group_jid}" if (conversation_scope == "GROUP" and group_jid) else sender_phone
     from app.services.telemetry_service import track_whatsapp_message
-    track_whatsapp_message("INBOUND", tenant_id=resolved_tenant, session_id=sender_phone, classification="inbound_gateway")
+    track_whatsapp_message("INBOUND", tenant_id=resolved_tenant, session_id=session_id_scope, classification="inbound_gateway")
     asyncio.create_task(log_to_supabase_messages(
         sender="user",
         text=incoming_text,
@@ -1192,7 +1329,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     # Kunci session di memory
     try:
         from app.services.whatsapp.credentials import set_user_session
-        set_user_session(sender_phone, resolved_tenant)
+        set_user_session(session_id_scope, resolved_tenant)
     except Exception as _lock_err:
         logger.debug(f"[EVOLUTION WEBHOOK] session lock skipped: {_lock_err}")
 
@@ -1202,6 +1339,11 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         sender_phone=sender_phone,
         message_body=incoming_text,
         sender_name=sender_name,
+        conversation_scope=conversation_scope,
+        group_jid=group_jid,
+        participant_jid=participant_jid,
+        reply_to_message_id=reply_to_message_id,
+        ctwa_clid=ctwa_clid,
     ))
     reply_text = inbound_res.get("reply_text")
     reply_media_to_send = inbound_res.get("media_url")
@@ -1227,35 +1369,48 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         logger.info(f"[SECURITY_OUTBOUND_GUARD] Bot is paused/inactive for tenant '{resolved_tenant}' (bot_paused={bot_paused}, is_bot_active={is_bot_active}). Zero outbound dispatched.")
         return {"status": "dropped", "reason": "bot_disabled"}
 
-    # Kirim balasan via Evolution API (sendMedia jika ada gambar, sendText jika teks)
+    # Target pengiriman balasan: group JID jika pesan grup, sender_phone jika direct DM
+    target_send_recipient = group_jid if (conversation_scope == "GROUP" and group_jid) else sender_phone
     target_send_instance = instance_name
+
+    outbound_options: Dict[str, Any] = {"delay": 1200, "presence": "composing"}
+    if conversation_scope == "GROUP" and reply_to_message_id:
+        outbound_options["quoted"] = {
+            "key": {
+                "id": reply_to_message_id,
+                "remoteJid": group_jid,
+                "participant": participant_jid,
+            }
+        }
+
+    # Kirim balasan via Evolution API (sendMedia jika ada gambar, sendText jika teks)
     if reply_media_to_send:
-        track_whatsapp_message("OUTBOUND_MEDIA", tenant_id=resolved_tenant, session_id=sender_phone, classification="outbound_gateway")
+        track_whatsapp_message("OUTBOUND_MEDIA", tenant_id=resolved_tenant, session_id=session_id_scope, classification="outbound_gateway")
         send_media_url = f"{EVOLUTION_BASE_URL}/message/sendMedia/{target_send_instance}"
         headers = get_evolution_headers()
         is_png = "quickchart.io" in reply_media_to_send.lower() or ".png" in reply_media_to_send.lower() or "qrserver" in reply_media_to_send.lower()
         media_ext = ".png" if is_png else (".webp" if ".webp" in reply_media_to_send.lower() else ".jpg")
         media_mime = "image/png" if is_png else ("image/webp" if media_ext == ".webp" else "image/jpeg")
         send_media_payload = {
-            "number": sender_phone,
+            "number": target_send_recipient,
             "mediatype": "image",
             "mimetype": media_mime,
             "caption": reply_text or "",
             "media": reply_media_to_send,
             "fileName": f"qris_dinamis{media_ext}",
-            "options": {"delay": 1200, "presence": "composing"}
+            "options": outbound_options
         }
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 res = await client.post(send_media_url, headers=headers, json=send_media_payload)
-                logger.info(f"[EVOLUTION SEND MEDIA STATUS] Dispatched to {sender_phone} via {target_send_instance}: {res.status_code}")
+                logger.info(f"[EVOLUTION SEND MEDIA STATUS] Dispatched to {target_send_recipient} via {target_send_instance}: {res.status_code}")
                 if res.status_code not in (200, 201):
                     logger.warning(f"[EVOLUTION SEND MEDIA WARNING] Fallback to sendText: {res.text[:200]}")
                     await client.post(f"{EVOLUTION_BASE_URL}/message/sendText/{target_send_instance}", headers=headers, json={
-                        "number": sender_phone,
+                        "number": target_send_recipient,
                         "text": reply_text,
                         "textMessage": {"text": reply_text},
-                        "options": {"delay": 500, "presence": "composing"}
+                        "options": outbound_options
                     })
         except Exception as media_err:
             logger.error(f"[EVOLUTION SEND MEDIA ERROR] {media_err}")
@@ -1271,19 +1426,19 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
             media_url=reply_media_to_send,
         ))
     elif reply_text:
-        track_whatsapp_message("OUTBOUND", tenant_id=resolved_tenant, session_id=sender_phone, classification="outbound_gateway")
+        track_whatsapp_message("OUTBOUND", tenant_id=resolved_tenant, session_id=session_id_scope, classification="outbound_gateway")
         send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{target_send_instance}"
         headers = get_evolution_headers()
         send_payload = {
-            "number": sender_phone,
+            "number": target_send_recipient,
             "text": reply_text,
             "textMessage": {"text": reply_text},
-            "options": {"delay": 1200, "presence": "composing"}
+            "options": outbound_options
         }
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 res = await client.post(send_url, headers=headers, json=send_payload)
-                logger.info(f"[EVOLUTION SEND STATUS] Dispatched to {sender_phone} via {target_send_instance}: {res.status_code}")
+                logger.info(f"[EVOLUTION SEND STATUS] Dispatched to {target_send_recipient} via {target_send_instance}: {res.status_code}")
                 if res.status_code not in (200, 201):
                     logger.warning(f"[EVOLUTION SEND WARNING] Response body: {res.text[:200]}")
         except Exception as send_err:
@@ -1302,6 +1457,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     return {
         "status": "success",
         "tenant": resolved_tenant,
+        "conversation_scope": conversation_scope,
         "reply": reply_text,
         "media_url": media_url,
     }
@@ -1319,6 +1475,64 @@ async def handle_evolution_webhook(request: Request, tenant_slug: Optional[str] 
     except Exception:
         return {"status": "error", "message": "Invalid JSON format"}
     return await process_evolution_webhook_payload(payload, tenant_slug)
+
+
+# --- INTERACTIVE LIST & BUTTON MENU HELPERS (Evolution API v2) ---
+class SendInteractiveListPayload(BaseModel):
+    instance_name: str
+    to_number: str
+    title: str
+    description: str
+    button_text: str
+    sections: List[Dict[str, Any]]
+
+class SendInteractiveButtonsPayload(BaseModel):
+    instance_name: str
+    to_number: str
+    title: str
+    description: str
+    buttons: List[Dict[str, Any]]
+    footer: Optional[str] = "BoonTrack App Shop V1"
+
+class SendAppShopCatalogPayload(BaseModel):
+    instance_name: str = "app_shop_v1"
+    to_number: str
+
+@router.post("/interactive/list", summary="Send Evolution API Interactive List")
+async def send_interactive_list_endpoint(payload: SendInteractiveListPayload):
+    from app.services.whatsapp.evolution import send_evolution_list
+    res = await send_evolution_list(
+        instance_name=payload.instance_name,
+        to_number=payload.to_number,
+        title=payload.title,
+        description=payload.description,
+        button_text=payload.button_text,
+        sections=payload.sections,
+    )
+    return res
+
+@router.post("/interactive/buttons", summary="Send Evolution API Interactive Buttons")
+async def send_interactive_buttons_endpoint(payload: SendInteractiveButtonsPayload):
+    from app.services.whatsapp.evolution import send_evolution_buttons
+    res = await send_evolution_buttons(
+        instance_name=payload.instance_name,
+        to_number=payload.to_number,
+        title=payload.title,
+        description=payload.description,
+        buttons=payload.buttons,
+        footer=payload.footer or "BoonTrack App Shop V1",
+    )
+    return res
+
+@router.post("/app-shop/catalog", summary="Send App Shop V1 Internal Package Catalog")
+async def send_app_shop_catalog_endpoint(payload: SendAppShopCatalogPayload):
+    from app.services.whatsapp.evolution import send_evolution_app_shop_catalog
+    res = await send_evolution_app_shop_catalog(
+        instance_name=payload.instance_name,
+        to_number=payload.to_number,
+    )
+    return res
+
 
 
 # --- AIOHTTP WEBHOOK & INBOUND HANDLERS (Railway Active Runner) ---

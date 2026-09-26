@@ -69,6 +69,9 @@ from app.services.whatsapp import (  # noqa: F401, F403
     is_valid_whatsapp_pairing_code,
     format_whatsapp_pairing_code,
     request_evolution_pairing_code,
+    send_evolution_list,
+    send_evolution_buttons,
+    send_evolution_app_shop_catalog,
     # activation
     normalize_activation_code,
     find_tenant_by_activation_code,
@@ -133,6 +136,9 @@ __all__ = [
     "is_valid_whatsapp_pairing_code",
     "format_whatsapp_pairing_code",
     "request_evolution_pairing_code",
+    "send_evolution_list",
+    "send_evolution_buttons",
+    "send_evolution_app_shop_catalog",
     # activation
     "normalize_activation_code",
     "find_tenant_by_activation_code",

@@ -341,6 +341,31 @@ class TenantContextResolver:
                 except Exception:
                     pass
 
+        # Dedicated App Shop V1 Tenant Runtime Contract (Closed Economic Loop)
+        if not row and clean_slug in ("app_shop_v1", "app_shop", "app-shop-v1", "app-shop"):
+            row = {
+                "id": "APP_SHOP_V1",
+                "slug": "app_shop_v1",
+                "name": "BoonTrack App Shop",
+                "business_type": "DIGITAL",
+                "tenant_kind": "ENTERPRISE",
+                "template_code": "APP_SHOP",
+                "capabilities": {
+                    "catalog": True,
+                    "orders": True,
+                    "qris": True,
+                    "capi": True,
+                    "digital_fulfillment": True,
+                    "interactive_menu": True,
+                    "group_community_guard": True,
+                },
+                "metadata": {
+                    "tenant_type": "APP_SHOP_V1",
+                    "runtime": "shared_core",
+                    "version": "1.0",
+                }
+            }
+
         if not row:
             logger.info(f"[TENANT_RESOLVER] Tenant '{clean_slug}' not found in database.")
             return None
@@ -393,6 +418,7 @@ class TenantContextResolver:
             or "1365010890024026"
         ).strip()
         aduan_phone_id = os.getenv("ADUAN_SANDBOX_PHONE_ID", "1306479742542883").strip()
+        app_shop_phone_id = os.getenv("APP_SHOP_PHONE_NUMBER_ID", "").strip()
 
         target_slug = None
         if clean_phone_id in (career_phone_id, "1340866379104241"):
@@ -401,6 +427,8 @@ class TenantContextResolver:
             target_slug = "boontrack-holding"
         elif clean_phone_id in (aduan_phone_id, "1306479742542883"):
             target_slug = "pelayanan_publik"
+        elif clean_phone_id.lower() in ("app_shop_v1", "app-shop-v1", "app_shop") or (app_shop_phone_id and clean_phone_id == app_shop_phone_id):
+            target_slug = "APP_SHOP_V1"
 
         if target_slug:
             ctx = await self.resolve_context(target_slug, force_refresh=force_refresh)

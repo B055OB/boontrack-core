@@ -22,6 +22,7 @@ from app.services.capi_service import dispatch_seller_capi_purchase
 from app.services.tracking_service import dispatch_all_capi
 from app.services.meta_capi_service import send_meta_capi_purchase
 from app.payments.matcher import extract_clean_dana_amount, match_and_fulfill_payment
+from app.core.redis import acquire_payment_lock, release_payment_lock
 
 logger = logging.getLogger(__name__)
 
@@ -452,18 +453,18 @@ async def handle_xendit_notification_logic(payload: Dict[str, Any]) -> tuple[Dic
     if not external_id:
         return {"status": "ignored", "reason": "no_external_id"}, 200
 
-    is_paid = status_str in ("PAID", "SETTLED", "COMPLETED")
+    # 0. Distributed Lock via Redis: SET lock:payment:webhook:{external_id} NX EX 300
+    if not acquire_payment_lock(external_id, ttl_seconds=300):
+        logger.info(f"[XENDIT LOCK HIT] Webhook for '{external_id}' currently being processed. Returning 200 OK.")
+        return {"status": "ok", "message": "Transaction already locked/processing", "idempotent": True}, 200
 
-    # 1. Idempotency check di level memory
-    if is_paid and external_id in xendit_service._processed_transactions:
-        logger.info(f"[XENDIT IDEMPOTENT SKIP] Order '{external_id}' already processed in memory.")
-        return {"status": "ok", "message": "already_processed"}, 200
+    is_paid = status_str in ("PAID", "SETTLED", "COMPLETED")
 
     if is_paid:
         supabase = get_supabase()
         order_record = None
 
-        # 2. Check & update status order di Supabase
+        # 1. Persistent Idempotency & DB State Guard: Check database status
         if supabase:
             try:
                 try:
@@ -475,31 +476,41 @@ async def handle_xendit_notification_logic(payload: Dict[str, Any]) -> tuple[Dic
                     if res.data:
                         order_record = res.data[0]
 
-                # Idempotency check di level DB
-                if order_record and order_record.get("status") in ("PAID", "LUNAS"):
+                # DB State Guard: If already PAID or CONFIRMED -> return ACK / HTTP 200 (NO-OP)
+                if order_record and order_record.get("status") in ("PAID", "LUNAS", "CONFIRMED", "SETTLED"):
                     logger.info(f"[XENDIT IDEMPOTENT DB SKIP] Order '{external_id}' already marked PAID/LUNAS in DB.")
-                    xendit_service._processed_transactions.add(external_id)
-                    return {"status": "ok", "message": "already_processed"}, 200
+                    return {"status": "ok", "message": "already_processed", "idempotent": True}, 200
 
-                # Lakukan update status ke LUNAS
+                # State Guard: Only transition if status is PENDING
+                if order_record and order_record.get("status") not in ("PENDING", "pending", "WAITING_PAYMENT", "unpaid", ""):
+                    logger.warning(f"[XENDIT STATE GUARD] Order '{external_id}' state is '{order_record.get('status')}' (not PENDING). Rejecting.")
+                    return {"status": "ignored", "reason": "non_pending_state"}, 200
+
+                # 2. Single Database Transaction Settlement
                 try:
+                    from app.services.checkout_service import execute_order_settlement_transaction
+                    execute_order_settlement_transaction(
+                        event_id=payload.get("id") or f"xendit_{external_id}",
+                        external_id=external_id,
+                        tenant_id=(order_record or {}).get("tenant_slug") or "onlineboost",
+                        amount=amt_val,
+                        payload=payload,
+                        provider="XENDIT",
+                        customer_phone=data_obj.get("customer_phone") or payload.get("customer_phone"),
+                        product_name=data_obj.get("product_name") or payload.get("product_name"),
+                    )
+                except Exception as tx_err:
+                    logger.warning(f"[XENDIT DB TX Fallback] {tx_err}")
+                    # Fallback direct update
                     supabase.table("orders").update({
                         "status": "LUNAS",
                         "payment_status": "PAID",
                         "paid_at": datetime.now(timezone.utc).isoformat()
                     }).eq("id", external_id).execute()
-                except Exception:
-                    supabase.table("orders").update({
-                        "status": "LUNAS",
-                        "payment_status": "PAID",
-                        "paid_at": datetime.now(timezone.utc).isoformat()
-                    }).eq("order_id", external_id).execute()
+
                 logger.info(f"[XENDIT WEBHOOK] Order '{external_id}' successfully marked as LUNAS in Supabase")
             except Exception as db_err:
                 logger.debug(f"[XENDIT WEBHOOK DB NOTE] {db_err}")
-
-        # Catat ke memory tracking set
-        xendit_service._processed_transactions.add(external_id)
 
         # 3. Update in-memory intent registry & active session
         if external_id in PAYMENT_INTENTS:
@@ -670,31 +681,60 @@ async def unified_qris_payment_webhook(payload: Dict[str, Any] = Body(...)):
 
     logger.info(f"[UNIFIED PAYMENT WEBHOOK] Order '{order_id}' Status '{status_str}' Amount: Rp{amount_val:,}")
 
+    # 0. Distributed Lock via Redis: SET lock:payment:webhook:{order_id} NX EX 300
+    if order_id and not acquire_payment_lock(order_id, ttl_seconds=300):
+        logger.info(f"[UNIFIED QRIS LOCK HIT] Webhook for '{order_id}' currently being processed. Returning 200 OK.")
+        return {"status": "ok", "message": "Transaction already locked/processing", "idempotent": True}
+
     is_paid = status_str in ("PAID", "SETTLED", "COMPLETED", "SUCCESS")
 
     if is_paid and order_id:
         now_iso = datetime.now(timezone.utc).isoformat()
-        # 1. Update in-memory intent
-        if order_id in PAYMENT_INTENTS:
-            PAYMENT_INTENTS[order_id]["status"] = "PAID"
-            PAYMENT_INTENTS[order_id]["paid_at"] = now_iso
-
-        # 2. Update Supabase orders table
         supabase = get_supabase()
+
+        # 1. DB State Guard
         if supabase:
             try:
-                supabase.table("orders").update({
-                    "status": "PAID",
-                    "paid_at": now_iso
-                }).eq("id", order_id).execute()
-            except Exception:
+                res = supabase.table("orders").select("status").or_(f"id.eq.{order_id},order_id.eq.{order_id}").limit(1).execute()
+                if res.data and len(res.data) > 0:
+                    current_db_status = str(res.data[0].get("status") or "").upper()
+                    if current_db_status in ("PAID", "LUNAS", "CONFIRMED", "SETTLED"):
+                        logger.info(f"[UNIFIED QRIS IDEMPOTENT DB SKIP] Order '{order_id}' already marked {current_db_status}. ACK NO-OP.")
+                        return {"status": "ok", "message": "already_processed", "idempotent": True}
+                    if current_db_status not in ("PENDING", "WAITING_PAYMENT", "UNPAID", ""):
+                        logger.warning(f"[UNIFIED QRIS REJECTED] Order '{order_id}' status '{current_db_status}' not PENDING.")
+                        return {"status": "ignored", "reason": "non_pending_state"}
+            except Exception as e_chk:
+                logger.debug(f"[UNIFIED QRIS DB CHECK NOTE] {e_chk}")
+
+        # 2. Single Database Transaction Settlement
+        try:
+            from app.services.checkout_service import execute_order_settlement_transaction
+            execute_order_settlement_transaction(
+                event_id=payload.get("id") or f"unified_{order_id}",
+                external_id=order_id,
+                tenant_id=tenant_id,
+                amount=amount_val,
+                payload=payload,
+                provider="UNIFIED_QRIS",
+                customer_phone=customer_phone,
+                product_name=product_name,
+            )
+        except Exception as tx_err:
+            logger.warning(f"[UNIFIED QRIS DB TX Fallback] {tx_err}")
+            if supabase:
                 try:
                     supabase.table("orders").update({
                         "status": "PAID",
                         "paid_at": now_iso
-                    }).eq("order_id", order_id).execute()
-                except Exception as e:
-                    logger.debug(f"[UNIFIED PAYMENT] Supabase update note: {e}")
+                    }).eq("id", order_id).execute()
+                except Exception:
+                    pass
+
+        # 3. Update in-memory intent
+        if order_id in PAYMENT_INTENTS:
+            PAYMENT_INTENTS[order_id]["status"] = "PAID"
+            PAYMENT_INTENTS[order_id]["paid_at"] = now_iso
 
         # 3. WhatsApp notification
         if customer_phone:

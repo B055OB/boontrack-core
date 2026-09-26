@@ -168,6 +168,13 @@ async def match_and_fulfill_payment(
             "amount": 0
         }
 
+    # Distributed lock: SET lock:payment:webhook:{ref} NX EX 300
+    lock_id = f"reader_{tenant_id}_{amount}"
+    from app.core.redis import acquire_payment_lock
+    if not acquire_payment_lock(lock_id, ttl_seconds=300):
+        logger.info(f"[PAYMENT MATCHER] Concurrent lock for {lock_id}. ACK NO-OP.")
+        return {"status": "ALREADY_SETTLED", "amount": amount, "idempotent": True}
+
     now_iso = datetime.now(timezone.utc).isoformat()
     supabase = get_supabase()
 
@@ -180,6 +187,15 @@ async def match_and_fulfill_payment(
         if intent.get("status") in ("PENDING", "UNPAID") and (intent.get("total_amount") == amount or intent.get("amount") == amount):
             matched_intent = intent
             break
+
+    # 2b. DB State Guard
+    if matched_job and matched_job.get("payment_status") in ("PAID", "SETTLED", "CONFIRMED"):
+        logger.info(f"[PAYMENT MATCHER] Job {matched_job.get('id')} already PAID. ACK NO-OP.")
+        return {"status": "ALREADY_SETTLED", "job_id": matched_job.get("id"), "amount": amount, "idempotent": True}
+
+    if matched_intent and matched_intent.get("status") in ("PAID", "SETTLED", "CONFIRMED"):
+        logger.info(f"[PAYMENT MATCHER] Intent {matched_intent.get('invoice_id')} already PAID. ACK NO-OP.")
+        return {"status": "ALREADY_SETTLED", "invoice_id": matched_intent.get("invoice_id"), "amount": amount, "idempotent": True}
 
 
     # 3. Jika cocok dengan document_jobs:

@@ -46,7 +46,22 @@ async def handle_reader_mutation_webhook(request: web.Request) -> web.Response:
         return web.Response(text="AMOUNT_REQUIRED", status=400)
 
     try:
-        # 1. Jalankan Unified Payment Matcher (Exact Document Jobs & Intent Fulfillment)
+        # 1. Jalankan Core Engine Reader Validation Matching (5-Parameter Verification)
+        from app.services.reader_validation_service import ReaderValidationService
+        val_res = await ReaderValidationService.validate_and_settle_mutation(
+            merchant_id=tenant_id,
+            incoming_amount=amount,
+            raw_text=raw_message,
+            explicit_ref=data.get("ref") or data.get("transaction_ref"),
+            source="reader_webhook",
+            raw_payload=data
+        )
+
+        if val_res.get("status") in ("SUCCESS", "ALREADY_SETTLED"):
+            logger.info(f"[READER WEBHOOK] Core Engine validated mutation: {val_res}")
+            return web.json_response(val_res, status=200)
+
+        # 2. Jalankan Unified Payment Matcher (Exact Document Jobs & Intent Fulfillment)
         match_res = await match_and_fulfill_payment(
             amount=amount,
             raw_text=raw_message,
@@ -70,6 +85,8 @@ async def handle_reader_mutation_webhook(request: web.Request) -> web.Response:
                     )
                 )
 
+            return web.json_response(match_res, status=200)
+        elif match_res.get("status") == "ALREADY_SETTLED":
             return web.json_response(match_res, status=200)
 
         # 2. Fallback: Eksekusi Smart Reconciliation (Near Match & Ambiguous)

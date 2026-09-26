@@ -585,6 +585,75 @@ async def aiohttp_tenant_upsert_product(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "detail": str(exc)}, status=500, headers=cors_headers)
 
 
+from app.services.checkout_service import deduct_stock_atomic, InsufficientStockError
+from pydantic import BaseModel, Field
+
+class DeductStockPayload(BaseModel):
+    quantity: int = Field(1, description="Quantity to deduct", ge=1)
+    product_id: Optional[str] = Field(None, description="Optional product ID if not in path")
+
+@product_router.post("/{product_id}/deduct-stock", summary="Atomic stock deduction")
+@product_router.post("/deduct-stock", summary="Atomic stock deduction with body")
+async def deduct_product_stock_endpoint(
+    product_id: Optional[str] = None,
+    payload: Optional[DeductStockPayload] = None,
+    id: Optional[str] = None,
+):
+    """
+    Eksekusi pengurangan stok secara atomic query:
+    UPDATE products SET stock = stock - :quantity WHERE id = :product_id AND stock >= :quantity;
+    Jika affected rows bernilai 0, gagalkan dengan error 409 insufficient_stock.
+    """
+    target_id = product_id or id or (payload.product_id if payload else None)
+    qty = payload.quantity if payload else 1
+    if not target_id:
+        raise HTTPException(status_code=400, detail="product_id is required")
+
+    try:
+        res = deduct_stock_atomic(product_id=target_id, quantity=qty)
+        return {"status": "success", **res}
+    except InsufficientStockError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "insufficient_stock", "message": str(exc), "product_id": target_id}
+        )
+    except Exception as exc:
+        logger.error(f"[DeductStock Endpoint Error] {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+async def aiohttp_deduct_product_stock(request: web.Request) -> web.Response:
+    """Aiohttp handler untuk POST /api/v1/products/{id}/deduct-stock."""
+    cors_headers = _build_product_cors_headers(request)
+    product_id = request.match_info.get("id") or request.match_info.get("product_id")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    target_id = product_id or body.get("product_id") or body.get("id")
+    try:
+        quantity = int(body.get("quantity") or 1)
+    except Exception:
+        quantity = 1
+
+    if not target_id:
+        return web.json_response({"status": "error", "detail": "product_id is required"}, status=400, headers=cors_headers)
+
+    try:
+        res = deduct_stock_atomic(product_id=target_id, quantity=quantity)
+        return web.json_response({"status": "success", **res}, status=200, headers=cors_headers)
+    except InsufficientStockError as exc:
+        return web.json_response(
+            {"status": "error", "error": "insufficient_stock", "detail": str(exc), "product_id": target_id},
+            status=409,
+            headers=cors_headers
+        )
+    except Exception as exc:
+        logger.error(f"[aiohttp_deduct_product_stock error]: {exc}", exc_info=True)
+        return web.json_response({"status": "error", "detail": str(exc)}, status=500, headers=cors_headers)
+
+
 def register_product_routes(app: web.Application):
     """Mendaftarkan endpoint CRUD produk dan preflight OPTIONS ke aiohttp web.Application."""
     routes_to_add = [
@@ -598,6 +667,11 @@ def register_product_routes(app: web.Application):
         ("PATCH", "/api/v1/product/{id}", aiohttp_update_product),
         ("GET", "/api/v1/product/{id}", aiohttp_get_product),
         ("OPTIONS", "/api/v1/product/{id}", aiohttp_options_product),
+
+        ("POST", "/api/v1/products/{id}/deduct-stock", aiohttp_deduct_product_stock),
+        ("OPTIONS", "/api/v1/products/{id}/deduct-stock", aiohttp_options_product),
+        ("POST", "/api/v1/product/{id}/deduct-stock", aiohttp_deduct_product_stock),
+        ("OPTIONS", "/api/v1/product/{id}/deduct-stock", aiohttp_options_product),
 
         ("POST", "/api/v1/tenants/{slug}/products", aiohttp_tenant_upsert_product),
         ("OPTIONS", "/api/v1/tenants/{slug}/products", aiohttp_options_product),
