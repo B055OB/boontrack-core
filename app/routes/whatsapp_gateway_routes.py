@@ -477,7 +477,7 @@ async def process_inbound_message(payload: InboundPayload):
             reply = engine_res.get("reply")
 
     # 1.7 APP_SHOP_V1 Interactive Catalog Interceptor
-    if tenant_slug.lower() in ("app_shop_v1", "app-shop-v1", "app_shop", "boontrack-app-shop", "boontrack_app_shop") and any(k in text_lower for k in ("paket", "katalog", "harga", "langganan", "upgrade", "menu", "beli")):
+    if tenant_slug.lower() in ("app_shop_v1", "app-shop-v1", "app_shop", "boon", "boontrack-app-shop", "boontrack_app_shop") and any(k in text_lower for k in ("paket", "katalog", "harga", "langganan", "upgrade", "menu", "beli")):
         from app.services.whatsapp.evolution import send_evolution_app_shop_catalog
         target_num = payload.group_jid if (payload.conversation_scope == "GROUP" and payload.group_jid) else clean_phone
         catalog_instance = "boontrack-app-shop" if "boontrack-app-shop" in tenant_slug.lower() else "boontrack-app-shop"
@@ -1043,11 +1043,11 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         return {"status": "ignored", "reason": "missing_instance"}
 
     connection = get_connection_by_instance(instance_name)
-    if not connection and instance_name.lower() in ("app_shop_v1", "app-shop-v1", "app_shop", "boontrack-app-shop", "boontrack_app_shop"):
+    if not connection and instance_name.lower() in ("app_shop_v1", "app-shop-v1", "app_shop", "boon", "boontrack-app-shop", "boontrack_app_shop"):
         # Shared core runtime tenant for App Shop V1 (Zona 2 - boontrack-app-shop)
         connection = {
-            "tenant_id": "app_shop_v1",
-            "tenant_slug": "app_shop_v1",
+            "tenant_id": "52967979-4760-4cea-b686-cdbdb389c0e1",
+            "tenant_slug": "boon",
             "instance_name": instance_name,
             "mode": "DEDICATED",
             "channel_type": "DEDICATED",
@@ -1497,7 +1497,7 @@ class SendInteractiveButtonsPayload(BaseModel):
     footer: Optional[str] = "BoonTrack App Shop V1"
 
 class SendAppShopCatalogPayload(BaseModel):
-    instance_name: str = "app_shop_v1"
+    instance_name: str = "boontrack-app-shop"
     to_number: str
 
 @router.post("/interactive/list", summary="Send Evolution API Interactive List")

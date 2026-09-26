@@ -426,16 +426,24 @@ async def request_evolution_pairing_code(tenant_slug: str, phone: str) -> Dict[s
 # Outgoing Message Helpers (Interactive List & Buttons for APP_SHOP_V1)
 # ---------------------------------------------------------------------------
 
+def normalize_evolution_instance(instance: str) -> str:
+    inst = str(instance or "").strip()
+    if inst.lower() in ("app_shop_v1", "app_shop", "app-shop-v1", "app-shop", "boon"):
+        return "boontrack-app-shop"
+    return inst or "boontrack-app-shop"
+
+
 async def send_evolution_list(
     number: str,
     title: str,
     description: str,
     button_text: str,
     sections: list,
-    instance_name: str = "app_shop_v1",
+    instance_name: str = "boontrack-app-shop",
     footer_text: str = "BoonTrack Official",
 ) -> Dict[str, Any]:
     """Sends an Interactive List message via Evolution API v2 (/message/sendList/{instance})."""
+    actual_instance = normalize_evolution_instance(instance_name)
     clean_num = normalize_phone_number(number) or number
     headers = get_evolution_headers()
     payload = {
@@ -446,7 +454,7 @@ async def send_evolution_list(
         "footerText": footer_text,
         "sections": sections,
     }
-    url = f"{EVOLUTION_BASE_URL}/message/sendList/{instance_name}"
+    url = f"{EVOLUTION_BASE_URL}/message/sendList/{actual_instance}"
     async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             res = await client.post(url, headers=headers, json=payload)
@@ -464,10 +472,11 @@ async def send_evolution_buttons(
     title: str,
     description: str,
     buttons: list,
-    instance_name: str = "app_shop_v1",
+    instance_name: str = "boontrack-app-shop",
     footer: str = "BoonTrack Official",
 ) -> Dict[str, Any]:
     """Sends an Interactive Buttons message via Evolution API v2 (/message/sendButtons/{instance})."""
+    actual_instance = normalize_evolution_instance(instance_name)
     clean_num = normalize_phone_number(number) or number
     headers = get_evolution_headers()
     payload = {
@@ -477,7 +486,7 @@ async def send_evolution_buttons(
         "footer": footer,
         "buttons": buttons,
     }
-    url = f"{EVOLUTION_BASE_URL}/message/sendButtons/{instance_name}"
+    url = f"{EVOLUTION_BASE_URL}/message/sendButtons/{actual_instance}"
     async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             res = await client.post(url, headers=headers, json=payload)
@@ -492,9 +501,10 @@ async def send_evolution_buttons(
 
 async def send_evolution_app_shop_catalog(
     number: str,
-    instance_name: str = "app_shop_v1"
+    instance_name: str = "boontrack-app-shop"
 ) -> Dict[str, Any]:
     """Helper to send internal package catalog for APP_SHOP_V1 via interactive List message."""
+    actual_instance = normalize_evolution_instance(instance_name)
     sections = [
         {
             "title": "📦 PILIHAN PAKET BOONTRACK SHOP",
@@ -528,6 +538,6 @@ async def send_evolution_app_shop_catalog(
         description="Pilih paket langganan yang paling tepat untuk mengakselerasi penjualan tokomu:",
         button_text="Lihat Paket",
         sections=sections,
-        instance_name=instance_name,
+        instance_name=actual_instance,
         footer_text="BoonTrack Shop V1 • Closed Economic Loop"
     )

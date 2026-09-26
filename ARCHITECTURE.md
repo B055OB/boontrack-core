@@ -1343,13 +1343,17 @@ Implementasi dan ekspansi jalur Meta Tech Provider wajib melalui 10 tahapan disi
 > **Architectural Status**: 🔒 **PRODUCTION CONTRACT & INVARIANT (P0 ARCHITECTURAL LOCK)**  
 > **Core Mandate**: *"Payment Idempotency adalah gate mutlak sebelum App Shop live transaksi. Sistem App Shop wajib murni sebagai Tenant Runtime (APP_SHOP_V1) di shared core, dilarang membuat file server terpisah."*
 
-### 26.1 App Shop V1 Closed Economic Loop (Zona 2 - Evolution API)
-* **Status Integrasi Produksi (Production Verified & Linked)**:
-  - **Gateway Endpoint**: `https://gateway.boontrack.com` (Railway CNAME `ilny5xoz.up.railway.app`)
-  - **Instance Name**: `boontrack-app-shop`
-  - **Connected Phone**: `081215567168` (+62 812-1556-7168)
-  - **Status**: Linked / Open (`open` / `CONNECTED` — Production Verified)
-  - **Webhook**: Enabled (`MESSAGES_UPSERT`, `CONNECTION_UPDATE` aktif terarah ke webhook intake shared core)
+### 26.1 Internal App Shop Infrastructure & Multi-Tenant Mapping
+- **Tenant ID**: `52967979-4760-4cea-b686-cdbdb389c0e1`
+- **Tenant Display Name**: BoonTrack Official Shop
+- **Tenant Slug**: `boon`
+- **Storefront Public URL**: `https://shop.boontrack.com/boon`
+- **Gateway Endpoint**: `https://gateway.boontrack.com`
+- **WhatsApp Instance Name**: `boontrack-app-shop`
+- **Connected Phone**: `081215567168` (Zona 2)
+- **Status**: Production Verified / Linked
+- **Webhook Events**: `MESSAGES_UPSERT`, `CONNECTION_UPDATE`
+- **Webhook Endpoint**: `https://api.boontrack.com/api/v1/whatsapp/webhook/evolution/boontrack-app-shop`
 * **Single Shared Core Runtime (`APP_SHOP_V1`)**:
   - `APP_SHOP_V1` beroperasi murni sebagai `TenantRuntimeContext` deklaratif pada shared core engine. Dilarang keras membuat file server, runner terpisah, atau duplikasi repository.
   - Memanfaatkan WhatsApp Gateway Zona 2 (Evolution API v2) untuk interaktivitas closed economic loop (in-app subscription, top-up kuota, renewal kuota, dan add-on paket).

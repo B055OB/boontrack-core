@@ -280,6 +280,11 @@ class TenantContextResolver:
             self._cache[safe_ctx.tenant_id.lower().strip()] = (safe_ctx, expiry)
         if safe_ctx.slug:
             self._cache[safe_ctx.slug.lower().strip()] = (safe_ctx, expiry)
+        if safe_ctx.slug == "boon" or safe_ctx.tenant_id == "52967979-4760-4cea-b686-cdbdb389c0e1":
+            self._cache["boon"] = (safe_ctx, expiry)
+            self._cache["52967979-4760-4cea-b686-cdbdb389c0e1"] = (safe_ctx, expiry)
+            self._cache["boontrack-app-shop"] = (safe_ctx, expiry)
+            self._cache["app_shop_v1"] = (safe_ctx, expiry)
 
     def invalidate_cache(self, slug_or_id: str) -> None:
         self._cache.pop(slug_or_id.lower().strip(), None)
@@ -307,46 +312,44 @@ class TenantContextResolver:
                 return cached
 
         supabase = get_supabase()
-        if not supabase:
-            logger.warning(f"[TENANT_RESOLVER] Supabase client is None when resolving '{clean_slug}'")
-            return None
-
         row = None
-        try:
-            res = supabase.table("tenants").select("*").eq("slug", clean_slug).execute()
-            if res.data and len(res.data) > 0:
-                row = res.data[0]
-            elif "-" in clean_slug and len(clean_slug) == 36:
-                res_id = supabase.table("tenants").select("*").eq("id", clean_slug).execute()
-                if res_id.data and len(res_id.data) > 0:
-                    row = res_id.data[0]
-        except Exception as e:
-            logger.error(f"[TENANT_RESOLVER] Database query error for '{clean_slug}': {e}")
-            return None
+        if supabase:
+            try:
+                res = supabase.table("tenants").select("*").eq("slug", clean_slug).execute()
+                if res.data and len(res.data) > 0:
+                    row = res.data[0]
+                elif "-" in clean_slug and len(clean_slug) == 36:
+                    res_id = supabase.table("tenants").select("*").eq("id", clean_slug).execute()
+                    if res_id.data and len(res_id.data) > 0:
+                        row = res_id.data[0]
+            except Exception as e:
+                logger.error(f"[TENANT_RESOLVER] Database query error for '{clean_slug}': {e}")
 
-        if not row:
-            # Check slug aliases for compatibility
-            slug_aliases = {
-                "boontrack-career": "career",
-                "boontrack_career": "career",
-                "boontrack-shop": "boontrack-holding",
-                "shop": "boontrack-holding",
-            }
-            if clean_slug in slug_aliases:
-                alias_target = slug_aliases[clean_slug]
-                try:
-                    res_alias = supabase.table("tenants").select("*").eq("slug", alias_target).execute()
-                    if res_alias.data and len(res_alias.data) > 0:
-                        row = res_alias.data[0]
-                except Exception:
-                    pass
+            if not row:
+                # Check slug aliases for compatibility
+                slug_aliases = {
+                    "boontrack-career": "career",
+                    "boontrack_career": "career",
+                    "boontrack-shop": "boontrack-holding",
+                    "shop": "boontrack-holding",
+                }
+                if clean_slug in slug_aliases:
+                    alias_target = slug_aliases[clean_slug]
+                    try:
+                        res_alias = supabase.table("tenants").select("*").eq("slug", alias_target).execute()
+                        if res_alias.data and len(res_alias.data) > 0:
+                            row = res_alias.data[0]
+                    except Exception:
+                        pass
+        else:
+            logger.warning(f"[TENANT_RESOLVER] Supabase client is None when resolving '{clean_slug}'")
 
         # Dedicated App Shop V1 Tenant Runtime Contract (Closed Economic Loop)
-        if not row and clean_slug in ("app_shop_v1", "app_shop", "app-shop-v1", "app-shop"):
+        if not row and clean_slug in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app_shop", "app-shop-v1", "app-shop", "boon", "boontrack-app-shop"):
             row = {
-                "id": "APP_SHOP_V1",
-                "slug": "app_shop_v1",
-                "name": "BoonTrack App Shop",
+                "id": "52967979-4760-4cea-b686-cdbdb389c0e1",
+                "slug": "boon",
+                "name": "BoonTrack Official Shop",
                 "business_type": "DIGITAL",
                 "tenant_kind": "ENTERPRISE",
                 "template_code": "APP_SHOP",
@@ -363,12 +366,31 @@ class TenantContextResolver:
                     "tenant_type": "APP_SHOP_V1",
                     "runtime": "shared_core",
                     "version": "1.0",
+                    "tenant_id": "52967979-4760-4cea-b686-cdbdb389c0e1",
+                    "storefront_url": "https://shop.boontrack.com/boon",
+                    "gateway_endpoint": "https://gateway.boontrack.com",
+                    "whatsapp_instance": "boontrack-app-shop",
+                    "phone": "081215567168",
                 }
             }
 
         if not row:
             logger.info(f"[TENANT_RESOLVER] Tenant '{clean_slug}' not found in database.")
             return None
+
+        if row.get("id") == "52967979-4760-4cea-b686-cdbdb389c0e1" or row.get("slug") == "boon":
+            meta = row.get("metadata") or {}
+            if not isinstance(meta, dict):
+                meta = {}
+            meta.setdefault("tenant_type", "APP_SHOP_V1")
+            meta.setdefault("runtime", "shared_core")
+            meta.setdefault("version", "1.0")
+            meta.setdefault("tenant_id", "52967979-4760-4cea-b686-cdbdb389c0e1")
+            meta.setdefault("storefront_url", "https://shop.boontrack.com/boon")
+            meta.setdefault("gateway_endpoint", "https://gateway.boontrack.com")
+            meta.setdefault("whatsapp_instance", "boontrack-app-shop")
+            meta.setdefault("phone", "081215567168")
+            row["metadata"] = meta
 
         context = build_context_from_dict(row)
         self.set_cached(clean_slug, context)
@@ -427,8 +449,8 @@ class TenantContextResolver:
             target_slug = "boontrack-holding"
         elif clean_phone_id in (aduan_phone_id, "1306479742542883"):
             target_slug = "pelayanan_publik"
-        elif clean_phone_id.lower() in ("app_shop_v1", "app-shop-v1", "app_shop") or (app_shop_phone_id and clean_phone_id == app_shop_phone_id):
-            target_slug = "APP_SHOP_V1"
+        elif clean_phone_id.lower() in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app-shop-v1", "app_shop", "boon", "boontrack-app-shop", "081215567168", "6281215567168") or (app_shop_phone_id and clean_phone_id == app_shop_phone_id):
+            target_slug = "boon"
 
         if target_slug:
             ctx = await self.resolve_context(target_slug, force_refresh=force_refresh)
@@ -462,18 +484,49 @@ class TenantContextResolver:
         if cached:
             return cached
 
+        row = None
         supabase = get_supabase()
-        if not supabase:
-            return None
+        if supabase:
+            try:
+                res = supabase.table("tenants").select("*").eq("slug", clean_slug).execute()
+                if res.data and len(res.data) > 0:
+                    row = res.data[0]
+            except Exception as e:
+                logger.error(f"[TENANT_RESOLVER] Sync DB query error for '{clean_slug}': {e}")
 
-        try:
-            res = supabase.table("tenants").select("*").eq("slug", clean_slug).execute()
-            if res.data and len(res.data) > 0:
-                ctx = build_context_from_dict(res.data[0])
-                self.set_cached(clean_slug, ctx)
-                return ctx
-        except Exception as e:
-            logger.error(f"[TENANT_RESOLVER] Sync DB query error for '{clean_slug}': {e}")
+        if not row and clean_slug in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app_shop", "app-shop-v1", "app-shop", "boon", "boontrack-app-shop"):
+            row = {
+                "id": "52967979-4760-4cea-b686-cdbdb389c0e1",
+                "slug": "boon",
+                "name": "BoonTrack Official Shop",
+                "business_type": "DIGITAL",
+                "tenant_kind": "ENTERPRISE",
+                "template_code": "APP_SHOP",
+                "capabilities": {
+                    "catalog": True,
+                    "orders": True,
+                    "qris": True,
+                    "capi": True,
+                    "digital_fulfillment": True,
+                    "interactive_menu": True,
+                    "group_community_guard": True,
+                },
+                "metadata": {
+                    "tenant_type": "APP_SHOP_V1",
+                    "runtime": "shared_core",
+                    "version": "1.0",
+                    "tenant_id": "52967979-4760-4cea-b686-cdbdb389c0e1",
+                    "storefront_url": "https://shop.boontrack.com/boon",
+                    "gateway_endpoint": "https://gateway.boontrack.com",
+                    "whatsapp_instance": "boontrack-app-shop",
+                    "phone": "081215567168",
+                }
+            }
+
+        if row:
+            ctx = build_context_from_dict(row)
+            self.set_cached(clean_slug, ctx)
+            return ctx
 
         return None
 
