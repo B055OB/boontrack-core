@@ -203,9 +203,24 @@ def build_context_from_dict(row: Dict[str, Any]) -> TenantRuntimeContext:
     """Membangun objek TenantRuntimeContext murni dari record database Supabase."""
     tenant_id = str(row.get("id") or "").strip()
     slug = str(row.get("slug") or "").strip().lower()
+    name = str(row.get("name") or row.get("tenant_name") or "").strip() or None
     meta = row.get("metadata") or {}
     if not isinstance(meta, dict):
         meta = {}
+
+    # Utamakan tenant_slug 'boon' dan tenant_name 'BoonTrack Official Shop' untuk official shop
+    if slug in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app-shop-v1", "app_shop", "app-shop", "boontrack-app-shop", "boontrack_app_shop") or tenant_id == "52967979-4760-4cea-b686-cdbdb389c0e1":
+        slug = "boon"
+        if not name or name == "52967979-4760-4cea-b686-cdbdb389c0e1" or name.lower() == "boon":
+            name = "BoonTrack Official Shop"
+
+    if name:
+        meta.setdefault("name", name)
+        meta.setdefault("tenant_name", name)
+    elif slug == "boon":
+        name = "BoonTrack Official Shop"
+        meta.setdefault("name", name)
+        meta.setdefault("tenant_name", name)
 
     business_type = normalize_business_type(row.get("business_type"), meta)
     tenant_kind = normalize_tenant_kind(row.get("tenant_kind"), meta, business_type)
@@ -238,6 +253,7 @@ def build_context_from_dict(row: Dict[str, Any]) -> TenantRuntimeContext:
     return TenantRuntimeContext(
         tenant_id=tenant_id or f"tenant_{slug}",
         slug=slug,
+        name=name,
         tenant_kind=tenant_kind,
         business_type=business_type,
         template_code=template_code,
@@ -379,9 +395,12 @@ class TenantContextResolver:
             return None
 
         if row.get("id") == "52967979-4760-4cea-b686-cdbdb389c0e1" or row.get("slug") == "boon":
+            row.setdefault("name", "BoonTrack Official Shop")
             meta = row.get("metadata") or {}
             if not isinstance(meta, dict):
                 meta = {}
+            meta.setdefault("name", "BoonTrack Official Shop")
+            meta.setdefault("tenant_name", "BoonTrack Official Shop")
             meta.setdefault("tenant_type", "APP_SHOP_V1")
             meta.setdefault("runtime", "shared_core")
             meta.setdefault("version", "1.0")
@@ -515,6 +534,8 @@ class TenantContextResolver:
                     "tenant_type": "APP_SHOP_V1",
                     "runtime": "shared_core",
                     "version": "1.0",
+                    "name": "BoonTrack Official Shop",
+                    "tenant_name": "BoonTrack Official Shop",
                     "tenant_id": "52967979-4760-4cea-b686-cdbdb389c0e1",
                     "storefront_url": "https://shop.boontrack.com/boon",
                     "gateway_endpoint": "https://gateway.boontrack.com",

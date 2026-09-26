@@ -36,6 +36,7 @@ class TenantRuntimeContext(BaseModel):
 
     tenant_id: str = Field(..., description="UUID or unique identifier of the tenant in database")
     slug: str = Field(..., description="Canonical lowercase URL slug of the tenant")
+    name: Optional[str] = Field(default=None, description="Display name of the tenant")
     tenant_kind: TenantKind = Field(default="SAAS", description="Tenant kind category: SAAS, CUSTOM_APP, or INTERNAL")
     business_type: BusinessTypeLiteral = Field(
         default="PHYSICAL",
@@ -60,8 +61,35 @@ class TenantRuntimeContext(BaseModel):
     )
 
     @property
+    def tenant_name(self) -> str:
+        raw_name = (
+            self.name
+            or (self.metadata.get("name") if isinstance(self.metadata, dict) else None)
+            or (self.metadata.get("tenant_name") if isinstance(self.metadata, dict) else None)
+            or (self.metadata.get("business_name") if isinstance(self.metadata, dict) else None)
+        )
+        if raw_name and not self._is_uuid(raw_name) and str(raw_name).strip().lower() != "boon":
+            return str(raw_name).strip()
+        if self.slug == "boon" or self.tenant_id == "52967979-4760-4cea-b686-cdbdb389c0e1":
+            return "BoonTrack Official Shop"
+        return self.slug.replace("-", " ").title()
+
+    @property
     def tenant_slug(self) -> str:
-        return self.slug
+        slug_val = str(self.slug or "").strip().lower()
+        if not slug_val or self._is_uuid(slug_val):
+            if self.tenant_id == "52967979-4760-4cea-b686-cdbdb389c0e1" or slug_val in ("app_shop_v1", "app_shop", "boontrack-app-shop"):
+                return "boon"
+            return slug_val or self.tenant_id
+        if slug_val in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app-shop-v1", "app_shop", "app-shop", "boontrack-app-shop", "boontrack_app_shop"):
+            return "boon"
+        return slug_val
+
+    @staticmethod
+    def _is_uuid(val: Any) -> bool:
+        import re
+        s = str(val or "").strip().lower()
+        return bool(re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", s))
 
     def has_capability(self, capability_name: str) -> bool:
         if not self.capabilities or not isinstance(self.capabilities, dict):

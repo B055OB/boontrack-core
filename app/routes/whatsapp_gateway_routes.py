@@ -365,7 +365,7 @@ async def process_inbound_message(payload: InboundPayload):
     2. Menjalankan pipeline AI Knowledge Base & Commerce Rules.
     3. Mengembalikan reply_text ke worker BoonTrack WhatsApp Engine untuk di-dispatch via sock.sendMessage.
     """
-    # 1. Validasi & Normalisasi Tenant Routing
+    # 1. Validasi & Normalisasi Tenant Routing (Utamakan tenant_slug sebelum tenant_id)
     clean_phone = normalize_phone_number(payload.sender_phone)
     raw_tenant = str(payload.tenant_slug or "").strip().lower()
     if not raw_tenant or raw_tenant in ("default", "null", "undefined", "none"):
@@ -375,7 +375,10 @@ async def process_inbound_message(payload: InboundPayload):
             "message": "Tenant tidak dikenali.",
             "reply_text": None,
         }
-    tenant_slug = raw_tenant
+    if raw_tenant in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app-shop-v1", "app_shop", "app-shop", "boontrack-app-shop", "boontrack_app_shop"):
+        tenant_slug = "boon"
+    else:
+        tenant_slug = raw_tenant
     incoming_text = payload.message_body.strip()
     contact_name = extract_customer_name(incoming_text, fallback=payload.sender_name or "Kakak")
     text_lower = incoming_text.lower()
@@ -455,7 +458,18 @@ async def process_inbound_message(payload: InboundPayload):
             f"[ENTITLEMENT_PROTECTION_BLOCKED] Tenant '{tenant_slug}' is on tier CHECKOUT_LITE (ai_bot disabled). "
             "Skipping AI pipelines and falling back to static store template."
         )
-        store_name = store_details.get("tenant", {}).get("name", tenant_slug.upper())
+        # 1. Ganti nama toko dengan tenant_name (ambil 'BoonTrack Official Shop')
+        store_name = (
+            tenant_info.get("name")
+            or tenant_info.get("tenant_name")
+            or store_details.get("tenant", {}).get("name")
+        )
+        if not store_name or "52967979" in str(store_name) or str(store_name).lower() == "boon":
+            if tenant_slug == "boon" or str(tenant_info.get("id")) == "52967979-4760-4cea-b686-cdbdb389c0e1":
+                store_name = "BoonTrack Official Shop"
+            else:
+                store_name = tenant_slug.replace("-", " ").title()
+
         reply = (
             f"Halo Kak! Terima kasih telah menghubungi *{store_name}*.\n\n"
             f"Untuk melihat katalog produk dan melakukan pemesanan langsung, silakan kunjungi link toko kami:\n"
@@ -677,7 +691,18 @@ async def process_inbound_message(payload: InboundPayload):
 
     # 6. Default welcoming response jika AI tidak merespons
     if not reply:
-        store_name = store_details.get("tenant", {}).get("name", tenant_slug.upper())
+        # 1. Ganti nama toko dengan tenant_name (ambil 'BoonTrack Official Shop')
+        store_name = (
+            tenant_info.get("name")
+            or tenant_info.get("tenant_name")
+            or store_details.get("tenant", {}).get("name")
+        )
+        if not store_name or "52967979" in str(store_name) or str(store_name).lower() == "boon":
+            if tenant_slug == "boon" or str(tenant_info.get("id")) == "52967979-4760-4cea-b686-cdbdb389c0e1":
+                store_name = "BoonTrack Official Shop"
+            else:
+                store_name = tenant_slug.replace("-", " ").title()
+
         reply = (
             f"Halo Kak! Selamat datang di asisten resmi *{store_name}* 👋\n\n"
             f"Terima kasih telah menghubungi kami. Pesan Kakak telah kami terima dan akan segera kami bantu.\n\n"
@@ -1058,14 +1083,14 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         logger.warning(f"[SECURITY_UNMAPPED_WHATSAPP_INSTANCE] Instance '{instance_name}' is not registered in whatsapp_connections. Dropping immediately.")
         return {"status": "ignored", "reason": "SECURITY_UNMAPPED_WHATSAPP_INSTANCE"}
 
-    conn_tenant_id = (connection.get("tenant_id") or connection.get("tenant_slug") or "").strip().lower()
-    if not conn_tenant_id:
-        logger.warning(f"[SECURITY_UNMAPPED_WHATSAPP_INSTANCE] Instance '{instance_name}' has empty tenant_id in whatsapp_connections. Dropping immediately.")
-        return {"status": "ignored", "reason": "SECURITY_UNMAPPED_WHATSAPP_INSTANCE"}
-
     conn_slug = str(connection.get("tenant_slug") or "").strip().lower()
+    conn_tenant_id = str(connection.get("tenant_id") or "").strip().lower()
     conn_inst = str(connection.get("instance_name") or "").strip().lower()
     valid_conn_identifiers = {conn_tenant_id, conn_slug, conn_inst} - {""}
+
+    if not valid_conn_identifiers:
+        logger.warning(f"[SECURITY_UNMAPPED_WHATSAPP_INSTANCE] Instance '{instance_name}' has empty tenant_id and tenant_slug in whatsapp_connections. Dropping immediately.")
+        return {"status": "ignored", "reason": "SECURITY_UNMAPPED_WHATSAPP_INSTANCE"}
 
     # Canonical alias set for App Shop V1 internal tenant (boon / boontrack-app-shop / UUID)
     _APP_SHOP_V1_ALIASES = {
@@ -1093,7 +1118,10 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
             )
             return {"status": "ignored", "reason": "tenant_mismatch"}
 
-    resolved_tenant = conn_tenant_id
+    # 3. Utamakan tenant_slug sebelum tenant_id
+    resolved_tenant = conn_slug or conn_tenant_id
+    if resolved_tenant in _APP_SHOP_V1_ALIASES:
+        resolved_tenant = "boon"
 
     # Validasi DEDICATED vs SHARED GATEWAY:
     conn_mode = str((connection.get("metadata") or {}).get("mode") or connection.get("channel_type") or "DEDICATED").upper()
@@ -1309,9 +1337,15 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     # Bind tenant_id ke TenantRuntimeContext
     from app.services.tenant_context_resolver import tenant_context_resolver
     runtime_ctx = await tenant_context_resolver.resolve_context(resolved_tenant)
+    if not runtime_ctx and conn_tenant_id and conn_tenant_id != resolved_tenant:
+        runtime_ctx = await tenant_context_resolver.resolve_context(conn_tenant_id)
     if not runtime_ctx:
         logger.warning(f"[SECURITY_UNMAPPED_WHATSAPP_INSTANCE] Tenant '{resolved_tenant}' not found in tenants database. Dropping immediately.")
         return {"status": "ignored", "reason": "tenant_not_found"}
+
+    canonical_slug = getattr(runtime_ctx, "slug", None) or getattr(runtime_ctx, "tenant_slug", None) or conn_slug or resolved_tenant
+    if canonical_slug in _APP_SHOP_V1_ALIASES:
+        canonical_slug = "boon"
 
     raw_push = str(data.get("pushName") or payload.get("pushName") or "").strip()
     if raw_push.lower() in ("hijau", "user", "guest", "admin", "customer", "pelanggan", "tester", "test") or re.match(r'^[\d\+\s\-]+$', raw_push):
@@ -1342,11 +1376,11 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     # Log pesan masuk ke Supabase & Telemetry (Session ID terisolasi untuk grup)
     session_id_scope = f"group:{group_jid}" if (conversation_scope == "GROUP" and group_jid) else sender_phone
     from app.services.telemetry_service import track_whatsapp_message
-    track_whatsapp_message("INBOUND", tenant_id=resolved_tenant, session_id=session_id_scope, classification="inbound_gateway")
+    track_whatsapp_message("INBOUND", tenant_id=canonical_slug, session_id=session_id_scope, classification="inbound_gateway")
     asyncio.create_task(log_to_supabase_messages(
         sender="user",
         text=incoming_text,
-        tenant_id=resolved_tenant,
+        tenant_id=canonical_slug,
         channel="whatsapp",
         user_phone=sender_phone,
         user_name=sender_name,
@@ -1356,13 +1390,13 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     # Kunci session di memory
     try:
         from app.services.whatsapp.credentials import set_user_session
-        set_user_session(session_id_scope, resolved_tenant)
+        set_user_session(session_id_scope, canonical_slug)
     except Exception as _lock_err:
         logger.debug(f"[EVOLUTION WEBHOOK] session lock skipped: {_lock_err}")
 
-    # Jalankan pemrosesan inbound AI
+    # Jalankan pemrosesan inbound AI (gunakan canonical_slug yang mengutamakan slug 'boon')
     inbound_res = await process_inbound_message(InboundPayload(
-        tenant_slug=resolved_tenant,
+        tenant_slug=canonical_slug,
         sender_phone=sender_phone,
         message_body=incoming_text,
         sender_name=sender_name,
@@ -1379,9 +1413,18 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     # 3. OUTBOUND OWNERSHIP CHAIN GUARD (P0 SECURITY MANDATE)
     # Validasi rantai kepemilikan sebelum memanggil Evolution API outbound dispatch
     # =========================================================================
-    conn_check_slug = (connection.get("tenant_id") or connection.get("tenant_slug") or "").strip().lower()
-    if not connection or conn_check_slug != resolved_tenant:
-        logger.error(f"[SECURITY_OUTBOUND_VIOLATION] Connection tenant '{conn_check_slug}' != command tenant '{resolved_tenant}'")
+    valid_conn_tenants = {
+        (connection.get("tenant_slug") or "").strip().lower(),
+        (connection.get("tenant_id") or "").strip().lower(),
+        resolved_tenant,
+        canonical_slug,
+    }
+    if bool(_APP_SHOP_V1_ALIASES.intersection(valid_conn_identifiers)):
+        valid_conn_tenants.update(_APP_SHOP_V1_ALIASES)
+    valid_conn_tenants -= {""}
+
+    if not connection or not valid_conn_tenants.intersection({resolved_tenant, canonical_slug}):
+        logger.error(f"[SECURITY_OUTBOUND_VIOLATION] Connection tenant {valid_conn_identifiers} != command tenant '{resolved_tenant}'")
         return {"status": "dropped", "reason": "tenant_mismatch"}
 
     tenant_meta = runtime_ctx.metadata if runtime_ctx and runtime_ctx.metadata else {}

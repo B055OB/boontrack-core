@@ -215,15 +215,35 @@ async def generate_concierge_reply(incoming_text: str) -> str:
 
 
 def get_tenant_fallback_message(store_name: str, tenant_slug: str, custom_greeting: Optional[str] = None) -> str:
-    clean_name = store_name or tenant_slug.replace("-", " ").title()
+    # 2 & 3. Utamakan tenant_slug sebelum tenant_id, normalisasi UUID ke 'boon'
+    slug = str(tenant_slug or "").strip().lower()
+    if slug in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app-shop-v1", "app_shop", "app-shop", "boontrack-app-shop", "boontrack_app_shop"):
+        slug = "boon"
+
+    # 1. Ganti nama toko dengan tenant_name (ambil 'BoonTrack Official Shop')
+    clean_name = str(store_name or "").strip()
+    is_uuid_like = bool(re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", clean_name.lower()) or "52967979" in clean_name)
+    if not clean_name or is_uuid_like:
+        if slug == "boon" or "52967979" in str(tenant_slug):
+            clean_name = "BoonTrack Official Shop"
+        else:
+            clean_name = slug.replace("-", " ").title()
+    elif slug == "boon" and clean_name.lower() in ("boon", "52967979 4760 4cea b686 cdbdb389c0e1"):
+        clean_name = "BoonTrack Official Shop"
+
     if custom_greeting and str(custom_greeting).strip():
         text = str(custom_greeting).strip()
-        text = text.replace("[nama_toko]", clean_name).replace("{nama_toko}", clean_name).replace("{store_name}", clean_name)
+        text = (
+            text.replace("[nama_toko]", clean_name)
+            .replace("{nama_toko}", clean_name)
+            .replace("{store_name}", clean_name)
+            .replace("{tenant_name}", clean_name)
+        )
         return text
     return (
         f"Halo! Selamat datang di *{clean_name}* \U0001f44b\n\n"
         "Terima kasih telah menghubungi kami. Tim kami siap melayani pesanan dan pertanyaan Kakak.\n\n"
-        f"\U0001f6cd\ufe0f *Katalog Produk*: https://shop.boontrack.com/{tenant_slug}\n\n"
+        f"\U0001f6cd\ufe0f *Katalog Produk*: https://shop.boontrack.com/{slug}\n\n"
         "\U0001f4cc *Panduan Bantuan Cepat:*\n"
         "\u2022 Ketik *Menu* \u2192 melihat katalog & pilihan produk\n"
         "\u2022 Ketik *Status* \u2192 memeriksa status pesanan terakhir\n"
@@ -889,7 +909,33 @@ class TenantWebhookRouter:
         raw_msg: Dict[str, Any],
         trace: WebhookExecutionTrace,
     ) -> Dict[str, Any]:
-        tenant_slug = tenant_context.tenant_id
+        # 3. Utamakan tenant_slug sebelum tenant_id
+        target_slug = (
+            getattr(tenant_context, "slug", None)
+            or getattr(tenant_context, "tenant_slug", None)
+            or tenant_context.tenant_id
+        )
+        clean_target_slug = str(target_slug).strip().lower()
+        if clean_target_slug in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app-shop-v1", "app_shop", "app-shop", "boontrack-app-shop", "boontrack_app_shop"):
+            tenant_slug = "boon"
+        else:
+            tenant_slug = clean_target_slug
+
+        # 1. Ganti nama toko dengan tenant_name (ambil 'BoonTrack Official Shop' untuk boon)
+        _meta = getattr(tenant_context, "metadata", None) or {}
+        store_name = (
+            getattr(tenant_context, "name", None)
+            or getattr(tenant_context, "tenant_name", None)
+            or _meta.get("name")
+            or _meta.get("tenant_name")
+            or _meta.get("business_name")
+        )
+        if not store_name or "52967979" in str(store_name) or str(store_name).lower() == "boon":
+            if tenant_slug == "boon" or getattr(tenant_context, "tenant_id", None) == "52967979-4760-4cea-b686-cdbdb389c0e1":
+                store_name = "BoonTrack Official Shop"
+            else:
+                store_name = tenant_slug.replace("-", " ").title()
+
         trace.route_type = "TENANT_SALES"
         trace.target_tenant = tenant_slug
         trace.log_step("TenantWebhookRouter.handle", f"Entered isolated tenant pipeline for '{tenant_slug}' (User: {sender_phone})")
@@ -951,12 +997,6 @@ class TenantWebhookRouter:
 
         if is_general_inquiry and not is_catalog_inquiry:
             # Fallback menu ramah untuk toko merchant
-            _meta = getattr(tenant_context, "metadata", None) or {}
-            store_name = (
-                _meta.get("name")
-                or _meta.get("business_name")
-                or getattr(tenant_context, "slug", tenant_slug).replace("-", " ").title()
-            )
             _custom_greeting = _meta.get("greeting_message") or _meta.get("custom_greeting_message")
             reply_text = get_tenant_fallback_message(store_name, tenant_slug, _custom_greeting)
             trace.log_step("StateGuard.TenantFallback", f"Generated fallback greeting for store '{store_name}'")
@@ -1016,12 +1056,6 @@ class TenantWebhookRouter:
 
             # Automated fallback bot jika AI belum menghasilkan jawaban
             if not reply_text:
-                _meta = getattr(tenant_context, "metadata", None) or {}
-                store_name = (
-                    _meta.get("name")
-                    or _meta.get("business_name")
-                    or getattr(tenant_context, "slug", tenant_slug).replace("-", " ").title()
-                )
                 _custom_greeting = _meta.get("greeting_message") or _meta.get("custom_greeting_message")
                 reply_text = get_tenant_fallback_message(store_name, tenant_slug, _custom_greeting)
                 trace.log_step("FallbackBot", "AI empty -> using automated tenant fallback bot")

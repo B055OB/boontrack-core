@@ -1006,9 +1006,14 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                 f"[CENTRAL WA MENU SELECT] Sender {from_phone} selected '{text_lower}' -> locked to '{selected_slug}'"
             )
 
+            if selected_slug in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app-shop-v1", "app_shop", "app-shop", "boontrack-app-shop", "boontrack_app_shop"):
+                selected_slug = "boon"
+
             details = onboarding_service.get_tenant_details_by_slug(selected_slug) or {}
             tenant_info = details.get("tenant", {})
-            store_name = tenant_info.get("name") or selected_slug.replace("-", " ").replace("_", " ").title()
+            store_name = tenant_info.get("name") or tenant_info.get("tenant_name")
+            if not store_name or "52967979" in str(store_name) or str(store_name).lower() == "boon":
+                store_name = "BoonTrack Official Shop" if selected_slug == "boon" else selected_slug.replace("-", " ").replace("_", " ").title()
             store_desc = tenant_info.get("description") or "Pusat produk & layanan resmi terpercaya."
             products = details.get("products", [])
 
@@ -1162,10 +1167,16 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                         f"[ENTITLEMENT_PROTECTION_BLOCKED] Tenant '{tenant_slug}' is on tier CHECKOUT_LITE. "
                         "Skipping AI execution (commerce_ai_engine/LLM). Falling back to static store template."
                     )
+                    clean_target_slug = str(tenant_slug or "").strip().lower()
+                    if clean_target_slug in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app-shop-v1", "app_shop", "app-shop", "boontrack-app-shop", "boontrack_app_shop"):
+                        clean_target_slug = "boon"
+                    clean_store_name = store_name
+                    if not clean_store_name or "52967979" in str(clean_store_name) or str(clean_store_name).lower() == "boon":
+                        clean_store_name = "BoonTrack Official Shop" if clean_target_slug == "boon" else clean_target_slug.replace("-", " ").title()
                     reply_text = (
-                        f"Halo Kak! Terima kasih telah menghubungi *{store_name}*.\n\n"
+                        f"Halo Kak! Terima kasih telah menghubungi *{clean_store_name}*.\n\n"
                         f"Untuk melihat katalog produk dan melakukan pemesanan langsung, silakan kunjungi link toko kami:\n"
-                        f"https://shop.boontrack.com/{tenant_slug}\n\n"
+                        f"https://shop.boontrack.com/{clean_target_slug}\n\n"
                         f"Admin kami akan segera membalas pesan Kakak secara manual."
                     )
                 else:

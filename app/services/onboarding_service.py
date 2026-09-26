@@ -626,9 +626,63 @@ class OnboardingService:
 
     def get_tenant_details_by_slug(self, slug: str) -> Optional[Dict[str, Any]]:
         """Finds full tenant profile, real products list, payout details, and persona configuration."""
-        clean_slug = slugify(slug)
+        raw_slug = str(slug or "").strip().lower()
+        if raw_slug in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app-shop-v1", "app_shop", "app-shop", "boon", "boontrack-app-shop", "boontrack_app_shop"):
+            clean_slug = "boon"
+        else:
+            clean_slug = slugify(raw_slug)
+
         cfg = LOADED_CONFIG_TENANTS.get(clean_slug)
         tenant_dict = self._tenants_by_slug.get(clean_slug)
+
+        if not tenant_dict and clean_slug == "boon":
+            tenant_dict = {
+                "id": "52967979-4760-4cea-b686-cdbdb389c0e1",
+                "name": "BoonTrack Official Shop",
+                "slug": "boon",
+                "tier": "ENTERPRISE",
+                "features": _build_feature_flags("ENTERPRISE", {}),
+                "template": "APP_SHOP",
+                "vertical": "DIGITAL",
+                "onboarding_mode": "SELF_SERVICE",
+                "affiliate_ref": None,
+                "admin_email": None,
+                "admin_phone": "081215567168",
+                "is_active": True,
+                "status": "active",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "metadata": {
+                    "tenant_type": "APP_SHOP_V1",
+                    "runtime": "shared_core",
+                    "version": "1.0",
+                    "name": "BoonTrack Official Shop",
+                    "tenant_name": "BoonTrack Official Shop",
+                    "tenant_id": "52967979-4760-4cea-b686-cdbdb389c0e1",
+                    "storefront_url": "https://shop.boontrack.com/boon",
+                    "gateway_endpoint": "https://gateway.boontrack.com",
+                    "whatsapp_instance": "boontrack-app-shop",
+                    "phone": "081215567168",
+                },
+                "persona": {
+                    "system_prompt": "Kamu adalah asisten resmi untuk toko BoonTrack Official Shop.",
+                    "tone": "Edukatif & Expert, ramah, to-the-point",
+                    "welcome_message": "Selamat datang di BoonTrack Official Shop! Ada yang bisa kami bantu?",
+                    "default_fallback_message": "Mohon maaf, layanan sedang memproses antrean pesan lain.",
+                    "assistant_name": "BoonTrack Official Shop Assistant",
+                    "ai_name": "BoonTrack Official Shop Assistant",
+                    "bot_strategy": "trust_builder",
+                },
+                "ai_knowledge": {
+                    "ai_name": "BoonTrack Official Shop Assistant",
+                    "assistant_name": "BoonTrack Official Shop Assistant",
+                    "system_prompt": "Kamu adalah asisten resmi untuk toko BoonTrack Official Shop.",
+                    "tone": "Edukatif & Expert, ramah, to-the-point",
+                    "bot_strategy": "trust_builder",
+                    "faq": [],
+                },
+            }
+            self._tenants_by_slug["boon"] = tenant_dict
+            self._tenants_by_slug["52967979-4760-4cea-b686-cdbdb389c0e1"] = tenant_dict
 
         if not tenant_dict:
             if cfg:
@@ -653,16 +707,24 @@ class OnboardingService:
                 if supabase:
                     try:
                         res = supabase.table("tenants").select("*").eq("slug", clean_slug).execute()
+                        if (not res or not res.data) and ("-" in raw_slug and len(raw_slug) == 36):
+                            res = supabase.table("tenants").select("*").eq("id", raw_slug).execute()
                         if res and res.data:
                             row = res.data[0]
+                            db_slug = str(row.get("slug") or "").strip().lower()
+                            if db_slug:
+                                clean_slug = db_slug
                             _row_tier = row.get("tier") or "STARTER"
                             _row_meta = row.get("metadata") or {}
                             _row_features = _row_meta.get("features") or {}
                             _trial_end = row.get("trial_ends_at") or _row_meta.get("trial_ends_at")
                             _sub_end = row.get("subscription_ends_at") or _row_meta.get("subscription_ends_at")
+                            resolved_name = row.get("name") or _row_meta.get("name") or _row_meta.get("tenant_name")
+                            if not resolved_name or resolved_name == "52967979-4760-4cea-b686-cdbdb389c0e1" or clean_slug == "boon":
+                                resolved_name = "BoonTrack Official Shop" if clean_slug == "boon" else (resolved_name or clean_slug.replace("-", " ").title())
                             tenant_dict = {
                                 "id": str(row.get("id") or clean_slug),
-                                "name": row.get("name") or clean_slug.replace("-", " ").title(),
+                                "name": resolved_name,
                                 "slug": clean_slug,
                                 "tier": _row_tier,
                                 "features": _build_feature_flags(_row_tier, _row_features),
@@ -678,9 +740,10 @@ class OnboardingService:
                         logger.debug(f"[OnboardingService Supabase lookup note] {e}")
 
                 if not tenant_dict:
+                    t_name = "BoonTrack Official Shop" if clean_slug == "boon" else clean_slug.replace("-", " ").title()
                     tenant_dict = {
-                        "id": str(uuid4()),
-                        "name": clean_slug.replace("-", " ").title(),
+                        "id": "52967979-4760-4cea-b686-cdbdb389c0e1" if clean_slug == "boon" else str(uuid4()),
+                        "name": t_name,
                         "slug": clean_slug,
                         "tier": "STARTER",
                         "features": _build_feature_flags("STARTER", {}),
