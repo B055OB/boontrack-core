@@ -418,3 +418,122 @@ class TestInboundPayloadGroupRouting:
         for s in non_boon:
             is_boon = s.lower() in ("boon", "boontrack-app-shop", "boontrack_app_shop", "app_shop", "app-shop")
             assert not is_boon, f"Slug '{s}' seharusnya BUKAN boon tenant"
+
+
+# ---------------------------------------------------------------------------
+# 11. P0 Enforce Group Mention Guard (Merchant Group Block vs Official Support)
+# ---------------------------------------------------------------------------
+class TestMerchantGroupMentionGuard:
+    """
+    Validasi P0:
+    1. Chat Grup (@g.us): HANYA nomor official (+6281215567168 / instance 'boontrack-shop' / internal node 'boon')
+       yang boleh merespons mention @boon di grup. Seluruh bot merchant WAJIB di-drop (merchant_group_blocked).
+    2. Chat Personal (@s.whatsapp.net): Merchant bots (seperti buzzerukm) HANYA aktif di 1-on-1 DM.
+    """
+
+    OFFICIAL_PHONES = {"6281215567168", "081215567168", "81215567168"}
+    OFFICIAL_INSTANCES = {
+        "boontrack-shop", "boontrack_shop", "boontrack-app-shop", "boontrack_app_shop",
+        "app_shop_v1", "app-shop-v1", "app_shop", "app-shop", "boon"
+    }
+
+    def _check_group_guard(
+        self,
+        remote_jid: str,
+        bot_phone: str,
+        instance_name: str,
+        resolved_tenant: str,
+        incoming_text: str = "@boon ada info?",
+    ) -> dict:
+        """Replika logika P0 Group Mention Guard dari whatsapp_gateway_routes.py."""
+        is_group = remote_jid.endswith("@g.us")
+        if not is_group:
+            return {"status": "allowed_direct_dm", "conversation_scope": "DIRECT"}
+
+        bot_phone_digits = re.sub(r"\D", "", bot_phone)
+        is_official_support = (
+            bot_phone_digits in self.OFFICIAL_PHONES
+            or instance_name.lower() in self.OFFICIAL_INSTANCES
+            or resolved_tenant == "boon"
+        )
+
+        if not is_official_support:
+            return {
+                "status": "dropped",
+                "reason": "merchant_group_blocked",
+                "group_jid": remote_jid,
+                "instance": instance_name,
+            }
+
+        text_lower = incoming_text.lower()
+        has_mention = bool(
+            re.search(r"@boon\b", text_lower)
+            or re.search(r"@boontrack\b", text_lower)
+            or re.search(r"@support\b", text_lower)
+            or re.search(r"@081215567168\b", text_lower)
+            or re.search(r"@6281215567168\b", text_lower)
+        )
+
+        if not has_mention:
+            return {"status": "ignored_group_general_chatter", "group_jid": remote_jid}
+
+        return {"status": "allowed_official_group", "conversation_scope": "GROUP"}
+
+    def test_merchant_in_group_with_boon_mention_is_blocked(self):
+        """Bot merchant (buzzerukm) di grup yang menerima @boon mention WAJIB DROP (zero LLM/outbound)."""
+        res = self._check_group_guard(
+            remote_jid="120363222222222222@g.us",
+            bot_phone="6289912345678",
+            instance_name="tenant_buzzerukm",
+            resolved_tenant="buzzerukm",
+            incoming_text="@boon tolong cek promo",
+        )
+        assert res["status"] == "dropped"
+        assert res["reason"] == "merchant_group_blocked"
+
+    def test_merchant_in_group_general_chatter_is_blocked(self):
+        """Bot merchant di grup tanpa mention juga WAJIB DROP."""
+        res = self._check_group_guard(
+            remote_jid="120363222222222222@g.us",
+            bot_phone="6289912345678",
+            instance_name="tenant_buzzerukm",
+            resolved_tenant="buzzerukm",
+            incoming_text="Halo semuanya selamat pagi",
+        )
+        assert res["status"] == "dropped"
+        assert res["reason"] == "merchant_group_blocked"
+
+    def test_merchant_in_personal_dm_is_allowed(self):
+        """Bot merchant di chat personal (1-on-1 @s.whatsapp.net) HANYA boleh aktif di sini."""
+        res = self._check_group_guard(
+            remote_jid="6281234567890@s.whatsapp.net",
+            bot_phone="6289912345678",
+            instance_name="tenant_buzzerukm",
+            resolved_tenant="buzzerukm",
+            incoming_text="Halo, mau beli followers twitter",
+        )
+        assert res["status"] == "allowed_direct_dm"
+        assert res["conversation_scope"] == "DIRECT"
+
+    def test_official_support_boontrack_shop_in_group_with_boon_allowed(self):
+        """Nomor official support (+6281215567168 / boontrack-shop) dengan @boon di grup diizinkan."""
+        res = self._check_group_guard(
+            remote_jid="120363222222222222@g.us",
+            bot_phone="+6281215567168",
+            instance_name="boontrack-shop",
+            resolved_tenant="boon",
+            incoming_text="@boon bagaimana cara integrasi QRIS?",
+        )
+        assert res["status"] == "allowed_official_group"
+        assert res["conversation_scope"] == "GROUP"
+
+    def test_official_support_in_group_without_mention_ignored(self):
+        """Nomor official support di grup tanpa mention mengabaikan obrolan umum (silent)."""
+        res = self._check_group_guard(
+            remote_jid="120363222222222222@g.us",
+            bot_phone="081215567168",
+            instance_name="boontrack-app-shop",
+            resolved_tenant="boon",
+            incoming_text="Selamat siang rekan-rekan",
+        )
+        assert res["status"] == "ignored_group_general_chatter"

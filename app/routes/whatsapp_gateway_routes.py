@@ -1127,8 +1127,12 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         return {"status": "ignored", "reason": "missing_instance"}
 
     connection = get_connection_by_instance(instance_name)
-    if not connection and instance_name.lower() in ("app_shop_v1", "app-shop-v1", "app_shop", "boon", "boontrack-app-shop", "boontrack_app_shop"):
-        # Shared core runtime tenant for App Shop V1 (Zona 2 - boontrack-app-shop)
+    if not connection and instance_name.lower() in (
+        "app_shop_v1", "app-shop-v1", "app_shop", "boon",
+        "boontrack-app-shop", "boontrack_app_shop",
+        "boontrack-shop", "boontrack_shop"
+    ):
+        # Shared core runtime tenant for App Shop V1 (Zona 2 - boontrack-app-shop / boontrack-shop)
         connection = {
             "tenant_id": "52967979-4760-4cea-b686-cdbdb389c0e1",
             "tenant_slug": "boon",
@@ -1157,6 +1161,8 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         "boon",
         "boontrack-app-shop",
         "boontrack_app_shop",
+        "boontrack-shop",
+        "boontrack_shop",
         "app_shop_v1",
         "app-shop-v1",
         "app_shop",
@@ -1292,22 +1298,54 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     # =========================================================================
     bot_phone = str(connection.get("phone_number") or "").strip()
     if is_group:
+        # P0 GROUP MENTION GUARD:
+        # Hanya Nomor Official (+6281215567168 / instance 'boontrack-shop' / internal node 'boon')
+        # yang diizinkan merespons mention @boon di dalam grup.
+        # Akun merchant (seperti buzzerukm) DILARANG KERAS merespons grup dan HANYA boleh aktif di Personal Chat (DM 1-on-1).
+        bot_phone_digits = re.sub(r"\D", "", bot_phone)
+        is_official_support = (
+            bot_phone_digits in ("6281215567168", "081215567168", "81215567168")
+            or instance_name.lower() in (
+                "boontrack-shop", "boontrack_shop", "boontrack-app-shop", "boontrack_app_shop",
+                "app_shop_v1", "app-shop-v1", "app_shop", "app-shop", "boon"
+            )
+            or resolved_tenant == "boon"
+            or conn_slug == "boon"
+            or conn_tenant_id == "52967979-4760-4cea-b686-cdbdb389c0e1"
+            or bool(_APP_SHOP_V1_ALIASES.intersection(valid_conn_identifiers))
+        )
+
+        if not is_official_support:
+            logger.info(
+                f"[GROUP MENTION GUARD DROP] Non-official merchant instance '{instance_name}' / "
+                f"tenant '{resolved_tenant}' (phone: '{bot_phone}') received group message in '{remote_jid}'. "
+                f"Merchant accounts are strictly limited to 1-on-1 personal DM chats (@s.whatsapp.net). Dropping immediately."
+            )
+            return {
+                "status": "dropped",
+                "reason": "merchant_group_blocked",
+                "group_jid": remote_jid,
+                "instance": instance_name,
+            }
+
         # a. Bot-Self Ignore: Drop jika participant adalah bot sendiri
         if participant_jid and bot_phone and bot_phone in participant_jid:
             logger.info(f"[GROUP GUARD] Dropped: participant is bot self ({participant_jid})")
             return {"status": "dropped", "reason": "bot_self_participant"}
 
         # b. Mention & Quoted Reply Guard:
-        # Hanya respon jika pesan memuat metadata mention @boontrack / @boon / @support / nomor bot ATAU
+        # HANYA nomor official +6281215567168 yang diizinkan memproses mention @boon di dalam grup.
+        # Hanya respon jika pesan memuat metadata mention @boon / @boontrack / @support / nomor bot ATAU
         # me-reply pesan dari bot. Abaikan obrolan umum grup lainnya.
         text_lower_grp = incoming_text.lower()
         bot_phone_clean = re.sub(r"\D", "", str(connection.get("phone_number") or bot_phone or "")).lstrip("0")
         has_mention = bool(
-            re.search(r"@boontrack\b", text_lower_grp)
+            re.search(r"@boon\b", text_lower_grp)
+            or re.search(r"@boontrack\b", text_lower_grp)
             or re.search(r"@boontrackbot\b", text_lower_grp)
-            or re.search(r"@boon\b", text_lower_grp)
             or re.search(r"@support\b", text_lower_grp)
             or re.search(r"@081215567168\b", text_lower_grp)
+            or re.search(r"@6281215567168\b", text_lower_grp)
             or ("boontrack" in text_lower_grp and "@" in text_lower_grp)
             or (bot_phone_clean and bot_phone_clean in text_lower_grp)
         )
@@ -1473,7 +1511,8 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     is_boon_instance = (
         canonical_slug == "boon"
         or resolved_tenant == "boon"
-        or (instance_name and "boontrack-app-shop" in instance_name.lower())
+        or (instance_name and ("boontrack-app-shop" in instance_name.lower() or "boontrack-shop" in instance_name.lower()))
+        or (bot_phone and re.sub(r"\D", "", bot_phone) in ("6281215567168", "081215567168", "81215567168"))
         or conversation_scope == "GROUP"
     )
 
