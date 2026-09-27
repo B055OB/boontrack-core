@@ -13,6 +13,7 @@ Menjamin:
 
 import re
 import logging
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 
 from app.services.onboarding_service import onboarding_service
@@ -191,6 +192,59 @@ class UnifiedConversationEngine:
         q = (message or "").strip()
         q_lower = q.lower()
 
+        from app.services.whatsapp_service import normalize_phone_number, get_supabase
+        clean_phone = normalize_phone_number(sender_id) if any(c.isdigit() for c in str(sender_id)) else str(sender_id)
+        supabase = get_supabase()
+
+        # Step 0: Inbound Message Drop saat Paused / Handover to Human
+        if supabase and clean_phone:
+            try:
+                s_res = (
+                    supabase.from_("conversation_sessions")
+                    .select("id, current_state, is_paused, paused_until")
+                    .eq("tenant_id", clean_slug)
+                    .eq("user_identifier", clean_phone)
+                    .maybe_single()
+                    .execute()
+                )
+                if s_res and s_res.data:
+                    s_data = s_res.data
+                    is_state_paused = s_data.get("current_state") in ("HANDOVER_TO_HUMAN", "PAUSED")
+                    is_flag_paused = bool(s_data.get("is_paused"))
+                    p_until = s_data.get("paused_until")
+                    is_active_pause = False
+                    if is_state_paused or is_flag_paused:
+                        if p_until:
+                            try:
+                                p_dt = datetime.fromisoformat(str(p_until).replace("Z", "+00:00"))
+                                if p_dt > datetime.now(timezone.utc):
+                                    is_active_pause = True
+                            except Exception:
+                                is_active_pause = True
+                        else:
+                            is_active_pause = True
+
+                    if is_active_pause:
+                        logger.info(
+                            f"[UNIFIED CONVERSATION ENGINE] Sesi untuk '{clean_phone}' (tenant='{clean_slug}') "
+                            f"sedang dalam status HANDOVER_TO_HUMAN/PAUSED hingga {p_until}. "
+                            "DROP inbound message agar owner/CS manusia membalas manual."
+                        )
+                        return {
+                            "success": True,
+                            "reply": None,
+                            "reply_text": None,
+                            "tenant_slug": clean_slug,
+                            "business_category": "DIGITAL",
+                            "action": "DROP_PAUSED",
+                            "bot_paused": True,
+                            "current_state": "HANDOVER_TO_HUMAN",
+                            "type": "NONE",
+                            "unassigned_triggered": False,
+                        }
+            except Exception as _chk_err:
+                logger.warning(f"[SESSION_PAUSE_CHECK_WARN] {_chk_err}")
+
         # 1. Resolve Tenant Profile & Kategori Bisnis
         details = onboarding_service.get_tenant_details_by_slug(clean_slug) or {}
         tenant_obj = details.get("tenant", {}) if details else {}
@@ -212,6 +266,101 @@ class UnifiedConversationEngine:
             tenant_slug=clean_slug,
             tenant_meta=tenant_meta,
         )
+
+        # 1.5. HANDOVER ESCALATION INTERCEPTOR (Pilihan '2', chat langsung dengan owner / Kang Sakti / CS)
+        clean_q = re.sub(r"[^\w\s]", "", q_lower).strip()
+        is_handover_intent = (
+            clean_q in ("2", "2.", "dua", "opsi 2", "pilihan 2", "nomor 2", "no 2", "chat langsung", "chat owner")
+            or q_lower.startswith("2 ")
+            or any(
+                kw in q_lower for kw in [
+                    "ngobrol dengan", "bicara dengan", "chat dengan", "kang sakti",
+                    "owner", "pemilik", "admin", "live cs", "hubungi cs", "chat cs",
+                    "manusia", "human cs", "staf", "bantuan admin", "tanya kang sakti",
+                    "ngobrol santai"
+                ]
+            )
+        )
+
+        if is_handover_intent:
+            logger.info(f"[HANDOVER_TO_HUMAN] Detected escalation intent from '{clean_phone}' for tenant '{clean_slug}': '{q[:60]}'")
+
+            # 1. Pesan konfirmasi transisi CUKUP SATU KALI SAJA
+            if "kang sakti" in q_lower or clean_slug == "buzzerukm":
+                handover_msg = (
+                    "Baik Kak, pesan Kakak sudah kami teruskan langsung ke Kang Sakti. "
+                    "Asisten bot kami jeda sejenak agar Kang Sakti dapat langsung membalas chat Kakak secara manual ya. Terima kasih! 🙏"
+                )
+            else:
+                handover_msg = (
+                    f"Baik Kak, pesan Kakak sudah kami teruskan ke tim admin / owner *{store_name}*. "
+                    "Asisten bot kami jeda sejenak agar tim kami dapat langsung membalas chat Kakak secara manual ya. Terima kasih! 🙏"
+                )
+
+            # 2. Kunci State Session: HANDOVER_TO_HUMAN, is_paused = True, paused_until = now() + 24 hours
+            now_dt = datetime.now(timezone.utc)
+            paused_until_dt = now_dt + timedelta(hours=24)
+            session_payload = {
+                "tenant_id": clean_slug,
+                "session_id": f"wa_{clean_slug}_{clean_phone}",
+                "channel": channel.upper(),
+                "user_identifier": clean_phone,
+                "current_state": "HANDOVER_TO_HUMAN",
+                "is_paused": True,
+                "paused_until": paused_until_dt.isoformat(),
+                "updated_at": now_dt.isoformat(),
+                "metadata": {
+                    "paused_reason": "HUMAN_HANDOVER",
+                    "paused_at": now_dt.isoformat(),
+                    "trigger_text": q[:100],
+                },
+            }
+            if supabase and clean_phone:
+                try:
+                    ex = supabase.from_("conversation_sessions").select("id").eq("tenant_id", clean_slug).eq("user_identifier", clean_phone).maybe_single().execute()
+                    if ex and ex.data:
+                        supabase.from_("conversation_sessions").update(session_payload).eq("id", ex.data["id"]).execute()
+                    else:
+                        supabase.from_("conversation_sessions").insert(session_payload).execute()
+                except Exception as _upsert_err:
+                    logger.warning(f"[SESSION_UPSERT_WARN] {_upsert_err}")
+
+            # 3. Mark unassigned & update Postgres conversations table
+            try:
+                rotary_routing_service.ensure_conversation_and_mark_unassigned(
+                    tenant_id=clean_slug,
+                    phone_or_session=clean_phone,
+                    contact_name=sender_name,
+                    reason=f"HANDOVER_TO_HUMAN: {q[:60]}"
+                )
+                conn = rotary_routing_service._get_connection()
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE conversations
+                        SET bot_paused = TRUE, bot_mode = 'HUMAN_ACTIVE', updated_at = NOW()
+                        WHERE tenant_id = %s AND (phone_number = %s OR phone_number LIKE %s);
+                        """,
+                        (clean_slug, clean_phone, f"%{clean_phone[-8:]}")
+                    )
+                    conn.commit()
+                conn.close()
+            except Exception as _rr_err:
+                logger.warning(f"[ROTARY_HANDOVER_WARN] {_rr_err}")
+
+            return {
+                "success": True,
+                "reply": handover_msg,
+                "reply_text": handover_msg,
+                "tenant_slug": clean_slug,
+                "business_category": business_category,
+                "quick_actions": [],
+                "action": "HANDOVER_TO_HUMAN",
+                "bot_paused": True,
+                "current_state": "HANDOVER_TO_HUMAN",
+                "type": "TEXT",
+                "unassigned_triggered": True,
+            }
 
         # 2. Ambil Katalog Produk Riil dari Database Supabase
         db_name, catalog = get_tenant_products_from_db(clean_slug)

@@ -568,8 +568,18 @@ async def process_inbound_message(payload: InboundPayload):
             sender_name=contact_name,
             channel="whatsapp",
         )
-        # Jika trigger greeting awal, katalog kosong, atau produk di luar database
-        if engine_res.get("action") in ("SHOW_MENU", "CS_HANDOVER") or engine_res.get("unassigned_triggered"):
+        if engine_res.get("action") == "DROP_PAUSED" or (engine_res.get("bot_paused") and not engine_res.get("reply")):
+            logger.info(f"[GROWTH GATEWAY BOT PAUSED] Sesi '{clean_phone}' dijeda (HANDOVER_TO_HUMAN / PAUSED). Menahan respons otomatis.")
+            return {
+                "status": "success",
+                "tenant": tenant_slug,
+                "bot_paused": True,
+                "reply_text": None,
+                "message": "Sesi dalam status HANDOVER_TO_HUMAN. Balasan otomatis ditahan."
+            }
+
+        # Jika trigger greeting awal, handover manusia, katalog kosong, atau produk di luar database
+        if engine_res.get("action") in ("SHOW_MENU", "CS_HANDOVER", "HANDOVER_TO_HUMAN") or engine_res.get("unassigned_triggered"):
             reply = engine_res.get("reply")
 
     # 1.7 APP_SHOP_V1 Interactive Catalog Interceptor — DISABLED (Shop mode bypassed, locked to pure Sales Rep)

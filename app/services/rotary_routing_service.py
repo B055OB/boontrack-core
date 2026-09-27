@@ -594,12 +594,42 @@ class RotaryRoutingService:
     def is_bot_paused_for_phone(self, tenant_id: str, phone: str) -> bool:
         """
         Mengecek apakah auto-reply bot di-pause untuk nomor pelanggan tertentu pada tenant_id.
-        Digunakan oleh agent_service untuk mencegah AI membalas otomatis saat CS sedang takeover.
+        Digunakan oleh gateway & agent_service untuk mencegah AI membalas otomatis saat CS/Owner sedang takeover.
         """
         from app.services.whatsapp_service import normalize_phone_number
         clean_digits = normalize_phone_number(phone or "")
         if not clean_digits:
             return False
+
+        # 1. Cek tabel conversation_sessions di Supabase (Single Source of Truth)
+        try:
+            from app.services.whatsapp_service import get_supabase
+            sb = get_supabase()
+            if sb:
+                res = (
+                    sb.from_("conversation_sessions")
+                    .select("current_state, is_paused, paused_until")
+                    .eq("tenant_id", tenant_id)
+                    .eq("user_identifier", clean_digits)
+                    .maybe_single()
+                    .execute()
+                )
+                if res and res.data:
+                    is_state_paused = res.data.get("current_state") in ("HANDOVER_TO_HUMAN", "PAUSED")
+                    is_flag_paused = bool(res.data.get("is_paused"))
+                    p_until = res.data.get("paused_until")
+                    if is_state_paused or is_flag_paused:
+                        if p_until:
+                            try:
+                                p_dt = datetime.fromisoformat(str(p_until).replace("Z", "+00:00"))
+                                if p_dt > datetime.now(timezone.utc):
+                                    return True
+                            except Exception:
+                                return True
+                        else:
+                            return True
+        except Exception:
+            pass
 
         conn = self._get_connection()
         try:
