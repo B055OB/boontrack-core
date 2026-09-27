@@ -205,25 +205,13 @@ class UnifiedConversationEngine:
         tenant_meta = tenant_obj.get("metadata") or {}
         if not isinstance(tenant_meta, dict):
             tenant_meta = {}
-        custom_greeting = (
-            tenant_meta.get("greeting_message")
-            or tenant_meta.get("custom_greeting_message")
-            or details.get("greeting_message")
-            or details.get("custom_greeting_message")
+
+        from app.whatsapp.traffic_splitter import get_tenant_greeting_message
+        welcome_msg = get_tenant_greeting_message(
+            store_name=store_name,
+            tenant_slug=clean_slug,
+            tenant_meta=tenant_meta,
         )
-        if custom_greeting and str(custom_greeting).strip():
-            welcome_msg = (
-                str(custom_greeting).strip()
-                .replace("[nama_toko]", store_name)
-                .replace("{nama_toko}", store_name)
-                .replace("{store_name}", store_name)
-            )
-        else:
-            welcome_msg = (
-                persona.get("welcome_message")
-                or ai_k.get("welcome_message")
-                or f"Halo! Selamat datang di {store_name} 👋 Ada yang bisa kami bantu?"
-            )
 
         # 2. Ambil Katalog Produk Riil dari Database Supabase
         db_name, catalog = get_tenant_products_from_db(clean_slug)
@@ -235,13 +223,17 @@ class UnifiedConversationEngine:
         # 3. Handle Greeting Awal / Percakapan Baru
         is_greeting = self.is_initial_greeting(q, history) or (button_id == "START_GREETING")
         if is_greeting:
-            greeting_text = (
-                f"{welcome_msg}\n\n"
-                f"Silakan pilih menu cepat berikut untuk memulai:\n"
-                f"1. {welcome_buttons[0]}\n"
-                f"2. {welcome_buttons[1]}\n"
-                f"3. {welcome_buttons[2]}"
-            )
+            has_embedded_options = any(w in welcome_msg.lower() for w in ["balas 1", "balas \"1\"", "balas '1'", "1.", "1 -", "opsi 1"])
+            if has_embedded_options or not welcome_buttons:
+                greeting_text = welcome_msg
+            else:
+                greeting_text = (
+                    f"{welcome_msg}\n\n"
+                    f"Silakan pilih menu cepat berikut untuk memulai:\n"
+                    f"1. {welcome_buttons[0]}\n"
+                    f"2. {welcome_buttons[1]}\n"
+                    f"3. {welcome_buttons[2]}"
+                )
             return {
                 "success": True,
                 "reply": greeting_text,
@@ -362,11 +354,11 @@ class UnifiedConversationEngine:
                 f"[ENTITLEMENT_PROTECTION_BLOCKED] Tenant '{clean_slug}' is on tier CHECKOUT_LITE. "
                 "Skipping LLM execution in unified_conversation_engine."
             )
-            static_reply = (
-                f"Halo! Terima kasih telah menghubungi *{store_name}*.\n\n"
-                f"Untuk katalog produk dan pemesanan online, silakan kunjungi:\n"
-                f"https://shop.boontrack.com/{clean_slug}\n\n"
-                f"Pesan Anda telah diteruskan ke admin toko untuk dibantu secara manual."
+            from app.whatsapp.traffic_splitter import get_tenant_greeting_message
+            static_reply = get_tenant_greeting_message(
+                store_name=store_name,
+                tenant_slug=clean_slug,
+                tenant_meta=tenant_meta,
             )
             return {
                 "success": True,

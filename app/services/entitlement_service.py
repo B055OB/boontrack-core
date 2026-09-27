@@ -200,6 +200,63 @@ _PLAN_DEFAULTS: Dict[str, Dict[str, Any]] = {
         },
         "limits": {"order_quota": 0, "ai_conversations": 250, "max_active_products": 0, "shipping_providers_max": 0},
     },
+    "PRO_SCALE": {
+        "capabilities": {
+            "catalog": True, "orders": True, "qris": True,
+            "ai_bot": True, "shipping": True,
+            "meta_capi": True, "multi_cs": True,
+            "powertools": True, "affiliate": True,
+            "single_page": True, "shipping_basic": True, "meta_pixel": True,
+            "analytics_advanced": True, "multi_user": True, "broadcast": True,
+            "storefront": {"single_page": True},
+            "products": {"max_active": 0},
+            "orders_detail": {"basic": True},
+            "payment": {"qris": True},
+            "checkout": {"digital": True, "physical": True},
+            "shipping_detail": {"basic": True, "max_providers": 0},
+            "tracking": {"meta": True, "capi": True},
+            "analytics": {"advanced": True},
+        },
+        "limits": {"order_quota": 0, "ai_conversations": 500, "max_active_products": 0, "shipping_providers_max": 0},
+    },
+    "ADS_PERFORMANCE": {
+        "capabilities": {
+            "catalog": True, "orders": True, "qris": True,
+            "ai_bot": True, "shipping": True,
+            "meta_capi": True, "multi_cs": True,
+            "powertools": True, "affiliate": True,
+            "single_page": True, "shipping_basic": True, "meta_pixel": True,
+            "analytics_advanced": True, "multi_user": True, "broadcast": True,
+            "storefront": {"single_page": True},
+            "products": {"max_active": 0},
+            "orders_detail": {"basic": True},
+            "payment": {"qris": True},
+            "checkout": {"digital": True, "physical": True},
+            "shipping_detail": {"basic": True, "max_providers": 0},
+            "tracking": {"meta": True, "capi": True},
+            "analytics": {"advanced": True},
+        },
+        "limits": {"order_quota": 0, "ai_conversations": 500, "max_active_products": 0, "shipping_providers_max": 0},
+    },
+    "ENTERPRISE": {
+        "capabilities": {
+            "catalog": True, "orders": True, "qris": True,
+            "ai_bot": True, "shipping": True,
+            "meta_capi": True, "multi_cs": True,
+            "powertools": True, "affiliate": True,
+            "single_page": True, "shipping_basic": True, "meta_pixel": True,
+            "analytics_advanced": True, "multi_user": True, "broadcast": True,
+            "storefront": {"single_page": True},
+            "products": {"max_active": 0},
+            "orders_detail": {"basic": True},
+            "payment": {"qris": True},
+            "checkout": {"digital": True, "physical": True},
+            "shipping_detail": {"basic": True, "max_providers": 0},
+            "tracking": {"meta": True, "capi": True},
+            "analytics": {"advanced": True},
+        },
+        "limits": {"order_quota": 0, "ai_conversations": 0, "max_active_products": 0, "shipping_providers_max": 0},
+    },
     "ADS_PERF": {
         "capabilities": {
             "catalog": True, "orders": True, "qris": True,
@@ -325,8 +382,61 @@ class TenantContextResolver:
         if "checkout_lite" in clean_slug or "checkout-lite" in clean_slug:
             return _static_context(clean_slug, "CHECKOUT_LITE")
 
-        # Path 1: Baca dari Supabase
+        # Resolve supabase_client jika belum disediakan
+        if supabase_client is None:
+            try:
+                from app.services.whatsapp_service import get_supabase
+                supabase_client = get_supabase()
+            except Exception:
+                pass
+
+        # Path 1: Single Source of Truth: Baca langsung dari tabel `tenants` di Supabase
         if supabase_client is not None:
+            try:
+                t_row = (
+                    supabase_client
+                    .from_("tenants")
+                    .select("slug, tier, category, metadata")
+                    .eq("slug", clean_slug)
+                    .maybe_single()
+                    .execute()
+                )
+                t_data = t_row.data if t_row else None
+                if t_data:
+                    raw_tier = str(t_data.get("tier") or (t_data.get("metadata") or {}).get("tier") or "FREE").strip().upper()
+                    if raw_tier in ("CHECKOUT_LITE", "LITE"):
+                        plan_id = "CHECKOUT_LITE"
+                    elif raw_tier in ("SOLO_TRIAL", "TRIAL"):
+                        plan_id = "SOLO_TRIAL"
+                    elif raw_tier in ("SOLO", "STARTER"):
+                        plan_id = "SOLO"
+                    elif raw_tier in ("PRO_SCALE", "PRO"):
+                        plan_id = "PRO_SCALE"
+                    elif raw_tier in ("ADS_PERF", "ADS_PERFORMANCE"):
+                        plan_id = "ADS_PERF"
+                    elif raw_tier in ("TEAM_SCALE", "TEAM", "ENTERPRISE"):
+                        plan_id = "TEAM_SCALE"
+                    else:
+                        plan_id = raw_tier if raw_tier in _PLAN_DEFAULTS else "FREE"
+
+                    safe_plan = plan_id if plan_id in _PLAN_DEFAULTS else "FREE"
+                    merged_caps = dict(_PLAN_DEFAULTS[safe_plan]["capabilities"])
+                    meta_dict = t_data.get("metadata") or {}
+                    is_bot_active_flag = meta_dict.get("is_bot_active", True)
+                    if safe_plan != "CHECKOUT_LITE" and (is_bot_active_flag or safe_plan in ("PRO_SCALE", "SOLO", "ADS_PERF", "TEAM_SCALE", "SOLO_TRIAL")):
+                        merged_caps["ai_bot"] = True
+
+                    return TenantRuntimeContext(
+                        tenant_id=clean_slug,
+                        business_type="PHYSICAL",
+                        plan=safe_plan,  # type: ignore[arg-type]
+                        status="ACTIVE" if safe_plan != "FREE" else "FREE",
+                        capabilities=TenantCapabilities(**merged_caps),
+                        limits=TenantLimits(**_PLAN_DEFAULTS[safe_plan]["limits"]),
+                    )
+            except Exception as exc:
+                logger.error(f"[ENTITLEMENT] DB error tenants untuk {clean_slug}: {exc}")
+
             try:
                 row = (
                     supabase_client

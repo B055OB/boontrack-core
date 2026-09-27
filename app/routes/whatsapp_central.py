@@ -1173,11 +1173,12 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                     clean_store_name = store_name
                     if not clean_store_name or "52967979" in str(clean_store_name) or str(clean_store_name).lower() == "boon":
                         clean_store_name = "BoonTrack Official Shop" if clean_target_slug == "boon" else clean_target_slug.replace("-", " ").title()
-                    reply_text = (
-                        f"Halo Kak! Terima kasih telah menghubungi *{clean_store_name}*.\n\n"
-                        f"Untuk melihat katalog produk dan melakukan pemesanan langsung, silakan kunjungi link toko kami:\n"
-                        f"https://shop.boontrack.com/{clean_target_slug}\n\n"
-                        f"Admin kami akan segera membalas pesan Kakak secara manual."
+                    from app.whatsapp.traffic_splitter import get_tenant_greeting_message
+                    t_meta = tenant_info.get("metadata") or store_details.get("metadata") or {}
+                    reply_text = get_tenant_greeting_message(
+                        store_name=clean_store_name,
+                        tenant_slug=clean_target_slug,
+                        tenant_meta=t_meta,
                     )
                 else:
                     logger.info(f"[CENTRAL WA 3-LAYER] Executing conversation engine for tenant={tenant_slug}, user={from_phone}")
@@ -1200,10 +1201,12 @@ async def handle_incoming_webhook(request: web.Request) -> web.Response:
                         )
 
                 if not reply_text:
-                    reply_text = (
-                        f"Halo Kak! Senang bisa membantu di *{store_name}*. "
-                        "Untuk pemula di dunia digital marketing, kami sangat menyarankan paket dasar praktis kami. "
-                        "Ketik *Katalog* untuk melihat daftar kurikulum ecourse lengkap atau langsung tanyakan materi yang ingin dipelajari ya Kak! ✨"
+                    from app.whatsapp.traffic_splitter import get_tenant_greeting_message
+                    t_meta = tenant_info.get("metadata") or store_details.get("metadata") or {}
+                    reply_text = get_tenant_greeting_message(
+                        store_name=store_name,
+                        tenant_slug=tenant_slug,
+                        tenant_meta=t_meta,
                     )
 
                 db_adapter = TenantDBAdapter(prods)

@@ -37,6 +37,7 @@ from app.services.ai_engine import commerce_ai_engine
 from app.services.agent_service import process_incoming_message
 from app.services.onboarding_service import onboarding_service
 from app.services.whatsapp_menu_flow_service import whatsapp_menu_flow_service
+from app.services.unified_conversation_service import unified_conversation_engine
 
 logger = logging.getLogger("WHATSAPP_GROWTH_ROUTER")
 
@@ -331,7 +332,6 @@ def register_whatsapp_gateway_routes(app):
 
 
 
-@router.post("/inbound-process")
 def extract_customer_name(text: str, fallback: str = "Kakak") -> str:
     """
     Ekstraksi nama pembeli secara cerdas & tangguh dari isi pesan percakapan.
@@ -357,6 +357,7 @@ def extract_customer_name(text: str, fallback: str = "Kakak") -> str:
     return fb
 
 
+@router.post("/inbound-process")
 async def process_inbound_message(payload: InboundPayload):
 
     """
@@ -446,17 +447,30 @@ async def process_inbound_message(payload: InboundPayload):
 
     # Entitlement / Tier Detection (ARCHITECTURE.md: CHECKOUT_LITE DILARANG menggunakan AI)
     tenant_tier = str(tenant_info.get("tier") or "").strip().upper()
+    tenant_meta = tenant_info.get("metadata") or store_details.get("metadata") or {}
+    if not isinstance(tenant_meta, dict):
+        tenant_meta = {}
+    is_bot_active = (
+        tenant_info.get("is_bot_active") is True
+        or tenant_meta.get("is_bot_active") is True
+        or (tenant_info.get("is_bot_active") is None and tenant_meta.get("is_bot_active") is not False)
+    )
+    is_paid_tier = tenant_tier in ("SOLO", "PRO_SCALE", "ADS_PERFORMANCE", "ADS_PERF", "ENTERPRISE", "TEAM_SCALE", "SOLO_TRIAL")
+
     is_checkout_lite = (
-        tenant_tier == "CHECKOUT_LITE"
+        tenant_tier in ("CHECKOUT_LITE", "LITE")
         or "checkout_lite" in tenant_slug
         or "checkout-lite" in tenant_slug
     )
-    if not is_checkout_lite:
+    if not is_checkout_lite and not (is_paid_tier and is_bot_active):
         try:
             from app.services.entitlement_service import tenant_context_resolver
             ctx = await tenant_context_resolver.resolve(tenant_slug)
-            if ctx.plan == "CHECKOUT_LITE" or not tenant_context_resolver.can_use(ctx, "ai_bot"):
+            if ctx.plan in ("CHECKOUT_LITE", "LITE"):
                 is_checkout_lite = True
+            elif not tenant_context_resolver.can_use(ctx, "ai_bot"):
+                if not (is_paid_tier or is_bot_active):
+                    is_checkout_lite = True
         except Exception:
             pass
 
@@ -494,7 +508,7 @@ async def process_inbound_message(payload: InboundPayload):
     if is_checkout_lite:
         logger.warning(
             f"[ENTITLEMENT_PROTECTION_BLOCKED] Tenant '{tenant_slug}' is on tier CHECKOUT_LITE (ai_bot disabled). "
-            "Skipping AI pipelines and falling back to static store template."
+            "Skipping AI pipelines and falling back to dynamic store template."
         )
         # 1. Ganti nama toko dengan tenant_name (ambil 'BoonTrack Official Shop')
         store_name = (
@@ -508,11 +522,11 @@ async def process_inbound_message(payload: InboundPayload):
             else:
                 store_name = tenant_slug.replace("-", " ").title()
 
-        reply = (
-            f"Halo Kak! Terima kasih telah menghubungi *{store_name}*.\n\n"
-            f"Untuk melihat katalog produk dan melakukan pemesanan langsung, silakan kunjungi link toko kami:\n"
-            f"👉 https://shop.boontrack.com/{tenant_slug}\n\n"
-            f"Admin kami akan segera membalas pesan Kakak secara manual."
+        from app.whatsapp.traffic_splitter import get_tenant_greeting_message
+        reply = get_tenant_greeting_message(
+            store_name=store_name,
+            tenant_slug=tenant_slug,
+            tenant_meta=tenant_meta,
         )
     else:
         is_group_scope = payload.conversation_scope == "GROUP" and bool(payload.group_jid)
@@ -762,11 +776,11 @@ async def process_inbound_message(payload: InboundPayload):
             else:
                 store_name = tenant_slug.replace("-", " ").title()
 
-        reply = (
-            f"Halo Kak! Selamat datang di asisten resmi *{store_name}* 👋\n\n"
-            f"Terima kasih telah menghubungi kami. Pesan Kakak telah kami terima dan akan segera kami bantu.\n\n"
-            f"Katalog & Checkout Otomatis:\n"
-            f"👉 https://shop.boontrack.com/{tenant_slug}"
+        from app.whatsapp.traffic_splitter import get_tenant_greeting_message
+        reply = get_tenant_greeting_message(
+            store_name=store_name,
+            tenant_slug=tenant_slug,
+            tenant_meta=tenant_meta,
         )
 
     # Log Terminal Detail Poin 3: Saat balasan siap dikirim

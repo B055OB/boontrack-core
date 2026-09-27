@@ -842,6 +842,22 @@ class OnboardingService:
                     persona["bot_strategy"] = bot_strategy_val
                     tenant_dict["bot_strategy"] = bot_strategy_val
 
+                    greeting_msg = (
+                        ai_k.get("greeting_message")
+                        or meta.get("greeting_message")
+                        or meta.get("custom_greeting_message")
+                        or (meta.get("whatsapp_settings") or {}).get("greeting_message")
+                        or p_meta.get("greeting_message")
+                        or p_meta.get("welcome_message")
+                    )
+                    if greeting_msg:
+                        persona["welcome_message"] = greeting_msg
+                        persona["greeting_message"] = greeting_msg
+                        tenant_dict["greeting_message"] = greeting_msg
+
+                    tenant_dict["is_bot_active"] = meta.get("is_bot_active", True)
+                    tenant_dict["bot_paused"] = meta.get("bot_paused", False)
+
                     tenant_dict["persona"] = persona
                     tenant_dict["ai_knowledge"] = {
                         "ai_name": ai_name or persona.get("assistant_name"),

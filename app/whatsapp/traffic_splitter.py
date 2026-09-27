@@ -521,13 +521,27 @@ async def generate_concierge_reply(incoming_text: str) -> str:
         return get_static_concierge_response(incoming_text)
 
 
-def get_tenant_fallback_message(store_name: str, tenant_slug: str, custom_greeting: Optional[str] = None) -> str:
-    # 2 & 3. Utamakan tenant_slug sebelum tenant_id, normalisasi UUID ke 'boon'
+def get_tenant_greeting_message(
+    store_name: str,
+    tenant_slug: str,
+    tenant_meta: Optional[Dict[str, Any]] = None,
+    custom_greeting: Optional[str] = None,
+) -> str:
+    """
+    Mengambil pesan sapaan resmi tenant secara dinamis dari database Supabase (metadata).
+    Urutan prioritas:
+    1. custom_greeting parameter
+    2. metadata.ai_knowledge.greeting_message
+    3. metadata.greeting_message
+    4. metadata.custom_greeting_message
+    5. metadata.whatsapp_settings.greeting_message
+    6. metadata.boonpilot_proposal.persona.greeting_message / persona.welcome_message
+    Jika tidak ada konfigurasi kustom, kembalikan format greeting default dinamis tanpa teks usang.
+    """
     slug = str(tenant_slug or "").strip().lower()
     if slug in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app-shop-v1", "app_shop", "app-shop", "boontrack-app-shop", "boontrack_app_shop"):
         slug = "boon"
 
-    # 1. Ganti nama toko dengan tenant_name (ambil 'BoonTrack Official Shop')
     clean_name = str(store_name or "").strip()
     is_uuid_like = bool(re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", clean_name.lower()) or "52967979" in clean_name)
     if not clean_name or is_uuid_like:
@@ -538,24 +552,50 @@ def get_tenant_fallback_message(store_name: str, tenant_slug: str, custom_greeti
     elif slug == "boon" and clean_name.lower() in ("boon", "52967979 4760 4cea b686 cdbdb389c0e1"):
         clean_name = "BoonTrack Official Shop"
 
-    if custom_greeting and str(custom_greeting).strip():
-        text = str(custom_greeting).strip()
+    meta = tenant_meta if isinstance(tenant_meta, dict) else {}
+    ai_k = meta.get("ai_knowledge") or {}
+    wa_set = meta.get("whatsapp_settings") or {}
+    persona = (meta.get("boonpilot_proposal") or {}).get("persona") or meta.get("persona") or {}
+
+    greeting = (
+        custom_greeting
+        or ai_k.get("greeting_message")
+        or meta.get("greeting_message")
+        or meta.get("custom_greeting_message")
+        or wa_set.get("greeting_message")
+        or persona.get("greeting_message")
+        or persona.get("welcome_message")
+    )
+
+    if greeting and isinstance(greeting, str) and greeting.strip():
+        text = str(greeting).strip()
         text = (
             text.replace("[nama_toko]", clean_name)
             .replace("{nama_toko}", clean_name)
             .replace("{store_name}", clean_name)
             .replace("{tenant_name}", clean_name)
+            .replace("{slug}", slug)
         )
         return text
+
     return (
-        f"Halo! Selamat datang di *{clean_name}* \U0001f44b\n\n"
-        "Terima kasih telah menghubungi kami. Tim kami siap melayani pesanan dan pertanyaan Kakak.\n\n"
-        f"\U0001f6cd\ufe0f *Katalog Produk*: https://shop.boontrack.com/{slug}\n\n"
-        "\U0001f4cc *Panduan Bantuan Cepat:*\n"
-        "\u2022 Ketik *Menu* \u2192 melihat katalog & pilihan produk\n"
-        "\u2022 Ketik *Status* \u2192 memeriksa status pesanan terakhir\n"
-        "\u2022 Ketik *Bantuan* atau *CS* \u2192 terhubung langsung dengan Customer Service kami\n\n"
-        "Ada yang bisa kami bantu seputar produk atau pesanan Kakak hari ini?"
+        f"Halo Kak! Selamat datang di *{clean_name}* 👋\n\n"
+        f"Ada yang bisa kami bantu seputar produk atau info toko kami?\n\n"
+        f"🛍️ *Katalog & Pemesanan:*\n👉 https://shop.boontrack.com/{slug}"
+    )
+
+
+def get_tenant_fallback_message(
+    store_name: str,
+    tenant_slug: str,
+    custom_greeting: Optional[str] = None,
+    tenant_meta: Optional[Dict[str, Any]] = None,
+) -> str:
+    return get_tenant_greeting_message(
+        store_name=store_name,
+        tenant_slug=tenant_slug,
+        tenant_meta=tenant_meta,
+        custom_greeting=custom_greeting,
     )
 
 
