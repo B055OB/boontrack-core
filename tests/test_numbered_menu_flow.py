@@ -22,8 +22,22 @@ def test_numbered_menu_flow():
     phone = "087788990011"
     tenant = "onlineboost"
 
-    # Reset initial state
+    # Reset initial state and unpause test session in both Supabase and Postgres
     whatsapp_menu_flow_service.reset_session(tenant, phone)
+    from app.services.whatsapp_service import get_supabase, normalize_phone_number
+    sb = get_supabase()
+    clean_p = normalize_phone_number(phone)
+    if sb:
+        sb.from_("conversation_sessions").delete().eq("user_identifier", clean_p).execute()
+    try:
+        from app.services.rotary_routing_service import rotary_routing_service
+        conn = rotary_routing_service._get_connection()
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM conversations WHERE phone_number LIKE %s;", (f"%{clean_p[-8:]}",))
+            conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
     # -------------------------------------------------------------
     # STEP 1: Pengguna Memilih "Tanya Produk"
@@ -81,9 +95,9 @@ def test_numbered_menu_flow():
     for line in data3["reply_text"].split("\n"):
         print(f"    {line}")
     assert data3["current_state"] == "viewing_testimonials"
-    assert "Testimoni Pembeli" in data3["reply_text"]
-    assert "★★★★★" in data3["reply_text"]
-    assert "*1.* Beli Sekarang | *2.* Kembali ke Daftar Produk" in data3["reply_text"]
+    assert ("Testimoni" in data3["reply_text"] or "Ulasan" in data3["reply_text"])
+    assert "*1.* Beli Sekarang" in data3["reply_text"]
+    assert "*2.* Kembali ke Daftar Produk" in data3["reply_text"]
     print("  -> STEP 3 PASSED: 5 buyer testimonials with star ratings displayed.")
 
     # -------------------------------------------------------------
@@ -155,3 +169,49 @@ def test_numbered_menu_flow():
 
 if __name__ == "__main__":
     test_numbered_menu_flow()
+
+
+def test_digitara_no_hardcoded_ads_testimonials():
+    """Memverifikasi tenant digitara tidak pernah menampilkan ulasan fiktif ROAS / ads course."""
+    client = TestClient(app)
+    phone = "087799887766"
+    tenant = "digitara"
+
+    whatsapp_menu_flow_service.reset_session(tenant, phone)
+
+    # 1. Trigger tanya produk
+    res1 = client.post("/api/v1/whatsapp/inbound-process", json={
+        "tenant_slug": tenant,
+        "sender_phone": phone,
+        "message_body": "katalog produk"
+    })
+    assert res1.status_code == 200
+
+    # 2. Pilih produk 1
+    res2 = client.post("/api/v1/whatsapp/inbound-process", json={
+        "tenant_slug": tenant,
+        "sender_phone": phone,
+        "message_body": "1"
+    })
+    assert res2.status_code == 200
+
+    # 3. Pilih '1' (Lihat Testimoni)
+    res3 = client.post("/api/v1/whatsapp/inbound-process", json={
+        "tenant_slug": tenant,
+        "sender_phone": phone,
+        "message_body": "1"
+    })
+    assert res3.status_code == 200
+    reply = res3.json()["reply_text"]
+
+    # Pastikan TIDAK ADA teks iklan fiktif
+    assert "ROAS" not in reply
+    assert "setup pixel" not in reply
+    assert "Jhoni S" not in reply
+    assert "Budi S" not in reply
+    assert "Dimas A" not in reply
+
+    # Pastikan memuat informasi relevan produk berhenti rokok & vape / ulasan sedang dihimpun
+    assert ("Ulasan" in reply or "Testimoni" in reply)
+    assert "*1.* Beli Sekarang" in reply
+    assert "*2.* Kembali ke Daftar Produk" in reply

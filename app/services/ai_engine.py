@@ -130,14 +130,36 @@ class CommerceAIEngine:
         else:
             catalog_text = f"1. Layanan Utama {store_name}\n   Link Checkout Web Resmi: https://shop.boontrack.com/{tenant_slug}"
 
+        # Injeksi Testimoni Resmi dari Database Supabase
+        testimonials_section = ""
+        testimonials = meta.get("testimonials") or []
+        if not testimonials and products:
+            for p in products:
+                spc = p.get("single_page_config") or {}
+                if isinstance(spc, dict) and spc.get("testimonials"):
+                    testimonials = spc.get("testimonials")
+                    break
+        if testimonials and isinstance(testimonials, list):
+            t_lines = []
+            for t in testimonials[:5]:
+                if isinstance(t, dict):
+                    t_name = t.get("name") or t.get("author") or "Pelanggan"
+                    t_comment = t.get("comment") or t.get("review") or ""
+                    if t_comment:
+                        t_lines.append(f"- \"{t_comment}\" ({t_name})")
+            if t_lines:
+                testimonials_section = f"TESTIMONI & ULASAN RESMI PEMBELI:\n" + "\n".join(t_lines) + "\n\n"
+
         guardrail_and_checkout_rules = (
+            f"{testimonials_section}"
             f"INFORMASI RESMI TOKO & TAUTAN WEB:\n"
             f"- Website Toko Resmi: https://shop.boontrack.com/{tenant_slug}\n\n"
             f"ATURAN MUTLAK ZERO-HALLUCINATION & KEAMANAN TAUTAN (URL GUARDRAIL):\n"
             f"1. DILARANG KERAS mengarang, memodifikasi, atau membagikan link/URL eksternal fiktif (seperti domain sendiri .com fiktif, blog fiktif, linktree, atau landing page palsu seperti {tenant_slug}.com atau buzzerukm.com).\n"
             f"2. HANYA gunakan link resmi toko yang ada di daftar katalog di atas (format resmi: https://shop.boontrack.com/{tenant_slug}/p/... atau https://shop.boontrack.com/{tenant_slug}).\n"
             f"3. Dilarang mengarang harga, paket, diskon, atau layanan di luar daftar tarif database di atas.\n"
-            f"4. Jika ada pertanyaan teknis di luar alur, jawab singkat dan tarik kembali pelanggan ke alur transaksi.\n\n"
+            f"4. Jika ada pertanyaan teknis di luar alur, jawab singkat dan tarik kembali pelanggan ke alur transaksi.\n"
+            f"5. DILARANG KERAS mengarang ulasan/testimoni fiktif, angka ROAS, atau klaim iklan palsu jika tidak tercantum dalam data resmi. Jika pelanggan menanyakan testimoni dan belum ada data testimoni resmi di atas, jelaskan bahwa testimoni sedang dihimpun oleh tim, fokuskan pada keunggulan/manfaat utama produk sesuai database resmi, dan tawarkan bantuan alur pemesanan.\n\n"
             f"ALUR PENDAFTARAN & CHECKOUT WHATSAPP (NATIVE LEAD COLLECTION):\n"
             f"Ketika calon pembeli menyatakan ingin membeli, mengambil paket, mendaftar, atau bertanya cara daftarnya (contoh: 'mau ambil yang 7-Day Sprint kak, gimana cara daftarnya?', 'mau beli', 'mau daftar', 'cara daftarnya kak'):\n"
             f"1. Sambut dengan ramah dan konfirmasi nama paket yang dipilih beserta harganya yang sesuai database resmi.\n"

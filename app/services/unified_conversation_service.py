@@ -136,6 +136,10 @@ class UnifiedConversationEngine:
             return False, None
 
         clean_text = message.lower().strip()
+        # Jika pertanyaan umum menanyakan produk/katalog yang tersedia, jangan anggap unlisted product
+        if any(g in clean_text for g in ["apa saja", "apa ja", "daftar produk", "katalog", "list produk", "semua produk", "produk apa", "tanya produk", "produk yang tersedia"]):
+            return False, None
+
         has_inquiry_intent = any(re.search(rf"\b{re.escape(kw)}\b", clean_text) for kw in PRODUCT_INQUIRY_KEYWORDS)
         if not has_inquiry_intent:
             return False, None
@@ -153,7 +157,8 @@ class UnifiedConversationEngine:
         user_words = [w for w in re.findall(r"\b[a-z0-9_-]{3,}\b", clean_text) if w not in {
             "apakah", "ada", "punya", "jual", "ready", "kak", "min", "saya", "mau",
             "cari", "tolong", "bisa", "berapa", "harga", "untuk", "dan", "atau",
-            "yang", "ini", "itu", "nya", "apakah", "kami", "dong", "gan", "sis", "stok"
+            "yang", "ini", "itu", "nya", "apakah", "kami", "dong", "gan", "sis", "stok",
+            "halo", "tanya", "produk", "layanan", "jasa", "apa", "saja", "tersedia", "katalog", "daftar"
         }]
 
         # Jika user menyebutkan kata benda/produk spesifik (>= 1 kata)
@@ -269,18 +274,32 @@ class UnifiedConversationEngine:
 
         # 1.5. HANDOVER ESCALATION INTERCEPTOR (Pilihan '2', chat langsung dengan owner / Kang Sakti / CS)
         clean_q = re.sub(r"[^\w\s]", "", q_lower).strip()
-        is_handover_intent = (
-            clean_q in ("2", "2.", "dua", "opsi 2", "pilihan 2", "nomor 2", "no 2", "chat langsung", "chat owner")
-            or q_lower.startswith("2 ")
-            or any(
-                kw in q_lower for kw in [
-                    "ngobrol dengan", "bicara dengan", "chat dengan", "kang sakti",
-                    "owner", "pemilik", "admin", "live cs", "hubungi cs", "chat cs",
-                    "manusia", "human cs", "staf", "bantuan admin", "tanya kang sakti",
-                    "ngobrol santai"
-                ]
+
+        # Guard: Jika user sedang dalam sesi memilih nomor produk di katalog (misal pilih produk #2), jangan cegat sebagai handover
+        is_in_product_menu = False
+        try:
+            from app.services.whatsapp_menu_flow_service import whatsapp_menu_flow_service
+            menu_sess = whatsapp_menu_flow_service.get_session(clean_slug, clean_phone)
+            if menu_sess and menu_sess.current_state in ("selecting_product", "viewing_product", "viewing_testimonials"):
+                is_in_product_menu = True
+        except Exception:
+            pass
+
+        has_explicit_owner_kw = any(
+            kw in q_lower for kw in [
+                "ngobrol dengan", "bicara dengan", "chat dengan", "kang sakti",
+                "owner", "pemilik", "admin", "live cs", "hubungi cs", "chat cs",
+                "manusia", "human cs", "staf", "bantuan admin", "tanya kang sakti",
+                "ngobrol santai"
+            ]
+        )
+        is_digit_2_handover = (
+            not is_in_product_menu and (
+                clean_q in ("2", "2.", "dua", "opsi 2", "pilihan 2", "nomor 2", "no 2", "chat langsung", "chat owner")
+                or q_lower.startswith("2 ")
             )
         )
+        is_handover_intent = has_explicit_owner_kw or is_digit_2_handover
 
         if is_handover_intent:
             logger.info(f"[HANDOVER_TO_HUMAN] Detected escalation intent from '{clean_phone}' for tenant '{clean_slug}': '{q[:60]}'")

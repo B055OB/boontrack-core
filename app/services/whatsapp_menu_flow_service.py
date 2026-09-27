@@ -2,12 +2,12 @@
 Interactive Numbered Menu Conversation Flow for WhatsApp Gateway Growth.
 
 Manages conversational state machine for:
-- State tracking (idle, selecting_product, viewing_product, viewing_testimonials)
-- Product listing by numbers (1, 2, 3...)
-- Product detail inspection with action sub-menus (1. Testimoni, 2. Beli, 3. Kembali)
-- 5 Verified buyer testimonials with star ratings
-- Direct checkout link / Dynamic QRIS dispatch
-- Seamless fallback to AI Knowledge Base for freeform questions
+* State tracking (idle, selecting_product, viewing_product, viewing_testimonials)
+* Product listing by numbers (1, 2, 3...)
+* Product detail inspection with action sub-menus (1. Testimoni, 2. Beli, 3. Kembali)
+* Verified buyer testimonials with star ratings from Supabase DB
+* Direct checkout link / Dynamic QRIS dispatch
+* Seamless fallback to AI Knowledge Base for freeform questions
 """
 
 import logging
@@ -27,44 +27,6 @@ class ChatSessionState(BaseModel):
     selected_product_id: Optional[str] = None
     selected_product_data: Optional[Dict[str, Any]] = None
     last_active: float = Field(default_factory=time.time)
-
-
-# Default High-Converting Catalog for Merchants without Products in DB
-DEFAULT_MERCHANT_CATALOG = [
-    {
-        "id": "prod-masterclass-2026",
-        "title": "Masterclass Meta & TikTok Ads 2026",
-        "slug": "masterclass-meta-tiktok-ads-2026",
-        "price": 149000,
-        "description": "Panduan komprehensif riset winning audience, struktur campaign CBO scaling, dan setup CAPI tracking konversi tinggi.",
-        "benefits": "Akses materi seumur hidup di Google Drive, update berkala modul 2026, dan akses grup konsultasi VIP Telegram.",
-    },
-    {
-        "id": "prod-template-copywriting",
-        "title": "Template Copywriting & Hook Video Viral",
-        "slug": "template-copywriting-hook-video-viral",
-        "price": 49000,
-        "description": "Koleksi 50+ script copywriting formula AIDA dan video hooks terbukti tembus 100k+ views organik & berbayar.",
-        "benefits": "Format Notion & spreadsheet siap pakai, panduan angle iklan, dan studi kasus winning ads.",
-    },
-    {
-        "id": "prod-private-coaching-1on1",
-        "title": "Private Coaching & Campaign Audit 1-on-1",
-        "slug": "private-coaching-campaign-audit-1on1",
-        "price": 499000,
-        "description": "Sesi privat bedah dashboard iklan, perbaikan targeting & creative hook, serta strategi scaling bersama praktisi iklan senior.",
-        "benefits": "Sesi konsultasi 90 menit via Google Meet, rekaman sesi, dan evaluasi berkala selama 14 hari.",
-    },
-]
-
-# Curated 5 Testimonials per Product / Store
-SAMPLE_TESTIMONIALS = [
-    {"rating": 5, "name": "Budi S.", "comment": "Materi daging banget, langsung praktek ROAS campaign saya tembus 3.8x!"},
-    {"rating": 5, "name": "Rina M.", "comment": "Sangat mudah dipahami untuk pemula, step by step setup pixel-nya jelas."},
-    {"rating": 5, "name": "Dimas A.", "comment": "Template video hook-nya beneran manjur, iklan langsung banjir checkout."},
-    {"rating": 5, "name": "Siti W.", "comment": "Support mentor di grup diskusi VIP responsif dan solutif banget."},
-    {"rating": 5, "name": "Hendra K.", "comment": "Investasi terbaik buat bisnis online tahun ini, rekomended parah!"},
-]
 
 
 def _format_price_idr(amount: float) -> str:
@@ -133,14 +95,124 @@ class WhatsAppMenuFlowService:
                     "slug": p.get("slug") or f"produk-{idx}",
                     "price": float(p.get("promo_price") or p.get("price") or 50000),
                     "description": p.get("description") or p.get("short_description") or "Katalog produk resmi berkualitas.",
-                    "benefits": "Garansi resmi, materi berkualitas, dan dukungan pelanggan prioritas.",
+                    "benefits": p.get("benefits") or "Garansi resmi, materi berkualitas, dan dukungan pelanggan prioritas.",
+                    "single_page_config": p.get("single_page_config"),
+                    "metadata": p.get("metadata"),
                 })
             return formatted
         return []
 
-    def get_product_testimonials(self, tenant_slug: str, product_id: str, product_title: str) -> List[Dict[str, Any]]:
-        """Returns 5 recent verified buyer testimonials for product."""
-        return SAMPLE_TESTIMONIALS[:5]
+    def _normalize_testimonials(self, raw_list: List[Any]) -> List[Dict[str, Any]]:
+        """Normalizes various testimonial schemas into unified rating, name, comment format."""
+        normalized = []
+        for item in raw_list:
+            if isinstance(item, dict):
+                name = item.get("name") or item.get("author") or item.get("user") or item.get("customer_name") or "Pelanggan Terverifikasi"
+                comment = item.get("comment") or item.get("review") or item.get("quote") or item.get("text") or item.get("content") or ""
+                if not comment or not str(comment).strip():
+                    continue
+                try:
+                    rating = int(item.get("rating") or item.get("stars") or 5)
+                except Exception:
+                    rating = 5
+                normalized.append({
+                    "name": str(name).strip(),
+                    "comment": str(comment).strip(),
+                    "rating": min(max(rating, 1), 5),
+                })
+        return normalized[:5]
+
+    def get_product_testimonials(
+        self,
+        tenant_slug: str,
+        product_id: str,
+        product_title: str,
+        product_data: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Dynamically fetches verified testimonials/reviews from database:
+        1. product_data.testimonials / single_page_config.testimonials / metadata.testimonials
+        2. Supabase product record (single_page_config.testimonials or metadata.testimonials)
+        3. Supabase tenant metadata.testimonials / metadata.reviews
+        4. Supabase product_reviews table (if exists)
+        Returns [] if no testimonials are configured in DB. Zero hardcoded mock fallback.
+        """
+        # 1. Cek langsung di product_data
+        if product_data and isinstance(product_data, dict):
+            spc = product_data.get("single_page_config") or {}
+            if isinstance(spc, dict) and spc.get("testimonials"):
+                t_list = spc.get("testimonials")
+                if isinstance(t_list, list) and len(t_list) > 0:
+                    norm = self._normalize_testimonials(t_list)
+                    if norm:
+                        return norm
+
+            if product_data.get("testimonials") and isinstance(product_data.get("testimonials"), list):
+                norm = self._normalize_testimonials(product_data.get("testimonials"))
+                if norm:
+                    return norm
+
+            meta = product_data.get("metadata") or {}
+            if isinstance(meta, dict) and meta.get("testimonials") and isinstance(meta.get("testimonials"), list):
+                norm = self._normalize_testimonials(meta.get("testimonials"))
+                if norm:
+                    return norm
+
+        # 2. Cek di Supabase database (products, tenants, product_reviews)
+        try:
+            from app.services.whatsapp_service import get_supabase
+            sb = get_supabase()
+            if sb:
+                clean_slug = (tenant_slug or "").strip().lower()
+                # A. Cek tabel products jika ada product_id
+                if product_id:
+                    try:
+                        p_res = sb.from_("products").select("single_page_config, metadata").eq("id", product_id).maybe_single().execute()
+                        if p_res and p_res.data:
+                            spc = p_res.data.get("single_page_config") or {}
+                            if isinstance(spc, dict) and spc.get("testimonials"):
+                                norm = self._normalize_testimonials(spc.get("testimonials"))
+                                if norm:
+                                    return norm
+                            pmeta = p_res.data.get("metadata") or {}
+                            if isinstance(pmeta, dict) and pmeta.get("testimonials"):
+                                norm = self._normalize_testimonials(pmeta.get("testimonials"))
+                                if norm:
+                                    return norm
+                    except Exception:
+                        pass
+
+                # B. Cek metadata tenant di Supabase
+                if clean_slug:
+                    try:
+                        t_res = sb.from_("tenants").select("metadata").eq("slug", clean_slug).maybe_single().execute()
+                        if t_res and t_res.data:
+                            t_meta = t_res.data.get("metadata") or {}
+                            if isinstance(t_meta, dict):
+                                if t_meta.get("testimonials") and isinstance(t_meta.get("testimonials"), list):
+                                    norm = self._normalize_testimonials(t_meta.get("testimonials"))
+                                    if norm:
+                                        return norm
+                                if t_meta.get("reviews") and isinstance(t_meta.get("reviews"), list):
+                                    norm = self._normalize_testimonials(t_meta.get("reviews"))
+                                    if norm:
+                                        return norm
+                    except Exception:
+                        pass
+
+                # C. Cek tabel product_reviews jika ada
+                try:
+                    r_res = sb.from_("product_reviews").select("*").eq("tenant_slug", clean_slug).limit(5).execute()
+                    if r_res and r_res.data and len(r_res.data) > 0:
+                        norm = self._normalize_testimonials(r_res.data)
+                        if norm:
+                            return norm
+                except Exception:
+                    pass
+        except Exception as _err:
+            logger.warning(f"[TESTIMONIALS_QUERY_WARN] {_err}")
+
+        return []
 
     def build_products_menu_message(self, tenant_slug: str) -> str:
         """Constructs numbered list of active products."""
@@ -176,19 +248,63 @@ class WhatsAppMenuFlowService:
             f"Ketik *1*, *2*, atau *3* untuk memilih."
         )
 
-    def build_testimonials_message(self, product_title: str, testimonials: List[Dict[str, Any]]) -> str:
-        """Constructs 5 buyer testimonials formatted with star ratings."""
-        lines = [f"⭐ *Testimoni Pembeli untuk {product_title}:*\n"]
-        for idx, item in enumerate(testimonials, 1):
-            stars = "★" * item.get("rating", 5)
-            name = item.get("name", "Pelanggan")
-            comment = item.get("comment", "Sangat memuaskan!")
-            lines.append(f"{idx}. {stars} - *{name}*: \"{comment}\"")
+    def build_testimonials_message(
+        self,
+        product_title: str,
+        testimonials: List[Dict[str, Any]],
+        product: Optional[Dict[str, Any]] = None,
+        tenant_slug: Optional[str] = None,
+    ) -> str:
+        """
+        Constructs buyer testimonials formatted with star ratings.
+        If testimonials exist in DB: displays verified buyer reviews with stars.
+        If NO testimonials in DB: constructs an elegant contextual message based on product benefits,
+        NEVER showing fake ad course / ROAS claims!
+        """
+        if testimonials and len(testimonials) > 0:
+            lines = [f"⭐ *Testimoni & Ulasan Pembeli untuk {product_title}:*\n"]
+            for idx, item in enumerate(testimonials, 1):
+                stars = "★" * item.get("rating", 5)
+                name = item.get("name", "Pelanggan")
+                comment = item.get("comment", "")
+                lines.append(f"{idx}. {stars} - *{name}*: \"{comment}\"")
 
-        lines.append("\nMau lanjut ke mana, Kak?")
-        lines.append("*1.* Beli Sekarang | *2.* Kembali ke Daftar Produk\n")
-        lines.append("Ketik *1* atau *2* untuk memilih.")
-        return "\n".join(lines)
+            lines.append("\nMau lanjut ke mana, Kak?")
+            lines.append("*1.* Beli Sekarang | *2.* Kembali ke Daftar Produk\n")
+            lines.append("Ketik *1* atau *2* untuk memilih.")
+            return "\n".join(lines)
+
+        # Fallback elegan jika belum ada ulasan tersimpan di DB
+        benefit_text = ""
+        if product and isinstance(product, dict):
+            spc = product.get("single_page_config") or {}
+            if isinstance(spc, dict) and spc.get("subheadline"):
+                subh = str(spc.get("subheadline")).strip()
+                if len(subh) > 10:
+                    benefit_text = subh
+            elif product.get("benefits"):
+                b = str(product.get("benefits")).strip()
+                if len(b) > 10 and "Jaminan garansi resmi toko" not in b:
+                    benefit_text = b
+            elif product.get("description"):
+                d = str(product.get("description")).strip()
+                first_line = d.split("\n")[0].strip()
+                if len(first_line) > 15:
+                    benefit_text = first_line
+
+        if not benefit_text:
+            benefit_text = "Produk ini dirancang dengan materi dan panduan terstruktur yang mengutamakan hasil nyata, kemudahan penerapan, dan kepuasan pelanggan."
+
+        return (
+            f"⭐ *Ulasan & Bukti Pembeli untuk {product_title}:*\n\n"
+            f"Ulasan dan testimoni untuk produk ini sedang dihimpun oleh tim kami.\n\n"
+            f"💡 *Keunggulan Utama Produk:*\n"
+            f"{benefit_text}\n\n"
+            f"Mau lanjut ke mana, Kak?\n"
+            f"*1.* Beli Sekarang / Lanjut Pemesanan\n"
+            f"*2.* Kembali ke Daftar Produk\n\n"
+            f"Ketik *1* atau *2* untuk memilih, atau tanyakan langsung apa pun yang ingin Kakak ketahui tentang produk ini ya! 🙏"
+        )
 
     def build_checkout_message(self, tenant_slug: str, product: Dict[str, Any], contact_name: str = "Kakak") -> str:
         """Constructs instant checkout URL & QRIS instruction."""
@@ -266,18 +382,31 @@ class WhatsAppMenuFlowService:
 
         # 3. State: viewing_product
         if session.current_state == "viewing_product":
-            selected_product = session.selected_product_data or (products[0] if products else DEFAULT_MERCHANT_CATALOG[0])
+            selected_product = session.selected_product_data or (products[0] if products else {})
+            if not selected_product:
+                self.reset_session(tenant_slug, sender_phone)
+                return "Katalog produk sedang disiapkan oleh admin toko kami."
             
             if clean_text == "1":
                 # Sub-menu 1: Lihat Testimoni Pembeli
-                logger.info(f"[{tenant_slug}:{sender_phone}] Submenu 1: Testimoni for '{selected_product['title']}'")
-                testimonials = self.get_product_testimonials(tenant_slug, selected_product.get("id", ""), selected_product["title"])
+                logger.info(f"[{tenant_slug}:{sender_phone}] Submenu 1: Testimoni for '{selected_product.get('title', 'Produk')}'")
+                testimonials = self.get_product_testimonials(
+                    tenant_slug,
+                    selected_product.get("id", ""),
+                    selected_product.get("title", ""),
+                    product_data=selected_product,
+                )
                 self.set_session_state(tenant_slug, sender_phone, state="viewing_testimonials")
-                return self.build_testimonials_message(selected_product["title"], testimonials)
+                return self.build_testimonials_message(
+                    selected_product.get("title", "Produk"),
+                    testimonials,
+                    product=selected_product,
+                    tenant_slug=tenant_slug,
+                )
 
             elif clean_text == "2":
                 # Sub-menu 2: Masukkan Keranjang / Beli Sekarang
-                logger.info(f"[{tenant_slug}:{sender_phone}] Submenu 2: Checkout for '{selected_product['title']}'")
+                logger.info(f"[{tenant_slug}:{sender_phone}] Submenu 2: Checkout for '{selected_product.get('title', 'Produk')}'")
                 self.reset_session(tenant_slug, sender_phone)
                 return self.build_checkout_message(tenant_slug, selected_product, contact_name)
 
@@ -302,11 +431,14 @@ class WhatsAppMenuFlowService:
 
         # 4. State: viewing_testimonials
         if session.current_state == "viewing_testimonials":
-            selected_product = session.selected_product_data or (products[0] if products else DEFAULT_MERCHANT_CATALOG[0])
+            selected_product = session.selected_product_data or (products[0] if products else {})
+            if not selected_product:
+                self.reset_session(tenant_slug, sender_phone)
+                return "Katalog produk sedang disiapkan oleh admin toko kami."
 
             if clean_text == "1":
                 # Beli Sekarang
-                logger.info(f"[{tenant_slug}:{sender_phone}] Testimonials option 1: Checkout '{selected_product['title']}'")
+                logger.info(f"[{tenant_slug}:{sender_phone}] Testimonials option 1: Checkout '{selected_product.get('title', 'Produk')}'")
                 self.reset_session(tenant_slug, sender_phone)
                 return self.build_checkout_message(tenant_slug, selected_product, contact_name)
 
