@@ -162,6 +162,19 @@ class PlatformAssistantEngine:
 
         reply_body = ""
 
+        # Intent -1: Storefront Context-Aware Sales Tag (Ref: tenant#product)
+        from app.services.waba_sales_service import (
+            extract_storefront_ref,
+            get_storefront_product_context,
+            build_context_aware_first_response
+        )
+        ref_match = extract_storefront_ref(clean_text)
+        if ref_match:
+            t_slug, p_slug = ref_match
+            storefront_ctx = get_storefront_product_context(t_slug, p_slug)
+            if storefront_ctx:
+                return build_context_aware_first_response(storefront_ctx)
+
         # Intent 0: Kelas Bos / Business Consulting Inquiry (Tenant Concierge)
         kelasbos_keywords = [
             "kelasbos", "kelas bos", "fahami", "fahami digital", "konsultasi bisnis",

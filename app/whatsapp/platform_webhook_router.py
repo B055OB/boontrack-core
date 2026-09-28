@@ -237,6 +237,26 @@ class PlatformWebhookRouter:
                 return res
 
         # =====================================================================
+        # JALUR 2.5: Storefront Context-Aware Sales Conversation (P0 Upgrade)
+        # Mendeteksi prefilled message dari etalase: (Ref: tenant_slug#product_slug)
+        # Menghasilkan first response natural & Quick Reply buttons, melewati generic greeting.
+        # =====================================================================
+        try:
+            from app.services.waba_sales_service import handle_waba_storefront_sales_inbound
+            sales_result = await handle_waba_storefront_sales_inbound(
+                sender_phone=sender_clean,
+                incoming_text=clean_text,
+                phone_number_id=phone_number_id,
+                raw_msg=raw_msg,
+                trace=trace,
+            )
+            if sales_result and sales_result.get("handled"):
+                _log("StorefrontSales", f"Handled by Storefront Context Sales (action={sales_result.get('action')}). Early return.")
+                return sales_result
+        except Exception as _sales_err:
+            logger.error(f"[WABA_SALES_ROUTER_ERROR] {_sales_err}", exc_info=True)
+
+        # =====================================================================
         # JALUR 3: Human Handover Interceptor
         # =====================================================================
         ticket = cls.get_or_create_ticket(sender_clean)
