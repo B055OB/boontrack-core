@@ -96,11 +96,13 @@ async def get_shipping_rates_handler(request: web.Request):
     """Mendapatkan opsi ongkir real-time yang terkelompok (instant vs regular)."""
     try:
         body = await request.json()
+        tenant_id = body.get("tenant_id") or body.get("slug") or body.get("tenant_slug")
         rates = await fetch_grouped_shipping_rates(
             dest_lat=float(body.get("dest_lat", -6.9175)),
             dest_lng=float(body.get("dest_lng", 107.6191)),
             weight_kg=float(body.get("weight_kg", 1.0)),
-            is_cod=bool(body.get("is_cod", False))
+            is_cod=bool(body.get("is_cod", False)),
+            tenant_id=tenant_id
         )
         return web.json_response({"success": True, "rates": rates})
     except Exception as e:

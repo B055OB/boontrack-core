@@ -16,7 +16,70 @@ DEFAULT_ORIGIN = {
     "lng": 107.6710
 }
 
-async def fetch_grouped_shipping_rates(dest_lat: float, dest_lng: float, weight_kg: float = 1.0, is_cod: bool = False) -> Dict[str, List[Dict[str, Any]]]:
+def get_tenant_origin(tenant_id: str = None) -> Dict[str, Any]:
+    """Mengambil origin langsung dari data toko tenant (tenant.metadata.warehouse_address atau tenant_settings.shipping_origin)."""
+    origin = dict(DEFAULT_ORIGIN)
+    if not tenant_id:
+        return origin
+
+    try:
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT biteship_config, shipping_origin FROM tenant_settings WHERE tenant_slug = %s LIMIT 1;", (tenant_id,))
+        settings_row = cur.fetchone()
+
+        cur.execute("SELECT metadata FROM tenants WHERE slug = %s OR id = %s LIMIT 1;", (tenant_id, tenant_id))
+        tenant_row = cur.fetchone()
+
+        biteship_cfg = settings_row.get("biteship_config") if settings_row and isinstance(settings_row.get("biteship_config"), dict) else {}
+        shipping_origin = settings_row.get("shipping_origin") if settings_row and isinstance(settings_row.get("shipping_origin"), dict) else {}
+        meta = tenant_row.get("metadata") if tenant_row and isinstance(tenant_row.get("metadata"), dict) else {}
+        meta_shipping = meta.get("shipping_config") if isinstance(meta.get("shipping_config"), dict) else {}
+        warehouse_address = meta.get("warehouse_address")
+
+        origin_obj = biteship_cfg.get("origin") or shipping_origin or {}
+        
+        addr = origin_obj.get("address") or meta_shipping.get("origin_address") or meta.get("origin_address")
+        if not addr and isinstance(warehouse_address, str):
+            addr = warehouse_address
+        elif not addr and isinstance(warehouse_address, dict):
+            addr = warehouse_address.get("address")
+        if addr:
+            origin["address"] = addr
+
+        city = origin_obj.get("city") or meta_shipping.get("origin_city") or meta.get("origin_city")
+        if not city and isinstance(warehouse_address, dict):
+            city = warehouse_address.get("city")
+        if city:
+            origin["city"] = city
+
+        postal = origin_obj.get("postal_code") or meta_shipping.get("origin_postal_code") or meta.get("origin_postal_code")
+        if not postal and isinstance(warehouse_address, dict):
+            postal = warehouse_address.get("postal_code")
+        if postal:
+            origin["postal_code"] = str(postal)
+
+        subdistrict_id = origin_obj.get("subdistrict_id") or meta_shipping.get("origin_subdistrict_id") or meta.get("origin_subdistrict_id")
+        if not subdistrict_id and isinstance(warehouse_address, dict):
+            subdistrict_id = warehouse_address.get("subdistrict_id")
+        if subdistrict_id:
+            origin["origin_subdistrict_id"] = str(subdistrict_id)
+
+        name = origin_obj.get("sender_name") or meta.get("name")
+        phone = origin_obj.get("sender_phone") or meta.get("wa_phone") or meta.get("phone")
+        if name:
+            origin["name"] = name
+        if phone:
+            origin["phone"] = phone
+
+        cur.close()
+        conn.close()
+    except Exception as err:
+        print(f"[Dynamic Origin Warning] Failed to query tenant origin: {err}")
+
+    return origin
+
+async def fetch_grouped_shipping_rates(dest_lat: float, dest_lng: float, weight_kg: float = 1.0, is_cod: bool = False, tenant_id: str = None) -> Dict[str, List[Dict[str, Any]]]:
     """Mengambil ongkir real-time dari Biteship dengan fallback mock rates untuk testing."""
     grouped: Dict[str, List[Dict[str, Any]]] = {
         "instant": [],
@@ -25,9 +88,10 @@ async def fetch_grouped_shipping_rates(dest_lat: float, dest_lng: float, weight_
 
     try:
         adapter = BiteshipShippingAdapter()
+        origin_info = get_tenant_origin(tenant_id)
         raw_rates = await adapter.get_rates(
-            origin_lat=DEFAULT_ORIGIN["lat"],
-            origin_lng=DEFAULT_ORIGIN["lng"],
+            origin_lat=origin_info.get("lat", DEFAULT_ORIGIN["lat"]),
+            origin_lng=origin_info.get("lng", DEFAULT_ORIGIN["lng"]),
             dest_lat=dest_lat,
             dest_lng=dest_lng,
             weight_kg=weight_kg,
@@ -130,7 +194,9 @@ async def create_checkout_order_with_shipping(payload: Dict[str, Any]) -> Dict[s
         ))
 
         # Komisi Affiliate & Split 2-Tier: Dihitung MURNI dari base_price (tanpa shipping_cost)
-        if referral_code or manager_id:
+        # SPRINT TESTING: Alokasi komisi afiliasi untuk tenant toko dinonaktifkan sementara
+        ENABLE_TENANT_AFFILIATE_COMMISSION = False
+        if ENABLE_TENANT_AFFILIATE_COMMISSION and (referral_code or manager_id):
             affiliate = None
             if referral_code:
                 cur.execute("""
@@ -220,11 +286,11 @@ async def trigger_order_processing_and_awb(order_id: str, tenant_id: str) -> Dic
                 service_type=order.get("courier_code") or "grab_instant",
                 is_cod=is_cod,
                 cod_amount=float(order["total_amount"]) if is_cod else 0.0,
-                sender_name=DEFAULT_ORIGIN["name"],
-                sender_phone=DEFAULT_ORIGIN["phone"],
-                sender_address=DEFAULT_ORIGIN["address"],
-                sender_lat=DEFAULT_ORIGIN["lat"],
-                sender_lng=DEFAULT_ORIGIN["lng"],
+                sender_name=get_tenant_origin(tenant_id).get("name", DEFAULT_ORIGIN["name"]),
+                sender_phone=get_tenant_origin(tenant_id).get("phone", DEFAULT_ORIGIN["phone"]),
+                sender_address=get_tenant_origin(tenant_id).get("address", DEFAULT_ORIGIN["address"]),
+                sender_lat=get_tenant_origin(tenant_id).get("lat", DEFAULT_ORIGIN["lat"]),
+                sender_lng=get_tenant_origin(tenant_id).get("lng", DEFAULT_ORIGIN["lng"]),
                 recipient_name="Pelanggan",
                 recipient_phone="08123456789",
                 recipient_address=order.get("shipping_address") or "Alamat Penerima",

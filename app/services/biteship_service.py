@@ -265,6 +265,7 @@ async def get_all_shipping_rates(
     destination_lng: Optional[float] = None,
     is_cod: bool = False,
     couriers: Optional[str] = None,
+    origin_postal_code: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Kalkulasi tarif kurir lengkap (Instant, Sameday, Reguler, Kargo, COD) via Biteship API.
     
@@ -304,8 +305,9 @@ async def get_all_shipping_rates(
     dest_postal_str = str(destination_postal_code).strip()
     dest_postal = int(dest_postal_str) if dest_postal_str.isdigit() else dest_postal_str
 
+    effective_origin_postal = int(origin_postal_code) if (origin_postal_code and str(origin_postal_code).isdigit()) else ORIGIN_WAREHOUSE["postal_code"]
     payload: Dict[str, Any] = {
-        "origin_postal_code": ORIGIN_WAREHOUSE["postal_code"],
+        "origin_postal_code": effective_origin_postal,
         "destination_postal_code": dest_postal,
         "items": formatted_items
     }
@@ -381,9 +383,13 @@ async def get_all_shipping_rates(
         "cod": [r for r in all_rates if r.get("is_cod_supported") is True],
     }
 
+    origin_ret = dict(ORIGIN_WAREHOUSE)
+    if origin_postal_code:
+        origin_ret["postal_code"] = effective_origin_postal
+
     return {
         "success": True,
-        "origin": ORIGIN_WAREHOUSE,
+        "origin": origin_ret,
         "destination_postal_code": dest_postal_str,
         "rates": all_rates,
         "grouped": grouped,
@@ -393,14 +399,16 @@ async def get_all_shipping_rates(
 async def get_instant_rates(
     destination_postal_code: str,
     items: list,
-    destination_area: Optional[str] = None
+    destination_area: Optional[str] = None,
+    origin_postal_code: Optional[int] = None
 ) -> List[Dict[str, Any]]:
     """Kalkulasi ongkos kirim kurir instan dan sameday (GoSend & Grab) via Biteship API."""
     res = await get_all_shipping_rates(
         destination_postal_code=destination_postal_code,
         items=items,
         destination_area=destination_area,
-        couriers="gosend,grab"
+        couriers="gosend,grab",
+        origin_postal_code=origin_postal_code
     )
     grouped = res.get("grouped", {})
     instant_and_sameday = grouped.get("instant", []) + grouped.get("sameday", [])

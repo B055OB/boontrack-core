@@ -11,6 +11,46 @@ from app.services.biteship_service import (
     STATUS_EVENT_MAPPING,
 )
 
+def resolve_tenant_origin(tenant_id: Optional[str]) -> Dict[str, Any]:
+    """Mengambil origin langsung dari data toko tenant (metadata.warehouse_address atau tenant_settings.shipping_origin)."""
+    origin = dict(ORIGIN_WAREHOUSE)
+    if not tenant_id:
+        return origin
+    try:
+        from app.services.whatsapp_service import get_supabase
+        supabase = get_supabase()
+        if supabase:
+            # 1. tenant_settings
+            st_res = supabase.table("tenant_settings").select("biteship_config").eq("tenant_slug", tenant_id).execute()
+            biteship_cfg = st_res.data[0].get("biteship_config") if st_res.data and isinstance(st_res.data[0], dict) else {}
+            shipping_origin = (biteship_cfg.get("origin") if isinstance(biteship_cfg, dict) else {})
+
+            # 2. tenants.metadata
+            t_res = supabase.table("tenants").select("metadata").eq("slug", tenant_id).execute()
+            meta = t_res.data[0].get("metadata") if t_res.data and isinstance(t_res.data[0], dict) else {}
+            meta_shipping = meta.get("shipping_config") if isinstance(meta.get("shipping_config"), dict) else {}
+
+            origin_obj = (biteship_cfg.get("origin") if isinstance(biteship_cfg, dict) else None) or shipping_origin or {}
+            
+            postal = origin_obj.get("postal_code") or meta_shipping.get("origin_postal_code") or meta.get("origin_postal_code")
+            if postal:
+                origin["postal_code"] = int(postal) if str(postal).isdigit() else postal
+            
+            city = origin_obj.get("city") or meta_shipping.get("origin_city") or meta.get("origin_city")
+            if city:
+                origin["city"] = city
+
+            subdistrict = origin_obj.get("subdistrict_id") or meta_shipping.get("origin_subdistrict_id") or meta.get("origin_subdistrict_id")
+            if subdistrict:
+                origin["origin_subdistrict_id"] = str(subdistrict)
+
+            addr = origin_obj.get("address") or meta_shipping.get("origin_address") or meta.get("origin_address") or meta.get("warehouse_address")
+            if addr and isinstance(addr, str):
+                origin["address"] = addr
+    except Exception as err:
+        logger.warning(f"[Origin Resolver] Fallback to default: {err}")
+    return origin
+
 logger = logging.getLogger("SHIPPING_ROUTES")
 
 router = APIRouter(prefix="/api/v1/shipping", tags=["Shipping Logistics"])
@@ -87,16 +127,18 @@ async def calculate_instant_rates(payload: InstantRatesRequest):
     )
 
     try:
+        origin_info = resolve_tenant_origin(payload.tenant_id)
         rates = await get_instant_rates(
             destination_postal_code=clean_postal,
             items=payload.items or [],
-            destination_area=payload.destination_area
+            destination_area=payload.destination_area,
+            origin_postal_code=origin_info.get("postal_code")
         )
 
         return InstantRatesResponse(
             success=True,
             tenant_id=payload.tenant_id,
-            origin=ORIGIN_WAREHOUSE,
+            origin=origin_info,
             destination_postal_code=clean_postal,
             destination_address=payload.destination_address,
             rates=rates
@@ -128,6 +170,7 @@ async def calculate_all_rates(payload: ShippingRatesRequest):
         )
 
     try:
+        origin_info = resolve_tenant_origin(payload.tenant_id)
         result = await get_all_shipping_rates(
             destination_postal_code=clean_postal,
             items=payload.items or [],
@@ -135,7 +178,9 @@ async def calculate_all_rates(payload: ShippingRatesRequest):
             destination_lat=payload.destination_lat,
             destination_lng=payload.destination_lng,
             is_cod=bool(payload.is_cod),
+            origin_postal_code=origin_info.get("postal_code"),
         )
+        result["origin"] = origin_info
 
         if payload.category:
             cat_clean = payload.category.strip().lower()
