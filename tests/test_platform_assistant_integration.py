@@ -696,3 +696,142 @@ def test_public_read_tools_error_handling():
     assert rate_res["status"] == "success"
     assert rate_res["weight_kg"] == 1
 
+
+# =============================================================================
+# 9. Dual-Language (ID / EN) Concierge & Language Detection Tests
+# =============================================================================
+
+def test_detect_language_rule_based():
+    """Memverifikasi akurasi deteksi bahasa Inggris vs Indonesia."""
+    from app.services.platform_assistant_engine import detect_language
+
+    # Kasus Bahasa Inggris
+    assert detect_language("Hello BoonTrack, I am interested in Enterprise solutions and platform activation.") == "en"
+    assert detect_language("hello") == "en"
+    assert detect_language("hi boontrack") == "en"
+    assert detect_language("I am interested in your custom app") == "en"
+    assert detect_language("How does activation work?") == "en"
+    assert detect_language("Can we talk in English please?") == "en"
+    assert detect_language("HELP") == "en"
+
+    # Kasus Bahasa Indonesia
+    assert detect_language("Halo BoonTrack, saya tertarik untuk konsultasi solusi Enterprise dan aktivasi platform.") == "id"
+    assert detect_language("Halo selamat pagi min") == "id"
+    assert detect_language("Tolong jelaskan katalog dan fitur layanan BoonTrack") == "id"
+    assert detect_language("Berapa harganya ya?") == "id"
+    assert detect_language("BANTUAN") == "id"
+    assert detect_language("") == "id"
+    assert detect_language(None) == "id"
+
+
+@pytest.mark.asyncio
+async def test_assistant_engine_catalog_intent_english():
+    """Engine memproses pesan masuk bahasa Inggris dengan template katalog EN dan link ?lang=en."""
+    from app.services.platform_assistant_engine import FOOTER_HELP_TEXT_EN
+
+    context = TrustedSessionContext(
+        context_id=uuid4(),
+        tenant_id=PLATFORM_TENANT_ID,
+        role=RoleEnum.ANONYMOUS,
+        authenticated=True,
+        metadata={"ownership_domain": "PLATFORM"},
+    )
+    reply = await platform_assistant_engine.generate_response(
+        user_text="Hello BoonTrack, I am interested in Enterprise solutions and platform activation.",
+        context=context,
+        is_first_message=True,
+    )
+
+    # 1. 5 Pilar Solusi Bahasa Inggris
+    assert "BoonTrack Platform Orchestration" in reply
+    assert "WhatsApp Business API (Official Meta WABA)" in reply
+    assert "BoonTrack POS (Point of Sale)" in reply
+    assert "IoT Doorlock & Smart Access Control" in reply
+    assert "BoonTrack Shop (Commerce Engine)" in reply
+
+    # 2. Onboarding CTA dengan query parameter ?lang=en
+    assert "https://boontrack.com/onboarding?lang=en" in reply
+
+    # 3. Teks eskalasi bantuan bahasa Inggris pada pesan pertama
+    assert FOOTER_HELP_TEXT_EN in reply
+    assert "Type 'HELP' to connect directly with our human representative." in reply
+
+
+@pytest.mark.asyncio
+async def test_assistant_engine_general_greeting_english():
+    """Pesan salam sederhana dalam bahasa Inggris menghasilkan sapaan EN dan footer HELP."""
+    from app.services.platform_assistant_engine import FOOTER_HELP_TEXT_EN
+
+    context = TrustedSessionContext(
+        context_id=uuid4(),
+        tenant_id=PLATFORM_TENANT_ID,
+        role=RoleEnum.ANONYMOUS,
+        authenticated=True,
+        metadata={"ownership_domain": "PLATFORM"},
+    )
+    reply = await platform_assistant_engine.generate_response(
+        user_text="Hello there!",
+        context=context,
+        is_first_message=True,
+    )
+
+    assert "How can we assist you with enterprise business orchestration" in reply
+    assert "https://boontrack.com/onboarding?lang=en" in reply
+    assert FOOTER_HELP_TEXT_EN in reply
+
+
+@pytest.mark.asyncio
+async def test_assistant_engine_indonesian_preserves_id_onboarding_link():
+    """Pesan bahasa Indonesia tetap mempertahankan link tanpa ?lang=en dan footer bahasa Indonesia."""
+    context = TrustedSessionContext(
+        context_id=uuid4(),
+        tenant_id=PLATFORM_TENANT_ID,
+        role=RoleEnum.ANONYMOUS,
+        authenticated=True,
+        metadata={"ownership_domain": "PLATFORM"},
+    )
+    reply = await platform_assistant_engine.generate_response(
+        user_text="Tolong jelaskan katalog dan solusi BoonTrack",
+        context=context,
+        is_first_message=True,
+    )
+
+    # Link onboarding Indonesia tanpa query parameter lang=en
+    assert "https://boontrack.com/onboarding" in reply
+    assert "https://boontrack.com/onboarding?lang=en" not in reply
+
+    # Footer bantuan bahasa Indonesia
+    assert FOOTER_HELP_TEXT in reply
+    assert "Ketik 'BANTUAN'" in reply
+
+
+@pytest.mark.asyncio
+async def test_lane_3_human_handover_help_english():
+    """Keyword 'HELP' memicu eskalasi human handover dengan balasan resmi bahasa Inggris."""
+    from app.whatsapp.platform_webhook_router import HANDOVER_RESPONSE_EN
+    from app.schemas.rev1_contracts import SupportTicketState
+    from app.whatsapp.traffic_splitter import WebhookExecutionTrace
+
+    sender = "6285181830099"
+    phone_id = DEFAULT_TEST_PHONE_ID
+    trace = WebhookExecutionTrace("msg_help_en", phone_id, sender, "HELP")
+
+    with patch("app.whatsapp.platform_webhook_router.send_whatsapp_text", new_callable=AsyncMock) as mock_send_wa:
+        mock_send_wa.return_value = True
+
+        res = await PlatformWebhookRouter.handle(
+            sender_phone=sender,
+            incoming_text="HELP",
+            phone_number_id=phone_id,
+            trace=trace,
+        )
+
+        assert res["status"] == "success"
+        assert res["action"] == "human_handover"
+        assert res["lane"] == "HUMAN_HANDOVER"
+        assert res["state"] == SupportTicketState.IN_PROGRESS.value
+        assert res["ai_muted"] is True
+        assert res["reply"] == HANDOVER_RESPONSE_EN
+        assert "Your request has been forwarded to a BoonTrack official representative" in res["reply"]
+
+

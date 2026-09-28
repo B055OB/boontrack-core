@@ -38,6 +38,7 @@ from app.core.rev1.gateway import (
 from app.services.platform_assistant_engine import (
     PLATFORM_TENANT_ID,
     platform_assistant_engine,
+    detect_language,
 )
 from app.services.whatsapp_service import normalize_phone_number, get_supabase
 from app.services.whatsapp.cloud_api import send_whatsapp_text
@@ -51,10 +52,14 @@ OPT_OUT_RESPONSE = (
     "Kirim 'START' kapan saja untuk mengaktifkan kembali."
 )
 
-ESCALATION_KEYWORDS = {"BANTUAN", "CS", "OPERATOR", "HUMAN", "ADMIN"}
+ESCALATION_KEYWORDS = {"BANTUAN", "CS", "OPERATOR", "HUMAN", "ADMIN", "HELP"}
 HANDOVER_RESPONSE = (
     "Permintaan Anda telah dialihkan ke representatif resmi BoonTrack. "
     "Tim kami akan segera membalas pesan ini."
+)
+HANDOVER_RESPONSE_EN = (
+    "Your request has been forwarded to a BoonTrack official representative. "
+    "Our team will assist you shortly."
 )
 
 QUOTA_EXCEEDED_RESPONSE = (
@@ -268,10 +273,16 @@ class PlatformWebhookRouter:
             if ticket.state == SupportTicketState.PENDING:
                 HumanHandOffManager.assign_to_human(ticket, agent_id="boontrack-support-queue")
 
+            handover_reply = (
+                HANDOVER_RESPONSE_EN
+                if detect_language(clean_text) == "en"
+                else HANDOVER_RESPONSE
+            )
+
             try:
                 await send_whatsapp_text(
                     to_phone=sender_clean,
-                    text=HANDOVER_RESPONSE,
+                    text=handover_reply,
                     tenant_id="shop",
                     phone_number_id=phone_number_id,
                 )
@@ -285,7 +296,7 @@ class PlatformWebhookRouter:
                 "ticket_id": str(ticket.ticket_id),
                 "state": ticket.state.value,
                 "ai_muted": ticket.is_ai_muted(),
-                "reply": HANDOVER_RESPONSE,
+                "reply": handover_reply,
                 "early_return": True,
             }
             if trace:

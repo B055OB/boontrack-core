@@ -30,7 +30,43 @@ logger = logging.getLogger("PLATFORM_ASSISTANT_ENGINE")
 PLATFORM_TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 ASSISTANT_NAME = "BoonTrack Business Concierge — Layanan Orkestrasi & Solusi Digital PT Boontrack Inovasi Digital"
+ASSISTANT_NAME_EN = "BoonTrack Business Concierge — Enterprise Orchestration & Digital Solutions PT Boontrack Inovasi Digital"
+
 FOOTER_HELP_TEXT = "Ketik 'BANTUAN' untuk berbicara langsung dengan tim representatif kami."
+FOOTER_HELP_TEXT_EN = "Type 'HELP' to connect directly with our human representative."
+
+# Rule-based regex patterns for English language detection
+ENGLISH_PATTERNS = [
+    r"\bhello\b",
+    r"\bhi\b",
+    r"\bhey\b",
+    r"\bhi\s+boontrack\b",
+    r"\binterested\b",
+    r"\bactivation\b",
+    r"\benglish\b",
+    r"\benterprise\s+solutions?\b",
+    r"\bcustom\s+app\b",
+    r"\bpricing\b",
+    r"\bfeatures?\b",
+    r"\bhow\s+to\b",
+    r"\bwhat\s+is\b",
+    r"\bhelp\b",
+]
+
+
+def detect_language(text: str) -> str:
+    """
+    Rule-based language detector for inbound messages.
+    Returns 'en' if English greeting, prefilled inquiry, or keywords are matched,
+    otherwise defaults to 'id'.
+    """
+    if not text or not isinstance(text, str):
+        return "id"
+    lower = text.lower()
+    for pattern in ENGLISH_PATTERNS:
+        if re.search(pattern, lower):
+            return "en"
+    return "id"
 
 
 class PlatformAssistantEngine:
@@ -41,6 +77,7 @@ class PlatformAssistantEngine:
 
     def __init__(self):
         self.name = ASSISTANT_NAME
+        self.name_en = ASSISTANT_NAME_EN
 
     def _format_catalog_reply(self, catalog_data: Dict[str, Any]) -> str:
         solutions = catalog_data.get("solutions", [])
@@ -55,6 +92,27 @@ class PlatformAssistantEngine:
         lines.append("")
         lines.append("Untuk pendaftaran, rancang otomatisasi, & simulasi pilot gratis 14 hari, silakan isi formulir resmi kami di:")
         lines.append("👉 https://boontrack.com/onboarding")
+        return "\n".join(lines)
+
+    def _format_catalog_reply_en(self, catalog_data: Optional[Dict[str, Any]] = None) -> str:
+        lines = [
+            f"Hello! I am the *{self.name_en}*.",
+            "",
+            "Here is the official solutions portfolio of the BoonTrack enterprise platform:",
+            "1. *BoonTrack Platform Orchestration*",
+            "   Unified enterprise digital orchestration for multi-channel integration, automated workflow state machines, and real-time transaction processing.",
+            "2. *WhatsApp Business API (Official Meta WABA)*",
+            "   Official high-speed Meta Cloud API integration with verified green badge, interactive messaging (CTA/Quick Reply), and enterprise SLA.",
+            "3. *BoonTrack POS (Point of Sale)*",
+            "   Smart multi-outlet cloud POS system for retail & FnB with centralized catalog management and automated payment reconciliation.",
+            "4. *IoT Doorlock & Smart Access Control*",
+            "   Hardware-to-cloud access control with dynamic QR Code and RFID for gyms, co-working spaces, and modern offices.",
+            "5. *BoonTrack Shop (Commerce Engine)*",
+            "   Sub-second instant e-commerce storefront for physical and digital goods with WhatsApp checkout and automated QRIS payments.",
+            "",
+            "To register, design custom automations, & access your 14-day free pilot simulation, please complete our official form at:",
+            "👉 https://boontrack.com/onboarding?lang=en",
+        ]
         return "\n".join(lines)
 
     def _format_shipping_reply(self, rates_data: Dict[str, Any]) -> str:
@@ -97,6 +155,14 @@ class PlatformAssistantEngine:
             "Ada yang bisa kami bantu seputar solusi orkestrasi bisnis, aktivasi akun, integrasi WhatsApp Business API, atau layanan BoonTrack Shop hari ini?\n\n"
             "Untuk pendaftaran, rancang otomatisasi, & simulasi pilot gratis 14 hari, silakan isi formulir resmi kami di:\n"
             "👉 https://boontrack.com/onboarding"
+        )
+
+    def _format_general_greeting_en(self) -> str:
+        return (
+            f"Hello! I am the *{self.name_en}*.\n\n"
+            "How can we assist you with enterprise business orchestration, account activation, WhatsApp Business API integration, or BoonTrack Shop solutions today?\n\n"
+            "To register, design custom automations, & access your 14-day free pilot simulation, please complete our official form at:\n"
+            "👉 https://boontrack.com/onboarding?lang=en"
         )
 
     def _format_kelasbos_consulting_reply(self, data: Dict[str, Any]) -> str:
@@ -157,11 +223,12 @@ class PlatformAssistantEngine:
     ) -> str:
         """
         Generates conversational response using intent routing, public read tools via gateway,
-        and Meta compliance formatting.
+        and Meta compliance formatting with dual-language (ID/EN) support.
         """
         clean_text = user_text.strip()
         lower_text = clean_text.lower()
-        logger.info(f"[PLATFORM_ASSISTANT] Processing inquiry for context {context.context_id}: '{clean_text[:60]}'")
+        lang = detect_language(clean_text)
+        logger.info(f"[PLATFORM_ASSISTANT] Processing inquiry ({lang}) for context {context.context_id}: '{clean_text[:60]}'")
 
         reply_body = ""
 
@@ -195,20 +262,23 @@ class PlatformAssistantEngine:
                 tenant_slug="kelasbos"
             )
             reply_body = self._format_kelasbos_consulting_reply(consulting_data)
-        # Intent 1: Catalog & Solutions Inquiry
-        catalog_keywords = [
-            "katalog", "solusi", "layanan", "fitur", "produk", "pos", "iot",
-            "doorlock", "shop", "waba", "whatsapp", "paket", "harga", "kelebihan"
-        ]
-        if is_kelasbos_context:
-            pass  # Already handled above
-        elif any(kw in lower_text for kw in catalog_keywords):
-            catalog_data = execute_public_tool("get_public_solution_catalog", context=context)
-            reply_body = self._format_catalog_reply(catalog_data)
+
+        # Intent 1: Catalog & Solutions Inquiry (Bilingual keywords)
+        elif (
+            any(kw in lower_text for kw in [
+                "katalog", "solusi", "layanan", "fitur", "produk", "pos", "iot",
+                "doorlock", "shop", "waba", "whatsapp", "paket", "harga", "kelebihan",
+                "catalog", "solutions", "solution", "portfolio", "features", "products", "pricing", "services", "interested"
+            ])
+        ):
+            if lang == "en":
+                reply_body = self._format_catalog_reply_en()
+            else:
+                catalog_data = execute_public_tool("get_public_solution_catalog", context=context)
+                reply_body = self._format_catalog_reply(catalog_data)
 
         # Intent 2: Shipping Rate Inquiry
-        elif any(kw in lower_text for kw in ["ongkir", "tarif", "pengiriman", "ekspedisi", "ongkos kirim"]):
-            # Heuristic extraction of cities
+        elif any(kw in lower_text for kw in ["ongkir", "tarif", "pengiriman", "ekspedisi", "ongkos kirim", "shipping"]):
             origin = "Jakarta"
             destination = "Bandung" if "bandung" in lower_text else ("Surabaya" if "surabaya" in lower_text else "Jakarta")
             weight = 1000
@@ -240,11 +310,15 @@ class PlatformAssistantEngine:
 
         # Intent 4: General Greeting or Inquiry
         else:
-            reply_body = self._format_general_greeting()
+            if lang == "en":
+                reply_body = self._format_general_greeting_en()
+            else:
+                reply_body = self._format_general_greeting()
 
         # Meta Compliance Policy: Append assistance footer on first message
         if is_first_message:
-            reply_body = f"{reply_body}\n\n{FOOTER_HELP_TEXT}"
+            footer = FOOTER_HELP_TEXT_EN if lang == "en" else FOOTER_HELP_TEXT
+            reply_body = f"{reply_body}\n\n{footer}"
 
         return reply_body.strip()
 
