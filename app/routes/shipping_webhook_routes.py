@@ -66,6 +66,28 @@ async def biteship_webhook_handler(request: web.Request):
                         WHERE order_id = %s;
                     """, (settlement_status, order_status, row["order_id"]))
 
+                # Trigger SHIPMENT_CREATED if tracking number is received in webhook
+                waybill_id = data.get("courier_tracking_id") or data.get("waybill_id") or data.get("tracking_id") or data.get("tracking_number")
+                if waybill_id and new_fulfillment in ("ALLOCATED", "PICKING_UP", "DROPPING_OFF"):
+                    try:
+                        import asyncio
+                        from app.services.transactional_event_service import trigger_shipment_created
+                        courier_name = data.get("courier_company") or (data.get("courier") if isinstance(data.get("courier"), dict) else {}).get("company") or "Biteship"
+                        service_type = data.get("courier_type") or (data.get("courier") if isinstance(data.get("courier"), dict) else {}).get("type") or "Standard"
+                        asyncio.create_task(
+                            trigger_shipment_created({
+                                "tenant_slug": row.get("tenant_id") or "shop",
+                                "order_id": row["order_id"],
+                                "customer_phone": (data.get("destination") if isinstance(data.get("destination"), dict) else {}).get("contact_phone") or "",
+                                "courier_name": courier_name,
+                                "service_name": service_type,
+                                "tracking_number": waybill_id,
+                                "shipping_address": (data.get("destination") if isinstance(data.get("destination"), dict) else {}).get("address") or "-",
+                            })
+                        )
+                    except Exception:
+                        pass
+
             conn.commit()
 
         cur.close()

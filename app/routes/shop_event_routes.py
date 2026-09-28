@@ -6,7 +6,9 @@ from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from app.services.transactional_event_service import (
     trigger_order_created,
+    trigger_payment_confirmed,
     trigger_payment_success,
+    trigger_shipment_created,
     trigger_cod_confirmation
 )
 
@@ -21,8 +23,10 @@ async def dispatch_event(event_type: str, data: Dict[str, Any]):
     event = str(event_type).upper()
     if event == "ORDER_CREATED":
         return await trigger_order_created(data)
-    elif event == "PAYMENT_SUCCESS":
-        return await trigger_payment_success(data)
+    elif event in ("PAYMENT_CONFIRMED", "PAYMENT_SUCCESS"):
+        return await trigger_payment_confirmed(data)
+    elif event == "SHIPMENT_CREATED":
+        return await trigger_shipment_created(data)
     elif event == "COD_CONFIRMATION":
         return await trigger_cod_confirmation(data)
     else:

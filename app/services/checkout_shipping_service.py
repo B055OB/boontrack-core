@@ -241,6 +241,30 @@ async def create_checkout_order_with_shipping(payload: Dict[str, Any]) -> Dict[s
                 """, (tenant_id, target_aff_id, order_id, int(base_price), commission_earned))
 
         conn.commit()
+
+        # Trigger ORDER_CREATED transactional notification via WABA (Task 2)
+        try:
+            from app.services.transactional_event_service import trigger_order_created
+            cust_phone = (
+                payload.get("recipient_phone")
+                or payload.get("customer_phone")
+                or payload.get("phone")
+                or ""
+            )
+            if cust_phone:
+                asyncio.create_task(
+                    trigger_order_created({
+                        "tenant_slug": tenant_id,
+                        "order_id": order_id,
+                        "customer_phone": cust_phone,
+                        "total_amount": int(total_amount),
+                        "items_summary": f"1x {product_name}",
+                        "payment_url": f"https://shop.boontrack.com/invoice/{order_id}",
+                    })
+                )
+        except Exception as _ord_err:
+            print(f"[ORDER_CREATED WABA WARN] {_ord_err}")
+
         return {
             "success": True,
             "order_id": order_id,
@@ -331,6 +355,30 @@ async def trigger_order_processing_and_awb(order_id: str, tenant_id: str) -> Dic
         ))
 
         conn.commit()
+
+        # Trigger SHIPMENT_CREATED transactional notification via WABA (Task 2)
+        try:
+            from app.services.transactional_event_service import trigger_shipment_created
+            cust_phone = (
+                order.get("recipient_phone")
+                or order.get("customer_phone")
+                or order.get("phone")
+                or ""
+            )
+            asyncio.create_task(
+                trigger_shipment_created({
+                    "tenant_slug": tenant_id,
+                    "order_id": order_id,
+                    "customer_phone": cust_phone,
+                    "courier_name": order.get("courier_code") or "Biteship",
+                    "service_name": order.get("courier_service_name") or "Standard",
+                    "tracking_number": tracking_number,
+                    "shipping_address": order.get("shipping_address") or "-",
+                })
+            )
+        except Exception as _ship_waba_err:
+            print(f"[SHIPMENT WABA WARN] {_ship_waba_err}")
+
         return {
             "success": True,
             "order_id": order_id,

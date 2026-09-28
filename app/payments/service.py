@@ -429,6 +429,35 @@ class PaymentCoreService:
         except Exception as e:
             logger.warning(f"[PaymentCore] Failed to record payment_event on settlement: {e}")
 
+        # Trigger PAYMENT_CONFIRMED transactional notification via WABA (Task 2)
+        try:
+            from app.services.transactional_event_service import trigger_payment_confirmed
+            meta = matched_intent.metadata or {}
+            raw = webhook.raw_payload or {}
+            cust_phone = (
+                meta.get("customer_phone")
+                or meta.get("buyer_phone")
+                or raw.get("phoneNumber")
+                or raw.get("customerPhone")
+                or raw.get("phone")
+                or ""
+            )
+            items = meta.get("items_summary") or meta.get("product_name") or "Pesanan Anda"
+            asyncio.create_task(
+                trigger_payment_confirmed({
+                    "tenant_slug": matched_intent.tenant_id,
+                    "order_id": matched_intent.order_id,
+                    "customer_phone": cust_phone,
+                    "amount": int(webhook.amount),
+                    "items_summary": items,
+                    "payment_method": webhook.provider.upper(),
+                    "payment_status": "SETTLED",
+                    "verified": True,
+                })
+            )
+        except Exception as _waba_tx_err:
+            logger.debug(f"[PaymentCore] PAYMENT_CONFIRMED dispatch note: {_waba_tx_err}")
+
         return settlement
 
     def expire_stale_intents(self) -> List[str]:

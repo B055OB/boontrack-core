@@ -90,6 +90,22 @@ async def send_whatsapp_payment_notification(
     except Exception as er_err:
         logger.warning(f"[Xendit WA E-Receipt Error] {er_err}")
 
+    # Trigger PAYMENT_CONFIRMED transactional event hook via WABA with Quick Replies
+    try:
+        from app.services.transactional_event_service import trigger_payment_confirmed
+        await trigger_payment_confirmed({
+            "tenant_slug": tenant_id,
+            "order_id": external_id,
+            "customer_phone": phone,
+            "amount": amount,
+            "items_summary": item_name,
+            "payment_method": "Xendit",
+            "payment_status": "PAID",
+            "verified": True,
+        })
+    except Exception as _tx_err:
+        logger.warning(f"[Xendit WA Transactional Hook Error] {_tx_err}")
+
     log_structured_event(
         service="whatsapp_delivery",
         event_type="WA_NOTIF_DISPATCHED",
