@@ -53,7 +53,8 @@ class PlatformAssistantEngine:
             lines.append(f"{idx}. *{s['name']}*")
             lines.append(f"   {s['description']}")
         lines.append("")
-        lines.append("Untuk pendaftaran & info kemitraan lengkap, kunjungi: https://boontrack.com atau https://shop.boontrack.com")
+        lines.append("Untuk pendaftaran, rancang otomatisasi, & simulasi pilot gratis 14 hari, silakan isi formulir resmi kami di:")
+        lines.append("👉 https://boontrack.com/onboarding")
         return "\n".join(lines)
 
     def _format_shipping_reply(self, rates_data: Dict[str, Any]) -> str:
@@ -93,7 +94,9 @@ class PlatformAssistantEngine:
     def _format_general_greeting(self) -> str:
         return (
             f"Halo! Saya *{self.name}*.\n\n"
-            "Ada yang bisa kami bantu seputar solusi orkestrasi bisnis, aktivasi akun, integrasi WhatsApp Business API, atau layanan BoonTrack Shop hari ini?"
+            "Ada yang bisa kami bantu seputar solusi orkestrasi bisnis, aktivasi akun, integrasi WhatsApp Business API, atau layanan BoonTrack Shop hari ini?\n\n"
+            "Untuk pendaftaran, rancang otomatisasi, & simulasi pilot gratis 14 hari, silakan isi formulir resmi kami di:\n"
+            "👉 https://boontrack.com/onboarding"
         )
 
     def _format_kelasbos_consulting_reply(self, data: Dict[str, Any]) -> str:
