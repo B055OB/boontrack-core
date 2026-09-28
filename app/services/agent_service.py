@@ -83,6 +83,8 @@ async def process_incoming_message(
     user_name: str = "",
     button_id: Optional[str] = None,
     session_id: Optional[str] = None,
+    image_base64: Optional[str] = None,
+    mime_type: Optional[str] = None,
 ) -> str:
     """Processes incoming message for a tenant with appropriate fallback service routing and telemetry."""
     from app.services.tenant_context_resolver import tenant_context_resolver, has_capability
@@ -98,10 +100,11 @@ async def process_incoming_message(
         except Exception as bot_check_err:
             logger.debug(f"[Bot Paused Check Note] {bot_check_err}")
 
-    # 0b. Custom Keyword Auto-Reply Rules per Tenant
-    custom_reply = await find_tenant_auto_reply(tenant_slug, message)
-    if custom_reply:
-        return custom_reply
+    # 0b. Custom Keyword Auto-Reply Rules per Tenant (hanya jika tanpa gambar)
+    if not image_base64:
+        custom_reply = await find_tenant_auto_reply(tenant_slug, message)
+        if custom_reply:
+            return custom_reply
 
     context = await tenant_context_resolver.resolve_tenant(tenant_slug)
 
@@ -132,6 +135,7 @@ async def process_incoming_message(
             pass
 
     # 3. STATIC Bot Mode Default (Unified Deterministic Architecture §8.1)
+    # Dilewati jika user mengirimkan gambar agar dianalisis visual oleh AI
     bot_mode = (
         getattr(context, "bot_mode", None)
         or (context.metadata.get("bot_mode") if context and context.metadata else None)
@@ -146,7 +150,7 @@ async def process_incoming_message(
 
     business_type = getattr(context, "business_type", "DIGITAL") or "DIGITAL"
 
-    if bot_mode == "STATIC":
+    if bot_mode == "STATIC" and not image_base64:
         clean_msg = message.strip()
         from app.configs.templates import resolve_static_menu_choice, format_vertical_menu
 
@@ -180,6 +184,8 @@ async def process_incoming_message(
         user_name=user_name,
         button_id=button_id,
         usage_out=usage_out,
+        image_base64=image_base64,
+        mime_type=mime_type,
     )
 
     # Fire-and-forget AI Token Telemetry Hook

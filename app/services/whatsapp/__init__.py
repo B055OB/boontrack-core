@@ -76,6 +76,7 @@ from app.services.whatsapp.evolution import (
     send_evolution_list,
     send_evolution_buttons,
     send_evolution_app_shop_catalog,
+    get_base64_from_media_message,
 )
 
 # activation
@@ -151,6 +152,7 @@ __all__ = [
     "send_evolution_list",
     "send_evolution_buttons",
     "send_evolution_app_shop_catalog",
+    "get_base64_from_media_message",
     # activation
     "normalize_activation_code",
     "find_tenant_by_activation_code",

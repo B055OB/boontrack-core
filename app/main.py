@@ -96,6 +96,8 @@ app.add_middleware(TracingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://dashboard.boontrack.com",
+        "http://dashboard.boontrack.com",
         "https://shop.boontrack.com",
         "http://shop.boontrack.com",
         "https://boontrack.com",

@@ -30,6 +30,7 @@ from app.services.whatsapp_service import (
     get_evolution_headers,
     request_evolution_pairing_code,
     get_or_create_evolution_session,
+    get_base64_from_media_message,
     get_supabase,
 )
 
@@ -58,6 +59,9 @@ class InboundPayload(BaseModel):
     participant_jid: Optional[str] = Field(None, description="Participant JID in group")
     reply_to_message_id: Optional[str] = Field(None, description="Message ID being quoted/replied to")
     ctwa_clid: Optional[str] = Field(None, description="CTWA Click ID")
+    image_base64: Optional[str] = Field(None, description="Base64 encoded image string (data:image/...;base64,...)")
+    mime_type: Optional[str] = Field(None, description="MIME type of the media (e.g. image/jpeg)")
+    media_url: Optional[str] = Field(None, description="Public media URL (e.g. from R2)")
 
 
 @router.post("/sessions/{tenant_slug}/connect")
@@ -420,7 +424,11 @@ async def process_inbound_message(payload: InboundPayload):
             f"[BOONPILOT SALES REP] Routing message for '{tenant_slug}' ({conversation_scope}) from '{clean_phone}' "
             f"-> BoonPilot Brain | text_clean='{text_clean[:80]}'"
         )
-        sales_rep_reply = await generate_group_boonpilot_reply(text_clean)
+        sales_rep_reply = await generate_group_boonpilot_reply(
+            text_clean,
+            image_base64=payload.image_base64,
+            mime_type=payload.mime_type or "image/jpeg",
+        )
         logger.info(f"[BOONPILOT SALES REP REPLY] ({len(sales_rep_reply)} chars): '{sales_rep_reply[:120]}'")
         return {
             "status": "success",
@@ -510,24 +518,25 @@ async def process_inbound_message(payload: InboundPayload):
             f"[ENTITLEMENT_PROTECTION_BLOCKED] Tenant '{tenant_slug}' is on tier CHECKOUT_LITE (ai_bot disabled). "
             "Skipping AI pipelines and falling back to dynamic store template."
         )
-        # 1. Ganti nama toko dengan tenant_name (ambil 'BoonTrack Official Shop')
-        store_name = (
-            tenant_info.get("name")
-            or tenant_info.get("tenant_name")
-            or store_details.get("tenant", {}).get("name")
-        )
-        if not store_name or "52967979" in str(store_name) or str(store_name).lower() == "boon":
-            if tenant_slug == "boon" or str(tenant_info.get("id")) == "52967979-4760-4cea-b686-cdbdb389c0e1":
-                store_name = "BoonTrack Official Shop"
-            else:
-                store_name = tenant_slug.replace("-", " ").title()
+        if not reply:
+            # 1. Ganti nama toko dengan tenant_name (ambil 'BoonTrack Official Shop')
+            store_name = (
+                tenant_info.get("name")
+                or tenant_info.get("tenant_name")
+                or store_details.get("tenant", {}).get("name")
+            )
+            if not store_name or "52967979" in str(store_name) or str(store_name).lower() == "boon":
+                if tenant_slug == "boon" or str(tenant_info.get("id")) == "52967979-4760-4cea-b686-cdbdb389c0e1":
+                    store_name = "BoonTrack Official Shop"
+                else:
+                    store_name = tenant_slug.replace("-", " ").title()
 
-        from app.whatsapp.traffic_splitter import get_tenant_greeting_message
-        reply = get_tenant_greeting_message(
-            store_name=store_name,
-            tenant_slug=tenant_slug,
-            tenant_meta=tenant_meta,
-        )
+            from app.whatsapp.traffic_splitter import get_tenant_greeting_message
+            reply = get_tenant_greeting_message(
+                store_name=store_name,
+                tenant_slug=tenant_slug,
+                tenant_meta=tenant_meta,
+            )
     else:
         is_group_scope = payload.conversation_scope == "GROUP" and bool(payload.group_jid)
         is_boon_tenant = tenant_slug.lower() in ("boon", "boontrack-app-shop", "boontrack_app_shop", "app_shop", "app-shop")
@@ -559,34 +568,39 @@ async def process_inbound_message(payload: InboundPayload):
                 "media_url": None,
             }
 
-        # Scope Isolation: if GROUP (non-boon), isolate conversation session key so it never collides with private DM
-        conv_sender_id = f"group:{payload.group_jid}" if (is_group_scope) else clean_phone
-        engine_res = await unified_conversation_engine.process_chat(
-            tenant_slug=tenant_slug,
-            message=incoming_text,
-            sender_id=conv_sender_id,
-            sender_name=contact_name,
-            channel="whatsapp",
-        )
-        if engine_res.get("action") == "DROP_PAUSED" or (engine_res.get("bot_paused") and not engine_res.get("reply")):
-            logger.info(f"[GROWTH GATEWAY BOT PAUSED] Sesi '{clean_phone}' dijeda (HANDOVER_TO_HUMAN / PAUSED). Menahan respons otomatis.")
-            return {
-                "status": "success",
-                "tenant": tenant_slug,
-                "bot_paused": True,
-                "reply_text": None,
-                "message": "Sesi dalam status HANDOVER_TO_HUMAN. Balasan otomatis ditahan."
-            }
+        engine_res = None
+        if not reply:
+            # Scope Isolation: if GROUP (non-boon), isolate conversation session key so it never collides with private DM
+            conv_sender_id = f"group:{payload.group_jid}" if (is_group_scope) else clean_phone
+            engine_res = await unified_conversation_engine.process_chat(
+                tenant_slug=tenant_slug,
+                message=incoming_text,
+                sender_id=conv_sender_id,
+                sender_name=contact_name,
+                channel="whatsapp",
+                image_base64=payload.image_base64,
+                mime_type=payload.mime_type or "image/jpeg",
+            )
+            if engine_res.get("action") == "DROP_PAUSED" or (engine_res.get("bot_paused") and not engine_res.get("reply")):
+                logger.info(f"[GROWTH GATEWAY BOT PAUSED] Sesi '{clean_phone}' dijeda (HANDOVER_TO_HUMAN / PAUSED). Menahan respons otomatis.")
+                return {
+                    "status": "success",
+                    "tenant": tenant_slug,
+                    "bot_paused": True,
+                    "reply_text": None,
+                    "message": "Sesi dalam status HANDOVER_TO_HUMAN. Balasan otomatis ditahan."
+                }
 
-        # Jika trigger greeting awal, handover manusia, katalog kosong, atau produk di luar database
-        if engine_res.get("action") in ("SHOW_MENU", "CS_HANDOVER", "HANDOVER_TO_HUMAN") or engine_res.get("unassigned_triggered"):
-            reply = engine_res.get("reply")
+            # Jika trigger greeting awal, handover manusia, katalog kosong, atau produk di luar database
+            if engine_res.get("action") in ("SHOW_MENU", "CS_HANDOVER", "HANDOVER_TO_HUMAN") or engine_res.get("unassigned_triggered"):
+                reply = engine_res.get("reply")
 
     # 1.7 APP_SHOP_V1 Interactive Catalog Interceptor — DISABLED (Shop mode bypassed, locked to pure Sales Rep)
     # Alur menu/katalog interaktif toko dinonaktifkan agar tidak mengirim kartu banner paket.
 
     # 2. Pipeline Numbered Menu Flow: Tanya Produk -> Pilih Nomor -> Testimoni / Beli / Kembali
-    if not reply:
+    # Jika pesan memuat media gambar, lewati menu numbered flow agar diproses multimodal oleh AI
+    if not reply and not payload.image_base64:
         menu_reply = await whatsapp_menu_flow_service.process_message(
             tenant_slug=tenant_slug,
             sender_phone=clean_phone,
@@ -755,6 +769,8 @@ async def process_inbound_message(payload: InboundPayload):
                     user_phone=clean_phone,
                     user_name=contact_name,
                     bot_strategy=resolved_strategy,
+                    image_base64=payload.image_base64,
+                    mime_type=payload.mime_type or "image/jpeg",
                 )
             except Exception as ai_err:
                 logger.error(f"[GROWTH AI ERROR] Error in commerce_ai_engine for '{tenant_slug}': {ai_err}", exc_info=True)
@@ -768,6 +784,8 @@ async def process_inbound_message(payload: InboundPayload):
                 message=incoming_text,
                 user_phone=clean_phone,
                 user_name=contact_name,
+                image_base64=payload.image_base64,
+                mime_type=payload.mime_type or "image/jpeg",
             )
         except Exception as proc_err:
             logger.error(f"[GROWTH PROCESS ERROR] Error in process_incoming_message: {proc_err}", exc_info=True)
@@ -1248,12 +1266,14 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         unwrapped_msg = unwrapped_msg.get("viewOnceMessageV2", {}).get("message", {})
 
     image_obj = unwrapped_msg.get("imageMessage", {})
-    message_type = str(data.get("messageType") or "").lower()
+    message_type = str(data.get("messageType") or payload.get("messageType") or "").lower()
     if not image_obj and message_type in ("imagemessage", "image"):
         image_obj = unwrapped_msg
 
     is_image_message = bool(image_obj)
     media_url: Optional[str] = None
+    image_base64: Optional[str] = None
+    image_mime_type: str = "image/jpeg"
 
     # Ekstraksi Nomor Pengirim Sementara untuk ID Media
     raw_media_sender = (participant_jid if is_group else remote_jid).replace("@s.whatsapp.net", "").replace("@c.us", "").split("@")[0]
@@ -1261,6 +1281,10 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
 
     if is_image_message:
         message_id = key_obj.get("id", f"img_{media_sender_phone}")
+        if isinstance(image_obj, dict) and image_obj.get("mimetype"):
+            image_mime_type = image_obj.get("mimetype")
+
+        # Cek apakah base64 sudah dikirim langsung dalam webhook payload
         raw_b64: Optional[str] = (
             data.get("base64")
             or data.get("mediaBase64")
@@ -1268,17 +1292,45 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
             or (data.get("media", {}) if isinstance(data.get("media"), dict) else {}).get("base64")
             or image_obj.get("base64")
             or unwrapped_msg.get("base64")
-            or image_obj.get("jpegThumbnail")
         )
-        if raw_b64:
+
+        # Jika base64 belum ada di webhook payload, unduh dari Evolution API getBase64FromMediaMessage
+        if not raw_b64 and instance_name:
+            logger.info(f"[EVOLUTION WEBHOOK] Calling getBase64FromMediaMessage for instance '{instance_name}', message_id '{message_id}'...")
             try:
-                if "," in raw_b64:
-                    raw_b64 = raw_b64.split(",", 1)[1]
-                media_bytes = base64.b64decode(raw_b64)
-                mime_type = image_obj.get("mimetype", "image/jpeg")
-                if "png" in mime_type:
+                fetched_b64 = await get_base64_from_media_message(
+                    instance_name=instance_name,
+                    message_payload={"key": key_obj, "message": unwrapped_msg},
+                )
+                if fetched_b64:
+                    raw_b64 = fetched_b64
+                    logger.info(f"[EVOLUTION WEBHOOK] Successfully fetched base64 media from Evolution API for {message_id}")
+            except Exception as _fetch_err:
+                logger.warning(f"[EVOLUTION WEBHOOK] getBase64FromMediaMessage error: {_fetch_err}")
+
+        # Fallback terakhir ke thumbnail jika tidak ada full media
+        if not raw_b64:
+            raw_b64 = image_obj.get("jpegThumbnail")
+
+        if raw_b64:
+            # Format data:image/jpeg;base64,...
+            if isinstance(raw_b64, str):
+                if not raw_b64.startswith("data:"):
+                    image_base64 = f"data:{image_mime_type};base64,{raw_b64}"
+                else:
+                    image_base64 = raw_b64
+                    if ";" in raw_b64 and ":" in raw_b64:
+                        try:
+                            image_mime_type = raw_b64.split(";")[0].split(":")[1]
+                        except Exception:
+                            pass
+
+            try:
+                clean_raw_b64 = raw_b64.split(",", 1)[1] if "," in raw_b64 else raw_b64
+                media_bytes = base64.b64decode(clean_raw_b64)
+                if "png" in image_mime_type:
                     ext = ".png"
-                elif "webp" in mime_type:
+                elif "webp" in image_mime_type:
                     ext = ".webp"
                 else:
                     ext = ".jpg"
@@ -1286,17 +1338,19 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
                 media_url = upload_media_to_r2(
                     file_bytes=media_bytes,
                     file_name=f"{message_id}{ext}",
-                    content_type=mime_type,
+                    content_type=image_mime_type,
                 )
                 logger.info(f"[EVOLUTION WEBHOOK] Image uploaded to R2: {media_url}")
             except Exception as media_err:
                 logger.warning(f"[EVOLUTION WEBHOOK] Gagal upload image ke R2: {media_err}")
 
     # 4. Ekstraksi teks berjenjang
+    caption_text = (image_obj.get("caption") if isinstance(image_obj, dict) else None) or ""
+    caption_text = caption_text.strip()
     incoming_text = (
         unwrapped_msg.get("conversation")
         or unwrapped_msg.get("extendedTextMessage", {}).get("text")
-        or image_obj.get("caption")
+        or caption_text
         or unwrapped_msg.get("videoMessage", {}).get("caption")
         or unwrapped_msg.get("buttonsResponseMessage", {}).get("selectedButtonId")
         or unwrapped_msg.get("templateButtonReplyMessage", {}).get("selectedId")
@@ -1305,7 +1359,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     ).strip()
 
     if not incoming_text and is_image_message:
-        incoming_text = "[Gambar diterima]"
+        incoming_text = caption_text or "Tolong analisa gambar ini sesuai konteks toko."
 
     if not incoming_text:
         return {"status": "ignored_empty_text"}
@@ -1552,7 +1606,11 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
             f"[BOONPILOT SALES REP] Webhook locked to pure Sales Rep mode for '{instance_name}' / '{canonical_slug}' "
             f"({conversation_scope}) from '{sender_phone}' -> text_clean='{text_clean[:80]}'"
         )
-        reply_text = await generate_group_boonpilot_reply(text_clean)
+        reply_text = await generate_group_boonpilot_reply(
+            text_clean,
+            image_base64=image_base64,
+            mime_type=image_mime_type,
+        )
         reply_media_to_send = None
         inbound_res = {
             "status": "success",
@@ -1572,6 +1630,9 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
             participant_jid=participant_jid,
             reply_to_message_id=reply_to_message_id,
             ctwa_clid=ctwa_clid,
+            image_base64=image_base64,
+            mime_type=image_mime_type,
+            media_url=media_url,
         ))
         reply_text = inbound_res.get("reply_text")
         reply_media_to_send = inbound_res.get("media_url")
@@ -1712,7 +1773,9 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         "tenant": resolved_tenant,
         "conversation_scope": conversation_scope,
         "reply": reply_text,
+        "reply_text": reply_text,
         "media_url": media_url,
+        "image_received": bool(image_base64),
     }
 
 

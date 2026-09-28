@@ -270,8 +270,25 @@ def _resolve_gemini_api_key() -> str:
     return ""
 
 
-async def _call_gemini_llm(api_key: str, clean_text: str) -> Optional[str]:
+async def _call_gemini_llm(
+    api_key: str,
+    clean_text: str,
+    image_base64: Optional[str] = None,
+    mime_type: Optional[str] = None,
+) -> Optional[str]:
     """Eksekusi LLM Gemini dengan model terkini (gemini-3.8-flash) & prompt sistem BoonPilot."""
+    import base64 as _b64
+
+    clean_b64 = None
+    img_bytes = None
+    img_mime = mime_type or "image/jpeg"
+    if image_base64 and isinstance(image_base64, str):
+        clean_b64 = image_base64.split(",", 1)[1] if "," in image_base64 else image_base64
+        try:
+            img_bytes = _b64.b64decode(clean_b64)
+        except Exception:
+            clean_b64 = None
+
     def _sync_call() -> str:
         # Prioritas: google.genai SDK
         try:
@@ -291,11 +308,19 @@ async def _call_gemini_llm(api_key: str, clean_text: str) -> Optional[str]:
                     temperature=0.4,
                     max_output_tokens=1000,
                 )
+
+            contents_payload = [clean_text]
+            if img_bytes:
+                try:
+                    contents_payload.append(types.Part.from_bytes(data=img_bytes, mime_type=img_mime))
+                except Exception:
+                    pass
+
             for m in ("gemini-3.8-flash", "gemini-2.5-flash", "gemini-1.5-flash"):
                 try:
                     res = client.models.generate_content(
                         model=m,
-                        contents=clean_text,
+                        contents=contents_payload,
                         config=config,
                     )
                     txt = (res.text or "").strip()
@@ -326,7 +351,10 @@ async def _call_gemini_llm(api_key: str, clean_text: str) -> Optional[str]:
                         generation_config={"temperature": 0.4, "max_output_tokens": 800},
                         system_instruction=GROUP_BOONPILOT_SYSTEM_PROMPT,
                     )
-                    res = model.generate_content(clean_text)
+                    legacy_contents = [clean_text]
+                    if img_bytes:
+                        legacy_contents.append({"mime_type": img_mime, "data": img_bytes})
+                    res = model.generate_content(legacy_contents)
                     txt = (res.text or "").strip()
                     if txt:
                         return txt
@@ -335,16 +363,55 @@ async def _call_gemini_llm(api_key: str, clean_text: str) -> Optional[str]:
         except Exception as _leg_err:
             logger.debug(f"[BOONPILOT LLM] google.generativeai error: {_leg_err}")
 
+        # Fallback 3: Direct Generative Language REST API
+        try:
+            import httpx
+            endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={api_key}"
+            parts = [{"text": clean_text}]
+            if clean_b64:
+                parts.append({"inlineData": {"mimeType": img_mime, "data": clean_b64}})
+            payload = {
+                "contents": [{"parts": parts}],
+                "system_instruction": {"parts": [{"text": GROUP_BOONPILOT_SYSTEM_PROMPT}]},
+                "generationConfig": {"temperature": 0.4, "maxOutputTokens": 1000},
+            }
+            with httpx.Client(timeout=8.0) as client:
+                r = client.post(endpoint, json=payload)
+                if r.status_code == 200:
+                    d = r.json()
+                    candidates = d.get("candidates", [])
+                    if candidates:
+                        p_res = candidates[0].get("content", {}).get("parts", [])
+                        if p_res:
+                            return p_res[0].get("text", "").strip()
+        except Exception as _rest_err:
+            logger.debug(f"[BOONPILOT LLM] REST fallback error: {_rest_err}")
+
         return ""
 
     loop = asyncio.get_event_loop()
-    return await asyncio.wait_for(loop.run_in_executor(None, _sync_call), timeout=9.0)
+    return await asyncio.wait_for(loop.run_in_executor(None, _sync_call), timeout=12.0)
 
 
-async def _call_openrouter_llm(api_key: str, clean_text: str) -> Optional[str]:
+async def _call_openrouter_llm(
+    api_key: str,
+    clean_text: str,
+    image_base64: Optional[str] = None,
+    mime_type: Optional[str] = None,
+) -> Optional[str]:
     """Fallback sekunder LLM via OpenRouter API jika Gemini tidak dapat dijangkau."""
     try:
         import httpx
+        user_content: Any = clean_text
+        if image_base64 and isinstance(image_base64, str):
+            clean_b64 = image_base64.split(",", 1)[1] if "," in image_base64 else image_base64
+            img_mime = mime_type or "image/jpeg"
+            data_url = f"data:{img_mime};base64,{clean_b64.strip()}"
+            user_content = [
+                {"type": "text", "text": clean_text},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ]
+
         async with httpx.AsyncClient(timeout=8.0) as client:
             res = await client.post(
                 "https://openrouter.ai/api/v1/chat/completions",
@@ -356,7 +423,7 @@ async def _call_openrouter_llm(api_key: str, clean_text: str) -> Optional[str]:
                     "model": "google/gemini-2.0-flash-001",
                     "messages": [
                         {"role": "system", "content": GROUP_BOONPILOT_SYSTEM_PROMPT},
-                        {"role": "user", "content": clean_text},
+                        {"role": "user", "content": user_content},
                     ],
                     "max_tokens": 800,
                     "temperature": 0.4,
@@ -370,21 +437,27 @@ async def _call_openrouter_llm(api_key: str, clean_text: str) -> Optional[str]:
     return ""
 
 
-async def generate_group_boonpilot_reply(incoming_text: str) -> str:
+async def generate_group_boonpilot_reply(
+    incoming_text: str,
+    image_base64: Optional[str] = None,
+    mime_type: Optional[str] = None,
+) -> str:
     """
     BoonPilot Brain: Jawaban AI luwes, natural, dan pintar untuk grup komunitas & DM.
-    PRIORITAS UTAMA: Selalu panggil LLM (Gemini / OpenRouter).
+    PRIORITAS UTAMA: Selalu panggil LLM (Gemini / OpenRouter) dengan dukungan multimodal visual.
     FALLBACK: get_static_group_boonpilot_response() HANYA jika panggilan LLM timeout/gagal.
     """
     clean_text = re.sub(r"@[a-zA-Z0-9_.]+", "", incoming_text).strip()
     if not clean_text:
         clean_text = incoming_text.strip()
+    if image_base64 and (not clean_text or clean_text == "[Gambar diterima]"):
+        clean_text = "Tolong analisa gambar ini sesuai konteks toko."
 
     # 1. Prioritas Utama: Gemini LLM (gemini-3.8-flash)
     gemini_key = _resolve_gemini_api_key()
     if gemini_key:
         try:
-            reply = await _call_gemini_llm(gemini_key, clean_text)
+            reply = await _call_gemini_llm(gemini_key, clean_text, image_base64=image_base64, mime_type=mime_type)
             if reply:
                 logger.info(f"[BOONPILOT LLM] Generated natural conversational reply via Gemini ({len(reply)} chars).")
                 return reply
@@ -395,7 +468,7 @@ async def generate_group_boonpilot_reply(incoming_text: str) -> str:
     openrouter_key = os.getenv("OPENROUTER_API_KEY")
     if openrouter_key:
         try:
-            reply = await _call_openrouter_llm(openrouter_key, clean_text)
+            reply = await _call_openrouter_llm(openrouter_key, clean_text, image_base64=image_base64, mime_type=mime_type)
             if reply:
                 logger.info(f"[BOONPILOT LLM] Generated reply via OpenRouter ({len(reply)} chars).")
                 return reply

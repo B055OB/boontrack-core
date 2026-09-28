@@ -171,6 +171,11 @@ class CommerceAIEngine:
             f"KETIKA PEMBELI MENGIRIMKAN DATA DIRI (NAMA DAN/ATAU EMAIL):\n"
             f"1. Ucapkan terima kasih dan konfirmasi bahwa data pendaftaran telah dicatat untuk penyiapan akses materi.\n"
             f"2. Arahkan untuk menyelesaikan pembayaran dengan menyertakan Link Checkout Web Resmi produk bersangkutan atau instruksi pembayaran QRIS.\n\n"
+            f"ANALISIS GAMBAR & DOKUMEN VISUAL (MULTIMODAL):\n"
+            f"Jika pengguna mengirimkan gambar:\n"
+            f"1. Foto Produk / Item: Identifikasi produk atau kemiripan dengan katalog resmi toko di atas. Jelaskan spesifikasi, varian, dan harga resmi dari katalog toko.\n"
+            f"2. Bukti Transfer Bank / Mutasi / Struk QRIS: Baca teks bukti transfer (nama bank pengirim/tujuan, nominal transfer, nomor referensi/RRN, tanggal & waktu transfer). Berikan konfirmasi penerimaan bukti transfer dengan ramah, dan jelaskan bahwa pembayaran sedang/sudah diverifikasi oleh sistem/admin untuk penyiapan akses materi atau pemrosesan pesanan.\n"
+            f"3. Gambar Umum / Lainnya: Analisa objek atau teks visual dalam gambar dengan seksama sesuai konteks toko.\n\n"
             f"FORMAT RESPON:\n"
             f"Respon WAJIB berupa JSON Object dengan struktur:\n"
             f'{{\n  "reply": "<teks balasan kepada calon pembeli>",\n  "quick_actions": ["<aksi 1>", "<aksi 2>"]\n}}\n'
@@ -230,6 +235,8 @@ class CommerceAIEngine:
         bot_strategy: Optional[str] = None,
         mode_prompt: Optional[str] = None,
         usage_out: Optional[Dict[str, Any]] = None,
+        image_base64: Optional[str] = None,
+        mime_type: Optional[str] = None,
     ) -> str:
         """Generates contextual AI completion using 100% dynamic database-driven system prompt."""
         details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
@@ -264,6 +271,8 @@ class CommerceAIEngine:
             system_prompt = f"{mode_prompt}\n\n{system_prompt}"
 
         clean_msg = (user_message or "").strip()
+        if image_base64 and (not clean_msg or clean_msg == "[Gambar diterima]"):
+            clean_msg = "Tolong analisa gambar ini sesuai konteks toko."
 
         if history and isinstance(history, list):
             formatted_turns = []
@@ -284,6 +293,8 @@ class CommerceAIEngine:
             "button_id": button_id,
             "has_history": bool(history),
             "bot_strategy": strategy_key,
+            "image_base64": image_base64,
+            "mime_type": mime_type or "image/jpeg",
         }
 
         try:

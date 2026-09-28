@@ -98,8 +98,20 @@ class GeminiProvider(BaseLLMProvider):
                 "thinkingBudget": 0 if thinking_level == "low" else (1024 if thinking_level == "medium" else 2048)
             }
 
+        parts: List[Dict[str, Any]] = [{"text": user_message}]
+        image_b64 = context.get("image_base64") if isinstance(context, dict) else None
+        if image_b64 and isinstance(image_b64, str):
+            clean_b64 = image_b64.split(",", 1)[1] if "," in image_b64 else image_b64
+            img_mime = (context.get("mime_type") if isinstance(context, dict) else None) or "image/jpeg"
+            parts.append({
+                "inlineData": {
+                    "mimeType": img_mime,
+                    "data": clean_b64.strip()
+                }
+            })
+
         payload: Dict[str, Any] = {
-            "contents": [{"parts": [{"text": user_message}]}],
+            "contents": [{"parts": parts}],
             "generationConfig": generation_config,
         }
 
@@ -112,8 +124,18 @@ class GeminiProvider(BaseLLMProvider):
             body = await resp.text()
             if resp.status != 200:
                 # Fallback tanpa thinkingConfig jika model v1 / payload ditolak
+                fallback_parts: List[Dict[str, Any]] = [{"text": f"{system_prompt}\n\nUser: {user_message}"}]
+                if image_b64 and isinstance(image_b64, str):
+                    clean_b64 = image_b64.split(",", 1)[1] if "," in image_b64 else image_b64
+                    img_mime = (context.get("mime_type") if isinstance(context, dict) else None) or "image/jpeg"
+                    fallback_parts.append({
+                        "inlineData": {
+                            "mimeType": img_mime,
+                            "data": clean_b64.strip()
+                        }
+                    })
                 fallback_payload = {
-                    "contents": [{"parts": [{"text": f"{system_prompt}\n\nUser: {user_message}"}]}],
+                    "contents": [{"parts": fallback_parts}],
                     "generationConfig": {"temperature": temp, "maxOutputTokens": 1024},
                 }
                 async with session.post(url, json=fallback_payload) as fb_resp:
@@ -232,11 +254,22 @@ class OpenRouterProvider(BaseLLMProvider):
                 models_to_try.append(m)
 
         temp = float(context.get("temperature", 0.0)) if isinstance(context, dict) and "temperature" in context else 0.0
+        user_content: Any = user_message
+        image_b64 = context.get("image_base64") if isinstance(context, dict) else None
+        if image_b64 and isinstance(image_b64, str):
+            clean_b64 = image_b64.split(",", 1)[1] if "," in image_b64 else image_b64
+            img_mime = (context.get("mime_type") if isinstance(context, dict) else None) or "image/jpeg"
+            img_data_url = f"data:{img_mime};base64,{clean_b64.strip()}"
+            user_content = [
+                {"type": "text", "text": user_message},
+                {"type": "image_url", "image_url": {"url": img_data_url}}
+            ]
+
         payload = {
             "models": models_to_try,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
+                {"role": "user", "content": user_content},
             ],
             "temperature": temp,
             "response_format": {"type": "json_object"},

@@ -541,3 +541,72 @@ async def send_evolution_app_shop_catalog(
         instance_name=actual_instance,
         footer_text="BoonTrack Shop V1 • Closed Economic Loop"
     )
+
+
+async def get_base64_from_media_message(
+    instance_name: str,
+    message_payload: Dict[str, Any],
+    convert_to_mp4: bool = False,
+) -> Optional[str]:
+    """
+    Mengunduh representasi Base64 dari media WhatsApp (gambar/dokumen/audio) via Evolution API v2:
+    Endpoint: POST /chat/getBase64FromMediaMessage/{instance}
+    Payload: { "message": message_payload, "convertToMp4": false }
+    Returns: string base64 dengan format data URL 'data:image/jpeg;base64,...' atau None jika gagal.
+    """
+    clean_instance = (instance_name or "").strip()
+    if not clean_instance or not message_payload:
+        return None
+
+    # Normalisasi format payload pesan untuk Evolution API
+    # Evolution API menerima: { "message": { "key": ..., "message": ... }, "convertToMp4": false }
+    if isinstance(message_payload, dict) and "key" in message_payload and "message" in message_payload:
+        msg_body = {
+            "key": message_payload["key"],
+            "message": message_payload["message"],
+        }
+    elif isinstance(message_payload, dict) and "key" in message_payload:
+        msg_body = message_payload
+    else:
+        msg_body = message_payload
+
+    headers = get_evolution_headers()
+    url = f"{EVOLUTION_BASE_URL}/chat/getBase64FromMediaMessage/{clean_instance}"
+    body = {
+        "message": msg_body,
+        "convertToMp4": convert_to_mp4,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            res = await client.post(url, headers=headers, json=body)
+            if res.status_code in (200, 201):
+                res_data = res.json()
+                b64 = (
+                    res_data.get("base64")
+                    or res_data.get("mediaBase64")
+                    or res_data.get("media")
+                    or (res_data.get("data") if isinstance(res_data.get("data"), str) else None)
+                )
+                if b64 and isinstance(b64, str):
+                    b64 = b64.strip()
+                    # Pastikan format data URL data:image/jpeg;base64,... jika belum ada prefix data:
+                    if not b64.startswith("data:"):
+                        mime = "image/jpeg"
+                        if isinstance(message_payload, dict):
+                            m_inner = message_payload.get("message", {}) if "message" in message_payload else message_payload
+                            img_inner = m_inner.get("imageMessage", {}) if isinstance(m_inner, dict) else {}
+                            if isinstance(img_inner, dict) and img_inner.get("mimetype"):
+                                mime = img_inner["mimetype"]
+                        b64 = f"data:{mime};base64,{b64}"
+                    return b64
+            else:
+                logger.warning(
+                    f"[Evolution Media] getBase64FromMediaMessage returned status {res.status_code} "
+                    f"for instance '{clean_instance}': {res.text[:200]}"
+                )
+    except Exception as e:
+        logger.warning(f"[Evolution Media Error] getBase64FromMediaMessage exception for '{clean_instance}': {e}")
+
+    return None
+

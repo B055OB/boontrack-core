@@ -142,6 +142,7 @@ async def test_process_inbound_growth_message_auto_reply_intercept():
     }
 
     with patch("app.routes.whatsapp_gateway_routes.onboarding_service.get_tenant_details_by_slug", return_value=mock_details), \
+         patch("app.services.rotary_routing_service.rotary_routing_service.is_bot_paused_for_phone", return_value=False), \
          patch("app.routes.whatsapp_gateway_routes.commerce_ai_engine.generate_commerce_response", new_callable=AsyncMock) as mock_ai:
 
         res = await process_inbound_message(payload)

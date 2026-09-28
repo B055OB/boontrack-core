@@ -180,6 +180,8 @@ class UnifiedConversationEngine:
         channel: str = "webchat",
         history: Optional[List[Dict[str, Any]]] = None,
         button_id: Optional[str] = None,
+        image_base64: Optional[str] = None,
+        mime_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Memproses pesan secara deterministik:
@@ -189,12 +191,14 @@ class UnifiedConversationEngine:
         4. Guardrail katalog kosong -> Respon resmi & mutasi ke status unassigned.
         5. Guardrail produk di luar database -> Respon penolakan & mutasi ke status unassigned.
         6. Interceptor tombol cepat & booking jasa.
-        7. LLM inference deterministik (temperature: 0.0).
+        7. LLM inference deterministik (temperature: 0.0) / Multimodal visual pipeline.
         """
         clean_slug = str(tenant_slug or "").strip().lower()
         if not clean_slug:
             return {"reply_text": "Halo! Silakan hubungi admin toko melalui tautan resmi kami.", "buttons": []}
         q = (message or "").strip()
+        if image_base64 and (not q or q == "[Gambar diterima]"):
+            q = "Tolong analisa gambar ini sesuai konteks toko."
         q_lower = q.lower()
 
         from app.services.whatsapp_service import normalize_phone_number, get_supabase
@@ -388,8 +392,8 @@ class UnifiedConversationEngine:
         if db_name and not tenant_obj.get("name"):
             store_name = db_name
 
-        # 3. Handle Greeting Awal / Percakapan Baru
-        is_greeting = self.is_initial_greeting(q, history) or (button_id == "START_GREETING")
+        # 3. Handle Greeting Awal / Percakapan Baru (hanya untuk teks murni tanpa gambar)
+        is_greeting = not bool(image_base64) and (self.is_initial_greeting(q, history) or (button_id == "START_GREETING"))
         if is_greeting:
             has_embedded_options = any(w in welcome_msg.lower() for w in ["balas 1", "balas \"1\"", "balas '1'", "1.", "1 -", "opsi 1"])
             if has_embedded_options or not welcome_buttons:
@@ -436,30 +440,31 @@ class UnifiedConversationEngine:
                 "unassigned_triggered": True,
             }
 
-        # 5. ZERO-HALLUCINATION SAFE GUARD 2: Pertanyaan Produk di Luar Database
-        is_unknown, queried_item = self.detect_unlisted_product_inquiry(q, catalog)
-        if is_unknown:
-            logger.info(
-                f"[Zero-Hallucination Safe Guard] User inquired about unknown product '{queried_item}' "
-                f"not in database for '{clean_slug}'. Triggering unassigned CS queue."
-            )
-            rotary_routing_service.ensure_conversation_and_mark_unassigned(
-                tenant_id=clean_slug,
-                phone_or_session=sender_id,
-                contact_name=sender_name,
-                reason=f"UNKNOWN_PRODUCT_QUERY: {queried_item}"
-            )
-            return {
-                "success": True,
-                "reply": UNKNOWN_PRODUCT_MESSAGE,
-                "reply_text": UNKNOWN_PRODUCT_MESSAGE,
-                "tenant_slug": clean_slug,
-                "business_category": business_category,
-                "quick_actions": welcome_buttons,
-                "action": "CS_HANDOVER",
-                "type": "TEXT",
-                "unassigned_triggered": True,
-            }
+        # 5. ZERO-HALLUCINATION SAFE GUARD 2: Pertanyaan Produk di Luar Database (hanya untuk teks murni tanpa gambar)
+        if not image_base64:
+            is_unknown, queried_item = self.detect_unlisted_product_inquiry(q, catalog)
+            if is_unknown:
+                logger.info(
+                    f"[Zero-Hallucination Safe Guard] User inquired about unknown product '{queried_item}' "
+                    f"not in database for '{clean_slug}'. Triggering unassigned CS queue."
+                )
+                rotary_routing_service.ensure_conversation_and_mark_unassigned(
+                    tenant_id=clean_slug,
+                    phone_or_session=sender_id,
+                    contact_name=sender_name,
+                    reason=f"UNKNOWN_PRODUCT_QUERY: {queried_item}"
+                )
+                return {
+                    "success": True,
+                    "reply": UNKNOWN_PRODUCT_MESSAGE,
+                    "reply_text": UNKNOWN_PRODUCT_MESSAGE,
+                    "tenant_slug": clean_slug,
+                    "business_category": business_category,
+                    "quick_actions": welcome_buttons,
+                    "action": "CS_HANDOVER",
+                    "type": "TEXT",
+                    "unassigned_triggered": True,
+                }
 
         # 6. Interceptor Cek Katalog / Tombol Statis Relevan
         if any(w in q_lower for w in ["cek katalog", "katalog", "daftar promo", "daftar harga", "menu", "tarif"]):
@@ -548,6 +553,8 @@ class UnifiedConversationEngine:
             user_name=sender_name,
             button_id=button_id,
             history=history,
+            image_base64=image_base64,
+            mime_type=mime_type,
         )
 
         return {

@@ -82,22 +82,25 @@ async def test_evolution_webhook_image_message_upload_r2():
             }
         }
 
-        res = client.post("/api/v1/whatsapp/webhook/evolution/onlineboost", json=payload)
-        assert res.status_code == 200
-        data = res.json()
-        assert data["status"] == "success"
-        assert data["media_url"] == expected_r2_url
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_evo_send:
+            mock_evo_send.return_value.status_code = 200
+            res = client.post("/api/v1/whatsapp/webhook/evolution/onlineboost", json=payload)
+            assert res.status_code == 200
+            data = res.json()
+            assert data["status"] == "success"
+            assert data["media_url"] == expected_r2_url
 
-        # Pastikan upload_media_to_r2 dipanggil dengan bytes yang di-decode
-        mock_r2.assert_called_once()
-        call_kwargs = mock_r2.call_args[1]
-        assert call_kwargs["file_bytes"] == dummy_bytes
-        assert "MSG_IMG_001" in call_kwargs["file_name"]
+            # Pastikan upload_media_to_r2 dipanggil dengan bytes yang di-decode
+            mock_r2.assert_called_once()
+            call_kwargs = mock_r2.call_args[1]
+            assert call_kwargs["file_bytes"] == dummy_bytes
+            assert "MSG_IMG_001" in call_kwargs["file_name"]
 
-        # Pastikan log_to_supabase_messages dipanggil dengan parameter media_url
-        mock_log.assert_called_once()
-        log_kwargs = mock_log.call_args[1]
-        assert log_kwargs["media_url"] == expected_r2_url
-        assert log_kwargs["text"] == "Bukti transfer"
-        assert log_kwargs["user_phone"] == "628987654321"
+            # Pastikan log_to_supabase_messages dipanggil dengan parameter media_url untuk pesan user
+            user_calls = [c for c in mock_log.call_args_list if c.kwargs.get("sender") == "user"]
+            assert len(user_calls) >= 1
+            log_kwargs = user_calls[0].kwargs
+            assert log_kwargs["media_url"] == expected_r2_url
+            assert log_kwargs["text"] == "Bukti transfer"
+            assert log_kwargs["user_phone"] == "628987654321"
 
