@@ -119,6 +119,49 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
     business_category = normalize_business_category(settings.get("tenant", {}).get("category") or settings.get("tenant", {}).get("vertical") or "PHYSICAL")
     welcome_buttons = get_welcome_buttons_for_category(business_category)
 
+    # STRICT GROUNDING INTERCEPTOR (SOP Terima Beres / Setup Toko & Reader 5 Accounts)
+    from app.services.ai.grounding import (
+        is_setup_toko_intent,
+        generate_setup_toko_consultation_reply,
+        is_reader_inquiry_intent,
+        generate_reader_account_explanation_reply,
+    )
+    if is_setup_toko_intent(q):
+        sop_reply = generate_setup_toko_consultation_reply(tenant_slug=clean_slug)
+        safe_log_to_supabase_messages(
+            sender="bot", text=sop_reply, tenant_id=clean_slug, channel="webchat", user_id=session_id
+        )
+        return StoreChatResponse(
+            reply_text=sop_reply,
+            action="NONE",
+            payload={"product_ids": [p["product_id"] for p in normalized_catalog]},
+            session_state={"tenant_id": clean_slug, "session_id": session_id},
+            status="success",
+            type="TEXT",
+            reply=sop_reply,
+            quick_actions=welcome_buttons,
+            session_id=session_id,
+            tenant_id=clean_slug,
+        )
+
+    if is_reader_inquiry_intent(q):
+        reader_reply = generate_reader_account_explanation_reply(tenant_slug=clean_slug)
+        safe_log_to_supabase_messages(
+            sender="bot", text=reader_reply, tenant_id=clean_slug, channel="webchat", user_id=session_id
+        )
+        return StoreChatResponse(
+            reply_text=reader_reply,
+            action="NONE",
+            payload={"product_ids": [p["product_id"] for p in normalized_catalog]},
+            session_state={"tenant_id": clean_slug, "session_id": session_id},
+            status="success",
+            type="TEXT",
+            reply=reader_reply,
+            quick_actions=welcome_buttons,
+            session_id=session_id,
+            tenant_id=clean_slug,
+        )
+
     # ZERO-HALLUCINATION SAFE GUARD 1: Katalog Kosong
     if not normalized_catalog:
         rotary_routing_service.ensure_conversation_and_mark_unassigned(
@@ -235,7 +278,7 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
         elif any(w in q_lower for w in ["lanjut", "pesan", "booking", "mau"]):
             ai_reply = "Baik Kak! Silakan pilih metode pembayaran yang diinginkan (dibayar setelah pengerjaan beres / 0% fee QRIS):"
             action = "SHOW_CHECKOUT"
-            quick_actions = ["Scan QRIS Mandiri", "Bayar di Tempat (Tunai)"]
+            quick_actions = ["Scan QRIS (Semua Bank/E-Wallet)", "Bayar di Tempat (Tunai)"]
         elif any(w in q_lower for w in ["qris", "scan"]):
             ai_reply = f"{qris_closing}\n\nBerikut rincian jadwal kunjungan teknisi ke lokasi Anda:"
             action = "SHOW_CHECKOUT"

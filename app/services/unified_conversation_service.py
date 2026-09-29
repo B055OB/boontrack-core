@@ -416,6 +416,41 @@ class UnifiedConversationEngine:
                 "unassigned_triggered": False,
             }
 
+        # 3.5 STRICT GROUNDING INTERCEPTOR (SOP Terima Beres / Setup Toko & Reader 5 Accounts)
+        if not image_base64:
+            from app.services.ai.grounding import (
+                is_setup_toko_intent,
+                generate_setup_toko_consultation_reply,
+                is_reader_inquiry_intent,
+                generate_reader_account_explanation_reply,
+            )
+            if is_setup_toko_intent(q):
+                sop_reply = generate_setup_toko_consultation_reply(tenant_slug=clean_slug)
+                return {
+                    "success": True,
+                    "reply": sop_reply,
+                    "reply_text": sop_reply,
+                    "tenant_slug": clean_slug,
+                    "business_category": business_category,
+                    "quick_actions": welcome_buttons,
+                    "action": "CONSULTATION_DIRECT_CHECKOUT",
+                    "type": "TEXT",
+                    "unassigned_triggered": False,
+                }
+            if is_reader_inquiry_intent(q):
+                reader_reply = generate_reader_account_explanation_reply(tenant_slug=clean_slug)
+                return {
+                    "success": True,
+                    "reply": reader_reply,
+                    "reply_text": reader_reply,
+                    "tenant_slug": clean_slug,
+                    "business_category": business_category,
+                    "quick_actions": welcome_buttons,
+                    "action": "READER_EXPLANATION",
+                    "type": "TEXT",
+                    "unassigned_triggered": False,
+                }
+
         # 4. ZERO-HALLUCINATION SAFE GUARD 1: Katalog Kosong
         if not catalog or len(catalog) == 0:
             logger.info(f"[Zero-Hallucination Safe Guard] Tenant '{clean_slug}' has empty catalog. Handing over to unassigned CS queue.")

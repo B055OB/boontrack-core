@@ -56,7 +56,7 @@ PLATFORM_PHONE_NUMBER_ID = (
 GLOBAL_FALLBACK_PLATFORM = (
     "Halo! Layanan resmi BoonTrack siap membantu. "
     "Untuk aktivasi akun ketik: AKTIVASI BT-XXXX. "
-    "Info lengkap kunjungi https://boontrack.com/buzzerukm"
+    "Info lengkap kunjungi https://boontrack.com"
 )
 
 # ---------------------------------------------------------------------------
@@ -71,6 +71,23 @@ Tugas Anda HANYA menjawab pertanyaan umum calon merchant dan pengguna seputar Bo
 2. Auto-Verifikasi Pembayaran QRIS Real-Time: Verifikasi transaksi otomatis seketika tanpa upload bukti transfer manual (0% platform fee).
 3. Server-Side Tracking Bawaan (Meta CAPI & GTM DataLayer): Tracking engine server-side terintegrasi lengkap dengan PII sanitization demi akurasi iklan optimal dan kepatuhan privasi data.
 4. Perlindungan Kuota Trial Cerdas & Arsitektur Database Multi-Tenant: Sistem isolasi multi-tenant yang aman dan terisolasi mutlak (zero cross-tenant data leakage) serta perlindungan kuota trial cerdas (CFO Hard-Cap Guardrail).
+
+[BATASAN TEGAS AKUN PENERIMA MUTASI BOONTRACK READER (§14.1 & §15.2 - ZERO FAKE FALLBACKS)]
+1. Akun Penerima Otomatis Merchant (BoonTrack Reader) HANYA 5:
+   1) BCA Mobile / myBCA
+   2) DANA Bisnis
+   3) GoPay / GoBiz
+   4) Shopee Partner / ShopeeFood
+   5) GrabMerchant / GrabFood
+2. LARANGAN KERAS MUTASI MERCHANT:
+   - DILARANG KERAS menyatakan Bank Mandiri, BRI, BNI, BSI sebagai akun penerima mutasi otomatis merchant (karena parser notifikasi Android belum tersedia).
+3. KLARIFIKASI PERBEDAAN MERCHANT VS PEMBELI:
+   - MERCHANT (Pemilik Toko): WAJIB menggunakan salah satu dari 5 akun resmi di atas pada perangkat Android BoonTrack Reader agar notifikasi mutasi masuk dapat diproses dan diverifikasi otomatis oleh sistem (0% MDR).
+   - PEMBELI (Customer/Buyer): BEBAS scan dan membayar dari rekening bank mana pun (BCA, Mandiri, BRI, BNI, BSI, Permata, CIMB, Danamon, dll) ataupun semua e-wallet (GoPay, OVO, DANA, ShopeePay, AstraPay, LinkAja) melalui scan barcode QRIS toko.
+
+[SOP DIRECT CHECKOUT WHATSAPP - JASA SETUP TOKO / TERIMA BERES]
+- Jika calon tenant meminta jasa terima beres / setup toko (bantu setup katalog produk, bot WhatsApp, QRIS dinamis, hingga tracking pixel/CAPI), berikan konsultasi ramah dan generate invoice/QRIS langsung di WhatsApp.
+- DILARANG KERAS melempar atau mengarahkan calon tenant ke link pendaftaran lama / buzzerukm.
 
 [FITUR PER PAKET LAYANAN]
 1. Paket Trial (Uji Coba Gratis):
@@ -94,14 +111,12 @@ Jika merchant atau pengguna baru bingung cara memulai, arahkan mereka ke asisten
 5. Pasang Pixel / Meta CAPI / GTM di menu Ads Tracking Pro (untuk pelacakan konversi iklan server-side).
 6. Jalankan Transaksi Uji Coba & Sebarkan Link Toko ke calon pelanggan.
 
-- Pendaftaran Toko Baru: Kunjungi https://buzzerukm.boontrack.com/register
 - Format Aktivasi Toko: Pengguna yang sedang mendaftar harus membalas dengan format: AKTIVASI BT-XXXX (sesuai kode verifikasi di browser).
 
 [ATURAN KETAT / ZERO HALLUCINATION]
 - HANYA gunakan fakta resmi di atas. JANGAN PERNAH mengarang diskon, harga tidak resmi, atau fitur di luar dokumen.
 - Jawab secara ringkas, ramah, dan profesional (maksimal 2-3 paragraf pendek).
 - Jika pertanyaan di luar konteks BoonTrack Shop, jawab dengan sopan: "Mohon maaf, saya hanya dapat membantu memberikan informasi resmi seputar layanan, paket, dan panduan BoonTrack Shop."
-- Di akhir jawaban informatif, selalu sertakan arahan singkat untuk mendaftar di https://buzzerukm.boontrack.com/register atau ketik AKTIVASI BT-XXXX jika sedang memverifikasi akun.
 """
 
 # ---------------------------------------------------------------------------
@@ -118,11 +133,10 @@ Gaya Komunikasi:
 - Buat jawaban mengalir dalam 1-2 paragraf natural, atau sisipkan poin pendek yang mudah dibaca sambil jalan.
 
 Detail Produk & Fitur Resmi:
-1. URL Resmi Branding Kelas Kang Sakti (Wajib digunakan konsisten, DILARANG KERAS menggunakan subdomain 'shop.boontrack.com' maupun slug '/boon' lama):
-   - Demo Toko: https://boontrack.com/buzzerukm
-   - Registrasi Akun / Coba Gratis: https://buzzerukm.boontrack.com/register
+1. URL Resmi Branding Kelas Kang Sakti:
+   - Demo Toko: https://shop.boontrack.com
 
-2. Matriks Hak Akses Tracking Pixel (Koreksi Penting):
+2. Matriks Hak Akses Tracking Pixel:
    - SEMUA PAKET (Checkout Lite Rp 59k/bln, Starter Rp 199k/bln, Ads Performance Rp 299k/bln) SUDAH BISA pasang Meta Pixel ID dan TikTok Pixel ID langsung di dashboard! Event ViewContent, AddToCart, hingga Purchase terlacak via browser.
    - Paket Ads Performance (Rp 299k/bln) khusus untuk pengiklan advance yang butuh Meta Conversions API (CAPI server-side), TikTok Events API, Google Tag Manager (GTM), dan 2 CS Seats.
 
@@ -130,15 +144,24 @@ Detail Produk & Fitur Resmi:
    - Cek ongkir otomatis real-time ke seluruh kecamatan di Indonesia terintegrasi kurir resmi (JNE, J&T, SiCepat, Anteraja, dll via agregator Biteship & Lincah).
    - Auto-generate resi resmi dan request pick-up kurir langsung dari dashboard tanpa antre di gerai.
 
-4. Fitur Pembayaran:
-   - Dynamic QRIS 0% MDR (uang masuk utuh tanpa potongan biaya admin merchant).
+4. Fitur Pembayaran & BoonTrack Reader (§14.1 & §15.2):
+   - Dynamic QRIS 0% MDR (uang masuk 100% utuh tanpa potongan biaya admin merchant).
+   - Akun Penerima Otomatis Merchant (BoonTrack Reader) HANYA 5:
+     1. BCA Mobile / myBCA
+     2. DANA Bisnis
+     3. GoPay / GoBiz
+     4. Shopee Partner / ShopeeFood
+     5. GrabMerchant / GrabFood
+   - DILARANG KERAS menyatakan Mandiri, BRI, BNI, BSI sebagai akun penerima mutasi otomatis merchant (karena parser notifikasi Android belum tersedia).
+   - Klarifikasi: Merchant wajib menggunakan salah satu dari 5 akun di atas untuk auto-verifikasi mutasi reader. Sedangkan Pembeli bebas scan & bayar via QRIS dari bank mana pun (BCA, Mandiri, BRI, BNI, Permata, dll) atau semua e-wallet!
 
 5. Pilihan Paket:
    - Checkout Lite: Rp 59.000/bln (halaman checkout instan, QRIS dinamis 0% MDR, Meta & TikTok Pixel)
    - Starter: Rp 199.000/bln (etalase toko lengkap, bot WhatsApp otomatis, cek ongkir kurir otomatis, Meta & TikTok Pixel)
    - Ads Performance: Rp 299.000/bln (Meta & TikTok CAPI server-side tracking, GTM container, 2 CS Seats)
 
-Selalu tutup dengan ajakan santai untuk coba lihat demonya di https://boontrack.com/buzzerukm atau coba gratis di https://buzzerukm.boontrack.com/register.
+6. SOP Direct Checkout WhatsApp (Jasa Setup Toko / Terima Beres):
+   - Jika calon tenant meminta jasa terima beres / setup toko, berikan konsultasi ramah, tanyakan nama toko, produk, dan nomor WA bisnis, lalu siapkan rincian invoice/QRIS langsung di WhatsApp tanpa melempar link pendaftaran lama atau buzzerukm.
 """
 
 GROUP_BOONPILOT_KNOWLEDGE: Dict[str, str] = {
@@ -147,7 +170,7 @@ GROUP_BOONPILOT_KNOWLEDGE: Dict[str, str] = {
         "(JNE, J&T, SiCepat, Anteraja, dll via agregator Biteship/Lincah). Ongkir terhitung otomatis saat checkout "
         "sesuai kecamatan dan berat barang, plus resi otomatis keluar dan bisa langsung request pick-up kurir dari "
         "dashboard tanpa antre di gerai kak.\n\n"
-        "Bisa langsung intip alur checkoutnya di https://boontrack.com/buzzerukm atau coba gratis di https://buzzerukm.boontrack.com/register ya!"
+        "Bisa langsung intip alur checkoutnya di https://shop.boontrack.com ya!"
     ),
     "pixel": (
         "Halo kak! Kabar baiknya, fitur tracking Meta Pixel dan TikTok Pixel SUDAH BISA dipakai di SEMUA paket BoonTrack, "
@@ -155,7 +178,7 @@ GROUP_BOONPILOT_KNOWLEDGE: Dict[str, str] = {
         "di dashboard, event Purchase langsung terlacak otomatis.\n\n"
         "Kalau kakak butuh Meta Conversions API (CAPI server-side) dan GTM container untuk bypass adblocker, kakak bisa pilih "
         "paket Ads Performance (Rp 299rb/bln).\n\n"
-        "Bisa langsung coba lihat alur checkoutnya di https://boontrack.com/buzzerukm atau daftar gratis di https://buzzerukm.boontrack.com/register ya kak!"
+        "Bisa langsung coba lihat alur checkoutnya di https://shop.boontrack.com ya kak!"
     ),
     "kelebihan": (
         "Halo kak! Bedanya kalau pakai BoonTrack, toko kakak serba otomatis. "
@@ -163,48 +186,71 @@ GROUP_BOONPILOT_KNOWLEDGE: Dict[str, str] = {
         "(JNE, J&T, SiCepat, dll), dan bayar via QRIS tanpa potongan MDR (0%). Begitu bayar, notifikasi WhatsApp langsung terkirim "
         "ke pembeli dan resi bisa dicetak dari satu dashboard tanpa rekap manual lagi kak. Ditambah lagi, Meta Pixel & TikTok Pixel "
         "sudah bisa dipasang di semua paket kak. 😊\n\n"
-        "Bisa langsung intip demonya di https://boontrack.com/buzzerukm ya kak!"
+        "Bisa langsung intip demonya di https://shop.boontrack.com ya kak!"
     ),
     "storefront": (
         "Halo kak! Di BoonTrack, kakak bisa langsung punya etalase toko online instan dalam hitungan menit tanpa perlu repot coding. "
         "Produk, checkout otomatis, cek ongkir kurir, sampai pembayaran QRIS 0% MDR langsung siap dipakai pelanggan belanja dengan nyaman. ✨\n\n"
-        "Bisa langsung intip demonya di https://boontrack.com/buzzerukm ya kak!"
+        "Bisa langsung intip demonya di https://shop.boontrack.com ya kak!"
     ),
     "automasi": (
         "Halo kak! Dengan automasi WhatsApp BoonTrack, kakak nggak perlu capek balas chat dan rekap pesanan satu-satu lagi. "
         "Bot AI siap bantu jawab pelanggan 24/7, plus notifikasi order dan konfirmasi pembayaran otomatis langsung terkirim ke WA pembeli. "
-        "Hemat waktu dan tenaga banget kak. 🙌\n\n"
-        "Bisa langsung coba gratis di https://buzzerukm.boontrack.com/register ya kak!"
+        "Hemat waktu dan tenaga banget kak. 🙌"
     ),
     "dashboard": (
         "Halo kak! Dashboard BoonTrack bikin urusan operasional jadi rapi dan gampang. Pesanan dan stok tercatat otomatis, "
         "plus sudah terintegrasi kurir lengkap (JNE, J&T, SiCepat, Anteraja via Biteship/Lincah) jadi ongkir otomatis terhitung "
-        "dan resi pengiriman bisa langsung dicetak atau request pick-up dari satu dashboard tanpa antre di gerai kak. 📦\n\n"
-        "Yuk cek dan coba gratis di https://buzzerukm.boontrack.com/register ya kak!"
+        "dan resi pengiriman bisa langsung dicetak atau request pick-up dari satu dashboard tanpa antre di gerai kak. 📦"
     ),
     "payment": (
-        "Halo kak! Pembayaran di BoonTrack sudah pakai QRIS dinamis otomatis dengan 0% MDR kak — jadi uang penjualan kakak "
-        "masuk 100% utuh tanpa kepotong biaya admin merchant. Pembeli tinggal scan, dan sistem langsung verifikasi otomatis "
-        "tanpa perlu kirim bukti transfer manual. Praktis dan hemat kan kak? 💳\n\n"
-        "Bisa cek simulasinya di https://boontrack.com/buzzerukm ya kak!"
+        "Halo kak! Pembayaran di BoonTrack sudah pakai QRIS dinamis otomatis dengan 0% MDR kak — jadi uang penjualan masuk 100% utuh "
+        "tanpa kepotong biaya admin merchant. Pembeli tinggal scan, dan sistem langsung verifikasi otomatis.\n\n"
+        "📌 *Akun Penerima Otomatis Toko (BoonTrack Reader):*\n"
+        "Untuk auto-verifikasi mutasi masuk merchant, HANYA mendukung 5 akun resmi:\n"
+        "1. BCA Mobile / myBCA\n"
+        "2. DANA Bisnis\n"
+        "3. GoPay / GoBiz\n"
+        "4. Shopee Partner / ShopeeFood\n"
+        "5. GrabMerchant / GrabFood\n"
+        "_(Bank Mandiri, BRI, BNI, BSI belum didukung untuk penerima mutasi merchant karena parser Android belum ada)_.\n\n"
+        "🛍️ *Untuk Pembeli (Customer):* Bebas scan QRIS dan membayar dari rekening bank mana pun (BCA, Mandiri, BRI, BNI, dll) atau semua e-wallet!"
+    ),
+    "reader": (
+        "Halo kak! Terkait verifikasi mutasi otomatis via *BoonTrack Reader*, berikut ketentuannya:\n\n"
+        "📌 *Akun Penerima Toko (Merchant):* Wajib menggunakan salah satu dari *5 akun resmi*:\n"
+        "1. BCA Mobile / myBCA\n"
+        "2. DANA Bisnis\n"
+        "3. GoPay / GoBiz\n"
+        "4. Shopee Partner / ShopeeFood\n"
+        "5. GrabMerchant / GrabFood\n"
+        "*(Catatan: Mandiri, BRI, BNI, BSI belum didukung sebagai akun penerima mutasi merchant)*.\n\n"
+        "🛍️ *Untuk Pembeli:* Tetap fleksibel dan bebas bayar dari bank apa saja (BCA, Mandiri, BRI, BNI, Permata, dll) atau e-wallet apa saja via QRIS!"
+    ),
+    "terima_beres": (
+        "Halo kak! Mau dibantu setup toko terima beres dari awal sampai siap jualan? Bisa banget kak! 🙌\n\n"
+        "Tim BoonTrack siap bantu setupkan lengkap:\n"
+        "• Input katalog produk & harga resmi\n"
+        "• Integrasi bot WhatsApp auto-reply 24/7\n"
+        "• Integrasi QRIS dinamis 0% MDR\n"
+        "• Pemasangan pixel iklan & kurir otomatis\n\n"
+        "Boleh dibantu infokan nama toko, jenis produk yang dijual, dan nomor WhatsApp bisnis toko ya kak. Nanti kami langsung siapkan invoice & rinciannya langsung di WhatsApp ini tanpa ribet!"
     ),
     "harga": (
         "Halo kak! Untuk pilihan paket di BoonTrack fleksibel dan terjangkau banget, dan SEMUA paket sudah bisa pasang Meta & TikTok Pixel:\n"
         "• Checkout Lite (Rp 59k/bln): Halaman checkout instan + QRIS dinamis 0% MDR + Meta & TikTok Pixel\n"
         "• Starter (Rp 199k/bln): Etalase toko lengkap, bot WhatsApp otomatis, cek ongkir kurir otomatis + Meta & TikTok Pixel\n"
         "• Ads Performance (Rp 299k/bln): Meta & TikTok CAPI (server-side tracking) + GTM container + 2 CS Seats\n\n"
-        "Kakak bisa coba gratis dulu tanpa kartu kredit di https://buzzerukm.boontrack.com/register ya kak!"
+        "Ada yang ingin kakak tanyakan lebih detail seputar paketnya?"
     ),
     "trial": (
         "Halo kak! Ada paket trial GRATIS kok di BoonTrack tanpa perlu kartu kredit. "
         "Kakak langsung dapat kuota 30 pesanan masuk, 50 interaksi bot AI, dan 15 notifikasi WhatsApp otomatis. "
-        "Cocok banget buat rasain enaknya jualan serba otomatis. 😉\n\n"
-        "Bisa langsung daftar dan aktifkan sekarang di https://buzzerukm.boontrack.com/register ya kak!"
+        "Cocok banget buat rasain enaknya jualan serba otomatis. 😉"
     ),
     "daftar": (
-        "Halo kak! Daftarnya mudah dan gratis kok, cukup buka https://buzzerukm.boontrack.com/register. "
-        "Dalam hitungan menit, toko online kakak sudah aktif lengkap dengan etalase, QRIS 0% MDR, dan bot WhatsApp siap pakai kak. "
-        "Ditunggu gabungnya ya kak! 🚀"
+        "Halo kak! Untuk mulai pakai BoonTrack sangat praktis. Kakak bisa konsultasi langsung dengan kami di WhatsApp ini, "
+        "atau jika butuh jasa terima beres/setup toko kami bantu siapkan langsung di chat ini ya kak! 🚀"
     ),
 }
 
@@ -214,6 +260,10 @@ def get_static_group_boonpilot_response(incoming_text: str) -> str:
     lower = incoming_text.lower().strip()
     lower = re.sub(r"@[a-z0-9_.]+", "", lower).strip()
 
+    if any(k in lower for k in ("terima beres", "setup toko", "jasa setup", "bantu setup", "bikinin toko", "buatkan toko", "terima jadi")):
+        return GROUP_BOONPILOT_KNOWLEDGE["terima_beres"]
+    if any(k in lower for k in ("reader", "mutasi", "rekening penerima", "akun penerima", "mandiri", "bri", "bni", "bsi")):
+        return GROUP_BOONPILOT_KNOWLEDGE["reader"]
     if any(k in lower for k in ("ongkir", "ekspedisi", "kurir", "jne", "j&t", "sicepat", "anteraja", "resi", "pickup", "kirim", "lincah", "biteship", "pengiriman")):
         return GROUP_BOONPILOT_KNOWLEDGE["ongkir"]
     if any(k in lower for k in ("pixel", "meta", "tiktok", "capi", "gtm", "tracking", "iklan", "fb ads", "ads")):
@@ -240,8 +290,8 @@ def get_static_group_boonpilot_response(incoming_text: str) -> str:
         "Halo kak! Aku BoonPilot, partner bisnis resmi dari BoonTrack 👋\n\n"
         "BoonTrack bantu jualan online kakak serba otomatis: etalase toko instan, QRIS dinamis 0% MDR tanpa potongan admin, "
         "cek ongkir kurir otomatis ke seluruh Indonesia, tracking Meta & TikTok Pixel di semua paket, "
-        "dan bot WhatsApp yang balas chat serta rekap pesanan otomatis. Ada yang ingin kakak tanyakan seputar jualan online?\n\n"
-        "Bisa langsung intip demonya di https://boontrack.com/buzzerukm atau coba gratis di https://buzzerukm.boontrack.com/register ya kak!"
+        "dan bot WhatsApp yang balas chat serta rekap pesanan otomatis.\n\n"
+        "Mau dibantu konsultasi toko atau butuh jasa setup terima beres kak? Tanyakan langsung di sini ya!"
     )
 
 
@@ -488,7 +538,7 @@ OFFICIAL_KNOWLEDGE_BASE: Dict[str, str] = {
         "2. *Auto-Verifikasi Pembayaran QRIS Real-Time*: Verifikasi transaksi otomatis tanpa perlu upload bukti transfer manual (0% fee platform).\n"
         "3. *Server-Side Tracking Bawaan (Meta CAPI & GTM DataLayer)*: Pelacakan konversi iklan optimal dengan PII sanitization demi kepatuhan privasi data.\n"
         "4. *Perlindungan Kuota Trial Cerdas & Isolasi Multi-Tenant*: Arsitektur database multi-tenant yang aman dan terisolasi mutlak (zero cross-tenant data leakage).\n\n"
-        "Info & pendaftaran: https://buzzerukm.boontrack.com/register"
+        "Info lengkap: https://boontrack.com"
     ),
     "paket": (
         "💼 *Pilihan Paket Layanan BoonTrack Shop:*\n\n"
@@ -501,9 +551,8 @@ OFFICIAL_KNOWLEDGE_BASE: Dict[str, str] = {
         "• Kuota transaksi & interaksi tanpa batas / kuota masif\n"
         "• Broadcast WhatsApp prioritas tanpa antrean\n"
         "• Custom AI Persona sesuai karakter toko\n"
-        "• Analitik performa iklan mendalam (Meta CAPI & GTM)\n"
-        "• Akses Whitelist Ads FB (https://buzzerukm.adsolution.co.id/register)\n\n"
-        "Info lengkap: https://buzzerukm.boontrack.com/register"
+        "• Analitik performa iklan mendalam (Meta CAPI & GTM)\n\n"
+        "Konsultasi & aktivasi langsung hubungi tim kami di WhatsApp ini ya!"
     ),
     "onboarding": (
         "🚀 *Panduan Pengguna Baru (Onboarding Guide):*\n\n"
@@ -514,7 +563,27 @@ OFFICIAL_KNOWLEDGE_BASE: Dict[str, str] = {
         "4. Aktivasi Akun Pembayaran (QRIS)\n"
         "5. Pasang Pixel / Meta CAPI / GTM di menu Ads Tracking Pro\n"
         "6. Jalankan Transaksi Uji Coba & Sebarkan Link Toko\n\n"
-        "Mulai sekarang di: https://buzzerukm.boontrack.com/register"
+        "Butuh jasa terima beres/setup toko siap pakai? Tanyakan langsung di chat ini ya Kak!"
+    ),
+    "reader": (
+        "📱 *Ketentuan Akun Mutasi BoonTrack Reader (§14.1 & §15.2):*\n\n"
+        "📌 *Akun Penerima Otomatis Merchant (Toko):* HANYA 5 akun resmi berikut:\n"
+        "1. BCA Mobile / myBCA\n"
+        "2. DANA Bisnis\n"
+        "3. GoPay / GoBiz\n"
+        "4. Shopee Partner / ShopeeFood\n"
+        "5. GrabMerchant / GrabFood\n"
+        "*(Bank Mandiri, BRI, BNI, BSI belum didukung untuk penerima mutasi merchant karena parser Android belum tersedia)*.\n\n"
+        "🛍️ *Untuk Pembeli (Customer):* Tetap bebas scan QRIS dan membayar dari bank mana pun (BCA, Mandiri, BRI, BNI, Permata, dll) atau semua e-wallet!"
+    ),
+    "terima_beres": (
+        "✨ *Jasa Setup Toko Terima Beres (BoonTrack Official):*\n\n"
+        "Tim kami siap membantu setup toko lengkap dari awal sampai siap jualan:\n"
+        "• Input katalog produk & harga resmi\n"
+        "• Integrasi bot WhatsApp auto-reply 24/7\n"
+        "• Aktivasi QRIS dinamis 0% MDR\n"
+        "• Pengaturan kurir & pixel tracking iklan\n\n"
+        "Silakan infokan Nama Toko, Jenis Produk, dan Nomor WhatsApp Bisnis toko Kakak di chat ini. Tim kami akan segera buatkan rincian invoice/QRIS pembayarannya langsung di WhatsApp tanpa ribet!"
     ),
 }
 
@@ -522,13 +591,17 @@ OFFICIAL_KNOWLEDGE_BASE: Dict[str, str] = {
 _CONCIERGE_STATIC_FALLBACK = (
     "Halo! Layanan resmi BoonTrack siap membantu. "
     "Untuk aktivasi akun ketik: AKTIVASI BT-XXXX. "
-    "Info lengkap kunjungi https://boontrack.com/buzzerukm"
+    "Untuk konsultasi atau jasa setup terima beres, silakan tanyakan langsung di chat ini."
 )
 
 
 def get_static_concierge_response(incoming_text: str) -> str:
     """Mencari jawaban resmi deterministik dari OFFICIAL_KNOWLEDGE_BASE berdasarkan kata kunci."""
     lower = incoming_text.lower().strip()
+    if any(k in lower for k in ("terima beres", "setup toko", "jasa setup", "bantu setup", "bikinin toko", "buatkan toko", "terima jadi")):
+        return OFFICIAL_KNOWLEDGE_BASE["terima_beres"]
+    if any(k in lower for k in ("reader", "mutasi", "rekening penerima", "akun penerima", "mandiri", "bri", "bni", "bsi")):
+        return OFFICIAL_KNOWLEDGE_BASE["reader"]
     if any(k in lower for k in ("kelebihan", "keunggulan", "kenapa", "mengapa", "benefit", "fitur utama", "unggul", "fitur")):
         if any(p in lower for p in ("paket", "harga", "biaya", "trial", "starter", "pro")):
             return OFFICIAL_KNOWLEDGE_BASE["paket"]

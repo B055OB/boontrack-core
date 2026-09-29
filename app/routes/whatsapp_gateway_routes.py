@@ -922,6 +922,21 @@ async def process_inbound_message(payload: InboundPayload):
                 f"_Akses materi akan otomatis aktif setelah pembayaran berhasil._ ✨"
             )
 
+    # 2.8 SOP Direct Checkout WhatsApp & Strict Reader Accounts Intent (§14.1 & §15.2)
+    if not reply:
+        from app.services.ai.grounding import (
+            is_setup_toko_intent,
+            generate_setup_toko_consultation_reply,
+            is_reader_inquiry_intent,
+            generate_reader_account_explanation_reply,
+        )
+        if is_setup_toko_intent(incoming_text):
+            logger.info(f"[GROWTH GATEWAY] Matched SOP Direct Checkout WA (Setup Toko / Terima Beres) for '{clean_phone}'")
+            reply = generate_setup_toko_consultation_reply(contact_name)
+        elif is_reader_inquiry_intent(incoming_text):
+            logger.info(f"[GROWTH GATEWAY] Matched Strict Reader 5 Accounts inquiry for '{clean_phone}'")
+            reply = generate_reader_account_explanation_reply(contact_name)
+
     # 3. Pipeline Auto-Reply: Deteksi Checkout & Pembelian Cepat
     if not reply:
         if resolved_strategy == "trust_builder":
