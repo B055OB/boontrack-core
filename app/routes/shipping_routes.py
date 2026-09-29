@@ -12,7 +12,11 @@ from app.services.biteship_service import (
 )
 
 def resolve_tenant_origin(tenant_id: Optional[str]) -> Dict[str, Any]:
-    """Mengambil origin langsung dari data toko tenant (metadata.warehouse_address atau tenant_settings.shipping_origin)."""
+    """
+    Mengambil data alamat asal pengiriman toko (Single Source of Truth: metadata.shipping_config & tenant_settings.biteship_config).
+    Mendukung Biteship Area ID (origin_area_id), koordinat presisi (latitude, longitude),
+    serta integrasi akun logistik kemitraan (referral vs custom API key).
+    """
     origin = dict(ORIGIN_WAREHOUSE)
     if not tenant_id:
         return origin
@@ -29,24 +33,67 @@ def resolve_tenant_origin(tenant_id: Optional[str]) -> Dict[str, Any]:
             t_res = supabase.table("tenants").select("metadata").eq("slug", tenant_id).execute()
             meta = t_res.data[0].get("metadata") if t_res.data and isinstance(t_res.data[0], dict) else {}
             meta_shipping = meta.get("shipping_config") if isinstance(meta.get("shipping_config"), dict) else {}
+            meta_origin = meta_shipping.get("origin") if isinstance(meta_shipping.get("origin"), dict) else meta_shipping
 
-            origin_obj = (biteship_cfg.get("origin") if isinstance(biteship_cfg, dict) else None) or shipping_origin or {}
+            origin_obj = shipping_origin or meta_origin or {}
             
-            postal = origin_obj.get("postal_code") or meta_shipping.get("origin_postal_code") or meta.get("origin_postal_code")
+            postal = origin_obj.get("postal_code") or meta_origin.get("origin_postal_code") or meta.get("origin_postal_code")
             if postal:
                 origin["postal_code"] = int(postal) if str(postal).isdigit() else postal
             
-            city = origin_obj.get("city") or meta_shipping.get("origin_city") or meta.get("origin_city")
+            city = origin_obj.get("city") or meta_origin.get("origin_city") or meta.get("origin_city")
             if city:
                 origin["city"] = city
 
-            subdistrict = origin_obj.get("subdistrict_id") or meta_shipping.get("origin_subdistrict_id") or meta.get("origin_subdistrict_id")
+            district = origin_obj.get("district") or meta_origin.get("origin_district") or meta.get("origin_district")
+            if district:
+                origin["district"] = district
+
+            subdistrict = origin_obj.get("subdistrict_id") or meta_origin.get("origin_subdistrict_id") or meta.get("origin_subdistrict_id")
             if subdistrict:
                 origin["origin_subdistrict_id"] = str(subdistrict)
 
-            addr = origin_obj.get("address") or meta_shipping.get("origin_address") or meta.get("origin_address") or meta.get("warehouse_address")
+            addr = origin_obj.get("address") or meta_origin.get("origin_address") or meta.get("origin_address") or meta.get("warehouse_address")
             if addr and isinstance(addr, str):
                 origin["address"] = addr
+
+            # Standardized origin_area_id (Biteship Area ID)
+            origin_area_id = origin_obj.get("origin_area_id") or origin_obj.get("area_id") or meta_origin.get("origin_area_id")
+            if origin_area_id:
+                origin["origin_area_id"] = str(origin_area_id)
+
+            # Standardized Pinpoint Coordinates (latitude & longitude)
+            lat = origin_obj.get("latitude") if origin_obj.get("latitude") is not None else meta_origin.get("latitude")
+            lng = origin_obj.get("longitude") if origin_obj.get("longitude") is not None else meta_origin.get("longitude")
+            if lat is not None:
+                try:
+                    origin["latitude"] = float(lat)
+                except (ValueError, TypeError):
+                    pass
+            if lng is not None:
+                try:
+                    origin["longitude"] = float(lng)
+                except (ValueError, TypeError):
+                    pass
+
+            # Contact info
+            sender_name = origin_obj.get("sender_name") or meta_origin.get("sender_name")
+            if sender_name:
+                origin["sender_name"] = str(sender_name)
+            sender_phone = origin_obj.get("sender_phone") or meta_origin.get("sender_phone")
+            if sender_phone:
+                origin["sender_phone"] = str(sender_phone)
+
+            # Partnership logistics account support
+            logistics_acc = (
+                biteship_cfg.get("logistics_account")
+                or meta_shipping.get("logistics_account")
+                or biteship_cfg.get("partnership")
+                or meta_shipping.get("partnership")
+            )
+            if logistics_acc and isinstance(logistics_acc, dict):
+                origin["logistics_account"] = logistics_acc
+
     except Exception as err:
         logger.warning(f"[Origin Resolver] Fallback to default: {err}")
     return origin
@@ -332,3 +379,77 @@ async def biteship_logistics_webhook(request: Request):
         "mapped_status": mapped_status,
         "message": f"Shipment status updated to {mapped_status}"
     }
+
+@router.get("/areas", summary="Pencarian dan Validasi Wilayah Autocomplete (Biteship)")
+@logistics_router.get("/areas", summary="Pencarian dan Validasi Wilayah Autocomplete Alias")
+async def search_biteship_areas(
+    query: Optional[str] = None,
+    q: Optional[str] = None,
+    input: Optional[str] = None,
+):
+    """
+    Meneruskan query pencarian wilayah ke Biteship Maps Areas API.
+    GET https://api.biteship.com/v1/maps/areas?countries=ID&input={query}&type=single
+    Mengembalikan data area terstandarisasi lengkap dengan Biteship Area ID.
+    """
+    search_term = (query or q or input or "").strip()
+    if not search_term or len(search_term) < 2:
+        return {
+            "success": True,
+            "areas": [],
+            "message": "Query pencarian minimal 2 karakter.",
+        }
+
+    import httpx
+    from app.services.biteship_service import BITESHIP_API_URL, BITESHIP_API_KEY
+
+    url = f"{BITESHIP_API_URL}/maps/areas"
+    params = {
+        "countries": "ID",
+        "input": search_term,
+        "type": "single",
+    }
+    headers = {
+        "Authorization": f"Bearer {BITESHIP_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params=params, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                raw_areas = data.get("areas", [])
+                formatted = []
+                for a in raw_areas:
+                    formatted.append({
+                        "id": a.get("id"),
+                        "name": a.get("name"),
+                        "postal_code": a.get("postal_code"),
+                        "country_name": a.get("country_name", "Indonesia"),
+                        "country_code": a.get("country_code", "ID"),
+                        "administrative_division_level_1_name": a.get("administrative_division_level_1_name"),
+                        "administrative_division_level_2_name": a.get("administrative_division_level_2_name"),
+                        "administrative_division_level_3_name": a.get("administrative_division_level_3_name"),
+                        "latitude": a.get("latitude"),
+                        "longitude": a.get("longitude"),
+                    })
+                return {
+                    "success": True,
+                    "areas": formatted,
+                    "count": len(formatted),
+                }
+            else:
+                logger.warning(f"[Biteship Areas] HTTP {resp.status_code}: {resp.text}")
+                return {
+                    "success": False,
+                    "areas": [],
+                    "message": "Gagal menghubungi layanan pencarian area pengiriman.",
+                }
+    except Exception as exc:
+        logger.error(f"[Biteship Areas Exception] {exc}")
+        return {
+            "success": False,
+            "areas": [],
+            "message": str(exc),
+        }

@@ -62,6 +62,10 @@ async def chat_with_boonpilot(payload: BoonPilotChatRequest):
             detail="Pesan tidak boleh kosong.",
         )
 
+    # Subscription Pre-LLM Guard
+    from app.core.subscription_guard import assert_tenant_subscription_active
+    assert_tenant_subscription_active(payload.tenant_slug)
+
     try:
         response = await boonpilot_service.chat(
             tenant_slug=payload.tenant_slug,

@@ -72,6 +72,10 @@ async def send_tenant_chat(payload: TenantChatRequest = Body(...)):
             detail=f"Tenant with slug or ID '{target_slug}' not found",
         )
 
+    # Subscription Pre-LLM Guard
+    from app.core.subscription_guard import assert_tenant_subscription_active
+    assert_tenant_subscription_active(clean_slug)
+
     engine_res = await unified_conversation_engine.process_chat(
         tenant_slug=clean_slug,
         message=payload.message,

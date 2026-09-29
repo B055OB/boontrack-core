@@ -32,7 +32,7 @@ from app.routes.onboarding import onboarding_router
 from app.routes.tenant_onboard_routes import tenant_intake_router, register_tenant_onboard_routes
 from app.routes.meta_whatsapp import meta_whatsapp_router
 from app.routes.chat import chat_router
-from app.routes.tenant_routes import tenant_router, tenant_singular_router, commerce_products_router, legacy_tenant_router
+from app.routes.tenant_routes import tenant_router, tenant_singular_router, commerce_products_router, legacy_tenant_router, storefront_router
 
 from app.routes.shop_gateway_routes import shop_gateway_fastapi_router, register_shop_gateway_routes
 from app.routes.shop_subscription_routes import (
@@ -169,6 +169,7 @@ app.include_router(tenant_intake_router)
 app.include_router(meta_whatsapp_router)
 app.include_router(chat_router)
 app.include_router(tenant_router)
+app.include_router(storefront_router)
 app.include_router(tenant_singular_router)
 app.include_router(commerce_products_router)
 app.include_router(legacy_tenant_router)

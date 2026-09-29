@@ -65,6 +65,10 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
     if not q:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Pesan tidak boleh kosong.")
 
+    # Subscription Pre-LLM Guard
+    from app.core.subscription_guard import assert_tenant_subscription_active
+    assert_tenant_subscription_active(clean_slug)
+
     # Ambil konfigurasi dinamis dari database/metadata tenant
     settings = onboarding_service.get_tenant_settings(clean_slug) or {}
     meta = settings.get("metadata", {}) if isinstance(settings, dict) else {}

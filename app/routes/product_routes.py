@@ -170,6 +170,9 @@ async def bulk_import_products(
 
     # Validasi tenant keberadaan / inisialisasi di onboarding_service
     clean_tenant_slug = slugify(tenant_slug)
+    from app.core.subscription_guard import assert_tenant_mutation_allowed
+    assert_tenant_mutation_allowed(clean_tenant_slug)
+
     tenant_details = onboarding_service.get_tenant_details_by_slug(clean_tenant_slug)
     if not tenant_details:
         raise HTTPException(
@@ -366,6 +369,8 @@ def handle_product_update(
         target_tenant_slug = "onlineboost"
 
     clean_tenant_slug = slugify(target_tenant_slug)
+    from app.core.subscription_guard import assert_tenant_mutation_allowed
+    assert_tenant_mutation_allowed(clean_tenant_slug)
 
     # 2. Ambil data produk yang sudah ada jika ada
     existing_products = onboarding_service.get_tenant_products(clean_tenant_slug) or []

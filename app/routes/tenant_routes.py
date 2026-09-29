@@ -81,7 +81,45 @@ async def get_tenant_settings_endpoint(slug: str):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Tenant with slug '{slug}' not found",
         )
+    
+    # Enrich with real-time subscription status (§1 P1 Sprint)
+    from app.core.subscription_guard import get_tenant_subscription_state
+    sub_state = get_tenant_subscription_state(slug)
+    if isinstance(settings, dict):
+        settings["is_suspended"] = sub_state.get("is_suspended", False)
+        settings["subscription_status"] = sub_state.get("subscription_status", "active")
+        settings["suspension_reason"] = sub_state.get("reason")
+        settings["tier"] = sub_state.get("tier")
     return settings
+
+
+@tenant_router.get("/{slug}/storefront", summary="Get Public Storefront Data with Suspension Status")
+async def get_tenant_storefront_endpoint(slug: str):
+    """Public Storefront Gateway endpoint with suspension status flag."""
+    settings = onboarding_service.get_tenant_settings(slug)
+    if not settings:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tenant with slug '{slug}' not found",
+        )
+    from app.core.subscription_guard import get_tenant_subscription_state
+    sub_state = get_tenant_subscription_state(slug)
+    
+    meta = settings.get("metadata") or {} if isinstance(settings, dict) else {}
+    products = settings.get("products") or meta.get("products") or []
+
+    return {
+        "success": True,
+        "slug": slug,
+        "name": settings.get("name") if isinstance(settings, dict) else slug,
+        "is_suspended": sub_state.get("is_suspended", False),
+        "subscription_status": sub_state.get("subscription_status", "active"),
+        "suspension_reason": sub_state.get("reason"),
+        "tier": sub_state.get("tier"),
+        "settings": settings,
+        "products": products,
+        "theme": meta.get("theme", {}),
+    }
 
 
 @tenant_router.put("/{slug}/settings", summary="Update Tenant CMS Store Settings (PUT)")
@@ -91,6 +129,9 @@ async def update_tenant_settings_endpoint(
     payload: TenantSettingsUpdateRequest = Body(...),
 ):
     """Updates tenant store settings, public description, persona bot, and auto-delivery URL."""
+    from app.core.subscription_guard import assert_tenant_mutation_allowed
+    assert_tenant_mutation_allowed(slug)
+
     updates = {k: v for k, v in payload.model_dump().items() if v is not None}
     updated = onboarding_service.update_tenant_settings(slug, updates)
     if not updated:
@@ -131,6 +172,9 @@ async def get_tenant_auto_replies_endpoint(slug: str):
 @tenant_router.post("/{slug}/auto-replies", summary="Update Tenant Auto-Reply Rules Alias")
 async def update_tenant_auto_replies_endpoint(slug: str, payload: AutoRepliesPayload):
     """Updates custom keyword auto-reply rules in tenant metadata."""
+    from app.core.subscription_guard import assert_tenant_mutation_allowed
+    assert_tenant_mutation_allowed(slug)
+
     updated = onboarding_service.update_tenant_settings(slug, {"auto_replies": payload.auto_replies})
     if not updated:
         raise HTTPException(
@@ -161,6 +205,9 @@ async def tenant_upload_media_endpoint(
     qris_image: Optional[UploadFile] = File(None),
 ):
     """Menerima upload gambar QRIS atau media untuk tenant dan mengupdate profile settings secara otomatis."""
+    from app.core.subscription_guard import assert_tenant_mutation_allowed
+    assert_tenant_mutation_allowed(slug)
+
     path_lower = request.url.path.lower()
     is_qris = "qris" in path_lower or qris is not None or qris_image is not None
     folder = "qris" if is_qris else "media"
@@ -182,6 +229,9 @@ async def upsert_tenant_product_endpoint(
     payload: TenantProductUpsertRequest = Body(...),
 ):
     """Creates a new product or updates an existing one in the tenant's catalog."""
+    from app.core.subscription_guard import assert_tenant_mutation_allowed
+    assert_tenant_mutation_allowed(slug)
+
     product = onboarding_service.upsert_tenant_product(slug, payload.model_dump())
     if not product:
         raise HTTPException(
@@ -203,6 +253,9 @@ async def update_tenant_product_by_id_endpoint(
     payload: TenantProductUpsertRequest = Body(...),
 ):
     """Memperbarui produk tenant berdasarkan ID termasuk custom/updated URL slug."""
+    from app.core.subscription_guard import assert_tenant_mutation_allowed
+    assert_tenant_mutation_allowed(slug)
+
     data = payload.model_dump()
     data["id"] = id
     product = onboarding_service.upsert_tenant_product(slug, data)
@@ -276,3 +329,8 @@ async def get_commerce_products(tenant_slug: str = "onlineboost"):
 legacy_tenant_router = APIRouter(prefix="/api/tenants", tags=["Tenant Legacy Compatibility"])
 legacy_tenant_router.add_api_route("/{slug}/products", get_tenant_products_endpoint, methods=["GET"])
 legacy_tenant_router.add_api_route("/{slug}/ads-config", get_tenant_ads_config_endpoint, methods=["GET"])
+storefront_router = APIRouter(prefix="/api/v1/storefront", tags=["Public Storefront"])
+
+@storefront_router.get("/{slug}", summary="Public Storefront Status Gateway")
+async def get_public_storefront_endpoint(slug: str):
+    return await get_tenant_storefront_endpoint(slug)
