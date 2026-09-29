@@ -32,6 +32,9 @@ class BoonPilotChatRequest(BaseModel):
         "MERCHANT",
         description="Peran pengguna e.g. MERCHANT, ADMIN, STAFF"
     )
+    image: Optional[str] = Field(None, description="Image URL or base64")
+    image_base64: Optional[str] = Field(None, description="Image base64 data")
+    mime_type: Optional[str] = Field("image/jpeg", description="MIME type")
 
 
 class BoonPilotExecuteActionRequest(BaseModel):
@@ -67,6 +70,9 @@ async def chat_with_boonpilot(payload: BoonPilotChatRequest):
             conversation_history=payload.conversation_history,
             untrusted_client_tenant_id=payload.untrusted_tenant_id,
             rbac_role=payload.rbac_role or "MERCHANT",
+            image=payload.image,
+            image_base64=payload.image_base64,
+            mime_type=payload.mime_type,
         )
         return response
     except PermissionError as pe:

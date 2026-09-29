@@ -350,15 +350,18 @@ class BoonPilotService:
             "  Langkah 4: Hubungkan Akun Pembayaran (QRIS)\n"
             "  Langkah 5: Pasang Pixel/Meta CAPI (jika beriklan)\n"
             "  Langkah 6: Lakukan Transaksi Uji Coba & Bagikan Link Katalog\n\n"
-            "PETA NAVIGASI UI DASHBOARD TOKO (UI NAVIGATION TREE):\n"
-            "- Tab Ringkasan (Overview): Kartu Omset, Order, Grafik Penjualan, Quick Actions onboarding.\n"
-            "- Tab Katalog (Products): Tambah/Edit Produk, Kelola Stok, Atur Varian, Foto & Deskripsi.\n"
-            "- Tab Pesanan (Orders): Daftar Transaksi Masuk, Status Pembayaran (QRIS/Transfer), Update Resi Pengiriman.\n"
-            "- Tab WhatsApp (WA Gateway): QR Code WhatsApp, Status Koneksi, Pesan Sapaan Otomatis (Greeting Message), Auto-reply & Splitter.\n"
-            "- Tab Pengiriman (Shipping): Pengaturan Biteship / Kurir Toko, Titik Jemput Gudang (Origin), Ongkir Otomatis.\n"
-            "- Tab Pembayaran (Payments): Integrasi QRIS Otomatis (Xendit/Midtrans), Rekening Pencairan Toko.\n"
-            "- Tab Iklan & Pelacakan (Tracking): Meta Pixel ID, Meta CAPI Access Token, Google Tag Manager (GTM).\n"
-            "- Tab Pengaturan (Settings): Profil Toko (Nama, Logo, Deskripsi, No. WA Toko, Pesan Sapaan WhatsApp), Domain Kustom, Akun Tim.\n\n"
+            "BLUEPRINT PETA 8 TAB DASHBOARD BOONTRACK (GROUND-TRUTH §27.3):
+- Tab 'overview' (Overview / Ringkasan): Ringkasan omset, grafik performa, dan quick checklist.
+- Tab 'products' (Katalog Produk): Single-page checkout, upload produk, dan toggle aktif/nonaktif.
+- Tab 'orders' (Pesanan): Data pesanan, status settlement QRIS, dan input resi manual.
+- Tab 'whatsapp' (WhatsApp Gateway): Status sesi Evolution API v2, pairing code, dan auto-reply.
+- Tab 'shipping' (Pengiriman): Pengaturan asal kirim, tarif, dan BYOK Lincah/Biteship.
+- Tab 'payments' (Pembayaran): QRIS statis merchant, kode unik downward, dan rekening.
+- Tab 'ads' / 'tracking' (Pelacakan Iklan): CAPI token, Meta Pixel, TikTok Pixel, dan Google Tag Manager.
+- Tab 'settings' (Pengaturan Toko): Profil toko (nomor registrasi terkunci), ganti email, dan PIN.
+
+PANDUAN NAVIGASI WAJIB:
+Jika merchant bertanya di mana letak fitur (misal: "di mana letak input resi?"), selalu arahkan secara presisi ke tab terkait (misal: tab 'orders').
             "PANDUAN NAVIGASI & KOMUNIKASI BOONPILOT UNTUK MERCHANT:\n"
             "1. Jika merchant bertanya di mana suatu menu berada atau bagaimana cara mengatur fitur, SELALU arahkan langkah-langkah navigasi menggunakan nama Tab dan tombol yang tercantum di PETA NAVIGASI UI di atas.\n"
             "2. Jika ditanya cara ubah sapaan / greeting WhatsApp: Arahkan langsung ke: 'Buka tab WhatsApp di dashboard > Cari bagian Pesan Sapaan Otomatis (Greeting Message) > Tulis pesan sapaan > Klik Simpan Pesan Sapaan' (atau via tab Pengaturan > sub-menu WhatsApp).\n"
@@ -377,6 +380,7 @@ class BoonPilotService:
             "tenant_name": tenant_name,
             "products": products,
             "sales_snapshot": sales_snapshot,
+            "analytics_snapshot": sales_snapshot,
             "shipping_origin": shipping_origin,
             "active_couriers": active_couriers,
             "system_prompt": system_prompt,
@@ -531,6 +535,9 @@ class BoonPilotService:
         untrusted_client_tenant_id: Optional[str] = None,
         rbac_role: str = "MERCHANT",
         target_whatsapp_phone: Optional[str] = None,
+        image: Optional[str] = None,
+        image_base64: Optional[str] = None,
+        mime_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Interaksi Utama BoonPilot Copilot dengan Scope Lock:
@@ -550,16 +557,35 @@ class BoonPilotService:
         # 2. Resolve Server-Authoritative TenantRuntimeContext
         context = await tenant_context_resolver.resolve(clean_slug)
 
-        # Entitlement Guard (ARCHITECTURE.md): Blokir CHECKOUT_LITE dari fitur AI BoonPilot
-        if context.plan == "CHECKOUT_LITE" or not tenant_context_resolver.can_use(context, "ai_bot"):
-            logger.warning(
-                f"[ENTITLEMENT_BLOCKED] Tenant '{clean_slug}' (plan={context.plan}) "
-                "mencoba mengakses BoonPilot AI Copilot tetapi tidak memiliki kapabilitas 'ai_bot'."
-            )
-            raise PermissionError(
-                "Akses ditolak: Paket CHECKOUT_LITE tidak memiliki akses ke fitur AI Copilot (BoonPilot). "
-                "Silakan upgrade langganan ke paket Starter atau Pro Scale untuk mengaktifkan asisten AI."
-            )
+        # Entitlement Guard & Grounding (§3.1, §5.1): Edukasi upgrade jika menanyakan CAPI / Multi-CS / Automation
+        is_low_tier = context.plan in ["CHECKOUT_LITE", "STARTER"]
+        user_msg_lower = (message or "").lower()
+
+        if is_low_tier:
+            if any(term in user_msg_lower for term in ["capi", "conversion api", "server-side", "meta capi", "tiktok capi"]):
+                return {
+                    "tenant_slug": clean_slug,
+                    "session_id": session_id or f"sess_{int(time.time())}",
+                    "reply": (
+                        f"Fitur **Server-Side Conversion API (CAPI Meta & TikTok)** dirancang untuk memulihkan sinyal data iklan hingga 95%+ dan hanya tersedia mulai dari paket **PRO_SCALE (Ads Performance)** atau **ENTERPRISE (Team Scale)**. "
+                        f"Pada paket Anda saat ini (**{context.plan}**), pelacakan terbatas pada browser pixel dasar. Silakan lakukan upgrade paket ke **PRO_SCALE (Rp 299.000/bln)** pada menu Pengaturan > Billing untuk mengaktifkan akses token CAPI dan pelacakan event server-side instan."
+                    ),
+                    "action_proposal": None,
+                    "quick_actions": ["Upgrade ke PRO_SCALE", "Lihat Perbandingan Fitur Paket", "Panduan Navigasi Dashboard"],
+                    "entitlement_status": {"tier": context.plan, "has_capi": False, "upgrade_required": True, "suggested_tier": "PRO_SCALE"},
+                }
+            if any(term in user_msg_lower for term in ["multi cs", "multi-seat", "banyak cs", "operator tambahan"]):
+                return {
+                    "tenant_slug": clean_slug,
+                    "session_id": session_id or f"sess_{int(time.time())}",
+                    "reply": (
+                        f"Fitur **Multi-Seat CS (BoonTrack Omnichannel Team Inbox)** untuk mengelola banyak operator CS dalam satu nomor WhatsApp tersedia secara eksklusif pada paket **ENTERPRISE (Team Scale)**. "
+                        f"Paket Anda saat ini (**{context.plan}**) mendukung operasional single-seat. Untuk menambahkan kursi CS, silakan upgrade ke paket **ENTERPRISE (Rp 499.000/bln)**."
+                    ),
+                    "action_proposal": None,
+                    "quick_actions": ["Upgrade ke ENTERPRISE", "Lihat Fitur Team Inbox"],
+                    "entitlement_status": {"tier": context.plan, "multi_cs": False, "upgrade_required": True, "suggested_tier": "ENTERPRISE"},
+                }
 
         # 3. Tenant & RBAC Isolation Guard (Tolak Arbitrary client tenant_id)
         if untrusted_client_tenant_id:
