@@ -368,12 +368,16 @@ class IngressProtectionPipeline:
         # =====================================================================
         # LAYER 3.5: [GATE C] Adaptive First-Line Friction (ChallengeService)
         # Anomaly burst detection per peer. Zero LLM tokens consumed.
+        # BYPASS: from_me messages (owner device) and transactional flows are
+        # trusted sources — Gate C only targets untrusted buyer inbound traffic.
         # =====================================================================
-        gate_c_state, gate_c_reply = challenge_service.evaluate(
-            tenant_slug=clean_slug,
-            phone=clean_phone,
-            incoming_text=clean_text,
-        )
+        gate_c_state, gate_c_reply = STATE_NORMAL, None
+        if not from_me and not is_transactional:
+            gate_c_state, gate_c_reply = challenge_service.evaluate(
+                tenant_slug=clean_slug,
+                phone=clean_phone,
+                incoming_text=clean_text,
+            )
 
         if gate_c_state == STATE_CHALLENGE_REQUIRED:
             logger.warning(
