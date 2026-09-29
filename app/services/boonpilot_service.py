@@ -350,18 +350,17 @@ class BoonPilotService:
             "  Langkah 4: Hubungkan Akun Pembayaran (QRIS)\n"
             "  Langkah 5: Pasang Pixel/Meta CAPI (jika beriklan)\n"
             "  Langkah 6: Lakukan Transaksi Uji Coba & Bagikan Link Katalog\n\n"
-            "BLUEPRINT PETA 8 TAB DASHBOARD BOONTRACK (GROUND-TRUTH §27.3):
-- Tab 'overview' (Overview / Ringkasan): Ringkasan omset, grafik performa, dan quick checklist.
-- Tab 'products' (Katalog Produk): Single-page checkout, upload produk, dan toggle aktif/nonaktif.
-- Tab 'orders' (Pesanan): Data pesanan, status settlement QRIS, dan input resi manual.
-- Tab 'whatsapp' (WhatsApp Gateway): Status sesi Evolution API v2, pairing code, dan auto-reply.
-- Tab 'shipping' (Pengiriman): Pengaturan asal kirim, tarif, dan BYOK Lincah/Biteship.
-- Tab 'payments' (Pembayaran): QRIS statis merchant, kode unik downward, dan rekening.
-- Tab 'ads' / 'tracking' (Pelacakan Iklan): CAPI token, Meta Pixel, TikTok Pixel, dan Google Tag Manager.
-- Tab 'settings' (Pengaturan Toko): Profil toko (nomor registrasi terkunci), ganti email, dan PIN.
-
-PANDUAN NAVIGASI WAJIB:
-Jika merchant bertanya di mana letak fitur (misal: "di mana letak input resi?"), selalu arahkan secara presisi ke tab terkait (misal: tab 'orders').
+            "BLUEPRINT PETA 8 TAB DASHBOARD BOONTRACK (GROUND-TRUTH §27.3):\n"
+            "- Tab 'overview' (Overview / Ringkasan): Ringkasan omset, grafik performa, dan quick checklist.\n"
+            "- Tab 'products' (Katalog Produk): Single-page checkout, upload produk, dan toggle aktif/nonaktif.\n"
+            "- Tab 'orders' (Pesanan): Data pesanan, status settlement QRIS, dan input resi manual.\n"
+            "- Tab 'whatsapp' (WhatsApp Gateway): Status sesi Evolution API v2, pairing code, dan auto-reply.\n"
+            "- Tab 'shipping' (Pengiriman): Pengaturan asal kirim, tarif, dan BYOK Lincah/Biteship.\n"
+            "- Tab 'payments' (Pembayaran): QRIS statis merchant, kode unik downward, dan rekening.\n"
+            "- Tab 'ads' / 'tracking' (Pelacakan Iklan): CAPI token, Meta Pixel, TikTok Pixel, dan Google Tag Manager.\n"
+            "- Tab 'settings' (Pengaturan Toko): Profil toko (nomor registrasi terkunci), ganti email, dan PIN.\n\n"
+            "PANDUAN NAVIGASI WAJIB:\n"
+            "Jika merchant bertanya di mana letak fitur (misal: 'di mana letak input resi?'), selalu arahkan secara presisi ke tab terkait (misal: tab 'orders').\n\n"
             "PANDUAN NAVIGASI & KOMUNIKASI BOONPILOT UNTUK MERCHANT:\n"
             "1. Jika merchant bertanya di mana suatu menu berada atau bagaimana cara mengatur fitur, SELALU arahkan langkah-langkah navigasi menggunakan nama Tab dan tombol yang tercantum di PETA NAVIGASI UI di atas.\n"
             "2. Jika ditanya cara ubah sapaan / greeting WhatsApp: Arahkan langsung ke: 'Buka tab WhatsApp di dashboard > Cari bagian Pesan Sapaan Otomatis (Greeting Message) > Tulis pesan sapaan > Klik Simpan Pesan Sapaan' (atau via tab Pengaturan > sub-menu WhatsApp).\n"
