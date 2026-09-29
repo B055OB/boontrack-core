@@ -124,6 +124,9 @@ async def get_tenant_storefront_endpoint(slug: str):
 
 @tenant_router.put("/{slug}/settings", summary="Update Tenant CMS Store Settings (PUT)")
 @tenant_router.post("/{slug}/settings", summary="Update Tenant CMS Store Settings (POST)")
+@tenant_router.patch("/{slug}/settings", summary="Update Tenant CMS Store Settings (PATCH)")
+@tenant_router.put("/{slug}", summary="Update Tenant CMS Store Settings Direct (PUT)")
+@tenant_router.patch("/{slug}", summary="Update Tenant CMS Store Settings Direct (PATCH)")
 async def update_tenant_settings_endpoint(
     slug: str,
     payload: TenantSettingsUpdateRequest = Body(...),
@@ -268,6 +271,45 @@ async def update_tenant_product_by_id_endpoint(
         "status": "success",
         "message": f"Product '{product.get('title')}' successfully updated for tenant '{slug}'",
         "product": product,
+    }
+
+
+@tenant_router.delete("/{slug}/products/{id}", summary="Delete Tenant Product by ID")
+@tenant_router.delete("/{slug}/products", summary="Delete Tenant Product with query ID")
+async def delete_tenant_product_endpoint(
+    slug: str,
+    id: Optional[str] = None,
+    product_id: Optional[str] = None,
+):
+    """Deletes a product from tenant catalog with subscription mutation guard."""
+    from app.core.subscription_guard import assert_tenant_mutation_allowed
+    assert_tenant_mutation_allowed(slug)
+
+    target_id = id or product_id
+    if not target_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Product ID is required for deletion.",
+        )
+    settings = onboarding_service.get_tenant_settings(slug) or {}
+    meta = settings.get("metadata") or {}
+    products = settings.get("products") or meta.get("products") or []
+    remaining = [p for p in products if str(p.get("id")) != str(target_id) and str(p.get("slug")) != str(target_id)]
+
+    onboarding_service.update_tenant_settings(slug, {"products": remaining})
+
+    supabase = get_supabase()
+    if supabase:
+        try:
+            supabase.table("products").delete().eq("tenant_slug", slug).eq("id", str(target_id)).execute()
+        except Exception:
+            pass
+
+    return {
+        "status": "success",
+        "message": f"Product with ID '{target_id}' deleted successfully for tenant '{slug}'",
+        "remaining_count": len(remaining),
+        "products": remaining,
     }
 
 

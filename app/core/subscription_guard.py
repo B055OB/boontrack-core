@@ -1,7 +1,6 @@
-"""app/core/subscription_guard.py
-Subscription Pre-LLM Guard and Storefront Gateway Validator.
-
-Enforces tenant active subscription before LLM chat / BoonPilot / Store chat execution.
+"""
+app/core/subscription_guard.py
+Centralized subscription guard for multi-tenant isolation and write-protection.
 Zero Hardcoding Policy: Dynamically inspects Supabase tenants table.
 """
 
@@ -16,7 +15,7 @@ logger = logging.getLogger("SUBSCRIPTION_GUARD")
 
 SUBSCRIPTION_MUTATION_RESTRICTED_PAYLOAD = {
     "error": "SUBSCRIPTION_REQUIRED",
-    "message": "Masa trial telah habis. Dashboard dalam mode baca-saja. Silakan lakukan upgrade paket untuk memperbarui toko.",
+    "message": "Masa aktif paket/trial telah berakhir. Toko dalam mode baca-saja. Silakan lakukan upgrade langganan.",
 }
 
 
@@ -111,6 +110,31 @@ def get_tenant_subscription_state(slug_or_id: str) -> Dict[str, Any]:
 
         meta_sub_status = str(meta.get("subscription_status") or "").strip().lower()
 
+        # Check Special Grant
+        sub_obj = meta.get("subscription") if isinstance(meta.get("subscription"), dict) else {}
+        is_special_grant = bool(
+            sub_obj.get("type") == "granted"
+            or sub_obj.get("subscription_type") == "granted"
+            or sub_obj.get("billing_cycle") == "grant"
+            or meta.get("subscription_type") == "granted"
+            or sub_obj.get("is_grant") is True
+        )
+
+        if is_special_grant:
+            return {
+                "tenant_id": t_row.get("id"),
+                "slug": t_row.get("slug"),
+                "tier": t_row.get("tier"),
+                "is_active": is_active,
+                "status": t_status,
+                "subscription_status": "active",
+                "is_suspended": False,
+                "reason": None,
+                "trial_ends_at": t_row.get("trial_ends_at") or meta.get("trial_ends_at"),
+                "subscription_ends_at": t_row.get("subscription_ends_at") or meta.get("subscription_ends_at"),
+                "metadata": meta,
+            }
+
         now = datetime.now(timezone.utc)
         is_suspended = False
         reason = None
@@ -118,7 +142,7 @@ def get_tenant_subscription_state(slug_or_id: str) -> Dict[str, Any]:
         # 1. Explicit status check
         if t_status in ["expired", "suspended"] or meta_sub_status in ["expired", "suspended"]:
             is_suspended = True
-            reason = "Status langganan kedaluwarsa atau ditangguhkan."
+            reason = "Masa aktif paket/trial telah berakhir. Toko dalam mode baca-saja. Silakan lakukan upgrade langganan."
 
         # 2. Deactivated tenant
         elif not is_active:
@@ -141,12 +165,12 @@ def get_tenant_subscription_state(slug_or_id: str) -> Dict[str, Any]:
                 if now > trial_ends_at:
                     if not sub_ends_at or now > sub_ends_at:
                         is_suspended = True
-                        reason = "Masa trial telah habis. Dashboard dalam mode baca-saja. Silakan lakukan upgrade paket untuk memperbarui toko."
+                        reason = "Masa aktif paket/trial telah berakhir. Toko dalam mode baca-saja. Silakan lakukan upgrade langganan."
 
             if not is_suspended and sub_ends_at:
                 if now > sub_ends_at:
                     is_suspended = True
-                    reason = "Masa aktif paket telah berakhir. Dashboard dalam mode baca-saja. Silakan lakukan upgrade paket untuk memperbarui toko."
+                    reason = "Masa aktif paket/trial telah berakhir. Toko dalam mode baca-saja. Silakan lakukan upgrade langganan."
 
         resolved_status = "expired" if is_suspended else (meta_sub_status or t_status or "active")
 
@@ -185,10 +209,7 @@ def assert_tenant_subscription_active(slug_or_id: str) -> Dict[str, Any]:
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error": "SUBSCRIPTION_REQUIRED",
-                "message": state.get("reason") or "Masa aktif paket/trial telah berakhir. Silakan lakukan upgrade langganan.",
-            },
+            detail=SUBSCRIPTION_MUTATION_RESTRICTED_PAYLOAD,
         )
     return state
 
@@ -198,7 +219,7 @@ def assert_tenant_mutation_allowed(slug_or_id: str) -> Dict[str, Any]:
     Guards mutation endpoints (POST/PUT/PATCH/DELETE) against expired/suspended tenants.
     Enforces read-only mode for tenants whose trial has expired or subscription suspended.
     Raises HTTP 403 Forbidden with exact payload required by Acceptance Criteria:
-    {"error": "SUBSCRIPTION_REQUIRED", "message": "Masa trial telah habis. Dashboard dalam mode baca-saja. Silakan lakukan upgrade paket untuk memperbarui toko."}
+    {"error": "SUBSCRIPTION_REQUIRED", "message": "Masa aktif paket/trial telah berakhir. Toko dalam mode baca-saja. Silakan lakukan upgrade langganan."}
     """
     state = get_tenant_subscription_state(slug_or_id)
     if state.get("is_suspended") or state.get("subscription_status") in ["expired", "suspended"]:
@@ -210,4 +231,3 @@ def assert_tenant_mutation_allowed(slug_or_id: str) -> Dict[str, Any]:
             detail=SUBSCRIPTION_MUTATION_RESTRICTED_PAYLOAD,
         )
     return state
-

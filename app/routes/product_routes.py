@@ -530,6 +530,9 @@ async def aiohttp_update_product(request: web.Request) -> web.Response:
             "message": f"Product '{updated_prod.get('title')}' successfully updated",
             "product": updated_prod
         }, status=200, headers=cors_headers)
+    except HTTPException as exc:
+        err_payload = exc.detail if isinstance(exc.detail, dict) else {"error": "SUBSCRIPTION_REQUIRED", "message": str(exc.detail)}
+        return web.json_response(err_payload, status=exc.status_code, headers=cors_headers)
     except Exception as exc:
         logger.error(f"[aiohttp_update_product error]: {exc}", exc_info=True)
         return web.json_response({"status": "error", "detail": str(exc)}, status=500, headers=cors_headers)
@@ -571,6 +574,13 @@ async def aiohttp_tenant_upsert_product(request: web.Request) -> web.Response:
     slug = request.match_info.get("slug")
     if not slug:
         return web.json_response({"status": "error", "detail": "Tenant slug is required"}, status=400, headers=cors_headers)
+    try:
+        from app.core.subscription_guard import assert_tenant_mutation_allowed
+        assert_tenant_mutation_allowed(slug)
+    except HTTPException as exc:
+        err_payload = exc.detail if isinstance(exc.detail, dict) else {"error": "SUBSCRIPTION_REQUIRED", "message": str(exc.detail)}
+        return web.json_response(err_payload, status=exc.status_code, headers=cors_headers)
+
     try:
         body = await request.json()
     except Exception:
