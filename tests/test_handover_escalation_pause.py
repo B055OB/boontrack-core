@@ -24,7 +24,7 @@ async def test_handover_option_2_detection_and_pause():
         assert res.get("action") == "HANDOVER_TO_HUMAN"
         assert res.get("bot_paused") is True
         assert res.get("current_state") == "HANDOVER_TO_HUMAN"
-        assert "Kang Sakti" in res.get("reply", "")
+        assert "Admin" in res.get("reply", "")
 
 @pytest.mark.asyncio
 async def test_handover_kang_sakti_phrase_detection():
@@ -45,7 +45,7 @@ async def test_handover_kang_sakti_phrase_detection():
 
         assert res.get("action") == "HANDOVER_TO_HUMAN"
         assert res.get("bot_paused") is True
-        assert "Kang Sakti" in res.get("reply", "")
+        assert "Admin" in res.get("reply", "")
 
 @pytest.mark.asyncio
 async def test_inbound_message_drop_when_paused():

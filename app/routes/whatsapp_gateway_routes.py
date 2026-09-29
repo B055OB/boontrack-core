@@ -13,7 +13,7 @@ import re
 import base64
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
@@ -389,9 +389,10 @@ async def check_and_handle_session_handover_and_toggle(
     paused_until_iso = (now_dt + timedelta(hours=24)).isoformat()
     sb = get_supabase()
 
-    # 1. Manual Toggle Command: PAUSE
-    if raw_upper == "PAUSE":
-        logger.info(f"[SESSION_TOGGLE_COMMAND] Manual PAUSE received from '{clean_digits}' on tenant '{tenant_slug}'")
+    # 1. Manual Toggle Command: PAUSE / #PAUSE (Admin Silent Command)
+    raw_lower = raw_clean.lower()
+    if raw_lower in ("pause", "#pause"):
+        logger.info(f"[SESSION_TOGGLE_COMMAND] Manual PAUSE received for '{clean_digits}' on tenant '{tenant_slug}'")
         if sb:
             try:
                 sb.table("conversation_sessions").upsert({
@@ -401,14 +402,17 @@ async def check_and_handle_session_handover_and_toggle(
                     "user_identifier": clean_digits,
                     "current_state": "HANDOVER_TO_HUMAN",
                     "is_paused": True,
+                    "paused_at": now_iso,
+                    "paused_by": "admin_command",
                     "paused_until": paused_until_iso,
-                    "metadata": {"manual_toggle": "PAUSE", "paused_at": now_iso},
+                    "metadata": {"manual_toggle": "PAUSE", "paused_by": "admin_command", "paused_at": now_iso},
                     "updated_at": now_iso,
                 }, on_conflict="tenant_id,user_identifier").execute()
                 sb.table("conversations").update({
                     "bot_paused": True,
                     "bot_mode": "HUMAN_ACTIVE",
-                }).eq("tenant_id", tenant_slug).eq("phone_number", clean_digits).execute()
+                    "updated_at": now_iso,
+                }).or_(f"tenant_slug.eq.{tenant_slug},tenant_id.eq.{tenant_slug}").eq("phone_number", clean_digits).execute()
             except Exception as _e:
                 logger.warning(f"[SESSION_TOGGLE_PAUSE_DB_ERR] {_e}")
 
@@ -417,12 +421,16 @@ async def check_and_handle_session_handover_and_toggle(
             "status": "success",
             "bot_paused": True,
             "action": "MANUAL_PAUSE",
-            "reply_text": "⏸️ Sesi bot otomatis berhasil dijeda (PAUSED). Pesan masuk selanjutnya akan ditangani secara manual oleh admin / tim CS.",
+            "is_paused": True,
+            "paused_by": "admin_command",
+            "paused_at": now_iso,
+            "reply_text": None,
+            "message": "Session paused by admin command (silent)",
         }
 
-    # 2. Manual Toggle Command: RESUME
-    if raw_upper == "RESUME":
-        logger.info(f"[SESSION_TOGGLE_COMMAND] Manual RESUME received from '{clean_digits}' on tenant '{tenant_slug}'")
+    # 2. Manual Toggle Command: RESUME / #RESUME (Admin Silent Command)
+    if raw_lower in ("resume", "#resume"):
+        logger.info(f"[SESSION_TOGGLE_COMMAND] Manual RESUME received for '{clean_digits}' on tenant '{tenant_slug}'")
         if sb:
             try:
                 sb.table("conversation_sessions").upsert({
@@ -432,14 +440,17 @@ async def check_and_handle_session_handover_and_toggle(
                     "user_identifier": clean_digits,
                     "current_state": "ACTIVE",
                     "is_paused": False,
+                    "paused_at": None,
+                    "paused_by": "admin_command",
                     "paused_until": None,
-                    "metadata": {"manual_toggle": "RESUME", "resumed_at": now_iso},
+                    "metadata": {"manual_toggle": "RESUME", "resumed_by": "admin_command", "resumed_at": now_iso},
                     "updated_at": now_iso,
                 }, on_conflict="tenant_id,user_identifier").execute()
                 sb.table("conversations").update({
                     "bot_paused": False,
                     "bot_mode": "AI_ACTIVE",
-                }).eq("tenant_id", tenant_slug).eq("phone_number", clean_digits).execute()
+                    "updated_at": now_iso,
+                }).or_(f"tenant_slug.eq.{tenant_slug},tenant_id.eq.{tenant_slug}").eq("phone_number", clean_digits).execute()
             except Exception as _e:
                 logger.warning(f"[SESSION_TOGGLE_RESUME_DB_ERR] {_e}")
 
@@ -448,12 +459,20 @@ async def check_and_handle_session_handover_and_toggle(
             "status": "success",
             "bot_paused": False,
             "action": "MANUAL_RESUME",
-            "reply_text": "▶️ Sesi bot otomatis telah diaktifkan kembali (RESUMED). Asisten siap melayani pelanggan kembali secara otomatis.",
+            "is_paused": False,
+            "paused_by": "admin_command",
+            "paused_at": None,
+            "reply_text": None,
+            "message": "Session resumed by admin command (silent)",
         }
 
-    # 3. Bot Rejection Intent (regex: /(bicara dengan|admin|owner|manusia|cs manual)/i)
-    if re.search(r"(bicara dengan|admin|owner|manusia|cs manual)", raw_clean, re.IGNORECASE):
-        logger.info(f"[BOT_REJECTION_HANDOVER] Handover intent detected from '{clean_digits}' on tenant '{tenant_slug}': '{raw_clean[:60]}'")
+    # 3. Buyer Escalation Intent (regex: r"\b(admin|cs|manusia|human|operator|bicara dengan orang|bantuan orang|ngobrol sama admin|mau cs|kang sakti|owner|pemilik|live cs|hubungi cs|chat cs|bantuan admin)\b")
+    BUYER_ESCALATION_PATTERN = re.compile(
+        r"\b(admin|cs|manusia|human|operator|bicara dengan orang|bantuan orang|ngobrol sama admin|mau cs|kang sakti|owner|pemilik|live cs|hubungi cs|chat cs|bantuan admin)\b",
+        re.IGNORECASE
+    )
+    if BUYER_ESCALATION_PATTERN.search(raw_clean):
+        logger.info(f"[BUYER_ESCALATION_HANDOVER] Escalation intent detected from '{clean_digits}' on tenant '{tenant_slug}': '{raw_clean[:60]}'")
         if sb:
             try:
                 sb.table("conversation_sessions").upsert({
@@ -463,24 +482,30 @@ async def check_and_handle_session_handover_and_toggle(
                     "user_identifier": clean_digits,
                     "current_state": "HANDOVER_TO_HUMAN",
                     "is_paused": True,
+                    "paused_at": now_iso,
+                    "paused_by": "buyer_escalation",
                     "paused_until": paused_until_iso,
-                    "metadata": {"handover_reason": "bot_rejection_intent", "triggered_at": now_iso, "trigger_text": raw_clean[:100]},
+                    "metadata": {"handover_reason": "buyer_escalation", "paused_by": "buyer_escalation", "paused_at": now_iso, "trigger_text": raw_clean[:100]},
                     "updated_at": now_iso,
                 }, on_conflict="tenant_id,user_identifier").execute()
                 sb.table("conversations").update({
                     "bot_paused": True,
                     "bot_mode": "HUMAN_ACTIVE",
                     "status": "unassigned",
-                }).eq("tenant_id", tenant_slug).eq("phone_number", clean_digits).execute()
+                    "updated_at": now_iso,
+                }).or_(f"tenant_slug.eq.{tenant_slug},tenant_id.eq.{tenant_slug}").eq("phone_number", clean_digits).execute()
             except Exception as _e:
-                logger.warning(f"[BOT_REJECTION_DB_ERR] {_e}")
+                logger.warning(f"[BUYER_ESCALATION_DB_ERR] {_e}")
 
         return {
             "handled": True,
             "status": "success",
             "bot_paused": True,
             "action": "HANDOVER_TO_HUMAN",
-            "reply_text": "Baik Kak, pesan Kakak sudah kami teruskan ke tim admin / owner. Asisten bot dijeda sementara (24 jam) agar admin manusia dapat langsung membalas chat Kakak secara manual. Terima kasih! 🙏",
+            "is_paused": True,
+            "paused_by": "buyer_escalation",
+            "paused_at": now_iso,
+            "reply_text": "Baik kak, obrolan ini saya teruskan langsung ke Admin kami ya. Sistem otomatis saya jeda agar admin kami bisa membalas manual. Mohon ditunggu sebentar ya kak 🙏",
         }
 
     # 4. Active Pause Guard (Auto-Mute): if session is currently paused/handover, mute bot
@@ -489,7 +514,7 @@ async def check_and_handle_session_handover_and_toggle(
         try:
             s_res = (
                 sb.table("conversation_sessions")
-                .select("current_state, is_paused, paused_until")
+                .select("current_state, is_paused, paused_until, paused_at, paused_by")
                 .eq("tenant_id", tenant_slug)
                 .eq("user_identifier", clean_digits)
                 .maybe_single()
@@ -1429,17 +1454,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         logger.warning(f"[SECURITY_SHARED_GATEWAY] Instance '{instance_name}' is SHARED. 2-way AI Commerce not allowed. Dropping.")
         return {"status": "ignored", "reason": "shared_gateway_inbound_not_allowed"}
 
-    # 1. Filter Self-Message: fromMe == True di-skip (Drop immediately)
-    is_from_me = (
-        key_obj.get("fromMe") is True
-        or payload.get("fromMe") is True
-        or (isinstance(data, dict) and data.get("fromMe") is True)
-    )
-    if is_from_me:
-        logger.info("[EVOLUTION WEBHOOK] Ignored: message fromMe is True (Self-Reply Guard)")
-        return {"status": "dropped", "reason": "from_me"}
-
-    # 2. Filter Broadcast
+    # 2A. Filter Broadcast
     remote_jid = str(key_obj.get("remoteJid") or payload.get("sender") or "").strip()
     if not remote_jid or remote_jid == "status@broadcast" or remote_jid.endswith("@broadcast"):
         logger.info(f"[EVOLUTION WEBHOOK] Ignored broadcast JID: '{remote_jid}'")
@@ -1467,6 +1482,99 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     media_url: Optional[str] = None
     image_base64: Optional[str] = None
     image_mime_type: str = "image/jpeg"
+
+    # Ekstraksi teks berjenjang
+    caption_text = (image_obj.get("caption") if isinstance(image_obj, dict) else None) or ""
+    caption_text = caption_text.strip()
+    incoming_text = (
+        unwrapped_msg.get("conversation")
+        or unwrapped_msg.get("extendedTextMessage", {}).get("text")
+        or caption_text
+        or unwrapped_msg.get("videoMessage", {}).get("caption")
+        or unwrapped_msg.get("buttonsResponseMessage", {}).get("selectedButtonId")
+        or unwrapped_msg.get("templateButtonReplyMessage", {}).get("selectedId")
+        or unwrapped_msg.get("listResponseMessage", {}).get("singleSelectReply", {}).get("selectedRowId")
+        or ""
+    ).strip()
+
+    if not incoming_text and is_image_message:
+        incoming_text = caption_text or "Tolong analisa gambar ini sesuai konteks toko."
+
+    # 2B. Admin Command Override (fromMe == True)
+    # Kunci isolasi granular berbasis pasangan: (tenant_slug, phone_number).
+    is_from_me = (
+        key_obj.get("fromMe") is True
+        or payload.get("fromMe") is True
+        or (isinstance(data, dict) and data.get("fromMe") is True)
+    )
+    if is_from_me:
+        raw_cust = (remote_jid or "").replace("@s.whatsapp.net", "").replace("@c.us", "").split("@")[0]
+        cust_phone = normalize_phone_number(raw_cust) or re.sub(r"\D", "", raw_cust)
+        clean_cmd = incoming_text.strip().lower()
+
+        if not is_group and cust_phone and clean_cmd in ("pause", "#pause"):
+            logger.info(f"[ADMIN_COMMAND_OVERRIDE] PAUSE for '{cust_phone}' on tenant '{resolved_tenant}'")
+            await check_and_handle_session_handover_and_toggle(
+                tenant_slug=resolved_tenant,
+                sender_phone=cust_phone,
+                incoming_text="pause",
+                sender_name="Admin",
+            )
+            asyncio.create_task(log_to_supabase_messages(
+                sender="admin",
+                text=incoming_text,
+                tenant_id=resolved_tenant,
+                channel="whatsapp",
+                user_phone=cust_phone,
+                user_name="Admin",
+            ))
+            return {
+                "status": "success",
+                "action": "admin_command_pause",
+                "is_paused": True,
+                "paused_by": "admin_command",
+                "sender_phone": cust_phone,
+                "tenant_slug": resolved_tenant,
+                "message": "Session paused by admin command (silent)",
+            }
+        elif not is_group and cust_phone and clean_cmd in ("resume", "#resume"):
+            logger.info(f"[ADMIN_COMMAND_OVERRIDE] RESUME for '{cust_phone}' on tenant '{resolved_tenant}'")
+            await check_and_handle_session_handover_and_toggle(
+                tenant_slug=resolved_tenant,
+                sender_phone=cust_phone,
+                incoming_text="resume",
+                sender_name="Admin",
+            )
+            asyncio.create_task(log_to_supabase_messages(
+                sender="admin",
+                text=incoming_text,
+                tenant_id=resolved_tenant,
+                channel="whatsapp",
+                user_phone=cust_phone,
+                user_name="Admin",
+            ))
+            return {
+                "status": "success",
+                "action": "admin_command_resume",
+                "is_paused": False,
+                "paused_by": "admin_command",
+                "sender_phone": cust_phone,
+                "tenant_slug": resolved_tenant,
+                "message": "Session resumed by admin command (silent)",
+            }
+        else:
+            # Pesan admin biasa lainnya -> BYPASS / NO ACTION (Return 200 OK)
+            if cust_phone and incoming_text and not is_group:
+                asyncio.create_task(log_to_supabase_messages(
+                    sender="admin",
+                    text=incoming_text,
+                    tenant_id=resolved_tenant,
+                    channel="whatsapp",
+                    user_phone=cust_phone,
+                    user_name="Admin",
+                ))
+            logger.info(f"[EVOLUTION WEBHOOK] Admin message (fromMe=True) bypassed without bot action for '{cust_phone}'")
+            return {"status": "dropped", "reason": "admin_bypass"}
 
     # Ekstraksi Nomor Pengirim Sementara untuk ID Media
     raw_media_sender = (participant_jid if is_group else remote_jid).replace("@s.whatsapp.net", "").replace("@c.us", "").split("@")[0]
@@ -1536,23 +1644,6 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
                 logger.info(f"[EVOLUTION WEBHOOK] Image uploaded to R2: {media_url}")
             except Exception as media_err:
                 logger.warning(f"[EVOLUTION WEBHOOK] Gagal upload image ke R2: {media_err}")
-
-    # 4. Ekstraksi teks berjenjang
-    caption_text = (image_obj.get("caption") if isinstance(image_obj, dict) else None) or ""
-    caption_text = caption_text.strip()
-    incoming_text = (
-        unwrapped_msg.get("conversation")
-        or unwrapped_msg.get("extendedTextMessage", {}).get("text")
-        or caption_text
-        or unwrapped_msg.get("videoMessage", {}).get("caption")
-        or unwrapped_msg.get("buttonsResponseMessage", {}).get("selectedButtonId")
-        or unwrapped_msg.get("templateButtonReplyMessage", {}).get("selectedId")
-        or unwrapped_msg.get("listResponseMessage", {}).get("singleSelectReply", {}).get("selectedRowId")
-        or ""
-    ).strip()
-
-    if not incoming_text and is_image_message:
-        incoming_text = caption_text or "Tolong analisa gambar ini sesuai konteks toko."
 
     if not incoming_text:
         return {"status": "ignored_empty_text"}
@@ -1795,13 +1886,53 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         sender_name=sender_name,
     )
     if evo_toggle_res and evo_toggle_res.get("handled"):
+        action = evo_toggle_res.get("action")
         reply_text = evo_toggle_res.get("reply_text")
-        if not reply_text:
+
+        # 2C. Buyer Escalation Intent: kirim transisi ramah & HALT AI
+        if action == "HANDOVER_TO_HUMAN" and reply_text:
+            send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{instance_name}"
+            headers = get_evolution_headers()
+            send_payload = {
+                "number": sender_phone,
+                "text": reply_text,
+                "textMessage": {"text": reply_text},
+                "options": {"delay": 800, "presence": "composing", "linkPreview": False},
+            }
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    res_send = await client.post(send_url, headers=headers, json=send_payload)
+                    logger.info(f"[BUYER_ESCALATION] Dispatched transition text to {sender_phone}: {res_send.status_code}")
+            except Exception as _e_trans:
+                logger.error(f"[HANDOVER_TRANSITION_DISPATCH_ERR] {_e_trans}")
+
+            # Simpan pesan transisi bot ke chat_logs / messages
+            asyncio.create_task(log_to_supabase_messages(
+                sender="bot",
+                text=reply_text,
+                tenant_id=canonical_slug,
+                channel="whatsapp",
+                user_phone=sender_phone,
+                user_name=sender_name,
+            ))
+
             return {
                 "status": "success",
                 "tenant_slug": canonical_slug,
                 "bot_paused": True,
-                "message": "Sesi dalam status HANDOVER_TO_HUMAN. Balasan otomatis ditahan.",
+                "action": "buyer_escalation_handover",
+                "reply_text": reply_text,
+                "message": "Buyer escalation intent handled. Transition text dispatched and AI halted.",
+            }
+
+        # 2D. Active Pause Gate: jika sesi sedang paused / handover
+        if evo_toggle_res.get("bot_paused"):
+            return {
+                "status": "success",
+                "tenant_slug": canonical_slug,
+                "bot_paused": True,
+                "action": "DROP_PAUSED",
+                "message": "Sesi dalam status HANDOVER_TO_HUMAN / PAUSED. Balasan otomatis ditahan.",
             }
 
     if is_boon_instance:

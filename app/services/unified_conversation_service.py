@@ -210,7 +210,7 @@ class UnifiedConversationEngine:
             try:
                 s_res = (
                     supabase.from_("conversation_sessions")
-                    .select("id, current_state, is_paused, paused_until")
+                    .select("id, current_state, is_paused, paused_until, paused_at, paused_by")
                     .eq("tenant_id", clean_slug)
                     .eq("user_identifier", clean_phone)
                     .maybe_single()
@@ -309,20 +309,15 @@ class UnifiedConversationEngine:
             logger.info(f"[HANDOVER_TO_HUMAN] Detected escalation intent from '{clean_phone}' for tenant '{clean_slug}': '{q[:60]}'")
 
             # 1. Pesan konfirmasi transisi CUKUP SATU KALI SAJA
-            if "kang sakti" in q_lower or clean_slug == "buzzerukm":
-                handover_msg = (
-                    "Baik Kak, pesan Kakak sudah kami teruskan langsung ke Kang Sakti. "
-                    "Asisten bot kami jeda sejenak agar Kang Sakti dapat langsung membalas chat Kakak secara manual ya. Terima kasih! 🙏"
-                )
-            else:
-                handover_msg = (
-                    f"Baik Kak, pesan Kakak sudah kami teruskan ke tim admin / owner *{store_name}*. "
-                    "Asisten bot kami jeda sejenak agar tim kami dapat langsung membalas chat Kakak secara manual ya. Terima kasih! 🙏"
-                )
+            handover_msg = (
+                "Baik kak, obrolan ini saya teruskan langsung ke Admin kami ya. "
+                "Sistem otomatis saya jeda agar admin kami bisa membalas manual. Mohon ditunggu sebentar ya kak 🙏"
+            )
 
             # 2. Kunci State Session: HANDOVER_TO_HUMAN, is_paused = True, paused_until = now() + 24 hours
             now_dt = datetime.now(timezone.utc)
             paused_until_dt = now_dt + timedelta(hours=24)
+            now_iso = now_dt.isoformat()
             session_payload = {
                 "tenant_id": clean_slug,
                 "session_id": f"wa_{clean_slug}_{clean_phone}",
@@ -330,11 +325,14 @@ class UnifiedConversationEngine:
                 "user_identifier": clean_phone,
                 "current_state": "HANDOVER_TO_HUMAN",
                 "is_paused": True,
+                "paused_at": now_iso,
+                "paused_by": "buyer_escalation",
                 "paused_until": paused_until_dt.isoformat(),
-                "updated_at": now_dt.isoformat(),
+                "updated_at": now_iso,
                 "metadata": {
-                    "paused_reason": "HUMAN_HANDOVER",
-                    "paused_at": now_dt.isoformat(),
+                    "paused_reason": "BUYER_ESCALATION",
+                    "paused_at": now_iso,
+                    "paused_by": "buyer_escalation",
                     "trigger_text": q[:100],
                 },
             }
