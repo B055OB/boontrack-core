@@ -103,6 +103,24 @@ Ekosistem BoonTrack meresmikan standarisasi paket komersial yang mengikat seluru
 
 ---
 
+### 4.2 Outbound Message Registry & Delivery Integrity
+Setiap pesan keluar yang diterbitkan oleh sistem bot (baik berupa pesan selamat datang, balasan AI, eskalasi serah terima manual / handover, maupun notifikasi order & Dynamic QRIS) WAJIB didaftarkan ke registri pesan keluar:
+- **Tabel / Entitas**: `outbound_messages`
+  * `id`: UUID (Primary Key)
+  * `tenant_id`: Identifier tenant toko
+  * `conversation_id`: Sesi percakapan pelanggan
+  * `runtime_instance_id`: Instance gateway (Evolution API / Meta Cloud API)
+  * `wa_message_id`: ID pesan unik WhatsApp (`wamid...` atau Baileys `key.id`)
+  * `recipient_jid`: Nomor tujuan / WhatsApp JID
+  * `message_type`: Tipe pesan (`text`, `image`, `order_notify`, `handover`)
+  * `content_hash`: SHA-256 hash dari konten pesan untuk deduplikasi cepat
+  * `source`: Sumber pengiriman (`bot`, `system`, `broadcast`, `handover`, `order_notify`)
+  * `created_at`: Timestamp UTC presisi
+- **Pencatatan Sinkron & Cache Sub-Millisecond**: `wa_message_id` dicatat ke dalam in-memory Set/Cache sebelum/saat pengiriman dan disimpan persisten ke tabel database `outbound_messages`.
+- **Zero Self-Echo Guarantee**: Ketika webhook WhatsApp menerima event `messages.upsert` dengan `fromMe == True`, sistem memeriksa `wa_message_id` di registri ini. Jika ditemukan, pesan seketika di-drop (`DROP_SELF_GENERATED`, LLM = 0, Outbound = 0).
+
+---
+
 ## 5. Monetization & Entitlement Lifecycle (Flexible Policy)
 - **Status Lifecycle Engine**: Mendukung transisi status dinamis: `TRIAL`, `ACTIVE`, `EXPIRED`, `CANCELLED`. Durasi aktif dan kuota pemakaian dibaca dari database (`valid_until`, `usage_limit`), bukan di-hardcode.
 
@@ -205,7 +223,36 @@ Arsitektur memisahkan secara tegas antara **Fase Konfigurasi (Setup & Tuning)** 
 
 ---
 
-### 8.4 Boundary & Role of BoonPilot
+### 8.4 7-Layer Ingress Webhook Architecture & Control Interception
+Setiap pesan masuk dari seluruh gateway (BoonTrack WhatsApp Engine / Evolution API maupun Meta WABA Cloud API) wajib melalui evaluasi sekuensial 7 lapis pengamanan (*7-Layer Ingress Webhook Architecture*):
+- **Layer 1: Normalization & HMAC Payload Sanitization**
+  Normalisasi `sender_phone`, ekstraksi `wa_message_id`, pembersihan teks pesan (unwrapping ephemeral, viewOnce, button reply, list response), serta verifikasi token HMAC bila tersedia.
+- **Layer 2: Self-Echo Protection & Coexistence Mode**
+  Jika `fromMe == True`:
+  * Cek `wa_message_id` di `outbound_messages`.
+  * **FOUND**: Drop instan dengan respon HTTP 200 OK (`DROP_SELF_GENERATED`). Zero LLM call, Zero Outbound.
+  * **NOT FOUND**: Ditandai sebagai pesan fisik manual Owner (*Coexistence Mode*). Pesan tidak memicu auto-reply bot ke diri sendiri, tetapi diperiksa untuk perintah kontrol `!pause` / `!resume`.
+- **Layer 3: RBAC Scope Detection**
+  Memverifikasi apakah nomor pengirim terdaftar sebagai OWNER / ADMIN tenant pada tabel `tenants` di Supabase (`phone`, `whatsapp_number`, `wa_verified_phone`, atau `admin_phones`).
+- **Layer 4: Control Command Interceptor - Silent Lock**
+  Menangkap perintah `!pause`, `!resume`, `/admin pause`, `/admin resume`, `pause`, `resume`, `#pause`, `#resume`:
+  * **HANYA BERLAKU** jika dikirim oleh OWNER / ADMIN terdaftar (Layer 3 == True).
+  * `!pause`: Mengubah state sesi/tenant `is_paused = True`. Mengembalikan respon HTTP 200 OK secara hening (*Silent Lock*: NO LLM, NO Outbound).
+  * `!resume`: Mengubah state `is_paused = False`. Mengembalikan respon HTTP 200 OK hening.
+  * **Jika dikirim oleh CUSTOMER biasa**: Perintah kontrol diabaikan secara tegas; pesan diproses sebagai obrolan pelanggan biasa.
+- **Layer 5: Session State Barrier**
+  Jika `is_paused == True`, status sesi berada di `HANDOVER_TO_HUMAN` / `PAUSED`, atau `circuit_state == OPEN`:
+  * Pesan langsung di-DROP dengan HTTP 200 OK (`DROPPED_PAUSED_SESSION`). Zero LLM call, Zero Outbound.
+- **Layer 6: Safety Velocity Budget & Circuit Breaker (§9.8)**
+  * **Contact Breaker**: Membatasi laju pesan per kontak (maks 15 pesan/menit) guna mencegah badai pesan berulang (*echo spam loop*).
+  * **WABA Breaker**: Khusus nomor WABA platform (+62 851-8183-0080), hard-cap maksimal 30 outbound/menit. Jika terlampaui, sirkuit langsung beralih ke `WABA_CIRCUIT_OPEN` dan memicu alert P0.
+  * **Emergency Kill Switch**:
+    - `GLOBAL_AI_OUTBOUND_ENABLED` (default `True`): Jika `False`, obrolan conversational AI dimatikan menyeluruh, namun alur transaksional (status pesanan, notifikasi pembayaran, Dynamic QRIS) tetap berjalan lancar.
+    - `WABA_AI_OUTBOUND_ACTIVE` (default `True`): Menentukan keaktifan respon conversational WABA.
+- **Layer 7: Conversational Execution & Gemini Runtime Dispatch**
+  Inferensi LLM (Commerce AI Engine / Platform Assistant Engine) HANYA dijalankan bila lolos seluruh Layer 1–6 tanpa perkecualian.
+
+### 8.4.1 Boundary & Role of BoonPilot
 - **Definisi Peran**: BoonPilot adalah *Merchant-Facing Configuration Consultant & Knowledge Architect*, BUKAN eksekutor transaksi runtime pembeli.
 - **Batas Wewenang BoonPilot**:
   - ✅ **DIPERBOLEHKAN**:
@@ -452,6 +499,18 @@ Pairing berhasil tidak sama dengan gateway yang beroperasi sehat. Sistem memanta
    - Dashboard merchant wajib menampilkan visual status yang akurat (🟢 Connected, 🟡 Reconnecting, 🔴 Disconnected / Perlu Tindakan).
 2. **Decoupled Metric Health (IT & Telemetry Dashboard)**:
    - Status kesehatan dipisah per layer: *Connection Health*, *Inbound Webhook Health*, *Queue Lag*, *AI Processing Latency*, dan *Outbound Delivery Success Rate*.
+
+### 9.8 Human Handoff, Circuit Breaker & Velocity Isolation
+1. **Pemisahan Handover Pause vs Circuit Breaker**:
+   - **Handover Pause (`is_paused = True`)**: Merupakan state bisnis operasional ketika merchant/admin toko mengambil alih percakapan secara sadar atau pembeli meminta CS manusia. Bot masuk mode *silent listener*.
+   - **Circuit Breaker (`circuit_state = 'OPEN'`)**: Merupakan mekanisme perlindungan infrastruktur darurat untuk memutus loop runaway (*runaway bot loop / rate limit breach*).
+   - Keduanya diuji secara terpisah pada Layer 5 Ingress Barrier untuk menghasilkan metrik telemetri yang presisi.
+2. **WABA Breaker (Hard-Cap 30 Outbound / Menit)**:
+   - Khusus nomor resmi WABA platform (+62 851-8183-0080), diterapkan hard-cap ketat maksimal 30 pesan outbound per menit (sliding window 60 detik).
+   - Jika terdeteksi lonjakan > 30 outbound/menit, sistem secara otomatis mengaktifkan status `WABA_CIRCUIT_OPEN`, menghentikan seluruh pengiriman outbound baru, dan mencatat log darurat P0 untuk audit CTO.
+3. **Environment Flags & Emergency Controls**:
+   - `GLOBAL_AI_OUTBOUND_ENABLED` (default `True`): Sakelar darurat global. Jika dinonaktifkan, seluruh conversational LLM mati, sementara alur transaksional e-commerce (notifikasi order dan Dynamic QRIS) tetap 100% fungsional.
+   - `WABA_AI_OUTBOUND_ACTIVE` (default `True`): Mengontrol respon bot AI pada nomor WABA platform.
 
 ### 9.8 Human Handoff & Business Graph Attribution
 1. **Human Handoff State**:

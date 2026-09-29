@@ -243,6 +243,16 @@ async def send_whatsapp_text(
         return None
 
     sanitized_text = sanitize_whatsapp_message_text(text)
+
+    # Velocity Budget & WABA Circuit Breaker Check (§9.8)
+    from app.services.circuit_breaker_service import circuit_breaker_service
+    is_waba = circuit_breaker_service.is_waba_target(phone_id) or circuit_breaker_service.is_waba_target(clean_phone)
+    if is_waba:
+        allowed, reason = circuit_breaker_service.record_waba_outbound()
+        if not allowed:
+            logger.critical(f"[WABA_CIRCUIT_BREAKER_BLOCKED] send_whatsapp_text blocked for {clean_phone}: {reason}")
+            return None
+
     url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
     headers = {
         **_get_auth_headers(token),
@@ -276,7 +286,22 @@ async def send_whatsapp_text(
                 conversation_id=clean_phone,
                 metadata={"msg_type": "text", "preview_url": preview_url}
             )
-            return response.json()
+            res_json = response.json()
+            try:
+                wa_msg_id = (res_json.get("messages") or [{}])[0].get("id") or str(uuid.uuid4())
+                from app.services.outbound_registry import outbound_registry
+                outbound_registry.register_outbound(
+                    wa_message_id=wa_msg_id,
+                    tenant_id=tenant_id,
+                    recipient_jid=clean_phone,
+                    content=sanitized_text,
+                    message_type="text",
+                    source="bot",
+                )
+            except Exception as _reg_err:
+                logger.debug(f"[OUTBOUND_REG_WARN] {_reg_err}")
+
+            return res_json
     except Exception as e:
         logger.error(f"[WhatsApp Service] Exception in send_whatsapp_text: {e}", exc_info=True)
         return None

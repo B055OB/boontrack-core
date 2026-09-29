@@ -585,6 +585,28 @@ async def process_inbound_message(payload: InboundPayload):
     text_lower = incoming_text.lower()
     conversation_scope = (payload.conversation_scope or "DIRECT").upper()
 
+    # 7-Layer Ingress Protection & Circuit Breaker Guard (§4.2, §8.4, §9.8)
+    from app.services.ingress_pipeline import ingress_pipeline
+    ingress_decision = await ingress_pipeline.evaluate_ingress(
+        tenant_slug=tenant_slug,
+        sender_phone=clean_phone,
+        incoming_text=incoming_text,
+        wa_message_id=getattr(payload, "message_id", None) or getattr(payload, "id", None),
+        from_me=getattr(payload, "from_me", False),
+        is_waba=False,
+        is_transactional=False,
+        raw_payload=payload.model_dump() if hasattr(payload, "model_dump") else {},
+    )
+    if not ingress_decision.allowed:
+        return {
+            "status": "success" if ("PAUSE" in ingress_decision.action or "RESUME" in ingress_decision.action) else "ignored",
+            "action": ingress_decision.action,
+            "reason": ingress_decision.reason,
+            "reply_text": None,
+            "llm_calls": ingress_decision.llm_calls,
+            "outbound_calls": ingress_decision.outbound_calls,
+        }
+
     # Log Terminal Detail Poin 3: Saat pesan masuk diterima
     logger.info(
         f"\n========================================================\n"
@@ -1551,6 +1573,42 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         or payload.get("fromMe") is True
         or (isinstance(data, dict) and data.get("fromMe") is True)
     )
+
+    # =========================================================================
+    # 7-LAYER INGRESS WEBHOOK PROTECTION & CIRCUIT BREAKER (§4.2, §8.4, §9.8)
+    # =========================================================================
+    raw_sender = (remote_jid or "").replace("@s.whatsapp.net", "").replace("@c.us", "").split("@")[0]
+    extracted_sender_phone = normalize_phone_number(raw_sender) or raw_sender
+    from app.services.ingress_pipeline import ingress_pipeline
+    ingress_decision = await ingress_pipeline.evaluate_ingress(
+        tenant_slug=resolved_tenant,
+        sender_phone=extracted_sender_phone,
+        incoming_text=incoming_text,
+        wa_message_id=reply_to_message_id,
+        from_me=is_from_me,
+        is_waba=False,
+        is_transactional=False,
+        raw_payload=payload,
+    )
+    if not ingress_decision.allowed:
+        logger.info(f"[7_LAYER_INGRESS_DROP] Action={ingress_decision.action} | Reason={ingress_decision.reason}")
+        if is_from_me and extracted_sender_phone and incoming_text and not is_group:
+            asyncio.create_task(log_to_supabase_messages(
+                sender="admin",
+                text=incoming_text,
+                tenant_id=resolved_tenant,
+                channel="whatsapp",
+                user_phone=extracted_sender_phone,
+                user_name="Admin",
+            ))
+        return {
+            "status": "success" if ("PAUSE" in ingress_decision.action or "RESUME" in ingress_decision.action) else "ignored",
+            "action": ingress_decision.action,
+            "reason": ingress_decision.reason,
+            "is_paused": ingress_decision.is_paused,
+            "llm_calls": ingress_decision.llm_calls,
+            "outbound_calls": ingress_decision.outbound_calls,
+        }
     if is_from_me:
         raw_cust = (remote_jid or "").replace("@s.whatsapp.net", "").replace("@c.us", "").split("@")[0]
         cust_phone = normalize_phone_number(raw_cust) or re.sub(r"\D", "", raw_cust)
@@ -2168,6 +2226,26 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
                 logger.info(f"[EVOLUTION SEND STATUS] Dispatched to {target_send_recipient} via {target_send_instance}: {res.status_code}")
                 if res.status_code not in (200, 201):
                     logger.warning(f"[EVOLUTION SEND WARNING] Response body: {res.text[:200]}")
+
+                # Register to Outbound Message Registry (§4.2, §8.4)
+                outbound_msg_id = None
+                try:
+                    res_data = res.json()
+                    outbound_msg_id = (res_data.get("key") or {}).get("id") or res_data.get("id")
+                except Exception:
+                    pass
+                if not outbound_msg_id:
+                    outbound_msg_id = f"out_{int(datetime.now(timezone.utc).timestamp()*1000)}"
+
+                from app.services.outbound_registry import outbound_registry
+                outbound_registry.register_outbound(
+                    wa_message_id=outbound_msg_id,
+                    tenant_id=resolved_tenant,
+                    recipient_jid=target_send_recipient,
+                    content=reply_text or "",
+                    message_type="text",
+                    source="bot",
+                )
         except Exception as send_err:
             logger.error(f"[EVOLUTION SEND ERROR] {send_err}")
 

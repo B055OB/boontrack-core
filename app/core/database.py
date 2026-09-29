@@ -350,6 +350,22 @@ def _init_db_sync():
 
         CREATE INDEX IF NOT EXISTS idx_conversations_tenant_status ON conversations (tenant_id, status);
         CREATE INDEX IF NOT EXISTS idx_conversations_assigned_agent ON conversations (assigned_agent_id, status);
+
+        -- Tabel outbound_messages (§4.2, §8.4, §9.8)
+        CREATE TABLE IF NOT EXISTS outbound_messages (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            tenant_id VARCHAR(100) NOT NULL,
+            conversation_id VARCHAR(100),
+            runtime_instance_id VARCHAR(100),
+            wa_message_id VARCHAR(255) NOT NULL,
+            recipient_jid VARCHAR(255) NOT NULL,
+            message_type VARCHAR(50) DEFAULT 'text',
+            content_hash VARCHAR(64),
+            source VARCHAR(50) DEFAULT 'bot',
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_outbound_messages_wa_id ON outbound_messages(wa_message_id);
+        CREATE INDEX IF NOT EXISTS idx_outbound_messages_tenant ON outbound_messages(tenant_id);
     """)
 
     conn.commit()

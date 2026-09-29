@@ -158,6 +158,33 @@ class PlatformWebhookRouter:
             }
 
         # =====================================================================
+        # 7-LAYER INGRESS WEBHOOK PROTECTION & CIRCUIT BREAKER (§4.2, §8.4, §9.8)
+        # =====================================================================
+        from app.services.ingress_pipeline import ingress_pipeline
+        wa_msg_id = (raw_msg or {}).get("id") or (raw_msg or {}).get("key", {}).get("id")
+        ingress_decision = await ingress_pipeline.evaluate_ingress(
+            tenant_slug="boontrack-platform",
+            sender_phone=sender_clean,
+            incoming_text=clean_text,
+            wa_message_id=wa_msg_id,
+            from_me=False,
+            is_waba=True,
+            is_transactional=False,
+            raw_payload=raw_msg,
+        )
+        if not ingress_decision.allowed:
+            _log("IngressPipelineGuard", f"Blocked by 7-layer pipeline: {ingress_decision.action} ({ingress_decision.reason})")
+            if trace:
+                trace.early_return = True
+                trace.response_status = ingress_decision.status_code
+            return {
+                "status": "ignored",
+                "action": ingress_decision.action,
+                "reason": ingress_decision.reason,
+                "early_return": True,
+            }
+
+        # =====================================================================
         # JALUR 1: Compliance Guard (Wajib Meta WABA Policy)
         # =====================================================================
         if clean_text.upper() in OPT_OUT_KEYWORDS:
