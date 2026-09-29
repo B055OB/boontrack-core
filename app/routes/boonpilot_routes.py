@@ -133,3 +133,56 @@ async def execute_boonpilot_action(payload: BoonPilotExecuteActionRequest):
         "action_type": proposal.get("action_type"),
         "result": proposal.get("result"),
     }
+
+
+merchant_copilot_router = APIRouter(prefix="/api/v1/merchant", tags=["Merchant Copilot"])
+
+
+@merchant_copilot_router.post("/copilot", summary="Merchant Copilot Gateway")
+async def merchant_copilot_chat(payload: BoonPilotChatRequest):
+    """
+    Gateway endpoint alias /api/v1/merchant/copilot yang meneruskan chat secara dinamis
+    ke boonpilot_service.chat (§0.12, §8.3) tanpa mock statis.
+    """
+    if not payload.message or not payload.message.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pesan tidak boleh kosong.",
+        )
+
+    try:
+        response = await boonpilot_service.chat(
+            tenant_slug=payload.tenant_slug,
+            message=payload.message,
+            session_id=payload.session_id,
+            conversation_history=payload.conversation_history,
+            untrusted_client_tenant_id=payload.untrusted_tenant_id,
+            rbac_role=payload.rbac_role or "MERCHANT",
+            image=payload.image,
+            image_base64=payload.image_base64,
+            mime_type=payload.mime_type,
+        )
+        reply = response.get("reply") or response.get("description") or ""
+        data_field = response.get("data") or {}
+        quick_actions = data_field.get("quick_actions") if isinstance(data_field, dict) else None
+        if not quick_actions:
+            quick_actions = response.get("quick_actions") or [
+                "Buka Tab Products",
+                "Cek Status WhatsApp",
+                "Lihat Laporan Penjualan",
+            ]
+        return {
+            "status": "success",
+            "tenant_id": payload.tenant_slug,
+            "reply": reply,
+            "action_proposal": response.get("action_proposal"),
+            "data": data_field,
+            "quick_actions": quick_actions,
+            "session_id": payload.session_id or f"sess_{payload.tenant_slug}",
+        }
+    except PermissionError as pe:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(pe))
+    except ValueError as ve:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

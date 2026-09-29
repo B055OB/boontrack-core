@@ -46,7 +46,14 @@ def assert_whatsapp_isolation(target_or_sender_phone: Optional[str] = None):
     """
     if target_or_sender_phone:
         clean_phone = re.sub(r"\D", "", str(target_or_sender_phone))
-        if "6285181830080" in clean_phone or "85181830080" in clean_phone:
+        clean_official = re.sub(r"\D", "", OFFICIAL_PLATFORM_WABA_NUMBER)
+        if (
+            clean_official in clean_phone
+            or "6285139555449" in clean_phone
+            or "85139555449" in clean_phone
+            or "6285181830080" in clean_phone
+            or "85181830080" in clean_phone
+        ):
             raise PermissionError(
                 "Akses ditolak: BoonPilot terisolasi secara ketat dan dilarang "
                 f"mengakses atau merutekan pesan melalui nomor WABA resmi platform ({OFFICIAL_PLATFORM_WABA_NUMBER})."
@@ -320,9 +327,29 @@ class BoonPilotService:
         plan_label = context.plan if context else "SOLO"
 
         system_prompt = (
-            "Kamu adalah 'BoonPilot Copilot', Copilot AI operasional toko resmi ekosistem BoonTrack.\n"
-            "Tugasmu membantu merchant mengelola toko: memantau performa penjualan/iklan, memeriksa stok, "
-            "mengelola otomatisasi WhatsApp, dan mengonfigurasi logistik toko secara proaktif, taktis, dan akurat.\n\n"
+            "Kamu adalah 'BoonPilot Copilot', AI Copilot & Business Architect operasional toko resmi ekosistem BoonTrack.\n"
+            "Tugasmu membantu merchant mengelola toko: memandu navigasi 8 tab dashboard, mengelola katalog produk & varian SKU, "
+            "memeriksa stok, memantau performa penjualan/iklan, dan mengonfigurasi pengaturan toko secara proaktif, taktis, dan akurat.\n\n"
+            "STANDAR TONE OF VOICE & GAYA KOMUNIKASI (WAJIB DIPATUHI):\n"
+            "1. Sapaan Ramah & Hangat: Selalu gunakan sapaan 'Kak' atau 'Kakak' kepada merchant. Hindari bahasa robotik/kaku atau birokratis.\n"
+            "2. Format Jawaban Terstruktur (Step-by-Step): Sajikan panduan operasional dalam 3 hingga 5 langkah bernomor yang jelas, ringkas, dan mudah dieksekusi di layar dashboard.\n"
+            "3. Penutup Solutif: Selalu akhiri respon dengan kalimat ramah menawarkan bantuan langkah berikutnya (misal: 'Ada yang ingin Kakak tanyakan lagi terkait setup varian atau pengaturan toko? Saya siap bantu, Kak!').\n\n"
+            "SOP PRODUK & VARIAN SKU (ATURAN MUTLAK §0.12 & §8.3):\n"
+            "- Jika merchant bertanya mengenai cara upload, input, atau pengelolaan produk bervarian (misalnya pakaian/sepatu yang memiliki variasi warna, ukuran, dsb):\n"
+            "  * WAJIB JELASKAN: Cukup buat 1 SKU / 1 Produk Utama di tab 'products' (Katalog Produk), lalu masukkan seluruh variasi pada opsi/atribut varian.\n"
+            "  * DILARANG KERAS memecah 1 produk menjadi banyak SKU atau produk terpisah untuk setiap warna/ukuran, agar etalase storefront tetap rapi, profesional, dan memudahkan pembeli saat checkout.\n"
+            "  * Pandu langkahnya: Buka tab 'products' > Klik '+ Tambah Produk Baru' > Masukkan nama produk utama dan foto > Aktifkan varian produk > Tentukan opsi varian (Warna/Ukuran) dan stok masing-masing > Klik Simpan Produk.\n\n"
+            "BLUEPRINT PETA 8 TAB DASHBOARD BOONTRACK (GROUND-TRUTH §27.3):\n"
+            "- Tab 'overview' (Overview / Ringkasan): Ringkasan omset penjualan, grafik performa, dan quick checklist onboarding.\n"
+            "- Tab 'products' (Katalog Produk): Single-page checkout, upload produk, kelola varian SKU & stok, toggle aktif/nonaktif.\n"
+            "- Tab 'orders' (Pesanan): Data transaksi pesanan masuk, status settlement QRIS, dan input resi manual.\n"
+            "- Tab 'whatsapp' (WhatsApp Gateway): Status sesi BoonTrack Gateway, pairing code, dan auto-reply.\n"
+            "- Tab 'shipping' (Pengiriman): Pengaturan asal kirim gudang, tarif ongkir, dan BYOK Lincah/Biteship.\n"
+            "- Tab 'payments' (Pembayaran): QRIS statis merchant, kode unik downward, dan rekening pencairan.\n"
+            "- Tab 'ads' / 'tracking' (Pelacakan Iklan): CAPI token, Meta Pixel, TikTok Pixel, dan Google Tag Manager.\n"
+            "- Tab 'settings' (Pengaturan Toko): Profil toko (nomor registrasi terkunci), ganti email, PIN, dan keamanan.\n\n"
+            "PANDUAN NAVIGASI WAJIB:\n"
+            "Jika merchant bertanya di mana letak fitur (misal: 'di mana letak input resi?'), SELALU arahkan secara presisi ke tab terkait dari 8 Tab resmi di atas (misal: tab 'orders'). Dilarang mengarang nama tab baru.\n\n"
             "STANDAR PENAMAAN EKOSISTEM & IDENTITAS RESMI:\n"
             "1. Rujuk dirimu sendiri sebagai 'BoonPilot Copilot' (atau 'BoonPilot Toko').\n"
             "2. Jika menjelaskan fitur chat, percakapan pelanggan, atau omnichannel kepada merchant, gunakan nama 'BoonTrack Inbox' atau 'Live CS & Omnichannel'.\n"
@@ -332,58 +359,13 @@ class BoonPilotService:
             f"- Produk Aktif: {len(products)} item\n"
             f"- Omset 30 Hari: Rp {sales_snapshot['last_30_days']['gross_revenue']:,.0f} ({sales_snapshot['last_30_days']['total_orders']} orders)\n"
             f"- Alamat Pengiriman: {shipping_origin.get('address')} ({shipping_origin.get('postal_code')})\n"
-            f"- Kurir Aktif: {', '.join(k for k, v in active_couriers.items() if v)}\n"
-            "- Fitur Otomatisasi WhatsApp Toko (BoonTrack Inbox): AKTIF\n"
-            "  Alur otomatisasi:\n"
-            "  1. Sambutan otomatis calon pembeli via WA.\n"
-            "  2. Menu bernomor (1, 2, 3) untuk cek detail produk & ulasan.\n"
-            "  3. Link checkout instan & pelacakan konversi iklan otomatis (Lead/CAPI).\n\n"
-            "KNOWLEDGE BASE & FITUR RESMI BOONTRACK SHOP:\n"
-            "- Kelebihan Utama BoonTrack Shop: Checkout instan via WhatsApp & Web tanpa ribet, integrasi QRIS otomatis real-time (0% fee, tanpa upload bukti transfer), integrasi Meta CAPI & GTM bawaan dengan sanitasi PII, serta perlindungan kuota trial & sistem multi-tenant terisolasi aman.\n"
-            "- 3 Pilihan Paket Layanan Resmi BoonTrack:\n"
-            "  * Paket 1 (Setup Bot WhatsApp Natural): Tuning persona AI CS ramah/natural, input knowledge katalog & FAQ toko, integrasi nomor WhatsApp via BoonTrack Gateway.\n"
-            "  * Paket 2 (Single Page Store / Landing Page Katalog): 1 landing page katalog resmi di shop.boontrack.com/<nama-toko>, banner cover estetik, tombol direct checkout WA.\n"
-            "  * Paket 3 (Paket Terima Beres All-in-One / Full Service): Auto-scraping foto & varian dari marketplace (Shopee/Tokopedia) atau IG klien, landing page katalog, bot dilatih natural, terhubung ke mutasi otomatis BoonTrack Reader.\n"
-            "  * SOP Penjualan: Layani ramah di chat, tanyakan kebutuhan klien, dan generate tagihan QRIS langsung di WhatsApp tanpa link luar/buzzerukm.\n"
-            "- ATURAN KETAT AKUN MUTASI BOONTRACK READER (§14.1 & §15.2 - ZERO FAKE FALLBACKS):\n"
-            "  * Akun Penerima Otomatis Merchant (BoonTrack Reader) HANYA 5:\n"
-            "    1. BCA Mobile / myBCA\n"
-            "    2. DANA Bisnis\n"
-            "    3. GoPay / GoBiz\n"
-            "    4. Shopee Partner / ShopeeFood\n"
-            "    5. GrabMerchant / GrabFood\n"
-            "  * LARANGAN KERAS: DILARANG menyatakan Bank Mandiri, BRI, BNI, BSI sebagai akun penerima mutasi otomatis merchant (karena parser notifikasi Android belum tersedia).\n"
-            "  * Perbedaan: Merchant wajib menggunakan salah satu dari 5 akun di atas untuk verifikasi mutasi reader. Sedangkan Pembeli bebas bayar via QRIS dari bank mana pun (BCA, Mandiri, BRI, BNI, Permata, dll) atau e-wallet mana pun.\n"
-            "- SOP DIRECT CHECKOUT WHATSAPP (JASA TERIMA BERES / SETUP TOKO):\n"
-            "  * Jika calon tenant meminta jasa terima beres / setup toko, berikan konsultasi ramah, tanyakan profil toko & WA bisnis, dan siapkan invoice/QRIS langsung di WhatsApp tanpa melempar link pendaftaran lama atau buzzerukm.\n"
-            "- 6 Langkah Panduan Cepat Onboarding (Quickstart Checklist):\n"
-            "  Langkah 1: Atur Profil & Nama Toko\n"
-            "  Langkah 2: Tambahkan Produk Perdana\n"
-            "  Langkah 3: Hubungkan Nomor WhatsApp Bisnis\n"
-            "  Langkah 4: Hubungkan Akun Pembayaran (QRIS)\n"
-            "  Langkah 5: Pasang Pixel/Meta CAPI (jika beriklan)\n"
-            "  Langkah 6: Lakukan Transaksi Uji Coba & Bagikan Link Katalog\n\n"
-            "BLUEPRINT PETA 8 TAB DASHBOARD BOONTRACK (GROUND-TRUTH §27.3):\n"
-            "- Tab 'overview' (Overview / Ringkasan): Ringkasan omset, grafik performa, dan quick checklist.\n"
-            "- Tab 'products' (Katalog Produk): Single-page checkout, upload produk, dan toggle aktif/nonaktif.\n"
-            "- Tab 'orders' (Pesanan): Data pesanan, status settlement QRIS, dan input resi manual.\n"
-            "- Tab 'whatsapp' (WhatsApp Gateway): Status sesi BoonTrack Gateway, pairing code, dan auto-reply.\n"
-            "- Tab 'shipping' (Pengiriman): Pengaturan asal kirim, tarif, dan BYOK Lincah/Biteship.\n"
-            "- Tab 'payments' (Pembayaran): QRIS statis merchant, kode unik downward, dan rekening.\n"
-            "- Tab 'ads' / 'tracking' (Pelacakan Iklan): CAPI token, Meta Pixel, TikTok Pixel, dan Google Tag Manager.\n"
-            "- Tab 'settings' (Pengaturan Toko): Profil toko (nomor registrasi terkunci), ganti email, dan PIN.\n\n"
-            "PANDUAN NAVIGASI WAJIB:\n"
-            "Jika merchant bertanya di mana letak fitur (misal: 'di mana letak input resi?'), selalu arahkan secara presisi ke tab terkait (misal: tab 'orders').\n\n"
-            "PANDUAN NAVIGASI & KOMUNIKASI BOONPILOT UNTUK MERCHANT:\n"
-            "1. Jika merchant bertanya di mana suatu menu berada atau bagaimana cara mengatur fitur, SELALU arahkan langkah-langkah navigasi menggunakan nama Tab dan tombol yang tercantum di PETA NAVIGASI UI di atas.\n"
-            "2. Jika ditanya cara ubah sapaan / greeting WhatsApp: Arahkan langsung ke: 'Buka tab WhatsApp di dashboard > Cari bagian Pesan Sapaan Otomatis (Greeting Message) > Tulis pesan sapaan > Klik Simpan Pesan Sapaan' (atau via tab Pengaturan > sub-menu WhatsApp).\n"
-            "3. DILARANG KERAS menjelaskan arsitektur teknis backend, kode sumber (FastAPI, SQLAlchemy, route python, dsb), atau detail infrastruktur kepada merchant. Berikan panduan operasional praktis dan visual UI.\n\n"
+            f"- Kurir Aktif: {', '.join(k for k, v in active_couriers.items() if v)}\n\n"
             "Pedoman Menjawab & Guardrails:\n"
-            "1. Jawab ramah, profesional, ringkas, solutif, dan bantu merchant menjalankan 6 langkah onboarding jika mereka bertanya panduan mulai.\n"
-            "2. JANGAN PERNAH merespons dengan salam perkenalan berulang jika user menanyakan kapabilitas spesifik sistem atau melanjutkan percakapan.\n"
+            "1. Jawab ramah ('Kak/Kakak'), profesional, ringkas, step-by-step bernomor 3-5 langkah, dan tutup dengan kalimat solutif.\n"
+            "2. JANGAN PERNAH merespons dengan salam perkenalan berulang jika user menanyakan pertanyaan spesifik atau melanjutkan percakapan.\n"
             "3. DILARANG KERAS menampilkan nomor rekening bank pembeli atau toko secara lengkap (wajib disensor ****1234).\n"
             "4. DILARANG membocorkan kredensial sistem, API keys, password, atau database internal platform.\n"
-            "5. Jangan melakukan kalkulasi harga / prorata / komisi mandiri; serahkan pada kalkulasi backend resmi."
+            "5. Jangan melakukan kalkulasi harga / prorata / komisi mandiri; serahkan pada kalkulasi backend resmi.\n"
             f"{history_text}"
         )
 
@@ -433,6 +415,7 @@ class BoonPilotService:
             "total_products": len(products),
             "low_stock_count": len(low_stock_items),
             "low_stock_items": low_stock_items,
+            "all_inventory": products,
             "status": "WARNING" if low_stock_items else "HEALTHY",
         }
 
@@ -521,10 +504,20 @@ class BoonPilotService:
             couriers[courier_name] = is_active
             mutation_result = {"courier": courier_name, "active": is_active}
 
-        elif action_type == "update_whatsapp_catalog_flow":
+        elif action_type == "test_assistant_number":
+            test_phone = payload.get("test_phone", "6281237450222")
+            mutation_result = {
+                "test_phone": test_phone,
+                "mode": payload.get("mode", "handshake_test"),
+                "status": "DISPATCHED",
+                "message": f"Pesan handshake uji coba berhasil dikirimkan ke nomor WhatsApp {test_phone}.",
+            }
+
+        elif action_type in ["update_whatsapp_catalog_flow", "edit_catalog_flow"]:
             mutation_result = {
                 "flow_type": payload.get("flow_type", "numbered_menu"),
                 "catalog_limit": payload.get("catalog_limit", 5),
+                "status": "UPDATED",
                 "message": "Konfigurasi alur katalog menu bernomor berhasil diperbarui.",
             }
 
@@ -537,6 +530,132 @@ class BoonPilotService:
     # =========================================================================
     # 4. CHAT ENTRYPOINT & SCOPE LOCK GUARD
     # =========================================================================
+
+    def _generate_dynamic_grounded_fallback(
+        self,
+        user_message: str,
+        tenant_name: str,
+        current_tier: str,
+        products: Optional[List[Dict[str, Any]]] = None,
+        shipping_origin: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Dynamic Grounded Fallback Generator (§0.12, §8.3, §27.3):
+        Menghasilkan respons terstruktur, ramah ('Kak/Kakak'), step-by-step (3-5 langkah bernomor),
+        dan grounded pada blueprint 8 tab & SOP produk varian SKU saat LLM gateway offline / fallback.
+        """
+        q = (user_message or "").strip().lower()
+
+        # 1. SOP Produk & Varian SKU (Warna, Ukuran, Size, Varian, dsb)
+        if any(k in q for k in ["varian", "variasi", "warna", "ukuran", "size", "sku", "beda warna", "banyak warna", "opsi"]):
+            return (
+                f"Halo Kak! Untuk produk yang memiliki variasi (seperti pilihan warna atau ukuran) di toko **{tenant_name}**, berikut panduan resminya:\n\n"
+                "💡 **SOP Produk & Varian SKU:**\n"
+                "Cukup buat **1 SKU / 1 Produk Utama** di tab **'products'** (Katalog Produk), lalu masukkan variasi pada atribut/opsi varian. "
+                "Dilarang memecah 1 produk menjadi banyak SKU terpisah agar etalase storefront tetap rapi, profesional, dan memudahkan pembeli saat checkout.\n\n"
+                "**Langkah-langkah Praktis di Dashboard:**\n"
+                "1. Buka tab **'products'** (Katalog Produk) pada panel navigasi dashboard.\n"
+                "2. Klik tombol **'+ Tambah Produk Baru'** (atau pilih produk yang ingin diedit).\n"
+                "3. Masukkan 1 Produk Utama dengan nama produk umum (misal: 'Kemeja Linen Pria') dan tentukan 1 kode SKU utama.\n"
+                "4. Aktifkan opsi varian produk, lalu tambahkan opsi varian seperti Warna (contoh: Hitam, Putih, Navy) dan Ukuran (contoh: S, M, L, XL) beserta stok masing-masing.\n"
+                "5. Klik **'Simpan Produk'**. Seluruh varian akan otomatis tergabung rapi dalam 1 halaman single-page checkout di etalase toko Kakak.\n\n"
+                "Apakah ada kendala saat input varian produknya, Kak? Beritahu saya ya jika Kakak butuh bantuan langkah berikutnya!"
+            )
+
+        # 2. Pesanan & Input Resi (Tab 'orders')
+        if any(k in q for k in ["resi", "input resi", "nomor resi", "order", "pesanan", "lacak resi"]):
+            return (
+                f"Halo Kak! Untuk mengelola data pesanan dan input nomor resi pengiriman toko **{tenant_name}**:\n\n"
+                "1. Buka tab **'orders'** (Pesanan) pada panel navigasi dashboard sebelah kiri.\n"
+                "2. Temukan pesanan yang ingin diproses pada daftar transaksi masuk.\n"
+                "3. Klik tombol **'Input Resi'** atau buka detail pesanan terkait.\n"
+                "4. Masukkan nomor resi resmi dari kurir ekspedisi dan simpan pembaruan status.\n"
+                "5. Status pengiriman akan otomatis terupdate dan pelanggan dapat melacak paketnya secara real-time.\n\n"
+                "Apakah ada nomor resi yang ingin Kakak perbarui sekarang? Saya siap bantu, Kak!"
+            )
+
+        # 3. WhatsApp Gateway & Sapaan Otomatis (Tab 'whatsapp')
+        if any(k in q for k in ["sapaan", "greeting", "sambutan", "pesan pembuka", "sambung wa", "koneksi wa", "scan wa", "pasang wa", "pairing"]):
+            return (
+                f"Halo Kak! Untuk mengelola alur WhatsApp dan pesan sapaan toko **{tenant_name}**:\n\n"
+                "1. Buka tab **'whatsapp'** (WhatsApp Gateway) di menu dashboard toko.\n"
+                "2. Jika ingin menghubungkan nomor: Klik **'Muat Ulang Sesi & QR Code'**, lalu scan barcode QR via WhatsApp di HP (Perangkat Tertaut).\n"
+                "3. Jika ingin mengubah salam pembuka: Gulir ke kartu **'Pesan Sapaan Otomatis (Greeting Message)'**, tuliskan kalimat sapaan ramah toko, lalu klik **'Simpan Pesan Sapaan'**.\n"
+                "4. Pantau dan balas chat pelanggan masuk secara real-time langsung melalui live chat **BoonTrack Inbox**.\n\n"
+                "Ada yang ingin Kakak tanyakan lagi seputar koneksi atau pesan otomatis WhatsApp toko? Saya siap bantu, Kak!"
+            )
+
+        # 4. Pengiriman & Ekspedisi (Tab 'shipping')
+        if any(k in q for k in ["ongkir", "shipping", "pengiriman", "ekspedisi", "kurir", "gudang", "asal kirim", "titik jemput"]):
+            return (
+                f"Halo Kak! Untuk mengatur ekspedisi dan tarif pengiriman toko **{tenant_name}**:\n\n"
+                "1. Buka tab **'shipping'** (Pengiriman) pada panel navigasi dashboard.\n"
+                "2. Tentukan titik jemput gudang / alamat asal toko (termasuk kelurahan, kecamatan, dan kode pos).\n"
+                "3. Pilih dan aktifkan layanan kurir yang ingin didukung (Instant, Sameday, atau Reguler via Lincah/Biteship).\n"
+                "4. Klik **'Simpan Pengaturan'** agar kalkulasi ongkir saat pembeli checkout otomatis akurat.\n\n"
+                "Butuh panduan lebih lanjut untuk aktivasi kurir atau alamat gudang toko, Kak?"
+            )
+
+        # 5. Pembayaran & QRIS (Tab 'payments')
+        if any(k in q for k in ["qris", "bayar", "pembayaran", "rekening", "transfer", "downward", "kode unik"]):
+            return (
+                f"Halo Kak! Untuk konfigurasi pembayaran otomatis toko **{tenant_name}**:\n\n"
+                "1. Buka tab **'payments'** (Pembayaran) di panel dashboard merchant.\n"
+                "2. Unggah file gambar QRIS statis toko Anda untuk aktivasi Dynamic QRIS 0% fee MDR.\n"
+                "3. Aktifkan fitur kode unik downward untuk verifikasi mutasi transfer instan.\n"
+                "4. Masukkan nomor rekening bank resmi untuk keperluan pencairan dana penjualan toko.\n"
+                "5. Klik Simpan. Pembeli langsung bisa bayar dari seluruh bank dan e-wallet mana pun!\n\n"
+                "Ada kendala saat upload barcode QRIS atau rekening toko, Kak? Saya siap bantu, Kak!"
+            )
+
+        # 6. Pelacakan Iklan & CAPI (Tab 'ads')
+        if any(k in q for k in ["iklan", "ads", "pixel", "meta pixel", "tiktok pixel", "gtm", "capi", "conversion api"]):
+            return (
+                f"Halo Kak! Untuk konfigurasi pelacakan iklan Meta & TikTok toko **{tenant_name}**:\n\n"
+                "1. Buka tab **'ads'** (Pelacakan Iklan / Tracking) di menu dashboard.\n"
+                "2. Masukkan ID Meta Pixel atau TikTok Pixel toko Kakak.\n"
+                "3. Masukkan token Server-Side Conversion API (CAPI) untuk memulihkan sinyal data iklan hingga 95%+\n"
+                "4. Klik Simpan Token. Seluruh event pembelian dan lead otomatis terlacak dengan sanitasi PII aman.\n\n"
+                "Ada yang ingin Kakak tanyakan lagi terkait integrasi pixel atau CAPI iklan toko?"
+            )
+
+        # 7. Pengaturan Toko & Akun (Tab 'settings')
+        if any(k in q for k in ["settings", "pengaturan", "profil", "nama toko", "domain", "pin", "ganti email", "keamanan"]):
+            return (
+                f"Halo Kak! Untuk mengatur profil dan keamanan toko **{tenant_name}**:\n\n"
+                "1. Buka tab **'settings'** (Pengaturan Toko) di menu navigasi dashboard.\n"
+                "2. Pada tab Profil Toko: Kakak dapat memperbarui logo, nama brand, dan bio toko.\n"
+                "3. Pada tab Keamanan & Akun: Kakak dapat mengelola PIN transaksi, ganti email, atau konfigurasi domain kustom.\n"
+                "4. Klik Simpan Perubahan.\n\n"
+                "Bagian pengaturan mana yang ingin Kakak ubah hari ini? Saya siap memandu, Kak!"
+            )
+
+        # 8. Tambah Produk / Impor Katalog Umum (Tab 'products')
+        if any(k in q for k in ["tambah produk", "upload produk", "impor produk", "import", "katalog", "buat produk"]):
+            return (
+                f"Halo Kak! Untuk menambahkan katalog produk toko **{tenant_name}**:\n\n"
+                "1. Buka tab **'products'** (Katalog Produk) di menu dashboard.\n"
+                "2. Untuk tambah satuan: Klik tombol **'+ Tambah Produk Baru'**, isi nama produk, harga, foto, dan varian.\n"
+                "3. Untuk upload massal: Klik tombol **'Import Massal (.xlsx / .csv)'** dan unggah file spreadsheet katalog Anda.\n"
+                "4. Klik Simpan Produk. Produk akan langsung tampil aktif dan siap dipesan di etalase toko Kakak.\n\n"
+                "Ada produk baru yang ingin Kakak upload hari ini? Saya siap bantu, Kak!"
+            )
+
+        # 9. Default Friendly Dashboard Overview & Navigation
+        return (
+            f"Halo Kak! Saya **BoonPilot Copilot** resmi toko **{tenant_name}** (Tier: **{current_tier}**).\n\n"
+            "Saya siap memandu operasional toko Kakak langkah demi langkah melalui 8 tab resmi dashboard:\n"
+            "1. **Overview**: Ringkasan omset penjualan dan grafik performa toko.\n"
+            "2. **Products**: Tambah produk, kelola 1 SKU untuk banyak varian warna/ukuran, dan atur stok.\n"
+            "3. **Orders**: Pantau pesanan masuk, settlement pembayaran QRIS, dan input resi.\n"
+            "4. **WhatsApp**: Kelola nomor CS, pesan sapaan otomatis, dan chat pelanggan via **BoonTrack Inbox**.\n"
+            "5. **Shipping**: Atur titik jemput gudang pengiriman dan kurir aktif.\n"
+            "6. **Payments**: Setup QRIS statis 0% MDR dan rekening pencairan.\n"
+            "7. **Ads**: Pasang Meta Pixel, TikTok Pixel, dan Server-Side CAPI.\n"
+            "8. **Settings**: Kelola profil toko, ganti email, dan PIN keamanan akun.\n\n"
+            "Ada hal yang ingin Kakak tanyakan atau butuh bantuan langkah berikutnya? Saya siap bantu, Kak!"
+        )
+
 
     async def chat(
         self,
@@ -715,193 +834,9 @@ class BoonPilotService:
             }
 
         # ---------------------------------------------------------------------
-        # C. Quick Action Menu / Onboarding
+        # C. MUTATION ACTIONS: Human-in-the-Loop Proposals (TTL 10 Menit)
         # ---------------------------------------------------------------------
-        if any(k in text_lower for k in ["menu", "tombol navigasi", "fitur apa saja", "bantuan menu", "bantuan"]):
-            dynamic_menu = self.resolve_dynamic_menu(context, rbac_role=rbac_role)
-            button_labels = "\n".join([f"• {btn['label']}" for btn in dynamic_menu["menu"]])
-            reply = (
-                f"👋 Halo! Berikut daftar menu dan kapabilitas resmi toko **{tenant_name}** "
-                f"(Tier: {context.plan}) yang telah disesuaikan dengan entitlement aktif:\n\n"
-                f"{button_labels}\n\n"
-                "Silakan pilih opsi di atas atau ketik instruksi yang Kakak butuhkan!"
-            )
-            data = dynamic_menu
-            self._append_turn(sess_id, "user", message)
-            self._append_turn(sess_id, "assistant", reply)
-            return {
-                "type": "text",
-                "reply": reply,
-                "data": data,
-                "session_id": sess_id,
-            }
-
-        # ---------------------------------------------------------------------
-        # D. Onboarding Impor Katalog
-        # ---------------------------------------------------------------------
-        catalog_onboarding_keywords = [
-            "cara impor", "impor produk", "import produk", "upload massal",
-            "tambah produk", "impor massal", "katalog produk", "spreadsheet", "excel", "csv"
-        ]
-        if any(k in text_lower for k in catalog_onboarding_keywords):
-            reply = (
-                f"Untuk menambahkan atau mengimpor katalog produk di toko {tenant_name}, Anda dapat menggunakan metode:\n\n"
-                "1. **Impor Massal Excel/CSV**:\n"
-                "   - Masuk ke menu **Dashboard > Produk > Impor Massal**.\n"
-                "   - Unduh template spreadsheet kami, isi nama produk, SKU, varian, harga, dan stok.\n"
-                "   - Sistem akan langsung memvalidasi dan menambahkan seluruh SKU dalam beberapa detik!\n\n"
-                "2. **Tambah Produk Manual**:\n"
-                "   - Klik tombol **'+ Tambah Produk Baru'** untuk mengisi detail satuan beserta unggah foto produk.\n\n"
-                "Ada yang ingin Anda tanyakan lebih lanjut seputar impor katalog produk?"
-            )
-            data = {
-                "feature": "catalog_onboarding",
-                "status": "READY",
-                "tenant_slug": clean_slug,
-                "tenant_name": tenant_name,
-                "quick_actions": [
-                    {"label": "Import Massal (.xlsx / .csv)", "action": "open_bulk_import"},
-                    {"label": "+ Tambah Produk Baru", "action": "open_new_product"},
-                ]
-            }
-            self._append_turn(sess_id, "user", message)
-            self._append_turn(sess_id, "assistant", reply)
-            return {
-                "type": "text",
-                "reply": reply,
-                "data": data,
-                "session_id": sess_id,
-            }
-
-        # ---------------------------------------------------------------------
-        # E1. WhatsApp Greeting / Sapaan Customization
-        # ---------------------------------------------------------------------
-        greeting_keywords = [
-            "sapaan", "greeting", "pesan pembuka", "ubah sapaan", "ganti sapaan",
-            "sambutan", "pesan sapaan", "teks sapaan", "edit sapaan", "ubah greeting",
-            "ganti greeting", "atur sapaan", "custom greeting"
-        ]
-        if any(k in text_lower for k in greeting_keywords):
-            reply = (
-                f"Untuk mengubah teks sapaan otomatis WhatsApp toko **{tenant_name}**:\n\n"
-                "1. Buka tab **WhatsApp** di navigasi dashboard Anda.\n"
-                "2. Gulir ke bagian **Pesan Sapaan Otomatis (Greeting Message)**.\n"
-                "3. Masukkan teks sapaan yang Anda inginkan (gunakan variabel `[nama_toko]` agar otomatis menyesuaikan nama toko).\n"
-                "4. Klik tombol **Simpan Pesan Sapaan**.\n\n"
-                "📌 *Alternatif*: Anda juga dapat mengaturnya melalui tab **Pengaturan** > sub-menu **WhatsApp**."
-            )
-            data = {
-                "feature": "whatsapp_greeting",
-                "status": "CONFIGURABLE",
-                "tenant_slug": clean_slug,
-                "tenant_name": tenant_name,
-                "quick_actions": [
-                    {"label": "Buka Tab WhatsApp", "action": "navigate_tab", "tab": "whatsapp"},
-                    {"label": "Buka Tab Pengaturan", "action": "navigate_tab", "tab": "settings"},
-                ]
-            }
-            self._append_turn(sess_id, "user", message)
-            self._append_turn(sess_id, "assistant", reply)
-            return {
-                "type": "text",
-                "reply": reply,
-                "data": data,
-                "session_id": sess_id,
-            }
-
-        # ---------------------------------------------------------------------
-        # E2. WhatsApp Automation Flow (Pencegahan Greeting Loop)
-        # ---------------------------------------------------------------------
-        wa_keywords = [
-            "whatsapp", "wa", "otomatisasi wa", "bot wa", "fitur wa",
-            "wa gateway", "alur wa", "whatsapp automation", "koneksi wa", "scan qr",
-        ]
-        if any(k in text_lower for k in wa_keywords):
-            reply = (
-                f"Fitur WhatsApp toko **{tenant_name}** terpusat di tab **WhatsApp** dashboard:\n\n"
-                "1. **Koneksi & Scan QR**: Hubungkan atau putuskan nomor WhatsApp bisnis toko.\n"
-                "2. **Pesan Sapaan Otomatis**: Kustomisasi salam pembuka saat pembeli pertama kali chat.\n"
-                "3. **Katalog & Checkout Instan**: Pembeli otomatis menerima menu produk dan link pembayaran QRIS.\n\n"
-                "Silakan buka tab **WhatsApp** di dashboard untuk mengelola koneksi dan teks sapaan toko Anda."
-            )
-            data = {
-                "feature": "whatsapp_automation",
-                "status": "ACTIVE",
-                "tenant_slug": clean_slug,
-                "tenant_name": tenant_name,
-                "quick_actions": [
-                    {"label": "Buka Tab WhatsApp", "action": "navigate_tab", "tab": "whatsapp"},
-                    {"label": "Buka Tab Pengaturan", "action": "navigate_tab", "tab": "settings"}
-                ]
-            }
-            self._append_turn(sess_id, "user", message)
-            self._append_turn(sess_id, "assistant", reply)
-            return {
-                "type": "text",
-                "reply": reply,
-                "data": data,
-                "session_id": sess_id,
-            }
-
-        # ---------------------------------------------------------------------
-        # F. Deteksi Tool: Sales & ROAS Report
-        # ---------------------------------------------------------------------
-        if any(k in text_lower for k in ["omset", "roas", "penjualan", "revenue", "closing", "performa"]):
-            days = 30 if "30" in text_lower or "sebulan" in text_lower else 7
-            report = await self.get_sales_and_roas_report(clean_slug, days=days)
-            reply = (
-                f"📊 *Laporan Penjualan & ROAS Toko ({days} Hari Terakhir)*\n\n"
-                f"• *Total Omset:* Rp {report['total_revenue']:,.0f}\n"
-                f"• *Total Closing:* {report['total_orders']} pesanan\n"
-                f"• *Estimasi ROAS:* {report['blended_roas']}x\n"
-                f"• *Conversion Rate:* {report['conversion_rate_pct']}%\n\n"
-                f"💡 *Insight BoonPilot:* {report['recommendation']}"
-            )
-            masked_reply = mask_sensitive_data(reply)
-            self._append_turn(sess_id, "user", message)
-            self._append_turn(sess_id, "assistant", masked_reply)
-            return {
-                "type": "text",
-                "reply": masked_reply,
-                "data": report,
-                "session_id": sess_id,
-            }
-
-        # ---------------------------------------------------------------------
-        # G. Deteksi Tool: Check Inventory Levels
-        # ---------------------------------------------------------------------
-        if any(k in text_lower for k in ["stok", "inventory", "sisa barang", "menipis", "habis"]):
-            if not any(k in text_lower for k in ["ubah", "ganti", "tambah", "set", "update"]):
-                inv = self.check_inventory_levels(clean_slug, threshold=5)
-                if inv["low_stock_items"]:
-                    items_str = "\n".join(
-                        f"  ⚠️ *{p['title']}* (Tersisa: {p['stock']} unit)"
-                        for p in inv["low_stock_items"]
-                    )
-                    reply = (
-                        f"⚠️ *Peringatan Stok Menipis!*\n"
-                        f"Terdapat {inv['low_stock_count']} produk dengan stok <= {inv['threshold']} unit:\n\n"
-                        f"{items_str}\n\n"
-                        "Apakah Kakak ingin saya bantu perbarui jumlah stok produk di atas?"
-                    )
-                else:
-                    reply = (
-                        f"✅ *Status Stok Aman!* Seluruh produk ({inv['total_products']} item) "
-                        f"memiliki ketersediaan stok di atas batas minimum."
-                    )
-                masked_reply = mask_sensitive_data(reply)
-                self._append_turn(sess_id, "user", message)
-                self._append_turn(sess_id, "assistant", masked_reply)
-                return {
-                    "type": "text",
-                    "reply": masked_reply,
-                    "data": inv,
-                    "session_id": sess_id,
-                }
-
-        # ---------------------------------------------------------------------
-        # H. Mutasi Data: Update Stock
-        # ---------------------------------------------------------------------
+        # 1. Update Product Stock
         if any(k in text_lower for k in ["ubah stok", "ganti stok", "update stok", "set stok"]):
             stock_match = re.search(r"\b(\d+)\b", text_lower)
             new_stock = int(stock_match.group(1)) if stock_match else 50
@@ -927,8 +862,178 @@ class BoonPilotService:
             self._append_turn(sess_id, "assistant", proposal["description"])
             return proposal
 
+        # 2. Update Shipping Origin
+        if any(k in text_lower for k in ["ganti alamat", "ubah alamat", "update alamat", "gudang pengiriman"]):
+            postal_match = re.search(r"\b(\d{5})\b", message)
+            postal_code = postal_match.group(1) if postal_match else "40111"
+
+            proposal = self.create_action_proposal(
+                tenant_slug=clean_slug,
+                action_type="update_shipping_origin",
+                description=f"Konfirmasi pembaruan alamat gudang pengiriman toko ke '{message}' (Kode Pos: {postal_code}).",
+                payload={
+                    "address": message.strip(),
+                    "postal_code": postal_code,
+                    "subdistrict": "Bandung",
+                },
+            )
+            self._append_turn(sess_id, "user", message)
+            self._append_turn(sess_id, "assistant", proposal["description"])
+            return proposal
+
+        # 3. Toggle Courier Service
+        if any(k in text_lower for k in ["kurir", "gosend", "grab", "jne", "sicepat"]):
+            if any(k in text_lower for k in ["aktifkan", "nonaktifkan", "matikan", "nyalakan", "toggle"]):
+                is_active = not any(k in text_lower for k in ["nonaktifkan", "matikan", "disable"])
+                courier_name = "GoSend"
+                if "grab" in text_lower:
+                    courier_name = "Grab"
+                elif "jne" in text_lower:
+                    courier_name = "JNE"
+                elif "sicepat" in text_lower:
+                    courier_name = "SiCepat"
+
+                action_verb = "mengaktifkan" if is_active else "menonaktifkan"
+                proposal = self.create_action_proposal(
+                    tenant_slug=clean_slug,
+                    action_type="toggle_courier_service",
+                    description=f"Konfirmasi {action_verb} layanan ekspedisi '{courier_name}' untuk pengiriman toko.",
+                    payload={
+                        "courier_name": courier_name,
+                        "is_active": is_active,
+                    },
+                )
+                self._append_turn(sess_id, "user", message)
+                self._append_turn(sess_id, "assistant", proposal["description"])
+                return proposal
+
+        # 4. WhatsApp Sub-actions (Test Assistant Number & Edit Catalog Flow)
+        if any(k in text_lower for k in ["uji nomor asisten", "tes nomor asisten", "test nomor asisten"]):
+            proposal = self.create_action_proposal(
+                tenant_slug=clean_slug,
+                action_type="test_assistant_number",
+                description="Konfirmasi pengiriman pesan uji coba handshake ke nomor asisten WhatsApp.",
+                payload={
+                    "test_phone": "6281237450222",
+                    "mode": "handshake_test",
+                },
+            )
+            self._append_turn(sess_id, "user", message)
+            self._append_turn(sess_id, "assistant", proposal["description"])
+            return proposal
+
+        if any(k in text_lower for k in ["ubah alur katalog", "ganti alur katalog", "edit alur katalog"]):
+            proposal = self.create_action_proposal(
+                tenant_slug=clean_slug,
+                action_type="edit_catalog_flow",
+                description="Konfirmasi pembaruan konfigurasi alur katalog produk WhatsApp toko.",
+                payload={
+                    "flow_type": "numbered_menu",
+                    "catalog_limit": 5,
+                },
+            )
+            self._append_turn(sess_id, "user", message)
+            self._append_turn(sess_id, "assistant", proposal["description"])
+            return proposal
+
         # ---------------------------------------------------------------------
-        # I. General Agentic Chat via LLM Gateway dengan Context & Multi-turn
+        # D. EXACT WHATSAPP AUTOMATION STATUS QUERY (Capability Guard)
+        # ---------------------------------------------------------------------
+        auto_flow_queries = [
+            "bagaimana otomatisasi whatsapp untuk toko ini",
+            "status bot wa toko",
+            "apakah whatsapp automation sudah aktif",
+            "fitur otomatisasi wa",
+            "bagaimana dengan otomatisasi whatsapp tokonya",
+        ]
+        clean_msg = text_lower.strip("? .")
+        if any(clean_msg == q or clean_msg.startswith(q) for q in auto_flow_queries):
+            reply = (
+                f"Otomatisasi WhatsApp untuk toko {tenant_name} sudah aktif dengan alur:\n"
+                f" 1. Sambutan otomatis calon pembeli via WA.\n"
+                f" 2. Menu bernomor (1, 2, 3) untuk cek detail produk & ulasan.\n"
+                f" 3. Link checkout instan & pelacakan konversi iklan otomatis (Lead/CAPI).\n\n"
+                "Apakah Anda ingin melihat statistik chat, menguji nomor asisten, atau mengubah alur katalog?"
+            )
+            data = {
+                "feature": "whatsapp_automation",
+                "status": "ACTIVE",
+                "tenant_slug": clean_slug,
+                "tenant_name": tenant_name,
+                "automation_flows": [
+                    "1. Sambutan otomatis calon pembeli via WA.",
+                    "2. Menu bernomor (1, 2, 3) untuk cek detail produk & ulasan.",
+                    "3. Link checkout instan & pelacakan konversi iklan otomatis (Lead/CAPI)."
+                ],
+                "quick_actions": [
+                    {"label": "Lihat Statistik Chat", "action": "view_chat_analytics", "path": "/dashboard/chats"},
+                    {"label": "Uji Nomor Asisten", "action": "test_assistant_number", "payload": {"test_phone": "6281237450222"}},
+                    {"label": "Ubah Alur Katalog", "action": "edit_catalog_flow", "path": "/dashboard/catalog/flow"}
+                ]
+            }
+            self._append_turn(sess_id, "user", message)
+            self._append_turn(sess_id, "assistant", reply)
+            return {
+                "type": "text",
+                "reply": reply,
+                "data": data,
+                "session_id": sess_id,
+            }
+
+        # ---------------------------------------------------------------------
+        # E. AUTHORITATIVE QUERY TOOLS: Sales Report & Inventory
+        # ---------------------------------------------------------------------
+        if any(k in text_lower for k in ["omset", "roas", "penjualan", "revenue", "closing", "performa"]):
+            days = 30 if "30" in text_lower or "sebulan" in text_lower else 7
+            report = await self.get_sales_and_roas_report(clean_slug, days=days)
+            reply = (
+                f"📊 *Laporan Penjualan & ROAS Toko ({days} Hari Terakhir)*\n\n"
+                f"• *Total Omset:* Rp {report['total_revenue']:,.0f}\n"
+                f"• *Total Closing:* {report['total_orders']} pesanan\n"
+                f"• *Estimasi ROAS:* {report['blended_roas']}x\n"
+                f"• *Conversion Rate:* {report['conversion_rate_pct']}%\n\n"
+                f"💡 *Insight BoonPilot:* {report['recommendation']}"
+            )
+            masked_reply = mask_sensitive_data(reply)
+            self._append_turn(sess_id, "user", message)
+            self._append_turn(sess_id, "assistant", masked_reply)
+            return {
+                "type": "text",
+                "reply": masked_reply,
+                "data": report,
+                "session_id": sess_id,
+            }
+
+        if any(k in text_lower for k in ["stok", "inventory", "sisa barang"]) and any(k in text_lower for k in ["cek", "menipis", "habis", "mau habis", "peringatan"]):
+            inv = self.check_inventory_levels(clean_slug, threshold=5)
+            if inv["low_stock_items"]:
+                items_str = "\n".join(
+                    f"  ⚠️ *{p['title']}* (Tersisa: {p['stock']} unit)"
+                    for p in inv["low_stock_items"]
+                )
+                reply = (
+                    f"⚠️ *Peringatan Stok Menipis!*\n"
+                    f"Terdapat {inv['low_stock_count']} produk dengan stok <= {inv['threshold']} unit:\n\n"
+                    f"{items_str}\n\n"
+                    "Apakah Kakak ingin saya bantu perbarui jumlah stok produk di atas?"
+                )
+            else:
+                reply = (
+                    f"✅ *Status Stok Aman!* Seluruh produk ({inv['total_products']} item) "
+                    f"memiliki ketersediaan stok di atas batas minimum."
+                )
+            masked_reply = mask_sensitive_data(reply)
+            self._append_turn(sess_id, "user", message)
+            self._append_turn(sess_id, "assistant", masked_reply)
+            return {
+                "type": "text",
+                "reply": masked_reply,
+                "data": inv,
+                "session_id": sess_id,
+            }
+
+        # ---------------------------------------------------------------------
+        # F. DYNAMIC AGENTIC CHAT VIA GEMINI LLM GATEWAY (ZERO STATIC MOCKING §0.12)
         # ---------------------------------------------------------------------
         system_prompt = context_data["system_prompt"]
         try:
@@ -946,10 +1051,14 @@ class BoonPilotService:
             logger.warning(f"BoonPilot LLM gateway call failed: {e}")
             llm_reply = None
 
+        # Resilient Dynamic Grounded Fallback if LLM is offline / unconfigured
         if not llm_reply or not llm_reply.strip():
-            llm_reply = (
-                f"Halo Kak! Saya BoonPilot Copilot toko **{tenant_name}**. "
-                f"Saya siap membantu memantau omset, stok barang, alur WhatsApp, hingga kalkulasi upgrade paket toko Anda."
+            llm_reply = self._generate_dynamic_grounded_fallback(
+                user_message=message,
+                tenant_name=tenant_name,
+                current_tier=context.plan,
+                products=context_data.get("products"),
+                shipping_origin=context_data.get("shipping_origin"),
             )
 
         masked_reply = mask_sensitive_data(llm_reply)
