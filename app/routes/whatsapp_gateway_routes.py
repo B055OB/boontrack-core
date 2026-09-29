@@ -99,7 +99,7 @@ async def connect_growth_session(
                 "qr_image": evo_data.get("qr_image") or evo_data.get("base64"),
                 "status": evo_data.get("status"),
                 "phone_number": evo_data.get("phone_number"),
-                "message": "Sesi QR WhatsApp terhubung melalui BoonTrack Gateway."
+                "message": "Sesi QR WhatsApp terhubung melalui BoonTrack WhatsApp Engine (BoonTrack Gateway)."
             }
         else:
             return JSONResponse(
@@ -631,6 +631,27 @@ async def process_inbound_message(payload: InboundPayload):
         or "app-shop" in tenant_slug
     )
     if is_boon_sales_rep:
+        # 1. Omnichannel VIP Upsell Router (Bot 081215567168 / Setup Toko Terima Beres §24.3)
+        from app.services.official_support_router import handle_official_support_vip_upsell
+        vip_res = await handle_official_support_vip_upsell(
+            incoming_text=incoming_text,
+            sender_phone=clean_phone,
+            contact_name=contact_name,
+        )
+        if vip_res and vip_res.get("reply_text"):
+            logger.info(
+                f"[VIP UPSELL ROUTER HIT] Handled for {clean_phone} (action: {vip_res.get('action')}, VIP: {vip_res.get('is_vip')})"
+            )
+            return {
+                "status": "success",
+                "tenant_slug": vip_res.get("tenant_slug", tenant_slug),
+                "conversation_scope": conversation_scope,
+                "group_jid": payload.group_jid,
+                "bot_strategy": "vip_upsell_router",
+                "reply_text": vip_res.get("reply_text"),
+                "media_url": vip_res.get("media_url"),
+            }
+
         from app.whatsapp.traffic_splitter import generate_group_boonpilot_reply
         text_clean = re.sub(r"@[\w.]+", "", incoming_text).strip()
         if not text_clean:
@@ -1046,6 +1067,17 @@ async def process_inbound_message(payload: InboundPayload):
         f"[GROWTH GATEWAY REPLY READY] ✅ Balasan Terbentuk untuk {clean_phone} "
         f"(Strategy: {resolved_strategy}, {len(reply)} chars): \"{reply[:80]}...\""
     )
+
+    # Atomic Quota Decrement (24h unique sender window §4.2)
+    if reply and not is_boon_sales_rep:
+        try:
+            from app.services.quota_service import quota_service
+            asyncio.create_task(quota_service.decrement_session_quota_if_eligible(
+                tenant_slug=tenant_slug,
+                sender_phone=clean_phone,
+            ))
+        except Exception as _q_err:
+            logger.debug(f"[QUOTA_DECREMENT_TASK_WARN] {_q_err}")
 
     # Catat pesan masuk dan keluar ke Supabase secara asinkron
     asyncio.create_task(log_to_supabase_messages(
@@ -1953,8 +1985,26 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         # Bypass seluruh kartu storefront/greeting toko untuk instance boontrack-app-shop.
         # Alihkan SEMUA pesan masuk (GROUP mention maupun DIRECT DM) LANGSUNG ke BoonPilot Brain.
         # =====================================================================
-        from app.whatsapp.traffic_splitter import generate_group_boonpilot_reply
-        text_clean = re.sub(r"@[\w.]+", "", incoming_text).strip() or incoming_text
+        # 1. Omnichannel VIP Upsell Router (Bot 081215567168 / Setup Toko Terima Beres §24.3)
+        from app.services.official_support_router import handle_official_support_vip_upsell
+        vip_res = await handle_official_support_vip_upsell(
+            incoming_text=message_body_for_processing or incoming_text,
+            sender_phone=sender_phone,
+            contact_name=sender_name,
+        )
+        if vip_res and vip_res.get("reply_text"):
+            reply_text = vip_res.get("reply_text")
+            reply_media_to_send = vip_res.get("media_url")
+            inbound_res = {
+                "status": "success",
+                "tenant_slug": vip_res.get("tenant_slug", canonical_slug),
+                "conversation_scope": conversation_scope,
+                "reply_text": reply_text,
+                "media_url": reply_media_to_send,
+            }
+        else:
+            from app.whatsapp.traffic_splitter import generate_group_boonpilot_reply
+            text_clean = re.sub(r"@[\w.]+", "", incoming_text).strip() or incoming_text
         logger.info(
             f"[BOONPILOT SALES REP] Webhook locked to pure Sales Rep mode for '{instance_name}' / '{canonical_slug}' "
             f"({conversation_scope}) from '{sender_phone}' -> text_clean='{text_clean[:80]}'"
@@ -2090,6 +2140,16 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         ))
     elif reply_text:
         track_whatsapp_message("OUTBOUND", tenant_id=resolved_tenant, session_id=session_id_scope, classification="outbound_gateway")
+        # Atomic Quota Decrement (24h unique sender window §4.2)
+        if not is_boon_instance and conversation_scope != "GROUP":
+            try:
+                from app.services.quota_service import quota_service
+                asyncio.create_task(quota_service.decrement_session_quota_if_eligible(
+                    tenant_slug=resolved_tenant,
+                    sender_phone=sender_phone,
+                ))
+            except Exception as _q_err:
+                logger.debug(f"[QUOTA_DECREMENT_TASK_WARN] {_q_err}")
         send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{target_send_instance}"
         headers = get_evolution_headers()
         send_payload: Dict[str, Any] = {

@@ -588,6 +588,13 @@ class UnifiedConversationEngine:
             mime_type=mime_type,
         )
 
+        # 8. Deduct session quota if eligible (24-hour unique sender window per architecture §3.1, §4.2, §8.4)
+        try:
+            from app.services.quota_service import quota_service
+            await quota_service.decrement_session_quota_if_eligible(clean_slug, sender_id)
+        except Exception as _q_err:
+            logger.warning(f"[QUOTA_DEDUCT_WARN] Failed to decrement quota for {clean_slug}: {_q_err}")
+
         return {
             "success": True,
             "reply": llm_reply,

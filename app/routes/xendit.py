@@ -565,6 +565,45 @@ async def process_xendit_webhook_core(
                 }
             }
 
+    # 1.8 SaaS Lifecycle AI Session Quota Top-Up Handler (PT BoonTrack Inovasi Digital)
+    if external_id.startswith("TOPUP-") or external_id.startswith("TOPUP_"):
+        if event_status in _PAID_STATUSES:
+            logger.info(f"[XENDIT_TOPUP_SETTLED] Processing quota top-up for '{external_id}' (Rp{amount:,})")
+            from app.services.quota_service import quota_service
+            # Format: TOPUP-{tenant_slug}-{sessions}-{timestamp}
+            parts = external_id.split("-")
+            topup_tenant_slug = parts[1] if len(parts) >= 3 else "general"
+            try:
+                topup_sessions = int(parts[2]) if len(parts) >= 3 else 100
+            except ValueError:
+                topup_sessions = 100
+
+            xendit_service.mark_settled(external_id)
+            topup_res = await quota_service.increment_session_quota(
+                tenant_slug=topup_tenant_slug,
+                additional_sessions=topup_sessions,
+                invoice_id=event_id,
+                package_id=f"topup_{topup_sessions}",
+                amount_paid=amount,
+            )
+            return {
+                "http_status": 200,
+                "response": {
+                    "status": "TOPUP_PROCESSED",
+                    "tenant_slug": topup_tenant_slug,
+                    "sessions_added": topup_sessions,
+                    "data": topup_res,
+                }
+            }
+        else:
+            return {
+                "http_status": 200,
+                "response": {
+                    "status": "TOPUP_PENDING",
+                    "event_status": event_status,
+                }
+            }
+
     # 2. Fast L1 In-Memory Idempotency Check
     if external_id and xendit_service.is_settled(external_id):
         logger.info(f"[Xendit Webhook L1 Hit] Order '{external_id}' already marked settled in-memory. Returning 200 OK.")
@@ -795,6 +834,7 @@ async def process_xendit_webhook_core(
 # FastAPI Route Handlers
 # -----------------------------------------------------------------------------
 
+@xendit_router.post("/api/v1/webhooks/xendit", summary="Xendit Official Webhook")
 @xendit_router.post("/webhook/payment/xendit", summary="Xendit Webhook Notification")
 @xendit_router.post("/api/v1/payments/xendit/callback", summary="Xendit QRIS Webhook Callback")
 @xendit_router.post("/api/v1/payment/xendit/callback", summary="Xendit QRIS Webhook Callback Alias")
