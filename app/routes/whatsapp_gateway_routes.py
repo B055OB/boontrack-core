@@ -99,7 +99,7 @@ async def connect_growth_session(
                 "qr_image": evo_data.get("qr_image") or evo_data.get("base64"),
                 "status": evo_data.get("status"),
                 "phone_number": evo_data.get("phone_number"),
-                "message": "Sesi QR WhatsApp terhubung melalui BoonTrack WhatsApp Engine (Evolution API v2)."
+                "message": "Sesi QR WhatsApp terhubung melalui BoonTrack Gateway."
             }
         else:
             return JSONResponse(
@@ -108,7 +108,7 @@ async def connect_growth_session(
                     "success": False,
                     "tenant_slug": clean_tenant,
                     "status": "DEGRADED",
-                    "error": evo_data.get("error") or "Gagal membuat atau menghubungkan sesi di Evolution API v2.",
+                    "error": evo_data.get("error") or "Gagal membuat atau menghubungkan sesi di BoonTrack Gateway.",
                     "disconnect_reason": evo_data.get("disconnect_reason") or "GATEWAY_SESSION_PENDING",
                     "detail": evo_data
                 }
@@ -122,7 +122,7 @@ async def connect_growth_session(
                 "tenant_slug": clean_tenant,
                 "status": "DEGRADED",
                 "disconnect_reason": "GATEWAY_UNREACHABLE",
-                "error": f"Evolution API v2 tidak dapat dihubungi: {str(evo_err)}"
+                "error": f"BoonTrack Gateway tidak dapat dihubungi: {str(evo_err)}"
             }
         )
 
@@ -208,7 +208,7 @@ async def get_evolution_instance_connection_state(instance: str):
             content={
                 "success": False,
                 "instance": clean_instance,
-                "error": f"Tidak dapat terhubung ke Evolution API di {EVOLUTION_BASE_URL}: {str(exc)}"
+                "error": f"Tidak dapat terhubung ke BoonTrack Gateway: {str(exc)}"
             }
         )
 
@@ -466,12 +466,9 @@ async def check_and_handle_session_handover_and_toggle(
             "message": "Session resumed by admin command (silent)",
         }
 
-    # 3. Buyer Escalation Intent (regex: r"\b(admin|cs|manusia|human|operator|bicara dengan orang|bantuan orang|ngobrol sama admin|mau cs|kang sakti|owner|pemilik|live cs|hubungi cs|chat cs|bantuan admin)\b")
-    BUYER_ESCALATION_PATTERN = re.compile(
-        r"\b(admin|cs|manusia|human|operator|bicara dengan orang|bantuan orang|ngobrol sama admin|mau cs|kang sakti|owner|pemilik|live cs|hubungi cs|chat cs|bantuan admin)\b",
-        re.IGNORECASE
-    )
-    if BUYER_ESCALATION_PATTERN.search(raw_clean):
+    # 3. Buyer Escalation Intent to Human CS
+    from app.services.ai.grounding import is_handover_intent, HANDOVER_TRANSITION_REPLY
+    if is_handover_intent(raw_clean):
         logger.info(f"[BUYER_ESCALATION_HANDOVER] Escalation intent detected from '{clean_digits}' on tenant '{tenant_slug}': '{raw_clean[:60]}'")
         if sb:
             try:
@@ -483,9 +480,9 @@ async def check_and_handle_session_handover_and_toggle(
                     "current_state": "HANDOVER_TO_HUMAN",
                     "is_paused": True,
                     "paused_at": now_iso,
-                    "paused_by": "buyer_escalation",
+                    "paused_by": "user_request_human",
                     "paused_until": paused_until_iso,
-                    "metadata": {"handover_reason": "buyer_escalation", "paused_by": "buyer_escalation", "paused_at": now_iso, "trigger_text": raw_clean[:100]},
+                    "metadata": {"handover_reason": "user_request_human", "paused_by": "user_request_human", "paused_at": now_iso, "trigger_text": raw_clean[:100]},
                     "updated_at": now_iso,
                 }, on_conflict="tenant_id,user_identifier").execute()
                 sb.table("conversations").update({
@@ -503,9 +500,9 @@ async def check_and_handle_session_handover_and_toggle(
             "bot_paused": True,
             "action": "HANDOVER_TO_HUMAN",
             "is_paused": True,
-            "paused_by": "buyer_escalation",
+            "paused_by": "user_request_human",
             "paused_at": now_iso,
-            "reply_text": "Baik kak, obrolan ini saya teruskan langsung ke Admin kami ya. Sistem otomatis saya jeda agar admin kami bisa membalas manual. Mohon ditunggu sebentar ya kak 🙏",
+            "reply_text": HANDOVER_TRANSITION_REPLY,
         }
 
     # 4. Active Pause Guard (Auto-Mute): if session is currently paused/handover, mute bot

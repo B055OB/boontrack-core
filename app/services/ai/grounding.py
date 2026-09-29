@@ -43,12 +43,32 @@ STRICT_READER_GROUNDING_PROMPT = """\
    - PEMBELI (Customer/Buyer): BEBAS scan dan membayar dari rekening bank mana pun (BCA, Mandiri, BRI, BNI, BSI, Permata, CIMB, Danamon, dll) ataupun semua e-wallet (GoPay, OVO, DANA, ShopeePay, AstraPay, LinkAja) melalui scan barcode QRIS toko.
 """
 
-DIRECT_CHECKOUT_WA_SOP_PROMPT = """\
-[SOP DIRECT CHECKOUT WHATSAPP - JASA TERIMA BERES / SETUP TOKO]
-1. Jika calon tenant atau pengguna meminta jasa terima beres / setup toko (misal: "bisa bantu terima beres?", "jasa setup toko berapa?", "tolong setupkan toko saya", "terima jadi"):
+BOONTRACK_OFFICIAL_SERVICES_PACKAGES = """\
+[3 PILIHAN PAKET LAYANAN RESMI BOONTRACK]
+Jika pelanggan / calon klien menanyakan seputar jasa, layanan, pembuatan toko, setup bot, atau landing page, jelaskan 3 pilihan paket resmi berikut dengan batasan yang jelas (tanpa melempar link luar / buzzerukm):
+
+1. Paket 1: Setup Bot WhatsApp Natural
+   - Ruang Lingkup: Tuning persona AI CS agar ramah dan natural, input knowledge katalog & FAQ lengkap toko, serta integrasi nomor WhatsApp via BoonTrack Gateway.
+   - Cocok untuk: Toko yang sudah memiliki katalog/produk dan ingin CS WhatsApp auto-reply 24/7 super responsif.
+
+2. Paket 2: Single Page Store / Landing Page Katalog
+   - Ruang Lingkup: Dibuatkan 1 landing page katalog resmi di shop.boontrack.com/<nama-toko>, banner cover estetik & mobile-friendly, serta tombol direct checkout terhubung langsung ke WhatsApp.
+   - Cocok untuk: Pebisnis yang butuh etalase produk profesional instan tanpa ribet bikin website.
+
+3. Paket 3: Paket Terima Beres All-in-One (Full Service)
+   - Ruang Lingkup: Auto-scraping foto, deskripsi, dan varian produk langsung dari link toko Marketplace (Shopee/Tokopedia) atau Instagram klien. Dibuatkan landing page katalog resmi, bot dilatih responsif & natural, dan dihubungkan ke mutasi otomatis BoonTrack Reader (auto-verifikasi pembayaran).
+   - Cocok untuk: Seller yang ingin terima jadi dari A sampai Z tanpa repot input produk satu per satu.
+"""
+
+DIRECT_CHECKOUT_WA_SOP_PROMPT = f"""\
+{BOONTRACK_OFFICIAL_SERVICES_PACKAGES}
+
+[SOP DIRECT CHECKOUT WHATSAPP - PENJUALAN JASA & SETUP TOKO]
+1. Jika calon tenant atau pengguna meminta jasa, layanan, atau setup toko (misal: "ada jasa apa aja?", "bisa bantu terima beres?", "jasa setup toko berapa?", "tolong setupkan toko saya", "paket bot wa"):
    - Berikan konsultasi yang ramah, hangat, dan solutif langsung di WhatsApp.
-   - Jelaskan bahwa tim BoonTrack siap membantu setup lengkap terima beres (katalog produk, integrasi bot WhatsApp, QRIS dinamis 0% MDR, dan pelacakan pixel/CAPI).
-   - Tanyakan informasi dasar toko (Nama Toko, Jenis Produk, dan Nomor WhatsApp Bisnis) dan siapkan rincian invoice/QRIS pembayaran langsung di WhatsApp.
+   - Paparkan 3 pilihan paket layanan resmi di atas.
+   - Tanyakan informasi kebutuhan toko (Nama Toko, Jenis Produk, Nomor WhatsApp Bisnis, dan link medsos/marketplace jika memilih Paket 3).
+   - Siapkan dan generate rincian invoice/QRIS pembayaran langsung di WhatsApp.
    - DILARANG KERAS melempar atau mengarahkan calon tenant ke link pendaftaran lama / buzzerukm (seperti buzzerukm.boontrack.com/register).
 """
 
@@ -63,10 +83,13 @@ COMBINED_STRICT_AI_DIRECTIVE = f"""\
 # ---------------------------------------------------------------------------
 
 SETUP_TOKO_KEYWORDS = [
+    "jasa", "layanan", "paket", "pembuatan toko", "setup bot", "landing page",
     "terima beres", "jasa terima beres", "setup toko", "jasa setup",
     "bantu setup", "setupkan toko", "bikinin toko", "buatkan toko",
     "terima jadi", "bantu buatkan toko", "jasa pembuatan toko",
-    "paket terima beres", "bantu pasang toko", "setup wa bot",
+    "paket terima beres", "all in one", "single page store", "harga jasa",
+    "biaya setup", "bikin bot wa", "tarif jasa", "paket 1", "paket 2", "paket 3",
+    "bantu pasang toko", "setup wa bot",
 ]
 
 READER_INQUIRY_KEYWORDS = [
@@ -76,9 +99,21 @@ READER_INQUIRY_KEYWORDS = [
     "verifikasi mutasi",
 ]
 
+# Kata kunci / regex resmi untuk auto-handover ke CS manusia
+HANDOVER_HUMAN_KEYWORDS = [
+    "admin", "cs", "manusia", "orang", "customer service",
+    "bicara langsung", "hubungi orang"
+]
+
+HANDOVER_TRANSITION_REPLY = (
+    "Siap kak, saya langsung hubungkan obrolan ini ke tim Admin / CS manusia kami ya. "
+    "Mohon ditunggu sebentar, tim kami akan segera membalas chat Kakak di sini secara langsung. "
+    "Terima kasih banyak atas kesabarannya! 🙏"
+)
+
 
 def is_setup_toko_intent(text: str) -> bool:
-    """Mendeteksi apakah pesan pengguna menanyakan jasa terima beres / setup toko."""
+    """Mendeteksi apakah pesan pengguna menanyakan jasa, layanan, paket, atau setup toko."""
     if not text:
         return False
     lower = text.lower().strip()
@@ -93,22 +128,36 @@ def is_reader_inquiry_intent(text: str) -> bool:
     return any(kw in lower for kw in READER_INQUIRY_KEYWORDS)
 
 
+def is_handover_intent(text: str) -> bool:
+    """Mendeteksi apakah pengguna ingin berbicara langsung dengan orang / CS manual."""
+    if not text:
+        return False
+    lower = text.lower().strip()
+    return any(re.search(rf"\b{re.escape(kw)}\b", lower) for kw in HANDOVER_HUMAN_KEYWORDS) or any(
+        kw in lower for kw in ["bicara dengan orang", "bantuan orang", "live cs", "human cs", "kang sakti", "owner", "pemilik"]
+    )
+
+
 def generate_setup_toko_consultation_reply(customer_name: str = "Kakak", tenant_slug: Optional[str] = None, **kwargs) -> str:
-    """Jawaban konsultasi ramah untuk calon tenant yang meminta jasa terima beres / setup toko langsung di WA."""
+    """Jawaban konsultasi ramah memaparkan 3 pilihan paket layanan resmi BoonTrack langsung di WA."""
     target_name = customer_name if customer_name and customer_name != "Kakak" else "Kak"
     return (
-        f"Halo {target_name}! Tentu, kami memiliki layanan *Jasa Setup Toko Terima Beres* langsung dari tim resmi BoonTrack 🙏✨\n\n"
-        "Dengan layanan terima beres ini, tim kami akan bantu siapkan seluruh toko online Kakak dari awal sampai siap jualan:\n"
-        "1. 🛍️ Input etalase katalog produk & varian resmi toko.\n"
-        "2. 💬 Integrasi bot WhatsApp otomatis (BoonTrack Engine) untuk fast-response pelanggan 24/7.\n"
-        "3. 💳 Aktivasi QRIS dinamis otomatis (0% fee/MDR, uang masuk 100% utuh langsung ke rekening Kakak).\n"
-        "4. 📦 Pengaturan integrasi cek ongkir otomatis kurir (JNE, J&T, SiCepat, dll).\n"
-        "5. 📊 Pemasangan Meta Pixel / TikTok Pixel untuk kebutuhan tracking iklan.\n\n"
-        "Agar tim kami bisa langsung menyiapkan rancangan toko dan rincian pembayarannya di chat ini, boleh dibantu informasikan:\n"
-        "• *Nama Toko / Brand:*\n"
-        "• *Jenis Produk yang Dijual:*\n"
-        "• *Nomor WhatsApp Bisnis Toko:*\n\n"
-        "Setelah data dikirim, invoice dan QRIS resmi akan langsung kami generate di chat WhatsApp ini ya Kak!"
+        f"Halo {target_name}! Terima kasih sudah menghubungi kami. Berikut 3 pilihan *Paket Layanan Resmi BoonTrack* yang bisa Kakak pilih sesuai kebutuhan bisnis Kakak 🙏✨\n\n"
+        "📦 *1. Paket 1: Setup Bot WhatsApp Natural*\n"
+        "• Tuning persona AI CS agar ramah, natural, dan sesuai karakter brand toko Kakak.\n"
+        "• Input knowledge katalog produk & FAQ lengkap toko.\n"
+        "• Integrasi nomor WhatsApp via *BoonTrack Gateway* untuk fast-response 24/7.\n\n"
+        "🌐 *2. Paket 2: Single Page Store / Landing Page Katalog*\n"
+        "• Dibuatkan 1 landing page katalog resmi di `shop.boontrack.com/<nama-toko>`.\n"
+        "• Desain banner cover estetik & mobile-friendly.\n"
+        "• Tombol direct checkout instan ke WhatsApp.\n\n"
+        "🚀 *3. Paket 3: Paket Terima Beres All-in-One (Full Service)*\n"
+        "• Auto-scraping foto, deskripsi, dan varian langsung dari link toko Marketplace (Shopee/Tokopedia) atau Instagram Kakak.\n"
+        "• Dibuatkan landing page katalog resmi.\n"
+        "• Bot AI CS dilatih natural untuk melayani pembeli.\n"
+        "• Terhubung ke mutasi otomatis *BoonTrack Reader* untuk verifikasi pembayaran real-time (0% fee MDR).\n\n"
+        "Kira-kira paket nomor berapa yang paling pas untuk kebutuhan toko Kakak saat ini? "
+        "Boleh dibantu informasikan nama toko dan jenis produknya agar tim kami bisa langsung siapkan rancangan dan tagihan QRIS-nya di chat WhatsApp ini ya Kak! 😊"
     )
 
 

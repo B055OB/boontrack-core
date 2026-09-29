@@ -289,14 +289,8 @@ class UnifiedConversationEngine:
         except Exception:
             pass
 
-        has_explicit_owner_kw = any(
-            kw in q_lower for kw in [
-                "ngobrol dengan", "bicara dengan", "chat dengan", "kang sakti",
-                "owner", "pemilik", "admin", "live cs", "hubungi cs", "chat cs",
-                "manusia", "human cs", "staf", "bantuan admin", "tanya kang sakti",
-                "ngobrol santai"
-            ]
-        )
+        from app.services.ai.grounding import is_handover_intent as check_handover_intent, HANDOVER_TRANSITION_REPLY
+        has_explicit_owner_kw = check_handover_intent(q)
         is_digit_2_handover = (
             not is_in_product_menu and (
                 clean_q in ("2", "2.", "dua", "opsi 2", "pilihan 2", "nomor 2", "no 2", "chat langsung", "chat owner")
@@ -309,10 +303,7 @@ class UnifiedConversationEngine:
             logger.info(f"[HANDOVER_TO_HUMAN] Detected escalation intent from '{clean_phone}' for tenant '{clean_slug}': '{q[:60]}'")
 
             # 1. Pesan konfirmasi transisi CUKUP SATU KALI SAJA
-            handover_msg = (
-                "Baik kak, obrolan ini saya teruskan langsung ke Admin kami ya. "
-                "Sistem otomatis saya jeda agar admin kami bisa membalas manual. Mohon ditunggu sebentar ya kak 🙏"
-            )
+            handover_msg = HANDOVER_TRANSITION_REPLY
 
             # 2. Kunci State Session: HANDOVER_TO_HUMAN, is_paused = True, paused_until = now() + 24 hours
             now_dt = datetime.now(timezone.utc)
@@ -326,13 +317,13 @@ class UnifiedConversationEngine:
                 "current_state": "HANDOVER_TO_HUMAN",
                 "is_paused": True,
                 "paused_at": now_iso,
-                "paused_by": "buyer_escalation",
+                "paused_by": "user_request_human",
                 "paused_until": paused_until_dt.isoformat(),
                 "updated_at": now_iso,
                 "metadata": {
-                    "paused_reason": "BUYER_ESCALATION",
+                    "paused_reason": "user_request_human",
                     "paused_at": now_iso,
-                    "paused_by": "buyer_escalation",
+                    "paused_by": "user_request_human",
                     "trigger_text": q[:100],
                 },
             }

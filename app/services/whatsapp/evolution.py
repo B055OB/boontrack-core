@@ -392,14 +392,14 @@ async def request_evolution_pairing_code(tenant_slug: str, phone: str) -> Dict[s
                     "tenant_slug": clean_tenant,
                     "instance": instance_name,
                     "phone": clean_phone,
-                    "message": f"Kode pairing resmi diterima dari Evolution API: {code_formatted}"
+                    "message": f"Kode pairing resmi diterima dari BoonTrack Gateway: {code_formatted}"
                 }
             elif conn_res.status_code not in (200, 201):
                 err_text = conn_res.text
                 logger.error(f"[Evolution API Error] Connect failed ({conn_res.status_code}): {err_text}")
                 return {
                     "success": False,
-                    "error": f"Evolution API Gateway Error ({conn_res.status_code}): {err_text[:200]}",
+                    "error": f"BoonTrack Gateway Error ({conn_res.status_code}): {err_text[:200]}",
                     "detail": err_text,
                     "status_code": conn_res.status_code
                 }
@@ -408,7 +408,7 @@ async def request_evolution_pairing_code(tenant_slug: str, phone: str) -> Dict[s
                 logger.warning(f"[Evolution API] Respons tidak memuat pairingCode valid: {res_data}")
                 return {
                     "success": False,
-                    "error": "Evolution API belum menerbitkan kode pairing 8-digit resmi. Pastikan nomor HP aktif dan muat ulang sesi.",
+                    "error": "BoonTrack Gateway belum menerbitkan kode pairing 8-digit resmi. Pastikan nomor HP aktif dan muat ulang sesi.",
                     "detail": res_data,
                     "status_code": 502
                 }
@@ -416,7 +416,7 @@ async def request_evolution_pairing_code(tenant_slug: str, phone: str) -> Dict[s
             logger.error(f"[Evolution API Connection Error] {conn_err}")
             return {
                 "success": False,
-                "error": f"Tidak dapat terhubung ke server Evolution API di {EVOLUTION_BASE_URL}: {str(conn_err)}",
+                "error": f"Tidak dapat terhubung ke server BoonTrack Gateway: {str(conn_err)}",
                 "detail": str(conn_err),
                 "status_code": 502
             }

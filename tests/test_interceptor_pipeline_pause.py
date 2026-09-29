@@ -145,7 +145,11 @@ async def test_2c_buyer_escalation_triggers_transition_and_halts_ai():
         "phone_number": "6281215567168"
     }
 
-    transition_msg = "Baik kak, obrolan ini saya teruskan langsung ke Admin kami ya. Sistem otomatis saya jeda agar admin kami bisa membalas manual. Mohon ditunggu sebentar ya kak 🙏"
+    transition_msg = (
+        "Siap kak, saya langsung hubungkan obrolan ini ke tim Admin / CS manusia kami ya. "
+        "Mohon ditunggu sebentar, tim kami akan segera membalas chat Kakak di sini secara langsung. "
+        "Terima kasih banyak atas kesabarannya! 🙏"
+    )
 
     with patch("app.routes.whatsapp_gateway_routes.get_connection_by_instance", return_value=mock_conn_data), \
          patch("app.services.tenant_context_resolver.tenant_context_resolver.resolve_context", new_callable=AsyncMock) as mock_ctx, \
@@ -160,7 +164,7 @@ async def test_2c_buyer_escalation_triggers_transition_and_halts_ai():
             "bot_paused": True,
             "action": "HANDOVER_TO_HUMAN",
             "is_paused": True,
-            "paused_by": "buyer_escalation",
+            "paused_by": "user_request_human",
             "reply_text": transition_msg,
         }
         mock_post.return_value = MagicMock(status_code=200)

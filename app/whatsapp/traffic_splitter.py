@@ -85,22 +85,18 @@ Tugas Anda HANYA menjawab pertanyaan umum calon merchant dan pengguna seputar Bo
    - MERCHANT (Pemilik Toko): WAJIB menggunakan salah satu dari 5 akun resmi di atas pada perangkat Android BoonTrack Reader agar notifikasi mutasi masuk dapat diproses dan diverifikasi otomatis oleh sistem (0% MDR).
    - PEMBELI (Customer/Buyer): BEBAS scan dan membayar dari rekening bank mana pun (BCA, Mandiri, BRI, BNI, BSI, Permata, CIMB, Danamon, dll) ataupun semua e-wallet (GoPay, OVO, DANA, ShopeePay, AstraPay, LinkAja) melalui scan barcode QRIS toko.
 
-[SOP DIRECT CHECKOUT WHATSAPP - JASA SETUP TOKO / TERIMA BERES]
-- Jika calon tenant meminta jasa terima beres / setup toko (bantu setup katalog produk, bot WhatsApp, QRIS dinamis, hingga tracking pixel/CAPI), berikan konsultasi ramah dan generate invoice/QRIS langsung di WhatsApp.
-- DILARANG KERAS melempar atau mengarahkan calon tenant ke link pendaftaran lama / buzzerukm.
+[3 PILIHAN PAKET LAYANAN RESMI BOONTRACK]
+1. Paket 1: Setup Bot WhatsApp Natural
+   - Ruang Lingkup: Tuning persona AI CS agar ramah dan natural, input knowledge katalog produk & FAQ lengkap toko, serta integrasi nomor WhatsApp via BoonTrack Gateway.
+2. Paket 2: Single Page Store / Landing Page Katalog
+   - Ruang Lingkup: Dibuatkan 1 landing page katalog resmi di shop.boontrack.com/<nama-toko>, banner cover estetik & mobile-friendly, serta tombol direct checkout terhubung langsung ke WhatsApp.
+3. Paket 3: Paket Terima Beres All-in-One (Full Service)
+   - Ruang Lingkup: Auto-scraping foto, deskripsi, dan varian produk langsung dari link toko Marketplace (Shopee/Tokopedia) atau Instagram klien. Dibuatkan landing page katalog resmi, bot dilatih responsif & natural, dan dihubungkan ke mutasi otomatis BoonTrack Reader (auto-verifikasi pembayaran 0% MDR).
 
-[FITUR PER PAKET LAYANAN]
-1. Paket Trial (Uji Coba Gratis):
-   - Kuota 30 Pesanan Masuk (Order Quota).
-   - Kuota 50 Interaksi AI Chatbot.
-   - Kuota 15 Notifikasi Pesanan WhatsApp.
-   - QRIS dinamis otomatis dan pelacakan dasar.
-2. Paket Berbayar (Starter / Pro):
-   - Kuota transaksi & interaksi tanpa batas / kuota masif sesuai skala bisnis.
-   - Broadcast WhatsApp prioritas berkecepatan tinggi tanpa antrean lambat.
-   - Custom AI Persona (BoonPilot Copilot) yang disesuaikan dengan karakter brand toko.
-   - Analitik performa iklan mendalam (Meta CAPI, TikTok Events API, GTM DataLayer container).
-   - Akses pendaftaran Akun Whitelist Ads FB resmi (https://buzzerukm.adsolution.co.id/register).
+[SOP DIRECT CHECKOUT WHATSAPP - PENJUALAN JASA & SETUP TOKO]
+- Layani secara ramah di chat, tanyakan kebutuhan klien dari 3 paket layanan di atas.
+- Tanyakan detail toko (Nama Toko, Jenis Produk, Nomor WhatsApp Bisnis, dan link medsos/marketplace jika memilih Paket 3).
+- Generate rincian tagihan dan barcode QRIS resmi langsung di chat WhatsApp tanpa melempar link pendaftaran lama / buzzerukm.
 
 [PANDUAN PENGGUNA BARU (ONBOARDING GUIDE)]
 Jika merchant atau pengguna baru bingung cara memulai, arahkan mereka ke asisten interaktif "BoonPilot" di sudut kanan bawah dashboard atau minta mereka menuntaskan "6 Langkah Cepat di Dashboard":
@@ -155,12 +151,12 @@ Detail Produk & Fitur Resmi:
    - DILARANG KERAS menyatakan Mandiri, BRI, BNI, BSI sebagai akun penerima mutasi otomatis merchant (karena parser notifikasi Android belum tersedia).
    - Klarifikasi: Merchant wajib menggunakan salah satu dari 5 akun di atas untuk auto-verifikasi mutasi reader. Sedangkan Pembeli bebas scan & bayar via QRIS dari bank mana pun (BCA, Mandiri, BRI, BNI, Permata, dll) atau semua e-wallet!
 
-5. Pilihan Paket:
-   - Checkout Lite: Rp 59.000/bln (halaman checkout instan, QRIS dinamis 0% MDR, Meta & TikTok Pixel)
-   - Starter: Rp 199.000/bln (etalase toko lengkap, bot WhatsApp otomatis, cek ongkir kurir otomatis, Meta & TikTok Pixel)
-   - Ads Performance: Rp 299.000/bln (Meta & TikTok CAPI server-side tracking, GTM container, 2 CS Seats)
+5. 3 Pilihan Paket Layanan Resmi:
+   - Paket 1: Setup Bot WhatsApp Natural (tuning persona AI CS ramah/natural, input knowledge katalog & FAQ toko, integrasi nomor WhatsApp via BoonTrack Gateway).
+   - Paket 2: Single Page Store / Landing Page Katalog (1 landing page katalog resmi di shop.boontrack.com/<nama-toko>, banner cover estetik, tombol direct checkout WA).
+   - Paket 3: Paket Terima Beres All-in-One / Full Service (auto-scraping foto & varian dari marketplace/IG, landing page katalog resmi, bot dilatih natural, terhubung ke mutasi otomatis BoonTrack Reader 0% MDR).
 
-6. SOP Direct Checkout WhatsApp (Jasa Setup Toko / Terima Beres):
+6. SOP Direct Checkout WhatsApp (Penjualan Jasa & Setup Toko):
    - Jika calon tenant meminta jasa terima beres / setup toko, berikan konsultasi ramah, tanyakan nama toko, produk, dan nomor WA bisnis, lalu siapkan rincian invoice/QRIS langsung di WhatsApp tanpa melempar link pendaftaran lama atau buzzerukm.
 """
 
@@ -228,13 +224,20 @@ GROUP_BOONPILOT_KNOWLEDGE: Dict[str, str] = {
         "🛍️ *Untuk Pembeli:* Tetap fleksibel dan bebas bayar dari bank apa saja (BCA, Mandiri, BRI, BNI, Permata, dll) atau e-wallet apa saja via QRIS!"
     ),
     "terima_beres": (
-        "Halo kak! Mau dibantu setup toko terima beres dari awal sampai siap jualan? Bisa banget kak! 🙌\n\n"
-        "Tim BoonTrack siap bantu setupkan lengkap:\n"
-        "• Input katalog produk & harga resmi\n"
-        "• Integrasi bot WhatsApp auto-reply 24/7\n"
-        "• Integrasi QRIS dinamis 0% MDR\n"
-        "• Pemasangan pixel iklan & kurir otomatis\n\n"
-        "Boleh dibantu infokan nama toko, jenis produk yang dijual, dan nomor WhatsApp bisnis toko ya kak. Nanti kami langsung siapkan invoice & rinciannya langsung di WhatsApp ini tanpa ribet!"
+        "Halo kak! Ada 3 pilihan *Paket Layanan Resmi BoonTrack* yang bisa disesuaikan dengan kebutuhan bisnis Kakak: 🙏✨\n\n"
+        "📦 *1. Paket 1: Setup Bot WhatsApp Natural*\n"
+        "• Tuning persona AI CS ramah, natural, dan pintar menjawab pertanyaan pembeli.\n"
+        "• Input knowledge katalog & FAQ toko lengkap.\n"
+        "• Integrasi nomor WhatsApp via BoonTrack Gateway untuk fast-response 24/7.\n\n"
+        "🌐 *2. Paket 2: Single Page Store / Landing Page Katalog*\n"
+        "• 1 landing page katalog resmi di shop.boontrack.com/<nama-toko>.\n"
+        "• Banner cover estetik & mobile-friendly.\n"
+        "• Tombol direct checkout instan ke WhatsApp.\n\n"
+        "🚀 *3. Paket 3: Paket Terima Beres All-in-One (Full Service)*\n"
+        "• Auto-scraping foto, deskripsi, dan varian dari Shopee/Tokopedia/Instagram Kakak.\n"
+        "• Landing page katalog resmi + Bot CS dilatih natural.\n"
+        "• Dihubungkan ke mutasi otomatis BoonTrack Reader (auto-verifikasi 0% MDR).\n\n"
+        "Kira-kira paket nomor berapa yang paling pas untuk toko Kakak? Boleh infokan nama toko & jenis produknya agar kami siapkan rincian tagihan QRIS-nya langsung di chat ini ya Kak! 😊"
     ),
     "harga": (
         "Halo kak! Untuk pilihan paket di BoonTrack fleksibel dan terjangkau banget, dan SEMUA paket sudah bisa pasang Meta & TikTok Pixel:\n"
@@ -541,18 +544,14 @@ OFFICIAL_KNOWLEDGE_BASE: Dict[str, str] = {
         "Info lengkap: https://boontrack.com"
     ),
     "paket": (
-        "💼 *Pilihan Paket Layanan BoonTrack Shop:*\n\n"
-        "1. *Paket Trial (Gratis)*:\n"
-        "• 30 Pesanan Masuk (Order Quota)\n"
-        "• 50 Interaksi AI Chatbot\n"
-        "• 15 Notifikasi WA Otomatis\n"
-        "• QRIS dinamis otomatis & pelacakan dasar\n\n"
-        "2. *Paket Berbayar (Starter / Pro)*:\n"
-        "• Kuota transaksi & interaksi tanpa batas / kuota masif\n"
-        "• Broadcast WhatsApp prioritas tanpa antrean\n"
-        "• Custom AI Persona sesuai karakter toko\n"
-        "• Analitik performa iklan mendalam (Meta CAPI & GTM)\n\n"
-        "Konsultasi & aktivasi langsung hubungi tim kami di WhatsApp ini ya!"
+        "💼 *3 Pilihan Paket Layanan Resmi BoonTrack:*\n\n"
+        "📦 *1. Paket 1: Setup Bot WhatsApp Natural*\n"
+        "• Tuning persona AI CS ramah & natural, input knowledge katalog & FAQ toko, integrasi WhatsApp via BoonTrack Gateway (fast-response 24/7).\n\n"
+        "🌐 *2. Paket 2: Single Page Store / Landing Page Katalog*\n"
+        "• 1 landing page katalog resmi di shop.boontrack.com/<nama-toko>, banner cover estetik & mobile-friendly, tombol direct checkout WA.\n\n"
+        "🚀 *3. Paket 3: Paket Terima Beres All-in-One (Full Service)*\n"
+        "• Auto-scraping foto & varian dari Shopee/Tokopedia/IG klien, landing page katalog resmi, bot dilatih natural, terhubung ke mutasi otomatis BoonTrack Reader (0% MDR).\n\n"
+        "Konsultasi kebutuhan & generate tagihan QRIS resmi langsung hubungi tim kami di WhatsApp ini ya Kak!"
     ),
     "onboarding": (
         "🚀 *Panduan Pengguna Baru (Onboarding Guide):*\n\n"

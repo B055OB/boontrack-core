@@ -1,24 +1,34 @@
 """tests/test_reader_grounding_and_direct_checkout.py
-Unit tests for Strict Grounding:
+Unit tests for Strict Grounding, 3 Official Packages, Auto-Handover, and White-Label:
 1. Exact 5 Reader Accounts (Zero Fake Fallbacks).
 2. Explicit prohibition of Mandiri, BRI, BNI, BSI for merchant reader auto-mutation.
 3. Merchant vs Buyer clarification (Buyer free to scan QRIS from any bank/e-wallet).
-4. SOP Direct Checkout WhatsApp for setup toko / terima beres.
-5. Reader Notification Parser strict 5 accounts enforcement.
+4. 3 Official Service Packages (Paket 1 Bot Natural, Paket 2 Single Page Store, Paket 3 Terima Beres All-in-One).
+5. SOP Direct Checkout WhatsApp for setup toko / terima beres.
+6. Auto-handover to human with keywords ['admin', 'cs', 'manusia', 'orang', 'customer service', 'bicara langsung', 'hubungi orang'].
+7. Exact transition response and session state (is_paused=True, current_state='HANDOVER_TO_HUMAN', paused_by='user_request_human').
+8. Strict White-Label branding (no 'Evolution' / 'Evolution API' in user-facing texts).
+9. Reader Notification Parser strict 5 accounts enforcement.
 """
 
 import pytest
+from unittest.mock import MagicMock, patch
 from app.services.ai.grounding import (
     READER_ALLOWED_MERCHANT_ACCOUNTS,
     READER_PROHIBITED_MERCHANT_ACCOUNTS,
     STRICT_READER_GROUNDING_PROMPT,
+    BOONTRACK_OFFICIAL_SERVICES_PACKAGES,
     DIRECT_CHECKOUT_WA_SOP_PROMPT,
+    HANDOVER_HUMAN_KEYWORDS,
+    HANDOVER_TRANSITION_REPLY,
     is_setup_toko_intent,
     is_reader_inquiry_intent,
+    is_handover_intent,
     generate_setup_toko_consultation_reply,
     generate_reader_account_explanation_reply,
 )
 from app.services.reader_parser import parse_reader_notification
+from app.routes.whatsapp_gateway_routes import check_and_handle_session_handover_and_toggle
 
 
 def test_reader_allowed_accounts_exact_five():
@@ -60,22 +70,36 @@ def test_strict_reader_grounding_prompt_clarity():
     assert "bebas scan" in prompt
 
 
+def test_three_official_service_packages_definition():
+    """Memastikan definisi 3 paket layanan resmi BoonTrack terdefinisi lengkap."""
+    pkg_text = BOONTRACK_OFFICIAL_SERVICES_PACKAGES
+    assert "Paket 1: Setup Bot WhatsApp Natural" in pkg_text
+    assert "BoonTrack Gateway" in pkg_text
+    assert "Paket 2: Single Page Store / Landing Page Katalog" in pkg_text
+    assert "shop.boontrack.com" in pkg_text
+    assert "Paket 3: Paket Terima Beres All-in-One (Full Service)" in pkg_text
+    assert "BoonTrack Reader" in pkg_text
+
+
 def test_sop_direct_checkout_wa_prompt():
     """Memastikan SOP Direct Checkout WA melarang link pendaftaran lama / buzzerukm."""
     prompt = DIRECT_CHECKOUT_WA_SOP_PROMPT.lower()
-    assert "terima beres" in prompt or "setup toko" in prompt
+    assert "terima beres" in prompt or "setup toko" in prompt or "paket" in prompt
     assert "dilarang keras melempar" in prompt
     assert "buzzerukm" in prompt
 
 
 def test_setup_toko_intent_detection():
-    """Memastikan deteksi intent jasa terima beres / setup toko akurat."""
+    """Memastikan deteksi intent jasa terima beres / setup toko / paket akurat."""
     valid_queries = [
-        "Halo min, ada jasa terima beres gak?",
+        "Halo min, ada jasa apa aja?",
         "Saya mau setup toko dong",
         "Bisa minta tolong bikinin toko?",
         "Berapa harga paket terima beres?",
         "Bantu buatkan toko saya ya",
+        "Info paket landing page katalog dong",
+        "Bisa bantu setup bot wa natural?",
+        "Tolong buatkan single page store",
     ]
     for q in valid_queries:
         assert is_setup_toko_intent(q) is True, f"Failed for query: {q}"
@@ -101,15 +125,16 @@ def test_reader_inquiry_intent_detection():
         assert is_reader_inquiry_intent(q) is True, f"Failed for query: {q}"
 
 
-def test_generate_setup_toko_consultation_reply():
-    """Memastikan respon terima beres ramah, meminta detail toko, dan tidak mengirim link buzzerukm."""
+def test_generate_setup_toko_consultation_reply_three_packages():
+    """Memastikan respon memaparkan 3 paket resmi, ramah, dan tidak mengirim link buzzerukm."""
     reply = generate_setup_toko_consultation_reply(customer_name="Budi", tenant_slug="boontrack")
     assert "Budi" in reply
-    assert "Jasa Setup Toko Terima Beres" in reply
-    assert "Nama Toko" in reply
-    assert "Nomor WhatsApp Bisnis" in reply
-    assert "buzzerukm.boontrack.com" not in reply
-    assert "buzzerukm.adsolution" not in reply
+    assert "Paket 1: Setup Bot WhatsApp Natural" in reply
+    assert "Paket 2: Single Page Store / Landing Page Katalog" in reply
+    assert "Paket 3: Paket Terima Beres All-in-One (Full Service)" in reply
+    assert "BoonTrack Gateway" in reply
+    assert "BoonTrack Reader" in reply
+    assert "buzzerukm" not in reply.lower()
 
 
 def test_generate_reader_account_explanation_reply():
@@ -123,6 +148,59 @@ def test_generate_reader_account_explanation_reply():
     assert "GrabMerchant" in reply
     assert "Bank Mandiri, BRI, BNI, dan BSI *belum didukung*" in reply
     assert "BEBAS scan & membayar dari bank atau e-wallet mana pun" in reply
+
+
+def test_auto_handover_intent_detection():
+    """Memastikan deteksi intent auto-handover ke CS manusia mencakup seluruh keyword wajib."""
+    target_keywords = ['admin', 'cs', 'manusia', 'orang', 'customer service', 'bicara langsung', 'hubungi orang']
+    for kw in target_keywords:
+        assert is_handover_intent(f"Tolong hubungkan saya dengan {kw}") is True, f"Failed for keyword: {kw}"
+        assert is_handover_intent(f"Mau {kw} dong") is True, f"Failed for keyword: {kw}"
+
+    assert is_handover_intent("Mau bicara langsung dengan orang") is True
+    assert is_handover_intent("Bisa hubungi orang sekarang?") is True
+    assert is_handover_intent("Saya mau ngobrol sama admin") is True
+
+
+@pytest.mark.asyncio
+async def test_auto_handover_response_and_session_update():
+    """Memastikan auto-handover menghasilkan respon transisi resmi dan state is_paused=True, paused_by='user_request_human'."""
+    tenant = "test_tenant_handover"
+    phone = "6281299988877"
+
+    with patch("app.routes.whatsapp_gateway_routes.get_supabase") as mock_sb:
+        mock_client = MagicMock()
+        mock_sb.return_value = mock_client
+        mock_table = MagicMock()
+        mock_client.table.return_value = mock_table
+        mock_table.upsert.return_value.execute.return_value = MagicMock(data=[])
+        mock_table.update.return_value.or_().eq().execute.return_value = MagicMock(data=[])
+
+        res = await check_and_handle_session_handover_and_toggle(
+            tenant_slug=tenant,
+            sender_phone=phone,
+            incoming_text="Mau bicara langsung dengan manusia dong min",
+            sender_name="Customer"
+        )
+
+        assert res is not None
+        assert res.get("handled") is True
+        assert res.get("action") == "HANDOVER_TO_HUMAN"
+        assert res.get("bot_paused") is True
+        assert res.get("is_paused") is True
+        assert res.get("paused_by") == "user_request_human"
+        assert res.get("reply_text") == HANDOVER_TRANSITION_REPLY
+        assert "Siap kak, saya langsung hubungkan obrolan ini ke tim Admin / CS manusia kami ya" in res.get("reply_text")
+
+
+def test_strict_white_label_no_evolution():
+    """Memastikan tidak ada kata 'Evolution' atau 'Evolution API' di respon publik bot."""
+    setup_reply = generate_setup_toko_consultation_reply()
+    reader_reply = generate_reader_account_explanation_reply()
+    handover_reply = HANDOVER_TRANSITION_REPLY
+
+    for text in (setup_reply, reader_reply, handover_reply):
+        assert "evolution" not in text.lower(), f"Found 'evolution' in text: {text}"
 
 
 def test_reader_parser_strictly_supports_5_apps_only():

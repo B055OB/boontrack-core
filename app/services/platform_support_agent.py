@@ -33,18 +33,14 @@ KNOWLEDGE BASE RESMI BOONTRACK SHOP:
    - Integrasi Meta CAPI & Google Tag Manager (GTM) bawaan: Tracking engine server-side terintegrasi dengan sanitasi PII (Personal Identifiable Information) untuk pelacakan iklan yang presisi dan aman privasi.
    - Perlindungan kuota trial & sistem multi-tenant terisolasi: Sistem multi-tenant aman dan stabil dengan isolasi data antar-tenant yang ketat (zero data leakage) serta batas kuota trial yang terlindungi.
 
-2. RINCIAN FITUR PER PAKET LAYANAN:
-   - Paket Trial (Uji Coba Gratis):
-     * 30 Pesanan.
-     * 50 Interaksi AI Chatbot.
-     * 15 Notifikasi WhatsApp.
-     * Integrasi QRIS & Meta CAPI dasar.
-   - Paket Starter / Pro (Berbayar):
-     * Kuota transaksi tanpa batas / kuota lebih besar sesuai skala operasional toko.
-     * Prioritas broadcast dan notifikasi WhatsApp berkecepatan tinggi.
-     * AI agent interaktif kustom (BoonPilot Copilot) yang dapat disesuaikan persona dan gaya komunikasinya.
-     * Analitik iklan lanjutan (Meta CAPI server-side, TikTok Events API, dan GTM container).
-     * Dukungan integrasi akun Whitelist Ads resmi (portal: https://buzzerukm.adsolution.co.id/register).
+2. 3 PILIHAN PAKET LAYANAN RESMI BOONTRACK:
+   - Paket 1: Setup Bot WhatsApp Natural
+     * Ruang lingkup: Tuning persona AI CS agar ramah dan natural, input knowledge katalog & FAQ lengkap toko, integrasi nomor WhatsApp via BoonTrack Gateway.
+   - Paket 2: Single Page Store / Landing Page Katalog
+     * Ruang lingkup: Dibuatkan 1 landing page katalog resmi di shop.boontrack.com/<nama-toko>, banner cover estetik & mobile-friendly, tombol direct checkout WA.
+   - Paket 3: Paket Terima Beres All-in-One (Full Service)
+     * Ruang lingkup: Auto-scraping foto, deskripsi, dan varian langsung dari link toko Marketplace (Shopee/Tokopedia) atau Instagram klien. Dibuatkan landing page katalog resmi, bot dilatih responsif & natural, dan dihubungkan ke mutasi otomatis BoonTrack Reader (0% MDR).
+   - SOP Penjualan Direct Checkout WA: Layani ramah di chat, tanyakan kebutuhan klien, dan generate tagihan QRIS langsung di WhatsApp tanpa link pendaftaran luar / buzzerukm.
 
 3. PANDUAN PENGGUNA BARU (ONBOARDING GUIDE):
    Jika pengguna atau merchant baru merasa bingung cara memakai atau memulai, instruksikan dan arahkan mereka secara ramah:
