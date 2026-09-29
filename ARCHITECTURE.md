@@ -117,9 +117,9 @@ Setiap pesan keluar yang diterbitkan oleh sistem bot (baik berupa pesan selamat 
   * `source`: Sumber pengiriman (`bot`, `system`, `broadcast`, `handover`, `order_notify`)
   * `created_at`: Timestamp UTC presisi
 - **Pencatatan Sinkron & Cache Sub-Millisecond**: `wa_message_id` dicatat ke dalam in-memory Set/Cache sebelum/saat pengiriman dan disimpan persisten ke tabel database `outbound_messages`.
-- **Zero Self-Echo Guarantee**: Ketika webhook WhatsApp menerima event `messages.upsert` dengan `fromMe == True`, sistem memeriksa `wa_message_id` di registri ini. Jika ditemukan, pesan seketika di-drop (`DROP_SELF_GENERATED`, LLM = 0, Outbound = 0).
+- **Zero Self-Echo Guarantee**: Ketika webhook BoonTrack Gateway menerima event `messages.upsert` dengan `fromMe == True`, sistem memeriksa `wa_message_id` di registri ini. Jika ditemukan, pesan seketika di-drop (`DROP_SELF_GENERATED`, LLM = 0, Outbound = 0).
 
-#### 4.2.1 Diagram 7-Layer Ingress Webhook Pipeline V2
+#### 4.2.1 Diagram 8-Layer Ingress Webhook Pipeline V2 (dengan Gate C)
 ```mermaid
 flowchart TD
     Inbound([Inbound Webhook Event]) --> L1[Layer 1: Normalize & Dedupe]
@@ -129,7 +129,10 @@ flowchart TD
     L2 -->|fromMe Physical Manual| Coexist[OWNER_MANUAL_PHYSICAL_MESSAGE]
     L2 --> L3{Layer 3: Control Command Interceptor}
     L3 -->|!pause / !resume Owner| SilentLock[SILENT_LOCK 200 OK]
-    L3 --> L4{Layer 4: Loop Containment Gate}
+    L3 --> L35{Layer 3.5: Gate C — ChallengeService}
+    L35 -->|Burst >= 3 msgs / 5s| Challenge[GATE_C_CHALLENGE_ISSUED 200 OK]
+    L35 -->|TTL Expired / Repeat Burst| GateCQ[GATE_C_ESCALATED_TO_QUARANTINE 200 OK]
+    L35 -->|NORMAL / CHALLENGE_PASSED| L4{Layer 4: Loop Containment Gate}
     L4 -->|Burst / Ping-Pong Breach| Quarantine[PEER_QUARANTINED 200 OK]
     L4 --> L5{Layer 5: Session State Barrier}
     L5 -->|Paused / Handover / Circuit Open| DropBarrier[DROPPED_PAUSED_SESSION 200 OK]
@@ -137,8 +140,34 @@ flowchart TD
     L5 -->|Global Kill Switch Active| DropKill[EMERGENCY_KILL_SWITCH_ACTIVE 200 OK]
     L5 --> L6{Layer 6: Pre-LLM Reservation}
     L6 -->|Budget Exhausted| DropBudget[PRE_LLM_RESERVATION_BLOCKED 200 OK]
-    L6 --> L7[Layer 7: Gemini AI Inference & Outbound Action]
+    L6 --> L7[Layer 7: AI Inference & Outbound Action]
 ```
+
+#### 4.2.2 Gate C — ChallengeService State Machine (§4.2-C)
+`app/services/challenge_service.py` — Singleton: `challenge_service`
+
+**Posisi dalam Pipeline**: Setelah Layer 3 (Control Command Interceptor), sebelum Layer 4 (Loop Containment Gate).
+
+**State Machine per Peer (`tenant_slug × phone_number`)**:
+
+| State | Transisi Masuk | Aksi Pipeline |
+| :--- | :--- | :--- |
+| `NORMAL` | Default / awal / setelah `CHALLENGE_PASSED` | Teruskan ke Layer 4 |
+| `CHALLENGE_REQUIRED` | Burst ≥ 3 pesan dalam 5 detik terdeteksi | Kirim `CHALLENGE_PROMPT` ke pembeli, short-circuit 200 OK. **Zero LLM.** |
+| `CHALLENGE_PASSED` | Balasan valid diterima (`manusia`, `human`, `ya`, `ok`, dll.) | Reset ke `NORMAL`, lanjutkan pipeline |
+| `ESCALATE_TO_QUARANTINE` | TTL 120 detik habis ATAU burst ulang saat pending | Trip `circuit_breaker_service` → `OPEN`, return 200 OK. **Zero LLM.** |
+
+**Adaptive Anomaly Thresholds**:
+- `ANOMALY_BURST_COUNT` = 3 pesan
+- `ANOMALY_WINDOW_SECS` = 5 detik (sliding window)
+- `CHALLENGE_TTL_SECS` = 120 detik (batas waktu pending)
+
+**Invariants**:
+1. Gate C DILARANG memanggil LLM atau API eksternal dalam kondisi apapun.
+2. State Gate C bersifat ephemeral (in-memory). Process restart = reset aman ke `NORMAL`.
+3. Isolasi granular wajib per pasangan `(tenant_slug, phone_number)` — satu peer TIDAK BOLEH memengaruhi peer lain.
+4. Pada `ESCALATE_TO_QUARANTINE`, Gate C memicu `circuit_breaker_service.set_circuit_state(tenant_slug, 'OPEN')` secara langsung.
+5. Admin dapat mereset peer secara manual via `challenge_service.reset_peer(tenant_slug, phone)`.
 
 ---
 

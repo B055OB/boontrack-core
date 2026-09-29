@@ -1,5 +1,5 @@
 """app/services/ingress_pipeline.py
-Unified 7-Layer Ingress Protection & Loop Containment V2 Pipeline (§4.2, §8.4, §9.8).
+Unified 8-Layer Ingress Protection & Loop Containment V2 Pipeline (§4.2, §8.4, §9.8).
 
 CTO Office Architectural Doctrines:
 1. "BoonTrack tidak berasumsi bahwa setiap inbound message berasal dari manusia.
@@ -9,11 +9,16 @@ CTO Office Architectural Doctrines:
 2. "Loop protection is scoped from conversation/peer upward; global breakers
     are last-resort containment, not the first line of defense."
 
-7-Layer Ingress Webhook Architecture V2:
+8-Layer Ingress Webhook Architecture V2 (with Gate C):
 - Layer 1: Normalize Event & Dedupe (sender_phone, wa_message_id, unwrapping, deduplication)
 - Layer 2: Self-Identity Protection (fromMe & outbound_registry lookup; DROP self-generated echo)
 - Layer 3: Control Command Interceptor (!pause, !resume RBAC Owner only, silent 200 OK)
-- Layer 4: [P0 NEW] LOOP CONTAINMENT GATE & PAIR SAFETY BUDGET:
+- Layer 3.5 [Gate C]: Adaptive First-Line Friction (ChallengeService):
+  * Detects anomalous burst (>= 3 msgs / 5s) per peer
+  * Issues human-verification challenge (Zero LLM)
+  * CHALLENGE_REQUIRED -> send prompt, short-circuit 200 OK
+  * ESCALATE_TO_QUARANTINE -> trip circuit breaker immediately
+- Layer 4: LOOP CONTAINMENT GATE & PAIR SAFETY BUDGET:
   * loop_key = f"{tenant_id}:{conversation_id}:{peer_identity}"
   * Sliding window per-peer (velocity, burst rate, max depth)
   * Breaches velocity threshold -> trip state to PEER_QUARANTINED
@@ -21,7 +26,7 @@ CTO Office Architectural Doctrines:
 - Layer 6: Cost & Token Budget Gate (PRE-LLM RESERVATION):
   * safety_budget_service.reserve(loop_key, estimated_turn=1)
   * Exhausted -> Fast DROP 200 OK, LLM = 0, Outbound = 0
-- Layer 7: Gemini AI Inference & Outbound Action (Dispatched ONLY if Layers 1-6 pass)
+- Layer 7: Gemini AI Inference & Outbound Action (Dispatched ONLY if Layers 1-7 pass)
 """
 
 import re
@@ -40,6 +45,13 @@ from app.services.safety_budget_service import (
     STATE_CIRCUIT_OPEN,
     STATE_PEER_QUARANTINED,
     STATE_HALF_OPEN,
+)
+from app.services.challenge_service import (
+    challenge_service,
+    STATE_NORMAL,
+    STATE_CHALLENGE_REQUIRED,
+    STATE_CHALLENGE_PASSED,
+    ESCALATE_TO_QUARANTINE,
 )
 
 logger = logging.getLogger("INGRESS_PROTECTION_PIPELINE")
@@ -352,6 +364,59 @@ class IngressProtectionPipeline:
                     f"[LAYER_3_UNAUTHORIZED_CONTROL_IGNORED] Customer '{clean_phone}' sent '{clean_text}'. "
                     "Control command ignored. Processing as normal chat."
                 )
+
+        # =====================================================================
+        # LAYER 3.5: [GATE C] Adaptive First-Line Friction (ChallengeService)
+        # Anomaly burst detection per peer. Zero LLM tokens consumed.
+        # =====================================================================
+        gate_c_state, gate_c_reply = challenge_service.evaluate(
+            tenant_slug=clean_slug,
+            phone=clean_phone,
+            incoming_text=clean_text,
+        )
+
+        if gate_c_state == STATE_CHALLENGE_REQUIRED:
+            logger.warning(
+                f"[LAYER_3.5_GATE_C_CHALLENGE] Peer '{clean_slug}:{clean_phone}' | "
+                "Anomaly burst detected. Issuing human-verification challenge. "
+                "Zero LLM, Zero AI Outbound."
+            )
+            return IngressPipelineResult(
+                status_code=200,
+                allowed=False,
+                action="GATE_C_CHALLENGE_ISSUED",
+                reason="Anomalous burst detected. Challenge issued to verify human sender.",
+                reply_text=gate_c_reply,
+                llm_calls=0,
+                outbound_calls=0,
+                telemetry={"layer": "3.5", "gate_c_state": gate_c_state, "peer": f"{clean_slug}:{clean_phone}"},
+            )
+
+        if gate_c_state == ESCALATE_TO_QUARANTINE:
+            # Gate C demands hard quarantine — trip the tenant circuit breaker
+            circuit_breaker_service.set_circuit_state(clean_slug, "OPEN")
+            logger.critical(
+                f"[LAYER_3.5_GATE_C_QUARANTINE] Peer '{clean_slug}:{clean_phone}' | "
+                "Challenge TTL expired or repeat burst → circuit breaker OPEN. "
+                "Zero LLM, Zero Outbound."
+            )
+            return IngressPipelineResult(
+                status_code=200,
+                allowed=False,
+                action="GATE_C_ESCALATED_TO_QUARANTINE",
+                circuit_state="OPEN",
+                reason="Gate C: Challenge unanswered or repeated burst detected. Peer quarantined.",
+                llm_calls=0,
+                outbound_calls=0,
+                telemetry={"layer": "3.5", "gate_c_state": gate_c_state, "peer": f"{clean_slug}:{clean_phone}"},
+            )
+
+        # Gate C passed (STATE_NORMAL or STATE_CHALLENGE_PASSED)
+        if gate_c_state == STATE_CHALLENGE_PASSED:
+            logger.info(
+                f"[LAYER_3.5_GATE_C_PASSED] Peer '{clean_slug}:{clean_phone}' | "
+                "Human verification passed. Resuming normal pipeline."
+            )
 
         # =====================================================================
         # LAYER 4: [P0 NEW] LOOP CONTAINMENT GATE & PAIR SAFETY BUDGET
