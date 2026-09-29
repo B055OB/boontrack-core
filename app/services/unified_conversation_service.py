@@ -467,7 +467,14 @@ class UnifiedConversationEngine:
                 }
 
         # 6. Interceptor Cek Katalog / Tombol Statis Relevan
-        if any(w in q_lower for w in ["cek katalog", "katalog", "daftar promo", "daftar harga", "menu", "tarif"]):
+        CATALOG_OPEN_INTENT_TRIGGERS = [
+            "cek katalog", "katalog", "daftar promo", "daftar harga", "menu", "tarif",
+            "ada produk apa saja", "ada produk apa", "produk apa saja", "produk apa ja",
+            "lihat menu", "lihat katalog", "daftar produk", "list produk", "semua produk",
+            "produk yang tersedia", "layanan apa saja", "apa saja produknya", "pilihan produk",
+            "jual apa saja", "jual apa", "ada apa saja"
+        ]
+        if any(w in q_lower for w in CATALOG_OPEN_INTENT_TRIGGERS):
             catalog_lines = []
             for idx, p in enumerate(catalog[:8], 1):
                 p_title = p.get("title") or p.get("name") or f"Item {idx}"

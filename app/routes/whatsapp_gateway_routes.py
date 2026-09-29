@@ -361,6 +361,180 @@ def extract_customer_name(text: str, fallback: str = "Kakak") -> str:
     return fb
 
 
+
+async def check_and_handle_session_handover_and_toggle(
+    tenant_slug: str,
+    sender_phone: str,
+    incoming_text: str,
+    sender_name: str = "Kakak",
+) -> Optional[Dict[str, Any]]:
+    """
+    Auto-Mute Handover & Toggle Command (Instance 081215567168 & Tenant):
+    1. Explicit 'PAUSE' and 'RESUME' (case-insensitive, trimmed) for manual session toggle.
+    2. Bot rejection intent (/(bicara dengan|admin|owner|manusia|cs manual)/i) activates:
+       - is_paused = True
+       - current_state = 'HANDOVER_TO_HUMAN'
+       - 24-hour locked duration (paused_until = now() + 24 hours)
+    3. Auto-Mute Guard:
+       - If session is currently paused/handover, drops auto-reply and holds message for manual CS.
+    """
+    if not sender_phone or not incoming_text:
+        return None
+
+    clean_digits = normalize_phone_number(sender_phone) or re.sub(r"\D", "", sender_phone)
+    raw_clean = incoming_text.strip()
+    raw_upper = raw_clean.upper()
+    now_dt = datetime.now(timezone.utc)
+    now_iso = now_dt.isoformat()
+    paused_until_iso = (now_dt + timedelta(hours=24)).isoformat()
+    sb = get_supabase()
+
+    # 1. Manual Toggle Command: PAUSE
+    if raw_upper == "PAUSE":
+        logger.info(f"[SESSION_TOGGLE_COMMAND] Manual PAUSE received from '{clean_digits}' on tenant '{tenant_slug}'")
+        if sb:
+            try:
+                sb.table("conversation_sessions").upsert({
+                    "tenant_id": tenant_slug,
+                    "session_id": f"wa_{tenant_slug}_{clean_digits}",
+                    "channel": "WHATSAPP",
+                    "user_identifier": clean_digits,
+                    "current_state": "HANDOVER_TO_HUMAN",
+                    "is_paused": True,
+                    "paused_until": paused_until_iso,
+                    "metadata": {"manual_toggle": "PAUSE", "paused_at": now_iso},
+                    "updated_at": now_iso,
+                }, on_conflict="tenant_id,user_identifier").execute()
+                sb.table("conversations").update({
+                    "bot_paused": True,
+                    "bot_mode": "HUMAN_ACTIVE",
+                }).eq("tenant_id", tenant_slug).eq("phone_number", clean_digits).execute()
+            except Exception as _e:
+                logger.warning(f"[SESSION_TOGGLE_PAUSE_DB_ERR] {_e}")
+
+        return {
+            "handled": True,
+            "status": "success",
+            "bot_paused": True,
+            "action": "MANUAL_PAUSE",
+            "reply_text": "⏸️ Sesi bot otomatis berhasil dijeda (PAUSED). Pesan masuk selanjutnya akan ditangani secara manual oleh admin / tim CS.",
+        }
+
+    # 2. Manual Toggle Command: RESUME
+    if raw_upper == "RESUME":
+        logger.info(f"[SESSION_TOGGLE_COMMAND] Manual RESUME received from '{clean_digits}' on tenant '{tenant_slug}'")
+        if sb:
+            try:
+                sb.table("conversation_sessions").upsert({
+                    "tenant_id": tenant_slug,
+                    "session_id": f"wa_{tenant_slug}_{clean_digits}",
+                    "channel": "WHATSAPP",
+                    "user_identifier": clean_digits,
+                    "current_state": "ACTIVE",
+                    "is_paused": False,
+                    "paused_until": None,
+                    "metadata": {"manual_toggle": "RESUME", "resumed_at": now_iso},
+                    "updated_at": now_iso,
+                }, on_conflict="tenant_id,user_identifier").execute()
+                sb.table("conversations").update({
+                    "bot_paused": False,
+                    "bot_mode": "AI_ACTIVE",
+                }).eq("tenant_id", tenant_slug).eq("phone_number", clean_digits).execute()
+            except Exception as _e:
+                logger.warning(f"[SESSION_TOGGLE_RESUME_DB_ERR] {_e}")
+
+        return {
+            "handled": True,
+            "status": "success",
+            "bot_paused": False,
+            "action": "MANUAL_RESUME",
+            "reply_text": "▶️ Sesi bot otomatis telah diaktifkan kembali (RESUMED). Asisten siap melayani pelanggan kembali secara otomatis.",
+        }
+
+    # 3. Bot Rejection Intent (regex: /(bicara dengan|admin|owner|manusia|cs manual)/i)
+    if re.search(r"(bicara dengan|admin|owner|manusia|cs manual)", raw_clean, re.IGNORECASE):
+        logger.info(f"[BOT_REJECTION_HANDOVER] Handover intent detected from '{clean_digits}' on tenant '{tenant_slug}': '{raw_clean[:60]}'")
+        if sb:
+            try:
+                sb.table("conversation_sessions").upsert({
+                    "tenant_id": tenant_slug,
+                    "session_id": f"wa_{tenant_slug}_{clean_digits}",
+                    "channel": "WHATSAPP",
+                    "user_identifier": clean_digits,
+                    "current_state": "HANDOVER_TO_HUMAN",
+                    "is_paused": True,
+                    "paused_until": paused_until_iso,
+                    "metadata": {"handover_reason": "bot_rejection_intent", "triggered_at": now_iso, "trigger_text": raw_clean[:100]},
+                    "updated_at": now_iso,
+                }, on_conflict="tenant_id,user_identifier").execute()
+                sb.table("conversations").update({
+                    "bot_paused": True,
+                    "bot_mode": "HUMAN_ACTIVE",
+                    "status": "unassigned",
+                }).eq("tenant_id", tenant_slug).eq("phone_number", clean_digits).execute()
+            except Exception as _e:
+                logger.warning(f"[BOT_REJECTION_DB_ERR] {_e}")
+
+        return {
+            "handled": True,
+            "status": "success",
+            "bot_paused": True,
+            "action": "HANDOVER_TO_HUMAN",
+            "reply_text": "Baik Kak, pesan Kakak sudah kami teruskan ke tim admin / owner. Asisten bot dijeda sementara (24 jam) agar admin manusia dapat langsung membalas chat Kakak secara manual. Terima kasih! 🙏",
+        }
+
+    # 4. Active Pause Guard (Auto-Mute): if session is currently paused/handover, mute bot
+    is_paused_active = False
+    if sb:
+        try:
+            s_res = (
+                sb.table("conversation_sessions")
+                .select("current_state, is_paused, paused_until")
+                .eq("tenant_id", tenant_slug)
+                .eq("user_identifier", clean_digits)
+                .maybe_single()
+                .execute()
+            )
+            if s_res and s_res.data:
+                s_data = s_res.data
+                is_state_paused = s_data.get("current_state") in ("HANDOVER_TO_HUMAN", "PAUSED")
+                is_flag_paused = bool(s_data.get("is_paused"))
+                p_until = s_data.get("paused_until")
+                if is_state_paused or is_flag_paused:
+                    if p_until:
+                        try:
+                            p_dt = datetime.fromisoformat(str(p_until).replace("Z", "+00:00"))
+                            if p_dt > datetime.now(timezone.utc):
+                                is_paused_active = True
+                        except Exception:
+                            is_paused_active = True
+                    else:
+                        is_paused_active = True
+        except Exception as _chk_err:
+            logger.debug(f"[ACTIVE_PAUSE_CHECK_ERR] {_chk_err}")
+
+    if not is_paused_active:
+        try:
+            from app.services.rotary_routing_service import rotary_routing_service
+            if rotary_routing_service.is_bot_paused_for_phone(tenant_slug, clean_digits):
+                is_paused_active = True
+        except Exception:
+            pass
+
+    if is_paused_active:
+        logger.info(f"[BOT_MUTED] Session '{clean_digits}' on tenant '{tenant_slug}' is HANDOVER_TO_HUMAN/PAUSED. Auto-reply suppressed.")
+        return {
+            "handled": True,
+            "status": "success",
+            "bot_paused": True,
+            "action": "DROP_PAUSED",
+            "reply_text": None,
+            "message": "Sesi dalam status HANDOVER_TO_HUMAN / PAUSED. Balasan otomatis ditahan."
+        }
+
+    return None
+
+
 @router.post("/inbound-process")
 async def process_inbound_message(payload: InboundPayload):
 
@@ -408,6 +582,25 @@ async def process_inbound_message(payload: InboundPayload):
     #    generate_group_boonpilot_reply(text_clean).
     # 3. Kembalikan murni balasan teks Sales Representative tanpa media/kartu banner.
     # =========================================================================
+    # Auto-Mute Handover & Toggle Command (Instance 081215567168 & Tenant)
+    toggle_res = await check_and_handle_session_handover_and_toggle(
+        tenant_slug=tenant_slug,
+        sender_phone=clean_phone,
+        incoming_text=incoming_text,
+        sender_name=contact_name,
+    )
+    if toggle_res and toggle_res.get("handled"):
+        return {
+            "status": "success",
+            "tenant_slug": tenant_slug,
+            "conversation_scope": conversation_scope,
+            "group_jid": payload.group_jid,
+            "bot_paused": toggle_res.get("bot_paused", False),
+            "reply_text": toggle_res.get("reply_text"),
+            "media_url": None,
+            "action": toggle_res.get("action"),
+        }
+
     is_boon_sales_rep = (
         tenant_slug == "boon"
         or conversation_scope == "GROUP"
@@ -1593,6 +1786,23 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         or (bot_phone and re.sub(r"\D", "", bot_phone) in ("6281215567168", "081215567168", "81215567168"))
         or conversation_scope == "GROUP"
     )
+
+    # Auto-Mute Handover & Toggle Command (Instance 081215567168 & Tenant)
+    evo_toggle_res = await check_and_handle_session_handover_and_toggle(
+        tenant_slug=canonical_slug,
+        sender_phone=sender_phone,
+        incoming_text=incoming_text,
+        sender_name=sender_name,
+    )
+    if evo_toggle_res and evo_toggle_res.get("handled"):
+        reply_text = evo_toggle_res.get("reply_text")
+        if not reply_text:
+            return {
+                "status": "success",
+                "tenant_slug": canonical_slug,
+                "bot_paused": True,
+                "message": "Sesi dalam status HANDOVER_TO_HUMAN. Balasan otomatis ditahan.",
+            }
 
     if is_boon_instance:
         # =====================================================================

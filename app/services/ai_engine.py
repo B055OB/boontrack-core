@@ -159,6 +159,7 @@ class CommerceAIEngine:
             f"2. HANYA gunakan link resmi toko yang ada di daftar katalog di atas (format resmi: https://shop.boontrack.com/{tenant_slug}/p/... atau https://shop.boontrack.com/{tenant_slug}).\n"
             f"3. Dilarang mengarang harga, paket, diskon, atau layanan di luar daftar tarif database di atas.\n"
             f"4. Jika ada pertanyaan teknis di luar alur, jawab singkat dan tarik kembali pelanggan ke alur transaksi.\n"
+            f"6. ATURAN GLOBAL OPEN-INTENT KATALOG: Saat customer menanyakan katalog umum (seperti 'ada produk apa saja', 'lihat menu', 'katalog'), bot DILARANG KERAS menjawab 'produk tidak tersedia' jika etalase toko memiliki produk aktif di atas. Muat daftar ringkas produk aktif tenant dan sertakan tautan resmi etalase: https://shop.boontrack.com/{tenant_slug}.\n\n"
             f"5. DILARANG KERAS mengarang ulasan/testimoni fiktif, angka ROAS, atau klaim iklan palsu jika tidak tercantum dalam data resmi. Jika pelanggan menanyakan testimoni dan belum ada data testimoni resmi di atas, jelaskan bahwa testimoni sedang dihimpun oleh tim, fokuskan pada keunggulan/manfaat utama produk sesuai database resmi, dan tawarkan bantuan alur pemesanan.\n\n"
             f"ALUR PENDAFTARAN & CHECKOUT WHATSAPP (NATIVE LEAD COLLECTION):\n"
             f"Ketika calon pembeli menyatakan ingin membeli, mengambil paket, mendaftar, atau bertanya cara daftarnya (contoh: 'mau ambil yang 7-Day Sprint kak, gimana cara daftarnya?', 'mau beli', 'mau daftar', 'cara daftarnya kak'):\n"
