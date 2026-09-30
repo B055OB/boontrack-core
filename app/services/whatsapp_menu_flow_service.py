@@ -313,13 +313,39 @@ class WhatsAppMenuFlowService:
         slug = product.get("slug", "produk")
 
         checkout_url = f"https://shop.boontrack.com/{tenant_slug}/p/{slug}?checkout=true"
-        return (
-            f"🎉 *Pemesanan {title}*\n"
-            f"💰 *Total:* Rp {price_str}\n\n"
-            f"Silakan selesaikan pembayaran Kakak melalui tautan checkout instan resmi berikut:\n"
-            f"👉 {checkout_url}\n\n"
-            f"Atau ketik *BAYAR* jika Kakak ingin kami buatkan kode Dynamic QRIS pembayaran otomatis langsung di chat ini."
-        )
+
+        is_qris_enabled = True
+        try:
+            from app.services.onboarding_service import onboarding_service
+            details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
+            tenant_info = details.get("tenant", {})
+            tenant_meta = tenant_info.get("metadata") or details.get("metadata") or {}
+            pay_cfg = tenant_meta.get("payment_config") or {}
+            pay_set = tenant_meta.get("payment_settings") or {}
+            if pay_cfg.get("enable_qris") is False or pay_set.get("enable_qris") is False or pay_set.get("is_qris_active") is False or tenant_info.get("is_qris_active") is False:
+                is_qris_enabled = False
+            prod_pm = product.get("payment_methods") or (product.get("metadata") or {}).get("payment_methods") or {}
+            if prod_pm.get("enable_qris") is False:
+                is_qris_enabled = False
+        except Exception:
+            pass
+
+        if is_qris_enabled:
+            return (
+                f"🎉 *Pemesanan {title}*\n"
+                f"💰 *Total:* Rp {price_str}\n\n"
+                f"Silakan selesaikan pembayaran Kakak melalui tautan checkout instan resmi berikut:\n"
+                f"👉 {checkout_url}\n\n"
+                f"Atau ketik *BAYAR* jika Kakak ingin kami buatkan kode Dynamic QRIS pembayaran otomatis langsung di chat ini."
+            )
+        else:
+            return (
+                f"🎉 *Pemesanan {title}*\n"
+                f"💰 *Total:* Rp {price_str}\n\n"
+                f"Silakan selesaikan pemesanan Kakak melalui tautan checkout resmi berikut:\n"
+                f"👉 {checkout_url}\n\n"
+                f"Metode pembayaran transfer manual (BCA) dan pemilihan jadwal konsultasi Google Meet langsung tersedia di halaman checkout tersebut ya Kak. 🙏"
+            )
 
     async def process_message(
         self,
