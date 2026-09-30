@@ -233,7 +233,10 @@ class UnifiedConversationEngine:
                         else:
                             is_active_pause = True
 
-                    if is_active_pause:
+                    clean_p = "".join(c for c in str(clean_phone or "") if c.isdigit())
+                    is_core_tester = clean_p in ("6281215567168", "081215567168", "81215567168") or clean_p.endswith("81215567168")
+
+                    if is_active_pause and not is_core_tester:
                         logger.info(
                             f"[UNIFIED CONVERSATION ENGINE] Sesi untuk '{clean_phone}' (tenant='{clean_slug}') "
                             f"sedang dalam status HANDOVER_TO_HUMAN/PAUSED hingga {p_until}. "

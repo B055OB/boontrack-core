@@ -56,6 +56,9 @@ from app.services.challenge_service import (
 
 logger = logging.getLogger("INGRESS_PROTECTION_PIPELINE")
 
+# Core Owner / Tester Phones (+62 812-1556-7168)
+CORE_OWNER_TESTER_PHONES: Set[str] = {"6281215567168", "081215567168", "81215567168"}
+
 # Supported Silent Lock Control Commands (§8.4)
 PAUSE_COMMANDS: Set[str] = {
     "!pause",
@@ -110,6 +113,10 @@ class IngressProtectionPipeline:
         """Checks if session is paused in memory or database."""
         clean_slug = str(tenant_slug or "").strip().lower()
         clean_phone = "".join(c for c in str(sender_phone or "") if c.isdigit())
+
+        # Core Owner / Tester exemption: never treat tester number as paused
+        if clean_phone in CORE_OWNER_TESTER_PHONES or clean_phone.endswith("81215567168"):
+            return False
 
         # 1. In-memory fast cache
         key = (clean_slug, clean_phone)

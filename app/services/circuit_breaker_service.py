@@ -31,6 +31,9 @@ OFFICIAL_WABA_NUMBERS: Set[str] = {
 WABA_MAX_OUTBOUND_PER_MINUTE = 30
 CONTACT_MAX_INGRESS_PER_MINUTE = 15
 
+# Core Owner / Tester Phones (+62 812-1556-7168)
+CORE_OWNER_TESTER_PHONES = {"6281215567168", "081215567168", "81215567168"}
+
 
 class CircuitBreakerService:
     """Manages runaway loop protection and velocity budgets."""
@@ -96,6 +99,10 @@ class CircuitBreakerService:
         Returns True if allowed, False if velocity budget breached.
         """
         if not contact_id:
+            return True
+
+        clean_c = "".join(c for c in str(contact_id or "") if c.isdigit())
+        if clean_c in CORE_OWNER_TESTER_PHONES or clean_c.endswith("81215567168"):
             return True
 
         now = time.time()

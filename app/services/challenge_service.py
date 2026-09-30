@@ -56,6 +56,9 @@ CHALLENGE_PROMPT = (
 
 VALID_CHALLENGE_REPLIES = {"manusia", "human", "iya", "ya", "yes", "ok", "oke"}
 
+# --- Tester / Core Owner Phone Whitelist (Gate C Friction Exemptions) ---
+TESTER_EXEMPT_PHONES = {"6281215567168", "081215567168", "81215567168"}
+
 
 @dataclass
 class _PeerState:
@@ -148,6 +151,11 @@ class ChallengeService:
                quarantine and return 200 OK; NO LLM, NO further outbound.
         """
         key  = self._key(tenant_slug, phone)
+        # Bypass Gate C for Core Owner / Tester phone (+62 812-1556-7168)
+        clean_phone_digits = key[1]
+        if clean_phone_digits in TESTER_EXEMPT_PHONES or clean_phone_digits.endswith("81215567168"):
+            return STATE_NORMAL, None
+
         peer = self._get_or_create(key)
         now  = time.time()
         text = str(incoming_text or "").strip()

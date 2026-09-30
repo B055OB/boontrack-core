@@ -42,7 +42,10 @@ DEFAULT_BURST_LIMIT = 5          # 5 messages
 DEFAULT_BURST_WINDOW = 10.0      # within 10 seconds
 DEFAULT_VELOCITY_LIMIT = 15      # 15 messages
 DEFAULT_VELOCITY_WINDOW = 60.0   # within 60 seconds
-DEFAULT_SESSION_BUDGET = 20      # 20 AI turns default
+DEFAULT_SESSION_BUDGET = 20
+
+# Core Owner / Tester Phones (+62 812-1556-7168)
+CORE_OWNER_TESTER_PHONES = {"6281215567168", "081215567168", "81215567168"}      # 20 AI turns default
 
 
 @dataclass
@@ -126,6 +129,10 @@ class SafetyBudgetService:
         now = time.time()
         peer = self.get_or_create_peer(loop_key)
 
+        clean_peer = "".join(c for c in str(peer.peer_identity or "") if c.isdigit())
+        if clean_peer in CORE_OWNER_TESTER_PHONES or clean_peer.endswith("81215567168"):
+            return True, STATE_ACTIVE, "Core Owner / Tester phone exempt from loop containment" 
+
         # 1. Check if currently in QUARANTINE
         if peer.state == STATE_PEER_QUARANTINED:
             if now < peer.cooldown_until:
@@ -206,6 +213,10 @@ class SafetyBudgetService:
         Returns True if reservation granted, False if budget exhausted.
         """
         peer = self.get_or_create_peer(loop_key)
+        clean_peer = "".join(c for c in str(peer.peer_identity or "") if c.isdigit())
+        if clean_peer in CORE_OWNER_TESTER_PHONES or clean_peer.endswith("81215567168"):
+            peer.used_turns += estimated_turn
+            return True
         if peer.used_turns + estimated_turn > peer.allocated_turns:
             logger.warning(
                 f"[PRE_LLM_RESERVATION_BLOCKED] loop_key='{loop_key}' budget exhausted! "
@@ -231,6 +242,9 @@ class SafetyBudgetService:
         """Checks if peer is currently quarantined."""
         peer = self._peers.get(loop_key)
         if not peer:
+            return False
+        clean_peer = "".join(c for c in str(peer.peer_identity or "") if c.isdigit())
+        if clean_peer in CORE_OWNER_TESTER_PHONES or clean_peer.endswith("81215567168"):
             return False
         if peer.state == STATE_PEER_QUARANTINED:
             if time.time() < peer.cooldown_until:

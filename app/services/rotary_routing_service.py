@@ -601,6 +601,10 @@ class RotaryRoutingService:
         if not clean_digits:
             return False
 
+        # Exemption: Core Owner / Tester (+62 812-1556-7168) testing bot as end-user
+        if clean_digits in ("6281215567168", "081215567168", "81215567168") or clean_digits.endswith("81215567168"):
+            return False
+
         # 1. Cek tabel conversation_sessions di Supabase (Single Source of Truth)
         try:
             from app.services.whatsapp_service import get_supabase

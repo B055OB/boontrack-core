@@ -506,6 +506,10 @@ async def check_and_handle_session_handover_and_toggle(
         }
 
     # 4. Active Pause Guard (Auto-Mute): if session is currently paused/handover, mute bot
+    # Exemption: Core Owner / Tester (+62 812-1556-7168) testing bot as end-user should never be muted
+    if clean_digits in ("6281215567168", "081215567168", "81215567168") or clean_digits.endswith("81215567168"):
+        return None
+
     is_paused_active = False
     if sb:
         try:
@@ -749,7 +753,10 @@ async def process_inbound_message(payload: InboundPayload):
     except Exception as _b_err:
         pass
 
-    if is_tenant_bot_paused or is_phone_paused:
+    clean_p = "".join(c for c in str(clean_phone or "") if c.isdigit())
+    is_core_tester = clean_p in ("6281215567168", "081215567168", "81215567168") or clean_p.endswith("81215567168")
+
+    if (is_tenant_bot_paused or is_phone_paused) and not is_core_tester:
         logger.info(f"[GROWTH GATEWAY BOT PAUSED] Bot AI dijeda untuk '{tenant_slug}' (tenant_paused={is_tenant_bot_paused}, phone_paused={is_phone_paused}). CS Manual aktif, menahan balasan otomatis.")
         return {
             "status": "success",
@@ -839,7 +846,7 @@ async def process_inbound_message(payload: InboundPayload):
                 image_base64=payload.image_base64,
                 mime_type=payload.mime_type or "image/jpeg",
             )
-            if engine_res.get("action") == "DROP_PAUSED" or (engine_res.get("bot_paused") and not engine_res.get("reply")):
+            if (engine_res.get("action") == "DROP_PAUSED" or (engine_res.get("bot_paused") and not engine_res.get("reply"))) and not is_core_tester:
                 logger.info(f"[GROWTH GATEWAY BOT PAUSED] Sesi '{clean_phone}' dijeda (HANDOVER_TO_HUMAN / PAUSED). Menahan respons otomatis.")
                 return {
                     "status": "success",
@@ -1386,13 +1393,41 @@ def get_connection_by_instance(instance_name: str) -> Optional[Dict[str, Any]]:
     try:
         from app.services.whatsapp_service import get_supabase
         sb = get_supabase()
-        if not sb:
-            return None
-        res = sb.table("whatsapp_connections").select("*").eq("instance_name", clean_inst).limit(1).execute()
-        if res.data and len(res.data) > 0:
-            return res.data[0]
+        if sb:
+            res = sb.table("whatsapp_connections").select("*").eq("instance_name", clean_inst).limit(1).execute()
+            if res.data and len(res.data) > 0:
+                return res.data[0]
     except Exception as e:
         logger.error(f"[SECURITY_CONN_LOOKUP_ERROR] Instance '{clean_inst}': {e}")
+
+    # Fallback to direct DB query (bypasses any RLS or client issues)
+    try:
+        from app.services.rotary_routing_service import rotary_routing_service
+        conn = rotary_routing_service._get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, tenant_id, tenant_slug, instance_name, provider, channel_type, phone_number, status, metadata FROM whatsapp_connections WHERE instance_name = %s LIMIT 1",
+                    (clean_inst,)
+                )
+                row = cur.fetchone()
+                if row:
+                    return {
+                        "id": str(row[0]),
+                        "tenant_id": str(row[1]) if row[1] else None,
+                        "tenant_slug": str(row[2]) if row[2] else None,
+                        "instance_name": str(row[3]),
+                        "provider": str(row[4]) if row[4] else None,
+                        "channel_type": str(row[5]) if row[5] else None,
+                        "phone_number": str(row[6]) if row[6] else None,
+                        "status": str(row[7]) if row[7] else None,
+                        "metadata": row[8] if isinstance(row[8], dict) else {},
+                    }
+        finally:
+            conn.close()
+    except Exception as db_err:
+        logger.debug(f"[SECURITY_CONN_DB_FALLBACK_ERROR] Instance '{clean_inst}': {db_err}")
+
     return None
 
 
@@ -2121,7 +2156,9 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     is_bot_active = bool(tenant_meta.get("is_bot_active", True))
 
     from app.services.rotary_routing_service import rotary_routing_service
-    if rotary_routing_service.is_bot_paused_for_phone(resolved_tenant, sender_phone):
+    if sender_phone in ("6281215567168", "081215567168", "81215567168") or str(sender_phone).endswith("81215567168"):
+        bot_paused = False
+    elif rotary_routing_service.is_bot_paused_for_phone(resolved_tenant, sender_phone):
         bot_paused = True
 
     if bot_paused or not is_bot_active:
