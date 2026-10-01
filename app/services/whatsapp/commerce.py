@@ -414,10 +414,21 @@ async def generate_cart_checkout_response(
         holder_display = f"• Atas Nama: {b_holder}\n" if b_holder else ""
         bank_str = f"\n🏦 *Rekening Resmi Transfer Bank:*\n• Bank: {b_name}\n{acc_display}{holder_display}"
 
+    scheme = str(cart_data.get("payment_scheme") or cart_data.get("scheme") or "").lower()
+    if not scheme:
+        name_lower = str(product_summary or "").lower()
+        if any(w in name_lower for w in ["dp", "uang muka", "tiket", "komitmen"]):
+            scheme = "dp"
+        elif "pelunasan" in name_lower:
+            scheme = "pelunasan"
+        else:
+            scheme = "lunas"
+    scheme_label = "Tagihan DP" if scheme == "dp" else ("Pelunasan" if scheme == "pelunasan" else "Lunas")
+
     caption = (
         f"Berikut Rincian Tagihan & Barcode QRIS Pembayaran 💳\n\n"
         f"📦 *Nama Pesanan:* {product_summary}\n"
-        f"💰 *Total Tagihan:* {amount_fmt}\n"
+        f"💰 *Total Tagihan ({scheme_label}):* {amount_fmt}\n"
         f"_(Harga: {base_fmt} - Diskon Kode Unik: {unique_code})_\n"
         f"🏪 *Merchant QRIS:* {merchant_qris_name}\n"
         f"🔖 *No. Pesanan:* `{external_id}`\n"
@@ -425,8 +436,8 @@ async def generate_cart_checkout_response(
         f"{bank_str}\n"
         f"📲 *Petunjuk Pembayaran:*\n"
         f"1. Scan barcode QRIS toko di atas menggunakan aplikasi M-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
-        f"2. *PENTING:* Pastikan nominal transfer tepat sebesar *{amount_fmt}* (hingga 3 digit kode unik terakhir) agar pembayaran terverifikasi otomatis.\n"
-        f"3. Setelah transfer berhasil, *mohon kirimkan screenshot / bukti transfer pembayaran ke chat WhatsApp ini* agar pesanan & akses Kakak langsung kami proses & aktifkan! ✨\n\n"
+        f"2. *PENTING:* Pastikan nominal transfer tepat sebesar *{amount_fmt}* (hingga 3 digit kode unik terakhir) agar pembayaran terverifikasi otomatis.\n\n"
+        f"📸 *Setelah melakukan transfer/pembayaran, silakan langsung kirimkan foto/screenshot bukti transfer ke chat ini ya Kak agar langsung dicek dan diverifikasi oleh sistem.*\n\n"
         f"🛒 *Link Storefront Toko:*\n"
         f"{prod_checkout_url}"
     )
@@ -603,10 +614,21 @@ async def generate_fast_track_checkout_response(
         holder_display = f"• Penerima: {b_holder}\n" if b_holder else ""
         bank_str = f"\n🏦 *Alternatif Transfer Bank:*\n• Bank: {b_name}\n{acc_display}{holder_display}"
 
+    ft_scheme = str(user_cart_sessions.get(clean_phone, {}).get("payment_scheme") or "").lower()
+    if not ft_scheme:
+        p_name_lower = str(product_name or "").lower()
+        if any(w in p_name_lower for w in ["dp", "uang muka", "tiket", "komitmen"]):
+            ft_scheme = "dp"
+        elif "pelunasan" in p_name_lower:
+            ft_scheme = "pelunasan"
+        else:
+            ft_scheme = "lunas"
+    ft_scheme_label = "Tagihan DP" if ft_scheme == "dp" else ("Pelunasan" if ft_scheme == "pelunasan" else "Lunas")
+
     caption = (
         f"Berikut Rincian Tagihan & Barcode QRIS Pembayaran 💳\n\n"
         f"📦 *Nama Produk:* {product_name}\n"
-        f"💰 *Total Tagihan:* {amount_fmt}\n"
+        f"💰 *Total Tagihan ({ft_scheme_label}):* {amount_fmt}\n"
         f"_(Harga: {base_fmt} - Diskon Kode Unik: {unique_code})_\n"
         f"🏪 *Merchant QRIS:* {merchant_qris_name}\n"
         f"🔖 *No. Pesanan:* `{external_id}`\n"
@@ -614,8 +636,8 @@ async def generate_fast_track_checkout_response(
         f"{bank_str}\n"
         f"📲 *Petunjuk Pembayaran:*\n"
         f"1. Scan barcode QRIS toko di atas menggunakan aplikasi M-Banking (BCA, Mandiri, BRI, BNI) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
-        f"2. *PENTING:* Pastikan nominal pembayaran tepat sebesar *{amount_fmt}* (hingga 3 digit kode unik terakhir) agar verifikasi otomatis berjalan lancar.\n"
-        f"3. Setelah transfer berhasil, *mohon kirimkan bukti transfer / screenshot pembayaran ke chat ini* agar akses materi langsung kami aktifkan. ✨\n\n"
+        f"2. *PENTING:* Pastikan nominal pembayaran tepat sebesar *{amount_fmt}* (hingga 3 digit kode unik terakhir) agar verifikasi otomatis berjalan lancar.\n\n"
+        f"📸 *Setelah melakukan transfer/pembayaran, silakan langsung kirimkan foto/screenshot bukti transfer ke chat ini ya Kak agar langsung dicek dan diverifikasi oleh sistem.*\n\n"
         f"🛒 *Link Storefront / Web Checkout Toko:*\n"
         f"{prod_checkout_url}"
     )

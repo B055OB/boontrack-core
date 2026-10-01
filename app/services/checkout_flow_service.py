@@ -192,26 +192,37 @@ async def create_d2c_order_and_dispatch_qris(
             logger.warning(f"[DB ORDER INSERT WARNING] {db_err}")
 
     # 4. Format Pesan WhatsApp Invoice Summary
+    scheme = str(order_data.get("payment_scheme") or order_data.get("scheme") or "").lower()
+    if not scheme:
+        t_lower = str(prod_title or "").lower()
+        if any(w in t_lower for w in ["dp", "uang muka", "tiket", "komitmen"]):
+            scheme = "dp"
+        elif "pelunasan" in t_lower:
+            scheme = "pelunasan"
+        else:
+            scheme = "lunas"
+    scheme_label = "Tagihan DP" if scheme == "dp" else ("Pelunasan" if scheme == "pelunasan" else "Lunas")
+
     amount_fmt = f"Rp{total_amount:,.0f}".replace(",", ".")
     if is_manual:
         bank_details = f"🏦 *Bank:* {adapter.bank_name}\n🔢 *No. Rekening:* `{adapter.account_number}`\n👤 *Atas Nama:* {adapter.account_holder}"
         caption = (
             f"Halo Kak *{customer_name}*, terima kasih telah melakukan pemesanan di *{merchant_slug}*! 🛍️\n\n"
             f"📄 *No. Pesanan:* `{order_id}`\n"
-            f"💰 *Total Tagihan:* *{amount_fmt}*\n\n"
+            f"💰 *Total Tagihan ({scheme_label}):* *{amount_fmt}*\n\n"
             f"Silakan lakukan pembayaran melalui transfer manual ke rekening berikut:\n"
             f"{bank_details}\n\n"
             f"Atau scan kode QRIS toko yang tertera.\n\n"
-            f"Setelah transfer, silakan kirimkan foto/tangkapan layar bukti pembayaran ke chat ini untuk verifikasi. 🙏"
+            f"📸 *Setelah melakukan transfer/pembayaran, silakan langsung kirimkan foto/screenshot bukti transfer ke chat ini ya Kak agar langsung dicek dan diverifikasi oleh sistem.*"
         )
     else:
         caption = (
             f"Halo Kak *{customer_name}*, terima kasih telah melakukan pemesanan di *{merchant_slug}*! 🛍️\n\n"
             f"📄 *No. Pesanan:* `{order_id}`\n"
-            f"💰 *Total Tagihan:* *{amount_fmt}*\n"
+            f"💰 *Total Tagihan ({scheme_label}):* *{amount_fmt}*\n"
             f"⏱️ *Batas Waktu Bayar:* 15 Menit\n\n"
-            f"Silakan scan kode QRIS di atas melalui m-Banking atau E-Wallet pilihan Anda.\n"
-            f"Setelah pembayaran berhasil, bukti bayar & akses produk akan langsung dikirim ke chat ini secara otomatis."
+            f"Silakan scan kode QRIS di atas melalui m-Banking atau E-Wallet pilihan Anda.\n\n"
+            f"📸 *Setelah melakukan transfer/pembayaran, silakan langsung kirimkan foto/screenshot bukti transfer ke chat ini ya Kak agar langsung dicek dan diverifikasi oleh sistem.*"
         )
 
     # 5. Dispatch WhatsApp Native Image QRIS / Static QR ke Buyer (Decoupled & Resilient)

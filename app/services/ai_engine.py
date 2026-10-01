@@ -204,7 +204,7 @@ class CommerceAIEngine:
             f"     • Atas Nama: PT SOLUSI GROUP BAROKAH\n"
             f"     • Nominal: Rp 149.000\n"
             f"     • Link Invoice/Checkout Web Resmi: https://shop.boontrack.com/{tenant_slug}/p/tiket-konsultasi?checkout=true\n"
-            f"   - Informasikan setelah transfer silakan kirimkan bukti transfer di chat ini untuk verifikasi instan.\n"
+            f"   - Sesuaikan rincian nominal dengan skema pembayaran (Lunas, Tagihan DP, atau Pelunasan).\n     • Selalu sertakan instruksi tegas di akhir pesan:\n       \"📸 *Setelah melakukan transfer/pembayaran, silakan langsung kirimkan foto/screenshot bukti transfer ke chat ini ya Kak agar langsung dicek dan diverifikasi oleh sistem.*\"\n"
             f"2. JIKA data pendaftaran sudah pernah dikirim di riwayat chat, DILARANG meminta ulang formulir pendataan.\n\n"
             f"ALUR PENDAFTARAN & CHECKOUT WHATSAPP (NATIVE LEAD COLLECTION):\n"
             f"Ketika calon pembeli menyatakan ingin membeli, mengambil paket, mendaftar, atau bertanya cara daftarnya (contoh: 'mau ambil yang 7-Day Sprint kak, gimana cara daftarnya?', 'mau beli', 'mau daftar', 'cara daftarnya kak'):\n"

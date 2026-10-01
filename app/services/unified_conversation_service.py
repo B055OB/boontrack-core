@@ -616,18 +616,25 @@ class UnifiedConversationEngine:
             checkout_url = f"https://shop.boontrack.com/{clean_slug}/p/{prod_slug}?checkout=true" if prod_slug else f"https://shop.boontrack.com/{clean_slug}"
 
             price_fmt = f"Rp {prod_price:,.0f}".replace(",", ".")
+            p_lower = prod_name.lower()
+            if any(w in p_lower for w in ["dp", "komitmen", "tiket", "uang muka"]):
+                scheme_label = "Tagihan DP / Tiket Komitmen"
+            elif "pelunasan" in p_lower:
+                scheme_label = "Pelunasan"
+            else:
+                scheme_label = "Lunas"
+
             pay_reply = (
-                f"Bisa banget, Kak! Pembayaran tiket *{prod_name}* ({price_fmt}) "
+                f"Bisa banget, Kak! Pembayaran *{prod_name}* ({price_fmt}) "
                 f"bisa langsung ditransfer via WhatsApp ke rekening resmi kami ya:\n\n"
                 f"🏦 *Bank Tujuan:* {b_name}\n"
                 f"🔢 *No. Rekening:* `{b_acc}`\n"
                 f"👤 *Atas Nama:* {b_holder}\n"
-                f"💰 *Nominal Tagihan:* {price_fmt}\n\n"
+                f"💰 *Nominal Tagihan ({scheme_label}):* {price_fmt}\n\n"
                 f"_(Catatan: Biaya tiket komitmen ini 100% MEMOTONG TAGIHAN DP jika nantinya Kakak lanjut menggunakan jasa agensi kami)_\n\n"
                 f"Atau jika Kakak ingin bayar instan via website resmi:\n"
                 f"👉 {checkout_url}\n\n"
-                f"Setelah melakukan transfer, silakan kirimkan foto/bukti transfernya di chat ini ya Kak, "
-                f"tim kami akan langsung verifikasi dan jadwalkan sesinya! 🙏"
+                f"📸 *Setelah melakukan transfer/pembayaran, silakan langsung kirimkan foto/screenshot bukti transfer ke chat ini ya Kak agar langsung dicek dan diverifikasi oleh sistem.*"
             )
             return {
                 "success": True,
