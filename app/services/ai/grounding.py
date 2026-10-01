@@ -112,16 +112,24 @@ HANDOVER_TRANSITION_REPLY = (
 )
 
 
-def is_setup_toko_intent(text: str) -> bool:
-    """Mendeteksi apakah pesan pengguna menanyakan jasa, layanan, paket, atau setup toko."""
+def is_setup_toko_intent(text: str, tenant_slug: Optional[str] = None) -> bool:
+    """Mendeteksi apakah pesan pengguna menanyakan jasa, layanan, paket, atau setup toko.
+    STRICT TENANT GUARD: Hanya aktif untuk platform tenant 'boontrack'.
+    """
+    if tenant_slug is not None and tenant_slug != "boontrack":
+        return False
     if not text:
         return False
     lower = text.lower().strip()
     return any(kw in lower for kw in SETUP_TOKO_KEYWORDS)
 
 
-def is_reader_inquiry_intent(text: str) -> bool:
-    """Mendeteksi apakah pesan pengguna menanyakan tentang akun mutasi atau BoonTrack Reader."""
+def is_reader_inquiry_intent(text: str, tenant_slug: Optional[str] = None) -> bool:
+    """Mendeteksi apakah pesan pengguna menanyakan tentang akun mutasi atau BoonTrack Reader.
+    STRICT TENANT GUARD: Hanya aktif untuk platform tenant 'boontrack'.
+    """
+    if tenant_slug is not None and tenant_slug != "boontrack":
+        return False
     if not text:
         return False
     lower = text.lower().strip()
@@ -139,7 +147,11 @@ def is_handover_intent(text: str) -> bool:
 
 
 def generate_setup_toko_consultation_reply(customer_name: str = "Kakak", tenant_slug: Optional[str] = None, **kwargs) -> str:
-    """Jawaban konsultasi ramah memaparkan 3 pilihan paket layanan resmi BoonTrack langsung di WA."""
+    """Jawaban konsultasi ramah memaparkan 3 pilihan paket layanan resmi BoonTrack langsung di WA.
+    STRICT TENANT GUARD: Dilarang keras dipicu oleh merchant selain 'boontrack'.
+    """
+    if tenant_slug is not None and tenant_slug != "boontrack":
+        return ""
     target_name = customer_name if customer_name and customer_name != "Kakak" else "Kak"
     return (
         f"Halo {target_name}! Terima kasih sudah menghubungi kami. Berikut 3 pilihan *Paket Layanan Resmi BoonTrack* yang bisa Kakak pilih sesuai kebutuhan bisnis Kakak 🙏✨\n\n"

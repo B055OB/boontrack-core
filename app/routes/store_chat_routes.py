@@ -124,47 +124,49 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
     welcome_buttons = get_welcome_buttons_for_category(business_category)
 
     # STRICT GROUNDING INTERCEPTOR (SOP Terima Beres / Setup Toko & Reader 5 Accounts)
-    from app.services.ai.grounding import (
-        is_setup_toko_intent,
-        generate_setup_toko_consultation_reply,
-        is_reader_inquiry_intent,
-        generate_reader_account_explanation_reply,
-    )
-    if is_setup_toko_intent(q):
-        sop_reply = generate_setup_toko_consultation_reply(tenant_slug=clean_slug)
-        safe_log_to_supabase_messages(
-            sender="bot", text=sop_reply, tenant_id=clean_slug, channel="webchat", user_id=session_id
+    # STRICT TENANT GUARD: Hanya aktif jika clean_slug == 'boontrack'
+    if clean_slug == "boontrack":
+        from app.services.ai.grounding import (
+            is_setup_toko_intent,
+            generate_setup_toko_consultation_reply,
+            is_reader_inquiry_intent,
+            generate_reader_account_explanation_reply,
         )
-        return StoreChatResponse(
-            reply_text=sop_reply,
-            action="NONE",
-            payload={"product_ids": [p["product_id"] for p in normalized_catalog]},
-            session_state={"tenant_id": clean_slug, "session_id": session_id},
-            status="success",
-            type="TEXT",
-            reply=sop_reply,
-            quick_actions=welcome_buttons,
-            session_id=session_id,
-            tenant_id=clean_slug,
-        )
+        if is_setup_toko_intent(q, tenant_slug=clean_slug):
+            sop_reply = generate_setup_toko_consultation_reply(tenant_slug=clean_slug)
+            safe_log_to_supabase_messages(
+                sender="bot", text=sop_reply, tenant_id=clean_slug, channel="webchat", user_id=session_id
+            )
+            return StoreChatResponse(
+                reply_text=sop_reply,
+                action="NONE",
+                payload={"product_ids": [p["product_id"] for p in normalized_catalog]},
+                session_state={"tenant_id": clean_slug, "session_id": session_id},
+                status="success",
+                type="TEXT",
+                reply=sop_reply,
+                quick_actions=welcome_buttons,
+                session_id=session_id,
+                tenant_id=clean_slug,
+            )
 
-    if is_reader_inquiry_intent(q):
-        reader_reply = generate_reader_account_explanation_reply(tenant_slug=clean_slug)
-        safe_log_to_supabase_messages(
-            sender="bot", text=reader_reply, tenant_id=clean_slug, channel="webchat", user_id=session_id
-        )
-        return StoreChatResponse(
-            reply_text=reader_reply,
-            action="NONE",
-            payload={"product_ids": [p["product_id"] for p in normalized_catalog]},
-            session_state={"tenant_id": clean_slug, "session_id": session_id},
-            status="success",
-            type="TEXT",
-            reply=reader_reply,
-            quick_actions=welcome_buttons,
-            session_id=session_id,
-            tenant_id=clean_slug,
-        )
+        if is_reader_inquiry_intent(q, tenant_slug=clean_slug):
+            reader_reply = generate_reader_account_explanation_reply(tenant_slug=clean_slug)
+            safe_log_to_supabase_messages(
+                sender="bot", text=reader_reply, tenant_id=clean_slug, channel="webchat", user_id=session_id
+            )
+            return StoreChatResponse(
+                reply_text=reader_reply,
+                action="NONE",
+                payload={"product_ids": [p["product_id"] for p in normalized_catalog]},
+                session_state={"tenant_id": clean_slug, "session_id": session_id},
+                status="success",
+                type="TEXT",
+                reply=reader_reply,
+                quick_actions=welcome_buttons,
+                session_id=session_id,
+                tenant_id=clean_slug,
+            )
 
     # ZERO-HALLUCINATION SAFE GUARD 1: Katalog Kosong
     if not normalized_catalog:

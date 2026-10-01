@@ -970,19 +970,21 @@ async def process_inbound_message(payload: InboundPayload):
             )
 
     # 2.8 SOP Direct Checkout WhatsApp & Strict Reader Accounts Intent (§14.1 & §15.2)
-    if not reply:
+    # STRICT TENANT GUARD: Hanya aktif jika tenant_slug == 'boontrack' (Nomor resmi platform BoonTrack sendiri)
+    # Tenant merchant (solusi-ads, buatinvideo, dll) WAJIB bypass total dan dialirkan langsung ke AI/CS toko masing-masing!
+    if not reply and tenant_slug == "boontrack":
         from app.services.ai.grounding import (
             is_setup_toko_intent,
             generate_setup_toko_consultation_reply,
             is_reader_inquiry_intent,
             generate_reader_account_explanation_reply,
         )
-        if is_setup_toko_intent(incoming_text):
+        if is_setup_toko_intent(incoming_text, tenant_slug=tenant_slug):
             logger.info(f"[GROWTH GATEWAY] Matched SOP Direct Checkout WA (Setup Toko / Terima Beres) for '{clean_phone}'")
-            reply = generate_setup_toko_consultation_reply(contact_name)
-        elif is_reader_inquiry_intent(incoming_text):
+            reply = generate_setup_toko_consultation_reply(contact_name, tenant_slug=tenant_slug)
+        elif is_reader_inquiry_intent(incoming_text, tenant_slug=tenant_slug):
             logger.info(f"[GROWTH GATEWAY] Matched Strict Reader 5 Accounts inquiry for '{clean_phone}'")
-            reply = generate_reader_account_explanation_reply(contact_name)
+            reply = generate_reader_account_explanation_reply(contact_name, tenant_slug=tenant_slug)
 
     # 3. Pipeline Auto-Reply: Deteksi Checkout & Pembelian Cepat
     if not reply:

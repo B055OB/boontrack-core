@@ -411,14 +411,15 @@ class UnifiedConversationEngine:
             }
 
         # 3.5 STRICT GROUNDING INTERCEPTOR (SOP Terima Beres / Setup Toko & Reader 5 Accounts)
-        if not image_base64:
+        # STRICT TENANT GUARD: Hanya aktif jika clean_slug == 'boontrack'
+        if not image_base64 and clean_slug == "boontrack":
             from app.services.ai.grounding import (
                 is_setup_toko_intent,
                 generate_setup_toko_consultation_reply,
                 is_reader_inquiry_intent,
                 generate_reader_account_explanation_reply,
             )
-            if is_setup_toko_intent(q):
+            if is_setup_toko_intent(q, tenant_slug=clean_slug):
                 sop_reply = generate_setup_toko_consultation_reply(tenant_slug=clean_slug)
                 return {
                     "success": True,
