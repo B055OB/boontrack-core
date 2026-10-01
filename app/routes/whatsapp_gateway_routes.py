@@ -834,15 +834,26 @@ async def process_inbound_message(payload: InboundPayload):
             }
 
         engine_res = None
+        inbound_history = []
         if not reply:
             # Scope Isolation: if GROUP (non-boon), isolate conversation session key so it never collides with private DM
             conv_sender_id = f"group:{payload.group_jid}" if (is_group_scope) else clean_phone
+
+            # Muat riwayat pesan nyata dari Supabase agar bot tidak amnesia
+            if clean_phone and not is_group_scope:
+                try:
+                    from app.services.conversation_history_service import get_recent_chat_history
+                    inbound_history = await get_recent_chat_history(tenant_slug, clean_phone, limit=10)
+                except Exception as _ih_err:
+                    logger.debug(f"[INBOUND HISTORY NOTE] {_ih_err}")
+
             engine_res = await unified_conversation_engine.process_chat(
                 tenant_slug=tenant_slug,
                 message=incoming_text,
                 sender_id=conv_sender_id,
                 sender_name=contact_name,
                 channel="whatsapp",
+                history=inbound_history,
                 image_base64=payload.image_base64,
                 mime_type=payload.mime_type or "image/jpeg",
             )
@@ -856,8 +867,8 @@ async def process_inbound_message(payload: InboundPayload):
                     "message": "Sesi dalam status HANDOVER_TO_HUMAN. Balasan otomatis ditahan."
                 }
 
-            # Jika trigger greeting awal, handover manusia, katalog kosong, atau produk di luar database
-            if engine_res.get("action") in ("SHOW_MENU", "CS_HANDOVER", "HANDOVER_TO_HUMAN") or engine_res.get("unassigned_triggered"):
+            # Jika trigger greeting awal, handover manusia, direct payment, katalog kosong, atau produk di luar database
+            if engine_res.get("action") in ("SHOW_MENU", "CS_HANDOVER", "HANDOVER_TO_HUMAN", "DIRECT_PAYMENT_INSTRUCTIONS") or engine_res.get("unassigned_triggered"):
                 reply = engine_res.get("reply")
 
     # 1.7 APP_SHOP_V1 Interactive Catalog Interceptor — DISABLED (Shop mode bypassed, locked to pure Sales Rep)
@@ -1050,6 +1061,8 @@ async def process_inbound_message(payload: InboundPayload):
                     user_message=incoming_text,
                     user_phone=clean_phone,
                     user_name=contact_name,
+                    button_id=None,
+                    history=inbound_history,
                     bot_strategy=resolved_strategy,
                     image_base64=payload.image_base64,
                     mime_type=payload.mime_type or "image/jpeg",
@@ -1086,12 +1099,20 @@ async def process_inbound_message(payload: InboundPayload):
             else:
                 store_name = tenant_slug.replace("-", " ").title()
 
-        from app.whatsapp.traffic_splitter import get_tenant_greeting_message
-        reply = get_tenant_greeting_message(
-            store_name=store_name,
-            tenant_slug=tenant_slug,
-            tenant_meta=tenant_meta,
-        )
+        # STRICT GUARD: Jika pesan BUKAN pesan pertama (sudah ada history), DILARANG menempelkan greeting/formulir!
+        has_prior_chat = bool(inbound_history and len(inbound_history) > 0)
+        if has_prior_chat:
+            reply = (
+                f"Ada yang bisa kami bantu lagi untuk toko atau layanan *{store_name}*, Kak? 😊\n\n"
+                f"Katalog & pemesanan resmi: https://shop.boontrack.com/{tenant_slug}"
+            )
+        else:
+            from app.whatsapp.traffic_splitter import get_tenant_greeting_message
+            reply = get_tenant_greeting_message(
+                store_name=store_name,
+                tenant_slug=tenant_slug,
+                tenant_meta=tenant_meta,
+            )
 
     # Log Terminal Detail Poin 3: Saat balasan siap dikirim
     logger.info(

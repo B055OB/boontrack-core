@@ -116,6 +116,9 @@ class UnifiedConversationEngine:
     @staticmethod
     def is_initial_greeting(message: str, history: Optional[List[Dict[str, Any]]] = None) -> bool:
         """Mendeteksi apakah percakapan merupakan sapaan awal pembuka."""
+        # JIKA SUDAH ADA RIWAYAT OBROLAN, BUKAN INITIAL GREETING!
+        if history and len(history) > 0:
+            return False
         clean_msg = re.sub(r"[^\w\s]", "", message.lower()).strip()
         if not clean_msg:
             return True
@@ -204,6 +207,14 @@ class UnifiedConversationEngine:
         from app.services.whatsapp_service import normalize_phone_number, get_supabase
         clean_phone = normalize_phone_number(sender_id) if any(c.isdigit() for c in str(sender_id)) else str(sender_id)
         supabase = get_supabase()
+
+        # Step 0A: Auto-load Conversation History jika belum disediakan (Single Source of Truth)
+        if (history is None or len(history) == 0) and clean_phone:
+            try:
+                from app.services.conversation_history_service import get_recent_chat_history
+                history = await get_recent_chat_history(clean_slug, clean_phone, limit=10)
+            except Exception as _hist_err:
+                logger.debug(f"[UNIFIED ENGINE HISTORY FETCH WARN] {_hist_err}")
 
         # Step 0: Inbound Message Drop saat Paused / Handover to Human
         if supabase and clean_phone:
@@ -551,6 +562,81 @@ class UnifiedConversationEngine:
                 "business_category": business_category,
                 "quick_actions": welcome_buttons,
                 "action": "SHOW_CATALOG",
+                "type": "TEXT",
+                "unassigned_triggered": False,
+            }
+
+        # 6.5 Interceptor Pembayaran Langsung via WhatsApp / Nomor Rekening
+        DIRECT_PAY_TRIGGERS = [
+            "mau bayar via wa", "bayar via wa", "bayar lewat wa",
+            "transfer via wa", "minta no rekening", "minta nomor rekening",
+            "nomor rekeningnya", "rekening mana", "transfer ke mana",
+            "mau bayar saja", "bisa bayar lewat wa", "mau bayar sekarang",
+            "kirim rekening", "minta rekening", "bayar via transfer",
+            "mau bayar via transfer"
+        ]
+        if any(w in q_lower for w in DIRECT_PAY_TRIGGERS):
+            p_settings = tenant_meta.get("payment_settings") or {}
+            p_config = tenant_meta.get("payment_config") or {}
+            bank_accounts = p_settings.get("bank_accounts") or p_config.get("bank_accounts") or []
+
+            b_name = "BCA"
+            b_acc = "8940770000"
+            b_holder = "PT SOLUSI GROUP BAROKAH"
+            if bank_accounts and isinstance(bank_accounts, list) and len(bank_accounts) > 0:
+                first_acc = bank_accounts[0]
+                if isinstance(first_acc, dict):
+                    b_name = first_acc.get("bank_name") or b_name
+                    b_acc = first_acc.get("account_number") or b_acc
+                    b_holder = first_acc.get("account_holder") or b_holder
+            else:
+                b_meta = tenant_meta.get("bank") or {}
+                if isinstance(b_meta, dict):
+                    b_name = b_meta.get("name") or b_name
+                    if b_meta.get("account") and b_meta.get("account") != "-":
+                        b_acc = b_meta.get("account")
+                    if b_meta.get("holder"):
+                        b_holder = b_meta.get("holder")
+
+            target_prod = None
+            if catalog:
+                for p in catalog:
+                    p_slug_test = str(p.get("slug") or "").lower()
+                    p_title_test = str(p.get("title") or p.get("name") or "").lower()
+                    if "tiket" in p_slug_test or "konsultasi" in p_title_test or "audit" in p_title_test:
+                        target_prod = p
+                        break
+                if not target_prod:
+                    target_prod = catalog[0]
+
+            target_prod = target_prod or {}
+            prod_name = target_prod.get("title") or target_prod.get("name") or "Sesi Audit & Konsultasi 1-on-1 Eksklusif"
+            prod_price = float(target_prod.get("promo_price") or target_prod.get("price") or 149000)
+            prod_slug = str(target_prod.get("slug") or target_prod.get("id") or "tiket-konsultasi").strip()
+            checkout_url = f"https://shop.boontrack.com/{clean_slug}/p/{prod_slug}?checkout=true" if prod_slug else f"https://shop.boontrack.com/{clean_slug}"
+
+            price_fmt = f"Rp {prod_price:,.0f}".replace(",", ".")
+            pay_reply = (
+                f"Bisa banget, Kak! Pembayaran tiket *{prod_name}* ({price_fmt}) "
+                f"bisa langsung ditransfer via WhatsApp ke rekening resmi kami ya:\n\n"
+                f"🏦 *Bank Tujuan:* {b_name}\n"
+                f"🔢 *No. Rekening:* `{b_acc}`\n"
+                f"👤 *Atas Nama:* {b_holder}\n"
+                f"💰 *Nominal Tagihan:* {price_fmt}\n\n"
+                f"_(Catatan: Biaya tiket komitmen ini 100% MEMOTONG TAGIHAN DP jika nantinya Kakak lanjut menggunakan jasa agensi kami)_\n\n"
+                f"Atau jika Kakak ingin bayar instan via website resmi:\n"
+                f"👉 {checkout_url}\n\n"
+                f"Setelah melakukan transfer, silakan kirimkan foto/bukti transfernya di chat ini ya Kak, "
+                f"tim kami akan langsung verifikasi dan jadwalkan sesinya! 🙏"
+            )
+            return {
+                "success": True,
+                "reply": pay_reply,
+                "reply_text": pay_reply,
+                "tenant_slug": clean_slug,
+                "business_category": business_category,
+                "quick_actions": welcome_buttons,
+                "action": "DIRECT_PAYMENT_INSTRUCTIONS",
                 "type": "TEXT",
                 "unassigned_triggered": False,
             }

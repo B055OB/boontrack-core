@@ -671,17 +671,13 @@ def get_tenant_greeting_message(
     tenant_slug: str,
     tenant_meta: Optional[Dict[str, Any]] = None,
     custom_greeting: Optional[str] = None,
+    is_ongoing: bool = False,
+    has_history: bool = False,
 ) -> str:
     """
     Mengambil pesan sapaan resmi tenant secara dinamis dari database Supabase (metadata).
-    Urutan prioritas:
-    1. custom_greeting parameter
-    2. metadata.ai_knowledge.greeting_message
-    3. metadata.greeting_message
-    4. metadata.custom_greeting_message
-    5. metadata.whatsapp_settings.greeting_message
-    6. metadata.boonpilot_proposal.persona.greeting_message / persona.welcome_message
-    Jika tidak ada konfigurasi kustom, kembalikan format greeting default dinamis tanpa teks usang.
+    Jika percakapan sedang berjalan (is_ongoing=True atau has_history=True), DILARANG
+    mengulang template greeting/form pendataan diri!
     """
     slug = str(tenant_slug or "").strip().lower()
     if slug in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app-shop-v1", "app_shop", "app-shop", "boontrack-app-shop", "boontrack_app_shop"):
@@ -696,6 +692,13 @@ def get_tenant_greeting_message(
             clean_name = slug.replace("-", " ").title()
     elif slug == "boon" and clean_name.lower() in ("boon", "52967979 4760 4cea b686 cdbdb389c0e1"):
         clean_name = "BoonTrack Official Shop"
+
+    # STRICT GUARD: Jika percakapan sudah berjalan, kembalikan respon ramah tanpa form!
+    if is_ongoing or has_history:
+        return (
+            f"Ada yang bisa kami bantu lagi untuk toko atau layanan *{clean_name}*, Kak? 😊\n\n"
+            f"Katalog & pemesanan resmi: https://shop.boontrack.com/{slug}"
+        )
 
     meta = tenant_meta if isinstance(tenant_meta, dict) else {}
     ai_k = meta.get("ai_knowledge") or {}
@@ -735,12 +738,16 @@ def get_tenant_fallback_message(
     tenant_slug: str,
     custom_greeting: Optional[str] = None,
     tenant_meta: Optional[Dict[str, Any]] = None,
+    is_ongoing: bool = False,
+    has_history: bool = False,
 ) -> str:
     return get_tenant_greeting_message(
         store_name=store_name,
         tenant_slug=tenant_slug,
         tenant_meta=tenant_meta,
         custom_greeting=custom_greeting,
+        is_ongoing=is_ongoing,
+        has_history=has_history,
     )
 
 
@@ -1485,10 +1492,20 @@ class TenantWebhookRouter:
         # Check product buy intent / catalog inquiry
         is_catalog_inquiry = any(kw in text_lower for kw in ["katalog", "harga", "produk", "beli", "order", "checkout", "bayar"])
 
+        # Cek apakah sender sudah pernah berinteraksi sebelumnya
+        has_sender_history = False
+        if sender_phone:
+            try:
+                from app.services.conversation_history_service import get_recent_chat_history
+                hist = await get_recent_chat_history(tenant_slug, sender_phone, limit=5)
+                has_sender_history = bool(hist and len(hist) > 0)
+            except Exception:
+                pass
+
         reply_text = None
 
-        if is_general_inquiry and not is_catalog_inquiry:
-            # Fallback menu ramah untuk toko merchant
+        if is_general_inquiry and not is_catalog_inquiry and not has_sender_history:
+            # Fallback menu ramah HANYA jika ini pesan pertama
             _custom_greeting = _meta.get("greeting_message") or _meta.get("custom_greeting_message")
             reply_text = get_tenant_fallback_message(store_name, tenant_slug, _custom_greeting)
             trace.log_step("StateGuard.TenantFallback", f"Generated fallback greeting for store '{store_name}'")
@@ -1549,7 +1566,10 @@ class TenantWebhookRouter:
             # Automated fallback bot jika AI belum menghasilkan jawaban
             if not reply_text:
                 _custom_greeting = _meta.get("greeting_message") or _meta.get("custom_greeting_message")
-                reply_text = get_tenant_fallback_message(store_name, tenant_slug, _custom_greeting)
+                reply_text = get_tenant_fallback_message(
+                    store_name, tenant_slug, _custom_greeting,
+                    is_ongoing=has_sender_history, has_history=has_sender_history
+                )
                 trace.log_step("FallbackBot", "AI empty -> using automated tenant fallback bot")
 
         # 4. Dispatch balasan ke pengguna

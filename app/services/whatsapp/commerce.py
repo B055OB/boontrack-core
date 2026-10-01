@@ -387,11 +387,32 @@ async def generate_cart_checkout_response(
         "tenant_id": clean_slug,
     }
 
-    bank_str = ""
-    if isinstance(bank_info, dict) and bank_info.get("name") and bank_info.get("holder"):
+    bank_accounts = (
+        (tenant_meta.get("payment_settings") or {}).get("bank_accounts")
+        or (tenant_meta.get("payment_config") or {}).get("bank_accounts")
+        or []
+    )
+    b_name = None
+    b_acc = None
+    b_holder = None
+    if bank_accounts and isinstance(bank_accounts, list) and len(bank_accounts) > 0:
+        first_acc = bank_accounts[0]
+        if isinstance(first_acc, dict):
+            b_name = first_acc.get("bank_name")
+            b_acc = first_acc.get("account_number")
+            b_holder = first_acc.get("account_holder")
+    elif isinstance(bank_info, dict) and bank_info.get("name"):
+        b_name = bank_info.get("name")
         b_acc = str(bank_info.get("account") or "").strip()
-        acc_display = f"• No. Rek: `{b_acc}`\n" if b_acc and b_acc != "-" else ""
-        bank_str = f"\n🏦 *Alternatif Transfer Bank:*\n• Bank: {bank_info.get('name')}\n• Penerima: {bank_info.get('holder')}\n{acc_display}"
+        if b_acc == "-":
+            b_acc = None
+        b_holder = bank_info.get("holder")
+
+    bank_str = ""
+    if b_name and (b_acc or b_holder):
+        acc_display = f"• No. Rekening: `{b_acc}`\n" if b_acc else ""
+        holder_display = f"• Atas Nama: {b_holder}\n" if b_holder else ""
+        bank_str = f"\n🏦 *Rekening Resmi Transfer Bank:*\n• Bank: {b_name}\n{acc_display}{holder_display}"
 
     caption = (
         f"Berikut Rincian Tagihan & Barcode QRIS Pembayaran 💳\n\n"
@@ -555,11 +576,32 @@ async def generate_fast_track_checkout_response(
         "tenant_id": clean_slug,
     }
 
-    bank_str = ""
-    if isinstance(bank_info, dict) and bank_info.get("name") and bank_info.get("holder"):
+    bank_accounts = (
+        (tenant_meta.get("payment_settings") or {}).get("bank_accounts")
+        or (tenant_meta.get("payment_config") or {}).get("bank_accounts")
+        or []
+    )
+    b_name = None
+    b_acc = None
+    b_holder = None
+    if bank_accounts and isinstance(bank_accounts, list) and len(bank_accounts) > 0:
+        first_acc = bank_accounts[0]
+        if isinstance(first_acc, dict):
+            b_name = first_acc.get("bank_name")
+            b_acc = first_acc.get("account_number")
+            b_holder = first_acc.get("account_holder")
+    elif isinstance(bank_info, dict) and bank_info.get("name"):
+        b_name = bank_info.get("name")
         b_acc = str(bank_info.get("account") or "").strip()
-        acc_display = f"• No. Rek: `{b_acc}`\n" if b_acc and b_acc != "-" else ""
-        bank_str = f"\n🏦 *Alternatif Transfer Bank:*\n• Bank: {bank_info.get('name')}\n• Penerima: {bank_info.get('holder')}\n{acc_display}"
+        if b_acc == "-":
+            b_acc = None
+        b_holder = bank_info.get("holder")
+
+    bank_str = ""
+    if b_name and (b_acc or b_holder):
+        acc_display = f"• No. Rek: `{b_acc}`\n" if b_acc else ""
+        holder_display = f"• Penerima: {b_holder}\n" if b_holder else ""
+        bank_str = f"\n🏦 *Alternatif Transfer Bank:*\n• Bank: {b_name}\n{acc_display}{holder_display}"
 
     caption = (
         f"Berikut Rincian Tagihan & Barcode QRIS Pembayaran 💳\n\n"

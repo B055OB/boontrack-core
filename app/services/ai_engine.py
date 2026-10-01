@@ -62,7 +62,13 @@ class CommerceAIEngine:
     def __init__(self, ai_service=None):
         self.ai_service = ai_service or ai_gateway
 
-    def build_commerce_system_prompt(self, tenant_slug: str, bot_strategy: Optional[str] = None) -> str:
+    def build_commerce_system_prompt(
+        self,
+        tenant_slug: str,
+        bot_strategy: Optional[str] = None,
+        has_history: bool = False,
+        is_first_message: bool = True,
+    ) -> str:
         """Constructs a hyper-focused system prompt dynamically pulled entirely from tenant database settings."""
         details = onboarding_service.get_tenant_details_by_slug(tenant_slug) or {}
         tenant = details.get("tenant", {}) if details else {}
@@ -111,7 +117,20 @@ class CommerceAIEngine:
             or f"Asisten {store_name}"
         )
         tone = persona.get("tone") or ai_k.get("tone") or "Ramah, solutif, dan profesional"
-        custom_system_prompt = persona.get("system_prompt") or ai_k.get("system_prompt") or tenant.get("system_prompt")        # Format Daftar Produk / Layanan / Tarif Riil dari Database dengan URL Resmi
+        custom_system_prompt = persona.get("system_prompt") or ai_k.get("system_prompt") or tenant.get("system_prompt")
+
+        if has_history or not is_first_message:
+            greeting_rule = (
+                "ATURAN SAPAAN & PERCAKAPAN BERLANJUT (STRICT GUARD):\n"
+                "- Sesi percakapan ini SEDANG BERJALAN (sudah ada interaksi riwayat chat sebelumnya).\n"
+                "- DILARANG KERAS menyapa ulang ('Halo Kak! Selamat datang...', dsb).\n"
+                "- DILARANG KERAS menempelkan greeting pembuka atau formulir data diri (seperti meminta Nama, Domisili, Email, Nama Toko, Link Toko, Omset) jika data sudah ada di riwayat atau jika pelanggan bertanya hal lain!\n"
+                "- Langsung jawab pesan/pertanyaan customer secara to-the-point, ramah, dan solutif.\n\n"
+            )
+        else:
+            greeting_rule = f"- Format Sapaan Awal (HANYA digunakan pada pesan pembuka pertama): {welcome}\n\n"
+
+        # Format Daftar Produk / Layanan / Tarif Riil dari Database dengan URL Resmi
         product_lines: List[str] = []
         if products:
             for idx, p in enumerate(products, 1):
@@ -176,6 +195,17 @@ class CommerceAIEngine:
             f"3. Paket 3: Paket Terima Beres All-in-One / Full Service (auto-scraping foto & varian dari marketplace/IG klien, landing page katalog resmi, bot dilatih natural, terhubung ke mutasi otomatis BoonTrack Reader 0% MDR).\n\n"
             f"SOP DIRECT CHECKOUT WHATSAPP (PENJUALAN JASA & SETUP TOKO):\n"
             f"Jika calon tenant meminta jasa terima beres / setup toko, jelaskan 3 paket di atas secara ramah, tanyakan nama toko, jenis produk, dan nomor WA bisnis, lalu siapkan rincian invoice/QRIS pembayaran langsung di WhatsApp tanpa melempar link pendaftaran lama / buzzerukm.\n\n"
+            f"ATURAN PEMBAYARAN VIA WHATSAPP & NO RE-REGISTRATION GUARD (MUTLAK):\n"
+            f"1. Jika customer menyatakan ingin bayar via WhatsApp, minta nomor rekening, atau transfer manual (contoh: 'mau bayar via wa', 'mau bayar via wa saja bisa', 'minta no rekening', 'transfer ke mana', 'mau bayar'):\n"
+            f"   - DILARANG KERAS meminta ulang Nama/Email/Toko/Omset atau meminta mengisi formulir apa pun!\n"
+            f"   - LANGSUNG berikan rincian tagihan resmi (misal: Sesi Audit & Konsultasi 1-on-1 Rp 149.000 yang 100% MEMOTONG TAGIHAN DP jika lanjut jasa) dan instruksi transfer resmi:\n"
+            f"     • Bank: BCA\n"
+            f"     • No. Rekening: 8940770000\n"
+            f"     • Atas Nama: PT SOLUSI GROUP BAROKAH\n"
+            f"     • Nominal: Rp 149.000\n"
+            f"     • Link Invoice/Checkout Web Resmi: https://shop.boontrack.com/{tenant_slug}/p/tiket-konsultasi?checkout=true\n"
+            f"   - Informasikan setelah transfer silakan kirimkan bukti transfer di chat ini untuk verifikasi instan.\n"
+            f"2. JIKA data pendaftaran sudah pernah dikirim di riwayat chat, DILARANG meminta ulang formulir pendataan.\n\n"
             f"ALUR PENDAFTARAN & CHECKOUT WHATSAPP (NATIVE LEAD COLLECTION):\n"
             f"Ketika calon pembeli menyatakan ingin membeli, mengambil paket, mendaftar, atau bertanya cara daftarnya (contoh: 'mau ambil yang 7-Day Sprint kak, gimana cara daftarnya?', 'mau beli', 'mau daftar', 'cara daftarnya kak'):\n"
             f"1. Sambut dengan ramah dan konfirmasi nama paket yang dipilih beserta harganya yang sesuai database resmi.\n"
@@ -206,7 +236,7 @@ class CommerceAIEngine:
                 f"- Nama Asisten AI: {assistant_name}\n"
                 f"- Nama Toko / Merchant: {store_name} ({vertical})\n"
                 f"- Gaya Komunikasi / Tone: {tone}\n"
-                f"- Sapaan Pembuka Wajib: {welcome}\n\n"
+                f"{greeting_rule}"
                 f"KATALOG & TARIF RESMI (DARI DATABASE):\n"
                 f"{catalog_text}\n\n"
                 f"{guardrail_and_checkout_rules}"
@@ -218,7 +248,7 @@ class CommerceAIEngine:
             f"INFORMASI TOKO:\n"
             f"- Nama Toko: {store_name}\n"
             f"- Nama Asisten AI: {assistant_name}\n"
-            f"- Sapaan Pembuka Wajib: {welcome}\n\n"
+            f"{greeting_rule}"
             f"{strategy_rules}\n\n"
             f"KATALOG & TARIF RESMI DARI DATABASE (JANGAN MENGARANG HARGA LAIN):\n"
             f"{catalog_text}\n\n"
@@ -282,7 +312,21 @@ class CommerceAIEngine:
             )
             return ""
 
-        system_prompt = self.build_commerce_system_prompt(tenant_slug, bot_strategy=strategy_key)
+        # Pastikan history terisi (Single Source of Truth dari Supabase messages)
+        if (history is None or len(history) == 0) and user_phone:
+            try:
+                from app.services.conversation_history_service import get_recent_chat_history
+                history = await get_recent_chat_history(tenant_slug, user_phone, limit=10)
+            except Exception as _h_err:
+                logger.debug(f"[AI_ENGINE HISTORY FETCH NOTE] {_h_err}")
+
+        has_history = bool(history and len(history) > 0)
+        system_prompt = self.build_commerce_system_prompt(
+            tenant_slug,
+            bot_strategy=strategy_key,
+            has_history=has_history,
+            is_first_message=(not has_history),
+        )
         if mode_prompt:
             system_prompt = f"{mode_prompt}\n\n{system_prompt}"
 
@@ -292,13 +336,19 @@ class CommerceAIEngine:
 
         if history and isinstance(history, list):
             formatted_turns = []
-            for turn in history[-8:]:
+            for turn in history[-10:]:
                 role = turn.get("role") or turn.get("sender") or "User"
                 content = turn.get("content") or turn.get("text") or turn.get("message") or ""
                 if content:
                     formatted_turns.append(f"{str(role).capitalize()}: {content}")
             if formatted_turns:
-                history_str = "\n\nRIWAYAT PERCAKAPAN SEBELUMNYA:\n" + "\n".join(formatted_turns)
+                history_str = (
+                    "\n\nRIWAYAT PERCAKAPAN SEBELUMNYA:\n" + "\n".join(formatted_turns) +
+                    "\n\nCATATAN PERCAKAPAN:\n"
+                    "- Di atas adalah riwayat obrolan nyata yang sudah berlangsung.\n"
+                    "- Ingat konteks di atas. JANGAN meminta ulang data yang sudah diberikan customer.\n"
+                    "- JANGAN mengulang sapaan selamat datang pembuka atau formulir template.\n"
+                )
                 system_prompt = f"{system_prompt}{history_str}"
 
         query_to_llm = clean_msg
@@ -343,9 +393,13 @@ class CommerceAIEngine:
         except Exception as e:
             logger.warning(f"[{tenant_slug}] AI generation error, falling back: {e}")
 
-        # Fallback dinamis murni mengambil sapaan dari database tenant bersangkutan
+        # Fallback dinamis: JIKA ada riwayat obrolan (percakapan sedang berlangsung), DILARANG KERAS mengembalikan greeting/form!
+        store_display_name = tenant.get("name") or tenant_slug.replace("-", " ").title()
+        if has_history:
+            return f"Terima kasih Kak. Ada yang bisa kami bantu lagi untuk kebutuhan toko atau layanan Kakak di *{store_display_name}*?"
+
         ai_k = details.get("ai_knowledge", {}) if details else {}
-        fallback_welcome = persona.get("welcome_message") or ai_k.get("welcome_message") or f"Halo! Selamat datang di {tenant.get('name', tenant_slug)}. Ada yang bisa saya bantu?"
+        fallback_welcome = persona.get("welcome_message") or ai_k.get("welcome_message") or f"Halo! Selamat datang di {store_display_name}. Ada yang bisa saya bantu?"
         return fallback_welcome
 
     async def validate_store_action(
