@@ -387,9 +387,30 @@ class UnifiedConversationEngine:
         # 3. Handle Greeting Awal / Percakapan Baru (hanya untuk teks murni tanpa gambar)
         is_greeting = not bool(image_base64) and (self.is_initial_greeting(q, history) or (button_id == "START_GREETING"))
         if is_greeting:
+            show_menu_flag = tenant_meta.get("show_menu_on_greeting")
+            if isinstance(show_menu_flag, str):
+                show_menu_flag = show_menu_flag.lower() in ("true", "1", "yes")
+            elif show_menu_flag is not None:
+                show_menu_flag = bool(show_menu_flag)
+
+            has_custom_greeting = bool(
+                tenant_meta.get("greeting_message")
+                or tenant_meta.get("custom_greeting_message")
+                or tenant_meta.get("welcome_message")
+                or (tenant_meta.get("ai_knowledge") or {}).get("greeting_message")
+                or (tenant_meta.get("whatsapp_settings") or {}).get("greeting_message")
+            )
             has_embedded_options = any(w in welcome_msg.lower() for w in ["balas 1", "balas \"1\"", "balas '1'", "1.", "1 -", "opsi 1"])
-            if has_embedded_options or not welcome_buttons:
+
+            should_append_menu = (
+                show_menu_flag is True
+                or (show_menu_flag is not False and not has_custom_greeting)
+            )
+
+            if not should_append_menu or has_embedded_options or not welcome_buttons:
                 greeting_text = welcome_msg
+                greeting_actions = []
+                greeting_action_name = "GREETING"
             else:
                 greeting_text = (
                     f"{welcome_msg}\n\n"
@@ -398,14 +419,17 @@ class UnifiedConversationEngine:
                     f"2. {welcome_buttons[1]}\n"
                     f"3. {welcome_buttons[2]}"
                 )
+                greeting_actions = welcome_buttons
+                greeting_action_name = "SHOW_MENU"
+
             return {
                 "success": True,
                 "reply": greeting_text,
                 "reply_text": greeting_text,
                 "tenant_slug": clean_slug,
                 "business_category": business_category,
-                "quick_actions": welcome_buttons,
-                "action": "SHOW_MENU",
+                "quick_actions": greeting_actions,
+                "action": greeting_action_name,
                 "type": "TEXT",
                 "unassigned_triggered": False,
             }

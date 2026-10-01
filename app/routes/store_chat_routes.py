@@ -75,7 +75,16 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
     persona = settings.get("persona", {}) if isinstance(settings, dict) else {}
     
     # Ambil template respons dari dashboard
-    welcome_msg = persona.get("welcome_message") or "Halo! Ada yang bisa kami bantu?"
+    from app.whatsapp.traffic_splitter import get_tenant_greeting_message
+    welcome_msg = (
+        get_tenant_greeting_message(
+            store_name=settings.get("tenant", {}).get("name") or clean_slug.replace("-", " ").title(),
+            tenant_slug=clean_slug,
+            tenant_meta=meta,
+        )
+        or persona.get("welcome_message")
+        or "Halo! Ada yang bisa kami bantu?"
+    )
     qris_closing = meta.get("qris_closing_template") or "Terima kasih Kak, pembayaran bisa via scan QRIS resmi setelah pekerjaan beres ya."
     cod_closing = meta.get("cod_closing_template") or "Terima kasih Kak, pembayaran tunai dibayarkan langsung ke teknisi setelah selesai."
     faqs = meta.get("faqs", []) # Daftar FAQ custom dari dashboard
@@ -217,25 +226,53 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
 
     # Greeting Awal
     if unified_conversation_engine.is_initial_greeting(q, payload.conversation_history) or payload.button_id == "START_GREETING":
-        greeting_text = (
-            f"{welcome_msg}\n\n"
-            f"Silakan pilih menu cepat berikut untuk memulai:\n"
-            f"1. {welcome_buttons[0]}\n"
-            f"2. {welcome_buttons[1]}\n"
-            f"3. {welcome_buttons[2]}"
+        show_menu_flag = meta.get("show_menu_on_greeting")
+        if isinstance(show_menu_flag, str):
+            show_menu_flag = show_menu_flag.lower() in ("true", "1", "yes")
+        elif show_menu_flag is not None:
+            show_menu_flag = bool(show_menu_flag)
+
+        has_custom_greeting = bool(
+            meta.get("greeting_message")
+            or meta.get("custom_greeting_message")
+            or meta.get("welcome_message")
+            or (meta.get("ai_knowledge") or {}).get("greeting_message")
+            or (meta.get("whatsapp_settings") or {}).get("greeting_message")
         )
+        has_embedded_options = any(w in welcome_msg.lower() for w in ["balas 1", "balas \"1\"", "balas '1'", "1.", "1 -", "opsi 1"])
+
+        should_append_menu = (
+            show_menu_flag is True
+            or (show_menu_flag is not False and not has_custom_greeting)
+        )
+
+        if not should_append_menu or has_embedded_options or not welcome_buttons:
+            greeting_text = welcome_msg
+            resp_buttons = []
+            resp_action = "GREETING"
+        else:
+            greeting_text = (
+                f"{welcome_msg}\n\n"
+                f"Silakan pilih menu cepat berikut untuk memulai:\n"
+                f"1. {welcome_buttons[0]}\n"
+                f"2. {welcome_buttons[1]}\n"
+                f"3. {welcome_buttons[2]}"
+            )
+            resp_buttons = welcome_buttons
+            resp_action = "SHOW_MENU"
+
         safe_log_to_supabase_messages(
             sender="bot", text=greeting_text, tenant_id=clean_slug, channel="webchat", user_id=session_id
         )
         return StoreChatResponse(
             reply_text=greeting_text,
-            action="SHOW_MENU",
+            action=resp_action,
             payload={"product_ids": [p["product_id"] for p in normalized_catalog]},
             session_state={"tenant_id": clean_slug, "session_id": session_id},
             status="success",
             type="TEXT",
             reply=greeting_text,
-            quick_actions=welcome_buttons,
+            quick_actions=resp_buttons,
             session_id=session_id,
             tenant_id=clean_slug,
         )
