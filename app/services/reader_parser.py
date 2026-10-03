@@ -1,6 +1,13 @@
 import re
 from typing import Optional, Dict, Any
 
+# Regex khusus push notifikasi DANA Bisnis riil (§DANA-PARSER-V2):
+# Title: "Pembayaran Masuk" | Body: "Rp99.304 diterima DANA Bisnis."
+_DANA_BISNIS_SPECIFIC = re.compile(
+    r"Rp\s*([\d][\d\.\,]*)\s+diterima\s+DANA\s+Bisnis",
+    re.IGNORECASE
+)
+
 # 5 Akun Penerima Otomatis Merchant Resmi (§14.1 & §15.2):
 # 1. BCA Mobile / myBCA
 # 2. DANA Bisnis
@@ -44,11 +51,22 @@ def parse_reader_notification(app_source: str, raw_text: str) -> dict:
     # 2. DANA Bisnis
     elif "dana" in src:
         parsed["supported"] = True
-        if any(w in clean_text.lower() for w in ("diterima", "masuk", "kirim", "berhasil")):
+        # 2a. Regex spesifik format push notifikasi DANA Bisnis:
+        #     Title: "Pembayaran Masuk"  |  Body: "Rp99.304 diterima DANA Bisnis."
+        title_lower = (app_source or "")  # app_source berisi title pada beberapa implementasi
+        is_payment_in_title = "pembayaran masuk" in clean_text.lower() or "masuk" in clean_text.lower()
+        match_specific = _DANA_BISNIS_SPECIFIC.search(clean_text)
+        if match_specific:
+            parsed["amount"] = _clean_amount(match_specific.group(1))
+            parsed["is_payment_in"] = True
+        # 2b. Fallback: rule generik untuk varian teks lain
+        elif any(w in clean_text.lower() for w in ("diterima", "masuk", "kirim", "berhasil")):
             match_amt = re.search(r"(?:Rp\s?|IDR\s?)([0-9.,]+)", clean_text, re.IGNORECASE)
             if match_amt:
                 parsed["amount"] = _clean_amount(match_amt.group(1))
-                parsed["is_payment_in"] = True
+                # Hanya tandai payment_in jika bukan notifikasi outbound (kirim/mengirim)
+                outbound_words = ("kirim", "mengirim", "transfer ke", "dikirim ke")
+                parsed["is_payment_in"] = not any(w in clean_text.lower() for w in outbound_words)
 
     # 3. GoPay / GoBiz Merchant
     elif "gobiz" in src or "gopay" in src:

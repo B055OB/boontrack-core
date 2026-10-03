@@ -1,5 +1,6 @@
 import os
 import re
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Tuple, Union, List
@@ -305,6 +306,20 @@ async def match_and_fulfill_payment(
                 "document_payment_verified",
                 meta={"amount": amount, "job_id": job_id, "method": "DANA_QRIS"}
             )
+
+        # 🔔 Notifikasi Telegram Seller: PEMBAYARAN LUNAS
+        try:
+            from app.services.telegram_seller_notify import dispatch_seller_event
+            notify_data = {
+                **matched_job,
+                "amount": amount,
+                "payment_method": f"{source.replace('_', ' ').title()} / QRIS",
+                "user_phone": user_phone,
+                "ref_code": (raw_payload or {}).get("ref") or (raw_payload or {}).get("transaction_ref"),
+            }
+            asyncio.create_task(dispatch_seller_event("payment_confirmed", notify_data))
+        except Exception as _ntf_err:
+            logger.debug(f"[PAYMENT MATCHER] Seller notify skipped: {_ntf_err}")
 
         return {
             "status": "SUCCESS",
