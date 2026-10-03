@@ -327,6 +327,9 @@ def register_whatsapp_gateway_routes(app):
     _safe_add_route("POST", "/api/v1/whatsapp/webhook/evolution/{tenant_slug}/messages-upsert", aiohttp_evolution_webhook_handler)
     _safe_add_route("POST", "/api/v1/whatsapp/webhook/evolution", aiohttp_evolution_webhook_handler)
     _safe_add_route("POST", "/api/v1/whatsapp/evolution/webhook", aiohttp_evolution_webhook_handler)
+    _safe_add_route("POST", "/whatsapp/webhook/evolution/{tenant_slug}", aiohttp_evolution_webhook_handler)
+    _safe_add_route("POST", "/whatsapp/webhook/evolution/{tenant_slug}/messages-upsert", aiohttp_evolution_webhook_handler)
+    _safe_add_route("POST", "/whatsapp/webhook/evolution", aiohttp_evolution_webhook_handler)
     _safe_add_route("POST", "/webhook/evolution/{tenant_slug}", aiohttp_evolution_webhook_handler)
     _safe_add_route("POST", "/webhook/evolution", aiohttp_evolution_webhook_handler)
     _safe_add_route("POST", "/api/v1/whatsapp/inbound-process", aiohttp_inbound_process_handler)
@@ -2335,6 +2338,11 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
 @router.post("/webhook/evolution/{tenant_slug}/messages-upsert", summary="Evolution API Webhook byEvent")
 @router.post("/webhook/evolution", summary="Evolution API Webhook Default")
 @router.post("/evolution/webhook", summary="Evolution API Webhook Alias")
+@tenant_reconnect_router.post("/whatsapp/webhook/evolution/{tenant_slug}", summary="Evolution API Webhook Alias Direct")
+@tenant_reconnect_router.post("/whatsapp/webhook/evolution/{tenant_slug}/messages-upsert", summary="Evolution API Webhook Alias Direct byEvent")
+@tenant_reconnect_router.post("/whatsapp/webhook/evolution", summary="Evolution API Webhook Alias Direct Default")
+@tenant_reconnect_router.post("/webhook/evolution/{tenant_slug}", summary="Evolution API Webhook Direct per Tenant")
+@tenant_reconnect_router.post("/webhook/evolution", summary="Evolution API Webhook Direct Default")
 async def handle_evolution_webhook(request: Request, tenant_slug: Optional[str] = None):
     """FastAPI handler untuk webhook Evolution API."""
     try:
