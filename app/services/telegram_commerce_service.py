@@ -270,17 +270,12 @@ def format_help_reply() -> str:
 
 
 def format_general_reply(user_name: str) -> str:
-    """
-    Format respon chat umum non-perintah.
-    """
+    """Format respon chat umum non-perintah."""
     return (
-        f"👋 *Halo {user_name}!* Saya asisten notifikasi e-commerce resmi platform BoonTrack (@{_BOT_USERNAME}).\n\n"
-        "💡 *Perintah yang dapat digunakan:*\n"
-        "• `/id` — Melihat Chat ID Anda untuk pairing notifikasi\n"
-        "• `/help` — Panduan menghubungkan toko Anda"
+        f"Halo {user_name}! Ada yang bisa kami bantu seputar pesanan atau toko online Anda?\n\n"
+        "• Ketik `/id` untuk melihat Chat ID\n"
+        "• Ketik `/help` untuk panduan integrasi"
     )
-
-
 async def send_telegram_reply(
     chat_id: Union[int, str],
     text: str,
@@ -376,8 +371,7 @@ async def process_telegram_incoming(
         # Di grup: Silent ignore KECUALI mengandung wake word atau mention bot
         lower_text = clean_text.lower()
         has_wake = any(w in lower_text for w in _WAKE_WORDS)
-        if has_wake:
-            return format_general_reply(user_name)
+        # Di grup publik, jangan kirim template notifikasi toko
         return None
 
     # Di Chat Pribadi (DM):
@@ -390,7 +384,21 @@ async def handle_telegram_update(
 ) -> Dict[str, Any]:
     """
     Handler universal untuk raw Update payload dari Telegram Webhook.
+    Forwarding payload ke Next.js BoonPilot Inbox Gateway (Gemini AI Sales Representative).
     """
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                "https://shop.boontrack.com/api/webhooks/telegram",
+                json=update,
+                headers={"User-Agent": "TelegramBot (via BoonTrack Core Proxy)"}
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                logger.info(f"[TELEGRAM PROXY] Forwarded to Next.js gateway: {data.get('status')}")
+                return {"status": "success", "forwarded": True, "result": data}
+    except Exception as forward_err:
+        logger.warning(f"[TELEGRAM PROXY WARNING] Failed forwarding to shop.boontrack.com: {forward_err}")
     message = update.get("message") or update.get("edited_message")
     callback_query = update.get("callback_query")
 
