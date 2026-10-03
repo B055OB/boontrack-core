@@ -68,6 +68,20 @@ async def send_welcome(message: types.Message):
     first_name = message.chat.first_name or "Teman"
     text = (message.text or "").strip()
 
+    if os.getenv("ENABLE_LEGACY_CV_BOT", "false").lower() != "true":
+        from app.services.telegram_commerce_service import process_telegram_incoming
+        reply = await process_telegram_incoming(
+            chat_id=message.chat.id,
+            user_id=message.from_user.id if message.from_user else message.chat.id,
+            text=text or "/start",
+            user_name=first_name,
+            chat_type=message.chat.type or "private",
+            chat_title=message.chat.title,
+        )
+        if reply:
+            await message.reply(reply, parse_mode="Markdown")
+        return
+
     if text and not text.startswith("/admin") and not text.startswith("/analytics"):
         await log_to_supabase_messages(
             sender=f"Telegram / {first_name}",

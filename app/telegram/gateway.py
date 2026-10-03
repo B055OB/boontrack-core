@@ -44,11 +44,36 @@ async def handle_telegram_inbound(
         f"[TELEGRAM GATEWAY] Inbound update received: bot=@{bot.bot_username} tenant_id={tenant_id} user_id={from_user.get('id')}"
     )
 
+    # Process via Commerce Engine if command or text is present
+    reply_sent = False
+    if chat_id and text:
+        from app.services.telegram_commerce_service import process_telegram_incoming, send_telegram_reply
+        user_id = from_user.get("id") or chat_id
+        user_name = from_user.get("first_name") or "User"
+        chat_type = message.get("chat", {}).get("type", "private")
+        chat_title = message.get("chat", {}).get("title")
+
+        reply_text = await process_telegram_incoming(
+            chat_id=chat_id,
+            user_id=user_id,
+            text=text,
+            user_name=user_name,
+            chat_type=chat_type,
+            chat_title=chat_title,
+            bot_token=raw_token,
+        )
+        if reply_text:
+            reply_sent = await send_telegram_reply(
+                chat_id=chat_id,
+                text=reply_text,
+                bot_token=raw_token,
+            )
+
     return {
         "status": "success",
         "tenant_id": str(tenant_id),
         "bot_username": bot.bot_username,
         "chat_id": chat_id,
         "user_text": text,
-        "raw_token": raw_token,
+        "reply_sent": reply_sent,
     }

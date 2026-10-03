@@ -269,6 +269,50 @@ async def handle_incoming_telegram_webhook(request: web.Request) -> web.Response
         metadata={"callback_data": callback_data, "update_id": update.get("update_id")}
     )
 
+    # 3.2.b Intercept E-Commerce Commerce Commands (/start link_*, /id, /help)
+    clean_inbound = (user_text or "").strip()
+    is_link_start = clean_inbound.startswith("/start link_")
+    is_id_cmd = clean_inbound == "/id" or clean_inbound.startswith("/id@")
+    is_help_cmd = clean_inbound in ["/help", "/bantuan"] or clean_inbound.startswith("/help@")
+    is_generic_start = (clean_inbound == "/start" or clean_inbound.startswith("/start@")) and clean_tenant != "digicorn"
+
+    if is_link_start or is_id_cmd or is_help_cmd or is_generic_start:
+        from app.services.telegram_commerce_service import process_telegram_incoming
+        chat_type_detected = message.get("chat", {}).get("type", "private") if isinstance(message, dict) else "private"
+        chat_title_detected = message.get("chat", {}).get("title") if isinstance(message, dict) else None
+        
+        commerce_reply = await process_telegram_incoming(
+            chat_id=chat_id,
+            user_id=user_id or chat_id,
+            text=clean_inbound,
+            user_name=user_name,
+            chat_type=chat_type_detected,
+            chat_title=chat_title_detected,
+            bot_token=bot_token,
+        )
+        if commerce_reply:
+            await send_telegram_message(
+                bot_token=bot_token,
+                chat_id=chat_id,
+                text=commerce_reply,
+            )
+            safe_log_to_supabase_messages(
+                sender="bot",
+                text=commerce_reply,
+                tenant_id=clean_tenant,
+                channel="telegram",
+                user_phone=str(chat_id),
+                user_name=user_name,
+                user_id=str(user_id or chat_id),
+                conversation_id=str(chat_id),
+            )
+            return web.json_response({
+                "status": "success",
+                "handled": "commerce_engine",
+                "tenant_id": clean_tenant,
+                "chat_id": chat_id,
+            }, status=200)
+
     # 3.3. Dispatching ke Domain Tenant Engine
     reply_text = ""
     reply_buttons = []
