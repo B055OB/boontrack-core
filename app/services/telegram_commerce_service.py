@@ -242,7 +242,7 @@ def format_start_welcome() -> str:
         "Bot ini bertugas mengirimkan notifikasi instan untuk pesanan baru (*New Order*) "
         "dan konfirmasi pembayaran (*Payment Confirmed*) langsung ke chat pribadi atau grup toko Anda.\n\n"
         "📌 *Cara Menghubungkan Toko:*\n"
-        "1. Buka dashboard merchant Anda di [inbox.boontrack.com](https://inbox.boontrack.com)\n"
+        "1. Buka dashboard merchant Anda di [dashboard.boontrack.com](https://dashboard.boontrack.com)\n"
         "2. Buka menu *Pengaturan* ➡️ *Notifikasi & Integrasi*\n"
         "3. Klik tombol *Hubungkan ke Telegram* atau gunakan link pairing toko Anda\n\n"
         "💡 *Perintah Bantuan:*\n"

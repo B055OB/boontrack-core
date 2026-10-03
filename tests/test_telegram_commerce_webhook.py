@@ -58,6 +58,8 @@ class TestTelegramCommerceEngine(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Karier", welcome)
         self.assertNotIn("ATS", welcome)
         self.assertNotIn("Langkah 1", welcome)
+        self.assertIn("dashboard.boontrack.com", welcome)
+        self.assertNotIn("inbox.boontrack.com", welcome)
 
     @patch("app.services.telegram_commerce_service.httpx.Client")
     def test_link_tenant_success(self, mock_client_cls):
