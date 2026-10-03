@@ -660,49 +660,24 @@ async def process_inbound_message(payload: InboundPayload):
         or "app-shop" in tenant_slug
     )
     if is_boon_sales_rep:
-        # 1. Omnichannel VIP Upsell Router (Bot 081215567168 / Setup Toko Terima Beres §24.3)
-        from app.services.official_support_router import handle_official_support_vip_upsell
-        vip_res = await handle_official_support_vip_upsell(
+        from app.services.official_support_router import resolve_official_bot_dual_role
+        dual_res = await resolve_official_bot_dual_role(
             incoming_text=incoming_text,
             sender_phone=clean_phone,
             contact_name=contact_name,
-        )
-        if vip_res and vip_res.get("reply_text"):
-            logger.info(
-                f"[VIP UPSELL ROUTER HIT] Handled for {clean_phone} (action: {vip_res.get('action')}, VIP: {vip_res.get('is_vip')})"
-            )
-            return {
-                "status": "success",
-                "tenant_slug": vip_res.get("tenant_slug", tenant_slug),
-                "conversation_scope": conversation_scope,
-                "group_jid": payload.group_jid,
-                "bot_strategy": "vip_upsell_router",
-                "reply_text": vip_res.get("reply_text"),
-                "media_url": vip_res.get("media_url"),
-            }
-
-        from app.whatsapp.traffic_splitter import generate_group_boonpilot_reply
-        text_clean = re.sub(r"@[\w.]+", "", incoming_text).strip()
-        if not text_clean:
-            text_clean = incoming_text.strip()
-        logger.info(
-            f"[BOONPILOT SALES REP] Routing message for '{tenant_slug}' ({conversation_scope}) from '{clean_phone}' "
-            f"-> BoonPilot Brain | text_clean='{text_clean[:80]}'"
-        )
-        sales_rep_reply = await generate_group_boonpilot_reply(
-            text_clean,
+            conversation_scope=conversation_scope,
+            group_jid=payload.group_jid,
             image_base64=payload.image_base64,
             mime_type=payload.mime_type or "image/jpeg",
         )
-        logger.info(f"[BOONPILOT SALES REP REPLY] ({len(sales_rep_reply)} chars): '{sales_rep_reply[:120]}'")
         return {
             "status": "success",
-            "tenant_slug": tenant_slug,
+            "tenant_slug": dual_res.get("tenant_slug", tenant_slug),
             "conversation_scope": conversation_scope,
             "group_jid": payload.group_jid,
-            "bot_strategy": "boonpilot_sales_rep",
-            "reply_text": sales_rep_reply,
-            "media_url": None,
+            "bot_strategy": dual_res.get("role", "dual_role_official_bot"),
+            "reply_text": dual_res.get("reply_text"),
+            "media_url": dual_res.get("media_url"),
         }
 
     reply: Optional[str] = None
@@ -1826,7 +1801,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         # P0 GROUP MENTION GUARD:
         # Hanya Nomor Official (+6281215567168 / instance 'boontrack-shop' / internal node 'boon')
         # yang diizinkan merespons mention @boon di dalam grup.
-        # Akun merchant (seperti buzzerukm) DILARANG KERAS merespons grup dan HANYA boleh aktif di Personal Chat (DM 1-on-1).
+        # Akun merchant non-official DILARANG KERAS merespons grup dan HANYA boleh aktif di Personal Chat (DM 1-on-1).
         bot_phone_digits = re.sub(r"\D", "", bot_phone)
         is_official_support = (
             bot_phone_digits in ("6281215567168", "081215567168", "81215567168")
@@ -2100,46 +2075,31 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
 
     if is_boon_instance:
         # =====================================================================
-        # DEDICATED SALES REPRESENTATIVE & KONSULTAN BISNIS MODE (P0 LOCK)
-        # Bypass seluruh kartu storefront/greeting toko untuk instance boontrack-app-shop.
-        # Alihkan SEMUA pesan masuk (GROUP mention maupun DIRECT DM) LANGSUNG ke BoonPilot Brain.
+        # DUAL-ROLE ADAPTIVE RESOLVER (081215567168 / boontrack-app-shop)
+        # 1. Group / Non-Tenant DM: Sales Representative & Onboarding Concierge
+        #    (Dynamic channel_bindings demo & register links / Platform default)
+        # 2. Registered Merchant DM: BoonPilot Toko (Business Co-Pilot)
         # =====================================================================
-        # 1. Omnichannel VIP Upsell Router (Bot 081215567168 / Setup Toko Terima Beres §24.3)
-        from app.services.official_support_router import handle_official_support_vip_upsell
-        vip_res = await handle_official_support_vip_upsell(
+        from app.services.official_support_router import resolve_official_bot_dual_role
+        dual_res = await resolve_official_bot_dual_role(
             incoming_text=message_body_for_processing or incoming_text,
             sender_phone=sender_phone,
             contact_name=sender_name,
-        )
-        if vip_res and vip_res.get("reply_text"):
-            reply_text = vip_res.get("reply_text")
-            reply_media_to_send = vip_res.get("media_url")
-            inbound_res = {
-                "status": "success",
-                "tenant_slug": vip_res.get("tenant_slug", canonical_slug),
-                "conversation_scope": conversation_scope,
-                "reply_text": reply_text,
-                "media_url": reply_media_to_send,
-            }
-        else:
-            from app.whatsapp.traffic_splitter import generate_group_boonpilot_reply
-            text_clean = re.sub(r"@[\w.]+", "", incoming_text).strip() or incoming_text
-        logger.info(
-            f"[BOONPILOT SALES REP] Webhook locked to pure Sales Rep mode for '{instance_name}' / '{canonical_slug}' "
-            f"({conversation_scope}) from '{sender_phone}' -> text_clean='{text_clean[:80]}'"
-        )
-        reply_text = await generate_group_boonpilot_reply(
-            text_clean,
+            conversation_scope=conversation_scope,
+            group_jid=group_jid,
             image_base64=image_base64,
             mime_type=image_mime_type,
         )
-        reply_media_to_send = None
+        reply_text = dual_res.get("reply_text")
+        reply_media_to_send = dual_res.get("media_url")
         inbound_res = {
             "status": "success",
-            "tenant_slug": canonical_slug,
+            "tenant_slug": dual_res.get("tenant_slug", canonical_slug),
             "conversation_scope": conversation_scope,
             "reply_text": reply_text,
-            "media_url": None,
+            "media_url": reply_media_to_send,
+            "role": dual_res.get("role"),
+            "bot_strategy": dual_res.get("role"),
         }
     else:
         inbound_res = await process_inbound_message(InboundPayload(

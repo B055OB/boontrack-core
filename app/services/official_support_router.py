@@ -42,46 +42,62 @@ async def find_tenant_by_admin_phone_or_text(
     """
     Identifies if sender_phone matches an admin/owner in Supabase tenants table,
     or extracts tenant slug from incoming text query: 'pemilik toko {{slug}}'.
+    Optimized with direct indexed Supabase query without linear scan cap.
     """
     supabase = get_supabase()
     if not supabase:
         return None
 
     # 1. Check if text specifies slug explicitly: 'pemilik toko <slug>'
-    slug_match = re.search(r"pemilik\s+toko\s+([a-zA-Z0-9_-]+)", incoming_text, re.IGNORECASE)
-    if slug_match:
-        target_slug = slug_match.group(1).strip().lower()
-        try:
-            res = supabase.from_("tenants").select("id, slug, name, tier, metadata").eq("slug", target_slug).maybe_single().execute()
-            if res and res.data:
-                logger.info(f"[VIP_ROUTER] Identified tenant '{target_slug}' from text query payload.")
-                return res.data
-        except Exception as e:
-            logger.debug(f"[VIP_ROUTER_SLUG_MATCH_WARN] {e}")
+    if incoming_text:
+        slug_match = re.search(r"pemilik\s+toko\s+([a-zA-Z0-9_-]+)", incoming_text, re.IGNORECASE)
+        if slug_match:
+            target_slug = slug_match.group(1).strip().lower()
+            try:
+                res = supabase.from_("tenants").select("id, slug, name, tier, metadata").eq("slug", target_slug).maybe_single().execute()
+                if res and getattr(res, "data", None):
+                    logger.info(f"[VIP_ROUTER] Identified tenant '{target_slug}' from text query payload.")
+                    return res.data
+            except Exception as e:
+                logger.debug(f"[VIP_ROUTER_SLUG_MATCH_WARN] {e}")
 
-    # 2. Check by sender_phone
+    # 2. Check by sender_phone variants (62... and 0...)
     clean_digits = normalize_phone_digits(sender_phone)
     if not clean_digits:
         return None
 
+    p62 = "62" + clean_digits
+    p0 = "0" + clean_digits
+    or_conds = [
+        f"metadata->>phone.eq.{p62}",
+        f"metadata->>phone.eq.{p0}",
+        f"metadata->>whatsapp_number.eq.{p62}",
+        f"metadata->>whatsapp_number.eq.{p0}",
+        f"metadata->>wa_verified_phone.eq.{p62}",
+        f"metadata->>wa_verified_phone.eq.{p0}",
+        f"metadata->>wa_number.eq.{p62}",
+        f"metadata->>wa_number.eq.{p0}",
+    ]
+    or_filter = ",".join(or_conds)
+
     try:
-        # Search tenants in Supabase
-        res = supabase.from_("tenants").select("id, slug, name, tier, metadata").limit(100).execute()
-        if res and res.data:
-            for row in res.data:
-                meta = row.get("metadata") or {}
-                candidate_phones = [
-                    str(meta.get("phone") or ""),
-                    str(meta.get("whatsapp_number") or ""),
-                    str(meta.get("wa_verified_phone") or ""),
-                    str((meta.get("sales_policy") or {}).get("handover_phone") or ""),
-                    str(row.get("access_username") or ""),
-                ]
-                for cp in candidate_phones:
-                    cp_clean = normalize_phone_digits(cp)
-                    if cp_clean and (cp_clean == clean_digits or clean_digits.endswith(cp_clean) or cp_clean.endswith(clean_digits)):
-                        logger.info(f"[VIP_ROUTER] Matched sender {sender_phone} to tenant '{row.get("slug")}' (admin phone {cp})")
-                        return row
+        res = supabase.from_("tenants").select("id, slug, name, tier, metadata").or_(or_filter).execute()
+        if res and getattr(res, "data", None):
+            matched = res.data[0]
+            logger.info(f"[VIP_ROUTER] Matched sender {sender_phone} to tenant '{matched.get('slug')}' via direct metadata query")
+            return matched
+
+        # Fallback via whatsapp_connections lookup
+        conn_res = supabase.from_("whatsapp_connections").select("tenant_id, tenant_slug").or_(f"phone_number.eq.{p62},phone_number.eq.{p0}").execute()
+        if conn_res and getattr(conn_res, "data", None):
+            t_id = conn_res.data[0].get("tenant_id")
+            t_slug = conn_res.data[0].get("tenant_slug")
+            if t_id and t_id not in ("boon", "52967979-4760-4cea-b686-cdbdb389c0e1"):
+                t_res = supabase.from_("tenants").select("id, slug, name, tier, metadata").or_(f"id.eq.{t_id},slug.eq.{t_slug or t_id}").execute()
+                if t_res and getattr(t_res, "data", None):
+                    matched = t_res.data[0]
+                    logger.info(f"[VIP_ROUTER] Matched sender {sender_phone} to tenant '{matched.get('slug')}' via whatsapp_connections")
+                    return matched
     except Exception as err:
         logger.error(f"[VIP_ROUTER_DB_ERROR] Failed looking up tenant for {sender_phone}: {err}")
 
@@ -226,3 +242,214 @@ async def handle_official_support_vip_upsell(
         "action": "UPSELL_PRESENTED",
     }
 
+
+
+async def resolve_official_bot_dual_role(
+    incoming_text: str,
+    sender_phone: str,
+    contact_name: Optional[str] = None,
+    conversation_scope: str = "DIRECT",
+    group_jid: Optional[str] = None,
+    image_base64: Optional[str] = None,
+    mime_type: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Dual-Role Resolver & Message Dispatcher for Official WhatsApp Bot (081215567168 / boontrack-app-shop).
+    
+    Roles:
+    1. GROUP / Non-Tenant DM: Sales Representative & Onboarding Concierge
+       (Edukasi fitur platform, 2 CTA resmi: demo URL & register link dengan atribusi granular dari channel_bindings).
+    2. REGISTERED MERCHANT DM: Personal AI Assistant (BoonPilot Toko)
+       (Analisa dashboard, konsultasi angle iklan, copywriting, operasional katalog & pesanan).
+       STRICT GUARD: Dilarang keras menawarkan pendaftaran toko baru (/register) kepada merchant terdaftar.
+    """
+    import urllib.parse
+    from app.whatsapp.traffic_splitter import generate_group_boonpilot_reply
+
+    supabase = get_supabase()
+    clean_text = re.sub(r"@[\w.]+", "", incoming_text).strip() if incoming_text else ""
+
+    # =========================================================================
+    # ROLE 1: GROUP CONVERSATION SCOPE
+    # =========================================================================
+    if conversation_scope == "GROUP":
+        lookup_jid = group_jid or sender_phone
+        wa_binding = None
+        if supabase and lookup_jid:
+            try:
+                res_cb = supabase.table("channel_bindings").select("*").eq("community_source_id", lookup_jid).eq("is_active", True).execute()
+                if res_cb and getattr(res_cb, "data", None):
+                    wa_binding = res_cb.data[0]
+            except Exception as _cb_err:
+                logger.warning(f"[WA_GROUP_CHANNEL_BINDING_ERR] {_cb_err}")
+
+        if wa_binding:
+            aff_id = wa_binding.get("affiliate_id") or "ob"
+            demo_url = wa_binding.get("demo_url") or "https://shop.boontrack.com/toko-demo"
+            register_url = f"https://dashboard.boontrack.com/register?ref={urllib.parse.quote(aff_id)}&src={urllib.parse.quote(lookup_jid)}"
+        else:
+            demo_url = "https://shop.boontrack.com/toko-demo"
+            register_url = "https://dashboard.boontrack.com/register"
+
+        # Check if message is a simple greeting or general mention
+        text_lower = clean_text.lower().strip()
+        is_simple_prompt = (
+            not clean_text
+            or len(clean_text) <= 12
+            or text_lower in ("halo", "hai", "info", "demo", "daftar", "tes", "test", "p", "halo boon", "siang", "malam", "pagi")
+        )
+
+        if is_simple_prompt:
+            reply_text = (
+                "👋 *Halo dari BoonTrack!*\n"
+                "Platform otomatisasi checkout & katalog digital 24 jam untuk pebisnis online & UKM.\n\n"
+                f"🛍️ *Cek Contoh Demo:*\n{demo_url}\n\n"
+                f"🚀 *Buka Toko Online / Coba Gratis:*\n{register_url}"
+            )
+            return {
+                "status": "success",
+                "role": "SALES_REP_GROUP",
+                "tenant_slug": "boon",
+                "reply_text": reply_text,
+                "media_url": None,
+                "demo_url": demo_url,
+                "register_url": register_url,
+            }
+
+        # Specific inquiry in group: answer with Sales Rep AI and append dynamic CTAs
+        group_sales_prompt = f"""\
+Anda adalah "BoonPilot", Sales Representative & Konsultan Resmi BoonTrack (https://boontrack.com) di grup komunitas WhatsApp.
+Gaya Komunikasi: Hangat, santai, solutif, dan profesional dalam Bahasa Indonesia.
+Tugas Anda: Menjawab pertanyaan seputar platform BoonTrack (checkout instan, auto-verifikasi QRIS 0% MDR, kurir agregator, notifikasi WhatsApp).
+Tautan Demo Resmi: {demo_url}
+Tautan Daftar Uji Coba: {register_url}
+
+ATURAN:
+- Jawab pertanyaan secara ringkas dan bersahabat (1-2 paragraf).
+- Di akhir jawaban, sertakan tautan demo ({demo_url}) dan daftar uji coba ({register_url}).
+"""
+        ai_reply = await generate_group_boonpilot_reply(
+            clean_text,
+            image_base64=image_base64,
+            mime_type=mime_type,
+            custom_system_prompt=group_sales_prompt,
+        )
+
+        # Ensure demo & register URLs are appended if AI omitted them
+        if demo_url not in ai_reply and register_url not in ai_reply:
+            ai_reply = f"{ai_reply}\n\n🛍️ *Cek Contoh Demo:*\n{demo_url}\n\n🚀 *Buka Toko Online / Coba Gratis:*\n{register_url}"
+
+        return {
+            "status": "success",
+            "role": "SALES_REP_GROUP",
+            "tenant_slug": "boon",
+            "reply_text": ai_reply,
+            "media_url": None,
+            "demo_url": demo_url,
+            "register_url": register_url,
+        }
+
+    # =========================================================================
+    # ROLE 2: DIRECT / PERSONAL DM CONVERSATION SCOPE
+    # =========================================================================
+
+    # 1. Check Omnichannel VIP Upsell Router ("Setup Toko Terima Beres" / QRIS BCA)
+    vip_res = await handle_official_support_vip_upsell(
+        incoming_text=incoming_text,
+        sender_phone=sender_phone,
+        contact_name=contact_name,
+    )
+    if vip_res and vip_res.get("reply_text"):
+        return vip_res
+
+    # 2. Query sender against registered merchant/tenants
+    merchant_tenant = await find_tenant_by_admin_phone_or_text(sender_phone, incoming_text)
+
+    # -------------------------------------------------------------------------
+    # SUB-ROLE A: REGISTERED MERCHANT -> BoonPilot Toko (Business Co-Pilot)
+    # -------------------------------------------------------------------------
+    if merchant_tenant:
+        m_meta = merchant_tenant.get("metadata") or {}
+        store_name = merchant_tenant.get("name") or merchant_tenant.get("slug")
+        store_slug = merchant_tenant.get("slug")
+        tier = merchant_tenant.get("tier") or "SOLO"
+        owner_name = m_meta.get("owner_name") or m_meta.get("merchant_name") or m_meta.get("pic_name") or contact_name or "Owner"
+
+        merchant_prompt = f"""\
+Anda adalah "BoonPilot", Asisten Pribadi Toko & Business Co-Pilot resmi untuk toko "{store_name}" (Tier: {tier}, Pemilik: Kak {owner_name}) di platform BoonTrack.
+Gaya Komunikasi: Rekan bisnis yang cerdas, suportif, santun, solutif, dan profesional dalam Bahasa Indonesia.
+
+PERAN & TUGAS UTAMA (MERCHANT TOKO "{store_name}"):
+1. Bantuan operasional toko, cek status order, dan panduan fitur 8 tab dashboard BoonTrack (Overview, Katalog Produk, Pesanan, WhatsApp Gateway, Pengiriman, Pembayaran/QRIS, Tim CS, Pengaturan Toko).
+2. Membantu analisis performa toko, screenshot analitik iklan / metrik dashboard (ROAS, CTR, CPA, margin), konsultasi angle iklan, dan copywriting promosi.
+3. Membantu pemecahan masalah operasional toko (checkout, ongkir, QRIS, notifikasi WhatsApp).
+
+PANDUAN KHUSUS:
+- Jika merchant bertanya tentang order / resi: Ingatkan bahwa ringkasan pesanan real-time dapat diakses di tab Pesanan (Orders) pada dashboard.boontrack.com/{store_slug}.
+- Jika merchant mengirimkan gambar / screenshot analitik: Berikan analisa visual objektif metrik dan saran angle iklan.
+
+ATURAN MUTLAK (STRICT RULES):
+- DILARANG KERAS menawarkan pendaftaran akun baru atau memberikan link registrasi akun (seperti /register) karena merchant ini SUDAH terdaftar dan aktif memiliki toko "{store_name}".
+- Sapa merchant secara ramah dengan menyebut Kak {owner_name} dan nama tokonya "{store_name}".
+- ISOLASI DATA (ZERO LEAKAGE): Anda hanya berwenang mendiskusikan toko "{store_name}". Dilarang membocorkan data toko privat tenant lain.
+"""
+        reply_text = await generate_group_boonpilot_reply(
+            clean_text or incoming_text,
+            image_base64=image_base64,
+            mime_type=mime_type,
+            custom_system_prompt=merchant_prompt,
+        )
+
+        return {
+            "status": "success",
+            "role": "BOONPILOT_MERCHANT_ASSISTANT",
+            "tenant_slug": store_slug,
+            "store_name": store_name,
+            "owner_name": owner_name,
+            "tier": tier,
+            "reply_text": reply_text,
+            "media_url": None,
+        }
+
+    # -------------------------------------------------------------------------
+    # SUB-ROLE B: UNREGISTERED GUEST / LEAD -> Sales Representative & Onboarding
+    # -------------------------------------------------------------------------
+    default_demo_url = "https://shop.boontrack.com/toko-demo"
+    default_register_url = "https://dashboard.boontrack.com/register"
+
+    sales_rep_prompt = f"""\
+Anda adalah "BoonPilot", Sales Representative & Onboarding Concierge resmi platform BoonTrack (https://boontrack.com).
+Gaya Komunikasi: Ramah, antusias, solutif, edukatif, dan profesional dalam Bahasa Indonesia.
+
+PERAN & TUGAS UTAMA (CALON MERCHANT / GUEST):
+1. Mengedukasi calon pengguna tentang keunggulan dan otomasi platform BoonTrack:
+   - Otomasi order & notifikasi WhatsApp (pesanan, invoice, konfirmasi, resi otomatis).
+   - Verifikasi pembayaran otomatis real-time (QRIS dinamis 0% fee MDR platform & transfer bank).
+   - Single-Page Checkout instan tanpa formulir rumit atau registrasi akun.
+   - Agregator Kurir multi-ekspedisi BYOK (Lincah, Biteship, JNE, SiCepat, J&T).
+   - Bot AI CS & Admin Penjualan WhatsApp 24 jam.
+2. Memandu calon pengguna untuk melihat contoh toko demo resmi: {default_demo_url}
+3. Memandu pendaftaran akun baru / uji coba gratis di {default_register_url}
+4. Menjelaskan paket harga (Solo, Pro Scale, Team Scale) secara transparan dan menarik.
+
+ATURAN MUTLAK:
+- DILARANG menggunakan domain internal developer atau link kadaluarsa (seperti buzzerukm).
+- Berikan link demo toko resmi: {default_demo_url}
+- Berikan link registrasi resmi: {default_register_url}
+"""
+    reply_text = await generate_group_boonpilot_reply(
+        clean_text or incoming_text,
+        image_base64=image_base64,
+        mime_type=mime_type,
+        custom_system_prompt=sales_rep_prompt,
+    )
+
+    return {
+        "status": "success",
+        "role": "SALES_REP_GUEST",
+        "tenant_slug": "boon",
+        "reply_text": reply_text,
+        "media_url": None,
+        "demo_url": default_demo_url,
+        "register_url": default_register_url,
+    }

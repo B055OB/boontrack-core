@@ -96,7 +96,7 @@ Tugas Anda HANYA menjawab pertanyaan umum calon merchant dan pengguna seputar Bo
 [SOP DIRECT CHECKOUT WHATSAPP - PENJUALAN JASA & SETUP TOKO]
 - Layani secara ramah di chat, tanyakan kebutuhan klien dari 3 paket layanan di atas.
 - Tanyakan detail toko (Nama Toko, Jenis Produk, Nomor WhatsApp Bisnis, dan link medsos/marketplace jika memilih Paket 3).
-- Generate rincian tagihan dan barcode QRIS resmi langsung di chat WhatsApp tanpa melempar link pendaftaran lama / buzzerukm.
+- Generate rincian tagihan dan barcode QRIS resmi langsung di chat WhatsApp tanpa melempar link pendaftaran statis atau tidak valid.
 
 [PANDUAN PENGGUNA BARU (ONBOARDING GUIDE)]
 Jika merchant atau pengguna baru bingung cara memulai, arahkan mereka ke asisten interaktif "BoonPilot" di sudut kanan bawah dashboard atau minta mereka menuntaskan "6 Langkah Cepat di Dashboard":
@@ -157,7 +157,7 @@ Detail Produk & Fitur Resmi:
    - Paket 3: Paket Terima Beres All-in-One / Full Service (auto-scraping foto & varian dari marketplace/IG, landing page katalog resmi, bot dilatih natural, terhubung ke mutasi otomatis BoonTrack Reader 0% MDR).
 
 6. SOP Direct Checkout WhatsApp (Penjualan Jasa & Setup Toko):
-   - Jika calon tenant meminta jasa terima beres / setup toko, berikan konsultasi ramah, tanyakan nama toko, produk, dan nomor WA bisnis, lalu siapkan rincian invoice/QRIS langsung di WhatsApp tanpa melempar link pendaftaran lama atau buzzerukm.
+   - Jika calon tenant meminta jasa terima beres / setup toko, berikan konsultasi ramah, tanyakan nama toko, produk, dan nomor WA bisnis, lalu siapkan rincian invoice/QRIS langsung di WhatsApp tanpa melempar link pendaftaran statis atau tidak valid.
 """
 
 GROUP_BOONPILOT_KNOWLEDGE: Dict[str, str] = {
@@ -328,8 +328,10 @@ async def _call_gemini_llm(
     clean_text: str,
     image_base64: Optional[str] = None,
     mime_type: Optional[str] = None,
+    system_instruction: Optional[str] = None,
 ) -> Optional[str]:
     """Eksekusi LLM Gemini dengan model terkini (gemini-3.8-flash) & prompt sistem BoonPilot."""
+    active_system_prompt = system_instruction or GROUP_BOONPILOT_SYSTEM_PROMPT
     import base64 as _b64
 
     clean_b64 = None
@@ -350,14 +352,14 @@ async def _call_gemini_llm(
             client = genai.Client(api_key=api_key)
             try:
                 config = types.GenerateContentConfig(
-                    system_instruction=GROUP_BOONPILOT_SYSTEM_PROMPT,
+                    system_instruction=active_system_prompt,
                     temperature=0.4,
                     max_output_tokens=1000,
                     thinking_config=types.ThinkingConfig(thinking_budget=0),
                 )
             except Exception:
                 config = types.GenerateContentConfig(
-                    system_instruction=GROUP_BOONPILOT_SYSTEM_PROMPT,
+                    system_instruction=active_system_prompt,
                     temperature=0.4,
                     max_output_tokens=1000,
                 )
@@ -402,7 +404,7 @@ async def _call_gemini_llm(
                     model = legacy_genai.GenerativeModel(
                         model_name=m,
                         generation_config={"temperature": 0.4, "max_output_tokens": 800},
-                        system_instruction=GROUP_BOONPILOT_SYSTEM_PROMPT,
+                        system_instruction=active_system_prompt,
                     )
                     legacy_contents = [clean_text]
                     if img_bytes:
@@ -425,7 +427,7 @@ async def _call_gemini_llm(
                 parts.append({"inlineData": {"mimeType": img_mime, "data": clean_b64}})
             payload = {
                 "contents": [{"parts": parts}],
-                "system_instruction": {"parts": [{"text": GROUP_BOONPILOT_SYSTEM_PROMPT}]},
+                "system_instruction": {"parts": [{"text": active_system_prompt}]},
                 "generationConfig": {"temperature": 0.4, "maxOutputTokens": 1000},
             }
             with httpx.Client(timeout=8.0) as client:
@@ -451,6 +453,7 @@ async def _call_openrouter_llm(
     clean_text: str,
     image_base64: Optional[str] = None,
     mime_type: Optional[str] = None,
+    system_instruction: Optional[str] = None,
 ) -> Optional[str]:
     """Fallback sekunder LLM via OpenRouter API jika Gemini tidak dapat dijangkau."""
     try:
@@ -475,7 +478,7 @@ async def _call_openrouter_llm(
                 json={
                     "model": "google/gemini-2.0-flash-001",
                     "messages": [
-                        {"role": "system", "content": GROUP_BOONPILOT_SYSTEM_PROMPT},
+                        {"role": "system", "content": system_instruction or GROUP_BOONPILOT_SYSTEM_PROMPT},
                         {"role": "user", "content": user_content},
                     ],
                     "max_tokens": 800,
@@ -494,6 +497,7 @@ async def generate_group_boonpilot_reply(
     incoming_text: str,
     image_base64: Optional[str] = None,
     mime_type: Optional[str] = None,
+    custom_system_prompt: Optional[str] = None,
 ) -> str:
     """
     BoonPilot Brain: Jawaban AI luwes, natural, dan pintar untuk grup komunitas & DM.
@@ -510,7 +514,7 @@ async def generate_group_boonpilot_reply(
     gemini_key = _resolve_gemini_api_key()
     if gemini_key:
         try:
-            reply = await _call_gemini_llm(gemini_key, clean_text, image_base64=image_base64, mime_type=mime_type)
+            reply = await _call_gemini_llm(gemini_key, clean_text, image_base64=image_base64, mime_type=mime_type, system_instruction=custom_system_prompt)
             if reply:
                 logger.info(f"[BOONPILOT LLM] Generated natural conversational reply via Gemini ({len(reply)} chars).")
                 return reply
@@ -521,7 +525,7 @@ async def generate_group_boonpilot_reply(
     openrouter_key = os.getenv("OPENROUTER_API_KEY")
     if openrouter_key:
         try:
-            reply = await _call_openrouter_llm(openrouter_key, clean_text, image_base64=image_base64, mime_type=mime_type)
+            reply = await _call_openrouter_llm(openrouter_key, clean_text, image_base64=image_base64, mime_type=mime_type, system_instruction=custom_system_prompt)
             if reply:
                 logger.info(f"[BOONPILOT LLM] Generated reply via OpenRouter ({len(reply)} chars).")
                 return reply
