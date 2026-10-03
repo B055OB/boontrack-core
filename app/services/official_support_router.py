@@ -274,6 +274,30 @@ async def resolve_official_bot_dual_role(
     # =========================================================================
     if conversation_scope == "GROUP":
         lookup_jid = group_jid or sender_phone
+
+        # ---------------------------------------------------------------------
+        # FITUR CEK ID INSTAN (@boon id / /id / !id)
+        # ---------------------------------------------------------------------
+        raw_text_lower = (incoming_text or "").lower().strip()
+        clean_lower = clean_text.lower().strip()
+        is_id_command = (
+            clean_lower in ("id", "/id", "!id", "cek id", "group id", "jid", "get id")
+            or raw_text_lower in ("@boon id", "/id", "!id", "id", "@boontrack id")
+            or raw_text_lower.startswith("@boon id")
+            or raw_text_lower.startswith("/id")
+            or raw_text_lower.startswith("!id")
+        )
+        if is_id_command:
+            reply_text = f"🆔 *ID Grup WhatsApp Ini:*\n`{lookup_jid}`\n\nSalin ID di atas untuk dimasukkan ke dashboard affiliate."
+            return {
+                "status": "success",
+                "role": "GROUP_ID_COMMAND",
+                "tenant_slug": "boon",
+                "reply_text": reply_text,
+                "media_url": None,
+                "demo_url": None,
+                "register_url": None,
+            }
         wa_binding = None
         if supabase and lookup_jid:
             try:
@@ -285,11 +309,11 @@ async def resolve_official_bot_dual_role(
 
         if wa_binding:
             aff_id = wa_binding.get("affiliate_id") or "ob"
-            demo_url = wa_binding.get("demo_url") or "https://shop.boontrack.com/toko-demo"
-            register_url = f"https://dashboard.boontrack.com/register?ref={urllib.parse.quote(aff_id)}&src={urllib.parse.quote(lookup_jid)}"
+            demo_url = wa_binding.get("demo_url") or "https://shop.boontrack.com/boon"
+            register_url = f"https://shop.boontrack.com/register?ref={urllib.parse.quote(aff_id)}&src={urllib.parse.quote(lookup_jid)}"
         else:
-            demo_url = "https://shop.boontrack.com/toko-demo"
-            register_url = "https://dashboard.boontrack.com/register"
+            demo_url = "https://shop.boontrack.com/boon"
+            register_url = "https://shop.boontrack.com/register"
 
         # Check if message is a simple greeting or general mention
         text_lower = clean_text.lower().strip()
@@ -414,8 +438,8 @@ ATURAN MUTLAK (STRICT RULES):
     # -------------------------------------------------------------------------
     # SUB-ROLE B: UNREGISTERED GUEST / LEAD -> Sales Representative & Onboarding
     # -------------------------------------------------------------------------
-    default_demo_url = "https://shop.boontrack.com/toko-demo"
-    default_register_url = "https://dashboard.boontrack.com/register"
+    default_demo_url = "https://shop.boontrack.com/boon"
+    default_register_url = "https://shop.boontrack.com/register"
 
     sales_rep_prompt = f"""\
 Anda adalah "BoonPilot", Sales Representative & Onboarding Concierge resmi platform BoonTrack (https://boontrack.com).

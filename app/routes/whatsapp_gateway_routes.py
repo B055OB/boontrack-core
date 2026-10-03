@@ -1848,6 +1848,10 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
             or re.search(r"@6281215567168\b", text_lower_grp)
             or ("boontrack" in text_lower_grp and "@" in text_lower_grp)
             or (bot_phone_clean and bot_phone_clean in text_lower_grp)
+            or text_lower_grp in ("/id", "!id", "@boon id")
+            or text_lower_grp.startswith("@boon id")
+            or text_lower_grp.startswith("/id")
+            or text_lower_grp.startswith("!id")
         )
         mentioned_jids = [str(j).lower() for j in (context_info.get("mentionedJid") or [])]
         if (
