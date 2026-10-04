@@ -1,5 +1,5 @@
 """app/tenants/pelayanan_publik/service.py
-Service layer untuk pilot B2G Pelayanan Publik (melayani pelayananpublik.boontrack.com).
+Service layer untuk pilot B2G Pelayanan Publik Kelurahan Margasari.
 """
 
 import logging
@@ -13,6 +13,7 @@ from app.tenants.pelayanan_publik.config import (
     TENANT_NAME,
     OPERATIONAL_HOURS,
     LOCATION,
+    LURAH,
     HOTLINE_PHONE,
     SERVICE_CATALOG,
     WELCOME_MESSAGE,
@@ -24,7 +25,7 @@ logger = logging.getLogger("PELAYANAN_PUBLIK_SERVICE")
 class PelayananPublikService(BaseTenantService):
     """Service pemrosesan permohonan layanan publik dan konsultasi dokumen warga
 
-    untuk pilot B2G Pelayanan Publik (melayani domain pelayananpublik.boontrack.com).
+    untuk pilot B2G Pelayanan Publik Kelurahan Margasari, Kec. Buahbatu, Kota Bandung.
     """
 
     tenant_id: str = TENANT_ID
@@ -44,9 +45,10 @@ class PelayananPublikService(BaseTenantService):
             f"📋 *Persyaratan Wajib:*\n{reqs}\n\n"
             f"🔄 *Alur Pengurusan:*\n{flow}\n\n"
             f"⏱️ *Estimasi Waktu:* {svc.get('processing_time', '-')}\n"
-            f"💰 *Biaya Administrasi:* {svc.get('cost', 'Gratis (Rp 0)')}\n\n"
+            f"💳 *Biaya Administrasi:* {svc.get('cost', 'Gratis (Rp 0)')}\n\n"
             f"📍 *Lokasi Pelayanan:* {LOCATION}\n"
-            f"⏰ *Jam Operasional:* {OPERATIONAL_HOURS}"
+            f"👤 *Lurah:* {LURAH}\n"
+            f"🕒 *Jam Operasional:* {OPERATIONAL_HOURS}"
         )
 
     async def handle_incoming_message(
@@ -63,39 +65,60 @@ class PelayananPublikService(BaseTenantService):
 
         logger.info(f"[{TENANT_ID}] Processing query from {clean_phone}: {clean_text[:50]}")
 
-        # 1. Cek Jam Operasional / Lokasi Kantor
-        if any(w in clean_text for w in ["jam", "jadwal", "buka", "tutup", "lokasi", "alamat", "kantor"]):
+        # 1. Cek Jam Operasional / Lokasi Kantor / Lurah
+        if any(w in clean_text for w in ["jam", "jadwal", "buka", "tutup", "lokasi", "alamat", "kantor", "lurah"]):
             reply = (
-                f"🏛️ *INFORMASI KANTOR LAYANAN PELAYANAN PUBLIK*\n\n"
-                f"🌐 *Domain Portal:* {TENANT_DOMAIN}\n"
+                f"🏛️ *INFORMASI KANTOR KELURAHAN MARGASARI*\n\n"
                 f"📍 *Alamat:* {LOCATION}\n"
-                f"⏰ *Jam Operasional:* {OPERATIONAL_HOURS}\n"
+                f"👤 *Lurah:* {LURAH}\n"
+                f"🕒 *Jam Operasional:* {OPERATIONAL_HOURS}\n"
+                f"🌐 *Domain Portal:* {TENANT_DOMAIN}\n"
                 f"📞 *Hotline / WhatsApp:* {HOTLINE_PHONE}\n\n"
                 f"Silakan datang pada hari & jam kerja dengan membawa berkas lengkap."
             )
             return {"reply": reply, "type": "information", "tenant_id": TENANT_ID, "domain": TENANT_DOMAIN}
 
-        # 2. Cek Surat Keterangan Usaha (SKU / NIB)
+        # 2. Cek IKD (Identitas Kependudukan Digital / KTP Online)
+        if any(w in clean_text for w in ["ikd", "ktp digital", "ktp online", "identitas kependudukan digital"]):
+            svc = self.catalog.get("ikd", {})
+            return {"reply": self._format_service_response(svc), "type": "service_detail", "service_id": "ikd"}
+
+        # 3. Cek SKDU (Surat Keterangan Domisili & Usaha)
+        if any(w in clean_text for w in ["skdu", "domisili", "domisili usaha"]):
+            svc = self.catalog.get("skdu", {})
+            return {"reply": self._format_service_response(svc), "type": "service_detail", "service_id": "skdu"}
+
+        # 4. Cek Pengantar KK / KTP-el
+        if any(w in clean_text for w in ["kk", "kartu keluarga", "pengantar ktp", "pengantar kk", "sari", "pemuda"]):
+            svc = self.catalog.get("kk_ktp", {})
+            return {"reply": self._format_service_response(svc), "type": "service_detail", "service_id": "kk_ktp"}
+
+        # 5. Cek KBS (Kawasan Bebas Sampah / Kebersihan)
+        if any(w in clean_text for w in ["kbs", "sampah", "kebersihan", "sampah liar", "kang pisman", "bank sampah"]):
+            svc = self.catalog.get("kbs", {})
+            return {"reply": self._format_service_response(svc), "type": "service_detail", "service_id": "kbs"}
+
+        # 6. Cek Surat Keterangan Usaha (SKU / NIB)
         if any(w in clean_text for w in ["sku", "usaha", "nib", "kur", "dagang", "toko"]):
             svc = self.catalog.get("sku", {})
             return {"reply": self._format_service_response(svc), "type": "service_detail", "service_id": "sku"}
 
-        # 3. Cek Surat Pengantar Nikah (N1-N4)
+        # 7. Cek Surat Pengantar Nikah (N1-N4)
         if any(w in clean_text for w in ["nikah", "kawin", "n1", "n4", "kua", "pengantin"]):
             svc = self.catalog.get("nikah", {})
             return {"reply": self._format_service_response(svc), "type": "service_detail", "service_id": "nikah"}
 
-        # 4. Cek Pengantar Akta Kelahiran
+        # 8. Cek Pengantar Akta Kelahiran
         if any(w in clean_text for w in ["lahir", "akta lahir", "kelahiran", "bayi"]):
             svc = self.catalog.get("akta_lahir", {})
             return {"reply": self._format_service_response(svc), "type": "service_detail", "service_id": "akta_lahir"}
 
-        # 5. Cek SKTM (Surat Keterangan Tidak Mampu)
+        # 9. Cek SKTM (Surat Keterangan Tidak Mampu)
         if any(w in clean_text for w in ["sktm", "tidak mampu", "miskin", "beasiswa", "kjp"]):
             svc = self.catalog.get("sktm", {})
             return {"reply": self._format_service_response(svc), "type": "service_detail", "service_id": "sktm"}
 
-        # 6. Default Welcome & Menu Pilihan
+        # 10. Default Welcome & Menu Pilihan
         return {
             "reply": WELCOME_MESSAGE,
             "type": "welcome",

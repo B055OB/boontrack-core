@@ -36,16 +36,25 @@ TENANT_TICKETS_STORE: Dict[str, List[Dict[str, Any]]] = {
             "status": "SELESAI"
         }
     ],
-    "kelurahan-indra": [
+    "kelurahan-margasari": [
         {
-            "id": "KL-20260822-001",
-            "waktu": "2026-08-22 08:30",
-            "aduan": "Pengajuan SKU mendesak untuk syarat KUR Bank",
-            "kategori": "Loket Pelayanan",
+            "id": "MGS-20261004-001",
+            "waktu": "2026-10-04 08:30",
+            "aduan": "Aktivasi IKD di Loket PTSP SIMDUK Kelurahan Margasari",
+            "kategori": "Loket PTSP / Kependudukan",
+            "status": "SELESAI"
+        },
+        {
+            "id": "MGS-20261004-002",
+            "waktu": "2026-10-04 09:15",
+            "aduan": "Pengajuan SKDU Usaha Kuliner RW 04 Margasari",
+            "kategori": "Pelayanan Umum",
             "status": "PROSES"
         }
     ]
 }
+# Backward compatibility mapping
+TENANT_TICKETS_STORE["kelurahan-indra"] = TENANT_TICKETS_STORE["kelurahan-margasari"]
 
 
 def safe_parse_ai_json(raw_text: str) -> dict:
@@ -58,43 +67,43 @@ def safe_parse_ai_json(raw_text: str) -> dict:
     if json_match:
         cleaned = json_match.group(1).strip()
     try:
-        parsed = json.loads(cleaned)
-        if isinstance(parsed, dict):
-            return parsed
-        return {"reply": str(parsed), "is_escalated": False}
+        return json.loads(cleaned)
     except Exception:
-        return {
-            "reply": raw_text.strip(),
-            "identified_service_slug": None,
-            "is_escalated": False,
-            "escalation_reason": None,
-        }
+        return {}
 
 
 class PublicServiceService:
-    @classmethod
-    def detect_jabar_category(cls, text: str) -> str:
-        t = text.lower()
-        if any(k in t for k in ["air", "pdam", "kran", "saluran", "ledeng", "pipa"]):
-            return "PDAM"
-        if any(k in t for k in ["listrik", "pln", "padam", "gardu", "korslet", "mati lampu"]):
-            return "PLN"
-        if any(k in t for k in ["jalan", "lubang", "pju", "lampu", "rambu", "dishub", "aspal"]):
-            return "Bina Marga / Dishub"
-        return "Bale Pananggeuhan (Umum)"
+    """Service pemrosesan pertanyaan warga, eskalasi tiket, dan informasi SOP multi-tenant."""
 
     @classmethod
-    def get_tickets(cls, tenant_id: str) -> List[Dict[str, Any]]:
-        return TENANT_TICKETS_STORE.get(tenant_id, [])
+    def get_tickets(cls, tenant_id: str = "kelurahan-margasari") -> List[Dict[str, Any]]:
+        target = "bale-pananggeuhan" if tenant_id == "bale-pananggeuhan" else "kelurahan-margasari"
+        return TENANT_TICKETS_STORE.get(target, [])
 
     @classmethod
     def update_ticket_status(cls, tenant_id: str, ticket_id: str, new_status: str) -> bool:
-        tickets = TENANT_TICKETS_STORE.get(tenant_id, [])
+        target = "bale-pananggeuhan" if tenant_id == "bale-pananggeuhan" else "kelurahan-margasari"
+        tickets = TENANT_TICKETS_STORE.get(target, [])
         for t in tickets:
-            if t["id"] == ticket_id:
+            if t.get("id") == ticket_id:
                 t["status"] = new_status
                 return True
         return False
+
+    @classmethod
+    def detect_jabar_category(cls, text: str) -> str:
+        text_lower = text.lower()
+        if any(w in text_lower for w in ["air", "pdam", "kran", "bocor", "pipa"]):
+            return "PDAM Tirtawening"
+        if any(w in text_lower for w in ["listrik", "pln", "mati lampu", "padam", "korslet", "tiang"]):
+            return "PLN Distribusi Jabar"
+        if any(w in text_lower for w in ["jalan", "lubang", "rusak", "aspal", "jembatan"]):
+            return "Dinas Bina Marga & Penataan Ruang Jabar"
+        if any(w in text_lower for w in ["pju", "lampu jalan", "rambu", "dishub", "macet"]):
+            return "Dinas Perhubungan Jabar"
+        if any(w in text_lower for w in ["sampah", "kebersihan", "dlh", "limbah"]):
+            return "Dinas Lingkungan Hidup Jabar"
+        return "Posko Pengaduan Umum Balai Pananggeuhan"
 
     @classmethod
     async def handle_query(
@@ -103,7 +112,7 @@ class PublicServiceService:
         user_id: str = "0",
         session_id: Optional[str] = None,
         channel: str = "webchat",
-        tenant_id: str = "bale-pananggeuhan"
+        tenant_id: str = "kelurahan-margasari"
     ) -> Dict[str, Any]:
         text = user_text.strip()
         text_lower = text.lower()
@@ -131,11 +140,11 @@ class PublicServiceService:
                 TENANT_TICKETS_STORE["bale-pananggeuhan"].insert(0, new_ticket)
 
                 msg = (
-                    f"🚨 **Laporan Berhasil Diterbitkan**\n"
+                    f"📢 **Laporan Berhasil Diterbitkan**\n"
                     f"• No. Tiket : `{ticket_id}`\n"
                     f"• Instansi  : {category}\n"
                     f"• Status    : **OPEN** (Menunggu Tindak Lanjut)\n\n"
-                    f"Laporan Anda telah diteruskan ke Posko Balé Pananggeuhan Gedung Sate untuk segera dikoordinasikan dengan dinas terkait."
+                    f"Laporan Anda telah diteruskan ke Posko Balai Pananggeuhan Gedung Sate untuk segera dikoordinasikan dengan dinas terkait."
                 )
                 return {"reply": msg, "type": "ticket", "ticket": new_ticket, "is_escalated": True}
 
@@ -148,7 +157,7 @@ class PublicServiceService:
                         "3. KTP-el lama (jika rusak atau permohonan ganti data)\n"
                         "4. Surat Keterangan Hilang Polsek (jika hilang)\n\n"
                         "⏱️ **Estimasi:** 1 - 3 Hari Kerja\n"
-                        "💰 **Biaya:** Gratis (Rp 0)"
+                        "💳 **Biaya:** Gratis (Rp 0)"
                     ),
                     "type": "information",
                     "ticket": None
@@ -162,7 +171,7 @@ class PublicServiceService:
                         "2. Buku Nikah / Akta Cerai (jika ubah status)\n"
                         "3. Surat Keterangan Lahir (jika tambah anak)\n\n"
                         "⏱️ **Estimasi:** 3 - 5 Hari Kerja\n"
-                        "💰 **Biaya:** Gratis (Rp 0)"
+                        "💳 **Biaya:** Gratis (Rp 0)"
                     ),
                     "type": "information",
                     "ticket": None
@@ -182,7 +191,7 @@ class PublicServiceService:
 
             return {
                 "reply": (
-                    "Sampurasun! Saya asisten virtual Balé Pananggeuhan Jawa Barat.\n\n"
+                    "Sampurasun! Saya asisten virtual Balai Pananggeuhan Jawa Barat.\n\n"
                     "Anda dapat menanyakan syarat dokumen kependudukan (KTP, KK, Bansos) atau melaporkan keluhan fasilitas umum (PDAM bocor, listrik PLN padam, jalan rusak/PJU)."
                 ),
                 "type": "information",
@@ -190,9 +199,35 @@ class PublicServiceService:
             }
 
         # -------------------------------------------------------------
-        # 2. LOGIKA KELURAHAN KEBON MELATI (INDRA)
+        # 2. LOGIKA KELURAHAN MARGASARI (KEC. BUAHBATU, KOTA BANDUNG)
         # -------------------------------------------------------------
-        provider = PublicServiceKnowledgeProvider(tenant_id="kelurahan-indra")
+        # Eskalasi / Pengaduan warga Margasari
+        aduan_words = ["lapor", "aduan", "pungli", "keluhan", "sampah liar", "sengketa"]
+        if any(w in text_lower for w in aduan_words):
+            ticket_id = f"MGS-{today_str}-{random.randint(1000, 9999)}"
+            kategori = "Seksi Trantib & Kebersihan" if "sampah" in text_lower else "Loket Pelayanan Kelurahan"
+            new_ticket = {
+                "id": ticket_id,
+                "waktu": now_str,
+                "aduan": text,
+                "kategori": kategori,
+                "status": "OPEN"
+            }
+            if "kelurahan-margasari" not in TENANT_TICKETS_STORE:
+                TENANT_TICKETS_STORE["kelurahan-margasari"] = []
+            TENANT_TICKETS_STORE["kelurahan-margasari"].insert(0, new_ticket)
+
+            msg = (
+                f"📢 **Laporan Pengaduan Warga Margasari Diterima**\n"
+                f"• No. Registrasi : `{ticket_id}`\n"
+                f"• Bidang Penanganan: {kategori}\n"
+                f"• Status: **OPEN** (Menunggu Tindak Lanjut Petugas)\n\n"
+                f"Laporan Anda telah diteruskan ke Seksi terkait di Kantor Kelurahan Margasari (Jl. Cipagalo Girang No. 09) untuk segera ditindaklanjuti."
+            )
+            return {"reply": msg, "type": "ticket", "ticket": new_ticket, "is_escalated": True}
+
+        # Knowledge Matching
+        provider = PublicServiceKnowledgeProvider(tenant_id="kelurahan-margasari")
         matched = provider.search_service(text)
 
         if matched:
@@ -205,19 +240,25 @@ class PublicServiceService:
                 f"**Persyaratan Wajib:**\n{reqs}\n\n"
                 f"**Alur Pengurusan:**\n{flow}\n\n"
                 f"⏱️ **Estimasi:** {svc['processing_time']}\n"
-                f"💰 **Biaya:** {svc['cost']}"
+                f"💳 **Biaya:** {svc['cost']}\n\n"
+                f"📍 *Lokasi:* Kantor Kelurahan Margasari, Jl. Cipagalo Girang No. 09, Kec. Buahbatu, Kota Bandung (Senin - Jumat, 08:00 - 15:00 WIB)"
             )
             return {"reply": reply_text, "type": "information", "ticket": None}
 
-        # Default Kelurahan
+        # Default Kelurahan Margasari Welcome
         return {
             "reply": (
-                "Halo! Selamat datang di layanan informasi Kelurahan Kebon Melati.\n\n"
-                "Silakan tanyakan syarat pengurusan dokumen warga, seperti:\n"
-                "• Surat Keterangan Usaha (SKU / NIB)\n"
+                "Sampurasun! Selamat datang di layanan informasi resmi Kelurahan Margasari, Kec. Buahbatu, Kota Bandung.\n\n"
+                "📍 Kantor: Jl. Cipagalo Girang No. 09, Margasari (Senin - Jumat, 08:00 - 15:00 WIB)\n"
+                "👤 Lurah: Wahyu A. Affandi, S.IP., M.Si.\n\n"
+                "Silakan tanyakan syarat dan alur pengurusan dokumen warga, seperti:\n"
+                "• Aktivasi IKD / KTP Online Digital\n"
+                "• Surat Keterangan Domisili & Usaha (SKDU / SKU)\n"
+                "• Pengantar KTP-el / Kartu Keluarga (KK)\n"
+                "• Surat Keterangan Tidak Mampu (SKTM)\n"
                 "• Surat Pengantar Nikah (N1-N4)\n"
-                "• Akta Kelahiran / Akta Kematian\n"
-                "• Izin Tanah Makam (IPTM) / SKTM"
+                "• Layanan Kebersihan & Kawasan Bebas Sampah (KBS Margasari)\n"
+                "• Akta Kelahiran / Akta Kematian"
             ),
             "type": "information",
             "ticket": None
