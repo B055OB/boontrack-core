@@ -1,3 +1,4 @@
+from app.modules.public_services.router import fastapi_public_service_router
 import sys
 import os
 import asyncio
@@ -208,6 +209,7 @@ app.include_router(boonpilot_router)
 app.include_router(merchant_copilot_router)
 app.include_router(billing_router)
 app.include_router(store_chat_router)
+app.include_router(fastapi_public_service_router)
 app.include_router(media_router)
 app.include_router(general_upload_router)
 app.include_router(product_router)

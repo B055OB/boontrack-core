@@ -514,11 +514,13 @@ BALE_PANANGGEUHAN_DATABASE = {
 class PublicServiceKnowledgeProvider:
     """Provider antarmuka untuk mengambil data pengetahuan layanan publik multi-tenant."""
 
-    def __init__(self, tenant_id: str = "kelurahan-margasari"):
-        self.tenant_id = tenant_id
-        if tenant_id == "bale-pananggeuhan":
+    def __init__(self, tenant_id: str = "margasari"):
+        clean_tenant = str(tenant_id or "margasari").strip().lower().replace("_", "-")
+        self.tenant_id = clean_tenant
+        if clean_tenant in ("bale-pananggeuhan", "bale_pananggeuhan", "balai-pananggeuhan"):
             self.db = BALE_PANANGGEUHAN_DATABASE
         else:
+            # Default to Margasari for 'margasari', 'kelurahan-margasari', 'kelurahan-indra', etc.
             self.db = SERVICES_DATABASE
 
     def get_all_services(self) -> dict:

@@ -111,3 +111,60 @@ async def render_dashboard(request: web.Request) -> web.Response:
 def register_public_service_routes(app: web.Application):
     app.add_routes(public_service_routes)
     logger.info("[ROUTER] Public Services unified routes registered.")
+
+# -----------------------------------------------------------------------------
+# FASTAPI ROUTER FOR PUBLIC SERVICES (B2G CIVIC PORTAL)
+# -----------------------------------------------------------------------------
+from fastapi import APIRouter, Body, HTTPException, status
+from pydantic import BaseModel
+from typing import Optional, Dict, Any, List
+
+fastapi_public_service_router = APIRouter(prefix="/api/v1/public-service", tags=["Public Service B2G"])
+
+class PublicServiceChatRequest(BaseModel):
+    message: str
+    session_id: Optional[str] = "webchat_anon"
+    user_id: Optional[str] = None
+    channel: Optional[str] = "webchat"
+    conversation_history: Optional[List[Dict[str, Any]]] = None
+
+class PublicServiceChatResponse(BaseModel):
+    status: str = "success"
+    tenant_id: str
+    reply: str
+    reply_text: str
+    response: str
+    message: str
+    type: str = "information"
+    ticket: Optional[Dict[str, Any]] = None
+    quick_actions: Optional[List[str]] = None
+
+@fastapi_public_service_router.post("/{tenant_id}/chat", response_model=PublicServiceChatResponse)
+@fastapi_public_service_router.post("/chat", response_model=PublicServiceChatResponse)
+async def handle_public_service_chat_fastapi(tenant_id: str = "margasari", payload: PublicServiceChatRequest = Body(...)):
+    user_msg = str(payload.message or "").strip()
+    if not user_msg:
+        raise HTTPException(status_code=400, detail="Pesan tidak boleh kosong")
+
+    result = await public_service_service.handle_query(
+        user_text=user_msg,
+        user_id=payload.user_id or payload.session_id or "webchat_anon",
+        session_id=payload.session_id or "webchat_anon",
+        channel=payload.channel or "webchat",
+        tenant_id=tenant_id
+    )
+    reply_str = result.get("reply", "")
+    from app.services.unified_conversation_service import get_welcome_buttons_for_category
+    quick_acts = get_welcome_buttons_for_category("PUBLIC_SERVICE")
+
+    return PublicServiceChatResponse(
+        status="success",
+        tenant_id=tenant_id,
+        reply=reply_str,
+        reply_text=reply_str,
+        response=reply_str,
+        message=reply_str,
+        type=result.get("type", "information"),
+        ticket=result.get("ticket"),
+        quick_actions=quick_acts,
+    )

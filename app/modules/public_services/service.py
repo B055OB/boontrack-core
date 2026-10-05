@@ -55,6 +55,7 @@ TENANT_TICKETS_STORE: Dict[str, List[Dict[str, Any]]] = {
 }
 # Backward compatibility mapping
 TENANT_TICKETS_STORE["kelurahan-indra"] = TENANT_TICKETS_STORE["kelurahan-margasari"]
+TENANT_TICKETS_STORE["margasari"] = TENANT_TICKETS_STORE["kelurahan-margasari"]
 
 
 def safe_parse_ai_json(raw_text: str) -> dict:
@@ -77,12 +78,14 @@ class PublicServiceService:
 
     @classmethod
     def get_tickets(cls, tenant_id: str = "kelurahan-margasari") -> List[Dict[str, Any]]:
-        target = "bale-pananggeuhan" if tenant_id == "bale-pananggeuhan" else "kelurahan-margasari"
+        clean_t = str(tenant_id or "").strip().lower().replace("_", "-")
+        target = "bale-pananggeuhan" if clean_t in ("bale-pananggeuhan", "bale_pananggeuhan", "balai-pananggeuhan") else "kelurahan-margasari"
         return TENANT_TICKETS_STORE.get(target, [])
 
     @classmethod
     def update_ticket_status(cls, tenant_id: str, ticket_id: str, new_status: str) -> bool:
-        target = "bale-pananggeuhan" if tenant_id == "bale-pananggeuhan" else "kelurahan-margasari"
+        clean_t = str(tenant_id or "").strip().lower().replace("_", "-")
+        target = "bale-pananggeuhan" if clean_t in ("bale-pananggeuhan", "bale_pananggeuhan", "balai-pananggeuhan") else "kelurahan-margasari"
         tickets = TENANT_TICKETS_STORE.get(target, [])
         for t in tickets:
             if t.get("id") == ticket_id:
@@ -112,7 +115,7 @@ class PublicServiceService:
         user_id: str = "0",
         session_id: Optional[str] = None,
         channel: str = "webchat",
-        tenant_id: str = "kelurahan-margasari"
+        tenant_id: str = "margasari"
     ) -> Dict[str, Any]:
         text = user_text.strip()
         text_lower = text.lower()
@@ -120,9 +123,11 @@ class PublicServiceService:
         today_str = datetime.datetime.now().strftime("%Y%m%d")
 
         # -------------------------------------------------------------
+        clean_tenant = str(tenant_id or "margasari").strip().lower().replace("_", "-")
+        # -------------------------------------------------------------
         # 1. LOGIKA BALE PANANGGEUHAN JABAR
         # -------------------------------------------------------------
-        if tenant_id == "bale-pananggeuhan":
+        if clean_tenant in ("bale-pananggeuhan", "bale_pananggeuhan", "balai-pananggeuhan"):
             escalation_words = ["lapor", "aduan", "rusak", "pungli", "keluhan", "jalan", "air", "listrik", "padam", "bocor", "lubang", "pju"]
             if any(w in text_lower for w in escalation_words):
                 ticket_id = f"PS-{today_str}-{random.randint(1000, 9999)}"
@@ -221,13 +226,14 @@ class PublicServiceService:
                 f"📢 **Laporan Pengaduan Warga Margasari Diterima**\n"
                 f"• No. Registrasi : `{ticket_id}`\n"
                 f"• Bidang Penanganan: {kategori}\n"
-                f"• Status: **OPEN** (Menunggu Tindak Lanjut Petugas)\n\n"
-                f"Laporan Anda telah diteruskan ke Seksi terkait di Kantor Kelurahan Margasari (Jl. Cipagalo Girang No. 09) untuk segera ditindaklanjuti."
+                f"• Status: **OPEN** (Menunggu Tindak Lanjut Pamong Kelurahan)\n\n"
+                f"Laporan Bapak/Ibu Warga telah diteruskan ke Seksi terkait di Kantor Kelurahan Margasari (Jl. Cipagalo Girang No. 09) untuk segera ditindaklanjuti.\n\n"
+                f"🌐 Pantau status pengaduan di: https://app.boontrack.com/margasari"
             )
             return {"reply": msg, "type": "ticket", "ticket": new_ticket, "is_escalated": True}
 
         # Knowledge Matching
-        provider = PublicServiceKnowledgeProvider(tenant_id="kelurahan-margasari")
+        provider = PublicServiceKnowledgeProvider(tenant_id=clean_tenant)
         matched = provider.search_service(text)
 
         if matched:
@@ -241,24 +247,26 @@ class PublicServiceService:
                 f"**Alur Pengurusan:**\n{flow}\n\n"
                 f"⏱️ **Estimasi:** {svc['processing_time']}\n"
                 f"💳 **Biaya:** {svc['cost']}\n\n"
-                f"📍 *Lokasi:* Kantor Kelurahan Margasari, Jl. Cipagalo Girang No. 09, Kec. Buahbatu, Kota Bandung (Senin - Jumat, 08:00 - 15:00 WIB)"
+                f"📍 *Lokasi Pelayanan:* Kantor Kelurahan Margasari, Jl. Cipagalo Girang No. 09, Kec. Buahbatu, Kota Bandung (Senin - Jumat, 08:00 - 15:00 WIB)\n\n"
+                f"🌐 *Portal Resmi Pelayanan Warga:* https://app.boontrack.com/margasari"
             )
             return {"reply": reply_text, "type": "information", "ticket": None}
 
         # Default Kelurahan Margasari Welcome
         return {
             "reply": (
-                "Sampurasun! Selamat datang di layanan informasi resmi Kelurahan Margasari, Kec. Buahbatu, Kota Bandung.\n\n"
-                "📍 Kantor: Jl. Cipagalo Girang No. 09, Margasari (Senin - Jumat, 08:00 - 15:00 WIB)\n"
-                "👤 Lurah: Wahyu A. Affandi, S.IP., M.Si.\n\n"
-                "Silakan tanyakan syarat dan alur pengurusan dokumen warga, seperti:\n"
+                "Sampurasun! Selamat datang Bapak/Ibu Warga di layanan resmi Loket Digital Kelurahan Margasari, Kec. Buahbatu, Kota Bandung.\n\n"
+                "📍 *Kantor Kelurahan:* Jl. Cipagalo Girang No. 09, Margasari (Senin - Jumat, 08:00 - 15:00 WIB)\n"
+                "👨‍💼 *Lurah Margasari:* Wahyu A. Affandi, S.IP., M.Si.\n"
+                "🌐 *Portal Resmi:* https://app.boontrack.com/margasari\n\n"
+                "Silakan sampaikan kebutuhan administrasi kependudukan atau surat pengantar Bapak/Ibu, seperti:\n"
                 "• Aktivasi IKD / KTP Online Digital\n"
                 "• Surat Keterangan Domisili & Usaha (SKDU / SKU)\n"
                 "• Pengantar KTP-el / Kartu Keluarga (KK)\n"
+                "• Surat Pengantar Nikah (Model N1 - N4)\n"
                 "• Surat Keterangan Tidak Mampu (SKTM)\n"
-                "• Surat Pengantar Nikah (N1-N4)\n"
                 "• Layanan Kebersihan & Kawasan Bebas Sampah (KBS Margasari)\n"
-                "• Akta Kelahiran / Akta Kematian"
+                "• Akta Kelahiran & Akta Kematian"
             ),
             "type": "information",
             "ticket": None

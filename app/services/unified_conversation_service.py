@@ -57,6 +57,12 @@ CATEGORY_WELCOME_BUTTONS: Dict[str, List[str]] = {
     ],
 }
 
+CATEGORY_WELCOME_BUTTONS["PUBLIC_SERVICE"] = [
+    "🏛️ Syarat Layanan & Surat",
+    "📱 Aktivasi IKD / KTP Online",
+    "📝 Lapor / Aduan Warga",
+]
+
 EMPTY_CATALOG_MESSAGE = (
     "Halo! Katalog produk/layanan kami sedang disiapkan oleh admin. "
     "Ada yang bisa kami bantu secara langsung?"
@@ -86,6 +92,8 @@ def normalize_business_category(category_input: Optional[str]) -> str:
     if not raw:
         return "PHYSICAL"
 
+    if any(k in raw for k in ("PUBLIC_SERVICE", "B2G", "GOV", "KELURAHAN", "DESA", "LAYANAN_PUBLIK", "CIVIC", "PEMKOT")):
+        return "PUBLIC_SERVICE"
     if any(k in raw for k in ("FOOD", "FNB", "CULINARY", "RESTO", "KULINER", "MAKANAN", "MINUMAN", "DAPUR")):
         return "FOOD"
     if any(k in raw for k in ("FIELD_SERVICE", "FIELD", "SERVICE_FIELD", "TOREN", "TEKNISI", "SERVIS", "REPARASI", "AC", "SEDOT")):
@@ -268,6 +276,32 @@ class UnifiedConversationEngine:
             except Exception as _chk_err:
                 logger.warning(f"[SESSION_PAUSE_CHECK_WARN] {_chk_err}")
 
+        # 0.5. PUBLIC SERVICE / B2G TENANT INTERCEPTOR (Kelurahan Margasari, etc.)
+        if (
+            clean_slug in ("margasari", "kelurahan-margasari", "kelurahan-indra", "bale-pananggeuhan", "bale_pananggeuhan")
+        ):
+            from app.modules.public_services.service import public_service_service
+            res = await public_service_service.handle_query(
+                user_text=q,
+                user_id=clean_phone,
+                session_id=f"{channel}:{clean_phone}",
+                channel=channel,
+                tenant_id=clean_slug
+            )
+            reply_text = res.get("reply", "")
+            return {
+                "success": True,
+                "reply": reply_text,
+                "reply_text": reply_text,
+                "tenant_slug": clean_slug,
+                "business_category": "PUBLIC_SERVICE",
+                "quick_actions": get_welcome_buttons_for_category("PUBLIC_SERVICE"),
+                "action": "PUBLIC_SERVICE_INFO",
+                "type": "TEXT",
+                "ticket": res.get("ticket"),
+                "unassigned_triggered": False,
+            }
+
         # 1. Resolve Tenant Profile & Kategori Bisnis
         details = onboarding_service.get_tenant_details_by_slug(clean_slug) or {}
         tenant_obj = details.get("tenant", {}) if details else {}
@@ -282,6 +316,29 @@ class UnifiedConversationEngine:
         tenant_meta = tenant_obj.get("metadata") or {}
         if not isinstance(tenant_meta, dict):
             tenant_meta = {}
+
+        if business_category == "PUBLIC_SERVICE" or tenant_meta.get("template_code") == "PUBLIC_SERVICE_V1" or tenant_meta.get("business_type") == "B2G":
+            from app.modules.public_services.service import public_service_service
+            res = await public_service_service.handle_query(
+                user_text=q,
+                user_id=clean_phone,
+                session_id=f"{channel}:{clean_phone}",
+                channel=channel,
+                tenant_id=clean_slug
+            )
+            reply_text = res.get("reply", "")
+            return {
+                "success": True,
+                "reply": reply_text,
+                "reply_text": reply_text,
+                "tenant_slug": clean_slug,
+                "business_category": "PUBLIC_SERVICE",
+                "quick_actions": get_welcome_buttons_for_category("PUBLIC_SERVICE"),
+                "action": "PUBLIC_SERVICE_INFO",
+                "type": "TEXT",
+                "ticket": res.get("ticket"),
+                "unassigned_triggered": False,
+            }
 
         from app.whatsapp.traffic_splitter import get_tenant_greeting_message
         welcome_msg = get_tenant_greeting_message(

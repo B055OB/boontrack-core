@@ -125,7 +125,7 @@ async def process_incoming_message(
     elif (
         has_capability(context, "public_service")
         or (context and context.business_type == "B2G")
-        or tenant_slug in ("bale_pananggeuhan", "pelayanan_publik")
+        or tenant_slug in ("margasari", "kelurahan-margasari", "kelurahan-indra", "bale_pananggeuhan", "bale-pananggeuhan", "pelayanan_publik", "pelayanan-publik")
     ):
         try:
             from app.modules.public_services.service import public_service_service

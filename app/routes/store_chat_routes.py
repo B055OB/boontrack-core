@@ -25,6 +25,11 @@ from app.schemas.context import RequestContext, resolve_tenant_context, ChannelT
 from app.core.security_context import assert_tenant_integrity
 from app.services.tenant_context_resolver import tenant_context_resolver
 
+from app.services.unified_conversation_service import (
+    normalize_business_category,
+    get_welcome_buttons_for_category,
+)
+
 logger = logging.getLogger("STORE_CHAT_ROUTES")
 router = APIRouter(tags=["AI Gateway Endpoints"])
 
@@ -74,6 +79,40 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
     meta = settings.get("metadata", {}) if isinstance(settings, dict) else {}
     persona = settings.get("persona", {}) if isinstance(settings, dict) else {}
     
+    # PUBLIC SERVICE / B2G INTERCEPTOR (Kelurahan Margasari, etc.)
+    business_category = normalize_business_category(settings.get("tenant", {}).get("category") or settings.get("tenant", {}).get("vertical") or meta.get("business_type") or "PHYSICAL")
+    if (
+        clean_slug in ("margasari", "kelurahan-margasari", "kelurahan-indra", "bale-pananggeuhan", "bale_pananggeuhan")
+        or business_category == "PUBLIC_SERVICE"
+        or meta.get("template_code") == "PUBLIC_SERVICE_V1"
+        or meta.get("business_type") == "B2G"
+    ):
+        from app.modules.public_services.service import public_service_service
+        res = await public_service_service.handle_query(
+            user_text=q,
+            user_id=session_id,
+            session_id=session_id,
+            channel="webchat",
+            tenant_id=clean_slug
+        )
+        reply_str = res.get("reply", "")
+        civic_buttons = get_welcome_buttons_for_category("PUBLIC_SERVICE")
+        safe_log_to_supabase_messages(
+            sender="bot", text=reply_str, tenant_id=clean_slug, channel="webchat", user_id=session_id
+        )
+        return StoreChatResponse(
+            reply_text=reply_str,
+            action="NONE",
+            payload={"service": "PUBLIC_SERVICE"},
+            session_state={"tenant_id": clean_slug, "session_id": session_id},
+            status="success",
+            type="TEXT",
+            reply=reply_str,
+            quick_actions=civic_buttons,
+            session_id=session_id,
+            tenant_id=clean_slug,
+        )
+
     # Ambil template respons dari dashboard
     from app.whatsapp.traffic_splitter import get_tenant_greeting_message
     welcome_msg = (
@@ -122,8 +161,6 @@ async def handle_store_chat(payload: StoreChatRequest = Body(...)):
 
     from app.services.unified_conversation_service import (
         unified_conversation_engine,
-        get_welcome_buttons_for_category,
-        normalize_business_category,
         EMPTY_CATALOG_MESSAGE,
         UNKNOWN_PRODUCT_MESSAGE,
     )
