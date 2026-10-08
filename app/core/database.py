@@ -366,6 +366,35 @@ def _init_db_sync():
         );
         CREATE INDEX IF NOT EXISTS idx_outbound_messages_wa_id ON outbound_messages(wa_message_id);
         CREATE INDEX IF NOT EXISTS idx_outbound_messages_tenant ON outbound_messages(tenant_id);
+
+        -- Tabel inbound_webhook_events (Durable Idempotency & Webhook Ingestion)
+        CREATE TABLE IF NOT EXISTS inbound_webhook_events (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            channel_provider VARCHAR(50) NOT NULL DEFAULT 'whatsapp_meta',
+            provider_message_id VARCHAR(255) NOT NULL,
+            payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+            status VARCHAR(50) NOT NULL DEFAULT 'RECEIVED',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT uq_inbound_webhook_channel_provider_msg_id UNIQUE (channel_provider, provider_message_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_inbound_webhook_provider_msg_id ON inbound_webhook_events(provider_message_id);
+        CREATE INDEX IF NOT EXISTS idx_inbound_webhook_created_at ON inbound_webhook_events(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_inbound_webhook_status ON inbound_webhook_events(status);
+
+        -- Tabel tenant_waba_configs (Tenant WhatsApp Integration)
+        CREATE TABLE IF NOT EXISTS tenant_waba_configs (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            tenant_id VARCHAR(100) NOT NULL,
+            waba_phone_number_id VARCHAR(100) NOT NULL UNIQUE,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            display_phone_number VARCHAR(50),
+            waba_account_id VARCHAR(100),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_tenant_waba_phone_number_id ON tenant_waba_configs(waba_phone_number_id);
+        CREATE INDEX IF NOT EXISTS idx_tenant_waba_tenant_id ON tenant_waba_configs(tenant_id);
+        CREATE INDEX IF NOT EXISTS idx_tenant_waba_is_active ON tenant_waba_configs(is_active);
     """)
 
     conn.commit()

@@ -105,5 +105,16 @@ __all__ = [
     "CSAgent",
     "TeamMemberRole",
     "AgentPresence",
+    # Inbound Webhook Durable Idempotency
+    "InboundWebhookEvent",
+    # Tenant WABA Integration
+    "TenantWabaConfig",
+    # Payment Orders & Reconciler
+    "PaymentOrder",
+    "PaymentStatus",
 ]
+
+from app.models.inbound_webhook_event import InboundWebhookEvent
+from app.models.tenant_waba import TenantWabaConfig
+from app.models.payment_order import PaymentOrder, PaymentStatus
 

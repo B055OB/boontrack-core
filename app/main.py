@@ -6,6 +6,8 @@ import logging
 from typing import Dict, Any
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from aiohttp import web
@@ -67,6 +69,8 @@ from app.routes.media_routes import media_router, general_upload_router, registe
 from app.routes.product_routes import product_router, product_singular_router, register_product_routes
 from app.routes.auth_routes import router as auth_router, auth_general_router
 from app.routes.custom_domain_routes import custom_domain_router, register_custom_domain_routes
+from app.api.v1.api import api_v1_router
+from app.api.v1.endpoints.whatsapp_webhook import router as whatsapp_webhook_router
 from app.api.v1.reader_router import router as reader_router
 from app.tenants.career.router import career_fastapi_router, register_career_routes
 from app.routers.creator_ugc import router as creator_ugc_router, register_creator_ugc_routes
@@ -95,9 +99,10 @@ app = FastAPI(
 
 @app.exception_handler(HTTPException)
 async def custom_http_exception_handler(request: Request, exc: HTTPException):
-    if isinstance(exc.detail, dict) and "error" in exc.detail:
-        return JSONResponse(status_code=exc.status_code, content=exc.detail)
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    encoded_detail = jsonable_encoder(exc.detail)
+    if isinstance(encoded_detail, dict) and "error" in encoded_detail:
+        return JSONResponse(status_code=exc.status_code, content=encoded_detail)
+    return JSONResponse(status_code=exc.status_code, content={"detail": encoded_detail})
 
 app.add_middleware(TracingMiddleware)
 
@@ -174,6 +179,8 @@ app.include_router(webchat_router)
 app.include_router(internal_router)
 app.include_router(onboarding_router)
 app.include_router(tenant_intake_router)
+app.include_router(api_v1_router)
+app.include_router(whatsapp_webhook_router)
 app.include_router(meta_whatsapp_router)
 app.include_router(chat_router)
 app.include_router(tenant_router)

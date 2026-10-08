@@ -40,22 +40,28 @@ class UpdateLeadStatusRequest(BaseModel):
 
 @tenant_intake_router.post(
     "/api/v1/tenant/onboard",
-    response_model=TenantOnboardIntakeResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Submit Tenant Onboarding Pilot Request Intake",
+    summary="Submit Tenant Onboarding Pilot Request Intake or Onboard Tenant",
 )
 async def submit_tenant_onboard_endpoint(
     request: Request,
     background_tasks: BackgroundTasks,
-    payload: TenantOnboardIntakeRequest = Body(..., description="Payload data intake calon tenant"),
+    payload: dict = Body(..., description="Payload data intake calon tenant atau tenant create"),
 ):
-    """Menerima dan memvalidasi intake calon merchant, mapping feature flags,
-    menyimpan ke control_plane.tenant_prospects dengan status 'PROSPECT_PILOT_REQUESTED',
-    dan mendispatch event 'Lead' ke Meta Conversions API secara asynchronous di background.
-    """
+    """Menerima dan memvalidasi intake calon merchant atau tenant creation baru."""
+    # Jika payload adalah TenantCreateRequest (memiliki slug atau business_category)
+    if "slug" in payload or "business_category" in payload:
+        from app.api.v1.endpoints.tenant_onboarding import onboard_tenant_endpoint
+        return await onboard_tenant_endpoint(
+            request=request,
+            background_tasks=background_tasks,
+            payload=payload,
+        )
+
     try:
+        intake_payload = TenantOnboardIntakeRequest.model_validate(payload)
         # 1. Simpan ke database
-        prospect = prospect_service.create_prospect(payload)
+        prospect = prospect_service.create_prospect(intake_payload)
 
         # 2. Extract metadata request untuk Meta CAPI (User-Agent, Client IP)
         client_ip = (
@@ -69,20 +75,22 @@ async def submit_tenant_onboard_endpoint(
         background_tasks.add_task(
             dispatch_meta_lead_event,
             prospect_id=str(prospect["id"]),
-            brand_name=payload.brand_name,
-            industry=payload.industry,
-            pic_name=payload.pic_name,
-            whatsapp=payload.whatsapp,
+            brand_name=intake_payload.brand_name,
+            industry=intake_payload.industry,
+            pic_name=intake_payload.pic_name,
+            whatsapp=intake_payload.whatsapp,
             client_ip=client_ip,
             client_user_agent=client_user_agent,
         )
 
         return TenantOnboardIntakeResponse(
             status="success",
-            message=f"Pendaftaran pilot untuk '{payload.brand_name}' berhasil diterima.",
+            message=f"Pendaftaran pilot untuk '{intake_payload.brand_name}' berhasil diterima.",
             prospect=TenantProspectItem(**prospect),
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[Onboard Intake Error] {e}", exc_info=True)
         raise HTTPException(

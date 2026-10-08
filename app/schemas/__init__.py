@@ -96,7 +96,22 @@ __all__ = [
     "ToolExecutionPermission",
     "SupportTicketState",
     "SupportTicket",
-    "InboundRequestPayload",
+    # WhatsApp Meta Schemas
+    "WebhookChallenge",
+    "WhatsAppMessage",
+    "WhatsAppValue",
+    "WhatsAppChange",
+    "WhatsAppEntry",
+    "WhatsAppWebhookPayload",
+    # Tenant Onboarding Schemas
+    "TenantCreateRequest",
+    "TenantResponse",
+    # Payment Schemas
+    "PaymentStatus",
+    "PaymentOrderCreate",
+    "PaymentOrderResponse",
+    "PaymentWebhookPayload",
+    "ReservedItem",
 ]
 
 from app.schemas.rev1_contracts import (
@@ -108,6 +123,25 @@ from app.schemas.rev1_contracts import (
     SupportTicketState,
     SupportTicket,
     InboundRequestPayload,
+)
+from app.schemas.whatsapp import (
+    WebhookChallenge,
+    WhatsAppMessage,
+    WhatsAppValue,
+    WhatsAppChange,
+    WhatsAppEntry,
+    WhatsAppWebhookPayload,
+)
+from app.schemas.tenant import (
+    TenantCreateRequest,
+    TenantResponse,
+)
+from app.schemas.payment import (
+    PaymentStatus,
+    PaymentOrderCreate,
+    PaymentOrderResponse,
+    PaymentWebhookPayload,
+    ReservedItem,
 )
 
 
