@@ -13,8 +13,9 @@ google-genai>=0.1.0
 google-api-python-client>=2.100.0
 google-auth>=2.23.0
 google-auth-httplib2>=0.1.1
-# Database Client
+# Database Client & Cache
 supabase>=2.0.0
+redis>=5.0.0
 # Network & Telegram Bot
 aiogram==2.25.2
 aiohttp==3.8.6
