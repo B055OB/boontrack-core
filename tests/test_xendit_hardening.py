@@ -140,7 +140,8 @@ async def run_verification():
     cur = conn.cursor()
     try:
         cur.execute("DELETE FROM financial_ledger WHERE order_id = %s;", (test_order_id,))
-        cur.execute("DELETE FROM payment_events WHERE event_id = %s;", (test_event_id,))
+        conn.commit()
+        # payment_events has immutable audit trigger in DB, so deletion is skipped intentionally
         cur.execute("DELETE FROM orders WHERE id = %s;", (test_order_id,))
         conn.commit()
         print(f"\n[CLEANUP] Removed test records for '{test_order_id}'.")

@@ -497,24 +497,29 @@ def _record_settlement_and_ledger_sync(
             except Exception as stk_err:
                 logger.warning(f"[Xendit Settlement Stock Warning] {stk_err}")
 
-        # 3d. Entitlement Activation in the same transaction
+        # 3d. Entitlement Activation in the same transaction with SAVEPOINT protection
         try:
+            cur.execute("SAVEPOINT entitlement_sp;")
             cur.execute(
                 """
-                INSERT INTO tenant_entitlements (tenant_id, feature, is_active, created_at, updated_at)
+                INSERT INTO tenant_entitlements (tenant_id, feature_code, status, updated_at)
                 VALUES (
                     (SELECT id FROM tenants WHERE slug = %s LIMIT 1),
                     'APP_SHOP_INTERNAL_FLOW',
-                    TRUE,
-                    %s,
+                    'ACTIVE',
                     %s
                 )
                 ON CONFLICT DO NOTHING;
                 """,
-                (tenant_id, now_utc, now_utc)
+                (tenant_id, now_utc)
             )
-        except Exception:
-            pass
+            cur.execute("RELEASE SAVEPOINT entitlement_sp;")
+        except Exception as ent_err:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT entitlement_sp;")
+            except Exception:
+                pass
+            logger.debug(f"[Xendit Entitlement Note] {ent_err}")
 
         conn.commit()
         logger.info(f"[Xendit Ledger Recorded] Event {event_id} & Order {external_id} saved to DB and financial_ledger.")
@@ -674,6 +679,7 @@ async def process_xendit_webhook_core(
 
     # 2. Fast L1 In-Memory Idempotency Check
     if external_id and xendit_service.is_settled(external_id):
+        release_payment_lock(external_id)
         logger.info(f"[Xendit Webhook L1 Hit] Order '{external_id}' already marked settled in-memory. Returning 200 OK.")
         log_structured_event(
             service="xendit_webhook",
@@ -698,6 +704,7 @@ async def process_xendit_webhook_core(
     db_check = await asyncio.to_thread(_check_db_idempotency_sync, event_id, external_id)
     if db_check:
         xendit_service.mark_settled(external_id)
+        release_payment_lock(external_id)
         logger.info(f"[Xendit Webhook DB Hit] Event '{event_id}' / Order '{external_id}' already processed in DB. Returning 200 OK.")
         log_structured_event(
             service="xendit_webhook",
@@ -720,6 +727,7 @@ async def process_xendit_webhook_core(
 
     # 4. Non-paid event handler (e.g. EXPIRED, FAILED, PENDING)
     if event_status not in _PAID_STATUSES:
+        release_payment_lock(external_id)
         logger.info(f"[Xendit Webhook] Non-paid event received ({event_status}) for order '{external_id}'. Ignoring.")
         return {
             "http_status": 200,
@@ -826,6 +834,7 @@ async def process_xendit_webhook_core(
     # Mark in-memory settled (L1 Lock) only after DB mutation succeeded
     if external_id:
         xendit_service.mark_settled(external_id)
+        release_payment_lock(external_id)
 
     log_structured_event(
         service="xendit_webhook",
