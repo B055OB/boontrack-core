@@ -62,11 +62,77 @@ LITTLE_BITE_FEEDING_KB: Dict[str, Any] = {
     },
 }
 
+TUMBUH_KEMBANG_ANAK_KB: Dict[str, Any] = {
+    "tenant_id": "tumbuh-kembang-anak",
+    "brand_name": "Tumbuh Kembang Anak (dr. Harys Maulana)",
+    "category": "Tumbuh Kembang & Nutrisi Anak",
+    "screening_url": "https://screening.littlebitefeeding.com/",
+    "checkout_url": "https://konsul.littlebitefeeding.com/p/eat-and-grow-konsultasi-chat-gtm-anak",
+    "identity": "Admin / Tim Layanan Pasien dr. Harys Maulana (Tumbuh Kembang Anak)",
+    "salutation": "Ayah/Bunda",
+    "services": [
+        {
+            "id": "eat_and_grow",
+            "name": "Eat & Grow (Konsultasi Chat GTM Anak)",
+            "price": 150000,
+            "currency": "IDR",
+            "formatted_price": "Rp150.000",
+            "is_primary": True,
+            "checkout_url": "https://konsul.littlebitefeeding.com/p/eat-and-grow-konsultasi-chat-gtm-anak",
+            "description": "Konsultasi intensif via chat WhatsApp bersama dr. Harys Maulana untuk evaluasi feeding rules, jadwal makan, tekstur, dan pendampingan GTM bertahap.",
+        },
+        {
+            "id": "gmeet_consultation",
+            "name": "Google Meet",
+            "price": 250000,
+            "currency": "IDR",
+            "formatted_price": "Rp250.000",
+            "is_primary": False,
+            "checkout_url": "https://shop.boontrack.com/tumbuh-kembang-anak",
+            "description": "Sesi tatap muka virtual live via Google Meet untuk observasi langsung respon dan postur makan si kecil bersama dr. Harys Maulana.",
+        },
+    ],
+    "payout_details": {
+        "bank_name": "BCA",
+        "account_number": "3741672471",
+        "account_name": "Muhamad Harys Maulana",
+    },
+    "gtm_scenarios": [
+        "1. Menolak makan sama sekali (tutup mulut rapat, buang muka, menangis saat melihat makanan)",
+        "2. Makan berdurasi lebih dari 30 menit atau makanan diemut berlama-lama",
+        "3. Kenaikan berat badan (BB) stagnan atau kurva pertumbuhan mendatar",
+        "4. Picky eater / selektif tekstur dan variasi makanan tertentu",
+        "5. Porsi makan terlalu mini atau cepat bosan saat sesi makan",
+    ],
+    "persona_guidelines": {
+        "identity": "Admin / Tim Layanan Pasien dr. Harys Maulana (Tumbuh Kembang Anak)",
+        "salutation": "Ayah/Bunda",
+        "tone": "Ramah, sopan, empatik, terstruktur, khas admin klinik profesional",
+        "strict_guardrail": (
+            "Bot BUKAN dokter dan BUKAN asisten medis/nakes. Dilarang memberikan diagnosis mandiri, "
+            "analisa grafik/kurva medis, atau resep obat. Tugas murni sebagai Admin / Tim Layanan Pasien "
+            "dr. Harys Maulana untuk pengumpulan data awal rekam medis."
+        ),
+        "anti_hardselling": (
+            "DILARANG langsung melampirkan link pembayaran atau mematok harga Rp150.000 di respons pembuka "
+            "saat orang tua curhat atau mengeluhkan kondisi anak."
+        ),
+        "conversation_funnel": {
+            "step_1": "Empati & Skrining Administratif (validasi kekhawatiran, tanyakan usia & BB serta durasi susah makan. ZERO link, ZERO harga)",
+            "step_2": "Pencatatan Data (konfirmasi bahwa data keluhan sudah dicatat untuk dr. Harys)",
+            "step_3": "Rekomendasi Konsultasi Resmi (sampaikan bahwa konsultasi langsung via chat privat bersama dr. Harys tersedia melalui layanan resmi https://konsul.littlebitefeeding.com/p/eat-and-grow-konsultasi-chat-gtm-anak)"
+        },
+    },
+}
+
 _TENANT_KB_REGISTRY: Dict[str, Dict[str, Any]] = {
     "little-bite-feeding": LITTLE_BITE_FEEDING_KB,
     "littlebite": LITTLE_BITE_FEEDING_KB,
     "little_bite_feeding": LITTLE_BITE_FEEDING_KB,
     "lbf": LITTLE_BITE_FEEDING_KB,
+    "tumbuh-kembang-anak": TUMBUH_KEMBANG_ANAK_KB,
+    "tumbuhkembanganak": TUMBUH_KEMBANG_ANAK_KB,
+    "tumbuh_kembang_anak": TUMBUH_KEMBANG_ANAK_KB,
 }
 
 
@@ -91,7 +157,8 @@ def generate_greeting_response(
     Returns:
         Formatted warm greeting string.
     """
-    kb = get_tenant_knowledge_base(tenant_id) or LITTLE_BITE_FEEDING_KB
+    clean_tenant = str(tenant_id or "").strip().lower()
+    kb = get_tenant_knowledge_base(clean_tenant) or LITTLE_BITE_FEEDING_KB
     payout = kb.get("payout_details", {})
     services = kb.get("services", [])
     primary_svc = next((s for s in services if s.get("is_primary")), services[0] if services else {})
@@ -106,6 +173,21 @@ def generate_greeting_response(
     bank = payout.get("bank_name", "BCA")
     acc_num = payout.get("account_number", "3741672471")
     acc_name = payout.get("account_name", "Muhamad Harys Maulana")
+
+    if clean_tenant in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak"):
+        checkout_link = kb.get("checkout_url") or "https://konsul.littlebitefeeding.com/p/eat-and-grow-konsultasi-chat-gtm-anak"
+        return (
+            f"Halo Ayah/Bunda! Salam kenal, saya Admin dr. Harys Maulana (Tumbuh Kembang Anak) ❤️\n\n"
+            f"Data skrining untuk si kecil *{child_name}* dengan *ID: {screening_id}* sudah kami terima dan catat untuk dr. Harys.\n\n"
+            f"Kami sangat memahami kekhawatiran Ayah/Bunda mendampingi si kecil yang sedang mengalami fase tantangan makan (GTM). "
+            f"Ayah/Bunda tidak sendirian, dan Ayah/Bunda sudah hebat sekali berjuang hingga hari ini.\n\n"
+            f"Untuk pendampingan dan evaluasi mendalam, konsultasi chat privat bersama dr. Harys dapat diakses melalui:\n"
+            f"👉 {checkout_link}\n\n"
+            f"Biaya konsultasi: *{primary_name}* ({primary_price})\n"
+            f"Pembayaran juga dapat ditransfer ke:\n"
+            f"💳 *{bank}*: `{acc_num}` a.n. *{acc_name}*\n\n"
+            f"Apakah ada data atau keluhan tambahan yang ingin disampaikan untuk dr. Harys, Ayah/Bunda?"
+        )
 
     return (
         f"Halo Bunda! Terima kasih sudah menghubungi *Little Bite Feeding* ❤️\n\n"
