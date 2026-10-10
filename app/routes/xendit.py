@@ -107,6 +107,19 @@ async def send_whatsapp_payment_notification(
         f"Jika membutuhkan bantuan atau pertanyaan teknis, silakan balas pesan ini kapan saja. Selamat belajar dan bertumbuh bersama *{store_name}*! 🚀"
     )
 
+    # SPECIALIZED CTWA STATE 5 AUTO-FULFILLMENT (OnlineBoost v1.2)
+    if tenant_id == "onlineboost":
+        try:
+            from app.services.ctwa_state_engine import ctwa_state_engine
+            text = ctwa_state_engine.generate_state_5_fulfillment_message(
+                phone=clean_phone,
+                external_id=external_id,
+                amount=amount,
+                customer_name=None,
+            )
+        except Exception as _ctwa_err:
+            logger.warning(f"[CTWA Fulfillment Generation Error] {_ctwa_err}")
+
     # 1. Primary Dispatch via WhatsApp Evolution API Gateway (In-Chat Instant Delivery)
     try:
         import httpx

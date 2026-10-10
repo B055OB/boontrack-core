@@ -445,6 +445,31 @@ class UnifiedConversationEngine:
                 "unassigned_triggered": True,
             }
 
+        # 1.8 SPECIALIZED STATE ENGINE: Tenant 'onlineboost' (CTWA Engine Flow v1.2)
+        if not image_base64 and clean_slug == "onlineboost":
+            from app.services.ctwa_state_engine import ctwa_state_engine
+            ctwa_res = await ctwa_state_engine.process_turn(
+                phone=sender_id,
+                incoming_text=q,
+                sender_name=sender_name,
+                history=history,
+            )
+            if ctwa_res and ctwa_res.get("reply"):
+                return {
+                    "success": True,
+                    "reply": ctwa_res["reply"],
+                    "reply_text": ctwa_res["reply"],
+                    "media_url": ctwa_res.get("media_url"),
+                    "qr_code_url": ctwa_res.get("qr_code_url"),
+                    "tenant_slug": clean_slug,
+                    "business_category": business_category,
+                    "quick_actions": welcome_buttons,
+                    "action": ctwa_res.get("action", "STATE_TRANSITION"),
+                    "current_state": ctwa_res.get("current_state"),
+                    "type": ctwa_res.get("type", "TEXT"),
+                    "unassigned_triggered": False,
+                }
+
         # 2. Ambil Katalog Produk Riil dari Database Supabase
         db_name, catalog = get_tenant_products_from_db(clean_slug)
         if not catalog and details.get("products"):
