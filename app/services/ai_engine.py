@@ -7,6 +7,7 @@ Dynamically constructs store-bounded AI system prompts for multi-tenant ecosyste
 3. Completely agnostic and dynamic—no hardcoded tenant knowledge bases or specific store scripts.
 """
 
+import re
 import logging
 from typing import Dict, Any, List, Optional
 from app.services.onboarding_service import onboarding_service
@@ -227,6 +228,93 @@ class CommerceAIEngine:
             f'{{\n  "reply": "<teks balasan kepada calon pembeli>",\n  "quick_actions": ["<aksi 1>", "<aksi 2>"]\n}}\n'
         )
 
+        clean_slug = str(tenant_slug or "").strip().lower()
+
+        # SPECIALIZED CLINIC PERSONA: Tumbuh Kembang Anak (dr. Harys Maulana)
+        if clean_slug in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak", "little-bite-feeding", "littlebite", "little_bite_feeding"):
+            from app.utils.url_builder import extract_custom_domain, extract_assessment_url, build_product_url
+            from app.services.knowledge_base import get_tenant_knowledge_base
+
+            kb = get_tenant_knowledge_base(clean_slug) or {}
+            tenant_meta = tenant.get("metadata") or {} if isinstance(tenant, dict) else {}
+
+            custom_domain = (
+                extract_custom_domain(tenant_meta)
+                or extract_custom_domain(tenant)
+                or kb.get("custom_domain")
+                or "konsul.littlebitefeeding.com"
+            )
+
+            screening_url = (
+                extract_assessment_url(tenant_meta)
+                or extract_assessment_url(tenant)
+                or kb.get("assessment_url")
+                or kb.get("screening_url")
+                or "https://screening.littlebitefeeding.com"
+            )
+
+            checkout_url = (
+                kb.get("checkout_url")
+                or build_product_url(clean_slug, "eat-and-grow-konsultasi-chat-gtm-anak", custom_domain=custom_domain)
+            )
+
+            clinic_history_rule = ""
+            if has_history or not is_first_message:
+                clinic_history_rule = (
+                    "STATUS PERCAKAPAN: Percakapan sedang berjalan (ada riwayat interaksi sebelumnya).\n"
+                    "- JANGAN mengulang sapaan pembuka 'Halo Ayah/Bunda, salam kenal saya Admin dr. Harys Maulana...'.\n"
+                    f"- Jika Ayah/Bunda secara spesifik meminta formulir atau link screening, berikan tautan resmi: {screening_url}\n"
+                    f"- Jika Ayah/Bunda baru saja memberikan data usia, BB, atau durasi keluhan, masuk ke TAHAP 2 (konfirmasi pencatatan data) lalu TAHAP 3 (rekomendasi sesi konsultasi resmi dr. Harys seharga Rp150.000 via {checkout_url}).\n\n"
+                )
+            else:
+                clinic_history_rule = (
+                    "STATUS PERCAKAPAN: Pesan pertama dari Ayah/Bunda (Percakapan baru dimulai).\n"
+                    "- Terapkan TAHAP 1 jika Ayah/Bunda mengeluhkan kondisi si kecil (GTM/susah makan/BB seret).\n"
+                    f"- Jika Ayah/Bunda menanyakan formulir skrining sejak awal, berikan link skrining resmi: {screening_url}\n\n"
+                )
+
+            clinic_prompt = (
+                "PERAN & BATASAN IDENTITAS RESMI (STRICT CLINIC GUARDRAIL):\n"
+                "- Identitas Anda: Admin / Tim Layanan Pasien dr. Harys Maulana (Tumbuh Kembang Anak).\n"
+                "- PENTING: Anda BUKAN dokter dan BUKAN asisten medis/nakes. Dilarang keras mengaku atau bersikap seolah dokter atau nakes.\n"
+                "- LARANGAN DIAGNOSTIK MEDIS: Dilarang keras memberikan diagnosis mandiri, menganalisis status gizi secara klinis, membaca grafik kurva secara mandiri, atau menyarankan obat/vitamin/suplemen. Tugas Anda MURNI ADMINISTRATIF: menyambut orang tua dengan penuh empati, mengumpulkan data keluhan awal untuk rekam medis dr. Harys Maulana, dan memfasilitasi pendaftaran konsultasi.\n"
+                "- Sapaan Wajib: Selalu panggil dengan sapaan 'Ayah/Bunda' (DILARANG KERAS menggunakan sapaan 'Kak', 'Kakak', 'Bro', 'Sis', 'Bapak', atau 'Ibu').\n"
+                "- Nada Bicara (Tone): Ramah, sopan, empatik, terstruktur, khas admin klinik profesional.\n\n"
+                f"{clinic_history_rule}"
+                "ATURAN ANTI-HARDSELLING (MANDATORY):\n"
+                "- DILARANG LANGSUNG melampirkan link pembayaran atau mematok harga Rp150.000 di respons pembuka/awal saat orang tua curhat atau mengeluhkan kondisi anak!\n"
+                "- Jangan pernah menyalahkan orang tua atas kondisi makan si kecil. Berikan validasi empati terlebih dahulu.\n\n"
+                "SKRINING MANDIRI RESMI (ASSESSMENT FORM):\n"
+                "- Jika Ayah/Bunda menanyakan, meminta, atau ingin mengisi formulir/link skrining mandiri si kecil (contoh: 'link screening mana kak', 'mau screening dulu saja', 'minta link screening', 'ada form skrining?'):\n"
+                f"- Berikan secara EKSPLISIT tautan formulir skrining resmi: {screening_url}\n"
+                "- Ajak Ayah/Bunda mengisi data di formulir tersebut agar rekam data awal si kecil dapat tercatat untuk evaluasi dr. Harys Maulana.\n"
+                "- DILARANG KERAS memberikan link checkout berbayar jika Ayah/Bunda secara spesifik meminta form skrining!\n\n"
+                "ALUR 3 TAHAP PERCAKAPAN (MANDATORY 3-STEP FUNNEL):\n"
+                "1. TAHAP 1 — EMPATI & SKRINING ADMINISTRATIF (Saat Pertama Curhat Keluhan):\n"
+                "   Saat Ayah/Bunda pertama kali mengeluhkan kondisi anak (GTM/susah makan/berat badan seret/tumbuh kembang):\n"
+                "   Sambut dengan empati admin lalu minta data awal untuk rekam medis dokter dr. Harys:\n"
+                "   Contoh format acuan:\n"
+                "   \"Halo Ayah/Bunda, salam kenal saya Admin dr. Harys Maulana. Kami sangat memahami kekhawatiran Ayah/Bunda.\n\n"
+                "   Agar jadwal dan penanganan dengan dr. Harys bisa disiapkan dengan tepat, boleh kami bantu catat data awal si kecil ya:\n"
+                "   1. Usia dan berat badan si kecil saat ini berapa ya Ayah/Bunda?\n"
+                "   2. Sudah berapa lama kondisi susah makannya berlangsung?\"\n"
+                "   *ATURAN MUTLAK TAHAP 1*: ZERO LINK CHECKOUT dan DILARANG MENYEBUT HARGA Rp150.000.\n\n"
+                "2. TAHAP 2 — PENCATATAN DATA (Setelah Data Diberikan):\n"
+                "   Saat Ayah/Bunda memberikan jawaban usia/berat badan dan durasi keluhan si kecil:\n"
+                "   Tangkap jawaban Ayah/Bunda dan konfirmasi bahwa data keluhan awal si kecil sudah dicatat dengan baik untuk diserahkan ke dr. Harys Maulana.\n\n"
+                "3. TAHAP 3 — REKOMENDASI KONSULTASI RESMI:\n"
+                "   Setelah data keluhan masuk dan dicatat, atau ketika Ayah/Bunda menanyakan jadwal dokter / biaya konsultasi / pendaftaran:\n"
+                "   Sampaikan bahwa evaluasi intensif dan konsultasi langsung via chat privat bersama dr. Harys Maulana tersedia melalui layanan resmi:\n"
+                "   - Layanan: Eat & Grow (Konsultasi Chat GTM Anak dr. Harys Maulana)\n"
+                "   - Biaya: Rp150.000\n"
+                f"   - Link Checkout Pendaftaran Resmi: {checkout_url}\n"
+                "   - Pembayaran Transfer Resmi (opsional jika diminta): BCA 3741672471 a.n. Muhamad Harys Maulana\n\n"
+                "FORMAT RESPON:\n"
+                "Respon WAJIB berupa JSON Object dengan struktur:\n"
+                "{\n  \"reply\": \"<teks balasan ramah kepada Ayah/Bunda>\",\n  \"quick_actions\": [\"<opsi 1>\", \"<opsi 2>\"]\n}\n"
+            )
+            return clinic_prompt
+
         # Jika merchant mengatur custom system prompt di dashboard
         if custom_system_prompt and custom_system_prompt.strip() and not custom_system_prompt.startswith("Kamu adalah asisten resmi"):
             return (
@@ -334,6 +422,24 @@ class CommerceAIEngine:
         if image_base64 and (not clean_msg or clean_msg == "[Gambar diterima]"):
             clean_msg = "Tolong analisa gambar ini sesuai konteks toko."
 
+        # Fast Interceptor: Permintaan link/form skrining mandiri untuk tenant klinik
+        if clean_slug in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak", "little-bite-feeding", "littlebite", "little_bite_feeding"):
+            from app.services.ai.grounding import is_screening_inquiry_intent, generate_screening_link_reply
+            from app.utils.url_builder import extract_assessment_url
+            if is_screening_inquiry_intent(clean_msg, tenant_slug=clean_slug):
+                t_meta = tenant.get("metadata") or {} if isinstance(tenant, dict) else {}
+                target_screening_url = (
+                    extract_assessment_url(t_meta)
+                    or extract_assessment_url(tenant)
+                    or "https://screening.littlebitefeeding.com"
+                )
+                logger.info(f"[{tenant_slug}] Screening inquiry detected: '{clean_msg}'. Responding with: {target_screening_url}")
+                return generate_screening_link_reply(
+                    customer_name=user_name or "Ayah/Bunda",
+                    screening_url=target_screening_url,
+                    tenant_slug=clean_slug,
+                )
+
         if history and isinstance(history, list):
             formatted_turns = []
             for turn in history[-10:]:
@@ -388,13 +494,79 @@ class CommerceAIEngine:
                 usage_out["provider"] = ai_context.get("provider_name", "Gemini")
 
             if response and response.strip():
+                clean_res = response.strip()
+                # Post-processing Guard: Persona Admin Klinik & Anti-Hardselling untuk tumbuh-kembang-anak
+                if clean_slug in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak", "little-bite-feeding", "littlebite", "little_bite_feeding"):
+                    from app.services.ai.grounding import is_screening_inquiry_intent, generate_screening_link_reply
+                    from app.utils.url_builder import extract_assessment_url
+
+                    # Normalisasi sapaan ke Ayah/Bunda
+                    clean_res = re.sub(r"\b(Kak|Kakak|Bro|Sis)\b", "Ayah/Bunda", clean_res, flags=re.IGNORECASE)
+
+                    # Cegah klaim bahwa bot adalah dokter atau asisten medis
+                    clean_res = re.sub(r"\b(saya|kami)\s+(adalah\s+)?(dokter|dr\.|asisten medis|nakes)\b", r"\1 Admin dr. Harys Maulana", clean_res, flags=re.IGNORECASE)
+
+                    # Ganti semua fallback link statis shop.boontrack.com ke canonical custom domain
+                    clean_res = re.sub(
+                        r"https?://shop\.boontrack\.com/tumbuh[-_]kembang[-_]anak(/p/[a-zA-Z0-9_\-]+)?",
+                        r"https://konsul.littlebitefeeding.com\1",
+                        clean_res,
+                    )
+
+
+                    # Jika user meminta screening mandiri, pastikan balasan memberikan link screening resmi dan BUKAN checkout konsultasi
+                    if is_screening_inquiry_intent(clean_msg, tenant_slug=clean_slug):
+                        t_meta = tenant.get("metadata") or {} if isinstance(tenant, dict) else {}
+                        target_screening_url = (
+                            extract_assessment_url(t_meta)
+                            or extract_assessment_url(tenant)
+                            or "https://screening.littlebitefeeding.com"
+                        )
+                        clean_res = generate_screening_link_reply(
+                            customer_name=user_name or "Ayah/Bunda",
+                            screening_url=target_screening_url,
+                            tenant_slug=clean_slug,
+                        )
+
+                    # Anti-hardselling pada turn 1 saat keluhan anak disampaikan:
+                    # DILARANG langsung melampirkan link pembayaran atau mematok harga Rp150.000 di respons pembuka
+                    is_asking_pricing = any(w in clean_msg.lower() for w in [
+                        "harga", "biaya", "tarif", "berapa", "bayar", "rekening", "transfer", "link", "daftar", "jadwal"
+                    ])
+                    # Pengecualian: jika kata "link" berkaitan dengan screening, jangan anggap asking pricing
+                    if is_screening_inquiry_intent(clean_msg, tenant_slug=clean_slug):
+                        is_asking_pricing = False
+
+                    if not has_history and not is_asking_pricing and not is_screening_inquiry_intent(clean_msg, tenant_slug=clean_slug):
+                        has_link = ("konsul.littlebitefeeding.com" in clean_res) or ("shop.boontrack.com" in clean_res) or ("http://" in clean_res) or ("https://" in clean_res)
+                        has_price = bool(re.search(r"150[.\s]?000", clean_res))
+                        if has_link or has_price:
+                            logger.info(
+                                f"[{tenant_slug}] Anti-Hardselling Guard: Turn 1 keluhan memuat link/harga. "
+                                "Menyesuaikan balasan ke Tahap 1 skrining administratif."
+                            )
+                            clean_res = (
+                                "Halo Ayah/Bunda, salam kenal saya Admin dr. Harys Maulana. Kami sangat memahami kekhawatiran Ayah/Bunda.\n\n"
+                                "Agar jadwal dan penanganan dengan dr. Harys bisa disiapkan dengan tepat, boleh kami bantu catat data awal si kecil ya:\n"
+                                "1. Usia dan berat badan si kecil saat ini berapa ya Ayah/Bunda?\n"
+                                "2. Sudah berapa lama kondisi susah makannya berlangsung?"
+                            )
+
                 from app.services.whatsapp_service import sanitize_whatsapp_message_text
-                return sanitize_whatsapp_message_text(response.strip())
+                return sanitize_whatsapp_message_text(clean_res)
         except Exception as e:
             logger.warning(f"[{tenant_slug}] AI generation error, falling back: {e}")
 
         # Fallback dinamis: JIKA ada riwayat obrolan (percakapan sedang berlangsung), DILARANG KERAS mengembalikan greeting/form!
         store_display_name = tenant.get("name") or tenant_slug.replace("-", " ").title()
+        if clean_slug in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak"):
+            if has_history:
+                return "Terima kasih Ayah/Bunda. Data sudah kami catat untuk dr. Harys. Ada yang bisa kami bantu lagi untuk si kecil?"
+            return (
+                "Halo Ayah/Bunda, salam kenal saya Admin dr. Harys Maulana (Tumbuh Kembang Anak) 👋\n\n"
+                "Ada yang bisa kami bantu seputar pendataan tumbuh kembang atau konsultasi si kecil bersama dr. Harys?"
+            )
+
         if has_history:
             return f"Terima kasih Kak. Ada yang bisa kami bantu lagi untuk kebutuhan toko atau layanan Kakak di *{store_display_name}*?"
 

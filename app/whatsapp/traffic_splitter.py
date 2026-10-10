@@ -85,6 +85,19 @@ Tugas Anda HANYA menjawab pertanyaan umum calon merchant dan pengguna seputar Bo
    - MERCHANT (Pemilik Toko): WAJIB menggunakan salah satu dari 5 akun resmi di atas pada perangkat Android BoonTrack Reader agar notifikasi mutasi masuk dapat diproses dan diverifikasi otomatis oleh sistem (0% MDR).
    - PEMBELI (Customer/Buyer): BEBAS scan dan membayar dari rekening bank mana pun (BCA, Mandiri, BRI, BNI, BSI, Permata, CIMB, Danamon, dll) ataupun semua e-wallet (GoPay, OVO, DANA, ShopeePay, AstraPay, LinkAja) melalui scan barcode QRIS toko.
 
+[FITUR PER PAKET LAYANAN & PERBANDINGAN TIER]
+1. Paket Trial (Uji Coba Gratis):
+   - Kuota 30 Pesanan Masuk (Order Quota).
+   - Kuota 50 Interaksi AI Chatbot.
+   - Kuota 15 Notifikasi Pesanan WhatsApp.
+   - QRIS dinamis otomatis dan pelacakan dasar.
+2. Paket Berbayar (Starter / Pro / Ads Performance):
+   - Kuota transaksi & interaksi tanpa batas / kuota masif sesuai skala bisnis.
+   - Broadcast WhatsApp prioritas berkecepatan tinggi tanpa antrean lambat.
+   - Custom AI Persona (BoonPilot Copilot) yang disesuaikan dengan karakter brand toko.
+   - Analitik performa iklan mendalam (Meta CAPI, TikTok Events API, GTM DataLayer container).
+   - Akses pendaftaran Akun Whitelist Ads FB resmi.
+
 [3 PILIHAN PAKET LAYANAN RESMI BOONTRACK]
 1. Paket 1: Setup Bot WhatsApp Natural
    - Ruang Lingkup: Tuning persona AI CS agar ramah dan natural, input knowledge katalog produk & FAQ lengkap toko, serta integrasi nomor WhatsApp via BoonTrack Gateway.
@@ -97,6 +110,19 @@ Tugas Anda HANYA menjawab pertanyaan umum calon merchant dan pengguna seputar Bo
 - Layani secara ramah di chat, tanyakan kebutuhan klien dari 3 paket layanan di atas.
 - Tanyakan detail toko (Nama Toko, Jenis Produk, Nomor WhatsApp Bisnis, dan link medsos/marketplace jika memilih Paket 3).
 - Generate rincian tagihan dan barcode QRIS resmi langsung di chat WhatsApp tanpa melempar link pendaftaran statis atau tidak valid.
+
+[FITUR UNIVERSAL BULK IMPORT KONTAK, PESANAN & LEADS (EXCEL / CSV)]
+- Deskripsi: Fitur migrasi dan upload massal file .xlsx / .csv langsung ke dashboard BoonTrack.
+- Target: Berlaku untuk merchant aktif (impor rutin data pelanggan/pesanan) maupun calon pengguna yang belum register (migrasi database lama tanpa ribet).
+- Format Header Spreadsheet yang Didukung:
+  * Pelanggan / Leads: nama, whatsapp / telepon, email, catatan / skrining, label / tag.
+  * Pesanan / Order: order_number, nama_produk, nominal / total, status, tanggal.
+- Benefit Utama yang Dijelaskan Bot:
+  * Migrasi cepat sekali klik tanpa repot input manual satu per satu.
+  * Klasifikasi otomatis leads hangat (warm leads) agar admin/bot siap langsung menyapa.
+  * Aman, tervalidasi otomatis oleh sistem, dan disediakan template spreadsheet siap pakai di dashboard.
+- Aksi Jika Ditanya Belum Register:
+  * Arahkan untuk coba siapkan file Excel-nya dan register toko gratis di https://dashboard.boontrack.com/register untuk langsung mencoba import datanya.
 
 [PANDUAN PENGGUNA BARU (ONBOARDING GUIDE)]
 Jika merchant atau pengguna baru bingung cara memulai, arahkan mereka ke asisten interaktif "BoonPilot" di sudut kanan bawah dashboard atau minta mereka menuntaskan "6 Langkah Cepat di Dashboard":
@@ -252,8 +278,19 @@ GROUP_BOONPILOT_KNOWLEDGE: Dict[str, str] = {
         "Cocok banget buat rasain enaknya jualan serba otomatis. 😉"
     ),
     "daftar": (
-        "Halo kak! Untuk mulai pakai BoonTrack sangat praktis. Kakak bisa konsultasi langsung dengan kami di WhatsApp ini, "
+        "Halo kak! Untuk mulai pakai BoonTrack sangat praktis. Kakak bisa langsung register akun di https://shop.boontrack.com atau konsultasi langsung dengan kami di WhatsApp ini, "
         "atau jika butuh jasa terima beres/setup toko kami bantu siapkan langsung di chat ini ya kak! 🚀"
+    ),
+    "bulk_import": (
+        "Halo kak! BoonTrack punya fitur *Universal Bulk Import (Excel / CSV)* yang super praktis:\n\n"
+        "📊 *Fitur & Keunggulan:*\n"
+        "• Migrasi cepat 1-klik: Upload massal file .xlsx / .csv langsung ke dashboard tanpa input manual satu per satu.\n"
+        "• Klasifikasi otomatis leads hangat (warm leads) agar admin/bot siap langsung menyapa.\n"
+        "• Aman, tervalidasi otomatis, dan template spreadsheet siap pakai sudah disediakan di dashboard.\n\n"
+        "📋 *Format Header yang Didukung:*\n"
+        "• Pelanggan / Leads: `nama`, `whatsapp/telepon`, `email`, `catatan/skrining`, `label/tag`.\n"
+        "• Pesanan / Order: `order_number`, `nama_produk`, `nominal/total`, `status`, `tanggal`.\n\n"
+        "💡 Belum punya akun? Siapkan file Excel kakak dan langsung daftar toko gratis di https://dashboard.boontrack.com/register untuk langsung coba import datanya ya kak! 🚀"
     ),
 }
 
@@ -263,6 +300,8 @@ def get_static_group_boonpilot_response(incoming_text: str) -> str:
     lower = incoming_text.lower().strip()
     lower = re.sub(r"@[a-z0-9_.]+", "", lower).strip()
 
+    if any(k in lower for k in ("bulk import", "import excel", "import csv", "impor excel", "impor csv", "upload excel", "upload csv", "upload kontak", "import kontak", "import leads", "impor pesanan", "migrasi data", "format excel")):
+        return GROUP_BOONPILOT_KNOWLEDGE["bulk_import"]
     if any(k in lower for k in ("terima beres", "setup toko", "jasa setup", "bantu setup", "bikinin toko", "buatkan toko", "terima jadi")):
         return GROUP_BOONPILOT_KNOWLEDGE["terima_beres"]
     if any(k in lower for k in ("reader", "mutasi", "rekening penerima", "akun penerima", "mandiri", "bri", "bni", "bsi")):
@@ -548,14 +587,23 @@ OFFICIAL_KNOWLEDGE_BASE: Dict[str, str] = {
         "Info lengkap: https://boontrack.com"
     ),
     "paket": (
-        "💼 *3 Pilihan Paket Layanan Resmi BoonTrack:*\n\n"
-        "📦 *1. Paket 1: Setup Bot WhatsApp Natural*\n"
-        "• Tuning persona AI CS ramah & natural, input knowledge katalog & FAQ toko, integrasi WhatsApp via BoonTrack Gateway (fast-response 24/7).\n\n"
-        "🌐 *2. Paket 2: Single Page Store / Landing Page Katalog*\n"
-        "• 1 landing page katalog resmi di shop.boontrack.com/<nama-toko>, banner cover estetik & mobile-friendly, tombol direct checkout WA.\n\n"
-        "🚀 *3. Paket 3: Paket Terima Beres All-in-One (Full Service)*\n"
-        "• Auto-scraping foto & varian dari Shopee/Tokopedia/IG klien, landing page katalog resmi, bot dilatih natural, terhubung ke mutasi otomatis BoonTrack Reader (0% MDR).\n\n"
-        "Konsultasi kebutuhan & generate tagihan QRIS resmi langsung hubungi tim kami di WhatsApp ini ya Kak!"
+        "💼 *Pilihan Paket Layanan BoonTrack Shop:*\n\n"
+        "1. *Paket Trial (Gratis)*:\n"
+        "• 30 Pesanan Masuk (Order Quota)\n"
+        "• 50 Interaksi AI Chatbot\n"
+        "• 15 Notifikasi WA Otomatis\n"
+        "• QRIS dinamis otomatis & pelacakan dasar\n\n"
+        "2. *Paket Berbayar (Starter / Pro)*:\n"
+        "• Kuota transaksi & interaksi tanpa batas / kuota masif\n"
+        "• Broadcast WhatsApp prioritas tanpa antrean\n"
+        "• Custom AI Persona sesuai karakter toko\n"
+        "• Analitik performa iklan mendalam (Meta CAPI & GTM)\n"
+        "• Akses pendaftaran Akun Whitelist Ads FB resmi (https://buzzerukm.adsolution.co.id/register)\n\n"
+        "📦 *3 Pilihan Layanan Setup Resmi:*\n"
+        "• Paket 1: Setup Bot WhatsApp Natural\n"
+        "• Paket 2: Single Page Store / Landing Page Katalog (shop.boontrack.com/<nama-toko>)\n"
+        "• Paket 3: Paket Terima Beres All-in-One (Full Service 0% MDR)\n\n"
+        "Konsultasi kebutuhan & aktivasi langsung hubungi tim kami di WhatsApp ini ya Kak!"
     ),
     "onboarding": (
         "🚀 *Panduan Pengguna Baru (Onboarding Guide):*\n\n"
@@ -588,6 +636,21 @@ OFFICIAL_KNOWLEDGE_BASE: Dict[str, str] = {
         "• Pengaturan kurir & pixel tracking iklan\n\n"
         "Silakan infokan Nama Toko, Jenis Produk, dan Nomor WhatsApp Bisnis toko Kakak di chat ini. Tim kami akan segera buatkan rincian invoice/QRIS pembayarannya langsung di WhatsApp tanpa ribet!"
     ),
+    "bulk_import": (
+        "📊 *Fitur Universal Bulk Import Kontak, Pesanan & Leads (Excel / CSV):*\n\n"
+        "Fitur migrasi dan upload massal file spreadsheet (.xlsx / .csv) langsung ke dashboard BoonTrack:\n\n"
+        "🎯 *Target Pengguna:*\n"
+        "• Merchant Aktif: Import rutin data pelanggan & rekapitulasi pesanan.\n"
+        "• Calon Pengguna / Belum Register: Migrasi database lama dari toko sebelumnya tanpa ribet.\n\n"
+        "📋 *Format Header yang Didukung:*\n"
+        "• Pelanggan / Leads: `nama`, `whatsapp / telepon`, `email`, `catatan / skrining`, `label / tag`.\n"
+        "• Pesanan / Order: `order_number`, `nama_produk`, `nominal / total`, `status`, `tanggal`.\n\n"
+        "✨ *Benefit Utama:*\n"
+        "1. Migrasi cepat 1-klik tanpa input manual satu per satu.\n"
+        "2. Klasifikasi otomatis leads hangat (warm leads) agar admin/bot siap langsung menyapa.\n"
+        "3. Aman, tervalidasi, dan template spreadsheet siap pakai disediakan di dashboard.\n\n"
+        "👉 Belum punya akun toko? Siapkan file Excel Anda dan daftar gratis di https://dashboard.boontrack.com/register sekarang!"
+    ),
 }
 
 # Pesan fallback statis default jika query tidak spesifik
@@ -601,6 +664,8 @@ _CONCIERGE_STATIC_FALLBACK = (
 def get_static_concierge_response(incoming_text: str) -> str:
     """Mencari jawaban resmi deterministik dari OFFICIAL_KNOWLEDGE_BASE berdasarkan kata kunci."""
     lower = incoming_text.lower().strip()
+    if any(k in lower for k in ("bulk import", "import excel", "import csv", "impor excel", "impor csv", "upload excel", "upload csv", "upload kontak", "import kontak", "import leads", "impor pesanan", "migrasi data", "format excel", "format csv", "template import")):
+        return OFFICIAL_KNOWLEDGE_BASE["bulk_import"]
     if any(k in lower for k in ("terima beres", "setup toko", "jasa setup", "bantu setup", "bikinin toko", "buatkan toko", "terima jadi")):
         return OFFICIAL_KNOWLEDGE_BASE["terima_beres"]
     if any(k in lower for k in ("reader", "mutasi", "rekening penerima", "akun penerima", "mandiri", "bri", "bni", "bsi")):
@@ -697,11 +762,23 @@ def get_tenant_greeting_message(
     elif slug == "boon" and clean_name.lower() in ("boon", "52967979 4760 4cea b686 cdbdb389c0e1"):
         clean_name = "BoonTrack Official Shop"
 
+    from app.utils.url_builder import resolve_storefront_url
+
     # STRICT GUARD: Jika percakapan sudah berjalan, kembalikan respon ramah tanpa form!
     if is_ongoing or has_history:
+        if slug in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak", "little-bite-feeding", "littlebite", "little_bite_feeding"):
+            return "Ada yang bisa kami bantu catat lagi untuk dokter, Ayah/Bunda? 😊"
+        catalog_url = resolve_storefront_url(slug, tenant_meta)
         return (
             f"Ada yang bisa kami bantu lagi untuk toko atau layanan *{clean_name}*, Kak? 😊\n\n"
-            f"Katalog & pemesanan resmi: https://shop.boontrack.com/{slug}"
+            f"Katalog & pemesanan resmi: {catalog_url}"
+        )
+
+    # SPECIALIZED CLINIC GUARD: Tumbuh Kembang Anak (dr. Harys Maulana)
+    if slug in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak", "little-bite-feeding", "littlebite", "little_bite_feeding"):
+        return (
+            f"Halo Ayah/Bunda, salam kenal saya Admin dr. Harys Maulana (Tumbuh Kembang Anak) 👋\n\n"
+            f"Ada yang bisa kami bantu seputar pendataan tumbuh kembang atau konsultasi si kecil bersama dr. Harys?"
         )
 
     meta = tenant_meta if isinstance(tenant_meta, dict) else {}
@@ -730,10 +807,11 @@ def get_tenant_greeting_message(
         )
         return text
 
+    store_url = resolve_storefront_url(slug, meta)
     return (
         f"Halo Kak! Selamat datang di *{clean_name}* 👋\n\n"
         f"Ada yang bisa kami bantu seputar produk atau info toko kami?\n\n"
-        f"🛍️ *Katalog & Pemesanan:*\n👉 https://shop.boontrack.com/{slug}"
+        f"🛍️ *Katalog & Pemesanan:*\n👉 {store_url}"
     )
 
 

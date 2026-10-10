@@ -684,6 +684,71 @@ class OnboardingService:
             self._tenants_by_slug["boon"] = tenant_dict
             self._tenants_by_slug["52967979-4760-4cea-b686-cdbdb389c0e1"] = tenant_dict
 
+        if not tenant_dict and clean_slug in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak"):
+            t_id = "tumbuh-kembang-anak-id"
+            tenant_dict = {
+                "id": t_id,
+                "name": "Tumbuh Kembang Anak",
+                "slug": "tumbuh-kembang-anak",
+                "tier": "PRO_SCALE",
+                "features": _build_feature_flags("PRO_SCALE", {}),
+                "template": "CLINIC_TEMPLATE",
+                "vertical": "KLINIK_KONSULTASI",
+                "onboarding_mode": "SELF_SERVICE",
+                "affiliate_ref": None,
+                "admin_email": None,
+                "admin_phone": "081234567890",
+                "is_active": True,
+                "status": "active",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "metadata": {
+                    "tenant_type": "CLINIC_TEMPLATE",
+                    "name": "Tumbuh Kembang Anak",
+                    "tenant_name": "Tumbuh Kembang Anak",
+                    "custom_domain": "konsul.littlebitefeeding.com",
+                    "custom_domains": ["konsul.littlebitefeeding.com"],
+                    "assessment_url": "https://screening.littlebitefeeding.com",
+                    "kidmap_assessment_url": "https://screening.littlebitefeeding.com",
+                    "screening_url": "https://screening.littlebitefeeding.com",
+                    "storefront_url": "https://konsul.littlebitefeeding.com",
+                    "is_bot_active": True,
+                },
+                "persona": {
+                    "system_prompt": "PERAN & BATASAN IDENTITAS RESMI: Admin / Tim Layanan Pasien dr. Harys Maulana...",
+                    "tone": "Ramah, sopan, empatik, terstruktur, khas admin klinik profesional",
+                    "welcome_message": "Halo Ayah/Bunda, salam kenal saya Admin dr. Harys Maulana (Tumbuh Kembang Anak). Ada yang bisa kami bantu seputar pendataan tumbuh kembang atau konsultasi si kecil bersama dr. Harys?",
+                    "default_fallback_message": "Mohon maaf Ayah/Bunda, admin sedang memproses antrean pasien lain.",
+                    "assistant_name": "Admin dr. Harys Maulana",
+                    "ai_name": "Admin dr. Harys Maulana",
+                    "bot_strategy": "trust_builder",
+                },
+                "ai_knowledge": {
+                    "ai_name": "Admin dr. Harys Maulana",
+                    "assistant_name": "Admin dr. Harys Maulana",
+                    "tone": "Ramah, sopan, empatik, terstruktur, khas admin klinik profesional",
+                    "welcome_message": "Halo Ayah/Bunda, salam kenal saya Admin dr. Harys Maulana (Tumbuh Kembang Anak). Ada yang bisa kami bantu seputar pendataan tumbuh kembang atau konsultasi si kecil bersama dr. Harys?",
+                    "bot_strategy": "trust_builder",
+                },
+            }
+            self._tenants_by_slug["tumbuh-kembang-anak"] = tenant_dict
+            self._tenants_by_slug["tumbuhkembanganak"] = tenant_dict
+            self._tenants_by_slug["tumbuh_kembang_anak"] = tenant_dict
+            self._products_by_tenant[t_id] = [
+                {
+                    "id": "prod-eat-and-grow",
+                    "title": "Eat & Grow (Konsultasi Chat GTM Anak dr. Harys Maulana)",
+                    "slug": "eat-and-grow-konsultasi-chat-gtm-anak",
+                    "price": 150000,
+                    "promo_price": 150000,
+                    "description": "Konsultasi chat privat intensif bersama dr. Harys Maulana untuk evaluasi feeding rules dan pendampingan GTM anak.",
+                }
+            ]
+            self._payouts_by_tenant[t_id] = {
+                "bank_name": "BCA",
+                "account_number": "3741672471",
+                "account_name": "Muhamad Harys Maulana",
+            }
+
         if not tenant_dict:
             if cfg:
                 _cfg_tier = getattr(cfg, "tier", None) or getattr(getattr(cfg, "billing", None), "tier", None) or "STARTER"

@@ -111,6 +111,57 @@ HANDOVER_TRANSITION_REPLY = (
     "Terima kasih banyak atas kesabarannya! 🙏"
 )
 
+# Kata kunci deteksi permintaan link / form screening anak
+SCREENING_INQUIRY_KEYWORDS = [
+    "screening", "skrining", "link screening", "link skrining",
+    "form screening", "form skrining", "formulir screening", "formulir skrining",
+    "screening mandiri", "skrining mandiri", "tes screening", "tes skrining",
+    "mau screening", "mau skrining", "isi screening", "isi skrining",
+    "kuisioner", "kuesioner", "assessment", "link assessment", "evaluasi mandiri",
+]
+
+CLINIC_SCREENING_GROUNDING_PROMPT = """\
+[PANDUAN EKSPLISIT SKRINING MANDIRI VS KONSULTASI RESMI DOKTER - DR. HARYS MAULANA]
+1. PERMINTAAN SKRINING MANDIRI (ASSESSMENT FORM):
+   - Jika orang tua (Ayah/Bunda) menanyakan, meminta, atau ingin mengisi formulir/link skrining mandiri si kecil (contoh: "link screening mana kak", "mau screening dulu saja", "minta link screening", "ada form skrining?"):
+   - Berikan secara EKSPLISIT tautan formulir skrining resmi: https://screening.littlebitefeeding.com
+   - DILARANG KERAS memberikan atau mengulang link checkout konsultasi dokter (seperti https://konsul.littlebitefeeding.com/p/eat-and-grow-konsultasi-chat-gtm-anak) saat Ayah/Bunda secara spesifik meminta link skrining!
+   - Jelaskan bahwa data keluhan pada form tersebut akan masuk ke rekam data awal untuk dr. Harys Maulana.
+
+2. REKOMENDASI KONSULTASI DOKTER (CHECKOUT RESERVASI):
+   - Jika merekomendasikan pendaftaran / checkout konsultasi chat privat dr. Harys (Tahap 3):
+   - Gunakan CANONICAL URL: https://konsul.littlebitefeeding.com/p/eat-and-grow-konsultasi-chat-gtm-anak
+   - DILARANG menggunakan domain fallback shop.boontrack.com untuk tenant ini.
+"""
+
+
+def is_screening_inquiry_intent(text: str, tenant_slug: Optional[str] = None) -> bool:
+    """Mendeteksi apakah pengguna menanyakan/meminta formulir atau link skrining mandiri si kecil.
+    Khusus untuk vertikal klinik/nutrisi tumbuh-kembang-anak / littlebite.
+    """
+    if not text:
+        return False
+    lower = text.lower().strip()
+    return any(kw in lower for kw in SCREENING_INQUIRY_KEYWORDS)
+
+
+def generate_screening_link_reply(
+    customer_name: str = "Ayah/Bunda",
+    screening_url: str = "https://screening.littlebitefeeding.com",
+    tenant_slug: Optional[str] = None,
+    **kwargs: Any,
+) -> str:
+    """Jawaban resmi saat orang tua meminta link screening mandiri si kecil."""
+    clean_url = (screening_url or "https://screening.littlebitefeeding.com").rstrip("/")
+    salutation = "Ayah/Bunda" if (not customer_name or customer_name == "Kakak" or tenant_slug in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak", "littlebite", "little-bite-feeding")) else customer_name
+    return (
+        f"Halo {salutation}! Berikut adalah tautan resmi formulir skrining mandiri tumbuh kembang si kecil 📋✨:\n\n"
+        f"👉 {clean_url}\n\n"
+        "Silakan mengisi data dan keluhan makan si kecil di form tersebut ya Ayah/Bunda. "
+        "Setelah data terkirim, tim Admin dr. Harys Maulana akan segera menerima rekam data awal "
+        "untuk evaluasi lebih lanjut bersama dokter. Ada yang ingin ditanyakan seputar pengisiannya?"
+    )
+
 
 def is_setup_toko_intent(text: str, tenant_slug: Optional[str] = None) -> bool:
     """Mendeteksi apakah pesan pengguna menanyakan jasa, layanan, paket, atau setup toko.

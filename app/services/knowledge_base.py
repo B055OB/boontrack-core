@@ -66,7 +66,11 @@ TUMBUH_KEMBANG_ANAK_KB: Dict[str, Any] = {
     "tenant_id": "tumbuh-kembang-anak",
     "brand_name": "Tumbuh Kembang Anak (dr. Harys Maulana)",
     "category": "Tumbuh Kembang & Nutrisi Anak",
-    "screening_url": "https://screening.littlebitefeeding.com/",
+    "custom_domain": "konsul.littlebitefeeding.com",
+    "custom_domains": ["konsul.littlebitefeeding.com"],
+    "assessment_url": "https://screening.littlebitefeeding.com",
+    "kidmap_assessment_url": "https://screening.littlebitefeeding.com",
+    "screening_url": "https://screening.littlebitefeeding.com",
     "checkout_url": "https://konsul.littlebitefeeding.com/p/eat-and-grow-konsultasi-chat-gtm-anak",
     "identity": "Admin / Tim Layanan Pasien dr. Harys Maulana (Tumbuh Kembang Anak)",
     "salutation": "Ayah/Bunda",
@@ -88,7 +92,7 @@ TUMBUH_KEMBANG_ANAK_KB: Dict[str, Any] = {
             "currency": "IDR",
             "formatted_price": "Rp250.000",
             "is_primary": False,
-            "checkout_url": "https://shop.boontrack.com/tumbuh-kembang-anak",
+            "checkout_url": "https://konsul.littlebitefeeding.com",
             "description": "Sesi tatap muka virtual live via Google Meet untuk observasi langsung respon dan postur makan si kecil bersama dr. Harys Maulana.",
         },
     ],
@@ -120,7 +124,8 @@ TUMBUH_KEMBANG_ANAK_KB: Dict[str, Any] = {
         "conversation_funnel": {
             "step_1": "Empati & Skrining Administratif (validasi kekhawatiran, tanyakan usia & BB serta durasi susah makan. ZERO link, ZERO harga)",
             "step_2": "Pencatatan Data (konfirmasi bahwa data keluhan sudah dicatat untuk dr. Harys)",
-            "step_3": "Rekomendasi Konsultasi Resmi (sampaikan bahwa konsultasi langsung via chat privat bersama dr. Harys tersedia melalui layanan resmi https://konsul.littlebitefeeding.com/p/eat-and-grow-konsultasi-chat-gtm-anak)"
+            "step_3": "Rekomendasi Konsultasi Resmi (sampaikan bahwa konsultasi langsung via chat privat bersama dr. Harys tersedia melalui layanan resmi https://konsul.littlebitefeeding.com/p/eat-and-grow-konsultasi-chat-gtm-anak)",
+            "screening_request": "Permintaan Skrining Mandiri: Jika Ayah/Bunda secara eksplisit meminta atau menanyakan link screening anak (contoh: 'link screening mana kak / mau screening dulu saja'), berikan secara langsung tautan resmi form skrining: https://screening.littlebitefeeding.com dan DILARANG memberikan link checkout berbayar!"
         },
     },
 }

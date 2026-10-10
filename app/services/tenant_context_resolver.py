@@ -222,6 +222,20 @@ def build_context_from_dict(row: Dict[str, Any]) -> TenantRuntimeContext:
         meta.setdefault("name", name)
         meta.setdefault("tenant_name", name)
 
+    # Sinkronisasi row-level custom domain dan assessment URL ke metadata
+    for k in ("custom_domain", "custom_domains", "assessment_url", "kidmap_assessment_url", "screening_url"):
+        if row.get(k) and not meta.get(k):
+            meta[k] = row[k]
+
+    # Dynamic defaults for specialized clinic tenant
+    if slug in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak", "littlebite", "little-bite-feeding"):
+        meta.setdefault("custom_domain", "konsul.littlebitefeeding.com")
+        meta.setdefault("custom_domains", ["konsul.littlebitefeeding.com"])
+        meta.setdefault("assessment_url", "https://screening.littlebitefeeding.com")
+        meta.setdefault("kidmap_assessment_url", "https://screening.littlebitefeeding.com")
+        meta.setdefault("screening_url", "https://screening.littlebitefeeding.com")
+        meta.setdefault("storefront_url", "https://konsul.littlebitefeeding.com")
+
     business_type = normalize_business_type(row.get("business_type"), meta)
     tenant_kind = normalize_tenant_kind(row.get("tenant_kind"), meta, business_type)
 
@@ -390,6 +404,35 @@ class TenantContextResolver:
                 }
             }
 
+        if not row and clean_slug in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak", "little-bite-feeding", "littlebite", "little_bite_feeding"):
+            row = {
+                "id": "tumbuh-kembang-anak-id",
+                "slug": "tumbuh-kembang-anak",
+                "name": "Tumbuh Kembang Anak (dr. Harys Maulana)",
+                "business_type": "PROFESSIONAL_SERVICE",
+                "tenant_kind": "SAAS",
+                "template_code": "CLINIC_TEMPLATE",
+                "capabilities": {
+                    "catalog": True,
+                    "orders": True,
+                    "qris": True,
+                    "capi": True,
+                    "consultation": True,
+                    "booking": True,
+                },
+                "metadata": {
+                    "tenant_type": "CLINIC_TEMPLATE",
+                    "name": "Tumbuh Kembang Anak",
+                    "tenant_name": "Tumbuh Kembang Anak (dr. Harys Maulana)",
+                    "custom_domain": "konsul.littlebitefeeding.com",
+                    "custom_domains": ["konsul.littlebitefeeding.com"],
+                    "assessment_url": "https://screening.littlebitefeeding.com",
+                    "kidmap_assessment_url": "https://screening.littlebitefeeding.com",
+                    "screening_url": "https://screening.littlebitefeeding.com",
+                    "storefront_url": "https://konsul.littlebitefeeding.com",
+                }
+            }
+
         if not row:
             logger.info(f"[TENANT_RESOLVER] Tenant '{clean_slug}' not found in database.")
             return None
@@ -541,6 +584,34 @@ class TenantContextResolver:
                     "gateway_endpoint": "https://gateway.boontrack.com",
                     "whatsapp_instance": "boontrack-app-shop",
                     "phone": "081215567168",
+                }
+            }
+        if not row and clean_slug in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak", "little-bite-feeding", "littlebite", "little_bite_feeding"):
+            row = {
+                "id": "tumbuh-kembang-anak-id",
+                "slug": "tumbuh-kembang-anak",
+                "name": "Tumbuh Kembang Anak (dr. Harys Maulana)",
+                "business_type": "PROFESSIONAL_SERVICE",
+                "tenant_kind": "SAAS",
+                "template_code": "CLINIC_TEMPLATE",
+                "capabilities": {
+                    "catalog": True,
+                    "orders": True,
+                    "qris": True,
+                    "capi": True,
+                    "consultation": True,
+                    "booking": True,
+                },
+                "metadata": {
+                    "tenant_type": "CLINIC_TEMPLATE",
+                    "name": "Tumbuh Kembang Anak",
+                    "tenant_name": "Tumbuh Kembang Anak (dr. Harys Maulana)",
+                    "custom_domain": "konsul.littlebitefeeding.com",
+                    "custom_domains": ["konsul.littlebitefeeding.com"],
+                    "assessment_url": "https://screening.littlebitefeeding.com",
+                    "kidmap_assessment_url": "https://screening.littlebitefeeding.com",
+                    "screening_url": "https://screening.littlebitefeeding.com",
+                    "storefront_url": "https://konsul.littlebitefeeding.com",
                 }
             }
 

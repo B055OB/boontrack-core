@@ -85,6 +85,21 @@ class TenantRuntimeContext(BaseModel):
             return "boon"
         return slug_val
 
+    @property
+    def custom_domain(self) -> Optional[str]:
+        from app.utils.url_builder import extract_custom_domain
+        return extract_custom_domain(self.metadata)
+
+    @property
+    def assessment_url(self) -> Optional[str]:
+        from app.utils.url_builder import extract_assessment_url
+        return extract_assessment_url(self.metadata)
+
+    @property
+    def storefront_url(self) -> str:
+        from app.utils.url_builder import resolve_storefront_url
+        return resolve_storefront_url(self.tenant_slug, self.metadata)
+
     @staticmethod
     def _is_uuid(val: Any) -> bool:
         import re
