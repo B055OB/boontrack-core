@@ -76,7 +76,7 @@
   },
   "payment_config": {
     "provider": "DANA_DYNAMIC",
-    "static_qris_payload": "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI5204737253033605802ID5909BoonTrack6012Kab. Bandung61054028663048DC1",
+    "static_qris_payload": null,
     "use_unique_code": true,
     "unique_code_digits": 3,
     "min_amount": 10000,

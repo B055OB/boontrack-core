@@ -58,39 +58,94 @@ async def send_whatsapp_payment_notification(
     tenant_id: str = "onlineboost",
     product_name: Optional[str] = None,
 ) -> None:
-    """Background task to notify customer of successful payment via text notification & official WABA E-Receipt."""
+    """Background task to notify customer of successful payment via WhatsApp Evolution API & WABA with instant class access link."""
     if not phone:
         logger.info(f"[Xendit WA Skip] No phone number associated with order '{external_id}'")
         return
 
-    item_name = product_name or ("Modul Praktis CPM 24 Jam" if amount == 1000 else "Produk Digital")
-    amt_comma = f"{amount:,}"
     amt_str = f"Rp{amount:,.0f}".replace(",", ".")
+    clean_phone = "".join(c for c in str(phone) if c.isdigit())
+    if clean_phone.startswith("0"):
+        clean_phone = "62" + clean_phone[1:]
 
+    # Dynamic Lookup from Tenant Catalog in Supabase
+    item_name = product_name or "Paket Layanan Resmi"
+    access_url = None
+    store_name = "OnlineBoost"
+    try:
+        from app.services.onboarding_service import onboarding_service
+        t_details = onboarding_service.get_tenant_details_by_slug(tenant_id) or {}
+        store_name = (t_details.get("tenant") or {}).get("name") or tenant_id.title()
+        t_meta = t_details.get("metadata") or {}
+        t_prods = t_meta.get("products") or []
+        for p in t_prods:
+            p_price = int(float(p.get("promo_price") or p.get("price") or 0))
+            p_name = str(p.get("name") or p.get("title") or "")
+            if p_price == int(amount) or (product_name and str(product_name).lower() in p_name.lower()):
+                item_name = p_name
+                access_url = p.get("access_url")
+                break
+    except Exception as _p_err:
+        logger.debug(f"[Xendit Product Match Note] {_p_err}")
+
+    # Fallback product matching for onlineboost
+    if not access_url and tenant_id == "onlineboost":
+        if amount == 149000:
+            item_name = "Kelas Inkubasi CTWA Batch 1 - Scale Bundle"
+            access_url = "https://onlineboost.id/ctwa-scale-bundle"
+        elif amount == 99000:
+            item_name = "Kelas Inkubasi CTWA Batch 1 - Paket Starter"
+            access_url = "https://onlineboost.id/ctwa-starter"
+
+    access_block = f"🔗 *Detail Link Akses Kelas Instan:*\n{access_url}\n\n" if access_url else ""
     text = (
         f"🎉 *PEMBAYARAN LUNAS TERVERIFIKASI!*\n\n"
-        f"Pembayaran sukses untuk Order #{external_id} sejumlah Rp{amt_comma} ({amt_str}) untuk {item_name} telah kami terima dan berstatus *LUNAS*.\n\n"
-        f"Akses materi ecourse & layanan Anda kini telah aktif. Terima kasih telah bertransaksi di BoonTrack! 🙏"
+        f"Halo Kak! Terima kasih banyak atas kepercayaan Kakak. Pembayaran untuk *{item_name}* senilai *{amt_str}* (No. Invoice: `{external_id}`) telah kami terima dan berstatus *LUNAS* via Xendit QRIS.\n\n"
+        f"{access_block}"
+        f"📌 *Panduan Akses:*\n"
+        f"Silakan klik tautan resmi di atas untuk langsung mengakses materi kelas dan fasilitas eksklusif Kakak.\n\n"
+        f"Jika membutuhkan bantuan atau pertanyaan teknis, silakan balas pesan ini kapan saja. Selamat belajar dan bertumbuh bersama *{store_name}*! 🚀"
     )
+
+    # 1. Primary Dispatch via WhatsApp Evolution API Gateway (In-Chat Instant Delivery)
+    try:
+        import httpx
+        from app.services.whatsapp.evolution import EVOLUTION_BASE_URL, get_evolution_headers
+        target_instance = tenant_id or "onlineboost"
+        send_url = f"{EVOLUTION_BASE_URL}/message/sendText/{target_instance}"
+        headers = get_evolution_headers()
+        send_payload = {
+            "number": clean_phone,
+            "text": text,
+            "textMessage": {"text": text},
+        }
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            evo_res = await client.post(send_url, headers=headers, json=send_payload)
+            logger.info(f"[Xendit WA Evolution API] Sent instant delivery to {clean_phone} via {target_instance}: status {evo_res.status_code}")
+    except Exception as evo_err:
+        logger.warning(f"[Xendit WA Evolution Error] {evo_err}")
+
+    # 2. Secondary Dispatch via Meta Cloud API / WABA (if configured)
     try:
         await send_whatsapp_text(to_phone=phone, text=text, tenant_id=tenant_id)
     except Exception as e:
         logger.warning(f"[Xendit WA Text Error] {e}")
 
+    # 3. Official E-Receipt Dispatch
     try:
         order_data = {
             "order_id": external_id,
             "amount": amount,
             "customer_phone": phone,
             "product_name": item_name,
-            "payment_method": "QRIS Dinamis Xendit / DANA Bisnis",
+            "payment_method": "Dynamic QRIS (Xendit)",
             "status": "LUNAS",
         }
         await send_ereceipt_whatsapp(to_phone=phone, order_data=order_data, tenant_id=tenant_id)
     except Exception as er_err:
         logger.warning(f"[Xendit WA E-Receipt Error] {er_err}")
 
-    # Trigger PAYMENT_CONFIRMED transactional event hook via WABA with Quick Replies
+    # 4. Trigger PAYMENT_CONFIRMED transactional event hook via WABA with Quick Replies
     try:
         from app.services.transactional_event_service import trigger_payment_confirmed
         await trigger_payment_confirmed({

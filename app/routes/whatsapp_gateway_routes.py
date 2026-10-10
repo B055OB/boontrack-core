@@ -848,6 +848,8 @@ async def process_inbound_message(payload: InboundPayload):
             # Jika trigger greeting awal, handover manusia, direct payment, katalog kosong, atau produk di luar database
             if engine_res.get("action") in ("SHOW_MENU", "CS_HANDOVER", "HANDOVER_TO_HUMAN", "DIRECT_PAYMENT_INSTRUCTIONS") or engine_res.get("unassigned_triggered"):
                 reply = engine_res.get("reply")
+                if engine_res.get("media_url") or engine_res.get("qr_code_url"):
+                    reply_media_url = engine_res.get("media_url") or engine_res.get("qr_code_url")
 
     # 1.7 APP_SHOP_V1 Interactive Catalog Interceptor — DISABLED (Shop mode bypassed, locked to pure Sales Rep)
     # Alur menu/katalog interaktif toko dinonaktifkan agar tidak mengirim kartu banner paket.
@@ -905,8 +907,8 @@ async def process_inbound_message(payload: InboundPayload):
                 from_phone=clean_phone,
                 contact_name=extracted_name,
             )
-            is_seller_qris = invoice.get("provider") == "SELLER_NATIVE_QRIS" or invoice.get("is_manual") is True
             qris_media_target = invoice.get("media_url") or invoice.get("qr_code_url") or invoice.get("image_url")
+            is_seller_qris = invoice.get("provider") in ("SELLER_NATIVE_QRIS", "xendit") or invoice.get("is_manual") is True or bool(qris_media_target)
 
             # Universal Webhook & Meta CAPI Event Dispatch
             try:

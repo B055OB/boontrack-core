@@ -51,11 +51,8 @@ from app.services.reconciliation_service import PAYMENT_INTENTS
 
 logger = logging.getLogger("GYM_ACCESS_SERVICE")
 
-DEFAULT_ATMOSFITNES_STATIC_QRIS = (
-    "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI"
-    "51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI5204737253033605802ID5911"
-    "Atmosfitnes6012Kab. Bandung61054028663048DC1"
-)
+# ZERO HARDCODING POLICY: Atmosfitnes static QRIS must be dynamically supplied via tenant metadata or env
+
 
 MEMBERSHIP_PACKAGE_PRICES = {
     "GYM_BASIC": 150000,
@@ -563,7 +560,9 @@ class GymAccessService:
         total_amount = base_price + unique_code
 
         invoice_id = f"GYM-REN-{str(member.id)[:8].upper()}-{unique_code}"
-        static_qris = static_qris_payload or DEFAULT_ATMOSFITNES_STATIC_QRIS
+        static_qris = (static_qris_payload or os.getenv("ATMOSFITNES_STATIC_QRIS", "")).strip()
+        if not static_qris or not static_qris.startswith("000201"):
+            raise ValueError("MERCHANT_QRIS_NOT_CONFIGURED: Missing static QRIS payload for gym tenant")
 
         # 2. Generate Dynamic QRIS Payload & QuickChart QR Link
         dynamic_qris = generate_dynamic_qris_payload(static_qris, total_amount)

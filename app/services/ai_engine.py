@@ -170,6 +170,43 @@ class CommerceAIEngine:
             if t_lines:
                 testimonials_section = f"TESTIMONI & ULASAN RESMI PEMBELI:\n" + "\n".join(t_lines) + "\n\n"
 
+                # Multi-Tenant Dynamic Payment Resolution (Zero Hardcoded Bank / QRIS)
+        clean_slug = str(tenant_slug or "").strip().lower()
+        p_provider = str(meta.get("payment_provider") or (meta.get("payment_config") or {}).get("provider") or "").lower().strip()
+        p_banks = meta.get("bank_accounts") or (meta.get("payment_config") or {}).get("bank_accounts") or []
+
+        if p_provider == "xendit" or clean_slug == "onlineboost":
+            payment_section_rules = (
+                "ATURAN PEMBAYARAN RESMI (DYNAMIC QRIS XENDIT - ZERO HALLUCINATION):\n"
+                "1. Metode Pembayaran Utama: Dynamic QRIS Resmi (Xendit).\n"
+                "2. Ketika customer meminta bayar via WhatsApp, memilih paket, atau menanyakan pembayaran (contoh: 'mau bayar', 'minta qris', 'mau transfer', 'cara bayarnya'):\n"
+                "   - Sistem gateway kami akan langsung mengirimkan Gambar/Barcode QRIS resmi langsung ke ruang chat WhatsApp ini dengan NOMINAL PAS (sesuai harga paket resmi, misal: Rp 149.000 pas, tanpa kode unik acak).\n"
+                "   - Berikan informasi bahwa barcode QRIS bisa di-screenshot lalu di-scan menggunakan aplikasi m-Banking (BCA, Mandiri, BRI, BNI, dll) atau E-Wallet apa saja (GoPay, OVO, DANA, ShopeePay).\n"
+                "   - Batas waktu pembayaran adalah 15 menit, dan verifikasi berlangsung instan secara otomatis (auto-settlement). Setelah lunas, link akses kelas/layanan akan langsung dikirimkan ke chat ini.\n"
+                "3. DILARANG KERAS mengarang nomor rekening bank manual jika tenant telah dikonfigurasi dengan gateway Xendit.\n"
+            )
+        elif p_banks and isinstance(p_banks, list) and len(p_banks) > 0:
+            b_lines = []
+            for b in p_banks:
+                if isinstance(b, dict):
+                    b_n = b.get("bank_name") or b.get("bank") or "Bank Transfer"
+                    b_a = b.get("account_number") or b.get("number") or "-"
+                    b_h = b.get("account_holder") or b.get("name") or store_name
+                    b_lines.append(f"     • Bank: {b_n}\n     • No. Rekening: {b_a}\n     • Atas Nama: {b_h}")
+            b_text = "\n".join(b_lines)
+            payment_section_rules = (
+                f"ATURAN PEMBAYARAN RESMI VIA TRANSFER BANK TOKO:\n"
+                f"1. Rekening Resmi Toko:\n{b_text}\n"
+                f"2. Berikan instruksi transfer sesuai nominal harga produk di database resmi.\n"
+                f"3. Sertakan catatan: 'Setelah melakukan transfer, silakan kirimkan foto/screenshot bukti transfer ke chat ini agar diverifikasi oleh sistem.'\n"
+            )
+        else:
+            payment_section_rules = (
+                f"ATURAN PEMBAYARAN RESMI:\n"
+                f"1. Arahkan customer untuk menyelesaikan pembayaran melalui link checkout resmi toko https://shop.boontrack.com/{tenant_slug} atau scan kode QRIS resmi yang dikirimkan sistem.\n"
+                f"2. DILARANG KERAS mengarang rekening bank atau nama penerima di luar database toko.\n"
+            )
+
         guardrail_and_checkout_rules = (
             f"{testimonials_section}"
             f"INFORMASI RESMI TOKO & TAUTAN WEB:\n"
@@ -190,22 +227,7 @@ class CommerceAIEngine:
             f"   • GrabMerchant / GrabFood\n"
             f"2. DILARANG KERAS menyatakan Bank Mandiri, BRI, BNI, BSI sebagai akun penerima mutasi otomatis merchant (karena parser notifikasi Android belum tersedia).\n"
             f"3. Klarifikasi: Merchant wajib salah satu dari 5 akun di atas untuk auto-verifikasi mutasi reader. Sedangkan Pembeli BEBAS scan & bayar QRIS dari bank mana pun (BCA, Mandiri, BRI, BNI, Permata, dll) atau semua e-wallet!\n\n"
-            f"3 PILIHAN PAKET LAYANAN RESMI BOONTRACK:\n"
-            f"1. Paket 1: Setup Bot WhatsApp Natural (tuning persona AI CS ramah & natural, input knowledge katalog & FAQ toko, integrasi nomor WhatsApp via BoonTrack Gateway).\n"
-            f"2. Paket 2: Single Page Store / Landing Page Katalog (1 landing page katalog resmi di shop.boontrack.com/<nama-toko>, banner cover estetik, tombol direct checkout WA).\n"
-            f"3. Paket 3: Paket Terima Beres All-in-One / Full Service (auto-scraping foto & varian dari marketplace/IG klien, landing page katalog resmi, bot dilatih natural, terhubung ke mutasi otomatis BoonTrack Reader 0% MDR).\n\n"
-            f"SOP DIRECT CHECKOUT WHATSAPP (PENJUALAN JASA & SETUP TOKO):\n"
-            f"Jika calon tenant meminta jasa terima beres / setup toko, jelaskan 3 paket di atas secara ramah, tanyakan nama toko, jenis produk, dan nomor WA bisnis, lalu siapkan rincian invoice/QRIS pembayaran langsung di WhatsApp tanpa melempar link pendaftaran lama / buzzerukm.\n\n"
-            f"ATURAN PEMBAYARAN VIA WHATSAPP & NO RE-REGISTRATION GUARD (MUTLAK):\n"
-            f"1. Jika customer menyatakan ingin bayar via WhatsApp, minta nomor rekening, atau transfer manual (contoh: 'mau bayar via wa', 'mau bayar via wa saja bisa', 'minta no rekening', 'transfer ke mana', 'mau bayar'):\n"
-            f"   - DILARANG KERAS meminta ulang Nama/Email/Toko/Omset atau meminta mengisi formulir apa pun!\n"
-            f"   - LANGSUNG berikan rincian tagihan resmi (misal: Sesi Audit & Konsultasi 1-on-1 Rp 149.000 yang 100% MEMOTONG TAGIHAN DP jika lanjut jasa) dan instruksi transfer resmi:\n"
-            f"     • Bank: BCA\n"
-            f"     • No. Rekening: 8940770000\n"
-            f"     • Atas Nama: PT SOLUSI GROUP BAROKAH\n"
-            f"     • Nominal: Rp 149.000\n"
-            f"     • Link Invoice/Checkout Web Resmi: https://shop.boontrack.com/{tenant_slug}/p/tiket-konsultasi?checkout=true\n"
-            f"   - Sesuaikan rincian nominal dengan skema pembayaran (Lunas, Tagihan DP, atau Pelunasan).\n     • Selalu sertakan instruksi tegas di akhir pesan:\n       \"📸 *Setelah melakukan transfer/pembayaran, silakan langsung kirimkan foto/screenshot bukti transfer ke chat ini ya Kak agar langsung dicek dan diverifikasi oleh sistem.*\"\n"
+                        f"{payment_section_rules}\n"\
             f"2. JIKA data pendaftaran sudah pernah dikirim di riwayat chat, DILARANG meminta ulang formulir pendataan.\n\n"
             f"ALUR PENDAFTARAN & CHECKOUT WHATSAPP (NATIVE LEAD COLLECTION):\n"
             f"Ketika calon pembeli menyatakan ingin membeli, mengambil paket, mendaftar, atau bertanya cara daftarnya (contoh: 'mau ambil yang 7-Day Sprint kak, gimana cara daftarnya?', 'mau beli', 'mau daftar', 'cara daftarnya kak'):\n"

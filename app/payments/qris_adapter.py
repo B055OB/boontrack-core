@@ -25,12 +25,9 @@ from app.payments.schemas import (
 from app.payments.matcher import extract_clean_dana_amount
 from app.utils.qris_generator import crc16_ccitt, get_quickchart_qr_url
 
-# Default master static QRIS for BoonTrack Platform
-DEFAULT_MASTER_STATIC_QRIS = (
-    "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI"
-    "51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI520473725303360"
-    "5802ID5909BoonTrack6012Kab. Bandung61054028663048DC1"
-)
+# ZERO HARDCODING POLICY: Static QRIS must be configured on a per-tenant basis.
+# No hardcoded default QRIS is permitted as global fallback.
+
 
 
 def parse_emvco_tlv(payload: str) -> Dict[str, str]:
@@ -77,8 +74,7 @@ class QRISPaymentAdapter(BasePaymentProvider):
     def __init__(self, master_static_qris: Optional[str] = None):
         self.master_static_qris = (
             master_static_qris
-            or os.getenv("BOONTRACK_STATIC_QRIS")
-            or DEFAULT_MASTER_STATIC_QRIS
+            or ""
         ).strip()
 
     def generate_dynamic_payload(
@@ -88,7 +84,10 @@ class QRISPaymentAdapter(BasePaymentProvider):
         bill_number: Optional[str] = None,
     ) -> str:
         """Transforms a static QRIS string into dynamic QRIS with Tag 54 and subtag injection."""
-        tags = parse_emvco_tlv(base_static_qris)
+        target_payload = (base_static_qris or self.master_static_qris or "").strip()
+        if not target_payload or not target_payload.startswith("000201"):
+            raise ValueError("MERCHANT_QRIS_NOT_CONFIGURED: Missing valid static QRIS payload for merchant")
+        tags = parse_emvco_tlv(target_payload)
 
         # 1. Update Tag 01 to dynamic (Point of Initiation Method: 12)
         tags["01"] = "12"

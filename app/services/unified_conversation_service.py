@@ -625,78 +625,147 @@ class UnifiedConversationEngine:
 
         # 6.5 Interceptor Pembayaran Langsung via WhatsApp / Nomor Rekening
         DIRECT_PAY_TRIGGERS = [
-            "mau bayar via wa", "bayar via wa", "bayar lewat wa",
+            "mau bayar", "bayar via wa", "bayar lewat wa",
             "transfer via wa", "minta no rekening", "minta nomor rekening",
             "nomor rekeningnya", "rekening mana", "transfer ke mana",
             "mau bayar saja", "bisa bayar lewat wa", "mau bayar sekarang",
             "kirim rekening", "minta rekening", "bayar via transfer",
-            "mau bayar via transfer"
+            "mau bayar via transfer", "minta qris", "kirim qris", "scan qris",
+            "bayar qris", "minta barcode", "kirim barcode", "cara bayar",
+            "ambil scale bundle", "ambil paket starter", "mau scale bundle",
+            "mau starter", "ambil paket", "mau transfer", "mau tf"
         ]
         if any(w in q_lower for w in DIRECT_PAY_TRIGGERS):
+            # Dynamic Multi-Tenant Payment Isolation (Zero Hardcoded Bank/QRIS)
+            p_provider = str(
+                tenant_meta.get("payment_provider")
+                or (tenant_meta.get("payment_config") or {}).get("provider")
+                or tenant_obj.get("payment_provider")
+                or ""
+            ).lower().strip()
             p_settings = tenant_meta.get("payment_settings") or {}
             p_config = tenant_meta.get("payment_config") or {}
-            bank_accounts = p_settings.get("bank_accounts") or p_config.get("bank_accounts") or []
+            bank_accounts = tenant_meta.get("bank_accounts") or p_settings.get("bank_accounts") or p_config.get("bank_accounts") or []
 
-            b_name = "BCA"
-            b_acc = "8940770000"
-            b_holder = "PT SOLUSI GROUP BAROKAH"
-            if bank_accounts and isinstance(bank_accounts, list) and len(bank_accounts) > 0:
-                first_acc = bank_accounts[0]
-                if isinstance(first_acc, dict):
-                    b_name = first_acc.get("bank_name") or b_name
-                    b_acc = first_acc.get("account_number") or b_acc
-                    b_holder = first_acc.get("account_holder") or b_holder
-            else:
-                b_meta = tenant_meta.get("bank") or {}
-                if isinstance(b_meta, dict):
-                    b_name = b_meta.get("name") or b_name
-                    if b_meta.get("account") and b_meta.get("account") != "-":
-                        b_acc = b_meta.get("account")
-                    if b_meta.get("holder"):
-                        b_holder = b_meta.get("holder")
-
+            # 1. Dynamic Product Detection
             target_prod = None
             if catalog:
                 for p in catalog:
                     p_slug_test = str(p.get("slug") or "").lower()
                     p_title_test = str(p.get("title") or p.get("name") or "").lower()
-                    if "tiket" in p_slug_test or "konsultasi" in p_title_test or "audit" in p_title_test:
+                    if ("starter" in q_lower and "starter" in (p_slug_test + p_title_test)) or \
+                       (("scale" in q_lower or "bundle" in q_lower) and ("scale" in (p_slug_test + p_title_test) or "bundle" in (p_slug_test + p_title_test))) or \
+                       ("cpm" in q_lower and "cpm" in (p_slug_test + p_title_test)) or \
+                       ("adsense" in q_lower and "adsense" in (p_slug_test + p_title_test)):
                         target_prod = p
                         break
-                if not target_prod:
+
+                # For onlineboost: default to Scale Bundle (Rp 149.000) if no specific package requested
+                if not target_prod and clean_slug == "onlineboost":
+                    for p in catalog:
+                        p_title_test = str(p.get("title") or p.get("name") or "").lower()
+                        if "scale" in p_title_test or "bundle" in p_title_test:
+                            target_prod = p
+                            break
+
+                if not target_prod and catalog:
                     target_prod = catalog[0]
 
             target_prod = target_prod or {}
-            prod_name = target_prod.get("title") or target_prod.get("name") or "Sesi Audit & Konsultasi 1-on-1 Eksklusif"
-            prod_price = float(target_prod.get("promo_price") or target_prod.get("price") or 149000)
-            prod_slug = str(target_prod.get("slug") or target_prod.get("id") or "tiket-konsultasi").strip()
+            prod_name = target_prod.get("title") or target_prod.get("name") or (
+                "Kelas Inkubasi CTWA Batch 1 - Scale Bundle" if clean_slug == "onlineboost" else f"Layanan {tenant_name}"
+            )
+            prod_price = int(float(target_prod.get("promo_price") or target_prod.get("price") or (149000 if clean_slug == "onlineboost" else 0)))
+            prod_slug = str(target_prod.get("slug") or target_prod.get("id") or "").strip()
             checkout_url = f"https://shop.boontrack.com/{clean_slug}/p/{prod_slug}?checkout=true" if prod_slug else f"https://shop.boontrack.com/{clean_slug}"
-
             price_fmt = f"Rp {prod_price:,.0f}".replace(",", ".")
-            p_lower = prod_name.lower()
-            if any(w in p_lower for w in ["dp", "komitmen", "tiket", "uang muka"]):
-                scheme_label = "Tagihan DP / Tiket Komitmen"
-            elif "pelunasan" in p_lower:
-                scheme_label = "Pelunasan"
-            else:
-                scheme_label = "Lunas"
 
-            pay_reply = (
-                f"Bisa banget, Kak! Pembayaran *{prod_name}* ({price_fmt}) "
-                f"bisa langsung ditransfer via WhatsApp ke rekening resmi kami ya:\n\n"
-                f"🏦 *Bank Tujuan:* {b_name}\n"
-                f"🔢 *No. Rekening:* `{b_acc}`\n"
-                f"👤 *Atas Nama:* {b_holder}\n"
-                f"💰 *Nominal Tagihan ({scheme_label}):* {price_fmt}\n\n"
-                f"_(Catatan: Biaya tiket komitmen ini 100% MEMOTONG TAGIHAN DP jika nantinya Kakak lanjut menggunakan jasa agensi kami)_\n\n"
-                f"Atau jika Kakak ingin bayar instan via website resmi:\n"
-                f"👉 {checkout_url}\n\n"
-                f"📸 *Setelah melakukan transfer/pembayaran, silakan langsung kirimkan foto/screenshot bukti transfer ke chat ini ya Kak agar langsung dicek dan diverifikasi oleh sistem.*"
+            # 2. XENDIT QRIS FLOW: In-Chat QRIS Image via Xendit API (Rp 149.000 Pas / Exact Amount)
+            if p_provider == "xendit" or clean_slug == "onlineboost":
+                import uuid
+                from app.services.xendit_service import xendit_service
+
+                clean_inv_slug = str(clean_slug).replace("_", "-").lower()[:8]
+                external_id = f"INV-{clean_inv_slug.upper()}-{uuid.uuid4().hex[:6].upper()}"
+
+                qr_media_url = None
+                try:
+                    xendit_qr = await xendit_service.create_dynamic_qris(
+                        external_id=external_id,
+                        amount=prod_price,
+                        tenant_id=clean_slug,
+                        customer_phone=sender_id,
+                        metadata={"product_name": prod_name, "product_slug": prod_slug}
+                    )
+                    qr_media_url = xendit_qr.get("qr_code_url")
+                except Exception as _xerr:
+                    logger.error(f"[XENDIT_QRIS_CREATE_ERROR] Failed for {clean_slug}: {_xerr}")
+
+                caption = (
+                    f"Berikut Barcode QRIS Resmi untuk Pembayaran Kakak ✨\n\n"
+                    f"📦 *Nama Paket:* {prod_name}\n"
+                    f"💰 *Nominal Pas:* *{price_fmt}*\n"
+                    f"⏱️ *Batas Waktu Pembayaran:* 15 Menit\n"
+                    f"📄 *No. Invoice:* `{external_id}`\n\n"
+                    f"💡 *Catatan:* Bisa di-screenshot lalu scan menggunakan m-Banking (BCA, Mandiri, BRI, BNI, dll) atau E-Wallet apa saja (GoPay, OVO, DANA, ShopeePay).\n\n"
+                    f"⚡ *Sistem Terverifikasi Otomatis:* Setelah pembayaran selesai, sistem akan langsung mengirimkan link akses kelas ke WhatsApp ini secara instan!"
+                )
+
+                return {
+                    "success": True,
+                    "reply": caption,
+                    "reply_text": caption,
+                    "media_url": qr_media_url,
+                    "qr_code_url": qr_media_url,
+                    "tenant_slug": clean_slug,
+                    "business_category": business_category,
+                    "quick_actions": welcome_buttons,
+                    "action": "DIRECT_PAYMENT_INSTRUCTIONS",
+                    "type": "MEDIA" if qr_media_url else "TEXT",
+                    "unassigned_triggered": False,
+                }
+
+            # 3. Dynamic Bank Accounts Flow (for tenants with configured bank accounts)
+            if bank_accounts and isinstance(bank_accounts, list) and len(bank_accounts) > 0:
+                first_acc = bank_accounts[0]
+                b_name = first_acc.get("bank_name") or first_acc.get("bank") or "Bank Transfer"
+                b_acc = first_acc.get("account_number") or first_acc.get("number") or "-"
+                b_holder = first_acc.get("account_holder") or first_acc.get("name") or tenant_name
+
+                pay_reply = (
+                    f"Bisa banget, Kak! Pembayaran *{prod_name}* ({price_fmt}) "
+                    f"bisa langsung ditransfer ke rekening resmi kami ya:\n\n"
+                    f"🏛️ *Bank Tujuan:* {b_name}\n"
+                    f"💳 *No. Rekening:* `{b_acc}`\n"
+                    f"👤 *Atas Nama:* {b_holder}\n"
+                    f"💰 *Nominal Tagihan:* {price_fmt}\n\n"
+                    f"Atau Kakak juga bisa bayar instan via website resmi:\n"
+                    f"🔗 {checkout_url}\n\n"
+                    f"📸 *Setelah transfer, silakan kirimkan bukti transfer ke chat ini agar diverifikasi oleh sistem.*"
+                )
+                return {
+                    "success": True,
+                    "reply": pay_reply,
+                    "reply_text": pay_reply,
+                    "tenant_slug": clean_slug,
+                    "business_category": business_category,
+                    "quick_actions": welcome_buttons,
+                    "action": "DIRECT_PAYMENT_INSTRUCTIONS",
+                    "type": "TEXT",
+                    "unassigned_triggered": False,
+                }
+
+            # 4. Standard Web Checkout Fallback
+            web_reply = (
+                f"Halo Kak! Untuk pemesanan dan pembayaran *{prod_name}* ({price_fmt}), "
+                f"Kakak bisa langsung menyelesaikan transaksi melalui link resmi toko kami berikut ya:\n\n"
+                f"🔗 {checkout_url}\n\n"
+                f"Setelah transaksi selesai, sistem akan langsung memproses pesanan Kakak."
             )
             return {
                 "success": True,
-                "reply": pay_reply,
-                "reply_text": pay_reply,
+                "reply": web_reply,
+                "reply_text": web_reply,
                 "tenant_slug": clean_slug,
                 "business_category": business_category,
                 "quick_actions": welcome_buttons,

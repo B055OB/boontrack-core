@@ -186,11 +186,8 @@ class XenditService:
             logger.error(f"[XENDIT_ERROR] Missing 'qr_string' in response: {data}")
             raise RuntimeError(f"Xendit response missing 'qr_string': {data}")
 
-        # If Xendit returns a dummy/placeholder string in sandbox that is not EMVCo compliant
-        if not qr_string.startswith("000201"):
-            from app.utils.qris_generator import get_dynamic_qris_string
-            logger.info(f"[XENDIT] Non-EMVCo qr_string returned ('{qr_string}'), augmenting with valid EMVCo dynamic QRIS.")
-            qr_string = get_dynamic_qris_string(amount=amount, invoice_id=str(external_id))
+        # For sandbox or development, qr_string might be a placeholder or raw string
+        logger.info(f"[XENDIT] Using authentic Xendit qr_string for QR generation (starts with 000201: {qr_string.startswith('000201')})")
 
         # Render URL gambar QR resmi dari qr_string Xendit
         encoded_qr = urllib.parse.quote(qr_string)

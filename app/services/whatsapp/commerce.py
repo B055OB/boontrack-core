@@ -479,19 +479,88 @@ async def generate_fast_track_checkout_response(
     if base_amount <= 0:
         base_amount = 1000  # Minimal nominal transaksi QRIS
 
-    # Injeksi 3-digit kode unik acak untuk rekonsiliasi mutasi otomatis
-    unique_code = random.randint(100, 999)
-    total_amount = max(1, base_amount - unique_code)
-    amount = total_amount
-
-    # -----------------------------------------------------------------------
-    # SELLER NATIVE QRIS CHECKOUT ENGINE (Manual Upload / Acquirer Mandiri)
-    # Default standard for all tenants: no third-party payment gateway
-    # -----------------------------------------------------------------------
     from app.services.onboarding_service import onboarding_service
     tenant_details = onboarding_service.get_tenant_details_by_slug(clean_slug) or {}
     tenant_obj = tenant_details.get("tenant", {}) if tenant_details else {}
     tenant_meta = tenant_details.get("metadata") or tenant_obj.get("metadata") or {}
+
+    p_provider = str(
+        tenant_meta.get("payment_provider")
+        or (tenant_meta.get("payment_config") or {}).get("provider")
+        or tenant_obj.get("payment_provider")
+        or ""
+    ).lower().strip()
+    unique_code_enabled = (
+        (tenant_meta.get("payment_config") or {}).get("unique_code_enabled")
+        if (tenant_meta.get("payment_config") or {}).get("unique_code_enabled") is not None
+        else True
+    )
+
+    clean_inv_slug = str(clean_slug).replace("_", "-").lower()[:8]
+    external_id = f"INV-{clean_inv_slug.upper()}-{uuid.uuid4().hex[:6].upper()}"
+    prod_slug = str((selected_product or {}).get("slug") or (selected_product or {}).get("id") or "").strip()
+    prod_checkout_url = f"https://shop.boontrack.com/{clean_slug}/p/{prod_slug}" if prod_slug else f"https://shop.boontrack.com/{clean_slug}"
+
+    # XENDIT IN-CHAT DYNAMIC QRIS (Nominal Pas, Tanpa Kode Unik Acak)
+    if p_provider == "xendit" or clean_slug == "onlineboost":
+        amount = base_amount
+        unique_code = 0
+        from app.services.xendit_service import xendit_service
+        try:
+            xendit_res = await xendit_service.create_dynamic_qris(
+                external_id=external_id,
+                amount=amount,
+                tenant_id=clean_slug,
+                customer_phone=clean_phone,
+                metadata={"product_name": product_name, "product_slug": prod_slug}
+            )
+            qr_img_target = xendit_res.get("qr_code_url")
+            dynamic_qr_payload = xendit_res.get("qr_string", "")
+        except Exception as _xerr:
+            logger.error(f"[XENDIT_FAST_TRACK_QRIS_ERROR] {_xerr}")
+            qr_img_target = None
+            dynamic_qr_payload = ""
+
+        amount_fmt = f"Rp{amount:,.0f}".replace(",", ".")
+        invoice = {
+            "external_id": external_id,
+            "order_id": external_id,
+            "amount": amount,
+            "base_amount": base_amount,
+            "unique_code": 0,
+            "product_name": product_name,
+            "provider": "xendit",
+            "status": "PENDING",
+            "is_manual": False,
+            "qr_string": dynamic_qr_payload,
+            "qr_code_url": qr_img_target,
+            "media_url": qr_img_target,
+            "image_url": qr_img_target,
+            "web_pay_url": prod_checkout_url,
+            "merchant_name": store_name,
+            "tenant_id": clean_slug,
+        }
+
+        caption = (
+            f"Berikut Barcode QRIS Resmi untuk Pembayaran Kakak ✨\n\n"
+            f"📦 *Nama Paket:* {product_name}\n"
+            f"💰 *Nominal Pas:* *{amount_fmt}*\n"
+            f"⏱️ *Batas Waktu Pembayaran:* 15 Menit\n"
+            f"📄 *No. Invoice:* `{external_id}`\n\n"
+            f"💡 *Catatan:* Bisa di-screenshot lalu scan menggunakan m-Banking (BCA, Mandiri, BRI, BNI, dll) atau E-Wallet apa saja (GoPay, OVO, DANA, ShopeePay).\n\n"
+            f"⚡ *Sistem Terverifikasi Otomatis:* Setelah pembayaran selesai, sistem akan langsung mengirimkan link akses kelas ke WhatsApp ini secara instan!"
+        )
+        user_cart_sessions.pop(clean_phone, None)
+        return caption, invoice, b""
+
+    # Native QRIS with Unique Code
+    if not unique_code_enabled:
+        unique_code = 0
+        total_amount = base_amount
+    else:
+        unique_code = random.randint(100, 999)
+        total_amount = max(1, base_amount - unique_code)
+    amount = total_amount
 
     seller_qris_image = (
         tenant_meta.get("qris_image_url")
