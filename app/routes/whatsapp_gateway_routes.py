@@ -1556,14 +1556,22 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         logger.warning(f"[SECURITY_SHARED_GATEWAY] Instance '{instance_name}' is SHARED. 2-way AI Commerce not allowed. Dropping.")
         return {"status": "ignored", "reason": "shared_gateway_inbound_not_allowed"}
 
-    # 2A. Filter Broadcast
+    # 2A. Filter Broadcast & Meta Ads Privacy LID Resolution
     remote_jid = str(key_obj.get("remoteJid") or payload.get("sender") or "").strip()
+    alt_jid = str(key_obj.get("remoteJidAlt") or data.get("remoteJidAlt") or payload.get("remoteJidAlt") or "").strip()
+    if "@lid" in remote_jid and alt_jid and ("@s.whatsapp.net" in alt_jid or "@c.us" in alt_jid):
+        logger.info(f"[EVOLUTION WEBHOOK] Meta Ads LID detected ({remote_jid}). Prioritizing remoteJidAlt: '{alt_jid}'")
+        remote_jid = alt_jid
+
     if not remote_jid or remote_jid == "status@broadcast" or remote_jid.endswith("@broadcast"):
         logger.info(f"[EVOLUTION WEBHOOK] Ignored broadcast JID: '{remote_jid}'")
         return {"status": "ignored_broadcast"}
 
     is_group = remote_jid.endswith("@g.us")
     participant_jid = str(key_obj.get("participant") or data.get("participant") or payload.get("participant") or "").strip()
+    participant_alt = str(key_obj.get("participantAlt") or data.get("participantAlt") or payload.get("participantAlt") or "").strip()
+    if "@lid" in participant_jid and participant_alt and ("@s.whatsapp.net" in participant_alt or "@c.us" in participant_alt):
+        participant_jid = participant_alt
     reply_to_message_id = str(key_obj.get("id") or "").strip()
 
     # 3. Unpack ephemeral / viewOnce wrappers jika ada
