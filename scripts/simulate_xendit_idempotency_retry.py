@@ -131,44 +131,47 @@ def run_3x_idempotency_simulation():
          patch("app.routes.xendit.dispatch_payment_success_notifications", side_effect=mock_waba_notif), \
          patch("app.services.digital_fulfillment_service.fulfill_if_digital", new_callable=AsyncMock):
 
-        responses = []
-        for i in range(1, 4):
-            log(f"\n--- [DISPATCH #{i}] Mengirimkan Webhook Xendit Callback (Payload Identik) ---")
-            resp = client.post(
-                "/api/v1/payments/xendit/callback",
-                json=payload,
-                headers=headers
-            )
-            log(f"  -> HTTP Status Code : {resp.status_code}")
-            try:
-                body = resp.json()
-            except Exception:
-                body = resp.text
-            log(f"  -> Response JSON     : {json.dumps(body, indent=2)}")
-            responses.append((resp.status_code, body))
+        import concurrent.futures
+
+        def fire_concurrent(index: int):
+            with TestClient(app) as local_client:
+                r = local_client.post("/api/v1/payments/xendit/callback", json=payload, headers=headers)
+                try:
+                    b = r.json()
+                except Exception:
+                    b = r.text
+                return index, r.status_code, b
+
+        log("\n--- MENGIRIMKAN 3X WEBHOOK REVENUE RETRY SECARA CONCURRENT (ThreadPoolExecutor max_workers=3) ---")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [executor.submit(fire_concurrent, i) for i in range(1, 4)]
+            responses = []
+            for f in concurrent.futures.as_completed(futures):
+                idx, status_code, body = f.result()
+                log(f"  [Thread #{idx}] HTTP Status: {status_code} | Body: {json.dumps(body)}")
+                responses.append((status_code, body))
 
     # =========================================================================
     # ASSERTIONS & VERIFIKASI KEAMANAN TINGKAT TINGGI
     # =========================================================================
     log("\n" + "=" * 80)
-    log("HASIL EVALUASI & VERIFIKASI INVARIANT KEAMANAN")
+    log("HASIL EVALUASI & VERIFIKASI INVARIANT KEAMANAN (CONCURRENCY)")
     log("=" * 80)
 
     # 1. Seluruh respons wajib HTTP 200 OK
     for i, (code, body) in enumerate(responses, 1):
-        assert code == 200, f"Dispatch #{i} gagal: HTTP {code}"
-        log(f"[OK] Invariant 1.{i}: Dispatch #{i} sukses mengembalikan HTTP 200 OK.")
+        assert code == 200, f"Concurrent request #{i} gagal: HTTP {code}"
+        log(f"[OK] Invariant 1.{i}: Concurrent request #{i} sukses mengembalikan HTTP 200 OK.")
 
-    # Dispatch #1 harus berstatus SUCCESS
-    assert responses[0][1].get("status") == "SUCCESS", f"Dispatch #1 bukan SUCCESS: {responses[0][1]}"
-    log("[OK] Invariant 1.4: Dispatch #1 berstatus 'SUCCESS' (settlement awal berhasil).")
+    # Tepat 1 request harus berstatus SUCCESS, dan 2 request harus ALREADY_PROCESSED (idempotent=True)
+    successes = [b for code, b in responses if b.get("status") == "SUCCESS"]
+    already_processed = [b for code, b in responses if b.get("status") == "ALREADY_PROCESSED" and b.get("idempotent") is True]
 
-    # Dispatch #2 dan #3 harus terdeteksi ALREADY_PROCESSED (idempotent=True)
-    for i in (1, 2):
-        b = responses[i][1]
-        assert b.get("status") == "ALREADY_PROCESSED", f"Dispatch #{i+1} status bukan ALREADY_PROCESSED: {b}"
-        assert b.get("idempotent") is True, f"Dispatch #{i+1} idempotent bukan True: {b}"
-        log(f"[OK] Invariant 1.{i+4}: Dispatch #{i+1} diakui sebagai 'ALREADY_PROCESSED' (idempotent=True).")
+    assert len(successes) == 1, f"Expected 1 SUCCESS, got {len(successes)}: {responses}"
+    assert len(already_processed) == 2, f"Expected 2 ALREADY_PROCESSED, got {len(already_processed)}: {responses}"
+
+    log("[OK] Invariant 1.4: Tepat 1 request memenangkan status 'SUCCESS' (settlement awal berhasil).")
+    log("[OK] Invariant 1.5: Tepat 2 request diakui sebagai 'ALREADY_PROCESSED' (idempotent=True).")
 
     # 2. Database Mutasi Hanya Mencatat Lunas 1 Kali
     conn = get_db_connection()
