@@ -296,6 +296,7 @@ def _init_db_sync():
         CREATE INDEX IF NOT EXISTS idx_financial_ledger_order ON financial_ledger(order_id);
         CREATE INDEX IF NOT EXISTS idx_financial_ledger_tenant ON financial_ledger(tenant_id);
         CREATE INDEX IF NOT EXISTS idx_financial_ledger_event ON financial_ledger(event_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_financial_ledger_order_credit ON financial_ledger (order_id) WHERE (transaction_type = 'PAYMENT_CREDIT');
     """)
 
     # 18. Tabel cs_agents & Update Skema conversations (BoonTrack Inbox Rotary Engine)

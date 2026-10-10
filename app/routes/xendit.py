@@ -37,7 +37,6 @@ from app.modules.tracking import capi_dispatcher
 from app.services.session_store import get_user_session_context
 from app.services.waba_notification_service import dispatch_payment_success_notifications
 from app.core.tracing import log_structured_event, set_trace_context, get_trace_context
-from app.core.redis import acquire_payment_lock, release_payment_lock
 
 logger = logging.getLogger("XENDIT_WEBHOOK")
 
@@ -407,13 +406,14 @@ def _record_settlement_and_ledger_sync(
                 )
             )
 
-        # 3. Catat Financial Transaction ke financial_ledger
+        # 3. Catat Financial Transaction ke financial_ledger (Dibatasi Unique Index di Postgres)
         cur.execute(
             """
             INSERT INTO financial_ledger (
                 order_id, tenant_id, provider, event_id, gross_amount, fee_amount, net_amount,
                 currency, transaction_type, status, metadata, created_at
-            ) VALUES (%s, %s, 'XENDIT', %s, %s, %s, %s, 'IDR', 'PAYMENT_CREDIT', 'SETTLED', %s, %s);
+            ) VALUES (%s, %s, 'XENDIT', %s, %s, %s, %s, 'IDR', 'PAYMENT_CREDIT', 'SETTLED', %s, %s)
+            ON CONFLICT (order_id) WHERE (transaction_type = 'PAYMENT_CREDIT') DO NOTHING;
             """,
             (
                 str(external_id),
@@ -464,7 +464,8 @@ def _record_settlement_and_ledger_sync(
                     %s, %s,
                     %s, %s, %s,
                     'PENDING_PAYOUT', %s
-                );
+                )
+                ON CONFLICT (reference_id) DO NOTHING;
                 """,
                 (
                     str(external_id),
@@ -624,20 +625,6 @@ async def process_xendit_webhook_core(
         correlation_id=external_id,
     )
 
-    # 1.5 Distributed Lock via Redis: SET lock:payment:webhook:{external_id} NX EX 300
-    if external_id:
-        lock_ok = acquire_payment_lock(external_id, ttl_seconds=300)
-        if not lock_ok:
-            logger.info(f"[Xendit Webhook Lock Hit] Transaction '{external_id}' is currently locked by concurrent worker. Returning 200 OK.")
-            return {
-                "http_status": 200,
-                "response": {
-                    "status": "ALREADY_PROCESSED",
-                    "message": f"Transaction '{external_id}' is currently being processed",
-                    "idempotent": True,
-                }
-            }
-
     # 1.8 SaaS Lifecycle AI Session Quota Top-Up Handler (PT BoonTrack Inovasi Digital)
     if external_id.startswith("TOPUP-") or external_id.startswith("TOPUP_"):
         if event_status in _PAID_STATUSES:
@@ -677,34 +664,11 @@ async def process_xendit_webhook_core(
                 }
             }
 
-    # 2. Fast L1 In-Memory Idempotency Check
-    if external_id and xendit_service.is_settled(external_id):
-        release_payment_lock(external_id)
-        logger.info(f"[Xendit Webhook L1 Hit] Order '{external_id}' already marked settled in-memory. Returning 200 OK.")
-        log_structured_event(
-            service="xendit_webhook",
-            event_type="IDEMPOTENCY_HIT",
-            entity_type="payment",
-            entity_id=external_id,
-            status="SUCCESS",
-            provider="xendit",
-            provider_event_id=event_id,
-            correlation_id=external_id,
-        )
-        return {
-            "http_status": 200,
-            "response": {
-                "status": "ALREADY_PROCESSED",
-                "message": f"Transaction '{external_id}' has already been settled",
-                "idempotent": True,
-            }
-        }
-
-    # 3. L2 Database Idempotency Check
+    # 2. Database Idempotency Check (SSOT Mutlak: Postgres orders.status & payment_events)
+    # Jangan pernah return 200 ALREADY_PROCESSED hanya karena in-memory lock hit.
     db_check = await asyncio.to_thread(_check_db_idempotency_sync, event_id, external_id)
     if db_check:
         xendit_service.mark_settled(external_id)
-        release_payment_lock(external_id)
         logger.info(f"[Xendit Webhook DB Hit] Event '{event_id}' / Order '{external_id}' already processed in DB. Returning 200 OK.")
         log_structured_event(
             service="xendit_webhook",
@@ -725,9 +689,8 @@ async def process_xendit_webhook_core(
             }
         }
 
-    # 4. Non-paid event handler (e.g. EXPIRED, FAILED, PENDING)
+    # 3. Non-paid event handler (e.g. EXPIRED, FAILED, PENDING)
     if event_status not in _PAID_STATUSES:
-        release_payment_lock(external_id)
         logger.info(f"[Xendit Webhook] Non-paid event received ({event_status}) for order '{external_id}'. Ignoring.")
         return {
             "http_status": 200,
@@ -831,10 +794,9 @@ async def process_xendit_webhook_core(
             }
         }
 
-    # Mark in-memory settled (L1 Lock) only after DB mutation succeeded
+    # Mark in-memory settled only after DB mutation succeeded
     if external_id:
         xendit_service.mark_settled(external_id)
-        release_payment_lock(external_id)
 
     log_structured_event(
         service="xendit_webhook",

@@ -82,30 +82,34 @@ async def test_xendit_webhook_3x_consecutive_retry_idempotency():
     async def mock_capi(external_id, amount, phone=None, email=None, product_name=None, currency="IDR", tenant_id="onlineboost"):
         capi_calls.append({"order_id": external_id, "amount": amount})
 
-    client = TestClient(app)
+    import concurrent.futures
+
+    def fire_request():
+        with TestClient(app) as local_client:
+            res = local_client.post("/api/v1/payments/xendit/callback", json=payload, headers=headers)
+            return res.status_code, res.json()
 
     with patch("app.routes.xendit.send_whatsapp_payment_notification", side_effect=mock_wa), \
          patch("app.routes.xendit.send_capi_task", side_effect=mock_capi), \
          patch("app.routes.xendit.dispatch_payment_success_notifications", new_callable=AsyncMock), \
          patch("app.services.digital_fulfillment_service.fulfill_if_digital", new_callable=AsyncMock):
 
-        responses = []
-        for _ in range(3):
-            resp = client.post("/api/v1/payments/xendit/callback", json=payload, headers=headers)
-            responses.append((resp.status_code, resp.json()))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [executor.submit(fire_request) for _ in range(3)]
+            responses = [f.result() for f in concurrent.futures.as_completed(futures)]
 
-    # Verifikasi Invariant
-    # 1. Semua HTTP 200 OK
-    assert responses[0][0] == 200
-    assert responses[1][0] == 200
-    assert responses[2][0] == 200
+    # Verifikasi Invariant Concurrency
+    # 1. Seluruh 3 respons konkuren wajib HTTP 200 OK
+    assert len(responses) == 3
+    for code, body in responses:
+        assert code == 200, f"Concurrent request returned {code}: {body}"
 
-    # 2. Status body
-    assert responses[0][1]["status"] == "SUCCESS"
-    assert responses[1][1]["status"] == "ALREADY_PROCESSED"
-    assert responses[1][1]["idempotent"] is True
-    assert responses[2][1]["status"] == "ALREADY_PROCESSED"
-    assert responses[2][1]["idempotent"] is True
+    # 2. Tepat 1 request berstatus 'SUCCESS' dan tepat 2 request berstatus 'ALREADY_PROCESSED' (idempotent=True)
+    successes = [b for code, b in responses if b.get("status") == "SUCCESS"]
+    already_processed = [b for code, b in responses if b.get("status") == "ALREADY_PROCESSED" and b.get("idempotent") is True]
+
+    assert len(successes) == 1, f"Expected exactly 1 SUCCESS, got {len(successes)}: {responses}"
+    assert len(already_processed) == 2, f"Expected exactly 2 ALREADY_PROCESSED, got {len(already_processed)}: {responses}"
 
     # 3. Database invariants
     conn = get_db_connection()

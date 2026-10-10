@@ -15,8 +15,11 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 from uuid import uuid4
 import httpx
+from dotenv import load_dotenv
 
 from app.services.reconciliation_service import PAYMENT_INTENTS
+
+load_dotenv()
 
 logger = logging.getLogger("XENDIT_SERVICE")
 
@@ -26,17 +29,24 @@ class XenditService:
 
     def __init__(self):
         self.provider = os.getenv("PAYMENT_GATEWAY_PROVIDER", "midtrans").strip().lower()
-        self.secret_key = os.getenv(
-            "XENDIT_SECRET_KEY",
-            "xnd_development_2itAoTg8FOAdr8Vk7jKpU0MksgDSAjaWzlLHzEMkPuHcRyf5IUxfvO7MG1KPe",
-        ).strip()
+        
+        secret_key = os.getenv("XENDIT_SECRET_KEY")
+        if not secret_key or not secret_key.strip():
+            raise ValueError("[SECURITY FAIL-CLOSED] XENDIT_SECRET_KEY is mandatory and not set.")
+        self.secret_key = secret_key.strip()
+
         self.api_url = os.getenv("XENDIT_API_URL", "https://api.xendit.co").rstrip("/")
         self.env = os.getenv("XENDIT_ENV", "sandbox")
-        self.callback_token = (
+
+        callback_token = (
             os.getenv("XENDIT_WEBHOOK_VERIFICATION_TOKEN")
             or os.getenv("XENDIT_CALLBACK_TOKEN")
-            or "aM08Ka1LQ9Jx1OsieBe6kcM1pK1Z5eWlpWAka5zBOuGpVbWS"
-        ).strip()
+        )
+        if not callback_token or not callback_token.strip():
+            raise ValueError(
+                "[SECURITY FAIL-CLOSED] XENDIT_CALLBACK_TOKEN / XENDIT_WEBHOOK_VERIFICATION_TOKEN is mandatory and not set."
+            )
+        self.callback_token = callback_token.strip()
         self.verification_token = self.callback_token
 
         # In-memory tracking for fast lookups & test isolation
