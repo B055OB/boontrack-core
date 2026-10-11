@@ -132,3 +132,36 @@ async def test_traffic_splitter_routes_resolved_tenant_without_dropping():
         assert trace.target_tenant == "kopi-nusantara"
         mock_tenant_handle.assert_called_once()
         assert response.get("status") == "success"
+
+
+@pytest.mark.asyncio
+async def test_tenant_cache_refresh_handler():
+    """Memverifikasi endpoint /api/v1/system/cache/refresh melakukan clear cache dan diagnostic probe."""
+    import json
+    from aiohttp.test_utils import make_mocked_request
+    from app.api.endpoints.health import tenant_cache_refresh_handler
+
+    req = make_mocked_request("GET", "/api/v1/system/cache/refresh?phone_number_id=541699802061762&slug=onlineboost")
+
+    mock_ctx = TenantRuntimeContext(
+        tenant_id="e12acd29-6c18-487b-ade7-5422878c1c36",
+        slug="onlineboost",
+        name="OnlineBoost ID",
+        business_type="PHYSICAL",
+        metadata={"waba_phone_number_id": "541699802061762"}
+    )
+    with patch("app.services.tenant_context_resolver.tenant_context_resolver.resolve_by_phone_number_id", new_callable=AsyncMock) as mock_res_ctx, \
+         patch("app.services.tenant_resolver.resolve_tenant_by_phone_number_id", new_callable=AsyncMock) as mock_res_waba, \
+         patch("app.services.tenant_resolver.async_clear_tenant_cache", new_callable=AsyncMock):
+        mock_res_ctx.return_value = mock_ctx
+        mock_res_waba.return_value = {"tenant_id": "onlineboost", "waba_phone_number_id": "541699802061762", "is_active": True}
+
+        resp = await tenant_cache_refresh_handler(req)
+        assert resp.status == 200
+        body = json.loads(resp.body)
+        assert body["status"] == "success"
+        assert body["cache_flushed"]["tenant_context_resolver_l1"] is True
+        assert body["target_probed"]["phone_number_id"] == "541699802061762"
+        assert body["target_probed"]["tenant_context_resolver"]["resolved"] is True
+        assert body["target_probed"]["tenant_resolver"]["tenant_id"] == "onlineboost"
+

@@ -267,6 +267,126 @@ async def root_health_check():
     }
 
 
+@app.get("/api/v1/system/cache/refresh", summary="Force Refresh Tenant Resolver Cache")
+@app.post("/api/v1/system/cache/refresh", summary="Force Refresh Tenant Resolver Cache")
+@app.get("/api/v1/system/tenant-resolver/refresh", summary="Force Refresh Tenant Resolver Cache")
+@app.post("/api/v1/system/tenant-resolver/refresh", summary="Force Refresh Tenant Resolver Cache")
+async def fastapi_tenant_cache_refresh(
+    phone_number_id: str = "541699802061762",
+    slug: str = "onlineboost",
+    update: bool = False,
+):
+    import re
+    from app.services.tenant_context_resolver import tenant_context_resolver
+    from app.services.tenant_resolver import (
+        async_clear_tenant_cache,
+        resolve_tenant_by_phone_number_id,
+    )
+    from app.services.whatsapp_service import get_supabase
+
+    tenant_context_resolver.clear_cache()
+    await async_clear_tenant_cache()
+
+    update_info = None
+    if update:
+        try:
+            sb = get_supabase()
+            if sb:
+                t_res = sb.table("tenants").select("id, metadata").eq("slug", slug).execute()
+                if t_res.data:
+                    current_meta = t_res.data[0].get("metadata") or {}
+                    current_meta["waba_phone_number_id"] = phone_number_id
+                    current_meta["phone_number_id"] = phone_number_id
+                    sb.table("tenants").update({
+                        "waba_phone_number_id": phone_number_id,
+                        "metadata": current_meta,
+                        "is_active": True,
+                    }).eq("slug", slug).execute()
+                try:
+                    cfg_chk = sb.table("tenant_waba_configs").select("id").eq("tenant_id", slug).execute()
+                    if cfg_chk.data:
+                        sb.table("tenant_waba_configs").update({
+                            "waba_phone_number_id": phone_number_id,
+                            "is_active": True,
+                        }).eq("tenant_id", slug).execute()
+                    else:
+                        sb.table("tenant_waba_configs").insert({
+                            "tenant_id": slug,
+                            "waba_phone_number_id": phone_number_id,
+                            "is_active": True,
+                        }).execute()
+                except Exception:
+                    pass
+                update_info = {"status": "success", "message": f"Updated tenant '{slug}' to phone_id '{phone_number_id}'"}
+        except Exception as upd_err:
+            update_info = {"status": "error", "message": str(upd_err)}
+
+    probe_ctx = await tenant_context_resolver.resolve_by_phone_number_id(phone_number_id, force_refresh=True)
+    probe_waba = await resolve_tenant_by_phone_number_id(phone_number_id, force_refresh=True)
+
+    sb_record = None
+    sb = get_supabase()
+    if sb:
+        try:
+            res_live = sb.table("tenants").select("id, slug, is_active, waba_phone_number_id, metadata").eq("slug", slug).execute()
+            if res_live.data:
+                row = res_live.data[0]
+                meta = row.get("metadata") or {}
+                sb_record = {
+                    "id": row.get("id"),
+                    "slug": row.get("slug"),
+                    "is_active": row.get("is_active"),
+                    "waba_phone_number_id": row.get("waba_phone_number_id"),
+                    "meta_waba_id": meta.get("waba_phone_number_id"),
+                    "meta_phone_id": meta.get("phone_number_id"),
+                }
+        except Exception as e_sb:
+            sb_record = {"error": str(e_sb)}
+
+    supabase_url_val = os.getenv("SUPABASE_URL", "")
+    expected_url = "https://mpluzajlzpregmjwpjqr.supabase.co"
+    database_url_val = os.getenv("DATABASE_URL", "")
+    masked_db = re.sub(r":([^:@]+)@", r":***@", database_url_val) if database_url_val else ""
+
+    res_body = {
+        "status": "success",
+        "message": "Tenant resolver cache flushed and probes executed.",
+        "cache_flushed": {
+            "tenant_context_resolver_l1": True,
+            "tenant_resolver_l1": True,
+            "tenant_resolver_l2_redis": True,
+        },
+        "env_diagnostics": {
+            "supabase_url": supabase_url_val,
+            "matches_expected_supabase_url": (supabase_url_val.rstrip("/") == expected_url.rstrip("/")),
+            "postgres_host": os.getenv("POSTGRES_HOST", ""),
+            "database_url_masked": masked_db,
+            "railway_environment": os.getenv("RAILWAY_ENVIRONMENT", "production"),
+            "waba_env_ids": {
+                "META_WABA_PHONE_NUMBER_ID": os.getenv("META_WABA_PHONE_NUMBER_ID"),
+                "WABA_PHONE_NUMBER_ID": os.getenv("WABA_PHONE_NUMBER_ID"),
+                "WHATSAPP_PHONE_NUMBER_ID": os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                "PHONE_NUMBER_ID": os.getenv("PHONE_NUMBER_ID"),
+            }
+        },
+        "target_probed": {
+            "phone_number_id": phone_number_id,
+            "slug": slug,
+            "tenant_context_resolver": {
+                "resolved": probe_ctx is not None,
+                "tenant_id": probe_ctx.tenant_id if probe_ctx else None,
+                "slug": probe_ctx.slug if probe_ctx else None,
+                "name": probe_ctx.name if probe_ctx else None,
+            },
+            "tenant_resolver": probe_waba,
+            "supabase_database_row": sb_record,
+        }
+    }
+    if update_info:
+        res_body["db_update_result"] = update_info
+    return res_body
+
+
 @app.get("/api/ads-config", summary="Tenant Ads Pixel Config Root")
 @app.get("/api/v1/store/ads-config", summary="Tenant Ads Pixel Config v1 Store")
 @app.get("/api/v1/shop/{tenant_slug}/ads-config", summary="Tenant Shop Ads Pixel Config")

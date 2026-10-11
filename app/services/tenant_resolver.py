@@ -83,6 +83,31 @@ def clear_tenant_cache(phone_number_id: Optional[str] = None) -> None:
         _test_tenant_registry.clear()
 
 
+async def async_clear_tenant_cache(phone_number_id: Optional[str] = None) -> None:
+    """Clears in-memory, test registry, and Redis caches asynchronously."""
+    clear_tenant_cache(phone_number_id)
+    try:
+        redis_client = await _get_async_redis_client()
+        if redis_client:
+            if phone_number_id:
+                clean_id = str(phone_number_id).strip()
+                await redis_client.delete(f"cache:tenant:waba:{clean_id}")
+            else:
+                keys_to_del = [
+                    "cache:tenant:waba:541699802061762",
+                    "cache:tenant:waba:141906974617162",
+                ]
+                try:
+                    async for key in redis_client.scan_iter("cache:tenant:waba:*"):
+                        keys_to_del.append(key)
+                except Exception:
+                    pass
+                if keys_to_del:
+                    await redis_client.delete(*set(keys_to_del))
+    except Exception as r_err:
+        logger.debug(f"[TENANT_RESOLVER] Redis cache eviction error: {r_err}")
+
+
 async def _get_async_redis_client() -> Optional[aioredis.Redis]:
     try:
         client = aioredis.from_url(
@@ -100,21 +125,24 @@ async def _get_async_redis_client() -> Optional[aioredis.Redis]:
 async def resolve_tenant_by_phone_number_id(
     phone_number_id: str,
     raise_if_not_found: bool = False,
+    force_refresh: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Resolves tenant information by Meta WhatsApp Business phone_number_id.
 
     Resolution Steps:
     1. Validate input.
     2. Check test registry override (if present).
-    3. Check L1 in-memory cache (TTL 1 hour).
-    4. Check L2 Redis cache (TTL 1 hour).
+    3. Check L1 in-memory cache (TTL 1 hour, skipped if force_refresh=True).
+    4. Check L2 Redis cache (TTL 1 hour, skipped if force_refresh=True).
     5. Cache miss -> Query PostgreSQL (`tenant_waba_configs`).
-    6. If found and active: update L1 & L2 caches and return dict.
-    7. If not found or inactive: raise TenantNotFoundError or return None.
+    6. Fallback query to Supabase `tenants` table.
+    7. If found and active: update L1 & L2 caches and return dict.
+    8. If not found or inactive: raise TenantNotFoundError or return None.
 
     Args:
         phone_number_id: Meta WABA phone_number_id from webhook metadata.
         raise_if_not_found: If True, raises TenantNotFoundError instead of returning None.
+        force_refresh: If True, bypasses caches and forces database re-query.
 
     Returns:
         Dict containing tenant_id, waba_phone_number_id, is_active, or None.
@@ -149,28 +177,29 @@ async def resolve_tenant_by_phone_number_id(
             "display_phone_number": "",
         }
 
-    # Step 1: Check L1 In-Memory Cache
-    if clean_id in _in_memory_tenant_cache:
+    # Step 1: Check L1 In-Memory Cache (skipped if force_refresh)
+    if not force_refresh and clean_id in _in_memory_tenant_cache:
         cached_data, expire_at = _in_memory_tenant_cache[clean_id]
         if expire_at > now:
             return cached_data
         else:
             del _in_memory_tenant_cache[clean_id]
 
-    # Step 2: Check L2 Redis Cache
+    # Step 2: Check L2 Redis Cache (skipped if force_refresh)
     cache_key = f"cache:tenant:waba:{clean_id}"
     redis_client = None
-    try:
-        redis_client = await _get_async_redis_client()
-        if redis_client:
-            raw_cached = await redis_client.get(cache_key)
-            if raw_cached:
-                tenant_data = json.loads(raw_cached)
-                # Populate L1 cache
-                _in_memory_tenant_cache[clean_id] = (tenant_data, now + CACHE_TTL_SECONDS)
-                return tenant_data
-    except Exception as redis_err:
-        logger.debug(f"[TENANT_RESOLVER] Redis get warning: {redis_err}")
+    if not force_refresh:
+        try:
+            redis_client = await _get_async_redis_client()
+            if redis_client:
+                raw_cached = await redis_client.get(cache_key)
+                if raw_cached:
+                    tenant_data = json.loads(raw_cached)
+                    # Populate L1 cache
+                    _in_memory_tenant_cache[clean_id] = (tenant_data, now + CACHE_TTL_SECONDS)
+                    return tenant_data
+        except Exception as redis_err:
+            logger.debug(f"[TENANT_RESOLVER] Redis get warning: {redis_err}")
 
     # Step 3: Cache Miss -> Query PostgreSQL Database with Supabase fallback
     tenant_data = await _query_postgres_tenant(clean_id)
