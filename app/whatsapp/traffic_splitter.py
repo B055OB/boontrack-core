@@ -1607,6 +1607,28 @@ class TenantWebhookRouter:
             return res
 
         # =====================================================================
+        # 1.5. BOONTRACK ACADEMY: WARM LAUNCH ALUMNI STATE MACHINE (STATE 0 & 1)
+        # =====================================================================
+        try:
+            from app.services.academy_service import academy_bot, is_academy_trigger_message
+            if is_academy_trigger_message(clean_text) or academy_bot.is_in_active_flow(sender_phone):
+                academy_res = await academy_bot.process_inbound(
+                    sender_phone=sender_phone,
+                    incoming_text=clean_text,
+                    contact_name=contact_name,
+                    phone_number_id=phone_number_id,
+                    tenant_id=tenant_slug,
+                )
+                if academy_res and academy_res.get("handled"):
+                    trace.log_step("TenantAcademyBot", f"Handled by Academy State Machine: State {academy_res.get('state')}")
+                    trace.early_return = True
+                    trace.response_status = 200
+                    trace.response_payload = academy_res
+                    return academy_res
+        except Exception as _acad_err:
+            logger.error(f"[TENANT_ACADEMY_BOT_ERROR] {_acad_err}", exc_info=True)
+
+        # =====================================================================
         # 2. STATE GUARD (ANTI-SILENT BOT): General Greeting / Menu / Help
         # =====================================================================
         is_general_inquiry = text_lower in ("halo", "hi", "p", "test", "tes", "hai", "start", "menu", "help", "bantuan", "info")

@@ -458,6 +458,23 @@ class PaymentCoreService:
         except Exception as _waba_tx_err:
             logger.debug(f"[PaymentCore] PAYMENT_CONFIRMED dispatch note: {_waba_tx_err}")
 
+        # Trigger BoonTrack Academy Alumni STATE 2 handler if this is an Academy order
+        if str(matched_intent.order_id).startswith("BTA-ALUMNI-") or (matched_intent.metadata or {}).get("sku_id") == "SKU-BTA-ALUMNI-249K":
+            try:
+                from app.services.academy_service import academy_bot
+                asyncio.create_task(
+                    academy_bot.handle_webhook_paid(
+                        order_id=matched_intent.order_id,
+                        event_id=webhook.provider_ref,
+                        provider=webhook.provider,
+                        amount=int(webhook.amount),
+                        raw_payload=webhook.raw_payload or {},
+                        tenant_id=matched_intent.tenant_id,
+                    )
+                )
+            except Exception as _bta_err:
+                logger.debug(f"[PaymentCore] Academy STATE 2 webhook dispatch note: {_bta_err}")
+
         return settlement
 
     def expire_stale_intents(self) -> List[str]:

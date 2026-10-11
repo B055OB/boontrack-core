@@ -289,6 +289,29 @@ class PlatformWebhookRouter:
                 return res
 
         # =====================================================================
+        # JALUR 2.4: BoonTrack Academy Warm Launch Alumni State Machine (State 0 & 1)
+        # =====================================================================
+        try:
+            from app.services.academy_service import academy_bot, is_academy_trigger_message
+            if is_academy_trigger_message(clean_text) or academy_bot.is_in_active_flow(sender_clean):
+                academy_res = await academy_bot.process_inbound(
+                    sender_phone=sender_clean,
+                    incoming_text=clean_text,
+                    contact_name="Pelanggan",
+                    phone_number_id=phone_number_id,
+                    tenant_id="onlineboost",
+                )
+                if academy_res and academy_res.get("handled"):
+                    _log("AcademyBot", f"Handled by Academy State Machine: State {academy_res.get('state')}")
+                    if trace:
+                        trace.early_return = True
+                        trace.response_status = 200
+                        trace.response_payload = academy_res
+                    return academy_res
+        except Exception as _acad_err:
+            logger.error(f"[PLATFORM_ACADEMY_BOT_ERROR] {_acad_err}", exc_info=True)
+
+        # =====================================================================
         # JALUR 2.5: Storefront Context-Aware Sales Conversation (P0 Upgrade)
         # Mendeteksi prefilled message dari etalase: (Ref: tenant_slug#product_slug)
         # Menghasilkan first response natural & Quick Reply buttons, melewati generic greeting.
