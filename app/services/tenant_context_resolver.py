@@ -481,17 +481,99 @@ class TenantContextResolver:
             if cached:
                 return cached
 
-        # Check database for tenant matching phone_number_id in metadata
+        # Check database for tenant matching waba_phone_number_id
         supabase = get_supabase()
         if supabase:
+            # 1. Direct physical column lookup: waba_phone_number_id
             try:
-                res = supabase.table("tenants").select("*").filter("metadata->>phone_number_id", "eq", clean_phone_id).execute()
-                if res.data and len(res.data) > 0:
+                res = (
+                    supabase.table("tenants")
+                    .select("*")
+                    .eq("waba_phone_number_id", str(clean_phone_id))
+                    .execute()
+                )
+                if res and isinstance(getattr(res, "data", None), list) and len(res.data) > 0:
                     ctx = build_context_from_dict(res.data[0])
                     self.set_cached(cache_key, ctx)
                     return ctx
-            except Exception as e:
-                logger.debug(f"[TENANT_RESOLVER] DB query by phone_number_id filter error: {e}")
+            except Exception as e_phys:
+                logger.debug(f"[TENANT_RESOLVER] DB query by physical waba_phone_number_id error: {e_phys}")
+
+            # 2. JSONB containment filter on metadata: {"waba_phone_number_id": str(clean_phone_id)}
+            try:
+                res = (
+                    supabase.table("tenants")
+                    .select("*")
+                    .contains("metadata", {"waba_phone_number_id": str(clean_phone_id)})
+                    .execute()
+                )
+                if res and isinstance(getattr(res, "data", None), list) and len(res.data) > 0:
+                    ctx = build_context_from_dict(res.data[0])
+                    self.set_cached(cache_key, ctx)
+                    return ctx
+            except Exception as e_json:
+                logger.debug(f"[TENANT_RESOLVER] DB query by jsonb contains waba_phone_number_id error: {e_json}")
+
+            # 3. JSONB containment filter fallback: {"phone_number_id": str(clean_phone_id)}
+            try:
+                res = (
+                    supabase.table("tenants")
+                    .select("*")
+                    .contains("metadata", {"phone_number_id": str(clean_phone_id)})
+                    .execute()
+                )
+                if res and isinstance(getattr(res, "data", None), list) and len(res.data) > 0:
+                    ctx = build_context_from_dict(res.data[0])
+                    self.set_cached(cache_key, ctx)
+                    return ctx
+            except Exception as e_pjson:
+                logger.debug(f"[TENANT_RESOLVER] DB query by jsonb contains phone_number_id error: {e_pjson}")
+
+            # 4. Fallback filter for legacy / mock compatibility: metadata->>phone_number_id
+            try:
+                res = (
+                    supabase.table("tenants")
+                    .select("*")
+                    .filter("metadata->>phone_number_id", "eq", clean_phone_id)
+                    .execute()
+                )
+                if res and isinstance(getattr(res, "data", None), list) and len(res.data) > 0:
+                    ctx = build_context_from_dict(res.data[0])
+                    self.set_cached(cache_key, ctx)
+                    return ctx
+            except Exception as e_leg:
+                logger.debug(f"[TENANT_RESOLVER] DB query by legacy filter error: {e_leg}")
+
+            # 5. Check tenant_waba_configs table in Supabase
+            try:
+                res_cfg = (
+                    supabase.table("tenant_waba_configs")
+                    .select("tenant_id")
+                    .eq("waba_phone_number_id", str(clean_phone_id))
+                    .eq("is_active", True)
+                    .execute()
+                )
+                if res_cfg and isinstance(getattr(res_cfg, "data", None), list) and len(res_cfg.data) > 0:
+                    cfg_t_id = res_cfg.data[0].get("tenant_id")
+                    if cfg_t_id:
+                        ctx = await self.resolve_context(str(cfg_t_id), force_refresh=force_refresh)
+                        if ctx:
+                            self.set_cached(cache_key, ctx)
+                            return ctx
+            except Exception as e_cfg:
+                logger.debug(f"[TENANT_RESOLVER] Supabase tenant_waba_configs query error: {e_cfg}")
+
+        # Fallback to postgres tenant resolver (TenantWabaConfig / whatsapp_connections)
+        try:
+            from app.services.tenant_resolver import resolve_tenant_by_phone_number_id
+            pg_tenant = await resolve_tenant_by_phone_number_id(clean_phone_id)
+            if pg_tenant and pg_tenant.get("tenant_id"):
+                ctx = await self.resolve_context(str(pg_tenant["tenant_id"]), force_refresh=force_refresh)
+                if ctx:
+                    self.set_cached(cache_key, ctx)
+                    return ctx
+        except Exception as pg_err:
+            logger.debug(f"[TENANT_RESOLVER] Postgres tenant resolver lookup error: {pg_err}")
 
         # Standard environment phone number ID mapping
         career_phone_id = os.getenv("CAREER_PHONE_NUMBER_ID", "1340866379104241").strip()

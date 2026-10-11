@@ -1839,7 +1839,20 @@ class TrafficSplitter:
         # ROUTE B: TENANT_SALES (Tenant Resolver)
         # =====================================================================
         tenant_context = await tenant_context_resolver.resolve_by_phone_number_id(incoming_phone_id)
+        if not tenant_context:
+            try:
+                from app.services.tenant_resolver import resolve_tenant_by_phone_number_id
+                tenant_info = await resolve_tenant_by_phone_number_id(incoming_phone_id)
+                if tenant_info and tenant_info.get("is_active"):
+                    t_id = tenant_info.get("tenant_id")
+                    if t_id and t_id not in ("boontrack-holding", "pelayanan_publik"):
+                        tenant_context = await tenant_context_resolver.resolve_context(t_id)
+            except Exception as fallback_err:
+                logger.debug(f"[TrafficSplitter] Fallback tenant resolution error: {fallback_err}")
+
         if tenant_context and tenant_context.tenant_id not in ("boontrack-holding", "pelayanan_publik"):
+            trace.route_type = "TENANT_SALES"
+            trace.target_tenant = getattr(tenant_context, "slug", None) or tenant_context.tenant_id
             trace.log_step("TrafficSplitter.Route", f"Resolved tenant '{tenant_context.tenant_id}' -> TenantWebhookRouter")
             result = await TenantWebhookRouter.handle(
                 tenant_context=tenant_context,

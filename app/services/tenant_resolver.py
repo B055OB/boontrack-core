@@ -172,8 +172,10 @@ async def resolve_tenant_by_phone_number_id(
     except Exception as redis_err:
         logger.debug(f"[TENANT_RESOLVER] Redis get warning: {redis_err}")
 
-    # Step 3: Cache Miss -> Query PostgreSQL Database
+    # Step 3: Cache Miss -> Query PostgreSQL Database with Supabase fallback
     tenant_data = await _query_postgres_tenant(clean_id)
+    if not tenant_data:
+        tenant_data = await _query_supabase_tenant(clean_id)
 
     if tenant_data and tenant_data.get("is_active"):
         # Populate L1 Cache
@@ -303,3 +305,65 @@ async def _query_postgres_tenant(phone_number_id: str) -> Optional[Dict[str, Any
         return await asyncio.to_thread(_sync_query)
     except Exception:
         return None
+
+
+async def _query_supabase_tenant(phone_number_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Fallback query ke Supabase tenants table jika PostgreSQL cache/connection miss.
+    Mendukung kolom fisik waba_phone_number_id dan JSONB containment filter metadata.
+    """
+    clean_id = str(phone_number_id or "").strip()
+    if not clean_id:
+        return None
+
+    try:
+        from app.services.whatsapp_service import get_supabase
+        sb = get_supabase()
+        if not sb:
+            return None
+
+        # 1. Direct physical column lookup: waba_phone_number_id
+        try:
+            res = sb.table("tenants").select("id, slug, is_active").eq("waba_phone_number_id", clean_id).execute()
+            if res and isinstance(getattr(res, "data", None), list) and len(res.data) > 0:
+                row = res.data[0]
+                return {
+                    "tenant_id": str(row.get("slug") or row.get("id") or ""),
+                    "waba_phone_number_id": clean_id,
+                    "is_active": bool(row.get("is_active", True)),
+                    "display_phone_number": "",
+                }
+        except Exception as e1:
+            logger.debug(f"[TENANT_RESOLVER] Supabase physical col query error: {e1}")
+
+        # 2. JSONB containment filter: metadata @> {"waba_phone_number_id": clean_id}
+        try:
+            res = sb.table("tenants").select("id, slug, is_active").contains("metadata", {"waba_phone_number_id": clean_id}).execute()
+            if res and isinstance(getattr(res, "data", None), list) and len(res.data) > 0:
+                row = res.data[0]
+                return {
+                    "tenant_id": str(row.get("slug") or row.get("id") or ""),
+                    "waba_phone_number_id": clean_id,
+                    "is_active": bool(row.get("is_active", True)),
+                    "display_phone_number": "",
+                }
+        except Exception as e2:
+            logger.debug(f"[TENANT_RESOLVER] Supabase jsonb contains waba query error: {e2}")
+
+        # 3. JSONB containment filter fallback: metadata @> {"phone_number_id": clean_id}
+        try:
+            res = sb.table("tenants").select("id, slug, is_active").contains("metadata", {"phone_number_id": clean_id}).execute()
+            if res and isinstance(getattr(res, "data", None), list) and len(res.data) > 0:
+                row = res.data[0]
+                return {
+                    "tenant_id": str(row.get("slug") or row.get("id") or ""),
+                    "waba_phone_number_id": clean_id,
+                    "is_active": bool(row.get("is_active", True)),
+                    "display_phone_number": "",
+                }
+        except Exception as e3:
+            logger.debug(f"[TENANT_RESOLVER] Supabase jsonb contains phone query error: {e3}")
+    except Exception as general_err:
+        logger.debug(f"[TENANT_RESOLVER] Supabase query tenant error: {general_err}")
+
+    return None
