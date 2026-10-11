@@ -25,12 +25,20 @@ EVOLUTION_BASE_URL = (
     or "https://evolution-api-production-abb7.up.railway.app"
 ).rstrip("/")
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 EVOLUTION_API_KEY = (
     os.getenv("EVOLUTION_API_KEY")
     or os.getenv("AUTHENTICATION_API_KEY")
     or os.getenv("WA_GATEWAY_INTERNAL_API_KEY")
-    or "4398809d97f770b1a2b243ed0ee33bf3312d02dec42be8789ea3512f487f4c5e"
 )
+
+if not EVOLUTION_API_KEY:
+    raise RuntimeError("EVOLUTION_API_KEY environment variable is missing")
 
 
 def get_evolution_headers() -> Dict[str, str]:

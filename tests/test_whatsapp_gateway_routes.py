@@ -104,3 +104,178 @@ async def test_evolution_webhook_image_message_upload_r2():
             assert log_kwargs["text"] == "Bukti transfer"
             assert log_kwargs["user_phone"] == "628987654321"
 
+
+@pytest.mark.asyncio
+async def test_connect_error_branch_no_name_error():
+    """
+    P0 FIX VERIFICATION:
+    Memastikan tidak ada NameError (clean_tenant -> resolved_tenant) saat socket Baileys/Evolution
+    mengembalikan error terdegradasi atau melemparkan exception tak terduga.
+    """
+    # 1. Kasus respons terdegradasi (success=False)
+    with patch("app.services.whatsapp_service.get_or_create_evolution_session", new_callable=AsyncMock) as mock_evo:
+        mock_evo.return_value = {
+            "success": False,
+            "error": "Baileys socket disconnect 408",
+            "disconnect_reason": "SOCKET_TIMEOUT"
+        }
+        res = client.get("/api/v1/whatsapp/sessions/tenant_err/connect?force=true")
+        assert res.status_code == 502
+        data = res.json()
+        assert data["success"] is False
+        assert data["tenant_slug"] == "tenant_err"
+        assert data["status"] == "DEGRADED"
+        assert data["disconnect_reason"] == "SOCKET_TIMEOUT"
+
+    # 2. Kasus Exception tak terduga dari network/socket
+    with patch("app.services.whatsapp_service.get_or_create_evolution_session", new_callable=AsyncMock) as mock_evo_exc:
+        mock_evo_exc.side_effect = ConnectionResetError("Connection reset by peer")
+        res = client.get("/api/v1/whatsapp/sessions/tenant_err/connect?force=true")
+        assert res.status_code == 502
+        data = res.json()
+        assert data["success"] is False
+        assert data["tenant_slug"] == "tenant_err"
+        assert data["disconnect_reason"] == "GATEWAY_UNREACHABLE"
+        assert "Connection reset by peer" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_canonical_and_alias_routes():
+    """
+    Memverifikasi bahwa seluruh route kanonis dan backward-compatible aliases
+    dapat diakses dengan baik pada runner FastAPI tanpa 404:
+    - Canonical: GET /api/v1/whatsapp/sessions/{tenant_slug}/connect
+    - Canonical POST: POST /api/v1/whatsapp/sessions/{tenant_slug}/connect
+    - Backward-compatible legacy alias: GET /sessions/{tenant_slug}/connect
+    - Backward-compatible legacy alias: POST /sessions/{tenant_slug}/connect
+    - Scoped alias: GET /api/v1/whatsapp/connect
+    - Legacy root alias: GET /connect
+    """
+    with patch("app.services.whatsapp_service.get_or_create_evolution_session", new_callable=AsyncMock) as mock_evo:
+        mock_evo.return_value = {
+            "success": True,
+            "provider": "EVOLUTION",
+            "instance_name": "alias_tenant",
+            "base64": "fake_qr_base64",
+            "code": "12345678",
+            "status": "connecting",
+            "message": "Sesi QR WhatsApp terhubung melalui BoonTrack WhatsApp Engine (BoonTrack Gateway)."
+        }
+
+        # 1. Canonical GET
+        res_canon_get = client.get("/api/v1/whatsapp/sessions/alias_tenant/connect?force=true")
+        assert res_canon_get.status_code == 200
+        assert res_canon_get.json()["tenant_slug"] == "alias_tenant"
+
+        # 2. Canonical POST
+        res_canon_post = client.post("/api/v1/whatsapp/sessions/alias_tenant/connect?force=true")
+        assert res_canon_post.status_code == 200
+        assert res_canon_post.json()["tenant_slug"] == "alias_tenant"
+
+        # 3. Legacy Alias GET without prefix
+        res_legacy_get = client.get("/sessions/alias_tenant/connect?force=true")
+        assert res_legacy_get.status_code == 200
+        assert res_legacy_get.json()["tenant_slug"] == "alias_tenant"
+
+        # 4. Legacy Alias POST without prefix
+        res_legacy_post = client.post("/sessions/alias_tenant/connect?force=true")
+        assert res_legacy_post.status_code == 200
+        assert res_legacy_post.json()["tenant_slug"] == "alias_tenant"
+
+        # 5. Scoped Alias GET
+        res_scoped_get = client.get("/api/v1/whatsapp/connect?tenant_slug=alias_tenant&force=true")
+        assert res_scoped_get.status_code == 200
+        assert res_scoped_get.json()["tenant_slug"] == "alias_tenant"
+
+        # 6. Legacy Root Alias GET
+        res_root_get = client.get("/connect?tenant_slug=alias_tenant&force=true")
+        assert res_root_get.status_code == 200
+        assert res_root_get.json()["tenant_slug"] == "alias_tenant"
+
+
+@pytest.mark.asyncio
+async def test_in_flight_lock_and_idempotency_cache():
+    """
+    Memverifikasi locking & 15-second result caching:
+    Dua request paralel/berurutan dalam kurun waktu 15 detik hanya memicu 1 kali pemanggilan
+    ke underlying get_or_create_evolution_session.
+    """
+    from app.routes.whatsapp_gateway_routes import _LAST_CONNECT_CACHE
+    _LAST_CONNECT_CACHE.pop("idemp_tenant", None)
+
+    with patch("app.services.whatsapp_service.get_or_create_evolution_session", new_callable=AsyncMock) as mock_evo:
+        mock_evo.return_value = {
+            "success": True,
+            "provider": "EVOLUTION",
+            "instance_name": "idemp_tenant",
+            "base64": "cached_qr_1",
+            "code": "87654321",
+            "status": "connecting",
+        }
+
+        # Request 1 (miss cache)
+        res1 = client.get("/api/v1/whatsapp/sessions/idemp_tenant/connect")
+        assert res1.status_code == 200
+        assert res1.json()["base64"] == "cached_qr_1"
+
+        # Request 2 (hit cache < 15s)
+        res2 = client.get("/api/v1/whatsapp/sessions/idemp_tenant/connect")
+        assert res2.status_code == 200
+        assert res2.json()["base64"] == "cached_qr_1"
+
+        # Hanya dipanggil 1 kali ke gateway backend
+        assert mock_evo.call_count == 1
+
+
+def test_aiohttp_route_registration():
+    """
+    Memverifikasi bahwa register_whatsapp_gateway_routes mendaftarkan seluruh
+    canonical path dan aliases ke aiohttp web.Application.
+    """
+    from aiohttp import web
+    from app.routes.whatsapp_gateway_routes import register_whatsapp_gateway_routes
+
+    app_aio = web.Application()
+    register_whatsapp_gateway_routes(app_aio)
+
+    registered_paths = {
+        (r.method, r.resource.canonical)
+        for r in app_aio.router.routes()
+    }
+
+    assert ("GET", "/api/v1/whatsapp/sessions/{tenant_slug}/connect") in registered_paths
+    assert ("POST", "/api/v1/whatsapp/sessions/{tenant_slug}/connect") in registered_paths
+    assert ("GET", "/api/v1/whatsapp/connect") in registered_paths
+    assert ("POST", "/api/v1/whatsapp/connect") in registered_paths
+    assert ("GET", "/sessions/{tenant_slug}/connect") in registered_paths
+    assert ("POST", "/sessions/{tenant_slug}/connect") in registered_paths
+    assert ("GET", "/connect") in registered_paths
+    assert ("POST", "/connect") in registered_paths
+
+
+def test_evolution_api_key_missing_raises_runtime_error(monkeypatch):
+    """
+    Memverifikasi validasi startup Evolution API:
+    Jika secret EVOLUTION_API_KEY tidak ditemukan di env, modul wajib melempar
+    RuntimeError('EVOLUTION_API_KEY environment variable is missing').
+    """
+    import importlib
+    import dotenv
+
+    # Hapus seluruh environment key Evolution
+    monkeypatch.delenv("EVOLUTION_API_KEY", raising=False)
+    monkeypatch.delenv("AUTHENTICATION_API_KEY", raising=False)
+    monkeypatch.delenv("WA_GATEWAY_INTERNAL_API_KEY", raising=False)
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: None)
+
+    import app.services.whatsapp.evolution as evo_mod
+
+    with pytest.raises(RuntimeError, match="EVOLUTION_API_KEY environment variable is missing"):
+        importlib.reload(evo_mod)
+
+    # Kembalikan state dengan reload normal
+    monkeypatch.setenv("EVOLUTION_API_KEY", "test_restore_key")
+    importlib.reload(evo_mod)
+
+
+
