@@ -460,6 +460,7 @@ async def start_application():
     register_shop_event_routes(aiohttp_app)
     register_webhook_payment_routes(aiohttp_app)
     register_entitlement_routes(aiohttp_app)
+    register_whatsapp_gateway_routes(aiohttp_app)
     register_whatsapp_control_routes(aiohttp_app)
     register_provisioning_routes(aiohttp_app)
     register_growth_routes(aiohttp_app)

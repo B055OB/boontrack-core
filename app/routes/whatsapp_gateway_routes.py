@@ -13,6 +13,7 @@ import re
 import base64
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, HTTPException, Request, status
@@ -64,67 +65,179 @@ class InboundPayload(BaseModel):
     media_url: Optional[str] = Field(None, description="Public media URL (e.g. from R2)")
 
 
-@router.post("/sessions/{tenant_slug}/connect")
-@router.get("/sessions/{tenant_slug}/connect")
-@router.post("/connect")
-@router.get("/connect")
-@router.post("/api/v1/whatsapp/connect")
-@router.get("/api/v1/whatsapp/connect")
-async def connect_growth_session(
-    tenant_slug: Optional[str] = None,
-    tenant: Optional[str] = None,
-    slug: Optional[str] = None
-):
-    """
-    Meminta QR code live socket Evolution API v2 (Production WhatsApp Gateway resmi).
-    Setiap merchant SaaS wajib diperlakukan sebagai mode DEDICATED dengan instance_name = tenant_slug.
-    """
-    resolved_tenant = (tenant_slug or tenant or slug or "").strip().lower()
-    if not resolved_tenant:
-        raise HTTPException(status_code=400, detail="tenant_slug is required")
+# In-Flight Provisioning Locks & 15-second Result Cache
+_CONNECT_LOCKS: Dict[str, asyncio.Lock] = {}
+_LAST_CONNECT_CACHE: Dict[str, Dict[str, Any]] = {}
+CACHE_TTL_SECONDS = 15.0
+ERROR_CACHE_TTL = 5.0
+LOCK_WAIT_TIMEOUT = 12.0
 
+
+async def execute_connect_growth_session(
+    resolved_tenant: str,
+    force_refresh: bool = False
+) -> tuple[int, Dict[str, Any]]:
+    """
+    Eksekusi connect session WhatsApp untuk tenant secara deterministik dan idempoten:
+    1. Menggunakan in-flight lock per resolved_tenant untuk mencegah duplicate delete/create session.
+    2. Request paralel dalam 10-15 detik menggunakan hasil cache segar (< 15 detik).
+    3. Jika lock sedang ditahan dan timeout (12s), mengembalikan status IN_PROGRESS (202).
+    4. Menangani kegagalan socket tanpa melempar NameError (bebas dari variabel tak terdefinisi).
+    """
+    clean_slug = (resolved_tenant or "").strip().lower()
+    if not clean_slug:
+        return status.HTTP_400_BAD_REQUEST, {
+            "success": False,
+            "error": "tenant_slug is required"
+        }
+
+    now = time.time()
+
+    # 1. Cek recent cache jika tidak force refresh
+    if not force_refresh:
+        cached = _LAST_CONNECT_CACHE.get(clean_slug)
+        if cached:
+            ttl = CACHE_TTL_SECONDS if cached.get("success") else ERROR_CACHE_TTL
+            if (now - cached.get("timestamp", 0)) < ttl:
+                logger.info(f"[WA Gateway] Cache hit untuk tenant '{clean_slug}' ({now - cached['timestamp']:.1f}s lalu)")
+                return cached["status_code"], cached["data"]
+
+    # 2. Dapatkan lock per tenant
+    if clean_slug not in _CONNECT_LOCKS:
+        _CONNECT_LOCKS[clean_slug] = asyncio.Lock()
+    lock = _CONNECT_LOCKS[clean_slug]
+
+    lock_acquired = False
     try:
-        from app.services.whatsapp_service import get_or_create_evolution_session
-        evo_data = await get_or_create_evolution_session(resolved_tenant)
-        if evo_data and evo_data.get("success"):
-            return {
+        try:
+            # Tunggu hingga lock rilis (timeout 12s)
+            await asyncio.wait_for(lock.acquire(), timeout=LOCK_WAIT_TIMEOUT)
+            lock_acquired = True
+        except asyncio.TimeoutError:
+            logger.warning(f"[WA Gateway] In-flight lock timeout (12s) untuk tenant '{clean_slug}'. Mengembalikan IN_PROGRESS.")
+            return status.HTTP_202_ACCEPTED, {
                 "success": True,
-                "tenant_slug": resolved_tenant,
-                "provider": evo_data.get("provider") or "EVOLUTION",
-                "mode": evo_data.get("mode") or "DEDICATED",
-                "instance_name": evo_data.get("instance_name") or resolved_tenant,
-                "base64": evo_data.get("base64") or evo_data.get("qr_image"),
-                "code": evo_data.get("code") or evo_data.get("qr_raw"),
-                "qr_raw": evo_data.get("qr_raw") or evo_data.get("code"),
-                "qr_image": evo_data.get("qr_image") or evo_data.get("base64"),
-                "status": evo_data.get("status"),
-                "phone_number": evo_data.get("phone_number"),
-                "message": "Sesi QR WhatsApp terhubung melalui BoonTrack WhatsApp Engine (BoonTrack Gateway)."
+                "tenant_slug": clean_slug,
+                "status": "IN_PROGRESS",
+                "message": "Sesi WhatsApp sedang disiapkan atau dipulihkan. Silakan tunggu beberapa detik."
             }
-        else:
-            return JSONResponse(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                content={
+
+        # 3. Double-check cache setelah lock berhasil didapatkan
+        now_after_lock = time.time()
+        if not force_refresh:
+            cached = _LAST_CONNECT_CACHE.get(clean_slug)
+            if cached:
+                ttl = CACHE_TTL_SECONDS if cached.get("success") else ERROR_CACHE_TTL
+                if (now_after_lock - cached.get("timestamp", 0)) < ttl:
+                    logger.info(f"[WA Gateway] Post-lock cache hit untuk tenant '{clean_slug}'")
+                    return cached["status_code"], cached["data"]
+
+        # 4. Panggil get_or_create_evolution_session
+        try:
+            from app.services.whatsapp_service import get_or_create_evolution_session
+            evo_data = await get_or_create_evolution_session(clean_slug)
+            if isinstance(evo_data, dict) and evo_data.get("success"):
+                res_data = {
+                    "success": True,
+                    "tenant_slug": clean_slug,
+                    "provider": evo_data.get("provider") or "EVOLUTION",
+                    "mode": evo_data.get("mode") or "DEDICATED",
+                    "instance_name": evo_data.get("instance_name") or clean_slug,
+                    "base64": evo_data.get("base64") or evo_data.get("qr_image"),
+                    "code": evo_data.get("code") or evo_data.get("qr_raw"),
+                    "qr_raw": evo_data.get("qr_raw") or evo_data.get("code"),
+                    "qr_image": evo_data.get("qr_image") or evo_data.get("base64"),
+                    "status": evo_data.get("status"),
+                    "phone_number": evo_data.get("phone_number"),
+                    "message": "Sesi QR WhatsApp terhubung melalui BoonTrack WhatsApp Engine (BoonTrack Gateway)."
+                }
+                status_code = status.HTTP_200_OK
+                success_flag = True
+            else:
+                err_msg = (evo_data.get("error") if isinstance(evo_data, dict) else None) or "Gagal membuat atau menghubungkan sesi di BoonTrack Gateway."
+                disc_reason = (evo_data.get("disconnect_reason") if isinstance(evo_data, dict) else None) or "GATEWAY_SESSION_PENDING"
+                res_data = {
                     "success": False,
-                    "tenant_slug": clean_tenant,
+                    "tenant_slug": clean_slug,
                     "status": "DEGRADED",
-                    "error": evo_data.get("error") or "Gagal membuat atau menghubungkan sesi di BoonTrack Gateway.",
-                    "disconnect_reason": evo_data.get("disconnect_reason") or "GATEWAY_SESSION_PENDING",
+                    "error": err_msg,
+                    "disconnect_reason": disc_reason,
                     "detail": evo_data
                 }
-            )
-    except Exception as evo_err:
-        logger.error(f"[Evolution Connect Error] {evo_err}")
-        return JSONResponse(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            content={
+                status_code = status.HTTP_502_BAD_GATEWAY
+                success_flag = False
+        except Exception as evo_err:
+            logger.error(f"[Evolution Connect Error] {evo_err}")
+            res_data = {
                 "success": False,
-                "tenant_slug": clean_tenant,
+                "tenant_slug": clean_slug,
                 "status": "DEGRADED",
                 "disconnect_reason": "GATEWAY_UNREACHABLE",
                 "error": f"BoonTrack Gateway tidak dapat dihubungi: {str(evo_err)}"
             }
-        )
+            status_code = status.HTTP_502_BAD_GATEWAY
+            success_flag = False
+
+        # 5. Simpan ke cache
+        _LAST_CONNECT_CACHE[clean_slug] = {
+            "timestamp": time.time(),
+            "status_code": status_code,
+            "success": success_flag,
+            "data": res_data
+        }
+        return status_code, res_data
+
+    finally:
+        if lock_acquired:
+            lock.release()
+
+
+@router.get("/sessions/{tenant_slug}/connect", summary="Connect WhatsApp Growth Session (Canonical GET)")
+@router.post("/sessions/{tenant_slug}/connect", summary="Connect WhatsApp Growth Session (Canonical POST)")
+@router.get("/connect", summary="Connect WhatsApp Growth Session (Scoped Alias GET)")
+@router.post("/connect", summary="Connect WhatsApp Growth Session (Scoped Alias POST)")
+async def connect_growth_session(
+    request: Request,
+    tenant_slug: Optional[str] = None,
+    tenant: Optional[str] = None,
+    slug: Optional[str] = None,
+):
+    """
+    Meminta QR code live socket Evolution API v2 (Production WhatsApp Gateway resmi).
+    Setiap merchant SaaS wajib diperlakukan sebagai mode DEDICATED dengan instance_name = tenant_slug.
+    Mendukung locking in-flight dan proteksi idempoten 10-15 detik.
+    """
+    body = {}
+    if request:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+    resolved_tenant = (
+        tenant_slug
+        or tenant
+        or slug
+        or (body.get("tenant_slug") if isinstance(body, dict) else None)
+        or (body.get("tenant") if isinstance(body, dict) else None)
+        or (body.get("slug") if isinstance(body, dict) else None)
+        or ""
+    ).strip().lower()
+
+    if not resolved_tenant:
+        raise HTTPException(status_code=400, detail="tenant_slug is required")
+
+    force = False
+    if request:
+        qp = request.query_params
+        force = qp.get("force", "").lower() in ("1", "true") or qp.get("force_refresh", "").lower() in ("1", "true")
+    if isinstance(body, dict) and not force:
+        force = bool(body.get("force") or body.get("force_refresh"))
+
+    status_code, response_data = await execute_connect_growth_session(resolved_tenant, force_refresh=force)
+    if status_code == status.HTTP_200_OK:
+        return response_data
+    return JSONResponse(status_code=status_code, content=response_data)
 
 
 class PairingCodePayload(BaseModel):
@@ -241,6 +354,25 @@ async def tenant_whatsapp_reconnect_legacy(request: Request):
     return {"success": True, "tenant": tenant, **(evo_data or {})}
 
 
+@tenant_reconnect_router.get("/sessions/{tenant_slug}/connect", summary="Connect WhatsApp Growth Session Legacy Alias (GET)")
+@tenant_reconnect_router.post("/sessions/{tenant_slug}/connect", summary="Connect WhatsApp Growth Session Legacy Alias (POST)")
+@tenant_reconnect_router.get("/connect", summary="Connect WhatsApp Growth Session Legacy Root Alias (GET)")
+@tenant_reconnect_router.post("/connect", summary="Connect WhatsApp Growth Session Legacy Root Alias (POST)")
+async def connect_growth_session_legacy_alias(
+    request: Request,
+    tenant_slug: Optional[str] = None,
+    tenant: Optional[str] = None,
+    slug: Optional[str] = None,
+):
+    """Legacy alias endpoint for WhatsApp Growth connect without /api/v1/whatsapp prefix."""
+    return await connect_growth_session(
+        tenant_slug=tenant_slug,
+        tenant=tenant,
+        slug=slug,
+        request=request,
+    )
+
+
 async def aiohttp_pairing_code_handler(request):
     try:
         from aiohttp import web
@@ -296,6 +428,48 @@ async def aiohttp_connection_state_handler(request):
         return web.json_response({"success": False, "error": str(exc)}, status=502)
 
 
+async def aiohttp_connect_growth_session_handler(request):
+    """
+    aiohttp handler untuk WhatsApp Growth Session Connect:
+    Mendukung canonical path /api/v1/whatsapp/sessions/{tenant_slug}/connect dan backward-compatible aliases.
+    """
+    try:
+        from aiohttp import web
+        body = {}
+        if request.method == "POST":
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+
+        tenant_slug = (
+            request.match_info.get("tenant_slug")
+            or request.query.get("tenant_slug")
+            or request.query.get("tenant")
+            or request.query.get("slug")
+            or (body.get("tenant_slug") if isinstance(body, dict) else None)
+            or (body.get("tenant") if isinstance(body, dict) else None)
+            or (body.get("slug") if isinstance(body, dict) else None)
+            or ""
+        ).strip().lower()
+
+        if not tenant_slug:
+            return web.json_response({"success": False, "error": "tenant_slug is required"}, status=400)
+
+        force = (
+            request.query.get("force", "").lower() in ("1", "true")
+            or request.query.get("force_refresh", "").lower() in ("1", "true")
+            or (bool(body.get("force") or body.get("force_refresh")) if isinstance(body, dict) else False)
+        )
+
+        status_code, data = await execute_connect_growth_session(tenant_slug, force_refresh=force)
+        return web.json_response(data, status=status_code)
+    except Exception as exc:
+        from aiohttp import web
+        logger.error(f"[aiohttp connect_growth_session Error] {exc}")
+        return web.json_response({"success": False, "error": str(exc)}, status=500)
+
+
 def register_whatsapp_gateway_routes(app):
     """Mendaftarkan seluruh route WhatsApp gateway (pairing, reconnect, Evolution webhook, status) ke server aiohttp."""
     existing_routes = {
@@ -313,6 +487,16 @@ def register_whatsapp_gateway_routes(app):
                 existing_routes.add((method.upper(), path))
             except Exception as e:
                 logger.warning(f"[register_whatsapp_gateway_routes] Skip {method} {path}: {e}")
+
+    # WhatsApp Growth Session Connect Routes (Canonical & Backward-Compatible Aliases)
+    _safe_add_route("GET", "/api/v1/whatsapp/sessions/{tenant_slug}/connect", aiohttp_connect_growth_session_handler)
+    _safe_add_route("POST", "/api/v1/whatsapp/sessions/{tenant_slug}/connect", aiohttp_connect_growth_session_handler)
+    _safe_add_route("GET", "/api/v1/whatsapp/connect", aiohttp_connect_growth_session_handler)
+    _safe_add_route("POST", "/api/v1/whatsapp/connect", aiohttp_connect_growth_session_handler)
+    _safe_add_route("GET", "/sessions/{tenant_slug}/connect", aiohttp_connect_growth_session_handler)
+    _safe_add_route("POST", "/sessions/{tenant_slug}/connect", aiohttp_connect_growth_session_handler)
+    _safe_add_route("GET", "/connect", aiohttp_connect_growth_session_handler)
+    _safe_add_route("POST", "/connect", aiohttp_connect_growth_session_handler)
 
     _safe_add_route("POST", "/tenant/whatsapp/reconnect", aiohttp_tenant_reconnect_handler)
     _safe_add_route("POST", "/api/v1/whatsapp/sessions/{tenant_slug}/pairing-code", aiohttp_pairing_code_handler)
