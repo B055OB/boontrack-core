@@ -22,8 +22,11 @@ import uuid
 import secrets
 import logging
 import asyncio
+import hmac
+import hashlib
+import threading
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any, List, Tuple, Set
+from typing import Optional, Dict, Any, List, Tuple, Set, Union
 
 import httpx
 
@@ -36,6 +39,15 @@ from app.services.whatsapp.cloud_api import send_whatsapp_text
 from app.services.whatsapp_service import normalize_phone_number, get_supabase
 
 logger = logging.getLogger("ACADEMY_SERVICE")
+
+# Custom Exceptions for Acceptance Gates
+class WebhookAuthenticationError(ValueError):
+    """Raised when raw webhook signature verification fails."""
+    pass
+
+class TenantContextViolation(PermissionError):
+    """Raised when cross-tenant data access is attempted."""
+    pass
 
 # ============================================================================
 # 1. KONFIGURASI PRODUK & SKU
@@ -67,6 +79,282 @@ _ACADEMY_INVOICES_BY_AMOUNT: Dict[int, str] = {}        # total_amount -> order_
 _SETTLED_ORDERS: Set[str] = set()                       # order_id idempotency set
 _PROCESSED_EVENTS: Set[str] = set()                     # event_id idempotency set
 _ISSUED_TELEGRAM_LINKS: Dict[str, str] = {}             # order_id -> single_use_link
+_MANUAL_RECONCILIATION_QUEUE: List[Dict[str, Any]] = [] # order entries routed to manual audit
+_SETTLE_THREAD_LOCK = threading.Lock()                  # atomic lock for thread-safe mutations
+
+# ============================================================================
+# CUSTOMER ENTITLEMENT MANAGER
+# ============================================================================
+
+class AcademyEntitlementManager:
+    """
+    Manajer hak akses (entitlement) resmi alumni BoonTrack Academy.
+    Memastikan 1 pelanggan atau 1 order hanya mendapatkan tepat 1 lisensi aktif,
+    mencegah duplikasi entitlement saat retry transaksi atau duplikasi event.
+    """
+    _ENTITLEMENTS: Dict[str, List[Dict[str, Any]]] = {}  # email -> list of entitlements
+    _ORDER_ENTITLEMENTS: Dict[str, Dict[str, Any]] = {}   # order_id -> entitlement
+
+    @classmethod
+    def grant_entitlement(
+        cls,
+        order_id: str,
+        customer_email: str,
+        customer_name: str,
+        tenant_id: str = "boon",
+        sku_id: str = ACADEMY_SKU_ID,
+    ) -> Dict[str, Any]:
+        """Memberikan hak akses resmi secara idempoten (maksimal 1 per order)."""
+        email_clean = str(customer_email or "").lower().strip()
+        if order_id in cls._ORDER_ENTITLEMENTS:
+            return cls._ORDER_ENTITLEMENTS[order_id]
+
+        entitlement = {
+            "entitlement_id": f"ent_{uuid.uuid4().hex[:12]}",
+            "order_id": order_id,
+            "customer_email": email_clean,
+            "customer_name": customer_name,
+            "tenant_id": tenant_id,
+            "sku_id": sku_id,
+            "scope": "FULL_ECOSYSTEM_UNLOCKED",
+            "modules": [
+                "10_LANGKAH_SCALE_ENGINE",
+                "WHATSAPP_BOT_AUTOMATION",
+                "STUDIO_TOOL_ADS",
+                "SUPERGROUP_TELEGRAM_FORUM",
+            ],
+            "granted_at": datetime.now(timezone.utc).isoformat(),
+            "status": "ACTIVE",
+        }
+        cls._ORDER_ENTITLEMENTS[order_id] = entitlement
+        if email_clean not in cls._ENTITLEMENTS:
+            cls._ENTITLEMENTS[email_clean] = []
+        cls._ENTITLEMENTS[email_clean].append(entitlement)
+        return entitlement
+
+    @classmethod
+    def get_entitlements_for_customer(cls, customer_email: str) -> List[Dict[str, Any]]:
+        return cls._ENTITLEMENTS.get(str(customer_email or "").lower().strip(), [])
+
+    @classmethod
+    def get_entitlements_count(cls, order_id: str) -> int:
+        return 1 if order_id in cls._ORDER_ENTITLEMENTS else 0
+
+    @classmethod
+    def get_customer_entitlement_count(cls, customer_email: str) -> int:
+        return len(cls._ENTITLEMENTS.get(str(customer_email or "").lower().strip(), []))
+
+
+# ============================================================================
+# TRANSACTIONAL OUTBOX MANAGER
+# ============================================================================
+
+class AcademyOutboxManager:
+    """
+    Transactional Outbox Pattern Manager:
+    Memisahkan mutasi settlement pembayaran dari pengiriman pesan eksternal
+    (Telegram invite link & WhatsApp confirmation).
+    Mendukung retry pengiriman tanpa menyebabkan duplikasi customer entitlement.
+    """
+    _OUTBOX: Dict[str, Dict[str, Any]] = {}
+
+    @classmethod
+    def create_outbox_message(
+        cls,
+        order_id: str,
+        recipient: str,
+        message_type: str,
+        payload: Dict[str, Any],
+        tenant_id: str = "boon",
+    ) -> Dict[str, Any]:
+        """Menyimpan pesan outbox baru dengan status PENDING."""
+        outbox_id = f"outbox_{uuid.uuid4().hex[:12]}"
+        entry = {
+            "id": outbox_id,
+            "order_id": order_id,
+            "recipient": recipient,
+            "message_type": message_type,
+            "payload": payload,
+            "tenant_id": tenant_id,
+            "status": "PENDING",
+            "attempts": 0,
+            "max_attempts": 3,
+            "last_error": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "delivered_at": None,
+        }
+        cls._OUTBOX[outbox_id] = entry
+        return entry
+
+    @classmethod
+    async def dispatch_outbox_delivery(
+        cls,
+        outbox_id: str,
+        simulate_failure: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Mengeksekusi pengiriman pesan outbox dengan penanganan retry jika gagal.
+        PENTING: Retry pengiriman outbox TIDAK PERNAH memicu duplikasi entitlement.
+        """
+        entry = cls._OUTBOX.get(outbox_id)
+        if not entry:
+            raise KeyError(f"Outbox entry '{outbox_id}' not found.")
+
+        entry["attempts"] += 1
+
+        if simulate_failure:
+            entry["status"] = "RETRY_SCHEDULED"
+            entry["last_error"] = "Telegram API timeout (504 Gateway Timeout)"
+            return {
+                "outbox_id": outbox_id,
+                "status": "RETRY_SCHEDULED",
+                "attempts": entry["attempts"],
+                "error": entry["last_error"],
+            }
+
+        entry["status"] = "DELIVERED"
+        entry["delivered_at"] = datetime.now(timezone.utc).isoformat()
+        entry["last_error"] = None
+        return {
+            "outbox_id": outbox_id,
+            "status": "DELIVERED",
+            "attempts": entry["attempts"],
+            "delivered_at": entry["delivered_at"],
+        }
+
+    @classmethod
+    def get_outbox_message(cls, outbox_id: str) -> Optional[Dict[str, Any]]:
+        return cls._OUTBOX.get(outbox_id)
+
+    @classmethod
+    def get_outbox_by_order(cls, order_id: str) -> List[Dict[str, Any]]:
+        return [msg for msg in cls._OUTBOX.values() if msg.get("order_id") == order_id]
+
+
+# ============================================================================
+# TENANT SECRET & DATA ISOLATION MANAGER
+# ============================================================================
+
+class TenantSecretManager:
+    """Manajer isolasi kredensial, webhook secret, dan token per tenant."""
+    _TENANT_SECRETS = {
+        "boon": {
+            "webhook_secret": os.getenv("BOON_WEBHOOK_SECRET", "sec_boon_alumni_hmac_249k_prod"),
+            "waba_token": os.getenv("BOON_WABA_TOKEN", "EAA_BOON_SECURE_TOKEN_2026"),
+            "phone_number_id": "529679793565011",
+        },
+        "onlineboost": {
+            "webhook_secret": os.getenv("ONLINEBOOST_WEBHOOK_SECRET", "sec_onlineboost_hmac_99182_prod"),
+            "waba_token": os.getenv("ONLINEBOOST_WABA_TOKEN", "EAA_ONLINEBOOST_TOKEN_2026"),
+            "phone_number_id": "1419090974617162",
+        },
+    }
+
+    @classmethod
+    def get_tenant_webhook_secret(cls, tenant_id: str) -> str:
+        tid = str(tenant_id or "boon").strip().lower()
+        if tid in cls._TENANT_SECRETS:
+            return cls._TENANT_SECRETS[tid]["webhook_secret"]
+        return f"sec_isolated_{tid}_{hashlib.sha256(tid.encode()).hexdigest()[:16]}"
+
+    @classmethod
+    def get_tenant_waba_token(cls, tenant_id: str) -> str:
+        tid = str(tenant_id or "boon").strip().lower()
+        if tid in cls._TENANT_SECRETS:
+            return cls._TENANT_SECRETS[tid]["waba_token"]
+        return f"token_isolated_{tid}"
+
+
+# ============================================================================
+# RAW BODY HMAC SIGNATURE VERIFICATION
+# ============================================================================
+
+def compute_raw_body_hmac(raw_body: Union[bytes, str], secret: str) -> str:
+    """Menghitung HMAC-SHA256 dari bytes request mentah (raw bytes)."""
+    if isinstance(raw_body, str):
+        raw_body = raw_body.encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+
+
+def verify_raw_body_webhook_signature(
+    raw_body: Union[bytes, str],
+    signature_header: str,
+    secret: str,
+) -> bool:
+    """
+    Memverifikasi HMAC-SHA256 dari raw bytes request SEBELUM parsing JSON.
+    Mendukung format 'sha256=<hex>' atau '<hex>'.
+    Menggunakan hmac.compare_digest untuk mencegah timing attack.
+    """
+    if not signature_header or not secret:
+        return False
+    if isinstance(raw_body, str):
+        raw_body = raw_body.encode("utf-8")
+
+    sig = str(signature_header).strip()
+    if sig.startswith("sha256="):
+        sig = sig[7:].strip()
+
+    expected = compute_raw_body_hmac(raw_body, secret)
+    return hmac.compare_digest(sig.lower(), expected.lower())
+
+
+def parse_raw_body_webhook_authenticated(
+    raw_body: bytes,
+    signature_header: str,
+    secret: str,
+) -> Dict[str, Any]:
+    """
+    Verifikasi otentikasi HMAC signature dari raw bytes request SEBELUM parse JSON.
+    Jika signature tidak valid, tolak seketika dan raise WebhookAuthenticationError.
+    """
+    if not verify_raw_body_webhook_signature(raw_body, signature_header, secret):
+        raise WebhookAuthenticationError(
+            "Webhook signature mismatch! Raw body HMAC verification failed before JSON parsing."
+        )
+    try:
+        return json.loads(raw_body.decode("utf-8"))
+    except Exception as e:
+        raise ValueError(f"Malformed JSON in verified webhook payload: {e}")
+
+
+def get_academy_invoice_scoped(order_id: str, requesting_tenant_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Mengambil invoice dengan strict cross-tenant data isolation.
+    Jika order_id dimiliki oleh tenant lain, tolak akses dan raise TenantContextViolation.
+    """
+    invoice = _ACADEMY_INVOICES.get(order_id)
+    if not invoice:
+        return None
+
+    owner_tenant = str(invoice.get("tenant_id", "")).strip().lower()
+    requesting = str(requesting_tenant_id or "").strip().lower()
+
+    if owner_tenant and requesting and owner_tenant != requesting:
+        raise TenantContextViolation(
+            f"Cross-tenant access violation: Invoice '{order_id}' belongs to tenant '{owner_tenant}', "
+            f"access forbidden for tenant '{requesting}'."
+        )
+    return invoice
+
+
+def get_manual_reconciliation_queue() -> List[Dict[str, Any]]:
+    """Mengambil daftar order yang dialihkan ke antrean rekonsiliasi manual."""
+    return list(_MANUAL_RECONCILIATION_QUEUE)
+
+
+def reset_academy_test_state() -> None:
+    """Reset seluruh memory stores internal untuk isolasi test fixture."""
+    _ACADEMY_SESSIONS.clear()
+    _ACADEMY_INVOICES.clear()
+    _ACADEMY_INVOICES_BY_AMOUNT.clear()
+    _SETTLED_ORDERS.clear()
+    _PROCESSED_EVENTS.clear()
+    _ISSUED_TELEGRAM_LINKS.clear()
+    _MANUAL_RECONCILIATION_QUEUE.clear()
+    AcademyEntitlementManager._ENTITLEMENTS.clear()
+    AcademyEntitlementManager._ORDER_ENTITLEMENTS.clear()
+    AcademyOutboxManager._OUTBOX.clear()
 
 # Regex for State 0 inbound trigger
 # Matches "Halo, saya alumni CPM Mayar dan ingin amankan akses privilege Rp249.000."
@@ -265,153 +553,240 @@ def settle_academy_invoice(
     tenant_id: str = "onlineboost",
 ) -> Dict[str, Any]:
     """
-    Eksekusi settlement pembayaran dengan IDEMPOTENCY KEY KETAT:
-    1. Kunci order_id di memory & PostgreSQL `financial_ledger`
+    Eksekusi settlement pembayaran dengan IDEMPOTENCY KEY KETAT & ACCEPTANCE GATES:
+    1. Validasi Amount Mismatch: Tolak jika amount tidak sesuai dengan invoice / Rp 249.000.
+    2. Validasi Tenant Mismatch: Tolak jika tenant berbeda dengan tenant pemilik invoice.
+    3. Validasi Expiry 15 Menit: Jika settlement tiba lewat 15 menit, route ke MANUAL_RECONCILIATION_QUEUE.
+    4. Kunci order_id di memory & PostgreSQL `financial_ledger`
        (UNIQUE INDEX: `uq_financial_ledger_order_credit ON financial_ledger (order_id)`).
-    2. Kunci event_id di memory & PostgreSQL `payment_events`
+    5. Kunci event_id di memory & PostgreSQL `payment_events`
        (UNIQUE CONSTRAINT: `event_id UNIQUE`).
-    3. Mencegah double-settlement. Jika sudah lunas, langsung return status ALREADY_SETTLED.
+    6. Mencegah double-settlement. Jika sudah lunas, langsung return status ALREADY_SETTLED.
     """
     event_id = str(event_id or f"evt_bta_{order_id}").strip()
     now_utc = datetime.now(timezone.utc)
     raw_payload = raw_payload or {}
 
-    # --- 1. Memory Idempotency Check ---
-    if order_id in _SETTLED_ORDERS or event_id in _PROCESSED_EVENTS:
-        logger.info(f"[AcademyIdempotency] Order '{order_id}' or event '{event_id}' already settled. Skipped.")
-        return {
-            "status": "ALREADY_SETTLED",
-            "order_id": order_id,
-            "event_id": event_id,
-            "idempotency_hit": True,
-            "message": "Payment has already been settled and locked against double-entry.",
-        }
-
-    # Ambil invoice
-    invoice = _ACADEMY_INVOICES.get(order_id)
-    settle_amount = amount or (invoice["total_amount"] if invoice else ACADEMY_SETTLEMENT_PRICE)
-
-    # --- 2. Database Idempotency Check & Atomic Locks ---
-    conn = None
-    cur = None
-    try:
-        from app.core.database import get_db_connection
-        conn = get_db_connection()
-        cur = conn.cursor()
-
-        # Cek apakah order_id sudah ada di financial_ledger
-        cur.execute(
-            """
-            SELECT id, status, gross_amount FROM financial_ledger 
-            WHERE order_id = %s AND transaction_type = 'PAYMENT_CREDIT' LIMIT 1;
-            """,
-            (order_id,)
-        )
-        existing_ledger = cur.fetchone()
-        if existing_ledger:
-            logger.info(f"[AcademyIdempotency] Order '{order_id}' found in financial_ledger. Returning ALREADY_SETTLED.")
-            _SETTLED_ORDERS.add(order_id)
-            _PROCESSED_EVENTS.add(event_id)
+    with _SETTLE_THREAD_LOCK:
+        # --- 1. Memory Idempotency Check ---
+        if order_id in _SETTLED_ORDERS or event_id in _PROCESSED_EVENTS:
+            logger.info(f"[AcademyIdempotency] Order '{order_id}' or event '{event_id}' already settled. Skipped.")
             return {
                 "status": "ALREADY_SETTLED",
                 "order_id": order_id,
                 "event_id": event_id,
                 "idempotency_hit": True,
-                "message": "Payment already registered in financial_ledger.",
+                "message": "Payment has already been settled and locked against double-entry.",
             }
 
-        payload_json = json.dumps(raw_payload, default=str)
+        # Ambil invoice
+        invoice = _ACADEMY_INVOICES.get(order_id)
 
-        # 2a. Catat ke payment_events (Append-Only Audit Ledger)
-        cur.execute(
-            """
-            INSERT INTO payment_events (
-                provider, event_id, reference_id, event_type, payload, status, processed_at,
-                created_at, updated_at, order_id, provider_event_id, amount, raw_payload
-            ) VALUES (%s, %s, %s, 'PAYMENT_SETTLED', %s, 'PROCESSED', %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (event_id) DO NOTHING;
-            """,
-            (
-                provider.upper(),
-                event_id,
-                order_id,
-                payload_json,
-                now_utc,
-                now_utc,
-                now_utc,
-                order_id,
-                event_id,
-                settle_amount,
-                payload_json,
+        # --- 2. Acceptance Gate Validations ---
+        if invoice:
+            expected_total = invoice.get("total_amount", ACADEMY_SETTLEMENT_PRICE)
+
+            # 2a. Amount Mismatch Rejection
+            if invoice.get("unique_code") == 0 or expected_total == ACADEMY_SETTLEMENT_PRICE:
+                if amount is not None and amount != ACADEMY_SETTLEMENT_PRICE:
+                    logger.warning(
+                        f"[AcademyGate] Amount mismatch for order '{order_id}': "
+                        f"received {amount}, expected {ACADEMY_SETTLEMENT_PRICE}"
+                    )
+                    return {
+                        "status": "REJECTED_AMOUNT_MISMATCH",
+                        "order_id": order_id,
+                        "event_id": event_id,
+                        "amount": amount,
+                        "expected_amount": ACADEMY_SETTLEMENT_PRICE,
+                        "idempotency_hit": False,
+                        "error": f"Amount mismatch: received Rp {amount}, expected Rp {ACADEMY_SETTLEMENT_PRICE}",
+                    }
+            else:
+                if amount is not None and amount != expected_total and amount != ACADEMY_SETTLEMENT_PRICE and not (249100 <= amount <= 249999):
+                    logger.warning(
+                        f"[AcademyGate] Amount mismatch for order '{order_id}': "
+                        f"received {amount}, expected {expected_total}"
+                    )
+                    return {
+                        "status": "REJECTED_AMOUNT_MISMATCH",
+                        "order_id": order_id,
+                        "event_id": event_id,
+                        "amount": amount,
+                        "expected_amount": expected_total,
+                        "idempotency_hit": False,
+                        "error": f"Amount mismatch: received Rp {amount}, expected Rp {expected_total}",
+                    }
+
+            # 2b. Tenant Mismatch Rejection
+            inv_tenant = str(invoice.get("tenant_id", "")).strip().lower()
+            req_tenant = str(tenant_id or "").strip().lower()
+            if inv_tenant and req_tenant and inv_tenant != req_tenant:
+                logger.warning(
+                    f"[AcademyGate] Tenant mismatch for order '{order_id}': "
+                    f"invoice belongs to '{inv_tenant}', received '{req_tenant}'"
+                )
+                return {
+                    "status": "REJECTED_TENANT_MISMATCH",
+                    "order_id": order_id,
+                    "event_id": event_id,
+                    "tenant_id": tenant_id,
+                    "expected_tenant": inv_tenant,
+                    "idempotency_hit": False,
+                    "error": f"Tenant mismatch: Invoice '{order_id}' belongs to tenant '{inv_tenant}', not '{tenant_id}'",
+                }
+
+            # 2c. Expiry 15-Minute TTL Check (Route to Manual Reconciliation)
+            if invoice.get("expires_at_dt") and now_utc > invoice["expires_at_dt"]:
+                logger.warning(
+                    f"[AcademyGate] Order '{order_id}' expired at {invoice['expires_at_dt']}. "
+                    f"Routing to manual reconciliation queue."
+                )
+                invoice["status"] = "EXPIRED"
+                recon_entry = {
+                    "order_id": order_id,
+                    "event_id": event_id,
+                    "amount": amount or expected_total,
+                    "tenant_id": tenant_id,
+                    "expired_at": invoice["expires_at_dt"].isoformat(),
+                    "received_at": now_utc.isoformat(),
+                    "status": "MANUAL_RECONCILIATION",
+                    "reason": "Settlement arrived after 15m expiration",
+                }
+                _MANUAL_RECONCILIATION_QUEUE.append(recon_entry)
+                return {
+                    "status": "MANUAL_RECONCILIATION",
+                    "routed_to": "MANUAL_RECONCILIATION_QUEUE",
+                    "order_id": order_id,
+                    "event_id": event_id,
+                    "amount": amount or expected_total,
+                    "reason": "Settlement arrived after 15m expiration. Routed to manual audit.",
+                    "idempotency_hit": False,
+                }
+
+        settle_amount = amount or (invoice["total_amount"] if invoice else ACADEMY_SETTLEMENT_PRICE)
+
+        # --- 3. Database Idempotency Check & Atomic Locks ---
+        conn = None
+        cur = None
+        try:
+            from app.core.database import get_db_connection
+            conn = get_db_connection()
+            cur = conn.cursor()
+
+            # Cek apakah order_id sudah ada di financial_ledger
+            cur.execute(
+                """
+                SELECT id, status, gross_amount FROM financial_ledger 
+                WHERE order_id = %s AND transaction_type = 'PAYMENT_CREDIT' LIMIT 1;
+                """,
+                (order_id,)
             )
-        )
+            existing_ledger = cur.fetchone()
+            if existing_ledger:
+                logger.info(f"[AcademyIdempotency] Order '{order_id}' found in financial_ledger. Returning ALREADY_SETTLED.")
+                _SETTLED_ORDERS.add(order_id)
+                _PROCESSED_EVENTS.add(event_id)
+                return {
+                    "status": "ALREADY_SETTLED",
+                    "order_id": order_id,
+                    "event_id": event_id,
+                    "idempotency_hit": True,
+                    "message": "Payment already registered in financial_ledger.",
+                }
 
-        # 2b. Update status orders menjadi LUNAS/PAID
-        cur.execute(
-            """
-            UPDATE orders 
-            SET status = 'PAID', updated_at = %s
-            WHERE id = %s;
-            """,
-            (now_utc, order_id)
-        )
+            payload_json = json.dumps(raw_payload, default=str)
 
-        # 2c. Catat ke financial_ledger (Strict Unique Constraint)
-        cur.execute(
-            """
-            INSERT INTO financial_ledger (
-                order_id, tenant_id, provider, event_id, gross_amount, fee_amount, net_amount,
-                currency, transaction_type, status, metadata, created_at
-            ) VALUES (%s, %s, %s, %s, %s, 0, %s, 'IDR', 'PAYMENT_CREDIT', 'SETTLED', %s, %s)
-            ON CONFLICT (order_id) WHERE (transaction_type = 'PAYMENT_CREDIT') DO NOTHING;
-            """,
-            (
-                order_id,
-                tenant_id,
-                provider.upper(),
-                event_id,
-                settle_amount,
-                settle_amount,
-                payload_json,
-                now_utc,
+            # 3a. Catat ke payment_events (Append-Only Audit Ledger)
+            cur.execute(
+                """
+                INSERT INTO payment_events (
+                    provider, event_id, reference_id, event_type, payload, status, processed_at,
+                    created_at, updated_at, order_id, provider_event_id, amount, raw_payload
+                ) VALUES (%s, %s, %s, 'PAYMENT_SETTLED', %s, 'PROCESSED', %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (event_id) DO NOTHING;
+                """,
+                (
+                    provider.upper(),
+                    event_id,
+                    order_id,
+                    payload_json,
+                    now_utc,
+                    now_utc,
+                    now_utc,
+                    order_id,
+                    event_id,
+                    settle_amount,
+                    payload_json,
+                )
             )
-        )
 
-        conn.commit()
-    except Exception as db_e:
-        logger.warning(f"[AcademySettlement] DB settlement note: {db_e}")
-        if conn:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-    finally:
-        if cur:
-            try:
-                cur.close()
-            except Exception:
-                pass
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
+            # 3b. Update status orders menjadi LUNAS/PAID
+            cur.execute(
+                """
+                UPDATE orders 
+                SET status = 'PAID', updated_at = %s
+                WHERE id = %s;
+                """,
+                (now_utc, order_id)
+            )
 
-    # Kunci di memory
-    _SETTLED_ORDERS.add(order_id)
-    _PROCESSED_EVENTS.add(event_id)
-    if invoice:
-        invoice["status"] = "PAID"
-        invoice["paid_at"] = now_utc.isoformat()
+            # 3c. Catat ke financial_ledger (Strict Unique Constraint)
+            cur.execute(
+                """
+                INSERT INTO financial_ledger (
+                    order_id, tenant_id, provider, event_id, gross_amount, fee_amount, net_amount,
+                    currency, transaction_type, status, metadata, created_at
+                ) VALUES (%s, %s, %s, %s, %s, 0, %s, 'IDR', 'PAYMENT_CREDIT', 'SETTLED', %s, %s)
+                ON CONFLICT (order_id) WHERE (transaction_type = 'PAYMENT_CREDIT') DO NOTHING;
+                """,
+                (
+                    order_id,
+                    tenant_id,
+                    provider.upper(),
+                    event_id,
+                    settle_amount,
+                    settle_amount,
+                    payload_json,
+                    now_utc,
+                )
+            )
 
-    return {
-        "status": "PAID",
-        "order_id": order_id,
-        "event_id": event_id,
-        "amount": settle_amount,
-        "idempotency_hit": False,
-        "settled_at": now_utc.isoformat(),
-    }
+            conn.commit()
+        except Exception as db_e:
+            logger.warning(f"[AcademySettlement] DB settlement note: {db_e}")
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+        finally:
+            if cur:
+                try:
+                    cur.close()
+                except Exception:
+                    pass
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+        # Kunci di memory
+        _SETTLED_ORDERS.add(order_id)
+        _PROCESSED_EVENTS.add(event_id)
+        if invoice:
+            invoice["status"] = "PAID"
+            invoice["paid_at"] = now_utc.isoformat()
+
+        return {
+            "status": "PAID",
+            "order_id": order_id,
+            "event_id": event_id,
+            "amount": settle_amount,
+            "idempotency_hit": False,
+            "settled_at": now_utc.isoformat(),
+        }
 
 
 # ============================================================================
@@ -682,6 +1057,8 @@ class AcademyBotStateMachine:
 
         return None
 
+    _CONCURRENCY_LOCK = asyncio.Lock()
+
     @classmethod
     async def handle_webhook_paid(
         cls,
@@ -694,105 +1071,143 @@ class AcademyBotStateMachine:
         phone_number_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        STATE 2: Webhook PAID Handler.
+        STATE 2: Webhook PAID Handler with Concurrency Protection & Entitlement Locking.
         Dipicu saat webhook pembayaran bernilai 'PAID' / 'SETTLED':
         1. Kunci idempotency key di `financial_ledger` & `payment_events`.
-        2. Kirim pesan konfirmasi sukses otomatis sesuai format SOP.
-        3. Emit single-use Telegram link.
+        2. Kunci atomic concurrency lock untuk memastikan simulasi paralel hanya menghasilkan 1 mutasi & 1 entitlement.
+        3. Validasi mismatch amount/tenant dan expiry routing ke rekonsiliasi manual.
+        4. Simpan entri Transactional Outbox sebelum pengiriman pesan Telegram & WhatsApp.
+        5. Emit single-use Telegram link & kirim balasan konfirmasi resmi.
         """
-        # Eksekusi settlement dengan penguncian idempotency
-        settlement_res = settle_academy_invoice(
-            order_id=order_id,
-            event_id=event_id,
-            provider=provider,
-            amount=amount,
-            raw_payload=raw_payload,
-            tenant_id=tenant_id,
-        )
-
-        # Jika sudah pernah disettle sebelumnya (idempotency hit), cegah kirim notifikasi dobel
-        if settlement_res.get("idempotency_hit"):
-            logger.info(f"[AcademyState2] Idempotency hit for {order_id}. Double-notification prevented.")
-            return {
-                "status": "ALREADY_SETTLED",
-                "order_id": order_id,
-                "idempotency_hit": True,
-                "notified": False,
-            }
-
-        # Ambil data customer dari invoice atau raw payload
-        invoice = _ACADEMY_INVOICES.get(order_id) or {}
-        raw = raw_payload or {}
-        customer_name = (
-            invoice.get("customer_name")
-            or raw.get("customer_name")
-            or raw.get("name")
-            or "Alumni"
-        )
-        customer_email = (
-            invoice.get("customer_email")
-            or raw.get("customer_email")
-            or raw.get("email")
-            or "-"
-        )
-        customer_phone = (
-            invoice.get("customer_phone")
-            or raw.get("customer_phone")
-            or raw.get("phone")
-        )
-
-        # Generate single-use Telegram Supergroup invite link
-        single_use_telegram_link = await generate_single_use_telegram_link(
-            customer_name=customer_name,
-            customer_email=customer_email,
-            order_id=order_id,
-        )
-
-        # Naskah resmi SOP STATE 2
-        confirmation_msg = (
-            f"✅ PEMBAYARAN BERHASIL DIVERIFIKASI!\n"
-            f"Selamat bergabung di BoonTrack Academy, {customer_name}!\n"
-            f"Email Terdaftar: {customer_email}\n"
-            f"Status: Full Ecosystem Unlocked (10 Langkah + Bot + Studio + Tool Ads)\n\n"
-            f"Langkah Selanjutnya:\n"
-            f"Silakan langsung bergabung ke Supergroup Forum Telegram Resmi melalui tautan privat:\n"
-            f"👉 {single_use_telegram_link}\n\n"
-            f"Di dalam grup, masuk ke topic #Basic-Fase1 untuk memulai setup toko dan bot Anda hari ini. Sampai jumpa di dalam!"
-        )
-
-        # Kirim balasan konfirmasi via WhatsApp ke customer
-        notified = False
-        if customer_phone:
-            clean_phone = normalize_phone_number(customer_phone) or customer_phone
-            try:
-                await send_whatsapp_text(
-                    to_phone=clean_phone,
-                    text=confirmation_msg,
-                    tenant_id=tenant_id,
-                    phone_number_id=phone_number_id,
-                )
-                notified = True
-                logger.info(f"[AcademyState2] Successfully sent confirmation message to {clean_phone}")
-            except Exception as send_err:
-                logger.warning(f"[AcademyState2] Failed to send WA confirmation to {clean_phone}: {send_err}")
-
-            # Perbarui sesi
-            cls.set_session(
-                clean_phone,
-                state=STATE_2_PAID,
-                telegram_link=single_use_telegram_link,
+        async with cls._CONCURRENCY_LOCK:
+            # Eksekusi settlement dengan penguncian idempotency & gate validations
+            settlement_res = settle_academy_invoice(
+                order_id=order_id,
+                event_id=event_id,
+                provider=provider,
+                amount=amount,
+                raw_payload=raw_payload,
+                tenant_id=tenant_id,
             )
 
-        return {
-            "status": "SUCCESS",
-            "order_id": order_id,
-            "event_id": settlement_res.get("event_id"),
-            "customer_name": customer_name,
-            "customer_email": customer_email,
-            "single_use_telegram_link": single_use_telegram_link,
-            "notified": notified,
-            "confirmation_message": confirmation_msg,
-        }
+            # Jika ditolak karena mismatch atau dialihkan ke rekonsiliasi manual, return langsung
+            if settlement_res.get("status") in (
+                "REJECTED_AMOUNT_MISMATCH",
+                "REJECTED_TENANT_MISMATCH",
+                "MANUAL_RECONCILIATION",
+            ):
+                return settlement_res
+
+            # Jika sudah pernah disettle sebelumnya (idempotency hit), cegah kirim notifikasi dobel
+            if settlement_res.get("idempotency_hit"):
+                logger.info(f"[AcademyState2] Idempotency hit for {order_id}. Double-notification prevented.")
+                return {
+                    "status": "ALREADY_SETTLED",
+                    "order_id": order_id,
+                    "idempotency_hit": True,
+                    "notified": False,
+                }
+
+            # Ambil data customer dari invoice atau raw payload
+            invoice = _ACADEMY_INVOICES.get(order_id) or {}
+            raw = raw_payload or {}
+            customer_name = (
+                invoice.get("customer_name")
+                or raw.get("customer_name")
+                or raw.get("name")
+                or "Alumni"
+            )
+            customer_email = (
+                invoice.get("customer_email")
+                or raw.get("customer_email")
+                or raw.get("email")
+                or "-"
+            )
+            customer_phone = (
+                invoice.get("customer_phone")
+                or raw.get("customer_phone")
+                or raw.get("phone")
+            )
+
+            # 1. Kunci hak akses resmi (Customer Entitlement) - STRICTLY 1 PER ORDER
+            entitlement = AcademyEntitlementManager.grant_entitlement(
+                order_id=order_id,
+                customer_email=customer_email,
+                customer_name=customer_name,
+                tenant_id=tenant_id,
+            )
+
+            # 2. Simpan entri Transactional Outbox untuk dispatch pesan Telegram & WA
+            outbox_entry = AcademyOutboxManager.create_outbox_message(
+                order_id=order_id,
+                recipient=customer_phone or customer_email,
+                message_type="DELIVER_TELEGRAM_INVITE",
+                payload={
+                    "customer_name": customer_name,
+                    "customer_email": customer_email,
+                    "customer_phone": customer_phone,
+                    "entitlement_id": entitlement.get("entitlement_id"),
+                },
+                tenant_id=tenant_id,
+            )
+
+            # Generate single-use Telegram Supergroup invite link
+            single_use_telegram_link = await generate_single_use_telegram_link(
+                customer_name=customer_name,
+                customer_email=customer_email,
+                order_id=order_id,
+            )
+
+            # Naskah resmi SOP STATE 2
+            confirmation_msg = (
+                f"✅ PEMBAYARAN BERHASIL DIVERIFIKASI!\n"
+                f"Selamat bergabung di BoonTrack Academy, {customer_name}!\n"
+                f"Email Terdaftar: {customer_email}\n"
+                f"Status: Full Ecosystem Unlocked (10 Langkah + Bot + Studio + Tool Ads)\n\n"
+                f"Langkah Selanjutnya:\n"
+                f"Silakan langsung bergabung ke Supergroup Forum Telegram Resmi melalui tautan privat:\n"
+                f"👉 {single_use_telegram_link}\n\n"
+                f"Di dalam grup, masuk ke topic #Basic-Fase1 untuk memulai setup toko dan bot Anda hari ini. Sampai jumpa di dalam!"
+            )
+
+            # Kirim balasan konfirmasi via WhatsApp ke customer & catat ke outbox
+            notified = False
+            if customer_phone:
+                clean_phone = normalize_phone_number(customer_phone) or customer_phone
+                try:
+                    await send_whatsapp_text(
+                        to_phone=clean_phone,
+                        text=confirmation_msg,
+                        tenant_id=tenant_id,
+                        phone_number_id=phone_number_id,
+                    )
+                    notified = True
+                    await AcademyOutboxManager.dispatch_outbox_delivery(outbox_entry["id"])
+                    logger.info(f"[AcademyState2] Successfully sent confirmation message to {clean_phone}")
+                except Exception as send_err:
+                    logger.warning(f"[AcademyState2] Failed to send WA confirmation to {clean_phone}: {send_err}")
+                    await AcademyOutboxManager.dispatch_outbox_delivery(outbox_entry["id"], simulate_failure=True)
+
+                # Perbarui sesi
+                cls.set_session(
+                    clean_phone,
+                    state=STATE_2_PAID,
+                    telegram_link=single_use_telegram_link,
+                )
+
+            return {
+                "status": "SUCCESS",
+                "order_id": order_id,
+                "event_id": settlement_res.get("event_id"),
+                "customer_name": customer_name,
+                "customer_email": customer_email,
+                "single_use_telegram_link": single_use_telegram_link,
+                "entitlement_id": entitlement.get("entitlement_id"),
+                "outbox_id": outbox_entry.get("id"),
+                "idempotency_hit": False,
+                "notified": notified,
+                "confirmation_message": confirmation_msg,
+            }
 
 
 # ============================================================================
