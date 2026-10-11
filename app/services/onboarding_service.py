@@ -626,14 +626,26 @@ class OnboardingService:
 
     def get_tenant_details_by_slug(self, slug: str) -> Optional[Dict[str, Any]]:
         """Finds full tenant profile, real products list, payout details, and persona configuration."""
-        raw_slug = str(slug or "").strip().lower()
-        if raw_slug in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app-shop-v1", "app_shop", "app-shop", "boon", "boontrack-app-shop", "boontrack_app_shop"):
+        raw_slug = str(slug or "").strip()
+        is_uuid = False
+        uuid_str = None
+        try:
+            val = uuid.UUID(raw_slug)
+            is_uuid = True
+            uuid_str = str(val)
+        except Exception:
+            is_uuid = False
+            uuid_str = None
+
+        if raw_slug.lower() in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app-shop-v1", "app_shop", "app-shop", "boon", "boontrack-app-shop", "boontrack_app_shop"):
             clean_slug = "boon"
         else:
-            clean_slug = slugify(raw_slug)
+            clean_slug = raw_slug.lower() if is_uuid else slugify(raw_slug)
 
         cfg = LOADED_CONFIG_TENANTS.get(clean_slug)
         tenant_dict = self._tenants_by_slug.get(clean_slug)
+        if not tenant_dict and is_uuid and uuid_str:
+            tenant_dict = self._tenants_by_slug.get(uuid_str)
 
         if not tenant_dict and clean_slug == "boon":
             tenant_dict = {
@@ -771,9 +783,13 @@ class OnboardingService:
                 supabase = get_supabase()
                 if supabase:
                     try:
-                        res = supabase.table("tenants").select("*").eq("slug", clean_slug).execute()
-                        if (not res or not res.data) and ("-" in raw_slug and len(raw_slug) == 36):
-                            res = supabase.table("tenants").select("*").eq("id", raw_slug).execute()
+                        res = None
+                        if is_uuid and uuid_str:
+                            res = supabase.table("tenants").select("*").eq("id", uuid_str).execute()
+                        if not res or not res.data:
+                            res = supabase.table("tenants").select("*").eq("slug", clean_slug).execute()
+                        if (not res or not res.data) and is_uuid and uuid_str:
+                            res = supabase.table("tenants").select("*").eq("id", uuid_str).execute()
                         if res and res.data:
                             row = res.data[0]
                             db_slug = str(row.get("slug") or "").strip().lower()
@@ -820,6 +836,8 @@ class OnboardingService:
                         "created_at": datetime.now(timezone.utc).isoformat(),
                     }
             self._tenants_by_slug[clean_slug] = tenant_dict
+            if tenant_dict.get("id"):
+                self._tenants_by_slug[str(tenant_dict["id"])] = tenant_dict
 
         t_id = tenant_dict.get("id")
         products = []
@@ -857,7 +875,11 @@ class OnboardingService:
         supabase = get_supabase()
         if supabase:
             try:
-                res = supabase.table("tenants").select("*").eq("slug", clean_slug).execute()
+                res = None
+                if is_uuid and uuid_str:
+                    res = supabase.table("tenants").select("*").eq("id", uuid_str).execute()
+                if not res or not res.data:
+                    res = supabase.table("tenants").select("*").eq("slug", clean_slug).execute()
                 if res and res.data:
                     row = res.data[0]
                     meta = row.get("metadata") or {}
@@ -978,8 +1000,18 @@ class OnboardingService:
 
     def get_tenant_settings(self, slug: str) -> Optional[Dict[str, Any]]:
         """Retrieves store settings, trust badges, persona, payout, products list, and FAQ."""
-        clean_slug = slugify(slug)
+        raw_id = str(slug or "").strip()
+        is_uuid = False
+        try:
+            val = uuid.UUID(raw_id)
+            is_uuid = True
+        except Exception:
+            is_uuid = False
+
+        clean_slug = raw_id.lower() if is_uuid else slugify(raw_id)
         details = self.get_tenant_details_by_slug(clean_slug)
+        if not details and is_uuid:
+            details = self.get_tenant_details_by_slug(raw_id)
         if not details:
             return None
 
@@ -995,26 +1027,79 @@ class OnboardingService:
             products[0].get("delivery_url") if (products and len(products) > 0 and products[0].get("delivery_url")) else None
         )
 
-        return {
+        resolved_slug = tenant.get("slug") or clean_slug
+        t_id = tenant.get("id")
+
+        # Dynamic Gateway Configuration from whatsapp_connections
+        gateway_config = {
+            "instance_name": resolved_slug,
+            "provider": "EVOLUTION",
+            "status": "open",
+            "is_connected": True,
+            "phone_number": tenant.get("metadata", {}).get("phone") or tenant.get("admin_phone"),
+            "channel_type": "BAILEYS",
+            "mode": "DEDICATED",
+        }
+        supabase = get_supabase()
+        if supabase:
+            try:
+                or_terms = [f"tenant_slug.eq.{resolved_slug}"]
+                if t_id:
+                    try:
+                        uuid.UUID(str(t_id).strip())
+                        or_terms.append(f"tenant_id.eq.{t_id}")
+                    except Exception:
+                        pass
+                res_gw = supabase.table("whatsapp_connections").select("*").or_(",".join(or_terms)).order("created_at", desc=True).limit(1).execute()
+                if res_gw and res_gw.data:
+                    gw_row = res_gw.data[0]
+                    gw_status = gw_row.get("status") or "open"
+                    is_conn = gw_row.get("is_connected") if gw_row.get("is_connected") is not None else (gw_status in ("open", "connected"))
+                    gateway_config = {
+                        "instance_name": gw_row.get("instance_name") or resolved_slug,
+                        "provider": gw_row.get("provider") or "EVOLUTION",
+                        "status": gw_status,
+                        "is_connected": is_conn,
+                        "phone_number": gw_row.get("phone_number") or tenant.get("admin_phone"),
+                        "channel_type": gw_row.get("channel_type") or "BAILEYS",
+                        "mode": (gw_row.get("metadata") or {}).get("mode", "DEDICATED"),
+                        "metadata": gw_row.get("metadata") or {},
+                    }
+            except Exception as e:
+                logger.debug(f"[OnboardingService gateway_config note] {e}")
+
+        tenant_payload = {
+            **tenant,
+            "gateway_config": gateway_config,
+            "whatsapp_connection": gateway_config,
+            "public_description": tenant.get("public_description") or (products[0].get("description") if products else "Toko Resmi Terverifikasi"),
+            "trust_badges": trust_badges,
+            "delivery_url": delivery_url,
+            "qris_image_url": tenant.get("qris_image_url") or tenant.get("qris_url"),
+            "qris_url": tenant.get("qris_url") or tenant.get("qris_image_url"),
+            "qris_string": tenant.get("qris_string"),
+            "logo_url": tenant.get("logo_url"),
+            "avatar_url": tenant.get("avatar_url"),
+            "banner_url": tenant.get("banner_url"),
+        }
+
+        response_dict = {
             "status": "success",
-            "tenant": {
-                **tenant,
-                "public_description": tenant.get("public_description") or (products[0].get("description") if products else "Toko Resmi Terverifikasi"),
-                "trust_badges": trust_badges,
-                "delivery_url": delivery_url,
-                "qris_image_url": tenant.get("qris_image_url") or tenant.get("qris_url"),
-                "qris_url": tenant.get("qris_url") or tenant.get("qris_image_url"),
-                "qris_string": tenant.get("qris_string"),
-                "logo_url": tenant.get("logo_url"),
-                "avatar_url": tenant.get("avatar_url"),
-                "banner_url": tenant.get("banner_url"),
-            },
+            "slug": resolved_slug,
+            "name": tenant.get("name") or resolved_slug,
+            "gateway_config": gateway_config,
+            "whatsapp_connection": gateway_config,
+            "whatsapp_instance": gateway_config.get("instance_name") or resolved_slug,
+            "tenant": tenant_payload,
             "persona": persona,
             "ai_knowledge": ai_knowledge,
             "payout": tenant.get("payout") or payout,
             "products": products,
             "faq": faq,
         }
+        # Nested settings dictionary for client compatibility
+        response_dict["settings"] = dict(response_dict)
+        return response_dict
 
     def update_tenant_settings(self, slug: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Updates store metadata, public description, persona bot, and auto-delivery URL.

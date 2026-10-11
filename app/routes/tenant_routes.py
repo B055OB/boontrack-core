@@ -79,17 +79,24 @@ async def get_tenant_settings_endpoint(slug: str):
     if not settings:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Tenant with slug '{slug}' not found",
+            detail=f"Tenant with identifier '{slug}' not found",
         )
     
     # Enrich with real-time subscription status (§1 P1 Sprint)
     from app.core.subscription_guard import get_tenant_subscription_state
-    sub_state = get_tenant_subscription_state(slug)
+    resolved_slug = settings.get("slug") or slug
+    sub_state = get_tenant_subscription_state(resolved_slug)
     if isinstance(settings, dict):
         settings["is_suspended"] = sub_state.get("is_suspended", False)
         settings["subscription_status"] = sub_state.get("subscription_status", "active")
         settings["suspension_reason"] = sub_state.get("reason")
         settings["tier"] = sub_state.get("tier")
+        if "settings" in settings and isinstance(settings["settings"], dict):
+            settings["settings"]["is_suspended"] = settings["is_suspended"]
+            settings["settings"]["subscription_status"] = settings["subscription_status"]
+            settings["settings"]["suspension_reason"] = settings["suspension_reason"]
+            settings["settings"]["tier"] = settings["tier"]
+            settings["settings"]["gateway_config"] = settings.get("gateway_config")
     return settings
 
 
