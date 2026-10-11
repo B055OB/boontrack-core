@@ -304,6 +304,14 @@ async def handle_midtrans_notification_logic(payload: Dict[str, Any]) -> tuple[D
             except Exception as db_err:
                 logger.debug(f"[MIDTRANS WEBHOOK DB NOTE] {db_err}")
 
+            # CRM SSOT: Idempotent contact sync from settled order (Fail-safe)
+            try:
+                from app.services.crm_service import sync_contact_from_order
+                sync_payload = dict(order_record) if order_record else {"order_id": order_id, "status": "PAID"}
+                sync_contact_from_order(sync_payload)
+            except Exception as _crm_err:
+                logger.debug(f"[MIDTRANS CRM SSOT Fail-safe Note] {_crm_err}")
+
         # Catat ke memory tracking set
         midtrans_service._processed_transactions.add(order_id)
 

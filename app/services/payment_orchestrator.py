@@ -175,6 +175,23 @@ class PaymentOrchestrator:
                 except Exception as stk_err:
                     logger.warning(f"[Payment Stock Warning] {stk_err}")
 
+            # 4c. CRM SSOT: Idempotent contact sync from settled order (Fail-safe)
+            try:
+                from app.services.crm_service import sync_contact_from_order
+                sync_contact_from_order({
+                    "order_id": str(order.get("id") or external_id),
+                    "tenant_id": order.get("tenant_id") or order.get("tenant_slug") or data_obj.get("tenant_id") or "onlineboost",
+                    "tenant_slug": order.get("tenant_slug") or data_obj.get("tenant_id") or "onlineboost",
+                    "customer_phone": order.get("customer_phone") or data_obj.get("customer_phone") or payload.get("customer_phone"),
+                    "customer_name": order.get("customer_name") or data_obj.get("customer_name"),
+                    "customer_email": order.get("customer_email") or data_obj.get("customer_email"),
+                    "gross_amount": amount,
+                    "paid_at": paid_at,
+                    "status": "LUNAS",
+                })
+            except Exception as _crm_err:
+                logger.warning(f"[Payment CRM SSOT Fail-safe Note] {_crm_err}")
+
         # 5. ATRIBUSI KOMISI & COMMISSION LEDGER ENTRY
         affiliate_id = order.get("affiliate_id")
         affiliate_code = order.get("affiliate_code")

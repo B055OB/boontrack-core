@@ -525,6 +525,23 @@ def _record_settlement_and_ledger_sync(
         conn.commit()
         logger.info(f"[Xendit Ledger Recorded] Event {event_id} & Order {external_id} saved to DB and financial_ledger.")
 
+        # 3e. CRM SSOT: Idempotent contact sync from settled order (Fail-safe)
+        try:
+            from app.services.crm_service import sync_contact_from_order
+            sync_contact_from_order({
+                "order_id": str(external_id),
+                "tenant_id": tenant_id,
+                "tenant_slug": tenant_id,
+                "customer_phone": customer_phone,
+                "customer_name": "Customer",
+                "customer_email": customer_email,
+                "gross_amount": amount,
+                "paid_at": now_utc,
+                "status": "LUNAS",
+            })
+        except Exception as _crm_err:
+            logger.warning(f"[Xendit CRM SSOT Fail-safe Note] {_crm_err}")
+
     except Exception as e:
         if conn:
             try:
