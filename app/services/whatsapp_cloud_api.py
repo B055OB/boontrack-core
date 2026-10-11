@@ -28,6 +28,7 @@ from app.services.whatsapp.cloud_api import (
 
 from app.services.whatsapp.credentials import (
     get_wa_credentials,
+    clear_wa_credentials_cache,
     normalize_phone_number,
     get_supabase,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "send_whatsapp_document",
     "download_whatsapp_media_by_id",
     "get_wa_credentials",
+    "clear_wa_credentials_cache",
     "normalize_phone_number",
     "get_supabase",
 ]

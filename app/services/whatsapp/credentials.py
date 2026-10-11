@@ -132,15 +132,113 @@ def set_user_session(phone: str, tenant_slug: str, state: str = "ACTIVE", contex
     set_user_tenant_session(phone, tenant_slug, state, context)
 
 
+import time
+
 # ---------------------------------------------------------------------------
-# Credential resolution
+# Credential resolution & caching
 # ---------------------------------------------------------------------------
+
+_WA_CREDENTIALS_CACHE: Dict[str, Tuple[str, str, str, float]] = {}
+_WA_CREDENTIALS_CACHE_TTL: float = 60.0  # seconds
+
+
+def clear_wa_credentials_cache() -> None:
+    """Membersihkan in-memory cache kredensial WhatsApp."""
+    _WA_CREDENTIALS_CACHE.clear()
+
+
+def _fetch_wa_credentials_from_db(
+    tenant_slug_or_id: Optional[str] = None,
+    phone_number_id: Optional[str] = None,
+) -> Optional[Tuple[str, str]]:
+    """
+    Query Supabase tabel `whatsapp_connections` (filter status='active')
+    untuk mengambil (api_key, phone_number_id) yang sesuai secara dinamis.
+    Mendukung pencarian via phone_number_id fisik atau tenant_slug/tenant_id.
+    """
+    sb = get_supabase()
+    if not sb:
+        return None
+
+    clean_phone_id = str(phone_number_id or "").strip()
+    clean_tenant = str(tenant_slug_or_id or "").lower().strip()
+
+    # 1. Lookup via physical phone_number_id jika tersedia
+    if clean_phone_id and clean_phone_id not in ("1268977686299719", ""):
+        try:
+            res = (
+                sb.table("whatsapp_connections")
+                .select("tenant_id, tenant_slug, phone_number_id, api_key, metadata, status")
+                .eq("phone_number_id", clean_phone_id)
+                .eq("status", "active")
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if res and res.data:
+                row = res.data[0]
+                token = (row.get("api_key") or "").strip()
+                if not token and isinstance(row.get("metadata"), dict):
+                    meta = row["metadata"]
+                    token = (meta.get("token") or meta.get("access_token") or meta.get("waba_access_token") or "").strip()
+                resolved_p_id = str(row.get("phone_number_id") or clean_phone_id).strip()
+                if token and resolved_p_id:
+                    return token, resolved_p_id
+        except Exception as err:
+            logger.debug(f"[WhatsApp Credential Lookup] Error querying by phone_number_id: {err}")
+
+    # 2. Lookup via tenant_slug / tenant_id
+    if clean_tenant and clean_tenant not in ("shop", "default", "none", "null", ""):
+        try:
+            safe_tenant = clean_tenant.replace("'", "").replace('"', '').replace(",", "").strip()
+            res = (
+                sb.table("whatsapp_connections")
+                .select("tenant_id, tenant_slug, phone_number_id, api_key, metadata, status")
+                .or_(f"tenant_slug.eq.{safe_tenant},tenant_id.eq.{safe_tenant}")
+                .eq("status", "active")
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if res and res.data:
+                row = res.data[0]
+                token = (row.get("api_key") or "").strip()
+                if not token and isinstance(row.get("metadata"), dict):
+                    meta = row["metadata"]
+                    token = (meta.get("token") or meta.get("access_token") or meta.get("waba_access_token") or "").strip()
+                resolved_p_id = str(row.get("phone_number_id") or (row.get("metadata") or {}).get("phone_number_id") or "").strip()
+                if token and resolved_p_id:
+                    return token, resolved_p_id
+        except Exception as err:
+            logger.debug(f"[WhatsApp Credential Lookup] Error querying by tenant: {err}")
+
+    return None
+
 
 def get_wa_credentials(
     tenant_id: str = "shop",
     phone_number_id: Optional[str] = None,
     access_token: Optional[str] = None,
 ) -> Tuple[str, str, str]:
+    """
+    Resolusi kredensial WhatsApp Cloud API (token, phone_number_id, version).
+    Mendukung dynamic database lookup ke tabel `whatsapp_connections` (status='active'),
+    dengan fallback otomatis ke environment variables (Career, Aduan, Platform Shop).
+    """
+    version = os.getenv("META_WABA_API_VERSION") or os.getenv("META_GRAPH_VERSION") or "v26.0"
+    clean_tenant = str(tenant_id).lower().strip() if tenant_id else "shop"
+    raw_phone_id = str(phone_number_id).strip() if phone_number_id else ""
+
+    platform_phone_id = (
+        os.getenv("META_WABA_PHONE_NUMBER_ID")
+        or os.getenv("PLATFORM_PHONE_NUMBER_ID")
+        or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+        or os.getenv("PHONE_NUMBER_ID")
+        or "1365010890024026"
+    ).strip()
+    career_phone_id = (os.getenv("CAREER_PHONE_NUMBER_ID") or "").strip()
+    aduan_phone_id = (os.getenv("ADUAN_SANDBOX_PHONE_ID") or "").strip()
+
     default_token = (
         os.getenv("WHATSAPP_ACCESS_TOKEN")
         or os.getenv("WHATSAPP_TOKEN")
@@ -150,58 +248,89 @@ def get_wa_credentials(
         or os.getenv("META_ACCESS_TOKEN")
         or ""
     ).strip()
-    version = os.getenv("META_WABA_API_VERSION") or os.getenv("META_GRAPH_VERSION") or "v26.0"
 
-    clean_tenant = str(tenant_id).lower().strip() if tenant_id else "shop"
-    platform_phone_id = (
-        os.getenv("META_WABA_PHONE_NUMBER_ID")
-        or os.getenv("PLATFORM_PHONE_NUMBER_ID")
-        or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
-        or os.getenv("PHONE_NUMBER_ID")
-        or "1365010890024026"
-    ).strip()
+    # Priority 0: Explicit token override provided by caller
+    if access_token and str(access_token).strip():
+        resolved_token = str(access_token).strip()
+        resolved_phone_id = raw_phone_id if raw_phone_id else platform_phone_id
+        if resolved_phone_id in ("1268977686299719", ""):
+            resolved_phone_id = platform_phone_id
+        return resolved_token, resolved_phone_id, version
 
-    # Priority 1: Explicit overrides from webhook payload
-    if phone_number_id and str(phone_number_id).strip():
-        resolved_phone_id = str(phone_number_id).strip()
+    # Check in-memory cache
+    cache_key = f"{clean_tenant}:{raw_phone_id}"
+    now = time.time()
+    if cache_key in _WA_CREDENTIALS_CACHE:
+        cached_tok, cached_pid, cached_ver, exp_time = _WA_CREDENTIALS_CACHE[cache_key]
+        if now < exp_time:
+            return cached_tok, cached_pid, cached_ver
+
+    # Priority 1: Dynamic Supabase Lookup from whatsapp_connections
+    db_creds = _fetch_wa_credentials_from_db(
+        tenant_slug_or_id=clean_tenant,
+        phone_number_id=raw_phone_id,
+    )
+    if db_creds:
+        db_token, db_phone_id = db_creds
+        res = (db_token, db_phone_id, version)
+        _WA_CREDENTIALS_CACHE[cache_key] = (db_token, db_phone_id, version, now + _WA_CREDENTIALS_CACHE_TTL)
+        return res
+
+    # Priority 2: Phone number based fallback (Career, Aduan, Platform)
+    if raw_phone_id:
+        resolved_phone_id = raw_phone_id
 
         # Sanitize: cegah ID lama (1268977686299719) yang sudah dinonaktifkan
         if resolved_phone_id in ("1268977686299719", ""):
             resolved_phone_id = platform_phone_id
 
         # Guard: cegah nomor Career membalas di toko showcase / retail / shop
-        if clean_tenant in ["shop", "boontrack", "boontrack-shop", "boontrack-holding", "onlineboost", "growthplus", "proscale"] and resolved_phone_id == (os.getenv("CAREER_PHONE_NUMBER_ID") or "").strip():
+        if clean_tenant in ["shop", "boontrack", "boontrack-shop", "boontrack-holding", "growthplus", "proscale"] and resolved_phone_id == career_phone_id:
             resolved_phone_id = platform_phone_id
 
-        resolved_token = str(access_token).strip() if access_token else default_token
-        if not access_token:
-            if resolved_phone_id == (os.getenv("CAREER_PHONE_NUMBER_ID") or "").strip() and (os.getenv("CAREER_PHONE_NUMBER_ID") or "").strip():
-                resolved_token = (os.getenv("CAREER_ACCESS_TOKEN") or "").strip() or default_token
-            elif resolved_phone_id == platform_phone_id:
-                resolved_token = default_token
-            elif resolved_phone_id == (os.getenv("ADUAN_SANDBOX_PHONE_ID") or "").strip() and (os.getenv("ADUAN_SANDBOX_PHONE_ID") or "").strip():
-                resolved_token = (os.getenv("ADUAN_ACCESS_TOKEN") or "").strip() or default_token
-        return (resolved_token or default_token).strip(), resolved_phone_id, version
+        if resolved_phone_id == career_phone_id and career_phone_id:
+            resolved_token = (os.getenv("CAREER_ACCESS_TOKEN") or "").strip() or default_token
+        elif resolved_phone_id == platform_phone_id:
+            resolved_token = default_token
+        elif resolved_phone_id == aduan_phone_id and aduan_phone_id:
+            resolved_token = (os.getenv("ADUAN_ACCESS_TOKEN") or "").strip() or default_token
+        else:
+            resolved_token = default_token
 
-    # Priority 2: Tenant-based resolution
-    if clean_tenant in ["shop", "boontrack", "boontrack-shop", "boontrack-holding", "onlineboost", "growthplus", "proscale"]:
+        res = (resolved_token or default_token).strip(), resolved_phone_id, version
+        _WA_CREDENTIALS_CACHE[cache_key] = (res[0], res[1], res[2], now + _WA_CREDENTIALS_CACHE_TTL)
+        return res
+
+    # Priority 3: Tenant-based fallback to environment variables
+    # (Pastikan "onlineboost" tidak lagi di-hardcode ke platform_phone_id/default_token)
+    if clean_tenant in ["shop", "boontrack", "boontrack-shop", "boontrack-holding", "growthplus", "proscale"]:
         phone_id = platform_phone_id
-        token = (os.getenv("WHATSAPP_TOKEN") or default_token).strip()
-        return token, str(phone_id).strip(), version
+        token = default_token
+        res = token, str(phone_id).strip(), version
+        _WA_CREDENTIALS_CACHE[cache_key] = (res[0], res[1], res[2], now + _WA_CREDENTIALS_CACHE_TTL)
+        return res
 
     if clean_tenant in ["boontrack-career", "career"]:
-        phone_id = (os.getenv("CAREER_PHONE_NUMBER_ID") or "").strip()
+        phone_id = career_phone_id or platform_phone_id
         token = (os.getenv("CAREER_ACCESS_TOKEN") or default_token).strip()
-        return token, str(phone_id).strip(), version
+        res = token, str(phone_id).strip(), version
+        _WA_CREDENTIALS_CACHE[cache_key] = (res[0], res[1], res[2], now + _WA_CREDENTIALS_CACHE_TTL)
+        return res
 
     if clean_tenant in ["aduan", "aduan-sandbox", "sandbox"]:
-        phone_id = (os.getenv("ADUAN_SANDBOX_PHONE_ID") or "").strip()
+        phone_id = aduan_phone_id or platform_phone_id
         token = (os.getenv("ADUAN_ACCESS_TOKEN") or default_token).strip()
-        return token, str(phone_id).strip(), version
+        res = token, str(phone_id).strip(), version
+        _WA_CREDENTIALS_CACHE[cache_key] = (res[0], res[1], res[2], now + _WA_CREDENTIALS_CACHE_TTL)
+        return res
 
+    # Default platform fallback
     phone_id = platform_phone_id
-    return default_token, str(phone_id).strip(), version
+    res = default_token, str(phone_id).strip(), version
+    _WA_CREDENTIALS_CACHE[cache_key] = (res[0], res[1], res[2], now + _WA_CREDENTIALS_CACHE_TTL)
+    return res
 
 
 def _get_auth_headers(token: str) -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+

@@ -29,6 +29,7 @@ from app.services.whatsapp import (  # noqa: F401, F403
     get_user_session,
     set_user_session,
     get_wa_credentials,
+    clear_wa_credentials_cache,
     _get_auth_headers,
     # cloud_api
     build_whatsapp_text_payload,
@@ -99,6 +100,7 @@ __all__ = [
     "get_user_session",
     "set_user_session",
     "get_wa_credentials",
+    "clear_wa_credentials_cache",
     "_get_auth_headers",
     # cloud_api
     "build_whatsapp_text_payload",
