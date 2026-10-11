@@ -134,6 +134,13 @@ async def tenant_cache_refresh_handler(request: web.Request) -> web.Response:
     # 2. Clear tenant_resolver L1 & L2 Redis caches
     await async_clear_tenant_cache()
 
+    # 2b. Clear WhatsApp credentials cache
+    try:
+        from app.services.whatsapp.credentials import clear_wa_credentials_cache
+        clear_wa_credentials_cache()
+    except Exception:
+        pass
+
     # 3. If update=True, execute direct DB synchronization inside the container
     update_info = None
     if do_update:
