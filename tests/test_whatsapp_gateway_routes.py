@@ -278,4 +278,24 @@ def test_evolution_api_key_missing_raises_runtime_error(monkeypatch):
     importlib.reload(evo_mod)
 
 
+@pytest.mark.asyncio
+async def test_send_whatsapp_text_fail_closed_on_credential_resolution_error():
+    """
+    Memverifikasi fail-closed behavior send_whatsapp_text:
+    Jika get_wa_credentials melempar CredentialResolutionError (misal tenant onlineboost tanpa koneksi unik),
+    send_whatsapp_text menangkap exception tersebut, me-log error, dan return None tanpa melempar 500 / crashing.
+    """
+    from app.services.whatsapp.cloud_api import send_whatsapp_text
+    from app.services.whatsapp.credentials import CredentialResolutionError
+
+    with patch("app.services.whatsapp.cloud_api.get_wa_credentials", side_effect=CredentialResolutionError("No unique active WhatsApp connection for tenant 'onlineboost'")):
+        result = await send_whatsapp_text(
+            to_phone="628123456789",
+            text="Halo testing",
+            tenant_id="onlineboost",
+        )
+        assert result is None
+
+
+
 

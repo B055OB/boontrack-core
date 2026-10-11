@@ -31,6 +31,7 @@ from app.services.whatsapp import (  # noqa: F401, F403
     get_wa_credentials,
     clear_wa_credentials_cache,
     _get_auth_headers,
+    CredentialResolutionError,
     # cloud_api
     build_whatsapp_text_payload,
     send_text,
@@ -102,6 +103,7 @@ __all__ = [
     "get_wa_credentials",
     "clear_wa_credentials_cache",
     "_get_auth_headers",
+    "CredentialResolutionError",
     # cloud_api
     "build_whatsapp_text_payload",
     "send_text",

@@ -21,6 +21,7 @@ from app.services.whatsapp.credentials import (
     get_wa_credentials,
     _get_auth_headers,
     normalize_phone_number,
+    CredentialResolutionError,
 )
 
 logger = logging.getLogger(__name__)
@@ -341,7 +342,12 @@ async def send_whatsapp_text(
 
     sanitized_text = sanitize_whatsapp_message_text(raw_text)
 
-    token, phone_id, version = get_wa_credentials(tenant_id, phone_number_id=phone_number_id, access_token=access_token)
+    try:
+        token, phone_id, version = get_wa_credentials(tenant_id, phone_number_id=phone_number_id, access_token=access_token)
+    except CredentialResolutionError as cred_err:
+        logger.error(f"[WhatsApp Service] Credential resolution failed for tenant '{tenant_id}': {cred_err}")
+        return None
+
     if not token or not phone_id:
         logger.error(f"[WhatsApp Service] Missing credentials (phone_id={phone_id}, tenant={tenant_id})")
         return None

@@ -20,6 +20,7 @@ from app.services.whatsapp.credentials import (
     get_wa_credentials,
     clear_wa_credentials_cache,
     _get_auth_headers,
+    CredentialResolutionError,
 )
 
 # cloud_api
@@ -114,6 +115,7 @@ __all__ = [
     "get_wa_credentials",
     "clear_wa_credentials_cache",
     "_get_auth_headers",
+    "CredentialResolutionError",
     # cloud_api
     "build_whatsapp_text_payload",
     "send_text",
