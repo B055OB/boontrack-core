@@ -60,7 +60,7 @@ from app.routes.seller_ads_routes import register_seller_ads_routes
 from app.routes.affiliate_auth import router as affiliate_auth_router, affiliate_payout_router, affiliate_router, register_affiliate_auth_routes
 from app.routes.meta_waba_routes import waba_router
 from app.routes.whatsapp_connect_routes import whatsapp_connect_router
-from app.routes.academy_routes import academy_router
+from app.routes.academy_routes import academy_router, register_academy_routes
 from app.routes.shipping_routes import router as shipping_router, logistics_router
 from app.routes.partner_routes import partner_router, manager_router
 from app.routes.analytics_fastapi_routes import router as analytics_router
@@ -516,6 +516,7 @@ async def start_application():
     register_tenant_onboard_routes(aiohttp_app)
     register_inbox_routes(aiohttp_app)
     register_d2c_order_routes(aiohttp_app)
+    register_academy_routes(aiohttp_app)
 
     port = int(os.getenv("PORT", 8080))
     await start_web_server(aiohttp_app, port=port)

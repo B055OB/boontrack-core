@@ -161,3 +161,61 @@ async def queue_broadcast_campaign(
         rate_limit_per_second=rate_limit_per_second,
     )
     return result
+
+
+def register_academy_routes(app):
+    """Mendaftarkan endpoint Academy ke aiohttp web server."""
+    from aiohttp import web
+
+    cors_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+    }
+
+    async def aio_get_sku(request: web.Request):
+        data = await get_academy_sku()
+        return web.json_response(data, headers=cors_headers)
+
+    async def aio_create_invoice(request: web.Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        payload = CreateAcademyInvoiceRequest(**body)
+        res = await create_academy_invoice(payload)
+        return web.json_response(res, headers=cors_headers)
+
+    async def aio_get_invoice(request: web.Request):
+        order_id = request.match_info.get("order_id", "")
+        inv = get_academy_invoice(order_id)
+        if not inv:
+            return web.json_response({"error": "Invoice not found"}, status=404, headers=cors_headers)
+        return web.json_response({"status": "success", "invoice": inv}, headers=cors_headers)
+
+    async def aio_paid_webhook(request: web.Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        payload = AcademyPaidWebhookRequest(**body)
+        res = await academy_paid_webhook(payload)
+        return web.json_response(res, headers=cors_headers)
+
+    async def aio_get_draft(request: web.Request):
+        total = int(request.query.get("total_recipients", 400))
+        res = await get_draft_campaign(total_recipients=total)
+        return web.json_response(res, headers=cors_headers)
+
+    async def aio_queue_campaign(request: web.Request):
+        phone_id = request.query.get("phone_number_id")
+        tenant_id = request.query.get("tenant_id", "onlineboost")
+        res = await queue_broadcast_campaign(phone_number_id=phone_id, tenant_id=tenant_id)
+        return web.json_response(res, headers=cors_headers)
+
+    app.router.add_get("/api/v1/academy/sku", aio_get_sku)
+    app.router.add_post("/api/v1/academy/invoice", aio_create_invoice)
+    app.router.add_get("/api/v1/academy/invoice/{order_id}", aio_get_invoice)
+    app.router.add_post("/api/v1/academy/webhook/paid", aio_paid_webhook)
+    app.router.add_get("/api/v1/academy/campaign/draft", aio_get_draft)
+    app.router.add_post("/api/v1/academy/campaign/queue", aio_queue_campaign)
