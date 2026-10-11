@@ -56,10 +56,19 @@ async def test_evolution_webhook_image_message_upload_r2():
     dummy_b64 = base64.b64encode(dummy_bytes).decode("utf-8")
     expected_r2_url = "https://pub-cdf9b905df884053a60ef8bdb777d463.r2.dev/media/test12345.jpg"
 
-    with patch("app.routes.whatsapp_gateway_routes.upload_media_to_r2") as mock_r2, \
+    with patch("app.routes.whatsapp_gateway_routes.get_connection_by_instance") as mock_get_conn, \
+         patch("app.routes.whatsapp_gateway_routes.upload_media_to_r2") as mock_r2, \
          patch("app.routes.whatsapp_gateway_routes.log_to_supabase_messages", new_callable=AsyncMock) as mock_log, \
          patch("app.routes.whatsapp_gateway_routes.process_inbound_message", new_callable=AsyncMock) as mock_process:
 
+        mock_get_conn.return_value = {
+            "tenant_id": "test-uuid-onlineboost",
+            "tenant_slug": "onlineboost",
+            "instance_name": "onlineboost",
+            "mode": "DEDICATED",
+            "channel_type": "DEDICATED",
+            "phone_number": "6288226098088",
+        }
         mock_r2.return_value = expected_r2_url
         mock_process.return_value = {"reply_text": "Terima kasih atas kiriman gambarnya!"}
 

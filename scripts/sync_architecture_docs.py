@@ -3,9 +3,12 @@ Sinkronisasi Kontrak Arsitektur Dual-Repo (Standar CTO):
 - boontrack-core/ARCHITECTURE.md
 - boontrack-inbox/ARCHITECTURE.md
 
-Menambahkan klausul resmi ADR 2026-10-11:
+Menambahkan klausul resmi ADR:
 - § 58: I18N LOCALIZATION FRAMEWORK & AUDIENCE SSOT CRM ALIGNMENT
 - § 59: WORKSPACE UX OVERHAUL & UNIVERSAL CHECKOUT TRIGGER
+- § 60: CONTROL PLANE ARCHITECTURE & UNIFIED GOVERNANCE
+- § 61: CROSS-BENEFIT ARCHITECTURE & ASSET PURGE LIFECYCLE
+- § 62: MULTI-TENANT WHATSAPP CREDENTIAL RESOLUTION & FAIL-CLOSED ARCHITECTURE (ADR 2026-10-12)
 Dan menyatukan seluruh konstitusi sistem menjadi 100% identik byte-for-byte.
 """
 
@@ -107,6 +110,37 @@ SECTION_58_AND_59 = """
   - Mengangkat modal checkout native BoonTrack dengan dynamic QRIS EMVCo Tag 54, penghitungan kode unik downward suffix, input data pembeli terverifikasi, dan auto-dispatch WhatsApp invoice tanpa perlu reload halaman atau integrasi API backend manual oleh merchant.
 """
 
+SECTION_62 = """
+
+---
+
+## § 62. MULTI-TENANT WHATSAPP CREDENTIAL RESOLUTION & FAIL-CLOSED ARCHITECTURE (ADR 2026-10-12)
+
+### 62.1 Konteks & Root Cause (Insiden HTTP 401 OnlineBoost)
+- **Problem**: Outbound Meta Cloud API gagal dengan status `HTTP 401 Authorization Error` dan pesan balasan bot tertahan dengan prefiks `[FAILED BOT REPLY]`.
+- **Root Cause**:
+  1. **Silent Fallback Anti-Pattern**: Implementasi resolusi kredensial (`get_wa_credentials()`) sebelumnya memiliki fallback diam-diam ke environment variable global platform (Railway) saat pencarian tenant gagal atau identifier tidak spesifik.
+  2. **Data Ambiguity & Status Laxity**: Ketiadaan filter status koneksi yang ketat (`status = 'active'`) menyebabkan tenant non-platform menggunakan token default platform yang tidak memiliki izin atas WhatsApp Business Account (WABA) milik tenant yang bersangkutan.
+
+### 62.2 Strategi Resolusi & Perubahan Arsitektur
+- **Tenant-Scoped Lookup Only**:
+  - Pencarian kredensial di tabel `whatsapp_connections` kini diikat secara ketat pada `tenant_id` atau `tenant_slug` dengan syarat mutlak `status = 'active'`.
+  - Token WABA wajib diambil dari kolom `api_key`, dan `phone_number_id` menjadi batasan validasi integritas tambahan (bukan jalur lookup global lintas-tenant).
+- **Fail-Closed Principle (`CredentialResolutionError`)**:
+  - Jika kredensial tenant tidak ditemukan, tidak aktif, atau berstatus ambigu (terdapat lebih dari 1 koneksi aktif tanpa penentu definitif), sistem melempar exception `CredentialResolutionError` dan langsung mengembalikan `None`.
+  - Sistem menolak keras melakukan fallback ke kredensial platform atau toko lain bagi tenant kustom (*strict tenant isolation*).
+  - Outbound messaging service (`send_whatsapp_text`) menangani `CredentialResolutionError` secara terkontrol tanpa memicu unhandled HTTP 500 error ke caller.
+- **Legacy Platform Tenant Allowlist**:
+  - Fallback environment variable platform (`WHATSAPP_API_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`) diisolasi secara ketat dan hanya diizinkan untuk tenant internal resmi BoonTrack (`shop`, `boontrack`, `boontrack-career`, dll.) melalui allowlist eksplisit (`PLATFORM_TENANT_ALLOWLIST`).
+
+### 62.3 Verifikasi & Penyelarasan Kontrak (Dual-Repo Alignment)
+- **Meta Graph API Direct Audit**: Verifikasi endpoint Meta Graph API membuktikan nomor `+62 882-2609-8088` berstatus `GREEN` dan token WABA permanen terverifikasi valid (`200 OK`).
+- **Automated Test Suite**:
+  - **Backend Core (`boontrack-core`)**: Unit test `test_send_whatsapp_text_fail_closed_on_credential_resolution_error` memvalidasi bahwa resolusi gagal ditangani secara fail-closed (return `None`) tanpa crash.
+  - **Inbox Frontend (`boontrack-inbox`)**: Test suite `__tests__/whatsapp/credential_resolver.test.ts` dan `meta_webhook_normalizer.test.ts` memverifikasi penegakan fail-closed webhook signature dan dynamic credential resolution.
+- **Production Validation**: Commit `1a05870` (`boontrack-core`) dan `7659596` (`boontrack-inbox`) terintegrasi di production, pesan masuk dan keluar sukses diproses oleh AI bot tanpa pesan gagal `[FAILED BOT REPLY]`.
+"""
+
 
 def build_unified_architecture():
     # 1. Read inbox ARCHITECTURE.md (has the rich frontend & subscription chapters up to 57.4)
@@ -117,7 +151,13 @@ def build_unified_architecture():
     if pos_sec14_inbox == -1:
         raise ValueError("Cannot find SECTION 14 in inbox ARCHITECTURE.md")
 
-    pre_sec14 = inbox_content[:pos_sec14_inbox].rstrip()
+    # If already contains Section 58, slice before 58
+    pos_sec58 = inbox_content.find("## § 58.")
+    if pos_sec58 != -1:
+        pre_sec14 = inbox_content[:pos_sec58].rstrip()
+    else:
+        pre_sec14 = inbox_content[:pos_sec14_inbox].rstrip()
+
     sec14_part = inbox_content[pos_sec14_inbox:].strip()
 
     # 2. Extract control plane and cross-benefit chapters from core
@@ -126,11 +166,17 @@ def build_unified_architecture():
 
     pos_core_cp = core_content.find("CONTROL PLANE ARCHITECTURE")
     pos_core_cp = core_content.rfind("##", 0, pos_core_cp)
-    pos_core_sec14 = core_content.find("## SECTION 14. DYNAMIC CUSTOM DOMAIN")
+    pos_core_sec62 = core_content.find("## § 62.")
+    if pos_core_sec62 != -1:
+        pos_end_cp = pos_core_sec62
+    else:
+        pos_end_cp = core_content.find("## SECTION 14. DYNAMIC CUSTOM DOMAIN")
 
-    cp_and_benefit = core_content[pos_core_cp:pos_core_sec14].strip()
+    cp_and_benefit = core_content[pos_core_cp:pos_end_cp].strip()
+    if cp_and_benefit.endswith("---"):
+        cp_and_benefit = cp_and_benefit[:-3].strip()
 
-    # Renumber Control Plane -> 60 and Cross Benefit -> 61
+    # Renumber Control Plane -> 60 and Cross Benefit -> 61 if needed
     cp_renumbered = cp_and_benefit
     cp_renumbered = cp_renumbered.replace("## § 58. CONTROL PLANE ARCHITECTURE", "## § 60. CONTROL PLANE ARCHITECTURE")
     cp_renumbered = cp_renumbered.replace("### 58.", "### 60.")
@@ -138,7 +184,7 @@ def build_unified_architecture():
     cp_renumbered = cp_renumbered.replace("### 59.", "### 61.")
 
     # 3. Assemble unified content
-    unified_doc = f"{pre_sec14}\n{SECTION_58_AND_59}\n\n---\n\n{cp_renumbered}\n\n---\n\n{sec14_part}\n"
+    unified_doc = f"{pre_sec14}\n{SECTION_58_AND_59}\n\n---\n\n{cp_renumbered}\n{SECTION_62}\n\n---\n\n{sec14_part}\n"
 
     # 4. Write to boontrack-core
     with open(CORE_PATH, "w", encoding="utf-8", newline="\n") as f:

@@ -4948,6 +4948,9 @@ Pada saat akun Studio diverifikasi (`activateStudioRegistrationByToken`):
 
 ---
 
+
+---
+
 ## § 58. I18N LOCALIZATION FRAMEWORK & AUDIENCE SSOT CRM ALIGNMENT (ADR 2026-10-11)
 
 ### 58.1 Konstitusi Data Audiens SSOT CRM (Contacts Table Invariant)
@@ -5180,6 +5183,36 @@ Ekosistem BoonTrack menghubungkan fungsionalitas perdagangan (BoonTrack Shop) de
   - Dilindungi otentikasi Bearer Header menggunakan `CRON_SECRET` atau `STUDIO_CRON_SECRET`.
   - Memproses batch maksimum 200 pekerjaan per putaran untuk menghindari timeout runtime Edge/Serverless.
   - Menghasilkan laporan terstruktur `AutoPurgeReport` berisi `scanned_count`, `purged_count`, `retained_count`, dan rincian detail setiap job ID yang dibersihkan.
+
+
+---
+
+## § 62. MULTI-TENANT WHATSAPP CREDENTIAL RESOLUTION & FAIL-CLOSED ARCHITECTURE (ADR 2026-10-12)
+
+### 62.1 Konteks & Root Cause (Insiden HTTP 401 OnlineBoost)
+- **Problem**: Outbound Meta Cloud API gagal dengan status `HTTP 401 Authorization Error` dan pesan balasan bot tertahan dengan prefiks `[FAILED BOT REPLY]`.
+- **Root Cause**:
+  1. **Silent Fallback Anti-Pattern**: Implementasi resolusi kredensial (`get_wa_credentials()`) sebelumnya memiliki fallback diam-diam ke environment variable global platform (Railway) saat pencarian tenant gagal atau identifier tidak spesifik.
+  2. **Data Ambiguity & Status Laxity**: Ketiadaan filter status koneksi yang ketat (`status = 'active'`) menyebabkan tenant non-platform menggunakan token default platform yang tidak memiliki izin atas WhatsApp Business Account (WABA) milik tenant yang bersangkutan.
+
+### 62.2 Strategi Resolusi & Perubahan Arsitektur
+- **Tenant-Scoped Lookup Only**:
+  - Pencarian kredensial di tabel `whatsapp_connections` kini diikat secara ketat pada `tenant_id` atau `tenant_slug` dengan syarat mutlak `status = 'active'`.
+  - Token WABA wajib diambil dari kolom `api_key`, dan `phone_number_id` menjadi batasan validasi integritas tambahan (bukan jalur lookup global lintas-tenant).
+- **Fail-Closed Principle (`CredentialResolutionError`)**:
+  - Jika kredensial tenant tidak ditemukan, tidak aktif, atau berstatus ambigu (terdapat lebih dari 1 koneksi aktif tanpa penentu definitif), sistem melempar exception `CredentialResolutionError` dan langsung mengembalikan `None`.
+  - Sistem menolak keras melakukan fallback ke kredensial platform atau toko lain bagi tenant kustom (*strict tenant isolation*).
+  - Outbound messaging service (`send_whatsapp_text`) menangani `CredentialResolutionError` secara terkontrol tanpa memicu unhandled HTTP 500 error ke caller.
+- **Legacy Platform Tenant Allowlist**:
+  - Fallback environment variable platform (`WHATSAPP_API_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`) diisolasi secara ketat dan hanya diizinkan untuk tenant internal resmi BoonTrack (`shop`, `boontrack`, `boontrack-career`, dll.) melalui allowlist eksplisit (`PLATFORM_TENANT_ALLOWLIST`).
+
+### 62.3 Verifikasi & Penyelarasan Kontrak (Dual-Repo Alignment)
+- **Meta Graph API Direct Audit**: Verifikasi endpoint Meta Graph API membuktikan nomor `+62 882-2609-8088` berstatus `GREEN` dan token WABA permanen terverifikasi valid (`200 OK`).
+- **Automated Test Suite**:
+  - **Backend Core (`boontrack-core`)**: Unit test `test_send_whatsapp_text_fail_closed_on_credential_resolution_error` memvalidasi bahwa resolusi gagal ditangani secara fail-closed (return `None`) tanpa crash.
+  - **Inbox Frontend (`boontrack-inbox`)**: Test suite `__tests__/whatsapp/credential_resolver.test.ts` dan `meta_webhook_normalizer.test.ts` memverifikasi penegakan fail-closed webhook signature dan dynamic credential resolution.
+- **Production Validation**: Commit `1a05870` (`boontrack-core`) dan `7659596` (`boontrack-inbox`) terintegrasi di production, pesan masuk dan keluar sukses diproses oleh AI bot tanpa pesan gagal `[FAILED BOT REPLY]`.
+
 
 ---
 
