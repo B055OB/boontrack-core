@@ -149,15 +149,66 @@ async def send_meta_broadcast_template(
             detail="FEATURE_NOT_ENTITLED",
         )
 
-    default_phone, default_token = meta_waba_dispatcher.get_default_credentials(tenant_id)
+    from app.services.whatsapp_service import get_supabase
+    sb = get_supabase()
 
-    phone_id = (payload.phone_number_id or default_phone or "").strip()
-    token = (payload.permanent_access_token or default_token or "").strip()
+    phone_id = (payload.phone_number_id or "").strip()
+    token = (payload.permanent_access_token or "").strip()
+
+    # Validasi kredensial riil dari tenant_waba_configs
+    waba_config = None
+    if sb:
+        try:
+            # 1. Cari langsung di tenant_waba_configs berdasarkan tenant_id
+            res_cfg = sb.table("tenant_waba_configs").select("*").eq("tenant_id", tenant_id).eq("is_active", True).limit(1).execute()
+            if res_cfg.data and len(res_cfg.data) > 0:
+                waba_config = res_cfg.data[0]
+            else:
+                # 2. Cari via id / slug dari tabel tenants
+                res_t = sb.table("tenants").select("id, slug").or_(f"id.eq.{tenant_id},slug.eq.{tenant_id}").limit(1).execute()
+                if res_t.data and len(res_t.data) > 0:
+                    t_id = res_t.data[0].get("id")
+                    t_slug = res_t.data[0].get("slug")
+                    res_cfg2 = sb.table("tenant_waba_configs").select("*").or_(f"tenant_id.eq.{t_id},tenant_id.eq.{t_slug}").eq("is_active", True).limit(1).execute()
+                    if res_cfg2.data and len(res_cfg2.data) > 0:
+                        waba_config = res_cfg2.data[0]
+        except Exception as e:
+            logger.warning(f"[WABA Config Query]: {e}")
+
+    # Fallback to whatsapp_connections jika tenant terdaftar aktif di kanal WABA
+    if not waba_config and sb:
+        try:
+            res_conn = sb.table("whatsapp_connections").select("phone_number_id, api_key, status, is_connected").or_(f"tenant_id.eq.{tenant_id},tenant_slug.eq.{tenant_id}").in_("status", ["active", "connected", "open"]).limit(1).execute()
+            if res_conn.data and len(res_conn.data) > 0:
+                conn_row = res_conn.data[0]
+                if conn_row.get("phone_number_id"):
+                    waba_config = {
+                        "waba_phone_number_id": conn_row.get("phone_number_id"),
+                        "access_token": conn_row.get("api_key")
+                    }
+        except Exception as e:
+            logger.warning(f"[WABA Connections Query]: {e}")
+
+    if not waba_config and not (phone_id and token):
+        logger.warning(f"[WABA Broadcast Rejected] Tenant '{tenant_id}' belum memiliki kredensial resmi di tenant_waba_configs.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Konfigurasi Meta WABA Belum Aktif",
+        )
+
+    if not phone_id and waba_config:
+        phone_id = (waba_config.get("waba_phone_number_id") or "").strip()
+
+    if not token and waba_config:
+        token = (waba_config.get("access_token") or "").strip()
+        if not token:
+            default_phone, default_token = meta_waba_dispatcher.get_default_credentials(tenant_id)
+            token = default_token
 
     if not phone_id or not token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing phone_number_id or permanent_access_token for WABA broadcast",
+            detail="Konfigurasi Meta WABA Belum Aktif",
         )
 
     broadcast_id = f"bcast_{uuid.uuid4().hex[:12]}"

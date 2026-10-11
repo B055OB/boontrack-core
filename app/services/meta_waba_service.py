@@ -74,7 +74,7 @@ class MetaGraphAPIDispatcher:
             or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
             or os.getenv("CAREER_PHONE_NUMBER_ID")
             or os.getenv("PHONE_NUMBER_ID")
-            or "1365010890024026"
+            or ""
         ).strip()
 
         # [SAFETY GUARD] Jika Phone ID yang di-resolve termasuk yang dinonaktifkan, ganti ke empty
