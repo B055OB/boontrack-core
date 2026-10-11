@@ -145,18 +145,43 @@ async def log_to_supabase_messages(
                     "tenant_id": clean_tenant,
                     "tenant_slug": clean_tenant,
                     "phone_number": clean_digits,
+                    "customer_phone": clean_digits,
                     "contact_name": user_name or f"User {clean_digits[-4:]}",
+                    "customer_name": user_name or f"User {clean_digits[-4:]}",
                     "lead_state": lead_state_val,
                     "last_message": content[:500] if content else None,
+                    "last_message_at": now_iso,
                     "updated_at": now_iso
                 }).execute()
             except Exception as conv_err:
                 logger.debug(f"[Supabase Conv Upsert Warning] {conv_err}")
-                conv_uuid = None
+                try:
+                    supabase.table("conversations").upsert({
+                        "id": conv_uuid,
+                        "tenant_id": clean_tenant,
+                        "tenant_slug": clean_tenant,
+                        "phone_number": clean_digits,
+                        "contact_name": user_name or f"User {clean_digits[-4:]}",
+                        "lead_state": lead_state_val,
+                        "last_message": content[:500] if content else None,
+                        "updated_at": now_iso
+                    }).execute()
+                except Exception as fallback_err:
+                    logger.debug(f"[Supabase Conv Upsert Fallback Warning] {fallback_err}")
+                    conv_uuid = None
+
+        safe_meta = {}
+        if metadata:
+            try:
+                safe_meta = json.loads(json.dumps(metadata, default=str))
+            except Exception:
+                safe_meta = {str(k): str(v) for k, v in metadata.items()}
 
         payload = {
             "sender": normalized_sender,
+            "sender_type": normalized_sender,
             "text": content,
+            "message_body": content,
             "tenant_id": clean_tenant,
             "tenant_slug": clean_tenant,
             "channel": channel,
@@ -166,8 +191,26 @@ async def log_to_supabase_messages(
             "conversation_id": conv_uuid,
             "created_at": now_iso,
             "media_url": media_url,
+            "metadata": safe_meta,
         }
-        supabase.table("messages").insert(payload).execute()
+        try:
+            supabase.table("messages").insert(payload).execute()
+        except Exception as insert_err:
+            logger.debug(f"[Supabase Message Insert Fallback] {insert_err}")
+            minimal_payload = {
+                "sender": normalized_sender,
+                "text": content,
+                "tenant_id": clean_tenant,
+                "tenant_slug": clean_tenant,
+                "channel": channel,
+                "user_id": resolved_uid,
+                "user_phone": resolved_phone,
+                "user_name": user_name,
+                "conversation_id": conv_uuid,
+                "created_at": now_iso,
+                "media_url": media_url,
+            }
+            supabase.table("messages").insert(minimal_payload).execute()
         return True
     except Exception as e:
         logger.error(f"[Supabase Logging Error] {e}")
@@ -224,25 +267,84 @@ def safe_log_to_supabase_messages(
 # Send helpers
 # ---------------------------------------------------------------------------
 
-async def send_whatsapp_text(
-    to_phone: str,
+def build_whatsapp_text_payload(
+    to: str,
     text: str,
+    preview_url: bool = False,
+) -> Dict[str, Any]:
+    """
+    Format standar Meta Cloud API Graph v20.0 untuk endpoint /messages:
+    {
+      "messaging_product": "whatsapp",
+      "recipient_type": "individual",
+      "to": "<nomor_telepon_tujuan_e164_tanpa_tanda_tambah>",
+      "type": "text",
+      "text": { "body": "<isi_pesan>" }
+    }
+    """
+    raw_to = str(to or "").strip()
+    clean_to = normalize_phone_number(raw_to).lstrip("+").strip()
+    if not clean_to:
+        clean_to = "".join(filter(str.isdigit, raw_to)).lstrip("+").strip()
+
+    if not clean_to:
+        raise ValueError("Recipient phone number ('to') is required and cannot be empty.")
+
+    sanitized_text = sanitize_whatsapp_message_text(text)
+    text_obj: Dict[str, Any] = {"body": sanitized_text}
+    if preview_url:
+        text_obj["preview_url"] = True
+
+    return {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": clean_to,
+        "type": "text",
+        "text": text_obj,
+    }
+
+
+async def send_whatsapp_text(
+    to_phone: Optional[str] = None,
+    text: Optional[str] = None,
     preview_url: bool = False,
     tenant_id: str = "shop",
     phone_number_id: Optional[str] = None,
     access_token: Optional[str] = None,
+    **kwargs: Any,
 ) -> Optional[Dict[str, Any]]:
+    """
+    Kirim pesan teks WhatsApp via Meta Cloud API Graph v20.0+.
+    Mendukung fleksibilitas parameter: to_phone, to, recipient, recipient_phone.
+    """
+    raw_target = (
+        to_phone
+        or kwargs.get("to")
+        or kwargs.get("recipient")
+        or kwargs.get("recipient_phone")
+        or kwargs.get("phone")
+        or ""
+    )
+    raw_text = (
+        text
+        if text is not None
+        else (kwargs.get("body") or kwargs.get("message") or "")
+    )
+
+    clean_phone = normalize_phone_number(str(raw_target or "")).lstrip("+").strip()
+    if not clean_phone:
+        clean_phone = "".join(filter(str.isdigit, str(raw_target or ""))).lstrip("+").strip()
+
+    if not clean_phone:
+        logger.error(f"[WhatsApp Service] Invalid/missing recipient phone number: raw='{raw_target}', kwargs={list(kwargs.keys())}")
+        return None
+
+    sanitized_text = sanitize_whatsapp_message_text(raw_text)
+
     token, phone_id, version = get_wa_credentials(tenant_id, phone_number_id=phone_number_id, access_token=access_token)
     if not token or not phone_id:
         logger.error(f"[WhatsApp Service] Missing credentials (phone_id={phone_id}, tenant={tenant_id})")
         return None
-
-    clean_phone = normalize_phone_number(to_phone)
-    if not clean_phone:
-        logger.error(f"[WhatsApp Service] Invalid phone number provided: {to_phone}")
-        return None
-
-    sanitized_text = sanitize_whatsapp_message_text(text)
 
     # Velocity Budget & WABA Circuit Breaker Check (§9.8)
     from app.services.circuit_breaker_service import circuit_breaker_service
@@ -258,22 +360,40 @@ async def send_whatsapp_text(
         **_get_auth_headers(token),
         "Content-Type": "application/json"
     }
-    payload = {
-        "messaging_product": "whatsapp",
-        "recipient_type": "individual",
-        "to": clean_phone,
-        "type": "text",
-        "text": {
-            "preview_url": preview_url,
-            "body": sanitized_text
-        }
-    }
+
+    try:
+        payload = build_whatsapp_text_payload(
+            to=clean_phone,
+            text=sanitized_text,
+            preview_url=preview_url,
+        )
+    except Exception as build_err:
+        logger.error(f"[WhatsApp Service] Failed building text payload: {build_err}")
+        return None
+
+    logger.debug(f"[WhatsApp Service] Dispatching to {url}: messaging_product={payload.get('messaging_product')}, to={payload.get('to')}")
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(url, headers=headers, json=payload)
             if response.status_code not in (200, 201):
                 logger.error(f"[WhatsApp Service] send_text failed: {response.status_code} - {response.text}")
+                await log_to_supabase_messages(
+                    sender="bot",
+                    text=f"[FAILED BOT REPLY] {sanitized_text}",
+                    tenant_id=tenant_id,
+                    channel="whatsapp",
+                    user_phone=clean_phone,
+                    user_id=clean_phone,
+                    conversation_id=clean_phone,
+                    metadata={
+                        "status": "failed",
+                        "status_code": response.status_code,
+                        "error": response.text,
+                        "phone_number_id": phone_id,
+                        "to": clean_phone,
+                    }
+                )
                 return None
 
             await log_to_supabase_messages(
@@ -284,7 +404,7 @@ async def send_whatsapp_text(
                 user_phone=clean_phone,
                 user_id=clean_phone,
                 conversation_id=clean_phone,
-                metadata={"msg_type": "text", "preview_url": preview_url}
+                metadata={"msg_type": "text", "preview_url": preview_url, "status": "sent"}
             )
             res_json = response.json()
             try:
@@ -305,6 +425,10 @@ async def send_whatsapp_text(
     except Exception as e:
         logger.error(f"[WhatsApp Service] Exception in send_whatsapp_text: {e}", exc_info=True)
         return None
+
+
+# Alias send_text
+send_text = send_whatsapp_text
 
 
 async def send_otp_whatsapp(

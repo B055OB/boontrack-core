@@ -2,8 +2,12 @@ import asyncio
 import logging
 from typing import Optional, Dict, Any, List
 from aiohttp import web
-from fastapi import APIRouter, HTTPException, status, Query
+import json
+import uuid
+from fastapi import APIRouter, HTTPException, status, Query, Header, Request
 from pydantic import BaseModel
+from psycopg2.extras import RealDictCursor
+from app.core.database import get_db_connection
 
 from app.services.rotary_routing_service import rotary_routing_service
 from app.services.whatsapp_service import log_to_supabase_messages, send_whatsapp_text, normalize_phone_number, get_supabase
@@ -24,6 +28,7 @@ class SendManualMessageRequest(BaseModel):
     text: str
     agent_id: Optional[str] = None
     phone_number: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
 class AssignChatRequest(BaseModel):
     tenant_id: str
@@ -68,31 +73,395 @@ class MarkPaidRequest(BaseModel):
     notes: Optional[str] = None
 
 # =====================================================================
-# Helper: Dispatch WhatsApp Message to Customer
+# Idempotency Helpers
 # =====================================================================
 
-async def _dispatch_whatsapp_message(tenant_id: str, to_phone: str, text: str) -> Dict[str, Any]:
-    """Mengirim pesan via adapter WhatsApp (Meta API atau Evolution API)."""
+def get_idempotency_record(tenant_id: str, key: str) -> Optional[Dict[str, Any]]:
+    """Mengecek apakah idempotency key sudah pernah diproses untuk tenant ini."""
+    if not key or not tenant_id:
+        return None
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, key, tenant_id, conversation_id, response_payload, status, created_at
+                FROM inbox_idempotency_keys
+                WHERE tenant_id = %s AND key = %s
+                LIMIT 1;
+                """,
+                (tenant_id, key.strip())
+            )
+            row = cur.fetchone()
+            if row:
+                res = dict(row)
+                res["id"] = str(res["id"])
+                return res
+            return None
+    except Exception as e:
+        logger.warning(f"[Idempotency] Error checking key {key}: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def save_idempotency_record(
+    tenant_id: str,
+    key: str,
+    conversation_id: str,
+    response_payload: Dict[str, Any],
+    status_val: str = "COMPLETED"
+):
+    """Menyimpan atau memperbarui hasil eksekusi ke tabel idempotency."""
+    if not key or not tenant_id:
+        return
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO inbox_idempotency_keys (id, key, tenant_id, conversation_id, response_payload, status, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (tenant_id, key)
+                DO UPDATE SET response_payload = EXCLUDED.response_payload,
+                              status = EXCLUDED.status,
+                              conversation_id = EXCLUDED.conversation_id;
+                """,
+                (
+                    str(uuid.uuid4()),
+                    key.strip(),
+                    tenant_id,
+                    str(conversation_id),
+                    json.dumps(response_payload, default=str),
+                    status_val
+                )
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"[Idempotency] Error saving key {key}: {e}")
+    finally:
+        conn.close()
+
+
+# =====================================================================
+# Outbound Channel Lock & Cross-Tenant Leak Prevention
+# =====================================================================
+
+def validate_and_lock_outbound_channel(tenant_id: str, conv: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Mengambil channel_type dan channel_connection_id langsung dari row percakapan di database.
+    - Menolak jika percakapan bukan milik tenant aktif (403 Forbidden).
+    - Memvalidasi bahwa koneksi pengirim benar milik tenant_id aktif (403 Forbidden).
+    - Menolak jika kanal tujuan offline (422 Unprocessable Entity) tanpa fallback otomatis.
+    """
+    # 1. Validasi kepemilikan percakapan terhadap tenant aktif (Anti Cross-Tenant Leak)
+    tenant_identifiers = rotary_routing_service._resolve_tenant_identifiers(tenant_id)
+    if not tenant_identifiers:
+        tenant_identifiers = [tenant_id]
+
+    conv_tenant_id = str(conv.get("tenant_id") or "").strip()
+    conv_tenant_slug = str(conv.get("tenant_slug") or "").strip()
+    is_owner = (conv_tenant_id in tenant_identifiers) or (conv_tenant_slug in tenant_identifiers)
+    if not is_owner:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Akses ditolak: Percakapan ini bukan milik tenant aktif (Cross-Tenant Leak Guard)."
+        )
+
+    # 2. Ambil channel_type & channel_connection_id dari row database (bukan dari frontend)
+    raw_channel = str(conv.get("channel_type") or "").strip().upper()
+    if not raw_channel:
+        cust_phone = str(conv.get("customer_phone") or conv.get("phone_number") or "").strip()
+        if cust_phone.startswith("webchat_"):
+            raw_channel = "WEBCHAT"
+        else:
+            raw_channel = "BAILEYS"
+
+    # Normalisasi jenis kanal
+    if raw_channel in ("WABA", "META_API", "META"):
+        channel_type = "WABA"
+    elif raw_channel in ("BAILEYS", "ENGINE", "EVOLUTION", "WAHA", "BOONTRACK_ENGINE"):
+        channel_type = "BAILEYS"
+    elif raw_channel in ("WEBCHAT",):
+        channel_type = "WEBCHAT"
+    else:
+        channel_type = raw_channel
+
+    # Jika Webchat: Kanal widget storefront (tidak butuh socket whatsapp_connections)
+    if channel_type == "WEBCHAT":
+        return {
+            "channel_type": "WEBCHAT",
+            "channel_connection_id": None,
+            "connection": None,
+            "is_online": True
+        }
+
+    # 3. Lookup koneksi di tabel whatsapp_connections
+    channel_connection_id = conv.get("channel_connection_id")
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            conn_row = None
+            if channel_connection_id:
+                cur.execute(
+                    """
+                    SELECT id, tenant_id, tenant_slug, provider, channel_type, status, is_connected,
+                           phone_number, phone_number_id, waba_id, api_key, gateway_node_url
+                    FROM whatsapp_connections
+                    WHERE id = %s
+                    LIMIT 1;
+                    """,
+                    (str(channel_connection_id),)
+                )
+                conn_row = cur.fetchone()
+                if not conn_row:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Koneksi kanal ({channel_type}) dengan ID {channel_connection_id} tidak ditemukan di sistem."
+                    )
+                # Validasi kepemilikan koneksi pengirim terhadap tenant aktif (Anti Cross-Tenant Leak)
+                conn_tid = str(conn_row.get("tenant_id") or "").strip()
+                conn_tslug = str(conn_row.get("tenant_slug") or "").strip()
+                if not (conn_tid in tenant_identifiers or conn_tslug in tenant_identifiers):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Akses ditolak: Koneksi pengirim bukan milik tenant aktif (Cross-Tenant Leak Guard)."
+                    )
+            else:
+                # Cari koneksi aktif untuk tenant sesuai jenis kanal yang terkunci
+                if channel_type == "WABA":
+                    cur.execute(
+                        """
+                        SELECT id, tenant_id, tenant_slug, provider, channel_type, status, is_connected,
+                               phone_number, phone_number_id, waba_id, api_key, gateway_node_url
+                        FROM whatsapp_connections
+                        WHERE (tenant_id = ANY(%s) OR tenant_slug = ANY(%s))
+                          AND (provider = 'META_API' OR channel_type = 'WABA')
+                        ORDER BY is_connected DESC, updated_at DESC
+                        LIMIT 1;
+                        """,
+                        (tenant_identifiers, tenant_identifiers)
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT id, tenant_id, tenant_slug, provider, channel_type, status, is_connected,
+                               phone_number, phone_number_id, waba_id, api_key, gateway_node_url
+                        FROM whatsapp_connections
+                        WHERE (tenant_id = ANY(%s) OR tenant_slug = ANY(%s))
+                          AND (provider != 'META_API' AND channel_type != 'WABA')
+                        ORDER BY is_connected DESC, updated_at DESC
+                        LIMIT 1;
+                        """,
+                        (tenant_identifiers, tenant_identifiers)
+                    )
+                conn_row = cur.fetchone()
+
+            if not conn_row:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Kanal tujuan ({channel_type}) belum dikonfigurasi atau tidak ditemukan untuk tenant ini."
+                )
+
+            # 4. Validasi status online (Tolak eksplisit jika offline, TANPA fallback otomatis)
+            is_connected = bool(conn_row.get("is_connected"))
+            status_str = str(conn_row.get("status") or "").strip().upper()
+            is_online = is_connected or (status_str in ("CONNECTED", "OPEN", "ACTIVE"))
+
+            if not is_online:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Kanal tujuan ({channel_type}) sedang offline atau terputus. Pengiriman pesan ditolak tanpa fallback otomatis."
+                )
+
+            return {
+                "channel_type": channel_type,
+                "channel_connection_id": str(conn_row["id"]),
+                "connection": dict(conn_row),
+                "is_online": True
+            }
+    finally:
+        conn.close()
+
+
+# =====================================================================
+# Strict Outbound Dispatch (Zero Fallback)
+# =====================================================================
+
+async def dispatch_locked_message(
+    channel_info: Dict[str, Any],
+    tenant_id: str,
+    to_phone: str,
+    text: str
+) -> Dict[str, Any]:
+    """
+    Mengirim pesan CS strictly melalui kanal yang terkunci.
+    Dilarang keras melakukan auto-fallback ke kanal lain bila terjadi error.
+    """
+    channel_type = channel_info["channel_type"]
     clean_digits = normalize_phone_number(to_phone)
-    if not clean_digits:
-        return {"success": False, "error": f"Invalid phone number: {to_phone}"}
+    if not clean_digits and channel_type != "WEBCHAT":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Nomor telepon tujuan tidak valid: {to_phone}"
+        )
 
-    # 1. Coba kirim via Meta API resmi
-    try:
-        res = await send_whatsapp_text(to_phone=clean_digits, text=text, tenant_id=tenant_id)
-        if res:
-            return {"success": True, "provider": "META_API", "response": res}
-    except Exception as meta_err:
-        logger.debug(f"[Inbox Dispatch] Meta API note: {meta_err}")
+    if channel_type == "WABA":
+        conn_data = channel_info.get("connection") or {}
+        phone_number_id = conn_data.get("phone_number_id")
+        try:
+            res = await send_whatsapp_text(
+                to_phone=clean_digits,
+                text=text,
+                tenant_id=tenant_id,
+                phone_number_id=phone_number_id
+            )
+            if not res:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Gagal mengirim pesan melalui Meta Cloud API (WABA): pengiriman ditolak atau gagal. Tidak ada fallback otomatis."
+                )
+            return {"success": True, "provider": "META_API", "channel_type": "WABA", "response": res}
+        except HTTPException:
+            raise
+        except Exception as meta_err:
+            logger.error(f"[Outbound Lock] Meta API dispatch error: {meta_err}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Gagal mengirim pesan via WABA: {meta_err}. Tidak ada fallback otomatis."
+            )
 
-    # 2. Fallback via Evolution API (WhatsAppAdapter)
-    try:
-        adapter = WhatsAppAdapter()
-        res = await adapter.send_message(tenant_id=tenant_id, to_phone=clean_digits, message=text)
-        return {"success": True, "provider": "EVOLUTION_API", "response": res}
-    except Exception as evo_err:
-        logger.warning(f"[Inbox Dispatch] Evolution API error: {evo_err}")
-        return {"success": False, "error": str(evo_err)}
+    elif channel_type == "BAILEYS":
+        try:
+            adapter = WhatsAppAdapter()
+            res = await adapter.send_message(tenant_id=tenant_id, to_phone=clean_digits, message=text)
+            if isinstance(res, dict) and (res.get("error") or res.get("success") is False):
+                err_msg = res.get("error") or "Pesan ditolak oleh WhatsApp Engine"
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Gagal mengirim pesan melalui BoonTrack Engine (Baileys): {err_msg}. Tidak ada fallback otomatis."
+                )
+            return {"success": True, "provider": "EVOLUTION_API", "channel_type": "BAILEYS", "response": res}
+        except HTTPException:
+            raise
+        except Exception as evo_err:
+            logger.error(f"[Outbound Lock] Evolution API dispatch error: {evo_err}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Gagal mengirim pesan via BoonTrack Engine: {evo_err}. Tidak ada fallback otomatis."
+            )
+
+    elif channel_type == "WEBCHAT":
+        return {"success": True, "provider": "WEBCHAT", "channel_type": "WEBCHAT"}
+
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Kanal tujuan '{channel_type}' belum didukung untuk outbound CS."
+        )
+
+
+# =====================================================================
+# Core Handler for CS Manual Send (Shared by FastAPI and aiohttp)
+# =====================================================================
+
+async def execute_send_cs_message(
+    tenant_id: str,
+    conversation_id: str,
+    text: str,
+    agent_id: Optional[str] = None,
+    phone_number: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    # 1. Idempotency Check
+    if idempotency_key:
+        idemp_record = get_idempotency_record(tenant_id, idempotency_key)
+        if idemp_record:
+            if idemp_record.get("status") == "COMPLETED" and idemp_record.get("response_payload"):
+                logger.info(f"[Idempotency Hit] Returning cached response for key '{idempotency_key}' (tenant '{tenant_id}').")
+                cached = idemp_record["response_payload"]
+                if isinstance(cached, str):
+                    try:
+                        cached = json.loads(cached)
+                    except Exception:
+                        pass
+                return cached
+            elif idemp_record.get("status") == "PROCESSING":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Permintaan dengan idempotency key ini sedang diproses."
+                )
+
+    # 2. Ambil data percakapan dari database
+    conv = rotary_routing_service.get_conversation(conversation_id)
+    if not conv:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Percakapan {conversation_id} tidak ditemukan."
+        )
+
+    # 3. Validasi Outbound Routing Lock & Anti Cross-Tenant Leak
+    channel_info = validate_and_lock_outbound_channel(tenant_id=tenant_id, conv=conv)
+
+    target_phone = phone_number or conv.get("customer_phone") or conv.get("phone_number")
+    if not target_phone and channel_info["channel_type"] != "WEBCHAT":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nomor telepon pelanggan tidak ditemukan pada percakapan."
+        )
+
+    # 4. Trigger Human Takeover: bot_mode = 'HUMAN_ACTIVE', bot_paused = TRUE
+    updated_conv = rotary_routing_service.set_human_takeover(
+        conversation_id=conversation_id,
+        agent_id=agent_id
+    )
+
+    # 5. Log pesan ke Supabase dengan sender = 'agent' dan channel terkunci
+    channel_name = channel_info["channel_type"].lower()
+    await log_to_supabase_messages(
+        sender="agent",
+        text=text,
+        tenant_id=tenant_id,
+        channel=channel_name,
+        user_phone=target_phone or "webchat_user",
+        conversation_id=conversation_id,
+        message_text=text,
+        metadata={
+            "agent_id": agent_id,
+            "mode": "HUMAN_ACTIVE",
+            "channel_type": channel_info["channel_type"],
+            "channel_connection_id": channel_info.get("channel_connection_id")
+        }
+    )
+
+    # 6. Dispatch locked message (tanpa fallback otomatis)
+    dispatch_res = await dispatch_locked_message(
+        channel_info=channel_info,
+        tenant_id=tenant_id,
+        to_phone=target_phone or "",
+        text=text
+    )
+
+    response_payload = {
+        "success": True,
+        "message": "Pesan manual CS terkirim dan Human Takeover aktif.",
+        "conversation": updated_conv,
+        "channel_type": channel_info["channel_type"],
+        "channel_connection_id": channel_info.get("channel_connection_id"),
+        "dispatch": dispatch_res
+    }
+
+    # 7. Simpan hasil ke idempotency record
+    if idempotency_key:
+        save_idempotency_record(
+            tenant_id=tenant_id,
+            key=idempotency_key,
+            conversation_id=conversation_id,
+            response_payload=response_payload,
+            status_val="COMPLETED"
+        )
+
+    return response_payload
 
 
 # =====================================================================
@@ -100,60 +469,28 @@ async def _dispatch_whatsapp_message(tenant_id: str, to_phone: str, text: str) -
 # =====================================================================
 
 @router.post("/messages/send")
-async def send_manual_cs_message(req: SendManualMessageRequest):
+async def send_manual_cs_message(
+    req: SendManualMessageRequest,
+    idempotency_key_header: Optional[str] = Header(None, alias="Idempotency-Key"),
+    x_idempotency_key_header: Optional[str] = Header(None, alias="X-Idempotency-Key")
+):
     """
-    Kirim Pesan Manual CS & Trigger Human Takeover:
-    1. Mengubah percakapan menjadi bot_mode = 'HUMAN_ACTIVE' dan bot_paused = TRUE.
-    2. Menghubungkan agen CS ke percakapan (jika agent_id diberikan).
-    3. Meneruskan pesan WhatsApp ke nomor telepon pelanggan.
-    4. Menyimpan riwayat pesan ke Supabase dengan sender = 'agent'.
+    Kirim Pesan Manual CS & Outbound Routing Lock:
+    1. Mengambil channel_type dan channel_connection_id langsung dari database percakapan.
+    2. Validasi pencegahan cross-tenant leak.
+    3. Tolak jika kanal offline (tanpa auto fallback).
+    4. Cek & catat Idempotency Key.
+    5. Trigger Human Takeover (bot_mode = 'HUMAN_ACTIVE', bot_paused = TRUE).
     """
-    try:
-        # 1. Ambil data percakapan yang ada
-        conv = rotary_routing_service.get_conversation(req.conversation_id)
-        if not conv:
-            raise HTTPException(status_code=404, detail=f"Percakapan {req.conversation_id} tidak ditemukan.")
-
-        target_phone = req.phone_number or conv.get("phone_number")
-        if not target_phone:
-            raise HTTPException(status_code=400, detail="Nomor telepon pelanggan tidak ditemukan pada percakapan.")
-
-        # 2. Trigger Human Takeover: bot_mode = 'HUMAN_ACTIVE', bot_paused = TRUE
-        updated_conv = rotary_routing_service.set_human_takeover(
-            conversation_id=req.conversation_id,
-            agent_id=req.agent_id
-        )
-
-        # 3. Log pesan ke database/Supabase dengan sender = 'agent'
-        await log_to_supabase_messages(
-            sender="agent",
-            text=req.text,
-            tenant_id=req.tenant_id,
-            channel="whatsapp",
-            user_phone=target_phone,
-            conversation_id=req.conversation_id,
-            message_text=req.text,
-            metadata={"agent_id": req.agent_id, "mode": "HUMAN_ACTIVE"}
-        )
-
-        # 4. Dispatch WhatsApp message ke pelanggan
-        dispatch_res = await _dispatch_whatsapp_message(
-            tenant_id=req.tenant_id,
-            to_phone=target_phone,
-            text=req.text
-        )
-
-        return {
-            "success": True,
-            "message": "Pesan manual CS terkirim dan Human Takeover aktif.",
-            "conversation": updated_conv,
-            "dispatch": dispatch_res
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[Inbox Send Message Error] {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    idemp_key = req.idempotency_key or idempotency_key_header or x_idempotency_key_header
+    return await execute_send_cs_message(
+        tenant_id=req.tenant_id,
+        conversation_id=req.conversation_id,
+        text=req.text,
+        agent_id=req.agent_id,
+        phone_number=req.phone_number,
+        idempotency_key=idemp_key
+    )
 
 
 @router.post("/conversations/{conversation_id}/assign")
@@ -397,43 +734,31 @@ async def aiohttp_send_manual_message(request: web.Request):
         text = body.get("text")
         agent_id = body.get("agent_id")
         phone_number = body.get("phone_number")
-
-        if not tenant_id or not conversation_id or not text:
-            return web.json_response({"success": False, "detail": "tenant_id, conversation_id, and text are required."}, status=400)
-
-        conv = rotary_routing_service.get_conversation(conversation_id)
-        if not conv:
-            return web.json_response({"success": False, "detail": "Conversation not found."}, status=404)
-
-        target_phone = phone_number or conv.get("phone_number")
-        if not target_phone:
-            return web.json_response({"success": False, "detail": "No phone number for conversation."}, status=400)
-
-        # Trigger Human Takeover
-        updated_conv = rotary_routing_service.set_human_takeover(conversation_id=conversation_id, agent_id=agent_id)
-
-        # Log to Supabase
-        await log_to_supabase_messages(
-            sender="agent",
-            text=text,
-            tenant_id=tenant_id,
-            channel="whatsapp",
-            user_phone=target_phone,
-            conversation_id=conversation_id,
-            message_text=text,
-            metadata={"agent_id": agent_id, "mode": "HUMAN_ACTIVE"}
+        idempotency_key = (
+            body.get("idempotency_key")
+            or request.headers.get("Idempotency-Key")
+            or request.headers.get("X-Idempotency-Key")
         )
 
-        dispatch_res = await _dispatch_whatsapp_message(tenant_id=tenant_id, to_phone=target_phone, text=text)
+        if not tenant_id or not conversation_id or not text:
+            return web.json_response(
+                {"success": False, "detail": "tenant_id, conversation_id, and text are required."},
+                status=400
+            )
 
-        return web.json_response({
-            "success": True,
-            "message": "Pesan manual CS terkirim dan Human Takeover aktif.",
-            "conversation": updated_conv,
-            "dispatch": dispatch_res
-        })
+        res = await execute_send_cs_message(
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            text=text,
+            agent_id=agent_id,
+            phone_number=phone_number,
+            idempotency_key=idempotency_key
+        )
+        return web.json_response(res)
+    except HTTPException as he:
+        return web.json_response({"success": False, "detail": he.detail}, status=he.status_code)
     except Exception as e:
-        logger.error(f"[aiohttp Inbox Send Error] {e}")
+        logger.error(f"[aiohttp Inbox Send Error] {e}", exc_info=True)
         return web.json_response({"success": False, "detail": str(e)}, status=500)
 
 

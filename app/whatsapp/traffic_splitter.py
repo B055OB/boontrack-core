@@ -1013,6 +1013,28 @@ class PlatformWebhookRouter:
             return res
 
         # =====================================================================
+        # 0. PERSIST INBOUND PLATFORM USER MESSAGE TO SUPABASE
+        # =====================================================================
+        if clean_text and sender_phone:
+            try:
+                from app.services.whatsapp.cloud_api import log_to_supabase_messages
+                await log_to_supabase_messages(
+                    sender="user",
+                    text=clean_text,
+                    tenant_id="platform",
+                    channel="whatsapp",
+                    user_phone=sender_phone,
+                    user_name="Pelanggan",
+                    metadata={
+                        "direction": "inbound",
+                        "phone_number_id": phone_number_id,
+                        "wamid": raw_msg.get("id"),
+                    }
+                )
+            except Exception as _p_log_err:
+                logger.debug(f"[PlatformWebhookRouter] Inbound log error: {_p_log_err}")
+
+        # =====================================================================
         # 1. ACTIVATION INTERCEPTOR (P0 LAYER TERATAS)
         # =====================================================================
         activation_match = cls.ACTIVATION_REGEX.search(clean_text)
@@ -1523,6 +1545,35 @@ class TenantWebhookRouter:
 
         clean_text = incoming_text.strip()
         text_lower = clean_text.lower()
+        wamid = str(raw_msg.get("id") or getattr(trace, "message_id", "") or "").strip()
+
+        # =====================================================================
+        # 0. PERSIST INBOUND USER MESSAGE TO SUPABASE (CS SMART CHATBOX QUEUE)
+        # =====================================================================
+        # Pastikan pesan masuk langsung tercatat di tabel conversations & messages
+        # sebelum alur AI, guard, atau dispatch outbound, agar tetap muncul di
+        # Smart Chatbox CS meskipun balasan bot gagal atau error 400.
+        if clean_text and sender_phone:
+            try:
+                from app.services.whatsapp.cloud_api import log_to_supabase_messages
+                await log_to_supabase_messages(
+                    sender="user",
+                    text=clean_text,
+                    tenant_id=tenant_slug,
+                    channel="whatsapp",
+                    user_phone=sender_phone,
+                    user_name=contact_name,
+                    metadata={
+                        "direction": "inbound",
+                        "phone_number_id": phone_number_id,
+                        "wamid": wamid,
+                        "timestamp": raw_msg.get("timestamp"),
+                    }
+                )
+                trace.log_step("InboundMessagePersisted", f"Inbound message from {sender_phone} saved to Supabase (tenant: {tenant_slug})")
+            except Exception as persist_err:
+                logger.error(f"[TenantWebhookRouter] Failed to persist inbound message: {persist_err}", exc_info=True)
+                trace.log_step("InboundMessagePersistError", str(persist_err))
 
         # =====================================================================
         # 1. REJECT PLATFORM ACTIVATION ON TENANT WABA (STRICT BOUNDARY)

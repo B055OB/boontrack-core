@@ -336,7 +336,8 @@ class RotaryRoutingService:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT id, tenant_id, phone_number, contact_name, assigned_agent_id, status, bot_mode, bot_paused, updated_at
+                    SELECT id, tenant_id, tenant_slug, phone_number, customer_phone, contact_name, customer_name,
+                           assigned_agent_id, status, bot_mode, bot_paused, updated_at, channel_type, channel_connection_id
                     FROM conversations
                     WHERE id = %s;
                     """,
@@ -349,6 +350,8 @@ class RotaryRoutingService:
                 conv["id"] = str(conv["id"])
                 if conv.get("assigned_agent_id"):
                     conv["assigned_agent_id"] = str(conv["assigned_agent_id"])
+                if conv.get("channel_connection_id"):
+                    conv["channel_connection_id"] = str(conv["channel_connection_id"])
                 return conv
         finally:
             conn.close()
@@ -412,7 +415,7 @@ class RotaryRoutingService:
                             status = 'assigned',
                             updated_at = NOW()
                         WHERE id = %s
-                        RETURNING id, tenant_id, phone_number, assigned_agent_id, status, bot_mode, bot_paused, updated_at;
+                        RETURNING id, tenant_id, tenant_slug, phone_number, customer_phone, assigned_agent_id, status, bot_mode, bot_paused, updated_at, channel_type, channel_connection_id;
                         """,
                         (selected_agent["id"], conversation_id)
                     )
@@ -446,7 +449,7 @@ class RotaryRoutingService:
                             bot_paused = FALSE,
                             updated_at = NOW()
                         WHERE id = %s
-                        RETURNING id, tenant_id, phone_number, assigned_agent_id, status, bot_mode, bot_paused, updated_at;
+                        RETURNING id, tenant_id, tenant_slug, phone_number, customer_phone, assigned_agent_id, status, bot_mode, bot_paused, updated_at, channel_type, channel_connection_id;
                         """,
                         (conversation_id,)
                     )
@@ -493,7 +496,7 @@ class RotaryRoutingService:
                             assigned_agent_id = %s,
                             updated_at = NOW()
                         WHERE id = %s
-                        RETURNING id, tenant_id, phone_number, assigned_agent_id, status, bot_mode, bot_paused, updated_at;
+                        RETURNING id, tenant_id, tenant_slug, phone_number, customer_phone, assigned_agent_id, status, bot_mode, bot_paused, updated_at, channel_type, channel_connection_id;
                         """,
                         (agent_id, conversation_id)
                     )
@@ -505,7 +508,7 @@ class RotaryRoutingService:
                             bot_paused = TRUE,
                             updated_at = NOW()
                         WHERE id = %s
-                        RETURNING id, tenant_id, phone_number, assigned_agent_id, status, bot_mode, bot_paused, updated_at;
+                        RETURNING id, tenant_id, tenant_slug, phone_number, customer_phone, assigned_agent_id, status, bot_mode, bot_paused, updated_at, channel_type, channel_connection_id;
                         """,
                         (conversation_id,)
                     )
@@ -517,6 +520,8 @@ class RotaryRoutingService:
                 res["id"] = str(res["id"])
                 if res.get("assigned_agent_id"):
                     res["assigned_agent_id"] = str(res["assigned_agent_id"])
+                if res.get("channel_connection_id"):
+                    res["channel_connection_id"] = str(res["channel_connection_id"])
                 return res
         finally:
             conn.close()
@@ -558,6 +563,8 @@ class RotaryRoutingService:
                 res["id"] = str(res["id"])
                 if res.get("assigned_agent_id"):
                     res["assigned_agent_id"] = str(res["assigned_agent_id"])
+                if res.get("channel_connection_id"):
+                    res["channel_connection_id"] = str(res["channel_connection_id"])
                 return res
         finally:
             conn.close()
@@ -587,6 +594,8 @@ class RotaryRoutingService:
                 res["id"] = str(res["id"])
                 if res.get("assigned_agent_id"):
                     res["assigned_agent_id"] = str(res["assigned_agent_id"])
+                if res.get("channel_connection_id"):
+                    res["channel_connection_id"] = str(res["channel_connection_id"])
                 return res
         finally:
             conn.close()

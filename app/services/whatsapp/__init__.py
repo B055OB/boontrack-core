@@ -23,6 +23,8 @@ from app.services.whatsapp.credentials import (
 
 # cloud_api
 from app.services.whatsapp.cloud_api import (
+    build_whatsapp_text_payload,
+    send_text,
     sanitize_whatsapp_message_text,
     log_to_supabase_messages,
     safe_log_to_supabase_messages,
@@ -111,6 +113,8 @@ __all__ = [
     "get_wa_credentials",
     "_get_auth_headers",
     # cloud_api
+    "build_whatsapp_text_payload",
+    "send_text",
     "sanitize_whatsapp_message_text",
     "log_to_supabase_messages",
     "safe_log_to_supabase_messages",

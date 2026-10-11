@@ -31,6 +31,8 @@ from app.services.whatsapp import (  # noqa: F401, F403
     get_wa_credentials,
     _get_auth_headers,
     # cloud_api
+    build_whatsapp_text_payload,
+    send_text,
     sanitize_whatsapp_message_text,
     log_to_supabase_messages,
     safe_log_to_supabase_messages,
@@ -99,6 +101,8 @@ __all__ = [
     "get_wa_credentials",
     "_get_auth_headers",
     # cloud_api
+    "build_whatsapp_text_payload",
+    "send_text",
     "sanitize_whatsapp_message_text",
     "log_to_supabase_messages",
     "safe_log_to_supabase_messages",

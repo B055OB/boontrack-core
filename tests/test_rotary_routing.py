@@ -31,10 +31,22 @@ def setup_test_tenant_and_data():
             (tenant_uuid, f"Test Tenant {tenant_slug}", tenant_slug)
         )
 
-    yield {"tenant_id": tenant_slug, "tenant_uuid": tenant_uuid}
+    conn_id = str(uuid.uuid4())
+    cur.execute(
+        """
+        INSERT INTO whatsapp_connections (id, tenant_id, tenant_slug, provider, channel_type, status, is_connected, phone_number)
+        VALUES (%s, %s, %s, 'META_API', 'WABA', 'CONNECTED', TRUE, '628123456789')
+        ON CONFLICT DO NOTHING;
+        """,
+        (conn_id, tenant_slug, tenant_slug)
+    )
+
+    yield {"tenant_id": tenant_slug, "tenant_uuid": tenant_uuid, "connection_id": conn_id}
 
     # Cleanup setelah test selesai
+    cur.execute("DELETE FROM inbox_idempotency_keys WHERE tenant_id = %s;", (tenant_slug,))
     cur.execute("DELETE FROM conversations WHERE tenant_id = %s;", (tenant_slug,))
+    cur.execute("DELETE FROM whatsapp_connections WHERE tenant_id = %s;", (tenant_slug,))
     cur.execute("DELETE FROM cs_agents WHERE tenant_id = %s;", (tenant_slug,))
     cur.execute("DELETE FROM tenants WHERE id = %s;", (tenant_uuid,))
     conn.close()
@@ -199,8 +211,8 @@ def test_human_takeover_trigger_and_ai_suppression(setup_test_tenant_and_data):
     conv_id = str(uuid.uuid4())
     cur.execute(
         """
-        INSERT INTO conversations (id, tenant_id, phone_number, contact_name, status, bot_mode, bot_paused)
-        VALUES (%s, %s, %s, 'Bapak Joko', 'assigned', 'AI_ACTIVE', FALSE);
+        INSERT INTO conversations (id, tenant_id, phone_number, contact_name, status, bot_mode, bot_paused, channel_type)
+        VALUES (%s, %s, %s, 'Bapak Joko', 'assigned', 'AI_ACTIVE', FALSE, 'WABA');
         """,
         (conv_id, tenant_id, phone)
     )

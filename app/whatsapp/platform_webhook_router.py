@@ -157,6 +157,26 @@ class PlatformWebhookRouter:
                 "purpose": "PLATFORM_TRANSACTIONAL",
             }
 
+        # PERSIST INBOUND USER MESSAGE TO SUPABASE (CS SMART CHATBOX QUEUE)
+        if clean_text and sender_clean:
+            try:
+                from app.services.whatsapp.cloud_api import log_to_supabase_messages
+                await log_to_supabase_messages(
+                    sender="user",
+                    text=clean_text,
+                    tenant_id=PLATFORM_TENANT_ID,
+                    channel="whatsapp",
+                    user_phone=sender_clean,
+                    user_name="Pelanggan",
+                    metadata={
+                        "direction": "inbound",
+                        "phone_number_id": phone_number_id,
+                        "wamid": (raw_msg or {}).get("id"),
+                    }
+                )
+            except Exception as _p_log_err:
+                logger.debug(f"[PlatformWebhookRouter] Inbound log error: {_p_log_err}")
+
         # =====================================================================
         # 7-LAYER INGRESS WEBHOOK PROTECTION & CIRCUIT BREAKER (§4.2, §8.4, §9.8)
         # =====================================================================
