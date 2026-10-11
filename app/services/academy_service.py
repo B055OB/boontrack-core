@@ -356,12 +356,110 @@ def reset_academy_test_state() -> None:
     AcademyEntitlementManager._ORDER_ENTITLEMENTS.clear()
     AcademyOutboxManager._OUTBOX.clear()
 
-# Regex for State 0 inbound trigger
-# Matches "Halo, saya alumni CPM Mayar dan ingin amankan akses privilege Rp249.000."
+# ============================================================================
+# MASTER DATA ALUMNI REGISTRY & LOOKUP
+# ============================================================================
+
+_ALUMNI_MASTER_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "6281234567890": {"name": "Budi Santoso", "email": "budi.alumni@gmail.com"},
+    "6281122334455": {"name": "Siti Rahma", "email": "siti@mayar.id"},
+    "6285811223344": {"name": "Dewi Lestari", "email": "dewi.lestari@mayar.id"},
+    "6281299887766": {"name": "Ahmad Fikri", "email": "ahmad.fikri@gmail.com"},
+}
+
+def lookup_alumni_master_data(phone: str, email: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Lookup data alumni CPM Mayar berdasarkan nomor WhatsApp atau email.
+    Mengecek in-memory registry serta database orders/customers jika terkoneksi.
+    """
+    clean_p = normalize_phone_number(phone) or phone
+    if clean_p in _ALUMNI_MASTER_REGISTRY:
+        return _ALUMNI_MASTER_REGISTRY[clean_p]
+
+    if email:
+        clean_email = str(email).lower().strip()
+        for p, d in _ALUMNI_MASTER_REGISTRY.items():
+            if d.get("email", "").lower().strip() == clean_email:
+                return d
+
+    # Cek Supabase jika aktif
+    try:
+        sb = get_supabase()
+        if sb:
+            res = sb.table("orders").select("customer_name, customer_email").eq("customer_phone", clean_p).limit(1).execute()
+            if res.data:
+                row = res.data[0]
+                return {
+                    "name": row.get("customer_name") or "Alumni",
+                    "email": row.get("customer_email"),
+                }
+    except Exception as e:
+        logger.debug(f"[AlumniLookup] Database query note: {e}")
+
+    return None
+
+def register_alumni_master_data(phone: str, name: str, email: str) -> None:
+    """Mendaftarkan atau memutakhirkan data alumni ke master registry."""
+    clean_p = normalize_phone_number(phone) or phone
+    _ALUMNI_MASTER_REGISTRY[clean_p] = {
+        "name": name.strip(),
+        "email": email.lower().strip(),
+    }
+
+
+# ============================================================================
+# MULTI-TRIGGER PATTERNS & ROUTING (BATCH 1)
+# ============================================================================
+
+# Trigger Kampanye A (ref=alumni_cpm):
+# - "Halo mas, saya alumni CPM Mayar dan mau ambil tiket privilege Rp249.000."
+# - "Halo, saya alumni CPM Mayar dan ingin amankan akses privilege Rp249.000."
+TRIGGER_PATTERN_CAMPAIGN_A = re.compile(
+    r"(?i)halo.*?alumni cpm mayar.*?(tiket|akses) privilege.*?249\.?000",
+    re.IGNORECASE
+)
+
+# Trigger Kampanye B (ref=ads_ctwa):
+# - "Halo kak, saya mau daftar Kelas Inkubasi CTWA Batch 1 promo Rp249.000."
+TRIGGER_PATTERN_CAMPAIGN_B = re.compile(
+    r"(?i)halo.*?mau daftar kelas inkubasi ctwa batch 1 promo.*?249\.?000",
+    re.IGNORECASE
+)
+
+# Trigger Storefront Direct:
+# - "Halo kak, saya mau konfirmasi pemesanan Inkubasi CTWA Batch 1."
+TRIGGER_PATTERN_STOREFRONT = re.compile(
+    r"(?i)halo.*?mau konfirmasi pemesanan inkubasi ctwa batch 1",
+    re.IGNORECASE
+)
+
+# Legacy pattern compatibility
 STATE_0_TRIGGER_PATTERN = re.compile(
     r"(?i)halo[\s,]*saya alumni cpm mayar dan ingin amankan akses privilege rp[\s.]*249\.?000",
     re.IGNORECASE
 )
+
+def classify_academy_trigger(text: str) -> Optional[str]:
+    """
+    Mengidentifikasi route kampanye dari pesan masuk:
+    - 'alumni_cpm': Kampanye A (Alumni CPM Mayar)
+    - 'ads_ctwa': Kampanye B (Ads Kelas Inkubasi CTWA Batch 1)
+    - 'storefront_direct': Storefront Direct Confirmation
+    """
+    if not text or not isinstance(text, str):
+        return None
+    clean = text.strip()
+    if TRIGGER_PATTERN_CAMPAIGN_A.search(clean) or STATE_0_TRIGGER_PATTERN.search(clean):
+        return "alumni_cpm"
+    if TRIGGER_PATTERN_CAMPAIGN_B.search(clean):
+        return "ads_ctwa"
+    if TRIGGER_PATTERN_STOREFRONT.search(clean):
+        return "storefront_direct"
+    return None
+
+def is_academy_trigger_message(text: str) -> bool:
+    """Mengecek apakah pesan masuk mencocokkan salah satu dari 3 pattern State 0."""
+    return classify_academy_trigger(text) is not None
 
 # Regex for email validation
 EMAIL_REGEX = re.compile(
@@ -380,14 +478,6 @@ def format_idr(amount: Any) -> str:
         return f"{val:,}".replace(",", ".")
     except Exception:
         return "249.000"
-
-
-def is_academy_trigger_message(text: str) -> bool:
-    """Mengecek apakah pesan masuk mencocokkan pattern STATE 0 Warm Launch."""
-    if not text or not isinstance(text, str):
-        return False
-    clean = text.strip()
-    return bool(STATE_0_TRIGGER_PATTERN.search(clean))
 
 
 # ============================================================================
@@ -921,41 +1011,181 @@ class AcademyBotStateMachine:
             resolved_name = "Kak"
 
         # ---------------------------------------------------------------------
-        # STATE 0: Inbound Trigger (Pattern Match)
+        # STATE 0: Multi-Trigger Inbound Routing (Batch 1)
         # ---------------------------------------------------------------------
-        if is_academy_trigger_message(clean_text):
-            logger.info(f"[AcademyState0] Matched inbound trigger from {clean_phone} ({resolved_name})")
-            cls.set_session(
-                clean_phone,
-                state=STATE_1_AWAITING_EMAIL,
-                name=resolved_name,
-            )
+        trigger_campaign = classify_academy_trigger(clean_text)
 
-            reply_text = (
-                f"Halo {resolved_name}! 👋\n\n"
-                f"Terima kasih telah mengonfirmasi status alumni CPM Mayar Anda.\n\n"
-                f"Untuk verifikasi lisensi resmi & penerbitan invoice *BoonTrack Academy "
-                f"(Alumni Privilege Pass Rp 249.000)*, mohon balas pesan ini dengan alamat *EMAIL aktif* Anda ya."
-            )
+        if trigger_campaign:
+            logger.info(f"[AcademyState0] Matched '{trigger_campaign}' trigger from {clean_phone} ({resolved_name})")
 
-            try:
-                await send_whatsapp_text(
-                    to_phone=clean_phone,
-                    text=reply_text,
+            # --- ROUTE A: Kampanye A (ref=alumni_cpm) ---
+            if trigger_campaign == "alumni_cpm":
+                alumni_master = lookup_alumni_master_data(clean_phone)
+                if alumni_master:
+                    resolved_name = alumni_master.get("name") or resolved_name
+                    master_email = alumni_master.get("email")
+                else:
+                    master_email = session.get("email")
+
+                cls.set_session(
+                    clean_phone,
+                    state=STATE_1_AWAITING_EMAIL,
+                    name=resolved_name,
+                    email=master_email,
+                    campaign="alumni_cpm",
                     tenant_id=tenant_id,
-                    phone_number_id=phone_number_id,
                 )
-            except Exception as e:
-                logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
 
-            return {
-                "handled": True,
-                "state": 0,
-                "next_state": 1,
-                "action": "ASK_EMAIL",
-                "reply": reply_text,
-                "customer_name": resolved_name,
-            }
+                if master_email:
+                    reply_text = (
+                        f"Halo {resolved_name}! 👋\n\n"
+                        f"Terima kasih telah mengonfirmasi status alumni CPM Mayar Anda.\n"
+                        f"Data alumni Anda terverifikasi dengan email terdaftar: *{master_email}*.\n\n"
+                        f"Untuk verifikasi lisensi resmi & penerbitan invoice *BoonTrack Academy "
+                        f"(Alumni Privilege Pass Rp 249.000)*, silakan balas dengan konfirmasi 'OK' atau kirimkan alamat *EMAIL aktif* Anda ya."
+                    )
+                else:
+                    reply_text = (
+                        f"Halo {resolved_name}! 👋\n\n"
+                        f"Terima kasih telah mengonfirmasi status alumni CPM Mayar Anda.\n\n"
+                        f"Untuk verifikasi lisensi resmi & penerbitan invoice *BoonTrack Academy "
+                        f"(Alumni Privilege Pass Rp 249.000)*, mohon balas pesan ini dengan alamat *EMAIL aktif* Anda ya."
+                    )
+
+                try:
+                    await send_whatsapp_text(
+                        to_phone=clean_phone,
+                        text=reply_text,
+                        tenant_id=tenant_id,
+                        phone_number_id=phone_number_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+
+                return {
+                    "handled": True,
+                    "state": 0,
+                    "next_state": 1,
+                    "action": "ASK_EMAIL",
+                    "campaign": "alumni_cpm",
+                    "reply": reply_text,
+                    "customer_name": resolved_name,
+                    "customer_email": master_email,
+                    "tenant_id": tenant_id,
+                }
+
+            # --- ROUTE B: Kampanye B (ref=ads_ctwa) ---
+            elif trigger_campaign == "ads_ctwa":
+                cls.set_session(
+                    clean_phone,
+                    state=STATE_1_AWAITING_EMAIL,
+                    name=resolved_name,
+                    campaign="ads_ctwa",
+                    tenant_id=tenant_id,
+                )
+
+                reply_text = (
+                    f"Halo {resolved_name}! 👋 Terima kasih telah menghubungi kami untuk pendaftaran *Kelas Inkubasi CTWA Batch 1*! 🚀\n\n"
+                    f"Berikut 3 Benefit Utama Program Inkubasi CTWA Batch 1:\n"
+                    f"1. 📈 *10 Langkah Scale Engine CTWA*: Framework scaling iklan dan funnel traffic langsung ke WhatsApp dengan rasio konversi tinggi.\n"
+                    f"2. 🤖 *WhatsApp Bot Automation & Direct Checkout*: Setup bot auto-reply cerdas, multi-tenant context, serta integrasi QRIS dinamis 10 detik.\n"
+                    f"3. 💎 *Supergroup Forum Privat & Ads Tool*: Akses topik khusus #Announcement & #Basic-Fase1 untuk review toko serta tools ads siap pakai.\n\n"
+                    f"Investasi Promo Batch 1: *Rp 249.000* (Diskon dari harga normal Rp 499.000).\n\n"
+                    f"Untuk memproses registrasi & penerbitan invoice resmi Anda, mohon balas pesan ini dengan *Nama Lengkap* dan *Email Aktif* Anda ya (contoh: *Budi Santoso - budi@gmail.com*)."
+                )
+
+                try:
+                    await send_whatsapp_text(
+                        to_phone=clean_phone,
+                        text=reply_text,
+                        tenant_id=tenant_id,
+                        phone_number_id=phone_number_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+
+                return {
+                    "handled": True,
+                    "state": 0,
+                    "next_state": 1,
+                    "action": "SEND_BENEFITS_AND_ASK_INFO",
+                    "campaign": "ads_ctwa",
+                    "reply": reply_text,
+                    "customer_name": resolved_name,
+                    "tenant_id": tenant_id,
+                }
+
+            # --- ROUTE C: Storefront Direct ---
+            elif trigger_campaign == "storefront_direct":
+                customer_email = session.get("email") or f"order.{clean_phone[-6:]}@boontrack.id"
+
+                invoice = generate_academy_qris_invoice(
+                    customer_name=resolved_name,
+                    customer_email=customer_email,
+                    customer_phone=clean_phone,
+                    tenant_id=tenant_id,
+                    use_unique_code=True,
+                )
+                order_id = invoice["order_id"]
+                total_amount = invoice["total_amount"]
+                formatted_total = format_idr(total_amount)
+                qr_image_url = invoice["qr_image_url"]
+                exp_wib = invoice["expires_at_dt"].astimezone(timezone(timedelta(hours=7)))
+                exp_time_str = exp_wib.strftime("%H:%M")
+
+                cls.set_session(
+                    clean_phone,
+                    state=STATE_1_PAYMENT_ISSUED,
+                    name=resolved_name,
+                    email=customer_email,
+                    order_id=order_id,
+                    amount=total_amount,
+                    campaign="storefront_direct",
+                    tenant_id=tenant_id,
+                )
+
+                reply_text = (
+                    f"📋 *RINGKASAN PEMESANAN KELAS INKUBASI CTWA BATCH 1*\n\n"
+                    f"Order ID: *{order_id}*\n"
+                    f"Nama Pelanggan: *{resolved_name}*\n"
+                    f"Program: *Kelas Inkubasi CTWA Batch 1 (Full Access)*\n\n"
+                    f"💰 *Total Tagihan: Rp {formatted_total}*\n"
+                    f"⚠️ *PENTING:* Mohon transfer *TEPAT Rp {formatted_total}* (termasuk 3-digit kode unik) "
+                    f"agar pembayaran Anda terverifikasi otomatis dalam 10 detik!\n\n"
+                    f"⏱️ *Batas Waktu Pembayaran:* 15 Menit (Hingga pukul {exp_time_str} WIB)\n\n"
+                    f"📱 *Instruksi Pembayaran QRIS:*\n"
+                    f"1. Buka aplikasi M-Banking (BCA, Mandiri, BRI, BNI, dll) atau E-Wallet (GoPay, OVO, DANA, ShopeePay).\n"
+                    f"2. Pilih menu *Scan / Bayar QRIS*.\n"
+                    f"3. Buka tautan gambar QRIS resmi berikut:\n"
+                    f"👉 {qr_image_url}\n"
+                    f"4. Pastikan nominal pembayaran adalah *Rp {formatted_total}*.\n"
+                    f"5. Selesaikan transaksi.\n\n"
+                    f"Setelah pembayaran terverifikasi otomatis, tautan bergabung Supergroup Forum Telegram Resmi Anda akan dikirim seketika di sini! 🚀"
+                )
+
+                try:
+                    await send_whatsapp_text(
+                        to_phone=clean_phone,
+                        text=reply_text,
+                        tenant_id=tenant_id,
+                        phone_number_id=phone_number_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+
+                return {
+                    "handled": True,
+                    "state": 1,
+                    "action": "PAYMENT_ISSUED",
+                    "campaign": "storefront_direct",
+                    "order_id": order_id,
+                    "total_amount": total_amount,
+                    "qr_image_url": qr_image_url,
+                    "reply": reply_text,
+                    "customer_name": resolved_name,
+                    "customer_email": customer_email,
+                    "tenant_id": tenant_id,
+                }
 
         # ---------------------------------------------------------------------
         # STATE 1: Issuing Payment (User kirim email saat STATE_1_AWAITING_EMAIL)
@@ -963,7 +1193,13 @@ class AcademyBotStateMachine:
         if current_state == STATE_1_AWAITING_EMAIL:
             # Ekstrak kata yang menyerupai email dari pesan
             email_match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", clean_text)
-            if not email_match:
+            customer_email = None
+            if email_match:
+                customer_email = email_match.group(0).lower().strip()
+            elif session.get("email") and re.search(r"\b(ok|ya|iya|siap|lanjut|benar|betul|konfirmasi|setuju)\b", clean_text.lower()):
+                customer_email = session.get("email").lower().strip()
+
+            if not customer_email:
                 # Format email belum sesuai
                 retry_reply = (
                     f"Mohon maaf {resolved_name}, format email belum sesuai. 😊\n\n"
@@ -987,14 +1223,25 @@ class AcademyBotStateMachine:
                     "reply": retry_reply,
                 }
 
-            customer_email = email_match.group(0).lower().strip()
+            # Ekstrak nama jika belum ada di sesi atau nama di sesi masih generik
+            if session.get("name") and session.get("name") not in ("Kak", "Pelanggan", "User", "+62", "62", "null", ""):
+                resolved_name = session.get("name")
+            else:
+                if "@" in clean_text:
+                    parts = [p.strip() for p in re.split(r"[-:,]", clean_text) if p.strip()]
+                    for part in parts:
+                        if not re.search(r"@", part) and len(part) > 2 and not part.lower().startswith("halo") and not any(k in part.lower() for k in ("email saya", "email", "daftar", "nama saya")):
+                            resolved_name = part
+                            break
+
+            effective_tenant = session.get("tenant_id") or tenant_id or "onlineboost"
 
             # Generate QRIS Invoice Rp 249.xxx (valid 15 menit)
             invoice = generate_academy_qris_invoice(
                 customer_name=resolved_name,
                 customer_email=customer_email,
                 customer_phone=clean_phone,
-                tenant_id=tenant_id,
+                tenant_id=effective_tenant,
                 use_unique_code=True,
             )
 
@@ -1010,9 +1257,11 @@ class AcademyBotStateMachine:
             cls.set_session(
                 clean_phone,
                 state=STATE_1_PAYMENT_ISSUED,
+                name=resolved_name,
                 email=customer_email,
                 order_id=order_id,
                 amount=total_amount,
+                tenant_id=effective_tenant,
             )
 
             invoice_msg = (
@@ -1039,7 +1288,7 @@ class AcademyBotStateMachine:
                 await send_whatsapp_text(
                     to_phone=clean_phone,
                     text=invoice_msg,
-                    tenant_id=tenant_id,
+                    tenant_id=effective_tenant,
                     phone_number_id=phone_number_id,
                 )
             except Exception as e:
@@ -1049,10 +1298,14 @@ class AcademyBotStateMachine:
                 "handled": True,
                 "state": 1,
                 "action": "PAYMENT_ISSUED",
+                "campaign": session.get("campaign") or "alumni_cpm",
                 "order_id": order_id,
                 "total_amount": total_amount,
                 "qr_image_url": qr_image_url,
                 "reply": invoice_msg,
+                "customer_name": resolved_name,
+                "customer_email": customer_email,
+                "tenant_id": effective_tenant,
             }
 
         return None
@@ -1137,6 +1390,28 @@ class AcademyBotStateMachine:
                 tenant_id=tenant_id,
             )
 
+            # Generate single-use Telegram Supergroup invite link
+            single_use_telegram_link = await generate_single_use_telegram_link(
+                customer_name=customer_name,
+                customer_email=customer_email,
+                order_id=order_id,
+            )
+
+            # Naskah resmi SOP STATE 2 (Delivery Payload Alumni Batch 1)
+            confirmation_msg = (
+                f"✅ PEMBAYARAN BERHASIL DIVERIFIKASI!\n\n"
+                f"Selamat datang di BoonTrack Academy, {customer_name}!\n\n"
+                f"Detail Transaksi:\n"
+                f"- Program: Kelas Inkubasi CTWA Batch 1 (Full Access)\n"
+                f"- Email: {customer_email}\n"
+                f"- Total: Rp 249.000 (LUNAS)\n\n"
+                f"Link Akses Forum Telegram:\n"
+                f"Silakan bergabung ke Supergroup Forum resmi melalui tautan khusus di bawah ini:\n"
+                f"👉 {single_use_telegram_link}\n\n"
+                f"Langkah Awal:\n"
+                f"Begitu masuk ke Telegram, buka topik #Announcement untuk membaca SOP kelas, lalu buka #Basic-Fase1 untuk memulai setup toko dan bot Anda hari ini."
+            )
+
             # 2. Simpan entri Transactional Outbox untuk dispatch pesan Telegram & WA
             outbox_entry = AcademyOutboxManager.create_outbox_message(
                 order_id=order_id,
@@ -1147,27 +1422,11 @@ class AcademyBotStateMachine:
                     "customer_email": customer_email,
                     "customer_phone": customer_phone,
                     "entitlement_id": entitlement.get("entitlement_id"),
+                    "single_use_telegram_link": single_use_telegram_link,
+                    "delivery_template": "BATCH_1_ALUMNI_PRIVILEGE",
+                    "confirmation_message": confirmation_msg,
                 },
                 tenant_id=tenant_id,
-            )
-
-            # Generate single-use Telegram Supergroup invite link
-            single_use_telegram_link = await generate_single_use_telegram_link(
-                customer_name=customer_name,
-                customer_email=customer_email,
-                order_id=order_id,
-            )
-
-            # Naskah resmi SOP STATE 2
-            confirmation_msg = (
-                f"✅ PEMBAYARAN BERHASIL DIVERIFIKASI!\n"
-                f"Selamat bergabung di BoonTrack Academy, {customer_name}!\n"
-                f"Email Terdaftar: {customer_email}\n"
-                f"Status: Full Ecosystem Unlocked (10 Langkah + Bot + Studio + Tool Ads)\n\n"
-                f"Langkah Selanjutnya:\n"
-                f"Silakan langsung bergabung ke Supergroup Forum Telegram Resmi melalui tautan privat:\n"
-                f"👉 {single_use_telegram_link}\n\n"
-                f"Di dalam grup, masuk ke topic #Basic-Fase1 untuk memulai setup toko dan bot Anda hari ini. Sampai jumpa di dalam!"
             )
 
             # Kirim balasan konfirmasi via WhatsApp ke customer & catat ke outbox

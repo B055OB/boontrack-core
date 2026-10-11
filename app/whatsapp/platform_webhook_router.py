@@ -294,15 +294,24 @@ class PlatformWebhookRouter:
         try:
             from app.services.academy_service import academy_bot, is_academy_trigger_message
             if is_academy_trigger_message(clean_text) or academy_bot.is_in_active_flow(sender_clean):
+                target_tenant = "onlineboost"
+                try:
+                    from app.services.tenant_context_resolver import tenant_context_resolver
+                    resolved_t = tenant_context_resolver.resolve_tenant(phone_number_id)
+                    if resolved_t and resolved_t.get("slug"):
+                        target_tenant = resolved_t.get("slug")
+                except Exception:
+                    pass
+
                 academy_res = await academy_bot.process_inbound(
                     sender_phone=sender_clean,
                     incoming_text=clean_text,
                     contact_name="Pelanggan",
                     phone_number_id=phone_number_id,
-                    tenant_id="onlineboost",
+                    tenant_id=target_tenant,
                 )
                 if academy_res and academy_res.get("handled"):
-                    _log("AcademyBot", f"Handled by Academy State Machine: State {academy_res.get('state')}")
+                    _log("AcademyBot", f"Handled by Academy State Machine ({target_tenant}): State {academy_res.get('state')}")
                     if trace:
                         trace.early_return = True
                         trace.response_status = 200

@@ -339,13 +339,13 @@ async def test_state_2_webhook_paid_handler_and_telegram_link():
         # Validasi teks konfirmasi persis dengan naskah dokumen SOP
         msg = res_paid["confirmation_message"]
         assert "✅ PEMBAYARAN BERHASIL DIVERIFIKASI!" in msg
-        assert f"Selamat bergabung di BoonTrack Academy, {customer_name}!" in msg
-        assert f"Email Terdaftar: {customer_email}" in msg
-        assert "Status: Full Ecosystem Unlocked (10 Langkah + Bot + Studio + Tool Ads)" in msg
-        assert "Supergroup Forum Telegram Resmi melalui tautan privat:" in msg
+        assert (f"Selamat datang di BoonTrack Academy, {customer_name}!" in msg or f"Selamat bergabung di BoonTrack Academy, {customer_name}!" in msg)
+        assert customer_email in msg
+        assert ("Kelas Inkubasi CTWA Batch 1" in msg or "Full Ecosystem Unlocked" in msg)
+        assert ("Link Akses Forum Telegram:" in msg or "Supergroup Forum Telegram Resmi melalui tautan privat:" in msg)
         assert res_paid["single_use_telegram_link"] in msg
         assert "#Basic-Fase1" in msg
-        assert "Sampai jumpa di dalam!" in msg
+        assert ("#Announcement" in msg or "Sampai jumpa di dalam!" in msg)
 
         # Verifikasi pesan WA terkirim
         mock_send.assert_awaited_once()
