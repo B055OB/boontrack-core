@@ -59,6 +59,7 @@ from app.routes.shipping_webhook_routes import register_shipping_routes
 from app.routes.seller_ads_routes import register_seller_ads_routes
 from app.routes.affiliate_auth import router as affiliate_auth_router, affiliate_payout_router, affiliate_router, register_affiliate_auth_routes
 from app.routes.meta_waba_routes import waba_router
+from app.routes.whatsapp_connect_routes import whatsapp_connect_router
 from app.routes.shipping_routes import router as shipping_router, logistics_router
 from app.routes.partner_routes import partner_router, manager_router
 from app.routes.analytics_fastapi_routes import router as analytics_router
@@ -207,6 +208,7 @@ app.include_router(affiliate_auth_router)
 app.include_router(affiliate_payout_router)
 app.include_router(affiliate_router)
 app.include_router(waba_router)
+app.include_router(whatsapp_connect_router)
 app.include_router(shipping_router)
 app.include_router(logistics_router)
 app.include_router(partner_router)
