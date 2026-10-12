@@ -1629,6 +1629,40 @@ class TenantWebhookRouter:
             logger.error(f"[TENANT_ACADEMY_BOT_ERROR] {_acad_err}", exc_info=True)
 
         # =====================================================================
+        # 1.6. ONLINEBOOST: CTWA FUNNEL (SINGLE OFFER 249K & FLOWS GATEKEEPER)
+        # =====================================================================
+        if tenant_slug == "onlineboost":
+            try:
+                from app.services.ctwa_state_engine import ctwa_state_engine
+                ctwa_res = await ctwa_state_engine.process_turn(
+                    phone=sender_phone,
+                    incoming_text=clean_text,
+                    sender_name=contact_name,
+                    raw_msg=raw_msg,
+                    phone_number_id=phone_number_id,
+                )
+                if ctwa_res and ctwa_res.get("reply"):
+                    trace.log_step(
+                        "TenantCtwaStateEngine",
+                        f"Handled by OnlineBoost CTWA Engine (Action: {ctwa_res.get('action')})"
+                    )
+                    res = {
+                        "status": "success",
+                        "purpose": "TENANT_SALES",
+                        "tenant": "onlineboost",
+                        "action": ctwa_res.get("action"),
+                        "reply": ctwa_res.get("reply"),
+                        "order_id": ctwa_res.get("order_id"),
+                        "total_amount": ctwa_res.get("total_amount"),
+                    }
+                    trace.early_return = True
+                    trace.response_status = 200
+                    trace.response_payload = res
+                    return res
+            except Exception as _ctwa_err:
+                logger.error(f"[TENANT_CTWA_ENGINE_ERROR] {_ctwa_err}", exc_info=True)
+
+        # =====================================================================
         # 2. STATE GUARD (ANTI-SILENT BOT): General Greeting / Menu / Help
         # =====================================================================
         is_general_inquiry = text_lower in ("halo", "hi", "p", "test", "tes", "hai", "start", "menu", "help", "bantuan", "info")
@@ -1788,6 +1822,9 @@ class TrafficSplitter:
         elif msg_type == "interactive":
             interactive = first_msg.get("interactive") or {}
             incoming_text = str(interactive.get("button_reply", {}).get("id") or interactive.get("list_reply", {}).get("id") or "").strip()
+            if not incoming_text and interactive.get("type") == "nfm_reply":
+                nfm = interactive.get("nfm_reply") or {}
+                incoming_text = str(nfm.get("response_json") or nfm.get("body") or "nfm_reply").strip()
         elif msg_type == "button":
             incoming_text = str((first_msg.get("button") or {}).get("payload") or "").strip()
 

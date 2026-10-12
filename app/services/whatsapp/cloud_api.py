@@ -587,6 +587,114 @@ async def send_whatsapp_buttons(
         return await send_whatsapp_text(to_phone, body_text, tenant_id=tenant_id, phone_number_id=phone_number_id, access_token=access_token)
 
 
+async def send_whatsapp_flow(
+    to_phone: str,
+    flow_id: Optional[str] = None,
+    flow_token: str = "ctwa_flow_token",
+    flow_cta: str = "📝 Isi Data Pendaftaran",
+    header_text: str = "Pendaftaran Batch 1",
+    body_text: str = (
+        "Amankan slot promo Rp249.000 dengan melengkapi data singkat di bawah ini. "
+        "Invoice resmi akan langsung diterbitkan:"
+    ),
+    footer_text: str = "OnlineBoost x BoonTrack",
+    tenant_id: str = "onlineboost",
+    phone_number_id: Optional[str] = None,
+    access_token: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Kirim pesan interaktif WhatsApp Flows Form (interactive: flow)."""
+    token, phone_id, version = get_wa_credentials(tenant_id, phone_number_id=phone_number_id, access_token=access_token)
+    clean_phone = str(to_phone).replace("+", "").strip()
+
+    resolved_flow_id = (
+        flow_id
+        or os.getenv("FLOW_ID_ONLINEBOOST")
+        or os.getenv("META_FLOW_ID")
+        or "<FLOW_ID_ONLINEBOOST>"
+    )
+
+    fallback_text = (
+        f"{body_text}\n\n"
+        "Silakan balas pesan ini dengan format:\n"
+        "Halo Admin, saya atas nama [Nama Lengkap] ([Email Aktif]) sudah daftar kelas"
+    )
+
+    if not token or not phone_id:
+        logger.warning(f"[WhatsApp Service] Missing credentials for tenant '{tenant_id}'. Sending text fallback.")
+        return await send_whatsapp_text(
+            to_phone=to_phone,
+            text=fallback_text,
+            tenant_id=tenant_id,
+            phone_number_id=phone_number_id,
+            access_token=access_token,
+        )
+
+    url = f"https://graph.facebook.com/{version}/{phone_id}/messages"
+    headers = {
+        **_get_auth_headers(token),
+        "Content-Type": "application/json",
+    }
+
+    interactive_obj: Dict[str, Any] = {
+        "type": "flow",
+        "action": {
+            "name": "flow",
+            "parameters": {
+                "flow_message_version": "3",
+                "flow_token": flow_token,
+                "flow_id": resolved_flow_id,
+                "flow_cta": flow_cta,
+            },
+        },
+    }
+
+    if header_text:
+        interactive_obj["header"] = {"type": "text", "text": header_text}
+    if body_text:
+        interactive_obj["body"] = {"text": sanitize_whatsapp_message_text(body_text)}
+    if footer_text:
+        interactive_obj["footer"] = {"text": footer_text}
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": clean_phone,
+        "type": "interactive",
+        "interactive": interactive_obj,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            if response.status_code not in (200, 201):
+                logger.warning(
+                    f"[WhatsApp Service] send_whatsapp_flow returned HTTP {response.status_code}: {response.text}. "
+                    "Falling back to text message."
+                )
+                return await send_whatsapp_text(
+                    to_phone, fallback_text, tenant_id=tenant_id, phone_number_id=phone_number_id, access_token=access_token
+                )
+
+            res_data = response.json()
+            await log_to_supabase_messages(
+                sender="bot",
+                text=body_text,
+                tenant_id=tenant_id,
+                channel="whatsapp",
+                user_phone=clean_phone,
+                user_id=clean_phone,
+                conversation_id=clean_phone,
+                metadata={"msg_type": "flow", "flow_id": resolved_flow_id, "flow_token": flow_token},
+            )
+            return res_data
+    except Exception as e:
+        logger.error(f"[WhatsApp Service] Exception in send_whatsapp_flow: {e}", exc_info=True)
+        return await send_whatsapp_text(
+            to_phone, fallback_text, tenant_id=tenant_id, phone_number_id=phone_number_id, access_token=access_token
+        )
+
+
+
 async def upload_media(
     bytes_data: bytes,
     mime_type: str = "image/png",

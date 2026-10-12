@@ -753,7 +753,39 @@ class OnboardingService:
                     "price": 150000,
                     "promo_price": 150000,
                     "description": "Konsultasi chat privat intensif bersama dr. Harys Maulana untuk evaluasi feeding rules dan pendampingan GTM anak.",
-                }
+                },
+                {
+                    "id": "prod-happyeating",
+                    "title": "Course GTM & Solusi MPASI Anti-GTM",
+                    "slug": "happyeating",
+                    "price": 199000,
+                    "promo_price": 99999,
+                    "description": "Kelas online komprehensif panduan praktis mengatasi GTM (Gerakan Tutup Mulut) & feeding rules MPASI anti-stres.",
+                },
+                {
+                    "id": "prod-panduan-stimulasi",
+                    "title": "Panduan Stimulasi Anak Cerdas (0–5 Tahun)",
+                    "slug": "panduan-stimulasianakcerdas",
+                    "price": 249000,
+                    "promo_price": 149000,
+                    "description": "E-book & modul checklist stimulasi motorik, kognitif, dan perkembangan bicara anak usia 0-5 tahun.",
+                },
+                {
+                    "id": "prod-play-n-grow",
+                    "title": "E-Course PLAY N GROW (Khusus Cirebon)",
+                    "slug": "play-n-grow-cirebon",
+                    "price": 99000,
+                    "promo_price": 75000,
+                    "description": "E-Course stimulasi sensori & motorik anak berbasis aktivitas bermain (Khusus Cirebon).",
+                },
+                {
+                    "id": "prod-konsultasi-dokter",
+                    "title": "Konsultasi Klinis & Screening Dokter Anak",
+                    "slug": "konsultasi-dokter",
+                    "price": 250000,
+                    "promo_price": 150000,
+                    "description": "Sesi evaluasi klinis dan skrining tumbuh kembang komprehensif dokter spesialis anak.",
+                },
             ]
             self._payouts_by_tenant[t_id] = {
                 "bank_name": "BCA",

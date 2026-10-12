@@ -77,8 +77,10 @@ TUMBUH_KEMBANG_ANAK_KB: Dict[str, Any] = {
     "services": [
         {
             "id": "eat_and_grow",
+            "slug": "eat-and-grow-konsultasi-chat-gtm-anak",
             "name": "Eat & Grow (Konsultasi Chat GTM Anak)",
             "price": 150000,
+            "promo_price": 150000,
             "currency": "IDR",
             "formatted_price": "Rp150.000",
             "is_primary": True,
@@ -86,9 +88,59 @@ TUMBUH_KEMBANG_ANAK_KB: Dict[str, Any] = {
             "description": "Konsultasi intensif via chat WhatsApp bersama dr. Harys Maulana untuk evaluasi feeding rules, jadwal makan, tekstur, dan pendampingan GTM bertahap.",
         },
         {
+            "id": "happyeating",
+            "slug": "happyeating",
+            "name": "Course GTM & Solusi MPASI Anti-GTM",
+            "price": 199000,
+            "promo_price": 99999,
+            "currency": "IDR",
+            "formatted_price": "Rp99.999",
+            "is_primary": False,
+            "checkout_url": "https://konsul.littlebitefeeding.com/p/happyeating",
+            "description": "Kelas online komprehensif panduan praktis mengatasi GTM (Gerakan Tutup Mulut) & feeding rules MPASI anti-stres.",
+        },
+        {
+            "id": "panduan_stimulasi",
+            "slug": "panduan-stimulasianakcerdas",
+            "name": "Panduan Stimulasi Anak Cerdas (0–5 Tahun)",
+            "price": 249000,
+            "promo_price": 149000,
+            "currency": "IDR",
+            "formatted_price": "Rp149.000",
+            "is_primary": False,
+            "checkout_url": "https://konsul.littlebitefeeding.com/p/panduan-stimulasianakcerdas",
+            "description": "E-book & modul checklist stimulasi motorik, kognitif, dan perkembangan bicara anak usia 0-5 tahun.",
+        },
+        {
+            "id": "play_n_grow",
+            "slug": "play-n-grow-cirebon",
+            "name": "E-Course PLAY N GROW (Khusus Cirebon)",
+            "price": 99000,
+            "promo_price": 75000,
+            "currency": "IDR",
+            "formatted_price": "Rp75.000",
+            "is_primary": False,
+            "checkout_url": "https://konsul.littlebitefeeding.com/p/play-n-grow-cirebon",
+            "description": "E-Course stimulasi sensori & motorik anak berbasis aktivitas bermain (Khusus Cirebon).",
+        },
+        {
+            "id": "konsultasi_dokter",
+            "slug": "konsultasi-dokter",
+            "name": "Konsultasi Klinis & Screening Dokter Anak",
+            "price": 250000,
+            "promo_price": 150000,
+            "currency": "IDR",
+            "formatted_price": "Rp150.000",
+            "is_primary": False,
+            "checkout_url": "https://konsul.littlebitefeeding.com/p/konsultasi-dokter",
+            "description": "Sesi evaluasi klinis dan skrining tumbuh kembang komprehensif dokter spesialis anak.",
+        },
+        {
             "id": "gmeet_consultation",
+            "slug": "gmeet_consultation",
             "name": "Google Meet",
             "price": 250000,
+            "promo_price": 250000,
             "currency": "IDR",
             "formatted_price": "Rp250.000",
             "is_primary": False,
@@ -120,6 +172,13 @@ TUMBUH_KEMBANG_ANAK_KB: Dict[str, Any] = {
         "anti_hardselling": (
             "DILARANG langsung melampirkan link pembayaran atau mematok harga Rp150.000 di respons pembuka "
             "saat orang tua curhat atau mengeluhkan kondisi anak."
+        ),
+        "auto_offer_direct_closing": (
+            "Saat Ayah/Bunda menanyakan harga, biaya, promo, atau benefit produk digital/konsultasi: "
+            "1. Jelaskan harga promo dan manfaat utama produk dengan ramah, empatik, dan terstruktur. "
+            "2. DILARANG KERAS hanya membalas nominal lalu diam (read-only mode). "
+            "3. WAJIB pasang direct-closing action: Arahkan ke pembayaran atau minta Nama Lengkap & Email aktif Ayah/Bunda "
+            "untuk langsung menerbitkan Dynamic QRIS otomatis."
         ),
         "conversation_funnel": {
             "step_1": "Empati & Skrining Administratif (validasi kekhawatiran, tanyakan usia & BB serta durasi susah makan. ZERO link, ZERO harga)",

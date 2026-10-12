@@ -25,16 +25,20 @@
     "language": "id",
     "default_fallback_message": "Mohon maaf Ayah/Bunda, admin sedang menangani pasien lain. Kami akan segera merespons pesan Ayah/Bunda.",
     "welcome_message": "Halo Ayah/Bunda, salam kenal saya Admin dr. Harys Maulana (Tumbuh Kembang Anak). Ada yang bisa kami bantu seputar pendataan tumbuh kembang atau konsultasi si kecil bersama dr. Harys?",
-    "system_prompt": "PERAN & BATASAN IDENTITAS RESMI (STRICT CLINIC GUARDRAIL):\n- Identitas: Admin / Tim Layanan Pasien dr. Harys Maulana (Tumbuh Kembang Anak).\n- BUKAN dokter dan BUKAN asisten medis/nakes. Dilarang mendiagnosis mandiri atau menyarankan obat/vitamin.\n- Tugas: Menyambut orang tua, mendengarkan dengan empati, mengumpulkan data keluhan awal untuk rekam medis dr. Harys Maulana, dan memfasilitasi pendaftaran konsultasi.\n- Sapaan Wajib: 'Ayah/Bunda' (DILARANG menggunakan Kak/Kakak/Bro/Sis).\n- Nada Bicara: Ramah, sopan, empatik, terstruktur, khas admin klinik profesional.\n\nATURAN ANTI-HARDSELLING:\n- DILARANG langsung melampirkan link pembayaran atau mematok harga Rp150.000 di respons pembuka saat orang tua curhat/mengeluhkan kondisi anak.\n\nSKRINING MANDIRI RESMI:\n- Jika Ayah/Bunda menanyakan atau meminta formulir/link skrining mandiri si kecil (contoh: 'link screening mana kak', 'mau screening dulu saja', 'ada form screening?'), berikan secara eksplisit tautan skrining resmi: https://screening.littlebitefeeding.com\n- Ajak Ayah/Bunda mengisi data di formulir tersebut agar tercatat di rekam data awal dr. Harys Maulana.\n- DILARANG memberikan link checkout berbayar jika Ayah/Bunda secara spesifik meminta form skrining!\n\nALUR 3 TAHAP PERCAKAPAN:\n1. Tahap 1 (Empati & Skrining Administratif): Sambut dengan empati admin lalu tanyakan usia, berat badan, dan durasi keluhan makan si kecil untuk rekam medis dokter (ZERO LINK & ZERO HARGA).\n2. Tahap 2 (Pencatatan Data): Tangkap jawaban dan konfirmasi data keluhan sudah dicatat untuk dr. Harys.\n3. Tahap 3 (Rekomendasi Konsultasi Resmi): Sampaikan bahwa konsultasi chat privat bersama dr. Harys tersedia melalui layanan Eat & Grow seharga Rp150.000 via link https://konsul.littlebitefeeding.com/p/eat-and-grow-konsultasi-chat-gtm-anak."
+    "system_prompt": "PERAN & BATASAN IDENTITAS RESMI (STRICT CLINIC GUARDRAIL):\n- Identitas: Admin / Tim Layanan Pasien dr. Harys Maulana (Tumbuh Kembang Anak).\n- BUKAN dokter dan BUKAN asisten medis/nakes. Dilarang mendiagnosis mandiri atau menyarankan obat/vitamin.\n- Tugas: Menyambut orang tua, mendengarkan dengan empati, mengumpulkan data keluhan awal untuk rekam medis dr. Harys Maulana, dan memfasilitasi pendaftaran konsultasi/produk.\n- Sapaan Wajib: 'Ayah/Bunda' (DILARANG menggunakan Kak/Kakak/Bro/Sis).\n- Nada Bicara: Ramah, sopan, empatik, terstruktur, khas admin klinik profesional.\n\nATURAN ANTI-HARDSELLING:\n- DILARANG langsung melampirkan link pembayaran atau mematok harga Rp150.000 di respons pembuka saat orang tua curhat/mengeluhkan kondisi anak.\n\nATURAN AUTO-OFFER & DIRECT-CLOSING:\n- Saat Ayah/Bunda menanyakan harga, biaya, promo, paket belajar, atau benefit produk digital/konsultasi:\n  1. Jelaskan harga promo dan manfaat utama produk dengan ramah dan terstruktur.\n  2. DILARANG KERAS hanya membalas nominal lalu diam (read-only mode)!\n  3. WAJIB pasang direct-closing action: Arahkan ke pembayaran atau minta Nama Lengkap & Email aktif Ayah/Bunda untuk langsung diterbitkan Dynamic QRIS otomatis.\n  Contoh penutup: 'Untuk mengamankan akses promo ini dan penerbitan kode QRIS otomatis, boleh dibantu Nama Lengkap & Email aktif Ayah/Bunda ya? 😊'\n\nSKRINING MANDIRI RESMI:\n- Jika Ayah/Bunda menanyakan atau meminta formulir/link skrining mandiri si kecil (contoh: 'link screening mana kak', 'mau screening dulu saja', 'ada form screening?'), berikan secara eksplisit tautan skrining resmi: https://screening.littlebitefeeding.com\n- Ajak Ayah/Bunda mengisi data di formulir tersebut agar tercatat di rekam data awal dr. Harys Maulana.\n- DILARANG memberikan link checkout berbayar jika Ayah/Bunda secara spesifik meminta form skrining!\n\nALUR 3 TAHAP PERCAKAPAN:\n1. Tahap 1 (Empati & Skrining Administratif): Sambut dengan empati admin lalu tanyakan usia, berat badan, dan durasi keluhan makan si kecil untuk rekam medis dokter (ZERO LINK & ZERO HARGA).\n2. Tahap 2 (Pencatatan Data): Tangkap jawaban dan konfirmasi data keluhan sudah dicatat untuk dr. Harys.\n3. Tahap 3 (Rekomendasi Konsultasi Resmi): Sampaikan bahwa konsultasi chat privat bersama dr. Harys tersedia melalui layanan Eat & Grow seharga Rp150.000 via link https://konsul.littlebitefeeding.com/p/eat-and-grow-konsultasi-chat-gtm-anak."
   },
   "menu_config": {
-    "main_menu_text": "📋 *Layanan Konsultasi dr. Harys Maulana (Tumbuh Kembang Anak)*\n\n1. Eat & Grow (Konsultasi Chat GTM Anak) - Rp150.000\n2. Formulir Skrining Mandiri Si Kecil\n3. Jadwal & Prosedur Konsultasi\n4. Bantuan Admin Klinik",
+    "main_menu_text": "📋 *Layanan & Produk Resmi dr. Harys Maulana (Tumbuh Kembang Anak)*\n\n1. Eat & Grow (Konsultasi Chat GTM Anak) - Rp150.000\n2. Course GTM & Solusi MPASI Anti-GTM - Rp99.999 (Promo)\n3. Panduan Stimulasi Anak Cerdas (0–5 Tahun) - Rp149.000 (Promo)\n4. E-Course PLAY N GROW (Khusus Cirebon) - Rp75.000 (Promo)\n5. Konsultasi Klinis & Screening Dokter Anak - Rp150.000 (Promo)\n6. Formulir Skrining Mandiri Si Kecil (Gratis)\n7. Bantuan Admin Klinik",
     "keywords": {
       "menu": "MAIN_MENU",
       "jadwal": "JADWAL_INFO",
       "konsultasi": "KONSULTASI_INFO",
       "screening": "SCREENING_LINK",
-      "skrining": "SCREENING_LINK"
+      "skrining": "SCREENING_LINK",
+      "gtm": "COURSE_GTM",
+      "mpasi": "COURSE_GTM",
+      "stimulasi": "PANDUAN_STIMULASI",
+      "play": "PLAY_N_GROW"
     },
     "options": [
       {
@@ -47,6 +51,38 @@
       },
       {
         "id": "2",
+        "title": "Course GTM & Solusi MPASI Anti-GTM",
+        "description": "Kelas online komprehensif panduan praktis mengatasi GTM & feeding rules MPASI anti-stres.",
+        "action": "ORDER_LINK",
+        "price_amount": 99999,
+        "payload": "https://konsul.littlebitefeeding.com/p/happyeating"
+      },
+      {
+        "id": "3",
+        "title": "Panduan Stimulasi Anak Cerdas (0–5 Tahun)",
+        "description": "E-book & modul checklist stimulasi motorik, kognitif, dan perkembangan bicara anak usia 0-5 tahun.",
+        "action": "ORDER_LINK",
+        "price_amount": 149000,
+        "payload": "https://konsul.littlebitefeeding.com/p/panduan-stimulasianakcerdas"
+      },
+      {
+        "id": "4",
+        "title": "E-Course PLAY N GROW (Khusus Cirebon)",
+        "description": "E-Course stimulasi sensori & motorik anak berbasis aktivitas bermain (Khusus Cirebon).",
+        "action": "ORDER_LINK",
+        "price_amount": 75000,
+        "payload": "https://konsul.littlebitefeeding.com/p/play-n-grow-cirebon"
+      },
+      {
+        "id": "5",
+        "title": "Konsultasi Klinis & Screening Dokter Anak",
+        "description": "Sesi evaluasi klinis dan skrining tumbuh kembang komprehensif dokter spesialis anak.",
+        "action": "ORDER_LINK",
+        "price_amount": 150000,
+        "payload": "https://konsul.littlebitefeeding.com/p/konsultasi-dokter"
+      },
+      {
+        "id": "6",
         "title": "Formulir Skrining Mandiri Si Kecil",
         "description": "Pengisian form evaluasi awal tumbuh kembang & kesulitan makan anak.",
         "action": "URL_LINK",

@@ -34,6 +34,7 @@ from app.services.whatsapp.cloud_api import (
     send_otp_whatsapp,
     send_ereceipt_whatsapp,
     send_whatsapp_buttons,
+    send_whatsapp_flow,
     upload_media,
     upload_whatsapp_media,
     send_whatsapp_image_link,
@@ -80,6 +81,7 @@ from app.services.whatsapp.evolution import (
     send_evolution_list,
     send_evolution_buttons,
     send_evolution_app_shop_catalog,
+    send_evolution_media,
     get_base64_from_media_message,
 )
 
@@ -126,6 +128,7 @@ __all__ = [
     "send_otp_whatsapp",
     "send_ereceipt_whatsapp",
     "send_whatsapp_buttons",
+    "send_whatsapp_flow",
     "upload_media",
     "upload_whatsapp_media",
     "send_whatsapp_image_link",
@@ -160,6 +163,7 @@ __all__ = [
     "send_evolution_list",
     "send_evolution_buttons",
     "send_evolution_app_shop_catalog",
+    "send_evolution_media",
     "get_base64_from_media_message",
     # activation
     "normalize_activation_code",

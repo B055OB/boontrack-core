@@ -551,6 +551,51 @@ async def send_evolution_app_shop_catalog(
     )
 
 
+async def send_evolution_media(
+    number: str,
+    media_url: str,
+    caption: str = "",
+    media_type: str = "image",
+    mimetype: Optional[str] = None,
+    file_name: str = "qris_dinamis.png",
+    instance_name: str = "boontrack-app-shop",
+    options: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Sends a media message (e.g. Dynamic QRIS PNG) via Evolution API v2 (/message/sendMedia/{instance})."""
+    actual_instance = normalize_evolution_instance(instance_name)
+    clean_num = normalize_phone_number(number) or number
+    headers = get_evolution_headers()
+
+    clean_media = str(media_url or "").strip()
+    is_png = "quickchart.io" in clean_media.lower() or ".png" in clean_media.lower() or "qrserver" in clean_media.lower()
+    media_ext = ".png" if is_png else (".webp" if ".webp" in clean_media.lower() else ".jpg")
+    resolved_mime = mimetype or ("image/png" if is_png else ("image/webp" if media_ext == ".webp" else "image/jpeg"))
+
+    outbound_opts = options or {"delay": 1200, "presence": "composing"}
+
+    payload: Dict[str, Any] = {
+        "number": clean_num,
+        "mediatype": media_type or "image",
+        "mimetype": resolved_mime,
+        "caption": caption or "",
+        "media": clean_media,
+        "fileName": file_name or f"qris_dinamis{media_ext}",
+        "options": outbound_opts,
+    }
+
+    url = f"{EVOLUTION_BASE_URL}/message/sendMedia/{actual_instance}"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            res = await client.post(url, headers=headers, json=payload)
+            if res.status_code in (200, 201):
+                return {"success": True, "data": res.json(), "status_code": res.status_code}
+            logger.warning(f"[Evolution API sendMedia] Failed ({res.status_code}) on instance '{actual_instance}': {res.text}")
+            return {"success": False, "error": res.text, "status_code": res.status_code}
+        except Exception as e:
+            logger.error(f"[Evolution API sendMedia Error] on instance '{actual_instance}': {e}")
+            return {"success": False, "error": str(e)}
+
+
 async def get_base64_from_media_message(
     instance_name: str,
     message_payload: Dict[str, Any],

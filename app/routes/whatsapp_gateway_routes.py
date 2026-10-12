@@ -1057,7 +1057,9 @@ async def process_inbound_message(payload: InboundPayload):
     if not reply and email_match:
         extracted_email = email_match.group(0).lower().strip()
         name_match = re.search(r'(?:nama|name)\s*[:=]\s*([^\n,]+)', incoming_text, re.IGNORECASE)
-        extracted_name = name_match.group(1).strip() if name_match else (contact_name or "Kakak")
+        is_tka = str(tenant_slug or "").strip().lower() in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak")
+        salutation_lead = "Ayah/Bunda" if is_tka else "Kakak"
+        extracted_name = name_match.group(1).strip() if name_match else (contact_name if (contact_name and contact_name != "Kakak") else salutation_lead)
         logger.info(f"[NATIVE LEAD COLLECTION] Captured lead for '{tenant_slug}': name='{extracted_name}', email='{extracted_email}', phone='{clean_phone}'")
 
         # Persist lead ke Supabase
@@ -1079,20 +1081,31 @@ async def process_inbound_message(payload: InboundPayload):
         # Dapatkan rincian produk toko
         from app.services.whatsapp.commerce import get_tenant_products_from_db, generate_fast_track_checkout_response
         store_name, products = get_tenant_products_from_db(tenant_slug)
-        sel_prod = products[0] if products else {}
+        if is_tka:
+            from app.services.unified_conversation_service import resolve_tumbuh_kembang_product
+            sel_prod = resolve_tumbuh_kembang_product(incoming_text, history=inbound_history, catalog=products) or {}
+        else:
+            sel_prod = products[0] if products else {}
+
         prod_title = sel_prod.get("title") or sel_prod.get("name") or f"Layanan {store_name}"
         prod_price = float(sel_prod.get("promo_price") or sel_prod.get("price") or 0)
         prod_slug = str(sel_prod.get("slug") or sel_prod.get("id") or "").strip()
-        prod_checkout_url = f"https://shop.boontrack.com/{tenant_slug}/p/{prod_slug}" if prod_slug else f"https://shop.boontrack.com/{tenant_slug}"
+        if is_tka:
+            prod_checkout_url = f"https://konsul.littlebitefeeding.com/p/{prod_slug}" if prod_slug else "https://konsul.littlebitefeeding.com"
+        else:
+            prod_checkout_url = f"https://shop.boontrack.com/{tenant_slug}/p/{prod_slug}" if prod_slug else f"https://shop.boontrack.com/{tenant_slug}"
 
         try:
             fast_reply, invoice, _ = await generate_fast_track_checkout_response(
                 tenant_slug=tenant_slug,
                 from_phone=clean_phone,
                 contact_name=extracted_name,
+                product_key=prod_slug,
             )
             qris_media_target = invoice.get("media_url") or invoice.get("qr_code_url") or invoice.get("image_url")
             is_seller_qris = invoice.get("provider") in ("SELLER_NATIVE_QRIS", "xendit") or invoice.get("is_manual") is True or bool(qris_media_target)
+            if is_tka:
+                fast_reply = re.sub(r"\b(Kak|Kakak)\b", "Ayah/Bunda", fast_reply, flags=re.IGNORECASE)
 
             # Universal Webhook & Meta CAPI Event Dispatch
             try:
@@ -1110,8 +1123,8 @@ async def process_inbound_message(payload: InboundPayload):
 
             if is_seller_qris:
                 reply = (
-                    f"Terima kasih Kak *{extracted_name}*! 🙏\n\n"
-                    f"Data pendaftaran Kakak telah kami catat:\n"
+                    f"Terima kasih {salutation_lead} *{extracted_name}*! 🙏\n\n"
+                    f"Data pendaftaran {salutation_lead} telah kami catat:\n"
                     f"• *Nama:* {extracted_name}\n"
                     f"• *Email:* {extracted_email}\n"
                     f"• *Paket:* {prod_title} (Rp{prod_price:,.0f})\n\n"
@@ -1122,20 +1135,20 @@ async def process_inbound_message(payload: InboundPayload):
             else:
                 pay_link = invoice.get("invoice_url") or prod_checkout_url
                 reply = (
-                    f"Terima kasih Kak *{extracted_name}*! 🙏\n\n"
-                    f"Data pendaftaran Kakak telah kami catat:\n"
+                    f"Terima kasih {salutation_lead} *{extracted_name}*! 🙏\n\n"
+                    f"Data pendaftaran {salutation_lead} telah kami catat:\n"
                     f"• *Nama:* {extracted_name}\n"
                     f"• *Email:* {extracted_email}\n"
                     f"• *Paket:* {prod_title} (Rp{prod_price:,.0f})\n\n"
                     f"Silakan selesaikan pembayaran melalui tautan resmi berikut:\n"
                     f"👉 *Link Pembayaran Instan QRIS:*\n{pay_link}\n\n"
                     f"🛒 *Link Storefront / Web Checkout:*\n{prod_checkout_url}\n\n"
-                    f"_Setelah pembayaran terverifikasi, link akses materi & member area akan dikirimkan otomatis ke email Kakak._ ✨"
+                    f"_Setelah pembayaran terverifikasi, link akses materi & member area akan dikirimkan otomatis ke email {salutation_lead}._ ✨"
                 )
         except Exception as _inv_err:
             reply = (
-                f"Terima kasih Kak *{extracted_name}*! 🙏\n\n"
-                f"Data pendaftaran Kakak telah kami catat:\n"
+                f"Terima kasih {salutation_lead} *{extracted_name}*! 🙏\n\n"
+                f"Data pendaftaran {salutation_lead} telah kami catat:\n"
                 f"• *Nama:* {extracted_name}\n"
                 f"• *Email:* {extracted_email}\n"
                 f"• *Paket:* {prod_title} (Rp{prod_price:,.0f})\n\n"

@@ -86,6 +86,50 @@ PRODUCT_INQUIRY_KEYWORDS = [
 ]
 
 
+def resolve_tumbuh_kembang_product(
+    query_text: str,
+    history: Optional[List[Dict[str, Any]]] = None,
+    catalog: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Resolves matching product for tumbuh-kembang-anak from current query or previous conversation turns."""
+    cat = catalog or []
+    q_low = str(query_text or "").lower()
+
+    product_patterns = [
+        (("happyeating", "gtm", "mpasi", "anti-gtm", "anti gtm", "makan"), ["happyeating"]),
+        (("panduan", "stimulasi", "cerdas", "modul", "ebook", "e-book"), ["panduan-stimulasianakcerdas"]),
+        (("play", "grow", "cirebon"), ["play-n-grow-cirebon"]),
+        (("klinis", "dokter anak", "screening dokter", "skrining dokter"), ["konsultasi-dokter"]),
+        (("eat", "grow", "konsul chat", "chat gtm", "harys"), ["eat-and-grow-konsultasi-chat-gtm-anak"]),
+    ]
+
+    # 1. Check current query
+    for keywords, target_slugs in product_patterns:
+        if any(kw in q_low for kw in keywords):
+            for p in cat:
+                p_slug = str(p.get("slug") or p.get("id") or "").lower()
+                if any(ts in p_slug for ts in target_slugs):
+                    return p
+
+    # 2. Check history
+    if history and isinstance(history, list):
+        for msg in reversed(history[-5:]):
+            h_text = str(msg.get("content") or msg.get("text") or msg.get("message") or "").lower()
+            for keywords, target_slugs in product_patterns:
+                if any(kw in h_text for kw in keywords):
+                    for p in cat:
+                        p_slug = str(p.get("slug") or p.get("id") or "").lower()
+                        if any(ts in p_slug for ts in target_slugs):
+                            return p
+
+    # 3. Default to primary product or catalog[0]
+    for p in cat:
+        if str(p.get("slug") or "") in ("happyeating", "eat-and-grow-konsultasi-chat-gtm-anak"):
+            return p
+    return cat[0] if cat else {}
+
+
+
 def normalize_business_category(category_input: Optional[str]) -> str:
     """Normalisasi string kategori ke 6 kategori kanonikal."""
     raw = str(category_input or "").strip().upper()
@@ -620,21 +664,30 @@ class UnifiedConversationEngine:
             "jual apa saja", "jual apa", "ada apa saja"
         ]
         if any(w in q_lower for w in CATALOG_OPEN_INTENT_TRIGGERS):
+            is_tka = clean_slug in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak")
+            salutation_word = "Ayah/Bunda" if is_tka else "Kakak"
+            storefront_base = "https://konsul.littlebitefeeding.com" if is_tka else f"https://shop.boontrack.com/{clean_slug}"
             catalog_lines = []
             for idx, p in enumerate(catalog[:8], 1):
                 p_title = p.get("title") or p.get("name") or f"Item {idx}"
                 p_price = float(p.get("promo_price") or p.get("price") or 0)
                 promo_txt = f" (Promo: Rp{p_price:,.0f})" if p.get("promo_price") else ""
                 p_slug = str(p.get("slug") or p.get("id") or "").strip()
-                p_url = f"https://shop.boontrack.com/{clean_slug}/p/{p_slug}" if p_slug else f"https://shop.boontrack.com/{clean_slug}"
+                p_url = f"{storefront_base}/p/{p_slug}" if p_slug else storefront_base
                 catalog_lines.append(f"{idx}. {p_title} - Rp{p_price:,.0f}{promo_txt}\n   Link Checkout: {p_url}")
             
             catalog_summary = "\n\n".join(catalog_lines)
+            closing_cta = (
+                f"Ada materi edukasi atau paket yang ingin {salutation_word} tanyakan lebih lanjut, "
+                f"atau ingin kami bantu terbitkan QRIS pembayarannya langsung? Cukup infokan Nama Lengkap & Email aktif {salutation_word} ya 😊"
+                if is_tka else
+                f"Ada item yang ingin Kakak tanyakan lebih lanjut atau langsung dipesan?"
+            )
             reply = (
                 f"Berikut daftar produk & layanan resmi *{store_name}*:\n\n"
                 f"{catalog_summary}\n\n"
-                f"🌐 Toko Resmi: https://shop.boontrack.com/{clean_slug}\n\n"
-                f"Ada item yang ingin Kakak tanyakan lebih lanjut atau langsung dipesan?"
+                f"🌐 Toko Resmi: {storefront_base}\n\n"
+                f"{closing_cta}"
             )
             return {
                 "success": True,
@@ -647,6 +700,68 @@ class UnifiedConversationEngine:
                 "type": "TEXT",
                 "unassigned_triggered": False,
             }
+
+        # 6.2 NATIVE LEAD CAPTURE & DYNAMIC QRIS (Tumbuh Kembang Anak Direct Closing)
+        email_match = re.search(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', q)
+        if email_match and clean_slug in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak"):
+            extracted_email = email_match.group(0).lower().strip()
+            name_match = re.search(r'(?:nama|name)\s*[:=]\s*([^\n,]+)', q, re.IGNORECASE)
+            extracted_name = name_match.group(1).strip() if name_match else (sender_name if (sender_name and sender_name != "Kakak") else "Ayah/Bunda")
+
+            target_prod = resolve_tumbuh_kembang_product(q, history=history, catalog=catalog)
+            prod_title = target_prod.get("title") or target_prod.get("name") or "Layanan Tumbuh Kembang Anak"
+            prod_price = float(target_prod.get("promo_price") or target_prod.get("price") or 0)
+            prod_slug = str(target_prod.get("slug") or target_prod.get("id") or "").strip()
+
+            try:
+                from app.services.whatsapp_service import get_supabase
+                sb = get_supabase()
+                if sb:
+                    sb.table("leads").insert({
+                        "tenant_slug": clean_slug,
+                        "customer_name": extracted_name,
+                        "customer_phone": clean_phone,
+                        "customer_email": extracted_email,
+                        "status": "QUALIFIED",
+                        "source": "whatsapp_native_checkout",
+                    }).execute()
+            except Exception as _lead_err:
+                logger.debug(f"[TUMBUH_KEMBANG_LEAD_WARN] {_lead_err}")
+
+            from app.services.whatsapp.commerce import generate_fast_track_checkout_response
+            try:
+                fast_reply, invoice, _ = await generate_fast_track_checkout_response(
+                    tenant_slug=clean_slug,
+                    from_phone=clean_phone or sender_id,
+                    contact_name=extracted_name,
+                    product_key=prod_slug,
+                )
+                qr_media_target = invoice.get("media_url") or invoice.get("qr_code_url") or invoice.get("image_url")
+                fast_reply_clean = re.sub(r"\b(Kak|Kakak)\b", "Ayah/Bunda", fast_reply, flags=re.IGNORECASE)
+
+                closing_reply = (
+                    f"Terima kasih Ayah/Bunda *{extracted_name}*! 🙏\n\n"
+                    f"Data pendaftaran telah kami catat:\n"
+                    f"• *Nama:* {extracted_name}\n"
+                    f"• *Email:* {extracted_email}\n"
+                    f"• *Paket:* {prod_title} (Rp{prod_price:,.0f})\n\n"
+                    f"{fast_reply_clean}"
+                )
+                return {
+                    "success": True,
+                    "reply": closing_reply,
+                    "reply_text": closing_reply,
+                    "media_url": qr_media_target,
+                    "qr_code_url": qr_media_target,
+                    "tenant_slug": clean_slug,
+                    "business_category": business_category,
+                    "quick_actions": welcome_buttons,
+                    "action": "DIRECT_PAYMENT_INSTRUCTIONS",
+                    "type": "MEDIA" if qr_media_target else "TEXT",
+                    "unassigned_triggered": False,
+                }
+            except Exception as _tka_inv_err:
+                logger.error(f"[TKA_CHECKOUT_ERROR] {_tka_inv_err}")
 
         # 6.5 Interceptor Pembayaran Langsung via WhatsApp / Nomor Rekening
         DIRECT_PAY_TRIGGERS = [
@@ -661,6 +776,31 @@ class UnifiedConversationEngine:
             "mau starter", "ambil paket", "mau transfer", "mau tf"
         ]
         if any(w in q_lower for w in DIRECT_PAY_TRIGGERS):
+            # Special Handling: Tumbuh Kembang Anak SELLER_NATIVE_QRIS Dynamic Issuance
+            if clean_slug in ("tumbuh-kembang-anak", "tumbuhkembanganak", "tumbuh_kembang_anak"):
+                target_prod = resolve_tumbuh_kembang_product(q, history=history, catalog=catalog)
+                from app.services.whatsapp.commerce import generate_fast_track_checkout_response
+                fast_reply, invoice, _ = await generate_fast_track_checkout_response(
+                    tenant_slug=clean_slug,
+                    from_phone=clean_phone or sender_id,
+                    contact_name=sender_name if (sender_name and sender_name != "Kakak") else "Ayah/Bunda",
+                    product_key=target_prod.get("slug") or target_prod.get("id"),
+                )
+                qr_media_target = invoice.get("media_url") or invoice.get("qr_code_url") or invoice.get("image_url")
+                fast_reply_clean = re.sub(r"\b(Kak|Kakak)\b", "Ayah/Bunda", fast_reply, flags=re.IGNORECASE)
+                return {
+                    "success": True,
+                    "reply": fast_reply_clean,
+                    "reply_text": fast_reply_clean,
+                    "media_url": qr_media_target,
+                    "qr_code_url": qr_media_target,
+                    "tenant_slug": clean_slug,
+                    "business_category": business_category,
+                    "quick_actions": welcome_buttons,
+                    "action": "DIRECT_PAYMENT_INSTRUCTIONS",
+                    "type": "MEDIA" if qr_media_target else "TEXT",
+                    "unassigned_triggered": False,
+                }
             # Dynamic Multi-Tenant Payment Isolation (Zero Hardcoded Bank/QRIS)
             p_provider = str(
                 tenant_meta.get("payment_provider")
@@ -685,23 +825,26 @@ class UnifiedConversationEngine:
                         target_prod = p
                         break
 
-                # For onlineboost: default to Scale Bundle (Rp 149.000) if no specific package requested
+                # For onlineboost: Single Offer 249K (Paket Lengkap Kelas Inkubasi CTWA Batch 1)
                 if not target_prod and clean_slug == "onlineboost":
-                    for p in catalog:
-                        p_title_test = str(p.get("title") or p.get("name") or "").lower()
-                        if "scale" in p_title_test or "bundle" in p_title_test:
-                            target_prod = p
-                            break
+                    target_prod = {
+                        "title": "Paket Lengkap Kelas Inkubasi CTWA Batch 1",
+                        "name": "Paket Lengkap Kelas Inkubasi CTWA Batch 1",
+                        "price": 249000,
+                        "promo_price": 249000,
+                        "slug": "kelas-inkubasi-ctwa-batch-1-scale",
+                        "id": "kelas-inkubasi-ctwa-batch-1-scale",
+                    }
 
                 if not target_prod and catalog:
                     target_prod = catalog[0]
 
             target_prod = target_prod or {}
             prod_name = target_prod.get("title") or target_prod.get("name") or (
-                "Kelas Inkubasi CTWA Batch 1 - Scale Bundle" if clean_slug == "onlineboost" else f"Layanan {tenant_name}"
+                "Paket Lengkap Kelas Inkubasi CTWA Batch 1" if clean_slug == "onlineboost" else f"Layanan {tenant_name}"
             )
-            prod_price = int(float(target_prod.get("promo_price") or target_prod.get("price") or (149000 if clean_slug == "onlineboost" else 0)))
-            prod_slug = str(target_prod.get("slug") or target_prod.get("id") or "").strip()
+            prod_price = int(float(target_prod.get("promo_price") or target_prod.get("price") or (249000 if clean_slug == "onlineboost" else 0)))
+            prod_slug = str(target_prod.get("slug") or target_prod.get("id") or ("kelas-inkubasi-ctwa-batch-1-scale" if clean_slug == "onlineboost" else "")).strip()
             checkout_url = f"https://shop.boontrack.com/{clean_slug}/p/{prod_slug}?checkout=true" if prod_slug else f"https://shop.boontrack.com/{clean_slug}"
             price_fmt = f"Rp {prod_price:,.0f}".replace(",", ".")
 

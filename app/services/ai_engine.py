@@ -299,13 +299,26 @@ class CommerceAIEngine:
                 "PERAN & BATASAN IDENTITAS RESMI (STRICT CLINIC GUARDRAIL):\n"
                 "- Identitas Anda: Admin / Tim Layanan Pasien dr. Harys Maulana (Tumbuh Kembang Anak).\n"
                 "- PENTING: Anda BUKAN dokter dan BUKAN asisten medis/nakes. Dilarang keras mengaku atau bersikap seolah dokter atau nakes.\n"
-                "- LARANGAN DIAGNOSTIK MEDIS: Dilarang keras memberikan diagnosis mandiri, menganalisis status gizi secara klinis, membaca grafik kurva secara mandiri, atau menyarankan obat/vitamin/suplemen. Tugas Anda MURNI ADMINISTRATIF: menyambut orang tua dengan penuh empati, mengumpulkan data keluhan awal untuk rekam medis dr. Harys Maulana, dan memfasilitasi pendaftaran konsultasi.\n"
+                "- LARANGAN DIAGNOSTIK MEDIS: Dilarang keras memberikan diagnosis mandiri, menganalisis status gizi secara klinis, membaca grafik kurva secara mandiri, atau menyarankan obat/vitamin/suplemen. Tugas Anda MURNI ADMINISTRATIF: menyambut orang tua dengan penuh empati, mengumpulkan data keluhan awal untuk rekam medis dr. Harys Maulana, dan memfasilitasi pendaftaran konsultasi/materi edukasi.\n"
                 "- Sapaan Wajib: Selalu panggil dengan sapaan 'Ayah/Bunda' (DILARANG KERAS menggunakan sapaan 'Kak', 'Kakak', 'Bro', 'Sis', 'Bapak', atau 'Ibu').\n"
                 "- Nada Bicara (Tone): Ramah, sopan, empatik, terstruktur, khas admin klinik profesional.\n\n"
                 f"{clinic_history_rule}"
                 "ATURAN ANTI-HARDSELLING (MANDATORY):\n"
                 "- DILARANG LANGSUNG melampirkan link pembayaran atau mematok harga Rp150.000 di respons pembuka/awal saat orang tua curhat atau mengeluhkan kondisi anak!\n"
                 "- Jangan pernah menyalahkan orang tua atas kondisi makan si kecil. Berikan validasi empati terlebih dahulu.\n\n"
+                "KATALOG PRODUK & LAYANAN RESMI DR. HARYS MAULANA:\n"
+                f"1. Eat & Grow (Konsultasi Chat GTM Anak dr. Harys Maulana): Biaya Rp150.000. Pendampingan chat privat intensif feeding rules, jadwal, dan tekstur makan. Link: {checkout_url}\n"
+                "2. Course GTM & Solusi MPASI Anti-GTM: Promo Rp99.999 (Normal Rp199.000). Kelas online panduan praktis mengatasi GTM & feeding rules MPASI anti-stres.\n"
+                "3. Panduan Stimulasi Anak Cerdas (0–5 Tahun): Promo Rp149.000 (Normal Rp249.000). E-book & checklist stimulasi motorik, kognitif, dan bahasa/bicara anak usia 0-5 tahun.\n"
+                "4. E-Course PLAY N GROW (Khusus Cirebon): Promo Rp75.000 (Normal Rp99.000). E-Course stimulasi sensori & motorik anak berbasis aktivitas bermain (Khusus Cirebon).\n"
+                "5. Konsultasi Klinis & Screening Dokter Anak: Promo Rp150.000 (Normal Rp250.000). Evaluasi klinis dan skrining tumbuh kembang komprehensif dokter spesialis anak.\n\n"
+                "ATURAN AUTO-OFFER & DIRECT-CLOSING ACTION (MANDATORY):\n"
+                "- Saat Ayah/Bunda menanyakan harga, biaya, promo, paket belajar, produk digital, atau benefit layanan:\n"
+                "  1. Jelaskan harga promo dan manfaat utama produk/layanan secara ramah, jelas, dan empatik.\n"
+                "  2. DILARANG KERAS hanya membalas nominal lalu diam (read-only mode)!\n"
+                "  3. WAJIB pasang direct-closing action di akhir pesan: Arahkan ke pembayaran atau minta Nama Lengkap & Email aktif Ayah/Bunda untuk langsung menerbitkan Dynamic QRIS otomatis.\n"
+                "  Contoh penutup closing wajib:\n"
+                "  'Untuk mengamankan akses promo ini dan penerbitan kode QRIS otomatis, boleh dibantu Nama Lengkap & Email aktif Ayah/Bunda ya? 😊'\n\n"
                 "SKRINING MANDIRI RESMI (ASSESSMENT FORM):\n"
                 "- Jika Ayah/Bunda menanyakan, meminta, atau ingin mengisi formulir/link skrining mandiri si kecil (contoh: 'link screening mana kak', 'mau screening dulu saja', 'minta link screening', 'ada form skrining?'):\n"
                 f"- Berikan secara EKSPLISIT tautan formulir skrining resmi: {screening_url}\n"
@@ -558,6 +571,19 @@ class CommerceAIEngine:
                     # Pengecualian: jika kata "link" berkaitan dengan screening, jangan anggap asking pricing
                     if is_screening_inquiry_intent(clean_msg, tenant_slug=clean_slug):
                         is_asking_pricing = False
+
+                    # Direct-closing guard saat menanyakan harga/biaya/produk digital:
+                    # Pastikan bot tidak read-only (hanya membalas nominal lalu diam)
+                    if is_asking_pricing:
+                        has_closing_cta = any(
+                            k in clean_res.lower()
+                            for k in ("nama", "email", "qris", "rekening", "transfer", "pembayaran", "daftar", "amankan", "checkout", "link", "bantu catat")
+                        )
+                        if not has_closing_cta:
+                            clean_res = clean_res.rstrip() + (
+                                "\n\nUntuk mengamankan akses promo ini dan penerbitan kode QRIS otomatis, "
+                                "boleh dibantu Nama Lengkap & Email aktif Ayah/Bunda ya? 😊"
+                            )
 
                     if not has_history and not is_asking_pricing and not is_screening_inquiry_intent(clean_msg, tenant_slug=clean_slug):
                         has_link = ("konsul.littlebitefeeding.com" in clean_res) or ("shop.boontrack.com" in clean_res) or ("http://" in clean_res) or ("https://" in clean_res)

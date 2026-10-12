@@ -95,6 +95,12 @@ def extract_meta_whatsapp_event(data: dict) -> Dict[str, Any]:
                     if isinstance(item, dict):
                         res["button_id"] = item.get("id")
                         res["text"] = str(item.get("title", "") or item.get("id", "")).strip()
+                elif inter_type == "nfm_reply" or "nfm_reply" in inter:
+                    nfm = inter.get("nfm_reply", {})
+                    if isinstance(nfm, dict):
+                        res["nfm_reply"] = nfm
+                        res["response_json"] = nfm.get("response_json")
+                        res["text"] = str(nfm.get("body") or nfm.get("response_json") or "").strip()
 
         elif msg_type == "button":
             btn_obj = msg_obj.get("button", {})

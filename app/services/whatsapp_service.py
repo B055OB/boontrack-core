@@ -76,6 +76,7 @@ from app.services.whatsapp import (  # noqa: F401, F403
     send_evolution_list,
     send_evolution_buttons,
     send_evolution_app_shop_catalog,
+    send_evolution_media,
     get_base64_from_media_message,
     # activation
     normalize_activation_code,
@@ -148,6 +149,7 @@ __all__ = [
     "send_evolution_list",
     "send_evolution_buttons",
     "send_evolution_app_shop_catalog",
+    "send_evolution_media",
     "get_base64_from_media_message",
     # activation
     "normalize_activation_code",

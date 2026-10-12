@@ -82,6 +82,28 @@ async def handle_order_paid_fulfillment(
     customer_phone = str(order_data.get("customer_phone") or "").strip()
     customer_email = str(order_data.get("customer_email") or "").strip()
 
+    # SPECIALIZED: OnlineBoost CTWA Single-Use Telegram Fulfillment
+    if resolved_tenant == "onlineboost":
+        from app.services.ctwa_fulfillment_service import fulfill_onlineboost_ctwa_order
+        ob_res = await fulfill_onlineboost_ctwa_order(
+            order_id=order_id,
+            buyer_name=customer_name,
+            buyer_phone=customer_phone,
+            amount=gross_amount,
+            tenant_id="onlineboost",
+        )
+        return {
+            "success": True,
+            "order_id": order_id,
+            "tenant_slug": "onlineboost",
+            "tier": "CHECKOUT_LITE",
+            "status": "PAID",
+            "access_url": ob_res.get("single_use_invite_link"),
+            "wa_dispatched": bool(ob_res.get("wa_result")),
+            "capi_dispatched": bool(ob_res.get("capi_result")),
+            "message": "Order OnlineBoost CTWA fulfilled with single-use Telegram link",
+        }
+
     # 2. Update Langganan Tenant ke Tier 'CHECKOUT_LITE'
     try:
         if sb and resolved_tenant:

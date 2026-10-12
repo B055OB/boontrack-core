@@ -869,6 +869,22 @@ async def process_xendit_webhook_core(
     except Exception as fe:
         logger.warning(f"[Xendit Webhook] Digital fulfillment task could not be scheduled: {fe}")
 
+    # Task 3b: OnlineBoost CTWA Single-Use Telegram Link Fulfillment
+    if tenant_id == "onlineboost":
+        try:
+            from app.services.ctwa_fulfillment_service import fulfill_onlineboost_ctwa_order
+            asyncio.create_task(
+                fulfill_onlineboost_ctwa_order(
+                    order_id=external_id,
+                    buyer_name=data_obj.get("customer_name") or "Kakak",
+                    buyer_phone=customer_phone,
+                    amount=amount,
+                    tenant_id="onlineboost",
+                )
+            )
+        except Exception as _ctwa_f_err:
+            logger.warning(f"[Xendit Webhook] OnlineBoost CTWA fulfillment note: {_ctwa_f_err}")
+
     # Task 4: WABA Transactional Notifications (Tenant, Super Admin, Affiliate, AM)
     asyncio.create_task(
         dispatch_payment_success_notifications(order_id=external_id)
