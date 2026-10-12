@@ -385,3 +385,148 @@ affiliate_service = AffiliateService()
 async def allocate_upgrade_commission(*args, **kwargs) -> Dict[str, Any]:
     return await affiliate_service.allocate_upgrade_commission(*args, **kwargs)
 
+
+def resolve_dynamic_referral_urls(
+    affiliate_slug_or_id: Optional[str] = None,
+    group_jid: Optional[str] = None,
+    channel_binding: Optional[Dict[str, Any]] = None,
+    affiliate_data: Optional[Dict[str, Any]] = None,
+    product_slug: Optional[str] = None,
+    supabase_client: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """
+    Menghasilkan tautan dynamic referral link dan demo URL untuk WhatsApp Bot BoonPilot.
+    
+    Mendukung skema:
+    1. VIP Subdomain / Whitelabel (misal: Kang Sakti / buzzerukm):
+       - register_url: https://{subdomain}.boontrack.com/register
+       - demo_url: https://{subdomain}.boontrack.com/p/{product_slug}
+    2. Standard Referral Link (Affiliate reguler):
+       - register_url: https://shop.boontrack.com/register?ref={slug}
+       - demo_url: https://shop.boontrack.com/{slug}/p/{product_slug} (atau demo_url dari channel_bindings)
+    """
+    supabase = supabase_client or get_supabase()
+    clean_jid = str(group_jid or "").strip()
+
+    # 1. Lookup channel_binding dari Supabase jika belum tersedia
+    if not channel_binding and clean_jid and supabase:
+        try:
+            res_cb = (
+                supabase.table("channel_bindings")
+                .select("*")
+                .eq("community_source_id", clean_jid)
+                .eq("is_active", True)
+                .execute()
+            )
+            if res_cb and getattr(res_cb, "data", None):
+                channel_binding = res_cb.data[0]
+        except Exception as _cb_err:
+            logger.warning(f"[AFFILIATE_URL_RESOLVER] channel_binding lookup error for '{clean_jid}': {_cb_err}")
+
+    binding_meta = (channel_binding.get("metadata") or {}) if isinstance(channel_binding, dict) else {}
+    if not isinstance(binding_meta, dict):
+        binding_meta = {}
+
+    binding_aff_id = (
+        channel_binding.get("affiliate_id")
+        or channel_binding.get("tenant_slug")
+    ) if isinstance(channel_binding, dict) else None
+
+    binding_demo_url = str(channel_binding.get("demo_url") or "").strip() if isinstance(channel_binding, dict) else ""
+    binding_reg_url = str(binding_meta.get("register_url") or binding_meta.get("fallback_register") or "").strip()
+
+    affiliate_slug = str(affiliate_slug_or_id or binding_aff_id or "").strip()
+
+    # 2. Ambil data affiliate jika belum dioper
+    if not affiliate_data and affiliate_slug and supabase:
+        try:
+            res_aff = (
+                supabase.table("affiliates")
+                .select("*")
+                .or_(f"referral_code.ilike.{affiliate_slug},id.eq.{affiliate_slug}")
+                .maybe_single()
+                .execute()
+            )
+            if res_aff and getattr(res_aff, "data", None):
+                affiliate_data = res_aff.data
+        except Exception as _aff_err:
+            logger.debug(f"[AFFILIATE_URL_RESOLVER] affiliate lookup note: {_aff_err}")
+
+        # Jika belum ada di affiliates, periksa tabel tenants
+        if not affiliate_data:
+            try:
+                res_t = (
+                    supabase.table("tenants")
+                    .select("id, slug, tier, metadata")
+                    .or_(f"slug.ilike.{affiliate_slug},id.eq.{affiliate_slug}")
+                    .maybe_single()
+                    .execute()
+                )
+                if res_t and getattr(res_t, "data", None):
+                    affiliate_data = res_t.data
+            except Exception as _t_err:
+                logger.debug(f"[AFFILIATE_URL_RESOLVER] tenant lookup note: {_t_err}")
+
+    aff_meta = (affiliate_data.get("metadata") or {}) if isinstance(affiliate_data, dict) else {}
+    if not isinstance(aff_meta, dict):
+        aff_meta = {}
+
+    # 3. Pengecekan Custom Subdomain / VIP Partner
+    is_buzzerukm = bool(affiliate_slug and affiliate_slug.lower() in ("buzzerukm", "sakti", "mafiasakti"))
+    has_custom_subdomain = bool(
+        (affiliate_data and (affiliate_data.get("has_custom_subdomain") or affiliate_data.get("subdomain")))
+        or aff_meta.get("has_custom_subdomain")
+        or aff_meta.get("subdomain")
+        or binding_meta.get("has_custom_subdomain")
+        or binding_meta.get("subdomain")
+        or is_buzzerukm
+        or (binding_reg_url and "buzzerukm.boontrack.com" in binding_reg_url)
+    )
+
+    subdomain = None
+    if has_custom_subdomain:
+        subdomain = (
+            (affiliate_data.get("subdomain") if isinstance(affiliate_data, dict) else None)
+            or aff_meta.get("subdomain")
+            or binding_meta.get("subdomain")
+            or (affiliate_data.get("slug") if isinstance(affiliate_data, dict) else None)
+            or aff_meta.get("slug")
+            or (affiliate_slug if affiliate_slug else "buzzerukm")
+        )
+        if subdomain:
+            subdomain = str(subdomain).strip().lower()
+
+    # 4. Konstruksi Dynamic URLs
+    if has_custom_subdomain and subdomain:
+        # VIP Subdomain URL
+        register_url = f"https://{subdomain}.boontrack.com/register"
+        if product_slug:
+            demo_url = f"https://{subdomain}.boontrack.com/p/{product_slug}"
+        elif binding_demo_url and "toko-demo" not in binding_demo_url:
+            demo_url = binding_demo_url
+        else:
+            default_prod = "ctwa-mastery-7day" if subdomain == "buzzerukm" else "demo"
+            demo_url = f"https://{subdomain}.boontrack.com/p/{default_prod}"
+    elif affiliate_slug:
+        # Standard Referral Link (query param)
+        clean_slug = affiliate_slug.lower().strip()
+        register_url = f"https://shop.boontrack.com/register?ref={clean_slug}"
+        if product_slug:
+            demo_url = f"https://shop.boontrack.com/{clean_slug}/p/{product_slug}"
+        elif binding_demo_url and binding_demo_url.strip():
+            demo_url = binding_demo_url.strip()
+        else:
+            demo_url = f"https://shop.boontrack.com/{clean_slug}/p/starter-pack"
+    else:
+        # Fallback Umum Tanpa Afiliasi
+        register_url = "https://shop.boontrack.com/register"
+        demo_url = binding_demo_url or "https://shop.boontrack.com/boon"
+
+    return {
+        "register_url": register_url,
+        "demo_url": demo_url,
+        "affiliate_slug": affiliate_slug or None,
+        "subdomain": subdomain,
+        "has_custom_subdomain": has_custom_subdomain,
+        "channel_binding": channel_binding,
+    }

@@ -307,13 +307,15 @@ async def resolve_official_bot_dual_role(
             except Exception as _cb_err:
                 logger.warning(f"[WA_GROUP_CHANNEL_BINDING_ERR] {_cb_err}")
 
-        if wa_binding:
-            aff_id = wa_binding.get("affiliate_id") or "ob"
-            demo_url = wa_binding.get("demo_url") or "https://shop.boontrack.com/boon"
-            register_url = f"https://shop.boontrack.com/register?ref={urllib.parse.quote(aff_id)}&src={urllib.parse.quote(lookup_jid)}"
-        else:
-            demo_url = "https://shop.boontrack.com/boon"
-            register_url = "https://shop.boontrack.com/register"
+        # Resolve dynamic referral & demo URLs (VIP Subdomain vs Standard Referral)
+        from app.services.affiliate_service import resolve_dynamic_referral_urls
+        dynamic_urls = resolve_dynamic_referral_urls(
+            group_jid=lookup_jid,
+            channel_binding=wa_binding,
+            supabase_client=supabase,
+        )
+        demo_url = dynamic_urls["demo_url"]
+        register_url = dynamic_urls["register_url"]
 
         # Check if message is a simple greeting or general mention
         text_lower = clean_text.lower().strip()
