@@ -114,8 +114,12 @@ class IngressProtectionPipeline:
         clean_slug = str(tenant_slug or "").strip().lower()
         clean_phone = "".join(c for c in str(sender_phone or "") if c.isdigit())
 
-        # Core Owner / Tester exemption: never treat tester number as paused
-        if clean_phone in CORE_OWNER_TESTER_PHONES or clean_phone.endswith("81215567168"):
+        # Core Owner / Tester & Personal contacts exemption: never treat as paused
+        if (
+            clean_phone in CORE_OWNER_TESTER_PHONES
+            or clean_phone.endswith("81215567168")
+            or clean_phone in ("6282130580323", "082130580323", "82130580323", "6282113914613", "082113914613", "82113914613")
+        ):
             return False
 
         # 1. In-memory fast cache
@@ -459,8 +463,23 @@ class IngressProtectionPipeline:
         # =====================================================================
         # LAYER 5: Session State Barrier (is_paused, HANDOVER, or CIRCUIT_OPEN)
         # =====================================================================
+        remote_jid = ""
+        if isinstance(raw_payload, dict):
+            key = raw_payload.get("key") or raw_payload.get("data", {}).get("key") or {}
+            remote_jid = str(key.get("remoteJid") or raw_payload.get("sender") or raw_payload.get("remoteJid") or "").strip()
+        is_group_msg = bool(
+            remote_jid.endswith("@g.us")
+            or (isinstance(raw_payload, dict) and raw_payload.get("conversation_scope") == "GROUP")
+            or "group:" in str(conversation_id or "")
+        )
+
         session_is_paused = self.is_session_paused(clean_slug, clean_phone)
         circuit_is_open = circuit_breaker_service.is_circuit_open(clean_slug)
+
+        # MANDATE: Chat personal (DM 1-on-1 / @s.whatsapp.net) wajib 100% dijawab oleh bot secara otomatis tanpa jeda manual.
+        # AI auto-reply HANYA di-skip/dinonaktifkan jika pesan berasal dari Grup WhatsApp (@g.us).
+        if not is_group_msg and not from_me:
+            session_is_paused = False
 
         if session_is_paused or circuit_is_open:
             reason = "Session is paused by merchant/admin" if session_is_paused else "Tenant circuit breaker is OPEN"

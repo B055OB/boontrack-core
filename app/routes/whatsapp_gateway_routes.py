@@ -693,8 +693,12 @@ async def check_and_handle_session_handover_and_toggle(
         }
 
     # 4. Active Pause Guard (Auto-Mute): if session is currently paused/handover, mute bot
-    # Exemption: Core Owner / Tester (+62 812-1556-7168) testing bot as end-user should never be muted
-    if clean_digits in ("6281215567168", "081215567168", "81215567168") or clean_digits.endswith("81215567168"):
+    # Exemption: Core Owner / Tester (+62 812-1556-7168) & Personal contacts testing bot
+    if (
+        clean_digits in ("6281215567168", "081215567168", "81215567168")
+        or clean_digits.endswith("81215567168")
+        or clean_digits in ("6282130580323", "082130580323", "82130580323", "6282113914613", "082113914613", "82113914613")
+    ):
         return None
 
     is_paused_active = False
@@ -916,7 +920,12 @@ async def process_inbound_message(payload: InboundPayload):
         pass
 
     clean_p = "".join(c for c in str(clean_phone or "") if c.isdigit())
-    is_core_tester = clean_p in ("6281215567168", "081215567168", "81215567168") or clean_p.endswith("81215567168")
+    is_core_tester = (
+        conversation_scope != "GROUP"
+        or clean_p in ("6281215567168", "081215567168", "81215567168")
+        or clean_p.endswith("81215567168")
+        or clean_p in ("6282130580323", "082130580323", "82130580323", "6282113914613", "082113914613", "82113914613")
+    )
 
     if (is_tenant_bot_paused or is_phone_paused) and not is_core_tester:
         logger.info(f"[GROWTH GATEWAY BOT PAUSED] Bot AI dijeda untuk '{tenant_slug}' (tenant_paused={is_tenant_bot_paused}, phone_paused={is_phone_paused}). CS Manual aktif, menahan balasan otomatis.")
@@ -2276,13 +2285,17 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
 
         # 2D. Active Pause Gate: jika sesi sedang paused / handover
         if evo_toggle_res.get("bot_paused"):
-            return {
-                "status": "success",
-                "tenant_slug": canonical_slug,
-                "bot_paused": True,
-                "action": "DROP_PAUSED",
-                "message": "Sesi dalam status HANDOVER_TO_HUMAN / PAUSED. Balasan otomatis ditahan.",
-            }
+            if not is_group:
+                # MANDATE: Chat personal (DM 1-on-1 / @s.whatsapp.net) wajib 100% dijawab oleh bot secara otomatis tanpa jeda manual!
+                logger.info(f"[PERSONAL_DM_ALWAYS_ACTIVE] Personal DM from '{sender_phone}' is 100% auto-reply enabled. Proceeding.")
+            else:
+                return {
+                    "status": "success",
+                    "tenant_slug": canonical_slug,
+                    "bot_paused": True,
+                    "action": "DROP_PAUSED",
+                    "message": "Sesi dalam status HANDOVER_TO_HUMAN / PAUSED. Balasan otomatis ditahan.",
+                }
 
     if is_boon_instance:
         # =====================================================================
@@ -2353,7 +2366,12 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     is_bot_active = bool(tenant_meta.get("is_bot_active", True))
 
     from app.services.rotary_routing_service import rotary_routing_service
-    if sender_phone in ("6281215567168", "081215567168", "81215567168") or str(sender_phone).endswith("81215567168"):
+    if (
+        not is_group
+        or sender_phone in ("6281215567168", "081215567168", "81215567168")
+        or str(sender_phone).endswith("81215567168")
+        or sender_phone in ("6282130580323", "082130580323", "82130580323", "6282113914613", "082113914613", "82113914613")
+    ):
         bot_paused = False
     elif rotary_routing_service.is_bot_paused_for_phone(resolved_tenant, sender_phone):
         bot_paused = True

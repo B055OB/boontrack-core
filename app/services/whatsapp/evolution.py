@@ -661,5 +661,33 @@ async def get_base64_from_media_message(
     except Exception as e:
         logger.warning(f"[Evolution Media Error] getBase64FromMediaMessage exception for '{clean_instance}': {e}")
 
-    return None
 
+async def send_evolution_text_message(
+    number: str,
+    text: str,
+    instance_name: str = "boontrack-app-shop",
+    options: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Sends a plain text message via Evolution API v2 (/message/sendText/{instance})."""
+    actual_instance = normalize_evolution_instance(instance_name)
+    clean_num = normalize_phone_number(number) or number
+    headers = get_evolution_headers()
+    outbound_opts = options or {"delay": 800, "presence": "composing", "linkPreview": False}
+    payload = {
+        "number": clean_num,
+        "text": text,
+        "textMessage": {"text": text},
+        "options": outbound_opts,
+    }
+    url = f"{EVOLUTION_BASE_URL}/message/sendText/{actual_instance}"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            res = await client.post(url, headers=headers, json=payload)
+            if res.status_code in (200, 201):
+                logger.info(f"[Evolution API sendText] Dispatched successfully to {clean_num} via {actual_instance} ({res.status_code})")
+                return {"success": True, "data": res.json(), "status_code": res.status_code}
+            logger.warning(f"[Evolution API sendText] Failed ({res.status_code}) on instance '{actual_instance}': {res.text}")
+            return {"success": False, "error": res.text, "status_code": res.status_code}
+        except Exception as e:
+            logger.error(f"[Evolution API sendText Error] on instance '{actual_instance}': {e}")
+            return {"success": False, "error": str(e)}

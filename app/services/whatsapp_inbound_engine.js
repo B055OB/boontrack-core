@@ -60,12 +60,13 @@ export function registerInboundMessageListener(sock, tenantSlug) {
 
       if (
         senderJid === 'status@broadcast' ||
-        senderJid.endsWith('@broadcast') ||
-        senderJid.endsWith('@g.us')
+        senderJid.endsWith('@broadcast')
       ) {
-        // Abaikan broadcast status WA Story dan grup agar auto-reply hanya ke chat personal
+        // Abaikan broadcast status WA Story
         continue;
       }
+
+      const isGroup = senderJid.endsWith('@g.us');
 
       // 4. Ekstraksi teks pesan secara lengkap
       const incomingText = extractMessageText(msg);
@@ -74,13 +75,46 @@ export function registerInboundMessageListener(sock, tenantSlug) {
         continue;
       }
 
-      const senderPhone = senderJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
+      // 5. Aturan Batasan Hanya untuk Grup:
+      // AI auto-reply HANYA di-skip/dinonaktifkan jika pesan berasal dari Grup WhatsApp (@g.us), KECUALI bot di-mention.
+      // Untuk chat personal (DM / @s.whatsapp.net): Wajib 100% dijawab oleh bot secara otomatis tanpa jeda manual.
+      if (isGroup) {
+        const contextInfo =
+          msg.message?.extendedTextMessage?.contextInfo ||
+          msg.message?.imageMessage?.contextInfo ||
+          msg.message?.contextInfo || {};
+        const mentionedJids = contextInfo.mentionedJid || [];
+        const botJid = sock.user?.id?.split(':')[0] || '';
+
+        const hasMention =
+          mentionedJids.some(j => (botJid && j.includes(botJid)) || j.includes('boon') || j.includes('boontrack')) ||
+          /@boon\b/i.test(incomingText) ||
+          /@boontrack\b/i.test(incomingText) ||
+          /@boontrackbot\b/i.test(incomingText) ||
+          /@support\b/i.test(incomingText) ||
+          (botJid && incomingText.includes(botJid)) ||
+          Boolean(contextInfo.quotedMessage && (contextInfo.participant?.includes(botJid) || contextInfo.fromMe));
+
+        if (!hasMention) {
+          // Abaikan obrolan umum grup non-mention
+          continue;
+        }
+      }
+
+      const senderPhone = (isGroup ? (msg.key?.participant || senderJid) : senderJid)
+        .replace('@s.whatsapp.net', '')
+        .replace('@c.us', '')
+        .replace(/[^0-9]/g, '');
+
+      const senderName = msg.pushName || 'Kakak';
+      const conversationScope = isGroup ? 'GROUP' : 'DIRECT';
 
       // Log Terminal Detail Poin 3: Saat pesan masuk diterima
       console.log(`\n========================================================`);
       console.log(`[BOONTRACK WA ENGINE INBOUND] 📩 Pesan Masuk Diterima`);
       console.log(`  • Pengirim (JID) : ${senderJid} (HP: ${senderPhone})`);
       console.log(`  • Tenant ID      : ${resolvedTenant}`);
+      console.log(`  • Scope          : ${conversationScope}`);
       console.log(`  • Isi Teks       : "${incomingText}"`);
       console.log(`========================================================`);
 
@@ -99,6 +133,9 @@ export function registerInboundMessageListener(sock, tenantSlug) {
             tenant_slug: resolvedTenant,
             sender_phone: senderPhone,
             message_body: incomingText,
+            sender_name: senderName,
+            conversation_scope: conversationScope,
+            group_jid: isGroup ? senderJid : null,
           },
           { timeout: 35000 }
         );

@@ -610,8 +610,12 @@ class RotaryRoutingService:
         if not clean_digits:
             return False
 
-        # Exemption: Core Owner / Tester (+62 812-1556-7168) testing bot as end-user
-        if clean_digits in ("6281215567168", "081215567168", "81215567168") or clean_digits.endswith("81215567168"):
+        # Exemption: Core Owner / Tester (+62 812-1556-7168) and personal contacts
+        if (
+            clean_digits in ("6281215567168", "081215567168", "81215567168")
+            or clean_digits.endswith("81215567168")
+            or clean_digits in ("6282130580323", "082130580323", "82130580323", "6282113914613", "082113914613", "82113914613")
+        ):
             return False
 
         # 1. Cek tabel conversation_sessions di Supabase (Single Source of Truth)
