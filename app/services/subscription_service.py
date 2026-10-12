@@ -393,6 +393,25 @@ async def process_successful_subscription(
         gross_amount = int(paid_amount)
     else:
         gross_amount = get_plan_pricing(clean_tier, paid_amount)
+
+    # 0. Idempotency Guard: Check if this invoice has already been activated to avoid duplicate commissions
+    supabase = get_supabase()
+    if supabase and xendit_invoice_id:
+        try:
+            existing_sub = supabase.table("shop_subscriptions").select("id, status, tenant_slug, plan_tier").eq("xendit_invoice_id", str(xendit_invoice_id)).execute()
+            if existing_sub and existing_sub.data:
+                for row in existing_sub.data:
+                    if str(row.get("status") or "").upper() in ("ACTIVE", "PAID"):
+                        logger.info(f"[Subscription Idempotency Hit] Invoice '{xendit_invoice_id}' already ACTIVE/PAID. Skipping duplicate ledger insertion.")
+                        return {
+                            "status": "success",
+                            "message": f"Invoice '{xendit_invoice_id}' already processed (Idempotent)",
+                            "idempotent": True,
+                            "tenant_slug": row.get("tenant_slug") or clean_slug,
+                            "plan_tier": row.get("plan_tier") or clean_tier,
+                        }
+        except Exception as check_err:
+            logger.debug(f"[Subscription Idempotency Check Note] {check_err}")
     
     # Aturan Pembagian Komisi & Strict Zero Financial Leakage Guardrail
     if is_upgrade:

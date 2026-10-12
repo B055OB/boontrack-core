@@ -253,7 +253,8 @@ def execute_order_settlement_transaction(
                     %s, %s,
                     %s, %s, %s,
                     'PENDING_PAYOUT', %s
-                );
+                )
+                ON CONFLICT (reference_id) DO NOTHING;
                 """,
                 (
                     str(external_id),

@@ -194,8 +194,7 @@ async def create_checkout_order_with_shipping(payload: Dict[str, Any]) -> Dict[s
         ))
 
         # Komisi Affiliate & Split 2-Tier: Dihitung MURNI dari base_price (tanpa shipping_cost)
-        # SPRINT TESTING: Alokasi komisi afiliasi untuk tenant toko dinonaktifkan sementara
-        ENABLE_TENANT_AFFILIATE_COMMISSION = False
+        ENABLE_TENANT_AFFILIATE_COMMISSION = True
         if ENABLE_TENANT_AFFILIATE_COMMISSION and (referral_code or manager_id):
             affiliate = None
             if referral_code:

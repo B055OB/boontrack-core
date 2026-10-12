@@ -183,6 +183,41 @@ class AffiliateService:
         base_amount = float(amount_paid or 0)
         supabase = get_supabase()
 
+        # 0. Idempotency Check: Pastikan komisi untuk invoice_id belum pernah dicatat
+        for existing in self._commissions.values():
+            if str(existing.get("invoice_id")) == str(invoice_id):
+                logger.info(f"[AffiliateService Idempotency Hit] Commission for invoice '{invoice_id}' already in memory.")
+                return {
+                    "status": "success",
+                    "idempotent": True,
+                    "message": f"Commission for invoice '{invoice_id}' already recorded",
+                    "tenant_id": clean_tenant,
+                    "invoice_id": invoice_id,
+                    "direct_commission": existing.get("amount", 0),
+                    "override_commission": 0,
+                    "revenue": base_amount,
+                }
+        if supabase and invoice_id:
+            try:
+                db_existing = supabase.table("affiliate_commissions").select("*").eq("order_id", str(invoice_id)).execute()
+                if not db_existing.data:
+                    db_existing = supabase.table("affiliate_commissions").select("*").eq("invoice_id", str(invoice_id)).execute()
+                if db_existing and db_existing.data:
+                    first_comm = db_existing.data[0]
+                    logger.info(f"[AffiliateService Idempotency Hit] Commission for invoice '{invoice_id}' already recorded in Supabase.")
+                    return {
+                        "status": "success",
+                        "idempotent": True,
+                        "message": f"Commission for invoice '{invoice_id}' already recorded in DB",
+                        "tenant_id": clean_tenant,
+                        "invoice_id": invoice_id,
+                        "direct_commission": first_comm.get("amount", 0),
+                        "override_commission": 0,
+                        "revenue": base_amount,
+                    }
+            except Exception as comm_check_err:
+                logger.debug(f"[AffiliateService Idempotency Check Note] {comm_check_err}")
+
         resolved_aff_id = affiliate_id
         resolved_ref_code = referral_code
 
