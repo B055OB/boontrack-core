@@ -72,6 +72,27 @@ MAINTENANCE_FAIL_CLOSED_RESPONSE = (
     "Silakan coba beberapa saat lagi."
 )
 
+ONBOARDING_LEAD_KEYWORDS = [
+    "solution architect",
+    "audit otomasi bisnis",
+    "klaim review arsitektur",
+]
+
+ONBOARDING_LEAD_CONFIRMATION_RESPONSE = (
+    "Halo! Terima kasih telah melengkapi formulir audit otomasi bisnis di BoonTrack. 🚀\n\n"
+    "Data bisnis dan kebutuhan Anda sudah berhasil dicatat di control plane kami. "
+    "Tim Solution Architect kami sedang meninjau rancangan integrasi dan menyiapkan simulasi demo pilot 14 hari Anda.\n\n"
+    "Representatif kami akan segera menghubungi Anda. Jika ingin konfirmasi jadwal demo lebih cepat, "
+    "Anda juga dapat langsung chat tim kami via:\n"
+    "👉 https://wa.me/6281977655099?text=Halo%2C%20saya%20sudah%20mengisi%20form%20audit%20BoonTrack%20dan%20ingin%20jadwalkan%20demo%20pilot%20segera.\n\n"
+    "Mohon ditunggu sebentar ya!"
+)
+
+BANTUAN_REPRESENTATIVE_RESPONSE = (
+    "Halo! Untuk berbicara langsung dengan tim representatif kami, silakan klik tautan berikut:\n"
+    "👉 https://wa.me/6281977655099"
+)
+
 
 class PlatformWebhookRouter:
     """
@@ -341,6 +362,124 @@ class PlatformWebhookRouter:
             logger.error(f"[WABA_SALES_ROUTER_ERROR] {_sales_err}", exc_info=True)
 
         # =====================================================================
+        # JALUR 2.6: Onboarding Pilot Lead Intent Handler
+        # Mendeteksi pesan lead dari form onboarding (audit otomasi bisnis, solution architect, klaim review arsitektur).
+        # Mencegah menu greeting default / link onboarding ulang.
+        # =====================================================================
+        if any(kw in clean_text.lower() for kw in ONBOARDING_LEAD_KEYWORDS):
+            _log("OnboardingLeadIntent", f"Detected onboarding lead from {sender_clean}. Bypassing default greeting & onboarding link.")
+
+            # 1. Tandai tiket / sesi untuk handover ke Solution Architect
+            ticket = cls.get_or_create_ticket(sender_clean)
+            ticket.state = SupportTicketState.IN_PROGRESS
+            ticket.assigned_agent_id = "solution-architect-queue"
+            if not hasattr(ticket, "metadata") or ticket.metadata is None:
+                ticket.metadata = {}
+            ticket.metadata["lead_status"] = "ONBOARDING_LEAD"
+            ticket.metadata["handover_ready"] = True
+            ticket.metadata["lead_source"] = "onboarding_audit_form"
+
+            # 2. Mutasi status sesi di session store & database
+            try:
+                from app.services.session_store import _save_to_db
+                _save_to_db(
+                    phone=sender_clean,
+                    tenant_slug="boontrack-platform",
+                    state="ONBOARDING_LEAD",
+                    context={
+                        "status": "ONBOARDING_LEAD",
+                        "handover_ready": True,
+                        "intent": "AUDIT_OTOMASI_BISNIS",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+            except Exception as _sess_err:
+                logger.debug(f"[OnboardingLeadIntent] Session DB save note: {_sess_err}")
+
+            # 3. Mutasi tabel conversations & contacts di PostgreSQL/Supabase
+            try:
+                from app.core.database import get_db_connection
+                _conn = get_db_connection()
+                try:
+                    with _conn.cursor() as _cur:
+                        _cur.execute(
+                            """
+                            UPDATE conversations
+                            SET status = 'unassigned',
+                                lead_state = 'ONBOARDING_LEAD',
+                                bot_mode = 'HUMAN_ACTIVE',
+                                bot_paused = TRUE,
+                                updated_at = NOW()
+                            WHERE phone_number = %s OR customer_phone = %s;
+                            """,
+                            (sender_clean, sender_clean)
+                        )
+                        _cur.execute(
+                            """
+                            UPDATE contacts
+                            SET contact_status = 'ACTIVE',
+                                lifecycle_stage = 'ONBOARDING_LEAD',
+                                updated_at = NOW()
+                            WHERE clean_phone = %s;
+                            """,
+                            (sender_clean,)
+                        )
+                        _conn.commit()
+                finally:
+                    _conn.close()
+            except Exception as _pg_err:
+                logger.debug(f"[OnboardingLeadIntent] Postgres update note: {_pg_err}")
+
+            supabase = get_supabase()
+            if supabase:
+                try:
+                    supabase.table("conversations").update({
+                        "lead_state": "ONBOARDING_LEAD",
+                        "status": "ready_for_handover",
+                        "bot_mode": "HUMAN_ACTIVE",
+                        "bot_paused": True,
+                    }).or_(f"phone_number.eq.{sender_clean},customer_phone.eq.{sender_clean}").execute()
+                except Exception as _sb_conv_err:
+                    logger.debug(f"[OnboardingLeadIntent] Supabase conv update note: {_sb_conv_err}")
+
+                try:
+                    supabase.table("contacts").update({
+                        "contact_status": "ACTIVE",
+                        "lifecycle_stage": "ONBOARDING_LEAD",
+                    }).eq("clean_phone", sender_clean).execute()
+                except Exception as _sb_cnt_err:
+                    logger.debug(f"[OnboardingLeadIntent] Supabase contact update note: {_sb_cnt_err}")
+
+            # 4. Kirim respons konfirmasi terstruktur
+            try:
+                await send_whatsapp_text(
+                    to_phone=sender_clean,
+                    text=ONBOARDING_LEAD_CONFIRMATION_RESPONSE,
+                    tenant_id="shop",
+                    phone_number_id=phone_number_id,
+                )
+                _log("OnboardingLeadIntent.Dispatch", f"Onboarding confirmation sent to {sender_clean}")
+            except Exception as e:
+                _log("OnboardingLeadIntent.DispatchError", str(e))
+
+            res = {
+                "status": "success",
+                "action": "onboarding_lead_confirmation",
+                "lane": "ONBOARDING_LEAD_HANDLER",
+                "ticket_id": str(ticket.ticket_id),
+                "state": "ONBOARDING_LEAD",
+                "handover_ready": True,
+                "ai_muted": True,
+                "reply": ONBOARDING_LEAD_CONFIRMATION_RESPONSE,
+                "early_return": True,
+            }
+            if trace:
+                trace.early_return = True
+                trace.response_status = 200
+                trace.response_payload = res
+            return res
+
+        # =====================================================================
         # JALUR 3: Human Handover Interceptor
         # =====================================================================
         ticket = cls.get_or_create_ticket(sender_clean)
@@ -352,11 +491,14 @@ class PlatformWebhookRouter:
             if ticket.state == SupportTicketState.PENDING:
                 HumanHandOffManager.assign_to_human(ticket, agent_id="boontrack-support-queue")
 
-            handover_reply = (
-                HANDOVER_RESPONSE_EN
-                if detect_language(clean_text) == "en"
-                else HANDOVER_RESPONSE
-            )
+            if "BANTUAN" in words or "bantuan" in clean_text.lower():
+                handover_reply = BANTUAN_REPRESENTATIVE_RESPONSE
+            else:
+                handover_reply = (
+                    HANDOVER_RESPONSE_EN
+                    if detect_language(clean_text) == "en"
+                    else HANDOVER_RESPONSE
+                )
 
             try:
                 await send_whatsapp_text(

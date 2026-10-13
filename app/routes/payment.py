@@ -426,210 +426,43 @@ async def midtrans_webhook_fastapi(
 # XENDIT PAYMENT WEBHOOK LISTENER & NOTIFICATION HANDLER
 # ============================================================================
 
-async def handle_xendit_notification_logic(payload: Dict[str, Any]) -> tuple[Dict[str, Any], int]:
-    """Memproses webhook notifikasi dari Xendit secara idempotent.
-    
-    Jika status adalah 'PAID', 'SETTLED', atau 'COMPLETED',
-    status order diupdate menjadi PAID, E-receipt resmi dikirim via WABA, dan CAPI ditrigger di background.
-    """
-    data_obj = payload.get("data") if isinstance(payload.get("data"), dict) else payload
-    external_id = (
-        data_obj.get("external_id")
-        or data_obj.get("reference_id")
-        or payload.get("external_id")
-        or data_obj.get("id")
-        or payload.get("id")
-        or ""
-    )
-    status_str = str(data_obj.get("status") or payload.get("status") or "").strip().upper()
-    raw_amount = (
-        data_obj.get("amount")
-        or data_obj.get("paid_amount")
-        or payload.get("amount")
-        or 0
-    )
-    try:
-        amt_val = int(float(raw_amount))
-    except (ValueError, TypeError):
-        amt_val = 0
-
-    logger.info(
-        f"[XENDIT WEBHOOK RECEIVED] Order: '{external_id}' | "
-        f"Status: '{status_str}' | Amount: {amt_val}"
-    )
-
-    if not external_id:
-        return {"status": "ignored", "reason": "no_external_id"}, 200
-
-    # 0. Distributed Lock via Redis: SET lock:payment:webhook:{external_id} NX EX 300
-    if not acquire_payment_lock(external_id, ttl_seconds=300):
-        logger.info(f"[XENDIT LOCK HIT] Webhook for '{external_id}' currently being processed. Returning 200 OK.")
-        return {"status": "ok", "message": "Transaction already locked/processing", "idempotent": True}, 200
-
-    is_paid = status_str in ("PAID", "SETTLED", "COMPLETED")
-
-    if is_paid:
-        supabase = get_supabase()
-        order_record = None
-
-        # 1. Persistent Idempotency & DB State Guard: Check database status
-        if supabase:
-            try:
-                try:
-                    res = supabase.table("orders").select("*").eq("id", external_id).execute()
-                    if res.data:
-                        order_record = res.data[0]
-                except Exception:
-                    res = supabase.table("orders").select("*").eq("order_id", external_id).execute()
-                    if res.data:
-                        order_record = res.data[0]
-
-                # DB State Guard: If already PAID or CONFIRMED -> return ACK / HTTP 200 (NO-OP)
-                if order_record and order_record.get("status") in ("PAID", "LUNAS", "CONFIRMED", "SETTLED"):
-                    logger.info(f"[XENDIT IDEMPOTENT DB SKIP] Order '{external_id}' already marked PAID/LUNAS in DB.")
-                    return {"status": "ok", "message": "already_processed", "idempotent": True}, 200
-
-                # State Guard: Only transition if status is PENDING
-                if order_record and order_record.get("status") not in ("PENDING", "pending", "WAITING_PAYMENT", "unpaid", ""):
-                    logger.warning(f"[XENDIT STATE GUARD] Order '{external_id}' state is '{order_record.get('status')}' (not PENDING). Rejecting.")
-                    return {"status": "ignored", "reason": "non_pending_state"}, 200
-
-                # 2. Single Database Transaction Settlement
-                try:
-                    from app.services.checkout_service import execute_order_settlement_transaction
-                    execute_order_settlement_transaction(
-                        event_id=payload.get("id") or f"xendit_{external_id}",
-                        external_id=external_id,
-                        tenant_id=(order_record or {}).get("tenant_slug") or "onlineboost",
-                        amount=amt_val,
-                        payload=payload,
-                        provider="XENDIT",
-                        customer_phone=data_obj.get("customer_phone") or payload.get("customer_phone"),
-                        product_name=data_obj.get("product_name") or payload.get("product_name"),
-                    )
-                except Exception as tx_err:
-                    logger.warning(f"[XENDIT DB TX Fallback] {tx_err}")
-                    # Fallback direct update
-                    supabase.table("orders").update({
-                        "status": "LUNAS",
-                        "payment_status": "PAID",
-                        "paid_at": datetime.now(timezone.utc).isoformat()
-                    }).eq("id", external_id).execute()
-
-                logger.info(f"[XENDIT WEBHOOK] Order '{external_id}' successfully marked as LUNAS in Supabase")
-            except Exception as db_err:
-                logger.debug(f"[XENDIT WEBHOOK DB NOTE] {db_err}")
-
-        # 3. Update in-memory intent registry & active session
-        if external_id in PAYMENT_INTENTS:
-            PAYMENT_INTENTS[external_id]["status"] = "PAID"
-            PAYMENT_INTENTS[external_id]["paid_at"] = datetime.now(timezone.utc).isoformat()
-
-        for uid, state in list(GLOBAL_USER_STATES.items()):
-            active_p = state.get("active_payment", {})
-            if active_p and (active_p.get("order_id") == external_id or active_p.get("invoice_id") == external_id):
-                state["is_premium"] = True
-                state["mode"] = "post_cv"
-                active_p["status"] = "PAID"
-                break
-
-        # 4. Trigger fulfillment pipeline non-blocking
-        try:
-            from app.services.checkout_flow_service import reconcile_payment_webhook
-            asyncio.create_task(reconcile_payment_webhook({
-                "external_id": external_id,
-                "status": "SETTLED",
-                "id": payload.get("id") or external_id
-            }))
-        except Exception as flow_err:
-            logger.warning(f"[XENDIT FULFILLMENT WARNING] {flow_err}")
-
-        # 5. Ekstraksi customer data
-        buyer_phone = (
-            (order_record or {}).get("customer_phone")
-            or payload.get("customer_phone")
-            or data_obj.get("customer_phone")
-            or PAYMENT_INTENTS.get(external_id, {}).get("phone")
-        )
-        buyer_name = (
-            (order_record or {}).get("customer_name")
-            or payload.get("customer_name")
-            or data_obj.get("customer_name")
-            or "Kakak"
-        )
-        tenant_id = (
-            (order_record or {}).get("tenant_slug")
-            or (order_record or {}).get("tenant_id")
-            or PAYMENT_INTENTS.get(external_id, {}).get("tenant_id")
-            or "boontrack-career"
-        )
-
-        # 6. Kirim E-receipt resmi via WhatsApp Meta Cloud API (WABA)
-        if buyer_phone:
-            order_info = {
-                "order_id": external_id,
-                "amount": amt_val,
-                "customer_name": buyer_name,
-                "customer_phone": buyer_phone,
-                "payment_method": "QRIS Dinamis Xendit",
-                "paid_at": datetime.now(timezone.utc).strftime("%d-%m-%Y %H:%M:%S UTC"),
-                "delivery_url": (order_record or {}).get("delivery_url") or "",
-                "product_name": (order_record or {}).get("product_name") or "Layanan / Akses Digital",
-            }
-            asyncio.create_task(send_ereceipt_whatsapp(buyer_phone, order_info, tenant_id=tenant_id))
-
-        # 7. Trigger Server-Side CAPI (Meta & TikTok) di background task
-        capi_payload = {
-            "order_id": external_id,
-            "amount": amt_val,
-            "currency": "IDR",
-            "customer_name": buyer_name,
-            "customer_phone": buyer_phone,
-            "customer_email": (order_record or {}).get("customer_email") or payload.get("customer_email"),
-            "product_name": (order_record or {}).get("product_name") or "Layanan Digital",
-            "fbclid": (order_record or {}).get("fbclid"),
-            "ttclid": (order_record or {}).get("ttclid"),
-            "user_agent": (order_record or {}).get("user_agent"),
-            "client_ip": (order_record or {}).get("client_ip"),
-        }
-        asyncio.create_task(dispatch_all_capi(capi_payload))
-
-        # 8. Track event analytics
-        try:
-            digits = re.sub(r"\D", "", str(buyer_phone)) if buyer_phone else ""
-            if digits:
-                asyncio.create_task(track_event(
-                    int(digits),
-                    "payment_success",
-                    meta={"amount": amt_val, "order_id": external_id, "method": "XENDIT_QRIS", "gateway": "xendit"}
-                ))
-        except Exception as tr_err:
-            logger.debug(f"[XENDIT TRACK ERROR] {tr_err}")
-
-        return {"status": "ok"}, 200
-
-    logger.info(f"[XENDIT WEBHOOK] Status '{status_str}' acknowledged without settlement.")
-    return {"status": "ok"}, 200
+async def handle_xendit_notification_logic(
+    payload: Dict[str, Any],
+    headers: Optional[Dict[str, str]] = None,
+) -> tuple[Dict[str, Any], int]:
+    """Memproses webhook notifikasi dari Xendit dengan validasi token resmi via process_xendit_webhook_core."""
+    from app.routes.xendit import process_xendit_webhook_core
+    result = await process_xendit_webhook_core(payload, headers or {})
+    return result.get("response", {}), result.get("http_status", 200)
 
 
 @payment_router.post("/api/v1/payments/webhook/xendit", summary="Xendit Webhook Notification Alias")
 @payment_router.post("/api/v1/payment/webhook/xendit", summary="Xendit Webhook Notification Alias 2")
 @payment_router.post("/api/webhook/payment/xendit", summary="Xendit Webhook Notification Alias 3")
 async def xendit_webhook_fastapi(
+    request: Request,
     payload: Dict[str, Any] = Body(...),
 ):
     """FastAPI route handler untuk Xendit webhook notifications."""
-    res, _ = await handle_xendit_notification_logic(payload)
+    res, status_code = await handle_xendit_notification_logic(payload, dict(request.headers))
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail=res.get("error", "Webhook processing failed"))
     return res
 
 
 @payment_router.post("/api/v1/payments/webhook", summary="Unified Dynamic QRIS Payment Webhook")
 @payment_router.post("/api/v1/payments/callback", summary="Unified Dynamic QRIS Payment Callback")
 @payment_router.post("/api/v1/payment/callback", summary="Unified Dynamic QRIS Payment Callback Alias")
-async def unified_qris_payment_webhook(payload: Dict[str, Any] = Body(...)):
+async def unified_qris_payment_webhook(request: Request, payload: Dict[str, Any] = Body(...)):
     """Webhook callback pembayaran QRIS dinamis EMVCo / native.
     Saat status transaksi 'PAID' / 'SETTLED' / 'COMPLETED', memicu update status order dan CAPI Purchase event otomatis.
     """
+    from app.services.payment.gateway_xendit import XenditAdapter
+    adapter = XenditAdapter()
+    token = request.headers.get("x-callback-token") or request.headers.get("x-webhook-secret")
+    if not adapter.verify_webhook_token(token):
+        logger.warning(f"[UNIFIED PAYMENT WEBHOOK] Unauthorized request rejected. Token: {token}")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid payment webhook token or signature")
     data_obj = payload.get("data") if isinstance(payload.get("data"), dict) else payload
     order_id = str(
         data_obj.get("order_id")
@@ -1040,7 +873,8 @@ def register_payment_routes(app: web.Application):
             data = await req.json()
         except Exception:
             data = {}
-        res, status_code = await handle_xendit_notification_logic(data)
+        headers = {k.lower(): v for k, v in req.headers.items()}
+        res, status_code = await handle_xendit_notification_logic(data, headers)
         return web.json_response(res, status=status_code)
 
     app.router.add_post("/webhook/payment/xendit", _aiohttp_xendit_webhook)

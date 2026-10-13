@@ -59,6 +59,27 @@ GLOBAL_FALLBACK_PLATFORM = (
     "Info lengkap kunjungi https://boontrack.com"
 )
 
+ONBOARDING_LEAD_KEYWORDS = [
+    "solution architect",
+    "audit otomasi bisnis",
+    "klaim review arsitektur",
+]
+
+ONBOARDING_LEAD_CONFIRMATION_RESPONSE = (
+    "Halo! Terima kasih telah melengkapi formulir audit otomasi bisnis di BoonTrack. 🚀\n\n"
+    "Data bisnis dan kebutuhan Anda sudah berhasil dicatat di control plane kami. "
+    "Tim Solution Architect kami sedang meninjau rancangan integrasi dan menyiapkan simulasi demo pilot 14 hari Anda.\n\n"
+    "Representatif kami akan segera menghubungi Anda. Jika ingin konfirmasi jadwal demo lebih cepat, "
+    "Anda juga dapat langsung chat tim kami via:\n"
+    "👉 https://wa.me/6281977655099?text=Halo%2C%20saya%20sudah%20mengisi%20form%20audit%20BoonTrack%20dan%20ingin%20jadwalkan%20demo%20pilot%20segera.\n\n"
+    "Mohon ditunggu sebentar ya!"
+)
+
+BANTUAN_REPRESENTATIVE_RESPONSE = (
+    "Halo! Untuk berbicara langsung dengan tim representatif kami, silakan klik tautan berikut:\n"
+    "👉 https://wa.me/6281977655099"
+)
+
 # ---------------------------------------------------------------------------
 # BoonPilot Concierge — AI Knowledge Concierge (Anti-Halusinasi, temperature=0.1)
 # ---------------------------------------------------------------------------
@@ -1574,6 +1595,135 @@ class TenantWebhookRouter:
             except Exception as persist_err:
                 logger.error(f"[TenantWebhookRouter] Failed to persist inbound message: {persist_err}", exc_info=True)
                 trace.log_step("InboundMessagePersistError", str(persist_err))
+
+        # =====================================================================
+        # 0.9. ONBOARDING PILOT LEAD INTENT (AUDIT OTOMASI BISNIS / SOLUTION ARCHITECT)
+        # =====================================================================
+        if any(kw in text_lower for kw in ONBOARDING_LEAD_KEYWORDS):
+            trace.log_step("TenantOnboardingLeadGuard", f"Onboarding lead intent detected from {sender_phone} on tenant '{tenant_slug}'")
+
+            # Mutasi status sesi di session store & database
+            try:
+                from app.services.session_store import _save_to_db
+                _save_to_db(
+                    phone=sender_phone,
+                    tenant_slug=tenant_slug,
+                    state="ONBOARDING_LEAD",
+                    context={
+                        "status": "ONBOARDING_LEAD",
+                        "handover_ready": True,
+                        "intent": "AUDIT_OTOMASI_BISNIS",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+            except Exception as _sess_err:
+                logger.debug(f"[TenantOnboardingLeadGuard] Session DB save note: {_sess_err}")
+
+            # Mutasi tabel conversations & contacts di PostgreSQL/Supabase
+            try:
+                from app.core.database import get_db_connection
+                _conn = get_db_connection()
+                try:
+                    with _conn.cursor() as _cur:
+                        _cur.execute(
+                            """
+                            UPDATE conversations
+                            SET status = 'unassigned',
+                                lead_state = 'ONBOARDING_LEAD',
+                                bot_mode = 'HUMAN_ACTIVE',
+                                bot_paused = TRUE,
+                                updated_at = NOW()
+                            WHERE phone_number = %s OR customer_phone = %s;
+                            """,
+                            (sender_phone, sender_phone)
+                        )
+                        _cur.execute(
+                            """
+                            UPDATE contacts
+                            SET contact_status = 'ACTIVE',
+                                lifecycle_stage = 'ONBOARDING_LEAD',
+                                updated_at = NOW()
+                            WHERE clean_phone = %s;
+                            """,
+                            (sender_phone,)
+                        )
+                        _conn.commit()
+                finally:
+                    _conn.close()
+            except Exception as _pg_err:
+                logger.debug(f"[TenantOnboardingLeadGuard] Postgres update note: {_pg_err}")
+
+            supabase = get_supabase()
+            if supabase:
+                try:
+                    supabase.table("conversations").update({
+                        "lead_state": "ONBOARDING_LEAD",
+                        "status": "ready_for_handover",
+                        "bot_mode": "HUMAN_ACTIVE",
+                        "bot_paused": True,
+                    }).or_(f"phone_number.eq.{sender_phone},customer_phone.eq.{sender_phone}").execute()
+                except Exception as _sb_conv_err:
+                    logger.debug(f"[TenantOnboardingLeadGuard] Supabase conv update note: {_sb_conv_err}")
+
+                try:
+                    supabase.table("contacts").update({
+                        "contact_status": "ACTIVE",
+                        "lifecycle_stage": "ONBOARDING_LEAD",
+                    }).eq("clean_phone", sender_phone).execute()
+                except Exception as _sb_cnt_err:
+                    logger.debug(f"[TenantOnboardingLeadGuard] Supabase contact update note: {_sb_cnt_err}")
+
+            try:
+                await send_whatsapp_text(
+                    to_phone=sender_phone,
+                    text=ONBOARDING_LEAD_CONFIRMATION_RESPONSE,
+                    tenant_id=tenant_slug,
+                    phone_number_id=phone_number_id,
+                )
+            except Exception:
+                pass
+
+            res = {
+                "status": "success",
+                "purpose": "TENANT_SALES",
+                "action": "onboarding_lead_confirmation",
+                "state": "ONBOARDING_LEAD",
+                "handover_ready": True,
+                "ai_muted": True,
+                "reply": ONBOARDING_LEAD_CONFIRMATION_RESPONSE,
+                "tenant": tenant_slug,
+            }
+            trace.early_return = True
+            trace.response_status = 200
+            trace.response_payload = res
+            return res
+
+        # =====================================================================
+        # 0.95. BANTUAN ESCALATION (HUMAN REPRESENTATIVE DIRECT LINK)
+        # =====================================================================
+        if "bantuan" in text_lower or re.search(r"\bbantuan\b", text_lower):
+            trace.log_step("TenantBantuanGuard", f"BANTUAN keyword detected from {sender_phone} on tenant '{tenant_slug}'")
+            try:
+                await send_whatsapp_text(
+                    to_phone=sender_phone,
+                    text=BANTUAN_REPRESENTATIVE_RESPONSE,
+                    tenant_id=tenant_slug,
+                    phone_number_id=phone_number_id,
+                )
+            except Exception:
+                pass
+
+            res = {
+                "status": "success",
+                "purpose": "TENANT_SALES",
+                "action": "bantuan_representative_link",
+                "reply": BANTUAN_REPRESENTATIVE_RESPONSE,
+                "tenant": tenant_slug,
+            }
+            trace.early_return = True
+            trace.response_status = 200
+            trace.response_payload = res
+            return res
 
         # =====================================================================
         # 1. REJECT PLATFORM ACTIVATION ON TENANT WABA (STRICT BOUNDARY)

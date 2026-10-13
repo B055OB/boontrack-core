@@ -1,22 +1,24 @@
-from app.modules.public_services.router import fastapi_public_service_router
 import sys
 import os
+
+# Setup path aplikasi
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from dotenv import load_dotenv
+load_dotenv()
+
+from app.modules.public_services.router import fastapi_public_service_router
 import asyncio
 import logging
 from typing import Dict, Any
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from aiohttp import web
-
-# Setup path aplikasi
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MAIN")
@@ -290,6 +292,11 @@ async def fastapi_tenant_cache_refresh(
 
     tenant_context_resolver.clear_cache()
     await async_clear_tenant_cache()
+    try:
+        from app.services.circuit_breaker_service import circuit_breaker_service
+        circuit_breaker_service.clear()
+    except Exception:
+        pass
 
     update_info = None
     if update:

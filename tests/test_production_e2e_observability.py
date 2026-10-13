@@ -270,11 +270,15 @@ class TestProductionE2EObservability(unittest.TestCase):
         mock_midtrans_charge.side_effect = RuntimeError("Midtrans API HTTP 504 Gateway Timeout")
 
         # Sistem harus menangkap exception atau menggunakan resilient fallback generator
-        from app.utils.qris_generator import generate_dynamic_qris_payload, STANDARD_MASTER_QRIS
+        from app.utils.qris_generator import generate_dynamic_qris_payload
         from app.services.qris_generator import generate_qris_png_bytes
 
+        static_qris = (
+            os.getenv("BOONTRACK_STATIC_QRIS")
+            or "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI5204737253033605802ID5909BoonTrack6012Kab. Bandung61054028663048DC1"
+        )
         fallback_qr = generate_dynamic_qris_payload(
-            static_payload=STANDARD_MASTER_QRIS,
+            static_payload=static_qris,
             amount=50000,
             invoice_id="INV-RESIL-001"
         )

@@ -122,17 +122,38 @@ class CircuitBreakerService:
         self._contact_timestamps[contact_id].append(now)
         return True
 
+    TENANT_CIRCUIT_COOLDOWN_SECONDS: float = 60.0
+
     # --- TENANT CIRCUIT STATE ---
 
     def is_circuit_open(self, tenant_slug: str) -> bool:
-        """Checks if circuit is open for a specific tenant or WABA."""
+        """Checks if circuit is open for a specific tenant or WABA with auto-healing cooldown."""
         if self.is_waba_target(tenant_slug):
             return self.is_waba_circuit_open()
-        return self._tenant_circuit_states.get(str(tenant_slug).strip().lower()) == "OPEN"
+        clean_slug = str(tenant_slug).strip().lower()
+        if self._tenant_circuit_states.get(clean_slug) == "OPEN":
+            tripped_at = getattr(self, "_tenant_circuit_tripped_at", {}).get(clean_slug, 0.0)
+            if (time.time() - tripped_at) > getattr(self, "TENANT_CIRCUIT_COOLDOWN_SECONDS", 60.0):
+                self._tenant_circuit_states[clean_slug] = "CLOSED"
+                logger.info(f"[CIRCUIT_BREAKER_AUTO_HEAL] Tenant '{clean_slug}' circuit breaker auto-recovered to CLOSED.")
+                return False
+            return True
+        return False
 
     def set_circuit_state(self, tenant_slug: str, state: str) -> None:
         """Sets circuit state for tenant ('OPEN' or 'CLOSED')."""
-        self._tenant_circuit_states[str(tenant_slug).strip().lower()] = state.upper()
+        clean_slug = str(tenant_slug).strip().lower()
+        self._tenant_circuit_states[clean_slug] = state.upper()
+        if not hasattr(self, "_tenant_circuit_tripped_at"):
+            self._tenant_circuit_tripped_at = {}
+        if state.upper() == "OPEN":
+            self._tenant_circuit_tripped_at[clean_slug] = time.time()
+        else:
+            self._tenant_circuit_tripped_at.pop(clean_slug, None)
+
+    def reset_tenant_circuit(self, tenant_slug: str) -> None:
+        """Explicitly resets circuit state for tenant to CLOSED."""
+        self.set_circuit_state(tenant_slug, "CLOSED")
 
     # --- ENVIRONMENT FLAGS ---
 
@@ -151,10 +172,12 @@ class CircuitBreakerService:
         return val in ("true", "1", "yes")
 
     def clear(self) -> None:
-        """Clears all circuit breaker states (for test isolation)."""
+        """Clears all circuit breaker states (for test isolation and manual recovery)."""
         self.reset_waba_circuit()
         self._contact_timestamps.clear()
         self._tenant_circuit_states.clear()
+        if hasattr(self, "_tenant_circuit_tripped_at"):
+            self._tenant_circuit_tripped_at.clear()
 
 
 # Singleton Instance

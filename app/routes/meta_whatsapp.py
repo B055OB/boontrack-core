@@ -43,13 +43,14 @@ user_tenant_sessions.clear()
 meta_whatsapp_router = APIRouter(tags=["Meta WhatsApp Official Gateway"])
 router = meta_whatsapp_router
 
-VERIFY_TOKENS = [
-    os.getenv("WHATSAPP_VERIFY_TOKEN", "boontrack_verify_secret"),
-    os.getenv("META_WEBHOOK_VERIFY_TOKEN", "boontrack-secure-verify-token"),
-    "boontrack_verify_secret",
-    "boontrack-secure-verify-token",
-    "boontrack_master_verify_token_2026",
-]
+def get_meta_verify_tokens() -> list[str]:
+    """Retrieve officially configured Meta WhatsApp webhook verification tokens from environment."""
+    candidates = [
+        os.getenv("WHATSAPP_VERIFY_TOKEN"),
+        os.getenv("META_WHATSAPP_VERIFY_TOKEN"),
+        os.getenv("META_WEBHOOK_VERIFY_TOKEN"),
+    ]
+    return [c.strip() for c in candidates if c and c.strip()]
 
 
 # =============================================================================
@@ -66,16 +67,16 @@ async def verify_webhook_handshake(
     hub_challenge: Optional[str] = Query(None, alias="hub.challenge"),
 ):
     """Verifikasi webhook handshake resmi Meta Cloud API."""
-    verify_token = os.getenv("WHATSAPP_VERIFY_TOKEN", "boontrack_verify_secret")
+    valid_tokens = get_meta_verify_tokens()
     mode = hub_mode or request.query_params.get("mode")
     token = hub_verify_token or request.query_params.get("token") or request.query_params.get("verify_token")
     challenge = hub_challenge or request.query_params.get("challenge")
 
-    if mode == "subscribe" and (token == verify_token or token in VERIFY_TOKENS):
+    if mode == "subscribe" and token and valid_tokens and str(token).strip() in valid_tokens:
         logger.info("[META WABA GATEWAY] Webhook handshake verified successfully.")
         return Response(content=str(challenge or ""), media_type="text/plain", status_code=200)
 
-    logger.warning(f"[META WABA GATEWAY] Handshake token mismatch: {token}")
+    logger.warning(f"[META WABA GATEWAY] Handshake token mismatch or unconfigured: {token}")
     return Response(content="Verification token mismatch", media_type="text/plain", status_code=403)
 
 

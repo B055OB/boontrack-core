@@ -137,7 +137,7 @@ def render_qris_bytes(payload: str, box_size: int = 10, border: int = 4) -> byte
 
 def get_dynamic_qris_string(amount: int, master_static: str = "", invoice_id: str = "") -> str:
     """Mengembalikan string Dynamic QRIS standar EMVCo."""
-    clean_master = str(master_static or "").strip()
+    clean_master = str(master_static or os.getenv("BOONTRACK_STATIC_QRIS", "")).strip()
     if not clean_master or not clean_master.startswith("000201"):
         raise ValueError("MERCHANT_QRIS_NOT_CONFIGURED: Missing valid static QRIS payload for merchant")
     return generate_dynamic_qris_payload(clean_master, int(amount), invoice_id=invoice_id)

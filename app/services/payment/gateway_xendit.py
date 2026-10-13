@@ -38,19 +38,18 @@ class XenditAdapter(PaymentAdapter):
             callback_token
             or os.getenv("XENDIT_WEBHOOK_VERIFICATION_TOKEN")
             or os.getenv("XENDIT_CALLBACK_TOKEN")
-            or "aM08Ka1LQ9Jx1OsieBe6kcM1pK1Z5eWlpWAka5zBOuGpVbWS"
+            or ""
         ).strip()
         self.is_sandbox = is_sandbox if is_sandbox is not None else (os.getenv("XENDIT_ENV", "sandbox") == "sandbox")
         self.api_url = os.getenv("XENDIT_API_URL", "https://api.xendit.co").rstrip("/")
 
     def verify_webhook_token(self, token: Optional[str]) -> bool:
         """Verifikasi token callback dari header 'x-callback-token'."""
-        if not token:
+        if not token or not str(token).strip():
             return False
-        clean_in = token.strip()
+        clean_in = str(token).strip()
         expected = self.callback_token
-        # Juga periksa fallback token dari env
-        alt_token = os.getenv("XENDIT_CALLBACK_TOKEN", "").strip()
+        alt_token = (os.getenv("XENDIT_WEBHOOK_VERIFICATION_TOKEN") or os.getenv("XENDIT_CALLBACK_TOKEN") or "").strip()
         if expected and clean_in == expected:
             return True
         if alt_token and clean_in == alt_token:

@@ -7,6 +7,7 @@ Integrates with:
 - app.utils.qris_generator (Dynamic QRIS generation)
 """
 
+import os
 import logging
 import re
 import urllib.parse
@@ -22,7 +23,6 @@ from app.tenants.gym.config import (
 )
 from app.services.gym_access_service import (
     gym_access_service,
-    DEFAULT_ATMOSFITNES_STATIC_QRIS,
 )
 from app.services.whatsapp_service import (
     send_whatsapp_text,
@@ -162,7 +162,14 @@ class GymTenantService:
         total_amount = base_price + unique_code
 
         invoice_id = f"GYM-ORD-{user_phone[-4:]}-{unique_code}"
-        dynamic_qris = generate_dynamic_qris_payload(DEFAULT_ATMOSFITNES_STATIC_QRIS, total_amount)
+        static_qris = (
+            os.getenv("ATMOSFITNES_STATIC_QRIS")
+            or os.getenv("BOONTRACK_STATIC_QRIS")
+            or ""
+        ).strip()
+        if not static_qris:
+            raise ValueError("MERCHANT_QRIS_NOT_CONFIGURED: Atmosfitnes dynamic QRIS requires static payload")
+        dynamic_qris = generate_dynamic_qris_payload(static_qris, total_amount, invoice_id=invoice_id)
         encoded_payload = urllib.parse.quote(dynamic_qris)
         qris_image_url = f"https://quickchart.io/qr?text={encoded_payload}&size=500&ecLevel=H"
 

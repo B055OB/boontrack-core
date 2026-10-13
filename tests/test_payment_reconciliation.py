@@ -181,6 +181,10 @@ class TestPaymentWebhookCallbackHandler(unittest.TestCase):
 
     def setUp(self):
         clear_payment_orders_store()
+        self.test_token = os.getenv("XENDIT_CALLBACK_TOKEN") or "xendit_test_callback_token_2026"
+        self.server_key = os.getenv("MIDTRANS_SERVER_KEY") or "midtrans_test_server_key_2026"
+        os.environ["XENDIT_CALLBACK_TOKEN"] = self.test_token
+        os.environ["MIDTRANS_SERVER_KEY"] = self.server_key
 
     def test_webhook_invalid_token_returns_401(self):
         payload = {
@@ -205,14 +209,14 @@ class TestPaymentWebhookCallbackHandler(unittest.TestCase):
             customer_name="Ibu Rahma",
         )
 
+        headers = {"X-Callback-Token": self.test_token}
         payload = {
             "external_id": order_id,
             "status": "PAID",
             "amount": 150000,
-            "callback_token": "xendit_test_callback_token",
         }
 
-        res = self.client.post("/api/v1/payment/webhook", json=payload)
+        res = self.client.post("/api/v1/payment/webhook", json=payload, headers=headers)
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertEqual(data["status"], "success")
@@ -238,7 +242,7 @@ class TestPaymentWebhookCallbackHandler(unittest.TestCase):
             customer_name="Ibu Rahma",
         )
 
-        headers = {"X-Callback-Token": "xendit_test_callback_token"}
+        headers = {"X-Callback-Token": self.test_token}
         payload = {
             "external_id": order_id,
             "status": "PAID",
@@ -263,7 +267,7 @@ class TestPaymentWebhookCallbackHandler(unittest.TestCase):
         order_id = f"ORD-MID-{os.urandom(4).hex()}"
         status_code = "200"
         gross_amount = "250000.00"
-        server_key = "midtrans_test_server_key"
+        server_key = self.server_key
 
         save_payment_order(
             tenant_id="store-fashion",

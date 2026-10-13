@@ -35,6 +35,27 @@ ASSISTANT_NAME_EN = "BoonTrack Business Concierge — Enterprise Orchestration &
 FOOTER_HELP_TEXT = "Ketik 'BANTUAN' untuk berbicara langsung dengan tim representatif kami."
 FOOTER_HELP_TEXT_EN = "Type 'HELP' to connect directly with our human representative."
 
+ONBOARDING_LEAD_KEYWORDS = [
+    "solution architect",
+    "audit otomasi bisnis",
+    "klaim review arsitektur",
+]
+
+ONBOARDING_LEAD_CONFIRMATION_RESPONSE = (
+    "Halo! Terima kasih telah melengkapi formulir audit otomasi bisnis di BoonTrack. 🚀\n\n"
+    "Data bisnis dan kebutuhan Anda sudah berhasil dicatat di control plane kami. "
+    "Tim Solution Architect kami sedang meninjau rancangan integrasi dan menyiapkan simulasi demo pilot 14 hari Anda.\n\n"
+    "Representatif kami akan segera menghubungi Anda. Jika ingin konfirmasi jadwal demo lebih cepat, "
+    "Anda juga dapat langsung chat tim kami via:\n"
+    "👉 https://wa.me/6281977655099?text=Halo%2C%20saya%20sudah%20mengisi%20form%20audit%20BoonTrack%20dan%20ingin%20jadwalkan%20demo%20pilot%20segera.\n\n"
+    "Mohon ditunggu sebentar ya!"
+)
+
+BANTUAN_REPRESENTATIVE_RESPONSE = (
+    "Halo! Untuk berbicara langsung dengan tim representatif kami, silakan klik tautan berikut:\n"
+    "👉 https://wa.me/6281977655099"
+)
+
 # Rule-based regex patterns for English language detection
 ENGLISH_PATTERNS = [
     r"\bhello\b",
@@ -244,6 +265,18 @@ class PlatformAssistantEngine:
             storefront_ctx = get_storefront_product_context(t_slug, p_slug)
             if storefront_ctx:
                 return build_context_aware_first_response(storefront_ctx)
+
+        # Intent -0.5: Onboarding Pilot Lead Intent Handler
+        # Mendeteksi pesan lead dari form onboarding (audit otomasi bisnis, solution architect, klaim review arsitektur).
+        # Mencegah menu greeting default / link onboarding ulang.
+        if any(kw in lower_text for kw in ONBOARDING_LEAD_KEYWORDS):
+            logger.info(f"[PLATFORM_ASSISTANT] Onboarding lead intent detected from text: '{clean_text[:50]}'. Returning structured confirmation.")
+            return ONBOARDING_LEAD_CONFIRMATION_RESPONSE
+
+        # Intent -0.4: Human Representative Escalation (BANTUAN)
+        elif "bantuan" in lower_text or re.search(r"\bbantuan\b", lower_text):
+            logger.info(f"[PLATFORM_ASSISTANT] BANTUAN escalation detected from text: '{clean_text[:50]}'. Returning representative link.")
+            return BANTUAN_REPRESENTATIVE_RESPONSE
 
         # Intent 0: Kelas Bos / Business Consulting Inquiry (Tenant Concierge)
         kelasbos_keywords = [

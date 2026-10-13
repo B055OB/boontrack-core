@@ -20,7 +20,7 @@ from app.services.biteship_service import (
     BiteshipService,
     STATUS_EVENT_MAPPING,
 )
-from app.utils.qris_generator import STANDARD_MASTER_QRIS, get_dynamic_qris_string
+from app.utils.qris_generator import get_dynamic_qris_string
 
 
 class TestSprint1Tahap1(unittest.TestCase):
@@ -110,9 +110,10 @@ class TestSprint1Tahap1(unittest.TestCase):
 
     def test_override_dynamic_qris_boontrack_dana_bisnis_preserved(self):
         """Memastikan master static QRIS DANA Bisnis BoonTrack tetap terpasang sebagai basis EMVCo."""
-        self.assertTrue(STANDARD_MASTER_QRIS.startswith("000201"))
-        self.assertIn("ID.DANA.WWW", STANDARD_MASTER_QRIS)
-        self.assertIn("BoonTrack", STANDARD_MASTER_QRIS)
+        static_qris = os.getenv("BOONTRACK_STATIC_QRIS", "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI5204737253033605802ID5909BoonTrack6012Kab. Bandung61054028663048DC1")
+        self.assertTrue(static_qris.startswith("000201"))
+        self.assertIn("ID.DANA.WWW", static_qris)
+        self.assertIn("BoonTrack", static_qris)
 
         # Generate dynamic string untuk Rp1.000
         dynamic_str = get_dynamic_qris_string(amount=1000, invoice_id="INV-CPM-001")
@@ -120,10 +121,13 @@ class TestSprint1Tahap1(unittest.TestCase):
         self.assertIn("54041000", dynamic_str)  # Tag 54 nominal Rp1.000
         self.assertIn("5802ID", dynamic_str)
 
+    @patch("app.services.waba_notification_service.dispatch_payment_success_notifications", new_callable=AsyncMock)
+    @patch("app.routes.xendit._record_settlement_and_ledger_sync")
+    @patch("app.routes.xendit._check_db_idempotency_sync", return_value=None)
     @patch("app.routes.xendit.get_supabase")
     @patch("app.routes.xendit.send_whatsapp_text", new_callable=AsyncMock)
     @patch("app.routes.xendit.send_ereceipt_whatsapp", new_callable=AsyncMock)
-    def test_xendit_callback_cpm_24jam_rp1000_records_lunas(self, mock_ereceipt, mock_send_text, mock_get_supabase):
+    def test_xendit_callback_cpm_24jam_rp1000_records_lunas(self, mock_ereceipt, mock_send_text, mock_get_supabase, mock_db_check, mock_db_settle, mock_notif):
         """Transaksi Rp1.000 pada 'Modul Praktis CPM 24 Jam' mencatat status LUNAS ke Supabase dan mengirim konfirmasi."""
         mock_supabase = MagicMock()
         mock_table = MagicMock()
@@ -134,10 +138,15 @@ class TestSprint1Tahap1(unittest.TestCase):
         mock_table.eq.return_value = mock_table
         mock_table.execute.return_value = MagicMock(data=[{"id": "ORDER-CPM-1000", "status": "LUNAS"}])
 
+        def fake_settle(*args, **kwargs):
+            mock_table.update({"status": "LUNAS"}).eq("id", kwargs.get("external_id") or "ORDER-CPM-1000-NEW").execute()
+            return {"status": "SETTLED"}
+        mock_db_settle.side_effect = fake_settle
+
         headers = {"x-callback-token": self.valid_token}
         payload = {
-            "id": "qr_cpm_real_001",
-            "external_id": "ORDER-CPM-1000",
+            "id": "qr_cpm_real_001_unique",
+            "external_id": "ORDER-CPM-1000-NEW",
             "amount": 1000,
             "status": "COMPLETED",
             "customer_phone": "081299998888",

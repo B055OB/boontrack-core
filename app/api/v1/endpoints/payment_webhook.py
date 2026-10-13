@@ -30,15 +30,15 @@ logger = logging.getLogger("PAYMENT_WEBHOOK_ENDPOINT")
 
 router = APIRouter(tags=["Payment Gateway Webhook"])
 
-CONFIGURED_CALLBACK_TOKENS = [
-    os.getenv("PAYMENT_WEBHOOK_SECRET", "boontrack_payment_webhook_secret"),
-    os.getenv("XENDIT_CALLBACK_TOKEN", "xendit_test_callback_token"),
-    os.getenv("MIDTRANS_SERVER_KEY", "midtrans_test_server_key"),
-    "boontrack_payment_webhook_secret",
-    "xendit_test_callback_token",
-    "midtrans_test_server_key",
-    "boontrack_master_payment_token_2026",
-]
+def get_configured_callback_tokens() -> list[str]:
+    """Retrieve only officially configured webhook secrets from environment."""
+    candidates = [
+        os.getenv("PAYMENT_WEBHOOK_SECRET"),
+        os.getenv("XENDIT_WEBHOOK_VERIFICATION_TOKEN"),
+        os.getenv("XENDIT_CALLBACK_TOKEN"),
+        os.getenv("MIDTRANS_SERVER_KEY"),
+    ]
+    return [c.strip() for c in candidates if c and c.strip()]
 
 
 def verify_callback_signature(
@@ -48,6 +48,11 @@ def verify_callback_signature(
     x_webhook_secret: Optional[str] = None,
 ) -> bool:
     """Verifies signature or callback token from Xendit, Midtrans, or Duitku."""
+    valid_tokens = get_configured_callback_tokens()
+    if not valid_tokens:
+        logger.warning("[PAYMENT_WEBHOOK] No payment webhook verification token configured in environment. Rejecting request.")
+        return False
+
     # 1. Header token check (Xendit / generic)
     provided_token = (
         x_callback_token
@@ -56,26 +61,17 @@ def verify_callback_signature(
         or request.headers.get("x-webhook-secret")
         or request.headers.get("x-signature")
     )
-    if provided_token and str(provided_token).strip() in CONFIGURED_CALLBACK_TOKENS:
+    if provided_token and str(provided_token).strip() in valid_tokens:
         return True
 
-    # 2. Payload token check
-    body_token = (
-        payload_dict.get("callback_token")
-        or payload_dict.get("webhook_secret")
-        or payload_dict.get("token")
-    )
-    if body_token and str(body_token).strip() in CONFIGURED_CALLBACK_TOKENS:
-        return True
-
-    # 3. Midtrans SHA-512 Signature Key verification
+    # 2. Midtrans SHA-512 Signature Key verification
     midtrans_sig = payload_dict.get("signature_key")
     order_id = str(payload_dict.get("order_id") or "").strip()
     status_code = str(payload_dict.get("status_code") or "").strip()
     gross_amount = str(payload_dict.get("gross_amount") or "").strip()
 
     if midtrans_sig and order_id and status_code and gross_amount:
-        for server_key in CONFIGURED_CALLBACK_TOKENS:
+        for server_key in valid_tokens:
             expected_raw = f"{order_id}{status_code}{gross_amount}{server_key}"
             computed_sig = hashlib.sha512(expected_raw.encode("utf-8")).hexdigest()
             if computed_sig.lower() == str(midtrans_sig).lower():

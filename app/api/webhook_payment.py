@@ -44,17 +44,20 @@ router = APIRouter(prefix="/webhook", tags=["Payments"])
 
 @router.post("/xendit")
 async def xendit_payment_webhook(request: Request, background_tasks: BackgroundTasks):
+    from fastapi import HTTPException
     from app.routes.xendit import process_xendit_webhook_core
     headers_dict = dict(request.headers)
     try:
         payload = await request.json()
     except Exception as e:
         logger.error(f"[Webhook FastAPI] Failed to parse JSON: {str(e)}")
-        return {"received": True, "error": "invalid_json"}
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
     result = await process_xendit_webhook_core(payload, headers_dict)
     http_code = result.get("http_status", 200)
     response_body = result.get("response", {})
+    if http_code != 200:
+        raise HTTPException(status_code=http_code, detail=response_body.get("error", "Webhook processing failed"))
     return response_body
 
 # ---------------------------------------------------------

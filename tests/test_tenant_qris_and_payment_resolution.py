@@ -7,14 +7,19 @@ import pytest
 import unittest
 from unittest.mock import patch, AsyncMock
 from app.services.payment.factory import PaymentAdapterFactory
+import os
 from app.services.payment.manual_adapter import ManualTransferAdapter
 from app.services.payment.gateway_duitku import DuitkuAdapter
 from app.services.payment.gateway_xendit import XenditAdapter
 from app.utils.qris_generator import (
-    STANDARD_MASTER_QRIS,
     generate_dynamic_qris_payload,
     crc16_ccitt,
     render_qris_bytes,
+)
+
+TEST_STATIC_QRIS = (
+    os.getenv("BOONTRACK_STATIC_QRIS")
+    or "00020101021126570011ID.DANA.WWW011893600915303379682702090337968270303UMI51440014ID.CO.QRIS.WWW0215ID10265640751030303UMI5204737253033605802ID5909BoonTrack6012Kab. Bandung61054028663048DC1"
 )
 from app.services.checkout_flow_service import create_d2c_order_and_dispatch_qris
 from app.routes.checkout_router import handle_qris_checkout, CreateOrderRequest
@@ -90,7 +95,7 @@ class TestQRISGenerationAndEMVCo(unittest.TestCase):
     def test_emvco_payload_and_crc16(self):
         amount = 75000
         invoice_id = "INV-TEST-999"
-        payload = generate_dynamic_qris_payload(STANDARD_MASTER_QRIS, amount=amount, invoice_id=invoice_id)
+        payload = generate_dynamic_qris_payload(TEST_STATIC_QRIS, amount=amount, invoice_id=invoice_id)
 
         self.assertTrue(payload.startswith("000201"))
         self.assertIn("010212", payload)
@@ -105,7 +110,7 @@ class TestQRISGenerationAndEMVCo(unittest.TestCase):
         self.assertEqual(expected_crc, calculated_crc)
 
     def test_rendering_png_bytes(self):
-        payload = generate_dynamic_qris_payload(STANDARD_MASTER_QRIS, amount=25000)
+        payload = generate_dynamic_qris_payload(TEST_STATIC_QRIS, amount=25000)
         img_bytes = render_qris_bytes(payload)
         self.assertIsInstance(img_bytes, bytes)
         self.assertTrue(len(img_bytes) > 500)

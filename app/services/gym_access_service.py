@@ -13,6 +13,7 @@ Features:
 - Instant Member Auto-Reactivation upon Renewal Payment
 """
 
+import os
 import hashlib
 import logging
 import urllib.parse
@@ -560,7 +561,7 @@ class GymAccessService:
         total_amount = base_price + unique_code
 
         invoice_id = f"GYM-REN-{str(member.id)[:8].upper()}-{unique_code}"
-        static_qris = (static_qris_payload or os.getenv("ATMOSFITNES_STATIC_QRIS", "")).strip()
+        static_qris = (static_qris_payload or os.getenv("ATMOSFITNES_STATIC_QRIS") or os.getenv("BOONTRACK_STATIC_QRIS") or "").strip()
         if not static_qris or not static_qris.startswith("000201"):
             raise ValueError("MERCHANT_QRIS_NOT_CONFIGURED: Missing static QRIS payload for gym tenant")
 

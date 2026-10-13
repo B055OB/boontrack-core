@@ -141,6 +141,13 @@ async def tenant_cache_refresh_handler(request: web.Request) -> web.Response:
     except Exception:
         pass
 
+    # 2c. Clear in-memory circuit breaker states & cooldowns
+    try:
+        from app.services.circuit_breaker_service import circuit_breaker_service
+        circuit_breaker_service.clear()
+    except Exception:
+        pass
+
     # 3. If update=True, execute direct DB synchronization inside the container
     update_info = None
     if do_update:

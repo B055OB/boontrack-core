@@ -14,7 +14,6 @@ from app.main import app
 from app.utils.qris_generator import (
     generate_dynamic_qris_payload,
     render_qris_bytes,
-    STANDARD_MASTER_QRIS,
 )
 from app.services.payment_service import PaymentService
 from app.engines.generic_tenant_engine import GenericTenantEngine

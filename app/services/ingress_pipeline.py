@@ -408,18 +408,17 @@ class IngressProtectionPipeline:
             )
 
         if gate_c_state == ESCALATE_TO_QUARANTINE:
-            # Gate C demands hard quarantine — trip the tenant circuit breaker
-            circuit_breaker_service.set_circuit_state(clean_slug, "OPEN")
+            # Gate C demands hard quarantine for this peer (Zero LLM, Zero Outbound)
             logger.critical(
                 f"[LAYER_3.5_GATE_C_QUARANTINE] Peer '{clean_slug}:{clean_phone}' | "
-                "Challenge TTL expired or repeat burst → circuit breaker OPEN. "
+                "Challenge TTL expired or repeat burst → Peer quarantined. "
                 "Zero LLM, Zero Outbound."
             )
             return IngressPipelineResult(
                 status_code=200,
                 allowed=False,
                 action="GATE_C_ESCALATED_TO_QUARANTINE",
-                circuit_state="OPEN",
+                circuit_state="CLOSED",
                 reason="Gate C: Challenge unanswered or repeated burst detected. Peer quarantined.",
                 llm_calls=0,
                 outbound_calls=0,
@@ -476,9 +475,9 @@ class IngressProtectionPipeline:
         session_is_paused = self.is_session_paused(clean_slug, clean_phone)
         circuit_is_open = circuit_breaker_service.is_circuit_open(clean_slug)
 
-        # MANDATE: Chat personal (DM 1-on-1 / @s.whatsapp.net) wajib 100% dijawab oleh bot secara otomatis tanpa jeda manual.
-        # AI auto-reply HANYA di-skip/dinonaktifkan jika pesan berasal dari Grup WhatsApp (@g.us).
-        if not is_group_msg and not from_me:
+        # MANDATE: Chat personal (DM 1-on-1 / @s.whatsapp.net) wajib 100% dijawab oleh bot secara otomatis tanpa jeda manual
+        # untuk tenant 'boon' dan tester core / Hendra Balah.
+        if (clean_slug in ("boon", "app_shop", "boontrack-app-shop") or clean_phone in ("6282130580323", "082130580323", "6282113914613", "082113914613", "6281215567168")) and not is_group_msg and not from_me:
             session_is_paused = False
 
         if session_is_paused or circuit_is_open:

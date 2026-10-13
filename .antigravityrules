@@ -9,3 +9,15 @@
 
 3. PACKAGE / SHARED EXPORTS:
    - Ekspor tipe dan utility wajib bersih dari runtime side-effects agar tidak memicu Temporal Dead Zone (TDZ) pada consumer repo (inbox).
+
+### MANDATORY POST-MODIFICATION IMPACT REPORT (BLAST RADIUS AUDIT)
+
+Setiap kali selesai membuat, memodifikasi, atau menghapus kode/file apa pun:
+1. DILARANG mengakhiri respons tanpa menyertakan laporan audit dampak lintas-file.
+2. WAJIB memeriksa rantai ketergantungan (dependency tree) serta file/modul lain yang mengimpor atau menggunakan fungsi, skema, tabel, atau variabel yang diubah.
+3. WAJIB menyertakan "Impact & Side-Effect Assessment" di akhir respons dengan format:
+   - **Modified File(s)**: [File yang langsung diedit]
+   - **Downstream Impacted Files**: [File/modul lain yang terpengaruh atau memanggil fungsi ini]
+   - **Behavioral Changes**: [Perubahan perilaku sistem atau UI/UX yang ditimbulkan]
+   - **Regression Risk**: [Tingkat risiko: Low / Medium / High beserta mitigasinya]
+4. ZERO SILENT FALLBACK: DILARANG membuat data tiruan/mock sintetis diam-diam untuk data yang seharusnya bersumber dari database (Supabase/PostgreSQL). Jika data tidak ditemukan, kembalikan status null/404 atau alur registrasi resmi secara eksplisit.

@@ -27,13 +27,14 @@ router = APIRouter(tags=["WhatsApp Cloud API Webhook"])
 
 STREAM_NAME = "stream:whatsapp:inbound"
 
-VERIFY_TOKENS = [
-    os.getenv("WHATSAPP_VERIFY_TOKEN", "boontrack_verify_secret"),
-    os.getenv("META_WEBHOOK_VERIFY_TOKEN", "boontrack-secure-verify-token"),
-    "boontrack_verify_secret",
-    "boontrack-secure-verify-token",
-    "boontrack_master_verify_token_2026",
-]
+def get_meta_verify_tokens() -> list[str]:
+    """Retrieve officially configured Meta WhatsApp webhook verification tokens from environment."""
+    candidates = [
+        os.getenv("WHATSAPP_VERIFY_TOKEN"),
+        os.getenv("META_WHATSAPP_VERIFY_TOKEN"),
+        os.getenv("META_WEBHOOK_VERIFY_TOKEN"),
+    ]
+    return [c.strip() for c in candidates if c and c.strip()]
 
 
 # =============================================================================
@@ -55,7 +56,7 @@ async def verify_webhook_handshake(
     - hub.verify_token: matching configured WHATSAPP_VERIFY_TOKEN
     - hub.challenge: verification challenge string
     """
-    configured_token = os.getenv("WHATSAPP_VERIFY_TOKEN", "boontrack_verify_secret")
+    valid_tokens = get_meta_verify_tokens()
     mode = hub_mode or request.query_params.get("mode")
     token = (
         hub_verify_token
@@ -64,7 +65,7 @@ async def verify_webhook_handshake(
     )
     challenge = hub_challenge or request.query_params.get("challenge")
 
-    if mode == "subscribe" and (token == configured_token or token in VERIFY_TOKENS):
+    if mode == "subscribe" and token and valid_tokens and str(token).strip() in valid_tokens:
         logger.info("[WHATSAPP WEBHOOK] Handshake verified successfully.")
         return Response(
             content=str(challenge or ""),
@@ -73,7 +74,7 @@ async def verify_webhook_handshake(
         )
 
     logger.warning(
-        f"[WHATSAPP WEBHOOK] Handshake failed. Mode: {mode}, Token mismatch: {token}"
+        f"[WHATSAPP WEBHOOK] Handshake failed or unconfigured. Mode: {mode}, Token mismatch: {token}"
     )
     return Response(
         content="Verification token mismatch",

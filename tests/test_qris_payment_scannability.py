@@ -7,7 +7,6 @@ from app.utils.qris_generator import (
     render_qris_bytes,
     get_quickchart_qr_url,
     crc16_ccitt,
-    STANDARD_MASTER_QRIS,
 )
 from app.services.whatsapp_service import (
     generate_cart_checkout_response,

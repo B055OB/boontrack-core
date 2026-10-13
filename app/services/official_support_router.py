@@ -24,6 +24,27 @@ logger = logging.getLogger("OFFICIAL_SUPPORT_ROUTER")
 PAKET_TERIMA_BERES_PRICE = 149000
 PAKET_TERIMA_BERES_TITLE = "Paket Terima Beres Setup Toko (Maks 15 SKU / 30 Varian)"
 
+ONBOARDING_LEAD_KEYWORDS = [
+    "solution architect",
+    "audit otomasi bisnis",
+    "klaim review arsitektur",
+]
+
+ONBOARDING_LEAD_CONFIRMATION_RESPONSE = (
+    "Halo! Terima kasih telah melengkapi formulir audit otomasi bisnis di BoonTrack. 🚀\n\n"
+    "Data bisnis dan kebutuhan Anda sudah berhasil dicatat di control plane kami. "
+    "Tim Solution Architect kami sedang meninjau rancangan integrasi dan menyiapkan simulasi demo pilot 14 hari Anda.\n\n"
+    "Representatif kami akan segera menghubungi Anda. Jika ingin konfirmasi jadwal demo lebih cepat, "
+    "Anda juga dapat langsung chat tim kami via:\n"
+    "👉 https://wa.me/6281977655099?text=Halo%2C%20saya%20sudah%20mengisi%20form%20audit%20BoonTrack%20dan%20ingin%20jadwalkan%20demo%20pilot%20segera.\n\n"
+    "Mohon ditunggu sebentar ya!"
+)
+
+BANTUAN_REPRESENTATIVE_RESPONSE = (
+    "Halo! Untuk berbicara langsung dengan tim representatif kami, silakan klik tautan berikut:\n"
+    "👉 https://wa.me/6281977655099"
+)
+
 
 def normalize_phone_digits(phone: str) -> str:
     """Normalizes phone string to digits only without leading 0, +, or 62."""
@@ -387,6 +408,104 @@ ATURAN:
     )
     if vip_res and vip_res.get("reply_text"):
         return vip_res
+
+    # 1.5. Check Onboarding Pilot Lead Intent Handler
+    # Mendeteksi pesan lead dari form onboarding (audit otomasi bisnis, solution architect, klaim review arsitektur).
+    # Mencegah sales rep prompt / menu greeting default / link onboarding ulang.
+    lower_inbound = (clean_text or incoming_text or "").lower()
+    if any(kw in lower_inbound for kw in ONBOARDING_LEAD_KEYWORDS):
+        logger.info(f"[OFFICIAL_SUPPORT] Detected onboarding lead from {sender_phone}. Bypassing sales rep & register url.")
+
+        # Mutasi status sesi & kontak ke ONBOARDING_LEAD
+        try:
+            from app.services.session_store import _save_to_db
+            _save_to_db(
+                phone=sender_phone,
+                tenant_slug="boon",
+                state="ONBOARDING_LEAD",
+                context={
+                    "status": "ONBOARDING_LEAD",
+                    "handover_ready": True,
+                    "intent": "AUDIT_OTOMASI_BISNIS",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        except Exception as _sess_err:
+            logger.debug(f"[OfficialSupportOnboardingLead] Session DB save note: {_sess_err}")
+
+        try:
+            from app.core.database import get_db_connection
+            _conn = get_db_connection()
+            try:
+                with _conn.cursor() as _cur:
+                    _cur.execute(
+                        """
+                        UPDATE conversations
+                        SET status = 'unassigned',
+                            lead_state = 'ONBOARDING_LEAD',
+                            bot_mode = 'HUMAN_ACTIVE',
+                            bot_paused = TRUE,
+                            updated_at = NOW()
+                        WHERE phone_number = %s OR customer_phone = %s;
+                        """,
+                        (sender_phone, sender_phone)
+                    )
+                    _cur.execute(
+                        """
+                        UPDATE contacts
+                        SET contact_status = 'ACTIVE',
+                            lifecycle_stage = 'ONBOARDING_LEAD',
+                            updated_at = NOW()
+                        WHERE clean_phone = %s;
+                        """,
+                        (sender_phone,)
+                    )
+                    _conn.commit()
+            finally:
+                _conn.close()
+        except Exception as _pg_err:
+            logger.debug(f"[OfficialSupportOnboardingLead] Postgres update note: {_pg_err}")
+
+        if supabase:
+            try:
+                supabase.table("conversations").update({
+                    "lead_state": "ONBOARDING_LEAD",
+                    "status": "ready_for_handover",
+                    "bot_mode": "HUMAN_ACTIVE",
+                    "bot_paused": True,
+                }).or_(f"phone_number.eq.{sender_phone},customer_phone.eq.{sender_phone}").execute()
+            except Exception as _sb_conv_err:
+                logger.debug(f"[OfficialSupportOnboardingLead] Supabase conv update note: {_sb_conv_err}")
+
+            try:
+                supabase.table("contacts").update({
+                    "contact_status": "ACTIVE",
+                    "lifecycle_stage": "ONBOARDING_LEAD",
+                }).eq("clean_phone", sender_phone).execute()
+            except Exception as _sb_cnt_err:
+                logger.debug(f"[OfficialSupportOnboardingLead] Supabase contact update note: {_sb_cnt_err}")
+
+        return {
+            "status": "success",
+            "role": "ONBOARDING_LEAD_CONFIRMATION",
+            "tenant_slug": "boon",
+            "state": "ONBOARDING_LEAD",
+            "handover_ready": True,
+            "ai_muted": True,
+            "reply_text": ONBOARDING_LEAD_CONFIRMATION_RESPONSE,
+            "media_url": None,
+        }
+
+    # 1.6. Check BANTUAN Escalation Handler
+    if "bantuan" in lower_inbound or re.search(r"\bbantuan\b", lower_inbound):
+        logger.info(f"[OFFICIAL_SUPPORT] Detected BANTUAN keyword from {sender_phone}. Returning representative link.")
+        return {
+            "status": "success",
+            "role": "BANTUAN_REPRESENTATIVE_LINK",
+            "tenant_slug": "boon",
+            "reply_text": BANTUAN_REPRESENTATIVE_RESPONSE,
+            "media_url": None,
+        }
 
     # 2. Query sender against registered merchant/tenants
     merchant_tenant = await find_tenant_by_admin_phone_or_text(sender_phone, incoming_text)
