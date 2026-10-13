@@ -32,6 +32,7 @@ import logging
 import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, Tuple, List, Union
+import urllib.parse
 
 from app.services.whatsapp_service import normalize_phone_number, get_supabase
 from app.services.whatsapp import cloud_api
@@ -133,6 +134,35 @@ class CTWAStateEngine:
         self.sessions[clean_phone] = session
         return session
 
+    def reset_session(self, phone: str) -> None:
+        """Reset sesi percakapan untuk nomor telepon menjadi fresh lead."""
+        clean_phone = normalize_phone_number(phone) or str(phone).strip()
+        self.sessions.pop(clean_phone, None)
+        self.sessions.pop(str(phone).strip(), None)
+        self._clear_session_from_db(clean_phone)
+
+    def _clear_session_from_db(self, clean_phone: str) -> None:
+        """Menghapus session dari database/Supabase conversation_sessions."""
+        try:
+            sb = get_supabase()
+            if sb:
+                sb.table("conversation_sessions").delete().eq("tenant_id", "onlineboost").eq("user_identifier", clean_phone).execute()
+                sb.table("conversation_sessions").delete().eq("tenant_id", "onlineboost").eq("session_id", f"wa_{clean_phone}").execute()
+        except Exception as e:
+            logger.debug(f"[CTWA Clear DB Session Note] {e}")
+        try:
+            from app.core.database import get_db_connection
+            conn = get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM conversation_sessions WHERE tenant_id = 'onlineboost' AND (user_identifier = %s OR session_id = %s)",
+                    (clean_phone, f"wa_{clean_phone}")
+                )
+                conn.commit()
+            conn.close()
+        except Exception as pg_err:
+            logger.debug(f"[CTWA Clear PG Session Note] {pg_err}")
+
     # ─────────────────────────────────────────────────────────────────────────
     # INBOUND PARSER: FLOWS FORM (nfm_reply) & CTA LANDING PAGE (FAST_TRACK)
     # ─────────────────────────────────────────────────────────────────────────
@@ -206,7 +236,14 @@ class CTWAStateEngine:
         3. Kirim gambar QRIS ke chat WhatsApp via Meta Media Endpoint beserta total tagihan presisi.
         4. Dispatch server-side event Meta CAPI InitiateCheckout.
         """
-        clean_phone = normalize_phone_number(phone) or str(phone).strip()
+        clean_phone = normalize_phone_number(phone) or str(phone or "").strip()
+        if not clean_phone:
+            raise ValueError("customer_phone wajib diisi dan tidak boleh kosong")
+        if not name or not str(name).strip():
+            raise ValueError("customer_name wajib diisi dan tidak boleh kosong")
+        if not email or not str(email).strip() or "@" not in str(email):
+            raise ValueError("customer_email wajib diisi dengan format valid dan tidak boleh kosong")
+
         session = self.get_session(clean_phone)
         session["lead_name"] = name
         session["lead_email"] = email
@@ -403,7 +440,7 @@ class CTWAStateEngine:
         if sender_name and not session.get("lead_name"):
             session["lead_name"] = sender_name
 
-        # ─── 1. CEK PRE-LLM GATEKEEPER TRIGGER (Flow Form atau CTA Landing Page) ──
+        # ─── 1. CEK PRE-LLM GATEKEEPER TRIGGER (Flow Form, QRIS Intent, atau CTA Landing Page) ──
         lead_detected = self.parse_inbound_lead(raw_msg=raw_msg, incoming_text=q)
 
         # Coba juga deteksi nama & email langsung dari teks santai
@@ -419,9 +456,32 @@ class CTWAStateEngine:
                 )
                 lead_detected = (extracted_name, extracted_email)
 
+        # Cek kata kunci intensi pembayaran QRIS langsung atau format pendaftaran
+        is_qris_intent = any(kw in q_lower for kw in [
+            "saya mau bayar via qris",
+            "mau bayar via qris",
+            "bayar via qris",
+            "bayar qris",
+            "mau bayar qris",
+            "minta qris",
+            "kirim qris",
+            "transfer qris",
+            "qris 249",
+            "bayar lewat qris",
+            "mau transfer qris",
+            "minta qrisnya",
+            "kirim qrisnya",
+            "minta qris dong",
+        ])
+
+        if not lead_detected and is_qris_intent:
+            extracted_name = sender_name or session.get("lead_name") or "Kakak"
+            extracted_email = session.get("lead_email") or f"{clean_phone}@customer.boontrack.com"
+            lead_detected = (extracted_name, extracted_email)
+
         if lead_detected:
             full_name, email = lead_detected
-            logger.info(f"[CTWA_TURN] Lead detected: {full_name} ({email}) -> Triggering Pre-LLM Gatekeeper")
+            logger.info(f"[CTWA_TURN] Lead / QRIS Intent detected: {full_name} ({email}) -> Triggering Pre-LLM Gatekeeper")
             gk_result = await self.execute_deterministic_gatekeeper(
                 phone=clean_phone,
                 name=full_name,
@@ -429,11 +489,16 @@ class CTWAStateEngine:
                 phone_number_id=phone_number_id,
                 ctwa_clid=ctwa_clid,
             )
+            qr_encoded = urllib.parse.quote(gk_result["qris_payload"])
+            qr_img_url = f"https://api.qrserver.com/v1/create-qr-code/?data={qr_encoded}&size=400x400"
             return {
                 "success": True,
                 "action": "GATEKEEPER_QRIS_ISSUED",
                 "reply": gk_result["caption"],
                 "reply_text": gk_result["caption"],
+                "media_url": qr_img_url,
+                "qr_code_url": qr_img_url,
+                "qris_payload": gk_result["qris_payload"],
                 "order_id": gk_result["order_id"],
                 "total_amount": gk_result["total_amount"],
                 "downward_code": gk_result["downward_code"],
@@ -550,7 +615,8 @@ class CTWAStateEngine:
             if sb:
                 payload = {
                     "tenant_id": "onlineboost",
-                    "channel": "whatsapp",
+                    "channel": "WHATSAPP",
+                    "session_id": f"wa_{clean_phone}",
                     "user_identifier": clean_phone,
                     "current_state": session.get("current_state", "STATE_0"),
                     "metadata": {

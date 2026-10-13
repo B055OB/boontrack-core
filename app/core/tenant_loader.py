@@ -44,7 +44,7 @@ TENANT_REGISTRY: Dict[str, Dict[str, Any]] = {
         "module": "app.routes.whatsapp_central",
         "register_func": "register_central_whatsapp_routes",
         "description": "Centralized Multi-Tenant WhatsApp Webhook Routing",
-        "enabled": False,  # DEACTIVATED: Official WABA is locked down to Notification & Store Activation only
+        "enabled": True,  # ACTIVE: Centralized Multi-Tenant WhatsApp Webhook Routing (Meta WABA & Evolution)
     },
     "telegram_central": {
         "name": "Central Telegram Channel",

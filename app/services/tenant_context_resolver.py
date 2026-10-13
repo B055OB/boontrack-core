@@ -586,6 +586,8 @@ class TenantContextResolver:
         aduan_phone_id = os.getenv("ADUAN_SANDBOX_PHONE_ID", "1306479742542883").strip()
         app_shop_phone_id = os.getenv("APP_SHOP_PHONE_NUMBER_ID", "").strip()
 
+        onlineboost_phone_id = os.getenv("ONLINEBOOST_PHONE_NUMBER_ID", "1419090974617162").strip()
+
         target_slug = None
         if clean_phone_id in (career_phone_id, "1340866379104241"):
             target_slug = "career"
@@ -593,6 +595,8 @@ class TenantContextResolver:
             target_slug = "boontrack-holding"
         elif clean_phone_id in (aduan_phone_id, "1306479742542883"):
             target_slug = "pelayanan_publik"
+        elif clean_phone_id in (onlineboost_phone_id, "1419090974617162", "onlineboost", "+6288226098088", "6288226098088", "088226098088"):
+            target_slug = "onlineboost"
         elif clean_phone_id.lower() in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app-shop-v1", "app_shop", "boon", "boontrack-app-shop", "081215567168", "6281215567168") or (app_shop_phone_id and clean_phone_id == app_shop_phone_id):
             target_slug = "boon"
 

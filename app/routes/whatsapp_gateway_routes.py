@@ -1038,11 +1038,20 @@ async def process_inbound_message(payload: InboundPayload):
                     "message": "Sesi dalam status HANDOVER_TO_HUMAN. Balasan otomatis ditahan."
                 }
 
-            # Jika trigger greeting awal, handover manusia, direct payment, katalog kosong, atau produk di luar database
-            if engine_res.get("action") in ("SHOW_MENU", "CS_HANDOVER", "HANDOVER_TO_HUMAN", "DIRECT_PAYMENT_INSTRUCTIONS") or engine_res.get("unassigned_triggered"):
-                reply = engine_res.get("reply")
-                if engine_res.get("media_url") or engine_res.get("qr_code_url"):
-                    reply_media_url = engine_res.get("media_url") or engine_res.get("qr_code_url")
+            # Jika trigger greeting awal, handover manusia, direct payment, CTWA, katalog kosong, atau produk di luar database
+            if engine_res and engine_res.get("reply"):
+                if (
+                    tenant_slug == "onlineboost"
+                    or engine_res.get("action") in (
+                        "SHOW_MENU", "CS_HANDOVER", "HANDOVER_TO_HUMAN",
+                        "DIRECT_PAYMENT_INSTRUCTIONS", "GATEKEEPER_QRIS_ISSUED",
+                        "SINGLE_OFFER_PITCH", "WAITING_VERIFICATION", "STATE_TRANSITION"
+                    )
+                    or engine_res.get("unassigned_triggered")
+                ):
+                    reply = engine_res.get("reply")
+                    if engine_res.get("media_url") or engine_res.get("qr_code_url"):
+                        reply_media_url = engine_res.get("media_url") or engine_res.get("qr_code_url")
 
     # 1.7 APP_SHOP_V1 Interactive Catalog Interceptor — DISABLED (Shop mode bypassed, locked to pure Sales Rep)
     # Alur menu/katalog interaktif toko dinonaktifkan agar tidak mengirim kartu banner paket.
@@ -1585,6 +1594,9 @@ async def _handle_connection_update_event(payload: Dict[str, Any], tenant_slug: 
     }
 
 
+_CONNECTION_BY_INSTANCE_CACHE: Dict[str, Any] = {}
+
+
 def get_connection_by_instance(instance_name: str) -> Optional[Dict[str, Any]]:
     """
     P0 ARSITEKTUR HARD BOUNDARY:
@@ -1599,13 +1611,23 @@ def get_connection_by_instance(instance_name: str) -> Optional[Dict[str, Any]]:
     if clean_inst in ("boontrack-gateway", "boontrack-holding", "default"):
         return None
 
+    now = time.time()
+    if clean_inst in _CONNECTION_BY_INSTANCE_CACHE:
+        cached_ts, cached_conn = _CONNECTION_BY_INSTANCE_CACHE[clean_inst]
+        if (now - cached_ts) < 60.0:
+            return cached_conn
+
+    result: Optional[Dict[str, Any]] = None
+
     try:
         from app.services.whatsapp_service import get_supabase
         sb = get_supabase()
         if sb:
-            res = sb.table("whatsapp_connections").select("*").eq("instance_name", clean_inst).limit(1).execute()
+            res = sb.table("whatsapp_connections").select("*").or_(f"instance_name.eq.{clean_inst},tenant_slug.eq.{clean_inst}").limit(1).execute()
             if res.data and len(res.data) > 0:
-                return res.data[0]
+                result = res.data[0]
+                _CONNECTION_BY_INSTANCE_CACHE[clean_inst] = (now, result)
+                return result
     except Exception as e:
         logger.error(f"[SECURITY_CONN_LOOKUP_ERROR] Instance '{clean_inst}': {e}")
 
@@ -1616,12 +1638,12 @@ def get_connection_by_instance(instance_name: str) -> Optional[Dict[str, Any]]:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id, tenant_id, tenant_slug, instance_name, provider, channel_type, phone_number, status, metadata FROM whatsapp_connections WHERE instance_name = %s LIMIT 1",
-                    (clean_inst,)
+                    "SELECT id, tenant_id, tenant_slug, instance_name, provider, channel_type, phone_number, status, metadata FROM whatsapp_connections WHERE instance_name = %s OR tenant_slug = %s LIMIT 1",
+                    (clean_inst, clean_inst)
                 )
                 row = cur.fetchone()
                 if row:
-                    return {
+                    result = {
                         "id": str(row[0]),
                         "tenant_id": str(row[1]) if row[1] else None,
                         "tenant_slug": str(row[2]) if row[2] else None,
@@ -1632,11 +1654,14 @@ def get_connection_by_instance(instance_name: str) -> Optional[Dict[str, Any]]:
                         "status": str(row[7]) if row[7] else None,
                         "metadata": row[8] if isinstance(row[8], dict) else {},
                     }
+                    _CONNECTION_BY_INSTANCE_CACHE[clean_inst] = (now, result)
+                    return result
         finally:
             conn.close()
     except Exception as db_err:
         logger.debug(f"[SECURITY_CONN_DB_FALLBACK_ERROR] Instance '{clean_inst}': {db_err}")
 
+    _CONNECTION_BY_INSTANCE_CACHE[clean_inst] = (now, None)
     return None
 
 
@@ -2419,7 +2444,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
             "options": outbound_options
         }
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=7.0) as client:
                 res = await client.post(send_media_url, headers=headers, json=send_media_payload)
                 logger.info(f"[EVOLUTION SEND MEDIA STATUS] Dispatched to {target_send_recipient} via {target_send_instance}: {res.status_code}")
                 if res.status_code not in (200, 201):
@@ -2473,7 +2498,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
             send_payload["preview_url"] = False
             send_payload["link_preview"] = False
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=7.0) as client:
                 res = await client.post(send_url, headers=headers, json=send_payload)
                 logger.info(f"[EVOLUTION SEND STATUS] Dispatched to {target_send_recipient} via {target_send_instance}: {res.status_code}")
                 if res.status_code not in (200, 201):
