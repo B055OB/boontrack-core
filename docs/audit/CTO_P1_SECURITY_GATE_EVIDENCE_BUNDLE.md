@@ -1,10 +1,10 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Tested Base Commit SHA (Parent HEAD)**: `0e505f5da20d5119e7240a90ecd742eab70ef9bc`
+- **Tested Base Commit SHA (Parent HEAD)**: `d9172c1530ebf231ccd5114f19a95103ffbc925b`
 - **Git Branch**: `main`
 - **Status Kebersihan Working Tree (`git status --porcelain`)**: `CLEAN (no uncommitted changes)`
-- **Waktu Audit (UTC)**: `2026-10-14 17:19:56 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 00:19:56 WIB`
+- **Waktu Audit (UTC)**: `2026-10-14 22:56:37 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 05:56:37 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **P1 CLOSED & APPROVED (ALL VERIFIED 100%)**
 - **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA.
@@ -53,7 +53,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.0s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.4s, max: 300s)`
 
 ### Lapis 4: Redis & AI Conversation Memory Boundary
 - **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).
@@ -109,14 +109,14 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Tested Base Commit SHA (Parent HEAD)**: `0e505f5da20d5119e7240a90ecd742eab70ef9bc`
+- **Tested Base Commit SHA (Parent HEAD)**: `d9172c1530ebf231ccd5114f19a95103ffbc925b`
 - **Git Branch**: `main`
 - **Status Kebersihan Working Tree**: `CLEAN (no uncommitted changes)`
-- **Timestamp Eksekusi (UTC)**: `2026-10-14 17:19:56 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-10-15 00:19:56 WIB`
+- **Timestamp Eksekusi (UTC)**: `2026-10-14 22:56:37 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-10-15 05:56:37 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
-### Ringkasan Eksekusi Test Suite (58/58 Tests PASSED)
+### Ringkasan Eksekusi Test Suite (60/60 Tests PASSED)
 
 | Test Suite | Scope Pengujian | Hasil | Detail |
 |---|---|---|---|
@@ -125,6 +125,7 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 | `tests/test_worker_cross_tenant_isolation.py` | Worker payload & DB mutation cross-tenant simulation + Elevated Hygiene | PASS ✅ (6/6) | Reconciler & Storage Ditolak PermissionError, DB 0 Rows, RESET ROLE; RESET ALL; Higienis |
 | `tests/test_live_postgres_rls_security.py` | Live PostgreSQL RLS engine isolation, authenticated non-superuser audit | PASS ✅ (3/3) | rolsuper=False, rolbypassrls=False, Tenant Beta 0 rows |
 | `tests/test_e2e_core_inbox_integration.py` | End-to-End Core <-> Inbox boundary (HMAC, tenant tamper, anti-replay, claim mismatch) | PASS ✅ (8/8) | HTTP 200, 401, 403 Validated |
+| `tests/test_rls_tenants_commerce_carts_attributions.py` | Dual-resolution RLS UUID/slug type-safety & cross-tenant isolation (tenants, commerce_products, carts, attributions, affiliates, affiliate_commissions, cart_items) | PASS ✅ (2/2) | 0 Type Cast Errors, Zero Data Leakage (0 rows) |
 | `inter_service_auth.py` | HMAC-SHA256, Anti-Replay <= 300s, Tenant Boundary Mismatch | PASS ✅ | 0% Toleransi Pemalsuan Tenant |
 | `redis.py` & AI Memory | Key Scope Enforcement & Worker Payload Binding | PASS ✅ | Cross-Tenant Read/Write Ditolak |
 | `logging_sanitizer.py` | Global RecordFactory + Formatter Exception Masking | PASS ✅ | 0 Plaintext PII / Kredensial Bocor |
@@ -159,29 +160,29 @@ Audit mencakup 100% tabel relasional di dalam schema `public` PostgreSQL pada Su
 | 10 | `staging_alumni_cpm` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_staging_alumni_cpm` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_staging_alumni_cpm` (public: tenant_id = app.current_tenant_id) |
 | 11 | `subscriptions` | postgres | ENABLED | NO | TENANT | NONE | *No custom policies (implicit deny for non-superuser)* |
 | 12 | `telegram_single_use_tokens` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_telegram_single_use_tokens` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_telegram_single_use_tokens` (public: tenant_id = app.current_tenant_id) |
-| 13 | `tenants` | postgres | ENABLED | NO | SYSTEM/GLOBAL | INSERT, SELECT, UPDATE | `Allow public read tenants` (public: true)<br>`allow_all_insert_tenants` (public: true)<br>`allow_all_select_tenants` (public: true) |
+| 13 | `tenants` | postgres | ENABLED | YES | SYSTEM/GLOBAL | ALL, SELECT | `auth_tenant_dml_tenants` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_tenants` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_tenants` (service_role: tenant_id = app.current_tenant_id) |
 | 14 | `whatsapp_connections` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_whatsapp_connections` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_whatsapp_connections` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolation_whatsapp_connections` (public: tenant_id = app.current_tenant_id) |
 | 15 | `activation_codes` | postgres | ENABLED | NO | TENANT | NONE | *No custom policies (implicit deny for non-superuser)* |
 | 16 | `affiliate_auth_otps` | postgres | ENABLED | NO | SYSTEM/GLOBAL | ALL | `Service role full access on affiliate_auth_otps` (service_role: true) |
-| 17 | `affiliate_commissions` | postgres | ENABLED | NO | TENANT | ALL | `Service role full access on affiliate_commissions` (service_role: true)<br>`allow_all_ops_affiliate_commissions` (public: true) |
+| 17 | `affiliate_commissions` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_affiliate_commissions` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_affiliate_commissions` (service_role: tenant_id = app.current_tenant_id) |
 | 18 | `affiliate_daily_stats` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
 | 19 | `affiliate_manager_assignments` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
-| 20 | `affiliates` | postgres | ENABLED | NO | TENANT | ALL, SELECT | `Public read access on affiliates` (anon,authenticated: true)<br>`Service role full access on affiliates` (service_role: true)<br>`allow_all_ops_affiliates` (public: true) |
+| 20 | `affiliates` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_affiliates` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_affiliates` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_affiliates` (service_role: tenant_id = app.current_tenant_id) |
 | 21 | `ai_usage_logs` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
 | 22 | `analytics` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
 | 23 | `attribution_sessions` | postgres | ENABLED | NO | TENANT | ALL | `Public access on attribution_sessions` (anon,authenticated: true)<br>`Service role full access on attribution_sessions` (service_role: true) |
-| 24 | `attributions` | postgres | ENABLED | NO | TENANT | ALL | `Public access on attributions` (anon,authenticated: true)<br>`Service role full access on attributions` (service_role: true) |
+| 24 | `attributions` | postgres | ENABLED | YES | TENANT | ALL, INSERT | `auth_tenant_attributions` (authenticated: tenant_id = app.current_tenant_id)<br>`public_insert_attributions` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_attributions` (service_role: tenant_id = app.current_tenant_id) |
 | 25 | `booking_reminders` | postgres | ENABLED | NO | TENANT | ALL | `Service role full access on booking_reminders` (service_role: true) |
 | 26 | `booking_slots` | postgres | ENABLED | NO | TENANT | ALL, SELECT | `Public read access on booking_slots` (anon,authenticated: true)<br>`Service role full access on booking_slots` (service_role: true) |
 | 27 | `bot_profiles` | postgres | ENABLED | NO | TENANT | ALL, SELECT | `Public read access on bot_profiles` (anon,authenticated: true)<br>`Service role full access on bot_profiles` (service_role: true) |
 | 28 | `campaign_attributions` | postgres | ENABLED | NO | TENANT | ALL, SELECT | `Public read access on campaign_attributions` (anon,authenticated: true)<br>`Service role full access on campaign_attributions` (service_role: true) |
 | 29 | `capi_events` | postgres | ENABLED | NO | TENANT | ALL, INSERT, SELECT | `Public insert access on capi_events` (anon,authenticated: true)<br>`Public read access on capi_events` (anon,authenticated: true)<br>`Service role full access on capi_events` (service_role: true) |
 | 30 | `capi_outbox` | postgres | ENABLED | NO | TENANT | ALL | `service_role_all_capi_outbox` (service_role: true) |
-| 31 | `cart_items` | postgres | ENABLED | NO | SYSTEM/GLOBAL | DELETE, INSERT, SELECT, UPDATE | `Public cart_items delete` (public: true)<br>`Public cart_items insert` (public: true)<br>`Public cart_items select` (public: true) |
-| 32 | `carts` | postgres | ENABLED | NO | TENANT | INSERT, SELECT, UPDATE | `Public carts insert` (public: true)<br>`Public carts select` (public: true)<br>`Public carts update` (public: true) |
+| 31 | `cart_items` | postgres | ENABLED | YES | SYSTEM/GLOBAL | ALL | `auth_tenant_cart_items` (authenticated: tenant_id = app.current_tenant_id)<br>`public_access_tenant_cart_items` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_cart_items` (service_role: tenant_id = app.current_tenant_id) |
+| 32 | `carts` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_carts` (authenticated: tenant_id = app.current_tenant_id)<br>`public_access_tenant_carts` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_carts` (service_role: tenant_id = app.current_tenant_id) |
 | 33 | `citizen_data` | postgres | ENABLED | NO | TENANT | ALL | `tenant_isolation_citizen_data` (public: tenant_id = app.current_tenant_id) |
 | 34 | `click_logs` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
-| 35 | `commerce_products` | postgres | ENABLED | NO | TENANT | INSERT, SELECT, UPDATE | `allow_all_insert_commerce_products` (public: true)<br>`allow_all_select_commerce_products` (public: true)<br>`allow_all_update_commerce_products` (public: true) |
+| 35 | `commerce_products` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_dml_commerce_products` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_commerce_products` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_commerce_products` (service_role: tenant_id = app.current_tenant_id) |
 
 ### Dokumentasi Pengecualian Tabel Global / Sistem
 1. **`tenants`**: Tabel katalog utama registri tenant. Memiliki RLS aktif; baris hanya dapat dimanipulasi oleh administrator (`service_role`) atau dibaca oleh pemilik tenant aktif.
