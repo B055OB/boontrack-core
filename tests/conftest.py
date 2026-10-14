@@ -14,7 +14,7 @@ _CI_TEST_ENV_DEFAULTS = {
     "EVOLUTION_API_KEY": "test_ci_evolution_api_key_placeholder",
     "R2_ACCESS_KEY_ID": "test_ci_r2_access_key",
     "R2_SECRET_ACCESS_KEY": "test_ci_r2_secret_key",
-    "R2_ACCOUNT_ID": "test_ci_r2_account",
+    "R2_ACCOUNT_ID": "test-ci-r2-account",
     "POSTGRES_HOST": "127.0.0.1",
     "POSTGRES_PORT": "5432",
     "POSTGRES_DB": "postgres",

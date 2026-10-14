@@ -38,6 +38,9 @@ load_dotenv()
 if not os.getenv("EVOLUTION_API_KEY"):
     os.environ["EVOLUTION_API_KEY"] = "ci_test_evolution_api_key_placeholder"
 
+if not os.getenv("R2_ACCOUNT_ID") or "_" in os.getenv("R2_ACCOUNT_ID", ""):
+    os.environ["R2_ACCOUNT_ID"] = os.getenv("R2_ACCOUNT_ID", "test-ci-r2-account").replace("_", "-")
+
 if not os.getenv("POSTGRES_HOST") or os.getenv("POSTGRES_HOST") == "postgres":
     os.environ["POSTGRES_HOST"] = "127.0.0.1"
 if not os.getenv("POSTGRES_PORT"):

@@ -73,7 +73,8 @@ class R2Client:
     @property
     def endpoint_url(self) -> str:
         self._refresh_credentials_if_needed()
-        pure_default = f"https://{self.account_id}.r2.cloudflarestorage.com" if self.account_id else "https://r2.cloudflarestorage.com"
+        clean_acc = self.account_id.replace("_", "-") if self.account_id else ""
+        pure_default = f"https://{clean_acc}.r2.cloudflarestorage.com" if clean_acc else "https://r2.cloudflarestorage.com"
         override = os.getenv("R2_ENDPOINT") or os.getenv("R2_ENDPOINT_URL") or os.getenv("S3_ENDPOINT")
         if override:
             raw = override.strip().rstrip("/")

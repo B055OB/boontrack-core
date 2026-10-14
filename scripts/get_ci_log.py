@@ -31,6 +31,7 @@ def fetch_log(job_id: str):
         return content
 
 if __name__ == "__main__":
-    log = fetch_log("115989368010")
+    job_id = sys.argv[1] if len(sys.argv) > 1 else "115989368010"
+    log = fetch_log(job_id)
     for line in log.splitlines()[-150:]:
         print(line)
