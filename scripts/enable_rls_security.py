@@ -1,14 +1,25 @@
 """
-Script: enable_rls_security.py
-Deskripsi: Otomatisasi pengaktifan Row-Level Security (RLS) pada seluruh tabel
-di schema 'public' Supabase (relkind 'r' dan 'p' / partitioned tables) yang belum ber-RLS,
-serta konfigurasi security_invoker = true pada view affiliate.
+scripts/enable_rls_security.py
+========================================================================================
+CTO HARDENED P1 AUDIT & RLS AUTOMATION ENGINE (FAIL-CLOSED STRICT)
+========================================================================================
+Melakukan penegakan dan audit keamanan mendalam pada level katalog PostgreSQL:
+1. Otomasi ENABLE ROW LEVEL SECURITY pada semua tabel relkind 'r' (regular) dan 'p' (partitioned).
+2. Verifikasi Eksplisit Katalog View: Memastikan seluruh view (v_affiliate_payout_summary,
+   affiliate_ledger, v_affiliate_ledger, chat_sessions) tersimpan dengan reloptions
+   ['security_invoker=true'] langsung di pg_class.
+3. Deep Tenant Policy Inspection: Memverifikasi tabel dengan kolom tenant_id memiliki
+   kebijakan RLS isolasi tenant_id dan memeriksa status relforcerowsecurity (FORCE RLS).
+4. Application Role Audit: Memverifikasi role aplikasi ('authenticated', 'anon')
+   TIDAK memiliki hak akses superuser maupun rolbypassrls (wajib rolbypassrls = false).
 
-Mode: FAIL-CLOSED STRICT. Skrip WAJIB return False dan exit(1) jika ada kegagalan.
+Mode: FAIL-CLOSED STRICT. Jika ada anomali atau kegagalan, skrip WAJIB exit(1).
+========================================================================================
 """
 
 import sys
 import os
+from typing import Dict, List, Tuple
 
 # Pastikan path modul core tersedia
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,31 +29,47 @@ if CORE_DIR not in sys.path:
 
 from app.core.database import get_db_connection
 
+# Pastikan UTF-8 encoding untuk stdout
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
-def enable_rls_and_harden_views() -> bool:
-    print("=" * 70)
-    print("  SUPABASE POSTGRESQL: RLS AUTOMATION & VIEW HARDENING (STRICT)")
-    print("=" * 70)
 
-    # 1. Uji & Ambil Koneksi
+def audit_and_enforce_rls() -> bool:
+    print("\n" + "#" * 80)
+    print("  BOONTRACK CORE SECURITY AUDIT — STRICT RLS & CATALOG ENFORCEMENT")
+    print("  Target: CTO P1 Security Gate Verification")
+    print("#" * 80)
+
     try:
         conn = get_db_connection()
         conn.autocommit = False
         cur = conn.cursor()
-        
+
         cur.execute("SELECT current_database(), current_user, version();")
         db_name, db_user, db_version = cur.fetchone()
-        print(f"\n[+] Status Koneksi: AMAN (Terkoneksi)")
-        print(f"    - Database : {db_name}")
-        print(f"    - User     : {db_user}")
-        print(f"    - Engine   : {db_version.split(',')[0]}")
+        print(f"\n[+] Koneksi Database : AMAN")
+        print(f"    - Database       : {db_name}")
+        print(f"    - Current User   : {db_user}")
+        print(f"    - Engine Version : {db_version.split(',')[0]}")
     except Exception as e:
-        print(f"\n[-] Gagal menghubungkan ke database: {e}")
+        print(f"\n[-] GAGAL KONEKSI DATABASE: {e}")
         return False
 
-    # 2. Query Tabel di Schema 'public' (relkind 'r' biasa dan 'p' partitioned) tanpa RLS
-    query_unprotected_tables = """
-        SELECT c.relname AS table_name, c.relkind
+    has_failures = False
+    failure_reasons: List[str] = []
+
+    # ==========================================================================
+    # 1. AUDIT & ENFORCE RLS PADA SELURUH TABEL 'r' DAN 'p'
+    # ==========================================================================
+    print("\n" + "=" * 80)
+    print("  1. AUDIT & PENEGAKAN ROW-LEVEL SECURITY PADA TABEL (RELKIND 'r' & 'p')")
+    print("=" * 80)
+
+    query_unprotected = """
+        SELECT c.relname, c.relkind
         FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'public'
@@ -50,124 +77,224 @@ def enable_rls_and_harden_views() -> bool:
           AND c.relrowsecurity = false
         ORDER BY c.relname;
     """
-    try:
-        cur.execute(query_unprotected_tables)
-        unprotected_tables = cur.fetchall()
-    except Exception as e:
-        print(f"\n[-] Gagal membaca daftar tabel: {e}")
-        conn.close()
-        return False
+    cur.execute(query_unprotected)
+    unprotected = cur.fetchall()
 
-    print(f"\n[+] Ditemukan {len(unprotected_tables)} tabel 'public' (relkind 'r' & 'p') tanpa RLS.")
+    if unprotected:
+        print(f"[!] Ditemukan {len(unprotected)} tabel tanpa RLS. Mengaktifkan RLS...")
+        for tbl, kind in unprotected:
+            try:
+                cur.execute(f'ALTER TABLE public."{tbl}" ENABLE ROW LEVEL SECURITY;')
+                conn.commit()
+                print(f"    [+] RLS Diaktifkan: public.\"{tbl}\" (relkind={kind})")
+            except Exception as err:
+                conn.rollback()
+                has_failures = True
+                msg = f"Gagal mengaktifkan RLS pada {tbl}: {err}"
+                failure_reasons.append(msg)
+                print(f"    [-] ERROR: {msg}")
+    else:
+        print("[OK] 100% Tabel public (relkind 'r' & 'p') telah memiliki relrowsecurity = true.")
 
-    enabled_tables = []
-    failed_tables = []
+    # ==========================================================================
+    # 2. AUDIT VIEW EKSPLISIT KATALOG pg_class.reloptions (SECURITY_INVOKER)
+    # ==========================================================================
+    print("\n" + "=" * 80)
+    print("  2. AUDIT VIEW EKSPLISIT KATALOG pg_class (SECURITY_INVOKER VERIFICATION)")
+    print("=" * 80)
 
-    # 3. Eksekusi ALTER TABLE ... ENABLE ROW LEVEL SECURITY dinamis
-    for idx, (table_name, relkind) in enumerate(unprotected_tables, 1):
-        relkind_desc = "partitioned" if relkind == 'p' else "regular"
-        try:
-            # Gunakan double quotes untuk mencegah masalah reserved keyword
-            cur.execute(f'ALTER TABLE public."{table_name}" ENABLE ROW LEVEL SECURITY;')
-            conn.commit()
-            enabled_tables.append(table_name)
-            print(f"    [{idx}/{len(unprotected_tables)}] SUCCESS: public.\"{table_name}\" ({relkind_desc}) -> RLS ENABLED")
-        except Exception as err:
-            conn.rollback()
-            failed_tables.append((table_name, str(err)))
-            print(f"    [{idx}/{len(unprotected_tables)}] FAILED: public.\"{table_name}\" ({relkind_desc}) -> {err}")
+    # Seluruh view public yang wajib ber-security_invoker
+    REQUIRED_HARDENED_VIEWS = [
+        "v_affiliate_payout_summary",
+        "affiliate_ledger",
+        "v_affiliate_ledger",
+        "chat_sessions"
+    ]
 
-    # 4. Hardening Views: v_affiliate_ledger & v_affiliate_payout_summary (security_invoker = true)
-    print("\n[+] Mengonfigurasi security_invoker = true pada view...")
-    views_hardened = []
-    view_failures = []
-
-    # 4.a View v_affiliate_payout_summary
-    try:
-        cur.execute("ALTER VIEW IF EXISTS public.v_affiliate_payout_summary SET (security_invoker = true);")
-        conn.commit()
-        views_hardened.append("public.v_affiliate_payout_summary")
-        print("    [OK] public.v_affiliate_payout_summary -> security_invoker = true")
-    except Exception as e:
-        conn.rollback()
-        view_failures.append(("public.v_affiliate_payout_summary", str(e)))
-        print(f"    [FAIL] public.v_affiliate_payout_summary: {e}")
-
-    # 4.b View affiliate_ledger
-    try:
-        cur.execute("ALTER VIEW IF EXISTS public.affiliate_ledger SET (security_invoker = true);")
-        conn.commit()
-        views_hardened.append("public.affiliate_ledger")
-        print("    [OK] public.affiliate_ledger -> security_invoker = true")
-    except Exception as e:
-        conn.rollback()
-        view_failures.append(("public.affiliate_ledger", str(e)))
-        print(f"    [FAIL] public.affiliate_ledger: {e}")
-
-    # 4.c View v_affiliate_ledger (Alias / Canonical)
-    try:
+    for view_name in REQUIRED_HARDENED_VIEWS:
+        # 2.a Cek eksistensi di katalog pg_class
         cur.execute("""
-            SELECT 1 FROM pg_class c
+            SELECT c.oid, c.reloptions
+            FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = 'public' AND c.relname = 'v_affiliate_ledger';
-        """)
-        if cur.fetchone():
-            cur.execute("ALTER VIEW public.v_affiliate_ledger SET (security_invoker = true);")
+            WHERE n.nspname = 'public' AND c.relname = %s AND c.relkind = 'v';
+        """, (view_name,))
+        row = cur.fetchone()
+
+        if not row:
+            # Jika v_affiliate_ledger belum ada, buat sebagai canonical view
+            if view_name == "v_affiliate_ledger":
+                try:
+                    cur.execute("""
+                        CREATE OR REPLACE VIEW public.v_affiliate_ledger 
+                        WITH (security_invoker = true) AS 
+                        SELECT * FROM public.affiliate_ledger;
+                    """)
+                    conn.commit()
+                    print(f"    [+] View {view_name} dibuat dengan security_invoker = true.")
+                except Exception as e:
+                    conn.rollback()
+                    has_failures = True
+                    msg = f"Gagal membuat view canonical {view_name}: {e}"
+                    failure_reasons.append(msg)
+                    print(f"    [-] ERROR: {msg}")
+                    continue
+            else:
+                has_failures = True
+                msg = f"View wajib '{view_name}' TIDAK DITEMUKAN di katalog pg_class!"
+                failure_reasons.append(msg)
+                print(f"    [-] CRITICAL: {msg}")
+                continue
+
+        # 2.b Konfigurasi dan verifikasi reloptions
+        try:
+            cur.execute(f'ALTER VIEW public."{view_name}" SET (security_invoker = true);')
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            has_failures = True
+            msg = f"Gagal SET security_invoker pada {view_name}: {e}"
+            failure_reasons.append(msg)
+            print(f"    [-] ERROR: {msg}")
+            continue
+
+        # 2.c Re-query reloptions eksplisit dari pg_class
+        cur.execute("""
+            SELECT c.reloptions
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relname = %s AND c.relkind = 'v';
+        """, (view_name,))
+        opts_row = cur.fetchone()
+        opts = opts_row[0] if opts_row and opts_row[0] else []
+
+        if "security_invoker=true" in opts:
+            print(f"    [OK] public.{view_name:<30} | reloptions: {opts} (VERIFIED)")
         else:
-            cur.execute("""
-                CREATE OR REPLACE VIEW public.v_affiliate_ledger 
-                WITH (security_invoker = true) AS 
-                SELECT * FROM public.affiliate_ledger;
-            """)
-        conn.commit()
-        views_hardened.append("public.v_affiliate_ledger")
-        print("    [OK] public.v_affiliate_ledger -> security_invoker = true")
-    except Exception as e:
-        conn.rollback()
-        view_failures.append(("public.v_affiliate_ledger", str(e)))
-        print(f"    [FAIL] public.v_affiliate_ledger: {e}")
+            has_failures = True
+            msg = f"View '{view_name}' TIDAK memiliki 'security_invoker=true' di reloptions! (Ditemukan: {opts})"
+            failure_reasons.append(msg)
+            print(f"    [-] VIOLATION: {msg}")
 
-    # 5. Verifikasi Akhir
-    cur.execute(query_unprotected_tables)
-    remaining_unprotected = [row[0] for row in cur.fetchall()]
+    # ==========================================================================
+    # 3. AUDIT ROLE APLIKASI: MEMASTIKAN TIDAK ADA BYPASS RLS (rolbypassrls = false)
+    # ==========================================================================
+    print("\n" + "=" * 80)
+    print("  3. AUDIT ROLE APLIKASI DI KATALOG pg_roles (ANTI-BYPASS RLS)")
+    print("=" * 80)
 
-    print("\n" + "=" * 70)
-    print("  RINGKASAN EKSEKUSI PEMBARUAN KEAMANAN")
-    print("=" * 70)
-    print(f"  Total Tabel Berhasil di-Enable RLS : {len(enabled_tables)}")
-    print(f"  Total Tabel Gagal / Error          : {len(failed_tables)}")
-    print(f"  Total View Gagal Dikonfigurasi     : {len(view_failures)}")
-    print(f"  Sisa Tabel 'public' Tanpa RLS      : {len(remaining_unprotected)}")
-    print(f"  View dengan security_invoker       : {', '.join(views_hardened)}")
-    print("=" * 70)
+    cur.execute("""
+        SELECT rolname, rolsuper, rolbypassrls, rolcanlogin
+        FROM pg_roles 
+        WHERE rolname IN ('authenticated', 'anon')
+        ORDER BY rolname;
+    """)
+    app_roles = cur.fetchall()
 
-    # 6. Evaluasi Kepatuhan Fail-Closed
-    has_critical_error = bool(failed_tables or view_failures or remaining_unprotected)
+    for rname, rsuper, rbypass, rlogin in app_roles:
+        status_ok = (not rsuper) and (not rbypass)
+        if status_ok:
+            print(f"    [OK] Role '{rname:<15}' | Superuser: {rsuper} | BypassRLS: {rbypass} (COMPLIANT)")
+        else:
+            has_failures = True
+            msg = f"Role aplikasi '{rname}' memiliki hak berbahaya! (Superuser={rsuper}, BypassRLS={rbypass})"
+            failure_reasons.append(msg)
+            print(f"    [-] CRITICAL FLAW: {msg}")
 
-    if has_critical_error:
-        print("\n[!] CRITICAL FAILURE: Ditemukan kegagalan hardening atau tabel tanpa RLS!")
-        if failed_tables:
-            print("  Tabel gagal di-alter:")
-            for t, err in failed_tables:
-                print(f"    - {t}: {err}")
-        if view_failures:
-            print("  View gagal di-harden:")
-            for v, err in view_failures:
-                print(f"    - {v}: {err}")
-        if remaining_unprotected:
-            print("  Tabel masih tanpa RLS:")
-            for t in remaining_unprotected:
-                print(f"    - {t}")
-        cur.close()
-        conn.close()
-        return False
+    # ==========================================================================
+    # 4. INSPEKSI MENDALAM KEBIJAKAN ISOLASI TENANT & FORCE RLS (CORE TABLES)
+    # ==========================================================================
+    print("\n" + "=" * 80)
+    print("  4. INSPEKSI KEBIJAKAN ISOLASI TENANT & STATUS FORCE RLS PADA TABEL KRITIKAL")
+    print("=" * 80)
 
-    print("\n[V] SELURUH TABEL SCHEMA 'PUBLIC' (RELKIND 'r' & 'p') KINI 100% TERLINDUNGI OLEH ROW-LEVEL SECURITY!")
+    CRITICAL_TENANT_TABLES = [
+        "audit_logs",
+        "staging_alumni_cpm",
+        "phone_suppressions",
+        "telegram_single_use_tokens",
+        "campaign_queues",
+        "campaign_queue_items"
+    ]
+
+    for tbl in CRITICAL_TENANT_TABLES:
+        # Cek status relrowsecurity & relforcerowsecurity
+        cur.execute("""
+            SELECT c.relrowsecurity, c.relforcerowsecurity
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relname = %s;
+        """, (tbl,))
+        class_info = cur.fetchone()
+        if not class_info:
+            has_failures = True
+            msg = f"Tabel kritikal '{tbl}' tidak ditemukan di katalog pg_class!"
+            failure_reasons.append(msg)
+            print(f"    [-] MISSING: {msg}")
+            continue
+
+        rls_enabled, force_rls = class_info
+
+        # Cek kebijakan tenant isolation di pg_policies
+        cur.execute("""
+            SELECT policyname, permissive, qual, with_check
+            FROM pg_policies
+            WHERE schemaname = 'public' AND tablename = %s;
+        """, (tbl,))
+        policies = cur.fetchall()
+
+        has_tenant_policy = any(
+            ("tenant_id" in str(p[2] or "").lower() or "tenant_id" in str(p[3] or "").lower())
+            for p in policies
+        )
+        has_permissive_wildcard_for_all = any(
+            (p[1] == 'PERMISSIVE' and p[2] == 'true' and p[3] == 'true' and 'public' in str(p))
+            for p in policies
+        )
+
+        checks_passed = rls_enabled and force_rls and has_tenant_policy and not has_permissive_wildcard_for_all
+
+        if checks_passed:
+            print(f"    [OK] public.{tbl:<30} | RLS: {rls_enabled} | FORCE: {force_rls} | Policies: {len(policies)} (ISOLATED)")
+        else:
+            has_failures = True
+            details = []
+            if not rls_enabled: details.append("RLS disabled")
+            if not force_rls: details.append("FORCE RLS disabled")
+            if not has_tenant_policy: details.append("No tenant_id isolation policy")
+            if has_permissive_wildcard_for_all: details.append("Dangerous wildcard FOR ALL policy detected")
+            msg = f"Tabel '{tbl}' tidak memenuhi standar keamanan: {', '.join(details)}"
+            failure_reasons.append(msg)
+            print(f"    [-] AUDIT FAIL: {msg}")
+
+    # ==========================================================================
+    # 5. KESIMPULAN & EVALUASI FAIL-CLOSED
+    # ==========================================================================
+    print("\n" + "=" * 80)
+    print("  LAPORAN AKHIR AUDIT KEAMANAN P1 (CTO AUDIT GATE)")
+    print("=" * 80)
+
     cur.close()
     conn.close()
-    return True
+
+    if has_failures:
+        print("  STATUS: [FAIL] DITEMUKAN PELANGGARAN INVARIAN KEAMANAN!")
+        print("\n  Daftar Pelanggaran:")
+        for idx, reason in enumerate(failure_reasons, 1):
+            print(f"  {idx}. {reason}")
+        print("\n  KESIMPULAN: Audit Gate HOLD. Perbaiki kegagalan sebelum rilis.")
+        print("=" * 80 + "\n")
+        return False
+    else:
+        print("  STATUS: [PASS] 100% INVARIAN KEAMANAN KATALOG POSTGRESQL TERPENUHI.")
+        print("  - Seluruh view tersimpan dengan 'security_invoker=true' di pg_class.reloptions.")
+        print("  - Role aplikasi terverifikasi bebas dari hak istimewa rolbypassrls.")
+        print("  - Tabel kritikal memiliki kebijakan isolasi tenant_id dan FORCE RLS aktif.")
+        print("  - Tidak ditemukan wildcard policy 'allow_all_ops' tanpa filter.")
+        print("=" * 80 + "\n")
+        return True
 
 
 if __name__ == '__main__':
-    success = enable_rls_and_harden_views()
+    success = audit_and_enforce_rls()
     sys.exit(0 if success else 1)

@@ -3,17 +3,17 @@ preflight_circuit_breaker_test.py
 ========================================================================================
 PERSISTENT TEST SUITE: CTO PREFLIGHT CIRCUIT BREAKER, SUPPRESSION, CONCURRENCY & AUDIT
 ========================================================================================
-Validasi 7 Syarat CTO Office untuk Kesiapan Produksi terintegrasi penuh ke Persistent Store
-(PostgreSQL Database / Supabase Engine):
+Validasi 7 Syarat CTO Office untuk Kesiapan Produksi (CTO P1 Hardened Acceptance Gate).
+Terintegrasi penuh ke PostgreSQL Database dengan Row-Level Security Ketat (Anti-Permissive):
 
 1. Circuit Breaker Simulation:
    - 3 kegagalan callback beruntun -> queue status 'FROZEN', worker berhenti ambil batch.
    - Ambang kegagalan 6% pada rolling window sampel terkirim -> trigger 'FROZEN'.
 2. STOP & Suppression:
-   - Inbound keyword 'STOP' -> nomor masuk tabel persisten 'phone_suppressions'.
+   - Inbound keyword 'STOP' -> nomor masuk tabel persisten 'phone_suppressions' dengan isolasi tenant.
    - Eliminasi mutlak dari batch pengiriman berikutnya via database filter.
 3. Atomic Freeze on Concurrency:
-   - 2 worker konkuren membaca status dari tabel 'campaign_queues'.
+   - 2 worker konkuren membaca status dari tabel 'campaign_queues' di PostgreSQL.
    - Trigger FROZEN di tengah jalan -> worker kedua membaca status persisten & berhenti seketika.
    - Sisa pesan di tabel 'campaign_queue_items' tetap utuh (PENDING).
 4. Telegram Single-Use Token:
@@ -23,6 +23,10 @@ Validasi 7 Syarat CTO Office untuk Kesiapan Produksi terintegrasi penuh ke Persi
 5. State Machine & Audit Trail:
    - Alur siklus hidup: READY -> RUNNING -> FROZEN -> REVIEW_REQUIRED -> READY.
    - Seluruh mutasi tercatat di tabel persisten 'audit_logs' dengan user_id pelaksana.
+6. Teardown & Isolation:
+   - Seluruh pengujian berjalan di bawah role 'authenticated' (rolbypassrls=false) dengan
+     tenant_id terisolasi ('tenant_preflight_cto').
+   - Teardown otomatis membersihkan seluruh data uji setelah eksekusi selesai.
 ========================================================================================
 """
 
@@ -52,6 +56,9 @@ if hasattr(sys.stdout, 'reconfigure'):
     except Exception:
         pass
 
+# Tenant ID khusus terisolasi untuk suite pengujian preflight
+TEST_TENANT_ID = "tenant_preflight_cto"
+
 
 # ======================================================================================
 # DOMAIN MODELS & ENUMS
@@ -71,31 +78,43 @@ class IllegalStateTransitionError(Exception):
 
 
 # ======================================================================================
-# DATABASE SETUP & DDL HELPER
+# DATABASE SETUP & DDL HELPER (STRICT TENANT ISOLATION — ZERO WILDCARD)
 # ======================================================================================
 
 def ensure_preflight_schema_exists():
-    """Membuat tabel persisten untuk suppression, token, antrean & audit jika belum ada."""
+    """
+    Membuat tabel persisten untuk suppression, token, antrean & audit dengan
+    skema isolasi tenant ketat dan Row-Level Security FORCE aktif.
+    Kebijakan permisif 'allow_all_ops_*' (USING true) DICABUT TOTAL.
+    """
     conn = get_db_connection()
     conn.autocommit = False
     cur = conn.cursor()
     try:
+        # Cabut policy permisif lama jika ada
+        for tbl in ['phone_suppressions', 'telegram_single_use_tokens', 'campaign_queues', 'campaign_queue_items']:
+            cur.execute(f"DROP POLICY IF EXISTS allow_all_ops_{tbl} ON public.{tbl};")
+
         # 1. Tabel Phone Suppressions
         cur.execute("""
             CREATE TABLE IF NOT EXISTS public.phone_suppressions (
                 id SERIAL PRIMARY KEY,
-                phone_number VARCHAR(50) NOT NULL UNIQUE,
+                tenant_id VARCHAR(100) NOT NULL DEFAULT 'tenant_preflight_cto',
+                phone_number VARCHAR(50) NOT NULL,
                 reason VARCHAR(255) DEFAULT 'STOP_KEYWORD',
                 metadata JSONB DEFAULT '{}',
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_phone_suppressions_tenant_phone UNIQUE (tenant_id, phone_number)
             );
             ALTER TABLE public.phone_suppressions ENABLE ROW LEVEL SECURITY;
+            ALTER TABLE public.phone_suppressions FORCE ROW LEVEL SECURITY;
         """)
 
         # 2. Tabel Telegram Single-Use Tokens
         cur.execute("""
             CREATE TABLE IF NOT EXISTS public.telegram_single_use_tokens (
                 token VARCHAR(64) PRIMARY KEY,
+                tenant_id VARCHAR(100) NOT NULL DEFAULT 'tenant_preflight_cto',
                 order_id VARCHAR(100) NOT NULL,
                 invite_link VARCHAR(255) NOT NULL,
                 claimed BOOLEAN DEFAULT FALSE,
@@ -105,21 +124,25 @@ def ensure_preflight_schema_exists():
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
             ALTER TABLE public.telegram_single_use_tokens ENABLE ROW LEVEL SECURITY;
+            ALTER TABLE public.telegram_single_use_tokens FORCE ROW LEVEL SECURITY;
         """)
 
         # 3. Tabel Campaign Queues & Items
         cur.execute("""
             CREATE TABLE IF NOT EXISTS public.campaign_queues (
                 queue_id VARCHAR(100) PRIMARY KEY,
+                tenant_id VARCHAR(100) NOT NULL DEFAULT 'tenant_preflight_cto',
                 state VARCHAR(50) NOT NULL DEFAULT 'READY',
                 metadata JSONB DEFAULT '{}',
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
             ALTER TABLE public.campaign_queues ENABLE ROW LEVEL SECURITY;
+            ALTER TABLE public.campaign_queues FORCE ROW LEVEL SECURITY;
 
             CREATE TABLE IF NOT EXISTS public.campaign_queue_items (
                 id SERIAL PRIMARY KEY,
+                tenant_id VARCHAR(100) NOT NULL DEFAULT 'tenant_preflight_cto',
                 queue_id VARCHAR(100) NOT NULL REFERENCES public.campaign_queues(queue_id) ON DELETE CASCADE,
                 item_payload VARCHAR(255) NOT NULL,
                 status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
@@ -129,20 +152,32 @@ def ensure_preflight_schema_exists():
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
             ALTER TABLE public.campaign_queue_items ENABLE ROW LEVEL SECURITY;
+            ALTER TABLE public.campaign_queue_items FORCE ROW LEVEL SECURITY;
         """)
 
-        # Pastikan permissive policy ada untuk testing operasional
+        # 4. Buat Kebijakan RLS Isolasi Tenant Ketat (RESTRICTIVE) & Base Auth Permissive
         for tbl in ['phone_suppressions', 'telegram_single_use_tokens', 'campaign_queues', 'campaign_queue_items']:
-            pol_name = f"allow_all_ops_{tbl}"
+            cur.execute(f"DROP POLICY IF EXISTS tenant_isolation_{tbl} ON public.{tbl};")
+            cur.execute(f"DROP POLICY IF EXISTS auth_permissive_{tbl} ON public.{tbl};")
+
+            # Restrictive: Hanya mengizinkan akses ke baris dengan tenant_id sesuai session
             cur.execute(f"""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM pg_policy WHERE polname = '{pol_name}'
-                    ) THEN
-                        CREATE POLICY {pol_name} ON public.{tbl} FOR ALL USING (true) WITH CHECK (true);
-                    END IF;
-                END $$;
+                CREATE POLICY tenant_isolation_{tbl} ON public.{tbl}
+                AS RESTRICTIVE
+                FOR ALL
+                TO public
+                USING (tenant_id::text = NULLIF(current_setting('app.current_tenant_id', true), ''))
+                WITH CHECK (tenant_id::text = NULLIF(current_setting('app.current_tenant_id', true), ''));
+            """)
+
+            # Permissive: Role authenticated diizinkan mengakses dengan syarat lolos restrictive policy
+            cur.execute(f"""
+                CREATE POLICY auth_permissive_{tbl} ON public.{tbl}
+                AS PERMISSIVE
+                FOR ALL
+                TO authenticated
+                USING (true)
+                WITH CHECK (true);
             """)
 
         conn.commit()
@@ -155,11 +190,26 @@ def ensure_preflight_schema_exists():
 
 
 # ======================================================================================
-# PERSISTENT CORE SERVICES UNDER TEST
+# PERSISTENT CORE SERVICES UNDER TEST (SCOPED KE ROLE AUTHENTICATED & TENANT ISOLATION)
 # ======================================================================================
+
+def _get_authenticated_scoped_conn(tenant_id: str):
+    """Menghasilkan koneksi database yang terikat ke role 'authenticated' dan tenant_id aktif."""
+    conn = get_db_connection()
+    conn.autocommit = False
+    cur = conn.cursor()
+    cur.execute("SET ROLE authenticated;")
+    cur.execute("SELECT set_config('app.current_tenant_id', %s, false);", (tenant_id,))
+    conn.commit()
+    cur.close()
+    return conn
+
 
 class PersistentAuditTrailService:
     """Mencatat dan mengamankan setiap mutasi state pada tabel 'audit_logs' di PostgreSQL."""
+    def __init__(self, tenant_id: str = TEST_TENANT_ID):
+        self.tenant_id = tenant_id
+
     def record_transition(
         self,
         from_state: QueueState,
@@ -168,8 +218,7 @@ class PersistentAuditTrailService:
         reason: str,
         queue_id: str
     ):
-        conn = get_db_connection()
-        conn.autocommit = False
+        conn = _get_authenticated_scoped_conn(self.tenant_id)
         cur = conn.cursor()
         try:
             metadata = {
@@ -183,7 +232,7 @@ class PersistentAuditTrailService:
                 (tenant_id, actor_id, action, resource_type, resource_id, metadata)
                 VALUES (%s, %s, %s, %s, %s, %s::jsonb);
             """, (
-                "system_campaign",
+                self.tenant_id,
                 actor_id,
                 f"QUEUE_TRANSITION_{to_state.value}",
                 "campaign_queue",
@@ -199,7 +248,7 @@ class PersistentAuditTrailService:
             conn.close()
 
     def get_logs(self, queue_id: str) -> List[dict]:
-        conn = get_db_connection()
+        conn = _get_authenticated_scoped_conn(self.tenant_id)
         cur = conn.cursor(cursor_factory=RealDictCursor)
         try:
             cur.execute("""
@@ -215,8 +264,11 @@ class PersistentAuditTrailService:
 
 
 class PersistentSuppressionService:
-    """Mengelola penambahan nomor ter-supresi ke database PostgreSQL aktual."""
+    """Mengelola penambahan nomor ter-supresi ke database PostgreSQL aktual dengan isolasi tenant."""
     STOP_KEYWORDS = {"STOP", "BERHENTI", "UNSUBSCRIBE", "BATAL", "OPTOUT"}
+
+    def __init__(self, tenant_id: str = TEST_TENANT_ID):
+        self.tenant_id = tenant_id
 
     @staticmethod
     def normalize_phone(phone: str) -> str:
@@ -236,16 +288,15 @@ class PersistentSuppressionService:
             return False
 
         clean_phone = self.normalize_phone(phone_number)
-        conn = get_db_connection()
-        conn.autocommit = False
+        conn = _get_authenticated_scoped_conn(self.tenant_id)
         cur = conn.cursor()
         try:
             cur.execute("""
-                INSERT INTO public.phone_suppressions (phone_number, reason, metadata)
-                VALUES (%s, 'INBOUND_STOP_KEYWORD', %s::jsonb)
-                ON CONFLICT (phone_number) 
+                INSERT INTO public.phone_suppressions (tenant_id, phone_number, reason, metadata)
+                VALUES (%s, %s, 'INBOUND_STOP_KEYWORD', %s::jsonb)
+                ON CONFLICT (tenant_id, phone_number) 
                 DO UPDATE SET reason = 'INBOUND_STOP_KEYWORD', created_at = CURRENT_TIMESTAMP;
-            """, (clean_phone, psycopg2.extras.Json({"raw_message": message_text.strip()})))
+            """, (self.tenant_id, clean_phone, psycopg2.extras.Json({"raw_message": message_text.strip()})))
             conn.commit()
             return True
         except Exception as e:
@@ -257,10 +308,13 @@ class PersistentSuppressionService:
 
     def is_suppressed(self, phone_number: str) -> bool:
         clean_phone = self.normalize_phone(phone_number)
-        conn = get_db_connection()
+        conn = _get_authenticated_scoped_conn(self.tenant_id)
         cur = conn.cursor()
         try:
-            cur.execute("SELECT 1 FROM public.phone_suppressions WHERE phone_number = %s;", (clean_phone,))
+            cur.execute("""
+                SELECT 1 FROM public.phone_suppressions 
+                WHERE tenant_id = %s AND phone_number = %s;
+            """, (self.tenant_id, clean_phone))
             return cur.fetchone() is not None
         finally:
             cur.close()
@@ -270,14 +324,14 @@ class PersistentSuppressionService:
         normalized_map = {self.normalize_phone(r): r for r in recipients}
         clean_phones = list(normalized_map.keys())
 
-        conn = get_db_connection()
+        conn = _get_authenticated_scoped_conn(self.tenant_id)
         cur = conn.cursor()
         try:
             cur.execute("""
                 SELECT phone_number 
                 FROM public.phone_suppressions 
-                WHERE phone_number = ANY(%s);
-            """, (clean_phones,))
+                WHERE tenant_id = %s AND phone_number = ANY(%s);
+            """, (self.tenant_id, clean_phones))
             suppressed_in_db = set(row[0] for row in cur.fetchall())
         finally:
             cur.close()
@@ -351,7 +405,7 @@ class CircuitBreaker:
 
 
 class PersistentCampaignQueue:
-    """Antrean pengiriman pesan persisten di PostgreSQL dengan State Machine deterministik."""
+    """Antrean pengiriman pesan persisten di PostgreSQL dengan State Machine deterministik & RLS."""
     VALID_TRANSITIONS = {
         QueueState.READY: {QueueState.RUNNING},
         QueueState.RUNNING: {QueueState.FROZEN, QueueState.COMPLETED},
@@ -360,21 +414,21 @@ class PersistentCampaignQueue:
         QueueState.COMPLETED: set()
     }
 
-    def __init__(self, queue_id: str, audit_service: PersistentAuditTrailService):
+    def __init__(self, queue_id: str, audit_service: PersistentAuditTrailService, tenant_id: str = TEST_TENANT_ID):
         self.queue_id = queue_id
         self.audit_service = audit_service
+        self.tenant_id = tenant_id
         self._ensure_record_exists()
 
     def _ensure_record_exists(self):
-        conn = get_db_connection()
-        conn.autocommit = False
+        conn = _get_authenticated_scoped_conn(self.tenant_id)
         cur = conn.cursor()
         try:
             cur.execute("""
-                INSERT INTO public.campaign_queues (queue_id, state)
-                VALUES (%s, 'READY')
+                INSERT INTO public.campaign_queues (queue_id, tenant_id, state)
+                VALUES (%s, %s, 'READY')
                 ON CONFLICT (queue_id) DO NOTHING;
-            """, (self.queue_id,))
+            """, (self.queue_id, self.tenant_id))
             conn.commit()
         except Exception as e:
             conn.rollback()
@@ -384,7 +438,7 @@ class PersistentCampaignQueue:
             conn.close()
 
     def get_state(self) -> QueueState:
-        conn = get_db_connection()
+        conn = _get_authenticated_scoped_conn(self.tenant_id)
         cur = conn.cursor()
         try:
             cur.execute("SELECT state FROM public.campaign_queues WHERE queue_id = %s;", (self.queue_id,))
@@ -397,11 +451,9 @@ class PersistentCampaignQueue:
             conn.close()
 
     def transition_to(self, new_state: QueueState, actor_id: str, reason: str) -> None:
-        conn = get_db_connection()
-        conn.autocommit = False
+        conn = _get_authenticated_scoped_conn(self.tenant_id)
         cur = conn.cursor()
         try:
-            # Atomic lock row for transition
             cur.execute("SELECT state FROM public.campaign_queues WHERE queue_id = %s FOR UPDATE;", (self.queue_id,))
             row = cur.fetchone()
             if not row:
@@ -438,16 +490,14 @@ class PersistentCampaignQueue:
             conn.close()
 
     def seed_items(self, item_payloads: List[str]):
-        """Menyimpan item batch ke tabel campaign_queue_items di PostgreSQL."""
-        conn = get_db_connection()
-        conn.autocommit = False
+        conn = _get_authenticated_scoped_conn(self.tenant_id)
         cur = conn.cursor()
         try:
             cur.execute("DELETE FROM public.campaign_queue_items WHERE queue_id = %s;", (self.queue_id,))
-            args = [(self.queue_id, p, 'PENDING') for p in item_payloads]
+            args = [(self.tenant_id, self.queue_id, p, 'PENDING') for p in item_payloads]
             cur.executemany("""
-                INSERT INTO public.campaign_queue_items (queue_id, item_payload, status)
-                VALUES (%s, %s, %s);
+                INSERT INTO public.campaign_queue_items (tenant_id, queue_id, item_payload, status)
+                VALUES (%s, %s, %s, %s);
             """, args)
             conn.commit()
         except Exception as e:
@@ -458,12 +508,7 @@ class PersistentCampaignQueue:
             conn.close()
 
     def fetch_and_claim_item(self, worker_name: str) -> Optional[Tuple[int, str]]:
-        """
-        Mengambil item secara atomik dengan FOR UPDATE SKIP LOCKED di database.
-        Hanya mengklaim jika antrean berstatus RUNNING.
-        """
-        conn = get_db_connection()
-        conn.autocommit = False
+        conn = _get_authenticated_scoped_conn(self.tenant_id)
         cur = conn.cursor()
         try:
             # 1. Pastikan antrean persisten masih RUNNING
@@ -499,35 +544,35 @@ class PersistentCampaignQueue:
             conn.close()
 
     def complete_item(self, item_id: int):
-        conn = get_db_connection()
-        conn.autocommit = True
+        conn = _get_authenticated_scoped_conn(self.tenant_id)
         cur = conn.cursor()
         try:
             cur.execute("""
                 UPDATE public.campaign_queue_items
                 SET status = 'PROCESSED', updated_at = CURRENT_TIMESTAMP
-                WHERE id = %s;
-            """, (item_id,))
+                WHERE id = %s AND tenant_id = %s;
+            """, (item_id, self.tenant_id))
+            conn.commit()
         finally:
             cur.close()
             conn.close()
 
     def release_item(self, item_id: int):
-        conn = get_db_connection()
-        conn.autocommit = True
+        conn = _get_authenticated_scoped_conn(self.tenant_id)
         cur = conn.cursor()
         try:
             cur.execute("""
                 UPDATE public.campaign_queue_items
                 SET status = 'PENDING', processed_by = NULL, updated_at = CURRENT_TIMESTAMP
-                WHERE id = %s;
-            """, (item_id,))
+                WHERE id = %s AND tenant_id = %s;
+            """, (item_id, self.tenant_id))
+            conn.commit()
         finally:
             cur.close()
             conn.close()
 
     def count_pending_items(self) -> int:
-        conn = get_db_connection()
+        conn = _get_authenticated_scoped_conn(self.tenant_id)
         cur = conn.cursor()
         try:
             cur.execute("""
@@ -542,19 +587,21 @@ class PersistentCampaignQueue:
 
 
 class PersistentTelegramTokenService:
-    """Penerbitan dan klaim token undangan Telegram 1x pakai di PostgreSQL."""
+    """Penerbitan dan klaim token undangan Telegram 1x pakai di PostgreSQL dengan isolasi tenant."""
+    def __init__(self, tenant_id: str = TEST_TENANT_ID):
+        self.tenant_id = tenant_id
+
     def issue_token(self, order_id: str, ttl_seconds: int = 86400) -> str:
         token = f"TGM-{uuid.uuid4().hex[:12].upper()}"
         invite_link = f"https://t.me/+Batch1Invite_{order_id[-6:]}"
-        conn = get_db_connection()
-        conn.autocommit = False
+        conn = _get_authenticated_scoped_conn(self.tenant_id)
         cur = conn.cursor()
         try:
             cur.execute("""
                 INSERT INTO public.telegram_single_use_tokens 
-                (token, order_id, invite_link, claimed, expires_at)
-                VALUES (%s, %s, %s, FALSE, CURRENT_TIMESTAMP + interval '%s seconds');
-            """, (token, order_id, invite_link, ttl_seconds))
+                (token, tenant_id, order_id, invite_link, claimed, expires_at)
+                VALUES (%s, %s, %s, %s, FALSE, CURRENT_TIMESTAMP + interval '%s seconds');
+            """, (token, self.tenant_id, order_id, invite_link, ttl_seconds))
             conn.commit()
             return token
         except Exception as e:
@@ -565,15 +612,10 @@ class PersistentTelegramTokenService:
             conn.close()
 
     def claim_token(self, token: str, claimant_id: str) -> Tuple[bool, str, Optional[str]]:
-        """
-        Klaim token single-use menggunakan ATOMIC CONDITIONAL UPDATE di PostgreSQL.
-        UPDATE ... WHERE claimed = false AND expires_at > CURRENT_TIMESTAMP
-        """
-        conn = get_db_connection()
-        conn.autocommit = False
+        conn = _get_authenticated_scoped_conn(self.tenant_id)
         cur = conn.cursor()
         try:
-            # 1. Percobaan klaim atomik
+            # Klaim atomik: UPDATE ... WHERE claimed = false AND expires_at > CURRENT_TIMESTAMP
             cur.execute("""
                 UPDATE public.telegram_single_use_tokens
                 SET claimed = TRUE,
@@ -590,7 +632,7 @@ class PersistentTelegramTokenService:
             if row:
                 return True, "SUCCESS", row[1]
 
-            # 2. Jika 0 baris ter-update, cari penyebab penolakan di database
+            # Jika 0 baris ter-update, evaluasi penyebab penolakan di DB
             cur.execute("""
                 SELECT claimed, (expires_at <= CURRENT_TIMESTAMP) AS is_expired
                 FROM public.telegram_single_use_tokens
@@ -620,11 +662,12 @@ class PersistentTelegramTokenService:
 # ======================================================================================
 
 class CTOPreflightTestSuite:
-    def __init__(self):
+    def __init__(self, tenant_id: str = TEST_TENANT_ID):
+        self.tenant_id = tenant_id
         ensure_preflight_schema_exists()
-        self.audit_service = PersistentAuditTrailService()
-        self.suppression_service = PersistentSuppressionService()
-        self.telegram_service = PersistentTelegramTokenService()
+        self.audit_service = PersistentAuditTrailService(self.tenant_id)
+        self.suppression_service = PersistentSuppressionService(self.tenant_id)
+        self.telegram_service = PersistentTelegramTokenService(self.tenant_id)
         self.results: List[Tuple[str, bool, str]] = []
 
     def log_header(self, title: str):
@@ -638,19 +681,38 @@ class CTOPreflightTestSuite:
         print(f"\n{badge} SYARAT {requirement_no} — {name}")
         print(f"       Detail  : {detail}")
 
+    def teardown(self):
+        """Membersihkan seluruh baris pengujian scoped ke TEST_TENANT_ID."""
+        conn = get_db_connection()
+        conn.autocommit = False
+        cur = conn.cursor()
+        try:
+            cur.execute("DELETE FROM public.phone_suppressions WHERE tenant_id = %s;", (self.tenant_id,))
+            cur.execute("DELETE FROM public.telegram_single_use_tokens WHERE tenant_id = %s;", (self.tenant_id,))
+            cur.execute("DELETE FROM public.campaign_queues WHERE tenant_id = %s;", (self.tenant_id,))
+            cur.execute("DELETE FROM public.campaign_queue_items WHERE tenant_id = %s;", (self.tenant_id,))
+            cur.execute("DELETE FROM public.audit_logs WHERE tenant_id = %s;", (self.tenant_id,))
+            conn.commit()
+            print(f"\n       [+] Teardown: Data pengujian scoped '{self.tenant_id}' berhasil dibersihkan.")
+        except Exception as e:
+            conn.rollback()
+            print(f"\n       [-] Peringatan Teardown: {e}")
+        finally:
+            cur.close()
+            conn.close()
+
     # ----------------------------------------------------------------------------------
     # SYARAT 1: 3 KEGAGALAN CALLBACK BERUNTUN -> FROZEN & WORKER HALT
     # ----------------------------------------------------------------------------------
     def test_requirement_1_consecutive_failures(self):
         self.log_header("Syarat 1: Simulasi 3 Kegagalan Callback Beruntun -> FROZEN")
         
-        queue_id = "queue-broadcast-001"
-        queue = PersistentCampaignQueue(queue_id, self.audit_service)
+        queue_id = f"queue-broadcast-001-{uuid.uuid4().hex[:6]}"
+        queue = PersistentCampaignQueue(queue_id, self.audit_service, self.tenant_id)
         queue.transition_to(QueueState.RUNNING, actor_id="operator_01", reason="Mulai eksekusi batch")
         
         cb = CircuitBreaker(consecutive_failure_threshold=3, rolling_window_size=50)
 
-        # Simulasikan pengiriman pesan: 2 sukses, kemudian 3 gagal berturut-turut
         simulated_callbacks = [True, True, False, False, False]
         worker_halted = False
         remaining_batch = ["msg_4", "msg_5", "msg_6"]
@@ -670,10 +732,7 @@ class CTOPreflightTestSuite:
                 worker_halted = True
                 break
 
-        if queue.get_state() == QueueState.FROZEN:
-            # Worker fetch simulation: ditolak karena status persisten FROZEN
-            pass
-        else:
+        if queue.get_state() != QueueState.FROZEN:
             fetched_after_trip.extend(remaining_batch)
 
         passed = (
@@ -695,14 +754,12 @@ class CTOPreflightTestSuite:
     def test_requirement_2_failure_rate_threshold(self):
         self.log_header("Syarat 2: Ambang Kegagalan 6% pada Rolling Window")
         
-        queue_id = "queue-broadcast-002"
-        queue = PersistentCampaignQueue(queue_id, self.audit_service)
+        queue_id = f"queue-broadcast-002-{uuid.uuid4().hex[:6]}"
+        queue = PersistentCampaignQueue(queue_id, self.audit_service, self.tenant_id)
         queue.transition_to(QueueState.RUNNING, actor_id="operator_01", reason="Mulai broadcast window test")
         
-        # Window size 50 sampel, threshold 6% (3 gagal dalam 50 sampel = 6.0%)
         cb = CircuitBreaker(consecutive_failure_threshold=10, rolling_window_size=50, failure_rate_threshold=0.06)
 
-        # 50 sampel: 47 sukses dan 3 gagal terpisah
         samples = [True] * 20 + [False] + [True] * 14 + [False] + [True] * 13 + [False]
         assert len(samples) == 50
 
@@ -741,7 +798,6 @@ class CTOPreflightTestSuite:
         test_phone_2 = "+62 813-1122-3344"
         test_phone_normal = "085511223344"
 
-        # Simulasikan pesan masuk dan verifikasi penyimpanan ke database
         is_supp_1 = self.suppression_service.process_inbound_message(test_phone_1, "STOP")
         is_supp_2 = self.suppression_service.process_inbound_message(test_phone_2, "  stop berlangganan  ")
         is_supp_3 = self.suppression_service.process_inbound_message(test_phone_normal, "Halo mau tanya kelas")
@@ -797,11 +853,10 @@ class CTOPreflightTestSuite:
     def test_requirement_5_atomic_freeze_concurrency(self):
         self.log_header("Syarat 5: Atomic Freeze pada 2 Worker Konkuren (Database Queue)")
 
-        queue_id = "queue-concurrency-persistent-test"
-        queue = PersistentCampaignQueue(queue_id, self.audit_service)
+        queue_id = f"queue-concurrency-{uuid.uuid4().hex[:6]}"
+        queue = PersistentCampaignQueue(queue_id, self.audit_service, self.tenant_id)
         queue.transition_to(QueueState.RUNNING, actor_id="operator_01", reason="Mulai broadcast multi-worker di DB")
 
-        # 30 pesan disimpan persisten di tabel campaign_queue_items
         initial_items = [f"msg_{i:02d}" for i in range(1, 31)]
         queue.seed_items(initial_items)
 
@@ -811,7 +866,7 @@ class CTOPreflightTestSuite:
 
         def persistent_worker_loop(worker_name: str, processed_list: List[str]):
             while True:
-                # 1. Baca status persisten dari database sebelum mengambil pesan
+                # 1. Baca status persisten dari database
                 current_state = queue.get_state()
                 if current_state != QueueState.RUNNING:
                     print(f"       [{worker_name}] Membaca status persisten '{current_state.value}' dari DB! Worker berhenti seketika.")
@@ -820,7 +875,6 @@ class CTOPreflightTestSuite:
                 # 2. Klaim item dari PostgreSQL menggunakan FOR UPDATE SKIP LOCKED
                 item_tuple = queue.fetch_and_claim_item(worker_name)
                 if not item_tuple:
-                    # Antrean sudah kosong atau antrean dibekukan
                     break
 
                 item_id, payload = item_tuple
@@ -834,11 +888,9 @@ class CTOPreflightTestSuite:
                         actor_id="system_circuit_breaker",
                         reason="Emergency freeze triggered during multi-worker processing"
                     )
-                    # Kembalikan item yang belum terkirim ke status PENDING
                     queue.release_item(item_id)
                     break
 
-                # Simulasi pengiriman pesan
                 processed_list.append(payload)
                 queue.complete_item(item_id)
                 time.sleep(0.015)
@@ -853,7 +905,6 @@ class CTOPreflightTestSuite:
 
         total_pending_in_db = queue.count_pending_items()
 
-        # Worker-2 harus berhenti begitu status antrean di DB menjadi FROZEN
         passed = (
             queue.get_state() == QueueState.FROZEN
             and total_pending_in_db > 0
@@ -878,15 +929,12 @@ class CTOPreflightTestSuite:
         token = self.telegram_service.issue_token(order_id, ttl_seconds=3600)
         print(f"       Token persisten diterbitkan: {token} untuk Order #{order_id}")
 
-        # Request Pertama: Berhasil klaim secara atomik (UPDATE ... WHERE claimed = false)
         ok_1, status_1, link_1 = self.telegram_service.claim_token(token, claimant_id="buyer_phone_62882260")
         print(f"       Klaim #1: Status={status_1}, Link={link_1}")
 
-        # Request Kedua: Replay attempt dengan token yang sama (wajib ditolak oleh database)
         ok_2, status_2, link_2 = self.telegram_service.claim_token(token, claimant_id="attacker_or_duplicate")
         print(f"       Klaim #2: Status={status_2}, Link={link_2}")
 
-        # Request Ketiga: Token expired
         expired_token = self.telegram_service.issue_token("ORD-EXPIRED-001", ttl_seconds=-10)
         ok_3, status_3, _ = self.telegram_service.claim_token(expired_token, claimant_id="late_buyer")
         print(f"       Klaim #3 (Expired): Status={status_3}")
@@ -914,16 +962,12 @@ class CTOPreflightTestSuite:
     def test_requirement_7_state_machine_and_audit(self):
         self.log_header("Syarat 7: Siklus Hidup State Machine & Audit Trail di PostgreSQL")
 
-        queue_id = "queue-audit-persistent-007"
-        queue = PersistentCampaignQueue(queue_id, self.audit_service)
+        queue_id = f"queue-audit-lifecycle-{uuid.uuid4().hex[:6]}"
+        queue = PersistentCampaignQueue(queue_id, self.audit_service, self.tenant_id)
         
-        # 1. READY -> RUNNING (oleh operator)
         queue.transition_to(QueueState.RUNNING, actor_id="operator_danang", reason="Menjalankan campaign blast")
-        
-        # 2. RUNNING -> FROZEN (oleh circuit breaker otomatis)
         queue.transition_to(QueueState.FROZEN, actor_id="system_circuit_breaker", reason="3 Callback HTTP 500 beruntun")
 
-        # 3. Negative Test: Percobaan ilegal FROZEN -> RUNNING tanpa review
         illegal_transition_blocked = False
         try:
             queue.transition_to(QueueState.RUNNING, actor_id="nakal_01", reason="Bypass review")
@@ -931,13 +975,9 @@ class CTOPreflightTestSuite:
             illegal_transition_blocked = True
             print("       [OK] Percobaan bypass ilegal FROZEN -> RUNNING berhasil dicegah!")
 
-        # 4. FROZEN -> REVIEW_REQUIRED (oleh supervisor insiden)
         queue.transition_to(QueueState.REVIEW_REQUIRED, actor_id="supervisor_aditya", reason="Eskalasi tim SRE untuk analisa rute")
-
-        # 5. REVIEW_REQUIRED -> READY (disetujui oleh CTO untuk restart)
         queue.transition_to(QueueState.READY, actor_id="cto_office", reason="Root cause diperbaiki, rute aman")
 
-        # Ambil audit log langsung dari database PostgreSQL
         relevant_logs = self.audit_service.get_logs(queue_id=queue_id)
 
         print("\n       --- BUKTI AUDIT TRAIL DI TABEL 'audit_logs' POSTGRESQL ---")
@@ -969,16 +1009,20 @@ class CTOPreflightTestSuite:
         print("\n" + "#" * 80)
         print("  BOONTRACK CORE ENGINEERING — CTO PREFLIGHT PERSISTENT TEST SUITE")
         print("  Target: 7 Syarat CTO (Circuit Breaker, Persistent Suppression, Concurrency & Audit)")
+        print(f"  Tenant Scope: {self.tenant_id}")
         print(f"  Waktu Eksekusi: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
         print("#" * 80)
 
-        self.test_requirement_1_consecutive_failures()
-        self.test_requirement_2_failure_rate_threshold()
-        self.test_requirement_3_stop_keyword_ingestion()
-        self.test_requirement_4_suppression_batch_filtering()
-        self.test_requirement_5_atomic_freeze_concurrency()
-        self.test_requirement_6_telegram_single_use_token()
-        self.test_requirement_7_state_machine_and_audit()
+        try:
+            self.test_requirement_1_consecutive_failures()
+            self.test_requirement_2_failure_rate_threshold()
+            self.test_requirement_3_stop_keyword_ingestion()
+            self.test_requirement_4_suppression_batch_filtering()
+            self.test_requirement_5_atomic_freeze_concurrency()
+            self.test_requirement_6_telegram_single_use_token()
+            self.test_requirement_7_state_machine_and_audit()
+        finally:
+            self.teardown()
 
         elapsed = time.time() - start_time
         all_passed = all(p for _, p, _ in self.results)
@@ -999,7 +1043,7 @@ class CTOPreflightTestSuite:
         if all_passed:
             print("  KESIMPULAN: Sistem 100% memenuhi 7 Syarat Hardening CTO dengan Persistent Store.")
             print("  Seluruh operasi STOP, Telegram Token, Atomic Concurrency Freeze & Audit Trail")
-            print("  terekam dan tervalidasi di PostgreSQL aktual.")
+            print("  terekam dan tervalidasi di PostgreSQL aktual di bawah RLS ketat.")
             print("  Status: READY FOR PRODUCTION BATCH 1 BLOWOUT.")
         else:
             print("  KESIMPULAN: Ditemukan kegagalan invarian arsitektur pada persistent store!")
