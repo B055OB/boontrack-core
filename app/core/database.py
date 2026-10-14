@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, List
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from aiogram import types
@@ -10,14 +11,25 @@ from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
 
-def get_db_connection():
-    return psycopg2.connect(
+def get_db_connection(as_role: Optional[str] = None, tenant_id: Optional[str] = None):
+    conn = psycopg2.connect(
         host=settings.POSTGRES_HOST,
         port=settings.POSTGRES_PORT,
         dbname=settings.POSTGRES_DB,
         user=settings.POSTGRES_USER,
         password=settings.POSTGRES_PASSWORD
     )
+    if as_role:
+        with conn.cursor() as cur:
+            cur.execute(f"SET ROLE {as_role};")
+            if tenant_id:
+                cur.execute("SELECT set_config('app.current_tenant_id', %s, true);", (str(tenant_id),))
+    return conn
+
+def get_tenant_db_connection(tenant_id: Optional[str] = None):
+    """Establishes database connection under the strict non-superuser 'authenticated' role
+    with tenant-level RLS context isolation (CTO Directive 06 P1-B mandate)."""
+    return get_db_connection(as_role="authenticated", tenant_id=tenant_id)
 
 def _init_db_sync():
     conn = get_db_connection()

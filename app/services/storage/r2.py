@@ -1,7 +1,7 @@
 """app/services/storage/r2.py
 Cloudflare R2 Object Storage Client for BoonTrack Ecosystem.
 Implements S3-compatible client for binary asset storage, zero egress fees,
-and canonical CDN public URL resolution (assets.boontrack.com).
+canonical CDN public URL resolution (assets.boontrack.com), and strict Fail-Closed security.
 """
 
 import io
@@ -11,12 +11,15 @@ import logging
 import asyncio
 from pathlib import PurePosixPath
 from typing import Union, Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger("R2_STORAGE")
 
 
 class R2Client:
-    """Cloudflare R2 S3-Compatible Client with canonical CDN distribution."""
+    """Cloudflare R2 S3-Compatible Client with canonical CDN distribution and Fail-Closed security."""
 
     def __init__(
         self,
@@ -26,18 +29,30 @@ class R2Client:
         bucket_name: Optional[str] = None,
         public_domain: Optional[str] = None,
     ):
-        self.account_id = (account_id or os.getenv("R2_ACCOUNT_ID", "")).strip()
-        self.access_key_id = (access_key_id or os.getenv("R2_ACCESS_KEY_ID", "")).strip()
-        self.secret_access_key = (secret_access_key or os.getenv("R2_SECRET_ACCESS_KEY", "")).strip()
-        self.bucket_name = (bucket_name or os.getenv("R2_BUCKET_NAME", "boontrack-media")).strip()
+        self._explicit_config = (access_key_id is not None or secret_access_key is not None)
+        self.account_id = (account_id if account_id is not None else os.getenv("R2_ACCOUNT_ID", "")).strip()
+        self.access_key_id = (access_key_id if access_key_id is not None else os.getenv("R2_ACCESS_KEY_ID", "")).strip()
+        self.secret_access_key = (secret_access_key if secret_access_key is not None else os.getenv("R2_SECRET_ACCESS_KEY", "")).strip()
+        self.bucket_name = (bucket_name if bucket_name is not None else os.getenv("R2_BUCKET_NAME", "boontrack-media")).strip()
         
         pub_domain = (public_domain or os.getenv("R2_PUBLIC_DOMAIN") or os.getenv("R2_PUBLIC_URL") or "assets.boontrack.com").strip()
         pub_domain = pub_domain.replace("https://", "").replace("http://", "").rstrip("/")
         self.public_domain = pub_domain
         self._s3_client = None
 
+    def _refresh_credentials_if_needed(self):
+        """Ensures credentials from environment are refreshed if initially empty."""
+        if not self._explicit_config:
+            if not self.access_key_id:
+                self.access_key_id = os.getenv("R2_ACCESS_KEY_ID", "").strip()
+            if not self.secret_access_key:
+                self.secret_access_key = os.getenv("R2_SECRET_ACCESS_KEY", "").strip()
+            if not self.account_id:
+                self.account_id = os.getenv("R2_ACCOUNT_ID", "").strip()
+
     @property
     def endpoint_url(self) -> str:
+        self._refresh_credentials_if_needed()
         pure_default = f"https://{self.account_id}.r2.cloudflarestorage.com" if self.account_id else "https://r2.cloudflarestorage.com"
         override = os.getenv("R2_ENDPOINT") or os.getenv("R2_ENDPOINT_URL") or os.getenv("S3_ENDPOINT")
         if override:
@@ -65,13 +80,16 @@ class R2Client:
         return pure_default
 
     def _get_boto_client(self):
-        """Initializes and caches boto3 client for Cloudflare R2."""
+        """Initializes and caches boto3 client for Cloudflare R2 (Strict Fail-Closed)."""
         if self._s3_client is not None:
             return self._s3_client
 
+        self._refresh_credentials_if_needed()
+
         if not self.access_key_id or not self.secret_access_key:
-            logger.warning("[R2] Credentials missing (R2_ACCESS_KEY_ID or R2_SECRET_ACCESS_KEY not set).")
-            return None
+            err_msg = "[R2 FAIL-CLOSED] Credentials missing (R2_ACCESS_KEY_ID or R2_SECRET_ACCESS_KEY not set). Fail-Closed active."
+            logger.critical(err_msg)
+            raise RuntimeError(err_msg)
 
         try:
             import boto3
@@ -88,8 +106,9 @@ class R2Client:
             self._s3_client = client
             return self._s3_client
         except Exception as e:
-            logger.warning(f"[R2] Failed to initialize S3 client: {e}")
-            return None
+            err_msg = f"[R2 FAIL-CLOSED] Failed to initialize S3 client: {e}"
+            logger.critical(err_msg)
+            raise RuntimeError(err_msg)
 
     def upload_bytes(
         self,
@@ -100,6 +119,7 @@ class R2Client:
         """
         Uploads binary buffer directly to Cloudflare R2 and returns canonical CDN URL.
         Accepts raw bytes or in-memory io.BytesIO buffer (zero disk I/O).
+        Strict Fail-Closed: Raises RuntimeError on any failure.
         """
         if isinstance(file_buffer, io.BytesIO):
             file_bytes = file_buffer.getvalue()
@@ -116,22 +136,19 @@ class R2Client:
         canonical_url = f"https://{self.public_domain}/{clean_key}"
 
         client = self._get_boto_client()
-        if client is not None:
-            try:
-                client.put_object(
-                    Bucket=self.bucket_name,
-                    Key=clean_key,
-                    Body=file_bytes,
-                    ContentType=content_type,
-                )
-                logger.info(f"[R2] Uploaded {len(file_bytes)} bytes to '{clean_key}' -> {canonical_url}")
-            except Exception as e:
-                logger.error(f"[R2] Error uploading object to '{clean_key}': {e}")
-                # We still return the canonical URL for testing/fail-soft scenarios
-        else:
-            logger.info(f"[R2 MOCK/OFFLINE] Upload simulated for '{clean_key}' ({len(file_bytes)} bytes) -> {canonical_url}")
-
-        return canonical_url
+        try:
+            client.put_object(
+                Bucket=self.bucket_name,
+                Key=clean_key,
+                Body=file_bytes,
+                ContentType=content_type,
+            )
+            logger.info(f"[R2] Uploaded {len(file_bytes)} bytes to '{clean_key}' -> {canonical_url}")
+            return canonical_url
+        except Exception as e:
+            err_msg = f"[R2 FAIL-CLOSED] Failed uploading object to '{clean_key}': {e}"
+            logger.error(err_msg)
+            raise RuntimeError(err_msg)
 
     def generate_presigned_download_url(
         self,
@@ -142,7 +159,7 @@ class R2Client:
         """
         Generates a Presigned Download URL for a private object in Cloudflare R2.
         
-        Strict Runtime Gates:
+        Strict Runtime Gates (CTO Mandate):
         1. TTL Enforcement: expires_in must be <= 900 seconds (15 minutes).
            Requests with expires_in > 900 are immediately rejected with ValueError.
         2. Tenant Authorization Gate: Verifies that object_key has prefix:
@@ -151,6 +168,8 @@ class R2Client:
            - tenants/system/... or system/...
            Cross-tenant access attempts (e.g. tenant_alpha requesting tenants/tenant_beta/...)
            are immediately rejected with PermissionError (HTTP 403 equivalent).
+        3. Fail-Closed: Zero fallback to mock URLs or unauthenticated strings.
+           Raises RuntimeError if client initialization or boto3 generation fails.
         """
         if expires_in > 900:
             raise ValueError(
@@ -184,26 +203,23 @@ class R2Client:
             )
 
         client = self._get_boto_client()
-        if client is not None:
-            try:
-                url = client.generate_presigned_url(
-                    ClientMethod="get_object",
-                    Params={
-                        "Bucket": self.bucket_name,
-                        "Key": clean_key,
-                    },
-                    ExpiresIn=expires_in,
-                )
-                logger.info(
-                    f"[R2] Generated presigned URL for '{clean_key}' (tenant '{clean_tenant}', TTL: {expires_in}s)"
-                )
-                return url
-            except Exception as e:
-                logger.error(f"[R2] Failed to generate presigned URL via boto3: {e}")
-
-        import hashlib
-        mock_sig = hashlib.sha256(f"{clean_key}:{clean_tenant}:{expires_in}:{self.access_key_id}".encode("utf-8")).hexdigest()[:16]
-        return f"https://{self.public_domain}/{clean_key}?X-Amz-Expires={expires_in}&X-Tenant-Auth={clean_tenant}&X-Sig={mock_sig}"
+        try:
+            url = client.generate_presigned_url(
+                ClientMethod="get_object",
+                Params={
+                    "Bucket": self.bucket_name,
+                    "Key": clean_key,
+                },
+                ExpiresIn=expires_in,
+            )
+            logger.info(
+                f"[R2] Generated presigned URL for '{clean_key}' (tenant '{clean_tenant}', TTL: {expires_in}s)"
+            )
+            return url
+        except Exception as e:
+            err_msg = f"[R2 FAIL-CLOSED] Presigned URL generation failed for '{clean_key}': {e}"
+            logger.error(err_msg)
+            raise RuntimeError(err_msg)
 
     async def upload_bytes_async(
         self,

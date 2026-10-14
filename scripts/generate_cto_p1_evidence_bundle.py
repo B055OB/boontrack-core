@@ -32,13 +32,15 @@ if sys.platform == "win32":
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from fastapi import HTTPException
+
 from app.core.database import get_db_connection
 from app.core.security.inter_service_auth import (
     generate_inter_service_signature,
     verify_inter_service_signature,
     enforce_tenant_boundary,
 )
-from app.services.storage.r2 import generate_presigned_download_url
+from app.services.storage.r2 import generate_presigned_download_url, R2Client
 from app.core.redis import set_tenant_key, get_tenant_key
 from app.services.sales_agent_guard import tenant_session_store, validate_worker_job_scope
 from app.core.logging_sanitizer import (
@@ -50,7 +52,13 @@ from app.core.tracing import log_structured_event
 
 
 def get_git_commit_sha() -> str:
-    """Gets the current git commit SHA."""
+    """Gets the current git commit SHA, with override from env or CLI argument."""
+    override = os.getenv("CTO_AUDIT_COMMIT_SHA")
+    if override:
+        return override.strip()
+    for arg in sys.argv[1:]:
+        if not arg.startswith("-") and len(arg) in (7, 8, 40):
+            return arg.strip()
     try:
         res = subprocess.run(["git", "rev-parse", "HEAD"], stdout=subprocess.PIPE, text=True, check=True)
         return res.stdout.strip()
@@ -162,7 +170,7 @@ class CTOEvidenceBundleGenerator:
         critical_priority = [
             "phone_suppressions", "telegram_single_use_tokens", "staging_alumni_cpm",
             "campaign_queues", "campaign_queue_items", "audit_logs", "orders",
-            "products", "messages", "tenants", "whatsapp_connections",
+            "products", "messages", "tenants", "whatsapp_connections", "channel_bindings",
             "inbox_idempotency_keys", "payment_transactions", "subscriptions"
         ]
         sorted_tables = sorted(tables, key=lambda x: (0 if x[0] in critical_priority else 1, x[0]))
@@ -361,10 +369,30 @@ class CTOEvidenceBundleGenerator:
             l5_ttl_passed = True
             l5_ttl_msg = str(ve)
 
+        # Skenario C: R2 Fail-Closed on missing config / failure (No mock fallback)
+        l5_fail_closed_passed = False
+        l5_fail_closed_msg = ""
+        try:
+            broken_client = R2Client(
+                account_id="",
+                access_key_id="",
+                secret_access_key="",
+                bucket_name="",
+                public_domain="",
+            )
+            broken_client.generate_presigned_download_url("tenants/tenant_alpha/sample.mp4", tenant_id="tenant_alpha", expires_in=300)
+        except RuntimeError as re:
+            l5_fail_closed_passed = True
+            l5_fail_closed_msg = f"RuntimeError ditegakkan tegas: {re}"
+        except Exception as e:
+            l5_fail_closed_msg = f"Unexpected exception: {type(e).__name__} - {e}"
+
         lines.append(f"- **Skenario A (Otorisasi Objek)**: Tenant Alpha meminta Presigned URL untuk objek privat milik Tenant Beta (`tenants/tenant_beta/private/draft.mp4`).")
         lines.append(f"- **Hasil Skenario A**: `{'PASS ✅' if l5_r2_passed else 'FAIL ❌'}` — {l5_r2_msg}")
         lines.append(f"- **Skenario B (TTL Enforcement)**: Pembuatan Presigned URL meminta masa berlaku 1800 detik (30 menit > batas 15 menit / 900s).")
         lines.append(f"- **Hasil Skenario B**: `{'PASS ✅' if l5_ttl_passed else 'FAIL ❌'}` — {l5_ttl_msg}")
+        lines.append(f"- **Skenario C (Fail-Closed Tanpa Mock Fallback)**: Kredensial R2 hilang / gagal inisialisasi wajib melempar RuntimeError (bukan mock URL / fallback lokal).")
+        lines.append(f"- **Hasil Skenario C**: `{'PASS ✅' if l5_fail_closed_passed else 'FAIL ❌'}` — {l5_fail_closed_msg}")
         lines.append("")
 
         # Lapis 6: Background Worker Execution Scope

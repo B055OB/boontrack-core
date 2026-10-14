@@ -5,8 +5,11 @@ Replaces shallow User-Agent checks with cryptographic payload verification.
 Guarantees:
 1. Anti-Replay: Timestamp window <= 300 seconds.
 2. Tamper-Proof: HMAC-SHA256({timestamp}.{authenticated_tenant_id}.{body_hash}).
-3. Strict Tenant Boundary: Automatic HTTP 403 TENANT_BOUNDARY_MISMATCH if an authenticated
+3. Fail-Secure: Total elimination of hardcoded secret fallbacks.
+   Raises ValueError immediately if BOONTRACK_HMAC_SECRET is missing.
+4. Strict Tenant Boundary: Automatic HTTP 403 TENANT_BOUNDARY_MISMATCH if an authenticated
    tenant context attempts to access, inject, or query resources for another tenant.
+   Exception is strictly never swallowed by try/except.
 """
 
 import os
@@ -17,15 +20,37 @@ import hashlib
 import logging
 from typing import Optional, Dict, Any, Union, Tuple
 from fastapi import Request, HTTPException, status
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger("INTER_SERVICE_AUTH")
 
-INTERNAL_HMAC_SECRET = (
-    os.getenv("BOONTRACK_INTERNAL_HMAC_SECRET")
-    or os.getenv("CORE_INBOX_SHARED_SECRET")
-    or "b055ob_core_inbox_hmac_secret_2026"
-)
 MAX_TIMESTAMP_DRIFT_SECONDS = 300  # 5 minutes anti-replay window
+
+
+def get_hmac_secret(explicit_secret: Optional[str] = None) -> str:
+    """Retrieves HMAC secret from environment.
+    
+    Fail-Secure Principle:
+    NO hardcoded fallback allowed under any circumstances.
+    Raises ValueError immediately if secret is missing.
+    """
+    if explicit_secret and explicit_secret.strip():
+        return explicit_secret.strip()
+
+    secret = (
+        os.getenv("BOONTRACK_HMAC_SECRET")
+        or os.getenv("BOONTRACK_INTERNAL_HMAC_SECRET")
+        or os.getenv("CORE_INBOX_SHARED_SECRET")
+    )
+    if not secret or not secret.strip():
+        logger.critical("[SECURITY_CRITICAL] BOONTRACK_HMAC_SECRET environment variable is missing. Fail-Secure mode active.")
+        raise ValueError(
+            "CRITICAL_SECURITY_ERROR: BOONTRACK_HMAC_SECRET environment variable is missing. "
+            "System strictly prohibits unauthenticated or default-secret cross-service communication."
+        )
+    return secret.strip()
 
 
 def compute_body_hash(body: Union[bytes, str, dict, None]) -> str:
@@ -60,7 +85,7 @@ def generate_inter_service_signature(
     body_hash = compute_body_hash(body)
     canonical_payload = f"{ts}.{clean_tenant}.{body_hash}"
 
-    key = (secret or INTERNAL_HMAC_SECRET).encode("utf-8")
+    key = get_hmac_secret(secret).encode("utf-8")
     signature = hmac.new(key, canonical_payload.encode("utf-8"), hashlib.sha256).hexdigest()
 
     return signature, ts, body_hash
@@ -139,6 +164,7 @@ async def verify_inter_service_tenant_boundary(request: Request) -> str:
     1. Extracts and verifies HMAC headers.
     2. Enforces anti-replay timestamp window.
     3. Rejects any cross-tenant injection in body, query params, or headers with HTTP 403.
+    4. Guarantees TENANT_BOUNDARY_MISMATCH is NEVER swallowed by try/except.
     """
     signature = request.headers.get("X-Boontrack-Signature")
     timestamp = request.headers.get("X-Boontrack-Timestamp")
@@ -170,18 +196,20 @@ async def verify_inter_service_tenant_boundary(request: Request) -> str:
             detail={"error": "INVALID_INTER_SERVICE_SIGNATURE", "reason": reason},
         )
 
-    # Inspect Query Parameters for Cross-Tenant manipulation
+    # 1. Inspect Query Parameters for Cross-Tenant manipulation
     query_tenant = request.query_params.get("tenant_id") or request.query_params.get("tenant_slug")
     enforce_tenant_boundary(authenticated_tenant_id, query_tenant, context_desc="query_params")
 
-    # Inspect Body JSON for Cross-Tenant manipulation
+    # 2. Inspect Body JSON for Cross-Tenant manipulation (Parse safely without swallowing HTTPException)
     if body_bytes:
+        body_json = None
         try:
             body_json = json.loads(body_bytes.decode("utf-8"))
-            if isinstance(body_json, dict):
-                body_tenant = body_json.get("tenant_id") or body_json.get("tenant_slug")
-                enforce_tenant_boundary(authenticated_tenant_id, body_tenant, context_desc="body_json")
         except Exception:
-            pass  # Non-JSON payloads are checked via raw signature
+            pass  # Non-JSON payloads are handled via cryptographic body hash signature
+
+        if isinstance(body_json, dict):
+            body_tenant = body_json.get("tenant_id") or body_json.get("tenant_slug")
+            enforce_tenant_boundary(authenticated_tenant_id, body_tenant, context_desc="body_json")
 
     return authenticated_tenant_id
