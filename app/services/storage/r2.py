@@ -11,6 +11,7 @@ import hmac
 import logging
 import asyncio
 import posixpath
+import urllib.parse
 from pathlib import PurePosixPath
 from typing import Union, Optional
 from dotenv import load_dotenv
@@ -155,30 +156,54 @@ class R2Client:
     def generate_presigned_download_url(
         self,
         object_key: str,
-        tenant_id: Optional[str] = None,
+        current_tenant_id: str,
         expires_in: int = 900,
-        current_tenant_id: Optional[str] = None,
+        allow_system_namespace: bool = False,
+        tenant_id: Optional[str] = None,
     ) -> str:
         """
         Generates a Presigned Download URL for a private object in Cloudflare R2.
         
-        Strict Runtime Gates (CTO Directive 07 P1-H3 Mandate):
-        1. TTL Enforcement: expires_in must be <= 900 seconds (15 minutes).
-           Requests with expires_in > 900 are immediately rejected with ValueError.
-        2. Parameter Manipulation Prevention: If both `current_tenant_id` and `tenant_id`
-           are supplied, they MUST match cryptographically. Mismatches are rejected as tampering.
-        3. Structural Path Decomposition: Object key is normalized via posixpath.
-           Path traversal patterns ('..', '//') are rejected with PermissionError.
-           Key structure must match:
-           - tenants/{tenant_namespace}/...
-           - videos/{tenant_namespace}/...
-           - tenants/system/... or system/...
-        4. Cryptographic Tenant Namespace Gate: The tenant namespace extracted from the path
-           MUST match the verified calling tenant identity using constant-time comparison
-           (hmac.compare_digest) to prevent timing attacks.
-        5. Fail-Closed: Zero fallback to mock URLs or unauthenticated strings.
-           Raises RuntimeError if client initialization or boto3 generation fails.
+        Strict Runtime Gates (CTO Directive 08 P1-H3 Mandate):
+        1. Mandatory Verified Tenant Identity: current_tenant_id is strictly required.
+           ZERO fallback to caller-supplied tenant_id is permitted. Missing/empty current_tenant_id
+           raises ValueError immediately.
+        2. Parameter Tamper Check: If tenant_id is also supplied, it MUST match current_tenant_id
+           cryptographically. Any mismatch raises PermissionError.
+        3. System Namespace Protection: Direct or prefixed access to 'system/' or 'tenants/system/'
+           is strictly blocked for standard tenant callers. Only authorized callers with
+           explicit allow_system_namespace=True can access the system namespace.
+        4. Robust Path Sanitization:
+           - Multi-pass URL decoding (%2e%2e, %2f, %5c, nested encodings)
+           - Path separator standardization (\\ -> /)
+           - Dot segment rejection (., ..)
+           - Empty/whitespace path rejection
+           - Posixpath normalization and root traversal rejection
+        5. Cryptographic Tenant Namespace Gate: The tenant namespace extracted from the path
+           MUST match current_tenant_id using constant-time comparison (hmac.compare_digest).
+        6. TTL Enforcement: expires_in must be between 1 and 900 seconds (15 minutes).
+        7. Fail-Closed: Zero mock fallback; raises RuntimeError on storage client failure.
         """
+        # 1. Mandatory current_tenant_id validation (Fail-Secure, Zero Fallback)
+        if not current_tenant_id or not str(current_tenant_id).strip():
+            raise ValueError(
+                "current_tenant_id is mandatory and must be provided from verified authentication context."
+            )
+        clean_current_tenant = str(current_tenant_id).strip().lower()
+
+        # Parameter tamper check
+        if tenant_id is not None:
+            clean_param_tenant = str(tenant_id).strip().lower()
+            if not hmac.compare_digest(clean_current_tenant, clean_param_tenant):
+                logger.warning(
+                    f"[R2_SECURITY_AUTH] Tenant parameter manipulation detected: "
+                    f"current_tenant_id='{current_tenant_id}' does not match tenant_id='{tenant_id}'."
+                )
+                raise PermissionError(
+                    f"Tenant parameter manipulation detected: caller '{current_tenant_id}' cannot request for '{tenant_id}'."
+                )
+
+        # 2. TTL Gate
         if expires_in > 900:
             raise ValueError(
                 f"Presigned URL TTL cannot exceed 900 seconds (15 minutes). Requested: {expires_in}s"
@@ -188,31 +213,46 @@ class R2Client:
                 f"Presigned URL TTL must be greater than 0 seconds. Requested: {expires_in}s"
             )
 
-        # 1. Determine effective calling tenant identity
-        calling_tenant = (current_tenant_id or tenant_id or "").strip().lower()
-        if not calling_tenant:
-            raise ValueError("tenant_id (or current_tenant_id) is required to authorize presigned URL generation.")
+        # 3. Object key sanitization & path-traversal rejection
+        if object_key is None:
+            raise ValueError("object_key cannot be empty.")
 
-        # Parameter tamper check: prevent spoofed parameter injection
-        if current_tenant_id and tenant_id:
-            if not hmac.compare_digest(current_tenant_id.strip().lower(), tenant_id.strip().lower()):
-                logger.warning(
-                    f"[R2_SECURITY_AUTH] Tenant parameter manipulation detected: "
-                    f"current_tenant_id='{current_tenant_id}' does not match tenant_id='{tenant_id}'."
-                )
+        raw_key = str(object_key).strip()
+        if not raw_key:
+            raise ValueError("object_key cannot be empty.")
+
+        # Multi-pass URL decoding (handles %2e%2e, %2f, %5c, double encoding)
+        decoded_key = raw_key
+        for _ in range(3):
+            prev = decoded_key
+            decoded_key = urllib.parse.unquote(decoded_key)
+            if decoded_key == prev:
+                break
+
+        # Standardize path separators
+        norm_separators = decoded_key.replace("\\", "/")
+
+        # Empty path check after stripping separators
+        clean_stripped = norm_separators.strip("/ ")
+        if not clean_stripped:
+            raise ValueError("object_key cannot be empty.")
+
+        # Reject any standalone dot segments ('.' or '..')
+        raw_segments = norm_separators.split("/")
+        for seg in raw_segments:
+            if seg in (".", ".."):
                 raise PermissionError(
-                    f"Tenant parameter manipulation detected: caller '{current_tenant_id}' cannot request for '{tenant_id}'."
+                    f"Path traversal or dot segment detected in storage object key: '{object_key}'"
                 )
 
-        # 2. Structural normalization & path-traversal rejection
-        raw_key = str(object_key or "").strip().lstrip("/")
-        norm_key = posixpath.normpath(raw_key)
-        if norm_key.startswith("..") or "/../" in raw_key or norm_key.startswith("/"):
+        # Normalize with posixpath
+        norm_key = posixpath.normpath(clean_stripped)
+        if norm_key.startswith("..") or norm_key.startswith("/"):
             raise PermissionError(
                 f"Path traversal detected in storage object key: '{object_key}'"
             )
 
-        # 3. Structural path decomposition
+        # Structural path decomposition
         segments = [p for p in norm_key.split("/") if p]
         if not segments:
             raise ValueError("object_key cannot be empty.")
@@ -221,18 +261,32 @@ class R2Client:
         is_authorized = False
 
         if root_namespace == "system":
-            # Global system assets
+            if not allow_system_namespace:
+                logger.warning(
+                    f"[R2_SECURITY_AUTH] Access to system namespace '{norm_key}' rejected for tenant '{clean_current_tenant}' "
+                    f"without explicit allow_system_namespace flag."
+                )
+                raise PermissionError(
+                    f"Access to system namespace '{norm_key}' is restricted to internal system/admin context."
+                )
             is_authorized = True
         elif root_namespace in ("tenants", "videos"):
             if len(segments) < 2:
                 raise PermissionError(f"Invalid private object path structure: '{norm_key}'")
             namespace_tenant = segments[1].lower()
             if root_namespace == "tenants" and namespace_tenant == "system":
-                # System shared assets in tenants/system/...
+                if not allow_system_namespace:
+                    logger.warning(
+                        f"[R2_SECURITY_AUTH] Access to tenants/system namespace '{norm_key}' rejected for tenant '{clean_current_tenant}' "
+                        f"without explicit allow_system_namespace flag."
+                    )
+                    raise PermissionError(
+                        f"Access to system namespace '{norm_key}' is restricted to internal system/admin context."
+                    )
                 is_authorized = True
             else:
                 # Cryptographic comparison: current_tenant_id MUST match namespace tenant
-                is_authorized = hmac.compare_digest(namespace_tenant, calling_tenant)
+                is_authorized = hmac.compare_digest(namespace_tenant, clean_current_tenant)
         else:
             raise PermissionError(
                 f"Unauthorized root storage namespace '{root_namespace}'. "
@@ -241,11 +295,11 @@ class R2Client:
 
         if not is_authorized:
             logger.warning(
-                f"[R2_SECURITY_AUTH] Cross-tenant object access denied: tenant '{calling_tenant}' "
+                f"[R2_SECURITY_AUTH] Cross-tenant object access denied: tenant '{clean_current_tenant}' "
                 f"is not authorized for object '{norm_key}' (path belongs to namespace '{segments[1] if len(segments) > 1 else 'unknown'}')."
             )
             raise PermissionError(
-                f"Cross-tenant storage access forbidden: tenant '{calling_tenant}' "
+                f"Cross-tenant storage access forbidden: tenant '{clean_current_tenant}' "
                 f"is not authorized to access private object '{norm_key}'."
             )
 
@@ -260,7 +314,7 @@ class R2Client:
                 ExpiresIn=expires_in,
             )
             logger.info(
-                f"[R2] Generated presigned URL for '{norm_key}' (tenant '{calling_tenant}', TTL: {expires_in}s)"
+                f"[R2] Generated presigned URL for '{norm_key}' (tenant '{clean_current_tenant}', TTL: {expires_in}s)"
             )
             return url
         except Exception as e:
@@ -309,16 +363,18 @@ async def upload_bytes_async(
 
 def generate_presigned_download_url(
     object_key: str,
-    tenant_id: Optional[str] = None,
+    current_tenant_id: str,
     expires_in: int = 900,
-    current_tenant_id: Optional[str] = None,
+    allow_system_namespace: bool = False,
+    tenant_id: Optional[str] = None,
 ) -> str:
     """Global convenience helper to generate presigned download URL with structural & cryptographic tenant bounds."""
     return r2_client.generate_presigned_download_url(
         object_key=object_key,
-        tenant_id=tenant_id,
-        expires_in=expires_in,
         current_tenant_id=current_tenant_id,
+        expires_in=expires_in,
+        allow_system_namespace=allow_system_namespace,
+        tenant_id=tenant_id,
     )
 
 

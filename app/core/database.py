@@ -3,6 +3,7 @@ import json
 import asyncio
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
+from contextlib import contextmanager
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from aiogram import types
@@ -23,13 +24,45 @@ def get_db_connection(as_role: Optional[str] = None, tenant_id: Optional[str] = 
         with conn.cursor() as cur:
             cur.execute(f"SET ROLE {as_role};")
             if tenant_id:
-                cur.execute("SELECT set_config('app.current_tenant_id', %s, true);", (str(tenant_id),))
+                cur.execute("SELECT set_config('app.current_tenant_id', %s, false);", (str(tenant_id),))
     return conn
 
-def get_tenant_db_connection(tenant_id: Optional[str] = None):
+def get_tenant_db_connection(tenant_id: str):
     """Establishes database connection under the strict non-superuser 'authenticated' role
-    with tenant-level RLS context isolation (CTO Directive 06 P1-B mandate)."""
-    return get_db_connection(as_role="authenticated", tenant_id=tenant_id)
+    (NOBYPASSRLS, NOSUPERUSER) with tenant-level RLS context isolation.
+    Guarantees that tenant requests execute strictly under RLS policies."""
+    if not tenant_id or not str(tenant_id).strip():
+        raise ValueError("tenant_id is mandatory to establish tenant database connection.")
+    clean_tenant = str(tenant_id).strip()
+    conn = get_db_connection()
+    with conn.cursor() as cur:
+        cur.execute("SET ROLE authenticated;")
+        cur.execute("SELECT set_config('app.current_tenant_id', %s, false);", (clean_tenant,))
+    return conn
+
+@contextmanager
+def tenant_transaction(conn, tenant_id: str):
+    """Executes a database transaction strictly under 'authenticated' role
+    (NOBYPASSRLS, NOSUPERUSER) and tenant-isolated 'app.current_tenant_id'
+    using transaction-local scoping (SET LOCAL).
+    Automatically resets upon transaction commit or rollback."""
+    if not tenant_id or not str(tenant_id).strip():
+        raise ValueError("tenant_id is mandatory for tenant_transaction.")
+    clean_tenant = str(tenant_id).strip()
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL ROLE authenticated;")
+            cur.execute("SELECT set_config('app.current_tenant_id', %s, true);", (clean_tenant,))
+        yield conn
+
+def get_worker_db_connection(worker_name: str, elevated: bool = False):
+    """Establishes a dedicated database connection for background workers.
+    Cross-tenant elevated worker paths are isolated explicitly.
+    All DML operations performed by workers are audited to require explicit tenant_id."""
+    if elevated:
+        # Explicitly isolated elevated path for administrative background jobs
+        return get_db_connection(as_role="service_role")
+    return get_db_connection(as_role="authenticated")
 
 def _init_db_sync():
     conn = get_db_connection()

@@ -32,17 +32,15 @@ MAX_TIMESTAMP_DRIFT_SECONDS = 300  # 5 minutes anti-replay window
 def get_hmac_secret(explicit_secret: Optional[str] = None) -> str:
     """Retrieves HMAC secret from environment.
     
-    Fail-Secure Principle:
-    NO hardcoded fallback allowed under any circumstances.
-    Raises ValueError immediately if secret is missing.
+    Fail-Secure Principle (CTO Directive 08 P1-H1 Mandate):
+    Strict Single Env Secret: Reads ONLY `os.environ.get("BOONTRACK_HMAC_SECRET")`.
+    Zero fallback to aliases (such as BOONTRACK_INTERNAL_HMAC_SECRET) or default strings.
+    Raises ValueError immediately if BOONTRACK_HMAC_SECRET is missing or empty.
     """
     if explicit_secret and explicit_secret.strip():
         return explicit_secret.strip()
 
-    secret = (
-        os.getenv("BOONTRACK_HMAC_SECRET")
-        or os.getenv("BOONTRACK_INTERNAL_HMAC_SECRET")
-    )
+    secret = os.environ.get("BOONTRACK_HMAC_SECRET")
     if not secret or not secret.strip():
         logger.critical("[SECURITY_CRITICAL] BOONTRACK_HMAC_SECRET environment variable is missing. Fail-Secure mode active.")
         raise ValueError(

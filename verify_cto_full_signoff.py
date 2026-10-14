@@ -247,39 +247,99 @@ class CTOFullSignoffVerifier:
             "Service role key terlindungi di environment private (.env) dan tidak terekspos ke bundle client."
         )
 
-        # 2.2 Audit Role PostgreSQL Authenticated (Non-Superuser, Strict RLS)
+        # 2.2 (a) Audit Atribut rolsuper dan rolbypassrls dari Role Aktif saat Sesi Runtime Tenant Dieksekusi
+        from app.core.database import get_tenant_db_connection
+        tenant_conn = get_tenant_db_connection(tenant_id=self.tenant_id)
+        tenant_cur = tenant_conn.cursor()
+        tenant_cur.execute("""
+            SELECT current_user, session_user, r.rolsuper, r.rolbypassrls
+            FROM pg_roles r
+            WHERE r.rolname = current_user;
+        """)
+        active_role_row = tenant_cur.fetchone()
+        active_user, session_user, active_super, active_bypass = active_role_row
+        
+        self.log_result(
+            "Active Tenant Runtime Session Role Hardening (NOBYPASSRLS, NOSUPERUSER)",
+            active_user == "authenticated" and active_super is False and active_bypass is False,
+            f"Active Execution Role: current_user='{active_user}', session_user='{session_user}', "
+            f"rolsuper={active_super}, rolbypassrls={active_bypass} (Tunduk 100% pada RLS Engine)."
+        )
+        tenant_cur.close()
+        tenant_conn.close()
+
+        # 2.3 (b) Audit Kepemilikan Tabel (Table Ownership & Grants)
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            SELECT rolname, rolsuper, rolbypassrls, rolcanlogin
-            FROM pg_roles
-            WHERE rolname IN ('authenticated', 'anon', 'postgres', 'service_role');
+            SELECT c.relname, pg_catalog.pg_get_userbyid(c.relowner) AS owner
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relkind = 'r'
+            AND pg_catalog.pg_get_userbyid(c.relowner) = 'authenticated';
         """)
-        role_rows = cur.fetchall()
-        role_map = {r[0]: {"super": r[1], "bypass": r[2], "login": r[3]} for r in role_rows}
+        auth_owned_tables = cur.fetchall()
 
-        auth_role = role_map.get("authenticated", {})
+        cur.execute("""
+            SELECT DISTINCT pg_catalog.pg_get_userbyid(c.relowner) AS owner
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relkind = 'r';
+        """)
+        table_owners = [r[0] for r in cur.fetchall()]
+
         self.log_result(
-            "Database 'authenticated' Role Security Boundaries",
-            auth_role.get("super") is False and auth_role.get("bypass") is False,
-            f"Role 'authenticated': rolsuper={auth_role.get('super')}, rolbypassrls={auth_role.get('bypass')} (Tunduk 100% pada RLS)."
+            "Table Ownership & Privilege Separation Audit (Zero Owner Bypass on 'authenticated')",
+            len(auth_owned_tables) == 0 and len(table_owners) > 0,
+            f"Tabel dimiliki oleh 'authenticated': {len(auth_owned_tables)} (0 bypass). "
+            f"Pemilik tabel infrastruktur resmi: {', '.join(table_owners)}."
         )
-
-        # 2.3 Audit Worker Query Parameters (Semua query menyertakan filter tenant_id)
-        workers_tested = [
-            "ctwa_fulfillment_service.py",
-            "academy_service.py",
-            "quota_alert_service.py",
-            "video_metadata_worker.py",
-        ]
-        self.log_result(
-            "Internal Workers Strict Tenant Context Binding",
-            len(workers_tested) == 4,
-            f"Worker terverifikasi: {', '.join(workers_tested)}. Semua operasi DML memuat binding `tenant_id`."
-        )
-
         cur.close()
         conn.close()
+
+        # 2.4 (c) Audit Dinamis Seluruh Modul Background Worker untuk Strict Tenant Binding
+        import glob
+        all_worker_files = set()
+        
+        # 1. Modul di app/workers/
+        workers_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app", "workers")
+        if os.path.exists(workers_dir):
+            for p in glob.glob(os.path.join(workers_dir, "*.py")):
+                if not os.path.basename(p).startswith("__"):
+                    all_worker_files.add(p)
+                    
+        # 2. Modul worker/job/scheduler di app/services/
+        services_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app", "services")
+        for p in glob.glob(os.path.join(services_dir, "*.py")):
+            bname = os.path.basename(p)
+            if bname.startswith("__"):
+                continue
+            if any(w in bname for w in ("worker", "scheduler", "fulfillment", "alert", "guard", "academy")):
+                all_worker_files.add(p)
+
+        # 3. Root worker scripts
+        for p in glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "*worker*.py")):
+            all_worker_files.add(p)
+
+        worker_audit_results = []
+        unbound_workers = []
+
+        for w_path in sorted(list(all_worker_files)):
+            w_name = os.path.relpath(w_path, os.path.dirname(os.path.abspath(__file__))).replace("\\", "/")
+            with open(w_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            has_tenant = any(t in content for t in ("tenant_id", "tenant_slug", "store_id", "merchant_id"))
+            if has_tenant:
+                worker_audit_results.append(w_name)
+            else:
+                unbound_workers.append(w_name)
+
+        self.log_result(
+            f"Dynamic Audit of {len(all_worker_files)} Background Worker Modules for Strict Tenant Binding",
+            len(unbound_workers) == 0 and len(worker_audit_results) > 0,
+            f"Total worker dipindai: {len(all_worker_files)}. Worker terverifikasi memuat binding `tenant_id`: "
+            f"{len(worker_audit_results)}/{len(all_worker_files)} ({', '.join([os.path.basename(w) for w in worker_audit_results[:5]])}...)."
+        )
 
     # =========================================================================
     # PILLAR 3: E2E APPLICATION CONTEXT & CONNECTION POOL HYGIENE

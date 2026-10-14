@@ -1,0 +1,67 @@
+name: CTO P1 Security Gate Audit & Provenance Verification
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  security-audit:
+    name: Execute CTO Security Audit & Bind Evidence to Commit SHA
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout Code at Exact Commit SHA
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest pytest-asyncio pytest-cov
+
+      - name: Verify Tested Commit SHA Provenance
+        run: |
+          echo "========================================================"
+          echo "GITHUB_SHA (Commit Under Test): ${{ github.sha }}"
+          echo "GIT REV-PARSE HEAD: $(git rev-parse HEAD)"
+          echo "WORKING TREE STATUS: $(git status --porcelain)"
+          echo "========================================================"
+
+      - name: Run Unit Tests for R2 Storage Gate & Strict HMAC Secret
+        env:
+          BOONTRACK_HMAC_SECRET: ${{ secrets.BOONTRACK_HMAC_SECRET || 'test_ci_secure_hmac_secret_for_pipeline_999' }}
+        run: |
+          pytest tests/test_r2_tenant_authorization.py tests/test_strict_hmac_secret.py -v
+
+      - name: Generate CTO P1 Security Gate Evidence Bundle Bound to Commit
+        env:
+          BOONTRACK_HMAC_SECRET: ${{ secrets.BOONTRACK_HMAC_SECRET || 'test_ci_secure_hmac_secret_for_pipeline_999' }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT || '5432' }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB || 'postgres' }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER || 'postgres' }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          python scripts/generate_cto_p1_evidence_bundle.py
+
+      - name: Upload CTO Audit Evidence Bundle Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cto-p1-evidence-bundle-${{ github.sha }}
+          path: docs/audit/CTO_P1_SECURITY_GATE_EVIDENCE_BUNDLE.md
+          retention-days: 30
