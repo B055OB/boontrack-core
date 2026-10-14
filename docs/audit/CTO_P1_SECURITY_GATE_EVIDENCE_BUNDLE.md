@@ -1,8 +1,8 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 **Komitmen Repositori**: `B055OB/boontrack-core`  
-**Commit SHA**: `5339d7f9d0cc4c66eae31ab5a0bac72a484d619c`  
+**Commit SHA**: `5b90c278521505495ab3cb2f47b2940d4d3953a9`  
 **Branch**: `main`  
-**Waktu Audit**: `2026-10-14 10:00:52 UTC`  
+**Waktu Audit**: `2026-10-14 10:01:56 UTC`  
 **Status Gerbang**: **P1 CLOSED & APPROVED (ALL 6 AUDIT PILLARS VERIFIED)**  
 
 ---
@@ -83,7 +83,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.4s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.2s, max: 300s)`
 
 ### Lapis 4: Redis & AI Conversation Memory Boundary
 - **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).
@@ -152,9 +152,9 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Git Commit SHA**: `5339d7f9d0cc4c66eae31ab5a0bac72a484d619c`
+- **Git Commit SHA**: `5b90c278521505495ab3cb2f47b2940d4d3953a9`
 - **Git Branch**: `main`
-- **Timestamp Eksekusi**: `2026-10-14 10:00:52 UTC`
+- **Timestamp Eksekusi**: `2026-10-14 10:01:56 UTC`
 - **Python Version**: `3.12.8` on `win32`
 
 ### Ringkasan Eksekusi Test Suite
