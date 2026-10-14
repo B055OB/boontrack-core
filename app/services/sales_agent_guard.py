@@ -77,15 +77,28 @@ class TenantScopedSessionStore:
     def __init__(self):
         self._store: Dict[str, Dict[str, Any]] = {}
 
-    def get(self, tenant_id: str, session_id: str, sub_key: str = "context") -> Optional[Any]:
+    def _validate_scope(self, tenant_id: str, caller_tenant_id: Optional[str]) -> None:
+        if caller_tenant_id:
+            clean_caller = str(caller_tenant_id).strip().lower()
+            clean_target = str(tenant_id).strip().lower()
+            if clean_caller != clean_target:
+                raise PermissionError(
+                    f"Cross-tenant AI memory access forbidden: caller '{clean_caller}' "
+                    f"cannot access AI conversation memory for tenant '{clean_target}'."
+                )
+
+    def get(self, tenant_id: str, session_id: str, sub_key: str = "context", caller_tenant_id: Optional[str] = None) -> Optional[Any]:
+        self._validate_scope(tenant_id, caller_tenant_id)
         key = format_tenant_session_key(tenant_id, session_id, sub_key)
         return self._store.get(key)
 
-    def set(self, tenant_id: str, session_id: str, value: Any, sub_key: str = "context") -> None:
+    def set(self, tenant_id: str, session_id: str, value: Any, sub_key: str = "context", caller_tenant_id: Optional[str] = None) -> None:
+        self._validate_scope(tenant_id, caller_tenant_id)
         key = format_tenant_session_key(tenant_id, session_id, sub_key)
         self._store[key] = value
 
-    def append_history(self, tenant_id: str, session_id: str, role: str, content: str) -> None:
+    def append_history(self, tenant_id: str, session_id: str, role: str, content: str, caller_tenant_id: Optional[str] = None) -> None:
+        self._validate_scope(tenant_id, caller_tenant_id)
         key = format_tenant_session_key(tenant_id, session_id, "history")
         if key not in self._store:
             self._store[key] = []
@@ -93,11 +106,13 @@ class TenantScopedSessionStore:
         if len(self._store[key]) > 20:
             self._store[key] = self._store[key][-20:]
 
-    def get_history(self, tenant_id: str, session_id: str) -> List[Dict[str, str]]:
+    def get_history(self, tenant_id: str, session_id: str, caller_tenant_id: Optional[str] = None) -> List[Dict[str, str]]:
+        self._validate_scope(tenant_id, caller_tenant_id)
         key = format_tenant_session_key(tenant_id, session_id, "history")
         return list(self._store.get(key, []))
 
-    def clear(self, tenant_id: str, session_id: str) -> None:
+    def clear(self, tenant_id: str, session_id: str, caller_tenant_id: Optional[str] = None) -> None:
+        self._validate_scope(tenant_id, caller_tenant_id)
         prefix = format_tenant_session_key(tenant_id, session_id)
         keys_to_delete = [k for k in self._store if k.startswith(prefix)]
         for k in keys_to_delete:
@@ -105,6 +120,20 @@ class TenantScopedSessionStore:
 
 
 tenant_session_store = TenantScopedSessionStore()
+
+
+def validate_worker_job_scope(job_payload: Dict[str, Any], worker_tenant_context: str) -> None:
+    """Validates that a background worker executing under a tenant context
+    does not process jobs belonging to another tenant."""
+    if not job_payload:
+        return
+    job_tenant = str(job_payload.get("tenant_id") or job_payload.get("tenant_slug") or "").strip().lower()
+    clean_worker = str(worker_tenant_context or "").strip().lower()
+    if job_tenant and clean_worker and job_tenant != clean_worker:
+        raise PermissionError(
+            f"Cross-tenant background job execution forbidden: worker in context '{clean_worker}' "
+            f"cannot process job destined for tenant '{job_tenant}'."
+        )
 
 
 # ============================================================================

@@ -102,12 +102,24 @@ app = FastAPI(
     version="1.0.0",
 )
 
+from app.core.logging_sanitizer import install_global_pii_sanitizer, sanitize_pii_recursive
+install_global_pii_sanitizer()
+
 @app.exception_handler(HTTPException)
 async def custom_http_exception_handler(request: Request, exc: HTTPException):
     encoded_detail = jsonable_encoder(exc.detail)
-    if isinstance(encoded_detail, dict) and "error" in encoded_detail:
-        return JSONResponse(status_code=exc.status_code, content=encoded_detail)
-    return JSONResponse(status_code=exc.status_code, content={"detail": encoded_detail})
+    sanitized_detail = sanitize_pii_recursive(encoded_detail)
+    if isinstance(sanitized_detail, dict) and "error" in sanitized_detail:
+        return JSONResponse(status_code=exc.status_code, content=sanitized_detail)
+    return JSONResponse(status_code=exc.status_code, content={"detail": sanitized_detail})
+
+@app.exception_handler(Exception)
+async def global_unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error(f"[UNHANDLED EXCEPTION] Path: {request.url.path} | Error: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "INTERNAL_SERVER_ERROR", "message": "An unexpected server error occurred."}
+    )
 
 app.add_middleware(TracingMiddleware)
 

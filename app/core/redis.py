@@ -9,8 +9,9 @@ Provides:
 
 import os
 import time
+import json
 import logging
-from typing import Optional
+from typing import Optional, Any
 
 logger = logging.getLogger("BOONTRACK_REDIS")
 
@@ -173,3 +174,72 @@ def check_and_increment_group_rate(group_jid: str, max_requests: int = 5, window
     valid_ts.append(now)
     _in_memory_group_rate[clean_jid] = valid_ts
     return RateLimitResult(True, 0)
+
+
+# ============================================================================
+# Multi-Tenant Key Isolation & Runtime Scope Gate
+# ============================================================================
+
+def extract_tenant_from_key(key: str) -> Optional[str]:
+    """Extracts tenant_id from standardized composite key patterns:
+    - tenant:{tenant_id}:...
+    - bt:{env}:tenant:{tenant_id}:...
+    """
+    clean_k = str(key or "").strip()
+    parts = clean_k.split(":")
+    for idx, part in enumerate(parts):
+        if part == "tenant" and idx + 1 < len(parts):
+            return parts[idx + 1].strip().lower()
+    return None
+
+
+def validate_redis_tenant_scope(key: str, caller_tenant_id: str) -> None:
+    """Validates that caller_tenant_id matches the tenant embedded in the key.
+    
+    Raises:
+        PermissionError: If caller attempts to access a key belonging to another tenant.
+    """
+    clean_caller = str(caller_tenant_id or "").strip().lower()
+    target_tenant = extract_tenant_from_key(key)
+    if target_tenant and clean_caller and target_tenant != clean_caller:
+        logger.warning(
+            f"[REDIS_SECURITY_VIOLATION] Cross-tenant Redis access denied: caller '{clean_caller}' "
+            f"attempted to access key '{key}' belonging to tenant '{target_tenant}'."
+        )
+        raise PermissionError(
+            f"Cross-tenant Redis access forbidden: caller '{clean_caller}' "
+            f"is not authorized to access key '{key}' of tenant '{target_tenant}'."
+        )
+
+
+def set_tenant_key(caller_tenant_id: str, key: str, value: Any, ex: Optional[int] = None) -> bool:
+    """Sets a tenant-scoped Redis key, strictly validating tenant ownership."""
+    validate_redis_tenant_scope(key, caller_tenant_id)
+    client = get_redis_client()
+    val_str = json.dumps(value) if not isinstance(value, str) else value
+    if client is not None:
+        try:
+            return bool(client.set(key, val_str, ex=ex))
+        except Exception as e:
+            logger.debug(f"[REDIS ERROR] {e}")
+    # In-memory fallback
+    _in_memory_locks[key] = (time.time() + ex) if ex else 9999999999.0
+    _in_memory_locks[f"{key}:val"] = val_str
+    return True
+
+
+def get_tenant_key(caller_tenant_id: str, key: str) -> Optional[str]:
+    """Gets a tenant-scoped Redis key, strictly validating tenant ownership."""
+    validate_redis_tenant_scope(key, caller_tenant_id)
+    client = get_redis_client()
+    if client is not None:
+        try:
+            return client.get(key)
+        except Exception as e:
+            logger.debug(f"[REDIS ERROR] {e}")
+    # In-memory fallback
+    exp = _in_memory_locks.get(key)
+    if exp and exp > time.time():
+        return _in_memory_locks.get(f"{key}:val")
+    return None
+

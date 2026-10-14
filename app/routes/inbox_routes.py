@@ -444,6 +444,7 @@ async def execute_send_cs_message(
 @router.post("/messages/send")
 async def send_manual_cs_message(
     req: SendManualMessageRequest,
+    request: Request,
     idempotency_key_header: Optional[str] = Header(None, alias="Idempotency-Key"),
     x_idempotency_key_header: Optional[str] = Header(None, alias="X-Idempotency-Key")
 ):
@@ -454,7 +455,13 @@ async def send_manual_cs_message(
     3. Tolak jika kanal offline (tanpa auto fallback).
     4. Cek & catat Idempotency Key.
     5. Trigger Human Takeover (bot_mode = 'HUMAN_ACTIVE', bot_paused = TRUE).
+    6. Verifikasi HMAC Signed Tenant Boundary jika request berasal dari Inbox gateway.
     """
+    sig = request.headers.get("X-Boontrack-Signature")
+    if sig:
+        from app.core.security.inter_service_auth import verify_inter_service_tenant_boundary
+        await verify_inter_service_tenant_boundary(request)
+
     idemp_key = req.idempotency_key or idempotency_key_header or x_idempotency_key_header
     return await execute_send_cs_message(
         tenant_id=req.tenant_id,
@@ -467,11 +474,15 @@ async def send_manual_cs_message(
 
 
 @router.post("/conversations/{conversation_id}/assign")
-async def assign_conversation(conversation_id: str, req: AssignChatRequest):
+async def assign_conversation(conversation_id: str, req: AssignChatRequest, request: Request):
     """
     Rotary Routing: Menugaskan percakapan ke agen aktif berikutnya yang paling sedikit beban chat-nya.
     Jika tidak ada agen online, percakapan menjadi 'unassigned' dan ditangani bot ('AI_ACTIVE').
     """
+    sig = request.headers.get("X-Boontrack-Signature")
+    if sig:
+        from app.core.security.inter_service_auth import verify_inter_service_tenant_boundary
+        await verify_inter_service_tenant_boundary(request)
     try:
         res = rotary_routing_service.assign_inbound_chat(
             tenant_id=req.tenant_id,

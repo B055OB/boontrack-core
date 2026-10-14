@@ -172,12 +172,16 @@ class StructuredJsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
+        from app.core.logging_sanitizer import sanitize_pii_recursive, mask_pii_string
+        log_data["message"] = mask_pii_string(record.getMessage())
+
         # Tambahkan metadata tambahan jika ada
         extra_meta = getattr(record, "extra_meta", None)
         if extra_meta and isinstance(extra_meta, dict):
-            log_data["metadata"] = extra_meta
+            log_data["metadata"] = sanitize_pii_recursive(extra_meta)
 
-        return json.dumps(log_data, default=str)
+        sanitized_payload = sanitize_pii_recursive(log_data)
+        return json.dumps(sanitized_payload, default=str)
 
 
 def log_structured_event(

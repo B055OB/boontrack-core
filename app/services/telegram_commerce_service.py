@@ -492,14 +492,22 @@ async def handle_telegram_update(
 ) -> Dict[str, Any]:
     """
     Handler universal untuk raw Update payload dari Telegram Webhook.
-    Forwarding payload ke Next.js BoonPilot Inbox Gateway (Gemini AI Sales Representative).
     """
     try:
+        from app.core.security.inter_service_auth import generate_inter_service_signature
+        target_tenant = "onlineboost"
+        sig, ts, _ = generate_inter_service_signature(target_tenant, body=update)
+        signed_headers = {
+            "Content-Type": "application/json",
+            "X-Boontrack-Signature": sig,
+            "X-Boontrack-Timestamp": str(ts),
+            "X-Boontrack-Tenant-Id": target_tenant,
+        }
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 "https://shop.boontrack.com/api/webhooks/telegram",
                 json=update,
-                headers={"User-Agent": "TelegramBot (via BoonTrack Core Proxy)"}
+                headers=signed_headers
             )
             if resp.status_code == 200:
                 data = resp.json()
