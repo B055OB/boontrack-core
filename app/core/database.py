@@ -125,6 +125,60 @@ def get_worker_db_connection(worker_name: str, elevated: bool = False):
             cur.execute("SET LOCAL ROLE authenticated;")
     return conn
 
+
+def close_worker_db_connection(conn, worker_name: str = "worker"):
+    """Guarantees full connection hygiene for background workers:
+    Rolls back uncommitted state, executes RESET ROLE; RESET ALL;, and closes connection cleanly."""
+    if conn and not conn.closed:
+        try:
+            conn.rollback()
+            with conn.cursor() as cur:
+                cur.execute("RESET ROLE; RESET ALL;")
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"[WORKER_CLEANUP] Worker '{worker_name}' reset warning: {e}")
+        finally:
+            if not conn.closed:
+                conn.close()
+
+
+@contextmanager
+def worker_elevated_transaction(worker_name: str, conn: Optional[Any] = None):
+    """Executes an elevated background worker database transaction under service_role.
+    
+    CTO Directive 10 (P1-E) Mandate:
+    Guarantees strict connection hygiene:
+    1. Scoped elevation: `SET LOCAL ROLE service_role;`
+    2. Zero pool contamination: The try/finally block ALWAYS executes `RESET ROLE; RESET ALL;`
+       and rolls back uncommitted changes before closing or returning connection to pool.
+    """
+    owns_connection = False
+    if conn is None:
+        conn = get_db_connection()
+        owns_connection = True
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL ROLE service_role;")
+        yield conn
+        conn.commit()
+    except Exception:
+        if not conn.closed:
+            conn.rollback()
+        raise
+    finally:
+        try:
+            if not conn.closed:
+                conn.rollback()
+                with conn.cursor() as cur:
+                    cur.execute("RESET ROLE; RESET ALL;")
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"[WORKER_CLEANUP] Worker '{worker_name}' connection reset warning: {e}")
+        finally:
+            if owns_connection and not conn.closed:
+                conn.close()
+
 def _init_db_sync():
     conn = get_db_connection()
     cur = conn.cursor()

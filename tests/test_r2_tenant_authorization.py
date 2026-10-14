@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 from unittest.mock import MagicMock, patch
 from app.services.storage.r2 import (
+    InternalSystemContext,
     R2Client,
     generate_presigned_download_url,
     generate_internal_system_presigned_url,
@@ -102,20 +103,39 @@ def test_tenant_access_system_namespace_without_flag_is_blocked(mock_r2_client):
         )
 
 
-def test_system_namespace_with_explicit_flag_is_authorized(mock_r2_client):
+def test_system_namespace_with_explicit_internal_context_is_authorized(mock_r2_client):
+    """P1-D: Trusted InternalSystemContext object authorizes access to system namespace."""
+    sys_ctx = InternalSystemContext(reason="test_audit_verification")
     url = mock_r2_client.generate_presigned_download_url(
         object_key="system/template.pdf",
-        current_tenant_id="admin_system",
-        allow_system_namespace=True,
+        current_tenant_id=sys_ctx,
+        internal_context=sys_ctx,
     )
     assert "https://assets.boontrack.com" in url
 
     url2 = mock_r2_client.generate_presigned_download_url(
         object_key="tenants/system/shared_badge.png",
-        current_tenant_id="admin_system",
-        allow_system_namespace=True,
+        current_tenant_id=sys_ctx,
+        allow_system_namespace=sys_ctx,
     )
     assert "https://assets.boontrack.com" in url2
+
+
+def test_string_admin_system_without_internal_context_is_blocked(mock_r2_client):
+    """P1-D: Raw string 'admin_system' without InternalSystemContext is strictly blocked."""
+    with pytest.raises(PermissionError, match="restricted to internal system/admin context"):
+        mock_r2_client.generate_presigned_download_url(
+            object_key="system/template.pdf",
+            current_tenant_id="admin_system",
+            allow_system_namespace=True,
+        )
+
+    with pytest.raises(PermissionError, match="restricted to internal system/admin context"):
+        mock_r2_client.generate_presigned_download_url(
+            object_key="tenants/system/shared_badge.png",
+            current_tenant_id="admin_system",
+            allow_system_namespace=False,
+        )
 
 
 # 5. Path Traversal & Dot Segment Defense
@@ -241,14 +261,14 @@ def test_tenant_alpha_cannot_bypass_with_allow_system_namespace_true(mock_r2_cli
     Non-system tenant callers (e.g. tenant_alpha) MUST NEVER be allowed to access
     system namespace even if they explicitly pass allow_system_namespace=True.
     """
-    with pytest.raises(PermissionError, match="not permitted to access system namespace"):
+    with pytest.raises(PermissionError, match="restricted to internal system/admin context"):
         mock_r2_client.generate_presigned_download_url(
             object_key="system/credentials.json",
             current_tenant_id="tenant_alpha",
             allow_system_namespace=True,
         )
 
-    with pytest.raises(PermissionError, match="not permitted to access system namespace"):
+    with pytest.raises(PermissionError, match="restricted to internal system/admin context"):
         mock_r2_client.generate_presigned_download_url(
             object_key="tenants/system/config.env",
             current_tenant_id="tenant_alpha",

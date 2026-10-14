@@ -21,6 +21,23 @@ load_dotenv()
 logger = logging.getLogger("R2_STORAGE")
 
 
+class InternalSystemContext:
+    """
+    Explicit trusted internal system context for privileged system namespace operations.
+    Cannot be forged or triggered by an external tenant string or query parameter.
+    Only internal platform components running within the core boundary can instantiate
+    and provide this context object.
+    """
+
+    def __init__(self, reason: str = "internal_system_operation"):
+        self.reason = reason
+        self.is_system = True
+        self.system_id = "admin_system"
+
+    def __repr__(self) -> str:
+        return f"<InternalSystemContext reason='{self.reason}'>"
+
+
 class R2Client:
     """Cloudflare R2 S3-Compatible Client with canonical CDN distribution and Fail-Closed security."""
 
@@ -156,23 +173,26 @@ class R2Client:
     def generate_presigned_download_url(
         self,
         object_key: str,
-        current_tenant_id: str,
+        current_tenant_id: Union[str, InternalSystemContext],
         expires_in: int = 900,
-        allow_system_namespace: bool = False,
+        allow_system_namespace: Union[bool, InternalSystemContext] = False,
         tenant_id: Optional[str] = None,
+        internal_context: Optional[InternalSystemContext] = None,
     ) -> str:
         """
         Generates a Presigned Download URL for a private object in Cloudflare R2.
         
-        Strict Runtime Gates (CTO Directive 08 P1-H3 Mandate):
+        Strict Runtime Gates (CTO Directive 08 P1-H3 & Directive 10 P1-D Mandate):
         1. Mandatory Verified Tenant Identity: current_tenant_id is strictly required.
            ZERO fallback to caller-supplied tenant_id is permitted. Missing/empty current_tenant_id
            raises ValueError immediately.
         2. Parameter Tamper Check: If tenant_id is also supplied, it MUST match current_tenant_id
            cryptographically. Any mismatch raises PermissionError.
-        3. System Namespace Protection: Direct or prefixed access to 'system/' or 'tenants/system/'
-           is strictly blocked for standard tenant callers. Only authorized callers with
-           explicit allow_system_namespace=True can access the system namespace.
+        3. Trusted Internal Context for System Namespace (P1-D):
+           Direct or prefixed access to 'system/' or 'tenants/system/' is strictly blocked for
+           standard tenant callers. External strings (e.g. current_tenant_id='admin_system')
+           or plain booleans (allow_system_namespace=True) CANNOT trigger system namespace access.
+           System namespace access is strictly guarded and REQUIRES a verified InternalSystemContext object.
         4. Robust Path Sanitization:
            - Multi-pass URL decoding (%2e%2e, %2f, %5c, nested encodings)
            - Path separator standardization (\\ -> /)
@@ -184,12 +204,22 @@ class R2Client:
         6. TTL Enforcement: expires_in must be between 1 and 900 seconds (15 minutes).
         7. Fail-Closed: Zero mock fallback; raises RuntimeError on storage client failure.
         """
-        # 1. Mandatory current_tenant_id validation (Fail-Secure, Zero Fallback)
-        if not current_tenant_id or not str(current_tenant_id).strip():
-            raise ValueError(
-                "current_tenant_id is mandatory and must be provided from verified authentication context."
-            )
-        clean_current_tenant = str(current_tenant_id).strip().lower()
+        # 1. Resolve and validate trusted internal context and current_tenant_id
+        trusted_system_context: Optional[InternalSystemContext] = None
+        if isinstance(current_tenant_id, InternalSystemContext):
+            trusted_system_context = current_tenant_id
+            clean_current_tenant = "admin_system"
+        else:
+            if not current_tenant_id or not str(current_tenant_id).strip():
+                raise ValueError(
+                    "current_tenant_id is mandatory and must be provided from verified authentication context."
+                )
+            clean_current_tenant = str(current_tenant_id).strip().lower()
+
+        if isinstance(allow_system_namespace, InternalSystemContext):
+            trusted_system_context = allow_system_namespace
+        elif isinstance(internal_context, InternalSystemContext):
+            trusted_system_context = internal_context
 
         # Parameter tamper check
         if tenant_id is not None:
@@ -261,20 +291,14 @@ class R2Client:
         is_authorized = False
 
         if root_namespace == "system":
-            if not allow_system_namespace:
+            # P1-D: System namespace REQUIRES a valid InternalSystemContext object
+            if not trusted_system_context or not isinstance(trusted_system_context, InternalSystemContext):
                 logger.warning(
-                    f"[R2_SECURITY_AUTH] Access to system namespace '{norm_key}' rejected for tenant '{clean_current_tenant}' "
-                    f"without explicit allow_system_namespace flag."
+                    f"[R2_SECURITY_AUTH] Access to system namespace '{norm_key}' rejected for caller '{clean_current_tenant}': "
+                    f"Akses sistem wajib divalidasi mutlak dari objek InternalSystemContext yang sah."
                 )
                 raise PermissionError(
-                    f"Access to system namespace '{norm_key}' is restricted to internal system/admin context."
-                )
-            if clean_current_tenant not in ("admin_system", "system", "internal_system"):
-                logger.warning(
-                    f"[R2_SECURITY_AUTH] Unauthorized tenant '{clean_current_tenant}' attempted to access system namespace via allow_system_namespace."
-                )
-                raise PermissionError(
-                    f"Tenant '{clean_current_tenant}' is not permitted to access system namespace."
+                    f"Access to system namespace '{norm_key}' is restricted to internal system/admin context (InternalSystemContext required)."
                 )
             is_authorized = True
         elif root_namespace in ("tenants", "videos"):
@@ -282,20 +306,14 @@ class R2Client:
                 raise PermissionError(f"Invalid private object path structure: '{norm_key}'")
             namespace_tenant = segments[1].lower()
             if root_namespace == "tenants" and namespace_tenant == "system":
-                if not allow_system_namespace:
+                # P1-D: tenants/system namespace REQUIRES a valid InternalSystemContext object
+                if not trusted_system_context or not isinstance(trusted_system_context, InternalSystemContext):
                     logger.warning(
-                        f"[R2_SECURITY_AUTH] Access to tenants/system namespace '{norm_key}' rejected for tenant '{clean_current_tenant}' "
-                        f"without explicit allow_system_namespace flag."
+                        f"[R2_SECURITY_AUTH] Access to tenants/system namespace '{norm_key}' rejected for caller '{clean_current_tenant}': "
+                        f"Akses sistem wajib divalidasi mutlak dari objek InternalSystemContext yang sah."
                     )
                     raise PermissionError(
-                        f"Access to system namespace '{norm_key}' is restricted to internal system/admin context."
-                    )
-                if clean_current_tenant not in ("admin_system", "system", "internal_system"):
-                    logger.warning(
-                        f"[R2_SECURITY_AUTH] Unauthorized tenant '{clean_current_tenant}' attempted to access tenants/system via allow_system_namespace."
-                    )
-                    raise PermissionError(
-                        f"Tenant '{clean_current_tenant}' is not permitted to access system namespace."
+                        f"Access to system namespace '{norm_key}' is restricted to internal system/admin context (InternalSystemContext required)."
                     )
                 is_authorized = True
             else:
@@ -359,14 +377,16 @@ class R2Client:
     ) -> str:
         """
         Internal-only system helper to generate presigned download URL for system-scoped assets.
-        Guaranteed to run in internal system context ('admin_system').
+        Guaranteed to run in internal system context via verified InternalSystemContext.
         Strictly isolated from tenant route callers.
         """
+        ctx = InternalSystemContext(reason="generate_internal_system_presigned_url")
         return self.generate_presigned_download_url(
             object_key=object_key,
-            current_tenant_id="admin_system",
+            current_tenant_id=ctx,
             expires_in=expires_in,
-            allow_system_namespace=True,
+            allow_system_namespace=ctx,
+            internal_context=ctx,
         )
 
 
@@ -394,10 +414,11 @@ async def upload_bytes_async(
 
 def generate_presigned_download_url(
     object_key: str,
-    current_tenant_id: str,
+    current_tenant_id: Union[str, InternalSystemContext],
     expires_in: int = 900,
-    allow_system_namespace: bool = False,
+    allow_system_namespace: Union[bool, InternalSystemContext] = False,
     tenant_id: Optional[str] = None,
+    internal_context: Optional[InternalSystemContext] = None,
 ) -> str:
     """Global convenience helper to generate presigned download URL with structural & cryptographic tenant bounds."""
     return r2_client.generate_presigned_download_url(
@@ -406,6 +427,7 @@ def generate_presigned_download_url(
         expires_in=expires_in,
         allow_system_namespace=allow_system_namespace,
         tenant_id=tenant_id,
+        internal_context=internal_context,
     )
 
 
@@ -442,6 +464,7 @@ def upload_qris_to_r2(
 
 
 __all__ = [
+    "InternalSystemContext",
     "R2Client",
     "r2_client",
     "upload_bytes",

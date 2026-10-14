@@ -25,6 +25,8 @@ from app.core.database import (
     get_db_connection,
     tenant_transaction,
     close_and_reset_connection,
+    worker_elevated_transaction,
+    close_worker_db_connection,
 )
 
 
@@ -119,12 +121,12 @@ def test_worker_db_mutation_cross_tenant_rejected_zero_rows():
     test_beta_order_id = "test-worker-beta-order-999"
 
     if not os.getenv("POSTGRES_PASSWORD") and not os.getenv("DATABASE_URL"):
-        pytest.skip("PostgreSQL credentials not configured in environment.")
+        pytest.fail("PostgreSQL credentials missing in environment. P1-B mandates live DB verification.")
 
     try:
         conn = get_db_connection()
     except Exception as exc:
-        pytest.skip(f"PostgreSQL not available in this environment: {exc}")
+        pytest.fail(f"PostgreSQL connection failed. P1-B mandates live DB verification: {exc}")
 
     try:
         # Pre-seed test order for Tenant Beta in superuser/admin context
@@ -187,3 +189,45 @@ def test_worker_storage_cross_tenant_access_raises_permission_error():
             current_tenant_id="tenant_alpha",
             expires_in=300,
         )
+
+
+# -----------------------------------------------------------------------------
+# 4. Elevated Worker Connection Hygiene & State Reset (P1-E)
+# -----------------------------------------------------------------------------
+def test_worker_elevated_transaction_hygiene_and_state_reset():
+    """
+    CTO Directive 10 (P1-E):
+    Proves that worker_elevated_transaction guarantees strict connection hygiene:
+    1. Operates under elevated service_role inside the context block.
+    2. Guaranteed try/finally execution executes RESET ROLE; RESET ALL;.
+    3. Returning to pool has zero state leakage.
+    """
+    if not os.getenv("POSTGRES_PASSWORD") and not os.getenv("DATABASE_URL"):
+        pytest.fail("PostgreSQL credentials missing - P1-B prohibits skipping database tests.")
+
+    try:
+        conn = get_db_connection()
+    except Exception as exc:
+        pytest.fail(f"PostgreSQL connection failed - P1-B prohibits skipping: {exc}")
+
+    try:
+        # Before entering: check baseline session
+        with conn.cursor() as cur:
+            cur.execute("SELECT current_user;")
+            base_user = cur.fetchone()[0]
+
+        # Inside elevated worker transaction
+        with worker_elevated_transaction("audit_p1_worker", conn):
+            with conn.cursor() as cur:
+                cur.execute("SELECT current_user;")
+                elevated_user = cur.fetchone()[0]
+                assert elevated_user == "service_role", f"Expected elevated service_role, got {elevated_user}"
+
+        # After exiting: verify RESET ROLE; RESET ALL; reverted role to baseline
+        with conn.cursor() as cur:
+            cur.execute("SELECT current_user;")
+            post_user = cur.fetchone()[0]
+            assert post_user == base_user, f"Expected {base_user}, got {post_user}"
+            assert post_user != "service_role", "Pool contaminated: service_role leaked into session!"
+    finally:
+        close_worker_db_connection(conn, "audit_p1_worker")
