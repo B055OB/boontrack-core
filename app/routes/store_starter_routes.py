@@ -27,38 +27,58 @@ class ImportStarterProductRequest(BaseModel):
     tenant_id: Optional[str] = Field(None, description="UUID atau slug tenant")
     tenant_slug: Optional[str] = Field(None, description="Slug tenant alternatif")
     product_preset: Optional[str] = Field("starter_bundle", description="Preset produk starter yang diimpor")
+    product_code: Optional[str] = Field(None, description="Kode produk resmi Studio")
+    title: Optional[str] = Field(None, description="Judul produk")
+    price_original: Optional[float] = Field(None, description="Harga coret asli")
+    price_sale: Optional[float] = Field(None, description="Harga promo jual")
     override_price: Optional[float] = Field(None, description="Harga kustom opsional")
+    images: Optional[list[str]] = Field(None, description="Daftar mockup / gambar produk")
+    description: Optional[str] = Field(None, description="Deskripsi lisensi produk")
 
 
 STARTER_PRODUCT_PRESETS = {
     "starter_bundle": {
-        "title": "Paket Starter Digital OnlineBoost: Template Mesin Penjualan & Copywriting",
-        "slug": "starter-digital-onlineboost-scale",
-        "description": "Paket lengkap template bot WhatsApp 24 jam, script copywriting konversi tinggi, dan modul scale-up iklan praktis.",
-        "price": 149000,
-        "sku": "OB-STARTER-01",
+        "product_code": "LP-CTWA-BOT-01",
+        "sku": "LP-CTWA-BOT-01",
+        "title": "BoonTrack CTWA Bot Assistant & Automation License",
+        "slug": "boontrack-ctwa-bot-assistant-license",
+        "description": "Lisensi resmi penggunaan sistem asisten toko otomatis 24 jam berbasis WhatsApp & Dynamic QRIS.",
+        "price_original": 199000,
+        "price_sale": 99000,
+        "price": 99000,
+        "images": [
+            "https://assets.boontrack.com/tenants/system/studio/starter-pack/license_box_mockup.webp",
+            "https://assets.boontrack.com/tenants/system/studio/starter-pack/whatsapp_flow_preview.webp",
+            "https://assets.boontrack.com/tenants/system/studio/starter-pack/qris_instant_settlement.webp"
+        ],
+        "image_url": "https://assets.boontrack.com/tenants/system/studio/starter-pack/license_box_mockup.webp",
         "product_type": "DIGITAL_FILE",
         "license_status": "OFFICIAL",
         "is_digital": True,
         "is_active": True,
         "is_available": True,
-        "link_digital": "https://assets.boontrack.com/digital/starter_bundle_onlineboost.zip",
-        "image_url": "https://assets.boontrack.com/images/starter_bundle_cover.webp",
-        "asset_reference": "starter_bundle_onlineboost_v1",
+        "link_digital": "https://assets.boontrack.com/digital/ctwa_bot_assistant_license.zip",
+        "asset_reference": "ctwa_bot_license_v1",
     },
     "cpm_module": {
+        "product_code": "OB-CPM-MODUL",
+        "sku": "OB-CPM-MODUL",
         "title": "Modul Praktis Scale CPM 24 Jam Anti-Boncos",
         "slug": "modul-praktis-cpm-24jam",
         "description": "Modul blueprint step-by-step membangun funnel Meta Ads dan otomasi kasir WhatsApp.",
+        "price_original": 199000,
+        "price_sale": 99000,
         "price": 99000,
-        "sku": "OB-CPM-MODUL",
+        "images": [
+            "https://assets.boontrack.com/images/modul_cpm_cover.webp"
+        ],
+        "image_url": "https://assets.boontrack.com/images/modul_cpm_cover.webp",
         "product_type": "DIGITAL_FILE",
         "license_status": "OFFICIAL",
         "is_digital": True,
         "is_active": True,
         "is_available": True,
         "link_digital": "https://assets.boontrack.com/digital/modul_cpm_24jam.pdf",
-        "image_url": "https://assets.boontrack.com/images/modul_cpm_cover.webp",
         "asset_reference": "modul_cpm_24jam_v1",
     }
 }
@@ -80,7 +100,18 @@ async def import_starter_product_endpoint(payload: ImportStarterProductRequest =
 
     preset_key = payload.product_preset if payload.product_preset in STARTER_PRODUCT_PRESETS else "starter_bundle"
     preset_data = STARTER_PRODUCT_PRESETS[preset_key]
-    price = float(payload.override_price) if payload.override_price is not None else float(preset_data["price"])
+
+    # Resolusi field yang dioverride atau memakai default resmi Studio
+    resolved_sku = str(payload.product_code or preset_data.get("product_code") or preset_data["sku"]).strip()
+    resolved_title = str(payload.title or preset_data["title"]).strip()
+    resolved_desc = str(payload.description or preset_data["description"]).strip()
+    price_orig = float(payload.price_original) if payload.price_original is not None else float(preset_data.get("price_original", 199000))
+    price_sale = float(payload.price_sale) if payload.price_sale is not None else (
+        float(payload.override_price) if payload.override_price is not None else float(preset_data.get("price_sale", 99000))
+    )
+    resolved_images = payload.images or preset_data.get("images", [preset_data["image_url"]])
+    primary_image = resolved_images[0] if resolved_images else preset_data["image_url"]
+    price = price_sale
 
     conn = None
     cur = None
@@ -116,7 +147,7 @@ async def import_starter_product_endpoint(payload: ImportStarterProductRequest =
                 tenant_meta = {}
 
         # 2. Insert or update produk starter ke public.products
-        prod_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{resolved_tenant_id}:{preset_data['sku']}"))
+        prod_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{resolved_tenant_id}:{resolved_sku}"))
         cur.execute(
             """
             INSERT INTO public.products (
@@ -131,6 +162,8 @@ async def import_starter_product_endpoint(payload: ImportStarterProductRequest =
             ON CONFLICT (id) DO UPDATE SET
                 title = EXCLUDED.title,
                 price = EXCLUDED.price,
+                description = EXCLUDED.description,
+                image_url = EXCLUDED.image_url,
                 asset_reference = EXCLUDED.asset_reference,
                 is_active = TRUE,
                 is_available = TRUE;
@@ -138,19 +171,19 @@ async def import_starter_product_endpoint(payload: ImportStarterProductRequest =
             (
                 prod_id,
                 resolved_tenant_id,
-                preset_data["title"],
+                resolved_title,
                 f"{preset_data['slug']}-{resolved_tenant_slug}",
-                preset_data["description"],
+                resolved_desc,
                 price,
-                preset_data["sku"],
+                resolved_sku,
                 preset_data["product_type"],
                 preset_data["license_status"],
                 preset_data["is_digital"],
                 preset_data["is_active"],
                 preset_data["is_available"],
                 preset_data["link_digital"],
-                preset_data["image_url"],
-                preset_data.get("asset_reference", "starter_bundle_onlineboost_v1"),
+                primary_image,
+                preset_data.get("asset_reference", "ctwa_bot_license_v1"),
             )
         )
 
@@ -165,13 +198,19 @@ async def import_starter_product_endpoint(payload: ImportStarterProductRequest =
         existing_products = tenant_meta.get("products") or []
         updated_prod_entry = {
             "id": prod_id,
-            "title": preset_data["title"],
+            "product_code": resolved_sku,
+            "title": resolved_title,
+            "description": resolved_desc,
             "price": price,
-            "sku": preset_data["sku"],
+            "price_original": price_orig,
+            "price_sale": price_sale,
+            "sku": resolved_sku,
+            "images": resolved_images,
+            "image_url": primary_image,
             "is_active": True,
         }
-        # Filter existing by SKU
-        filtered_prods = [p for p in existing_products if p.get("sku") != preset_data["sku"]]
+        # Filter existing by SKU / product_code
+        filtered_prods = [p for p in existing_products if p.get("sku") != resolved_sku and p.get("product_code") != resolved_sku]
         filtered_prods.append(updated_prod_entry)
         tenant_meta["products"] = filtered_prods
         tenant_meta["total_products"] = total_products
@@ -186,7 +225,7 @@ async def import_starter_product_endpoint(payload: ImportStarterProductRequest =
         )
 
         conn.commit()
-        logger.info(f"[StoreStarter] Imported '{preset_data['title']}' for tenant '{tenant_name}' ({resolved_tenant_id}). Total: {total_products}")
+        logger.info(f"[StoreStarter] Imported '{resolved_title}' ({resolved_sku}) for tenant '{tenant_name}' ({resolved_tenant_id}). Total: {total_products}")
 
         return {
             "status": "success",
@@ -196,14 +235,20 @@ async def import_starter_product_endpoint(payload: ImportStarterProductRequest =
             "total_products": total_products,
             "product": {
                 "id": prod_id,
-                "title": preset_data["title"],
+                "product_code": resolved_sku,
+                "title": resolved_title,
                 "price": price,
-                "sku": preset_data["sku"],
+                "price_original": price_orig,
+                "price_sale": price_sale,
+                "sku": resolved_sku,
+                "images": resolved_images,
+                "image_url": primary_image,
+                "description": resolved_desc,
                 "product_type": preset_data["product_type"],
                 "is_active": True,
                 "link_digital": preset_data["link_digital"],
             },
-            "message": f"Starter product berhasil diimpor ke toko '{tenant_name}'. Syarat kepemilikan katalog terpenuhi (Total: {total_products} produk)."
+            "message": f"Starter product '{resolved_title}' berhasil diimpor ke toko '{tenant_name}'. Syarat kepemilikan katalog terpenuhi (Total: {total_products} produk)."
         }
 
     except HTTPException:

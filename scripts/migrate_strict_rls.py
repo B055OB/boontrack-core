@@ -85,7 +85,7 @@ try:
         cur.execute(f'DROP POLICY IF EXISTS tenant_isolation_{tbl} ON public."{tbl}";')
         cur.execute(f'DROP POLICY IF EXISTS auth_permissive_{tbl} ON public."{tbl}";')
 
-        # Restrictive Tenant Isolation Policy (bukan USING true, melainkan wajib mencocokkan app.current_tenant_id)
+        # Restrictive Tenant Isolation Policy (wajib mencocokkan app.current_tenant_id)
         cur.execute(f"""
             CREATE POLICY tenant_isolation_{tbl} ON public."{tbl}"
             AS RESTRICTIVE
@@ -95,15 +95,20 @@ try:
             WITH CHECK (tenant_id::text = NULLIF(current_setting('app.current_tenant_id', true), ''));
         """)
 
-        # Permissive policy for authenticated role
+        # Permissive policy for authenticated role - ZERO WILDCARD (wajib mencocokkan app.current_tenant_id)
         cur.execute(f"""
             CREATE POLICY auth_permissive_{tbl} ON public."{tbl}"
             AS PERMISSIVE
             FOR ALL
             TO authenticated
-            USING (true)
-            WITH CHECK (true);
+            USING (tenant_id::text = NULLIF(current_setting('app.current_tenant_id', true), ''))
+            WITH CHECK (tenant_id::text = NULLIF(current_setting('app.current_tenant_id', true), ''));
         """)
+
+    # Clean up permissive wildcards on products and orders
+    cur.execute("DROP POLICY IF EXISTS allow_all_ops_products ON public.products;")
+    cur.execute("DROP POLICY IF EXISTS allow_all_ops_orders ON public.orders;")
+    cur.execute("DROP POLICY IF EXISTS allow_all_ops_capi_outbox ON public.capi_outbox;")
 
     print("[5] Hardening chat_sessions view...")
     cur.execute("ALTER VIEW IF EXISTS public.chat_sessions SET (security_invoker = true);")

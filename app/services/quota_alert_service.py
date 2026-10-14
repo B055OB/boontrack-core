@@ -78,6 +78,7 @@ async def trigger_quota_80_percent_alert(
     recipient_phone: str,
     current_usage: int,
     max_quota: int,
+    store_id: Optional[str] = None,
     phone_number_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -88,6 +89,8 @@ async def trigger_quota_80_percent_alert(
     """
     clean_phone = normalize_phone_number(recipient_phone) or recipient_phone
     percentage = (current_usage / max_quota * 100) if max_quota > 0 else 80.0
+    resolved_store = str(store_id or tenant_id).strip()
+    upgrade_link = f"https://shop.boontrack.com/dashboard/billing/upgrade?ref={resolved_store}"
 
     # 1. Pengecekan tabel supresi (RLS Ketat)
     if is_phone_suppressed(clean_phone, tenant_id=tenant_id):
@@ -100,13 +103,15 @@ async def trigger_quota_80_percent_alert(
             "reason": "PHONE_SUPPRESSED",
             "detail": f"Nomor {clean_phone} berada dalam daftar blacklist/opt-out (phone_suppressions).",
             "tenant_id": tenant_id,
+            "store_id": resolved_store,
+            "upgrade_link": upgrade_link,
             "recipient": clean_phone,
             "usage": current_usage,
             "max_quota": max_quota,
             "percentage": round(percentage, 1),
         }
 
-    # 2. Susun pesan peringatan kuota 80%
+    # 2. Susun pesan peringatan kuota 80% (Spesifikasi Growth)
     alert_text = (
         f"⚠️ *PERINGATAN KUOTA LAYANAN BOONTRACK ({round(percentage, 1)}%)*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -115,7 +120,7 @@ async def trigger_quota_80_percent_alert(
         f"💡 *Rekomendasi Tindakan:*\n"
         f"Untuk memastikan bot kasir 24 jam dan penerbit QRIS tidak terhenti, "
         f"Anda dapat melakukan top-up kuota sesi tambahan langsung dari Dashboard Toko:\n"
-        f"👉 https://dashboard.boontrack.com/settings/billing\n\n"
+        f"👉 {upgrade_link}\n\n"
         f"_Terima kasih telah menggunakan ekosistem BoonTrack!_"
     )
 
@@ -132,6 +137,9 @@ async def trigger_quota_80_percent_alert(
             "status": "sent",
             "sent": True,
             "tenant_id": tenant_id,
+            "store_id": resolved_store,
+            "upgrade_link": upgrade_link,
+            "alert_text": alert_text,
             "recipient": clean_phone,
             "usage": current_usage,
             "max_quota": max_quota,
@@ -145,5 +153,8 @@ async def trigger_quota_80_percent_alert(
             "sent": False,
             "error": str(err),
             "tenant_id": tenant_id,
+            "store_id": resolved_store,
+            "upgrade_link": upgrade_link,
+            "alert_text": alert_text,
             "recipient": clean_phone,
         }
