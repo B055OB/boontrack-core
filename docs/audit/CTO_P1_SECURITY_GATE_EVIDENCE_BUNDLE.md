@@ -1,10 +1,10 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Tested Base Commit SHA (Parent HEAD)**: `f4c576cdfcf2dff32da459e5dc20316b122943f1`
+- **Tested Base Commit SHA (Parent HEAD)**: `61994390f29a300f31e0226ec95cb6fbcdcbcc7a`
 - **Git Branch**: `main`
 - **Status Kebersihan Working Tree (`git status --porcelain`)**: `CLEAN (no uncommitted changes)`
-- **Waktu Audit (UTC)**: `2026-10-14 16:30:42 UTC`
-- **Waktu Audit (WIB)**: `2026-10-14 23:30:42 WIB`
+- **Waktu Audit (UTC)**: `2026-10-14 16:48:57 UTC`
+- **Waktu Audit (WIB)**: `2026-10-14 23:48:57 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **P1 CLOSED & APPROVED (ALL VERIFIED 100%)**
 - **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA.
@@ -53,7 +53,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.1s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.7s, max: 300s)`
 
 ### Lapis 4: Redis & AI Conversation Memory Boundary
 - **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).
@@ -89,7 +89,7 @@ Pengujian menggunakan fixture bersarang (*deeply nested payload*) dan exception 
 ```log
 Error encountered in payment engine: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 Traceback (most recent call last):
-  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 686, in generate_section_4
+  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 712, in generate_section_4
     raise ValueError(f"Fulfillment failed for {raw_phone} ({raw_email}) with key {raw_xendit}")
 ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 ```
@@ -109,11 +109,11 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Tested Base Commit SHA (Parent HEAD)**: `f4c576cdfcf2dff32da459e5dc20316b122943f1`
+- **Tested Base Commit SHA (Parent HEAD)**: `61994390f29a300f31e0226ec95cb6fbcdcbcc7a`
 - **Git Branch**: `main`
 - **Status Kebersihan Working Tree**: `CLEAN (no uncommitted changes)`
-- **Timestamp Eksekusi (UTC)**: `2026-10-14 16:30:42 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-10-14 23:30:42 WIB`
+- **Timestamp Eksekusi (UTC)**: `2026-10-14 16:48:57 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-10-14 23:48:57 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite (58/58 Tests PASSED)
