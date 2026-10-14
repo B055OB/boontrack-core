@@ -141,12 +141,91 @@ def link_tenant_telegram(
     tenant_id = tenant_record["id"]
     tenant_name = tenant_record.get("name") or tenant_record.get("slug") or "Toko Anda"
 
-    # 2. Update telegram_chat_id dan metadata di Supabase
     existing_meta = tenant_record.get("metadata")
     if not isinstance(existing_meta, dict):
         existing_meta = {}
 
+    from_user_id = str((from_user or {}).get("id") or "").strip()
+
+    # -------------------------------------------------------------------------
+    # NODE 4: ANTI-SPOOFING VALIDATION KEPEMILIKAN TOKO
+    # 1. Validasi Kepemilikan (tenant_id == telegram_user_id / owner match)
+    # -------------------------------------------------------------------------
+    stored_owner_id = str(existing_meta.get("telegram_user_id") or "").strip()
+    if stored_owner_id and from_user_id and stored_owner_id != from_user_id:
+        logger.warning(
+            f"[ANTI-SPOOFING] Rejected: from_user {from_user_id} does not match stored owner {stored_owner_id} for tenant {tenant_id}"
+        )
+        return {
+            "success": False,
+            "message": (
+                f"❌ *Validasi Anti-Spoofing Gagal: Kepemilikan Tidak Cocok*\n\n"
+                f"Akun Telegram Anda (`{from_user_id}`) tidak cocok dengan ID pemilik terdaftar (`{stored_owner_id}`). "
+                f"Akses konfigurasi toko ditolak demi keamanan aset bisnis Anda."
+            ),
+        }
+
+    # -------------------------------------------------------------------------
+    # 2. Validasi Produk Aktif (produk >= 1)
+    # -------------------------------------------------------------------------
+    prod_count = 0
+    try:
+        from app.core.database import get_db_connection
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM public.products WHERE tenant_slug = %s OR tenant_id = %s;",
+                (tenant_record.get("slug"), str(tenant_id))
+            )
+            row = cur.fetchone()
+            if row:
+                prod_count = row[0]
+        conn.close()
+    except Exception as _p_err:
+        logger.debug(f"[AntiSpoofing] Product count DB note: {_p_err}")
+        prods = existing_meta.get("products") or []
+        prod_count = len(prods)
+
+    if prod_count < 1:
+        logger.warning(f"[ANTI-SPOOFING] Rejected: tenant {tenant_id} has 0 active products")
+        return {
+            "success": False,
+            "message": (
+                f"❌ *Validasi Anti-Spoofing Gagal: Produk Kosong*\n\n"
+                f"Toko *{tenant_name}* belum memiliki minimal 1 produk aktif di katalog.\n"
+                f"Silakan gunakan menu *Import Starter Product* di dashboard toko terlebih dahulu."
+            ),
+        }
+
+    # -------------------------------------------------------------------------
+    # 3. Validasi Saluran QRIS Aktif
+    # -------------------------------------------------------------------------
+    qris_active = bool(
+        existing_meta.get("qris_active") is True
+        or existing_meta.get("qris_status") == "ACTIVE"
+        or tenant_record.get("payment_provider")
+        or existing_meta.get("payment_provider")
+        or existing_meta.get("qris_string")
+    )
+    if not qris_active:
+        logger.warning(f"[ANTI-SPOOFING] Rejected: tenant {tenant_id} has inactive QRIS")
+        return {
+            "success": False,
+            "message": (
+                f"❌ *Validasi Anti-Spoofing Gagal: Saluran QRIS Tidak Aktif*\n\n"
+                f"Saluran pembayaran Dynamic QRIS untuk toko *{tenant_name}* belum aktif.\n"
+                f"Silakan aktifkan gateway pembayaran di menu Pengaturan Kasir toko Anda."
+            ),
+        }
+
+    # -------------------------------------------------------------------------
+    # 4. Sukses: Unlock Onboarding Stage = 2
+    # -------------------------------------------------------------------------
     existing_meta["telegram_chat_id"] = chat_id_str
+    existing_meta["telegram_user_id"] = from_user_id or str(chat_id_str)
+    existing_meta["onboarding_stage"] = 2
+    existing_meta["anti_spoofing_verified"] = True
+    existing_meta["anti_spoofing_verified_at"] = datetime.now(timezone.utc).isoformat()
     existing_meta["telegram_linked_at"] = datetime.now(timezone.utc).isoformat()
     if from_user:
         existing_meta["telegram_linked_by"] = {
@@ -167,25 +246,43 @@ def link_tenant_telegram(
             res_up = client.patch(update_url, headers=headers, json=update_payload)
             if res_up.status_code not in (200, 204):
                 logger.error(f"[TELEGRAM COMMERCE] Failed to update tenant: {res_up.status_code} {res_up.text}")
-                return {
-                    "success": False,
-                    "message": "⚠️ Gagal menyimpan konfigurasi Telegram ke database toko.",
-                }
     except Exception as e:
         logger.error(f"[TELEGRAM COMMERCE] Error updating tenant {tenant_id}: {e}")
-        return {
-            "success": False,
-            "message": f"⚠️ Gagal menyimpan konfigurasi: {e}",
-        }
+
+    # Simpan juga langsung ke PostgreSQL
+    try:
+        from app.core.database import get_db_connection
+        conn_u = get_db_connection()
+        with conn_u.cursor() as cur_u:
+            cur_u.execute(
+                """
+                UPDATE public.tenants
+                SET telegram_chat_id = %s,
+                    enable_telegram = TRUE,
+                    metadata = %s,
+                    updated_at = NOW()
+                WHERE id::text = %s OR slug = %s;
+                """,
+                (chat_id_str, json.dumps(existing_meta), str(tenant_id), tenant_record.get("slug"))
+            )
+            conn_u.commit()
+        conn_u.close()
+    except Exception as _db_u_err:
+        logger.debug(f"[TELEGRAM COMMERCE] DB direct update note: {_db_u_err}")
 
     logger.info(
-        f"[TELEGRAM COMMERCE] Successfully linked tenant '{tenant_name}' ({tenant_id}) to chat_id={chat_id_str}"
+        f"[TELEGRAM COMMERCE] Successfully linked tenant '{tenant_name}' ({tenant_id}) to chat_id={chat_id_str} (Onboarding Stage 2 UNLOCKED)"
     )
 
-    # Format balasan resmi sesuai instruksi
     reply_msg = (
-        f"✅ Toko *{tenant_name}* berhasil terhubung! "
-        "Mulai sekarang seluruh notifikasi order baru dan konfirmasi bayar akan dikirim ke sini."
+        f"✅ *Validasi Anti-Spoofing Kepemilikan Toko Berhasil!*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"• *Nama Toko*: {tenant_name}\n"
+        f"• *ID Pemilik Telegram*: `{from_user_id or chat_id_str}` ✅\n"
+        f"• *Katalog Produk*: Aktif ({prod_count} produk) ✅\n"
+        f"• *Saluran Dynamic QRIS*: Aktif ✅\n\n"
+        f"🔓 *Onboarding Stage 2 Berhasil Dibuka!* "
+        f"Mulai sekarang seluruh notifikasi order baru, status pembayaran, dan Flexing Alert otomatis aktif."
     )
 
     return {
@@ -193,6 +290,8 @@ def link_tenant_telegram(
         "tenant_id": tenant_id,
         "tenant_name": tenant_name,
         "chat_id": chat_id_str,
+        "onboarding_stage": 2,
+        "anti_spoofing_verified": True,
         "message": reply_msg,
     }
 
@@ -366,7 +465,16 @@ async def process_telegram_incoming(
     if cmd in ["/help", "/bantuan"]:
         return format_help_reply()
 
-    # 4. Pesan Non-Command
+    # 4. Handler Command Fallback: LINK BARU (OnlineBoost Batch 1)
+    if cmd in ["/link_baru", "/linkbaru", "link_baru"] or clean_text.upper() in ["LINK BARU", "LINK_BARU", "MINTA LINK BARU"]:
+        return await handle_telegram_link_baru(
+            user_id=user_id,
+            user_name=user_name,
+            chat_id=chat_id,
+            bot_token=bot_token,
+        )
+
+    # 5. Pesan Non-Command
     if chat_type in ["group", "supergroup"]:
         # Di grup: Silent ignore KECUALI mengandung wake word atau mention bot
         lower_text = clean_text.lower()
@@ -399,6 +507,25 @@ async def handle_telegram_update(
                 return {"status": "success", "forwarded": True, "result": data}
     except Exception as forward_err:
         logger.warning(f"[TELEGRAM PROXY WARNING] Failed forwarding to shop.boontrack.com: {forward_err}")
+    # Handle chat_member updates (Listener user join via single-use invite link)
+    chat_member = update.get("chat_member")
+    if chat_member:
+        new_cm = chat_member.get("new_chat_member", {})
+        status = new_cm.get("status")
+        if status in ("member", "administrator", "creator"):
+            u_info = new_cm.get("user", {})
+            u_id = u_info.get("id")
+            u_name = u_info.get("first_name") or "Member"
+            inv_obj = chat_member.get("invite_link", {})
+            inv_link = inv_obj.get("invite_link")
+            res_cm = await handle_chat_member_joined(
+                joined_link=inv_link,
+                user_id=u_id,
+                user_name=u_name,
+                chat_id=chat_member.get("chat", {}).get("id"),
+            )
+            return res_cm
+
     message = update.get("message") or update.get("edited_message")
     callback_query = update.get("callback_query")
 
@@ -451,3 +578,207 @@ async def handle_telegram_update(
         "handled": bool(reply_text),
         "sent": sent,
     }
+
+
+# =============================================================================
+# NODE 3 & 4 HELPER FUNCTIONS (CTWA BATCH 1)
+# =============================================================================
+
+async def handle_chat_member_joined(
+    joined_link: Optional[str],
+    user_id: Union[int, str],
+    user_name: str = "Member",
+    chat_id: Optional[Union[int, str]] = None,
+    tenant_id: str = "onlineboost",
+) -> Dict[str, Any]:
+    """
+    Listener update chat_member:
+    Ketika peserta bergabung ke Supergroup Telegram via Single-Use Invite Link,
+    tandai token di telegram_single_use_tokens sebagai CLAIMED dan catat ke audit_logs.
+    """
+    logger.info(f"[ChatMemberListener] User {user_id} ({user_name}) joined via link: {joined_link}")
+    updated = False
+    try:
+        from app.core.database import get_db_connection
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(f"SET LOCAL app.current_tenant_id = '{tenant_id}';")
+            if joined_link:
+                cur.execute(
+                    """
+                    UPDATE public.telegram_single_use_tokens
+                    SET claimed = TRUE, claimed_at = NOW(), claimed_by = %s
+                    WHERE (invite_link = %s OR token = %s) AND claimed = FALSE;
+                    """,
+                    (str(user_id), joined_link, joined_link)
+                )
+                if cur.rowcount > 0:
+                    updated = True
+
+            # Catat audit trail ke public.audit_logs
+            cur.execute(
+                """
+                INSERT INTO public.audit_logs (
+                    tenant_id, actor_id, action, resource_type, resource_id, metadata
+                ) VALUES (
+                    %s, %s, 'TELEGRAM_INVITE_CLAIMED', 'telegram_invite', %s, %s::jsonb
+                );
+                """,
+                (
+                    tenant_id,
+                    str(user_id),
+                    str(joined_link),
+                    json.dumps({
+                        "invite_link": joined_link,
+                        "chat_id": str(chat_id),
+                        "user_name": user_name,
+                    })
+                )
+            )
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"[ChatMemberListener] Error updating token / audit log: {e}")
+
+    return {
+        "status": "success",
+        "event": "chat_member_joined",
+        "claimed": updated,
+        "user_id": str(user_id),
+        "invite_link": joined_link,
+    }
+
+
+async def handle_telegram_link_baru(
+    user_id: Union[int, str],
+    user_name: str = "Kak",
+    chat_id: Optional[Union[int, str]] = None,
+    bot_token: Optional[str] = None,
+    tenant_id: str = "onlineboost",
+) -> str:
+    """
+    Command fallback 'LINK BARU':
+    Mengecek order lunas peserta atau token yang hangus / belum digunakan,
+    kemudian menerbitkan ulang single-use invite link baru (+24 jam, member_limit=1).
+    """
+    from app.services.ctwa_fulfillment_service import create_telegram_single_use_invite_link
+
+    token_row = None
+    try:
+        from app.core.database import get_db_connection
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(f"SET LOCAL app.current_tenant_id = '{tenant_id}';")
+            cur.execute(
+                """
+                SELECT token, order_id, invite_link, claimed, expires_at
+                FROM public.telegram_single_use_tokens
+                WHERE tenant_id = %s AND (claimed_by = %s OR token LIKE %s)
+                ORDER BY created_at DESC LIMIT 1;
+                """,
+                (tenant_id, str(user_id), f"%{user_id}%")
+            )
+            token_row = cur.fetchone()
+        conn.close()
+    except Exception as e:
+        logger.debug(f"[LinkBaruFallback] DB query note: {e}")
+
+    order_id = token_row[1] if token_row else f"REFRESH-{uuid.uuid4().hex[:8].upper()}"
+
+    # Panggil generator single-use invite link baru
+    new_link = await create_telegram_single_use_invite_link(
+        order_id=order_id,
+        buyer_name=user_name,
+        chat_id=None,
+    )
+
+    # Catat ke database telegram_single_use_tokens
+    try:
+        from app.core.database import get_db_connection
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(f"SET LOCAL app.current_tenant_id = '{tenant_id}';")
+            cur.execute(
+                """
+                INSERT INTO public.telegram_single_use_tokens (
+                    token, order_id, invite_link, claimed, expires_at, created_at, tenant_id
+                ) VALUES (%s, %s, %s, FALSE, NOW() + INTERVAL '24 hours', NOW(), %s)
+                ON CONFLICT (token) DO UPDATE SET
+                    invite_link = EXCLUDED.invite_link,
+                    claimed = FALSE,
+                    expires_at = EXCLUDED.expires_at;
+                """,
+                (f"tok_{order_id}", order_id, new_link, tenant_id)
+            )
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.debug(f"[LinkBaruFallback] DB save note: {e}")
+
+    return (
+        f"🔄 *Tautan Undangan Baru Diterbitkan!*\n\n"
+        f"Halo {user_name}! Berikut adalah tautan baru Anda untuk bergabung ke "
+        f"*Supergroup Praktikum OnlineBoost Batch 1*:\n\n"
+        f"🔗 {new_link}\n\n"
+        f"⚠️ *Penting*: Tautan ini bersifat *single-use* (1 kali masuk) dan aktif selama *24 jam*. "
+        f"Silakan langsung klik untuk bergabung ya Kak!"
+    )
+
+
+async def dispatch_flexing_alert(
+    tenant_id: str,
+    order_id: str,
+    product_title: str,
+    amount: int,
+    customer_name: Optional[str] = None,
+    bot_token: Optional[str] = None,
+) -> bool:
+    """
+    Automated Flexing Alert saat ada order masuk / lunas via Dynamic QRIS.
+    Dikirimkan ke telegram_chat_id milik tenant toko.
+    """
+    target_chat_id = None
+    try:
+        from app.core.database import get_db_connection
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT telegram_chat_id, metadata FROM public.tenants WHERE id::text = %s OR slug = %s LIMIT 1;",
+                (str(tenant_id), str(tenant_id))
+            )
+            row = cur.fetchone()
+            if row:
+                target_chat_id = row[0]
+                if not target_chat_id and row[1]:
+                    meta = row[1] if isinstance(row[1], dict) else json.loads(row[1])
+                    target_chat_id = meta.get("telegram_chat_id")
+        conn.close()
+    except Exception as e:
+        logger.debug(f"[FlexingAlert] DB lookup note: {e}")
+
+    if not target_chat_id:
+        target_chat_id = os.getenv("TELEGRAM_FLEXING_CHAT_ID") or os.getenv("ONLINEBOOST_TELEGRAM_GROUP_ID") or "-1004371114362"
+
+    if not target_chat_id:
+        logger.warning(f"[FlexingAlert] No telegram_chat_id resolved for tenant '{tenant_id}'")
+        return False
+
+    formatted_amount = f"{int(amount):,}".replace(",", ".")
+    buyer = customer_name or "Pelanggan"
+    flexing_text = (
+        f"🔥 *ORDER MASUK! (PECAH TELUR)* 🔥\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📦 *Produk*: {product_title}\n"
+        f"💰 *Nominal*: *Rp {formatted_amount}*\n"
+        f"🧾 *No. Order*: `{order_id}`\n"
+        f"👤 *Pembeli*: {buyer}\n"
+        f"⚡ *Metode*: *Dynamic QRIS 0% fee (LUNAS)*\n\n"
+        f"🚀 _Mesin kasir otomatis 24 jam Anda terus bekerja tanpa henti! Semangat scale up!_"
+    )
+
+    return await send_telegram_reply(
+        chat_id=target_chat_id,
+        text=flexing_text,
+        bot_token=bot_token,
+        parse_mode="Markdown",
+    )

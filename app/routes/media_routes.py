@@ -26,6 +26,17 @@ logger = logging.getLogger("MEDIA_UPLOAD_ROUTE")
 media_router = APIRouter(prefix="/api/v1/media", tags=["Media Upload"])
 general_upload_router = APIRouter(tags=["Media Upload Direct"])
 
+def format_media_upload_error(exc: Exception) -> str:
+    raw = str(exc)
+    raw_lower = raw.lower()
+    if any(k in raw_lower for k in ["eproto", "handshake failure", "ssl alert", "tls", "ssl", "endpointconnectionerror"]):
+        return "Gagal mengunggah foto ke cloud storage karena kendala koneksi aman (TLS/SSL Handshake). Silakan coba beberapa saat lagi."
+    if any(k in raw_lower for k in ["connection refused", "connection reset", "timed out", "timeout"]):
+        return "Koneksi ke server cloud storage terputus atau timeout. Silakan periksa jaringan dan coba lagi."
+    if len(raw) > 160 or "traceback" in raw_lower or "file \"" in raw_lower:
+        return "Gagal memproses upload gambar. Silakan coba beberapa saat lagi."
+    return f"Gagal memproses upload gambar: {raw}"
+
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 MAX_WIDTH = 1200
 WEBP_QUALITY = 85
@@ -321,7 +332,7 @@ async def _fastapi_handle_upload(
         logger.error(f"[FastAPI Upload Exception] {exc}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Gagal memproses upload gambar: {str(exc)}"
+            detail=format_media_upload_error(exc)
         )
 
 
@@ -500,7 +511,7 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
     except Exception as exc:
         logger.error(f"[aiohttp_upload_image Exception] {exc}", exc_info=True)
         return web.json_response(
-            {"status": "error", "detail": f"Gagal memproses upload gambar: {str(exc)}"},
+            {"status": "error", "detail": format_media_upload_error(exc)},
             status=500,
             headers=cors_headers
         )

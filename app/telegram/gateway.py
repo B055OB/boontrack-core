@@ -44,6 +44,33 @@ async def handle_telegram_inbound(
         f"[TELEGRAM GATEWAY] Inbound update received: bot=@{bot.bot_username} tenant_id={tenant_id} user_id={from_user.get('id')}"
     )
 
+    # Check if chat_member update (user joined via single-use link)
+    chat_member = payload.get("chat_member")
+    if chat_member:
+        from app.services.telegram_commerce_service import handle_chat_member_joined
+        new_cm = chat_member.get("new_chat_member", {})
+        status = new_cm.get("status")
+        if status in ("member", "administrator", "creator"):
+            u_info = new_cm.get("user", {})
+            u_id = u_info.get("id")
+            u_name = u_info.get("first_name") or "Member"
+            inv_obj = chat_member.get("invite_link", {})
+            inv_link = inv_obj.get("invite_link")
+            cm_res = await handle_chat_member_joined(
+                joined_link=inv_link,
+                user_id=u_id,
+                user_name=u_name,
+                chat_id=chat_member.get("chat", {}).get("id"),
+                tenant_id=str(tenant_id),
+            )
+            return {
+                "status": "success",
+                "tenant_id": str(tenant_id),
+                "bot_username": bot.bot_username,
+                "event": "chat_member_joined",
+                "result": cm_res,
+            }
+
     # Process via Commerce Engine if command or text is present
     reply_sent = False
     if chat_id and text:

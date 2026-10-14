@@ -82,6 +82,7 @@ from app.routes.creator_storefront import router as creator_storefront_router, r
 from app.routes.digital_download_routes import router as digital_download_router, register_digital_download_routes
 from app.routes.inbox_routes import router as inbox_router, register_inbox_routes
 from app.routes.telegram_webhook_routes import router as telegram_webhook_router, register_telegram_webhook_routes
+from app.routes.store_starter_routes import store_starter_router
 from fastapi.staticfiles import StaticFiles
 
 # Inisialisasi Supabase Client
@@ -237,6 +238,7 @@ app.include_router(creator_storefront_router)
 app.include_router(digital_download_router)
 app.include_router(inbox_router)
 app.include_router(telegram_webhook_router)
+app.include_router(store_starter_router)
 
 # Mount Static Uploads
 uploads_dir = os.path.join(project_root, "assets", "uploads")

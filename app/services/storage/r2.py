@@ -38,12 +38,31 @@ class R2Client:
 
     @property
     def endpoint_url(self) -> str:
-        override = os.getenv("R2_ENDPOINT_URL")
+        pure_default = f"https://{self.account_id}.r2.cloudflarestorage.com" if self.account_id else "https://r2.cloudflarestorage.com"
+        override = os.getenv("R2_ENDPOINT") or os.getenv("R2_ENDPOINT_URL") or os.getenv("S3_ENDPOINT")
         if override:
-            return override.rstrip("/")
-        if self.account_id:
-            return f"https://{self.account_id}.r2.cloudflarestorage.com"
-        return "https://r2.cloudflarestorage.com"
+            raw = override.strip().rstrip("/")
+            if not raw.startswith("http://") and not raw.startswith("https://"):
+                raw = f"https://{raw}"
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(raw)
+                host = parsed.netloc.lower()
+                # Guard against custom CDN domain (assets.boontrack.com / r2.dev)
+                if "boontrack.com" in host or "r2.dev" in host or "r2.cloudflarestorage.com" not in host:
+                    logger.warning(f"[R2] Custom domain detected in endpoint ('{host}'). Re-routing to pure R2 S3 endpoint.")
+                    return pure_default
+                # Guard against bucket prefix on hostname
+                parts = host.split(".")
+                if len(parts) >= 4 and parts[-2] == "cloudflarestorage" and parts[-1] == "com" and parts[-3] == "r2":
+                    acc_part = parts[-4]
+                    if acc_part and acc_part != "r2" and acc_part != self.bucket_name.lower():
+                        return f"https://{acc_part}.r2.cloudflarestorage.com"
+                    return pure_default
+                return f"https://{host}"
+            except Exception:
+                return pure_default
+        return pure_default
 
     def _get_boto_client(self):
         """Initializes and caches boto3 client for Cloudflare R2."""

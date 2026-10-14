@@ -625,6 +625,23 @@ async def process_xendit_webhook_core(
 
     logger.info(f"[Xendit Webhook] Processing event: {event_id} | Order: {external_id} | Amount: Rp{amount:,} | Status: {event_status}")
 
+    # 1.4 Distributed Redis Lock SETNX (<150ms response guarantee & concurrency deduplication)
+    from app.core.redis import acquire_payment_lock
+    if external_id:
+        lock_acquired = acquire_payment_lock(external_id, ttl_seconds=60)
+        if not lock_acquired:
+            logger.info(
+                f"[Xendit Webhook] Concurrent intake rejected by Redis SETNX lock for '{external_id}'. Fast 200 OK return."
+            )
+            return {
+                "http_status": 200,
+                "response": {
+                    "status": "ALREADY_PROCESSING",
+                    "message": f"Transaction '{external_id}' is currently being processed by another worker",
+                    "idempotent": True,
+                }
+            }
+
     # Set distributed tracing context
     inbound_trace = headers.get("x-trace-id") or headers.get("x-request-id")
     set_trace_context(
@@ -889,6 +906,21 @@ async def process_xendit_webhook_core(
     asyncio.create_task(
         dispatch_payment_success_notifications(order_id=external_id)
     )
+
+    # Task 5: Automated Flexing Alert to Tenant Telegram Chat (@boonshop_bot)
+    try:
+        from app.services.telegram_commerce_service import dispatch_flexing_alert
+        asyncio.create_task(
+            dispatch_flexing_alert(
+                tenant_id=tenant_id,
+                order_id=external_id,
+                product_title=product_name,
+                amount=amount,
+                customer_name=data_obj.get("customer_name") or "Pelanggan",
+            )
+        )
+    except Exception as _flex_err:
+        logger.debug(f"[Xendit Webhook] Flexing alert dispatch note: {_flex_err}")
 
     logger.info(f"[Xendit Webhook] Settlement successful for '{external_id}' (Rp{amount:,})")
     return {

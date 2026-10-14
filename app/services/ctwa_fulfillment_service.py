@@ -247,6 +247,30 @@ async def fulfill_onlineboost_ctwa_order(
         except Exception as pg_upd_err:
             logger.debug(f"[CTWA FULFILLMENT] Postgres metadata update note: {pg_upd_err}")
 
+    # Simpan ke tabel telegram_single_use_tokens dengan RLS
+    try:
+        from app.core.database import get_db_connection
+        conn_tok = get_db_connection()
+        with conn_tok.cursor() as cur_tok:
+            cur_tok.execute(f"SET LOCAL app.current_tenant_id = '{tenant_id}';")
+            tok_str = f"tok_{order_id}"
+            cur_tok.execute(
+                """
+                INSERT INTO public.telegram_single_use_tokens (
+                    token, order_id, invite_link, claimed, expires_at, created_at, tenant_id
+                ) VALUES (%s, %s, %s, FALSE, NOW() + INTERVAL '24 hours', NOW(), %s)
+                ON CONFLICT (token) DO UPDATE SET
+                    invite_link = EXCLUDED.invite_link,
+                    expires_at = EXCLUDED.expires_at;
+                """,
+                (tok_str, order_id, single_use_link, tenant_id)
+            )
+            conn_tok.commit()
+        conn_tok.close()
+        logger.info(f"[CTWA FULFILLMENT] Recorded single-use invite link into telegram_single_use_tokens for order {order_id}")
+    except Exception as _tok_err:
+        logger.warning(f"[CTWA FULFILLMENT] Failed to record telegram_single_use_tokens: {_tok_err}")
+
     # 3. Susun Teks Konfirmasi Resmi Sesuai Spesifikasi Prompt
     confirmation_message = (
         f"Selamat Kak {resolved_name}! Pembayaran sebesar Rp{amt_formatted} untuk Kelas Inkubasi CTWA Batch 1 telah BERHASIL diverifikasi ✅\n\n"

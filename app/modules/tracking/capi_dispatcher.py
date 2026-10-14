@@ -309,10 +309,12 @@ class CapiDispatcher:
         product_ids: List[str],
         ctwa_clid: Optional[str] = None,
         occurred_at: Optional[datetime] = None,
+        test_event_code: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Mengirimkan event 'InitiateCheckout' ke Meta Conversions API.
         Trigger: Saat action validator meloloskan tombol [💳 Beli Sekarang (QR)].
+        Mendukung test_event_code untuk pengujian di Meta Test Events Sandbox.
         """
         try:
             if occurred_at is None:
@@ -346,7 +348,9 @@ class CapiDispatcher:
                     "content_type": "product",
                 },
             }
-            body = {"data": [event_payload]}
+            body: Dict[str, Any] = {"data": [event_payload]}
+            if test_event_code:
+                body["test_event_code"] = test_event_code.strip()
 
             dataset_id, token = await self.resolve_credentials(tenant_id)
             delivery_status = "PENDING"
@@ -403,11 +407,13 @@ class CapiDispatcher:
         order_id: str,
         ctwa_clid: Optional[str] = None,
         occurred_at: Optional[datetime] = None,
+        test_event_code: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Mengirimkan event 'Purchase' ke Meta Conversions API.
         Trigger: Saat webhook notifikasi pembayaran SUCCEEDED/PAID diterima.
         Deduplikasi: event_id disetel menggunakan order_id/payment_id.
+        Mendukung test_event_code untuk pengujian di Meta Test Events Sandbox.
         """
         try:
             if occurred_at is None:
@@ -447,7 +453,9 @@ class CapiDispatcher:
                     "content_type": "product",
                 },
             }
-            body = {"data": [event_payload]}
+            body: Dict[str, Any] = {"data": [event_payload]}
+            if test_event_code:
+                body["test_event_code"] = test_event_code.strip()
 
             dataset_id, token = await self.resolve_credentials(tenant_id)
             delivery_status = "PENDING"
@@ -456,10 +464,10 @@ class CapiDispatcher:
             if not dataset_id or not token or dataset_id.startswith("mock_") or token.startswith("mock_"):
                 logger.info(
                     f"[CAPI MOCK DISPATCH] Purchase for tenant '{tenant_id}', order '{order_id}' "
-                    f"(Amount: Rp{total_amount:,.0f}) | ctwa_clid={ctwa_clid}"
+                    f"(Amount: Rp{total_amount:,.0f}) | ctwa_clid={ctwa_clid} | test_event_code={test_event_code}"
                 )
                 delivery_status = "SENT"
-                resp_text = json.dumps({"status": "mock_sent", "events_received": 1})
+                resp_text = json.dumps({"status": "mock_sent", "events_received": 1, "test_event_code": test_event_code})
             else:
                 url = f"https://graph.facebook.com/{self.GRAPH_API_VERSION}/{dataset_id}/events"
                 try:
@@ -495,6 +503,54 @@ class CapiDispatcher:
         except Exception as e:
             logger.error(f"[CAPI PURCHASE DISPATCH ERROR] {e}", exc_info=True)
             return {"status": "FAILED", "error": str(e)}
+
+    async def run_sandbox_3x_test_events(
+        self,
+        tenant_id: str = "onlineboost",
+        test_event_code: str = "TEST99249",
+        phone: str = "6281234567890",
+    ) -> List[Dict[str, Any]]:
+        """
+        Menjalankan 3x Sandbox Meta CAPI dengan test_event_code (Fase 3 & Node 5).
+        1x InitiateCheckout + 2x Purchase.
+        """
+        results = []
+        # Event 1: InitiateCheckout
+        res1 = await self.dispatch_initiate_checkout(
+            tenant_id=tenant_id,
+            phone=phone,
+            total_amount=249000.0,
+            product_ids=["kelas-inkubasi-ctwa-batch-1-scale"],
+            test_event_code=test_event_code,
+        )
+        results.append(res1)
+
+        # Event 2: Purchase #1
+        order_1 = f"SANDBOX-OB1-{uuid.uuid4().hex[:6].upper()}"
+        res2 = await self.dispatch_purchase(
+            tenant_id=tenant_id,
+            phone=phone,
+            total_amount=249000.0,
+            product_ids=["kelas-inkubasi-ctwa-batch-1-scale"],
+            order_id=order_1,
+            test_event_code=test_event_code,
+        )
+        results.append(res2)
+
+        # Event 3: Purchase #2
+        order_2 = f"SANDBOX-OB1-{uuid.uuid4().hex[:6].upper()}"
+        res3 = await self.dispatch_purchase(
+            tenant_id=tenant_id,
+            phone=phone,
+            total_amount=249000.0,
+            product_ids=["kelas-inkubasi-ctwa-batch-1-scale"],
+            order_id=order_2,
+            test_event_code=test_event_code,
+        )
+        results.append(res3)
+
+        logger.info(f"[CAPI SANDBOX 3X] Successfully executed 3 test events with test_event_code={test_event_code}")
+        return results
 
 
 # Global singleton instance
