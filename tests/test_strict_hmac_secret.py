@@ -27,26 +27,29 @@ from app.core.security.inter_service_auth import (
 )
 
 
-def test_alias_only_raises_value_error():
+def test_alias_only_raises_value_error(monkeypatch):
     """Negative Test: BOONTRACK_HMAC_SECRET unset, but BOONTRACK_INTERNAL_HMAC_SECRET set.
     MUST raise ValueError. Zero fallback allowed."""
-    with patch.dict(os.environ, {"BOONTRACK_INTERNAL_HMAC_SECRET": "alias_secret_should_be_ignored"}, clear=True):
-        with pytest.raises(ValueError, match="BOONTRACK_HMAC_SECRET environment variable is missing"):
-            get_hmac_secret()
+    monkeypatch.delenv("BOONTRACK_HMAC_SECRET", raising=False)
+    monkeypatch.setenv("BOONTRACK_INTERNAL_HMAC_SECRET", "alias_secret_should_be_ignored")
+    with pytest.raises(ValueError, match="BOONTRACK_HMAC_SECRET environment variable is missing"):
+        get_hmac_secret()
 
 
-def test_no_secret_at_all_raises_value_error():
+def test_no_secret_at_all_raises_value_error(monkeypatch):
     """Negative Test: No HMAC secret environment variables set. MUST raise ValueError."""
-    with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValueError, match="BOONTRACK_HMAC_SECRET environment variable is missing"):
-            get_hmac_secret()
+    monkeypatch.delenv("BOONTRACK_HMAC_SECRET", raising=False)
+    monkeypatch.delenv("BOONTRACK_INTERNAL_HMAC_SECRET", raising=False)
+    with pytest.raises(ValueError, match="BOONTRACK_HMAC_SECRET environment variable is missing"):
+        get_hmac_secret()
 
 
-def test_blank_secret_raises_value_error():
+def test_blank_secret_raises_value_error(monkeypatch):
     """Negative Test: BOONTRACK_HMAC_SECRET is blank or whitespace. MUST raise ValueError."""
-    with patch.dict(os.environ, {"BOONTRACK_HMAC_SECRET": "   "}, clear=True):
-        with pytest.raises(ValueError, match="BOONTRACK_HMAC_SECRET environment variable is missing"):
-            get_hmac_secret()
+    monkeypatch.setenv("BOONTRACK_HMAC_SECRET", "   ")
+    monkeypatch.delenv("BOONTRACK_INTERNAL_HMAC_SECRET", raising=False)
+    with pytest.raises(ValueError, match="BOONTRACK_HMAC_SECRET environment variable is missing"):
+        get_hmac_secret()
 
 
 def test_valid_secret_retrieved_via_monkeypatch(monkeypatch):

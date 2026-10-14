@@ -118,6 +118,9 @@ def test_worker_db_mutation_cross_tenant_rejected_zero_rows():
     beta_tenant_id = "00000000-0000-0000-0000-00000000000b"
     test_beta_order_id = "test-worker-beta-order-999"
 
+    if not os.getenv("POSTGRES_PASSWORD") and not os.getenv("DATABASE_URL"):
+        pytest.skip("PostgreSQL credentials not configured in environment.")
+
     try:
         conn = get_db_connection()
     except Exception as exc:
