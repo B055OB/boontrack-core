@@ -113,6 +113,50 @@ def init_test_schema():
       USING (((tenant_id)::text = NULLIF(current_setting('app.current_tenant_id', true), '')) OR (tenant_slug = NULLIF(current_setting('app.current_tenant_id', true), '')))
       WITH CHECK (((tenant_id)::text = NULLIF(current_setting('app.current_tenant_id', true), '')) OR (tenant_slug = NULLIF(current_setting('app.current_tenant_id', true), '')));
 
+    CREATE TABLE IF NOT EXISTS public.tenants (
+      id UUID PRIMARY KEY,
+      name VARCHAR NOT NULL,
+      slug VARCHAR UNIQUE NOT NULL,
+      is_active BOOLEAN DEFAULT TRUE,
+      metadata JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    ALTER TABLE public.tenants ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_read_policy ON public.tenants;
+    CREATE POLICY tenant_read_policy ON public.tenants
+      AS PERMISSIVE FOR SELECT TO public
+      USING (true);
+
+    INSERT INTO public.tenants (id, name, slug)
+    VALUES 
+      ('00000000-0000-0000-0000-00000000000a', 'Tenant Alpha', 'tenant_alpha'),
+      ('00000000-0000-0000-0000-00000000000b', 'Tenant Beta', 'tenant_beta')
+    ON CONFLICT (slug) DO NOTHING;
+
+    CREATE TABLE IF NOT EXISTS public.whatsapp_connections (
+      id VARCHAR PRIMARY KEY,
+      tenant_id VARCHAR NOT NULL,
+      tenant_slug VARCHAR NOT NULL,
+      provider VARCHAR,
+      channel_type VARCHAR,
+      status VARCHAR,
+      is_connected BOOLEAN DEFAULT TRUE,
+      phone_number VARCHAR,
+      phone_number_id VARCHAR,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    ALTER TABLE public.whatsapp_connections ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.whatsapp_connections FORCE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS auth_permissive_whatsapp_connections ON public.whatsapp_connections;
+    CREATE POLICY auth_permissive_whatsapp_connections ON public.whatsapp_connections
+      AS PERMISSIVE FOR ALL TO public
+      USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''))
+      WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''));
+
     GRANT ALL ON SCHEMA public TO postgres;
     GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
     GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres;
