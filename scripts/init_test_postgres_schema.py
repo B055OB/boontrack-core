@@ -124,10 +124,22 @@ def init_test_schema():
     );
 
     ALTER TABLE public.tenants ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.tenants FORCE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_read_policy ON public.tenants;
-    CREATE POLICY tenant_read_policy ON public.tenants
+    DROP POLICY IF EXISTS public_select_active_tenants ON public.tenants;
+    CREATE POLICY public_select_active_tenants ON public.tenants
       AS PERMISSIVE FOR SELECT TO public
-      USING (true);
+      USING (
+        is_active = true
+        OR id = (
+          CASE 
+            WHEN current_setting('app.current_tenant_id', true) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            THEN current_setting('app.current_tenant_id', true)::uuid
+            ELSE NULL
+          END
+        )
+        OR slug = NULLIF(current_setting('app.current_tenant_id', true), '')
+      );
 
     INSERT INTO public.tenants (id, name, slug)
     VALUES 

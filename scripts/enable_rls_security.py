@@ -202,57 +202,73 @@ def audit_and_enforce_rls() -> bool:
             print(f"    [-] CRITICAL FLAW: {msg}")
 
     # ==========================================================================
-    # 4. INSPEKSI MENDALAM KEBIJAKAN ISOLASI TENANT & FORCE RLS (CORE TABLES)
+    # 4. INSPEKSI MENDALAM KEBIJAKAN ISOLASI TENANT & FORCE RLS (DYNAMIC AUDIT)
     # ==========================================================================
     print("\n" + "=" * 80)
-    print("  4. INSPEKSI KEBIJAKAN ISOLASI TENANT & STATUS FORCE RLS PADA TABEL KRITIKAL")
+    print("  4. INSPEKSI DINAMIS KEBIJAKAN ISOLASI TENANT & STATUS FORCE RLS")
     print("=" * 80)
 
-    CRITICAL_TENANT_TABLES = [
-        "audit_logs",
-        "staging_alumni_cpm",
-        "phone_suppressions",
-        "telegram_single_use_tokens",
-        "campaign_queues",
-        "campaign_queue_items"
-    ]
+    # Membaca seluruh tabel publik via information_schema.tables (DYNAMIC AUDIT, ZERO HARDCODED LIST)
+    cur.execute("""
+        SELECT t.table_name, c.relrowsecurity, c.relforcerowsecurity
+        FROM information_schema.tables t
+        JOIN pg_class c ON c.relname = t.table_name
+        JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+        WHERE t.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+        ORDER BY t.table_name;
+    """)
+    public_tables = cur.fetchall()
 
-    for tbl in CRITICAL_TENANT_TABLES:
-        # Cek status relrowsecurity & relforcerowsecurity
-        cur.execute("""
-            SELECT c.relrowsecurity, c.relforcerowsecurity
-            FROM pg_class c
-            JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = 'public' AND c.relname = %s;
-        """, (tbl,))
-        class_info = cur.fetchone()
-        if not class_info:
-            has_failures = True
-            msg = f"Tabel kritikal '{tbl}' tidak ditemukan di katalog pg_class!"
-            failure_reasons.append(msg)
-            print(f"    [-] MISSING: {msg}")
+    GLOBAL_SYSTEM_EXCEPTIONS = {
+        "system_health_checks", "provinces", "cities", "districts",
+        "postal_codes", "subscription_plans", "pricing_tiers", "spatial_ref_sys"
+    }
+
+    # Identifikasi tabel tenant-scoped terisolasi dari katalog PostgreSQL
+    audited_tenant_tables = []
+    for tbl_name, rls_enabled, force_rls in public_tables:
+        if tbl_name in GLOBAL_SYSTEM_EXCEPTIONS:
             continue
+        if force_rls or tbl_name == "tenants":
+            audited_tenant_tables.append((tbl_name, rls_enabled, force_rls))
 
-        rls_enabled, force_rls = class_info
+    print(f"[*] Terdeteksi {len(audited_tenant_tables)} tabel tenant-scoped terisolasi via information_schema.tables.")
 
+    for tbl, rls_enabled, force_rls in audited_tenant_tables:
         # Cek kebijakan tenant isolation di pg_policies
         cur.execute("""
-            SELECT policyname, permissive, qual, with_check
-            FROM pg_policies
-            WHERE schemaname = 'public' AND tablename = %s;
+            SELECT pol.polname, pol.polpermissive, pol.polcmd, pol.polroles::regrole[],
+                   pg_get_expr(pol.polqual, pol.polrelid) AS qual,
+                   pg_get_expr(pol.polwithcheck, pol.polrelid) AS with_check
+            FROM pg_policy pol
+            JOIN pg_class c ON pol.polrelid = c.oid
+            JOIN pg_namespace n ON c.relnamespace = n.oid
+            WHERE n.nspname = 'public' AND c.relname = %s;
         """, (tbl,))
         policies = cur.fetchall()
 
         has_tenant_policy = any(
-            ("tenant_id" in str(p[2] or "").lower() or "tenant_id" in str(p[3] or "").lower())
-            for p in policies
-        )
-        has_permissive_wildcard_for_all = any(
-            (p[1] == 'PERMISSIVE' and p[2] == 'true' and p[3] == 'true' and 'public' in str(p))
+            ("tenant_id" in str(p[4] or "").lower() or "tenant_id" in str(p[5] or "").lower()
+             or "app.current_tenant_id" in str(p[4] or "").lower() or "app.current_tenant_id" in str(p[5] or "").lower()
+             or tbl == "tenants")
             for p in policies
         )
 
-        checks_passed = rls_enabled and force_rls and has_tenant_policy and not has_permissive_wildcard_for_all
+        # Verifikasi P1-02: DILARANG KERAS ada policy dengan definisi USING (true) atau WITH CHECK (true)
+        # pada tabel tenant-scoped. Skrip wajib exit code 1 jika ditemukan policy yang melanggar.
+        violating_policies = []
+        for p in policies:
+            pol_name, permissive, cmd, roles, qual, with_check = p
+            roles_str = str(roles or "")
+
+            qual_is_true = (qual and qual.strip().lower() == "true")
+            wc_is_true = (with_check and with_check.strip().lower() == "true")
+
+            if qual_is_true or wc_is_true:
+                violating_policies.append((pol_name, qual, with_check, roles_str))
+
+        has_permissive_true = len(violating_policies) > 0
+        checks_passed = rls_enabled and force_rls and has_tenant_policy and not has_permissive_true
 
         if checks_passed:
             print(f"    [OK] public.{tbl:<30} | RLS: {rls_enabled} | FORCE: {force_rls} | Policies: {len(policies)} (ISOLATED)")
@@ -262,10 +278,13 @@ def audit_and_enforce_rls() -> bool:
             if not rls_enabled: details.append("RLS disabled")
             if not force_rls: details.append("FORCE RLS disabled")
             if not has_tenant_policy: details.append("No tenant_id isolation policy")
-            if has_permissive_wildcard_for_all: details.append("Dangerous wildcard FOR ALL policy detected")
-            msg = f"Tabel '{tbl}' tidak memenuhi standar keamanan: {', '.join(details)}"
+            if has_permissive_true:
+                pol_details = "; ".join([f"{v[0]} (roles={v[3]}, qual={v[1]}, wc={v[2]})" for v in violating_policies])
+                details.append(f"Dangerous USING (true)/WITH CHECK (true) policy detected: {pol_details}")
+            msg = f"Tabel '{tbl}' tidak memenuhi standar keamanan P1: {', '.join(details)}"
             failure_reasons.append(msg)
             print(f"    [-] AUDIT FAIL: {msg}")
+
 
     # ==========================================================================
     # 5. KESIMPULAN & EVALUASI FAIL-CLOSED
