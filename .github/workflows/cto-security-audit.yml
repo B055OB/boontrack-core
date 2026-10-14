@@ -52,7 +52,14 @@ jobs:
           POSTGRES_USER: ${{ secrets.POSTGRES_USER || 'postgres' }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
-          pytest tests/test_r2_tenant_authorization.py tests/test_strict_hmac_secret.py tests/test_worker_cross_tenant_isolation.py -v
+          set -o pipefail
+          python -m pytest tests/test_r2_tenant_authorization.py tests/test_strict_hmac_secret.py tests/test_worker_cross_tenant_isolation.py -v -ra --tb=short 2>&1 | tee /tmp/test_results.log || {
+            echo "## ❌ Pytest Failures" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat /tmp/test_results.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          }
 
       - name: Generate CTO P1 Security Gate Evidence Bundle Bound to Commit
         env:
