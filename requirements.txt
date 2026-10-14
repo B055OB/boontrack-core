@@ -16,8 +16,10 @@ google-auth-httplib2>=0.1.1
 # Database Client & Cache
 supabase>=2.0.0
 redis>=5.0.0
-# Network & Telegram Bot
-aiogram==2.25.2
+# Network & Telegram Bot (Dependencies for aiogram & bot network)
+Babel>=2.9.1
+certifi>=2021.10.8
+magic-filter>=1.0.9
 aiohttp>=3.9.5,<4.0.0
 httpx>=0.24.0
 python-dotenv>=1.0.0
