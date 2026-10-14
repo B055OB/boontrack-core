@@ -5240,3 +5240,54 @@ Setiap pembentukan URL melalui url_builder (Core) maupun resolver client (Inbox)
 ### 14.4. Prosedur Onboarding Tenant Baru (Zero Manual Code Change)
 - Penambahan domain kustom baru (misalnya via Cloudflare CNAME flattening) hanya perlu mengisi field custom_domain pada metadata record tenant di database.
 - Dilarang keras melakukan commit atau perubahan kode (di Core maupun Inbox) hanya untuk menambahkan domain spesifik per tenant.
+
+---
+
+## § 63. MULTI-TENANT PAYMENT ORCHESTRATION, BYO-GATEWAY & SECURITY BOUNDARIES (ADR 2026-10-14)
+
+> **Architectural Status**: 🔒 **APPROVED WITH GUARDRAILS (CTO SIGN-OFF & BATCH 1 GREEN LIGHT)**  
+> **Core Principle**: *"One Shared Payment Engine, Pluggable Gateway Adapters, Secret-Isolated Credentials, and Strict Handoff Fulfillment Boundaries."*
+
+### 63.1 Core Security & Payment Invariants
+1. **Single Source of Truth**: Backend adalah satu-satunya otoritas penentu harga, nominal tagihan, status pembayaran, entitlement, dan otorisasi fulfillment.
+2. **Deterministic Payment Intent**: Setiap transaksi terikat immutable pada satu tenant (`tenant_id`), satu payment rail, satu referensi gateway account, dan satu snapshot nominal/mata uang.
+3. **Zero Plaintext Secret**: Secret gateway, API key, webhook signature secret, atau bot token DILARANG KERAS disimpan dalam plaintext di `tenants.metadata`, source code, frontend, log audit, maupun konteks AI LLM.
+4. **Idempotency & Replay Protection**: Seluruh webhook pembayaran wajib diverifikasi tanda tangannya (HMAC/Callback Token), dicocokkan dengan payment intent aktif, dan diproses secara idempotent (0 efek samping ganda pada webhook retry).
+5. **Decoupled Lifecycle**: Status `PAID`/`SETTLED`, hak akses produk, pengiriman link digital/grup, dan komisi afiliasi adalah domain terpisah dengan siklus hidup masing-masing. Kegagalan downstream tidak boleh membatalkan transaksi yang telah sah dibayar.
+6. **Fail-Closed Rule**: Jika identitas tenant, payment intent, gateway account, atau kredensial gagal divalidasi, sistem wajib Fail-Closed (silent drop, zero outbound message, zero payment mutation). Dilarang fallback ke tenant lain atau akun global platform.
+
+### 63.2 Transitional In-Database Credential Vault (MVP Standard)
+Mendukung model BYO-Gateway (Bring Your Own Payment Gateway) untuk tenant B2B tanpa menambah dependensi server vault eksternal di fase awal:
+1. **Isolated Storage**: Kredensial gateway disimpan pada tabel terpisah `tenant_gateway_credentials`, dienkripsi di tingkat kolom menggunakan fungsi PostgreSQL `pgcrypto` (AES-256).
+2. **External Encryption Key**: Master encryption key wajib dikelola di luar database (disimpan di environment variable backend yang terlindungi, dilarang berada di skema DB atau metadata tenant). Mendukung key versioning dan prosedur rotasi.
+3. **Least Privilege & Role Isolation**: Pembacaan data kredensial HANYA diizinkan untuk `service_role` backend terpercaya. Dilarang keras mengekspos field secret melalui API tenant-facing, response JSON, maupun client dashboard.
+4. **Audit Logging**: Setiap pembuatan, pembaruan, rotasi secret, dan uji koneksi gateway wajib mencatat jejak audit (`actor_id`, `tenant_id`, `provider`, `action`, `timestamp`).
+
+### 63.3 In-App Dynamic QRIS & Nominal Rules
+1. **Pemisahan Evaluasi Nominal Berbasis Metode Bayar**:
+   - **Gateway Rail (`XENDIT_QRIS`, `MIDTRANS`, `BYO_GATEWAY`)**: Nominal ditagihkan bulat murni (`base_amount`) sesuai payment intent tanpa penambahan atau pengurangan kode unik. Barcode QRIS dinamis berlisensi BI langsung dirender in-app modal (`<QRCodeSVG />`).
+   - **Manual Rail (`MANUAL_TRANSFER`, `SELLER_NATIVE_QRIS`)**: Tetap mempertahankan alokasi kode unik 3 digit downward berbatas waktu (rolling window anti-collision) untuk pencocokan mutasi kasir/OCR.
+2. **Realtime UI Projection**: Frontend checkout modal menggunakan Supabase Realtime / Polling 2,5s sebagai proyeksi tampilan status dari backend. Jika koneksi realtime terputus, modal wajib fallback ke polling.
+
+### 63.4 OnlineBoost Batch 1 Funnel Orchestration & Inbound Automation
+1. **Keyword Ingress Gatekeeper (`MAU METODE RAHASIA`)**:
+   - Pesan masuk via WABA Meta Cloud API / WhatsApp Gateway yang memuat keyword `MAU METODE RAHASIA` (case-insensitive & whitespace-tolerant) diintersepsi sebelum memicu ConversationEngine/LLM.
+   - **CRM Customer Tagging**: Pelanggan otomatis dibuat/diperbarui di tabel `contacts` dengan lifecycle stage `LEAD`, disematkan tag `awaiting_payment`, dan dicatat ke `contact_tags` serta `conversations.metadata`.
+   - **Direct Registration Offer**: Mengirimkan auto-reply terstruktur yang merangkum kurikulum 10 langkah, kuota 50 peserta, diskon promo Rp249.000, serta tautan checkout langsung ke landing page resmi: `https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale`.
+
+### 63.5 Dynamic Single-Use Telegram Invite Link Protocol (`createChatInviteLink`)
+1. **Penerbitan Tautan Sekali Pakai (Single-Use, Time-Limited)**:
+   - Pada saat callback settlement Xendit diterima (`event: qr.payment` / `invoice.paid`), sistem memicu pemanggilan Bot Telegram API `createChatInviteLink` (`lib/telegram/telegram-invite-service.ts`) ke supergroup target (`-1004371114362` via `channel_bindings`):
+     - `member_limit`: **1 orang** (mencegah pembagian link akses gratis lintas-pengguna).
+     - `expire_date`: **+86400 detik (24 jam)** sejak settlement.
+   - **Graceful Fallback**: Jika pemanggilan API Telegram mengalami kegagalan atau rate-limit (HTTP 429), sistem secara otomatis mengembalikan tautan admin approval resmi: `https://t.me/+WZ6alwTIjjExODc1`.
+2. **Mutasi Settlement & Tagging Otomatis (`customer_batch1_paid`)**:
+   - Tabel `orders`: dimutasi ke `status = 'PAID'`, `payment_status = 'PAID'`, `order_status = 'COMPLETED'`, `customer_tag = 'customer_batch1_paid'`, `download_url = <invite_url>`.
+   - Tabel `contacts`: Tag `awaiting_payment` otomatis dicopot, disematkan tag `customer_batch1_paid`, dan stage dinaikkan ke `CUSTOMER`.
+   - Tabel `message_outbox`: Mengantrekan template fulfillment WhatsApp resmi berisi tautan invite Telegram langsung ke nomor pembeli (`phone_number_id: 1419090974617162`).
+
+### 63.6 Pre-Flight Smoke Test & Zero Residue Audit
+1. **Siklus Pengujian Otomatis 100% Pass**:
+   - Seluruh alur (Inbound Keyword $\rightarrow$ Tagging `awaiting_payment` $\rightarrow$ Order Creation Rp249.000 $\rightarrow$ Webhook Settlement $\rightarrow$ Mutasi `customer_batch1_paid` $\rightarrow$ Telegram Invite Generation $\rightarrow$ WABA Outbox Notification) wajib divalidasi end-to-end sebelum pelepasan siaran broadcast.
+   - Menggunakan nomor dummy dan order uji coba dengan verifikasi *Clean Slate Protocol* (0 residu transaksi, contact, atau outbox di database Supabase).
+
