@@ -112,12 +112,22 @@ jobs:
           POSTGRES_USER: ${{ secrets.POSTGRES_USER || 'postgres' }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'test_ci_postgres_password' }}
         run: |
-          python scripts/generate_cto_p1_evidence_bundle.py
+          set -o pipefail
+          python scripts/generate_cto_p1_evidence_bundle.py 2>&1 | tee /tmp/bundle_generation.log || {
+            echo "## ❌ Bundle Generation Error" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat /tmp/bundle_generation.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          }
 
       - name: Upload CTO Audit Evidence Bundle Artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cto-p1-evidence-bundle-${{ github.sha }}
-          path: docs/audit/CTO_P1_SECURITY_GATE_EVIDENCE_BUNDLE.md
+          path: |
+            docs/audit/CTO_P1_SECURITY_GATE_EVIDENCE_BUNDLE.md
+            /tmp/bundle_generation.log
           retention-days: 30
 

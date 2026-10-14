@@ -10,6 +10,7 @@ scripts/tmp_*
 __pycache__/
 *.pyc
 .vscode/
+.pytest_cache/
 
 # Temporary dynamic media & document artifacts
 *.png

@@ -135,6 +135,7 @@ class CTOEvidenceBundleGenerator:
     def __init__(self):
         self.sections_output: Dict[int, str] = {}
         self.all_passed = True
+        self.failures: List[str] = []
         self.base_commit_sha = get_git_base_commit_sha()
         self.branch = get_git_branch()
         self.working_tree_status = get_git_working_tree_status()
@@ -273,6 +274,7 @@ class CTOEvidenceBundleGenerator:
             return "\n".join(lines)
         except Exception as e:
             self.all_passed = False
+            self.failures.append(f"Section 1 (DB Catalog Inventory): {type(e).__name__} - {e}")
             lines = [
                 "## BAGIAN 1: TABEL INVENTARISASI LENGKAP 129 TABEL & POLICY RLS",
                 "",
@@ -320,6 +322,7 @@ class CTOEvidenceBundleGenerator:
         lines.append("")
         if not l1_passed:
             self.all_passed = False
+            self.failures.append(f"Section 2 Lapis 1 (API Outbound Channel): {l1_msg}")
 
         # Lapis 2: Database Layer + Connection Pool (Role 'authenticated')
         lines.append("### Lapis 2: Database Layer + Connection Pool (Role 'authenticated' + SET LOCAL)")
@@ -380,6 +383,7 @@ class CTOEvidenceBundleGenerator:
 
         if not l2_passed:
             self.all_passed = False
+            self.failures.append(f"Section 2 Lapis 2 (DB RLS Staging): {l2_msg}")
 
         lines.append(f"- **Skenario**: Role database sesungguhnya (`authenticated`, non-superuser) membaca baris data rahasia `staging_alumni_cpm` milik Tenant Alpha saat session di-set ke `tenant_beta`.")
         lines.append(f"- **Ekspektasi**: PostgreSQL RLS engine mengembalikan tepat 0 baris (zero visibility).")
@@ -408,6 +412,7 @@ class CTOEvidenceBundleGenerator:
 
         if not l3_tamper_passed or is_valid_expired:
             self.all_passed = False
+            self.failures.append(f"Section 2 Lapis 3 (HMAC Anti-Replay): tamper_passed={l3_tamper_passed}, expired_valid={is_valid_expired}, reason={reason_expired}")
 
         lines.append(f"- **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.")
         lines.append(f"- **Hasil Skenario A**: `{'PASS ✅' if l3_tamper_passed else 'FAIL ❌'}` — {l3_tamper_msg}")
@@ -436,6 +441,7 @@ class CTOEvidenceBundleGenerator:
 
         if not l4_redis_passed or not l4_ai_passed:
             self.all_passed = False
+            self.failures.append(f"Section 2 Lapis 4 (Redis/AI Memory): redis_passed={l4_redis_passed}, ai_passed={l4_ai_passed}")
 
         lines.append(f"- **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).")
         lines.append(f"- **Hasil Skenario A**: `{'PASS ✅' if l4_redis_passed else 'FAIL ❌'}` — {l4_redis_msg}")
@@ -540,6 +546,7 @@ class CTOEvidenceBundleGenerator:
 
         if not l5_r2_passed or not l5_ttl_passed or not l5_fail_closed_passed or not l5_tamper_passed or not l5_system_passed:
             self.all_passed = False
+            self.failures.append(f"Section 2 Lapis 5 (R2 Storage): r2={l5_r2_passed}, ttl={l5_ttl_passed}, fail_closed={l5_fail_closed_passed}, tamper={l5_tamper_passed}, system={l5_system_passed}, msg='{l5_system_msg}'")
 
         lines.append(f"- **Skenario A (Otorisasi Objek)**: Tenant Alpha meminta Presigned URL untuk objek privat milik Tenant Beta (`tenants/tenant_beta/private/draft.mp4`).")
         lines.append(f"- **Hasil Skenario A**: `{'PASS ✅' if l5_r2_passed else 'FAIL ❌'}` — {l5_r2_msg}")
@@ -593,6 +600,7 @@ class CTOEvidenceBundleGenerator:
 
         if not l6_worker_passed or not l6_hygiene_passed:
             self.all_passed = False
+            self.failures.append(f"Section 2 Lapis 6 (Worker Scope & Hygiene): worker={l6_worker_passed}, hygiene={l6_hygiene_passed}, msg='{l6_hygiene_msg}'")
 
         lines.append(f"- **Skenario A (Scope Isolation)**: Background worker yang berjalan di bawah thread context Tenant Alpha menerima payload antrean job milik Tenant Beta.")
         lines.append(f"- **Hasil Skenario A**: `{'PASS ✅' if l6_worker_passed else 'FAIL ❌'}` — {l6_worker_msg}")
@@ -653,6 +661,7 @@ class CTOEvidenceBundleGenerator:
             return "\n".join(lines)
         except Exception as e:
             self.all_passed = False
+            self.failures.append(f"Section 3 (Runtime DB Roles): {type(e).__name__} - {e}")
             lines = [
                 "## BAGIAN 3: BUKTI PEMERIKSAAN KONFIGURASI & PRIVILEGE RUNTIME",
                 "",
@@ -735,6 +744,7 @@ class CTOEvidenceBundleGenerator:
 
         if phone_leaked or email_leaked or xendit_leaked or tg_leaked or nik_leaked:
             self.all_passed = False
+            self.failures.append(f"Section 4 (PII Leak): phone={phone_leaked}, email={email_leaked}, xendit={xendit_leaked}, tg={tg_leaked}, nik={nik_leaked}")
 
         lines.append("### Cuplikan Output Log Hasil Sanitasi Runtime (Zero Plaintext Leak)")
         lines.append("```log")
@@ -910,4 +920,6 @@ if __name__ == "__main__":
     print(report)
     if not generator.all_passed:
         print("\n❌ CRITICAL: Evidence bundle audit checks failed or inconclusive!", file=sys.stderr)
+        for fail in generator.failures:
+            print(f"  - [FAILURE] {fail}", file=sys.stderr)
         sys.exit(1)
