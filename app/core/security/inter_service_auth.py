@@ -42,7 +42,6 @@ def get_hmac_secret(explicit_secret: Optional[str] = None) -> str:
     secret = (
         os.getenv("BOONTRACK_HMAC_SECRET")
         or os.getenv("BOONTRACK_INTERNAL_HMAC_SECRET")
-        or os.getenv("CORE_INBOX_SHARED_SECRET")
     )
     if not secret or not secret.strip():
         logger.critical("[SECURITY_CRITICAL] BOONTRACK_HMAC_SECRET environment variable is missing. Fail-Secure mode active.")

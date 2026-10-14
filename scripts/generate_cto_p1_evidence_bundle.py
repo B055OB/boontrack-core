@@ -75,12 +75,27 @@ def get_git_branch() -> str:
         return "main"
 
 
+def get_git_commit_timestamp() -> str:
+    """Dynamically extracts the actual git commit timestamp or current UTC time."""
+    try:
+        res = subprocess.run(
+            ["git", "log", "-1", "--format=%cd", "--date=format:%Y-%m-%d %H:%M:%S UTC"],
+            stdout=subprocess.PIPE, text=True, check=True
+        )
+        val = res.stdout.strip()
+        if val:
+            return val
+    except Exception:
+        pass
+    return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+
+
 class CTOEvidenceBundleGenerator:
     def __init__(self):
         self.sections_output: Dict[int, str] = {}
         self.commit_sha = get_git_commit_sha()
         self.branch = get_git_branch()
-        self.timestamp_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+        self.timestamp_utc = get_git_commit_timestamp()
         install_global_pii_sanitizer()
 
     # =========================================================================
@@ -387,12 +402,38 @@ class CTOEvidenceBundleGenerator:
         except Exception as e:
             l5_fail_closed_msg = f"Unexpected exception: {type(e).__name__} - {e}"
 
+        # Skenario D: Structural Path Traversal & Parameter Tampering (P1-H3)
+        l5_tamper_passed = False
+        l5_tamper_msg = ""
+        try:
+            # 1. Path traversal attempt
+            try:
+                generate_presigned_download_url("tenants/tenant_alpha/../tenant_beta/private.mp4", current_tenant_id="tenant_alpha")
+                traversal_blocked = False
+            except PermissionError:
+                traversal_blocked = True
+
+            # 2. Parameter tampering attempt
+            try:
+                generate_presigned_download_url("tenants/tenant_alpha/private.mp4", current_tenant_id="tenant_alpha", tenant_id="tenant_beta")
+                tamper_blocked = False
+            except PermissionError:
+                tamper_blocked = True
+
+            if traversal_blocked and tamper_blocked:
+                l5_tamper_passed = True
+                l5_tamper_msg = "Path traversal ('..') dan manipulasi parameter tenant ditolak tegas dengan PermissionError (HTTP 403 equivalent)."
+        except Exception as e:
+            l5_tamper_msg = str(e)
+
         lines.append(f"- **Skenario A (Otorisasi Objek)**: Tenant Alpha meminta Presigned URL untuk objek privat milik Tenant Beta (`tenants/tenant_beta/private/draft.mp4`).")
         lines.append(f"- **Hasil Skenario A**: `{'PASS ✅' if l5_r2_passed else 'FAIL ❌'}` — {l5_r2_msg}")
         lines.append(f"- **Skenario B (TTL Enforcement)**: Pembuatan Presigned URL meminta masa berlaku 1800 detik (30 menit > batas 15 menit / 900s).")
         lines.append(f"- **Hasil Skenario B**: `{'PASS ✅' if l5_ttl_passed else 'FAIL ❌'}` — {l5_ttl_msg}")
         lines.append(f"- **Skenario C (Fail-Closed Tanpa Mock Fallback)**: Kredensial R2 hilang / gagal inisialisasi wajib melempar RuntimeError (bukan mock URL / fallback lokal).")
         lines.append(f"- **Hasil Skenario C**: `{'PASS ✅' if l5_fail_closed_passed else 'FAIL ❌'}` — {l5_fail_closed_msg}")
+        lines.append(f"- **Skenario D (Otorisasi Struktural & Anti-Tampering)**: Validasi struktural menolak path-traversal dan mendeteksi manipulasi parameter (current_tenant_id != tenant_id).")
+        lines.append(f"- **Hasil Skenario D**: `{'PASS ✅' if l5_tamper_passed else 'FAIL ❌'}` — {l5_tamper_msg}")
         lines.append("")
 
         # Lapis 6: Background Worker Execution Scope

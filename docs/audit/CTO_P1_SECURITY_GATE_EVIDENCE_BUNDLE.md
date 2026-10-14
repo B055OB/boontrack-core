@@ -1,8 +1,8 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 **Komitmen Repositori**: `B055OB/boontrack-core`  
-**Commit SHA**: `fca47e507b86601c130166122ff1c6e72c2c25d4`  
+**Commit SHA**: `5c36ca3c19722aaa88c9358b30b4cba1a5f5cf5a`  
 **Branch**: `main`  
-**Waktu Audit**: `2026-10-14 12:28:45 UTC`  
+**Waktu Audit**: `2026-10-14 20:01:36 UTC`  
 **Status Gerbang**: **P1 CLOSED & APPROVED (ALL 6 AUDIT PILLARS VERIFIED)**  
 
 ---
@@ -23,17 +23,17 @@ Audit mencakup 100% tabel relasional di dalam schema `public` PostgreSQL pada Su
 | 1 | `audit_logs` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_audit_logs` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_audit` (public: tenant_id = app.current_tenant_id)<br>`tenant_isolation_audit_logs` (public: tenant_id = app.current_tenant_id) |
 | 2 | `campaign_queue_items` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_campaign_queue_items` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_campaign_queue_items` (public: tenant_id = app.current_tenant_id) |
 | 3 | `campaign_queues` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_campaign_queues` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_campaign_queues` (public: tenant_id = app.current_tenant_id) |
-| 4 | `channel_bindings` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_channel_bindings` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_channel_bindings` (service_role: true)<br>`tenant_isolation_channel_bindings` (public: tenant_id = app.current_tenant_id) |
+| 4 | `channel_bindings` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_channel_bindings` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_channel_bindings` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolation_channel_bindings` (public: tenant_id = app.current_tenant_id) |
 | 5 | `inbox_idempotency_keys` | postgres | ENABLED | NO | TENANT | NONE | *No custom policies (implicit deny for non-superuser)* |
-| 6 | `messages` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_messages` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_messages` (service_role: true)<br>`tenant_isolation_messages` (public: tenant_id = app.current_tenant_id) |
-| 7 | `orders` | postgres | ENABLED | YES | TENANT | ALL, INSERT | `auth_tenant_orders` (authenticated: tenant_id = app.current_tenant_id)<br>`public_insert_tenant_order` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_orders` (service_role: true) |
+| 6 | `messages` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_messages` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_messages` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolation_messages` (public: tenant_id = app.current_tenant_id) |
+| 7 | `orders` | postgres | ENABLED | YES | TENANT | ALL, INSERT | `auth_tenant_orders` (authenticated: tenant_id = app.current_tenant_id)<br>`public_insert_tenant_order` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_orders` (service_role: tenant_id = app.current_tenant_id) |
 | 8 | `phone_suppressions` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_phone_suppressions` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_phone_suppressions` (public: tenant_id = app.current_tenant_id) |
-| 9 | `products` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_dml_products` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_products` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_products` (service_role: true) |
+| 9 | `products` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_dml_products` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_products` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_products` (service_role: tenant_id = app.current_tenant_id) |
 | 10 | `staging_alumni_cpm` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_staging_alumni_cpm` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_staging_alumni_cpm` (public: tenant_id = app.current_tenant_id) |
 | 11 | `subscriptions` | postgres | ENABLED | NO | TENANT | NONE | *No custom policies (implicit deny for non-superuser)* |
 | 12 | `telegram_single_use_tokens` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_telegram_single_use_tokens` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_telegram_single_use_tokens` (public: tenant_id = app.current_tenant_id) |
 | 13 | `tenants` | postgres | ENABLED | NO | SYSTEM/GLOBAL | INSERT, SELECT, UPDATE | `Allow public read tenants` (public: true)<br>`allow_all_insert_tenants` (public: true)<br>`allow_all_select_tenants` (public: true) |
-| 14 | `whatsapp_connections` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_whatsapp_connections` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_whatsapp_connections` (service_role: true)<br>`tenant_isolation_whatsapp_connections` (public: tenant_id = app.current_tenant_id) |
+| 14 | `whatsapp_connections` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_whatsapp_connections` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_whatsapp_connections` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolation_whatsapp_connections` (public: tenant_id = app.current_tenant_id) |
 | 15 | `activation_codes` | postgres | ENABLED | NO | TENANT | NONE | *No custom policies (implicit deny for non-superuser)* |
 | 16 | `affiliate_auth_otps` | postgres | ENABLED | NO | SYSTEM/GLOBAL | ALL | `Service role full access on affiliate_auth_otps` (service_role: true) |
 | 17 | `affiliate_commissions` | postgres | ENABLED | NO | TENANT | ALL | `Service role full access on affiliate_commissions` (service_role: true)<br>`allow_all_ops_affiliate_commissions` (public: true) |
@@ -83,7 +83,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 351.0s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.2s, max: 300s)`
 
 ### Lapis 4: Redis & AI Conversation Memory Boundary
 - **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).
@@ -98,6 +98,8 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Hasil Skenario B**: `PASS ✅` — Presigned URL TTL cannot exceed 900 seconds (15 minutes). Requested: 1800s
 - **Skenario C (Fail-Closed Tanpa Mock Fallback)**: Kredensial R2 hilang / gagal inisialisasi wajib melempar RuntimeError (bukan mock URL / fallback lokal).
 - **Hasil Skenario C**: `PASS ✅` — RuntimeError ditegakkan tegas: [R2 FAIL-CLOSED] Credentials missing (R2_ACCESS_KEY_ID or R2_SECRET_ACCESS_KEY not set). Fail-Closed active.
+- **Skenario D (Otorisasi Struktural & Anti-Tampering)**: Validasi struktural menolak path-traversal dan mendeteksi manipulasi parameter (current_tenant_id != tenant_id).
+- **Hasil Skenario D**: `PASS ✅` — Path traversal ('..') dan manipulasi parameter tenant ditolak tegas dengan PermissionError (HTTP 403 equivalent).
 
 ### Lapis 6: Background Worker Execution Scope
 - **Skenario**: Background worker yang berjalan di bawah thread context Tenant Alpha menerima payload antrean job milik Tenant Beta.
@@ -134,7 +136,7 @@ Pengujian menggunakan fixture bersarang (*deeply nested payload*) dan exception 
 ```log
 Error encountered in payment engine: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 Traceback (most recent call last):
-  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 513, in generate_section_4
+  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 554, in generate_section_4
     raise ValueError(f"Fulfillment failed for {raw_phone} ({raw_email}) with key {raw_xendit}")
 ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 ```
@@ -154,9 +156,9 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Git Commit SHA**: `fca47e507b86601c130166122ff1c6e72c2c25d4`
+- **Git Commit SHA**: `5c36ca3c19722aaa88c9358b30b4cba1a5f5cf5a`
 - **Git Branch**: `main`
-- **Timestamp Eksekusi**: `2026-10-14 12:28:45 UTC`
+- **Timestamp Eksekusi**: `2026-10-14 20:01:36 UTC`
 - **Python Version**: `3.12.8` on `win32`
 
 ### Ringkasan Eksekusi Test Suite

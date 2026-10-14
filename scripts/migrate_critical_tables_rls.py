@@ -16,6 +16,10 @@ import sys
 import os
 from dotenv import load_dotenv
 
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 load_dotenv()
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -54,7 +58,16 @@ def apply_critical_rls_hardening():
         cur.execute("""
             CREATE POLICY service_role_all_messages ON public.messages
             AS PERMISSIVE FOR ALL TO service_role
-            USING (true) WITH CHECK (true);
+            USING (
+                (current_user = 'service_role' OR auth.role() = 'service_role')
+                AND (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL 
+                     OR tenant_id::text = current_setting('app.current_tenant_id', true))
+            )
+            WITH CHECK (
+                (current_user = 'service_role' OR auth.role() = 'service_role')
+                AND (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL 
+                     OR tenant_id::text = current_setting('app.current_tenant_id', true))
+            );
         """)
 
         print("[2/5] Hardening RLS on 'whatsapp_connections'...")
@@ -85,7 +98,18 @@ def apply_critical_rls_hardening():
         cur.execute("""
             CREATE POLICY service_role_all_whatsapp_connections ON public.whatsapp_connections
             AS PERMISSIVE FOR ALL TO service_role
-            USING (true) WITH CHECK (true);
+            USING (
+                (current_user = 'service_role' OR auth.role() = 'service_role')
+                AND (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL 
+                     OR tenant_id::text = current_setting('app.current_tenant_id', true)
+                     OR tenant_slug::text = current_setting('app.current_tenant_id', true))
+            )
+            WITH CHECK (
+                (current_user = 'service_role' OR auth.role() = 'service_role')
+                AND (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL 
+                     OR tenant_id::text = current_setting('app.current_tenant_id', true)
+                     OR tenant_slug::text = current_setting('app.current_tenant_id', true))
+            );
         """)
 
         print("[3/5] Hardening RLS on 'channel_bindings'...")
@@ -116,7 +140,18 @@ def apply_critical_rls_hardening():
         cur.execute("""
             CREATE POLICY service_role_all_channel_bindings ON public.channel_bindings
             AS PERMISSIVE FOR ALL TO service_role
-            USING (true) WITH CHECK (true);
+            USING (
+                (current_user = 'service_role' OR auth.role() = 'service_role')
+                AND (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL 
+                     OR tenant_id::text = current_setting('app.current_tenant_id', true)
+                     OR tenant_slug::text = current_setting('app.current_tenant_id', true))
+            )
+            WITH CHECK (
+                (current_user = 'service_role' OR auth.role() = 'service_role')
+                AND (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL 
+                     OR tenant_id::text = current_setting('app.current_tenant_id', true)
+                     OR tenant_slug::text = current_setting('app.current_tenant_id', true))
+            );
         """)
 
         print("[4/5] Hardening RLS on 'products'...")
@@ -150,7 +185,16 @@ def apply_critical_rls_hardening():
         cur.execute("""
             CREATE POLICY service_role_all_products ON public.products
             AS PERMISSIVE FOR ALL TO service_role
-            USING (true) WITH CHECK (true);
+            USING (
+                (current_user = 'service_role' OR auth.role() = 'service_role')
+                AND (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL 
+                     OR tenant_id::text = current_setting('app.current_tenant_id', true))
+            )
+            WITH CHECK (
+                (current_user = 'service_role' OR auth.role() = 'service_role')
+                AND (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL 
+                     OR tenant_id::text = current_setting('app.current_tenant_id', true))
+            );
         """)
 
         print("[5/5] Hardening RLS on 'orders'...")
@@ -188,7 +232,18 @@ def apply_critical_rls_hardening():
         cur.execute("""
             CREATE POLICY service_role_all_orders ON public.orders
             AS PERMISSIVE FOR ALL TO service_role
-            USING (true) WITH CHECK (true);
+            USING (
+                (current_user = 'service_role' OR auth.role() = 'service_role')
+                AND (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL 
+                     OR tenant_id::text = current_setting('app.current_tenant_id', true)
+                     OR tenant_slug::text = current_setting('app.current_tenant_id', true))
+            )
+            WITH CHECK (
+                (current_user = 'service_role' OR auth.role() = 'service_role')
+                AND (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL 
+                     OR tenant_id::text = current_setting('app.current_tenant_id', true)
+                     OR tenant_slug::text = current_setting('app.current_tenant_id', true))
+            );
         """)
 
         conn.commit()

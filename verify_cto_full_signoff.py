@@ -94,6 +94,14 @@ class CTOFullSignoffVerifier:
         self.store_id = "onlineboost-store"
         self.impostor_tenant = "impostor_store_xyz"
 
+        # P1-H1: Zero Fallback Secret Enforcement
+        self.hmac_secret = os.getenv("BOONTRACK_HMAC_SECRET")
+        if not self.hmac_secret or not self.hmac_secret.strip():
+            raise ValueError(
+                "[P1-H1 FATAL] BOONTRACK_HMAC_SECRET is not set in the environment! "
+                "System strictly prohibits unauthenticated or default-secret operation."
+            )
+
     def log_header(self, title: str):
         print("\n" + "=" * 80)
         print(f"📌 {title.upper()}")
@@ -322,12 +330,33 @@ class CTOFullSignoffVerifier:
     async def verify_pillar_4_cross_system_gate_and_b2g(self):
         self.log_header("SYARAT 4: CROSS-SYSTEM GATE & B2G READINESS")
 
-        # 4.1 Boundary Autentikasi Core <-> Inbox
-        inbox_secret = os.getenv("INBOX_WEBHOOK_SECRET") or os.getenv("CORE_INBOX_SHARED_SECRET") or "B055OB_SHARED_2026"
+        # 4.1 Boundary Autentikasi Core <-> Inbox (P1-H1: Zero Fallback Secret)
+        hmac_secret = os.getenv("BOONTRACK_HMAC_SECRET")
+        if not hmac_secret or not hmac_secret.strip():
+            raise ValueError(
+                "[P1-H1 FATAL] BOONTRACK_HMAC_SECRET is not set in the environment! "
+                "Zero-fallback policy strictly enforced by CTO audit gate."
+            )
+
+        from app.core.security.inter_service_auth import (
+            generate_inter_service_signature,
+            verify_inter_service_signature,
+        )
+        test_payload = {"action": "sync_chat", "tenant_id": self.tenant_id}
+        test_sig, test_ts, _ = generate_inter_service_signature(
+            authenticated_tenant_id=self.tenant_id,
+            body=test_payload,
+        )
+        is_valid_sig, sig_reason = verify_inter_service_signature(
+            signature=test_sig,
+            timestamp=test_ts,
+            authenticated_tenant_id=self.tenant_id,
+            body=test_payload,
+        )
         self.log_result(
-            "Core <-> Inbox Cross-System Auth Boundary",
-            bool(inbox_secret),
-            "Shared secret & User-Agent proxy boundary aktif untuk pengamanan webhook komunikasi."
+            "Core <-> Inbox Cross-System Auth Boundary (Zero Fallback Secret)",
+            is_valid_sig and bool(hmac_secret),
+            f"Cryptographic HMAC-SHA256 signature verified with explicit BOONTRACK_HMAC_SECRET ({sig_reason or 'VALID'})."
         )
 
         # 4.2 Isolasi Key Redis WA Per-Tenant
