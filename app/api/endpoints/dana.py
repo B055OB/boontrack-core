@@ -2,7 +2,11 @@ import os
 import re
 import logging
 from aiohttp import web
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+try:
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+except ModuleNotFoundError:
+    InlineKeyboardMarkup = None
+    InlineKeyboardButton = None
 
 from app.core.bot import bot
 from app.core.database import match_and_complete_order, match_and_complete_donation
@@ -60,18 +64,21 @@ async def dana_webhook_handler(request: web.Request) -> web.Response:
                     f"Terima kasih telah membeli <b>{product}</b>.\n"
                     f"File E-book kamu terlampir langsung di bawah ini. Selamat membaca dan sukses terus!"
                 )
-                try:
-                    await bot.send_document(
-                        chat_id=buyer_id,
-                        document=EBOOK_FILE_ID,
-                        caption=caption_text,
-                        protect_content=True,
-                        parse_mode="HTML"
-                    )
-                except Exception as doc_err:
-                    print(f"[Document Send Error]: {doc_err}", flush=True)
-                    fallback_msg = f"{caption_text}\n\n👉 Link Akses Alternative: https://cvats.boontrack.com/ebook-interview-boontrack.pdf"
-                    await bot.send_message(chat_id=buyer_id, text=fallback_msg, parse_mode="HTML")
+                if bot is not None:
+                    try:
+                        await bot.send_document(
+                            chat_id=buyer_id,
+                            document=EBOOK_FILE_ID,
+                            caption=caption_text,
+                            protect_content=True,
+                            parse_mode="HTML"
+                        )
+                    except Exception as doc_err:
+                        print(f"[Document Send Error]: {doc_err}", flush=True)
+                        fallback_msg = f"{caption_text}\n\n👉 Link Akses Alternative: https://cvats.boontrack.com/ebook-interview-boontrack.pdf"
+                        await bot.send_message(chat_id=buyer_id, text=fallback_msg, parse_mode="HTML")
+                else:
+                    print("[DANA WARNING] Bot is None, skipping telegram document delivery.", flush=True)
 
                 return web.json_response({"status": "success_order", "order_id": order["order_id"]}, status=200)
 
@@ -86,11 +93,13 @@ async def dana_webhook_handler(request: web.Request) -> web.Response:
                 user_data = {"cp_status": "active"}
                 default_slug = await generate_unique_slug(user_data)
 
-                kbd_post = InlineKeyboardMarkup(row_width=1)
-                kbd_post.add(
-                    InlineKeyboardButton(f"✅ Pakai {default_slug}.boontrack.com", callback_data="cp_confirm_default_slug"),
-                    InlineKeyboardButton("✏️ Ketik Nama Custom Sendiri", callback_data="cp_change_slug_start")
-                )
+                kbd_post = None
+                if InlineKeyboardMarkup is not None and InlineKeyboardButton is not None:
+                    kbd_post = InlineKeyboardMarkup(row_width=1)
+                    kbd_post.add(
+                        InlineKeyboardButton(f"✅ Pakai {default_slug}.boontrack.com", callback_data="cp_confirm_default_slug"),
+                        InlineKeyboardButton("✏️ Ketik Nama Custom Sendiri", callback_data="cp_change_slug_start")
+                    )
 
                 don_thanks = (
                     f"🎉 <b>PEMBAYARAN CAREER PAGE TERKONFIRMASI!</b>\n\n"
@@ -100,7 +109,10 @@ async def dana_webhook_handler(request: web.Request) -> web.Response:
                     f"👉 <code>{default_slug}.boontrack.com</code>\n\n"
                     f"Apakah kamu mau memakai nama rekomendasi di atas, atau ingin mengetik nama custom sendiri?"
                 )
-                await bot.send_message(chat_id=donor_id, text=don_thanks, reply_markup=kbd_post, parse_mode="HTML")
+                if bot is not None:
+                    await bot.send_message(chat_id=donor_id, text=don_thanks, reply_markup=kbd_post, parse_mode="HTML")
+                else:
+                    print("[DANA WARNING] Bot is None, skipping telegram message delivery.", flush=True)
                 return web.json_response({"status": "success_donation", "donation_id": donation["donation_id"]}, status=200)
 
             print(f"[DANA WARNING] Nominal Rp{incoming_amount:,} tidak cocok dengan order/donasi pending manapun.", flush=True)

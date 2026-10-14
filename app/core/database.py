@@ -7,7 +7,6 @@ from typing import Optional, Dict, Any, List
 from contextlib import contextmanager
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from aiogram import types
 from app.core.config import settings
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -531,7 +530,7 @@ def _track_event_sync(user_id, event, meta=None):
 async def track_event(user_id, event, meta=None):
     await asyncio.to_thread(_track_event_sync, user_id, event, meta)
 
-def _save_user_sync(user: types.User, meta: dict = None):
+def _save_user_sync(user: Any, meta: dict = None):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -568,7 +567,7 @@ def _save_user_sync(user: types.User, meta: dict = None):
     except Exception as e:
         print(f"Save User DB Error: {e}")
 
-async def save_user(user: types.User, meta: dict = None):
+async def save_user(user: Any, meta: dict = None):
     await asyncio.to_thread(_save_user_sync, user, meta)
 
 def _save_dropoff_sync(user_id, step, data):

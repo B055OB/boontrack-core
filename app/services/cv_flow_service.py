@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 import re
 import json
@@ -9,8 +10,15 @@ from docx import Document
 from docx.shared import Pt, RGBColor, Inches
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from aiogram import types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
+
+try:
+    from aiogram import types
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
+except ModuleNotFoundError:
+    types = None
+    InlineKeyboardMarkup = None
+    InlineKeyboardButton = None
+    InputFile = None
 
 from app.core.bot import bot, send_chunked_message
 from app.core.database import (
@@ -333,7 +341,9 @@ def create_cv_docx(user_id: int, data: dict) -> str:
     doc.save(file_path)
     return file_path
 
-def get_career_home_keyboard() -> types.InlineKeyboardMarkup:
+def get_career_home_keyboard() -> Optional[types.InlineKeyboardMarkup]:
+    if types is None or not hasattr(types, "InlineKeyboardMarkup"):
+        return None
     kbd = types.InlineKeyboardMarkup(row_width=1)
     kbd.add(
         types.InlineKeyboardButton("📝 Buat / Edit CV Baru", callback_data="home_create_cv"),
@@ -345,7 +355,9 @@ def get_career_home_keyboard() -> types.InlineKeyboardMarkup:
     )
     return kbd
 
-def get_donation_options_keyboard() -> InlineKeyboardMarkup:
+def get_donation_options_keyboard() -> Optional[InlineKeyboardMarkup]:
+    if InlineKeyboardMarkup is None or InlineKeyboardButton is None:
+        return None
     kbd = InlineKeyboardMarkup(row_width=1)
     kbd.add(
         InlineKeyboardButton("🌐 Buat Career Page Profesional (Rp10.000)", callback_data="don_10000"),
@@ -354,11 +366,14 @@ def get_donation_options_keyboard() -> InlineKeyboardMarkup:
     )
     return kbd
 
-async def process_and_send_cv(message: types.Message, user_id: int, user_data: dict, user_state: Optional[dict] = None):
+async def process_and_send_cv(message: Any, user_id: int, user_data: dict, user_state: Optional[dict] = None):
     if user_state is not None and user_id in user_state:
         user_state[user_id]["step"] = 0
     await save_dropoff(user_id, TOTAL_STEPS, user_data)
     
+    if message is None or not hasattr(message, "reply"):
+        return
+
     processing_msg = await message.reply(
         "⏳ <b>Merapikan & menyusun CV kamu agar mudah dibaca sistem rekrutmen...</b>\n"
         "Mohon tunggu sekitar 15-20 detik ya!",

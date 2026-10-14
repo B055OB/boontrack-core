@@ -1,6 +1,13 @@
+from __future__ import annotations
 import os
-from aiogram import types
-from aiogram.types import InputFile, InlineKeyboardMarkup, InlineKeyboardButton
+try:
+    from aiogram import types
+    from aiogram.types import InputFile, InlineKeyboardMarkup, InlineKeyboardButton
+except ModuleNotFoundError:
+    types = None
+    InputFile = None
+    InlineKeyboardMarkup = None
+    InlineKeyboardButton = None
 from app.core.database import (
     save_dropoff,
     save_cv_version,

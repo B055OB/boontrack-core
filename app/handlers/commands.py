@@ -1,7 +1,14 @@
+from __future__ import annotations
 import os
 import json
-from aiogram import types, Dispatcher
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+try:
+    from aiogram import types, Dispatcher
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+except ModuleNotFoundError:
+    types = None
+    Dispatcher = None
+    InlineKeyboardMarkup = None
+    InlineKeyboardButton = None
 from app.core.database import save_user, track_event, get_user_history, save_dropoff
 from app.handlers.admin_handler import admin_handler
 from app.services.analytics_service import analytics_service

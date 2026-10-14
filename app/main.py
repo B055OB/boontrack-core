@@ -457,7 +457,10 @@ async def start_application():
     await init_db()
 
     # 2. Daftarkan Semua Handler Bot Telegram
-    register_all_bot_handlers(dp, bot)
+    if bot is not None and dp is not None:
+        register_all_bot_handlers(dp, bot)
+    else:
+        print("[BOOT] Telegram Bot or Dispatcher is None, skipping bot handler registration.", flush=True)
 
     # 3. Buat dan Jalankan Web Server aiohttp
     print("[BOOT] Starting Web Server...", flush=True)
@@ -544,8 +547,11 @@ async def start_application():
     await start_web_server(aiohttp_app, port=port)
 
     # 4. Jalankan Background Polling Telegram
-    asyncio.create_task(start_telegram_polling(bot, dp))
-    print("[BOOT] Telegram & Web Server running concurrently.", flush=True)
+    if bot is not None and dp is not None:
+        asyncio.create_task(start_telegram_polling(bot, dp))
+        print("[BOOT] Telegram & Web Server running concurrently.", flush=True)
+    else:
+        print("[BOOT] Telegram Bot disabled or not installed (bot is None). Web Server running.", flush=True)
 
 if __name__ == '__main__':
     loop = asyncio.new_event_loop()

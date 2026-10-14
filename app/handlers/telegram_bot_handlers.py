@@ -19,7 +19,12 @@ import os
 import logging
 from typing import Optional
 
-from aiogram import types, Dispatcher, Bot
+try:
+    from aiogram import types, Dispatcher, Bot
+except ModuleNotFoundError:
+    types = None
+    Dispatcher = None
+    Bot = None
 
 from app.services.telegram_commerce_service import (
     link_tenant_telegram,
@@ -33,8 +38,11 @@ from app.services.telegram_commerce_service import (
 logger = logging.getLogger("TELEGRAM_HANDLERS")
 
 
-def register_all_bot_handlers(dp: Dispatcher, bot: Bot):
+def register_all_bot_handlers(dp=None, bot=None):
     """Mendaftarkan seluruh handler E-Commerce resmi ke Aiogram Dispatcher."""
+    if dp is None or bot is None:
+        logger.warning("[TELEGRAM_HANDLERS] Bot or Dispatcher is None, skipping handler registration.")
+        return
 
     # 1. COMMAND /start (Mendukung deep link /start link_<tenant_id>)
     @dp.message_handler(commands=['start'])

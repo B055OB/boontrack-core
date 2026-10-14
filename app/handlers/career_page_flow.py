@@ -1,8 +1,18 @@
+from __future__ import annotations
 import re
-from aiogram import types, Dispatcher
-from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+try:
+    from aiogram import types, Dispatcher
+    from aiogram.dispatcher import FSMContext
+    from aiogram.dispatcher.filters.state import State, StatesGroup
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+except ModuleNotFoundError:
+    types = None
+    Dispatcher = None
+    FSMContext = None
+    class StatesGroup: pass
+    class State: pass
+    InlineKeyboardMarkup = None
+    InlineKeyboardButton = None
 from app.services.cloudflare_service import (
     is_slug_available, 
     sync_profile_to_cloudflare_kv, 

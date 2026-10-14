@@ -2,7 +2,11 @@ import os
 import logging
 from aiohttp import web
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from aiogram import Bot, Dispatcher
+try:
+    from aiogram import Bot, Dispatcher
+except ModuleNotFoundError:
+    Bot = None
+    Dispatcher = None
 
 from app.core.middlewares import cors_middleware
 from app.api.endpoints import register_api_routes
@@ -90,8 +94,12 @@ async def start_web_server(app: web.Application, port: int = 8080) -> web.AppRun
     print(f"[BOOT] Web server listening on port {port}", flush=True)
     return runner
 
-async def start_telegram_polling(bot: Bot, dp: Dispatcher):
+async def start_telegram_polling(bot=None, dp=None):
     """Menjalankan polling worker untuk bot Telegram."""
+    if bot is None or dp is None:
+        print("[TELEGRAM] Telegram Bot or Dispatcher is None, polling disabled.", flush=True)
+        return
+
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token or os.getenv("ENABLE_TELEGRAM_POLLING", "true").lower() == "false":
         print("[TELEGRAM] Telegram polling disabled / token absent.", flush=True)
