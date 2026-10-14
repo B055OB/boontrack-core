@@ -1,10 +1,10 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Tested Base Commit SHA (Parent HEAD)**: `99310f54f6e3b17b60c800584d26160b68b1373e`
+- **Tested Base Commit SHA (Parent HEAD)**: `859e2ad4686b92061b676c6b736a25372c08e0ff`
 - **Git Branch**: `main`
 - **Status Kebersihan Working Tree (`git status --porcelain`)**: `CLEAN (no uncommitted changes)`
-- **Waktu Audit (UTC)**: `2026-10-14 17:03:11 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 00:03:11 WIB`
+- **Waktu Audit (UTC)**: `2026-10-14 17:11:14 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 00:11:14 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **P1 CLOSED & APPROVED (ALL VERIFIED 100%)**
 - **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA.
@@ -53,7 +53,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.3s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.8s, max: 300s)`
 
 ### Lapis 4: Redis & AI Conversation Memory Boundary
 - **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).
@@ -109,11 +109,11 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Tested Base Commit SHA (Parent HEAD)**: `99310f54f6e3b17b60c800584d26160b68b1373e`
+- **Tested Base Commit SHA (Parent HEAD)**: `859e2ad4686b92061b676c6b736a25372c08e0ff`
 - **Git Branch**: `main`
 - **Status Kebersihan Working Tree**: `CLEAN (no uncommitted changes)`
-- **Timestamp Eksekusi (UTC)**: `2026-10-14 17:03:11 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-10-15 00:03:11 WIB`
+- **Timestamp Eksekusi (UTC)**: `2026-10-14 17:11:14 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-10-15 00:11:14 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite (58/58 Tests PASSED)
@@ -160,7 +160,7 @@ Audit mencakup 100% tabel relasional di dalam schema `public` PostgreSQL pada Su
 | 11 | `subscriptions` | postgres | ENABLED | NO | TENANT | NONE | *No custom policies (implicit deny for non-superuser)* |
 | 12 | `telegram_single_use_tokens` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_telegram_single_use_tokens` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_telegram_single_use_tokens` (public: tenant_id = app.current_tenant_id) |
 | 13 | `tenants` | postgres | ENABLED | NO | SYSTEM/GLOBAL | INSERT, SELECT, UPDATE | `Allow public read tenants` (public: true)<br>`allow_all_insert_tenants` (public: true)<br>`allow_all_select_tenants` (public: true) |
-| 14 | `whatsapp_connections` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_whatsapp_connections` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_whatsapp_connections` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolation_whatsapp_connections` (public: tenant_id = app.current_tenant_id) |
+| 14 | `whatsapp_connections` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_whatsapp_connections` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_whatsapp_connections` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolation_whatsapp_connections` (public: tenant_id = app.current_tenant_id) |
 | 15 | `activation_codes` | postgres | ENABLED | NO | TENANT | NONE | *No custom policies (implicit deny for non-superuser)* |
 | 16 | `affiliate_auth_otps` | postgres | ENABLED | NO | SYSTEM/GLOBAL | ALL | `Service role full access on affiliate_auth_otps` (service_role: true) |
 | 17 | `affiliate_commissions` | postgres | ENABLED | NO | TENANT | ALL | `Service role full access on affiliate_commissions` (service_role: true)<br>`allow_all_ops_affiliate_commissions` (public: true) |
