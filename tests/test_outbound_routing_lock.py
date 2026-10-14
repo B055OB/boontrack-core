@@ -300,3 +300,263 @@ def test_outbound_lock_idempotency_key(setup_outbound_test_data):
         assert data2["message"] == data1["message"]
         # Dispatch function TIDAK boleh dipanggil ulang (tetap 1 kali)
         assert mock_waba.call_count == 1
+
+
+def test_outbound_routing_onlineboost_waba_channel_first():
+    """
+    Mandat 1: Tenant 'onlineboost' outbound CS dieksekusi 100% via connection WABA
+    tanpa melewati blok percabangan fallback string.
+    """
+    onlineboost_conn_id = "b3c149fb-2d2a-4e8e-bded-04fb827a96b6"
+    test_phone = f"62899{uuid.uuid4().int % 100000000:08d}"
+    conv_id = str(uuid.uuid4())
+
+    conn = get_db_connection()
+    conn.autocommit = True
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO conversations (
+            id, tenant_id, tenant_slug, phone_number, customer_phone, contact_name,
+            status, bot_mode, channel_type, channel_connection_id, provider
+        ) VALUES (
+            %s, 'onlineboost', 'onlineboost', %s, %s, 'Tester Onlineboost',
+            'assigned', 'AI_ACTIVE', 'WABA', %s, 'OFFICIAL_META'
+        );
+        """,
+        (conv_id, test_phone, test_phone, onlineboost_conn_id)
+    )
+    conn.close()
+
+    try:
+        with patch("app.routes.inbox_routes.send_whatsapp_text", new_callable=AsyncMock) as mock_waba, \
+             patch("app.routes.inbox_routes.WhatsAppAdapter.send_message", new_callable=AsyncMock) as mock_baileys:
+
+            mock_waba.return_value = {"messages": [{"id": "wamid.onlineboost_official_waba_1"}]}
+
+            response = client.post(
+                "/api/v1/inbox/messages/send",
+                json={
+                    "tenant_id": "onlineboost",
+                    "conversation_id": conv_id,
+                    "text": "Pesan manual CS Online Boost via WABA resmi",
+                    "phone_number": test_phone
+                }
+            )
+
+            assert response.status_code == 200
+            res = response.json()
+            assert res["success"] is True
+            assert res["channel_type"] == "WABA"
+            assert res["channel_connection_id"] == onlineboost_conn_id
+            assert res["provider"] == "OFFICIAL_META"
+
+            # 100% dipanggil via send_whatsapp_text dengan phone_number_id WABA resmi
+            assert mock_waba.called is True
+            call_kwargs = mock_waba.call_args.kwargs
+            assert call_kwargs["phone_number_id"] == "1419090974617162"
+            assert call_kwargs["tenant_id"] == "onlineboost"
+            assert call_kwargs["to_phone"] == test_phone
+
+            # DILARANG memanggil Baileys
+            assert mock_baileys.called is False
+    finally:
+        cleanup_conn = get_db_connection()
+        cleanup_conn.autocommit = True
+        cleanup_cur = cleanup_conn.cursor()
+        cleanup_cur.execute("DELETE FROM conversations WHERE id = %s;", (conv_id,))
+        cleanup_conn.close()
+
+
+def test_outbound_rejects_unmapped_channel_binding_zero_guessing():
+    """
+    Mandat 2: Zero Channel Guessing.
+    Jika percakapan tidak memiliki binding channel_connection_id,
+    outbound CS DILARANG menebak berdasarkan tenant dan WAJIB ditolak dengan 422.
+    """
+    test_phone = f"62899{uuid.uuid4().int % 100000000:08d}"
+    conv_id = str(uuid.uuid4())
+
+    conn = get_db_connection()
+    conn.autocommit = True
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO conversations (
+            id, tenant_id, tenant_slug, phone_number, customer_phone, contact_name,
+            status, bot_mode, channel_type, channel_connection_id
+        ) VALUES (
+            %s, 'onlineboost', 'onlineboost', %s, %s, 'No Binding Tester',
+            'assigned', 'AI_ACTIVE', NULL, NULL
+        );
+        """,
+        (conv_id, test_phone, test_phone)
+    )
+    conn.close()
+
+    try:
+        with patch("app.routes.inbox_routes.send_whatsapp_text", new_callable=AsyncMock) as mock_waba, \
+             patch("app.routes.inbox_routes.WhatsAppAdapter.send_message", new_callable=AsyncMock) as mock_baileys:
+
+            response = client.post(
+                "/api/v1/inbox/messages/send",
+                json={
+                    "tenant_id": "onlineboost",
+                    "conversation_id": conv_id,
+                    "text": "Pesan tanpa binding"
+                }
+            )
+
+            assert response.status_code == 422
+            detail = response.json()["detail"]
+            assert "channel_connection_id" in detail
+            assert "Zero Channel Guessing" in detail
+            assert mock_waba.called is False
+            assert mock_baileys.called is False
+    finally:
+        cleanup_conn = get_db_connection()
+        cleanup_conn.autocommit = True
+        cleanup_cur = cleanup_conn.cursor()
+        cleanup_cur.execute("DELETE FROM conversations WHERE id = %s;", (conv_id,))
+        cleanup_conn.close()
+
+
+def test_outbound_waba_fail_closed_zero_fallback():
+    """
+    Mandat 3: Fail-Closed Zero Silent Fallback.
+    Jika percakapan terikat WABA dan Meta API gagal/error,
+    sistem wajib melempar HTTP 502 (Fail-Closed) dan DILARANG KERAS diam-diam
+    mengalihkan pengiriman ke Baileys/Evolution.
+    """
+    onlineboost_conn_id = "b3c149fb-2d2a-4e8e-bded-04fb827a96b6"
+    test_phone = f"62899{uuid.uuid4().int % 100000000:08d}"
+    conv_id = str(uuid.uuid4())
+
+    conn = get_db_connection()
+    conn.autocommit = True
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO conversations (
+            id, tenant_id, tenant_slug, phone_number, customer_phone, contact_name,
+            status, bot_mode, channel_type, channel_connection_id, provider
+        ) VALUES (
+            %s, 'onlineboost', 'onlineboost', %s, %s, 'WABA Error Tester',
+            'assigned', 'AI_ACTIVE', 'WABA', %s, 'OFFICIAL_META'
+        );
+        """,
+        (conv_id, test_phone, test_phone, onlineboost_conn_id)
+    )
+    conn.close()
+
+    try:
+        with patch("app.routes.inbox_routes.send_whatsapp_text", new_callable=AsyncMock) as mock_waba, \
+             patch("app.routes.inbox_routes.WhatsAppAdapter.send_message", new_callable=AsyncMock) as mock_baileys:
+
+            # Simulasikan Meta API menolak / error
+            mock_waba.return_value = None
+
+            response = client.post(
+                "/api/v1/inbox/messages/send",
+                json={
+                    "tenant_id": "onlineboost",
+                    "conversation_id": conv_id,
+                    "text": "Tes WABA Failure"
+                }
+            )
+
+            assert response.status_code == 502
+            assert "Tidak ada fallback otomatis" in response.json()["detail"]
+            assert mock_waba.called is True
+            # Dilarang keras fallback ke Baileys
+            assert mock_baileys.called is False
+    finally:
+        cleanup_conn = get_db_connection()
+        cleanup_conn.autocommit = True
+        cleanup_cur = cleanup_conn.cursor()
+        cleanup_cur.execute("DELETE FROM conversations WHERE id = %s;", (conv_id,))
+        cleanup_conn.close()
+
+
+def test_outbound_baileys_fail_closed_zero_fallback():
+    """
+    Mandat 4: Fail-Closed Zero Silent Fallback untuk Baileys.
+    Jika percakapan terikat BAILEYS dan Engine gagal,
+    sistem wajib melempar HTTP 502 dan DILARANG KERAS mengalihkan pengiriman ke WABA Meta.
+    """
+    baileys_conn_id = str(uuid.uuid4())
+    test_tenant_uuid = str(uuid.uuid4())
+    test_tenant_slug = f"baileys-test-{uuid.uuid4().hex[:6]}"
+    test_phone = f"62899{uuid.uuid4().int % 100000000:08d}"
+
+    conn = get_db_connection()
+    conn.autocommit = True
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO tenants (id, name, slug)
+        VALUES (%s, 'Baileys Tenant', %s)
+        ON CONFLICT DO NOTHING;
+        """,
+        (test_tenant_uuid, test_tenant_slug)
+    )
+    cur.execute(
+        """
+        INSERT INTO whatsapp_connections (
+            id, tenant_id, tenant_slug, provider, channel_type, status, is_connected,
+            phone_number
+        ) VALUES (
+            %s, %s, %s, 'EVOLUTION', 'BAILEYS', 'CONNECTED', TRUE, '6285555555'
+        );
+        """,
+        (baileys_conn_id, test_tenant_slug, test_tenant_slug)
+    )
+
+    conv_id = str(uuid.uuid4())
+    cur.execute(
+        """
+        INSERT INTO conversations (
+            id, tenant_id, tenant_slug, phone_number, customer_phone, contact_name,
+            status, bot_mode, channel_type, channel_connection_id, provider
+        ) VALUES (
+            %s, %s, %s, %s, %s, 'Baileys Tester',
+            'assigned', 'AI_ACTIVE', 'BAILEYS', %s, 'EVOLUTION'
+        );
+        """,
+        (conv_id, test_tenant_slug, test_tenant_slug, test_phone, test_phone, baileys_conn_id)
+    )
+    conn.close()
+
+    try:
+        with patch("app.routes.inbox_routes.send_whatsapp_text", new_callable=AsyncMock) as mock_waba, \
+             patch("app.routes.inbox_routes.WhatsAppAdapter.send_message", new_callable=AsyncMock) as mock_baileys:
+
+            # Simulasikan Baileys Engine error
+            mock_baileys.return_value = {"success": False, "error": "Engine socket timeout"}
+
+            response = client.post(
+                "/api/v1/inbox/messages/send",
+                json={
+                    "tenant_id": test_tenant_slug,
+                    "conversation_id": conv_id,
+                    "text": "Tes Baileys Failure"
+                }
+            )
+
+            assert response.status_code == 502
+            assert "Tidak ada fallback otomatis" in response.json()["detail"]
+            assert mock_baileys.called is True
+            # Dilarang keras fallback ke WABA Meta
+            assert mock_waba.called is False
+    finally:
+        cleanup_conn = get_db_connection()
+        cleanup_conn.autocommit = True
+        cleanup_cur = cleanup_conn.cursor()
+        cleanup_cur.execute("DELETE FROM conversations WHERE id = %s;", (conv_id,))
+        cleanup_cur.execute("DELETE FROM whatsapp_connections WHERE id = %s;", (baileys_conn_id,))
+        cleanup_cur.execute("DELETE FROM tenants WHERE id = %s;", (test_tenant_uuid,))
+        cleanup_conn.close()

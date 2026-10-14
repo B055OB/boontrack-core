@@ -19,6 +19,10 @@ from app.services.ai.grounding import (
     generate_reader_account_explanation_reply,
     generate_screening_link_reply,
     CLINIC_SCREENING_GROUNDING_PROMPT,
+    BOONTRACK_ADS_TRACKING_AND_SYNC_DIRECTIVE,
+    CUSTOMER_SYNC_AND_CAPI_KEYWORDS,
+    is_capi_or_sync_inquiry_intent,
+    generate_capi_and_sync_explanation_reply,
 )
 
 __all__ = [
@@ -38,4 +42,8 @@ __all__ = [
     "generate_reader_account_explanation_reply",
     "generate_screening_link_reply",
     "CLINIC_SCREENING_GROUNDING_PROMPT",
+    "BOONTRACK_ADS_TRACKING_AND_SYNC_DIRECTIVE",
+    "CUSTOMER_SYNC_AND_CAPI_KEYWORDS",
+    "is_capi_or_sync_inquiry_intent",
+    "generate_capi_and_sync_explanation_reply",
 ]

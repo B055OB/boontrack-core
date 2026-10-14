@@ -175,6 +175,14 @@ class CommerceAIEngine:
         p_provider = str(meta.get("payment_provider") or (meta.get("payment_config") or {}).get("provider") or "").lower().strip()
         p_banks = meta.get("bank_accounts") or (meta.get("payment_config") or {}).get("bank_accounts") or []
 
+        boontrack_extra_directive = ""
+        if clean_slug == "boontrack":
+            try:
+                from app.services.ai.grounding import BOONTRACK_ADS_TRACKING_AND_SYNC_DIRECTIVE
+                boontrack_extra_directive = f"{BOONTRACK_ADS_TRACKING_AND_SYNC_DIRECTIVE}\n\n"
+            except Exception:
+                pass
+
         if p_provider == "xendit" or clean_slug == "onlineboost":
             payment_section_rules = (
                 "ATURAN PEMBAYARAN RESMI (DYNAMIC QRIS XENDIT - ZERO HALLUCINATION):\n"
@@ -227,7 +235,8 @@ class CommerceAIEngine:
             f"   • GrabMerchant / GrabFood\n"
             f"2. DILARANG KERAS menyatakan Bank Mandiri, BRI, BNI, BSI sebagai akun penerima mutasi otomatis merchant (karena parser notifikasi Android belum tersedia).\n"
             f"3. Klarifikasi: Merchant wajib salah satu dari 5 akun di atas untuk auto-verifikasi mutasi reader. Sedangkan Pembeli BEBAS scan & bayar QRIS dari bank mana pun (BCA, Mandiri, BRI, BNI, Permata, dll) atau semua e-wallet!\n\n"
-                        f"{payment_section_rules}\n"\
+            f"{boontrack_extra_directive}"
+            f"{payment_section_rules}\n"
             f"2. JIKA data pendaftaran sudah pernah dikirim di riwayat chat, DILARANG meminta ulang formulir pendataan.\n\n"
             f"ALUR PENDAFTARAN & CHECKOUT WHATSAPP (NATIVE LEAD COLLECTION):\n"
             f"Ketika calon pembeli menyatakan ingin membeli, mengambil paket, mendaftar, atau bertanya cara daftarnya (contoh: 'mau ambil yang 7-Day Sprint kak, gimana cara daftarnya?', 'mau beli', 'mau daftar', 'cara daftarnya kak'):\n"

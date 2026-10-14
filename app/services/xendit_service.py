@@ -213,6 +213,19 @@ class XenditService:
         )
 
         invoice_web_url = data.get("invoice_url") or f"https://checkout.xendit.co/web/{external_id}"
+        product_name = (metadata or {}).get("product_name") or "Paket Lengkap Kelas Inkubasi CTWA Batch 1"
+        try:
+            inv_data = await self.create_invoice(
+                external_id=external_id,
+                amount=amount,
+                product_name=product_name,
+                customer_phone=customer_phone,
+                tenant_id=tenant_id,
+            )
+            if inv_data.get("invoice_url"):
+                invoice_web_url = inv_data.get("invoice_url")
+        except Exception as inv_err:
+            logger.warning(f"[XENDIT] Non-fatal invoice creation note: {inv_err}")
 
         result = {
             "qr_string": qr_string,

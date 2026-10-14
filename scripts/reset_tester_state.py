@@ -95,11 +95,12 @@ def reset_testers():
             except Exception as e:
                 print(f"Postgres conversations delete note: {e}")
 
-        # E. Ensure whatsapp_connections has onlineboost instance_name set!
+        # E. Ensure whatsapp_connections has onlineboost WABA configuration set!
         cur.execute(
             """
             UPDATE whatsapp_connections 
-            SET instance_name = 'onlineboost', status = 'open', is_connected = TRUE 
+            SET status = 'active', channel_type = 'WABA', provider = 'OFFICIAL_META',
+                phone_number_id = '1419090974617162', phone_number = '+6288226098088', is_connected = TRUE 
             WHERE tenant_slug = 'onlineboost'
             """
         )
@@ -132,11 +133,14 @@ def reset_testers():
 
         try:
             sb.table("whatsapp_connections").update({
-                "instance_name": "onlineboost",
-                "status": "open",
+                "status": "active",
+                "channel_type": "WABA",
+                "provider": "OFFICIAL_META",
+                "phone_number_id": "1419090974617162",
+                "phone_number": "+6288226098088",
                 "is_connected": True
             }).eq("tenant_slug", "onlineboost").execute()
-            print("Supabase whatsapp_connections onlineboost updated")
+            print("Supabase whatsapp_connections onlineboost updated to WABA active")
         except Exception as e:
             print(f"Supabase whatsapp_connections update error: {e}")
 

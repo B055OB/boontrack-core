@@ -21,3 +21,27 @@ Setiap kali selesai membuat, memodifikasi, atau menghapus kode/file apa pun:
    - **Behavioral Changes**: [Perubahan perilaku sistem atau UI/UX yang ditimbulkan]
    - **Regression Risk**: [Tingkat risiko: Low / Medium / High beserta mitigasinya]
 4. ZERO SILENT FALLBACK: DILARANG membuat data tiruan/mock sintetis diam-diam untuk data yang seharusnya bersumber dari database (Supabase/PostgreSQL). Jika data tidak ditemukan, kembalikan status null/404 atau alur registrasi resmi secara eksplisit.
+### 5. STRICT MULTI-TENANT DATA ISOLATION (ZERO CROSS-TENANT LEAKAGE)
+- **STRICT TENANT SCOPING**: Setiap pembuatan file, komponen landing page, query SQL, asset (gambar/testimonial/copywriting), dan rute API WAJIB diikat secara eksplisit ke `tenant_id` / `tenant_slug` target.
+- **NO GLOBAL MUTATION**: DILARANG KERAS memodifikasi shared layout, master template, atau global component hanya untuk mengakomodasi kebutuhan spesifik satu tenant. Jika butuh kustomisasi, gunakan pattern:
+  - Database dynamic injection berbasis `tenant_id`, ATAU
+  - Subfolder/tenant-specific module (`/tenants/[tenant_slug]/...`).
+- **FAIL-CLOSED ON UNKNOWN TENANT**: Jika konteks request/render tidak membawa `tenant_id` yang valid, sistem WAJIB me-return 404/Error, DILARANG me-render fallback data milik tenant lain (seperti OnlineBoost atau Boon).
+- **TESTIMONIAL & ASSET ISOLATION**: Data testimoni, logo, nomor CS, dan kredensial pembayaran adalah ASSET PRIVAT. Wajib terverifikasi query: `WHERE tenant_id = current_tenant` tanpa pengecualian.
+
+### 6. MANDATORY EXECUTION SCOPE DECLARATION
+Setiap agen memulai pengerjaan task, agen WAJIB mengawali output dengan deklarasi:
+`[TARGET TENANT: <slug>] | [TARGET CHANNEL: <WABA/BAILEYS/NONE>] | [BLAST RADIUS: <ISOLATED/GLOBAL>]`
+Jika agen harus menyentuh shared component untuk keperluan tenant tertentu, agen WAJIB berhenti dan meminta konfirmasi sebelum mengeksekusi perubahan.
+
+### 7. TENANT SERVICING PROTOCOL & ZERO HARDCODING GUARDRAILS
+1. DILARANG KERAS HARDCODE DATA TENANT DI SHARED FRONTEND/BACKEND:
+   - Dilarang menaruh nama produk, harga jasa, testimoni, nomor WA, logo, atau kredensial tenant mana pun secara statis di dalam file komponen umum (contoh: ProductCard, StorefrontLayout, CheckoutView, dll).
+   - Seluruh data katalog toko di `shop.boontrack.com/[slug]` WAJIB ditarik dinamis dari database berdasarkan `tenant_id` / `tenant_slug` yang sedang diakses di URL. Jika tenant A tidak punya produk X, produk X DILARANG muncul di toko tenant A.
+
+2. PENGERJAAN JASA SETUP PER-TENANT VIA BACKEND:
+   - Jika ada tugas "Setup katalog / edit landing page untuk tenant [X]", agen WAJIB menginput data tersebut ke database (PostgreSQL/Supabase) pada row milik tenant [X], BUKAN mengotak-atik file JSX/TSX/HTML global.
+   - DILARANG menaruh mock data atau fallback data milik tenant 'onlineboost' atau 'boon' ke komponen shared. Jika data database kosong, tampilkan empty-state bersih, BUKAN data tenant lain.
+
+3. AUDIT ENFORCEMENT:
+   - Periksa rute toko `shop.boontrack.com/[slug]` dan katalog produk: pastikan data produk jasa (seperti 'Setup AI Sales Rep', 'Paket Toko Terima Beres', dll) ter-scope murni ke tenant yang bersangkutan (misal tenant 'boon') dan TIDAK BISA bocor/ter-render saat pengunjung membuka slug tenant lain (seperti /onlineboost, /lala, dll).

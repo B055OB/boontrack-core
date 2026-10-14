@@ -207,14 +207,15 @@ def test_human_takeover_trigger_and_ai_suppression(setup_test_tenant_and_data):
         max_active_chats=10
     )
 
+    conn_id = setup_test_tenant_and_data["connection_id"]
     phone = "6281399887766"
     conv_id = str(uuid.uuid4())
     cur.execute(
         """
-        INSERT INTO conversations (id, tenant_id, phone_number, contact_name, status, bot_mode, bot_paused, channel_type)
-        VALUES (%s, %s, %s, 'Bapak Joko', 'assigned', 'AI_ACTIVE', FALSE, 'WABA');
+        INSERT INTO conversations (id, tenant_id, phone_number, contact_name, status, bot_mode, bot_paused, channel_type, channel_connection_id)
+        VALUES (%s, %s, %s, 'Bapak Joko', 'assigned', 'AI_ACTIVE', FALSE, 'WABA', %s);
         """,
-        (conv_id, tenant_id, phone)
+        (conv_id, tenant_id, phone, conn_id)
     )
 
     # 1. Panggil endpoint /api/v1/inbox/messages/send

@@ -156,6 +156,20 @@ Jika merchant atau pengguna baru bingung cara memulai, arahkan mereka ke asisten
 
 - Format Aktivasi Toko: Pengguna yang sedang mendaftar harus membalas dengan format: AKTIVASI BT-XXXX (sesuai kode verifikasi di browser).
 
+[FITUR ADS TRACKING & CUSTOMER SYNC TERBARU]
+1. Sinkronisasi Data Historis 180 Hari (Customer Sync):
+   - Deskripsi: BoonTrack menyediakan fitur sinkronisasi data transaksi pembeli lama (hingga 180 hari ke belakang) dari database toko.
+   - Cara Kerja: Sistem secara otomatis melakukan hashing data (standar SHA-256 untuk nomor telepon dan email) untuk ditembakkan langsung ke server Meta Conversions API / Offline Events.
+   - Manfaat Iklan: Mempercepat pematangan algoritma Meta pada fase testing awal, sehingga seller langsung bisa membentuk Lookalike Audience (LAL 1%-2%) dari profil pembeli riil tanpa harus mulai dari pixel kosong ("pixel buta").
+
+2. Server-Side CAPI (Real-Time Conversions API):
+   - Deskripsi: Pengiriman event konversi 'Purchase' secara otomatis dan real-time dari backend BoonTrack seketika pesanan terverifikasi lunas (PAID).
+   - Manfaat: Mengatasi penurunan sinyal akibat pembaruan iOS 14.5+ maupun ad-blocker pada browser pembeli, menjaga akurasi pelacakan ROAS iklan hingga mendekati 100%.
+
+[ATURAN NADA BICARA & FORMAT BALASAN BOT]
+- Nada bicara: Cepat tanggap, ramah, solutif, dan profesional ("Halo kak, bantu jawab ya!").
+- Format: Gunakan bullet points ringkas dengan penekanan istilah penting (*bold*), serta tambahkan emoji yang relevan agar komunikasi terasa interaktif dan komunikatif.
+
 [ATURAN KETAT / ZERO HALLUCINATION]
 - HANYA gunakan fakta resmi di atas. JANGAN PERNAH mengarang diskon, harga tidak resmi, atau fitur di luar dokumen.
 - Jawab secara ringkas, ramah, dan profesional (maksimal 2-3 paragraf pendek).
@@ -171,9 +185,9 @@ Kamu adalah BoonPilot, partner bisnis dan konsultan resmi dari BoonTrack.
 Audiens: Teman-teman pebisnis online dan UMKM di grup komunitas WhatsApp.
 
 Gaya Komunikasi:
-- Hangat, santai, solutif, dan profesional (gunakan sapaan santai seperti 'Halo kak', 'Bantu jawab ya kak', tanpa nada robot atau kaku).
+- Hangat, santai, solutif, dan profesional (gunakan sapaan santai seperti 'Halo kak, bantu jawab ya!', tanpa nada robot atau kaku).
 - Jangan menulis seperti brosur template atau teks hafalan. Berbicaralah seperti rekan diskusi bisnis yang mengerti masalah jualan online (capek balas chat satu-satu, pusing rekap ongkir, kepotong biaya admin QRIS).
-- Buat jawaban mengalir dalam 1-2 paragraf natural, atau sisipkan poin pendek yang mudah dibaca sambil jalan.
+- Buat jawaban mengalir dalam 1-2 paragraf natural, atau sisipkan poin pendek yang mudah dibaca sambil jalan dengan penekanan istilah penting (*bold*) dan emoji relevan.
 
 Detail Produk & Fitur Resmi:
 1. URL Resmi Branding Kelas Kang Sakti:
@@ -205,6 +219,11 @@ Detail Produk & Fitur Resmi:
 
 6. SOP Direct Checkout WhatsApp (Penjualan Jasa & Setup Toko):
    - Jika calon tenant meminta jasa terima beres / setup toko, berikan konsultasi ramah, tanyakan nama toko, produk, dan nomor WA bisnis, lalu siapkan rincian invoice/QRIS langsung di WhatsApp tanpa melempar link pendaftaran statis atau tidak valid.
+
+7. Fitur Ads Tracking Pro & Customer Sync 180 Hari:
+   - Sinkronisasi Data Historis 180 Hari (Customer Sync): Sinkronisasi data pembeli lama (hingga 180 hari ke belakang) dari database toko. Auto-hashing SHA-256 (telepon & email) ditembakkan langsung ke server Meta Conversions API / Offline Events. Mempercepat pematangan algoritma Meta pada fase testing, sehingga seller langsung bisa membentuk Lookalike Audience (LAL 1%-2%) dari profil pembeli riil tanpa harus mulai dari pixel kosong ("pixel buta").
+   - Server-Side CAPI (Real-Time Conversions API): Pengiriman event konversi 'Purchase' otomatis & real-time dari backend BoonTrack seketika pesanan terverifikasi lunas (PAID). Mengatasi penurunan sinyal akibat pembaruan iOS 14.5+ maupun ad-blocker pada browser pembeli, menjaga akurasi pelacakan ROAS iklan hingga mendekati 100%.
+   - Aturan Nada Bicara & Format: Cepat tanggap, ramah, solutif, profesional ("Halo kak, bantu jawab ya!"), gunakan bullet points ringkas dengan penekanan istilah penting (*bold*), serta tambahkan emoji relevan.
 """
 
 GROUP_BOONPILOT_KNOWLEDGE: Dict[str, str] = {
@@ -222,6 +241,22 @@ GROUP_BOONPILOT_KNOWLEDGE: Dict[str, str] = {
         "Kalau kakak butuh Meta Conversions API (CAPI server-side) dan GTM container untuk bypass adblocker, kakak bisa pilih "
         "paket Ads Performance (Rp 299rb/bln).\n\n"
         "Bisa langsung coba lihat alur checkoutnya di https://shop.boontrack.com ya kak!"
+    ),
+    "sync": (
+        "Halo kak, bantu jawab ya! 😊✨\n\n"
+        "BoonTrack menyediakan fitur *Sinkronisasi Data Historis 180 Hari (Customer Sync)* untuk akselerasi performa iklan:\n\n"
+        "• 🔄 *Sinkronisasi Data Historis 180 Hari:* Data transaksi pembeli lama hingga 180 hari ke belakang disinkronkan langsung dari database toko.\n"
+        "• 🔒 *Enkripsi SHA-256 Otomatis:* Sistem otomatis melakukan hashing SHA-256 standar Meta pada nomor telepon & email sebelum ditembakkan ke Meta Conversions API / Offline Events.\n"
+        "• 🎯 *Lookalike Audience Instan:* Mempercepat pematangan algoritma Meta pada fase testing awal, sehingga Kakak langsung bisa membentuk *Lookalike Audience (LAL 1%-2%)* dari pembeli riil tanpa harus mulai dari *pixel kosong ('pixel buta')*.\n\n"
+        "Mau konsultasi integrasi atau aktivasi Customer Sync ini di toko Kakak? 🚀"
+    ),
+    "capi": (
+        "Halo kak, bantu jawab ya! 😊✨\n\n"
+        "Untuk pelacakan konversi presisi tinggi, BoonTrack dilengkapi *Server-Side Conversions API (CAPI)* & *Customer Sync*:\n\n"
+        "• ⚡ *Real-Time Purchase Event:* Pengiriman event konversi *'Purchase'* otomatis dan real-time dari backend BoonTrack seketika pesanan terverifikasi lunas (*PAID*).\n"
+        "• 🛡️ *Bypass iOS 14.5+ & Ad-Blocker:* Mengatasi penurunan sinyal akibat kebijakan privasi iOS maupun ad-blocker pada browser pembeli, menjaga akurasi pelacakan *ROAS iklan hingga mendekati 100%*.\n"
+        "• 🔄 *Customer Sync 180 Hari:* Auto-hashing SHA-256 data 180 hari ke Meta CAPI untuk pembentukan *Lookalike Audience (LAL 1%-2%)* instan tanpa pixel buta!\n\n"
+        "Fitur CAPI server-side ini tersedia di paket *Ads Performance (Rp 299k/bln)* kak. Ada yang ingin ditanyakan lagi? 🙌"
     ),
     "kelebihan": (
         "Halo kak! Bedanya kalau pakai BoonTrack, toko kakak serba otomatis. "
@@ -329,7 +364,11 @@ def get_static_group_boonpilot_response(incoming_text: str) -> str:
         return GROUP_BOONPILOT_KNOWLEDGE["reader"]
     if any(k in lower for k in ("ongkir", "ekspedisi", "kurir", "jne", "j&t", "sicepat", "anteraja", "resi", "pickup", "kirim", "lincah", "biteship", "pengiriman")):
         return GROUP_BOONPILOT_KNOWLEDGE["ongkir"]
-    if any(k in lower for k in ("pixel", "meta", "tiktok", "capi", "gtm", "tracking", "iklan", "fb ads", "ads")):
+    if any(k in lower for k in ("sync", "sinkron", "historis", "180 hari", "lal", "lookalike", "pixel buta", "offline event", "customer sync")):
+        return GROUP_BOONPILOT_KNOWLEDGE["sync"]
+    if any(k in lower for k in ("capi", "conversions api", "conversion api", "server side", "server-side", "roas", "ios 14", "adblock", "ad-blocker")):
+        return GROUP_BOONPILOT_KNOWLEDGE["capi"]
+    if any(k in lower for k in ("pixel", "meta", "tiktok", "gtm", "tracking", "iklan", "fb ads", "ads")):
         return GROUP_BOONPILOT_KNOWLEDGE["pixel"]
     if any(k in lower for k in ("qris", "mdr", "potongan", "admin qris", "biaya admin", "payment", "transfer")):
         return GROUP_BOONPILOT_KNOWLEDGE["payment"]

@@ -66,8 +66,12 @@ async def create_telegram_single_use_invite_link(
     bot_token = (
         os.getenv("TELEGRAM_BOT_TOKEN")
         or os.getenv("TELEGRAM_ACADEMY_BOT_TOKEN")
-        or "ctwa_telegram_bot_token"
-    )
+        or ""
+    ).strip()
+    if not bot_token:
+        logger.error("[CTWA FULFILLMENT] TELEGRAM_BOT_TOKEN tidak dikonfigurasi di environment (fail-closed)")
+        raise ValueError("TELEGRAM_BOT_TOKEN is not configured in environment variables (fail-closed)")
+
     expire_date = int(time.time()) + 86400
     invite_name = f"Invite-{order_id}"
 

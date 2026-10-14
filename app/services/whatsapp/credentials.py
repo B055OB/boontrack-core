@@ -179,7 +179,7 @@ def _fetch_wa_credentials_from_db(
                 sb.table("whatsapp_connections")
                 .select(columns)
                 .eq(field, clean_tenant)
-                .eq("status", "active")
+                .in_("status", ["active", "open", "connected"])
             )
             if clean_phone_id:
                 query = query.eq("phone_number_id", clean_phone_id)
@@ -214,7 +214,31 @@ def _fetch_wa_credentials_from_db(
                 "[WhatsApp Credential Lookup] Database lookup failed for field=%s (%s)",
                 field, type(err).__name__
             )
-            return None
+
+    # Fallback to direct PostgreSQL DB query if Supabase returned no rows or errored
+    try:
+        from app.core.database import get_db_connection
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            query_sql = """
+                SELECT api_key, phone_number_id
+                FROM whatsapp_connections
+                WHERE (tenant_slug = %s OR tenant_id = %s)
+                  AND LOWER(status) IN ('active', 'open', 'connected')
+                  AND api_key IS NOT NULL AND phone_number_id IS NOT NULL
+            """
+            params = [clean_tenant, clean_tenant]
+            if clean_phone_id:
+                query_sql += " AND phone_number_id = %s"
+                params.append(clean_phone_id)
+            query_sql += " ORDER BY created_at DESC LIMIT 1;"
+            cur.execute(query_sql, params)
+            row = cur.fetchone()
+            if row and row[0] and row[1]:
+                return str(row[0]).strip(), str(row[1]).strip()
+        conn.close()
+    except Exception as pg_err:
+        logger.debug(f"[WhatsApp Credential DB Fallback Note] {pg_err}")
 
     return None
 

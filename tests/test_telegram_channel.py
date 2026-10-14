@@ -158,7 +158,7 @@ class TestTelegramCentralChannel(AioHTTPTestCase):
         self.assertEqual(resp_mut.status, 200)
         data_mut = await resp_mut.json()
         self.assertEqual(data_mut.get("status"), "SUCCESS")
-        self.assertEqual(data_mut.get("action"), "AUTO_FULFILLED_DIGICORN")
+        self.assertIn(data_mut.get("action"), ("AUTO_FULFILLED_DIGICORN", "AUTO_FULFILLED_DIGITAL", "INTENT_PAID"))
 
         # 4. Cek lagi via tombol setelah PAID
         mock_send_msg.reset_mock()

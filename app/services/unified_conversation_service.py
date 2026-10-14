@@ -571,7 +571,7 @@ class UnifiedConversationEngine:
                 "unassigned_triggered": False,
             }
 
-        # 3.5 STRICT GROUNDING INTERCEPTOR (SOP Terima Beres / Setup Toko & Reader 5 Accounts)
+        # 3.5 STRICT GROUNDING INTERCEPTOR (SOP Terima Beres / Setup Toko, Reader 5 Accounts & CAPI/Customer Sync)
         # STRICT TENANT GUARD: Hanya aktif jika clean_slug == 'boontrack'
         if not image_base64 and clean_slug == "boontrack":
             from app.services.ai.grounding import (
@@ -579,6 +579,8 @@ class UnifiedConversationEngine:
                 generate_setup_toko_consultation_reply,
                 is_reader_inquiry_intent,
                 generate_reader_account_explanation_reply,
+                is_capi_or_sync_inquiry_intent,
+                generate_capi_and_sync_explanation_reply,
             )
             if is_setup_toko_intent(q, tenant_slug=clean_slug):
                 sop_reply = generate_setup_toko_consultation_reply(tenant_slug=clean_slug)
@@ -593,7 +595,7 @@ class UnifiedConversationEngine:
                     "type": "TEXT",
                     "unassigned_triggered": False,
                 }
-            if is_reader_inquiry_intent(q):
+            if is_reader_inquiry_intent(q, tenant_slug=clean_slug):
                 reader_reply = generate_reader_account_explanation_reply(tenant_slug=clean_slug)
                 return {
                     "success": True,
@@ -603,6 +605,19 @@ class UnifiedConversationEngine:
                     "business_category": business_category,
                     "quick_actions": welcome_buttons,
                     "action": "READER_EXPLANATION",
+                    "type": "TEXT",
+                    "unassigned_triggered": False,
+                }
+            if is_capi_or_sync_inquiry_intent(q, tenant_slug=clean_slug):
+                capi_reply = generate_capi_and_sync_explanation_reply(customer_name=sender_name, tenant_slug=clean_slug)
+                return {
+                    "success": True,
+                    "reply": capi_reply,
+                    "reply_text": capi_reply,
+                    "tenant_slug": clean_slug,
+                    "business_category": business_category,
+                    "quick_actions": welcome_buttons,
+                    "action": "CAPI_SYNC_EXPLANATION",
                     "type": "TEXT",
                     "unassigned_triggered": False,
                 }

@@ -149,10 +149,12 @@ def save_idempotency_record(
 
 def validate_and_lock_outbound_channel(tenant_id: str, conv: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Mengambil channel_type dan channel_connection_id langsung dari row percakapan di database.
+    Mengambil channel_type, provider, dan channel_connection_id langsung dari row percakapan di database.
     - Menolak jika percakapan bukan milik tenant aktif (403 Forbidden).
     - Memvalidasi bahwa koneksi pengirim benar milik tenant_id aktif (403 Forbidden).
+    - Menolak jika kanal tidak memiliki binding eksplisit / channel_connection_id kosong (422 Unprocessable Entity).
     - Menolak jika kanal tujuan offline (422 Unprocessable Entity) tanpa fallback otomatis.
+    - Zero Channel Guessing: DILARANG menebak kanal berdasarkan tenant_id atau tenant_slug.
     """
     # 1. Validasi kepemilikan percakapan terhadap tenant aktif (Anti Cross-Tenant Leak)
     tenant_identifiers = rotary_routing_service._resolve_tenant_identifiers(tenant_id)
@@ -168,100 +170,68 @@ def validate_and_lock_outbound_channel(tenant_id: str, conv: Dict[str, Any]) -> 
             detail="Akses ditolak: Percakapan ini bukan milik tenant aktif (Cross-Tenant Leak Guard)."
         )
 
-    # 2. Ambil channel_type & channel_connection_id dari row database (bukan dari frontend)
+    # 2. Cek apakah ini Webchat (storefront widget)
     raw_channel = str(conv.get("channel_type") or "").strip().upper()
-    if not raw_channel:
-        cust_phone = str(conv.get("customer_phone") or conv.get("phone_number") or "").strip()
-        if cust_phone.startswith("webchat_"):
-            raw_channel = "WEBCHAT"
-        else:
-            raw_channel = "BAILEYS"
-
-    # Normalisasi jenis kanal
-    if raw_channel in ("WABA", "META_API", "META"):
-        channel_type = "WABA"
-    elif raw_channel in ("BAILEYS", "ENGINE", "EVOLUTION", "WAHA", "BOONTRACK_ENGINE"):
-        channel_type = "BAILEYS"
-    elif raw_channel in ("WEBCHAT",):
-        channel_type = "WEBCHAT"
-    else:
-        channel_type = raw_channel
-
-    # Jika Webchat: Kanal widget storefront (tidak butuh socket whatsapp_connections)
-    if channel_type == "WEBCHAT":
+    cust_phone = str(conv.get("customer_phone") or conv.get("phone_number") or "").strip()
+    if raw_channel == "WEBCHAT" or cust_phone.startswith("webchat_"):
         return {
             "channel_type": "WEBCHAT",
+            "provider": "WEBCHAT",
             "channel_connection_id": None,
             "connection": None,
             "is_online": True
         }
 
-    # 3. Lookup koneksi di tabel whatsapp_connections
+    # 3. Strict Channel Binding: HANYA membaca channel_connection_id (Zero Channel Guessing)
     channel_connection_id = conv.get("channel_connection_id")
+    if not channel_connection_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Percakapan tidak memiliki binding kanal (channel_connection_id). Zero Channel Guessing melarang penebakan kanal berdasarkan tenant."
+        )
+
     conn = get_db_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            conn_row = None
-            if channel_connection_id:
-                cur.execute(
-                    """
-                    SELECT id, tenant_id, tenant_slug, provider, channel_type, status, is_connected,
-                           phone_number, phone_number_id, waba_id, api_key, gateway_node_url
-                    FROM whatsapp_connections
-                    WHERE id = %s
-                    LIMIT 1;
-                    """,
-                    (str(channel_connection_id),)
-                )
-                conn_row = cur.fetchone()
-                if not conn_row:
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail=f"Koneksi kanal ({channel_type}) dengan ID {channel_connection_id} tidak ditemukan di sistem."
-                    )
-                # Validasi kepemilikan koneksi pengirim terhadap tenant aktif (Anti Cross-Tenant Leak)
-                conn_tid = str(conn_row.get("tenant_id") or "").strip()
-                conn_tslug = str(conn_row.get("tenant_slug") or "").strip()
-                if not (conn_tid in tenant_identifiers or conn_tslug in tenant_identifiers):
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Akses ditolak: Koneksi pengirim bukan milik tenant aktif (Cross-Tenant Leak Guard)."
-                    )
-            else:
-                # Cari koneksi aktif untuk tenant sesuai jenis kanal yang terkunci
-                if channel_type == "WABA":
-                    cur.execute(
-                        """
-                        SELECT id, tenant_id, tenant_slug, provider, channel_type, status, is_connected,
-                               phone_number, phone_number_id, waba_id, api_key, gateway_node_url
-                        FROM whatsapp_connections
-                        WHERE (tenant_id = ANY(%s) OR tenant_slug = ANY(%s))
-                          AND (provider = 'META_API' OR channel_type = 'WABA')
-                        ORDER BY is_connected DESC, updated_at DESC
-                        LIMIT 1;
-                        """,
-                        (tenant_identifiers, tenant_identifiers)
-                    )
-                else:
-                    cur.execute(
-                        """
-                        SELECT id, tenant_id, tenant_slug, provider, channel_type, status, is_connected,
-                               phone_number, phone_number_id, waba_id, api_key, gateway_node_url
-                        FROM whatsapp_connections
-                        WHERE (tenant_id = ANY(%s) OR tenant_slug = ANY(%s))
-                          AND (provider != 'META_API' AND channel_type != 'WABA')
-                        ORDER BY is_connected DESC, updated_at DESC
-                        LIMIT 1;
-                        """,
-                        (tenant_identifiers, tenant_identifiers)
-                    )
-                conn_row = cur.fetchone()
-
+            cur.execute(
+                """
+                SELECT id, tenant_id, tenant_slug, provider, channel_type, status, is_connected,
+                       phone_number, phone_number_id, waba_id, api_key, gateway_node_url
+                FROM whatsapp_connections
+                WHERE id = %s
+                LIMIT 1;
+                """,
+                (str(channel_connection_id),)
+            )
+            conn_row = cur.fetchone()
             if not conn_row:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Kanal tujuan ({channel_type}) belum dikonfigurasi atau tidak ditemukan untuk tenant ini."
+                    detail=f"Koneksi kanal dengan ID {channel_connection_id} tidak ditemukan di sistem."
                 )
+
+            # Validasi kepemilikan koneksi pengirim terhadap tenant aktif (Anti Cross-Tenant Leak)
+            conn_tid = str(conn_row.get("tenant_id") or "").strip()
+            conn_tslug = str(conn_row.get("tenant_slug") or "").strip()
+            if not (conn_tid in tenant_identifiers or conn_tslug in tenant_identifiers):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Akses ditolak: Koneksi pengirim bukan milik tenant aktif (Cross-Tenant Leak Guard)."
+                )
+
+            # Resolusi channel_type dan provider dari data whatsapp_connections
+            conn_provider = str(conn_row.get("provider") or "").strip().upper()
+            conn_ctype = str(conn_row.get("channel_type") or "").strip().upper()
+
+            if conn_provider in ("OFFICIAL_META", "META_API", "META") or conn_ctype in ("WABA", "META_API", "META"):
+                channel_type = "WABA"
+                provider = "OFFICIAL_META"
+            elif conn_provider in ("EVOLUTION", "EVOLUTION_API", "BAILEYS") or conn_ctype in ("BAILEYS", "ENGINE", "EVOLUTION", "WAHA", "BOONTRACK_ENGINE"):
+                channel_type = "BAILEYS"
+                provider = "EVOLUTION"
+            else:
+                channel_type = conn_ctype or "WABA"
+                provider = conn_provider or "OFFICIAL_META"
 
             # 4. Validasi status online (Tolak eksplisit jika offline, TANPA fallback otomatis)
             is_connected = bool(conn_row.get("is_connected"))
@@ -276,6 +246,7 @@ def validate_and_lock_outbound_channel(tenant_id: str, conv: Dict[str, Any]) -> 
 
             return {
                 "channel_type": channel_type,
+                "provider": provider,
                 "channel_connection_id": str(conn_row["id"]),
                 "connection": dict(conn_row),
                 "is_online": True
@@ -296,9 +267,10 @@ async def dispatch_locked_message(
 ) -> Dict[str, Any]:
     """
     Mengirim pesan CS strictly melalui kanal yang terkunci.
-    Dilarang keras melakukan auto-fallback ke kanal lain bila terjadi error.
+    Dilarang keras melakukan auto-fallback ke kanal lain bila terjadi error (FAIL-CLOSED).
     """
     channel_type = channel_info["channel_type"]
+    provider = channel_info.get("provider") or ("OFFICIAL_META" if channel_type == "WABA" else "EVOLUTION")
     clean_digits = normalize_phone_number(to_phone)
     if not clean_digits and channel_type != "WEBCHAT":
         raise HTTPException(
@@ -321,7 +293,7 @@ async def dispatch_locked_message(
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     detail="Gagal mengirim pesan melalui Meta Cloud API (WABA): pengiriman ditolak atau gagal. Tidak ada fallback otomatis."
                 )
-            return {"success": True, "provider": "META_API", "channel_type": "WABA", "response": res}
+            return {"success": True, "provider": provider, "channel_type": "WABA", "response": res}
         except HTTPException:
             raise
         except Exception as meta_err:
@@ -341,7 +313,7 @@ async def dispatch_locked_message(
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     detail=f"Gagal mengirim pesan melalui BoonTrack Engine (Baileys): {err_msg}. Tidak ada fallback otomatis."
                 )
-            return {"success": True, "provider": "EVOLUTION_API", "channel_type": "BAILEYS", "response": res}
+            return {"success": True, "provider": provider, "channel_type": "BAILEYS", "response": res}
         except HTTPException:
             raise
         except Exception as evo_err:
@@ -448,6 +420,7 @@ async def execute_send_cs_message(
         "conversation": updated_conv,
         "channel_type": channel_info["channel_type"],
         "channel_connection_id": channel_info.get("channel_connection_id"),
+        "provider": channel_info.get("provider"),
         "dispatch": dispatch_res
     }
 

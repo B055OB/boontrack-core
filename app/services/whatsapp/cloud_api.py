@@ -139,37 +139,121 @@ async def log_to_supabase_messages(
         )
         lead_state_val = engine_result.get("lead_state", "TANYA_TANYA")
 
-        if conv_uuid and clean_digits:
+        # Resolve connection binding (Strict Channel-First Mandate)
+        resolved_channel_type = (metadata or {}).get("channel_type")
+        resolved_conn_id = (metadata or {}).get("channel_connection_id")
+        resolved_provider = (metadata or {}).get("provider")
+
+        if not resolved_conn_id or not resolved_channel_type:
+            phone_num_id = (metadata or {}).get("phone_number_id")
+            instance_nm = (metadata or {}).get("instance_name")
             try:
-                supabase.table("conversations").upsert({
-                    "id": conv_uuid,
-                    "tenant_id": clean_tenant,
-                    "tenant_slug": clean_tenant,
-                    "phone_number": clean_digits,
-                    "customer_phone": clean_digits,
-                    "contact_name": user_name or f"User {clean_digits[-4:]}",
-                    "customer_name": user_name or f"User {clean_digits[-4:]}",
-                    "lead_state": lead_state_val,
-                    "last_message": content[:500] if content else None,
-                    "last_message_at": now_iso,
-                    "updated_at": now_iso
-                }).execute()
+                from app.core.database import get_db_connection
+                _db = get_db_connection()
+                with _db.cursor() as _cur:
+                    if phone_num_id:
+                        _cur.execute(
+                            "SELECT id, channel_type, provider FROM whatsapp_connections WHERE phone_number_id = %s LIMIT 1;",
+                            (str(phone_num_id),)
+                        )
+                        _r = _cur.fetchone()
+                        if _r:
+                            resolved_conn_id = str(_r[0])
+                            resolved_channel_type = str(_r[1] or "WABA").upper()
+                            resolved_provider = str(_r[2] or "OFFICIAL_META").upper()
+                    elif instance_nm:
+                        _cur.execute(
+                            "SELECT id, channel_type, provider FROM whatsapp_connections WHERE instance_name = %s LIMIT 1;",
+                            (str(instance_nm),)
+                        )
+                        _r = _cur.fetchone()
+                        if _r:
+                            resolved_conn_id = str(_r[0])
+                            resolved_channel_type = str(_r[1] or "BAILEYS").upper()
+                            resolved_provider = str(_r[2] or "EVOLUTION").upper()
+
+                    if not resolved_conn_id:
+                        _cur.execute(
+                            """
+                            SELECT id, channel_type, provider FROM whatsapp_connections
+                            WHERE (tenant_slug = %s OR tenant_id = %s)
+                              AND LOWER(status) IN ('active', 'open', 'connected')
+                            ORDER BY is_connected DESC, created_at DESC LIMIT 1;
+                            """,
+                            (clean_tenant, clean_tenant)
+                        )
+                        _r = _cur.fetchone()
+                        if _r:
+                            resolved_conn_id = str(_r[0])
+                            resolved_channel_type = str(_r[1] or "WABA").upper()
+                            resolved_provider = str(_r[2] or "OFFICIAL_META").upper()
+                _db.close()
+            except Exception as _lookup_err:
+                logger.debug(f"[Strict Channel Binding Lookup Note] {_lookup_err}")
+
+        if conv_uuid and clean_digits:
+            conv_payload = {
+                "id": conv_uuid,
+                "tenant_id": clean_tenant,
+                "tenant_slug": clean_tenant,
+                "phone_number": clean_digits,
+                "customer_phone": clean_digits,
+                "contact_name": user_name or f"User {clean_digits[-4:]}",
+                "customer_name": user_name or f"User {clean_digits[-4:]}",
+                "lead_state": lead_state_val,
+                "last_message": content[:500] if content else None,
+                "last_message_at": now_iso,
+                "updated_at": now_iso,
+            }
+            if resolved_conn_id:
+                conv_payload["channel_connection_id"] = resolved_conn_id
+            if resolved_channel_type:
+                conv_payload["channel_type"] = resolved_channel_type
+            if resolved_provider:
+                conv_payload["provider"] = resolved_provider
+
+            try:
+                supabase.table("conversations").upsert(conv_payload).execute()
             except Exception as conv_err:
                 logger.debug(f"[Supabase Conv Upsert Warning] {conv_err}")
-                try:
-                    supabase.table("conversations").upsert({
-                        "id": conv_uuid,
-                        "tenant_id": clean_tenant,
-                        "tenant_slug": clean_tenant,
-                        "phone_number": clean_digits,
-                        "contact_name": user_name or f"User {clean_digits[-4:]}",
-                        "lead_state": lead_state_val,
-                        "last_message": content[:500] if content else None,
-                        "updated_at": now_iso
-                    }).execute()
-                except Exception as fallback_err:
-                    logger.debug(f"[Supabase Conv Upsert Fallback Warning] {fallback_err}")
-                    conv_uuid = None
+
+            # PostgreSQL Sync (P0 Strict Channel Binding)
+            try:
+                from app.core.database import get_db_connection
+                pg_conn = get_db_connection()
+                with pg_conn.cursor() as pg_cur:
+                    pg_cur.execute(
+                        """
+                        INSERT INTO conversations (
+                            id, tenant_id, tenant_slug, phone_number, customer_phone, contact_name, customer_name,
+                            lead_state, last_message, last_message_at, updated_at, channel_type, channel_connection_id, provider
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        )
+                        ON CONFLICT (id) DO UPDATE SET
+                            tenant_slug = EXCLUDED.tenant_slug,
+                            customer_phone = EXCLUDED.customer_phone,
+                            contact_name = EXCLUDED.contact_name,
+                            customer_name = EXCLUDED.customer_name,
+                            lead_state = EXCLUDED.lead_state,
+                            last_message = EXCLUDED.last_message,
+                            last_message_at = EXCLUDED.last_message_at,
+                            updated_at = EXCLUDED.updated_at,
+                            channel_type = COALESCE(EXCLUDED.channel_type, conversations.channel_type),
+                            channel_connection_id = COALESCE(EXCLUDED.channel_connection_id, conversations.channel_connection_id),
+                            provider = COALESCE(EXCLUDED.provider, conversations.provider);
+                        """,
+                        (
+                            conv_uuid, clean_tenant, clean_tenant, clean_digits, clean_digits,
+                            user_name or f"User {clean_digits[-4:]}", user_name or f"User {clean_digits[-4:]}",
+                            lead_state_val, content[:500] if content else None, now_iso, now_iso,
+                            resolved_channel_type, resolved_conn_id, resolved_provider
+                        )
+                    )
+                    pg_conn.commit()
+                pg_conn.close()
+            except Exception as pg_conv_err:
+                logger.debug(f"[PostgreSQL Conv Upsert Note] {pg_conv_err}")
 
         safe_meta = {}
         if metadata:

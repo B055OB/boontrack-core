@@ -19,16 +19,21 @@ from app.services.ai.grounding import (
     STRICT_READER_GROUNDING_PROMPT,
     BOONTRACK_OFFICIAL_SERVICES_PACKAGES,
     DIRECT_CHECKOUT_WA_SOP_PROMPT,
+    BOONTRACK_ADS_TRACKING_AND_SYNC_DIRECTIVE,
+    CUSTOMER_SYNC_AND_CAPI_KEYWORDS,
     HANDOVER_HUMAN_KEYWORDS,
     HANDOVER_TRANSITION_REPLY,
     is_setup_toko_intent,
     is_reader_inquiry_intent,
     is_handover_intent,
+    is_capi_or_sync_inquiry_intent,
     generate_setup_toko_consultation_reply,
     generate_reader_account_explanation_reply,
+    generate_capi_and_sync_explanation_reply,
 )
 from app.services.reader_parser import parse_reader_notification
 from app.routes.whatsapp_gateway_routes import check_and_handle_session_handover_and_toggle
+from app.whatsapp.traffic_splitter import get_static_group_boonpilot_response
 
 
 def test_reader_allowed_accounts_exact_five():
@@ -246,3 +251,92 @@ def test_reader_parser_strictly_supports_5_apps_only():
     assert bri_res["supported"] is False
     assert bri_res["is_payment_in"] is False
     assert bri_res["amount"] == 0.0
+
+
+def test_boontrack_ads_tracking_and_sync_directive_content():
+    """Memastikan direktif resmi memuat fitur Customer Sync 180 Hari, Server-Side CAPI, dan Nada Bicara."""
+    directive = BOONTRACK_ADS_TRACKING_AND_SYNC_DIRECTIVE.lower()
+    
+    # 1. Fitur Sinkronisasi Data Historis 180 Hari (Customer Sync)
+    assert "180 hari" in directive
+    assert "customer sync" in directive
+    assert "sha-256" in directive
+    assert "lookalike audience" in directive or "lal" in directive
+    assert "pixel kosong" in directive or "pixel buta" in directive
+    
+    # 2. Fitur Server-Side CAPI (Real-Time Conversions API)
+    assert "server-side" in directive or "capi" in directive
+    assert "purchase" in directive
+    assert "paid" in directive
+    assert "ios 14.5" in directive or "ios 14" in directive
+    assert "ad-blocker" in directive or "adblock" in directive
+    assert "roas" in directive
+    
+    # 3. Aturan Nada Bicara & Format Balasan Bot
+    assert "halo kak, bantu jawab ya!" in directive
+    assert "bullet points" in directive or "bullet point" in directive
+
+
+def test_is_capi_or_sync_inquiry_intent_detection_and_tenant_guard():
+    """Memastikan deteksi intent CAPI/Sync aktif untuk tenant 'boontrack' dan diblokir untuk tenant lain."""
+    valid_sync_queries = [
+        "Apakah ada fitur customer sync 180 hari?",
+        "Gimana cara sinkronisasi data transaksi pembeli lama?",
+        "Bisa buat lookalike audience dari pembeli lama tanpa pixel buta?",
+        "Apakah nomor telepon di-hash SHA-256 sebelum dikirim ke Meta?",
+        "Bagaimana cara kerja server-side CAPI di BoonTrack?",
+        "Apakah event Purchase dikirim real-time saat pesanan PAID?",
+        "Apakah CAPI BoonTrack bisa tembus iOS 14.5+ dan ad-blocker?",
+    ]
+    for q in valid_sync_queries:
+        assert is_capi_or_sync_inquiry_intent(q, tenant_slug="boontrack") is True, f"Failed for query: {q}"
+
+    # Strict Tenant Guard: Tenant lain (misal: solusi-ads, buatinvideo) dilarang trigger interceptor ini
+    for q in valid_sync_queries:
+        assert is_capi_or_sync_inquiry_intent(q, tenant_slug="solusi-ads") is False
+        assert is_capi_or_sync_inquiry_intent(q, tenant_slug="tumbuh-kembang-anak") is False
+
+    # Irrelevant queries on boontrack
+    irrelevant = [
+        "Berapa ongkir ke Surabaya?",
+        "Mau pesan paket 1",
+        "Resi saya mana ya?",
+    ]
+    for q in irrelevant:
+        assert is_capi_or_sync_inquiry_intent(q, tenant_slug="boontrack") is False
+
+
+def test_generate_capi_and_sync_explanation_reply_format_and_tone():
+    """Memastikan respon bot ramah, memakai bullet points, penekanan istilah tebal (*bold*), dan emoji."""
+    reply = generate_capi_and_sync_explanation_reply(customer_name="Rian", tenant_slug="boontrack")
+    
+    # Nada bicara wajib
+    assert "Halo kak Rian, bantu jawab ya! 😊✨" in reply
+    
+    # Istilah penting
+    assert "Sinkronisasi Data Historis 180 Hari (Customer Sync)" in reply
+    assert "*SHA-256*" in reply
+    assert "*Lookalike Audience (LAL 1%-2%)*" in reply
+    assert "pixel buta" in reply
+    assert "Server-Side CAPI (Real-Time Conversions API)" in reply
+    assert "*'Purchase'*" in reply
+    assert "*PAID*" in reply
+    assert "*iOS 14.5+*" in reply
+    assert "*ROAS iklan*" in reply
+    assert "100%" in reply
+    
+    # Format bullet points
+    assert "•" in reply
+
+
+def test_traffic_splitter_static_boonpilot_sync_and_capi_routing():
+    """Memastikan static response BoonPilot pada grup me-route pertanyaan sync dan CAPI dengan benar."""
+    sync_reply = get_static_group_boonpilot_response("Gimana cara sinkronisasi 180 hari dan LAL di Meta?")
+    assert "Sinkronisasi Data Historis 180 Hari" in sync_reply
+    assert "SHA-256" in sync_reply
+    assert "Lookalike Audience" in sync_reply
+
+    capi_reply = get_static_group_boonpilot_response("Jelasin tentang server-side CAPI dan ROAS dong")
+    assert "Server-Side Conversions API (CAPI)" in capi_reply
+    assert "Purchase" in capi_reply
+    assert "iOS 14.5+" in capi_reply

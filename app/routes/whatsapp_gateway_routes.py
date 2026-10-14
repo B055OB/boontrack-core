@@ -1184,6 +1184,8 @@ async def process_inbound_message(payload: InboundPayload):
             generate_setup_toko_consultation_reply,
             is_reader_inquiry_intent,
             generate_reader_account_explanation_reply,
+            is_capi_or_sync_inquiry_intent,
+            generate_capi_and_sync_explanation_reply,
         )
         if is_setup_toko_intent(incoming_text, tenant_slug=tenant_slug):
             logger.info(f"[GROWTH GATEWAY] Matched SOP Direct Checkout WA (Setup Toko / Terima Beres) for '{clean_phone}'")
@@ -1191,6 +1193,9 @@ async def process_inbound_message(payload: InboundPayload):
         elif is_reader_inquiry_intent(incoming_text, tenant_slug=tenant_slug):
             logger.info(f"[GROWTH GATEWAY] Matched Strict Reader 5 Accounts inquiry for '{clean_phone}'")
             reply = generate_reader_account_explanation_reply(contact_name, tenant_slug=tenant_slug)
+        elif is_capi_or_sync_inquiry_intent(incoming_text, tenant_slug=tenant_slug):
+            logger.info(f"[GROWTH GATEWAY] Matched CAPI / Customer Sync inquiry for '{clean_phone}'")
+            reply = generate_capi_and_sync_explanation_reply(contact_name, tenant_slug=tenant_slug)
 
     # 3. Pipeline Auto-Reply: Deteksi Checkout & Pembelian Cepat
     if not reply:
@@ -2229,6 +2234,13 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
     session_id_scope = f"group:{group_jid}" if (conversation_scope == "GROUP" and group_jid) else sender_phone
     from app.services.telemetry_service import track_whatsapp_message
     track_whatsapp_message("INBOUND", tenant_id=canonical_slug, session_id=session_id_scope, classification="inbound_gateway")
+    conn_id = str(connection.get("id") or "")
+    meta_binding = {
+        "channel_connection_id": conn_id if conn_id else None,
+        "instance_name": instance_name,
+        "channel_type": str(connection.get("channel_type") or "BAILEYS").upper(),
+        "provider": str(connection.get("provider") or "EVOLUTION").upper(),
+    }
     asyncio.create_task(log_to_supabase_messages(
         sender="user",
         text=incoming_text,
@@ -2237,6 +2249,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         user_phone=sender_phone,
         user_name=sender_name,
         media_url=media_url,
+        metadata=meta_binding,
     ))
 
     # Kunci session di memory
@@ -2297,6 +2310,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
                 channel="whatsapp",
                 user_phone=sender_phone,
                 user_name=sender_name,
+                metadata=meta_binding,
             ))
 
             return {
@@ -2534,6 +2548,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
             channel="whatsapp",
             user_phone=sender_phone,
             user_name=sender_name,
+            metadata=meta_binding,
         ))
 
     return {

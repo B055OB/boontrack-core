@@ -41,6 +41,8 @@ from app.utils.qris_generator import (
     render_qris_bytes,
     generate_unique_code,
 )
+from app.services.xendit_service import xendit_service
+from app.services.qris_generator import generate_qris_png_bytes
 from app.modules.tracking.capi_dispatcher import capi_dispatcher
 from app.services.ctwa_fulfillment_service import (
     fulfill_onlineboost_ctwa_order,
@@ -261,19 +263,24 @@ class CTWAStateEngine:
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
 
-        # 2. Bentuk Dynamic QRIS EMVCo Tag 54 presisi (preservasi Tag 62 acquirer sesuai §14.1)
-        base_qris = (
-            os.getenv("ONLINEBOOST_STATIC_QRIS")
-            or os.getenv("BOONTRACK_STATIC_QRIS")
-            or DEFAULT_STATIC_QRIS
-        ).strip()
-        qris_payload = generate_dynamic_qris_payload(
-            static_payload=base_qris,
+        # 2. Terbitkan Dynamic QRIS resmi via Xendit API akun PT Boontrack
+        xendit_qr_res = await xendit_service.create_dynamic_qris(
+            external_id=order_id,
             amount=total_amount,
-            invoice_id=order_id,
+            tenant_id="onlineboost",
+            customer_phone=clean_phone,
+            metadata={
+                "product_name": SINGLE_OFFER_NAME,
+                "product_slug": SINGLE_OFFER_SLUG,
+                "customer_name": name,
+                "ctwa_clid": ctwa_clid,
+            }
         )
+        qris_payload = str(xendit_qr_res.get("qr_string") or "").strip()
+        invoice_url = str(xendit_qr_res.get("invoice_url") or "").strip()
+        session["invoice_url"] = invoice_url
 
-        qr_png_bytes = render_qris_bytes(qris_payload)
+        qr_png_bytes = generate_qris_png_bytes(qris_payload) if qris_payload else b""
 
         # 3. Buat baris order baru di Supabase pada tabel orders dengan status PENDING
         order_metadata = {
@@ -283,6 +290,9 @@ class CTWAStateEngine:
             "unique_code_system": "DOWNWARD",
             "product_slug": SINGLE_OFFER_SLUG,
             "qris_payload": qris_payload,
+            "qr_id": xendit_qr_res.get("qr_id"),
+            "invoice_url": invoice_url,
+            "payment_provider": "XENDIT",
             "ctwa_clid": ctwa_clid,
         }
 
@@ -348,6 +358,7 @@ class CTWAStateEngine:
 
         # 4. Kirim gambar QRIS ke chat WhatsApp via Meta Media Endpoint beserta total tagihan presisi
         total_formatted = format_idr(total_amount)
+        web_checkout_part = f"\nAtau selesaikan langsung via Web Checkout Resmi:\n👉 {invoice_url}\n" if invoice_url else ""
         qris_caption = (
             f"📋 *TAGIHAN RESMI PENDAFTARAN BATCH 1*\n\n"
             f"Hai Kak *{name}*! Data pendaftaran Kakak telah kami catat dengan sukses.\n\n"
@@ -358,7 +369,8 @@ class CTWAStateEngine:
             f"• *TOTAL TAGIHAN PRESISI: Rp {total_formatted}*\n\n"
             f"⚠️ *PENTING:* Mohon transfer tepat hingga 3 digit terakhir (*Rp {total_formatted}*) "
             f"agar sistem AI kami dapat memverifikasi pembayaran Kakak secara otomatis dalam hitungan detik.\n\n"
-            f"📲 Silakan scan kode QRIS di atas melalui BCA, Mandiri, BRI, BNI, GoPay, OVO, Dana, atau ShopeePay.\n\n"
+            f"📲 Silakan scan kode QRIS di atas melalui BCA, Mandiri, BRI, BNI, GoPay, OVO, Dana, atau ShopeePay.\n"
+            f"{web_checkout_part}\n"
             f"Akses Supergroup Praktikum akan otomatis diterbitkan begitu pembayaran terverifikasi! 🚀"
         )
 

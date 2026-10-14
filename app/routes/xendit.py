@@ -89,7 +89,7 @@ async def send_whatsapp_payment_notification(
 
     # Fallback product matching for onlineboost
     if not access_url and tenant_id == "onlineboost":
-        if amount == 149000:
+        if amount == 249000 or (248000 <= amount <= 249000):
             item_name = "Kelas Inkubasi CTWA Batch 1 - Scale Bundle"
             access_url = "https://onlineboost.id/ctwa-scale-bundle"
         elif amount == 99000:

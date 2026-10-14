@@ -622,15 +622,15 @@ class BoonPilotService:
                 "Ada kendala saat upload barcode QRIS atau rekening toko, Kak? Saya siap bantu, Kak!"
             )
 
-        # 6. Pelacakan Iklan & CAPI (Tab 'ads')
-        if any(k in q for k in ["iklan", "ads", "pixel", "meta pixel", "tiktok pixel", "gtm", "capi", "conversion api"]):
+        # 6. Pelacakan Iklan, Server-Side CAPI & 180-Day Customer Sync (Tab 'ads')
+        if any(k in q for k in ["iklan", "ads", "pixel", "meta pixel", "tiktok pixel", "gtm", "capi", "conversion api", "sync", "sinkron", "180 hari", "lal", "lookalike"]):
             return (
-                f"Halo Kak! Untuk konfigurasi pelacakan iklan Meta & TikTok toko **{tenant_name}**:\n\n"
-                "1. Buka tab **'ads'** (Pelacakan Iklan / Tracking) di menu dashboard.\n"
-                "2. Masukkan ID Meta Pixel atau TikTok Pixel toko Kakak.\n"
-                "3. Masukkan token Server-Side Conversion API (CAPI) untuk memulihkan sinyal data iklan hingga 95%+\n"
-                "4. Klik Simpan Token. Seluruh event pembelian dan lead otomatis terlacak dengan sanitasi PII aman.\n\n"
-                "Ada yang ingin Kakak tanyakan lagi terkait integrasi pixel atau CAPI iklan toko?"
+                f"Halo kak, bantu jawab ya! 😊✨\n\n"
+                f"Untuk konfigurasi pelacakan iklan Meta & TikTok toko **{tenant_name}**:\n\n"
+                "• ⚡ **Server-Side CAPI (Real-Time Conversions API):** Pengiriman event konversi 'Purchase' otomatis dan real-time dari backend BoonTrack seketika pesanan PAID, mengatasi penurunan sinyal iOS 14.5+ & ad-blocker serta menjaga akurasi pelacakan ROAS iklan mendekati 100%.\n"
+                "• 🔄 **Sinkronisasi Data Historis 180 Hari (Customer Sync):** Sinkronisasi data pembeli lama (hingga 180 hari ke belakang) dengan auto-hashing SHA-256 (telepon & email) langsung ke Meta CAPI / Offline Events. Seller langsung bisa membentuk Lookalike Audience (LAL 1%-2%) tanpa harus mulai dari pixel kosong ('pixel buta').\n"
+                "• 📌 **Langkah di Dashboard:** Buka tab **'ads'** di dashboard, masukkan Pixel ID & token CAPI, lalu klik Simpan.\n\n"
+                "Ada yang ingin Kakak tanyakan lagi terkait integrasi pixel, CAPI, atau sinkronisasi 180 hari ini? 🚀"
             )
 
         # 7. Pengaturan Toko & Akun (Tab 'settings')
@@ -707,13 +707,15 @@ class BoonPilotService:
         user_msg_lower = (message or "").lower()
 
         if is_low_tier:
-            if any(term in user_msg_lower for term in ["capi", "conversion api", "server-side", "meta capi", "tiktok capi"]):
+            if any(term in user_msg_lower for term in ["capi", "conversion api", "server-side", "meta capi", "tiktok capi", "customer sync", "180 hari", "sinkronisasi historis"]):
                 return {
                     "tenant_slug": clean_slug,
                     "session_id": session_id or f"sess_{int(time.time())}",
                     "reply": (
-                        f"Fitur **Server-Side Conversion API (CAPI Meta & TikTok)** dirancang untuk memulihkan sinyal data iklan hingga 95%+ dan hanya tersedia mulai dari paket **PRO_SCALE (Ads Performance)** atau **ENTERPRISE (Team Scale)**. "
-                        f"Pada paket Anda saat ini (**{context.plan}**), pelacakan terbatas pada browser pixel dasar. Silakan lakukan upgrade paket ke **PRO_SCALE (Rp 299.000/bln)** pada menu Pengaturan > Billing untuk mengaktifkan akses token CAPI dan pelacakan event server-side instan."
+                        f"Halo kak, bantu jawab ya! 😊✨\n\n"
+                        f"Fitur **Server-Side Conversion API (CAPI Meta & TikTok)** dan **Sinkronisasi Data Historis 180 Hari (Customer Sync)** dirancang untuk memulihkan sinyal data iklan hingga mendekati 100% dan membentuk Lookalike Audience (LAL 1%-2%) instan tanpa pixel buta.\n\n"
+                        f"Fitur advanced tracking ini tersedia mulai dari paket **PRO_SCALE (Ads Performance - Rp 299.000/bln)** atau **ENTERPRISE (Team Scale)**. "
+                        f"Pada paket Anda saat ini (**{context.plan}**), pelacakan terbatas pada browser pixel dasar. Silakan lakukan upgrade paket ke **PRO_SCALE** pada menu Pengaturan > Billing untuk mengaktifkan akses CAPI dan Customer Sync 180 Hari ya kak! 🚀"
                     ),
                     "action_proposal": None,
                     "quick_actions": ["Upgrade ke PRO_SCALE", "Lihat Perbandingan Fitur Paket", "Panduan Navigasi Dashboard"],

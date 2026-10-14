@@ -33,6 +33,7 @@ async def create_d2c_order_and_dispatch_qris(
     is_digital: bool = True,
     delivery_asset_url: Optional[str] = None,
     correlation_id: Optional[str] = None,
+    customer_email: Optional[str] = None,
 ) -> Dict[str, Any]:
     """1. Membuat record pesanan di Supabase & PostgreSQL dengan trace/correlation_id.
     2. Menghasilkan QRIS Dinamis via Gateway.
@@ -40,6 +41,11 @@ async def create_d2c_order_and_dispatch_qris(
     """
     supabase = get_supabase()
     clean_phone = normalize_phone_number(customer_phone)
+    if not clean_phone:
+        raise ValueError("customer_phone tidak valid atau kosong.")
+    if not customer_name or not str(customer_name).strip():
+        raise ValueError("customer_name wajib diisi dan tidak boleh kosong.")
+
     order_id = f"ORD-{merchant_slug.upper()[:6]}-{int(datetime.now().timestamp())}"
     active_corr = correlation_id or order_id
     
@@ -150,8 +156,8 @@ async def create_d2c_order_and_dispatch_qris(
             """
             INSERT INTO orders (
                 id, tenant_slug, product_id, product_title, gross_amount,
-                customer_name, customer_phone, status, correlation_id, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'PENDING', %s, NOW(), NOW())
+                customer_name, customer_phone, customer_email, status, correlation_id, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', %s, NOW(), NOW())
             ON CONFLICT (id) DO UPDATE SET
                 correlation_id = EXCLUDED.correlation_id,
                 updated_at = NOW();
@@ -164,6 +170,7 @@ async def create_d2c_order_and_dispatch_qris(
                 total_amount,
                 customer_name,
                 clean_phone,
+                customer_email,
                 correlation_id
             )
         )
@@ -185,6 +192,7 @@ async def create_d2c_order_and_dispatch_qris(
                 "gross_amount": total_amount,
                 "customer_name": customer_name,
                 "customer_phone": clean_phone,
+                "customer_email": customer_email,
                 "status": "PENDING",
                 "correlation_id": correlation_id,
             }).execute()
@@ -192,7 +200,7 @@ async def create_d2c_order_and_dispatch_qris(
             logger.warning(f"[DB ORDER INSERT WARNING] {db_err}")
 
     # 4. Format Pesan WhatsApp Invoice Summary
-    scheme = str(order_data.get("payment_scheme") or order_data.get("scheme") or "").lower()
+    scheme = ""
     if not scheme:
         t_lower = str(prod_title or "").lower()
         if any(w in t_lower for w in ["dp", "uang muka", "tiket", "komitmen"]):

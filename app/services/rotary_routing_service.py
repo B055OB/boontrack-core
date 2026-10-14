@@ -337,7 +337,7 @@ class RotaryRoutingService:
                 cur.execute(
                     """
                     SELECT id, tenant_id, tenant_slug, phone_number, customer_phone, contact_name, customer_name,
-                           assigned_agent_id, status, bot_mode, bot_paused, updated_at, channel_type, channel_connection_id
+                           assigned_agent_id, status, bot_mode, bot_paused, updated_at, channel_type, channel_connection_id, provider
                     FROM conversations
                     WHERE id = %s;
                     """,
@@ -352,6 +352,8 @@ class RotaryRoutingService:
                     conv["assigned_agent_id"] = str(conv["assigned_agent_id"])
                 if conv.get("channel_connection_id"):
                     conv["channel_connection_id"] = str(conv["channel_connection_id"])
+                if conv.get("provider"):
+                    conv["provider"] = str(conv["provider"])
                 return conv
         finally:
             conn.close()
@@ -673,7 +675,10 @@ class RotaryRoutingService:
         tenant_id: str,
         phone_or_session: str,
         contact_name: Optional[str] = None,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
+        channel_type: Optional[str] = None,
+        channel_connection_id: Optional[str] = None,
+        provider: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Memastikan record percakapan tersedia dan memutasi statusnya menjadi 'unassigned'.
@@ -692,11 +697,11 @@ class RotaryRoutingService:
                     """
                     SELECT id, tenant_id, phone_number, status, bot_mode, assigned_agent_id
                     FROM conversations
-                    WHERE tenant_id = %s AND phone_number = %s
+                    WHERE (tenant_id = %s OR tenant_slug = %s) AND (phone_number = %s OR customer_phone = %s)
                     ORDER BY updated_at DESC
                     LIMIT 1;
                     """,
-                    (tenant_id, final_id)
+                    (tenant_id, tenant_id, final_id, final_id)
                 )
                 existing = cur.fetchone()
 
@@ -707,11 +712,14 @@ class RotaryRoutingService:
                         UPDATE conversations
                         SET status = 'unassigned',
                             assigned_agent_id = NULL,
+                            channel_type = COALESCE(%s, channel_type),
+                            channel_connection_id = COALESCE(%s, channel_connection_id),
+                            provider = COALESCE(%s, provider),
                             updated_at = NOW()
                         WHERE id = %s
-                        RETURNING id, tenant_id, phone_number, contact_name, assigned_agent_id, status, bot_mode, bot_paused, updated_at;
+                        RETURNING id, tenant_id, tenant_slug, phone_number, customer_phone, contact_name, assigned_agent_id, status, bot_mode, bot_paused, updated_at, channel_type, channel_connection_id, provider;
                         """,
-                        (existing["id"],)
+                        (channel_type, channel_connection_id, provider, existing["id"])
                     )
                     updated = cur.fetchone()
                     conn.commit()
@@ -723,11 +731,11 @@ class RotaryRoutingService:
                     new_id = str(uuid.uuid4())
                     cur.execute(
                         """
-                        INSERT INTO conversations (id, tenant_id, phone_number, contact_name, status, bot_mode, bot_paused, created_at, updated_at)
-                        VALUES (%s, %s, %s, %s, 'unassigned', 'AI_ACTIVE', FALSE, NOW(), NOW())
-                        RETURNING id, tenant_id, phone_number, contact_name, assigned_agent_id, status, bot_mode, bot_paused, updated_at;
+                        INSERT INTO conversations (id, tenant_id, tenant_slug, phone_number, customer_phone, contact_name, status, bot_mode, bot_paused, channel_type, channel_connection_id, provider, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, 'unassigned', 'AI_ACTIVE', FALSE, %s, %s, %s, NOW(), NOW())
+                        RETURNING id, tenant_id, tenant_slug, phone_number, customer_phone, contact_name, assigned_agent_id, status, bot_mode, bot_paused, updated_at, channel_type, channel_connection_id, provider;
                         """,
-                        (new_id, tenant_id, final_id, contact_name or "Pelanggan")
+                        (new_id, tenant_id, tenant_id, final_id, final_id, contact_name or "Pelanggan", channel_type, channel_connection_id, provider)
                     )
                     created = cur.fetchone()
                     conn.commit()

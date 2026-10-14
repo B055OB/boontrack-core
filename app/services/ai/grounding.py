@@ -60,8 +60,26 @@ Jika pelanggan / calon klien menanyakan seputar jasa, layanan, pembuatan toko, s
    - Cocok untuk: Seller yang ingin terima jadi dari A sampai Z tanpa repot input produk satu per satu.
 """
 
+BOONTRACK_ADS_TRACKING_AND_SYNC_DIRECTIVE = """\
+[FITUR RESMI PELACAKAN IKLAN & SINKRONISASI DATA HISTORIS BOONTRACK]
+1. FITUR SINKRONISASI DATA HISTORIS 180 HARI (CUSTOMER SYNC):
+   - Deskripsi: BoonTrack menyediakan fitur sinkronisasi data transaksi pembeli lama (hingga 180 hari ke belakang) dari database toko.
+   - Cara Kerja: Sistem secara otomatis melakukan hashing data (standar SHA-256 untuk nomor telepon dan email) untuk ditembakkan langsung ke server Meta Conversions API / Offline Events demi kepatuhan privasi data.
+   - Manfaat Iklan: Mempercepat pematangan algoritma Meta pada fase testing awal, sehingga seller langsung bisa membentuk Lookalike Audience (LAL 1%-2%) dari profil pembeli riil tanpa harus mulai dari pixel kosong ("pixel buta").
+
+2. FITUR SERVER-SIDE CAPI (REAL-TIME CONVERSIONS API):
+   - Deskripsi: Pengiriman event konversi 'Purchase' secara otomatis dan real-time dari backend BoonTrack seketika pesanan terverifikasi lunas (PAID).
+   - Manfaat: Mengatasi penurunan sinyal akibat pembaruan iOS 14.5+ maupun ad-blocker pada browser pembeli, menjaga akurasi pelacakan ROAS iklan hingga mendekati 100%.
+
+3. ATURAN NADA BICARA & FORMAT BALASAN BOT:
+   - Nada Bicara: Cepat tanggap, ramah, solutif, dan profesional ("Halo kak, bantu jawab ya!").
+   - Format: Gunakan bullet points ringkas dengan penekanan istilah penting (*bold*), serta tambahkan emoji yang relevan agar komunikasi terasa interaktif dan komunikatif.
+"""
+
 DIRECT_CHECKOUT_WA_SOP_PROMPT = f"""\
 {BOONTRACK_OFFICIAL_SERVICES_PACKAGES}
+
+{BOONTRACK_ADS_TRACKING_AND_SYNC_DIRECTIVE}
 
 [SOP DIRECT CHECKOUT WHATSAPP - PENJUALAN JASA & SETUP TOKO]
 1. Jika calon tenant atau pengguna meminta jasa, layanan, atau setup toko (misal: "ada jasa apa aja?", "bisa bantu terima beres?", "jasa setup toko berapa?", "tolong setupkan toko saya", "paket bot wa"):
@@ -74,6 +92,10 @@ DIRECT_CHECKOUT_WA_SOP_PROMPT = f"""\
 
 COMBINED_STRICT_AI_DIRECTIVE = f"""\
 {STRICT_READER_GROUNDING_PROMPT}
+
+{BOONTRACK_OFFICIAL_SERVICES_PACKAGES}
+
+{BOONTRACK_ADS_TRACKING_AND_SYNC_DIRECTIVE}
 
 {DIRECT_CHECKOUT_WA_SOP_PROMPT}
 """
@@ -237,4 +259,62 @@ def generate_reader_account_explanation_reply(customer_name: str = "Kakak", tena
         "🛍️ *Fleksibilitas Pembayaran untuk Pembeli (Customer):*\n"
         "Pembeli toko Kakak *BEBAS scan & membayar dari bank atau e-wallet mana pun* (BCA, Mandiri, BRI, BNI, BSI, Permata, GoPay, OVO, DANA, ShopeePay, dll) melalui barcode QRIS toko Kakak.\n\n"
         "Apakah ada yang ingin Kakak tanyakan lebih lanjut seputar cara integrasi akun penerima toko Kakak?"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 4. ADS PERFORMANCE: 180-DAY CUSTOMER SYNC & SERVER-SIDE CAPI GROUNDING
+# ---------------------------------------------------------------------------
+
+CUSTOMER_SYNC_AND_CAPI_KEYWORDS = [
+    "customer sync", "sinkronisasi data", "sinkron data", "data historis", "sinkronisasi", "sinkron",
+    "180 hari", "historis 180 hari", "capi", "conversions api", "conversion api",
+    "server-side", "server side", "server-side capi", "server side capi", "offline events", "offline event",
+    "lookalike", "lal", "lal 1%", "pixel buta", "pixel kosong", "ios 14", "ios 14.5", "ad blocker", "adblocker",
+    "roas", "roas iklan", "sha-256", "sha256", "real-time conversions api", "purchase", "paid", "event purchase",
+    "hashing data", "pembeli lama", "transaksi pembeli lama",
+]
+
+
+def is_capi_or_sync_inquiry_intent(text: str, tenant_slug: Optional[str] = None) -> bool:
+    """Mendeteksi apakah pengguna menanyakan tentang Server-Side CAPI atau Sinkronisasi Data Historis 180 Hari.
+    STRICT TENANT GUARD: Hanya aktif untuk platform tenant 'boontrack'.
+    """
+    if tenant_slug is not None and tenant_slug != "boontrack":
+        return False
+    if not text:
+        return False
+    lower = text.lower().strip()
+    return any(kw in lower for kw in CUSTOMER_SYNC_AND_CAPI_KEYWORDS)
+
+
+def generate_capi_and_sync_explanation_reply(
+    customer_name: Optional[str] = "Kakak",
+    tenant_slug: Optional[str] = None,
+    **kwargs: Any,
+) -> str:
+    """Jawaban resmi grounding seputar Sinkronisasi Data Historis 180 Hari dan Server-Side CAPI.
+    Mematuhi nada bicara: cepat tanggap, ramah, solutif, profesional ('Halo kak, bantu jawab ya!').
+    Format: bullet points ringkas, penekanan istilah penting (*bold*), dan emoji interaktif.
+    """
+    if tenant_slug is not None and tenant_slug != "boontrack":
+        return ""
+    if not customer_name or str(customer_name).strip().lower() in ("kakak", "kak", "none"):
+        target_name = "kak"
+    elif str(customer_name).strip().lower().startswith("kak "):
+        target_name = str(customer_name).strip()
+    else:
+        target_name = f"kak {str(customer_name).strip()}"
+
+    return (
+        f"Halo {target_name}, bantu jawab ya! 😊✨\n\n"
+        "Berikut informasi pembaruan fitur resmi seputar *Pelacakan Iklan & Sinkronisasi Data* di BoonTrack:\n\n"
+        "🔄 *1. Fitur Sinkronisasi Data Historis 180 Hari (Customer Sync)*\n"
+        "• *Deskripsi*: BoonTrack menyediakan fitur sinkronisasi data transaksi pembeli lama (hingga *180 hari ke belakang*) dari database toko.\n"
+        "• *Cara Kerja*: Sistem secara otomatis melakukan hashing data berstandar *SHA-256* (untuk nomor telepon dan email) untuk ditembakkan langsung ke server *Meta Conversions API / Offline Events* demi privasi data.\n"
+        "• *Manfaat Iklan*: Mempercepat pematangan algoritma Meta pada fase testing awal! Seller langsung bisa membentuk *Lookalike Audience (LAL 1%-2%)* dari profil pembeli riil tanpa harus mulai dari pixel kosong (*'pixel buta'*). 🎯\n\n"
+        "⚡ *2. Fitur Server-Side CAPI (Real-Time Conversions API)*\n"
+        "• *Deskripsi*: Pengiriman event konversi *'Purchase'* secara otomatis dan real-time dari backend BoonTrack seketika pesanan terverifikasi lunas (*PAID*).\n"
+        "• *Manfaat*: Mengatasi penurunan sinyal akibat pembaruan *iOS 14.5+* maupun ad-blocker pada browser pembeli, menjaga akurasi pelacakan *ROAS iklan* hingga mendekati *100%*! 📈🔥\n\n"
+        "Ada yang ingin ditanyakan lebih lanjut seputar aktivasi CAPI atau sinkronisasi data pelanggan ini? Tim kami siap bantu pandu sampai aktif ya kak! 🙌"
     )
