@@ -7,10 +7,35 @@ and tables 'orders' and 'staging_alumni_cpm' have RLS and FORCE RLS enabled.
 import os
 import sys
 
+from dotenv import load_dotenv
+load_dotenv()
+
+if not os.getenv("POSTGRES_HOST") or os.getenv("POSTGRES_HOST") == "postgres":
+    os.environ["POSTGRES_HOST"] = "127.0.0.1"
+if not os.getenv("POSTGRES_PORT"):
+    os.environ["POSTGRES_PORT"] = "5432"
+if not os.getenv("POSTGRES_PASSWORD"):
+    os.environ["POSTGRES_PASSWORD"] = "test_ci_postgres_password"
+if not os.getenv("POSTGRES_USER"):
+    os.environ["POSTGRES_USER"] = "postgres"
+if not os.getenv("POSTGRES_DB"):
+    os.environ["POSTGRES_DB"] = "postgres"
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.core.database import get_db_connection
+from app.core.config import settings
 
+if not getattr(settings, "POSTGRES_PASSWORD", None):
+    settings.POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "test_ci_postgres_password")
+if not getattr(settings, "POSTGRES_USER", None):
+    settings.POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
+if not getattr(settings, "POSTGRES_DB", None):
+    settings.POSTGRES_DB = os.getenv("POSTGRES_DB", "postgres")
+if not getattr(settings, "POSTGRES_PORT", None):
+    settings.POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+if not getattr(settings, "POSTGRES_HOST", None) or settings.POSTGRES_HOST == "postgres":
+    settings.POSTGRES_HOST = os.getenv("POSTGRES_HOST", "127.0.0.1")
 
 if sys.platform == "win32":
     try:
@@ -41,7 +66,7 @@ def init_test_schema():
 
     CREATE TABLE IF NOT EXISTS public.orders (
       id VARCHAR PRIMARY KEY,
-      tenant_id VARCHAR NOT NULL,
+      tenant_id UUID NOT NULL,
       tenant_slug VARCHAR NOT NULL,
       product_id VARCHAR,
       product_title VARCHAR,
@@ -52,6 +77,16 @@ def init_test_schema():
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
+
+    DO $$
+    BEGIN
+      BEGIN
+        ALTER TABLE public.orders ALTER COLUMN tenant_id TYPE UUID USING tenant_id::uuid;
+      EXCEPTION WHEN others THEN
+        NULL;
+      END;
+    END
+    $$;
 
     CREATE TABLE IF NOT EXISTS public.staging_alumni_cpm (
       id SERIAL PRIMARY KEY,
@@ -78,9 +113,13 @@ def init_test_schema():
       USING (((tenant_id)::text = NULLIF(current_setting('app.current_tenant_id', true), '')) OR (tenant_slug = NULLIF(current_setting('app.current_tenant_id', true), '')))
       WITH CHECK (((tenant_id)::text = NULLIF(current_setting('app.current_tenant_id', true), '')) OR (tenant_slug = NULLIF(current_setting('app.current_tenant_id', true), '')));
 
+    GRANT ALL ON SCHEMA public TO postgres;
+    GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
     GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres;
+    GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
     GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
-    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+    GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
     """)
 
     cur.close()

@@ -32,10 +32,36 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
+from dotenv import load_dotenv
+load_dotenv()
+
 if not os.getenv("EVOLUTION_API_KEY"):
     os.environ["EVOLUTION_API_KEY"] = "ci_test_evolution_api_key_placeholder"
 
+if not os.getenv("POSTGRES_HOST") or os.getenv("POSTGRES_HOST") == "postgres":
+    os.environ["POSTGRES_HOST"] = "127.0.0.1"
+if not os.getenv("POSTGRES_PORT"):
+    os.environ["POSTGRES_PORT"] = "5432"
+if not os.getenv("POSTGRES_PASSWORD"):
+    os.environ["POSTGRES_PASSWORD"] = "test_ci_postgres_password"
+if not os.getenv("POSTGRES_USER"):
+    os.environ["POSTGRES_USER"] = "postgres"
+if not os.getenv("POSTGRES_DB"):
+    os.environ["POSTGRES_DB"] = "postgres"
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.core.config import settings
+if not getattr(settings, "POSTGRES_PASSWORD", None):
+    settings.POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+if not getattr(settings, "POSTGRES_USER", None):
+    settings.POSTGRES_USER = os.getenv("POSTGRES_USER")
+if not getattr(settings, "POSTGRES_DB", None):
+    settings.POSTGRES_DB = os.getenv("POSTGRES_DB")
+if not getattr(settings, "POSTGRES_PORT", None):
+    settings.POSTGRES_PORT = os.getenv("POSTGRES_PORT")
+if not getattr(settings, "POSTGRES_HOST", None) or settings.POSTGRES_HOST == "postgres":
+    settings.POSTGRES_HOST = os.getenv("POSTGRES_HOST")
 
 from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException
@@ -77,11 +103,11 @@ def get_git_base_commit_sha() -> str:
 
 
 def get_git_working_tree_status() -> str:
-    """Gets the exact working tree status via git status --porcelain."""
+    """Gets the exact working tree status via git status --porcelain, ignoring the generated bundle file itself."""
     try:
         res = subprocess.run(["git", "status", "--porcelain"], stdout=subprocess.PIPE, text=True, check=True)
-        out = res.stdout.strip()
-        return out if out else "CLEAN (no uncommitted changes)"
+        lines = [line.strip() for line in res.stdout.strip().splitlines() if line.strip() and not line.endswith("CTO_P1_SECURITY_GATE_EVIDENCE_BUNDLE.md")]
+        return "\n".join(lines) if lines else "CLEAN (no uncommitted changes)"
     except Exception as e:
         return f"UNKNOWN ({e})"
 
