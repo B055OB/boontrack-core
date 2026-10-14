@@ -1,9 +1,14 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Tested Base Commit SHA (Parent HEAD)**: `911a5335bbd6ccf3eff0ad3dfe4754aada79e5ce`
+- **Tested Base Commit SHA (Parent HEAD)**: `f9a4705c72fe879d53f025fea5c104b23a961b8f`
 - **Git Branch**: `main`
-- **Status Kebersihan Working Tree (`git status --porcelain`)**: `CLEAN (no uncommitted changes)`
-- **Waktu Audit**: `2026-10-14 21:48:02 UTC`
+- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M .github/workflows/cto-security-audit.yml
+ M app/services/rotary_routing_service.py
+ M app/workers/__init__.py
+ M docs/audit/CTO_P1_SECURITY_GATE_EVIDENCE_BUNDLE.md
+ M scripts/generate_cto_p1_evidence_bundle.py
+?? tests/conftest.py`
+- **Waktu Audit**: `2026-10-14 22:00:29 UTC`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **P1 CLOSED & APPROVED (ALL VERIFIED)**
 - **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA.
@@ -51,7 +56,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.4s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.8s, max: 300s)`
 
 ### Lapis 4: Redis & AI Conversation Memory Boundary
 - **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).
@@ -85,7 +90,7 @@ Pengujian menggunakan fixture bersarang (*deeply nested payload*) dan exception 
 ```log
 Error encountered in payment engine: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 Traceback (most recent call last):
-  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 577, in generate_section_4
+  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 622, in generate_section_4
     raise ValueError(f"Fulfillment failed for {raw_phone} ({raw_email}) with key {raw_xendit}")
 ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 ```
@@ -105,19 +110,25 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Tested Base Commit SHA (Parent HEAD)**: `911a5335bbd6ccf3eff0ad3dfe4754aada79e5ce`
+- **Tested Base Commit SHA (Parent HEAD)**: `f9a4705c72fe879d53f025fea5c104b23a961b8f`
 - **Git Branch**: `main`
-- **Status Kebersihan Working Tree**: `CLEAN (no uncommitted changes)`
-- **Timestamp Eksekusi**: `2026-10-14 21:48:02 UTC`
+- **Status Kebersihan Working Tree**: `M .github/workflows/cto-security-audit.yml
+ M app/services/rotary_routing_service.py
+ M app/workers/__init__.py
+ M docs/audit/CTO_P1_SECURITY_GATE_EVIDENCE_BUNDLE.md
+ M scripts/generate_cto_p1_evidence_bundle.py
+?? tests/conftest.py`
+- **Timestamp Eksekusi**: `2026-10-14 22:00:29 UTC`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite
 
 | Test Suite | Scope Pengujian | Hasil | Detail |
 |---|---|---|---|
-| `verify_cto_full_signoff.py` | 4 Pilar CTO (Catalog, Privilege, Pool, B2G) + Bagian A Studio Assets | PASS ✅ (16/16) | 100% Lolos Tanpa Mock di Produksi |
-| `test_strict_hmac_secret.py` | Strict single env secret, zero alias fallback, tamper protection | PASS ✅ (6/6) | 0% Toleransi Alias / Fallback |
-| `test_r2_tenant_authorization.py` | Mandatory current_tenant_id, path traversal, system namespace | PASS ✅ (28/28) | Ditolak PermissionError / ValueError |
+| `verify_cto_full_signoff.py` | 4 Pilar CTO + Studio Assets + AST Worker Isolation Audit | PASS ✅ (17/17) | 100% Lolos Tanpa Mock di Produksi |
+| `test_strict_hmac_secret.py` | Strict single env secret, zero alias fallback, tamper protection | PASS ✅ (8/8) | 0% Toleransi Alias / Fallback |
+| `test_r2_tenant_authorization.py` | Mandatory current_tenant_id, path traversal, system namespace, AST proof | PASS ✅ (31/31) | Ditolak PermissionError / ValueError |
+| `test_worker_cross_tenant_isolation.py` | Worker payload & DB mutation cross-tenant simulation (Alpha vs Beta) | PASS ✅ (5/5) | Reconciler & Storage Ditolak PermissionError, DB 0 Rows |
 | `inter_service_auth.py` | HMAC-SHA256, Anti-Replay <= 300s, Tenant Boundary Mismatch | PASS ✅ | 0% Toleransi Pemalsuan Tenant |
 | `redis.py` & AI Memory | Key Scope Enforcement & Worker Payload Binding | PASS ✅ | Cross-Tenant Read/Write Ditolak |
 | `logging_sanitizer.py` | Global RecordFactory + Formatter Exception Masking | PASS ✅ | 0 Plaintext PII / Kredensial Bocor |

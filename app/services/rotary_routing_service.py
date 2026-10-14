@@ -27,8 +27,9 @@ class RotaryRoutingService:
         if not clean:
             return []
         identifiers = [clean]
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT id::text, slug FROM tenants WHERE slug = %s OR id::text = %s LIMIT 1;",
@@ -44,7 +45,8 @@ class RotaryRoutingService:
         except Exception as e:
             logger.debug(f"[RotaryRoutingService] Resolve tenant note: {e}")
         finally:
-            conn.close()
+            if conn and not conn.closed:
+                conn.close()
         return identifiers
 
     def create_agent(

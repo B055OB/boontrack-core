@@ -45,6 +45,10 @@ jobs:
       - name: Run Unit Tests for Security Gates, R2 Storage, HMAC Secret & Worker Isolation
         env:
           BOONTRACK_HMAC_SECRET: ${{ secrets.BOONTRACK_HMAC_SECRET || 'test_ci_secure_hmac_secret_for_pipeline_999' }}
+          EVOLUTION_API_KEY: ${{ secrets.EVOLUTION_API_KEY || 'test_ci_evolution_api_key_placeholder' }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || 'test_ci_r2_access_key' }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY || 'test_ci_r2_secret_key' }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID || 'test_ci_r2_account' }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
           POSTGRES_PORT: ${{ secrets.POSTGRES_PORT || '5432' }}
@@ -61,9 +65,21 @@ jobs:
             exit 1
           }
 
+      - name: Upload Test Results Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results-${{ github.sha }}
+          path: /tmp/test_results.log
+          retention-days: 7
+
       - name: Generate CTO P1 Security Gate Evidence Bundle Bound to Commit
         env:
           BOONTRACK_HMAC_SECRET: ${{ secrets.BOONTRACK_HMAC_SECRET || 'test_ci_secure_hmac_secret_for_pipeline_999' }}
+          EVOLUTION_API_KEY: ${{ secrets.EVOLUTION_API_KEY || 'test_ci_evolution_api_key_placeholder' }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || 'test_ci_r2_access_key' }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY || 'test_ci_r2_secret_key' }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID || 'test_ci_r2_account' }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
           POSTGRES_PORT: ${{ secrets.POSTGRES_PORT || '5432' }}
@@ -79,3 +95,4 @@ jobs:
           name: cto-p1-evidence-bundle-${{ github.sha }}
           path: docs/audit/CTO_P1_SECURITY_GATE_EVIDENCE_BUNDLE.md
           retention-days: 30
+
