@@ -14,11 +14,15 @@ Verifies:
 10. TTL boundaries (<= 0 or > 900s).
 """
 
+import ast
+import os
+from pathlib import Path
 import pytest
 from unittest.mock import MagicMock, patch
 from app.services.storage.r2 import (
     R2Client,
     generate_presigned_download_url,
+    generate_internal_system_presigned_url,
 )
 
 
@@ -228,3 +232,105 @@ def test_legitimate_tenant_access_succeeds(mock_r2_client):
         Params={"Bucket": "test_bucket", "Key": "tenants/tenant_alpha/private/summary.pdf"},
         ExpiresIn=600,
     )
+
+
+# 11. System Namespace Hardening & Separation
+def test_tenant_alpha_cannot_bypass_with_allow_system_namespace_true(mock_r2_client):
+    """
+    CTO Directive 09 FIX 4:
+    Non-system tenant callers (e.g. tenant_alpha) MUST NEVER be allowed to access
+    system namespace even if they explicitly pass allow_system_namespace=True.
+    """
+    with pytest.raises(PermissionError, match="not permitted to access system namespace"):
+        mock_r2_client.generate_presigned_download_url(
+            object_key="system/credentials.json",
+            current_tenant_id="tenant_alpha",
+            allow_system_namespace=True,
+        )
+
+    with pytest.raises(PermissionError, match="not permitted to access system namespace"):
+        mock_r2_client.generate_presigned_download_url(
+            object_key="tenants/system/config.env",
+            current_tenant_id="tenant_alpha",
+            allow_system_namespace=True,
+        )
+
+
+def test_generate_internal_system_presigned_url_succeeds(mock_r2_client):
+    """Internal system function safely accesses system namespace with admin_system context."""
+    url = mock_r2_client.generate_internal_system_presigned_url("system/templates/report.pdf")
+    assert "https://assets.boontrack.com" in url
+    mock_r2_client._s3_client.generate_presigned_url.assert_called_with(
+        ClientMethod="get_object",
+        Params={"Bucket": "test_bucket", "Key": "system/templates/report.pdf"},
+        ExpiresIn=900,
+    )
+
+
+# 12. AST Call-Site Audit across Routes and API Endpoints
+def test_ast_no_routes_or_api_call_allow_system_namespace():
+    """
+    CTO Directive 09 FIX 4 Mathematical Proof via AST:
+    Scans every Python file in app/routes/ and app/api/ to mathematically prove that
+    NO public route or tenant-facing endpoint passes allow_system_namespace=True
+    or calls generate_internal_system_presigned_url.
+    """
+    base_dir = Path(__file__).resolve().parent.parent
+    target_dirs = [base_dir / "app" / "routes", base_dir / "app" / "api"]
+    
+    scanned_files = []
+    violations = []
+
+    for target_dir in target_dirs:
+        if not target_dir.exists():
+            continue
+        for file_path in target_dir.rglob("*.py"):
+            if "__pycache__" in str(file_path):
+                continue
+            scanned_files.append(file_path)
+            
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                try:
+                    tree = ast.parse(f.read(), filename=str(file_path))
+                except Exception as parse_err:
+                    violations.append(f"Failed to parse {file_path}: {parse_err}")
+                    continue
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    func_name = ""
+                    if isinstance(node.func, ast.Name):
+                        func_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        func_name = node.func.attr
+
+                    # 1. Reject any call to internal system generator in routes/api
+                    if func_name == "generate_internal_system_presigned_url":
+                        violations.append(
+                            f"{file_path}:{node.lineno} calls internal function '{func_name}' directly."
+                        )
+
+                    # 2. Check generate_presigned_download_url calls
+                    if func_name == "generate_presigned_download_url":
+                        for kw in node.keywords:
+                            if kw.arg == "allow_system_namespace":
+                                # If keyword is constant True or not False
+                                if isinstance(kw.value, ast.Constant) and kw.value.value is True:
+                                    violations.append(
+                                        f"{file_path}:{node.lineno} passes allow_system_namespace=True"
+                                    )
+                                elif not (isinstance(kw.value, ast.Constant) and kw.value.value is False):
+                                    violations.append(
+                                        f"{file_path}:{node.lineno} passes non-False allow_system_namespace"
+                                    )
+
+                        # Positional arg check (index 3 is allow_system_namespace)
+                        if len(node.args) >= 4:
+                            arg4 = node.args[3]
+                            if isinstance(arg4, ast.Constant) and arg4.value is True:
+                                violations.append(
+                                    f"{file_path}:{node.lineno} passes positional allow_system_namespace=True"
+                                )
+
+    assert len(scanned_files) >= 40, f"Expected at least 40 route/API files, found {len(scanned_files)}"
+    assert violations == [], f"Found system namespace bypass violations in routes/API: {violations}"

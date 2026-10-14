@@ -1,17 +1,19 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Tested Base Commit SHA (Parent HEAD)**: `75877727700e0bd5be9731fb441d442e6346c5a6`
+- **Tested Base Commit SHA (Parent HEAD)**: `761641c53bde952f3957af06d688cae510f979d3`
 - **Git Branch**: `main`
-- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M app/core/database.py
+- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M .github/workflows/cto-security-audit.yml
+ M app/core/database.py
  M app/core/security/inter_service_auth.py
  M app/services/storage/r2.py
- M docs/audit/CTO_P1_SECURITY_GATE_EVIDENCE_BUNDLE.md
+ M app/workers/payment_reconciler_worker.py
+ M requirements.txt
  M scripts/generate_cto_p1_evidence_bundle.py
+ M tests/test_r2_tenant_authorization.py
+ M tests/test_strict_hmac_secret.py
  M verify_cto_full_signoff.py
-?? .github/workflows/cto-security-audit.yml
-?? tests/test_r2_tenant_authorization.py
-?? tests/test_strict_hmac_secret.py`
-- **Waktu Audit**: `2026-10-14 20:02:12 UTC`
+?? tests/test_worker_cross_tenant_isolation.py`
+- **Waktu Audit**: `2026-10-14 21:08:28 UTC`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **P1 CLOSED & APPROVED (ALL VERIFIED)**
 - **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA.
@@ -93,7 +95,7 @@ Pengujian menggunakan fixture bersarang (*deeply nested payload*) dan exception 
 ```log
 Error encountered in payment engine: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 Traceback (most recent call last):
-  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 574, in generate_section_4
+  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 577, in generate_section_4
     raise ValueError(f"Fulfillment failed for {raw_phone} ({raw_email}) with key {raw_xendit}")
 ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 ```
@@ -113,18 +115,20 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Tested Base Commit SHA (Parent HEAD)**: `75877727700e0bd5be9731fb441d442e6346c5a6`
+- **Tested Base Commit SHA (Parent HEAD)**: `761641c53bde952f3957af06d688cae510f979d3`
 - **Git Branch**: `main`
-- **Status Kebersihan Working Tree**: `M app/core/database.py
+- **Status Kebersihan Working Tree**: `M .github/workflows/cto-security-audit.yml
+ M app/core/database.py
  M app/core/security/inter_service_auth.py
  M app/services/storage/r2.py
- M docs/audit/CTO_P1_SECURITY_GATE_EVIDENCE_BUNDLE.md
+ M app/workers/payment_reconciler_worker.py
+ M requirements.txt
  M scripts/generate_cto_p1_evidence_bundle.py
+ M tests/test_r2_tenant_authorization.py
+ M tests/test_strict_hmac_secret.py
  M verify_cto_full_signoff.py
-?? .github/workflows/cto-security-audit.yml
-?? tests/test_r2_tenant_authorization.py
-?? tests/test_strict_hmac_secret.py`
-- **Timestamp Eksekusi**: `2026-10-14 20:02:12 UTC`
+?? tests/test_worker_cross_tenant_isolation.py`
+- **Timestamp Eksekusi**: `2026-10-14 21:08:28 UTC`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite

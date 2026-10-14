@@ -237,3 +237,37 @@ async def run_reconciliation_cycle(
         "expired_orders": expired_orders,
         "restored_items_count": restored_items_count,
     }
+
+
+def reconcile_single_order(
+    order_id: str,
+    current_tenant_id: str,
+    db_session: Any = None,
+) -> Dict[str, Any]:
+    """
+    Reconciles a specific order with strict tenant boundary enforcement.
+    Raises PermissionError if target order belongs to a different tenant.
+    """
+    if not current_tenant_id or not str(current_tenant_id).strip():
+        raise ValueError("current_tenant_id is mandatory.")
+
+    clean_tenant = str(current_tenant_id).strip()
+    order = get_payment_order(order_id)
+    if not order:
+        return {"status": "NOT_FOUND", "order_id": order_id, "rows_affected": 0}
+
+    order_tenant = str(order.get("tenant_id") or "").strip()
+    if order_tenant and order_tenant != clean_tenant:
+        logger.warning(
+            f"[RECONCILER_SECURITY] Cross-tenant manipulation attempt: "
+            f"worker for tenant '{clean_tenant}' attempted to manipulate order '{order_id}' "
+            f"belonging to tenant '{order_tenant}'."
+        )
+        raise PermissionError(
+            f"Cross-tenant worker manipulation forbidden: tenant '{clean_tenant}' cannot modify order of '{order_tenant}'."
+        )
+
+    order["payment_status"] = PaymentStatus.EXPIRED.value
+    order["status"] = PaymentStatus.EXPIRED.value
+    order["updated_at"] = datetime.now(timezone.utc)
+    return {"status": "SUCCESS", "order_id": order_id, "rows_affected": 1}

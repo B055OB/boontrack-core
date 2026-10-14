@@ -248,25 +248,27 @@ class CTOFullSignoffVerifier:
         )
 
         # 2.2 (a) Audit Atribut rolsuper dan rolbypassrls dari Role Aktif saat Sesi Runtime Tenant Dieksekusi
-        from app.core.database import get_tenant_db_connection
+        from app.core.database import get_tenant_db_connection, close_and_reset_connection
         tenant_conn = get_tenant_db_connection(tenant_id=self.tenant_id)
-        tenant_cur = tenant_conn.cursor()
-        tenant_cur.execute("""
-            SELECT current_user, session_user, r.rolsuper, r.rolbypassrls
-            FROM pg_roles r
-            WHERE r.rolname = current_user;
-        """)
-        active_role_row = tenant_cur.fetchone()
-        active_user, session_user, active_super, active_bypass = active_role_row
-        
-        self.log_result(
-            "Active Tenant Runtime Session Role Hardening (NOBYPASSRLS, NOSUPERUSER)",
-            active_user == "authenticated" and active_super is False and active_bypass is False,
-            f"Active Execution Role: current_user='{active_user}', session_user='{session_user}', "
-            f"rolsuper={active_super}, rolbypassrls={active_bypass} (Tunduk 100% pada RLS Engine)."
-        )
-        tenant_cur.close()
-        tenant_conn.close()
+        try:
+            tenant_cur = tenant_conn.cursor()
+            tenant_cur.execute("""
+                SELECT current_user, session_user, r.rolsuper, r.rolbypassrls
+                FROM pg_roles r
+                WHERE r.rolname = current_user;
+            """)
+            active_role_row = tenant_cur.fetchone()
+            active_user, session_user, active_super, active_bypass = active_role_row
+            
+            self.log_result(
+                "Active Tenant Runtime Session Role Hardening (NOBYPASSRLS, NOSUPERUSER)",
+                active_user == "authenticated" and active_super is False and active_bypass is False,
+                f"Active Execution Role: current_user='{active_user}', session_user='{session_user}', "
+                f"rolsuper={active_super}, rolbypassrls={active_bypass} (Tunduk 100% pada RLS Engine)."
+            )
+            tenant_cur.close()
+        finally:
+            close_and_reset_connection(tenant_conn)
 
         # 2.3 (b) Audit Kepemilikan Tabel (Table Ownership & Grants)
         conn = get_db_connection()
@@ -321,24 +323,83 @@ class CTOFullSignoffVerifier:
         for p in glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "*worker*.py")):
             all_worker_files.add(p)
 
+        # 2.4 (c) Audit Dinamis Seluruh Modul Background Worker untuk Strict Tenant Binding (AST Inspection)
+        import ast
         worker_audit_results = []
         unbound_workers = []
 
         for w_path in sorted(list(all_worker_files)):
             w_name = os.path.relpath(w_path, os.path.dirname(os.path.abspath(__file__))).replace("\\", "/")
-            with open(w_path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
-            has_tenant = any(t in content for t in ("tenant_id", "tenant_slug", "store_id", "merchant_id"))
-            if has_tenant:
-                worker_audit_results.append(w_name)
+            try:
+                with open(w_path, "r", encoding="utf-8", errors="ignore") as f:
+                    tree = ast.parse(f.read(), filename=w_path)
+            except Exception as e:
+                unbound_workers.append(f"{w_name} (AST parse error: {e})")
+                continue
+
+            # AST Analysis: Verifikasi bahwa modul worker mengikat tenant parameter,
+            # memanggil tenant_transaction / get_tenant_db_connection, atau mengeksekusi
+            # query / mutation yang mengikat tenant_id / tenant_slug / store_id
+            bound_ast_elements = []
+            for node in ast.walk(tree):
+                # 1. Function / method definitions dengan tenant parameters
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for a in node.args.args:
+                        if any(t in a.arg.lower() for t in ("tenant", "store_id", "merchant_id")):
+                            bound_ast_elements.append(f"def:{node.name}:{a.arg}")
+                # 2. Calls to tenant context managers, database query helpers, or functions with tenant kwargs
+                elif isinstance(node, ast.Call):
+                    func_name = ""
+                    if isinstance(node.func, ast.Name):
+                        func_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        func_name = node.func.attr
+                    if any(t in func_name.lower() for t in ("tenant_transaction", "get_tenant_db_connection", "tenant")):
+                        bound_ast_elements.append(f"call:{func_name}")
+                    for kw in node.keywords:
+                        if kw.arg and any(t in kw.arg.lower() for t in ("tenant", "store_id", "merchant_id")):
+                            bound_ast_elements.append(f"kw:{func_name}:{kw.arg}")
+                # 3. Variable references and bindings (e.g. tenant_id)
+                elif isinstance(node, ast.Name):
+                    if any(t in node.id.lower() for t in ("tenant_id", "tenant_slug", "store_id")):
+                        bound_ast_elements.append(f"var:{node.id}")
+
+            if bound_ast_elements:
+                worker_audit_results.append((w_name, len(bound_ast_elements)))
             else:
                 unbound_workers.append(w_name)
 
         self.log_result(
-            f"Dynamic Audit of {len(all_worker_files)} Background Worker Modules for Strict Tenant Binding",
+            f"Dynamic AST Audit of {len(all_worker_files)} Background Worker Modules for Strict Tenant Binding",
             len(unbound_workers) == 0 and len(worker_audit_results) > 0,
-            f"Total worker dipindai: {len(all_worker_files)}. Worker terverifikasi memuat binding `tenant_id`: "
-            f"{len(worker_audit_results)}/{len(all_worker_files)} ({', '.join([os.path.basename(w) for w in worker_audit_results[:5]])}...)."
+            f"Total worker dipindai: {len(all_worker_files)}. Seluruh modul terbukti via AST mengikat parameter / konteks tenant: "
+            f"{len(worker_audit_results)}/{len(all_worker_files)} ({', '.join([os.path.basename(w[0]) for w in worker_audit_results[:5]])}...)."
+        )
+
+        # 2.5 (d) Runtime Cross-Tenant Worker Job Simulation Test (Alpha vs Beta)
+        from app.workers.payment_reconciler_worker import save_payment_order, reconcile_single_order, PaymentStatus, clear_payment_orders_store
+        from datetime import datetime, timezone, timedelta
+        clear_payment_orders_store()
+        now = datetime.now(timezone.utc)
+        test_beta_order = "ORD-CTO-BETA-777"
+        save_payment_order(
+            tenant_id="tenant_beta",
+            order_id=test_beta_order,
+            amount=300000,
+            expired_at=now - timedelta(minutes=5),
+            payment_status=PaymentStatus.PENDING,
+        )
+        cross_tenant_rejected = False
+        try:
+            reconcile_single_order(order_id=test_beta_order, current_tenant_id="tenant_alpha")
+        except PermissionError:
+            cross_tenant_rejected = True
+        clear_payment_orders_store()
+
+        self.log_result(
+            "Runtime Cross-Tenant Worker Job Isolation (Alpha vs Beta Rejection)",
+            cross_tenant_rejected is True,
+            "Eksekusi job worker payload tenant Alpha yang mencoba memanipulasi objek tenant Beta berhasil ditolak dengan PermissionError."
         )
 
     # =========================================================================

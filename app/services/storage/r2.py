@@ -269,6 +269,13 @@ class R2Client:
                 raise PermissionError(
                     f"Access to system namespace '{norm_key}' is restricted to internal system/admin context."
                 )
+            if clean_current_tenant not in ("admin_system", "system", "internal_system"):
+                logger.warning(
+                    f"[R2_SECURITY_AUTH] Unauthorized tenant '{clean_current_tenant}' attempted to access system namespace via allow_system_namespace."
+                )
+                raise PermissionError(
+                    f"Tenant '{clean_current_tenant}' is not permitted to access system namespace."
+                )
             is_authorized = True
         elif root_namespace in ("tenants", "videos"):
             if len(segments) < 2:
@@ -282,6 +289,13 @@ class R2Client:
                     )
                     raise PermissionError(
                         f"Access to system namespace '{norm_key}' is restricted to internal system/admin context."
+                    )
+                if clean_current_tenant not in ("admin_system", "system", "internal_system"):
+                    logger.warning(
+                        f"[R2_SECURITY_AUTH] Unauthorized tenant '{clean_current_tenant}' attempted to access tenants/system via allow_system_namespace."
+                    )
+                    raise PermissionError(
+                        f"Tenant '{clean_current_tenant}' is not permitted to access system namespace."
                     )
                 is_authorized = True
             else:
@@ -338,6 +352,23 @@ class R2Client:
             content_type,
         )
 
+    def generate_internal_system_presigned_url(
+        self,
+        object_key: str,
+        expires_in: int = 900,
+    ) -> str:
+        """
+        Internal-only system helper to generate presigned download URL for system-scoped assets.
+        Guaranteed to run in internal system context ('admin_system').
+        Strictly isolated from tenant route callers.
+        """
+        return self.generate_presigned_download_url(
+            object_key=object_key,
+            current_tenant_id="admin_system",
+            expires_in=expires_in,
+            allow_system_namespace=True,
+        )
+
 
 # Singleton instance
 r2_client = R2Client()
@@ -378,6 +409,17 @@ def generate_presigned_download_url(
     )
 
 
+def generate_internal_system_presigned_url(
+    object_key: str,
+    expires_in: int = 900,
+) -> str:
+    """Global convenience helper to generate presigned download URL for system-scoped assets."""
+    return r2_client.generate_internal_system_presigned_url(
+        object_key=object_key,
+        expires_in=expires_in,
+    )
+
+
 # Backward Compatibility helpers
 def upload_media_to_r2(
     file_bytes: bytes,
@@ -405,6 +447,7 @@ __all__ = [
     "upload_bytes",
     "upload_bytes_async",
     "generate_presigned_download_url",
+    "generate_internal_system_presigned_url",
     "upload_media_to_r2",
     "upload_qris_to_r2",
 ]

@@ -280,9 +280,9 @@ class CTOEvidenceBundleGenerator:
         l2_passed = False
         l2_msg = ""
         try:
-            # Transaksi 1: Masuk sebagai authenticated dengan tenant_alpha
-            cur.execute("SET ROLE authenticated;")
-            cur.execute("SET LOCAL app.current_tenant_id = 'tenant_alpha';")
+            # Transaksi 1: Masuk sebagai authenticated dengan tenant_alpha via SET LOCAL
+            cur.execute("SET LOCAL ROLE authenticated;")
+            cur.execute("SELECT set_config('app.current_tenant_id', 'tenant_alpha', true);")
             cur.execute("""
                 INSERT INTO public.staging_alumni_cpm (tenant_id, lead_phone, alumni_name, status)
                 VALUES ('tenant_alpha', '628999900001', 'Alpha Confidential Member', 'STAGED');
@@ -290,12 +290,15 @@ class CTOEvidenceBundleGenerator:
             cur.execute("SELECT COUNT(*) FROM public.staging_alumni_cpm WHERE tenant_id = 'tenant_alpha';")
             alpha_count = cur.fetchone()[0]
 
-            # Ganti context di dalam koneksi yang sama ke tenant_beta
-            cur.execute("SET LOCAL app.current_tenant_id = 'tenant_beta';")
+            # Ganti context di dalam transaksi yang sama ke tenant_beta
+            cur.execute("SELECT set_config('app.current_tenant_id', 'tenant_beta', true);")
             cur.execute("SELECT COUNT(*) FROM public.staging_alumni_cpm WHERE tenant_id = 'tenant_alpha';")
             beta_see_alpha = cur.fetchone()[0]
 
             conn.rollback()  # Rollback insert uji coba
+            with conn.cursor() as reset_cur:
+                reset_cur.execute("RESET ROLE; RESET ALL;")
+            conn.commit()
 
             # Transaksi 2: Ambil koneksi baru dari pool dan pastikan context bersih
             conn2 = get_db_connection()
