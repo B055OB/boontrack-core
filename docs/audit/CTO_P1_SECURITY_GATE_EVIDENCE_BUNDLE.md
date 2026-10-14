@@ -1,19 +1,9 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Tested Base Commit SHA (Parent HEAD)**: `761641c53bde952f3957af06d688cae510f979d3`
+- **Tested Base Commit SHA (Parent HEAD)**: `911a5335bbd6ccf3eff0ad3dfe4754aada79e5ce`
 - **Git Branch**: `main`
-- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M .github/workflows/cto-security-audit.yml
- M app/core/database.py
- M app/core/security/inter_service_auth.py
- M app/services/storage/r2.py
- M app/workers/payment_reconciler_worker.py
- M requirements.txt
- M scripts/generate_cto_p1_evidence_bundle.py
- M tests/test_r2_tenant_authorization.py
- M tests/test_strict_hmac_secret.py
- M verify_cto_full_signoff.py
-?? tests/test_worker_cross_tenant_isolation.py`
-- **Waktu Audit**: `2026-10-14 21:08:28 UTC`
+- **Status Kebersihan Working Tree (`git status --porcelain`)**: `CLEAN (no uncommitted changes)`
+- **Waktu Audit**: `2026-10-14 21:48:02 UTC`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **P1 CLOSED & APPROVED (ALL VERIFIED)**
 - **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA.
@@ -61,7 +51,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.8s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.4s, max: 300s)`
 
 ### Lapis 4: Redis & AI Conversation Memory Boundary
 - **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).
@@ -115,20 +105,10 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Tested Base Commit SHA (Parent HEAD)**: `761641c53bde952f3957af06d688cae510f979d3`
+- **Tested Base Commit SHA (Parent HEAD)**: `911a5335bbd6ccf3eff0ad3dfe4754aada79e5ce`
 - **Git Branch**: `main`
-- **Status Kebersihan Working Tree**: `M .github/workflows/cto-security-audit.yml
- M app/core/database.py
- M app/core/security/inter_service_auth.py
- M app/services/storage/r2.py
- M app/workers/payment_reconciler_worker.py
- M requirements.txt
- M scripts/generate_cto_p1_evidence_bundle.py
- M tests/test_r2_tenant_authorization.py
- M tests/test_strict_hmac_secret.py
- M verify_cto_full_signoff.py
-?? tests/test_worker_cross_tenant_isolation.py`
-- **Timestamp Eksekusi**: `2026-10-14 21:08:28 UTC`
+- **Status Kebersihan Working Tree**: `CLEAN (no uncommitted changes)`
+- **Timestamp Eksekusi**: `2026-10-14 21:48:02 UTC`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite
