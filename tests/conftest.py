@@ -17,9 +17,9 @@ _CI_TEST_ENV_DEFAULTS = {
     "R2_ACCOUNT_ID": "test-ci-r2-account",
     "POSTGRES_HOST": "127.0.0.1",
     "POSTGRES_PORT": "5432",
-    "POSTGRES_DB": "postgres",
-    "POSTGRES_USER": "postgres",
-    "POSTGRES_PASSWORD": "test_ci_postgres_password",
+    "POSTGRES_DB": "test_boontrack",
+    "POSTGRES_USER": "test_user",
+    "POSTGRES_PASSWORD": "test_password",
 }
 
 for _k, _v in _CI_TEST_ENV_DEFAULTS.items():
@@ -29,15 +29,11 @@ for _k, _v in _CI_TEST_ENV_DEFAULTS.items():
 # Synchronize app.core.config.settings
 try:
     from app.core.config import settings
-    if not getattr(settings, "POSTGRES_PASSWORD", None):
-        settings.POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
-    if not getattr(settings, "POSTGRES_USER", None):
-        settings.POSTGRES_USER = os.getenv("POSTGRES_USER")
-    if not getattr(settings, "POSTGRES_DB", None):
-        settings.POSTGRES_DB = os.getenv("POSTGRES_DB")
-    if not getattr(settings, "POSTGRES_PORT", None):
-        settings.POSTGRES_PORT = os.getenv("POSTGRES_PORT")
-    if not getattr(settings, "POSTGRES_HOST", None) or settings.POSTGRES_HOST == "postgres":
-        settings.POSTGRES_HOST = os.getenv("POSTGRES_HOST")
+    settings.POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+    settings.POSTGRES_USER = os.getenv("POSTGRES_USER")
+    settings.POSTGRES_DB = os.getenv("POSTGRES_DB")
+    settings.POSTGRES_PORT = os.getenv("POSTGRES_PORT")
+    settings.POSTGRES_HOST = os.getenv("POSTGRES_HOST")
 except Exception:
     pass
+

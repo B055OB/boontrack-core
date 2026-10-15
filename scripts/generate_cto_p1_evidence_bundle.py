@@ -55,16 +55,11 @@ if not os.getenv("POSTGRES_DB"):
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.core.config import settings
-if not getattr(settings, "POSTGRES_PASSWORD", None):
-    settings.POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
-if not getattr(settings, "POSTGRES_USER", None):
-    settings.POSTGRES_USER = os.getenv("POSTGRES_USER")
-if not getattr(settings, "POSTGRES_DB", None):
-    settings.POSTGRES_DB = os.getenv("POSTGRES_DB")
-if not getattr(settings, "POSTGRES_PORT", None):
-    settings.POSTGRES_PORT = os.getenv("POSTGRES_PORT")
-if not getattr(settings, "POSTGRES_HOST", None) or settings.POSTGRES_HOST == "postgres":
-    settings.POSTGRES_HOST = os.getenv("POSTGRES_HOST")
+settings.POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+settings.POSTGRES_USER = os.getenv("POSTGRES_USER")
+settings.POSTGRES_DB = os.getenv("POSTGRES_DB")
+settings.POSTGRES_PORT = os.getenv("POSTGRES_PORT")
+settings.POSTGRES_HOST = os.getenv("POSTGRES_HOST")
 
 from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException

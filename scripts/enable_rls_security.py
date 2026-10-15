@@ -37,9 +37,10 @@ if hasattr(sys.stdout, 'reconfigure'):
         pass
 
 
-def audit_and_enforce_rls() -> bool:
+def audit_and_enforce_rls(verify_only: bool = False) -> bool:
+    mode_str = "READ-ONLY VERIFICATION AUDIT (ZERO MUTATIONS)" if verify_only else "STRICT RLS & CATALOG ENFORCEMENT"
     print("\n" + "#" * 80)
-    print("  BOONTRACK CORE SECURITY AUDIT — STRICT RLS & CATALOG ENFORCEMENT")
+    print(f"  BOONTRACK CORE SECURITY AUDIT — {mode_str}")
     print("  Target: CTO P1 Security Gate Verification")
     print("#" * 80)
 
@@ -65,7 +66,7 @@ def audit_and_enforce_rls() -> bool:
     # 1. AUDIT & ENFORCE RLS PADA SELURUH TABEL 'r' DAN 'p'
     # ==========================================================================
     print("\n" + "=" * 80)
-    print("  1. AUDIT & PENEGAKAN ROW-LEVEL SECURITY PADA TABEL (RELKIND 'r' & 'p')")
+    print("  1. AUDIT ROW-LEVEL SECURITY PADA TABEL (RELKIND 'r' & 'p')")
     print("=" * 80)
 
     query_unprotected = """
@@ -81,18 +82,25 @@ def audit_and_enforce_rls() -> bool:
     unprotected = cur.fetchall()
 
     if unprotected:
-        print(f"[!] Ditemukan {len(unprotected)} tabel tanpa RLS. Mengaktifkan RLS...")
-        for tbl, kind in unprotected:
-            try:
-                cur.execute(f'ALTER TABLE public."{tbl}" ENABLE ROW LEVEL SECURITY;')
-                conn.commit()
-                print(f"    [+] RLS Diaktifkan: public.\"{tbl}\" (relkind={kind})")
-            except Exception as err:
-                conn.rollback()
-                has_failures = True
-                msg = f"Gagal mengaktifkan RLS pada {tbl}: {err}"
+        has_failures = True
+        if verify_only:
+            print(f"[-] VIOLATION: Ditemukan {len(unprotected)} tabel tanpa RLS dalam mode verifikasi!")
+            for tbl, kind in unprotected:
+                msg = f"Tabel public.\"{tbl}\" (relkind={kind}) relrowsecurity = false!"
                 failure_reasons.append(msg)
-                print(f"    [-] ERROR: {msg}")
+                print(f"    [-] VIOLATION: {msg}")
+        else:
+            print(f"[!] Ditemukan {len(unprotected)} tabel tanpa RLS. Mengaktifkan RLS...")
+            for tbl, kind in unprotected:
+                try:
+                    cur.execute(f'ALTER TABLE public."{tbl}" ENABLE ROW LEVEL SECURITY;')
+                    conn.commit()
+                    print(f"    [+] RLS Diaktifkan: public.\"{tbl}\" (relkind={kind})")
+                except Exception as err:
+                    conn.rollback()
+                    msg = f"Gagal mengaktifkan RLS pada {tbl}: {err}"
+                    failure_reasons.append(msg)
+                    print(f"    [-] ERROR: {msg}")
     else:
         print("[OK] 100% Tabel public (relkind 'r' & 'p') telah memiliki relrowsecurity = true.")
 
@@ -103,7 +111,6 @@ def audit_and_enforce_rls() -> bool:
     print("  2. AUDIT VIEW EKSPLISIT KATALOG pg_class (SECURITY_INVOKER VERIFICATION)")
     print("=" * 80)
 
-    # Seluruh view public yang wajib ber-security_invoker
     REQUIRED_HARDENED_VIEWS = [
         "v_affiliate_payout_summary",
         "affiliate_ledger",
@@ -112,7 +119,6 @@ def audit_and_enforce_rls() -> bool:
     ]
 
     for view_name in REQUIRED_HARDENED_VIEWS:
-        # 2.a Cek eksistensi di katalog pg_class
         cur.execute("""
             SELECT c.oid, c.reloptions
             FROM pg_class c
@@ -122,59 +128,44 @@ def audit_and_enforce_rls() -> bool:
         row = cur.fetchone()
 
         if not row:
-            # Jika v_affiliate_ledger belum ada, buat sebagai canonical view
-            if view_name == "v_affiliate_ledger":
-                try:
-                    cur.execute("""
-                        CREATE OR REPLACE VIEW public.v_affiliate_ledger 
-                        WITH (security_invoker = true) AS 
-                        SELECT * FROM public.affiliate_ledger;
-                    """)
-                    conn.commit()
-                    print(f"    [+] View {view_name} dibuat dengan security_invoker = true.")
-                except Exception as e:
-                    conn.rollback()
-                    has_failures = True
-                    msg = f"Gagal membuat view canonical {view_name}: {e}"
-                    failure_reasons.append(msg)
-                    print(f"    [-] ERROR: {msg}")
-                    continue
-            else:
-                has_failures = True
-                msg = f"View wajib '{view_name}' TIDAK DITEMUKAN di katalog pg_class!"
-                failure_reasons.append(msg)
-                print(f"    [-] CRITICAL: {msg}")
-                continue
-
-        # 2.b Konfigurasi dan verifikasi reloptions
-        try:
-            cur.execute(f'ALTER VIEW public."{view_name}" SET (security_invoker = true);')
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
             has_failures = True
-            msg = f"Gagal SET security_invoker pada {view_name}: {e}"
+            msg = f"View wajib '{view_name}' TIDAK DITEMUKAN di katalog pg_class!"
             failure_reasons.append(msg)
-            print(f"    [-] ERROR: {msg}")
+            print(f"    [-] CRITICAL: {msg}")
             continue
 
-        # 2.c Re-query reloptions eksplisit dari pg_class
-        cur.execute("""
-            SELECT c.reloptions
-            FROM pg_class c
-            JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = 'public' AND c.relname = %s AND c.relkind = 'v';
-        """, (view_name,))
-        opts_row = cur.fetchone()
-        opts = opts_row[0] if opts_row and opts_row[0] else []
-
+        opts = row[1] if row and row[1] else []
         if "security_invoker=true" in opts:
             print(f"    [OK] public.{view_name:<30} | reloptions: {opts} (VERIFIED)")
         else:
-            has_failures = True
-            msg = f"View '{view_name}' TIDAK memiliki 'security_invoker=true' di reloptions! (Ditemukan: {opts})"
-            failure_reasons.append(msg)
-            print(f"    [-] VIOLATION: {msg}")
+            if verify_only:
+                has_failures = True
+                msg = f"View '{view_name}' TIDAK memiliki 'security_invoker=true' di reloptions! (Ditemukan: {opts})"
+                failure_reasons.append(msg)
+                print(f"    [-] VIOLATION: {msg}")
+            else:
+                try:
+                    cur.execute(f'ALTER VIEW public."{view_name}" SET (security_invoker = true);')
+                    conn.commit()
+                    cur.execute("""
+                        SELECT c.reloptions
+                        FROM pg_class c
+                        JOIN pg_namespace n ON n.oid = c.relnamespace
+                        WHERE n.nspname = 'public' AND c.relname = %s AND c.relkind = 'v';
+                    """, (view_name,))
+                    opts_after = cur.fetchone()[0] or []
+                    if "security_invoker=true" in opts_after:
+                        print(f"    [+] public.{view_name:<30} | reloptions diubah ke: {opts_after} (FIXED)")
+                    else:
+                        has_failures = True
+                        msg = f"View '{view_name}' gagal di-set security_invoker=true!"
+                        failure_reasons.append(msg)
+                except Exception as e:
+                    conn.rollback()
+                    has_failures = True
+                    msg = f"Gagal SET security_invoker pada {view_name}: {e}"
+                    failure_reasons.append(msg)
+                    print(f"    [-] ERROR: {msg}")
 
     # ==========================================================================
     # 3. AUDIT ROLE APLIKASI: MEMASTIKAN TIDAK ADA BYPASS RLS (rolbypassrls = false)
@@ -330,5 +321,15 @@ def audit_and_enforce_rls() -> bool:
 
 
 if __name__ == '__main__':
-    success = audit_and_enforce_rls()
+    import argparse
+    parser = argparse.ArgumentParser(description="CTO P1 Security Catalog Audit & Enforcement")
+    parser.add_argument(
+        "--verify", "--read-only", "--check",
+        action="store_true",
+        dest="verify_only",
+        help="Run strictly in read-only verification mode without database mutations (ALTER/CREATE/DROP)."
+    )
+    args = parser.parse_args()
+    is_verify = args.verify_only or os.getenv("CI") == "true" or os.getenv("AUDIT_READ_ONLY") == "true"
+    success = audit_and_enforce_rls(verify_only=is_verify)
     sys.exit(0 if success else 1)
