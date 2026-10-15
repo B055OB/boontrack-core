@@ -1,0 +1,143 @@
+
+################################################################################
+  BOONTRACK CORE SECURITY AUDIT — READ-ONLY VERIFICATION AUDIT (ZERO MUTATIONS)
+  Target: CTO P1 Security Gate Verification
+################################################################################
+
+[+] Koneksi Database : AMAN
+    - Database       : postgres
+    - Current User   : postgres
+    - Engine Version : PostgreSQL 17.6 on aarch64-unknown-linux-gnu
+
+================================================================================
+  1. AUDIT ROW-LEVEL SECURITY PADA TABEL (RELKIND 'r' & 'p')
+================================================================================
+[OK] 100% Tabel public (relkind 'r' & 'p') telah memiliki relrowsecurity = true.
+
+================================================================================
+  2. AUDIT VIEW EKSPLISIT KATALOG pg_class (SECURITY_INVOKER VERIFICATION)
+================================================================================
+    [OK] public.v_affiliate_payout_summary     | reloptions: ['security_invoker=true'] (VERIFIED)
+    [OK] public.affiliate_ledger               | reloptions: ['security_invoker=true'] (VERIFIED)
+    [OK] public.v_affiliate_ledger             | reloptions: ['security_invoker=true'] (VERIFIED)
+    [OK] public.chat_sessions                  | reloptions: ['security_invoker=true'] (VERIFIED)
+
+================================================================================
+  3. AUDIT ROLE APLIKASI DI KATALOG pg_roles (ANTI-BYPASS RLS)
+================================================================================
+    [OK] Role 'anon           ' | Superuser: False | BypassRLS: False (COMPLIANT)
+    [OK] Role 'authenticated  ' | Superuser: False | BypassRLS: False (COMPLIANT)
+
+================================================================================
+  4. INSPEKSI DINAMIS KEBIJAKAN ISOLASI TENANT & STATUS FORCE RLS
+================================================================================
+[*] Terdeteksi 98 tabel tenant-scoped terisolasi via information_schema.tables.
+    [OK] public.activation_codes               | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.affiliate_commissions          | RLS: True | FORCE: True | Policies: 4 (ISOLATED)
+    [OK] public.affiliates                     | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.attribution_sessions           | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.attributions                   | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.audit_logs                     | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.booking_reminders              | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.booking_slots                  | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.bot_profiles                   | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.campaign_attributions          | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.campaign_queue_items           | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.campaign_queues                | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.capi_events                    | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.capi_outbox                    | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.cart_items                     | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.carts                          | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.channel_bindings               | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.citizen_data                   | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.commerce_products              | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.commission_ledger              | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.complaint_tickets              | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.contact_channel_identities     | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.contact_notes                  | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.contacts                       | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.conversation_entities          | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.conversation_sessions          | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.conversations                  | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.creator_profiles               | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.credit_transactions            | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.cs_agents                      | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.delivery_orders                | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.demo_user_sessions             | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.document_jobs                  | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.event_ledger                   | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.financial_events               | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.financial_ledger               | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.inbox_idempotency_keys         | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.leads                          | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.lifecycle_events               | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.lifecycle_templates            | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.marketing_attributions         | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.member_entitlements            | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.merchant_audit_logs            | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.merchant_devices               | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.message_outbox                 | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.messages                       | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.order_audit_logs               | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.order_items                    | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.orders                         | RLS: True | FORCE: True | Policies: 5 (ISOLATED)
+    [OK] public.outbound_messages              | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.payment_events                 | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.payment_evidence               | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.phone_suppressions             | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.products                       | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.push_subscriptions             | RLS: True | FORCE: True | Policies: 4 (ISOLATED)
+    [OK] public.quick_replies                  | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.reader_notifications           | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.reseller_attributions          | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.reseller_commissions           | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.reseller_links                 | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.seller_ad_conversions          | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.seller_pixel_configs           | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.shop_commission_ledger         | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.shop_reseller_settings         | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.shop_subscriptions             | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.shop_wa_instances              | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.staging_alumni_cpm             | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.store_resellers                | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.studio_job_credit_reservations | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.studio_workspaces              | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.subscriptions                  | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.tags                           | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.telegram_bots                  | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.telegram_single_use_tokens     | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.tenant_addons                  | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.tenant_ai_personas             | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.tenant_booking_schemas         | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.tenant_business_profiles       | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.tenant_configs                 | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.tenant_conversion_rules        | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.tenant_credit_ledger           | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.tenant_entitlements            | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.tenant_identities              | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.tenant_incidents               | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.tenant_members                 | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.tenant_meta_configs            | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.tenant_service_configs         | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.tenant_settings                | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.tenant_users                   | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.tenant_vertical_configs        | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.tenant_waba_configs            | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.tenant_whatsapp_channels       | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.tenants                        | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+    [OK] public.tenants_config                 | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.tool_audit_logs                | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.tracking_sessions              | RLS: True | FORCE: True | Policies: 2 (ISOLATED)
+    [OK] public.waba_conversations             | RLS: True | FORCE: True | Policies: 1 (ISOLATED)
+    [OK] public.whatsapp_connections           | RLS: True | FORCE: True | Policies: 3 (ISOLATED)
+
+================================================================================
+  LAPORAN AKHIR AUDIT KEAMANAN P1 (CTO AUDIT GATE)
+================================================================================
+  STATUS: [PASS] 100% INVARIAN KEAMANAN KATALOG POSTGRESQL TERPENUHI.
+  - Seluruh view tersimpan dengan 'security_invoker=true' di pg_class.reloptions.
+  - Role aplikasi terverifikasi bebas dari hak istimewa rolbypassrls.
+  - Tabel kritikal memiliki kebijakan isolasi tenant_id dan FORCE RLS aktif.
+  - Tidak ditemukan wildcard policy 'allow_all_ops' tanpa filter.
+================================================================================
+

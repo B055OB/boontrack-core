@@ -1,12 +1,12 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Code Commit Under Test**: `f4639881b42df5c22670826951cdaae0020ad196` (f463988)
-- **Evidence Synchronization Commit**: `f4639881b42df5c22670826951cdaae0020ad196` (f463988)
-- **GitHub Actions Verification**: Run #21 (ID: `38674740844`) — **SUCCESS ✅**
+- **Tested Code Commit SHA**: `f4639881b42df5c22670826951cdaae0020ad196` (Run #21)
+- **Evidence Sync Commit SHA**: `9654c4b37ba0eb66daebb250094965e493667dc1` (Run #22)
+- **GitHub Actions Verification**: Run #21 (ID: `38674740844`) & Run #22 (ID: `38675628531`) — **SUCCESS ✅**
 - **Git Branch**: `main`
-- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M scripts/generate_cto_p1_evidence_bundle.py`
-- **Waktu Audit (UTC)**: `2026-10-15 03:09:12 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 10:09:12 WIB`
+- **Status Kebersihan Working Tree (`git status --porcelain`)**: `CLEAN (no uncommitted changes)`
+- **Waktu Audit (UTC)**: `2026-10-15 03:26:01 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 10:26:01 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **PENDING CTO FINAL SIGN-OFF**
 - **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA.
@@ -91,7 +91,7 @@ Pengujian menggunakan fixture bersarang (*deeply nested payload*) dan exception 
 ```log
 Error encountered in payment engine: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 Traceback (most recent call last):
-  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 722, in generate_section_4
+  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 777, in generate_section_4
     raise ValueError(f"Fulfillment failed for {raw_phone} ({raw_email}) with key {raw_xendit}")
 ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 ```
@@ -111,11 +111,12 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Tested Base Commit SHA (Parent HEAD)**: `f4639881b42df5c22670826951cdaae0020ad196`
+- **Tested Code Commit SHA**: `f4639881b42df5c22670826951cdaae0020ad196` (Run #21)
+- **Evidence Sync Commit SHA**: `9654c4b37ba0eb66daebb250094965e493667dc1` (Run #22)
 - **Git Branch**: `main`
-- **Status Kebersihan Working Tree**: `M scripts/generate_cto_p1_evidence_bundle.py`
-- **Timestamp Eksekusi (UTC)**: `2026-10-15 03:09:12 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-10-15 10:09:12 WIB`
+- **Status Kebersihan Working Tree**: `CLEAN (no uncommitted changes)`
+- **Timestamp Eksekusi (UTC)**: `2026-10-15 03:26:01 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-10-15 10:26:01 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite (62/62 Tests PASSED)
@@ -137,9 +138,9 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 | Parameter Audit | Nilai Terverifikasi | Status / Catatan |
 |---|---|---|
-| **Code Commit Under Test** | `f4639881b42df5c22670826951cdaae0020ad196` (f463988) | Rekonsiliasi jumlah tabel tenant 98/98, klarifikasi semantik service role defense-in-depth |
-| **Evidence Synchronization Commit** | `f4639881b42df5c22670826951cdaae0020ad196` (f463988) | Sinkronisasi bundel bukti audit dan integrasi pipeline CI |
-| **GitHub Actions Verification** | **Run #21 (ID: 38674740844)** | **SUCCESS ✅ (HIJAU)** — 62/62 tests PASS, Catalog Gate PASS |
+| **Tested Code Commit SHA** | `f4639881b42df5c22670826951cdaae0020ad196` (f463988) | Rekonsiliasi jumlah tabel tenant 98/98, klarifikasi semantik service role defense-in-depth (Run #21) |
+| **Evidence Sync Commit SHA** | `9654c4b37ba0eb66daebb250094965e493667dc1` (9654c4b) | Sinkronisasi bundel bukti audit dan integrasi pipeline CI (Run #22) |
+| **GitHub Actions Verification** | **Run #21 (ID: 38674740844) & Run #22 (ID: 38675628531)** | **SUCCESS ✅ (HIJAU)** — 62/62 tests PASS, Catalog Gate PASS |
 | **Status Gerbang P1** | **PENDING CTO FINAL SIGN-OFF** | Menunggu evaluasi & persetujuan final CTO |
 
 ---
@@ -195,6 +196,53 @@ Audit mencakup 100% tabel relasional di dalam schema `public` PostgreSQL pada Su
 | 34 | `click_logs` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
 | 35 | `commerce_products` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_dml_commerce_products` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_commerce_products` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_commerce_products` (service_role: tenant_id = app.current_tenant_id) |
 
+### Lampiran Khusus: Inventarisasi Eksplisit 31 Tabel Master / Sistem Non-Tenant & Semantik Akses
+
+Seluruh 31 tabel master/sistem non-tenant pada schema `public` memiliki `relrowsecurity = True` (100% RLS Enforcement).
+
+| No | Nama Tabel | Owner | RLS | Force RLS | Kebijakan Terdefinisi | Semantik Akses Non-Superuser (`authenticated` / `anon`) | Domain & Fungsi Sistem |
+|---|---|---|---|---|---|---|---|
+| 1 | `affiliate_auth_otps` | postgres | ENABLED | NO | `Service role full access on affiliate_auth_otps` | **DEFAULT DENY** (Akses eksklusif backend/service_role) | Platform Auth (OTP Login Afiliasi) |
+| 2 | `affiliate_daily_stats` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Agregasi Statistik Harian Afiliasi |
+| 3 | `affiliate_manager_assignments` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Penugasan Pengelola Afiliasi Platform |
+| 4 | `ai_usage_logs` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Log Telemetri & Token AI Global |
+| 5 | `analytics` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Agregasi Metrik Platform Global |
+| 6 | `click_logs` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Log Klik URL Publik & Analitik Trafik |
+| 7 | `contact_tags` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Master Label Kontak Global |
+| 8 | `core_features` | postgres | ENABLED | NO | `Public read access`, `Service role full access` | **READ ONLY** (Bebas dibaca untuk feature flags) | Definisi Fitur Platform Core |
+| 9 | `core_plans` | postgres | ENABLED | NO | `Public read access`, `Service role full access` | **READ ONLY** (Bebas dibaca untuk pricing tier) | Master Paket Berlangganan Core |
+| 10 | `cv_documents` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Penyimpanan Dokumen CV Pelamar |
+| 11 | `cv_reviews` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Review & Evaluasi Dokumen CV |
+| 12 | `donation_sessions` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Sesi Donasi Transaksional OBC |
+| 13 | `features` | postgres | ENABLED | NO | `Public read access`, `Service role full access` | **READ ONLY** (Bebas dibaca untuk feature flags) | Katalog Fitur Platform Global |
+| 14 | `inbound_webhook_events` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Ingestion Log Webhook Eksternal |
+| 15 | `merchants` | postgres | ENABLED | NO | `Service role full access on merchants` | **DEFAULT DENY** (Akses eksklusif backend/service_role) | Registri Merchant Transaksional |
+| 16 | `obc_classes` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Master Kelas Komunitas OBC |
+| 17 | `obc_donations` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Data Donasi Anggota OBC |
+| 18 | `obc_members` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Registri Anggota Komunitas OBC |
+| 19 | `obc_questions` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Bank Soal / Kuisioner OBC |
+| 20 | `obc_zoom_schedules` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Jadwal Pertemuan Daring OBC |
+| 21 | `payout_requests` | postgres | ENABLED | NO | `Service role full access on payout_requests` | **DEFAULT DENY** (Akses eksklusif backend/service_role) | Pengajuan Pembayaran Afiliasi |
+| 22 | `plan_entitlements` | postgres | ENABLED | NO | `Public read access`, `Service role full access` | **READ ONLY** (Bebas dibaca untuk hak akses paket) | Matriks Hak Akses & Limit Paket |
+| 23 | `plans` | postgres | ENABLED | NO | `Public read access`, `Service role full access` | **READ ONLY** (Bebas dibaca untuk pricing tier) | Master Paket Berlangganan Platform |
+| 24 | `product_orders` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Transaksi Pesanan Produk Global |
+| 25 | `referral_clicks` | postgres | ENABLED | NO | `Public insert/read`, `Service role full access` | **INSERT & READ ONLY** (Pelacakan rujukan anonim) | Pencatatan Klik Rujukan Afiliasi |
+| 26 | `slug_reservations` | postgres | ENABLED | NO | `Service role full access on slug_reservations` | **DEFAULT DENY** (Akses eksklusif backend/service_role) | Reservasi Slug Domain/Tenant Global |
+| 27 | `studio_normalized_insights` | postgres | ENABLED | NO | `Public read`, `Service role full access` | **READ ONLY** (Wawasan analitik agregat publik) | Normalisasi Wawasan Kreatif Studio |
+| 28 | `template_capabilities` | postgres | ENABLED | NO | `Public read access`, `Service role full access` | **READ ONLY** (Kapabilitas template publik) | Metadata Kapabilitas Template Pesan |
+| 29 | `templates` | postgres | ENABLED | NO | `Public read access`, `Service role full access` | **READ ONLY** (Template pesan global) | Katalog Template Komunikasi |
+| 30 | `user_progress` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Progres Pembelajaran Pengguna |
+| 31 | `users` | postgres | ENABLED | NO | *None* | **DEFAULT DENY** (0 baris dapat diakses) | Registri Akun Pengguna Global |
+
+#### Semantik Kebijakan Akses & Primary Security Boundary
+1. **Prinsip Fail-Closed / Default Deny**: Seluruh 31 tabel master memiliki `relrowsecurity = True`. Untuk tabel-tabel tanpa policy (misal: `users`, `analytics`, `click_logs`, `inbound_webhook_events`, dsb.), PostgreSQL secara matematis memberlakukan *implicit default deny* bagi peran aplikasi non-superuser (`authenticated` dan `anon`). Tidak ada satu baris pun yang dapat dibaca, disisipkan, diperbarui, atau dihapus oleh client runtime aplikasi.
+2. **Peran RLS pada `service_role` Sebagai Defense-in-Depth**:
+   - Kebijakan RLS yang disetel pada `service_role` (misalnya pada tabel master atau tabel tenant di migrasi 030) berfungsi secara murni sebagai **pertahanan lapis kedua (*defense-in-depth*)**.
+   - **Batas Keamanan Primer (Primary Security Boundary)** ditegakkan di luar engine RLS melalui:
+     * **Isolasi Private Subnet Backend**: Background workers beroperasi secara terisolasi di dalam VPC/private subnet tanpa public ingress.
+     * **Zero Client Exposure**: Kredensial `SUPABASE_SERVICE_ROLE_KEY` tidak pernah diekspos ke client bundle (Next.js/mobile) atau API publik.
+     * **Connection Pool Hygiene**: Setiap pemanggilan elevated worker dibungkus blok `try/finally` yang wajib mengeksekusi `RESET ROLE; RESET ALL;` sebelum koneksi dikembalikan ke pool, mengeliminasi risiko polusi hak akses lintas transaksi.
+
 ### Dokumentasi Pengecualian Tabel Global / Sistem
 1. **`tenants`**: Tabel katalog utama registri tenant. Memiliki RLS aktif; baris hanya dapat dimanipulasi oleh administrator (`service_role`) atau dibaca oleh pemilik tenant aktif.
 2. **`system_health_checks` / `subscription_plans`**: Master referensi konfigurasi platform yang dibaca publik (read-only) untuk katalog tier.
@@ -227,21 +275,26 @@ Audit mencakup 100% tabel relasional di dalam schema `public` PostgreSQL pada Su
 
 ## CLUSTER IV: PRODUCTION CATALOG VERIFICATION (READ-ONLY AUDIT GATE)
 
-Audit katalog independen dieksekusi menggunakan mode verifikasi murni (read-only):
+Audit katalog independen dieksekusi menggunakan mode verifikasi murni (read-only) dan diekspor ke file log independen:
 ```bash
-python scripts/enable_rls_security.py --verify
+python scripts/enable_rls_security.py --verify > docs/audit/live_catalog_audit_pg17.log
 ```
 
 ### Metadata & Parameter Verifikasi Katalog Database Nyata (Independen dari CI)
 - **Status Hasil Audit**: `100% PASS ✅` (Exit Code: `0`, Zero DDL Mutations)
-- **Independensi Lingkungan**: Audit ini dieksekusi langsung terhadap live database Supabase PostgreSQL produksi/staging, terpisah secara independen dari container PostgreSQL ephemeral di runner GitHub Actions CI.
-- **Timestamp Eksekusi (ISO 8601)**: `2026-10-15T03:04:40Z` (10:04:40 WIB)
-- **Target Sanitasi Database**: Engine `PostgreSQL 17.6`, Host `aws-0-ap-southeast-1.pooler.supabase.com:5432`, Database `postgres`, User `postgres`
+- **Independensi Lingkungan (Environmental Separation)**:
+  * **CI Pipeline Container**: PostgreSQL 15 (`postgres:15` ephemeral container pada runner GitHub Actions Ubuntu 22.04, database steril diinisialisasi via `scripts/init_test_postgres_schema.py`).
+  * **Live Production / Staging Database**: PostgreSQL 17.6 (`PostgreSQL 17.6 on aarch64-unknown-linux-gnu` pada Supabase pooler AWS Singapore `aws-0-ap-southeast-1.pooler.supabase.com:5432`).
+- **File Log Independen**: [`docs/audit/live_catalog_audit_pg17.log`](file:///c:/boontrack-core/docs/audit/live_catalog_audit_pg17.log) (12492 bytes)
+- **SHA-256 Checksum Log Live**: `cbace114b095e835662eebf71e37b7b2989f0ad2de8b0c3446bcd8e7ecd4ded3`
+- **Timestamp Eksekusi (ISO 8601)**: `2026-10-15T03:21:40Z` (10:21:40 WIB)
+- **Target Sanitasi Database**: Engine `PostgreSQL 17.6 on aarch64-unknown-linux-gnu`, Host `aws-0-ap-southeast-1.pooler.supabase.com:5432`, Database `postgres`, User `postgres`
 - **Total Objek Terverifikasi**:
   * **129/129 Tabel Public**: 100% memiliki `relrowsecurity = true`
   * **98/98 Tabel Tenant-Scoped**: 100% terverifikasi memiliki RLS = True, FORCE RLS = True, dan minimal 1 valid tenant policy
+  * **31/31 Tabel Master / Sistem**: 100% terverifikasi memiliki RLS = True (default deny untuk peran non-superuser pada tabel tanpa policy)
   * **0 Tabel Tanpa Policy**: 0 tabel tenant-scoped dengan 0 policy (zero unshielded tables)
-  * **0 Wildcard Policy**: 0% kebijakan permissif bertipe `USING (true)` atau `WITH CHECK (true)`
+  * **0 Wildcard Policy**: 0% kebijakan permissif bertipe `USING (true)` atau `WITH CHECK (true)` pada tabel tenant
   * **4/4 Hardened Views**: 100% terkonfirmasi `security_invoker=true` di `pg_class.reloptions`
   * **2/2 Role Aplikasi (`authenticated`, `anon`)**: Terverifikasi bebas bypass (`rolsuper = False`, `rolbypassrls = False`)
 
@@ -254,7 +307,7 @@ python scripts/enable_rls_security.py --verify
 [+] Koneksi Database : AMAN
     - Database       : postgres
     - Current User   : postgres
-    - Engine Version : PostgreSQL 17.6
+    - Engine Version : PostgreSQL 17.6 on aarch64-unknown-linux-gnu
 
 ================================================================================
   1. AUDIT ROW-LEVEL SECURITY PADA TABEL (RELKIND 'r' & 'p')
