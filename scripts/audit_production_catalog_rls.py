@@ -360,14 +360,20 @@ def run_production_catalog_audit() -> Tuple[bool, Dict[str, Any], str]:
 
     md_report = "\n".join(md_lines)
 
+    audit_dir = os.path.join(REPO_ROOT, "docs", "audit")
+    os.makedirs(audit_dir, exist_ok=True)
+
     is_ci_ephemeral = (audit_data.get("engine_info", {}).get("database") == "test_boontrack" or (os.getenv("CI") == "true" and not os.getenv("FORCE_WRITE_PROD_REPORT")))
     if is_ci_ephemeral:
-        print("[CI EPHEMERAL CHECK] Target is CI ephemeral test database. Verifying RLS on test schema without overwriting authentic production reports.")
-        json_path = "/tmp/ci_ephemeral_catalog_report.json" if sys.platform != "win32" else os.path.join(REPO_ROOT, ".pytest_cache", "ci_catalog_report.json")
-        md_path = "/tmp/ci_ephemeral_catalog_report.md" if sys.platform != "win32" else os.path.join(REPO_ROOT, ".pytest_cache", "ci_catalog_report.md")
+        print("[CI EPHEMERAL CHECK] Target is CI ephemeral test database. Writing to docs/audit/ci_catalog_rls_report.json (.md).")
+        audit_data["audit_metadata"]["title"] = "CI Sandbox & Ephemeral Fixture Catalog RLS Security Verification"
+        audit_data["audit_metadata"]["environment"] = "CI Pipeline Ephemeral Container (PostgreSQL 15)"
+        json_path = os.path.join(audit_dir, "ci_catalog_rls_report.json")
+        md_path = os.path.join(audit_dir, "ci_catalog_rls_report.md")
     else:
-        audit_dir = os.path.join(REPO_ROOT, "docs", "audit")
-        os.makedirs(audit_dir, exist_ok=True)
+        print("[PRODUCTION AUDIT] Target is Live Database. Writing to docs/audit/production_catalog_rls_report.json (.md).")
+        audit_data["audit_metadata"]["title"] = "Production Database Catalog RLS Read-Only Security Verification"
+        audit_data["audit_metadata"]["environment"] = "Live Production Supabase Database (PostgreSQL 17.6)"
         json_path = os.path.join(audit_dir, "production_catalog_rls_report.json")
         md_path = os.path.join(audit_dir, "production_catalog_rls_report.md")
 

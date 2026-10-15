@@ -102,7 +102,7 @@ async def get_tenant_settings_endpoint(slug: str):
 
 @tenant_router.get("/{slug}/storefront", summary="Get Public Storefront Data with Suspension Status")
 async def get_tenant_storefront_endpoint(slug: str):
-    """Public Storefront Gateway endpoint with suspension status flag."""
+    """Public Storefront Gateway endpoint with suspension status flag and sanitized public settings."""
     settings = onboarding_service.get_tenant_settings(slug)
     if not settings:
         raise HTTPException(
@@ -115,15 +115,32 @@ async def get_tenant_storefront_endpoint(slug: str):
     meta = settings.get("metadata") or {} if isinstance(settings, dict) else {}
     products = settings.get("products") or meta.get("products") or []
 
+    # Column Least Privilege: Strip sensitive internal fields (payout, bank accounts, secrets)
+    safe_settings = {
+        "id": settings.get("id"),
+        "slug": slug,
+        "name": settings.get("name") if isinstance(settings, dict) else slug,
+        "tier": sub_state.get("tier") or settings.get("tier"),
+        "is_active": settings.get("is_active", True),
+        "status": settings.get("status", "ACTIVE"),
+        "region_config": settings.get("region_config", {}),
+        "public_description": settings.get("public_description") or meta.get("public_description", ""),
+        "trust_badges": settings.get("trust_badges") or meta.get("trust_badges", []),
+        "qris_image_url": settings.get("qris_image_url") or meta.get("qris_image_url"),
+        "logo_url": settings.get("logo_url") or meta.get("logo_url"),
+        "avatar_url": settings.get("avatar_url") or meta.get("avatar_url"),
+        "banner_url": settings.get("banner_url") or meta.get("banner_url"),
+    }
+
     return {
         "success": True,
         "slug": slug,
-        "name": settings.get("name") if isinstance(settings, dict) else slug,
+        "name": safe_settings["name"],
         "is_suspended": sub_state.get("is_suspended", False),
         "subscription_status": sub_state.get("subscription_status", "active"),
         "suspension_reason": sub_state.get("reason"),
-        "tier": sub_state.get("tier"),
-        "settings": settings,
+        "tier": safe_settings["tier"],
+        "settings": safe_settings,
         "products": products,
         "theme": meta.get("theme", {}),
     }
@@ -383,3 +400,59 @@ storefront_router = APIRouter(prefix="/api/v1/storefront", tags=["Public Storefr
 @storefront_router.get("/{slug}", summary="Public Storefront Status Gateway")
 async def get_public_storefront_endpoint(slug: str):
     return await get_tenant_storefront_endpoint(slug)
+
+
+SAFE_PUBLIC_TENANT_COLUMNS = ["id", "slug", "name", "tier", "is_active", "status", "region_config"]
+
+
+@tenant_router.get("/directory/list", summary="Public Active Storefront Directory")
+@tenant_router.get("/directory", summary="Public Active Storefront Directory Alias")
+@storefront_router.get("/directory/list", summary="Public Active Storefront Directory Alias 2")
+@storefront_router.get("/directory", summary="Public Active Storefront Directory Alias 3")
+async def get_public_store_directory(limit: int = 50, offset: int = 0):
+    """Public Store Directory Endpoint (Column Least Privilege).
+    
+    Guarantees:
+    1. Returns ONLY safe public columns: id, slug, name, tier, is_active, status, region_config.
+    2. Zero internal metadata, credentials, secrets, or bank accounts exposed.
+    3. Respects PostgreSQL RLS (only active stores visible).
+    """
+    from app.core.database import get_db_connection
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, slug, name, tier, is_active, status, region_config
+                FROM public.tenants
+                WHERE is_active = true
+                ORDER BY name ASC
+                LIMIT %s OFFSET %s;
+            """, (min(limit, 100), max(offset, 0)))
+            rows = cur.fetchall()
+            stores = []
+            for r in rows:
+                stores.append({
+                    "id": str(r[0]),
+                    "slug": str(r[1]),
+                    "name": str(r[2]),
+                    "tier": str(r[3]),
+                    "is_active": bool(r[4]),
+                    "status": str(r[5]),
+                    "region_config": r[6] if isinstance(r[6], dict) else {},
+                })
+            return {
+                "success": True,
+                "count": len(stores),
+                "stores": stores,
+            }
+    except Exception as exc:
+        logger.error(f"[DIRECTORY] Error fetching public store directory: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error retrieving public store directory",
+        )
+    finally:
+        if conn and not conn.closed:
+            conn.close()
+

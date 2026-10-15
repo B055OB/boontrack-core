@@ -20,7 +20,7 @@ from app.core.database import (
 )
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def db_conn():
     conn = get_db_connection()
     yield conn
@@ -338,6 +338,51 @@ def test_rls_tenants_public_anon_negative_isolation(db_conn):
             cur.execute("RESET ROLE; RESET ALL;")
             cur.execute("DELETE FROM public.tenants WHERE id IN (%s, %s);", (alpha_tenant_id, inact_tenant_id))
             db_conn.commit()
+
+
+def test_public_tenant_column_least_privilege_and_anon_role_audit(db_conn):
+    """CTO Mandate 3: Column Least Privilege & Anon Role Audit.
+    1. Konfirmasi role anon tidak memiliki privilege berlebih (rolsuper = False, rolbypassrls = False).
+    2. Endpoint publik / directory storefront hanya mengekspos field aman (id, slug, name, tier, is_active, status, region_config).
+    3. Metadata sensitif (payout, bank_accounts, credentials) strictly never exposed ke publik.
+    """
+    from fastapi.testclient import TestClient
+    from app.main import app
+    client = TestClient(app)
+
+    # 1. Audit pg_roles untuk role anon
+    with db_conn.cursor() as cur:
+        cur.execute("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'anon';")
+        row = cur.fetchone()
+        if row:
+            rolsuper, rolbypassrls = row
+            assert rolsuper is False, "Role 'anon' must NOT be superuser!"
+            assert rolbypassrls is False, "Role 'anon' must NOT bypass RLS!"
+
+    # 2. Test directory endpoint (Column Least Privilege)
+    resp = client.get("/api/v1/tenants/directory?limit=10")
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+    data = resp.json()
+    assert data.get("success") is True
+    assert "stores" in data
+    assert len(data["stores"]) > 0
+
+    safe_allowed_keys = {"id", "slug", "name", "tier", "is_active", "status", "region_config"}
+    forbidden_keys = {"payout", "bank_accounts", "credentials", "api_key", "secret", "webhook_secret", "password"}
+
+    for store in data["stores"]:
+        keys = set(store.keys())
+        assert keys.issubset(safe_allowed_keys), f"Directory exposed unexpected columns: {keys - safe_allowed_keys}"
+        assert not any(fk in store for fk in forbidden_keys), f"Forbidden key leaked in public directory: {store}"
+
+    # 3. Test storefront gateway endpoint (Settings Sanitization)
+    sf_resp = client.get("/api/v1/tenants/boon/storefront")
+    if sf_resp.status_code == 200:
+        sf_data = sf_resp.json()
+        settings = sf_data.get("settings", {})
+        assert "payout" not in settings, "Payout info must NOT be exposed on public storefront!"
+        assert "bank_accounts" not in settings, "Bank accounts must NOT be exposed on public storefront!"
+
 
 
 

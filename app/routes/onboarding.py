@@ -95,6 +95,20 @@ async def get_tenant_activation_token_endpoint(slug: str):
 
 
 @onboarding_router.get(
+    "/directory",
+    summary="Public Active Storefront Directory Alias",
+)
+@onboarding_router.get(
+    "/directory/list",
+    summary="Public Active Storefront Directory List",
+)
+async def get_directory_onboarding_alias(limit: int = 50, offset: int = 0):
+    """Alias for public store directory (Column Least Privilege) on onboarding router."""
+    from app.routes.tenant_routes import get_public_store_directory
+    return await get_public_store_directory(limit=limit, offset=offset)
+
+
+@onboarding_router.get(
     "/{slug}",
     summary="Get Tenant Profile, Catalog Products & Persona by Slug",
 )

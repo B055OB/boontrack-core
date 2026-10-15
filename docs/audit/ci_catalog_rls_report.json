@@ -1,0 +1,188 @@
+{
+  "audit_metadata": {
+    "title": "CI Sandbox & Ephemeral Fixture Catalog RLS Security Verification",
+    "timestamp_utc": "2026-10-15 07:55:00 UTC",
+    "timestamp_wib": "2026-10-15 14:55:00 WIB",
+    "target": "CTO P1 Security Gate Verification",
+    "mode": "PURE READ-ONLY (ZERO DDL / MUTATIONS)",
+    "environment": "CI Pipeline Ephemeral Container (PostgreSQL 15)"
+  },
+  "engine_info": {
+    "database": "test_boontrack",
+    "user": "test_user",
+    "version": "PostgreSQL 15 on x86_64-pc-linux-gnu (GitHub Actions Runner)"
+  },
+  "tenant_tables": {
+    "total_tenant_scoped": 11,
+    "rls_enabled_count": 11,
+    "force_rls_count": 11,
+    "compliant_count": 11,
+    "tables": [
+      {
+        "table_name": "tenants",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "orders",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "staging_alumni_cpm",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "whatsapp_connections",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "commerce_products",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "carts",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "cart_items",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "attributions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "affiliates",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "affiliate_commissions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "conversation_sessions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      }
+    ]
+  },
+  "dynamic_views": {
+    "total_views": 4,
+    "compliant_count": 4,
+    "views": [
+      {
+        "view_name": "v_affiliate_payout_summary",
+        "found": true,
+        "reloptions": [
+          "security_invoker=true"
+        ],
+        "compliant": true
+      },
+      {
+        "view_name": "affiliate_ledger",
+        "found": true,
+        "reloptions": [
+          "security_invoker=true"
+        ],
+        "compliant": true
+      },
+      {
+        "view_name": "v_affiliate_ledger",
+        "found": true,
+        "reloptions": [
+          "security_invoker=true"
+        ],
+        "compliant": true
+      },
+      {
+        "view_name": "chat_sessions",
+        "found": true,
+        "reloptions": [
+          "security_invoker=true"
+        ],
+        "compliant": true
+      }
+    ]
+  },
+  "application_roles": {
+    "compliant_count": 3,
+    "roles": [
+      {
+        "role_name": "anon",
+        "rolsuper": false,
+        "rolbypassrls": false,
+        "rolcanlogin": false,
+        "compliant": true
+      },
+      {
+        "role_name": "authenticated",
+        "rolsuper": false,
+        "rolbypassrls": false,
+        "rolcanlogin": false,
+        "compliant": true
+      },
+      {
+        "role_name": "boontrack_test_app_user",
+        "rolsuper": false,
+        "rolbypassrls": false,
+        "rolcanlogin": true,
+        "compliant": true
+      }
+    ]
+  },
+  "violations": [],
+  "overall_status": "PASS"
+}

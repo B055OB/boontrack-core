@@ -55,6 +55,7 @@ from app.core.security.inter_service_auth import (
     verify_inter_service_signature,
     enforce_tenant_boundary,
     get_hmac_secret,
+    replay_guard,
 )
 
 
@@ -73,6 +74,7 @@ class OfficialInboxClientSigner:
         tamper_body_bytes: Optional[bytes] = None,
         custom_header_tenant: Optional[str] = None,
         timestamp_offset_seconds: float = 0.0,
+        request_id: Optional[str] = None,
     ) -> Tuple[bytes, Dict[str, str]]:
         """Constructs canonical signed request package using official inter-service signer."""
         raw_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -85,6 +87,7 @@ class OfficialInboxClientSigner:
             authenticated_tenant_id=sig_tenant,
             body=raw_bytes,
             timestamp=effective_ts,
+            request_id=request_id,
         )
 
         # Return potentially tampered body for negative contract testing
@@ -260,3 +263,64 @@ def test_contract_rejection_replay_attack_outside_window(core_client):
     detail = get_response_detail(response)
     assert detail.get("error") == "INVALID_INTER_SERVICE_SIGNATURE"
     assert "TIMESTAMP_DRIFT_EXCEEDED" in str(detail.get("reason", ""))
+
+
+def test_contract_rejection_identical_request_replay_within_window(core_client):
+    """Contract Proof 8a: Replay request identik dengan nonce/request_id yang sama
+    dalam jendela anti-replay 300 detik wajib ditolak tegas dengan HTTP 401 (REPLAY_REJECTED).
+    """
+    replay_guard.reset()
+    inbox = OfficialInboxClientSigner(tenant_id="tenant_alpha")
+    payload = {"tenant_id": "tenant_alpha", "action": "sync_chat", "session_id": "sess_replay_test_001"}
+    body_bytes, headers = inbox.build_signed_request(payload)
+
+    # 1. Panggilan pertama: berhasil 200 OK
+    res1 = core_client.post("/api/v1/inbox/sync", content=body_bytes, headers=headers)
+    assert res1.status_code == 200, f"Panggilan pertama harus berhasil, got {res1.status_code}: {res1.text}"
+    data1 = res1.json()
+    assert data1["status"] == "SYNCED"
+
+    # 2. Panggilan kedua (replay request identik): wajib ditolak HTTP 401 (REPLAY_REJECTED)
+    res2 = core_client.post("/api/v1/inbox/sync", content=body_bytes, headers=headers)
+    assert res2.status_code == 401, f"Panggilan replay harus ditolak 401, got {res2.status_code}: {res2.text}"
+    detail2 = get_response_detail(res2)
+    assert detail2.get("error") == "REPLAY_REJECTED"
+    assert "already been processed" in detail2.get("message", "").lower()
+
+
+def test_contract_concurrent_race_condition_identical_nonce(core_client):
+    """Contract Proof 8b: Permintaan bersamaan (race-condition / concurrent requests)
+    dengan nonce identik wajib atomik: tepat 1 permintaan diterima (200 OK), sisanya ditolak 401 (REPLAY_REJECTED).
+    """
+    import concurrent.futures
+    replay_guard.reset()
+
+    inbox = OfficialInboxClientSigner(tenant_id="tenant_alpha")
+    shared_nonce = f"race_condition_nonce_{time.time()}"
+    payload = {"tenant_id": "tenant_alpha", "action": "sync_chat", "session_id": "sess_race_test_999"}
+    body_bytes, headers = inbox.build_signed_request(payload, request_id=shared_nonce)
+
+    num_concurrent = 5
+    results = []
+
+    def send_request():
+        return core_client.post("/api/v1/inbox/sync", content=body_bytes, headers=headers)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_concurrent) as executor:
+        futures = [executor.submit(send_request) for _ in range(num_concurrent)]
+        for f in concurrent.futures.as_completed(futures):
+            results.append(f.result())
+
+    status_codes = [r.status_code for r in results]
+    success_count = status_codes.count(200)
+    rejected_count = status_codes.count(401)
+
+    assert success_count == 1, f"Tepat 1 request harus berhasil (200 OK), namun didapat {success_count}. Statuses: {status_codes}"
+    assert rejected_count == num_concurrent - 1, f"Sisa request harus ditolak 401 (REPLAY_REJECTED), got {rejected_count}. Statuses: {status_codes}"
+
+    # Verifikasi seluruh respon yang gagal membawa kode REPLAY_REJECTED
+    for r in results:
+        if r.status_code != 200:
+            detail = get_response_detail(r)
+            assert detail.get("error") == "REPLAY_REJECTED"
+

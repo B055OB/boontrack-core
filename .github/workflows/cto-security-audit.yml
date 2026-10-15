@@ -154,5 +154,7 @@ jobs:
             docs/audit/CTO_P1_SECURITY_GATE_EVIDENCE_BUNDLE.md
             docs/audit/production_catalog_rls_report.json
             docs/audit/production_catalog_rls_report.md
+            docs/audit/ci_catalog_rls_report.json
+            docs/audit/ci_catalog_rls_report.md
             /tmp/bundle_generation.log
           retention-days: 30
