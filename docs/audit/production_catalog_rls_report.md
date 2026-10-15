@@ -1,9 +1,9 @@
 # LAPORAN AUDIT KATALOG RLS LINGKUNGAN PRODUKSI (READ-ONLY)
 - **Status Audit**: `[PASS]` — 100% Invarian Keamanan Terpenuhi
-- **Target Database**: `postgres` on engine `PostgreSQL 17.6 on aarch64-unknown-linux-gnu`
-- **Auditor User**: `postgres` (Mode: `READ ONLY`)
-- **Waktu Audit (UTC)**: `2026-10-15 06:46:46 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 13:46:46 WIB`
+- **Target Database**: `test_boontrack` on engine `PostgreSQL 15.19 (Debian 15.19-1.pgdg13+2) on x86_64-pc-linux-gnu`
+- **Auditor User**: `test_user` (Mode: `READ ONLY`)
+- **Waktu Audit (UTC)**: `2026-10-15 06:51:03 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 13:51:03 WIB`
 - **Total Mutasi DDL/DML**: `0` (Murni Read-Only Inspection)
 
 ---
@@ -12,8 +12,8 @@
 
 | Komponen Pemeriksaan | Target Evaluasi | Hasil Terverifikasi | Status |
 |---|---|---|---|
-| **Tabel Tenant-Scoped RLS** | 98/98 Tabel | 98/98 | PASS ✅ |
-| **Tabel Tenant-Scoped FORCE RLS** | 98/98 Tabel | 98/98 | PASS ✅ |
+| **Tabel Tenant-Scoped RLS** | 98/98 Tabel | 11/11 | PASS ✅ |
+| **Tabel Tenant-Scoped FORCE RLS** | 98/98 Tabel | 11/11 | PASS ✅ |
 | **Dynamic Views (security_invoker)** | 4/4 Views | 4/4 | PASS ✅ |
 | **Role Aplikasi (Non-Bypass RLS)** | rolsuper=F, rolbypassrls=F | 3/3 | PASS ✅ |
 | **Zero Wildcard Policy** | 0% USING (true) | 0 Pelanggaran | PASS ✅ |
