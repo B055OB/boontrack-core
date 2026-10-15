@@ -1,12 +1,12 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Code Commit Under Test**: `219fdc4a18260babf22aeea4f56f447dbaf6ecdf` (219fdc4)
-- **Evidence Synchronization Commit**: `219fdc4a18260babf22aeea4f56f447dbaf6ecdf` (219fdc4)
-- **GitHub Actions Verification**: Run #19 (ID: `38672563628`) — **SUCCESS ✅**
+- **Code Commit Under Test**: `f4639881b42df5c22670826951cdaae0020ad196` (f463988)
+- **Evidence Synchronization Commit**: `f4639881b42df5c22670826951cdaae0020ad196` (f463988)
+- **GitHub Actions Verification**: Run #21 (ID: `38674740844`) — **SUCCESS ✅**
 - **Git Branch**: `main`
 - **Status Kebersihan Working Tree (`git status --porcelain`)**: `M scripts/generate_cto_p1_evidence_bundle.py`
-- **Waktu Audit (UTC)**: `2026-10-15 03:06:05 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 10:06:05 WIB`
+- **Waktu Audit (UTC)**: `2026-10-15 03:09:12 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 10:09:12 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **PENDING CTO FINAL SIGN-OFF**
 - **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA.
@@ -55,7 +55,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.1s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.8s, max: 300s)`
 
 ### Lapis 4: Redis & AI Conversation Memory Boundary
 - **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).
@@ -111,11 +111,11 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Tested Base Commit SHA (Parent HEAD)**: `2b509befd3e716c942496ae83aafa460bef1eeb7`
+- **Tested Base Commit SHA (Parent HEAD)**: `f4639881b42df5c22670826951cdaae0020ad196`
 - **Git Branch**: `main`
 - **Status Kebersihan Working Tree**: `M scripts/generate_cto_p1_evidence_bundle.py`
-- **Timestamp Eksekusi (UTC)**: `2026-10-15 03:06:05 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-10-15 10:06:05 WIB`
+- **Timestamp Eksekusi (UTC)**: `2026-10-15 03:09:12 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-10-15 10:09:12 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite (62/62 Tests PASSED)
@@ -137,9 +137,9 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 | Parameter Audit | Nilai Terverifikasi | Status / Catatan |
 |---|---|---|
-| **Code Commit Under Test** | `219fdc4a18260babf22aeea4f56f447dbaf6ecdf` (219fdc4) | Remediasi celah audit zero-policy, hardening 23 tabel tenant, isolasi residual risk |
-| **Evidence Synchronization Commit** | `219fdc4a18260babf22aeea4f56f447dbaf6ecdf` (219fdc4) | Sinkronisasi bundel bukti audit dan integrasi pipeline CI |
-| **GitHub Actions Verification** | **Run #19 (ID: 38672563628)** | **SUCCESS ✅ (HIJAU)** — 62/62 tests PASS, Catalog Gate PASS |
+| **Code Commit Under Test** | `f4639881b42df5c22670826951cdaae0020ad196` (f463988) | Rekonsiliasi jumlah tabel tenant 98/98, klarifikasi semantik service role defense-in-depth |
+| **Evidence Synchronization Commit** | `f4639881b42df5c22670826951cdaae0020ad196` (f463988) | Sinkronisasi bundel bukti audit dan integrasi pipeline CI |
+| **GitHub Actions Verification** | **Run #21 (ID: 38674740844)** | **SUCCESS ✅ (HIJAU)** — 62/62 tests PASS, Catalog Gate PASS |
 | **Status Gerbang P1** | **PENDING CTO FINAL SIGN-OFF** | Menunggu evaluasi & persetujuan final CTO |
 
 ---

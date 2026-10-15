@@ -825,9 +825,9 @@ class CTOEvidenceBundleGenerator:
         lines.append("")
         lines.append("| Parameter Audit | Nilai Terverifikasi | Status / Catatan |")
         lines.append("|---|---|---|")
-        lines.append("| **Code Commit Under Test** | `219fdc4a18260babf22aeea4f56f447dbaf6ecdf` (219fdc4) | Remediasi celah audit zero-policy, hardening 23 tabel tenant, isolasi residual risk |")
-        lines.append("| **Evidence Synchronization Commit** | `219fdc4a18260babf22aeea4f56f447dbaf6ecdf` (219fdc4) | Sinkronisasi bundel bukti audit dan integrasi pipeline CI |")
-        lines.append("| **GitHub Actions Verification** | **Run #19 (ID: 38672563628)** | **SUCCESS ✅ (HIJAU)** — 62/62 tests PASS, Catalog Gate PASS |")
+        lines.append("| **Code Commit Under Test** | `f4639881b42df5c22670826951cdaae0020ad196` (f463988) | Rekonsiliasi jumlah tabel tenant 98/98, klarifikasi semantik service role defense-in-depth |")
+        lines.append("| **Evidence Synchronization Commit** | `f4639881b42df5c22670826951cdaae0020ad196` (f463988) | Sinkronisasi bundel bukti audit dan integrasi pipeline CI |")
+        lines.append("| **GitHub Actions Verification** | **Run #21 (ID: 38674740844)** | **SUCCESS ✅ (HIJAU)** — 62/62 tests PASS, Catalog Gate PASS |")
         lines.append("| **Status Gerbang P1** | **PENDING CTO FINAL SIGN-OFF** | Menunggu evaluasi & persetujuan final CTO |")
 
         return "\n".join(lines)
@@ -996,9 +996,9 @@ class CTOEvidenceBundleGenerator:
         doc_parts = [
             "# PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)",
             f"- **Komitmen Repositori**: `B055OB/boontrack-core`",
-            f"- **Code Commit Under Test**: `219fdc4a18260babf22aeea4f56f447dbaf6ecdf` (219fdc4)",
-            f"- **Evidence Synchronization Commit**: `219fdc4a18260babf22aeea4f56f447dbaf6ecdf` (219fdc4)",
-            f"- **GitHub Actions Verification**: Run #19 (ID: `38672563628`) — **SUCCESS ✅**",
+            f"- **Code Commit Under Test**: `f4639881b42df5c22670826951cdaae0020ad196` (f463988)",
+            f"- **Evidence Synchronization Commit**: `f4639881b42df5c22670826951cdaae0020ad196` (f463988)",
+            f"- **GitHub Actions Verification**: Run #21 (ID: `38674740844`) — **SUCCESS ✅**",
             f"- **Git Branch**: `{self.branch}`",
             f"- **Status Kebersihan Working Tree (`git status --porcelain`)**: `{self.working_tree_status}`",
             f"- **Waktu Audit (UTC)**: `{self.timestamp_utc}`",
