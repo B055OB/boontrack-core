@@ -29,6 +29,14 @@ if not os.getenv("XENDIT_SECRET_KEY"):
     os.environ["XENDIT_SECRET_KEY"] = "test_ci_xendit_secret_key_mock_12345"
 if not os.getenv("XENDIT_CALLBACK_TOKEN"):
     os.environ["XENDIT_CALLBACK_TOKEN"] = "test_ci_xendit_callback_token_mock_12345"
+if not os.getenv("SUPABASE_URL"):
+    os.environ["SUPABASE_URL"] = "https://mpluzajlzpregmjwpjqr.supabase.co"
+if not os.getenv("SUPABASE_KEY"):
+    os.environ["SUPABASE_KEY"] = "test_ci_supabase_anon_key_mock_999"
+if not os.getenv("SUPABASE_ANON_KEY"):
+    os.environ["SUPABASE_ANON_KEY"] = "test_ci_supabase_anon_key_mock_999"
+if not os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
+    os.environ["SUPABASE_SERVICE_ROLE_KEY"] = "test_ci_supabase_service_role_key_mock_999"
 
 from app.main import app
 from app.core.security.inter_service_auth import (

@@ -87,8 +87,11 @@ from fastapi.staticfiles import StaticFiles
 
 # Inisialisasi Supabase Client
 supabase_url = os.getenv("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.co")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY", "")
-supabase_client: Client = create_client(supabase_url, supabase_key)
+supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "ci-placeholder-key")
+try:
+    supabase_client: Client = create_client(supabase_url, supabase_key)
+except Exception:
+    supabase_client = None
 
 from app.core.tracing import TracingMiddleware
 

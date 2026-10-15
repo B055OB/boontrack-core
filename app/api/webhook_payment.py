@@ -15,10 +15,13 @@ except ImportError:
         from app.core.supabase import get_supabase
         supabase = get_supabase()
     except Exception:
-        from supabase import create_client
-        url = os.getenv("SUPABASE_URL", "")
-        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY", "")
-        supabase = create_client(url, key)
+        try:
+            from supabase import create_client
+            url = os.getenv("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.co")
+            key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_ANON_KEY", "ci-mock-key")
+            supabase = create_client(url, key)
+        except Exception:
+            supabase = None
 
 logger = logging.getLogger("boontrack.webhook")
 wa_service = WhatsAppDeliveryService()

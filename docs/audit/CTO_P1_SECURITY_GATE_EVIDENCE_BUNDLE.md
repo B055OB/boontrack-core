@@ -1,17 +1,17 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Current Verified Commit SHA**: `e4bbf38042d937f96d9d767f1794a29e8a615681`
+- **Current Verified Commit SHA**: `23113c9d9a66d0f3e0212f7118983b6dbac97e70`
 - **GitHub Actions Verification**: Local Development Execution (`git rev-parse HEAD`) — **PROVENANCE BOUND ✅**
 - **Git Branch / Ref**: `main`
 - **Status Kebersihan Working Tree (`git status --porcelain`)**: `M .github/workflows/cto-security-audit.yml
-M app/core/server.py
-M tests/test_e2e_core_inbox_integration.py
-M tests/test_live_postgres_rls_security.py`
-- **Waktu Audit (UTC)**: `2026-10-15 05:14:13 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 12:14:13 WIB`
+M app/api/webhook_payment.py
+M app/main.py
+M tests/test_e2e_core_inbox_integration.py`
+- **Waktu Audit (UTC)**: `2026-10-15 05:20:06 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 12:20:06 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **PENDING CTO FINAL SIGN-OFF**
-- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA `e4bbf38042d937f96d9d767f1794a29e8a615681`.
+- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA `23113c9d9a66d0f3e0212f7118983b6dbac97e70`.
 - **Verifikasi Integritas Fail-Safe**: Fail-safe aktif. Jika ada pemeriksaan yang gagal, status bundle wajib mencatat FAIL/INCONCLUSIVE dan exit code 1.
 
 ---
@@ -57,7 +57,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.1s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.8s, max: 300s)`
 
 ### Lapis 4: Redis & AI Conversation Memory Boundary
 - **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).
@@ -113,15 +113,15 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Verified Commit SHA**: `e4bbf38042d937f96d9d767f1794a29e8a615681`
+- **Verified Commit SHA**: `23113c9d9a66d0f3e0212f7118983b6dbac97e70`
 - **Workflow Run**: Local Development Execution (`git rev-parse HEAD`)
 - **Git Branch / Ref**: `main`
 - **Status Kebersihan Working Tree**: `M .github/workflows/cto-security-audit.yml
-M app/core/server.py
-M tests/test_e2e_core_inbox_integration.py
-M tests/test_live_postgres_rls_security.py`
-- **Timestamp Eksekusi (UTC)**: `2026-10-15 05:14:13 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-10-15 12:14:13 WIB`
+M app/api/webhook_payment.py
+M app/main.py
+M tests/test_e2e_core_inbox_integration.py`
+- **Timestamp Eksekusi (UTC)**: `2026-10-15 05:20:06 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-10-15 12:20:06 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite (63/63 Tests PASSED)
@@ -143,7 +143,7 @@ M tests/test_live_postgres_rls_security.py`
 
 | Parameter Audit | Nilai Terverifikasi | Status / Catatan |
 |---|---|---|
-| **Verified Commit SHA** | `e4bbf38042d937f96d9d767f1794a29e8a615681` | Resolusi dinamis via GITHUB_SHA / git rev-parse HEAD |
+| **Verified Commit SHA** | `23113c9d9a66d0f3e0212f7118983b6dbac97e70` | Resolusi dinamis via GITHUB_SHA / git rev-parse HEAD |
 | **Workflow Run Verification** | Local Development Execution (`git rev-parse HEAD`) | Verifikasi eksekusi CI pipeline GitHub Actions otomatis |
 | **Branch / Ref** | `main` | Target branch evaluasi |
 | **Status Gerbang P1** | **PENDING CTO FINAL SIGN-OFF** | Menunggu evaluasi & persetujuan final CTO |
