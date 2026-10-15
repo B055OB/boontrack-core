@@ -1,8 +1,8 @@
 {
   "audit_metadata": {
     "title": "CI Sandbox & Ephemeral Fixture Catalog RLS Security Verification",
-    "timestamp_utc": "2026-10-15 08:17:41 UTC",
-    "timestamp_wib": "2026-10-15 15:17:41 WIB",
+    "timestamp_utc": "2026-10-15 10:05:31 UTC",
+    "timestamp_wib": "2026-10-15 17:05:31 WIB",
     "target": "CTO P1 Security Gate Verification",
     "mode": "PURE READ-ONLY (ZERO DDL / MUTATIONS)",
     "environment": "CI Pipeline Ephemeral Container (PostgreSQL 15)"
@@ -10,7 +10,12 @@
   "engine_info": {
     "database": "test_boontrack",
     "user": "test_user",
-    "version": "PostgreSQL 15.19 (Debian 15.19-1.pgdg13+2) on x86_64-pc-linux-gnu"
+    "host": "127.0.0.1",
+    "port": "5432",
+    "connection_endpoint": "127.0.0.1:5432",
+    "version": "PostgreSQL 15.19 (Debian 15.19-1.pgdg13+2) on x86_64-pc-linux-gnu",
+    "readonly_transaction": true,
+    "transaction_read_only_setting": "on"
   },
   "tenant_tables": {
     "total_tenant_scoped": 11,
