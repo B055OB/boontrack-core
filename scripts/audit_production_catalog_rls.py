@@ -36,7 +36,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(dotenv_path=os.path.join(REPO_ROOT, ".env"), override=True)
 
 from app.core.database import get_db_connection
 
@@ -360,15 +360,21 @@ def run_production_catalog_audit() -> Tuple[bool, Dict[str, Any], str]:
 
     md_report = "\n".join(md_lines)
 
-    # Save JSON and MD reports to docs/audit/
-    audit_dir = os.path.join(REPO_ROOT, "docs", "audit")
-    os.makedirs(audit_dir, exist_ok=True)
+    is_ci_ephemeral = (audit_data.get("engine_info", {}).get("database") == "test_boontrack" or (os.getenv("CI") == "true" and not os.getenv("FORCE_WRITE_PROD_REPORT")))
+    if is_ci_ephemeral:
+        print("[CI EPHEMERAL CHECK] Target is CI ephemeral test database. Verifying RLS on test schema without overwriting authentic production reports.")
+        json_path = "/tmp/ci_ephemeral_catalog_report.json" if sys.platform != "win32" else os.path.join(REPO_ROOT, ".pytest_cache", "ci_catalog_report.json")
+        md_path = "/tmp/ci_ephemeral_catalog_report.md" if sys.platform != "win32" else os.path.join(REPO_ROOT, ".pytest_cache", "ci_catalog_report.md")
+    else:
+        audit_dir = os.path.join(REPO_ROOT, "docs", "audit")
+        os.makedirs(audit_dir, exist_ok=True)
+        json_path = os.path.join(audit_dir, "production_catalog_rls_report.json")
+        md_path = os.path.join(audit_dir, "production_catalog_rls_report.md")
 
-    json_path = os.path.join(audit_dir, "production_catalog_rls_report.json")
+    os.makedirs(os.path.dirname(json_path), exist_ok=True)
     with open(json_path, "w", encoding="utf-8") as jf:
         json.dump(audit_data, jf, indent=2)
 
-    md_path = os.path.join(audit_dir, "production_catalog_rls_report.md")
     with open(md_path, "w", encoding="utf-8") as mf:
         mf.write(md_report)
 

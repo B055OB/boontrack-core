@@ -51,15 +51,16 @@ if not os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
 from app.main import app
 from app.core.security.inter_service_auth import (
     generate_inter_service_signature,
+    create_inter_service_signed_headers,
     verify_inter_service_signature,
     enforce_tenant_boundary,
     get_hmac_secret,
 )
 
 
-class SimulatedInboxClient:
-    """Simulates the actual outbound client running inside the Inbox microservice.
-    Holds verified session context (tenant_id, session_user) and signs all requests.
+class OfficialInboxClientSigner:
+    """Authoritative outbound signer representing the actual Inbox client adapter.
+    Uses official create_inter_service_signed_headers module to guarantee identical contract.
     """
 
     def __init__(self, tenant_id: str, operator_id: str = "cs_agent_001"):
@@ -73,26 +74,20 @@ class SimulatedInboxClient:
         custom_header_tenant: Optional[str] = None,
         timestamp_offset_seconds: float = 0.0,
     ) -> Tuple[bytes, Dict[str, str]]:
-        """Constructs canonical signed request package according to contract."""
+        """Constructs canonical signed request package using official inter-service signer."""
         raw_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
         sig_tenant = custom_header_tenant or self.session_tenant_id
         effective_ts = int(time.time() + timestamp_offset_seconds)
 
-        sig, ts, _ = generate_inter_service_signature(
+        # Uses the official production signer helper
+        headers = create_inter_service_signed_headers(
             authenticated_tenant_id=sig_tenant,
             body=raw_bytes,
             timestamp=effective_ts,
         )
 
-        headers = {
-            "X-Boontrack-Signature": sig,
-            "X-Boontrack-Timestamp": str(effective_ts),
-            "X-Boontrack-Tenant-Id": sig_tenant,
-            "Content-Type": "application/json",
-        }
-
-        # Return potentially tampered body for negative testing
+        # Return potentially tampered body for negative contract testing
         outgoing_body = tamper_body_bytes if tamper_body_bytes is not None else raw_bytes
         return outgoing_body, headers
 
@@ -127,7 +122,7 @@ def test_contract_inbox_client_signs_and_core_receives_success(core_client):
     """Contract Proof 1: Inbox signs payload with HMAC-SHA256 using verified session tenant.
     Core validates signature, timestamp, and tenant boundary, returning 200 OK.
     """
-    inbox = SimulatedInboxClient(tenant_id="tenant_alpha", operator_id="cs_agent_alpha")
+    inbox = OfficialInboxClientSigner(tenant_id="tenant_alpha", operator_id="cs_agent_alpha")
     payload = {
         "tenant_id": "tenant_alpha",
         "action": "sync_customer_chat",
@@ -150,7 +145,7 @@ def test_contract_rejection_payload_body_tampering(core_client):
     """Contract Proof 2: Payload body modified in transit while keeping original signature.
     Core receiver detects cryptographic mismatch and rejects with HTTP 401.
     """
-    inbox = SimulatedInboxClient(tenant_id="tenant_alpha")
+    inbox = OfficialInboxClientSigner(tenant_id="tenant_alpha")
     original_payload = {
         "tenant_id": "tenant_alpha",
         "action": "deliver_digital_item",
@@ -182,7 +177,7 @@ def test_contract_rejection_tenant_header_vs_payload_mismatch(core_client):
     """Contract Proof 3: Sesi Inbox terverifikasi adalah Tenant Alpha, namun payload mencoba
     menargetkan Tenant Beta. Core receiver mendeteksi pelanggaran batas dan menolak dengan HTTP 403.
     """
-    inbox = SimulatedInboxClient(tenant_id="tenant_alpha")
+    inbox = OfficialInboxClientSigner(tenant_id="tenant_alpha")
     hostile_payload = {
         "tenant_id": "tenant_beta",  # Cross-tenant injection attempt
         "action": "exfiltrate_messages",
@@ -207,7 +202,7 @@ def test_contract_rejection_past_timestamp_drift_exceeded(core_client):
     """Contract Proof 4a: Timestamp lampau dengan drift > 300 detik (5 menit).
     Core receiver menolak dengan HTTP 401 TIMESTAMP_DRIFT_EXCEEDED.
     """
-    inbox = SimulatedInboxClient(tenant_id="tenant_alpha")
+    inbox = OfficialInboxClientSigner(tenant_id="tenant_alpha")
     payload = {"tenant_id": "tenant_alpha", "action": "sync_chat"}
 
     # 350 seconds in the past (> 300s tolerance)
@@ -225,7 +220,7 @@ def test_contract_rejection_future_timestamp_drift_exceeded(core_client):
     """Contract Proof 4b: Timestamp masa depan dengan drift > 300 detik (5 menit).
     Core receiver menolak dengan HTTP 401 TIMESTAMP_DRIFT_EXCEEDED.
     """
-    inbox = SimulatedInboxClient(tenant_id="tenant_alpha")
+    inbox = OfficialInboxClientSigner(tenant_id="tenant_alpha")
     payload = {"tenant_id": "tenant_alpha", "action": "sync_chat"}
 
     # 350 seconds into future (> 300s tolerance)
@@ -254,7 +249,7 @@ def test_contract_rejection_replay_attack_outside_window(core_client):
     """Contract Proof 6: Serangan replay dari pesan yang ditangkap sebelumnya namun dikirim
     kembali di luar masa berlaku anti-replay (> 300 detik) ditolak secara tegas.
     """
-    inbox = SimulatedInboxClient(tenant_id="tenant_alpha")
+    inbox = OfficialInboxClientSigner(tenant_id="tenant_alpha")
     stale_payload = {"tenant_id": "tenant_alpha", "action": "replay_sensitive_action"}
 
     # Stale timestamp: 600 seconds ago (10 minutes old)

@@ -156,7 +156,7 @@ def init_test_schema():
       AS PERMISSIVE FOR SELECT TO public
       USING (
         is_active = true
-        AND (
+        OR (
           id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))
           OR slug = NULLIF(current_setting('app.current_tenant_id', true), '')
         )

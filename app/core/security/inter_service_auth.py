@@ -84,6 +84,33 @@ def generate_inter_service_signature(
     return signature, ts, body_hash
 
 
+def create_inter_service_signed_headers(
+    authenticated_tenant_id: str,
+    body: Union[bytes, str, dict, None] = None,
+    timestamp: Optional[Union[int, float]] = None,
+) -> Dict[str, str]:
+    """Authoritative outbound signer used across BoonTrack microservices (Inbox -> Core).
+    Produces canonical headers:
+    - X-Boontrack-Signature: HMAC-SHA256
+    - X-Boontrack-Timestamp: epoch seconds as integer string
+    - X-Boontrack-Tenant-Id: verified tenant identifier
+    - Content-Type: application/json
+    """
+    clean_tenant = str(authenticated_tenant_id or "").strip()
+    ts = int(timestamp) if timestamp is not None else None
+    sig, eff_ts, _ = generate_inter_service_signature(
+        authenticated_tenant_id=clean_tenant,
+        body=body,
+        timestamp=ts,
+    )
+    return {
+        "X-Boontrack-Signature": sig,
+        "X-Boontrack-Timestamp": str(eff_ts),
+        "X-Boontrack-Tenant-Id": clean_tenant,
+        "Content-Type": "application/json",
+    }
+
+
 def verify_inter_service_signature(
     signature: str,
     timestamp: Union[int, str],

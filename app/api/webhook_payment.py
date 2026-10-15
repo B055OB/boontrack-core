@@ -78,6 +78,15 @@ async def xendit_payment_webhook(request: Request, background_tasks: BackgroundT
     from fastapi import HTTPException
     from app.routes.xendit import process_xendit_webhook_core
     headers_dict = dict(request.headers)
+
+    # STRICT FAIL-CLOSED AUTHENTICATION & PRIVILEGE GUARD BEFORE MUTATION
+    try:
+        admin_sb = get_verified_webhook_supabase_client(headers_dict)
+        logger.info("[Webhook FastAPI] Admin Supabase client authorized for verified webhook settlement.")
+    except PermissionError as auth_err:
+        logger.warning(f"[Webhook FastAPI] Unauthorized webhook rejected fail-closed: {auth_err}")
+        raise HTTPException(status_code=403, detail=str(auth_err))
+
     try:
         payload = await request.json()
     except Exception as e:
@@ -90,13 +99,6 @@ async def xendit_payment_webhook(request: Request, background_tasks: BackgroundT
     if http_code != 200:
         raise HTTPException(status_code=http_code, detail=response_body.get("error", "Webhook processing failed"))
 
-    # STRICT PRIVILEGE BOUNDARY: Admin client acquisition is gated behind verified callback token
-    try:
-        admin_sb = get_verified_webhook_supabase_client(headers_dict)
-        logger.info("[Webhook FastAPI] Admin Supabase client authorized for verified webhook settlement.")
-    except PermissionError as auth_err:
-        logger.warning(f"[Webhook FastAPI] Admin client access omitted: {auth_err}")
-
     return response_body
 
 # ---------------------------------------------------------
@@ -105,6 +107,15 @@ async def xendit_payment_webhook(request: Request, background_tasks: BackgroundT
 async def aiohttp_xendit_webhook_handler(request: web.Request) -> web.Response:
     from app.routes.xendit import process_xendit_webhook_core
     headers_dict = {k.lower(): v for k, v in request.headers.items()}
+
+    # STRICT FAIL-CLOSED AUTHENTICATION & PRIVILEGE GUARD BEFORE MUTATION
+    try:
+        admin_sb = get_verified_webhook_supabase_client(headers_dict)
+        logger.info("[Webhook aiohttp] Admin Supabase client authorized for verified webhook settlement.")
+    except PermissionError as auth_err:
+        logger.warning(f"[Webhook aiohttp] Unauthorized webhook rejected fail-closed: {auth_err}")
+        return web.json_response({"error": str(auth_err)}, status=403)
+
     try:
         payload = await request.json()
     except Exception as e:
@@ -116,13 +127,6 @@ async def aiohttp_xendit_webhook_handler(request: web.Request) -> web.Response:
     response_body = result.get("response", {})
     if http_code != 200:
         return web.json_response(response_body, status=http_code)
-
-    # STRICT PRIVILEGE BOUNDARY: Admin client acquisition is gated behind verified callback token
-    try:
-        admin_sb = get_verified_webhook_supabase_client(headers_dict)
-        logger.info("[Webhook aiohttp] Admin Supabase client authorized for verified webhook settlement.")
-    except PermissionError as auth_err:
-        logger.warning(f"[Webhook aiohttp] Admin client access omitted: {auth_err}")
 
     return web.json_response(response_body, status=200)
 

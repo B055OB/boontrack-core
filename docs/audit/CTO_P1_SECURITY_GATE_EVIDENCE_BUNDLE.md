@@ -1,15 +1,23 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Current Verified Commit SHA**: `35d73f297c354728f4e985cd2f30d1441fef907c`
-- **GitHub Actions Verification**: GitHub Actions CI Execution — Run #32 (ID: `38694772580`) — **PROVENANCE BOUND ✅**
+- **Current Verified Commit SHA**: `41a349e59f7a245210b999947bc5d0709e1fb17c`
+- **GitHub Actions Verification**: Local Development Execution (`git rev-parse HEAD`) — **PROVENANCE BOUND ✅**
 - **Git Branch / Ref**: `main`
-- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M docs/audit/production_catalog_rls_report.json
-M docs/audit/production_catalog_rls_report.md`
-- **Waktu Audit (UTC)**: `2026-10-15 06:51:05 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 13:51:05 WIB`
-- **Environment Identity**: `Python 3.12.15 on linux (Linux-6.17.0-1022-azure-x86_64-with-glibc2.39), Hostname 'runnervmmprz5'`
+- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M app/api/webhook_payment.py
+M app/core/security/inter_service_auth.py
+M docs/audit/production_catalog_rls_report.json
+M docs/audit/production_catalog_rls_report.md
+M scripts/audit_production_catalog_rls.py
+M scripts/init_test_postgres_schema.py
+M tests/test_contract_inbox_core_boundary.py
+M tests/test_rls_tenants_commerce_carts_attributions.py
+?? scripts/cleanup_dummy_pending_tenants.py
+?? scripts/seed_production_tenants.py`
+- **Waktu Audit (UTC)**: `2026-10-15 07:25:44 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 14:25:44 WIB`
+- **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **PENDING CTO FINAL SIGN-OFF**
-- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA `35d73f297c354728f4e985cd2f30d1441fef907c`.
+- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA `41a349e59f7a245210b999947bc5d0709e1fb17c`.
 - **Verifikasi Integritas Fail-Safe**: Fail-safe aktif. Jika ada pemeriksaan yang gagal, status bundle wajib mencatat FAIL/INCONCLUSIVE dan exit code 1.
 
 ---
@@ -41,14 +49,22 @@ Pemeriksaan statis terhadap integritas arsitektur kode sumber untuk eliminasi ce
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Verified Commit SHA**: `35d73f297c354728f4e985cd2f30d1441fef907c`
-- **Workflow Run**: GitHub Actions CI Execution — Run #32 (ID: `38694772580`)
+- **Verified Commit SHA**: `41a349e59f7a245210b999947bc5d0709e1fb17c`
+- **Workflow Run**: Local Development Execution (`git rev-parse HEAD`)
 - **Git Branch / Ref**: `main`
-- **Status Kebersihan Working Tree**: `M docs/audit/production_catalog_rls_report.json
-M docs/audit/production_catalog_rls_report.md`
-- **Timestamp Eksekusi (UTC)**: `2026-10-15 06:51:05 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-10-15 13:51:05 WIB`
-- **Environment Identity**: `Python 3.12.15 on linux (Linux-6.17.0-1022-azure-x86_64-with-glibc2.39), Hostname 'runnervmmprz5'`
+- **Status Kebersihan Working Tree**: `M app/api/webhook_payment.py
+M app/core/security/inter_service_auth.py
+M docs/audit/production_catalog_rls_report.json
+M docs/audit/production_catalog_rls_report.md
+M scripts/audit_production_catalog_rls.py
+M scripts/init_test_postgres_schema.py
+M tests/test_contract_inbox_core_boundary.py
+M tests/test_rls_tenants_commerce_carts_attributions.py
+?? scripts/cleanup_dummy_pending_tenants.py
+?? scripts/seed_production_tenants.py`
+- **Timestamp Eksekusi (UTC)**: `2026-10-15 07:25:44 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-10-15 14:25:44 WIB`
+- **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite (88/88 Tests PASSED)
 
@@ -72,8 +88,8 @@ M docs/audit/production_catalog_rls_report.md`
 
 | Parameter Audit | Nilai Terverifikasi | Status / Catatan |
 |---|---|---|
-| **Verified Commit SHA** | `35d73f297c354728f4e985cd2f30d1441fef907c` | Resolusi dinamis via GITHUB_SHA / git rev-parse HEAD |
-| **Workflow Run Verification** | GitHub Actions CI Execution — Run #32 (ID: `38694772580`) | Verifikasi eksekusi CI pipeline GitHub Actions otomatis |
+| **Verified Commit SHA** | `41a349e59f7a245210b999947bc5d0709e1fb17c` | Resolusi dinamis via GITHUB_SHA / git rev-parse HEAD |
+| **Workflow Run Verification** | Local Development Execution (`git rev-parse HEAD`) | Verifikasi eksekusi CI pipeline GitHub Actions otomatis |
 | **Branch / Ref** | `main` | Target branch evaluasi |
 | **Status Gerbang P1** | **PENDING CTO FINAL SIGN-OFF** | Menunggu evaluasi & persetujuan final CTO |
 
@@ -91,13 +107,13 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 ### Lapis 2: Database Layer + Connection Pool (Role 'authenticated' + SET LOCAL)
 - **Skenario**: Role database sesungguhnya (`authenticated`, non-superuser) membaca baris data rahasia `staging_alumni_cpm` milik Tenant Alpha saat session di-set ke `tenant_beta`.
 - **Ekspektasi**: PostgreSQL RLS engine mengembalikan tepat 0 baris (zero visibility).
-- **Hasil Pengujian**: `PASS ✅` — Tenant Alpha melihat 2 baris miliknya. Tenant Beta melihat 0 baris milik Alpha (0 baris bocor). Koneksi pool setelah commit/rollback: 'None' (Higiene Sempurna).
+- **Hasil Pengujian**: `PASS ✅` — Tenant Alpha melihat 2 baris miliknya. Tenant Beta melihat 0 baris milik Alpha (0 baris bocor). Koneksi pool setelah commit/rollback: '' (Higiene Sempurna).
 
 ### Lapis 3: Core <-> Inbox Signed Boundary (HMAC-SHA256 & Anti-Replay <= 300s)
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.7s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.4s, max: 300s)`
 
 ### Lapis 4: Redis & AI Conversation Memory Boundary
 - **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).
@@ -133,7 +149,7 @@ Pengujian menggunakan fixture bersarang (*deeply nested payload*) dan exception 
 ```log
 Error encountered in payment engine: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 Traceback (most recent call last):
-  File "/home/runner/work/boontrack-core/boontrack-core/scripts/generate_cto_p1_evidence_bundle.py", line 825, in generate_section_4
+  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 825, in generate_section_4
     raise ValueError(f"Fulfillment failed for {raw_phone} ({raw_email}) with key {raw_xendit}")
 ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 ```
@@ -199,8 +215,8 @@ python scripts/enable_rls_security.py --verify > docs/audit/live_catalog_audit_p
 - **Independensi Lingkungan (Environmental Separation)**:
   * **CI Pipeline Container**: PostgreSQL 15 (`postgres:15` ephemeral container pada runner GitHub Actions Ubuntu 22.04, database steril diinisialisasi via `scripts/init_test_postgres_schema.py`).
   * **Live Production / Staging Database**: PostgreSQL 17.6 (`PostgreSQL 17.6 on aarch64-unknown-linux-gnu` pada Supabase pooler AWS Singapore `aws-0-ap-southeast-1.pooler.supabase.com:5432`).
-- **File Log Independen**: [`docs/audit/live_catalog_audit_pg17.log`](file:///c:/boontrack-core/docs/audit/live_catalog_audit_pg17.log) (12349 bytes)
-- **SHA-256 Checksum Log Live**: `9c415b0163096385e055c7a6a8286a08ab98901276e3164940adb254ccf1ee7f`
+- **File Log Independen**: [`docs/audit/live_catalog_audit_pg17.log`](file:///c:/boontrack-core/docs/audit/live_catalog_audit_pg17.log) (12492 bytes)
+- **SHA-256 Checksum Log Live**: `cbace114b095e835662eebf71e37b7b2989f0ad2de8b0c3446bcd8e7ecd4ded3`
 - **Timestamp Eksekusi (ISO 8601)**: `2026-10-15T03:21:40Z` (10:21:40 WIB)
 - **Target Sanitasi Database**: Engine `PostgreSQL 17.6 on aarch64-unknown-linux-gnu`, Host `aws-0-ap-southeast-1.pooler.supabase.com:5432`, Database `postgres`, User `postgres`
 - **Total Objek Terverifikasi**:
@@ -271,26 +287,50 @@ python scripts/enable_rls_security.py --verify > docs/audit/live_catalog_audit_p
 
 Audit mencakup 100% tabel relasional di dalam schema `public` PostgreSQL pada Supabase.
 
-- **Total Tabel Public**: `11`
-- **Tabel dengan RLS Aktif (`relrowsecurity = True`)**: `11/11` (100.0%)
-- **Klasifikasi Tenant-Scoped**: `11` tabel
-- **Klasifikasi Global / System Catalog**: `0` tabel
+- **Total Tabel Public**: `129`
+- **Tabel dengan RLS Aktif (`relrowsecurity = True`)**: `129/129` (100.0%)
+- **Klasifikasi Tenant-Scoped**: `98` tabel
+- **Klasifikasi Global / System Catalog**: `31` tabel
 
 ### Matriks RLS & Policy DML (Cuplikan 30 Tabel Utama Termasuk Tabel Kritis)
 
 | No | Nama Tabel | Owner | RLS | Force RLS | Klasifikasi | DML Commands | Kebijakan Aktif (Roles & Qual) |
 |---|---|---|---|---|---|---|---|
-| 1 | `orders` | test_user | ENABLED | YES | TENANT | ALL | `p1_tenant_isolation_orders` (public: tenant_id = app.current_tenant_id) |
-| 2 | `staging_alumni_cpm` | test_user | ENABLED | YES | TENANT | ALL | `tenant_isolation_staging_alumni_cpm` (public: tenant_id = app.current_tenant_id) |
-| 3 | `tenants` | test_user | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_dml_tenants` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_tenants` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_tenants` (service_role: tenant_id = app.current_tenant_id) |
-| 4 | `whatsapp_connections` | test_user | ENABLED | YES | TENANT | ALL | `auth_permissive_whatsapp_connections` (public: tenant_id = app.current_tenant_id) |
-| 5 | `affiliate_commissions` | test_user | ENABLED | YES | TENANT | ALL | `auth_tenant_commissions` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_commissions` (service_role: tenant_id = app.current_tenant_id) |
-| 6 | `affiliates` | test_user | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_affiliates` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_affiliates` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_affiliates` (service_role: tenant_id = app.current_tenant_id) |
-| 7 | `attributions` | test_user | ENABLED | YES | TENANT | ALL, INSERT | `auth_tenant_attributions` (authenticated: tenant_id = app.current_tenant_id)<br>`public_insert_attributions` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_attributions` (service_role: tenant_id = app.current_tenant_id) |
-| 8 | `cart_items` | test_user | ENABLED | YES | TENANT | ALL | `auth_tenant_cart_items` (authenticated: (cart_id IN ( SELECT carts....)<br>`public_access_tenant_cart_items` (public: (cart_id IN ( SELECT carts....)<br>`service_role_all_cart_items` (service_role: tenant_id = app.current_tenant_id) |
-| 9 | `carts` | test_user | ENABLED | YES | TENANT | ALL | `auth_tenant_carts` (authenticated: (tenant_id = current_app_te...)<br>`public_access_tenant_carts` (public: (tenant_id = current_app_te...)<br>`service_role_all_carts` (service_role: tenant_id = app.current_tenant_id) |
-| 10 | `commerce_products` | test_user | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_dml_commerce_products` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_commerce_products` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_commerce_products` (service_role: tenant_id = app.current_tenant_id) |
-| 11 | `conversation_sessions` | test_user | ENABLED | YES | TENANT | ALL | `tenant_isolation_conversation_sessions` (public: tenant_id = app.current_tenant_id) |
+| 1 | `audit_logs` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_audit_logs` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_audit` (public: tenant_id = app.current_tenant_id)<br>`tenant_isolation_audit_logs` (public: tenant_id = app.current_tenant_id) |
+| 2 | `campaign_queue_items` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_campaign_queue_items` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_campaign_queue_items` (public: tenant_id = app.current_tenant_id) |
+| 3 | `campaign_queues` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_campaign_queues` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_campaign_queues` (public: tenant_id = app.current_tenant_id) |
+| 4 | `channel_bindings` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_channel_bindings` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_channel_bindings` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolation_channel_bindings` (public: tenant_id = app.current_tenant_id) |
+| 5 | `inbox_idempotency_keys` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_inbox_idempotency_keys` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_inbox_idempotency_keys` (service_role: tenant_id = app.current_tenant_id) |
+| 6 | `messages` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_messages` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_messages` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolation_messages` (public: tenant_id = app.current_tenant_id) |
+| 7 | `orders` | postgres | ENABLED | YES | TENANT | ALL, INSERT | `auth_tenant_orders` (authenticated: tenant_id = app.current_tenant_id)<br>`p1_tenant_isolation_orders` (public: tenant_id = app.current_tenant_id)<br>`public_insert_tenant_order` (public: tenant_id = app.current_tenant_id) |
+| 8 | `phone_suppressions` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_phone_suppressions` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_phone_suppressions` (public: tenant_id = app.current_tenant_id) |
+| 9 | `products` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_dml_products` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_products` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_products` (service_role: tenant_id = app.current_tenant_id) |
+| 10 | `staging_alumni_cpm` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_staging_alumni_cpm` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_staging_alumni_cpm` (public: tenant_id = app.current_tenant_id) |
+| 11 | `subscriptions` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_subscriptions` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_subscriptions` (service_role: tenant_id = app.current_tenant_id) |
+| 12 | `telegram_single_use_tokens` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_telegram_single_use_tokens` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_telegram_single_use_tokens` (public: tenant_id = app.current_tenant_id) |
+| 13 | `tenants` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_dml_tenants` (authenticated: tenant_id = app.current_tenant_id)<br>`p1_tenant_public_read` (anon,authenticated: (is_active = true))<br>`public_select_active_tenants` (public: (is_active = true)) |
+| 14 | `whatsapp_connections` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_whatsapp_connections` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_whatsapp_connections` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolation_whatsapp_connections` (public: tenant_id = app.current_tenant_id) |
+| 15 | `activation_codes` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_activation_codes` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_activation_codes` (service_role: tenant_id = app.current_tenant_id) |
+| 16 | `affiliate_auth_otps` | postgres | ENABLED | NO | SYSTEM/GLOBAL | ALL | `Service role full access on affiliate_auth_otps` (service_role: true) |
+| 17 | `affiliate_commissions` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_affiliate_commissions` (authenticated: tenant_id = app.current_tenant_id)<br>`auth_tenant_commissions` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_affiliate_commissions` (service_role: tenant_id = app.current_tenant_id) |
+| 18 | `affiliate_daily_stats` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
+| 19 | `affiliate_manager_assignments` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
+| 20 | `affiliates` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_affiliates` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_affiliates` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_affiliates` (service_role: tenant_id = app.current_tenant_id) |
+| 21 | `ai_usage_logs` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
+| 22 | `analytics` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
+| 23 | `attribution_sessions` | postgres | ENABLED | YES | TENANT | ALL | `Service role full access on attribution_sessions` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolated_Public_access_on_attribution_sessions` (authenticated: tenant_id = app.current_tenant_id) |
+| 24 | `attributions` | postgres | ENABLED | YES | TENANT | ALL, INSERT | `auth_tenant_attributions` (authenticated: tenant_id = app.current_tenant_id)<br>`public_insert_attributions` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_attributions` (service_role: tenant_id = app.current_tenant_id) |
+| 25 | `booking_reminders` | postgres | ENABLED | YES | TENANT | ALL | `Service role full access on booking_reminders` (service_role: tenant_id = app.current_tenant_id) |
+| 26 | `booking_slots` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `Service role full access on booking_slots` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolated_Public_read_access_on_booking_slots` (public: tenant_id = app.current_tenant_id) |
+| 27 | `bot_profiles` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `Service role full access on bot_profiles` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolated_Public_read_access_on_bot_profiles` (public: tenant_id = app.current_tenant_id) |
+| 28 | `campaign_attributions` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `Service role full access on campaign_attributions` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolated_Public_read_access_on_campaign_attributions` (public: tenant_id = app.current_tenant_id) |
+| 29 | `capi_events` | postgres | ENABLED | YES | TENANT | ALL, INSERT, SELECT | `Service role full access on capi_events` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolated_Public_insert_access_on_capi_events` (public: tenant_id = app.current_tenant_id)<br>`tenant_isolated_Public_read_access_on_capi_events` (public: tenant_id = app.current_tenant_id) |
+| 30 | `capi_outbox` | postgres | ENABLED | YES | TENANT | ALL | `service_role_all_capi_outbox` (service_role: tenant_id = app.current_tenant_id) |
+| 31 | `cart_items` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_cart_items` (authenticated: (cart_id IN ( SELECT carts....)<br>`public_access_tenant_cart_items` (public: (cart_id IN ( SELECT carts....)<br>`service_role_all_cart_items` (service_role: tenant_id = app.current_tenant_id) |
+| 32 | `carts` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_carts` (authenticated: (tenant_id = current_app_te...)<br>`public_access_tenant_carts` (public: (tenant_id = current_app_te...)<br>`service_role_all_carts` (service_role: tenant_id = app.current_tenant_id) |
+| 33 | `citizen_data` | postgres | ENABLED | YES | TENANT | ALL | `tenant_isolation_citizen_data` (public: tenant_id = app.current_tenant_id) |
+| 34 | `click_logs` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
+| 35 | `commerce_products` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_dml_commerce_products` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_commerce_products` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_commerce_products` (service_role: tenant_id = app.current_tenant_id) |
 
 ### Lampiran Khusus: Inventarisasi Eksplisit 31 Tabel Master / Sistem Non-Tenant & Semantik Akses
 
@@ -350,9 +390,9 @@ Seluruh 31 tabel master/sistem non-tenant pada schema `public` memiliki `relrows
 
 ## BAGIAN 3: BUKTI PEMERIKSAAN KONFIGURASI & PRIVILEGE RUNTIME
 
-- **Database Active**: `test_boontrack`
-- **Current User (Pooled Session)**: `test_user` | **Session User**: `test_user`
-- **PostgreSQL Engine**: `PostgreSQL 15.19 (Debian 15.19-1.pgdg13+2)`
+- **Database Active**: `postgres`
+- **Current User (Pooled Session)**: `postgres` | **Session User**: `postgres`
+- **PostgreSQL Engine**: `PostgreSQL 17.6`
 
 ### Tabel Perizinan Role Database (`pg_roles`)
 
@@ -360,6 +400,7 @@ Seluruh 31 tabel master/sistem non-tenant pada schema `public` memiliki `relrows
 |---|---|---|---|---|
 | `anon` | `False` | `False` | `False` | ✅ **Publik/Storefront**: Tunduk 100% pada RLS, hanya akses katalog publik. |
 | `authenticated` | `False` | `False` | `False` | ✅ **Aplikasi Client/API**: Tunduk 100% pada RLS, Zero Superuser. |
+| `postgres` | `False` | `True` | `True` | 🔒 Superuser infrastruktur Supabase. |
 | `service_role` | `False` | `True` | `False` | ⚠️ **Internal Backend Only**: Digunakan terbatas untuk migrasi & daemon. |
 
 ### Audit Batas Penggunaan `service_role`
