@@ -1,20 +1,14 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Current Verified Commit SHA**: `ede7fad542aac15842410cffc0fcbcc12c8aae38`
+- **Current Verified Commit SHA**: `f11230694c7f7b6f57b2ac7f02c3a66ce9322637`
 - **GitHub Actions Verification**: Local Development Execution (`git rev-parse HEAD`) — **PROVENANCE BOUND ✅**
 - **Git Branch / Ref**: `main`
-- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M app/core/security/inter_service_auth.py
-M docs/audit/production_catalog_rls_report.json
-M docs/audit/production_catalog_rls_report.md
-M scripts/audit_production_catalog_rls.py
-M tests/test_contract_inbox_core_boundary.py
-M tests/test_e2e_core_inbox_integration.py
-M tests/test_worker_cross_tenant_isolation.py`
-- **Waktu Audit (UTC)**: `2026-10-15 10:00:13 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 17:00:13 WIB`
+- **Status Kebersihan Working Tree (`git status --porcelain`)**: `CLEAN (no uncommitted changes)`
+- **Waktu Audit (UTC)**: `2026-10-15 10:01:28 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 17:01:28 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **PENDING CTO FINAL SIGN-OFF**
-- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA `ede7fad542aac15842410cffc0fcbcc12c8aae38`.
+- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA `f11230694c7f7b6f57b2ac7f02c3a66ce9322637`.
 - **Verifikasi Integritas Fail-Safe**: Fail-safe aktif. Jika ada pemeriksaan yang gagal, status bundle wajib mencatat FAIL/INCONCLUSIVE dan exit code 1.
 
 ---
@@ -46,18 +40,12 @@ Pemeriksaan statis terhadap integritas arsitektur kode sumber untuk eliminasi ce
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Verified Commit SHA**: `ede7fad542aac15842410cffc0fcbcc12c8aae38`
+- **Verified Commit SHA**: `f11230694c7f7b6f57b2ac7f02c3a66ce9322637`
 - **Workflow Run**: Local Development Execution (`git rev-parse HEAD`)
 - **Git Branch / Ref**: `main`
-- **Status Kebersihan Working Tree**: `M app/core/security/inter_service_auth.py
-M docs/audit/production_catalog_rls_report.json
-M docs/audit/production_catalog_rls_report.md
-M scripts/audit_production_catalog_rls.py
-M tests/test_contract_inbox_core_boundary.py
-M tests/test_e2e_core_inbox_integration.py
-M tests/test_worker_cross_tenant_isolation.py`
-- **Timestamp Eksekusi (UTC)**: `2026-10-15 10:00:13 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-10-15 17:00:13 WIB`
+- **Status Kebersihan Working Tree**: `CLEAN (no uncommitted changes)`
+- **Timestamp Eksekusi (UTC)**: `2026-10-15 10:01:28 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-10-15 17:01:28 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite (94/94 Tests PASSED)
@@ -82,7 +70,7 @@ M tests/test_worker_cross_tenant_isolation.py`
 
 | Parameter Audit | Nilai Terverifikasi | Status / Catatan |
 |---|---|---|
-| **Verified Commit SHA** | `ede7fad542aac15842410cffc0fcbcc12c8aae38` | Resolusi dinamis via GITHUB_SHA / git rev-parse HEAD |
+| **Verified Commit SHA** | `f11230694c7f7b6f57b2ac7f02c3a66ce9322637` | Resolusi dinamis via GITHUB_SHA / git rev-parse HEAD |
 | **Workflow Run Verification** | Local Development Execution (`git rev-parse HEAD`) | Verifikasi eksekusi CI pipeline GitHub Actions otomatis |
 | **Branch / Ref** | `main` | Target branch evaluasi |
 | **Status Gerbang P1** | **PENDING CTO FINAL SIGN-OFF** | Menunggu evaluasi & persetujuan final CTO |
@@ -107,11 +95,11 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.7s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.6s, max: 300s)`
 - **Skenario C**: Replay attack request identik dalam window 300 detik dengan request_id / nonce yang sama.
 - **Hasil Skenario C**: `PASS ✅` — Ditolak seketika: `HTTP 401 Unauthorized: REPLAY_REJECTED (Replay attack detected: request_id or signature has already been processed within the 300s anti-replay window)`
 - **Skenario D**: Scoped Nonce Namespace `core:replay:{service}:{tenant}:{request_id}`.
-- **Hasil Skenario D**: `PASS ✅` — Namespace terikat eksplisit: `core:replay:inbox:tenant_alpha:test_nonce_830694c352087c70` (Valid ✅)
+- **Hasil Skenario D**: `PASS ✅` — Namespace terikat eksplisit: `core:replay:inbox:tenant_alpha:test_nonce_c04c31d0b4b8c0bf` (Valid ✅)
 - **Skenario E**: Fail-Closed Anti-Replay (Redis outage -> HTTP 503 REPLAY_GUARD_UNAVAILABLE).
 - **Hasil Skenario E**: `PASS ✅` — HTTP 503 Service Unavailable: REPLAY_GUARD_UNAVAILABLE (Anti-replay Redis instance is not available. Fail-closed enforced in production.) — Fail-Closed Terpenuhi ✅
 
