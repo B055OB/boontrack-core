@@ -125,6 +125,10 @@ def test_worker_db_mutation_cross_tenant_rejected_zero_rows():
 
     try:
         conn = get_db_connection()
+        try:
+            conn.set_session(readonly=False)
+        except Exception:
+            pass
     except Exception as exc:
         pytest.fail(f"PostgreSQL connection failed. P1-B mandates live DB verification: {exc}")
 

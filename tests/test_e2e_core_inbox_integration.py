@@ -43,6 +43,7 @@ from app.core.security.inter_service_auth import (
     generate_inter_service_signature,
     verify_inter_service_signature,
     verify_inter_service_tenant_boundary,
+    create_inter_service_signed_headers,
     get_hmac_secret,
 )
 
@@ -63,14 +64,7 @@ def test_e2e_inbox_core_valid_signed_request():
     tenant_id = "tenant_alpha"
     payload = {"tenant_id": tenant_id, "action": "sync_chat", "session_id": "sess_123"}
     raw_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    sig, ts, _ = generate_inter_service_signature(authenticated_tenant_id=tenant_id, body=raw_bytes)
-
-    headers = {
-        "X-Boontrack-Signature": sig,
-        "X-Boontrack-Timestamp": str(ts),
-        "X-Boontrack-Tenant-Id": tenant_id,
-        "Content-Type": "application/json",
-    }
+    headers = create_inter_service_signed_headers(authenticated_tenant_id=tenant_id, body=raw_bytes)
 
     response = client.post("/api/v1/inbox/sync", content=raw_bytes, headers=headers)
     assert response.status_code == 200, f"Expected 200 OK, got {response.status_code}: {response.text}"
@@ -97,14 +91,7 @@ def test_e2e_inbox_core_tenant_tampering_rejected_403():
     auth_tenant = "tenant_alpha"
     tampered_payload = {"tenant_id": "tenant_beta", "action": "exfiltrate_messages"}
     raw_bytes = json.dumps(tampered_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    sig, ts, _ = generate_inter_service_signature(authenticated_tenant_id=auth_tenant, body=raw_bytes)
-
-    headers = {
-        "X-Boontrack-Signature": sig,
-        "X-Boontrack-Timestamp": str(ts),
-        "X-Boontrack-Tenant-Id": auth_tenant,
-        "Content-Type": "application/json",
-    }
+    headers = create_inter_service_signed_headers(authenticated_tenant_id=auth_tenant, body=raw_bytes)
 
     response = client.post("/api/v1/inbox/sync", content=raw_bytes, headers=headers)
     assert response.status_code == 403, f"Expected 403 Forbidden, got {response.status_code}"
@@ -121,14 +108,7 @@ def test_e2e_inbox_core_query_param_tenant_tampering_rejected_403():
     """Query parameter injection (?tenant_id=tenant_beta) is intercepted and rejected with HTTP 403."""
     auth_tenant = "tenant_alpha"
     payload = {"action": "list_contacts"}
-    sig, ts, _ = generate_inter_service_signature(authenticated_tenant_id=auth_tenant, body=payload)
-
-    headers = {
-        "X-Boontrack-Signature": sig,
-        "X-Boontrack-Timestamp": str(ts),
-        "X-Boontrack-Tenant-Id": auth_tenant,
-        "Content-Type": "application/json",
-    }
+    headers = create_inter_service_signed_headers(authenticated_tenant_id=auth_tenant, body=payload)
 
     response = client.post("/api/v1/inbox/sync?tenant_id=tenant_beta", json=payload, headers=headers)
     assert response.status_code == 403
@@ -144,14 +124,7 @@ def test_e2e_inbox_core_anti_replay_past_drift_rejected_401():
     tenant_id = "tenant_alpha"
     payload = {"tenant_id": tenant_id, "action": "replayed_action"}
     expired_ts = int(time.time()) - 350  # 350s ago (> 300s)
-    sig, _, _ = generate_inter_service_signature(authenticated_tenant_id=tenant_id, body=payload, timestamp=expired_ts)
-
-    headers = {
-        "X-Boontrack-Signature": sig,
-        "X-Boontrack-Timestamp": str(expired_ts),
-        "X-Boontrack-Tenant-Id": tenant_id,
-        "Content-Type": "application/json",
-    }
+    headers = create_inter_service_signed_headers(authenticated_tenant_id=tenant_id, body=payload, timestamp=expired_ts)
 
     response = client.post("/api/v1/inbox/sync", json=payload, headers=headers)
     assert response.status_code == 401
@@ -165,14 +138,7 @@ def test_e2e_inbox_core_anti_replay_future_drift_rejected_401():
     tenant_id = "tenant_alpha"
     payload = {"tenant_id": tenant_id, "action": "future_action"}
     future_ts = int(time.time()) + 400  # 400s into future
-    sig, _, _ = generate_inter_service_signature(authenticated_tenant_id=tenant_id, body=payload, timestamp=future_ts)
-
-    headers = {
-        "X-Boontrack-Signature": sig,
-        "X-Boontrack-Timestamp": str(future_ts),
-        "X-Boontrack-Tenant-Id": tenant_id,
-        "Content-Type": "application/json",
-    }
+    headers = create_inter_service_signed_headers(authenticated_tenant_id=tenant_id, body=payload, timestamp=future_ts)
 
     response = client.post("/api/v1/inbox/sync", json=payload, headers=headers)
     assert response.status_code == 401
@@ -189,15 +155,8 @@ def test_e2e_inbox_core_payload_claim_mismatch_rejected_401():
     original_payload = {"tenant_id": tenant_id, "amount": 50000}
     altered_payload = {"tenant_id": tenant_id, "amount": 999999999}
 
-    # Signature signed over original payload
-    sig, ts, _ = generate_inter_service_signature(authenticated_tenant_id=tenant_id, body=original_payload)
-
-    headers = {
-        "X-Boontrack-Signature": sig,
-        "X-Boontrack-Timestamp": str(ts),
-        "X-Boontrack-Tenant-Id": tenant_id,
-        "Content-Type": "application/json",
-    }
+    # Signature signed over original payload with nonce
+    headers = create_inter_service_signed_headers(authenticated_tenant_id=tenant_id, body=original_payload)
 
     # Transmit altered payload
     response = client.post("/api/v1/inbox/sync", json=altered_payload, headers=headers)
@@ -218,7 +177,7 @@ def test_e2e_inbox_core_missing_headers_rejected_401():
     resp = client.post(
         "/api/v1/inbox/sync",
         json=payload,
-        headers={"X-Boontrack-Timestamp": str(int(time.time())), "X-Boontrack-Tenant-Id": "tenant_alpha"},
+        headers={"X-Boontrack-Timestamp": str(int(time.time())), "X-Boontrack-Tenant-Id": "tenant_alpha", "X-Boontrack-Request-Id": "req_1"},
     )
     assert resp.status_code == 401
     detail = get_response_detail(resp)
@@ -228,9 +187,18 @@ def test_e2e_inbox_core_missing_headers_rejected_401():
     resp2 = client.post(
         "/api/v1/inbox/sync",
         json=payload,
-        headers={"X-Boontrack-Signature": "abc", "X-Boontrack-Timestamp": str(int(time.time()))},
+        headers={"X-Boontrack-Signature": "abc", "X-Boontrack-Timestamp": str(int(time.time())), "X-Boontrack-Request-Id": "req_2"},
     )
     assert resp2.status_code == 401
+
+    # Missing request_id / nonce
+    resp3 = client.post(
+        "/api/v1/inbox/sync",
+        json=payload,
+        headers={"X-Boontrack-Signature": "abc", "X-Boontrack-Timestamp": str(int(time.time())), "X-Boontrack-Tenant-Id": "tenant_alpha"},
+    )
+    assert resp3.status_code == 401
+    assert get_response_detail(resp3).get("error") == "MISSING_NONCE"
 
 
 # -----------------------------------------------------------------------------
@@ -243,19 +211,13 @@ def test_e2e_inbox_core_forged_key_rejected_401(monkeypatch):
 
     # Attacker signs with bogus secret
     monkeypatch.setenv("BOONTRACK_HMAC_SECRET", "attacker_fake_forged_key_12345")
-    attacker_sig, ts, _ = generate_inter_service_signature(authenticated_tenant_id=tenant_id, body=payload)
+    headers = create_inter_service_signed_headers(authenticated_tenant_id=tenant_id, body=payload)
 
     # Server receives with real secret
     monkeypatch.setenv("BOONTRACK_HMAC_SECRET", "test_ci_secure_hmac_secret_for_pipeline_999")
-
-    headers = {
-        "X-Boontrack-Signature": attacker_sig,
-        "X-Boontrack-Timestamp": str(ts),
-        "X-Boontrack-Tenant-Id": tenant_id,
-        "Content-Type": "application/json",
-    }
 
     response = client.post("/api/v1/inbox/dispatch", json=payload, headers=headers)
     assert response.status_code == 401
     detail = get_response_detail(response)
     assert detail.get("reason") == "SIGNATURE_MISMATCH"
+

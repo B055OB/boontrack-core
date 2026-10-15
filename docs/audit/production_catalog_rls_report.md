@@ -1,9 +1,10 @@
-# LAPORAN AUDIT KATALOG RLS LINGKUNGAN PRODUKSI (READ-ONLY)
+# LAPORAN AUDIT KATALOG RLS LINGKUNGAN PRODUKSI SUPABASE (POSTGRESQL 17.6)
 - **Status Audit**: `[PASS]` — 100% Invarian Keamanan Terpenuhi
+- **Target Host**: `aws-0-ap-southeast-1.pooler.supabase.com:6543` (Supabase Production Pooler)
 - **Target Database**: `postgres` on engine `PostgreSQL 17.6 on aarch64-unknown-linux-gnu`
-- **Auditor User**: `postgres` (Mode: `READ ONLY`)
-- **Waktu Audit (UTC)**: `2026-10-15 07:55:36 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 14:55:36 WIB`
+- **Auditor User**: `postgres` (Mode: `READ ONLY (transaction_read_only = on, ZERO DDL/DML)`)
+- **Waktu Audit (UTC)**: `2026-10-15 09:52:55 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 16:52:55 WIB`
 - **Total Mutasi DDL/DML**: `0` (Murni Read-Only Inspection)
 
 ---

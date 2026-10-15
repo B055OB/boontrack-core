@@ -31,19 +31,29 @@ logger = logging.getLogger("INTER_SERVICE_AUTH")
 MAX_TIMESTAMP_DRIFT_SECONDS = 300  # 5 minutes anti-replay window
 
 
+class ReplayGuardUnavailableError(Exception):
+    """Raised when Redis anti-replay storage is unavailable in production (fail-closed)."""
+    pass
+
+
 class InterServiceReplayGuard:
     """Atomic anti-replay idempotency tracker with TTL (300 seconds).
     
-    CTO Directive 09 Mandate:
-    1. Single-use enforcement: An identical request_id / nonce cannot be accepted twice
-       within the anti-replay window (300s).
-    2. Atomic registration:
-       - Uses Redis SET key 1 EX 300 NX when Redis is available.
-       - Uses Thread-Safe Lock + memory table with epoch expiration for local/CI environments.
-    3. Rejects replay and race conditions explicitly with REPLAY_REJECTED.
+    CTO Directive 10 Mandates:
+    1. Scoped Namespace: Nonce is explicitly bound per service and tenant:
+       f"core:replay:{service_name}:{tenant_id}:{request_id}"
+    2. Fail-Closed in Production:
+       If Redis is down/unavailable in production, requests MUST fail-closed
+       (raises ReplayGuardUnavailableError -> HTTP 503 Service Unavailable).
+       Silent in-memory fallback is strictly prohibited in production to prevent
+       multi-instance distributed replay attacks across clustered worker instances.
+    3. Non-Production Fallback:
+       In local dev / test environments (e.g. CI sandbox without standalone Redis),
+       falls back to thread-safe in-memory store unless fail_closed is explicitly activated.
+    4. Atomic registration:
+       Uses Redis SET key 1 EX 300 NX.
     """
     NONCE_TTL_SECONDS = 300
-    KEY_PREFIX = "nonce:inter_service:"
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -67,29 +77,63 @@ class InterServiceReplayGuard:
         except Exception:
             self._redis = None
 
-    def acquire_nonce(self, nonce: str) -> bool:
-        """Atomically registers a nonce.
+    def is_production(self) -> bool:
+        if os.getenv("STRICT_REPLAY_GUARD", "").lower() in ("true", "1", "yes"):
+            return True
+        env = os.getenv("ENVIRONMENT", os.getenv("APP_ENV", os.getenv("RAILWAY_ENVIRONMENT", ""))).strip().lower()
+        return env in ("production", "prod", "staging")
+
+    def build_nonce_key(self, request_id: str, tenant_id: str = "default", service_name: str = "inbox") -> str:
+        clean_service = str(service_name or "inbox").strip().lower()
+        clean_tenant = str(tenant_id or "default").strip()
+        clean_req_id = str(request_id or "").strip()
+        return f"core:replay:{clean_service}:{clean_tenant}:{clean_req_id}"
+
+    def acquire_nonce(
+        self,
+        request_id: str,
+        tenant_id: Optional[str] = None,
+        service_name: str = "inbox",
+        fail_closed: Optional[bool] = None,
+    ) -> bool:
+        """Atomically registers a nonce with explicit scoped namespace.
+        
+        Namespace format:
+            core:replay:{service_name}:{tenant_id}:{request_id}
+            
         Returns:
             True if nonce is fresh (first time seen within window).
             False if nonce is a duplicate / replay attack.
+            
+        Raises:
+            ReplayGuardUnavailableError if Redis is unavailable and fail_closed is active.
+            ValueError if request_id is missing or empty.
         """
-        if not nonce or not str(nonce).strip():
-            return False
+        if not request_id or not str(request_id).strip():
+            raise ValueError("request_id is mandatory for anti-replay guard")
 
-        clean_nonce = str(nonce).strip()
-        key = f"{self.KEY_PREFIX}{clean_nonce}"
+        clean_tenant = str(tenant_id or "default").strip()
+        key = self.build_nonce_key(request_id=request_id, tenant_id=clean_tenant, service_name=service_name)
+        should_fail_closed = self.is_production() if fail_closed is None else bool(fail_closed)
 
         # 1. Atomic Redis SET with NX and EX
         if self._redis:
             try:
                 was_set = self._redis.set(key, "1", ex=self.NONCE_TTL_SECONDS, nx=True)
-                if was_set:
-                    return True
-                return False
+                return bool(was_set)
             except Exception as e:
-                logger.warning(f"[ReplayGuard] Redis error ({e}), falling back to locked in-memory store.")
+                logger.warning(f"[ReplayGuard] Redis error ({e}) during nonce registration.")
+                if should_fail_closed:
+                    raise ReplayGuardUnavailableError(
+                        f"Anti-replay Redis error in fail-closed mode: {e}"
+                    ) from e
+        else:
+            if should_fail_closed:
+                raise ReplayGuardUnavailableError(
+                    "Anti-replay Redis instance is not available. Fail-closed enforced in production."
+                )
 
-        # 2. Thread-safe in-memory store
+        # 2. Thread-safe in-memory store (ONLY for non-production environments)
         now = time.time()
         with self._lock:
             # Prune expired keys
@@ -109,7 +153,7 @@ class InterServiceReplayGuard:
             self._memory.clear()
         if self._redis:
             try:
-                keys = self._redis.keys(f"{self.KEY_PREFIX}*")
+                keys = self._redis.keys("core:replay:*")
                 if keys:
                     self._redis.delete(*keys)
             except Exception:
@@ -330,6 +374,7 @@ async def verify_inter_service_tenant_boundary(request: Request) -> str:
     timestamp = request.headers.get("X-Boontrack-Timestamp")
     authenticated_tenant_id = request.headers.get("X-Boontrack-Tenant-Id")
     request_id = request.headers.get("X-Boontrack-Request-Id") or request.headers.get("X-Boontrack-Nonce")
+    service_name = request.headers.get("X-Boontrack-Service") or request.headers.get("X-Boontrack-Origin-Service") or "inbox"
 
     if not signature or not timestamp or not authenticated_tenant_id:
         raise HTTPException(
@@ -337,6 +382,17 @@ async def verify_inter_service_tenant_boundary(request: Request) -> str:
             detail={
                 "error": "MISSING_INTER_SERVICE_AUTH_HEADERS",
                 "message": "Headers 'X-Boontrack-Signature', 'X-Boontrack-Timestamp', and 'X-Boontrack-Tenant-Id' are mandatory.",
+            },
+        )
+
+    # CTO Mandate: Wajibkan request_id / nonce (hilangkan jalur verifikasi tanpa nonce)
+    if not request_id or not str(request_id).strip():
+        logger.warning("[INTER_SERVICE_AUTH] Missing mandatory request_id / nonce header.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": "MISSING_NONCE",
+                "message": "Header 'X-Boontrack-Request-Id' is mandatory. Requests without unique nonce are rejected fail-closed.",
             },
         )
 
@@ -358,15 +414,31 @@ async def verify_inter_service_tenant_boundary(request: Request) -> str:
             detail={"error": "INVALID_INTER_SERVICE_SIGNATURE", "reason": reason},
         )
 
-    # Anti-Replay Nonce / Request-ID Enforcement (Atomic Window 300s)
-    nonce_to_check = request_id or signature
-    if not replay_guard.acquire_nonce(nonce_to_check):
-        logger.warning(f"[INTER_SERVICE_AUTH] Replay attack rejected: nonce '{nonce_to_check}' already processed.")
+    # Anti-Replay Nonce Enforcement (Atomic Window 300s, Scoped Namespace, Fail-Closed)
+    try:
+        acquired = replay_guard.acquire_nonce(
+            request_id=request_id,
+            tenant_id=authenticated_tenant_id,
+            service_name=service_name,
+        )
+    except ReplayGuardUnavailableError as rge:
+        logger.error(f"[INTER_SERVICE_AUTH] Anti-replay service unavailable (fail-closed): {rge}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "REPLAY_GUARD_UNAVAILABLE",
+                "message": "Anti-replay service is unavailable. Request rejected fail-closed to prevent replay attacks.",
+                "reason": str(rge),
+            },
+        )
+
+    if not acquired:
+        logger.warning(f"[INTER_SERVICE_AUTH] Replay attack rejected: nonce '{request_id}' already processed for tenant '{authenticated_tenant_id}'.")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
                 "error": "REPLAY_REJECTED",
-                "message": f"Replay request rejected: request_id or nonce '{nonce_to_check}' has already been processed within the 300s window.",
+                "message": f"Replay request rejected: request_id or nonce '{request_id}' has already been processed within the 300s window.",
             },
         )
 

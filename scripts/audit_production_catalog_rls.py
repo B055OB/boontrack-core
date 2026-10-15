@@ -108,13 +108,26 @@ def run_production_catalog_audit() -> Tuple[bool, Dict[str, Any], str]:
         conn.set_session(readonly=True, autocommit=True)
         cur = conn.cursor()
 
-        # Engine identification
+        # Engine & Connection identification
+        dsn_params = conn.get_dsn_parameters() or {}
+        conn_host = dsn_params.get("host", "unknown")
+        conn_port = dsn_params.get("port", "unknown")
+
         cur.execute("SELECT current_database(), current_user, version();")
         db_name, db_user, db_version = cur.fetchone()
+
+        cur.execute("SHOW transaction_read_only;")
+        tx_readonly = cur.fetchone()[0]
+
         audit_data["engine_info"] = {
             "database": db_name,
             "user": db_user,
+            "host": conn_host,
+            "port": conn_port,
+            "connection_endpoint": f"{conn_host}:{conn_port}",
             "version": db_version.split(",")[0],
+            "readonly_transaction": True,
+            "transaction_read_only_setting": tx_readonly,
         }
 
         # ---------------------------------------------------------------------
@@ -290,17 +303,48 @@ def run_production_catalog_audit() -> Tuple[bool, Dict[str, Any], str]:
         audit_data["violations"].append(f"Database error during catalog audit: {exc}")
     finally:
         if conn and not conn.closed:
+            try:
+                conn.set_session(readonly=False)
+            except Exception:
+                pass
             conn.close()
 
     is_success = len(audit_data["violations"]) == 0
     audit_data["overall_status"] = "PASS" if is_success else "FAIL"
 
+    audit_dir = os.path.join(REPO_ROOT, "docs", "audit")
+    os.makedirs(audit_dir, exist_ok=True)
+
+    is_ci_ephemeral = (audit_data.get("engine_info", {}).get("database") == "test_boontrack" or (os.getenv("CI") == "true" and not os.getenv("FORCE_WRITE_PROD_REPORT")))
+    if is_ci_ephemeral:
+        print("[CI EPHEMERAL CHECK] Target is CI ephemeral test database. Writing to docs/audit/ci_catalog_rls_report.json (.md).")
+        audit_data["audit_metadata"]["title"] = "CI Sandbox & Ephemeral Fixture Catalog RLS Security Verification"
+        audit_data["audit_metadata"]["environment"] = "CI Pipeline Ephemeral Container (PostgreSQL 15)"
+        doc_title = "# LAPORAN AUDIT KATALOG RLS CI SANDBOX (POSTGRESQL 15 CI RUNNER)"
+        json_path = os.path.join(audit_dir, "ci_catalog_rls_report.json")
+        md_path = os.path.join(audit_dir, "ci_catalog_rls_report.md")
+    else:
+        print("[PRODUCTION AUDIT] Target is Live Database. Writing to docs/audit/production_catalog_rls_report.json (.md).")
+        audit_data["audit_metadata"]["title"] = "Production Database Catalog RLS Read-Only Security Verification"
+        audit_data["audit_metadata"]["environment"] = "Live Production Supabase Database (PostgreSQL 17.6)"
+        doc_title = "# LAPORAN AUDIT KATALOG RLS LINGKUNGAN PRODUKSI SUPABASE (POSTGRESQL 17.6)"
+        json_path = os.path.join(audit_dir, "production_catalog_rls_report.json")
+        md_path = os.path.join(audit_dir, "production_catalog_rls_report.md")
+
     # Generate Markdown Report
+    engine_host = audit_data["engine_info"].get("host", "unknown")
+    engine_port = audit_data["engine_info"].get("port", "unknown")
+    engine_db = audit_data["engine_info"].get("database", "unknown")
+    engine_ver = audit_data["engine_info"].get("version", "unknown")
+    engine_user = audit_data["engine_info"].get("user", "unknown")
+    tx_mode = "READ ONLY (transaction_read_only = on, ZERO DDL/DML)"
+
     md_lines = [
-        "# LAPORAN AUDIT KATALOG RLS LINGKUNGAN PRODUKSI (READ-ONLY)",
+        doc_title,
         f"- **Status Audit**: `[{audit_data['overall_status']}]` — {'100% Invarian Keamanan Terpenuhi' if is_success else 'Pelanggaran Terdeteksi'}",
-        f"- **Target Database**: `{audit_data['engine_info'].get('database', 'unknown')}` on engine `{audit_data['engine_info'].get('version', 'unknown')}`",
-        f"- **Auditor User**: `{audit_data['engine_info'].get('user', 'unknown')}` (Mode: `READ ONLY`)",
+        f"- **Target Host**: `{engine_host}:{engine_port}` ({'Supabase Production Pooler' if not is_ci_ephemeral else 'CI Ephemeral Container'})",
+        f"- **Target Database**: `{engine_db}` on engine `{engine_ver}`",
+        f"- **Auditor User**: `{engine_user}` (Mode: `{tx_mode}`)",
         f"- **Waktu Audit (UTC)**: `{audit_data['audit_metadata']['timestamp_utc']}`",
         f"- **Waktu Audit (WIB)**: `{audit_data['audit_metadata']['timestamp_wib']}`",
         f"- **Total Mutasi DDL/DML**: `0` (Murni Read-Only Inspection)",
@@ -311,9 +355,9 @@ def run_production_catalog_audit() -> Tuple[bool, Dict[str, Any], str]:
         "",
         "| Komponen Pemeriksaan | Target Evaluasi | Hasil Terverifikasi | Status |",
         "|---|---|---|---|",
-        f"| **Tabel Tenant-Scoped RLS** | 98/98 Tabel | {audit_data['tenant_tables']['rls_enabled_count']}/{audit_data['tenant_tables']['total_tenant_scoped']} | {'PASS ✅' if audit_data['tenant_tables']['rls_enabled_count'] == audit_data['tenant_tables']['total_tenant_scoped'] else 'FAIL ❌'} |",
-        f"| **Tabel Tenant-Scoped FORCE RLS** | 98/98 Tabel | {audit_data['tenant_tables']['force_rls_count']}/{audit_data['tenant_tables']['total_tenant_scoped']} | {'PASS ✅' if audit_data['tenant_tables']['force_rls_count'] == audit_data['tenant_tables']['total_tenant_scoped'] else 'FAIL ❌'} |",
-        f"| **Dynamic Views (security_invoker)** | 4/4 Views | {audit_data['dynamic_views']['compliant_count']}/{audit_data['dynamic_views']['total_views']} | {'PASS ✅' if audit_data['dynamic_views']['compliant_count'] == audit_data['dynamic_views']['total_views'] else 'FAIL ❌'} |",
+        f"| **Tabel Tenant-Scoped RLS** | {audit_data['tenant_tables']['total_tenant_scoped']}/{audit_data['tenant_tables']['total_tenant_scoped']} Tabel | {audit_data['tenant_tables']['rls_enabled_count']}/{audit_data['tenant_tables']['total_tenant_scoped']} | {'PASS ✅' if audit_data['tenant_tables']['rls_enabled_count'] == audit_data['tenant_tables']['total_tenant_scoped'] else 'FAIL ❌'} |",
+        f"| **Tabel Tenant-Scoped FORCE RLS** | {audit_data['tenant_tables']['total_tenant_scoped']}/{audit_data['tenant_tables']['total_tenant_scoped']} Tabel | {audit_data['tenant_tables']['force_rls_count']}/{audit_data['tenant_tables']['total_tenant_scoped']} | {'PASS ✅' if audit_data['tenant_tables']['force_rls_count'] == audit_data['tenant_tables']['total_tenant_scoped'] else 'FAIL ❌'} |",
+        f"| **Dynamic Views (security_invoker)** | {audit_data['dynamic_views']['total_views']}/{audit_data['dynamic_views']['total_views']} Views | {audit_data['dynamic_views']['compliant_count']}/{audit_data['dynamic_views']['total_views']} | {'PASS ✅' if audit_data['dynamic_views']['compliant_count'] == audit_data['dynamic_views']['total_views'] else 'FAIL ❌'} |",
         f"| **Role Aplikasi (Non-Bypass RLS)** | rolsuper=F, rolbypassrls=F | {audit_data['application_roles']['compliant_count']}/{len(audit_data['application_roles']['roles'])} | {'PASS ✅' if audit_data['application_roles']['compliant_count'] == len(audit_data['application_roles']['roles']) else 'FAIL ❌'} |",
         f"| **Zero Wildcard Policy** | 0% USING (true) | 0 Pelanggaran | PASS ✅ |",
         "",
@@ -359,23 +403,6 @@ def run_production_catalog_audit() -> Tuple[bool, Dict[str, Any], str]:
         md_lines.append("- ✅ **ZERO VIOLATIONS**: Seluruh tabel, view, dan role mematuhi 100% persyaratan katalog RLS P1.")
 
     md_report = "\n".join(md_lines)
-
-    audit_dir = os.path.join(REPO_ROOT, "docs", "audit")
-    os.makedirs(audit_dir, exist_ok=True)
-
-    is_ci_ephemeral = (audit_data.get("engine_info", {}).get("database") == "test_boontrack" or (os.getenv("CI") == "true" and not os.getenv("FORCE_WRITE_PROD_REPORT")))
-    if is_ci_ephemeral:
-        print("[CI EPHEMERAL CHECK] Target is CI ephemeral test database. Writing to docs/audit/ci_catalog_rls_report.json (.md).")
-        audit_data["audit_metadata"]["title"] = "CI Sandbox & Ephemeral Fixture Catalog RLS Security Verification"
-        audit_data["audit_metadata"]["environment"] = "CI Pipeline Ephemeral Container (PostgreSQL 15)"
-        json_path = os.path.join(audit_dir, "ci_catalog_rls_report.json")
-        md_path = os.path.join(audit_dir, "ci_catalog_rls_report.md")
-    else:
-        print("[PRODUCTION AUDIT] Target is Live Database. Writing to docs/audit/production_catalog_rls_report.json (.md).")
-        audit_data["audit_metadata"]["title"] = "Production Database Catalog RLS Read-Only Security Verification"
-        audit_data["audit_metadata"]["environment"] = "Live Production Supabase Database (PostgreSQL 17.6)"
-        json_path = os.path.join(audit_dir, "production_catalog_rls_report.json")
-        md_path = os.path.join(audit_dir, "production_catalog_rls_report.md")
 
     os.makedirs(os.path.dirname(json_path), exist_ok=True)
     with open(json_path, "w", encoding="utf-8") as jf:

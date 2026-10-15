@@ -324,3 +324,116 @@ def test_contract_concurrent_race_condition_identical_nonce(core_client):
             detail = get_response_detail(r)
             assert detail.get("error") == "REPLAY_REJECTED"
 
+
+def test_contract_rejection_missing_nonce(core_client):
+    """Contract Proof 8c: Wajibkan request_id / nonce (hilangkan jalur verifikasi tanpa nonce).
+    Permintaan tanpa header X-Boontrack-Request-Id wajib ditolak tegas dengan HTTP 401 (MISSING_NONCE).
+    """
+    inbox = OfficialInboxClientSigner(tenant_id="tenant_alpha")
+    payload = {"tenant_id": "tenant_alpha", "action": "sync_chat"}
+    body_bytes, headers = inbox.build_signed_request(payload)
+
+    # Hilangkan header request_id
+    headers_without_nonce = {k: v for k, v in headers.items() if k not in ("X-Boontrack-Request-Id", "X-Boontrack-Nonce")}
+
+    response = core_client.post("/api/v1/inbox/sync", content=body_bytes, headers=headers_without_nonce)
+    assert response.status_code == 401, f"Expected 401 for missing nonce, got {response.status_code}: {response.text}"
+
+    detail = get_response_detail(response)
+    assert detail.get("error") == "MISSING_NONCE"
+    assert "mandatory" in detail.get("message", "").lower()
+
+
+def test_contract_redis_outage_fails_closed(core_client, monkeypatch):
+    """Contract Proof 8d: Fail-Closed Anti-Replay in Production.
+    Jika Redis mati / tidak tersedia di lingkungan produksi, request sensitif WAJIB fail-closed (HTTP 503).
+    Fallback in-memory dilarang keras di jalur produksi untuk mencegah serangan replay antar cluster.
+    """
+    # 1. Simulasikan environment produksi
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr(replay_guard, "_redis", None)
+
+    inbox = OfficialInboxClientSigner(tenant_id="tenant_alpha")
+    payload = {"tenant_id": "tenant_alpha", "action": "sensitive_payment_trigger", "amount": 1000000}
+    body_bytes, headers = inbox.build_signed_request(payload)
+
+    response = core_client.post("/api/v1/inbox/sync", content=body_bytes, headers=headers)
+    assert response.status_code == 503, f"Expected 503 Service Unavailable, got {response.status_code}: {response.text}"
+
+    detail = get_response_detail(response)
+    assert detail.get("error") == "REPLAY_GUARD_UNAVAILABLE"
+    assert "fail-closed" in detail.get("message", "").lower() or "unavailable" in detail.get("message", "").lower()
+
+
+def test_contract_multi_instance_race_condition(monkeypatch):
+    """Contract Proof 8e: Multi-Instance Race Condition & Scoped Nonce Namespace.
+    Simulasi multi-instance Core nodes bersaing mendaftarkan nonce identik pada shared store.
+    1. Memverifikasi namespace terikat eksplisit: core:replay:{service}:{tenant}:{request_id}.
+    2. Menjamin tepat 1 instance yang berhasil (acquire=True), instance lainnya gagal (acquire=False).
+    """
+    from app.core.security.inter_service_auth import InterServiceReplayGuard
+
+    # Inisialisasi Mock Redis bersama yang mensimulasikan Redis cluster multi-instance
+    shared_redis_storage = {}
+    import threading
+    storage_lock = threading.Lock()
+
+    class MockDistributedRedis:
+        def set(self, key, value, ex=None, nx=False):
+            with storage_lock:
+                if nx and key in shared_redis_storage:
+                    return False
+                shared_redis_storage[key] = value
+                return True
+
+        def delete(self, *keys):
+            with storage_lock:
+                for k in keys:
+                    shared_redis_storage.pop(k, None)
+
+        def keys(self, pattern="*"):
+            with storage_lock:
+                return list(shared_redis_storage.keys())
+
+    mock_cluster_redis = MockDistributedRedis()
+
+    # Buat 3 instance Core terpisah yang berbagi Redis yang sama
+    node_a = InterServiceReplayGuard()
+    node_b = InterServiceReplayGuard()
+    node_c = InterServiceReplayGuard()
+    node_a._redis = mock_cluster_redis
+    node_b._redis = mock_cluster_redis
+    node_c._redis = mock_cluster_redis
+
+    test_request_id = f"distributed_nonce_{time.time()}"
+    tenant_id = "tenant_gamma"
+    service_name = "inbox"
+
+    # Verifikasi format namespace eksplisit
+    expected_namespace = f"core:replay:{service_name}:{tenant_id}:{test_request_id}"
+    assert node_a.build_nonce_key(test_request_id, tenant_id=tenant_id, service_name=service_name) == expected_namespace
+
+    # Eksekusi konkurensi antar instance
+    import concurrent.futures
+    nodes = [node_a, node_b, node_c]
+    acquired_results = []
+
+    def attempt_acquire(node):
+        return node.acquire_nonce(
+            request_id=test_request_id,
+            tenant_id=tenant_id,
+            service_name=service_name,
+            fail_closed=True,
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [executor.submit(attempt_acquire, n) for n in nodes]
+        for f in concurrent.futures.as_completed(futures):
+            acquired_results.append(f.result())
+
+    # Tepat 1 instance menang, 2 instance kalah
+    assert acquired_results.count(True) == 1, f"Tepat 1 instance multi-node harus menang, got {acquired_results}"
+    assert acquired_results.count(False) == 2, f"2 instance lainnya harus ditolak, got {acquired_results}"
+    assert expected_namespace in shared_redis_storage
+
+

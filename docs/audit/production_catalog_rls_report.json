@@ -1,8 +1,8 @@
 {
   "audit_metadata": {
     "title": "Production Database Catalog RLS Read-Only Security Verification",
-    "timestamp_utc": "2026-10-15 07:55:36 UTC",
-    "timestamp_wib": "2026-10-15 14:55:36 WIB",
+    "timestamp_utc": "2026-10-15 09:52:55 UTC",
+    "timestamp_wib": "2026-10-15 16:52:55 WIB",
     "target": "CTO P1 Security Gate Verification",
     "mode": "PURE READ-ONLY (ZERO DDL / MUTATIONS)",
     "environment": "Live Production Supabase Database (PostgreSQL 17.6)"
@@ -10,7 +10,12 @@
   "engine_info": {
     "database": "postgres",
     "user": "postgres",
-    "version": "PostgreSQL 17.6 on aarch64-unknown-linux-gnu"
+    "host": "aws-0-ap-southeast-1.pooler.supabase.com",
+    "port": "6543",
+    "connection_endpoint": "aws-0-ap-southeast-1.pooler.supabase.com:6543",
+    "version": "PostgreSQL 17.6 on aarch64-unknown-linux-gnu",
+    "readonly_transaction": true,
+    "transaction_read_only_setting": "on"
   },
   "tenant_tables": {
     "total_tenant_scoped": 98,
