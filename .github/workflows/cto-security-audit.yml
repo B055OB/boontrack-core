@@ -7,6 +7,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   security-audit:
     name: Execute CTO Security Audit & Bind Evidence to Commit SHA
@@ -46,9 +49,6 @@ jobs:
       R2_SECRET_ACCESS_KEY: test_ci_r2_secret_key
       R2_ACCOUNT_ID: test-ci-r2-account
       CI: "true"
-
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout Code at Exact Commit SHA
@@ -131,19 +131,6 @@ jobs:
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit 1
           }
-
-      - name: Commit and Push Synchronized Evidence Bundle to Repository
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          if [[ -n "$(git status --porcelain docs/audit/)" ]]; then
-            git add docs/audit/
-            git commit -m "docs(audit): sync CTO evidence bundle and audit reports for commit ${{ github.sha }} [skip ci]"
-            git push origin main
-          else
-            echo "Evidence bundle is already synchronized with commit ${{ github.sha }}."
-          fi
 
       - name: Upload CTO Audit Evidence Bundle Artifact
         if: always()
