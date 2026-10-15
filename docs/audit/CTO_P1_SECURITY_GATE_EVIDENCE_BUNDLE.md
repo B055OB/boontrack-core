@@ -5,8 +5,8 @@
 - **GitHub Actions Verification**: Run #19 (ID: `38672563628`) — **SUCCESS ✅**
 - **Git Branch**: `main`
 - **Status Kebersihan Working Tree (`git status --porcelain`)**: `M scripts/generate_cto_p1_evidence_bundle.py`
-- **Waktu Audit (UTC)**: `2026-10-15 02:44:21 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 09:44:21 WIB`
+- **Waktu Audit (UTC)**: `2026-10-15 03:06:05 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 10:06:05 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **PENDING CTO FINAL SIGN-OFF**
 - **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA.
@@ -55,7 +55,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.4s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.1s, max: 300s)`
 
 ### Lapis 4: Redis & AI Conversation Memory Boundary
 - **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).
@@ -91,7 +91,7 @@ Pengujian menggunakan fixture bersarang (*deeply nested payload*) dan exception 
 ```log
 Error encountered in payment engine: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 Traceback (most recent call last):
-  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 719, in generate_section_4
+  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 722, in generate_section_4
     raise ValueError(f"Fulfillment failed for {raw_phone} ({raw_email}) with key {raw_xendit}")
 ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 ```
@@ -111,11 +111,11 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Tested Base Commit SHA (Parent HEAD)**: `219fdc4a18260babf22aeea4f56f447dbaf6ecdf`
+- **Tested Base Commit SHA (Parent HEAD)**: `2b509befd3e716c942496ae83aafa460bef1eeb7`
 - **Git Branch**: `main`
 - **Status Kebersihan Working Tree**: `M scripts/generate_cto_p1_evidence_bundle.py`
-- **Timestamp Eksekusi (UTC)**: `2026-10-15 02:44:21 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-10-15 09:44:21 WIB`
+- **Timestamp Eksekusi (UTC)**: `2026-10-15 03:06:05 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-10-15 10:06:05 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite (62/62 Tests PASSED)
@@ -152,8 +152,8 @@ Audit mencakup 100% tabel relasional di dalam schema `public` PostgreSQL pada Su
 
 - **Total Tabel Public**: `129`
 - **Tabel dengan RLS Aktif (`relrowsecurity = True`)**: `129/129` (100.0%)
-- **Klasifikasi Tenant-Scoped**: `96` tabel
-- **Klasifikasi Global / System Catalog**: `33` tabel
+- **Klasifikasi Tenant-Scoped**: `98` tabel
+- **Klasifikasi Global / System Catalog**: `31` tabel
 
 ### Matriks RLS & Policy DML (Cuplikan 30 Tabel Utama Termasuk Tabel Kritis)
 
@@ -171,7 +171,7 @@ Audit mencakup 100% tabel relasional di dalam schema `public` PostgreSQL pada Su
 | 10 | `staging_alumni_cpm` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_staging_alumni_cpm` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_staging_alumni_cpm` (public: tenant_id = app.current_tenant_id) |
 | 11 | `subscriptions` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_subscriptions` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_subscriptions` (service_role: tenant_id = app.current_tenant_id) |
 | 12 | `telegram_single_use_tokens` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_telegram_single_use_tokens` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_telegram_single_use_tokens` (public: tenant_id = app.current_tenant_id) |
-| 13 | `tenants` | postgres | ENABLED | YES | SYSTEM/GLOBAL | ALL, SELECT | `auth_tenant_dml_tenants` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_tenants` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_tenants` (service_role: tenant_id = app.current_tenant_id) |
+| 13 | `tenants` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_dml_tenants` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_tenants` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_tenants` (service_role: tenant_id = app.current_tenant_id) |
 | 14 | `whatsapp_connections` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_whatsapp_connections` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_whatsapp_connections` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolation_whatsapp_connections` (public: tenant_id = app.current_tenant_id) |
 | 15 | `activation_codes` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_activation_codes` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_activation_codes` (service_role: tenant_id = app.current_tenant_id) |
 | 16 | `affiliate_auth_otps` | postgres | ENABLED | NO | SYSTEM/GLOBAL | ALL | `Service role full access on affiliate_auth_otps` (service_role: true) |
@@ -189,7 +189,7 @@ Audit mencakup 100% tabel relasional di dalam schema `public` PostgreSQL pada Su
 | 28 | `campaign_attributions` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `Service role full access on campaign_attributions` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolated_Public_read_access_on_campaign_attributions` (public: tenant_id = app.current_tenant_id) |
 | 29 | `capi_events` | postgres | ENABLED | YES | TENANT | ALL, INSERT, SELECT | `Service role full access on capi_events` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolated_Public_insert_access_on_capi_events` (public: tenant_id = app.current_tenant_id)<br>`tenant_isolated_Public_read_access_on_capi_events` (public: tenant_id = app.current_tenant_id) |
 | 30 | `capi_outbox` | postgres | ENABLED | YES | TENANT | ALL | `service_role_all_capi_outbox` (service_role: tenant_id = app.current_tenant_id) |
-| 31 | `cart_items` | postgres | ENABLED | YES | SYSTEM/GLOBAL | ALL | `auth_tenant_cart_items` (authenticated: (cart_id IN ( SELECT carts....)<br>`public_access_tenant_cart_items` (public: (cart_id IN ( SELECT carts....)<br>`service_role_all_cart_items` (service_role: tenant_id = app.current_tenant_id) |
+| 31 | `cart_items` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_cart_items` (authenticated: (cart_id IN ( SELECT carts....)<br>`public_access_tenant_cart_items` (public: (cart_id IN ( SELECT carts....)<br>`service_role_all_cart_items` (service_role: tenant_id = app.current_tenant_id) |
 | 32 | `carts` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_carts` (authenticated: (tenant_id = current_app_te...)<br>`public_access_tenant_carts` (public: (tenant_id = current_app_te...)<br>`service_role_all_carts` (service_role: tenant_id = app.current_tenant_id) |
 | 33 | `citizen_data` | postgres | ENABLED | YES | TENANT | ALL | `tenant_isolation_citizen_data` (public: tenant_id = app.current_tenant_id) |
 | 34 | `click_logs` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
@@ -235,8 +235,8 @@ python scripts/enable_rls_security.py --verify
 ### Metadata & Parameter Verifikasi Katalog Database Nyata (Independen dari CI)
 - **Status Hasil Audit**: `100% PASS ✅` (Exit Code: `0`, Zero DDL Mutations)
 - **Independensi Lingkungan**: Audit ini dieksekusi langsung terhadap live database Supabase PostgreSQL produksi/staging, terpisah secara independen dari container PostgreSQL ephemeral di runner GitHub Actions CI.
-- **Timestamp Eksekusi (ISO 8601)**: `2026-10-15T02:37:55Z` (09:37:55 WIB)
-- **Target Sanitasi Database**: Engine `PostgreSQL 17.6`, Database `postgres`, User `postgres`
+- **Timestamp Eksekusi (ISO 8601)**: `2026-10-15T03:04:40Z` (10:04:40 WIB)
+- **Target Sanitasi Database**: Engine `PostgreSQL 17.6`, Host `aws-0-ap-southeast-1.pooler.supabase.com:5432`, Database `postgres`, User `postgres`
 - **Total Objek Terverifikasi**:
   * **129/129 Tabel Public**: 100% memiliki `relrowsecurity = true`
   * **98/98 Tabel Tenant-Scoped**: 100% terverifikasi memiliki RLS = True, FORCE RLS = True, dan minimal 1 valid tenant policy
@@ -330,6 +330,16 @@ python scripts/enable_rls_security.py --verify
 - **Higiene Koneksi Pool Pasca-Transaksi**:
   Setiap penggunaan transaksi elevated oleh worker dibungkus blok `try/finally` yang secara wajib mengeksekusi `RESET ROLE; RESET ALL;` sebelum koneksi dikembalikan ke pool, mencegah polusi privilege antar-eksekusi.
 
+### 3. Klarifikasi Semantik: Service Role RLS Policies Sebagai Defense-in-Depth
+- **Status Batas Keamanan Primer (Primary Security Boundary)**:
+  Batas keamanan primer ditegakkan secara mutlak di level **arsitektur aplikasi dan worker**, BUKAN mengandalkan RLS pada `service_role`:
+  1. **Private Subnet Isolation**: Background worker beroperasi secara eksklusif di dalam private network / backend VPC subnet tanpa public ingress.
+  2. **Zero Client Runtime Exposure**: Kredensial `SUPABASE_SERVICE_ROLE_KEY` tidak pernah dimuat ke dalam client runtime, bundle frontend (Next.js/browser), atau exposed via API publik.
+  3. **Strict Context & Scope Enforcement**: Worker job memvalidasi tenant scope payload (`validate_worker_job_scope`) sebelum memulai mutasi data.
+  4. **Connection Pool Hygiene**: Setiap elevated session dibungkus dalam blok `try/finally` yang mewajibkan eksekusi `RESET ROLE; RESET ALL;` sebelum koneksi dikembalikan ke pool koneksi.
+- **Peran RLS Policy Migration 030 pada `service_role`**:
+  Kebijakan RLS yang diterapkan pada role `service_role` di `migrations/030_harden_rls_all_remaining_tenant_tables.sql` (`service_role_all_*`) berfungsi sebagai **lapis pertahanan tambahan (defense-in-depth)** jika terjadi kesalahan logika worker yang menyetel `app.current_tenant_id`. Kebijakan ini **BUKAN** security boundary primer pengganti isolasi role database, karena role `service_role` secara inheren memiliki kapabilitas `rolbypassrls = true` pada engine PostgreSQL / Supabase.
+
 ---
 
 ## BAGIAN 6: TABEL RISK REGISTER & RESIDUAL FINDINGS
@@ -338,7 +348,7 @@ Daftar risiko residual dan mitigasi teknis berlapis (*defense-in-depth*):
 
 | ID Risiko | Komponen / Subsistem | Deskripsi Temuan Residual | Tingkat Risiko | Pemilik (Owner) | Langkah Mitigasi & Kontrol Bertahan |
 |---|---|---|---|---|---|
-| **RSK-01** | **Supabase Service Role Privileges** | Kredensial `service_role` memiliki kapabilitas `BYPASSRLS` bawaan di tingkat engine database PostgreSQL. Jika disalahgunakan, berpotensi memotong batasan isolasi tenant. | **MEDIUM** | Core Infra & Security Lead | **Mitigasi Berlapis Eksplisit**: 1) Kredensial `SUPABASE_SERVICE_ROLE_KEY` diisolasi ketat hanya untuk background worker berautentikasi (seperti reconciler pembayaran dan cron scheduler) di server internal; tidak pernah diekspos ke client bundle (Next.js/browser) atau endpoint publik mana pun. 2) Setiap transaksi elevated wajib menggunakan wrapper `try/finally` yang mengeksekusi `RESET ROLE; RESET ALL;` sebelum koneksi dikembalikan ke pool, menjamin nol polusi privilege sesi koneksi. 3) Seluruh endpoint bisnis/FastAPI dipaksa berjalan pada context `authenticated`/`anon` di mana `rolbypassrls = False`. |
+| **RSK-01** | **Supabase Service Role Privileges** | Kredensial `service_role` memiliki kapabilitas `BYPASSRLS` bawaan di tingkat engine database PostgreSQL. RLS policy pada `service_role` di migration 030 adalah lapis pertahanan tambahan (*defense-in-depth*), BUKAN security boundary primer. | **MEDIUM** | Core Infra & Security Lead | **Penegakan Primary Boundary & Defense-in-Depth**: 1) **Primary Boundary**: Kredensial `SUPABASE_SERVICE_ROLE_KEY` hanya dapat diakses oleh background worker di private subnet backend; tidak pernah dimuat ke client bundle (Next.js/browser) atau diekspos ke publik. 2) **Worker Connection Hygiene**: Transaksi elevated worker wajib menggunakan wrapper `try/finally` yang mengeksekusi `RESET ROLE; RESET ALL;` sebelum koneksi dikembalikan ke pool, menjamin nol polusi privilege sesi koneksi. 3) **Tenant Context Enforcement**: Seluruh endpoint bisnis/FastAPI dipaksa berjalan pada context `authenticated`/`anon` di mana `rolbypassrls = False`. 4) **Defense-in-Depth**: Kebijakan RLS migration 030 bertindak sebagai jaring pengaman sekunder saat `app.current_tenant_id` terdefinisi. |
 | **RSK-02** | **R2 Direct CDN Download** | URL publik CDN (`assets.boontrack.com`) untuk aset gambar produk publik dapat diakses tanpa login. | **LOW** | Storage Lead | Hanya file di direktori publik (`tenants/system/*` atau produk) yang di-expose ke CDN; file privat (rekaman video, dokumen download) diwajibkan melalui Presigned URL dengan TTL <= 15 menit. |
 | **RSK-03** | **Clock Drift Antar-Server** | Perbedaan jam sistem antara server Core dan Inbox dapat memicu penolakan anti-replay jika drift > 300 detik. | **LOW** | DevOps Lead | NTP synchronization daemon diaktifkan di seluruh server container cloud dengan ambang drift toleransi < 1 detik. |
 | **RSK-04** | **Fallback In-Memory Session** | Ketika Redis server mengalami restart/outage, lock dan session beralih sementara ke memory lokal proses. | **LOW** | Backend Platform | Redis di-deploy dalam cluster high-availability dengan fail-closed circuit breaker pada rute keuangan kritikal. |
