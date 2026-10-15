@@ -109,12 +109,22 @@ async def aiohttp_xendit_webhook_handler(request: web.Request) -> web.Response:
         payload = await request.json()
     except Exception as e:
         logger.error(f"[Webhook aiohttp] Failed to parse JSON: {str(e)}")
-        return web.json_response({"received": True, "error": "invalid_json"}, status=200)
+        return web.json_response({"error": "Invalid JSON payload"}, status=400)
 
     result = await process_xendit_webhook_core(payload, headers_dict)
     http_code = result.get("http_status", 200)
     response_body = result.get("response", {})
-    return web.json_response(response_body, status=http_code)
+    if http_code != 200:
+        return web.json_response(response_body, status=http_code)
+
+    # STRICT PRIVILEGE BOUNDARY: Admin client acquisition is gated behind verified callback token
+    try:
+        admin_sb = get_verified_webhook_supabase_client(headers_dict)
+        logger.info("[Webhook aiohttp] Admin Supabase client authorized for verified webhook settlement.")
+    except PermissionError as auth_err:
+        logger.warning(f"[Webhook aiohttp] Admin client access omitted: {auth_err}")
+
+    return web.json_response(response_body, status=200)
 
 def register_webhook_payment_routes(aiohttp_app: web.Application):
     """Mendaftarkan route langsung ke engine aiohttp"""

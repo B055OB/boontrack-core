@@ -1,0 +1,970 @@
+{
+  "audit_metadata": {
+    "title": "Production & Catalog RLS Read-Only Security Verification",
+    "timestamp_utc": "2026-10-15 06:46:46 UTC",
+    "timestamp_wib": "2026-10-15 13:46:46 WIB",
+    "target": "CTO P1 Security Gate Verification",
+    "mode": "PURE READ-ONLY (ZERO DDL / MUTATIONS)"
+  },
+  "engine_info": {
+    "database": "postgres",
+    "user": "postgres",
+    "version": "PostgreSQL 17.6 on aarch64-unknown-linux-gnu"
+  },
+  "tenant_tables": {
+    "total_tenant_scoped": 98,
+    "rls_enabled_count": 98,
+    "force_rls_count": 98,
+    "compliant_count": 98,
+    "tables": [
+      {
+        "table_name": "activation_codes",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "affiliate_commissions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 4,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "affiliates",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "attribution_sessions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "attributions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "audit_logs",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "booking_reminders",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "booking_slots",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "bot_profiles",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "campaign_attributions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "campaign_queue_items",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "campaign_queues",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "capi_events",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "capi_outbox",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "cart_items",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "carts",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "channel_bindings",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "citizen_data",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "commerce_products",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "commission_ledger",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "complaint_tickets",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "contact_channel_identities",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "contact_notes",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "contacts",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "conversation_entities",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "conversation_sessions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "conversations",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "creator_profiles",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "credit_transactions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "cs_agents",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "delivery_orders",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "demo_user_sessions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "document_jobs",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "event_ledger",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "financial_events",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "financial_ledger",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "inbox_idempotency_keys",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "leads",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "lifecycle_events",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "lifecycle_templates",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "marketing_attributions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "member_entitlements",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "merchant_audit_logs",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "merchant_devices",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "message_outbox",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "messages",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "order_audit_logs",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "order_items",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "orders",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 5,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "outbound_messages",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "payment_events",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "payment_evidence",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "phone_suppressions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "products",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "push_subscriptions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 4,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "quick_replies",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "reader_notifications",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "reseller_attributions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "reseller_commissions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "reseller_links",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "seller_ad_conversions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "seller_pixel_configs",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "shop_commission_ledger",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "shop_reseller_settings",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "shop_subscriptions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "shop_wa_instances",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "staging_alumni_cpm",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "store_resellers",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "studio_job_credit_reservations",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "studio_workspaces",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "subscriptions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tags",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "telegram_bots",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "telegram_single_use_tokens",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_addons",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_ai_personas",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_booking_schemas",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_business_profiles",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_configs",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_conversion_rules",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_credit_ledger",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_entitlements",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_identities",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_incidents",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_members",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_meta_configs",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_service_configs",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_settings",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_users",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_vertical_configs",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_waba_configs",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenant_whatsapp_channels",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenants",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenants_config",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tool_audit_logs",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tracking_sessions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "waba_conversations",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "whatsapp_connections",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      }
+    ]
+  },
+  "dynamic_views": {
+    "total_views": 4,
+    "compliant_count": 4,
+    "views": [
+      {
+        "view_name": "v_affiliate_payout_summary",
+        "found": true,
+        "reloptions": [
+          "security_invoker=true"
+        ],
+        "compliant": true
+      },
+      {
+        "view_name": "affiliate_ledger",
+        "found": true,
+        "reloptions": [
+          "security_invoker=true"
+        ],
+        "compliant": true
+      },
+      {
+        "view_name": "v_affiliate_ledger",
+        "found": true,
+        "reloptions": [
+          "security_invoker=true"
+        ],
+        "compliant": true
+      },
+      {
+        "view_name": "chat_sessions",
+        "found": true,
+        "reloptions": [
+          "security_invoker=true"
+        ],
+        "compliant": true
+      }
+    ]
+  },
+  "application_roles": {
+    "compliant_count": 3,
+    "roles": [
+      {
+        "role_name": "anon",
+        "rolsuper": false,
+        "rolbypassrls": false,
+        "rolcanlogin": false,
+        "compliant": true
+      },
+      {
+        "role_name": "authenticated",
+        "rolsuper": false,
+        "rolbypassrls": false,
+        "rolcanlogin": false,
+        "compliant": true
+      },
+      {
+        "role_name": "boontrack_test_app_user",
+        "rolsuper": false,
+        "rolbypassrls": false,
+        "rolcanlogin": true,
+        "compliant": true
+      }
+    ]
+  },
+  "violations": [],
+  "overall_status": "PASS"
+}

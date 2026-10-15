@@ -1,0 +1,267 @@
+"""tests/test_contract_inbox_core_boundary.py
+========================================================================================
+CTO MANDATE: INBOX <-> CORE INTER-SERVICE PROCESS BOUNDARY CONTRACT TEST SUITE
+========================================================================================
+Simulates genuine Inbox client sender and Core receiver to verify the cryptographic
+contract across process boundaries (ARCHITECTURE.md §8.9 & §10.1):
+
+Guarantees:
+1. Genuine Inbox client cryptographically signs outbound payload with HMAC-SHA256
+   using tenant bound to verified session context.
+2. Core receiver verifies signature, timestamp, and tenant boundary with 200 OK.
+3. Rejection Tests (Fail-Secure Gate):
+   a. Body manipulation in transit -> HTTP 401 (SIGNATURE_MISMATCH).
+   b. Tenant header vs payload body mismatch -> HTTP 403 (TENANT_BOUNDARY_MISMATCH).
+   c. Past timestamp drift > 300s -> HTTP 401 (TIMESTAMP_DRIFT_EXCEEDED).
+   d. Future timestamp drift > 300s -> HTTP 401 (TIMESTAMP_DRIFT_EXCEEDED).
+   e. Unset/empty secret -> Fatal ValueError (Fail-Closed).
+   f. Replay attack outside validity window -> Rejected.
+========================================================================================
+"""
+
+import os
+import time
+import json
+import pytest
+from typing import Dict, Any, Tuple, Optional
+from fastapi.testclient import TestClient
+
+# Ensure test DB environment is configured
+if not os.getenv("DATABASE_URL"):
+    pg_user = os.getenv("POSTGRES_USER", "postgres")
+    pg_pass = os.getenv("POSTGRES_PASSWORD", "postgres")
+    pg_host = os.getenv("POSTGRES_HOST", "127.0.0.1")
+    pg_port = os.getenv("POSTGRES_PORT", "5432")
+    pg_db = os.getenv("POSTGRES_DB", "postgres")
+    os.environ["DATABASE_URL"] = f"postgresql://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
+
+if not os.getenv("XENDIT_SECRET_KEY"):
+    os.environ["XENDIT_SECRET_KEY"] = "test_ci_xendit_secret_key_mock_12345"
+if not os.getenv("XENDIT_CALLBACK_TOKEN"):
+    os.environ["XENDIT_CALLBACK_TOKEN"] = "test_ci_xendit_callback_token_mock_12345"
+if not os.getenv("SUPABASE_URL"):
+    os.environ["SUPABASE_URL"] = "https://mpluzajlzpregmjwpjqr.supabase.co"
+if not os.getenv("SUPABASE_KEY"):
+    os.environ["SUPABASE_KEY"] = "test_ci_supabase_anon_key_mock_999"
+if not os.getenv("SUPABASE_ANON_KEY"):
+    os.environ["SUPABASE_ANON_KEY"] = "test_ci_supabase_anon_key_mock_999"
+if not os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
+    os.environ["SUPABASE_SERVICE_ROLE_KEY"] = "test_ci_supabase_service_role_key_mock_999"
+
+from app.main import app
+from app.core.security.inter_service_auth import (
+    generate_inter_service_signature,
+    verify_inter_service_signature,
+    enforce_tenant_boundary,
+    get_hmac_secret,
+)
+
+
+class SimulatedInboxClient:
+    """Simulates the actual outbound client running inside the Inbox microservice.
+    Holds verified session context (tenant_id, session_user) and signs all requests.
+    """
+
+    def __init__(self, tenant_id: str, operator_id: str = "cs_agent_001"):
+        self.session_tenant_id = str(tenant_id).strip()
+        self.operator_id = str(operator_id).strip()
+
+    def build_signed_request(
+        self,
+        payload: Dict[str, Any],
+        tamper_body_bytes: Optional[bytes] = None,
+        custom_header_tenant: Optional[str] = None,
+        timestamp_offset_seconds: float = 0.0,
+    ) -> Tuple[bytes, Dict[str, str]]:
+        """Constructs canonical signed request package according to contract."""
+        raw_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+        sig_tenant = custom_header_tenant or self.session_tenant_id
+        effective_ts = int(time.time() + timestamp_offset_seconds)
+
+        sig, ts, _ = generate_inter_service_signature(
+            authenticated_tenant_id=sig_tenant,
+            body=raw_bytes,
+            timestamp=effective_ts,
+        )
+
+        headers = {
+            "X-Boontrack-Signature": sig,
+            "X-Boontrack-Timestamp": str(effective_ts),
+            "X-Boontrack-Tenant-Id": sig_tenant,
+            "Content-Type": "application/json",
+        }
+
+        # Return potentially tampered body for negative testing
+        outgoing_body = tamper_body_bytes if tamper_body_bytes is not None else raw_bytes
+        return outgoing_body, headers
+
+
+def get_response_detail(response) -> dict:
+    """Safely extracts error or detail payload from FastAPI response."""
+    data = response.json()
+    if isinstance(data, dict):
+        if "detail" in data and isinstance(data["detail"], dict):
+            return data["detail"]
+        return data
+    return {}
+
+
+@pytest.fixture(autouse=True)
+def ensure_hmac_secret(monkeypatch):
+    """Enforces authoritative HMAC secret in test context."""
+    monkeypatch.setenv("BOONTRACK_HMAC_SECRET", "test_ci_secure_hmac_secret_for_pipeline_999")
+
+
+@pytest.fixture
+def core_client():
+    """Provides test client communicating with Core service application."""
+    return TestClient(app)
+
+
+# =============================================================================
+# CONTRACT VERIFICATION TEST SUITE
+# =============================================================================
+
+def test_contract_inbox_client_signs_and_core_receives_success(core_client):
+    """Contract Proof 1: Inbox signs payload with HMAC-SHA256 using verified session tenant.
+    Core validates signature, timestamp, and tenant boundary, returning 200 OK.
+    """
+    inbox = SimulatedInboxClient(tenant_id="tenant_alpha", operator_id="cs_agent_alpha")
+    payload = {
+        "tenant_id": "tenant_alpha",
+        "action": "sync_customer_chat",
+        "session_id": "chat_sess_99182",
+        "operator_id": inbox.operator_id,
+    }
+
+    body_bytes, headers = inbox.build_signed_request(payload)
+
+    response = core_client.post("/api/v1/inbox/sync", content=body_bytes, headers=headers)
+    assert response.status_code == 200, f"Expected 200 OK, got {response.status_code}: {response.text}"
+
+    data = response.json()
+    assert data["status"] == "SYNCED"
+    assert data["tenant_id"] == "tenant_alpha"
+    assert data["action"] == "sync_customer_chat"
+
+
+def test_contract_rejection_payload_body_tampering(core_client):
+    """Contract Proof 2: Payload body modified in transit while keeping original signature.
+    Core receiver detects cryptographic mismatch and rejects with HTTP 401.
+    """
+    inbox = SimulatedInboxClient(tenant_id="tenant_alpha")
+    original_payload = {
+        "tenant_id": "tenant_alpha",
+        "action": "deliver_digital_item",
+        "order_id": "order_original_123",
+        "price": 50000,
+    }
+
+    # Interceptor tampers with payload (alters price and order_id)
+    tampered_payload = {
+        "tenant_id": "tenant_alpha",
+        "action": "deliver_digital_item",
+        "order_id": "order_original_123",
+        "price": 0,  # Attacker attempts free item
+    }
+    tampered_bytes = json.dumps(tampered_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    # Generate signature on original, but transmit tampered body
+    _, headers = inbox.build_signed_request(original_payload)
+
+    response = core_client.post("/api/v1/inbox/sync", content=tampered_bytes, headers=headers)
+    assert response.status_code == 401, f"Expected 401 Unauthorized, got {response.status_code}: {response.text}"
+
+    detail = get_response_detail(response)
+    assert detail.get("error") == "INVALID_INTER_SERVICE_SIGNATURE"
+    assert "SIGNATURE_MISMATCH" in str(detail.get("reason", ""))
+
+
+def test_contract_rejection_tenant_header_vs_payload_mismatch(core_client):
+    """Contract Proof 3: Sesi Inbox terverifikasi adalah Tenant Alpha, namun payload mencoba
+    menargetkan Tenant Beta. Core receiver mendeteksi pelanggaran batas dan menolak dengan HTTP 403.
+    """
+    inbox = SimulatedInboxClient(tenant_id="tenant_alpha")
+    hostile_payload = {
+        "tenant_id": "tenant_beta",  # Cross-tenant injection attempt
+        "action": "exfiltrate_messages",
+        "session_id": "chat_sess_beta_secret",
+    }
+
+    body_bytes, headers = inbox.build_signed_request(
+        payload=hostile_payload,
+        custom_header_tenant="tenant_alpha",  # Signed under Alpha's authority
+    )
+
+    response = core_client.post("/api/v1/inbox/sync", content=body_bytes, headers=headers)
+    assert response.status_code == 403, f"Expected 403 Forbidden, got {response.status_code}: {response.text}"
+
+    detail = get_response_detail(response)
+    assert detail.get("error") == "TENANT_BOUNDARY_MISMATCH"
+    assert detail.get("authenticated_tenant") == "tenant_alpha"
+    assert detail.get("attempted_tenant") == "tenant_beta"
+
+
+def test_contract_rejection_past_timestamp_drift_exceeded(core_client):
+    """Contract Proof 4a: Timestamp lampau dengan drift > 300 detik (5 menit).
+    Core receiver menolak dengan HTTP 401 TIMESTAMP_DRIFT_EXCEEDED.
+    """
+    inbox = SimulatedInboxClient(tenant_id="tenant_alpha")
+    payload = {"tenant_id": "tenant_alpha", "action": "sync_chat"}
+
+    # 350 seconds in the past (> 300s tolerance)
+    body_bytes, headers = inbox.build_signed_request(payload, timestamp_offset_seconds=-350.0)
+
+    response = core_client.post("/api/v1/inbox/sync", content=body_bytes, headers=headers)
+    assert response.status_code == 401, f"Expected 401, got {response.status_code}: {response.text}"
+
+    detail = get_response_detail(response)
+    assert detail.get("error") == "INVALID_INTER_SERVICE_SIGNATURE"
+    assert "TIMESTAMP_DRIFT_EXCEEDED" in str(detail.get("reason", ""))
+
+
+def test_contract_rejection_future_timestamp_drift_exceeded(core_client):
+    """Contract Proof 4b: Timestamp masa depan dengan drift > 300 detik (5 menit).
+    Core receiver menolak dengan HTTP 401 TIMESTAMP_DRIFT_EXCEEDED.
+    """
+    inbox = SimulatedInboxClient(tenant_id="tenant_alpha")
+    payload = {"tenant_id": "tenant_alpha", "action": "sync_chat"}
+
+    # 350 seconds into future (> 300s tolerance)
+    body_bytes, headers = inbox.build_signed_request(payload, timestamp_offset_seconds=350.0)
+
+    response = core_client.post("/api/v1/inbox/sync", content=body_bytes, headers=headers)
+    assert response.status_code == 401, f"Expected 401, got {response.status_code}: {response.text}"
+
+    detail = get_response_detail(response)
+    assert detail.get("error") == "INVALID_INTER_SERVICE_SIGNATURE"
+    assert "TIMESTAMP_DRIFT_EXCEEDED" in str(detail.get("reason", ""))
+
+
+def test_contract_rejection_empty_secret_fails_closed(monkeypatch):
+    """Contract Proof 5: Saat environment secret BOONTRACK_HMAC_SECRET kosong atau hilang,
+    sistem wajib gagal secara aman (fail-closed) melempar ValueError eksplisit.
+    """
+    monkeypatch.delenv("BOONTRACK_HMAC_SECRET", raising=False)
+    with pytest.raises(ValueError) as exc_info:
+        get_hmac_secret()
+    assert "BOONTRACK_HMAC_SECRET" in str(exc_info.value)
+    assert "mandatory" in str(exc_info.value).lower() or "missing" in str(exc_info.value).lower()
+
+
+def test_contract_rejection_replay_attack_outside_window(core_client):
+    """Contract Proof 6: Serangan replay dari pesan yang ditangkap sebelumnya namun dikirim
+    kembali di luar masa berlaku anti-replay (> 300 detik) ditolak secara tegas.
+    """
+    inbox = SimulatedInboxClient(tenant_id="tenant_alpha")
+    stale_payload = {"tenant_id": "tenant_alpha", "action": "replay_sensitive_action"}
+
+    # Stale timestamp: 600 seconds ago (10 minutes old)
+    body_bytes, headers = inbox.build_signed_request(stale_payload, timestamp_offset_seconds=-600.0)
+
+    response = core_client.post("/api/v1/inbox/sync", content=body_bytes, headers=headers)
+    assert response.status_code == 401
+    detail = get_response_detail(response)
+    assert detail.get("error") == "INVALID_INTER_SERVICE_SIGNATURE"
+    assert "TIMESTAMP_DRIFT_EXCEEDED" in str(detail.get("reason", ""))
