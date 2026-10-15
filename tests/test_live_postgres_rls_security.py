@@ -13,11 +13,15 @@ Mathematically and empirically proves:
 import os
 import pytest
 import psycopg2
+from fastapi import HTTPException
 from app.core.config import settings
 from app.core.database import (
     get_db_connection,
+    get_tenant_db_connection,
+    tenant_transaction,
     close_and_reset_connection,
 )
+from app.core.security.inter_service_auth import enforce_tenant_boundary
 
 
 def _ensure_live_db():
@@ -216,3 +220,58 @@ def test_p1_b_live_postgres_connection_pool_hygiene_and_state_reset():
             assert current_user != "authenticated", f"Pool leak: role '{current_user}' remained 'authenticated'!"
     finally:
         close_and_reset_connection(conn2)
+
+
+def test_p1_b_tenant_membership_trust_boundary_rejection(non_superuser_db_conn):
+    """
+    Validates tenant trust boundary enforcement:
+    1. Asserts non-superuser connection is active (rolsuper=False, rolbypassrls=False).
+    2. Kernel-level RLS boundary: Under tenant_alpha context, an unauthorized insert into
+       tenant_beta is strictly blocked by PostgreSQL RLS (WITH CHECK policy violation).
+    3. Middleware-level boundary: enforce_tenant_boundary rejects caller attempting to operate
+       on a tenant outside their signed membership (HTTP 403 TENANT_BOUNDARY_MISMATCH).
+    4. Database context helper fail-closed: get_tenant_db_connection and tenant_transaction
+       reject empty/None/blank tenant IDs with ValueError.
+    """
+    conn = non_superuser_db_conn
+
+    # 1. Assert genuine non-superuser role
+    with conn.cursor() as cur:
+        cur.execute("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'boontrack_test_app_user';")
+        rolsuper, rolbypassrls = cur.fetchone()
+        assert rolsuper is False, "Trust boundary requirement: rolsuper must be False"
+        assert rolbypassrls is False, "Trust boundary requirement: rolbypassrls must be False"
+
+        # 2. Kernel-level RLS boundary: Tenant Alpha context attempting unauthorized Tenant Beta write
+        cur.execute("SET LOCAL ROLE authenticated;")
+        cur.execute("SELECT set_config('app.current_tenant_id', 'tenant_alpha', true);")
+
+        with pytest.raises(psycopg2.errors.InsufficientPrivilege) as exc_info:
+            cur.execute("""
+                INSERT INTO public.staging_alumni_cpm (tenant_id, lead_phone, alumni_name, status)
+                VALUES ('tenant_beta', '628999900002', 'Malicious Cross Tenant Insert', 'STAGED');
+            """)
+        assert "violates row-level security policy" in str(exc_info.value), (
+            f"Expected RLS WITH CHECK policy violation, got: {exc_info.value}"
+        )
+
+    # Rollback aborted transaction
+    conn.rollback()
+
+    # 3. Middleware-level boundary: Caller with tenant_alpha membership attempting tenant_beta action
+    with pytest.raises(HTTPException) as http_exc:
+        enforce_tenant_boundary("tenant_alpha", "tenant_beta")
+    assert http_exc.value.status_code == 403
+    assert http_exc.value.detail.get("error") == "TENANT_BOUNDARY_MISMATCH"
+
+    # Self-tenant boundary is permitted
+    enforce_tenant_boundary("tenant_alpha", "tenant_alpha")
+
+    # 4. Context helper fail-closed: Blank/None tenant rejected
+    for invalid_tenant in ["", "   ", None]:
+        with pytest.raises(ValueError):
+            get_tenant_db_connection(invalid_tenant)
+        with pytest.raises(ValueError):
+            with tenant_transaction(invalid_tenant):
+                pass
+
