@@ -161,13 +161,7 @@ def seed_production_tenants():
             DROP POLICY IF EXISTS public_select_active_tenants ON public.tenants;
             CREATE POLICY public_select_active_tenants ON public.tenants
             AS PERMISSIVE FOR SELECT TO public
-            USING (
-                is_active = true
-                OR (
-                    id = try_cast_uuid(current_setting('app.current_tenant_id', true))
-                    OR (slug)::text = NULLIF(current_setting('app.current_tenant_id', true), '')
-                )
-            );
+            USING (is_active = true);
         """)
         print("    ✅ Policy public_select_active_tenants berhasil diaktifkan.")
 

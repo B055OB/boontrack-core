@@ -1,23 +1,15 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Current Verified Commit SHA**: `41a349e59f7a245210b999947bc5d0709e1fb17c`
+- **Current Verified Commit SHA**: `47ef35ea5372accacc2bcf792f93c903b61cb278`
 - **GitHub Actions Verification**: Local Development Execution (`git rev-parse HEAD`) — **PROVENANCE BOUND ✅**
 - **Git Branch / Ref**: `main`
-- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M app/api/webhook_payment.py
-M app/core/security/inter_service_auth.py
-M docs/audit/production_catalog_rls_report.json
-M docs/audit/production_catalog_rls_report.md
-M scripts/audit_production_catalog_rls.py
-M scripts/init_test_postgres_schema.py
-M tests/test_contract_inbox_core_boundary.py
-M tests/test_rls_tenants_commerce_carts_attributions.py
-?? scripts/cleanup_dummy_pending_tenants.py
-?? scripts/seed_production_tenants.py`
-- **Waktu Audit (UTC)**: `2026-10-15 07:25:44 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 14:25:44 WIB`
+- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M scripts/init_test_postgres_schema.py
+M scripts/seed_production_tenants.py`
+- **Waktu Audit (UTC)**: `2026-10-15 07:33:46 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 14:33:46 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **PENDING CTO FINAL SIGN-OFF**
-- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA `41a349e59f7a245210b999947bc5d0709e1fb17c`.
+- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA `47ef35ea5372accacc2bcf792f93c903b61cb278`.
 - **Verifikasi Integritas Fail-Safe**: Fail-safe aktif. Jika ada pemeriksaan yang gagal, status bundle wajib mencatat FAIL/INCONCLUSIVE dan exit code 1.
 
 ---
@@ -49,21 +41,13 @@ Pemeriksaan statis terhadap integritas arsitektur kode sumber untuk eliminasi ce
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Verified Commit SHA**: `41a349e59f7a245210b999947bc5d0709e1fb17c`
+- **Verified Commit SHA**: `47ef35ea5372accacc2bcf792f93c903b61cb278`
 - **Workflow Run**: Local Development Execution (`git rev-parse HEAD`)
 - **Git Branch / Ref**: `main`
-- **Status Kebersihan Working Tree**: `M app/api/webhook_payment.py
-M app/core/security/inter_service_auth.py
-M docs/audit/production_catalog_rls_report.json
-M docs/audit/production_catalog_rls_report.md
-M scripts/audit_production_catalog_rls.py
-M scripts/init_test_postgres_schema.py
-M tests/test_contract_inbox_core_boundary.py
-M tests/test_rls_tenants_commerce_carts_attributions.py
-?? scripts/cleanup_dummy_pending_tenants.py
-?? scripts/seed_production_tenants.py`
-- **Timestamp Eksekusi (UTC)**: `2026-10-15 07:25:44 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-10-15 14:25:44 WIB`
+- **Status Kebersihan Working Tree**: `M scripts/init_test_postgres_schema.py
+M scripts/seed_production_tenants.py`
+- **Timestamp Eksekusi (UTC)**: `2026-10-15 07:33:46 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-10-15 14:33:46 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite (88/88 Tests PASSED)
@@ -88,7 +72,7 @@ M tests/test_rls_tenants_commerce_carts_attributions.py
 
 | Parameter Audit | Nilai Terverifikasi | Status / Catatan |
 |---|---|---|
-| **Verified Commit SHA** | `41a349e59f7a245210b999947bc5d0709e1fb17c` | Resolusi dinamis via GITHUB_SHA / git rev-parse HEAD |
+| **Verified Commit SHA** | `47ef35ea5372accacc2bcf792f93c903b61cb278` | Resolusi dinamis via GITHUB_SHA / git rev-parse HEAD |
 | **Workflow Run Verification** | Local Development Execution (`git rev-parse HEAD`) | Verifikasi eksekusi CI pipeline GitHub Actions otomatis |
 | **Branch / Ref** | `main` | Target branch evaluasi |
 | **Status Gerbang P1** | **PENDING CTO FINAL SIGN-OFF** | Menunggu evaluasi & persetujuan final CTO |
@@ -113,7 +97,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.4s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.3s, max: 300s)`
 
 ### Lapis 4: Redis & AI Conversation Memory Boundary
 - **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).

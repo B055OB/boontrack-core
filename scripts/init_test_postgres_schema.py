@@ -154,13 +154,7 @@ def init_test_schema():
     DROP POLICY IF EXISTS public_select_active_tenants ON public.tenants;
     CREATE POLICY public_select_active_tenants ON public.tenants
       AS PERMISSIVE FOR SELECT TO public
-      USING (
-        is_active = true
-        OR (
-          id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))
-          OR slug = NULLIF(current_setting('app.current_tenant_id', true), '')
-        )
-      );
+      USING (is_active = true);
 
     DROP POLICY IF EXISTS auth_tenant_dml_tenants ON public.tenants;
     CREATE POLICY auth_tenant_dml_tenants ON public.tenants
