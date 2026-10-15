@@ -14,10 +14,10 @@ import os
 import time
 import json
 import pytest
-from fastapi import FastAPI, Depends, Request, status
-from fastapi.responses import JSONResponse
+from fastapi import status
 from fastapi.testclient import TestClient
 
+from app.main import app
 from app.core.security.inter_service_auth import (
     generate_inter_service_signature,
     verify_inter_service_signature,
@@ -25,34 +25,7 @@ from app.core.security.inter_service_auth import (
     get_hmac_secret,
 )
 
-# Setup isolated test FastAPI application
-app = FastAPI(title="Core-Inbox-E2E-Test-Gateway")
-
-
-@app.post("/api/v1/inbox/sync")
-async def inbox_sync_endpoint(
-    request: Request,
-    tenant_id: str = Depends(verify_inter_service_tenant_boundary),
-):
-    body = await request.json()
-    return JSONResponse(
-        status_code=status.HTTP_200_OK,
-        content={"status": "SYNCED", "tenant_id": tenant_id, "action": body.get("action")},
-    )
-
-
-@app.post("/api/v1/inbox/dispatch")
-async def inbox_dispatch_endpoint(
-    request: Request,
-    tenant_id: str = Depends(verify_inter_service_tenant_boundary),
-):
-    body = await request.json()
-    return JSONResponse(
-        status_code=status.HTTP_200_OK,
-        content={"status": "DISPATCHED", "tenant_id": tenant_id, "recipient": body.get("recipient")},
-    )
-
-
+# Use production FastAPI application instance
 client = TestClient(app)
 
 
@@ -86,6 +59,15 @@ def test_e2e_inbox_core_valid_signed_request():
     assert data["action"] == "sync_chat"
 
 
+def get_response_detail(response) -> dict:
+    data = response.json()
+    if isinstance(data, dict):
+        if "detail" in data and isinstance(data["detail"], dict):
+            return data["detail"]
+        return data
+    return {}
+
+
 # -----------------------------------------------------------------------------
 # 2. Negative Scenario: Tenant Tampering in Body (Alpha -> Beta)
 # -----------------------------------------------------------------------------
@@ -105,7 +87,7 @@ def test_e2e_inbox_core_tenant_tampering_rejected_403():
 
     response = client.post("/api/v1/inbox/sync", content=raw_bytes, headers=headers)
     assert response.status_code == 403, f"Expected 403 Forbidden, got {response.status_code}"
-    detail = response.json().get("detail", {})
+    detail = get_response_detail(response)
     assert detail.get("error") == "TENANT_BOUNDARY_MISMATCH"
     assert detail.get("authenticated_tenant") == auth_tenant
     assert detail.get("attempted_tenant") == "tenant_beta"
@@ -129,7 +111,7 @@ def test_e2e_inbox_core_query_param_tenant_tampering_rejected_403():
 
     response = client.post("/api/v1/inbox/sync?tenant_id=tenant_beta", json=payload, headers=headers)
     assert response.status_code == 403
-    detail = response.json().get("detail", {})
+    detail = get_response_detail(response)
     assert detail.get("error") == "TENANT_BOUNDARY_MISMATCH"
 
 
@@ -152,7 +134,7 @@ def test_e2e_inbox_core_anti_replay_past_drift_rejected_401():
 
     response = client.post("/api/v1/inbox/sync", json=payload, headers=headers)
     assert response.status_code == 401
-    detail = response.json().get("detail", {})
+    detail = get_response_detail(response)
     assert detail.get("error") == "INVALID_INTER_SERVICE_SIGNATURE"
     assert "TIMESTAMP_DRIFT_EXCEEDED" in detail.get("reason", "")
 
@@ -173,7 +155,8 @@ def test_e2e_inbox_core_anti_replay_future_drift_rejected_401():
 
     response = client.post("/api/v1/inbox/sync", json=payload, headers=headers)
     assert response.status_code == 401
-    assert "TIMESTAMP_DRIFT_EXCEEDED" in response.json().get("detail", {}).get("reason", "")
+    detail = get_response_detail(response)
+    assert "TIMESTAMP_DRIFT_EXCEEDED" in detail.get("reason", "")
 
 
 # -----------------------------------------------------------------------------
@@ -198,7 +181,7 @@ def test_e2e_inbox_core_payload_claim_mismatch_rejected_401():
     # Transmit altered payload
     response = client.post("/api/v1/inbox/sync", json=altered_payload, headers=headers)
     assert response.status_code == 401
-    detail = response.json().get("detail", {})
+    detail = get_response_detail(response)
     assert detail.get("error") == "INVALID_INTER_SERVICE_SIGNATURE"
     assert detail.get("reason") == "SIGNATURE_MISMATCH"
 
@@ -217,7 +200,8 @@ def test_e2e_inbox_core_missing_headers_rejected_401():
         headers={"X-Boontrack-Timestamp": str(int(time.time())), "X-Boontrack-Tenant-Id": "tenant_alpha"},
     )
     assert resp.status_code == 401
-    assert resp.json()["detail"]["error"] == "MISSING_INTER_SERVICE_AUTH_HEADERS"
+    detail = get_response_detail(resp)
+    assert detail.get("error") == "MISSING_INTER_SERVICE_AUTH_HEADERS"
 
     # Missing tenant id
     resp2 = client.post(
@@ -252,4 +236,5 @@ def test_e2e_inbox_core_forged_key_rejected_401(monkeypatch):
 
     response = client.post("/api/v1/inbox/dispatch", json=payload, headers=headers)
     assert response.status_code == 401
-    assert response.json()["detail"]["reason"] == "SIGNATURE_MISMATCH"
+    detail = get_response_detail(response)
+    assert detail.get("reason") == "SIGNATURE_MISMATCH"

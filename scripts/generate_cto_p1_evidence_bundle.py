@@ -137,13 +137,61 @@ def get_current_timestamps() -> Tuple[str, str]:
     return utc_str, wib_str
 
 
+def resolve_provenance_metadata() -> Tuple[str, str, str, str, str]:
+    """Dynamically resolves commit SHA, run ID, run number, branch name, and run display.
+
+    Reads from environment variables (GITHUB_SHA, GITHUB_RUN_ID, GITHUB_RUN_NUMBER, GITHUB_REF_NAME)
+    with fallback to local git (git rev-parse HEAD, git rev-parse --abbrev-ref HEAD).
+
+    Enforces strict fail-closed validation:
+    - If GITHUB_SHA is set and local git HEAD is available, they MUST match.
+    - If neither GITHUB_SHA nor git HEAD is available, raises RuntimeError.
+    """
+    env_sha = os.getenv("GITHUB_SHA")
+    local_head = get_git_base_commit_sha()
+
+    if env_sha:
+        if local_head not in ("UNKNOWN_COMMIT", "") and env_sha.lower() != local_head.lower():
+            raise RuntimeError(
+                f"FAIL-CLOSED PROVENANCE ERROR: GITHUB_SHA ({env_sha}) does not match local git HEAD ({local_head})!"
+            )
+        commit_sha = env_sha
+    else:
+        if local_head in ("UNKNOWN_COMMIT", ""):
+            raise RuntimeError(
+                "FAIL-CLOSED PROVENANCE ERROR: Unable to determine commit SHA from git rev-parse HEAD or GITHUB_SHA!"
+            )
+        commit_sha = local_head
+
+    run_id = os.getenv("GITHUB_RUN_ID", "LOCAL")
+    run_number = os.getenv("GITHUB_RUN_NUMBER", "")
+    branch = os.getenv("GITHUB_REF_NAME") or get_git_branch()
+
+    if run_id != "LOCAL":
+        run_display = (
+            f"Run #{run_number} (ID: `{run_id}`)"
+            if run_number
+            else f"Run ID: `{run_id}`"
+        )
+    else:
+        run_display = "Local Development Execution (`git rev-parse HEAD`)"
+
+    return commit_sha, run_id, run_number, branch, run_display
+
+
 class CTOEvidenceBundleGenerator:
     def __init__(self):
         self.sections_output: Dict[int, str] = {}
         self.all_passed = True
         self.failures: List[str] = []
-        self.base_commit_sha = get_git_base_commit_sha()
-        self.branch = get_git_branch()
+        (
+            self.commit_sha,
+            self.run_id,
+            self.run_number,
+            self.branch,
+            self.run_display,
+        ) = resolve_provenance_metadata()
+        self.base_commit_sha = self.commit_sha
         self.working_tree_status = get_git_working_tree_status()
         self.timestamp_utc, self.timestamp_wib = get_current_timestamps()
         self.environment_identity = f"Python {sys.version.split(' ')[0]} on {sys.platform} ({platform.platform()}), Hostname '{socket.gethostname()}'"
@@ -853,9 +901,9 @@ class CTOEvidenceBundleGenerator:
         lines = []
         lines.append("## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST")
         lines.append("")
-        lines.append(f"- **Tested Code Commit SHA**: `f4639881b42df5c22670826951cdaae0020ad196` (Run #21)")
-        lines.append(f"- **Evidence Sync Commit SHA**: `09b81e8ea963ba533ffd4828dbf5f07f6306e299` (Run #23)")
-        lines.append(f"- **Git Branch**: `{self.branch}`")
+        lines.append(f"- **Verified Commit SHA**: `{self.commit_sha}`")
+        lines.append(f"- **Workflow Run**: {self.run_display}")
+        lines.append(f"- **Git Branch / Ref**: `{self.branch}`")
         lines.append(f"- **Status Kebersihan Working Tree**: `{self.working_tree_status}`")
         lines.append(f"- **Timestamp Eksekusi (UTC)**: `{self.timestamp_utc}`")
         lines.append(f"- **Timestamp Eksekusi (WIB)**: `{self.timestamp_wib}`")
@@ -881,9 +929,9 @@ class CTOEvidenceBundleGenerator:
         lines.append("")
         lines.append("| Parameter Audit | Nilai Terverifikasi | Status / Catatan |")
         lines.append("|---|---|---|")
-        lines.append("| **Tested Code Commit SHA** | `f4639881b42df5c22670826951cdaae0020ad196` (f463988) | Rekonsiliasi jumlah tabel tenant 98/98, klarifikasi semantik service role defense-in-depth (Run #21) |")
-        lines.append("| **Evidence Sync Commit SHA** | `09b81e8ea963ba533ffd4828dbf5f07f6306e299` (09b81e8) | Sinkronisasi bundel bukti audit, log independen live DB, dan 31 tabel master (Run #23) |")
-        lines.append("| **GitHub Actions Verification** | **Run #21 (ID: 38674740844) & Run #23 (ID: 38676540967)** | **SUCCESS ✅ (HIJAU)** — 62/62 tests PASS, Catalog Gate PASS |")
+        lines.append(f"| **Verified Commit SHA** | `{self.commit_sha}` | Resolusi dinamis via GITHUB_SHA / git rev-parse HEAD |")
+        lines.append(f"| **Workflow Run Verification** | {self.run_display} | Verifikasi eksekusi CI pipeline GitHub Actions otomatis |")
+        lines.append(f"| **Branch / Ref** | `{self.branch}` | Target branch evaluasi |")
         lines.append("| **Status Gerbang P1** | **PENDING CTO FINAL SIGN-OFF** | Menunggu evaluasi & persetujuan final CTO |")
 
         return "\n".join(lines)
@@ -1068,16 +1116,15 @@ class CTOEvidenceBundleGenerator:
         doc_parts = [
             "# PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)",
             f"- **Komitmen Repositori**: `B055OB/boontrack-core`",
-            f"- **Tested Code Commit SHA**: `f4639881b42df5c22670826951cdaae0020ad196` (Run #21)",
-            f"- **Evidence Sync Commit SHA**: `09b81e8ea963ba533ffd4828dbf5f07f6306e299` (Run #23)",
-            f"- **GitHub Actions Verification**: Run #21 (ID: `38674740844`) & Run #23 (ID: `38676540967`) — **SUCCESS ✅**",
-            f"- **Git Branch**: `{self.branch}`",
+            f"- **Current Verified Commit SHA**: `{self.commit_sha}`",
+            f"- **GitHub Actions Verification**: {self.run_display} — **PROVENANCE BOUND ✅**",
+            f"- **Git Branch / Ref**: `{self.branch}`",
             f"- **Status Kebersihan Working Tree (`git status --porcelain`)**: `{self.working_tree_status}`",
             f"- **Waktu Audit (UTC)**: `{self.timestamp_utc}`",
             f"- **Waktu Audit (WIB)**: `{self.timestamp_wib}`",
             f"- **Environment Identity**: `{self.environment_identity}`",
             f"- **Status Gerbang**: {gate_status}",
-            f"- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA.",
+            f"- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA `{self.commit_sha}`.",
             f"- **Verifikasi Integritas Fail-Safe**: Fail-safe aktif. Jika ada pemeriksaan yang gagal, status bundle wajib mencatat FAIL/INCONCLUSIVE dan exit code 1.",
             "",
             "---",

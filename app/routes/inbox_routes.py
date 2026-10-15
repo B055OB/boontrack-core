@@ -4,10 +4,12 @@ from typing import Optional, Dict, Any, List
 from aiohttp import web
 import json
 import uuid
-from fastapi import APIRouter, HTTPException, status, Query, Header, Request
+from fastapi import APIRouter, HTTPException, status, Query, Header, Request, Depends
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from psycopg2.extras import RealDictCursor
 from app.core.database import get_db_connection
+from app.core.security.inter_service_auth import verify_inter_service_tenant_boundary
 
 from app.services.rotary_routing_service import rotary_routing_service
 from app.services.whatsapp_service import log_to_supabase_messages, send_whatsapp_text, normalize_phone_number, get_supabase
@@ -524,6 +526,38 @@ async def resolve_conversation(conversation_id: str):
     except Exception as e:
         logger.error(f"[Inbox Resolve Error] {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sync")
+async def inbox_sync_endpoint(
+    request: Request,
+    tenant_id: str = Depends(verify_inter_service_tenant_boundary),
+):
+    """
+    Inter-Service Sync Endpoint between Inbox and Core.
+    Protected by HMAC-SHA256 signature and strict tenant boundary verification.
+    """
+    body = await request.json()
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"status": "SYNCED", "tenant_id": tenant_id, "action": body.get("action")},
+    )
+
+
+@router.post("/dispatch")
+async def inbox_dispatch_endpoint(
+    request: Request,
+    tenant_id: str = Depends(verify_inter_service_tenant_boundary),
+):
+    """
+    Inter-Service Dispatch Endpoint between Inbox and Core.
+    Protected by HMAC-SHA256 signature and strict tenant boundary verification.
+    """
+    body = await request.json()
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"status": "DISPATCHED", "tenant_id": tenant_id, "recipient": body.get("recipient")},
+    )
 
 
 @router.get("/agents")

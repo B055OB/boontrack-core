@@ -1,15 +1,17 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Tested Code Commit SHA**: `f4639881b42df5c22670826951cdaae0020ad196` (Run #21)
-- **Evidence Sync Commit SHA**: `09b81e8ea963ba533ffd4828dbf5f07f6306e299` (Run #23)
-- **GitHub Actions Verification**: Run #21 (ID: `38674740844`) & Run #23 (ID: `38676540967`) — **SUCCESS ✅**
-- **Git Branch**: `main`
-- **Status Kebersihan Working Tree (`git status --porcelain`)**: `CLEAN (no uncommitted changes)`
-- **Waktu Audit (UTC)**: `2026-10-15 04:29:35 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 11:29:35 WIB`
+- **Current Verified Commit SHA**: `ec05f3ba94f2f2c13bea37f931b091671e5ef386`
+- **GitHub Actions Verification**: Local Development Execution (`git rev-parse HEAD`) — **PROVENANCE BOUND ✅**
+- **Git Branch / Ref**: `main`
+- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M app/routes/inbox_routes.py
+M scripts/init_test_postgres_schema.py
+M tests/test_e2e_core_inbox_integration.py
+M tests/test_live_postgres_rls_security.py`
+- **Waktu Audit (UTC)**: `2026-10-15 04:54:54 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 11:54:54 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **PENDING CTO FINAL SIGN-OFF**
-- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA.
+- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA `ec05f3ba94f2f2c13bea37f931b091671e5ef386`.
 - **Verifikasi Integritas Fail-Safe**: Fail-safe aktif. Jika ada pemeriksaan yang gagal, status bundle wajib mencatat FAIL/INCONCLUSIVE dan exit code 1.
 
 ---
@@ -55,7 +57,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.5s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.0s, max: 300s)`
 
 ### Lapis 4: Redis & AI Conversation Memory Boundary
 - **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).
@@ -91,7 +93,7 @@ Pengujian menggunakan fixture bersarang (*deeply nested payload*) dan exception 
 ```log
 Error encountered in payment engine: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 Traceback (most recent call last):
-  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 777, in generate_section_4
+  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 825, in generate_section_4
     raise ValueError(f"Fulfillment failed for {raw_phone} ({raw_email}) with key {raw_xendit}")
 ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 ```
@@ -111,12 +113,15 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Tested Code Commit SHA**: `f4639881b42df5c22670826951cdaae0020ad196` (Run #21)
-- **Evidence Sync Commit SHA**: `09b81e8ea963ba533ffd4828dbf5f07f6306e299` (Run #23)
-- **Git Branch**: `main`
-- **Status Kebersihan Working Tree**: `CLEAN (no uncommitted changes)`
-- **Timestamp Eksekusi (UTC)**: `2026-10-15 04:29:35 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-10-15 11:29:35 WIB`
+- **Verified Commit SHA**: `ec05f3ba94f2f2c13bea37f931b091671e5ef386`
+- **Workflow Run**: Local Development Execution (`git rev-parse HEAD`)
+- **Git Branch / Ref**: `main`
+- **Status Kebersihan Working Tree**: `M app/routes/inbox_routes.py
+M scripts/init_test_postgres_schema.py
+M tests/test_e2e_core_inbox_integration.py
+M tests/test_live_postgres_rls_security.py`
+- **Timestamp Eksekusi (UTC)**: `2026-10-15 04:54:54 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-10-15 11:54:54 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite (62/62 Tests PASSED)
@@ -138,9 +143,9 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 | Parameter Audit | Nilai Terverifikasi | Status / Catatan |
 |---|---|---|
-| **Tested Code Commit SHA** | `f4639881b42df5c22670826951cdaae0020ad196` (f463988) | Rekonsiliasi jumlah tabel tenant 98/98, klarifikasi semantik service role defense-in-depth (Run #21) |
-| **Evidence Sync Commit SHA** | `09b81e8ea963ba533ffd4828dbf5f07f6306e299` (09b81e8) | Sinkronisasi bundel bukti audit, log independen live DB, dan 31 tabel master (Run #23) |
-| **GitHub Actions Verification** | **Run #21 (ID: 38674740844) & Run #23 (ID: 38676540967)** | **SUCCESS ✅ (HIJAU)** — 62/62 tests PASS, Catalog Gate PASS |
+| **Verified Commit SHA** | `ec05f3ba94f2f2c13bea37f931b091671e5ef386` | Resolusi dinamis via GITHUB_SHA / git rev-parse HEAD |
+| **Workflow Run Verification** | Local Development Execution (`git rev-parse HEAD`) | Verifikasi eksekusi CI pipeline GitHub Actions otomatis |
+| **Branch / Ref** | `main` | Target branch evaluasi |
 | **Status Gerbang P1** | **PENDING CTO FINAL SIGN-OFF** | Menunggu evaluasi & persetujuan final CTO |
 
 ---

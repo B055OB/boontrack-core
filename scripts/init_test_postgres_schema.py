@@ -58,6 +58,10 @@ def init_test_schema():
       IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
         CREATE ROLE service_role BYPASSRLS NOCREATEDB NOCREATEROLE NOLOGIN;
       END IF;
+      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'boontrack_test_app_user') THEN
+        CREATE ROLE boontrack_test_app_user WITH LOGIN PASSWORD 'TestAppUserPassword!123' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+      END IF;
+      GRANT authenticated TO boontrack_test_app_user;
     END
     $$;
 
@@ -629,9 +633,9 @@ def init_test_schema():
     SELECT * FROM public.conversation_sessions;
 
     -- 5. GRANTS FOR ROLE SECURITY
-    GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
-    GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated, anon, service_role;
-    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated, anon, service_role;
+    GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role, boontrack_test_app_user;
+    GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated, anon, service_role, boontrack_test_app_user;
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated, anon, service_role, boontrack_test_app_user;
     """)
 
     cur.close()
