@@ -423,12 +423,25 @@ async def get_public_store_directory(limit: int = 50, offset: int = 0):
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, slug, name, tier, is_active, status, region_config
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'tenants';
+            """)
+            existing_cols = {row[0] for row in cur.fetchall()}
+
+            tier_expr = "tier" if "tier" in existing_cols else "'STARTER' AS tier"
+            status_expr = "status" if "status" in existing_cols else "'ACTIVE' AS status"
+            region_expr = "region_config" if "region_config" in existing_cols else "'{}'::jsonb AS region_config"
+            is_active_filter = "WHERE is_active = true" if "is_active" in existing_cols else ""
+
+            query = f"""
+                SELECT id, slug, name, {tier_expr}, is_active, {status_expr}, {region_expr}
                 FROM public.tenants
-                WHERE is_active = true
+                {is_active_filter}
                 ORDER BY name ASC
                 LIMIT %s OFFSET %s;
-            """, (min(limit, 100), max(offset, 0)))
+            """
+            cur.execute(query, (min(limit, 100), max(offset, 0)))
             rows = cur.fetchall()
             stores = []
             for r in rows:

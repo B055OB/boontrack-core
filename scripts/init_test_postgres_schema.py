@@ -90,11 +90,17 @@ def init_test_schema():
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       name VARCHAR NOT NULL,
       slug VARCHAR UNIQUE NOT NULL,
+      tier VARCHAR DEFAULT 'STARTER',
+      status VARCHAR DEFAULT 'ACTIVE',
       is_active BOOLEAN DEFAULT TRUE,
+      region_config JSONB DEFAULT '{}'::jsonb,
       metadata JSONB DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
+    ALTER TABLE public.tenants ADD COLUMN IF NOT EXISTS tier VARCHAR DEFAULT 'STARTER';
+    ALTER TABLE public.tenants ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'ACTIVE';
+    ALTER TABLE public.tenants ADD COLUMN IF NOT EXISTS region_config JSONB DEFAULT '{}'::jsonb;
 
     CREATE OR REPLACE FUNCTION public.current_app_tenant_uuid()
     RETURNS uuid
