@@ -1,10 +1,10 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Tested Base Commit SHA (Parent HEAD)**: `a39efe91734c3249eb375d2b914590d2d0812a74`
+- **Tested Base Commit SHA (Parent HEAD)**: `a6e5b4bad7c3e6d48fa39e949b90a7456a08fb77`
 - **Git Branch**: `main`
 - **Status Kebersihan Working Tree (`git status --porcelain`)**: `CLEAN (no uncommitted changes)`
-- **Waktu Audit (UTC)**: `2026-10-15 01:42:14 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 08:42:14 WIB`
+- **Waktu Audit (UTC)**: `2026-10-15 02:05:54 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 09:05:54 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **P1 CLOSED & APPROVED (ALL VERIFIED 100%)**
 - **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA.
@@ -53,7 +53,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.6s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.9s, max: 300s)`
 
 ### Lapis 4: Redis & AI Conversation Memory Boundary
 - **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).
@@ -89,7 +89,7 @@ Pengujian menggunakan fixture bersarang (*deeply nested payload*) dan exception 
 ```log
 Error encountered in payment engine: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 Traceback (most recent call last):
-  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 724, in generate_section_4
+  File "C:\boontrack-core\scripts\generate_cto_p1_evidence_bundle.py", line 719, in generate_section_4
     raise ValueError(f"Fulfillment failed for {raw_phone} ({raw_email}) with key {raw_xendit}")
 ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key xnd_dev_****5678
 ```
@@ -109,11 +109,11 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Tested Base Commit SHA (Parent HEAD)**: `a39efe91734c3249eb375d2b914590d2d0812a74`
+- **Tested Base Commit SHA (Parent HEAD)**: `a6e5b4bad7c3e6d48fa39e949b90a7456a08fb77`
 - **Git Branch**: `main`
 - **Status Kebersihan Working Tree**: `CLEAN (no uncommitted changes)`
-- **Timestamp Eksekusi (UTC)**: `2026-10-15 01:42:14 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-10-15 08:42:14 WIB`
+- **Timestamp Eksekusi (UTC)**: `2026-10-15 02:05:54 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-10-15 09:05:54 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite (62/62 Tests PASSED)
@@ -164,7 +164,7 @@ Audit mencakup 100% tabel relasional di dalam schema `public` PostgreSQL pada Su
 | 14 | `whatsapp_connections` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_whatsapp_connections` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_whatsapp_connections` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolation_whatsapp_connections` (public: tenant_id = app.current_tenant_id) |
 | 15 | `activation_codes` | postgres | ENABLED | YES | TENANT | NONE | *No custom policies (implicit deny for non-superuser)* |
 | 16 | `affiliate_auth_otps` | postgres | ENABLED | NO | SYSTEM/GLOBAL | ALL | `Service role full access on affiliate_auth_otps` (service_role: true) |
-| 17 | `affiliate_commissions` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_affiliate_commissions` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_affiliate_commissions` (service_role: tenant_id = app.current_tenant_id) |
+| 17 | `affiliate_commissions` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_affiliate_commissions` (authenticated: tenant_id = app.current_tenant_id)<br>`auth_tenant_commissions` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_affiliate_commissions` (service_role: tenant_id = app.current_tenant_id) |
 | 18 | `affiliate_daily_stats` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
 | 19 | `affiliate_manager_assignments` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
 | 20 | `affiliates` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_affiliates` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_affiliates` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_affiliates` (service_role: tenant_id = app.current_tenant_id) |
@@ -178,8 +178,8 @@ Audit mencakup 100% tabel relasional di dalam schema `public` PostgreSQL pada Su
 | 28 | `campaign_attributions` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `Service role full access on campaign_attributions` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolated_Public_read_access_on_campaign_attributions` (public: tenant_id = app.current_tenant_id) |
 | 29 | `capi_events` | postgres | ENABLED | YES | TENANT | ALL, INSERT, SELECT | `Service role full access on capi_events` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolated_Public_insert_access_on_capi_events` (public: tenant_id = app.current_tenant_id)<br>`tenant_isolated_Public_read_access_on_capi_events` (public: tenant_id = app.current_tenant_id) |
 | 30 | `capi_outbox` | postgres | ENABLED | YES | TENANT | ALL | `service_role_all_capi_outbox` (service_role: tenant_id = app.current_tenant_id) |
-| 31 | `cart_items` | postgres | ENABLED | YES | SYSTEM/GLOBAL | ALL | `auth_tenant_cart_items` (authenticated: tenant_id = app.current_tenant_id)<br>`public_access_tenant_cart_items` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_cart_items` (service_role: tenant_id = app.current_tenant_id) |
-| 32 | `carts` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_carts` (authenticated: tenant_id = app.current_tenant_id)<br>`public_access_tenant_carts` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_carts` (service_role: tenant_id = app.current_tenant_id) |
+| 31 | `cart_items` | postgres | ENABLED | YES | SYSTEM/GLOBAL | ALL | `auth_tenant_cart_items` (authenticated: (cart_id IN ( SELECT carts....)<br>`public_access_tenant_cart_items` (public: (cart_id IN ( SELECT carts....)<br>`service_role_all_cart_items` (service_role: tenant_id = app.current_tenant_id) |
+| 32 | `carts` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_carts` (authenticated: (tenant_id = current_app_te...)<br>`public_access_tenant_carts` (public: (tenant_id = current_app_te...)<br>`service_role_all_carts` (service_role: tenant_id = app.current_tenant_id) |
 | 33 | `citizen_data` | postgres | ENABLED | YES | TENANT | ALL | `tenant_isolation_citizen_data` (public: tenant_id = app.current_tenant_id) |
 | 34 | `click_logs` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
 | 35 | `commerce_products` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_dml_commerce_products` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_commerce_products` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_commerce_products` (service_role: tenant_id = app.current_tenant_id) |
