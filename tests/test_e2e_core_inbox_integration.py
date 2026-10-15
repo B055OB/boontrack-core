@@ -17,6 +17,14 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
+if not os.getenv("DATABASE_URL"):
+    pg_user = os.getenv("POSTGRES_USER", "postgres")
+    pg_pass = os.getenv("POSTGRES_PASSWORD", "postgres")
+    pg_host = os.getenv("POSTGRES_HOST", "127.0.0.1")
+    pg_port = os.getenv("POSTGRES_PORT", "5432")
+    pg_db = os.getenv("POSTGRES_DB", "postgres")
+    os.environ["DATABASE_URL"] = f"postgresql://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
+
 from app.main import app
 from app.core.security.inter_service_auth import (
     generate_inter_service_signature,

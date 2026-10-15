@@ -33,6 +33,7 @@ jobs:
       POSTGRES_DB: test_boontrack
       POSTGRES_USER: test_user
       POSTGRES_PASSWORD: test_password
+      DATABASE_URL: postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack
       BOONTRACK_HMAC_SECRET: test_ci_secure_hmac_secret_for_pipeline_999
       EVOLUTION_API_KEY: test_ci_evolution_api_key_placeholder
       R2_ACCESS_KEY_ID: test_ci_r2_access_key
