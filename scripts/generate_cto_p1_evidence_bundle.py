@@ -854,7 +854,7 @@ class CTOEvidenceBundleGenerator:
         lines.append("## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST")
         lines.append("")
         lines.append(f"- **Tested Code Commit SHA**: `f4639881b42df5c22670826951cdaae0020ad196` (Run #21)")
-        lines.append(f"- **Evidence Sync Commit SHA**: `9654c4b37ba0eb66daebb250094965e493667dc1` (Run #22)")
+        lines.append(f"- **Evidence Sync Commit SHA**: `09b81e8ea963ba533ffd4828dbf5f07f6306e299` (Run #23)")
         lines.append(f"- **Git Branch**: `{self.branch}`")
         lines.append(f"- **Status Kebersihan Working Tree**: `{self.working_tree_status}`")
         lines.append(f"- **Timestamp Eksekusi (UTC)**: `{self.timestamp_utc}`")
@@ -882,8 +882,8 @@ class CTOEvidenceBundleGenerator:
         lines.append("| Parameter Audit | Nilai Terverifikasi | Status / Catatan |")
         lines.append("|---|---|---|")
         lines.append("| **Tested Code Commit SHA** | `f4639881b42df5c22670826951cdaae0020ad196` (f463988) | Rekonsiliasi jumlah tabel tenant 98/98, klarifikasi semantik service role defense-in-depth (Run #21) |")
-        lines.append("| **Evidence Sync Commit SHA** | `9654c4b37ba0eb66daebb250094965e493667dc1` (9654c4b) | Sinkronisasi bundel bukti audit dan integrasi pipeline CI (Run #22) |")
-        lines.append("| **GitHub Actions Verification** | **Run #21 (ID: 38674740844) & Run #22 (ID: 38675628531)** | **SUCCESS ✅ (HIJAU)** — 62/62 tests PASS, Catalog Gate PASS |")
+        lines.append("| **Evidence Sync Commit SHA** | `09b81e8ea963ba533ffd4828dbf5f07f6306e299` (09b81e8) | Sinkronisasi bundel bukti audit, log independen live DB, dan 31 tabel master (Run #23) |")
+        lines.append("| **GitHub Actions Verification** | **Run #21 (ID: 38674740844) & Run #23 (ID: 38676540967)** | **SUCCESS ✅ (HIJAU)** — 62/62 tests PASS, Catalog Gate PASS |")
         lines.append("| **Status Gerbang P1** | **PENDING CTO FINAL SIGN-OFF** | Menunggu evaluasi & persetujuan final CTO |")
 
         return "\n".join(lines)
@@ -1069,8 +1069,8 @@ class CTOEvidenceBundleGenerator:
             "# PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)",
             f"- **Komitmen Repositori**: `B055OB/boontrack-core`",
             f"- **Tested Code Commit SHA**: `f4639881b42df5c22670826951cdaae0020ad196` (Run #21)",
-            f"- **Evidence Sync Commit SHA**: `9654c4b37ba0eb66daebb250094965e493667dc1` (Run #22)",
-            f"- **GitHub Actions Verification**: Run #21 (ID: `38674740844`) & Run #22 (ID: `38675628531`) — **SUCCESS ✅**",
+            f"- **Evidence Sync Commit SHA**: `09b81e8ea963ba533ffd4828dbf5f07f6306e299` (Run #23)",
+            f"- **GitHub Actions Verification**: Run #21 (ID: `38674740844`) & Run #23 (ID: `38676540967`) — **SUCCESS ✅**",
             f"- **Git Branch**: `{self.branch}`",
             f"- **Status Kebersihan Working Tree (`git status --porcelain`)**: `{self.working_tree_status}`",
             f"- **Waktu Audit (UTC)**: `{self.timestamp_utc}`",
