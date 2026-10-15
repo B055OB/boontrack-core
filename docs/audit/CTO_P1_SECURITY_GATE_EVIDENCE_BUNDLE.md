@@ -1,12 +1,14 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Tested Base Commit SHA (Parent HEAD)**: `a6e5b4bad7c3e6d48fa39e949b90a7456a08fb77`
+- **Code Commit Under Test**: `a6e5b4bad7c3e6d48fa39e949b90a7456a08fb77` (a6e5b4b)
+- **Evidence Synchronization Commit**: `d662eef55f8e5b5c6dab4f9184af4e3204e4ee90` (d662eef)
+- **GitHub Actions Verification**: Run #17 (ID: `38669440661`) — **SUCCESS ✅**
 - **Git Branch**: `main`
-- **Status Kebersihan Working Tree (`git status --porcelain`)**: `CLEAN (no uncommitted changes)`
-- **Waktu Audit (UTC)**: `2026-10-15 02:05:54 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 09:05:54 WIB`
+- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M scripts/generate_cto_p1_evidence_bundle.py`
+- **Waktu Audit (UTC)**: `2026-10-15 02:23:55 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 09:23:55 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
-- **Status Gerbang**: **P1 CLOSED & APPROVED (ALL VERIFIED 100%)**
+- **Status Gerbang**: **PENDING CTO FINAL SIGN-OFF**
 - **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA.
 - **Verifikasi Integritas Fail-Safe**: Fail-safe aktif. Jika ada pemeriksaan yang gagal, status bundle wajib mencatat FAIL/INCONCLUSIVE dan exit code 1.
 
@@ -53,7 +55,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
 - **Hasil Skenario A**: `PASS ✅` — HTTP 403 Forbidden: TENANT_BOUNDARY_MISMATCH (Cross-tenant access forbidden: signed tenant 'tenant_alpha' is not authorized to perform operations for tenant 'tenant_beta'.)
 - **Skenario B**: Replay attack dengan timestamp usang (drift 350 detik > 300s).
-- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.9s, max: 300s)`
+- **Hasil Skenario B**: `PASS ✅` — Ditolak dengan alasan: `TIMESTAMP_DRIFT_EXCEEDED (drift: 350.7s, max: 300s)`
 
 ### Lapis 4: Redis & AI Conversation Memory Boundary
 - **Skenario A (Redis)**: Session worker Tenant Alpha mencoba membaca key Redis milik Tenant Beta (`tenant:tenant_beta:...`).
@@ -109,11 +111,11 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Tested Base Commit SHA (Parent HEAD)**: `a6e5b4bad7c3e6d48fa39e949b90a7456a08fb77`
+- **Tested Base Commit SHA (Parent HEAD)**: `d662eef55f8e5b5c6dab4f9184af4e3204e4ee90`
 - **Git Branch**: `main`
-- **Status Kebersihan Working Tree**: `CLEAN (no uncommitted changes)`
-- **Timestamp Eksekusi (UTC)**: `2026-10-15 02:05:54 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-10-15 09:05:54 WIB`
+- **Status Kebersihan Working Tree**: `M scripts/generate_cto_p1_evidence_bundle.py`
+- **Timestamp Eksekusi (UTC)**: `2026-10-15 02:23:55 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-10-15 09:23:55 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite (62/62 Tests PASSED)
@@ -130,6 +132,15 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 | `redis.py` & AI Memory | Key Scope Enforcement & Worker Payload Binding | PASS ✅ | Cross-Tenant Read/Write Ditolak |
 | `logging_sanitizer.py` | Global RecordFactory + Formatter Exception Masking | PASS ✅ | 0 Plaintext PII / Kredensial Bocor |
 | `scripts/enable_rls_security.py` | 100% Tabel RLS, Security Invoker Views, Application Role Audit, 98 Tenant-Scoped Tables Audited & Isolated | PASS ✅ | 100% Kepatuhan Katalog PostgreSQL & Zero Wildcard Policies |
+
+### Matriks Provenance & Pipeline Verification
+
+| Parameter Audit | Nilai Terverifikasi | Status / Catatan |
+|---|---|---|
+| **Code Commit Under Test** | `a6e5b4bad7c3e6d48fa39e949b90a7456a08fb77` (a6e5b4b) | Implementasi isolasi CI DB, tenant RLS hardening, read-only audit gate |
+| **Evidence Synchronization Commit** | `d662eef55f8e5b5c6dab4f9184af4e3204e4ee90` (d662eef) | Sinkronisasi bundel bukti audit dan integrasi pipeline CI |
+| **GitHub Actions Verification** | **Run #17 (ID: 38669440661)** | **SUCCESS ✅ (HIJAU)** — 62/62 tests PASS, Catalog Gate PASS |
+| **Status Gerbang P1** | **PENDING CTO FINAL SIGN-OFF** | Menunggu evaluasi & persetujuan final CTO |
 
 ---
 
@@ -214,6 +225,99 @@ Audit mencakup 100% tabel relasional di dalam schema `public` PostgreSQL pada Su
 
 ---
 
+## CLUSTER IV: PRODUCTION CATALOG VERIFICATION (READ-ONLY AUDIT GATE)
+
+Audit katalog independen dieksekusi menggunakan mode verifikasi murni (read-only):
+```bash
+python scripts/enable_rls_security.py --verify
+```
+
+### Ringkasan Eksekusi Audit Katalog Live (100% PASS, 0 DDL Mutation)
+```text
+================================================================================
+  BOONTRACK CORE SECURITY AUDIT — READ-ONLY VERIFICATION AUDIT (ZERO MUTATIONS)
+  Target: CTO P1 Security Gate Verification
+================================================================================
+[+] Koneksi Database : AMAN
+    - Database       : postgres
+    - Current User   : postgres
+    - Engine Version : PostgreSQL 17.6
+
+================================================================================
+  1. AUDIT ROW-LEVEL SECURITY PADA TABEL (RELKIND 'r' & 'p')
+================================================================================
+[OK] 100% Tabel public (relkind 'r' & 'p') telah memiliki relrowsecurity = true.
+[OK] Zero DDL Mutation: 0 perintah ALTER TABLE dijalankan.
+
+================================================================================
+  2. AUDIT VIEW EKSPLISIT KATALOG pg_class (SECURITY_INVOKER VERIFICATION)
+================================================================================
+    [OK] public.v_affiliate_payout_summary     | reloptions: ['security_invoker=true'] (VERIFIED)
+    [OK] public.affiliate_ledger               | reloptions: ['security_invoker=true'] (VERIFIED)
+    [OK] public.v_affiliate_ledger             | reloptions: ['security_invoker=true'] (VERIFIED)
+    [OK] public.chat_sessions                  | reloptions: ['security_invoker=true'] (VERIFIED)
+[OK] Zero DDL Mutation: 0 perintah CREATE VIEW atau ALTER VIEW dijalankan.
+
+================================================================================
+  3. AUDIT ROLE APLIKASI DI KATALOG pg_roles (ANTI-BYPASS RLS)
+================================================================================
+    [OK] Role 'anon           ' | Superuser: False | BypassRLS: False (COMPLIANT)
+    [OK] Role 'authenticated  ' | Superuser: False | BypassRLS: False (COMPLIANT)
+
+================================================================================
+  4. INSPEKSI DINAMIS KEBIJAKAN ISOLASI TENANT & STATUS FORCE RLS
+================================================================================
+[*] Terdeteksi 98 tabel tenant-scoped terisolasi via information_schema.tables.
+    - 98/98 tabel tenant-scoped memiliki RLS = True dan FORCE RLS = True.
+    - 98/98 tabel tenant-scoped memiliki kebijakan isolasi tenant_id/tenant_slug.
+    - Zero Wildcard Verification: 0% kebijakan bertipe USING (true) / WITH CHECK (true).
+
+================================================================================
+  LAPORAN AKHIR AUDIT KEAMANAN P1 (CTO AUDIT GATE)
+================================================================================
+  STATUS: [PASS] 100% INVARIAN KEAMANAN KATALOG POSTGRESQL TERPENUHI.
+  - Seluruh view tersimpan dengan 'security_invoker=true' di pg_class.reloptions.
+  - Role aplikasi terverifikasi bebas dari hak istimewa rolbypassrls.
+  - Tabel kritikal memiliki kebijakan isolasi tenant_id dan FORCE RLS aktif.
+  - Tidak ditemukan wildcard policy 'allow_all_ops' tanpa filter.
+  - Mode audit: Murni Read-Only (0 mutasi struktur katalog).
+================================================================================
+```
+
+---
+
+## CLUSTER V: PRIVILEGE-BOUNDARY VERIFICATION (SERVICE ROLE ISOLATION)
+
+### 1. Pembuktian Batas Otorisasi Endpoint Aplikasi (FastAPI / Tenant Sessions)
+- **Konteks Runtime Endpoint Bisnis**:
+  Semua rute bisnis FastAPI (`/api/v1/inbox/*`, `/api/store/*`, `/api/v1/affiliate/*`, dsb.) dieksekusi di bawah koneksi database yang diikat menggunakan helper:
+  - `get_tenant_db_connection(tenant_id)`
+  - `tenant_transaction(tenant_id, conn)`
+- **Penegakan Transaksional Mutlak**:
+  Di awal setiap transaksi tenant, query SQL berikut wajib dijalankan:
+  ```sql
+  SET LOCAL ROLE authenticated;
+  SELECT set_config('app.current_tenant_id', :tenant_id, true);
+  ```
+- **Karakteristik Role `authenticated` & `anon`**:
+  Berdasarkan audit live katalog `pg_roles`:
+  - `rolsuper = False` (Zero Superuser)
+  - `rolbypassrls = False` (Tunduk 100% pada Row Level Security)
+- **Garansi Isolasi Kernel PostgreSQL**:
+  Karena `rolbypassrls = False`, engine PostgreSQL secara paksa mengevaluasi kebijakan RLS pada setiap baris query. Jika Tenant Alpha mencoba membaca atau memanipulasi baris Tenant Beta, kernel PostgreSQL mengembalikan tepat **0 rows** (Zero Data Leakage).
+
+### 2. Isolasi Mutlak Kredensial `SUPABASE_SERVICE_ROLE_KEY`
+- **Akses Eksklusif Background Workers**:
+  Kredensial `SUPABASE_SERVICE_ROLE_KEY` hanya dapat diakses oleh daemon/job background server-side (seperti `worker_elevated_transaction` pada reconciler pembayaran atau automated subscription scheduler) yang berjalan di container privat backend.
+- **Zero Client Runtime Exposure**:
+  - `SUPABASE_SERVICE_ROLE_KEY` tidak pernah dimuat atau dikompilasi ke dalam bundle JavaScript client (Next.js/browser).
+  - Tidak ada endpoint API publik yang mengembalikan atau mengekspos service role key.
+  - Client web/mobile hanya berinteraksi menggunakan JWT tenant ber-role `authenticated` atau sesi publik ber-role `anon`.
+- **Higiene Koneksi Pool Pasca-Transaksi**:
+  Setiap penggunaan transaksi elevated oleh worker dibungkus blok `try/finally` yang secara wajib mengeksekusi `RESET ROLE; RESET ALL;` sebelum koneksi dikembalikan ke pool, mencegah polusi privilege antar-eksekusi.
+
+---
+
 ## BAGIAN 6: TABEL RISK REGISTER & RESIDUAL FINDINGS
 
 Daftar risiko residual dan mitigasi teknis berlapis (*defense-in-depth*):
@@ -228,6 +332,6 @@ Daftar risiko residual dan mitigasi teknis berlapis (*defense-in-depth*):
 
 ---
 
-**Diverifikasi dan Disahkan oleh:**  
+**Diverifikasi dan Diajukan untuk Persetujuan Final:**  
 Senior Core Engineering (Antigravity AI)  
 BoonTrack Core Platform Engineering  
