@@ -1,8 +1,8 @@
 {
   "audit_metadata": {
     "title": "CI Sandbox & Ephemeral Fixture Catalog RLS Security Verification",
-    "timestamp_utc": "2026-10-15 07:55:00 UTC",
-    "timestamp_wib": "2026-10-15 14:55:00 WIB",
+    "timestamp_utc": "2026-10-15 08:17:41 UTC",
+    "timestamp_wib": "2026-10-15 15:17:41 WIB",
     "target": "CTO P1 Security Gate Verification",
     "mode": "PURE READ-ONLY (ZERO DDL / MUTATIONS)",
     "environment": "CI Pipeline Ephemeral Container (PostgreSQL 15)"
@@ -10,7 +10,7 @@
   "engine_info": {
     "database": "test_boontrack",
     "user": "test_user",
-    "version": "PostgreSQL 15 on x86_64-pc-linux-gnu (GitHub Actions Runner)"
+    "version": "PostgreSQL 15.19 (Debian 15.19-1.pgdg13+2) on x86_64-pc-linux-gnu"
   },
   "tenant_tables": {
     "total_tenant_scoped": 11,
@@ -19,70 +19,7 @@
     "compliant_count": 11,
     "tables": [
       {
-        "table_name": "tenants",
-        "relrowsecurity": true,
-        "relforcerowsecurity": true,
-        "policy_count": 2,
-        "has_tenant_isolation": true,
-        "wildcard_violations": [],
-        "compliant": true
-      },
-      {
-        "table_name": "orders",
-        "relrowsecurity": true,
-        "relforcerowsecurity": true,
-        "policy_count": 3,
-        "has_tenant_isolation": true,
-        "wildcard_violations": [],
-        "compliant": true
-      },
-      {
-        "table_name": "staging_alumni_cpm",
-        "relrowsecurity": true,
-        "relforcerowsecurity": true,
-        "policy_count": 2,
-        "has_tenant_isolation": true,
-        "wildcard_violations": [],
-        "compliant": true
-      },
-      {
-        "table_name": "whatsapp_connections",
-        "relrowsecurity": true,
-        "relforcerowsecurity": true,
-        "policy_count": 2,
-        "has_tenant_isolation": true,
-        "wildcard_violations": [],
-        "compliant": true
-      },
-      {
-        "table_name": "commerce_products",
-        "relrowsecurity": true,
-        "relforcerowsecurity": true,
-        "policy_count": 2,
-        "has_tenant_isolation": true,
-        "wildcard_violations": [],
-        "compliant": true
-      },
-      {
-        "table_name": "carts",
-        "relrowsecurity": true,
-        "relforcerowsecurity": true,
-        "policy_count": 2,
-        "has_tenant_isolation": true,
-        "wildcard_violations": [],
-        "compliant": true
-      },
-      {
-        "table_name": "cart_items",
-        "relrowsecurity": true,
-        "relforcerowsecurity": true,
-        "policy_count": 2,
-        "has_tenant_isolation": true,
-        "wildcard_violations": [],
-        "compliant": true
-      },
-      {
-        "table_name": "attributions",
+        "table_name": "affiliate_commissions",
         "relrowsecurity": true,
         "relforcerowsecurity": true,
         "policy_count": 2,
@@ -100,10 +37,37 @@
         "compliant": true
       },
       {
-        "table_name": "affiliate_commissions",
+        "table_name": "attributions",
         "relrowsecurity": true,
         "relforcerowsecurity": true,
-        "policy_count": 2,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "cart_items",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "carts",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "commerce_products",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
         "has_tenant_isolation": true,
         "wildcard_violations": [],
         "compliant": true
@@ -112,7 +76,43 @@
         "table_name": "conversation_sessions",
         "relrowsecurity": true,
         "relforcerowsecurity": true,
-        "policy_count": 2,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "orders",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "staging_alumni_cpm",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "tenants",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "whatsapp_connections",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
         "has_tenant_isolation": true,
         "wildcard_violations": [],
         "compliant": true
