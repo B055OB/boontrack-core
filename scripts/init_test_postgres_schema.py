@@ -131,14 +131,16 @@ def init_test_schema():
       AS PERMISSIVE FOR SELECT TO public
       USING (
         is_active = true
-        OR id = (
-          CASE 
-            WHEN current_setting('app.current_tenant_id', true) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-            THEN current_setting('app.current_tenant_id', true)::uuid
-            ELSE NULL
-          END
+        AND (
+          id = (
+            CASE 
+              WHEN current_setting('app.current_tenant_id', true) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+              THEN current_setting('app.current_tenant_id', true)::uuid
+              ELSE NULL
+            END
+          )
+          OR slug = NULLIF(current_setting('app.current_tenant_id', true), '')
         )
-        OR slug = NULLIF(current_setting('app.current_tenant_id', true), '')
       );
 
     INSERT INTO public.tenants (id, name, slug)

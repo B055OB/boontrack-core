@@ -40,6 +40,28 @@ USING (
 );
 
 -- =============================================================================
+-- 1.B TENANTS: STRICT TENANT ISOLATION FIX
+-- =============================================================================
+
+DROP POLICY IF EXISTS public_select_active_tenants ON public.tenants;
+
+CREATE POLICY public_select_active_tenants ON public.tenants
+AS PERMISSIVE FOR SELECT TO public
+USING (
+    is_active = true
+    AND (
+        id = (
+            CASE 
+                WHEN current_setting('app.current_tenant_id', true) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                THEN current_setting('app.current_tenant_id', true)::uuid
+                ELSE NULL
+            END
+        )
+        OR slug = NULLIF(current_setting('app.current_tenant_id', true), '')
+    )
+);
+
+-- =============================================================================
 -- 2. ENFORCE FORCE ROW LEVEL SECURITY ON ALL TENANT-SCOPED TABLES
 -- =============================================================================
 
