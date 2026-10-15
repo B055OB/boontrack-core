@@ -15,13 +15,41 @@ Base = declarative_base()
 
 
 def get_db_connection():
-    """Returns a raw PostgreSQL database connection."""
+    """Returns a raw PostgreSQL database connection.
+    Fails closed (raises RuntimeError) if required connection parameters are not configured.
+    """
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    if database_url:
+        return psycopg2.connect(database_url)
+
+    host = settings.POSTGRES_HOST or os.getenv("POSTGRES_HOST")
+    port = settings.POSTGRES_PORT or os.getenv("POSTGRES_PORT", "5432")
+    dbname = settings.POSTGRES_DB or os.getenv("POSTGRES_DB")
+    user = settings.POSTGRES_USER or os.getenv("POSTGRES_USER")
+    password = settings.POSTGRES_PASSWORD or os.getenv("POSTGRES_PASSWORD")
+
+    missing = []
+    if not host:
+        missing.append("POSTGRES_HOST")
+    if not dbname:
+        missing.append("POSTGRES_DB")
+    if not user:
+        missing.append("POSTGRES_USER")
+    if not password:
+        missing.append("POSTGRES_PASSWORD")
+
+    if missing:
+        raise RuntimeError(
+            f"[SECURITY FAIL-CLOSED] PostgreSQL connection credentials are not configured: {', '.join(missing)}. "
+            "Neither DATABASE_URL nor discrete credentials were provided in the environment."
+        )
+
     return psycopg2.connect(
-        host=settings.POSTGRES_HOST,
-        port=settings.POSTGRES_PORT,
-        dbname=settings.POSTGRES_DB,
-        user=settings.POSTGRES_USER,
-        password=settings.POSTGRES_PASSWORD
+        host=host,
+        port=port,
+        dbname=dbname,
+        user=user,
+        password=password
     )
 
 

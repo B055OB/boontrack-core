@@ -7,21 +7,22 @@ from aiohttp import web
 from app.services.payment_orchestrator import PaymentOrchestrator
 from app.services.whatsapp_delivery_service import WhatsAppDeliveryService
 
-# Safe import Supabase Client
+# Supabase Client Initialization (Fail-Closed)
+from supabase import create_client, Client
+
+supabase_url = os.getenv("SUPABASE_URL", "").strip()
+supabase_key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_ANON_KEY", "")).strip()
+
+if not supabase_url or not supabase_key:
+    raise RuntimeError(
+        "[SECURITY FAIL-CLOSED] Mandatory Supabase configuration is missing in webhook_payment. "
+        "SUPABASE_URL and SUPABASE_KEY / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY must be provided in the environment."
+    )
+
 try:
-    from app.services.supabase_client import supabase
-except ImportError:
-    try:
-        from app.core.supabase import get_supabase
-        supabase = get_supabase()
-    except Exception:
-        try:
-            from supabase import create_client
-            url = os.getenv("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.co")
-            key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_ANON_KEY", "ci-mock-key")
-            supabase = create_client(url, key)
-        except Exception:
-            supabase = None
+    supabase: Client = create_client(supabase_url, supabase_key)
+except Exception as e:
+    raise RuntimeError(f"[SECURITY FAIL-CLOSED] Failed to initialize Supabase client in webhook_payment: {e}") from e
 
 logger = logging.getLogger("boontrack.webhook")
 wa_service = WhatsAppDeliveryService()

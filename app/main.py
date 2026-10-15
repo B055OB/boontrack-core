@@ -23,6 +23,21 @@ from aiohttp import web
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MAIN")
 
+# Inisialisasi Supabase Client (Fail-Closed)
+supabase_url = os.getenv("SUPABASE_URL", "").strip()
+supabase_key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "")).strip()
+
+if not supabase_url or not supabase_key:
+    raise RuntimeError(
+        "[SECURITY FAIL-CLOSED] Mandatory Supabase configuration is missing in app.main. "
+        "SUPABASE_URL and SUPABASE_KEY / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY must be configured in environment."
+    )
+
+try:
+    supabase_client: Client = create_client(supabase_url, supabase_key)
+except Exception as e:
+    raise RuntimeError(f"[SECURITY FAIL-CLOSED] Failed to initialize Supabase client in app.main: {e}") from e
+
 from app.core.bot import bot, dp
 from app.core.database import init_db
 from app.core.server import create_web_app, start_web_server, start_telegram_polling
@@ -85,13 +100,7 @@ from app.routes.telegram_webhook_routes import router as telegram_webhook_router
 from app.routes.store_starter_routes import store_starter_router
 from fastapi.staticfiles import StaticFiles
 
-# Inisialisasi Supabase Client
-supabase_url = os.getenv("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.co")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "ci-placeholder-key")
-try:
-    supabase_client: Client = create_client(supabase_url, supabase_key)
-except Exception:
-    supabase_client = None
+# Supabase Client is initialized above at entry point
 
 from app.core.tracing import TracingMiddleware
 

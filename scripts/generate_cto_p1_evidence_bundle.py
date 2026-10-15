@@ -46,11 +46,11 @@ if not os.getenv("POSTGRES_HOST") or os.getenv("POSTGRES_HOST") == "postgres":
 if not os.getenv("POSTGRES_PORT"):
     os.environ["POSTGRES_PORT"] = "5432"
 if not os.getenv("POSTGRES_PASSWORD"):
-    os.environ["POSTGRES_PASSWORD"] = "test_ci_postgres_password"
+    os.environ["POSTGRES_PASSWORD"] = "test_password"
 if not os.getenv("POSTGRES_USER"):
-    os.environ["POSTGRES_USER"] = "postgres"
+    os.environ["POSTGRES_USER"] = "test_user"
 if not os.getenv("POSTGRES_DB"):
-    os.environ["POSTGRES_DB"] = "postgres"
+    os.environ["POSTGRES_DB"] = "test_boontrack"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

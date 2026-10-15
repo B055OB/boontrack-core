@@ -20,6 +20,11 @@ _CI_TEST_ENV_DEFAULTS = {
     "POSTGRES_DB": "test_boontrack",
     "POSTGRES_USER": "test_user",
     "POSTGRES_PASSWORD": "test_password",
+    "DATABASE_URL": "postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack",
+    "SUPABASE_URL": "https://test-project.supabase.co",
+    "SUPABASE_KEY": "test_ci_supabase_anon_key_mock_999",
+    "SUPABASE_ANON_KEY": "test_ci_supabase_anon_key_mock_999",
+    "SUPABASE_SERVICE_ROLE_KEY": "test_ci_supabase_service_role_key_mock_999",
 }
 
 for _k, _v in _CI_TEST_ENV_DEFAULTS.items():
