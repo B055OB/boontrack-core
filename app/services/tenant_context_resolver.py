@@ -35,13 +35,13 @@ def get_supabase():
         url = (
             os.getenv("SUPABASE_URL")
             or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-            or "https://mpluzajlzpregmjwpjqr.supabase.co"
-        )
+            or ""
+        ).strip()
         key = (
-            os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            os.getenv("SUPABASE_ANON_KEY")
             or os.getenv("SUPABASE_KEY")
-            or os.getenv("SUPABASE_ANON_KEY")
             or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+            or ""
         )
         if url and key:
             _supabase_client = create_client(url, key)

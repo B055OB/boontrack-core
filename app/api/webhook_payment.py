@@ -7,22 +7,49 @@ from aiohttp import web
 from app.services.payment_orchestrator import PaymentOrchestrator
 from app.services.whatsapp_delivery_service import WhatsAppDeliveryService
 
-# Supabase Client Initialization (Fail-Closed)
+# Supabase Client Initialization (Fail-Closed & Principle of Least Privilege)
 from supabase import create_client, Client
 
 supabase_url = os.getenv("SUPABASE_URL", "").strip()
-supabase_key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_ANON_KEY", "")).strip()
+supabase_anon_key = (os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "")).strip()
 
-if not supabase_url or not supabase_key:
+if not supabase_url or not supabase_anon_key:
     raise RuntimeError(
-        "[SECURITY FAIL-CLOSED] Mandatory Supabase configuration is missing in webhook_payment. "
-        "SUPABASE_URL and SUPABASE_KEY / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY must be provided in the environment."
+        "[SECURITY FAIL-CLOSED] Mandatory Supabase public configuration is missing in webhook_payment. "
+        "SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_KEY) must be provided in the environment."
     )
 
 try:
-    supabase: Client = create_client(supabase_url, supabase_key)
+    # Standard restricted client bound by RLS
+    supabase: Client = create_client(supabase_url, supabase_anon_key)
 except Exception as e:
     raise RuntimeError(f"[SECURITY FAIL-CLOSED] Failed to initialize Supabase client in webhook_payment: {e}") from e
+
+
+def get_admin_supabase_client() -> Client:
+    """Isolated administrative Supabase client using SUPABASE_SERVICE_ROLE_KEY.
+    STRICT PRIVILEGE SEPARATION:
+    Must only be called from verified administrative execution paths.
+    """
+    admin_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if not admin_key or not supabase_url:
+        raise RuntimeError(
+            "[SECURITY FAIL-CLOSED] SUPABASE_SERVICE_ROLE_KEY is required for administrative operations but not configured."
+        )
+    return create_client(supabase_url, admin_key)
+
+
+def get_verified_webhook_supabase_client(headers: Dict[str, str]) -> Client:
+    """Returns administrative client ONLY if inbound request contains a valid x-callback-token.
+    Enforces that unverified callers cannot acquire administrative service_role access.
+    """
+    configured_token = os.getenv("XENDIT_CALLBACK_TOKEN", "").strip()
+    inbound_token = headers.get("x-callback-token") or headers.get("X-CALLBACK-TOKEN")
+    if not configured_token or inbound_token != configured_token:
+        raise PermissionError(
+            "[SECURITY BOUNDARY] Access to administrative Supabase client denied: Invalid or missing x-callback-token."
+        )
+    return get_admin_supabase_client()
 
 logger = logging.getLogger("boontrack.webhook")
 wa_service = WhatsAppDeliveryService()
@@ -62,6 +89,14 @@ async def xendit_payment_webhook(request: Request, background_tasks: BackgroundT
     response_body = result.get("response", {})
     if http_code != 200:
         raise HTTPException(status_code=http_code, detail=response_body.get("error", "Webhook processing failed"))
+
+    # STRICT PRIVILEGE BOUNDARY: Admin client acquisition is gated behind verified callback token
+    try:
+        admin_sb = get_verified_webhook_supabase_client(headers_dict)
+        logger.info("[Webhook FastAPI] Admin Supabase client authorized for verified webhook settlement.")
+    except PermissionError as auth_err:
+        logger.warning(f"[Webhook FastAPI] Admin client access omitted: {auth_err}")
+
     return response_body
 
 # ---------------------------------------------------------

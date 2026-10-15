@@ -40,8 +40,8 @@ def resolve_tenant_telegram_chat_id(tenant_ref: Optional[str]) -> Optional[str]:
     if not tenant_ref:
         return None
 
-    sb_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-    sb_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
+    sb_url = (os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or "").strip()
+    sb_key = (os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY") or "").strip()
     if not sb_url or not sb_key:
         return None
 

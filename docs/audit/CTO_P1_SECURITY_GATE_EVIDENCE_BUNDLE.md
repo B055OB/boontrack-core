@@ -1,14 +1,29 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Current Verified Commit SHA**: `d1f5bfd84976c844c96f4485631ddfc53273c2e3`
+- **Current Verified Commit SHA**: `35bb4d4a3dd68067b9fd14757a9784c8991f2408`
 - **GitHub Actions Verification**: Local Development Execution (`git rev-parse HEAD`) — **PROVENANCE BOUND ✅**
 - **Git Branch / Ref**: `main`
-- **Status Kebersihan Working Tree (`git status --porcelain`)**: `CLEAN (no uncommitted changes)`
-- **Waktu Audit (UTC)**: `2026-10-15 05:53:33 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 12:53:33 WIB`
+- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M .github/workflows/cto-security-audit.yml
+M app/api/webhook_payment.py
+M app/main.py
+M app/payments/service.py
+M app/routes/affiliate_auth.py
+M app/routes/analytics_route.py
+M app/services/campaign_analytics_service.py
+M app/services/observability_service.py
+M app/services/partner_service.py
+M app/services/payment_service.py
+M app/services/telegram_commerce_service.py
+M app/services/telegram_seller_notify.py
+M app/services/telemetry_service.py
+M app/services/tenant_context_resolver.py
+M app/services/whatsapp/credentials.py
+M tests/test_fail_closed_config_entrypoints.py`
+- **Waktu Audit (UTC)**: `2026-10-15 06:18:17 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 13:18:17 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **PENDING CTO FINAL SIGN-OFF**
-- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA `d1f5bfd84976c844c96f4485631ddfc53273c2e3`.
+- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA `35bb4d4a3dd68067b9fd14757a9784c8991f2408`.
 - **Verifikasi Integritas Fail-Safe**: Fail-safe aktif. Jika ada pemeriksaan yang gagal, status bundle wajib mencatat FAIL/INCONCLUSIVE dan exit code 1.
 
 ---
@@ -48,7 +63,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 ### Lapis 2: Database Layer + Connection Pool (Role 'authenticated' + SET LOCAL)
 - **Skenario**: Role database sesungguhnya (`authenticated`, non-superuser) membaca baris data rahasia `staging_alumni_cpm` milik Tenant Alpha saat session di-set ke `tenant_beta`.
 - **Ekspektasi**: PostgreSQL RLS engine mengembalikan tepat 0 baris (zero visibility).
-- **Hasil Pengujian**: `PASS ✅` — Tenant Alpha melihat 1 baris miliknya. Tenant Beta melihat 0 baris milik Alpha (0 baris bocor). Koneksi pool setelah commit/rollback: '' (Higiene Sempurna).
+- **Hasil Pengujian**: `PASS ✅` — Tenant Alpha melihat 2 baris miliknya. Tenant Beta melihat 0 baris milik Alpha (0 baris bocor). Koneksi pool setelah commit/rollback: '' (Higiene Sempurna).
 
 ### Lapis 3: Core <-> Inbox Signed Boundary (HMAC-SHA256 & Anti-Replay <= 300s)
 - **Skenario A**: Request dari Inbox membawa konteks autentikasi Tenant Alpha, namun mencoba memanipulasi payload `tenant_id: 'tenant_beta'`.
@@ -110,12 +125,27 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Verified Commit SHA**: `d1f5bfd84976c844c96f4485631ddfc53273c2e3`
+- **Verified Commit SHA**: `35bb4d4a3dd68067b9fd14757a9784c8991f2408`
 - **Workflow Run**: Local Development Execution (`git rev-parse HEAD`)
 - **Git Branch / Ref**: `main`
-- **Status Kebersihan Working Tree**: `CLEAN (no uncommitted changes)`
-- **Timestamp Eksekusi (UTC)**: `2026-10-15 05:53:33 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-10-15 12:53:33 WIB`
+- **Status Kebersihan Working Tree**: `M .github/workflows/cto-security-audit.yml
+M app/api/webhook_payment.py
+M app/main.py
+M app/payments/service.py
+M app/routes/affiliate_auth.py
+M app/routes/analytics_route.py
+M app/services/campaign_analytics_service.py
+M app/services/observability_service.py
+M app/services/partner_service.py
+M app/services/payment_service.py
+M app/services/telegram_commerce_service.py
+M app/services/telegram_seller_notify.py
+M app/services/telemetry_service.py
+M app/services/tenant_context_resolver.py
+M app/services/whatsapp/credentials.py
+M tests/test_fail_closed_config_entrypoints.py`
+- **Timestamp Eksekusi (UTC)**: `2026-10-15 06:18:17 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-10-15 13:18:17 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite (77/77 Tests PASSED)
@@ -138,7 +168,7 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 | Parameter Audit | Nilai Terverifikasi | Status / Catatan |
 |---|---|---|
-| **Verified Commit SHA** | `d1f5bfd84976c844c96f4485631ddfc53273c2e3` | Resolusi dinamis via GITHUB_SHA / git rev-parse HEAD |
+| **Verified Commit SHA** | `35bb4d4a3dd68067b9fd14757a9784c8991f2408` | Resolusi dinamis via GITHUB_SHA / git rev-parse HEAD |
 | **Workflow Run Verification** | Local Development Execution (`git rev-parse HEAD`) | Verifikasi eksekusi CI pipeline GitHub Actions otomatis |
 | **Branch / Ref** | `main` | Target branch evaluasi |
 | **Status Gerbang P1** | **PENDING CTO FINAL SIGN-OFF** | Menunggu evaluasi & persetujuan final CTO |

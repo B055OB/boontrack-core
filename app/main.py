@@ -23,20 +23,36 @@ from aiohttp import web
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MAIN")
 
-# Inisialisasi Supabase Client (Fail-Closed)
+# Inisialisasi Supabase Public / Tenant Client (Principle of Least Privilege: Anon / Standard Key bound by RLS)
 supabase_url = os.getenv("SUPABASE_URL", "").strip()
-supabase_key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "")).strip()
+supabase_anon_key = (os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "")).strip()
 
-if not supabase_url or not supabase_key:
+if not supabase_url or not supabase_anon_key:
     raise RuntimeError(
-        "[SECURITY FAIL-CLOSED] Mandatory Supabase configuration is missing in app.main. "
-        "SUPABASE_URL and SUPABASE_KEY / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY must be configured in environment."
+        "[SECURITY FAIL-CLOSED] Mandatory Supabase public configuration is missing in app.main. "
+        "SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_KEY) must be configured in environment. "
+        "SUPABASE_SERVICE_ROLE_KEY is strictly prohibited for standard application client."
     )
 
 try:
-    supabase_client: Client = create_client(supabase_url, supabase_key)
+    # Standard tenant/merchant/public client (restricted by RLS)
+    supabase_client: Client = create_client(supabase_url, supabase_anon_key)
 except Exception as e:
     raise RuntimeError(f"[SECURITY FAIL-CLOSED] Failed to initialize Supabase client in app.main: {e}") from e
+
+
+def get_admin_supabase_client() -> Client:
+    """Isolated administrative Supabase client using SUPABASE_SERVICE_ROLE_KEY.
+    STRICT PRIVILEGE SEPARATION:
+    Only accessible by verified administrative execution paths (e.g., signature-verified payment webhooks).
+    Never exposed to standard tenant/merchant endpoints or client bundles.
+    """
+    admin_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if not admin_key or not supabase_url:
+        raise RuntimeError(
+            "[SECURITY FAIL-CLOSED] SUPABASE_SERVICE_ROLE_KEY is required for administrative operations but not configured."
+        )
+    return create_client(supabase_url, admin_key)
 
 from app.core.bot import bot, dp
 from app.core.database import init_db

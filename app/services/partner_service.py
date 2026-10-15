@@ -34,10 +34,10 @@ MINIMUM_PAYOUT_AMOUNT = 50000
 
 SLUG_REGEX = re.compile(r"^[A-Z0-9]{3,20}$")
 
-# Supabase Initialization
-supabase_url = os.getenv("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.co")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY", "")
-supabase: Client = create_client(supabase_url, supabase_key)
+# Supabase Initialization (Least Privilege: Anon Key)
+supabase_url = os.getenv("SUPABASE_URL", "").strip()
+supabase_key = (os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "")).strip()
+supabase: Client = create_client(supabase_url, supabase_key) if (supabase_url and supabase_key) else None
 
 
 def decode_jwt_token(token: str) -> Optional[Dict[str, Any]]:

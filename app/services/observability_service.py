@@ -75,8 +75,8 @@ def mask_sensitive_data(text: str) -> str:
 
 
 def get_supabase():
-    url = os.getenv("SUPABASE_URL", "")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY", "")
+    url = os.getenv("SUPABASE_URL", "").strip()
+    key = (os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "")).strip()
     if url and key:
         try:
             from supabase import create_client

@@ -230,3 +230,86 @@ def test_webhook_payment_fail_closed_without_supabase_key():
     assert proc.returncode != 0
     assert "[SECURITY FAIL-CLOSED]" in proc.stderr
     assert "SUPABASE_KEY" in proc.stderr
+
+
+# ============================================================================
+# 3. Privilege Separation Tests: Supabase Client Least Privilege & RLS
+# ============================================================================
+
+def test_main_rejects_service_role_key_as_standard_client():
+    """Verifies that app.main refuses to use SUPABASE_SERVICE_ROLE_KEY for the standard client."""
+    code = "import app.main"
+    proc = _run_isolated_code(code, extra_vars={
+        "DATABASE_URL": "postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack",
+        "SUPABASE_URL": "https://valid-supabase-url.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "secret-service-role-key-that-must-not-be-default",
+    })
+    assert proc.returncode != 0
+    assert "[SECURITY FAIL-CLOSED]" in proc.stderr
+    assert "SUPABASE_SERVICE_ROLE_KEY is strictly prohibited for standard application client" in proc.stderr
+
+
+def test_main_get_admin_supabase_client_isolation(monkeypatch):
+    """Verifies get_admin_supabase_client() raises RuntimeError when SUPABASE_SERVICE_ROLE_KEY is absent."""
+    import app.main as main_mod
+
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+    with pytest.raises(RuntimeError) as exc_info:
+        main_mod.get_admin_supabase_client()
+    assert "SUPABASE_SERVICE_ROLE_KEY is required" in str(exc_info.value)
+
+
+def test_webhook_payment_verified_admin_client_boundary(monkeypatch):
+    """Verifies that get_verified_webhook_supabase_client strictly gates admin client acquisition."""
+    from app.api.webhook_payment import get_verified_webhook_supabase_client
+
+    monkeypatch.setenv("XENDIT_CALLBACK_TOKEN", "verified_token_12345")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "admin_service_role_key_xyz")
+    monkeypatch.setenv("SUPABASE_URL", "https://valid-supabase-url.supabase.co")
+
+    # 1. Missing header -> PermissionError
+    with pytest.raises(PermissionError) as exc_missing:
+        get_verified_webhook_supabase_client({})
+    assert "Invalid or missing x-callback-token" in str(exc_missing.value)
+
+    # 2. Invalid token -> PermissionError
+    with pytest.raises(PermissionError) as exc_invalid:
+        get_verified_webhook_supabase_client({"x-callback-token": "attacker_fake_token"})
+    assert "Invalid or missing x-callback-token" in str(exc_invalid.value)
+
+    # 3. Valid token -> Success (admin client granted)
+    admin_client = get_verified_webhook_supabase_client({"x-callback-token": "verified_token_12345"})
+    assert admin_client is not None
+    assert admin_client.supabase_key == "admin_service_role_key_xyz"
+
+
+def test_tenant_client_cannot_read_protected_tables_without_valid_session():
+    """
+    Verifies that a tenant or public client under 'authenticated' role
+    cannot read protected tenant-scoped records without an active app.current_tenant_id session.
+    """
+    admin_conn = get_db_connection()
+    try:
+        # 1. Seed confidential record under tenant_alpha
+        with admin_conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO public.staging_alumni_cpm (tenant_id, lead_phone, alumni_name, status)
+                VALUES ('tenant_alpha', '62811119999', 'Protected Tenant Record', 'STAGED')
+                ON CONFLICT DO NOTHING;
+            """)
+        admin_conn.commit()
+
+        # 2. Query as non-superuser role 'authenticated' with NO tenant context set
+        with admin_conn.cursor() as cur:
+            cur.execute("SET LOCAL ROLE authenticated;")
+            # Ensure app.current_tenant_id is unconfigured/empty
+            cur.execute("SELECT set_config('app.current_tenant_id', '', true);")
+            cur.execute("SELECT COUNT(*) FROM public.staging_alumni_cpm WHERE tenant_id = 'tenant_alpha';")
+            count = cur.fetchone()[0]
+
+            # RLS MUST enforce zero visibility
+            assert count == 0, f"SECURITY AUDIT FAILURE: Anonymous/unset tenant session leaked {count} rows!"
+    finally:
+        admin_conn.rollback()
+        admin_conn.close()
+

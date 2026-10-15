@@ -8,9 +8,9 @@ logger = logging.getLogger("CAMPAIGN_ANALYTICS_SERVICE")
 from dotenv import load_dotenv
 load_dotenv()
 
-# Supabase Client
-supabase_url = os.getenv("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.co")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "")
+# Supabase Client (Least Privilege: Anon Key)
+supabase_url = os.getenv("SUPABASE_URL", "").strip()
+supabase_key = (os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "")).strip()
 supabase: Optional[Client] = None
 if supabase_url and supabase_key:
     try:

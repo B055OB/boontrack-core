@@ -36,7 +36,7 @@ _WAKE_WORDS = ["boon", "@boon", f"@{_BOT_USERNAME.lower()}", "@boonshop_bot", "@
 
 
 def _get_supabase_headers() -> Optional[Dict[str, str]]:
-    sb_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
+    sb_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY")
     if not sb_key:
         return None
     return {
@@ -48,7 +48,7 @@ def _get_supabase_headers() -> Optional[Dict[str, str]]:
 
 
 def _get_supabase_url() -> str:
-    url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or "https://mpluzajlzpregmjwpjqr.supabase.co"
+    url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL", "")
     return url.rstrip("/")
 
 

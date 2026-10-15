@@ -169,9 +169,9 @@ def resolve_provenance_metadata() -> Tuple[str, str, str, str, str]:
 
     if run_id != "LOCAL":
         run_display = (
-            f"Run #{run_number} (ID: `{run_id}`)"
+            f"GitHub Actions CI Execution — Run #{run_number} (ID: `{run_id}`)"
             if run_number
-            else f"Run ID: `{run_id}`"
+            else f"GitHub Actions CI Execution — Run ID: `{run_id}`"
         )
     else:
         run_display = "Local Development Execution (`git rev-parse HEAD`)"

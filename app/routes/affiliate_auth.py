@@ -26,9 +26,9 @@ affiliate_router = APIRouter(prefix="/api/v1/affiliate", tags=["Affiliate Dashbo
 JWT_SECRET = os.getenv("JWT_SECRET", "boontrack-secret-key-production-3000")
 JWT_ALGORITHM = "HS256"
 
-supabase_url = os.getenv("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.co")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY", "")
-supabase: Client = create_client(supabase_url, supabase_key)
+supabase_url = os.getenv("SUPABASE_URL", "").strip()
+supabase_key = (os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "")).strip()
+supabase: Client = create_client(supabase_url, supabase_key) if (supabase_url and supabase_key) else None
 
 
 def generate_jwt_token(payload: dict) -> str:

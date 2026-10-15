@@ -6,9 +6,9 @@ import os
 analytics_bp = Blueprint('analytics', __name__, url_prefix='/api/analytics')
 logger = logging.getLogger(__name__)
 
-# Credentials Supabase
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://mpluzajlzpregmjwpjqr.supabase.co")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "sb_publishable_OXETaOPFYI_AKCrKpLEr0Q__RUHScg7") # Gunakan Publishable Key yang tadi di-copy
+# Credentials Supabase (Least Privilege: Anon / Publishable Key)
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
+SUPABASE_KEY = (os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_KEY", "")).strip()
 
 def get_supabase():
     try:

@@ -48,7 +48,7 @@ jobs:
       CI: "true"
 
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - name: Checkout Code at Exact Commit SHA
@@ -123,6 +123,19 @@ jobs:
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit 1
           }
+
+      - name: Commit and Push Synchronized Evidence Bundle to Repository
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [[ -n "$(git status --porcelain docs/audit/CTO_P1_SECURITY_GATE_EVIDENCE_BUNDLE.md)" ]]; then
+            git add docs/audit/CTO_P1_SECURITY_GATE_EVIDENCE_BUNDLE.md
+            git commit -m "docs(audit): sync CTO evidence bundle for commit ${{ github.sha }} [skip ci]"
+            git push origin main
+          else
+            echo "Evidence bundle is already synchronized with commit ${{ github.sha }}."
+          fi
 
       - name: Upload CTO Audit Evidence Bundle Artifact
         if: always()
