@@ -4,9 +4,11 @@
 - **Evidence Synchronization Commit**: `d662eef55f8e5b5c6dab4f9184af4e3204e4ee90` (d662eef)
 - **GitHub Actions Verification**: Run #17 (ID: `38669440661`) — **SUCCESS ✅**
 - **Git Branch**: `main`
-- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M scripts/generate_cto_p1_evidence_bundle.py`
-- **Waktu Audit (UTC)**: `2026-10-15 02:23:55 UTC`
-- **Waktu Audit (WIB)**: `2026-10-15 09:23:55 WIB`
+- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M scripts/enable_rls_security.py
+M scripts/generate_cto_p1_evidence_bundle.py
+?? migrations/030_harden_rls_all_remaining_tenant_tables.sql`
+- **Waktu Audit (UTC)**: `2026-10-15 02:41:10 UTC`
+- **Waktu Audit (WIB)**: `2026-10-15 09:41:10 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **PENDING CTO FINAL SIGN-OFF**
 - **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA.
@@ -111,11 +113,13 @@ ValueError: Fulfillment failed for +62812****999 (b***@onlineboost.id) with key 
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Tested Base Commit SHA (Parent HEAD)**: `d662eef55f8e5b5c6dab4f9184af4e3204e4ee90`
+- **Tested Base Commit SHA (Parent HEAD)**: `6b61cae2a389600724f8f4f6c6db9fca41c6a755`
 - **Git Branch**: `main`
-- **Status Kebersihan Working Tree**: `M scripts/generate_cto_p1_evidence_bundle.py`
-- **Timestamp Eksekusi (UTC)**: `2026-10-15 02:23:55 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-10-15 09:23:55 WIB`
+- **Status Kebersihan Working Tree**: `M scripts/enable_rls_security.py
+M scripts/generate_cto_p1_evidence_bundle.py
+?? migrations/030_harden_rls_all_remaining_tenant_tables.sql`
+- **Timestamp Eksekusi (UTC)**: `2026-10-15 02:41:10 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-10-15 09:41:10 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite (62/62 Tests PASSED)
@@ -163,17 +167,17 @@ Audit mencakup 100% tabel relasional di dalam schema `public` PostgreSQL pada Su
 | 2 | `campaign_queue_items` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_campaign_queue_items` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_campaign_queue_items` (public: tenant_id = app.current_tenant_id) |
 | 3 | `campaign_queues` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_campaign_queues` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_campaign_queues` (public: tenant_id = app.current_tenant_id) |
 | 4 | `channel_bindings` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_channel_bindings` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_channel_bindings` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolation_channel_bindings` (public: tenant_id = app.current_tenant_id) |
-| 5 | `inbox_idempotency_keys` | postgres | ENABLED | YES | TENANT | NONE | *No custom policies (implicit deny for non-superuser)* |
+| 5 | `inbox_idempotency_keys` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_inbox_idempotency_keys` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_inbox_idempotency_keys` (service_role: tenant_id = app.current_tenant_id) |
 | 6 | `messages` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_messages` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_messages` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolation_messages` (public: tenant_id = app.current_tenant_id) |
 | 7 | `orders` | postgres | ENABLED | YES | TENANT | ALL, INSERT | `auth_tenant_orders` (authenticated: tenant_id = app.current_tenant_id)<br>`p1_tenant_isolation_orders` (public: tenant_id = app.current_tenant_id)<br>`public_insert_tenant_order` (public: tenant_id = app.current_tenant_id) |
 | 8 | `phone_suppressions` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_phone_suppressions` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_phone_suppressions` (public: tenant_id = app.current_tenant_id) |
 | 9 | `products` | postgres | ENABLED | YES | TENANT | ALL, SELECT | `auth_tenant_dml_products` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_products` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_products` (service_role: tenant_id = app.current_tenant_id) |
 | 10 | `staging_alumni_cpm` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_staging_alumni_cpm` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_staging_alumni_cpm` (public: tenant_id = app.current_tenant_id) |
-| 11 | `subscriptions` | postgres | ENABLED | YES | TENANT | NONE | *No custom policies (implicit deny for non-superuser)* |
+| 11 | `subscriptions` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_subscriptions` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_subscriptions` (service_role: tenant_id = app.current_tenant_id) |
 | 12 | `telegram_single_use_tokens` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_telegram_single_use_tokens` (authenticated: tenant_id = app.current_tenant_id)<br>`tenant_isolation_telegram_single_use_tokens` (public: tenant_id = app.current_tenant_id) |
 | 13 | `tenants` | postgres | ENABLED | YES | SYSTEM/GLOBAL | ALL, SELECT | `auth_tenant_dml_tenants` (authenticated: tenant_id = app.current_tenant_id)<br>`public_select_active_tenants` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_tenants` (service_role: tenant_id = app.current_tenant_id) |
 | 14 | `whatsapp_connections` | postgres | ENABLED | YES | TENANT | ALL | `auth_permissive_whatsapp_connections` (public: tenant_id = app.current_tenant_id)<br>`service_role_all_whatsapp_connections` (service_role: tenant_id = app.current_tenant_id)<br>`tenant_isolation_whatsapp_connections` (public: tenant_id = app.current_tenant_id) |
-| 15 | `activation_codes` | postgres | ENABLED | YES | TENANT | NONE | *No custom policies (implicit deny for non-superuser)* |
+| 15 | `activation_codes` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_activation_codes` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_activation_codes` (service_role: tenant_id = app.current_tenant_id) |
 | 16 | `affiliate_auth_otps` | postgres | ENABLED | NO | SYSTEM/GLOBAL | ALL | `Service role full access on affiliate_auth_otps` (service_role: true) |
 | 17 | `affiliate_commissions` | postgres | ENABLED | YES | TENANT | ALL | `auth_tenant_affiliate_commissions` (authenticated: tenant_id = app.current_tenant_id)<br>`auth_tenant_commissions` (authenticated: tenant_id = app.current_tenant_id)<br>`service_role_all_affiliate_commissions` (service_role: tenant_id = app.current_tenant_id) |
 | 18 | `affiliate_daily_stats` | postgres | ENABLED | NO | SYSTEM/GLOBAL | NONE | *No custom policies (implicit deny for non-superuser)* |
@@ -232,6 +236,19 @@ Audit katalog independen dieksekusi menggunakan mode verifikasi murni (read-only
 python scripts/enable_rls_security.py --verify
 ```
 
+### Metadata & Parameter Verifikasi Katalog Database Nyata (Independen dari CI)
+- **Status Hasil Audit**: `100% PASS ✅` (Exit Code: `0`, Zero DDL Mutations)
+- **Independensi Lingkungan**: Audit ini dieksekusi langsung terhadap live database Supabase PostgreSQL produksi/staging, terpisah secara independen dari container PostgreSQL ephemeral di runner GitHub Actions CI.
+- **Timestamp Eksekusi (ISO 8601)**: `2026-10-15T02:37:55Z` (09:37:55 WIB)
+- **Target Sanitasi Database**: Engine `PostgreSQL 17.6`, Database `postgres`, User `postgres`
+- **Total Objek Terverifikasi**:
+  * **129/129 Tabel Public**: 100% memiliki `relrowsecurity = true`
+  * **98/98 Tabel Tenant-Scoped**: 100% terverifikasi memiliki RLS = True, FORCE RLS = True, dan minimal 1 valid tenant policy
+  * **0 Tabel Tanpa Policy**: 0 tabel tenant-scoped dengan 0 policy (zero unshielded tables)
+  * **0 Wildcard Policy**: 0% kebijakan permissif bertipe `USING (true)` atau `WITH CHECK (true)`
+  * **4/4 Hardened Views**: 100% terkonfirmasi `security_invoker=true` di `pg_class.reloptions`
+  * **2/2 Role Aplikasi (`authenticated`, `anon`)**: Terverifikasi bebas bypass (`rolsuper = False`, `rolbypassrls = False`)
+
 ### Ringkasan Eksekusi Audit Katalog Live (100% PASS, 0 DDL Mutation)
 ```text
 ================================================================================
@@ -271,6 +288,7 @@ python scripts/enable_rls_security.py --verify
     - 98/98 tabel tenant-scoped memiliki RLS = True dan FORCE RLS = True.
     - 98/98 tabel tenant-scoped memiliki kebijakan isolasi tenant_id/tenant_slug.
     - Zero Wildcard Verification: 0% kebijakan bertipe USING (true) / WITH CHECK (true).
+    - Zero Unshielded Verification: 0 tabel tenant-scoped tanpa kebijakan (0 policies = FAIL).
 
 ================================================================================
   LAPORAN AKHIR AUDIT KEAMANAN P1 (CTO AUDIT GATE)
@@ -324,7 +342,7 @@ Daftar risiko residual dan mitigasi teknis berlapis (*defense-in-depth*):
 
 | ID Risiko | Komponen / Subsistem | Deskripsi Temuan Residual | Tingkat Risiko | Pemilik (Owner) | Langkah Mitigasi & Kontrol Bertahan |
 |---|---|---|---|---|---|
-| **RSK-01** | **Supabase Service Role** | Kredensial `service_role` memiliki bypass RLS bawaan di tingkat database engine. | **MEDIUM** | Core Infra Lead | Kunci hanya disimpan di env private cloud (tidak pernah di client bundle); audit query runtime membatasi query hanya untuk task sinkronisasi sistem. |
+| **RSK-01** | **Supabase Service Role Privileges** | Kredensial `service_role` memiliki kapabilitas `BYPASSRLS` bawaan di tingkat engine database PostgreSQL. Jika disalahgunakan, berpotensi memotong batasan isolasi tenant. | **MEDIUM** | Core Infra & Security Lead | **Mitigasi Berlapis Eksplisit**: 1) Kredensial `SUPABASE_SERVICE_ROLE_KEY` diisolasi ketat hanya untuk background worker berautentikasi (seperti reconciler pembayaran dan cron scheduler) di server internal; tidak pernah diekspos ke client bundle (Next.js/browser) atau endpoint publik mana pun. 2) Setiap transaksi elevated wajib menggunakan wrapper `try/finally` yang mengeksekusi `RESET ROLE; RESET ALL;` sebelum koneksi dikembalikan ke pool, menjamin nol polusi privilege sesi koneksi. 3) Seluruh endpoint bisnis/FastAPI dipaksa berjalan pada context `authenticated`/`anon` di mana `rolbypassrls = False`. |
 | **RSK-02** | **R2 Direct CDN Download** | URL publik CDN (`assets.boontrack.com`) untuk aset gambar produk publik dapat diakses tanpa login. | **LOW** | Storage Lead | Hanya file di direktori publik (`tenants/system/*` atau produk) yang di-expose ke CDN; file privat (rekaman video, dokumen download) diwajibkan melalui Presigned URL dengan TTL <= 15 menit. |
 | **RSK-03** | **Clock Drift Antar-Server** | Perbedaan jam sistem antara server Core dan Inbox dapat memicu penolakan anti-replay jika drift > 300 detik. | **LOW** | DevOps Lead | NTP synchronization daemon diaktifkan di seluruh server container cloud dengan ambang drift toleransi < 1 detik. |
 | **RSK-04** | **Fallback In-Memory Session** | Ketika Redis server mengalami restart/outage, lock dan session beralih sementara ke memory lokal proses. | **LOW** | Backend Platform | Redis di-deploy dalam cluster high-availability dengan fail-closed circuit breaker pada rute keuangan kritikal. |

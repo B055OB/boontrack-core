@@ -239,6 +239,12 @@ def audit_and_enforce_rls(verify_only: bool = False) -> bool:
 
     print(f"[*] Terdeteksi {len(audited_tenant_tables)} tabel tenant-scoped terisolasi via information_schema.tables.")
 
+    # Explicit approved exception whitelist for tenant-scoped tables
+    # e.g. tabel 'tenants' memiliki policy SELECT publik p1_tenant_public_read untuk login & discovery
+    TENANT_POLICY_EXCEPTION_WHITELIST = {
+        "tenants",
+    }
+
     for tbl, rls_enabled, force_rls in audited_tenant_tables:
         # Cek kebijakan tenant isolation di pg_policies
         cur.execute("""
@@ -252,11 +258,20 @@ def audit_and_enforce_rls(verify_only: bool = False) -> bool:
         """, (tbl,))
         policies = cur.fetchall()
 
+        # Strict P1 Validation: Setiap tabel tenant-scoped WAJIB memiliki minimal 1 policy.
+        # Tabel tanpa policy (0 policies) WAJIB menghasilkan status FAIL (FAIL-CLOSED).
+        if len(policies) == 0:
+            has_failures = True
+            msg = f"Tabel tenant-scoped public.\"{tbl}\" TIDAK MEMILIKI POLICY (0 policies defined)! FAIL-CLOSED: wajib memiliki minimal 1 policy isolasi tenant."
+            failure_reasons.append(msg)
+            print(f"    [-] CRITICAL FLAW: {msg}")
+            continue
+
         has_tenant_policy = any(
             ("tenant_id" in str(p[4] or "").lower() or "tenant_id" in str(p[5] or "").lower()
              or "tenant_slug" in str(p[4] or "").lower() or "tenant_slug" in str(p[5] or "").lower()
              or "app.current_tenant_id" in str(p[4] or "").lower() or "app.current_tenant_id" in str(p[5] or "").lower()
-             or tbl in ("tenants", "cart_items"))
+             or (tbl in TENANT_POLICY_EXCEPTION_WHITELIST))
             for p in policies
         )
 
@@ -274,7 +289,7 @@ def audit_and_enforce_rls(verify_only: bool = False) -> bool:
                 violating_policies.append((pol_name, qual, with_check, roles_str))
 
         has_permissive_true = len(violating_policies) > 0
-        checks_passed = rls_enabled and force_rls and (has_tenant_policy or len(policies) == 0) and not has_permissive_true
+        checks_passed = rls_enabled and force_rls and has_tenant_policy and not has_permissive_true
 
         if checks_passed:
             print(f"    [OK] public.{tbl:<30} | RLS: {rls_enabled} | FORCE: {force_rls} | Policies: {len(policies)} (ISOLATED)")
@@ -283,7 +298,7 @@ def audit_and_enforce_rls(verify_only: bool = False) -> bool:
             details = []
             if not rls_enabled: details.append("RLS disabled")
             if not force_rls: details.append("FORCE RLS disabled")
-            if not has_tenant_policy and len(policies) > 0: details.append("No tenant_id isolation policy")
+            if not has_tenant_policy: details.append("No valid tenant isolation policy")
             if has_permissive_true:
                 pol_details = "; ".join([f"{v[0]} (roles={v[3]}, qual={v[1]}, wc={v[2]})" for v in violating_policies])
                 details.append(f"Dangerous USING (true)/WITH CHECK (true) policy detected: {pol_details}")
