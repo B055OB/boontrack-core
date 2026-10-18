@@ -110,10 +110,47 @@ async def get_or_create_evolution_session(tenant_slug: str = "") -> Dict[str, An
                 state = (data.get("instance", {}).get("state") or data.get("state") or "").lower()
 
                 if state == "open":
-                    owner = data.get("instance", {}).get("ownerJid") or ""
+                    owner = data.get("instance", {}).get("ownerJid") or data.get("ownerJid") or ""
                     phone_number = owner.split("@")[0] if "@" in owner else owner
+
+                    # Fallback 1: Jika ownerJid kosong dari connectionState, ambil dari /instance/fetchInstances
+                    if not phone_number:
+                        try:
+                            fetch_res = await client.get(
+                                f"{EVOLUTION_BASE_URL}/instance/fetchInstances?instanceName={instance_name}",
+                                headers=headers
+                            )
+                            if fetch_res.status_code == 200:
+                                fetch_data = fetch_res.json()
+                                items = fetch_data if isinstance(fetch_data, list) else [fetch_data]
+                                for item in items:
+                                    name = item.get("name") or (item.get("instance") or {}).get("instanceName")
+                                    if str(name).lower() == instance_name.lower():
+                                        owner_candidate = item.get("ownerJid") or (item.get("instance") or {}).get("ownerJid") or item.get("number")
+                                        if owner_candidate:
+                                            owner = str(owner_candidate)
+                                            phone_number = owner.split("@")[0] if "@" in owner else owner
+                                            break
+                        except Exception as fetch_err:
+                            logger.debug(f"[Evolution API] fetchInstances phone lookup note: {fetch_err}")
+
+                    # Fallback 2: Jika masih kosong, ambil nomor WhatsApp dari metadata tenant
+                    if not phone_number:
+                        try:
+                            from app.services.whatsapp.credentials import get_supabase
+                            sb = get_supabase()
+                            if sb:
+                                t_res = sb.table("tenants").select("metadata").or_(f"id.eq.{clean_tenant},slug.eq.{clean_tenant}").limit(1).execute()
+                                if t_res.data and len(t_res.data) > 0:
+                                    meta = t_res.data[0].get("metadata") or {}
+                                    meta_phone = meta.get("whatsapp_number") or meta.get("wa_number") or meta.get("whatsapp") or meta.get("phone")
+                                    if meta_phone:
+                                        phone_number = str(meta_phone).strip()
+                        except Exception as meta_err:
+                            logger.debug(f"[Evolution API] Fallback tenant metadata phone note: {meta_err}")
+
                     try:
-                        from app.services.whatsapp_service import get_supabase
+                        from app.services.whatsapp.credentials import get_supabase
                         sb = get_supabase()
                         if sb:
                             sb.table("whatsapp_connections").upsert({
@@ -122,27 +159,32 @@ async def get_or_create_evolution_session(tenant_slug: str = "") -> Dict[str, An
                                 "instance_name": instance_name,
                                 "provider": "EVOLUTION",
                                 "channel_type": "BAILEYS",
-                                "status": "open",
+                                "status": "CONNECTED",
+                                "ownership_domain": "TENANT",
                                 "is_connected": True,
                                 "phone_number": phone_number or None,
                                 "metadata": {
                                     "mode": "DEDICATED",
                                     "instance_name": instance_name,
                                     "tenant_slug": clean_tenant,
-                                    "provider": "EVOLUTION"
+                                    "provider": "EVOLUTION",
+                                    "phone_number": phone_number or None
                                 }
                             }, on_conflict="instance_name").execute()
                     except Exception as upsert_err:
-                        logger.debug(f"[Evolution API] Upsert whatsapp_connections open note: {upsert_err}")
+                        logger.warning(f"[Evolution API] Upsert whatsapp_connections open note: {upsert_err}")
 
                     return {
                         "success": True,
                         "status": "CONNECTED",
+                        "connected": True,
+                        "is_connected": True,
                         "provider": "EVOLUTION",
                         "mode": "DEDICATED",
                         "instance_name": instance_name,
                         "tenant_slug": clean_tenant,
                         "phone_number": phone_number or None,
+                        "connected_phone": phone_number or None,
                         "capabilities": {"qr_pairing": True, "pairing_code": True, "multi_agent": False}
                     }
                 elif state in ("close", "refused", "disconnected"):
