@@ -2430,17 +2430,22 @@ Antarmuka menu **"AI Knowledge & Bot"** (`AiKnowledgeTab.tsx`) direstrukturisasi
 
 1. **Komponen Visual Kuota Sesi (`AiSessionQuotaMeter`)**:
    - Diposisikan di bagian paling atas tab untuk visibilitas langsung sisa kuota bulanan.
-   - Menyajikan bilah progres visual: Sisa Kuota Sesi (150 Solo, 300 Pro Scale, 600 Team Scale) + Tambahan Overage.
+   - Mengambil nilai kanonikal SSOT dari context tenant aktif:
+     * *ENTERPRISE / TEAM_SCALE*: Kuota Bulanan 600 Sesi, Mode: Active AI.
+     * *PRO_SCALE / ADS_PERFORMANCE*: Kuota Bulanan 300 Sesi.
+     * *STARTER / SOLO*: Kuota Bulanan 0 Sesi (Fallback Assistant Mode).
+   - Menghilangkan fallback hardcode 'STARTER' saat data subscription belum ter-cache dan menghilangkan badge 'Fallback Assistant Mode' jika tenant berada pada tier Team Scale dengan kuota tersedia.
+   - Menyajikan bilah progres visual: Sisa Kuota Sesi + Tambahan Overage/Top-Up.
    - Indikator visual dinamis:
      * *Healthy* (>20%): Bilah hijau emerald.
-     * *Low Warning* (â‰¤20%): Bilah oranye amber dengan tanda peringatan kuota menipis.
-     * *Depleted* (0): Bilah rose merah dengan status **Fallback Assistant Mode (Menu Statis Aktif)** yang mengamankan komunikasi agar bot tetap melayani menggunakan menu interaktif tanpa LLM.
+     * *Low Warning* (≤20%): Bilah oranye amber dengan tanda peringatan kuota menipis.
+     * *Depleted* (0): Bilah rose merah dengan status **Fallback Assistant Mode (Menu Statis Aktif)** (hanya berlaku jika kuota benar-benar habis dan bukan pada tier aktif dengan kuota tersedia).
    - Tombol CTA `+ Top-Up Kuota` membuka modal instan untuk pembelian paket +100 sesi (Rp 49.000) atau +250 sesi (Rp 99.000).
 2. **Konsolidasi 3 Tab Sederhana**:
    - **Tab 1 [Profil Bot]**:
      * Nama Asisten AI (`ai_name`).
      * Gaya Bahasa / Nada Bicara Terpadu (`tone`: casual, professional, persuasive, friendly).
-     * Salam Pembuka Otomatis (*Greeting Message*).
+     * Salam Pembuka Otomatis (*Greeting Message*) — dipusatkan secara eksklusif di sini (dicabut dari `WhatsAppTab.tsx`).
      * Instruksi Khusus Toko (*System Prompt Utama*).
    - **Tab 2 [Aturan Jual & Policy]**:
      * Mode Operasional Bot: Pilihan kartu visual **HYBRID** (AI Cerdas + Menu Cepat) vs **STATIC** (Deterministik Penuh 0-Token).
@@ -5361,4 +5366,205 @@ Kegagalan upload foto produk dengan pesan error `write EPROTO ... ssl/tls alert 
    - Seluruh handler upload (`app/api/v1/upload/route.ts`, `media_routes.py`, `ImageUpload.tsx`) wajib menangkap error level socket/koneksi (`EPROTO`, `SSL alert`, `handshake failure`, `ETIMEDOUT`) dan mengembalikan pesan ramah pengguna: *"Gagal mengunggah foto ke cloud storage karena kendala koneksi aman (TLS/SSL). Silakan refresh halaman dan coba kembali."*
    - Dilarang memuntahkan raw stack trace, EPROTO, atau path internal ke client dashboard.
 
+---
+
+## § 60. STORE RESELLER & CREATOR MONETIZATION ARCHITECTURE (SPRINT P0 CONTRACT)
+
+> **Architectural Status**: 🔒 **FROZEN & RATIFIED (FOUNDER, CTO & CFO CONSENSUS)**  
+> **Core Principle**: *"Access ≠ Payment ≠ Commission. Centralized custody is strictly restricted to in-house principal products; external tenants remain strictly non-custodial. Attribution is immutable; ledger is append-only."*
+
+---
+
+### 60.1 Scope Boundary: In-House Principal Merchant vs Non-Custodial Tenants (§ 17 & § 45)
+Platform BoonTrack menegakkan batas yurisdiksi finansial absolut (*financial jurisdiction boundary*) guna mematuhi regulasi Penyelenggara Jasa Pembayaran (PJP) Kategori 1 Bank Indonesia (*Zero Illegal Escrow*) dan mencegah anomali omzet semu pada Direktorat Jenderal Pajak (DJP):
+
+1. **Produk In-House / Pilot Milik BoonTrack Sendiri (`OnlineBoost` / `boon`)**:
+   - PT Boontrack Inovasi Digital bertindak sebagai **Principal Merchant / Seller of Record**.
+   - Pembayaran Dynamic QRIS dialirkan 100% ke **akun Xendit operasional PT**.
+   - Hak komisi reseller dicatat sebagai biaya penjualan (*Sales Expense*) pada akun kewajiban *Reseller Fee Payable*.
+   - Payout komisi dieksekusi secara terpusat oleh divisi Finance PT Boontrack.
+   - **Kepatuhan Pajak (PKP)**: 100% Gross Merchandise Value (GMV) produk in-house dihitung sebagai omzet bruto PT Boontrack terhadap ambang batas Pengusaha Kena Pajak (PKP) sebesar Rp 4,8 Miliar.
+
+2. **Tenant Pihak Ketiga (UMKM & Merchant Eksternal)**:
+   - Tunduk mutlak pada doktrin **Non-Custodial Murni (§ 17.2 & § 45.3)**.
+   - Pembayaran pembeli langsung mendarat ke rekening/QRIS merchant melalui model **Bring Your Own Payment Gateway (BYO-PG)** atau *Xendit XenPlatform Split Payment* berlisensi.
+   - Rekening operasional PT Boontrack **DILARANG KERAS** menampung, mengendapkan, atau menjadi perantara penarikan dana pihak ketiga (*Zero Fund Holding / Zero Illegal Escrow*).
+   - Platform BoonTrack murni bertindak sebagai **Pencatat Buku Besar Atribusi (Accounting Ledger)** dan wasit ekosistem; tanggung jawab pencairan komisi berada 100% pada masing-masing merchant.
+
+---
+
+### 60.2 Three-Layer Attribution Architecture (Anti-Bypass & Deterministic Snapshot)
+Mencegah kecurangan atribusi (*cookie deletion*, *link tampering*, dan pembajakan prospek oleh toko) melalui 3 lapisan pengaman:
+
+```
+[ Layer 1: Client Signal ]  --> ?r=KODE_RESELLER (localStorage TTL 30 Hari + Cookie Fallback)
+│
+[ Layer 2: Identity Lock ]  --> customer_attribution_locks (Tenant-wide, 90 Hari, Phone E.164)
+│
+[ Layer 3: Order Snapshot ] --> orders.reseller_user_id & reseller_code_snapshot (FROZEN AT CHECKOUT)
+```
+
+1. **Layer 1: Click Attribution (`?r=KODE_RESELLER`)**:
+   - Query parameter `?r=` ditangkap di sisi klien dan disimpan persisten di `localStorage` dengan skema JSON penanda kedaluwarsa 30 hari:
+     `{ "code": "KODE", "expires_at": Date.now() + (30 * 86400 * 1000) }`
+   - Dilengkapi *fallback* cookie *first-party*: `bt_reseller_code=KODE; path=/; max-age=2592000; SameSite=Lax`.
+   - Script klien secara otomatis menyuntikkan atribut `data-bt-reseller="KODE"` ke seluruh tombol pemicu *checkout drawer* (`[data-bt-checkout]`, `a[href="#checkout"]`).
+2. **Layer 2: Customer Attribution Lock (`customer_attribution_locks`)**:
+   - Saat pembeli menginput nomor WhatsApp (format E.164), sistem mengunci relasi pembeli dengan reseller selama **90 hari**:
+     `UNIQUE(tenant_id, customer_phone_e164)`
+   - **Tenant-Wide Anti-Bypass**: Penguncian berlaku di level toko secara menyeluruh. Sekalipun merchant merilis SKU baru atau katalog tiruan, transaksi ulang dari nomor telepon yang sama dalam 90 hari tetap mengalirkan komisi ke reseller awal.
+3. **Layer 3: Order Transaction Snapshot**:
+   - Pada saat formulir checkout disubmit, identitas reseller dibekukan secara permanen ke tabel `orders`:
+     * `orders.reseller_user_id UUID REFERENCES auth.users(id)`
+     * `orders.reseller_code_snapshot VARCHAR(50)`
+     * `orders.reseller_commission_amount NUMERIC(12, 2)`
+     * `orders.attribution_type VARCHAR(20)` (`'DIRECT_CLICK'` | `'ATTRIBUTION_LOCK'` | `'NONE'`)
+   - Begitu order terbentuk, manipulasi cookie atau pergantian link oleh pembeli di detik terakhir tidak akan mengubah *snapshot* transaksi.
+
+---
+
+### 60.3 Immutable Commission Ledger & Dual-Bucket Balance
+Platform melarang penyimpanan saldo komisi dalam bentuk kolom angka statis (`wallet_balance = x`) yang rentan *race condition* dan manipulasi kueri `UPDATE`. Saldo adalah proyeksi dinamis dari buku besar transaksi *append-only*:
+
+1. **Tabel `reseller_commission_ledger`**:
+   - `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
+   - `tenant_id UUID NOT NULL REFERENCES tenants(id)`
+   - `reseller_user_id UUID NOT NULL REFERENCES auth.users(id)`
+   - `order_id UUID REFERENCES orders(id)`
+   - `entry_type VARCHAR(20) NOT NULL` CHECK (`entry_type` IN ('EARNED', 'REVERSAL', 'PAYOUT', 'ADJUSTMENT'))
+   - `amount NUMERIC(12, 2) NOT NULL` (Positif untuk penambahan komisi; Negatif untuk penarikan/reversal)
+   - `status VARCHAR(20) NOT NULL` CHECK (`status` IN ('PENDING_CLEARANCE', 'AVAILABLE', 'PAID', 'CANCELLED'))
+   - `available_at TIMESTAMPTZ NOT NULL`
+   - `idempotency_key VARCHAR(100) NOT NULL`
+   - `created_at TIMESTAMPTZ DEFAULT NOW()`
+   - `CONSTRAINT uq_reseller_ledger_idemp UNIQUE (tenant_id, idempotency_key)`
+
+2. **Dual-Bucket Balance Lifecycle**:
+   - **`PENDING_CLEARANCE` (`unsettled_balance`)**: Komisi dari transaksi yang baru berstatus `PAID`. Dana ditahan selama masa *buffer* anti-fraud & anti-dispute (**7 Hari Penuh / 168 Jam kalender sejak status settled di Xendit**).
+   - **`AVAILABLE` (`withdrawable_balance`)**: Saldo sah yang telah melewati masa *holding* 7 hari (`NOW() >= available_at`) dan dana telah *settled* penuh di rekening bank.
+
+---
+
+### 60.4 Financial Clearing & Payout Parameters (Baku)
+
+| Parameter Finansial | Keputusan Baku (Locked) | Dasar Regulasi & Efisiensi |
+| :--- | :--- | :--- |
+| **Batas Minimal Penarikan** | **Rp 100.000 (Netto)** | Satu penjualan OnlineBoost (Rp 124.500) langsung melewati batas. Menekan rasio biaya transfer bank Xendit ke $\le 2,7\%$. |
+| **Beban Biaya Transfer & Pajak** | **100% Ditanggung Mitra** | Dipotong langsung dari nominal penarikan: Biaya admin Xendit (Rp 2.775) + pemotongan PPh 21 resmi sesuai NIK/NPWP. Kas PT haram mensubsidi biaya transfer bank mitra. |
+| **Masa Tahan (Holding Period)** | **7 Hari sejak Settled** | Mengikuti jendela refund QRIS 7 hari perbankan nasional dan mitigasi sengketa/komplain pembeli awal. |
+| **Jadwal Batch Payout** | **Selasa pukul 14.00 WIB** | Cut-off pengajuan: Minggu 23:59 WIB. Hari Senin digunakan finance untuk rekonsiliasi bersih dan menghindari *weekend float* (dana Jumat–Minggu belum cair). |
+| **Rate Limiter Penarikan** | **1x Seminggu (Batch Cycle)** | Siklus batch mingguan otomatis bertindak sebagai *rate limiter* alami tanpa perlu menumpuk aturan *cooldown* terpisah. |
+| **Proteksi Konkurensi** | **PostgreSQL Row-Locking** | Endpoint penarikan wajib menggunakan `SELECT ... FOR UPDATE` dengan `Idempotency-Key` unik guna mencegah eksploitasi klik ganda (*race condition attack*). |
+| **Prasyarat KYC Finansial** | **16 Digit NIK/NPWP Wajib** | Tombol penarikan digembok (*disabled*) sampai reseller memvalidasi nama rekening (wajib sama dengan profil terdaftar) dan 16 digit NIK/NPWP untuk dasar bukti potong pajak. |
+| **Cadangan Kas Minimum** | **Internal Cash Reserve** | Kas operasional internal PT Boontrack wajib dijaga minimal sama dengan total kewajiban *Reseller Fee Payable*. |
+
+---
+
+### 60.5 Skema Komisi Single-Tier Murni (Anti-Piramida / Anti-MLM)
+1. **Direct Sale Only (1 Tingkat)**: Komisi hanya dibayarkan kepada mitra yang tautan rujukannya secara langsung menghasilkan penjualan (*direct closing*).
+2. **Larangan Skema Berjenjang**: Sistem mengharamkan struktur multi-tier, bonus rekrutmen member (*referral-of-referral*), atau skema piramida guna menjaga legalitas regulasi Kemendag/OJK, memangkas sengketa antar-mitra, dan menjaga kesederhanaan akuntansi *double-entry*.
+3. **Pencegahan Self-Referral**: Sistem memblokir alokasi komisi secara otomatis jika nomor WhatsApp atau email pembeli identik dengan data akun reseller bersangkutan.
+
+---
+
+### 60.6 Perlindungan Privasi UU PDP No. 27/2022 & Anti-Bypass Toko
+1. **100% Hard-Masking PII di Portal Reseller**:
+   - Pada rekap data prospek di CRM Reseller (`creator.boontrack.com/admin`), data pribadi calon pembeli milik tenant **WAJIB disensor permanen**:
+     * Nama: `Budi S****`
+     * Nomor WhatsApp: `0812****7890`
+   - Dilarang menampilkan nomor kontak lengkap tanpa persetujuan eksplisit pembeli (Pasal 20 UU PDP).
+2. **Penutupan Celah Bypass Transaksi**:
+   - Sensor kontak mencegah oknum reseller nakal menghubungi calon pembeli di tahap *pending checkout* untuk mengalihkan pembayaran ke rekening pribadi di luar QRIS resmi PT Boontrack.
+
+---
+
+### 60.7 Tata Kelola Kemitraan Tenant Pihak Ketiga (Ecosystem Governance)
+1. **Scoped Kill-Switch (Sanksi Wanprestasi Tenant)**:
+   - Jika tenant pihak ketiga mangkir membayar komisi reseller melewati batas SLA (H+2 dari jadwal payout), sistem mengaktifkan status penegakan bertingkat:
+     $$\text{ACTIVE} \longrightarrow \text{PAYMENT\_DUE} \longrightarrow \text{OVERDUE} \longrightarrow \text{FROZEN} \longrightarrow \text{REINSTATED}$$
+   - Pada status `FROZEN`, katalog kemitraan toko dibekukan dan seluruh produk dicabut dari portal Creator publik. Penjualan langsung reguler toko fisik tetap berjalan agar arus kas toko tidak mati total, namun hak distribusi kemitraan terkunci hingga seluruh kewajiban komisi diselesaikan.
+2. **Vision OCR Struk Transfer Sebagai Bukti Sementara (*Provisional Evidence*)**:
+   - Pembacaan OCR struk transfer hanya menghasilkan status *intermediate*: `EVIDENCE_MATCHED` atau `AWAITING_REVIEW`.
+   - OCR **BUKAN** otoritas finansial mutlak (menutup risiko struk palsu hasil generator/Canva). Otoritas mutlak tetap berada pada webhook mutasi bank atau persetujuan manual bertanda tangan operator toko.
+3. **1-Click Corporate Banking CSV Export**:
+   - Dashboard tenant menyediakan generator ekspor batch transfer sesuai format internet banking korporat (KlikBCA Bisnis, Mandiri Cash Management / MCM, dan BRI CMS) agar toko dapat mencairkan komisi puluhan reseller secara serentak dalam 1 berkas.
+
+---
+
+### 60.8 Penempatan Portal di `creator.boontrack.com`
+1. **Mesin Pertumbuhan Backlink Organik (SEO Growth Loop)**: Domain `creator.boontrack.com` bersifat publik dan gratis (`/@handle`). Setiap bio-link yang disebarkan reseller menciptakan ribuan backlink berkualitas menuju domain induk `boontrack.com`.
+2. **Inklusi Finansial Modal Rp0**: Mitra pemasar yang merintis dari nol tidak dibebani biaya langganan SaaS di muka untuk mulai berjualan.
+3. **Zero Infrastructure Overhead**: Modul kemitraan terintegrasi sebagai Tab baru di rute terautentikasi yang sudah ada: `creator.boontrack.com/admin` (tanpa menambah domain baru `reseller.boontrack.com` dan tanpa fragmentasi tabel `auth.users`).
+
+---
+
+## § 61. IN-HOUSE FLAGSHIP PILOT: ONLINEBOOST CAMPAIGN & PROPRIETARY TENANT ARCHITECTURE
+
+> **Architectural Status**: 🔒 **ACTIVE PRODUCTION CONTRACT (ONLINEBOOST BATCH 1)**  
+> **Core Principle**: *"OnlineBoost is not a third-party tenant. OnlineBoost is a proprietary flagship extension and first-party incubation product of PT Boontrack Inovasi Digital."*
+
+### 61.1 Status Hukum & Pengecualian Non-Custodial Terverifikasi
+*Engineer baru wajib memahami status istimewa tenant `onlineboost`*:
+1. **Perpanjangan Resmi Perusahaan (Proprietary Business Unit)**:
+   - Tenant dengan slug `onlineboost` dimiliki dan dioperasikan 100% oleh PT Boontrack Inovasi Digital sebagai produk inkubasi edukasi kelas periklanan (*Click-to-WhatsApp Mastery*).
+2. **Pengecualian Legal Doktrin Non-Custodial**:
+   - Penampungan dana pembayaran Dynamic QRIS Rp 249.000 ke **akun Xendit operasional PT Boontrack Inovasi Digital adalah SAH dan BUKAN pelanggaran PJP / Illegal Escrow**.
+   - PT Boontrack bertindak sebagai penjual resmi (*Principal Merchant / Seller of Record*). Seluruh penerimaan dana adalah hak omzet PT, dan pembagian komisi reseller 50% (Rp 124.500) adalah biaya komersial internal perusahaan.
+   - Pengecualian ini **TIDAK BERLAKU** untuk tenant UMKM pihak ketiga umum (§ 17 & § 45).
+
+---
+
+### 61.2 Frontend Engine: Section #10 Full Custom HTML & Native Drawer Binding
+Halaman penawaran OnlineBoost menggunakan mode **Section #10: Full Custom HTML** untuk kebebasan visual total tanpa merusak tata letak default platform:
+1. **DOM Checkout Binding Contract**:
+   Seluruh tombol Call-to-Action (CTA) di landing page Custom HTML wajib menyertakan atribut DOM berikut:
+   ```html
+   <a 
+     href="#checkout" 
+     data-bt-checkout 
+     data-bt-tenant="onlineboost" 
+     data-bt-sku="LP-CTWA-BOT-01"
+     class="btn-cta"
+   >
+     Daftar Kelas OnlineBoost Sekarang
+   </a>
+   ```
+2. **Helper Drawer Checkout Native**:
+   - Helper drawer checkout native BoonTrack menangkap klik pada elemen `[data-bt-checkout]`.
+   - Mengambil nilai atribusi `data-bt-reseller` dari `localStorage` / cookie untuk mengikat komisi ke reseller bersangkutan sebelum invoice QRIS diterbitkan.
+
+---
+
+### 61.3 Mesin Kasir & Idempotensi Webhook Xendit (Gerbang 1 & 2)
+1. **Dynamic QRIS Rp 249.000**:
+   - Menghasilkan QRIS dinamis Xendit dengan latency render gambar PNG < 2 detik.
+   - Menggunakan pencarian instan data alumni CPM (`staging_alumni_cpm`) berdasarkan nomor WhatsApp E.164 (`628...`) untuk memotong alur pengetikan (*Zero-Typing Lookup*).
+2. **Idempotensi Webhook (Redis Lock SETNX)**:
+   - Endpoint `POST /api/webhooks/xendit/paid` menerapkan kuncian terdistribusi:
+     `SETNX idemp:xendit:payment:{payment_id} IN_PROGRESS (TTL 60s)`
+   - Handler merespons HTTP 200 OK dalam waktu < 150ms dan mendelegasikan tugas berat ke background worker.
+
+---
+
+### 61.4 Auto-Fulfillment & Auto-Provisioning SaaS (Gerbang 3)
+Saat notifikasi pembayaran Rp 249.000 terverifikasi lunas:
+1. **Single-Use Invite Link Supergroup Telegram**:
+   - Worker memanggil Telegram Bot API `createChatInviteLink` (`member_limit=1`, `expire_date = NOW() + 24h`) untuk supergroup `-1004371114362`.
+   - Tautan undangan dikirimkan secara otomatis ke WhatsApp peserta beserta kredensial login.
+   - **Command Penyelamat**: Jika peserta belum bergabung (`telegram_joined_at IS NULL`), perintah WhatsApp "LINK BARU" akan membatalkan link lama dan menerbitkan link baru.
+2. **Auto-Provisioning Akun SaaS & Alokasi Kuota Enterprise**:
+   - Akun toko peserta otomatis dibuat dan diberikan hak akses tier **ENTERPRISE** (kuota 600 sesi percakapan AI per bulan kalender).
+   - Akses WABA dan multi-seat CS langsung aktif untuk menunjang praktik kurikulum inkubasi.
+3. **1-Click Starter Product Import**:
+   - Endpoint `POST /api/store/import-starter-product` menyuntikkan katalog produk pancingan (foto 1:1, deskripsi penawaran, dan pengaturan harga) ke etalase peserta tanpa kendala CORS.
+
+---
+
+### 61.5 Lifecycle Radar CAPI & Automated Flexing (Gerbang 4)
+1. **Sandbox Simulasi Misi 6**:
+   - Parameter `is_sandbox_test = true` menguji coba alur konversi Meta CAPI (`test_event_code`) dan balasan bot WhatsApp tanpa memotong kuota sesi AI utama toko peserta.
+2. **Fast Metadata Injection Video 9-Scene (Cloudflare R2)**:
+   - Eksekusi FFmpeg `ffmpeg -i input.mp4 -c copy -metadata comment="..."` menghasilkan MD5 unik dalam kurun waktu < 3 detik tanpa merusak kualitas video kreatif.
+3. **Automated Flexing Alert**:
+   - Saat toko peserta inkubasi berhasil memecahkan rekor transaksi pertama (*pecah telur*), bot `@boonshop_bot` secara otomatis memancarkan kartu selebrasi ke supergroup Telegram pada topik `#General-Lounge` dan `#Fase1`.
 
