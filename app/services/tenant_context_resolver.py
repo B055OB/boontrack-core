@@ -38,7 +38,9 @@ def get_supabase():
             or ""
         ).strip()
         key = (
-            os.getenv("SUPABASE_ANON_KEY")
+            os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            or os.getenv("SUPABASE_SERVICE_KEY")
+            or os.getenv("SUPABASE_ANON_KEY")
             or os.getenv("SUPABASE_KEY")
             or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
             or ""
