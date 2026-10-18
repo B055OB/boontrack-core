@@ -197,6 +197,10 @@ async def dispatch_seller_event(
     if not effective_chat_id:
         effective_chat_id = _DEFAULT_SELLER_CHAT_ID
 
+    if not bot_token:
+        if str(tenant_ref or "").lower() == "onlineboost" or str(order_data.get("tenant_slug") or "").lower() == "onlineboost":
+            bot_token = os.getenv("TELEGRAM_ONLINEBOOST_BOT_TOKEN", "8788492843:AAHV-VPCA7BSq0HlH5wPLLdsqFUGRH-e0Ek").strip()
+
     tenant_name = (
         order_data.get("tenant_name")
         or order_data.get("store_name")

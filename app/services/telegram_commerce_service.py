@@ -36,7 +36,7 @@ _WAKE_WORDS = ["boon", "@boon", f"@{_BOT_USERNAME.lower()}", "@boonshop_bot", "@
 
 
 def _get_supabase_headers() -> Optional[Dict[str, str]]:
-    sb_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY")
+    sb_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY")
     if not sb_key:
         return None
     return {
@@ -296,6 +296,137 @@ def link_tenant_telegram(
     }
 
 
+def link_creator_telegram(
+    creator_ref: str,
+    chat_id: Union[int, str],
+    from_user: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Menghubungkan creatorId atau handle ke telegram_chat_id di tabel creator_profiles Supabase.
+    Deep link pairing: https://t.me/booncreator_bot?start=auth_${creatorId}
+    """
+    clean_ref = str(creator_ref).strip()
+    if not clean_ref:
+        return {
+            "success": False,
+            "message": "❌ *Parameter otentikasi kreator tidak valid.*\nFormat yang benar: `/start auth_<creator_id>`",
+        }
+
+    sb_url = _get_supabase_url()
+    headers = _get_supabase_headers()
+    if not headers:
+        logger.error("[TELEGRAM COMMERCE] Supabase credentials not found in env.")
+        return {
+            "success": False,
+            "message": "⚠️ Terjadi kendala konfigurasi server saat menghubungkan kreator. Hubungi admin.",
+        }
+
+    chat_id_str = str(chat_id).strip()
+
+    is_uuid = False
+    try:
+        uuid.UUID(clean_ref)
+        is_uuid = True
+    except (ValueError, TypeError, AttributeError):
+        is_uuid = False
+
+    creator_record = None
+    try:
+        with httpx.Client(timeout=6.0) as client:
+            if is_uuid:
+                params = {
+                    "or": f"(id.eq.{clean_ref},tenant_id.eq.{clean_ref})",
+                    "select": "id,handle,display_name,tenant_id,telegram_chat_id",
+                    "limit": "1",
+                }
+            else:
+                params = {
+                    "handle": f"eq.{clean_ref.lower().replace('@', '')}",
+                    "select": "id,handle,display_name,tenant_id,telegram_chat_id",
+                    "limit": "1",
+                }
+
+            res = client.get(f"{sb_url}/rest/v1/creator_profiles", headers=headers, params=params)
+            if res.status_code == 200:
+                data = res.json()
+                if data and len(data) > 0:
+                    creator_record = data[0]
+
+            if not creator_record and not is_uuid:
+                fallback_params = {
+                    "id": f"eq.{clean_ref}",
+                    "select": "id,handle,display_name,tenant_id,telegram_chat_id",
+                    "limit": "1",
+                }
+                res_fb = client.get(f"{sb_url}/rest/v1/creator_profiles", headers=headers, params=fallback_params)
+                if res_fb.status_code == 200 and res_fb.json():
+                    creator_record = res_fb.json()[0]
+
+    except Exception as e:
+        logger.error(f"[TELEGRAM COMMERCE] Error querying creator_profiles '{clean_ref}': {e}")
+        return {
+            "success": False,
+            "message": f"⚠️ Gagal menghubungkan profil kreator karena gangguan koneksi database: {e}",
+        }
+
+    if not creator_record:
+        logger.warning(f"[TELEGRAM COMMERCE] Creator profile not found for ref: '{clean_ref}'")
+        return {
+            "success": False,
+            "message": (
+                f"❌ *Profil Kreator Tidak Ditemukan*\n\n"
+                f"Rujukan kreator (`{clean_ref}`) belum terdaftar di platform BoonTrack Bio Link.\n"
+                "Silakan periksa kembali tautan integrasi di Dashboard Kreator Anda."
+            ),
+        }
+
+    cid = creator_record["id"]
+    creator_name = creator_record.get("display_name") or creator_record.get("handle") or "Kreator"
+    handle = creator_record.get("handle") or "kreator"
+
+    # Simpan telegram_chat_id ke tabel creator_profiles
+    try:
+        with httpx.Client(timeout=6.0) as client:
+            patch_headers = dict(headers)
+            patch_headers["Prefer"] = "return=representation"
+            update_payload = {
+                "telegram_chat_id": chat_id_str,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            update_res = client.patch(
+                f"{sb_url}/rest/v1/creator_profiles?id=eq.{cid}",
+                headers=patch_headers,
+                json=update_payload,
+            )
+            if update_res.status_code not in (200, 204):
+                logger.error(f"[TELEGRAM COMMERCE] Failed to update creator telegram_chat_id: {update_res.text}")
+                return {
+                    "success": False,
+                    "message": "⚠️ Gagal memperbarui sambungan Telegram ke database profil kreator.",
+                }
+    except Exception as update_err:
+        logger.error(f"[TELEGRAM COMMERCE] Exception updating creator telegram_chat_id: {update_err}")
+        return {
+            "success": False,
+            "message": f"⚠️ Terjadi kesalahan saat menyimpan sambungan: {update_err}",
+        }
+
+    logger.info(f"[TELEGRAM COMMERCE] Creator '{handle}' ({cid}) successfully linked to telegram chat {chat_id_str}")
+
+    return {
+        "success": True,
+        "message": (
+            f"🎉 *Akun Kreator Berhasil Terhubung!*\n\n"
+            f"Halo *{creator_name}* (@{handle}), akun Telegram ini telah tersambung resmi ke profil Bio Link BoonTrack Anda via @booncreator_bot.\n\n"
+            f"🔔 *Notifikasi Aktif:*\n"
+            f"• Notifikasi traktir tip / donasi QRIS instan\n"
+            f"• Notifikasi komisi reseller & affiliate\n"
+            f"• Laporan transaksi kartu bio\n\n"
+            f"_Chat ID: `{chat_id_str}`_"
+        ),
+    }
+
+
 def format_id_reply(
     chat_id: Union[int, str],
     user_id: Union[int, str],
@@ -439,8 +570,17 @@ async def process_telegram_incoming(
 
     # 1. Handler Command: /start
     if cmd == "/start":
+        # Cek apakah ada parameter creator deep link: /start auth_<creator_id>
+        if len(parts) > 1 and parts[1].startswith("auth_"):
+            creator_ref = parts[1][5:].strip()
+            link_res = link_creator_telegram(
+                creator_ref=creator_ref,
+                chat_id=chat_id,
+                from_user={"id": user_id, "first_name": user_name},
+            )
+            return link_res["message"]
         # Cek apakah ada parameter deep link: /start link_<tenant_id>
-        if len(parts) > 1 and parts[1].startswith("link_"):
+        elif len(parts) > 1 and parts[1].startswith("link_"):
             tenant_ref = parts[1][5:].strip()
             link_res = link_tenant_telegram(
                 tenant_ref=tenant_ref,

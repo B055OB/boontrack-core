@@ -88,6 +88,40 @@ async def send_telegram_message(
         return None
 
 
+async def send_onlineboost_message(
+    chat_id: Union[int, str],
+    text: str,
+    reply_markup: Optional[Dict[str, Any]] = None,
+    parse_mode: str = "Markdown"
+) -> Optional[Dict[str, Any]]:
+    """Mengirim pesan via bot resmi OnlineBoost (@onlineboostbot)."""
+    token = os.getenv("TELEGRAM_ONLINEBOOST_BOT_TOKEN", "8788492843:AAHV-VPCA7BSq0HlH5wPLLdsqFUGRH-e0Ek").strip()
+    return await send_telegram_message(
+        bot_token=token,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=reply_markup,
+        parse_mode=parse_mode
+    )
+
+
+async def send_creator_message(
+    chat_id: Union[int, str],
+    text: str,
+    reply_markup: Optional[Dict[str, Any]] = None,
+    parse_mode: str = "Markdown"
+) -> Optional[Dict[str, Any]]:
+    """Mengirim pesan via bot resmi Creator Boontrack (@booncreator_bot)."""
+    token = os.getenv("TELEGRAM_CREATOR_BOT_TOKEN", "8868732988:AAFVOYtibyof2YlAyvhix-cwVSJC9mAH4SQ").strip()
+    return await send_telegram_message(
+        bot_token=token,
+        chat_id=chat_id,
+        text=text,
+        reply_markup=reply_markup,
+        parse_mode=parse_mode
+    )
+
+
 async def send_telegram_buttons(
     bot_token: str,
     chat_id: Union[int, str],
