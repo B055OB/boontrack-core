@@ -69,6 +69,14 @@ class Settings:
     @property
     def BOT_TOKEN(self) -> Optional[str]:
         return os.getenv("TELEGRAM_BOT_TOKEN")
+
+    @property
+    def TELEGRAM_ONLINEBOOST_BOT_TOKEN(self) -> str:
+        return os.getenv("TELEGRAM_ONLINEBOOST_BOT_TOKEN", "8788492843:AAHV-VPCA7BSq0HlH5wPLLdsqFUGRH-e0Ek")
+
+    @property
+    def TELEGRAM_CREATOR_BOT_TOKEN(self) -> str:
+        return os.getenv("TELEGRAM_CREATOR_BOT_TOKEN", "8868732988:AAFVOYtibyof2YlAyvhix-cwVSJC9mAH4SQ")
     
     # QRIS & Promo Configuration
     @property
