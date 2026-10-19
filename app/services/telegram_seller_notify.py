@@ -199,7 +199,12 @@ async def dispatch_seller_event(
 
     if not bot_token:
         if str(tenant_ref or "").lower() == "onlineboost" or str(order_data.get("tenant_slug") or "").lower() == "onlineboost":
-            bot_token = os.getenv("TELEGRAM_ONLINEBOOST_BOT_TOKEN", "8788492843:AAHV-VPCA7BSq0HlH5wPLLdsqFUGRH-e0Ek").strip()
+            try:
+                from app.core.channels.telegram import get_dynamic_telegram_bot_token
+                bot_token = get_dynamic_telegram_bot_token(bot_username="onlineboostbot")
+            except Exception as e:
+                logger.error(f"[TELEGRAM NOTIFY] Failed to resolve OnlineBoost bot token dynamically: {e}")
+                bot_token = os.getenv("TELEGRAM_ONLINEBOOST_BOT_TOKEN")
 
     tenant_name = (
         order_data.get("tenant_name")
