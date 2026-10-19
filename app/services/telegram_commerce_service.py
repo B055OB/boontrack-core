@@ -506,6 +506,34 @@ def format_general_reply(user_name: str) -> str:
         "• Ketik `/id` untuk melihat Chat ID\n"
         "• Ketik `/help` untuk panduan integrasi"
     )
+def resolve_commerce_bot_token(
+    bot_token: Optional[str] = None,
+    tenant_ref: Optional[str] = None,
+) -> str:
+    """
+    Menentukan bot token untuk Commerce Engine secara dinamis:
+    1. Parameter eksplisit bot_token (jika diberikan).
+    2. Bot token spesifik tenant via get_dynamic_telegram_bot_token(tenant_ref=tenant_ref).
+    3. Default bot platform: get_dynamic_telegram_bot_token(bot_username="boonshop_bot").
+    4. Fallback fail-safe: os.getenv("TELEGRAM_BOT_TOKEN").
+    """
+    if bot_token and str(bot_token).strip():
+        return str(bot_token).strip()
+
+    try:
+        from app.core.channels.telegram import get_dynamic_telegram_bot_token
+        if tenant_ref and str(tenant_ref).strip():
+            try:
+                return get_dynamic_telegram_bot_token(tenant_ref=str(tenant_ref).strip())
+            except Exception:
+                pass
+        return get_dynamic_telegram_bot_token(bot_username="boonshop_bot")
+    except Exception:
+        pass
+
+    return (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+
+
 async def send_telegram_reply(
     chat_id: Union[int, str],
     text: str,
@@ -515,7 +543,7 @@ async def send_telegram_reply(
     """
     Mengirim pesan balasan ke chat Telegram via Telegram Bot API HTTP POST.
     """
-    token = bot_token or _BOT_TOKEN
+    token = resolve_commerce_bot_token(bot_token=bot_token)
     if not token:
         logger.error("[TELEGRAM COMMERCE] Bot token not provided or missing from env.")
         return False

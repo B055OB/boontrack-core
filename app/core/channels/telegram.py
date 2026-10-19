@@ -29,7 +29,8 @@ _BOT_CACHE_TTL_SEC: float = 60.0
 
 def get_dynamic_telegram_bot_token(
     bot_username: Optional[str] = None,
-    tenant_id: Optional[str] = None
+    tenant_id: Optional[str] = None,
+    tenant_ref: Optional[str] = None,
 ) -> str:
     """
     Mengambil bot_token secara dinamis dari tabel public.tenant_telegram_bots via Supabase Service Client.
@@ -37,12 +38,13 @@ def get_dynamic_telegram_bot_token(
     - Jika bot tidak ditemukan di database atau is_active == False, lempar TelegramBotResolutionError eksplisit.
     - Tidak pernah menggunakan default credentials / hardcoded fallback.
     """
-    if not bot_username and not tenant_id:
+    effective_tenant = (tenant_id or tenant_ref or "").strip()
+    if not bot_username and not effective_tenant:
         raise TelegramBotResolutionError(
-            "[Fail-Closed] Either bot_username or tenant_id must be provided to resolve Telegram bot token."
+            "[Fail-Closed] Either bot_username or tenant_id/tenant_ref must be provided to resolve Telegram bot token."
         )
 
-    cache_key = (bot_username or tenant_id or "").strip().lower().lstrip("@")
+    cache_key = (bot_username or effective_tenant).strip().lower().lstrip("@")
     now = time.time()
     if cache_key in _BOT_TOKEN_CACHE:
         token, expires_at = _BOT_TOKEN_CACHE[cache_key]
@@ -63,48 +65,104 @@ def get_dynamic_telegram_bot_token(
             "Authorization": f"Bearer {sb_key}",
             "Content-Type": "application/json",
         }
-        params = {"is_active": "eq.true", "select": "id,tenant_id,bot_username,bot_token,is_active", "limit": "1"}
-        if bot_username:
-            params["bot_username"] = f"eq.{cache_key}"
-        elif tenant_id:
-            params["tenant_id"] = f"eq.{tenant_id.strip()}"
 
         try:
             with httpx.Client(timeout=6.0) as client:
-                res = client.get(f"{sb_url.rstrip('/')}/rest/v1/tenant_telegram_bots", headers=headers, params=params)
-                if res.status_code == 200 and res.json():
-                    row = res.json()[0]
-                    token = str(row.get("bot_token") or "").strip()
-                    if token:
-                        _BOT_TOKEN_CACHE[cache_key] = (token, now + _BOT_CACHE_TTL_SEC)
-                        return token
+                # 1. Query by bot_username
+                if bot_username:
+                    params = {"is_active": "eq.true", "select": "id,tenant_id,bot_username,bot_token,is_active", "limit": "1", "bot_username": f"eq.{cache_key}"}
+                    res = client.get(f"{sb_url.rstrip('/')}/rest/v1/tenant_telegram_bots", headers=headers, params=params)
+                    if res.status_code == 200 and res.json():
+                        token = str(res.json()[0].get("bot_token") or "").strip()
+                        if token:
+                            _BOT_TOKEN_CACHE[cache_key] = (token, now + _BOT_CACHE_TTL_SEC)
+                            return token
+
+                # 2. Query by effective_tenant (direct tenant_id)
+                if effective_tenant:
+                    params = {"is_active": "eq.true", "select": "id,tenant_id,bot_username,bot_token,is_active", "limit": "1", "tenant_id": f"eq.{effective_tenant}"}
+                    res = client.get(f"{sb_url.rstrip('/')}/rest/v1/tenant_telegram_bots", headers=headers, params=params)
+                    if res.status_code == 200 and res.json():
+                        token = str(res.json()[0].get("bot_token") or "").strip()
+                        if token:
+                            _BOT_TOKEN_CACHE[cache_key] = (token, now + _BOT_CACHE_TTL_SEC)
+                            return token
+
+                    # Try resolving slug -> tenant_id from tenants table
+                    res_t = client.get(f"{sb_url.rstrip('/')}/rest/v1/tenants", headers=headers, params={"slug": f"eq.{effective_tenant.lower()}", "select": "id", "limit": "1"})
+                    if res_t.status_code == 200 and res_t.json():
+                        matched_id = res_t.json()[0].get("id")
+                        if matched_id:
+                            params = {"is_active": "eq.true", "select": "id,tenant_id,bot_username,bot_token,is_active", "limit": "1", "tenant_id": f"eq.{matched_id}"}
+                            res = client.get(f"{sb_url.rstrip('/')}/rest/v1/tenant_telegram_bots", headers=headers, params=params)
+                            if res.status_code == 200 and res.json():
+                                token = str(res.json()[0].get("bot_token") or "").strip()
+                                if token:
+                                    _BOT_TOKEN_CACHE[cache_key] = (token, now + _BOT_CACHE_TTL_SEC)
+                                    return token
+
+                    # Try candidates by bot_username (e.g. onlineboost -> onlineboostbot)
+                    for cand in [effective_tenant.lower(), f"{effective_tenant.lower()}bot", f"{effective_tenant.lower()}_bot"]:
+                        params = {"is_active": "eq.true", "select": "id,tenant_id,bot_username,bot_token,is_active", "limit": "1", "bot_username": f"eq.{cand}"}
+                        res = client.get(f"{sb_url.rstrip('/')}/rest/v1/tenant_telegram_bots", headers=headers, params=params)
+                        if res.status_code == 200 and res.json():
+                            token = str(res.json()[0].get("bot_token") or "").strip()
+                            if token:
+                                _BOT_TOKEN_CACHE[cache_key] = (token, now + _BOT_CACHE_TTL_SEC)
+                                return token
+
         except Exception as http_err:
             raise TelegramBotResolutionError(f"[Fail-Closed] Error querying tenant_telegram_bots: {http_err}")
 
         raise TelegramBotResolutionError(
-            f"[Fail-Closed] Bot '{bot_username or tenant_id}' is not registered or is inactive in tenant_telegram_bots."
+            f"[Fail-Closed] Bot '{bot_username or effective_tenant}' is not registered or is inactive in tenant_telegram_bots."
         )
 
     try:
-        query = sb.table("tenant_telegram_bots").select("id, tenant_id, bot_username, bot_token, is_active").eq("is_active", True)
+        # Supabase client branch
         if bot_username:
-            query = query.eq("bot_username", cache_key)
-        elif tenant_id:
-            query = query.eq("tenant_id", tenant_id.strip())
+            res = sb.table("tenant_telegram_bots").select("id, tenant_id, bot_username, bot_token, is_active").eq("is_active", True).eq("bot_username", cache_key).limit(1).execute()
+            if res.data and len(res.data) > 0:
+                token = str(res.data[0].get("bot_token") or "").strip()
+                if token:
+                    _BOT_TOKEN_CACHE[cache_key] = (token, now + _BOT_CACHE_TTL_SEC)
+                    return token
 
-        res = query.limit(1).execute()
-        if res.data and len(res.data) > 0:
-            row = res.data[0]
-            token = str(row.get("bot_token") or "").strip()
-            if token:
-                _BOT_TOKEN_CACHE[cache_key] = (token, now + _BOT_CACHE_TTL_SEC)
-                return token
+        if effective_tenant:
+            res = sb.table("tenant_telegram_bots").select("id, tenant_id, bot_username, bot_token, is_active").eq("is_active", True).eq("tenant_id", effective_tenant).limit(1).execute()
+            if res.data and len(res.data) > 0:
+                token = str(res.data[0].get("bot_token") or "").strip()
+                if token:
+                    _BOT_TOKEN_CACHE[cache_key] = (token, now + _BOT_CACHE_TTL_SEC)
+                    return token
+
+            # Try slug from tenants table
+            res_t = sb.table("tenants").select("id").eq("slug", effective_tenant.lower()).limit(1).execute()
+            if res_t.data and len(res_t.data) > 0:
+                matched_id = res_t.data[0].get("id")
+                if matched_id:
+                    res = sb.table("tenant_telegram_bots").select("id, tenant_id, bot_username, bot_token, is_active").eq("is_active", True).eq("tenant_id", matched_id).limit(1).execute()
+                    if res.data and len(res.data) > 0:
+                        token = str(res.data[0].get("bot_token") or "").strip()
+                        if token:
+                            _BOT_TOKEN_CACHE[cache_key] = (token, now + _BOT_CACHE_TTL_SEC)
+                            return token
+
+            # Try candidate bot_usernames
+            for cand in [effective_tenant.lower(), f"{effective_tenant.lower()}bot", f"{effective_tenant.lower()}_bot"]:
+                res = sb.table("tenant_telegram_bots").select("id, tenant_id, bot_username, bot_token, is_active").eq("is_active", True).eq("bot_username", cand).limit(1).execute()
+                if res.data and len(res.data) > 0:
+                    token = str(res.data[0].get("bot_token") or "").strip()
+                    if token:
+                        _BOT_TOKEN_CACHE[cache_key] = (token, now + _BOT_CACHE_TTL_SEC)
+                        return token
+
     except Exception as db_err:
         logger.error(f"[TELEGRAM CHANNEL] Error resolving bot token from Supabase: {db_err}")
         raise TelegramBotResolutionError(f"[Fail-Closed] Error querying tenant_telegram_bots: {db_err}")
 
     raise TelegramBotResolutionError(
-        f"[Fail-Closed] Bot '{bot_username or tenant_id}' is not registered or is inactive in tenant_telegram_bots."
+        f"[Fail-Closed] Bot '{bot_username or effective_tenant}' is not registered or is inactive in tenant_telegram_bots."
     )
 
 
