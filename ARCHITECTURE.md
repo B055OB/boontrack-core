@@ -5066,7 +5066,7 @@ Pada saat akun Studio diverifikasi (`activateStudioRegistrationByToken`):
 
 ## § 60. EXPRESS CONVERSION FUNNEL & TELEGRAM SINGLE-USE FULFILLMENT (ADR 2026-10-12)
 
-> **Architectural Status**: 🔒 **ACTIVE & PRODUCTION-PROVEN (Campaign: OnlineBoost CTWA Batch 1)**  
+> **Architectural Status**: 🔒 **ACTIVE & TESTED (Campaign: OnlineBoost CTWA Batch 1)**  
 > **Ratification Date**: Senin, 12 Oktober 2026  
 > **Core Principle**: *"Single-price zero-friction checkout; automated single-use community access delivery."*
 
@@ -5087,19 +5087,19 @@ Pada saat akun Studio diverifikasi (`activateStudioRegistrationByToken`):
 3. **Supergroup Topics/Forum Topology**:
    - Integrasi grup forum Telegram (`-1004371114362`) ke dalam arsitektur komunitas multi-topik: `#General`, `#Rules`, `#Announcement`, dan `#Basic-Fase1`.
 
-### 60.3 Vertical Snapshot Engine Blueprint (War Room Consensus)
+### 60.3 Vertical Snapshot Engine Blueprint
 - Menetapkan kontrak deklaratif konfigurasi vertikal (*Snapshot Manifest*) berbasis schema-driven JSON (`ai_profile`, `conversation_blueprint`, `form_schema`, `notification_rules`) guna memfasilitasi replikasi tenant tanpa modifikasi *core engine*.
 
 ---
 
-## § 61. DYNAMIC TELEGRAM BOT CREDENTIALS & DATABASE SECRET MIGRATION (ADR 2026-10-14)
+## § 61. DYNAMIC TELEGRAM BOT CREDENTIALS & DATABASE SECRET RESOLUTION (ADR 2026-10-14)
 
 > **Architectural Status**: 🔒 **ACTIVE & ENFORCED**  
 > **Ratification Date**: Rabu, 14 Oktober 2026  
-> **Core Principle**: *"No bot API secrets in stateless runtime environment variables; database-backed resolution guarantees zero-downtime rotation."*
+> **Core Principle**: *"No bot API secrets in stateless runtime environment variables; strict fail-closed database resolution."*
 
 ### 61.1 Eliminasi Environment Variable untuk Bot Tokens
-1. **Pemisahan dari Env Railway & Vercel**:
+1. **Pemisahan dari Env Runtime**:
    - Token API untuk bot resmi ekosistem (`@boonshop_bot`, `onlineboostbot`, dan `@booncreator_bot`) dicabut seluruhnya dari environment variables container Railway dan Vercel.
    - Mencegah kebutuhan *redeploy* container atau pembengkakan siklus build saat terjadi pembaruan atau rotasi token via BotFather.
 2. **Tabel Penyimpanan Kredensial Dinamis (`bot_credentials` / `channel_bindings`)**:
@@ -5107,9 +5107,9 @@ Pada saat akun Studio diverifikasi (`activateStudioRegistrationByToken`):
      * `@boonshop_bot`: Notifikasi transaksi toko, order pending, dan alert lunas ke merchant/grup.
      * `onlineboostbot`: Otomasi pembuatan tautan *single-use invite link* 24 jam ke forum OnlineBoost Batch 1.
      * `@booncreator_bot`: Penanganan showcase, link-in-bio, form traktir kopi, dan notifikasi donasi kreator.
-3. **Runtime Token Resolution (Zero-Downtime Hot Reload)**:
-   - Handler webhook dan dispatcher mengambil token secara dinamis melalui service caching layer in-memory (TTL 10 menit dengan invalidasi otomatis via RPC).
-   - Rotasi token dapat dieksekusi instan melalui dashboard atau query database tanpa ada downtime layanan.
+3. **Fail-Closed Runtime Token Resolution**:
+   - Webhook handler dan dispatcher mengambil token secara dinamis melalui caching layer in-memory (TTL 10 menit dengan invalidasi otomatis via RPC).
+   - Dilarang menyediakan *silent fallback* ke environment variable statis jika token di database tidak ditemukan; kueri wajib *fail-closed* dengan mencatat security event ke log.
 
 ---
 
@@ -5153,7 +5153,7 @@ Pada saat akun Studio diverifikasi (`activateStudioRegistrationByToken`):
 
 ### 63.2 Creator Direct Tipping / Traktir Kopi (Pragmatic Static QRIS)
 1. **Static QRIS Murni (Arahan Resmi CTO)**:
-   - Mengingat ranah kreator berfokus pada kesederhanaan (*low-friction*), transaksi traktir kopi/donasi menggunakan **QRIS Statis Asli Kreator** (BCA, GoPay, DANA, dll.) tanpa modifikasi injeksi EMVCo Tag 54 dinamis. Meniadakan risiko penolakan *decoding* pada m-banking donatur.
+   - Mengingat ranah kreator berfokus pada kesederhanaan (*low-friction*), transaksi traktir kopi/donasi menggunakan **QRIS Statis Asli Kreator** (BCA, GoPay, DANA, dll.) tanpa modifikasi injeksi EMVCo Tag 54 dinamis guna meniadakan risiko kegagalan *decoding* m-banking donatur.
 2. **Form Apresiasi 3-Input**:
    - Sebelum/saat memindai QRIS, pendukung mengisi modal/formulir ringkas:
      * **Nama Pendukung**: Nama atau alias donatur.
@@ -5175,7 +5175,7 @@ Pada saat akun Studio diverifikasi (`activateStudioRegistrationByToken`):
 
 ## § 64. F&B HOME SERVICE, VILLA CATERING & REUSABLE ASSET STATE MACHINE (ADR 2026-10-19)
 
-> **Architectural Status**: 🔒 **ACTIVE & PRODUCTION-PROVEN (Pilot: Shabu Ajhi — PR #30 Merged)**  
+> **Architectural Status**: 🟡 **PILOT MVP & RUNTIME VALIDATION (Pilot: Shabu Ajhi — PR #30 & PR #35 Merged)**  
 > **Ratification Date**: Senin, 19 Oktober 2026  
 > **Core Principle**: *"Perishable food needs precise time slots; loan equipment demands closed-loop asset recovery."*
 
@@ -5195,14 +5195,14 @@ Pada saat akun Studio diverifikasi (`activateStudioRegistrationByToken`):
 ### 64.2 Reusable Equipment Lifecycle (Closed-Loop Asset Loop)
 - **Status Bebas Cuci Alat (Diambil Kotor)**: Seluruh paket katering home service meminjamkan set alat masak komplit (kompor portabel, panci sekat shabu, grill pan, centang/capitan) dengan ketentuan diambil kotor H+1 oleh kurir toko.
 - **State Machine Daur Hidup Aset**:
-  $$	ext{ORDER\_PAID} \longrightarrow 	ext{EQUIPMENT\_RESERVED} \longrightarrow 	ext{DELIVERED (H0)} \longrightarrow 	ext{AUTO\_PICKUP\_TASK (H+1)} \longrightarrow 	ext{QC\_AND\_RESTOCK}$$
-- Setiap pesanan katering yang berstatus `PAID` secara deterministik mengunci kuota unit kompor/panci di tabel inventaris dan menerbitkan tiket penjemputan alat pada rute kurir internal toko untuk keesokan harinya (H+1).
+  $$\text{ORDER\_PAID} \longrightarrow \text{EQUIPMENT\_RESERVED} \longrightarrow \text{DELIVERED (H0)} \longrightarrow \text{AUTO\_PICKUP\_TASK (H+1)} \longrightarrow \text{QC\_AND\_RESTOCK}$$
+- **Runtime Validation Scope**: Setiap pesanan katering berstatus `PAID` mengunci kuota kompor/panci di tabel inventaris dan menjadwalkan tiket penjemputan alat pada rute kurir internal toko H+1. Validasi lapangan atas rasio kehilangan/kerusakan alat sedang dipantau pada pilot Shabu Ajhi.
 
 ---
 
 ## § 65. UNIVERSAL BOOKING SLOT & SMART LOGISTICS DISPATCHER (ADR 2026-10-20)
 
-> **Architectural Status**: 🔒 **ACTIVE SPECIFICATION**  
+> **Architectural Status**: 🟡 **ACTIVE SPECIFICATION & CRITERIA HARDENING**  
 > **Ratification Date**: Selasa, 20 Oktober 2026  
 > **Core Principle**: *"Internal fleet first for cost & asset retrieval; instant courier fallback for surge capacity."*
 
@@ -5218,33 +5218,38 @@ Pada saat akun Studio diverifikasi (`activateStudioRegistrationByToken`):
   * Role `anon` / `public`: Hanya berhak `SELECT` jika `tenant_id` cocok dan `is_active = true`.
   * Role `service_role`: Memiliki akses `ALL` untuk orkestrasi backend dan background worker.
 
-### 65.2 Dual-Tier Dispatch Logic & Kurir Whitelist
+### 65.2 Dual-Tier Dispatch Logic & Whitelist
 1. **Tier 1 (Prioritas Utama: Armada Internal Toko)**:
    - Digunakan selama akumulasi order pada slot jam pengantaran terkait belum melampaui batas kuota armada (`current_orders < max_quota`).
    - Menjalankan pengantaran makanan segar sekaligus mengamankan rute penjemputan alat kotor H+1 tanpa biaya pihak ketiga.
 2. **Tier 2 (Fallback Otomatis: Lalamove on-Demand via Biteship)**:
    - Terpicu secara otomatis jika kuota armada internal penuh atau pesanan mendadak di luar radius jangkauan reguler.
    - **Whitelist Kurir Terkunci**: Khusus vertikal katering/F&B, agregator Biteship dikunci eksklusif pada armada mobil/van Lalamove (`allowed_couriers: ["lalamove"]`). Ekspedisi motor roda dua reguler dinonaktifkan guna mencegah risiko kuah tumpah atau penolakan muatan kompor/panci.
-   - **Tiket Penjemputan Tetap Terbit**: Kendati pengantaran awal dialihkan ke Lalamove, tiket penjemputan alat H+1 tetap dijadwalkan ke rute harian kurir toko internal.
+
+### 65.3 Concurrency & Timeout Acceptance Criteria (CTO Hardening)
+- **Anti Race-Condition Locking**: Pengurangan kuota slot saat checkout bersamaan wajib dilindungi kueri atomik database (`FOR UPDATE` / advisory lock). Jika kuota habis di tengah proses checkout, transaksi wajib gagal dengan pesan `SLOT_CAPACITY_EXCEEDED` sebelum pembayaran terbit.
+- **Courier Timeout & Retry Policy**: Panggilan dispatch API Lalamove/Biteship dibatasi timeout maksimal 10 detik. Jika terjadi kegagalan jaringan atau timeout, sistem menerapkan mekanisme exponential backoff (maksimal 3 kali retry) sebelum menandai tiket dispatch untuk review manual oleh admin toko.
 
 ---
 
 ## § 66. B2B2C ZERO-TOUCH VILLA CONCIERGE & REFERRAL ENGINE (ADR 2026-10-20)
 
-> **Architectural Status**: 🔒 **ACTIVE SPECIFICATION**  
+> **Architectural Status**: 🟡 **ACTIVE SPECIFICATION & CRITERIA HARDENING**  
 > **Ratification Date**: Selasa, 20 Oktober 2026  
 > **Core Principle**: *"Empower villa guests with instant culinary amenities while rewarding partners with zero-friction commissions."*
 
-### 66.1 Concierge Amenity Positioning
-- Standee akrilik ber-QR di meja makan villa mitra diposisikan sebagai fasilitas kuliner privat bagi tamu villa (*guest amenity*), bukan beban operasional bagi pengelola villa.
-- Format URL rujukan: `https://shop.boontrack.com/{tenant_slug}?ref={villa_code}`.
+### 66.1 Concierge Amenity Positioning & Zero-Touch Flow
+- Standee akrilik ber-QR di meja makan villa mitra diposisikan sebagai fasilitas kuliner privat bagi tamu villa (`https://shop.boontrack.com/{tenant_slug}?ref={villa_code}`).
+- Input nama villa / blok glamping pada widget pemesanan terisi dan terkunci otomatis (*auto-filled & locked*).
+- Transaksi diselesaikan via Dynamic QRIS resmi toko katering.
 
-### 66.2 Zero-Touch Concierge Flow
-1. Tamu villa memindai QR code di meja villa $ightarrow$ parameter `ref={villa_code}` otomatis terdeteksi.
-2. Nilai input nama villa / blok glamping pada widget pemesanan terisi dan terkunci otomatis (*auto-filled & locked*).
-3. Tamu memilih menu dan menyelesaikan transaksi via Dynamic QRIS resmi toko katering.
-4. Begitu transaksi berstatus `PAID`, sistem secara otomatis mencatat komisi flat (misal Rp 25.000 / transaksi) ke tabel `partner_referrals`.
-5. Sistem memicu notifikasi transaksional WhatsApp resmi (WABA) langsung ke nomor pemilik/penjaga villa tanpa mewajibkan mereka login ke dashboard web atau mengunduh aplikasi tambahan (*zero-touch experience*).
+### 66.2 Idempotent Ledger Integrity (CTO Requirement)
+1. **Idempotent Commission Tracking**:
+   - Pencatatan komisi referral wajib menggunakan constraint unik idempotensi berbasis `(order_id, partner_id)` di tabel `partner_referrals`. Mencegah terjadinya komisi ganda akibat *webhook replay* atau *polling retry*.
+2. **Append-Only Ledger Computation**:
+   - Saldo komisi mitra villa dihitung murni dari agregasi mutasi buku besar (*ledger aggregation*), dilarang menggunakan manipulasi penambahan angka mentah (*raw counter update*) di tabel profil.
+3. **Outbound Notification Delivery**:
+   - Sistem memicu notifikasi transaksional WhatsApp resmi (WABA) langsung ke nomor pemilik/penjaga villa begitu status pesanan valid `PAID`.
 
 ---
 
@@ -5257,12 +5262,14 @@ Pada saat akun Studio diverifikasi (`activateStudioRegistrationByToken`):
 ### 67.1 Pemisahan Peran Transport Pesan (WABA vs Evolution API)
 1. **Official Meta Cloud API (WABA)**:
    - Dikhususkan untuk pesan transaksional bernilai hukum/keuangan tinggi dan berstatus anti-banned: pengiriman tautan Dynamic QRIS, notifikasi verifikasi pembayaran lunas, pengingat penjemputan alat H+1, dan notifikasi komisi referral villa B2B.
-   - Menggunakan nomor resmi berbadan hukum dan mematuhi regulasi *Official Meta Tech Provider*.
 2. **Unofficial Gateway (Evolution API v2 - QR Mode)**:
    - Dikhususkan untuk Customer Service harian (2-way chat): konsultasi porsi, rekomendasi menu, tanya-jawab rasa kuah, dan follow-up santai.
-   - Mengeliminasi biaya percakapan per sesi (*conversation fee*) Meta serta membebaskan admin dari batasan *24-hour service window*.
 
-### 67.2 Sentralisasi Meja Kerja CS (`dashboard.boontrack.com`)
+### 67.2 Messaging Gateway Bukan SSOT Keuangan (CTO Strict Mandate)
+- Gateway pesan WhatsApp dan Telegram murni bertindak sebagai saluran transmisi *outbound delivery*.
+- DILARANG KERAS menjadikan pesan chat, status webhook pesan, atau tanggapan bot sebagai penentu status lunas suatu transaksi. Sumber kebenaran tunggal (*Single Source of Truth*) untuk status finansial mutlak berada di webhook resmi payment gateway yang tercatat di kernel database `orders.status = 'PAID'`.
+
+### 67.3 Sentralisasi Meja Kerja CS (`dashboard.boontrack.com`)
 - Menegaskan kembali Invarian §2.1 & §21: **Platform BoonTrack tidak memiliki domain terpisah `desk.boontrack.com`**.
 - Seluruh workstation CS multi-agen, antrean chat, penerbitan Quick POS, dan kontrol manual handover beroperasi eksklusif di dalam:
   `https://dashboard.boontrack.com/{slug}` pada tab Inbox (`TeamChatTab.tsx`).
@@ -5284,7 +5291,7 @@ Pada saat akun Studio diverifikasi (`activateStudioRegistrationByToken`):
    - Membuktikan bahwa satu *generic storefront renderer* sanggup melayani katering F&B dan ritel umum murni dari konfigurasi metadata JSON berversi di Supabase tanpa modifikasi komponen renderer.
    - Skema deklaratif hanya mengatur tata letak dan registri komponen tampilan; seluruh validasi harga, kuota slot, dan status pembayaran mutlak diatur oleh backend.
 2. **Prioritas 2 — Asset State Machine & Outbox Task Scheduler (Keandalan Operasional)**:
-   - Siklus daur hidup alat pinjaman (`Kirim` $ightarrow$ `Pinjam` $ightarrow$ `Jemput` $ightarrow$ `Restock`) dicatat persisten di database.
+   - Siklus daur hidup alat pinjaman (`Kirim` $\longrightarrow$ `Pinjam` $\longrightarrow$ `Jemput` $\longrightarrow$ `Restock`) dicatat persisten di database.
    - Menunda ketergantungan Redis Queue; pemrosesan tiket jemput H+1 diproses via PostgreSQL + Transactional Outbox Pattern secara idempoten berbasis zona waktu Asia/Jakarta.
 3. **Prioritas 3 — Read-Only Function Calling Copilot (Produktivitas CS)**:
    - AI Inbox dilarang melakukan mutasi database langsung.
