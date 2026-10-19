@@ -16,9 +16,104 @@ logger = logging.getLogger("CENTRAL_TELEGRAM_CHANNEL")
 telegram_channel_routes = web.RouteTableDef()
 
 
+import time
+from typing import Dict, Any, Optional, List, Union, Tuple
+from app.services.whatsapp.credentials import get_supabase
+
+class TelegramBotResolutionError(Exception):
+    """Raised when a telegram bot cannot be dynamically resolved or is inactive (Fail-Closed)."""
+    pass
+
+_BOT_TOKEN_CACHE: Dict[str, Tuple[str, float]] = {}
+_BOT_CACHE_TTL_SEC: float = 60.0
+
+def get_dynamic_telegram_bot_token(
+    bot_username: Optional[str] = None,
+    tenant_id: Optional[str] = None
+) -> str:
+    """
+    Mengambil bot_token secara dinamis dari tabel public.tenant_telegram_bots via Supabase Service Client.
+    Menerapkan prinsip Fail-Closed:
+    - Jika bot tidak ditemukan di database atau is_active == False, lempar TelegramBotResolutionError eksplisit.
+    - Tidak pernah menggunakan default credentials / hardcoded fallback.
+    """
+    if not bot_username and not tenant_id:
+        raise TelegramBotResolutionError(
+            "[Fail-Closed] Either bot_username or tenant_id must be provided to resolve Telegram bot token."
+        )
+
+    cache_key = (bot_username or tenant_id or "").strip().lower().lstrip("@")
+    now = time.time()
+    if cache_key in _BOT_TOKEN_CACHE:
+        token, expires_at = _BOT_TOKEN_CACHE[cache_key]
+        if now < expires_at:
+            return token
+
+    # Cek database Supabase via service role client
+    sb = get_supabase()
+    if not sb:
+        import httpx
+        sb_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL", "")
+        sb_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY", "")
+        if not sb_url or not sb_key:
+            raise TelegramBotResolutionError("[Fail-Closed] Supabase credentials not found to resolve bot token.")
+
+        headers = {
+            "apikey": sb_key,
+            "Authorization": f"Bearer {sb_key}",
+            "Content-Type": "application/json",
+        }
+        params = {"is_active": "eq.true", "select": "id,tenant_id,bot_username,bot_token,is_active", "limit": "1"}
+        if bot_username:
+            params["bot_username"] = f"eq.{cache_key}"
+        elif tenant_id:
+            params["tenant_id"] = f"eq.{tenant_id.strip()}"
+
+        try:
+            with httpx.Client(timeout=6.0) as client:
+                res = client.get(f"{sb_url.rstrip('/')}/rest/v1/tenant_telegram_bots", headers=headers, params=params)
+                if res.status_code == 200 and res.json():
+                    row = res.json()[0]
+                    token = str(row.get("bot_token") or "").strip()
+                    if token:
+                        _BOT_TOKEN_CACHE[cache_key] = (token, now + _BOT_CACHE_TTL_SEC)
+                        return token
+        except Exception as http_err:
+            raise TelegramBotResolutionError(f"[Fail-Closed] Error querying tenant_telegram_bots: {http_err}")
+
+        raise TelegramBotResolutionError(
+            f"[Fail-Closed] Bot '{bot_username or tenant_id}' is not registered or is inactive in tenant_telegram_bots."
+        )
+
+    try:
+        query = sb.table("tenant_telegram_bots").select("id, tenant_id, bot_username, bot_token, is_active").eq("is_active", True)
+        if bot_username:
+            query = query.eq("bot_username", cache_key)
+        elif tenant_id:
+            query = query.eq("tenant_id", tenant_id.strip())
+
+        res = query.limit(1).execute()
+        if res.data and len(res.data) > 0:
+            row = res.data[0]
+            token = str(row.get("bot_token") or "").strip()
+            if token:
+                _BOT_TOKEN_CACHE[cache_key] = (token, now + _BOT_CACHE_TTL_SEC)
+                return token
+    except Exception as db_err:
+        logger.error(f"[TELEGRAM CHANNEL] Error resolving bot token from Supabase: {db_err}")
+        raise TelegramBotResolutionError(f"[Fail-Closed] Error querying tenant_telegram_bots: {db_err}")
+
+    raise TelegramBotResolutionError(
+        f"[Fail-Closed] Bot '{bot_username or tenant_id}' is not registered or is inactive in tenant_telegram_bots."
+    )
+
+
 def resolve_tenant_telegram_token(tenant_id: str) -> Optional[str]:
-    """Mendapatkan bot token Telegram secara dinamis dari Config/Database Registry."""
-    return tenant_registry.get_telegram_token(tenant_id)
+    """Mendapatkan bot token Telegram secara dinamis dari tabel tenant_telegram_bots / registry."""
+    try:
+        return get_dynamic_telegram_bot_token(tenant_id=tenant_id)
+    except TelegramBotResolutionError:
+        return tenant_registry.get_telegram_token(tenant_id)
 
 
 
@@ -94,8 +189,8 @@ async def send_onlineboost_message(
     reply_markup: Optional[Dict[str, Any]] = None,
     parse_mode: str = "Markdown"
 ) -> Optional[Dict[str, Any]]:
-    """Mengirim pesan via bot resmi OnlineBoost (@onlineboostbot)."""
-    token = os.getenv("TELEGRAM_ONLINEBOOST_BOT_TOKEN", "8788492843:AAHV-VPCA7BSq0HlH5wPLLdsqFUGRH-e0Ek").strip()
+    """Mengirim pesan via bot resmi OnlineBoost (@onlineboostbot) via Supabase Dynamic Dispatcher."""
+    token = get_dynamic_telegram_bot_token(bot_username="onlineboostbot")
     return await send_telegram_message(
         bot_token=token,
         chat_id=chat_id,
@@ -111,8 +206,8 @@ async def send_creator_message(
     reply_markup: Optional[Dict[str, Any]] = None,
     parse_mode: str = "Markdown"
 ) -> Optional[Dict[str, Any]]:
-    """Mengirim pesan via bot resmi Creator Boontrack (@booncreator_bot)."""
-    token = os.getenv("TELEGRAM_CREATOR_BOT_TOKEN", "8868732988:AAFVOYtibyof2YlAyvhix-cwVSJC9mAH4SQ").strip()
+    """Mengirim pesan via bot resmi Creator Boontrack (@booncreator_bot) via Supabase Dynamic Dispatcher."""
+    token = get_dynamic_telegram_bot_token(bot_username="booncreator_bot")
     return await send_telegram_message(
         bot_token=token,
         chat_id=chat_id,
