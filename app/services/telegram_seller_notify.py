@@ -22,6 +22,39 @@ _BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 _DEFAULT_SELLER_CHAT_ID: str = os.getenv("BOONPILOT_TG_SELLER_CHAT_ID", "")
 
 
+def resolve_effective_bot_token(
+    bot_token: Optional[str] = None,
+    tenant_ref: Optional[str] = None
+) -> str:
+    """
+    Menentukan bot token secara dinamis dengan urutan resolusi:
+    1. Parameter eksplisit bot_token (jika diberikan).
+    2. Bot token spesifik tenant via get_dynamic_telegram_bot_token(tenant_ref=tenant_ref).
+    3. Default bot platform: get_dynamic_telegram_bot_token(bot_username="boonshop_bot").
+    4. Fallback fail-safe: os.getenv("TELEGRAM_BOT_TOKEN").
+    """
+    if bot_token and str(bot_token).strip():
+        return str(bot_token).strip()
+
+    from app.core.channels.telegram import get_dynamic_telegram_bot_token
+
+    # 1. Cari bot token spesifik tenant
+    if tenant_ref and str(tenant_ref).strip():
+        try:
+            return get_dynamic_telegram_bot_token(tenant_ref=str(tenant_ref).strip())
+        except Exception as e:
+            logger.debug(f"[SELLER NOTIFY] Dynamic token for tenant '{tenant_ref}' not found, falling back to platform bot: {e}")
+
+    # 2. Default bot platform: @boonshop_bot
+    try:
+        return get_dynamic_telegram_bot_token(bot_username="boonshop_bot")
+    except Exception as e:
+        logger.warning(f"[SELLER NOTIFY] Failed to resolve boonshop_bot token dynamically: {e}")
+
+    # 3. Terakhir baru fallback ke env
+    return (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+
+
 def _fmt_rupiah(amount: int) -> str:
     return f"Rp{amount:,}".replace(",", ".")
 
@@ -86,8 +119,8 @@ async def notify_new_order(
     seller_chat_id: Optional[str] = None,
     bot_token: Optional[str] = None,
 ) -> bool:
-    token = bot_token or _BOT_TOKEN
-    chat_id = seller_chat_id or _DEFAULT_SELLER_CHAT_ID
+    token = resolve_effective_bot_token(bot_token=bot_token)
+    chat_id = seller_chat_id or _DEFAULT_SELLER_CHAT_ID or os.getenv("OWNER_TELEGRAM_ID", "")
     if not token:
         logger.error("[SELLER NOTIFY] TELEGRAM_BOT_TOKEN tidak tersedia.")
         return False
@@ -135,8 +168,8 @@ async def notify_payment_confirmed(
     seller_chat_id: Optional[str] = None,
     bot_token: Optional[str] = None,
 ) -> bool:
-    token = bot_token or _BOT_TOKEN
-    chat_id = seller_chat_id or _DEFAULT_SELLER_CHAT_ID
+    token = resolve_effective_bot_token(bot_token=bot_token)
+    chat_id = seller_chat_id or _DEFAULT_SELLER_CHAT_ID or os.getenv("OWNER_TELEGRAM_ID", "")
     if not token:
         logger.error("[SELLER NOTIFY] TELEGRAM_BOT_TOKEN tidak tersedia.")
         return False
@@ -195,16 +228,14 @@ async def dispatch_seller_event(
 
     # Fallback jika belum di-set: gunakan master seller/admin chat
     if not effective_chat_id:
-        effective_chat_id = _DEFAULT_SELLER_CHAT_ID
+        effective_chat_id = _DEFAULT_SELLER_CHAT_ID or os.getenv("OWNER_TELEGRAM_ID", "")
 
+    # Penentuan bot_token secara dinamis:
+    # 1. Cari bot token spesifik tenant via get_dynamic_telegram_bot_token(tenant_ref=tenant_ref)
+    # 2. Jika tidak ditemukan atau tenant umum/shop/affiliate, gunakan default bot platform: boonshop_bot
+    # 3. Terakhir baru fallback ke os.getenv("TELEGRAM_BOT_TOKEN")
     if not bot_token:
-        if str(tenant_ref or "").lower() == "onlineboost" or str(order_data.get("tenant_slug") or "").lower() == "onlineboost":
-            try:
-                from app.core.channels.telegram import get_dynamic_telegram_bot_token
-                bot_token = get_dynamic_telegram_bot_token(bot_username="onlineboostbot")
-            except Exception as e:
-                logger.error(f"[TELEGRAM NOTIFY] Failed to resolve OnlineBoost bot token dynamically: {e}")
-                bot_token = os.getenv("TELEGRAM_ONLINEBOOST_BOT_TOKEN")
+        bot_token = resolve_effective_bot_token(tenant_ref=str(tenant_ref) if tenant_ref else None)
 
     tenant_name = (
         order_data.get("tenant_name")
