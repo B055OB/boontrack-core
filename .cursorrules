@@ -45,3 +45,47 @@ Jika agen harus menyentuh shared component untuk keperluan tenant tertentu, agen
 
 3. AUDIT ENFORCEMENT:
    - Periksa rute toko `shop.boontrack.com/[slug]` dan katalog produk: pastikan data produk jasa (seperti 'Setup AI Sales Rep', 'Paket Toko Terima Beres', dll) ter-scope murni ke tenant yang bersangkutan (misal tenant 'boon') dan TIDAK BISA bocor/ter-render saat pengunjung membuka slug tenant lain (seperti /onlineboost, /lala, dll).
+
+
+---
+
+## § 63. CANONICAL SUBDOMAIN TOPOLOGY & ZERO-LEAK ONBOARDING CONTRACT (ADR 2026-10-20)
+
+> **Architectural Status**: 🔒 **ACTIVE & ENFORCED IN PRODUCTION**  
+> **Core Principle**: *"dashboard.boontrack.com is the exclusive home for merchant control plane. app.boontrack.com is reserved strictly for custom corporate B2B/B2G applications."*
+
+### 63.1 Pemetaan Resmi Subdomain Ekosistem BoonTrack
+
+Seluruh generator URL, laporan onboarding tenant, middleware routing, CORS runner, dan asisten AI WAJIB mematuhi pemetaan berikut:
+
+1. **`dashboard.boontrack.com` (MERCHANT DASHBOARD & LOGIN)**
+   - **Tampilan Root (`/`)**: Otomatis internal rewrite ke form login bawaan (Input Slug Toko + Password/PIN). URL di browser tetap bersih: `https://dashboard.boontrack.com`.
+   - **Rute Toko**: `https://dashboard.boontrack.com/[tenant-slug]` (contoh: `/elinor-jewelry`, `/onlineboost`).
+   - ❌ **DILARANG KERAS** menggunakan `app.boontrack.com` atau `desk.boontrack.com` untuk akses login/onboarding toko merchant standar!
+
+2. **`shop.boontrack.com` (STOREFRONT PEMBELI)**
+   - Katalog Toko: `https://shop.boontrack.com/[tenant-slug]`
+   - Fast Invoice: `https://shop.boontrack.com/[tenant-slug]/pay/[token]`
+
+3. **`app.boontrack.com` (CUSTOM APP ENTERPRISE B2B & B2G)**
+   - Didedikasikan HANYA untuk modul aplikasi vertikal kustom non-toko: IoT Gym (`app.boontrack.com/gym`), Portal Kelurahan Margasari (`app.boontrack.com/margasari`), dsb.
+
+4. **`desk.boontrack.com` (CS INBOX HUB)**
+   - Workspace operator chat WhatsApp multi-agent terpusat.
+
+5. **`creator.boontrack.com` & `studio.boontrack.com`**
+   - Khusus portal publik kreator (`/@handle`) dan studio produksi naskah UGC/render queue.
+
+6. **`deck.boontrack.com`**
+   - Khusus slide pitch deck interaktif (`deck.boontrack.com/jennakaia`).
+
+7. **`boontrack.com`**
+   - Web korporat holding PT Boontrack Inovasi Digital dan profil `boontrack.com/about`.
+
+---
+
+### 63.2 Onboarding Output Format Standard
+Setiap kali menyusun draf pesan serah terima akun tenant baru, format link WAJIB:
+- **Portal Login**: `https://dashboard.boontrack.com`
+- **Domain / Nama Toko**: `[tenant-slug]`
+- **Katalog Pembeli**: `https://shop.boontrack.com/[tenant-slug]`
