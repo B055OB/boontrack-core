@@ -1,0 +1,46 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: boontrack_standby_backend
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+    # Strict localhost isolation - prevents direct public ingress binding
+    ports:
+      - "127.0.0.1:${PORT:-8000}:8000"
+
+    environment:
+      - PYTHONPATH=/app
+      - PORT=8000
+      # Boot-Time Mandatory Fail-Closed Variables (Module-level imports/instantiations)
+      - DATABASE_URL=${DATABASE_URL}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-${SUPABASE_KEY}}
+      - SUPABASE_KEY=${SUPABASE_KEY:-${SUPABASE_ANON_KEY}}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
+      - XENDIT_SECRET_KEY=${XENDIT_SECRET_KEY}
+      - XENDIT_CALLBACK_TOKEN=${XENDIT_CALLBACK_TOKEN}
+      # Inter-Service Authentication & Security
+      - BOONTRACK_HMAC_SECRET=${BOONTRACK_HMAC_SECRET:-}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - RAILWAY_ENVIRONMENT=${RAILWAY_ENVIRONMENT:-standby}
+      # Runtime Service Integrations (Passed through from standby host/secrets)
+      - REDIS_URL=${REDIS_URL:-}
+      - META_WABA_PHONE_NUMBER_ID=${META_WABA_PHONE_NUMBER_ID:-}
+      - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN:-}
+      - EVOLUTION_API_URL=${EVOLUTION_API_URL:-}
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+
+    # Lightweight probe targeting GET /health without external binary dependencies
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).getcode() == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -1,6 +1,6 @@
 import sys
 import os
-import asyncio
+import uvicorn
 
 project_root = os.path.dirname(os.path.abspath(__file__))
 if project_root not in sys.path:
@@ -9,16 +9,8 @@ if project_root not in sys.path:
 from dotenv import load_dotenv
 load_dotenv()
 
-from app.main import app, start_application
+from app.main import app
 
 if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(start_application())
-        loop.run_forever()
-    except KeyboardInterrupt:
-        print("[SHUTDOWN] Server stopped by user.", flush=True)
-    finally:
-        loop.stop()
-        loop.close()
+    port = int(os.getenv("PORT", 8080))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=False)

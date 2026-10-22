@@ -18,7 +18,6 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
-from aiohttp import web
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MAIN")
@@ -54,65 +53,58 @@ def get_admin_supabase_client() -> Client:
         )
     return create_client(supabase_url, admin_key)
 
-from app.core.bot import bot, dp
-from app.core.database import init_db
-from app.core.server import create_web_app, start_web_server, start_telegram_polling
-from app.handlers.telegram_bot_handlers import register_all_bot_handlers
 from app.routes.gym_access_routes import gym_router
 from app.routes.gym_admin_routes import router as gym_admin_router
-from app.routes.payment import payment_router, register_payment_routes
+from app.routes.payment import payment_router
 from app.routes.webchat import router as webchat_router
 from app.routes.internal_routes import internal_router
-from app.routes.xendit import xendit_router, register_xendit_routes
+from app.routes.xendit import xendit_router
 from app.routes.onboarding import onboarding_router
-from app.routes.tenant_onboard_routes import tenant_intake_router, register_tenant_onboard_routes
+from app.routes.tenant_onboard_routes import tenant_intake_router
 from app.routes.meta_whatsapp import meta_whatsapp_router
 from app.routes.chat import chat_router
 from app.routes.tenant_routes import tenant_router, tenant_singular_router, commerce_products_router, legacy_tenant_router, storefront_router
 
-from app.routes.shop_gateway_routes import shop_gateway_fastapi_router, register_shop_gateway_routes
+from app.routes.shop_gateway_routes import shop_gateway_fastapi_router
 from app.routes.shop_subscription_routes import (
     shop_subscription_fastapi_router,
     subscription_fastapi_router,
-    register_shop_subscription_routes
 )
-from app.routes.shop_event_routes import shop_event_fastapi_router, register_shop_event_routes
-from app.api.webhook_payment import router as webhook_payment_router, register_webhook_payment_routes
+from app.routes.shop_event_routes import shop_event_fastapi_router
+from app.api.webhook_payment import router as webhook_payment_router
 from app.services.payout_service import PayoutService
 
-# IMPORT ROUTER & AIOHTTP REGISTRARS ENTITLEMENT, WHATSAPP GATEWAY, PROVISIONING, GROWTH & SHIPPING LOGISTICS
-from app.routes.entitlement_routes import router as entitlement_router, register_entitlement_routes
-from app.routes.whatsapp_gateway_routes import router as whatsapp_gateway_router, tenant_reconnect_router, register_whatsapp_gateway_routes
-from app.routes.whatsapp_control import router as whatsapp_control_router, register_whatsapp_control_routes
-from app.routes.provisioning import router as provisioning_router, register_provisioning_routes
-from app.routes.growth_routes import router as growth_router, register_growth_routes
-from app.routes.d2c_order_routes import d2c_router, register_d2c_order_routes
+# IMPORT ROUTER ENTITLEMENT, WHATSAPP GATEWAY, PROVISIONING, GROWTH & SHIPPING LOGISTICS
+from app.routes.entitlement_routes import router as entitlement_router
+from app.routes.whatsapp_gateway_routes import router as whatsapp_gateway_router, tenant_reconnect_router
+from app.routes.whatsapp_control import router as whatsapp_control_router
+from app.routes.provisioning import router as provisioning_router
+from app.routes.growth_routes import router as growth_router
+from app.routes.d2c_order_routes import d2c_router
 from app.routes.meta_oauth import meta_exchange_router
-from app.routes.shipping_webhook_routes import register_shipping_routes
-from app.routes.seller_ads_routes import register_seller_ads_routes
-from app.routes.affiliate_auth import router as affiliate_auth_router, affiliate_payout_router, affiliate_router, register_affiliate_auth_routes
+from app.routes.affiliate_auth import router as affiliate_auth_router, affiliate_payout_router, affiliate_router
 from app.routes.meta_waba_routes import waba_router
 from app.routes.whatsapp_connect_routes import whatsapp_connect_router
-from app.routes.academy_routes import academy_router, register_academy_routes
+from app.routes.academy_routes import academy_router
 from app.routes.shipping_routes import router as shipping_router, logistics_router
 from app.routes.partner_routes import partner_router, manager_router
 from app.routes.analytics_fastapi_routes import router as analytics_router
 from app.routes.boonpilot_routes import router as boonpilot_router, merchant_copilot_router
 from app.routes.billing_routes import billing_router
-from app.routes.store_chat_routes import router as store_chat_router, handle_store_chat, StoreChatRequest
-from app.routes.media_routes import media_router, general_upload_router, register_media_routes
-from app.routes.product_routes import product_router, product_singular_router, register_product_routes
+from app.routes.store_chat_routes import router as store_chat_router
+from app.routes.media_routes import media_router, general_upload_router
+from app.routes.product_routes import product_router, product_singular_router
 from app.routes.auth_routes import router as auth_router, auth_general_router
-from app.routes.custom_domain_routes import custom_domain_router, register_custom_domain_routes
+from app.routes.custom_domain_routes import custom_domain_router
 from app.api.v1.api import api_v1_router
 from app.api.v1.endpoints.whatsapp_webhook import router as whatsapp_webhook_router
 from app.api.v1.reader_router import router as reader_router
-from app.tenants.career.router import career_fastapi_router, register_career_routes
-from app.routers.creator_ugc import router as creator_ugc_router, register_creator_ugc_routes
-from app.routes.creator_storefront import router as creator_storefront_router, register_creator_storefront_routes
-from app.routes.digital_download_routes import router as digital_download_router, register_digital_download_routes
-from app.routes.inbox_routes import router as inbox_router, register_inbox_routes
-from app.routes.telegram_webhook_routes import router as telegram_webhook_router, register_telegram_webhook_routes
+from app.tenants.career.router import career_fastapi_router
+from app.routers.creator_ugc import router as creator_ugc_router
+from app.routes.creator_storefront import router as creator_storefront_router
+from app.routes.digital_download_routes import router as digital_download_router
+from app.routes.inbox_routes import router as inbox_router
+from app.routes.telegram_webhook_routes import router as telegram_webhook_router
 from app.routes.store_starter_routes import store_starter_router
 from fastapi.staticfiles import StaticFiles
 
@@ -465,132 +457,7 @@ async def settle_payout(payload: Dict[str, Any]):
     return result
 
 
-# ============================================================================
-# Async Server Runner (aiohttp & Telegram bot worker)
-# ============================================================================
-
-async def start_application():
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-
-    print("========================================", flush=True)
-    print("[BOOT] BoonTrack Core Service Starting", flush=True)
-    print(f"[BOOT] PID          : {os.getpid()}", flush=True)
-    print(f"[BOOT] HOSTNAME     : {os.getenv('HOSTNAME', 'unknown')}", flush=True)
-    print(f"[BOOT] PORT         : {os.getenv('PORT', '8080')}", flush=True)
-    print(f"[BOOT] TOKEN STATUS : {'TERBACA OK' if bot_token else 'KOSONG / UNDEFINED'}", flush=True)
-    print("========================================", flush=True)
-
-    # 1. Inisialisasi Skema Database
-    print("[BOOT] Initializing database...", flush=True)
-    await init_db()
-
-    # 2. Daftarkan Semua Handler Bot Telegram
-    if bot is not None and dp is not None:
-        register_all_bot_handlers(dp, bot)
-    else:
-        print("[BOOT] Telegram Bot or Dispatcher is None, skipping bot handler registration.", flush=True)
-
-    # 3. Buat dan Jalankan Web Server aiohttp
-    print("[BOOT] Starting Web Server...", flush=True)
-    aiohttp_app = create_web_app()
-
-    # Mount Static Route APK di aiohttp
-    aiohttp_reader_dir = os.path.join(project_root, "static", "dl-reader-x9k2m")
-    os.makedirs(aiohttp_reader_dir, exist_ok=True)
-    aiohttp_app.router.add_static("/dl-reader-x9k2m/", path=aiohttp_reader_dir, name="aiohttp_reader_download")
-
-    # Mount Static Route Uploads di aiohttp
-    aiohttp_uploads_dir = os.path.join(project_root, "assets", "uploads")
-    os.makedirs(aiohttp_uploads_dir, exist_ok=True)
-    aiohttp_app.router.add_static("/assets/uploads/", path=aiohttp_uploads_dir, name="aiohttp_static_uploads")
-    
-    # Daftarkan Router Modul Gateway, Subscription, Event Worker, Webhook, Entitlements, WhatsApp Control, Provisioning, Growth, Shipping & Seller Ads Pro
-    register_payment_routes(aiohttp_app)
-    register_shop_gateway_routes(aiohttp_app)
-    register_xendit_routes(aiohttp_app)
-    register_shop_subscription_routes(aiohttp_app)
-    register_shop_event_routes(aiohttp_app)
-    register_webhook_payment_routes(aiohttp_app)
-    register_entitlement_routes(aiohttp_app)
-    register_whatsapp_gateway_routes(aiohttp_app)
-    register_whatsapp_control_routes(aiohttp_app)
-    register_provisioning_routes(aiohttp_app)
-    register_growth_routes(aiohttp_app)
-    register_shipping_routes(aiohttp_app)
-    register_seller_ads_routes(aiohttp_app)
-    register_media_routes(aiohttp_app)
-    register_career_routes(aiohttp_app)
-    register_creator_ugc_routes(aiohttp_app)
-    register_creator_storefront_routes(aiohttp_app)
-    register_digital_download_routes(aiohttp_app)
-    register_affiliate_auth_routes(aiohttp_app)
-    register_telegram_webhook_routes(aiohttp_app)
-
-    cors_headers = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "*",
-    }
-
-    # Register endpoint ads-config langsung pada router aiohttp
-    async def aiohttp_ads_config(request):
-        tenant_slug = request.match_info.get("tenant_slug", "kurastorenkrw")
-        return web.json_response(
-            {
-                "status": "success",
-                "tenant_slug": tenant_slug,
-                "meta_pixel_id": None,
-                "tiktok_pixel_id": None,
-                "google_tag_id": None,
-            },
-            headers=cors_headers,
-        )
-
-    aiohttp_app.router.add_get("/api/ads-config", aiohttp_ads_config)
-    aiohttp_app.router.add_get("/api/v1/store/ads-config", aiohttp_ads_config)
-    aiohttp_app.router.add_get("/api/v1/shop/{tenant_slug}/ads-config", aiohttp_ads_config)
-
-    # Register endpoint store chat langsung pada router aiohttp
-    async def aiohttp_store_chat(request):
-        try:
-            body = await request.json()
-            payload = StoreChatRequest(**body)
-            res = await handle_store_chat(payload)
-            return web.json_response(res.model_dump(), headers=cors_headers)
-        except Exception as e:
-            logger.exception("Store chat processing error")
-            return web.json_response({"status": "error", "detail": str(e)}, status=500, headers=cors_headers)
-
-    aiohttp_app.router.add_post("/api/v1/store/chat", aiohttp_store_chat)
-    aiohttp_app.router.add_post("/api/store/chat", aiohttp_store_chat)
-
-    register_product_routes(aiohttp_app)
-    register_custom_domain_routes(aiohttp_app)
-    register_tenant_onboard_routes(aiohttp_app)
-    register_inbox_routes(aiohttp_app)
-    register_d2c_order_routes(aiohttp_app)
-    register_academy_routes(aiohttp_app)
-
+if __name__ == "__main__":
+    import uvicorn
     port = int(os.getenv("PORT", 8080))
-    await start_web_server(aiohttp_app, port=port)
-
-    # 4. Jalankan Background Polling Telegram
-    if bot is not None and dp is not None:
-        asyncio.create_task(start_telegram_polling(bot, dp))
-        print("[BOOT] Telegram & Web Server running concurrently.", flush=True)
-    else:
-        print("[BOOT] Telegram Bot disabled or not installed (bot is None). Web Server running.", flush=True)
-
-if __name__ == '__main__':
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    loop.run_until_complete(start_application())
-
-    try:
-        loop.run_forever()
-    except KeyboardInterrupt:
-        print("[SHUTDOWN] Server stopped by user.", flush=True)
-    finally:
-        loop.stop()
-        loop.close()
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=False)

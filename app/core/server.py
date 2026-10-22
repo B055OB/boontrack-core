@@ -101,14 +101,15 @@ async def start_web_server(app: web.Application, port: int = 8080) -> web.AppRun
     return runner
 
 async def start_telegram_polling(bot=None, dp=None):
-    """Menjalankan polling worker untuk bot Telegram."""
+    """Menjalankan polling worker untuk bot Telegram (hanya aktif jika ENABLE_TELEGRAM_POLLING=true)."""
     if bot is None or dp is None:
         print("[TELEGRAM] Telegram Bot or Dispatcher is None, polling disabled.", flush=True)
         return
 
     token = os.getenv("TELEGRAM_BOT_TOKEN")
-    if not token or os.getenv("ENABLE_TELEGRAM_POLLING", "true").lower() == "false":
-        print("[TELEGRAM] Telegram polling disabled / token absent.", flush=True)
+    enable_polling = os.getenv("ENABLE_TELEGRAM_POLLING", "false").lower() in ("true", "1", "yes")
+    if not token or not enable_polling:
+        print("[TELEGRAM] Telegram polling disabled (ENABLE_TELEGRAM_POLLING is not true). Use run_bot.py for standalone bot worker.", flush=True)
         return
 
     print("[TELEGRAM] Polling worker starting...", flush=True)
