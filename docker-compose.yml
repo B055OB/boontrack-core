@@ -61,7 +61,7 @@ services:
     container_name: boontrack_bot
     restart: unless-stopped
 
-    command: python app/main.py
+    command: python run_bot.py
 
     environment:
       PYTHONPATH: /app
