@@ -12,15 +12,19 @@ load_dotenv()
 from app.modules.public_services.router import fastapi_public_service_router
 import asyncio
 import logging
-from typing import Dict, Any
-from fastapi import FastAPI, HTTPException, Request
+from typing import Dict, Any, Optional
+from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from supabase import create_client, Client
+import httpx
+from supabase import create_client, Client, ClientOptions
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MAIN")
+
+# Bounded HTTP socket timeout (2.5s connect, 5.0s read/write) to prevent thread/socket hangs
+SUPABASE_HTTP_TIMEOUT = httpx.Timeout(connect=2.5, read=5.0, write=5.0, pool=5.0)
 
 # Inisialisasi Supabase Public / Tenant Client (Principle of Least Privilege: Anon / Standard Key bound by RLS)
 supabase_url = os.getenv("SUPABASE_URL", "").strip()
@@ -34,8 +38,12 @@ if not supabase_url or not supabase_anon_key:
     )
 
 try:
-    # Standard tenant/merchant/public client (restricted by RLS)
-    supabase_client: Client = create_client(supabase_url, supabase_anon_key)
+    # Standard tenant/merchant/public client (restricted by RLS) with bounded HTTP socket timeout
+    supabase_client: Client = create_client(
+        supabase_url,
+        supabase_anon_key,
+        options=ClientOptions(postgrest_client_timeout=SUPABASE_HTTP_TIMEOUT)
+    )
 except Exception as e:
     raise RuntimeError(f"[SECURITY FAIL-CLOSED] Failed to initialize Supabase client in app.main: {e}") from e
 
@@ -51,7 +59,11 @@ def get_admin_supabase_client() -> Client:
         raise RuntimeError(
             "[SECURITY FAIL-CLOSED] SUPABASE_SERVICE_ROLE_KEY is required for administrative operations but not configured."
         )
-    return create_client(supabase_url, admin_key)
+    return create_client(
+        supabase_url,
+        admin_key,
+        options=ClientOptions(postgrest_client_timeout=SUPABASE_HTTP_TIMEOUT)
+    )
 
 from app.routes.gym_access_routes import gym_router
 from app.routes.gym_admin_routes import router as gym_admin_router
@@ -283,28 +295,89 @@ os.makedirs(reader_dir, exist_ok=True)
 app.mount("/dl-reader-x9k2m", StaticFiles(directory=reader_dir), name="reader_download")
 
 
-@app.get("/", summary="Root Health Check")
-@app.get("/health", summary="Health Check")
+@app.get("/", summary="Root Liveness Check")
+@app.get("/health", summary="Process Liveness Check")
 async def root_health_check():
-    db_status = "inactive"
-    try:
-        if supabase_client:
-            res = supabase_client.table("tenants").select("id").limit(1).execute()
-            db_status = "active" if (res and hasattr(res, "data")) else "connected"
-        else:
-            db_status = "unconfigured"
-    except Exception as e:
-        logger.warning(f"[HEALTH CHECK] Supabase connection warning: {e}")
-        db_status = "active" if supabase_url else "degraded"
-
+    """Liveness probe: Returns HTTP 200 while the application process is alive and responsive.
+    Strictly zero network calls. Does not falsely claim unverified external connectivity.
+    """
     return {
         "status": "healthy",
         "service": "boontrack-core",
         "version": "1.0.0",
         "database": {
-            "supabase": db_status
+            "supabase": "configured" if supabase_client else "unconfigured"
         }
     }
+
+
+@app.get("/ready", summary="Dependency Readiness Check")
+async def readiness_check(response: Response):
+    """Readiness probe: Validates genuine dependency connectivity to Supabase.
+    Returns HTTP 200 when ready to serve requests, or HTTP 503 when dependencies are unreachable.
+    Uses bounded HTTP timeouts configured at client initialization without mutating shared state.
+    Public responses return sanitized error categories; diagnostics are preserved in server logs.
+    """
+    db_status = "unconfigured"
+    is_ready = False
+    error_category: Optional[str] = None
+
+    if not supabase_client:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {
+            "status": "unhealthy",
+            "service": "boontrack-core",
+            "version": "1.0.0",
+            "database": {"supabase": "unconfigured"},
+            "dependencies": {
+                "supabase": {
+                    "status": "unconfigured",
+                    "category": "DEPENDENCY_NOT_CONFIGURED"
+                }
+            }
+        }
+
+    try:
+        # Offload synchronous query to worker thread.
+        # ClientOptions(postgrest_client_timeout=SUPABASE_HTTP_TIMEOUT) guarantees socket terminates.
+        res = await asyncio.to_thread(lambda: supabase_client.table("tenants").select("id").limit(1).execute())
+        if res and hasattr(res, "data") and res.data is not None:
+            db_status = "active"
+            is_ready = True
+        else:
+            db_status = "degraded"
+            is_ready = False
+            error_category = "DEPENDENCY_MALFORMED_RESPONSE"
+    except (httpx.TimeoutException, TimeoutError) as e:
+        logger.warning(f"[READINESS CHECK] Supabase connection timed out: {e}")
+        db_status = "timeout"
+        is_ready = False
+        error_category = "DEPENDENCY_TIMEOUT"
+    except Exception as e:
+        logger.warning(f"[READINESS CHECK] Supabase connection error: {e}")
+        db_status = "unreachable"
+        is_ready = False
+        error_category = "DEPENDENCY_UNREACHABLE"
+
+    if not is_ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+    dep_info = {"status": db_status}
+    if error_category:
+        dep_info["category"] = error_category
+
+    return {
+        "status": "ready" if is_ready else "unhealthy",
+        "service": "boontrack-core",
+        "version": "1.0.0",
+        "database": {
+            "supabase": db_status
+        },
+        "dependencies": {
+            "supabase": dep_info
+        }
+    }
+
 
 
 @app.get("/api/v1/system/cache/refresh", summary="Force Refresh Tenant Resolver Cache")

@@ -23,8 +23,10 @@ CREATE TABLE IF NOT EXISTS payment_settlements (
     payment_intent_id UUID REFERENCES payment_intents(id) ON DELETE CASCADE,
     provider_ref VARCHAR(255) NOT NULL,
     settled_amount BIGINT NOT NULL,
+    status VARCHAR(50) DEFAULT 'LUNAS',
     raw_payload JSONB DEFAULT '{}'::jsonb,
     settled_at TIMESTAMPTZ DEFAULT now(),
+    created_at TIMESTAMPTZ DEFAULT now(),
     CONSTRAINT uq_payment_settlement_ref UNIQUE (provider_ref)
 );
 

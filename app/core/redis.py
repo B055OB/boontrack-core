@@ -15,7 +15,35 @@ from typing import Optional, Any
 
 logger = logging.getLogger("BOONTRACK_REDIS")
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+def resolve_redis_url() -> Optional[str]:
+    """Resolves Redis connection URL from various Railway / Cloud environment variables.
+    
+    Supports:
+    1. Direct URL environment variables: REDIS_URL, REDIS_PRIVATE_URL, REDIS_PUBLIC_URL, REDISURL
+    2. Discrete host/port variables: REDISHOST / REDIS_HOST, REDISPORT / REDIS_PORT, REDISPASSWORD / REDIS_PASSWORD
+    3. Explicit local Redis flag: ENABLE_LOCAL_REDIS=true (defaults to False in cloud production)
+    """
+    for var in ("REDIS_URL", "REDIS_PRIVATE_URL", "REDIS_PUBLIC_URL", "REDISURL"):
+        val = os.getenv(var)
+        if val and val.strip():
+            return val.strip()
+
+    host = os.getenv("REDISHOST") or os.getenv("REDIS_HOST")
+    if host and host.strip():
+        port = os.getenv("REDISPORT") or os.getenv("REDIS_PORT") or "6379"
+        user = os.getenv("REDISUSER") or os.getenv("REDIS_USER") or ""
+        password = os.getenv("REDISPASSWORD") or os.getenv("REDIS_PASSWORD") or ""
+        db = os.getenv("REDIS_DB") or "0"
+        auth = f"{user}:{password}@" if (user or password) else (f":{password}@" if password else "")
+        return f"redis://{auth}{host.strip()}:{port}/{db}"
+
+    # Only attempt 127.0.0.1 if explicitly configured or running in local dev with redis flag
+    if os.getenv("ENABLE_LOCAL_REDIS", "false").lower() in ("true", "1", "yes"):
+        return "redis://127.0.0.1:6379/0"
+
+    return None
+
+REDIS_URL = resolve_redis_url()
 
 _redis_client = None
 _redis_available: Optional[bool] = None
@@ -54,18 +82,28 @@ def get_redis_client():
         return None
 
     _redis_last_check = now
+    redis_url = resolve_redis_url()
+    if not redis_url:
+        if _redis_available is None:
+            logger.info("[REDIS] No Redis environment variables detected (REDIS_URL/REDIS_PRIVATE_URL/REDISHOST). Operating in resilient in-memory fallback mode.")
+        _redis_available = False
+        return None
+
     try:
         import redis
+        connect_timeout = float(os.getenv("REDIS_CONNECT_TIMEOUT", "1.5"))
+        socket_timeout = float(os.getenv("REDIS_SOCKET_TIMEOUT", "1.0"))
         client = redis.Redis.from_url(
-            REDIS_URL,
+            redis_url,
             decode_responses=True,
-            socket_timeout=0.05,
-            socket_connect_timeout=0.05,
+            socket_timeout=socket_timeout,
+            socket_connect_timeout=connect_timeout,
         )
         client.ping()
         _redis_client = client
         _redis_available = True
-        logger.info("[REDIS] Successfully connected to Redis instance.")
+        masked_url = redis_url.split("@")[-1] if "@" in redis_url else redis_url
+        logger.info(f"[REDIS] Successfully connected to Redis instance ({masked_url}).")
         return _redis_client
     except Exception as e:
         _redis_available = False
