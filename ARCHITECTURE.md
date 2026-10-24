@@ -1389,9 +1389,9 @@ Ekosistem BoonTrack membagi beban komputasi secara tegas ke dalam 3 tier infrast
 
 | Tier Komputasi | Infrastruktur / Engine | Peran & Tanggung Jawab Utama | Alasan Arsitektural & SLA |
 | :--- | :--- | :--- | :--- |
-| **Edge & Presentation** | **Vercel** (Next.js 16 App Router) | â€¢ Storefront publik & landing page toko<br>â€¢ Client checkout & render QRIS dinamis<br>â€¢ Edge caching & SSR UI rendering<br>â€¢ Fast payment webhook ingestion (`/api/v1/reader/notification`)<br>â€¢ Client-side polling invoice status | **Latensi Ultra-Rendah (<100ms)**:<br>Serverless Edge menjamin penerimaan mutasi kasir instan tanpa cold-start lambat dan melayani ribuan pembeli checkout secara bersamaan tanpa scaling bottleneck. |
-| **State Store & Source of Truth** | **Supabase** (PostgreSQL 15+ Managed) | â€¢ Shared transactional ledger (`orders` table)<br>â€¢ Single source of truth seluruh transaksi platform<br>â€¢ Row Level Security (RLS) isolasi data antar toko<br>â€¢ Tenant registry, catalog, & user identity<br>â€¢ Elevated operations via `SUPABASE_SERVICE_ROLE_KEY` | **ACID Compliance & Integritas Finansial**:<br>Mencegah data race, menjamin konsistensi status order, dan menjadi titik temu independen antara frontend Next.js dan backend FastAPI. |
-| **Heavy Processing & AI Core** | **Railway** (FastAPI + aiohttp runner - `boontrack-core`) | â€¢ Heavy AI Reasoning (Gemini LLM & BoonPilot)<br>â€¢ Semantic vector search & RAG katalog<br>â€¢ Background workers & long-running scheduled tasks<br>â€¢ Integrasi WhatsApp WABA & Evolution API bridge<br>â€¢ Kalkulasi komisi afiliasi & audit entitlement | **Persistent Compute & Asynchronous Queue**:<br>Proses AI dan worker jangka panjang tidak cocok dijalankan di serverless function yang memiliki batas timeout eksekusi (Vercel max 15-60s). |
+| **Edge & Presentation** | **Vercel** (Next.js 16 App Router - dashboard.boontrack.com & shop.boontrack.com) | • Storefront publik & landing page toko<br>• Client checkout & render QRIS dinamis<br>• Edge caching & SSR UI rendering<br>• **Consumer Murni**: Read & mutate transaksi via API & SWR realtime<br>• Ingestion lokal Reader APK (/api/v1/reader/notification)<br>• ⚠️ **Bukan Ingress Payment Gateway**: Webhook Xendit 100% dialihkan ke Railway backend | **Latensi Ultra-Rendah (<100ms)**:<br>Serverless Edge menjamin interaksi merchant & pembeli responsif tanpa cold-start lambat. Mencegah dual-ingestion hazard dengan mendelegasikan webhook gateway ke Railway. |
+| **State Store & Source of Truth** | **Supabase** (PostgreSQL 15+ Managed) | • Shared transactional ledger (orders table)<br>• Buku besar keuangan (inancial_ledger)<br>• Single source of truth seluruh transaksi platform<br>• Row Level Security (RLS) isolasi data antar toko<br>• Tenant registry, catalog, & user identity<br>• Elevated operations via SUPABASE_SERVICE_ROLE_KEY | **ACID Compliance & Integritas Finansial**:<br>Mencegah data race, menjamin konsistensi status order, dan menjadi titik temu independen antara frontend Next.js dan backend FastAPI. |
+| **Heavy Processing & AI Core** | **Railway** (FastAPI + aiohttp runner - oontrack-core - pi.boontrack.com) | • **Official Payment Gateway Ingress**: https://api.boontrack.com/api/v1/payments/xendit/callback<br>• Verifikasi token x-callback-token, mutasi status DB ke PAID, & pencatatan ledger<br>• Asynchronous notification workers (WhatsApp buyer receipt & merchant alert)<br>• Heavy AI Reasoning (Gemini LLM & BoonPilot)<br>• Semantic vector search & RAG katalog<br>• Background workers, Meta CAPI / TikTok events, & digital fulfillment | **Persistent Compute & Authoritative Settlement**:<br>Menjamin idempotensi transaksi, eksekusi worker jangka panjang, dan isolasi penuh dari keterbatasan batas timeout serverless function (Vercel max 15-60s). |
 
 ---
 
@@ -5143,8 +5143,10 @@ Pada saat akun Studio diverifikasi (`activateStudioRegistrationByToken`):
 1. **Strict Non-Custodial Principle (Peniadaan Tombol Tarik Saldo Global)**:
    - Platform BoonTrack bukan *escrow* penampung dana penjualan merchant. DILARANG KERAS menyediakan tombol tunggal "Tarik Saldo" di level platform yang memberi impresi bahwa BoonTrack yang membayarkan komisi reseller.
    - Dompet komisi reseller di dasbor wajib dipecah menjadi **Daftar Akumulasi Komisi Per-Tenant**:
-     * Tenant A: Saldo Rp 14.400 $ightarrow$ `[Minta Pencairan ke Tenant A]`
-     * Tenant B: Saldo Rp 12.900 $ightarrow$ `[Minta Pencairan ke Tenant B]`
+     * Tenant A: Saldo Rp 14.400 $
+ightarrow$ `[Minta Pencairan ke Tenant A]`
+     * Tenant B: Saldo Rp 12.900 $
+ightarrow$ `[Minta Pencairan ke Tenant B]`
    - Tanggung jawab dan verifikasi mutasi transfer komisi berada 100% di tangan masing-masing tenant pemilik produk (Platform Zero Liability).
 2. **Entitlement Quota & Status FROZEN saat Downgrade**:
    - Kuota reseller aktif: Free (5), Starter (25), Scale (100), Enterprise (Unlimited).
@@ -5343,3 +5345,106 @@ Setiap kali menyusun draf pesan serah terima akun tenant baru, format link WAJIB
 - **Portal Login**: `https://dashboard.boontrack.com`
 - **Domain / Nama Toko**: `[tenant-slug]`
 - **Katalog Pembeli**: `https://shop.boontrack.com/[tenant-slug]`
+
+---
+
+## § 70. PAYMENT GATEWAY WEBHOOK ROUTING & RUNTIME RESPONSIBILITY CONTRACT (ADR 2026-10-24)
+
+> **Architectural Status**: 🔒 **ACTIVE & ENFORCED IN PRODUCTION (CTO Mandate)**  
+> **Core Principle**: *"The Railway backend (`api.boontrack.com`) is the single authoritative ingress for all production Xendit payment callbacks. The Next.js frontend (`dashboard.boontrack.com`) is a pure consumer and MUST NOT ingest production payment gateway webhooks."*
+
+### 70.1 Official Production Ingress & Callback Routing
+
+Seluruh konfigurasi webhook Xendit (Dashboard Xendit > Settings > Callbacks) WAJIB mengarah 100% ke endpoint resmi backend Railway:
+
+- **Canonical Endpoint Resmi**:
+  ```http
+  POST https://api.boontrack.com/api/v1/payments/xendit/callback
+  ```
+- **Supported Backend Route Aliases** (Terdaftar pada dual-runner FastAPI + aiohttp di `boontrack-core`):
+  * `POST /api/v1/payments/xendit/callback` (Primary Canonical)
+  * `POST /api/v1/payment/xendit/callback` (Singular Alias)
+  * `POST /api/v1/webhooks/xendit`
+  * `POST /webhook/payment/xendit`
+- **Keamanan Signature**:
+  * Inbound HTTP request wajib menyertakan header `x-callback-token`.
+  * Nilai token diverifikasi secara fail-closed terhadap environment variable `XENDIT_CALLBACK_TOKEN`.
+
+```text
+       ┌────────────────────────────────────────────────────────┐
+       │                Xendit Payment Gateway                  │
+       │   (QRIS, Virtual Account, Retail Outlet, E-Wallet)     │
+       └───────────────────────────┬────────────────────────────┘
+                                   │
+                                   │ POST (Header: x-callback-token)
+                                   ▼
+       ┌────────────────────────────────────────────────────────┐
+       │  🚀 BACKEND RAILWAY (api.boontrack.com)                 │
+       │  Endpoint: /api/v1/payments/xendit/callback            │
+       ├────────────────────────────────────────────────────────┤
+       │ 1. Verifikasi x-callback-token (Fail-Closed)           │
+       │ 2. Distributed Idempotency Lock (Redis SETNX 60s)      │
+       │ 3. Atomic DB Status Mutation -> orders.status = 'PAID' │
+       │ 4. Double-Entry Recording -> financial_ledger          │
+       │ 5. Asynchronous Worker Notification Dispatch:          │
+       │    • WhatsApp E-Receipt ke Pembeli                     │
+       │    • WhatsApp Instant Alert ke Merchant                │
+       │    • Meta CAPI & TikTok Purchase Server-Side Event     │
+       │    • Digital Product Auto-Fulfillment                  │
+       └───────────────────────────┬────────────────────────────┘
+                                   │
+                     Realtime Sync / SWR Cache Invalidation
+                                   ▼
+       ┌────────────────────────────────────────────────────────┐
+       │  💻 FRONTEND DASHBOARD (dashboard.boontrack.com)       │
+       │  Peran: PURE CONSUMER (Read & Mutate via API/SWR)      │
+       ├────────────────────────────────────────────────────────┤
+       │ • Menampilkan status pesanan secara reaktif via SWR.   │
+       │ • Aksi manual diteruskan melalui REST API backend.     │
+       │ ⚠️ DILARANG menerima webhook Xendit di route lokal     │
+       │    Next.js untuk mencegah konfigurasi ganda.           │
+       └────────────────────────────────────────────────────────┘
+```
+
+### 70.2 Tanggung Jawab Runtime Backend (`boontrack-core` / FastAPI + aiohttp)
+
+Backend di Railway bertindak sebagai **Single Source of Truth & Sole Financial Authority** untuk seluruh transaksi payment gateway platform:
+
+1. **Verifikasi Token Callback (Fail-Closed)**:
+   - Header `x-callback-token` divalidasi langsung oleh `XenditAdapter.handle_webhook()`.
+   - Permintaan tanpa token atau token tidak cocok langsung ditolak dengan `HTTP 403 Forbidden` (`{"error": "Invalid callback token"}`). Tidak ada pemrosesan payload jika otentikasi gagal.
+2. **Kontrol Idempotensi Berlapis (Triple-Tier Concurrency Lock)**:
+   - **Distributed Lock**: Redis `SET idemp:payment:{external_id} NX EX 60` mencegah *race conditions* pada callback serentak (<150ms SLA response guarantee).
+   - **Database Check**: Pengecekan riwayat event di tabel `payment_events` dan status tabel `orders`. Jika transaksi sudah tercatat lunas (`status == 'PAID'`), sistem seketika mengembalikan safe acknowledgement `HTTP 200 OK` (`{"status": "ALREADY_PROCESSED", "idempotent": true}`) tanpa mutasi ganda.
+3. **Mutasi Atomik Status Database ke `PAID`**:
+   - Eksekusi atomic conditional update pada database PostgreSQL Supabase (`_record_settlement_and_ledger_sync`):
+     ```sql
+     UPDATE orders
+     SET status = 'PAID',
+         payment_status = 'PAID',
+         paid_at = NOW(),
+         updated_at = NOW()
+     WHERE id = :order_id AND status != 'PAID';
+     ```
+   - Integritas ACID menjamin status pesanan lunas tidak akan terduplikasi atau tertimpa oleh observasi yang tidak valid.
+4. **Pencatatan Buku Besar Finansial (`financial_ledger`)**:
+   - Setiap mutasi lunas wajib membukukan entri transaksi tak terhapuskan (*immutable double-entry audit record*) pada tabel `financial_ledger`.
+   - Data ledger mencakup: `event_id`, `external_id`, `tenant_id`, nominal kotor (`gross_amount`), biaya gateway (`fee`), nama provider (`xendit`), dan timestamp settlement.
+5. **Dispatch Notifikasi WhatsApp & Worker Background Asinkron**:
+   - Background tasks didecouple secara non-blocking via `asyncio.create_task` agar endpoint segera merespons 200 OK ke Xendit:
+     * **Notifikasi Pembeli**: Mengirim struk/e-receipt resmi via WhatsApp (`send_whatsapp_payment_notification`).
+     * **Notifikasi Merchant**: Mengirim alert transaksi masuk ke nomor WA merchant (`send_merchant_payment_alert`).
+     * **Adtech Conversion Dispatch**: Mengirim event server-side `Purchase` ke Meta CAPI dan TikTok Events API (`send_purchase_event_background`).
+     * **Digital Fulfillment**: Menerbitkan lisensi, tautan unduhan, atau akses keanggotaan digital (`fulfill_if_digital`).
+
+### 70.3 Batasan Peran Frontend (`boontrack-inbox` / Next.js) & Anti-Konfigurasi Ganda
+
+1. **Prinsip Consumer Murni (Pure Consumer)**:
+   - Frontend Next.js (`dashboard.boontrack.com` dan storefront `shop.boontrack.com`) bertindak murni sebagai **consumer** pembaca dan pemanggil mutasi melalui API backend (`useSWR` / Supabase Realtime).
+   - Frontend **TIDAK MEMPROSES** settlement finansial produksi dari payment gateway pihak ketiga.
+   - SWR secara otomatis merevalidasi cache data saat mutasi terjadi di database backend, memastikan UI pesanan lunas tampil instan di layar merchant tanpa logic processing di Next.js.
+2. **Pencegahan Bahaya Konfigurasi Ganda (Split-Brain Mutation Hazard)**:
+   - Mengarahkan webhook Xendit ke Next.js (`/api/webhooks/xendit`, `/api/webhooks/xendit/paid`, atau `/api/webhook/payment`) di lingkungan produksi merupakan **PELANGGARAN ARSITEKTUR TINGKAT TINGGI (High Severity Anti-Pattern)**.
+   - Konfigurasi ganda memicu risiko *split-brain*, di mana Next.js dan Railway saling berebut memutasi status order, memicu duplikasi notifikasi WhatsApp atau ketidaksinkronan buku besar finansial.
+   - Folder rute webhook lokal di Next.js (`app/api/webhooks/xendit/*`, `app/api/webhook/payment/*`) dilabeli peringatan keras arsitektur dan dinonaktifkan dari jalur produksi publik.
+

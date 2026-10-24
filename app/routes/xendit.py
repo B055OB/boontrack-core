@@ -281,13 +281,14 @@ def _check_db_idempotency_sync(event_id: str, external_id: str) -> Optional[Dict
 
         # 2. Cek tabel orders
         cur.execute(
-            "SELECT status FROM orders WHERE id = %s LIMIT 1;",
+            "SELECT status, payment_status FROM orders WHERE id = %s LIMIT 1;",
             (str(external_id),)
         )
         order_row = cur.fetchone()
         if order_row:
             o_status = str(order_row[0] or "").upper()
-            if o_status in _PAID_STATUSES:
+            o_pay_status = str(order_row[1] or "").upper()
+            if o_status in _PAID_STATUSES or o_pay_status in _PAID_STATUSES:
                 # Update status payment_events
                 try:
                     cur.execute(
@@ -319,6 +320,55 @@ def _check_db_idempotency_sync(event_id: str, external_id: str) -> Optional[Dict
 
     return None
 
+
+
+def _lookup_persisted_order_sync(external_id: str) -> Optional[Dict[str, Any]]:
+    """Authoritative lookup of persisted order in PostgreSQL for tenant resolution and amount verification."""
+    if not external_id:
+        return None
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, tenant_slug, tenant_id, gross_amount, customer_name, customer_phone, customer_email, product_title, status, payment_status, metadata
+            FROM orders
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (str(external_id),)
+        )
+        row = cur.fetchone()
+        if row:
+            return {
+                "id": str(row[0]),
+                "tenant_slug": str(row[1]) if row[1] else None,
+                "tenant_id": str(row[2]) if row[2] else None,
+                "gross_amount": row[3],
+                "customer_name": row[4],
+                "customer_phone": row[5],
+                "customer_email": row[6],
+                "product_title": row[7],
+                "status": row[8],
+                "payment_status": row[9],
+                "metadata": row[10] if isinstance(row[10], dict) else {},
+            }
+    except Exception as e:
+        logger.warning(f"[Xendit Webhook] Order lookup failed for '{external_id}': {e}")
+    finally:
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return None
 
 def _record_settlement_and_ledger_sync(
     event_id: str,
@@ -364,21 +414,23 @@ def _record_settlement_and_ledger_sync(
             )
         )
 
-        # 2. Update status orders menjadi LUNAS secara atomik
+        # 2. Update status orders menjadi LUNAS & PAID secara atomik
         cur.execute(
             """
             UPDATE orders 
             SET status = 'LUNAS',
+                payment_status = 'PAID',
+                paid_at = COALESCE(orders.paid_at, %s),
                 updated_at = %s
-            WHERE id = %s AND status IN ('PENDING', 'pending', 'WAITING_PAYMENT', 'unpaid');
+            WHERE id = %s AND (status IN ('PENDING', 'pending', 'WAITING_PAYMENT', 'unpaid') OR payment_status IN ('PENDING', 'pending', 'WAITING_PAYMENT', 'unpaid') OR status IS NULL);
             """,
-            (now_utc, str(external_id))
+            (now_utc, now_utc, str(external_id))
         )
         if cur.rowcount == 0:
-            cur.execute("SELECT status FROM orders WHERE id = %s LIMIT 1;", (str(external_id),))
+            cur.execute("SELECT status, payment_status FROM orders WHERE id = %s LIMIT 1;", (str(external_id),))
             existing_ord = cur.fetchone()
-            if existing_ord and str(existing_ord[0] or "").upper() in _PAID_STATUSES:
-                logger.info(f"[Xendit Atomic Check] Order '{external_id}' already LUNAS. Idempotency hit.")
+            if existing_ord and (str(existing_ord[0] or "").upper() in _PAID_STATUSES or str(existing_ord[1] or "").upper() in _PAID_STATUSES):
+                logger.info(f"[Xendit Atomic Check] Order '{external_id}' already LUNAS/PAID. Idempotency hit.")
                 return {"status": "ALREADY_SETTLED"}
 
             # Jika order belum ada di database, auto-insert order lunas
@@ -386,10 +438,12 @@ def _record_settlement_and_ledger_sync(
                 """
                 INSERT INTO orders (
                     id, tenant_slug, product_id, product_title, gross_amount,
-                    customer_name, customer_phone, customer_email, status, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'LUNAS', %s, %s)
+                    customer_name, customer_phone, customer_email, status, payment_status, paid_at, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'LUNAS', 'PAID', %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
                     status = 'LUNAS',
+                    payment_status = 'PAID',
+                    paid_at = COALESCE(orders.paid_at, EXCLUDED.paid_at),
                     updated_at = EXCLUDED.updated_at;
                 """,
                 (
@@ -401,6 +455,7 @@ def _record_settlement_and_ledger_sync(
                     "Customer",
                     customer_phone or "-",
                     customer_email,
+                    now_utc,
                     now_utc,
                     now_utc,
                 )
@@ -625,23 +680,6 @@ async def process_xendit_webhook_core(
 
     logger.info(f"[Xendit Webhook] Processing event: {event_id} | Order: {external_id} | Amount: Rp{amount:,} | Status: {event_status}")
 
-    # 1.4 Distributed Redis Lock SETNX (<150ms response guarantee & concurrency deduplication)
-    from app.core.redis import acquire_payment_lock
-    if external_id:
-        lock_acquired = acquire_payment_lock(external_id, ttl_seconds=60)
-        if not lock_acquired:
-            logger.info(
-                f"[Xendit Webhook] Concurrent intake rejected by Redis SETNX lock for '{external_id}'. Fast 200 OK return."
-            )
-            return {
-                "http_status": 200,
-                "response": {
-                    "status": "ALREADY_PROCESSING",
-                    "message": f"Transaction '{external_id}' is currently being processed by another worker",
-                    "idempotent": True,
-                }
-            }
-
     # Set distributed tracing context
     inbound_trace = headers.get("x-trace-id") or headers.get("x-request-id")
     set_trace_context(
@@ -699,7 +737,7 @@ async def process_xendit_webhook_core(
             }
 
     # 2. Database Idempotency Check (SSOT Mutlak: Postgres orders.status & payment_events)
-    # Jangan pernah return 200 ALREADY_PROCESSED hanya karena in-memory lock hit.
+    # Diproses sebelum locking agar duplicate replay instan 200 OK ALREADY_PROCESSED
     db_check = await asyncio.to_thread(_check_db_idempotency_sync, event_id, external_id)
     if db_check:
         xendit_service.mark_settled(external_id)
@@ -735,40 +773,142 @@ async def process_xendit_webhook_core(
             }
         }
 
-    # 5. Intent Lookup & Customer Context
+    # 4. Distributed Redis Lock SETNX (<150ms response guarantee & concurrency deduplication)
+    from app.core.redis import acquire_payment_lock, release_payment_lock
+    if external_id:
+        lock_acquired = acquire_payment_lock(external_id, ttl_seconds=60)
+        if not lock_acquired:
+            # Poll DB check briefly for concurrent in-flight settlement
+            for _ in range(6):
+                await asyncio.sleep(0.05)
+                db_check = await asyncio.to_thread(_check_db_idempotency_sync, event_id, external_id)
+                if db_check:
+                    xendit_service.mark_settled(external_id)
+                    return {
+                        "http_status": 200,
+                        "response": {
+                            "status": "ALREADY_PROCESSED",
+                            "message": f"Transaction '{external_id}' has already been settled in database",
+                            "idempotent": True,
+                        }
+                    }
+            logger.info(
+                f"[Xendit Webhook] Concurrent intake rejected by Redis SETNX lock for '{external_id}'. Fast 200 OK return."
+            )
+            return {
+                "http_status": 200,
+                "response": {
+                    "status": "ALREADY_PROCESSING",
+                    "message": f"Transaction '{external_id}' is currently being processed by another worker",
+                    "idempotent": True,
+                }
+            }
+
+    # 5. Authoritative Order Lookup & Tenant Resolution
+    persisted_order = await asyncio.to_thread(_lookup_persisted_order_sync, external_id)
     stored_intent = xendit_service.get_intent(external_id) or PAYMENT_INTENTS.get(external_id, {})
-    customer_phone = (
-        data_obj.get("customer_phone")
-        or payload.get("customer_phone")
-        or stored_intent.get("customer_phone")
-        or stored_intent.get("phone")
-    )
-    customer_email = (
-        data_obj.get("customer_email")
-        or payload.get("customer_email")
-        or stored_intent.get("customer_email")
-        or stored_intent.get("email")
-    )
-    product_slug = (
-        data_obj.get("product_slug")
-        or data_obj.get("slug")
-        or payload.get("product_slug")
-        or payload.get("slug")
-        or (stored_intent.get("metadata", {}) if isinstance(stored_intent.get("metadata"), dict) else {}).get("product_slug")
-        or ""
-    )
-    product_name = (
-        data_obj.get("product_name")
-        or payload.get("product_name")
-        or (stored_intent.get("metadata", {}) if isinstance(stored_intent.get("metadata"), dict) else {}).get("product_name")
-        or ("Modul Praktis CPM 24 Jam" if (amount == 1000 or product_slug == "cpm-24jam" or "cpm" in external_id.lower()) else "Produk Digital")
-    )
-    tenant_id = (
-        data_obj.get("tenant_id")
-        or payload.get("tenant_id")
-        or stored_intent.get("tenant_id")
-        or ("onlineboost" if (amount == 1000 or product_slug == "cpm-24jam") else "boontrack-career")
-    )
+
+    if not persisted_order and not stored_intent:
+        logger.warning(f"[Xendit Webhook] Unknown order '{external_id}'. No persisted order or trusted intent found.")
+        if external_id:
+            release_payment_lock(external_id)
+        return {
+            "http_status": 404,
+            "response": {
+                "status": "ORDER_NOT_FOUND",
+                "message": f"Order '{external_id}' not found in database or registered payment intents",
+                "external_id": external_id,
+            }
+        }
+
+    # Authoritative amount verification
+    expected_amount = None
+    if persisted_order and persisted_order.get("gross_amount") is not None:
+        try:
+            expected_amount = int(float(persisted_order["gross_amount"]))
+        except (ValueError, TypeError):
+            expected_amount = None
+    elif stored_intent and stored_intent.get("amount") is not None:
+        try:
+            expected_amount = int(stored_intent["amount"])
+        except (ValueError, TypeError):
+            expected_amount = None
+
+    if expected_amount is not None and amount != expected_amount:
+        logger.warning(
+            f"[Xendit Webhook] Amount mismatch for order '{external_id}': expected Rp{expected_amount:,}, got Rp{amount:,}"
+        )
+        if external_id:
+            release_payment_lock(external_id)
+        return {
+            "http_status": 400,
+            "response": {
+                "status": "AMOUNT_MISMATCH",
+                "message": f"Payment amount Rp{amount:,} does not match expected gross amount Rp{expected_amount:,}",
+                "external_id": external_id,
+            }
+        }
+
+    # Authoritative Tenant Resolution:
+    # 1. Trusted database persisted order tenant_slug / tenant_id
+    # 2. Trusted stored payment intent tenant_slug / tenant_id
+    # Never fall back to arbitrary dummy tenant or amount heuristics!
+    tenant_id = None
+    customer_phone = None
+    customer_email = None
+    product_name = None
+
+    if persisted_order:
+        tenant_id = persisted_order.get("tenant_slug") or persisted_order.get("tenant_id")
+        customer_phone = (
+            data_obj.get("customer_phone")
+            or payload.get("customer_phone")
+            or persisted_order.get("customer_phone")
+        )
+        customer_email = (
+            data_obj.get("customer_email")
+            or payload.get("customer_email")
+            or persisted_order.get("customer_email")
+        )
+        product_name = (
+            data_obj.get("product_name")
+            or payload.get("product_name")
+            or persisted_order.get("product_title")
+            or "Produk Digital"
+        )
+    elif stored_intent:
+        tenant_id = stored_intent.get("tenant_slug") or stored_intent.get("tenant_id")
+        customer_phone = (
+            data_obj.get("customer_phone")
+            or payload.get("customer_phone")
+            or stored_intent.get("customer_phone")
+            or stored_intent.get("phone")
+        )
+        customer_email = (
+            data_obj.get("customer_email")
+            or payload.get("customer_email")
+            or stored_intent.get("customer_email")
+            or stored_intent.get("email")
+        )
+        product_name = (
+            data_obj.get("product_name")
+            or payload.get("product_name")
+            or (stored_intent.get("metadata", {}) if isinstance(stored_intent.get("metadata"), dict) else {}).get("product_name")
+            or "Produk Digital"
+        )
+
+    if not tenant_id:
+        logger.warning(f"[Xendit Webhook] Unresolved tenant for order '{external_id}'. Fail-closed.")
+        if external_id:
+            release_payment_lock(external_id)
+        return {
+            "http_status": 422,
+            "response": {
+                "status": "UNRESOLVED_TENANT",
+                "message": f"Tenant identity for order '{external_id}' cannot be authoritatively resolved",
+                "external_id": external_id,
+            }
+        }
 
     # 6. Context Tracing Tenant Binding
     set_trace_context(tenant_id=tenant_id)
@@ -786,6 +926,8 @@ async def process_xendit_webhook_core(
             customer_email=customer_email,
             product_name=product_name,
         )
+        if external_id:
+            release_payment_lock(external_id)
         if isinstance(settle_res, dict) and settle_res.get("status") == "ALREADY_SETTLED":
             log_structured_event(
                 service="xendit_webhook",
@@ -807,6 +949,11 @@ async def process_xendit_webhook_core(
                 }
             }
     except Exception as db_err:
+        if external_id:
+            try:
+                release_payment_lock(external_id)
+            except Exception:
+                pass
         log_structured_event(
             service="xendit_webhook",
             event_type="DATABASE_OUTAGE_ERROR",
@@ -922,6 +1069,11 @@ async def process_xendit_webhook_core(
     except Exception as _flex_err:
         logger.debug(f"[Xendit Webhook] Flexing alert dispatch note: {_flex_err}")
 
+    if external_id:
+        try:
+            release_payment_lock(external_id)
+        except Exception:
+            pass
     logger.info(f"[Xendit Webhook] Settlement successful for '{external_id}' (Rp{amount:,})")
     return {
         "http_status": 200,

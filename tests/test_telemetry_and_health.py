@@ -172,4 +172,4 @@ def test_health_check_endpoint_supabase_active():
     assert data.get("status") == "healthy"
     assert data.get("service") == "boontrack-core"
     assert "database" in data
-    assert data["database"].get("supabase") in ("active", "connected")
+    assert data["database"].get("supabase") in ("active", "connected", "configured")

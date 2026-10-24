@@ -22,6 +22,7 @@ import secrets
 import logging
 from typing import Dict, Any, Optional
 import httpx
+from datetime import datetime, timezone
 
 from app.services.whatsapp_service import normalize_phone_number, get_supabase
 from app.services.whatsapp import cloud_api
@@ -114,7 +115,7 @@ async def create_telegram_single_use_invite_link(
 
 
 def get_stored_telegram_link_from_order(order_data: Dict[str, Any]) -> Optional[str]:
-    """Cek apakah orders.metadata['telegram_single_invite_link'] sudah ada (idempoten)."""
+    """Cek apakah link invite sudah ada di metadata, download_url, atau fulfillment_metadata (idempoten)."""
     if not order_data:
         return None
     meta = order_data.get("metadata") or {}
@@ -125,6 +126,16 @@ def get_stored_telegram_link_from_order(order_data: Dict[str, Any]) -> Optional[
             meta = {}
     if isinstance(meta, dict) and meta.get("telegram_single_invite_link"):
         return meta.get("telegram_single_invite_link")
+    if order_data.get("download_url") and str(order_data.get("download_url", "")).startswith("https://t.me/"):
+        return order_data.get("download_url")
+    f_meta = order_data.get("fulfillment_metadata") or {}
+    if isinstance(f_meta, str):
+        try:
+            f_meta = json.loads(f_meta)
+        except Exception:
+            f_meta = {}
+    if isinstance(f_meta, dict) and str(f_meta.get("access_url", "")).startswith("https://t.me/"):
+        return f_meta.get("access_url")
     return None
 
 
@@ -220,12 +231,26 @@ async def fulfill_onlineboost_ctwa_order(
 
         current_meta["telegram_single_invite_link"] = single_use_link
         current_meta["fulfillment_status"] = "DELIVERED"
+        current_meta["delivered_at"] = datetime.now(timezone.utc).isoformat()
+
+        fulfillment_payload = {
+            "type": "digital",
+            "delivery_type": "TELEGRAM_GROUP",
+            "access_url": single_use_link,
+            "download_url": single_use_link,
+            "file_format": "TELEGRAM_INVITE",
+            "button_text": "Gabung Grup Telegram",
+            "delivered_at": datetime.now(timezone.utc).isoformat(),
+        }
 
         if sb and order_id:
             try:
                 sb.table("orders").update({
                     "metadata": current_meta,
                     "status": "PAID",
+                    "payment_status": "PAID",
+                    "download_url": single_use_link,
+                    "fulfillment_metadata": fulfillment_payload,
                 }).eq("id", order_id).execute()
             except Exception as upd_err:
                 logger.warning(f"[CTWA FULFILLMENT] Failed updating Supabase order metadata: {upd_err}")
@@ -237,10 +262,16 @@ async def fulfill_onlineboost_ctwa_order(
                 cur.execute(
                     """
                     UPDATE orders 
-                    SET metadata = %s, status = 'PAID', updated_at = NOW() 
+                    SET metadata = %s,
+                        status = 'PAID',
+                        payment_status = 'PAID',
+                        paid_at = COALESCE(paid_at, NOW()),
+                        download_url = %s,
+                        fulfillment_metadata = %s,
+                        updated_at = NOW()
                     WHERE id = %s;
                     """,
-                    (json.dumps(current_meta), order_id)
+                    (json.dumps(current_meta), single_use_link, json.dumps(fulfillment_payload), order_id)
                 )
                 conn.commit()
             conn.close()
