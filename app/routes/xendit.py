@@ -414,15 +414,16 @@ def _record_settlement_and_ledger_sync(
             )
         )
 
-        # 2. Update status orders menjadi LUNAS & PAID secara atomik
+        # 2. Update status orders menjadi PAID secara atomik
         cur.execute(
             """
             UPDATE orders 
-            SET status = 'LUNAS',
+            SET status = 'PAID',
                 payment_status = 'PAID',
+                order_status = 'PAID',
                 paid_at = COALESCE(orders.paid_at, %s),
                 updated_at = %s
-            WHERE id = %s AND (status IN ('PENDING', 'pending', 'WAITING_PAYMENT', 'unpaid') OR payment_status IN ('PENDING', 'pending', 'WAITING_PAYMENT', 'unpaid') OR status IS NULL);
+            WHERE id = %s AND (status IN ('PENDING', 'pending', 'WAITING_PAYMENT', 'unpaid', 'LUNAS') OR payment_status IN ('PENDING', 'pending', 'WAITING_PAYMENT', 'unpaid') OR status IS NULL);
             """,
             (now_utc, now_utc, str(external_id))
         )
@@ -430,7 +431,7 @@ def _record_settlement_and_ledger_sync(
             cur.execute("SELECT status, payment_status FROM orders WHERE id = %s LIMIT 1;", (str(external_id),))
             existing_ord = cur.fetchone()
             if existing_ord and (str(existing_ord[0] or "").upper() in _PAID_STATUSES or str(existing_ord[1] or "").upper() in _PAID_STATUSES):
-                logger.info(f"[Xendit Atomic Check] Order '{external_id}' already LUNAS/PAID. Idempotency hit.")
+                logger.info(f"[Xendit Atomic Check] Order '{external_id}' already PAID/LUNAS. Idempotency hit.")
                 return {"status": "ALREADY_SETTLED"}
 
             # Jika order belum ada di database, auto-insert order lunas
@@ -438,11 +439,12 @@ def _record_settlement_and_ledger_sync(
                 """
                 INSERT INTO orders (
                     id, tenant_slug, product_id, product_title, gross_amount,
-                    customer_name, customer_phone, customer_email, status, payment_status, paid_at, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'LUNAS', 'PAID', %s, %s, %s)
+                    customer_name, customer_phone, customer_email, status, payment_status, order_status, paid_at, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'PAID', 'PAID', 'PAID', %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
-                    status = 'LUNAS',
+                    status = 'PAID',
                     payment_status = 'PAID',
+                    order_status = 'PAID',
                     paid_at = COALESCE(orders.paid_at, EXCLUDED.paid_at),
                     updated_at = EXCLUDED.updated_at;
                 """,
@@ -621,14 +623,14 @@ def _record_settlement_and_ledger_sync(
     supabase = get_supabase()
     if supabase:
         try:
-            supabase.table("payment_settlements").insert({
+            supabase.table("payment_settlements").upsert({
                 "provider_ref": f"xendit_{external_id}",
                 "settled_amount": amount,
-                "status": "LUNAS",
+                "status": "PAID",
                 "raw_payload": payload,
-            }).execute()
-        except Exception:
-            pass
+            }, on_conflict="provider_ref").execute()
+        except Exception as sb_err:
+            logger.debug(f"[Xendit Supabase Settlement Note] {sb_err}")
 
 
 # -----------------------------------------------------------------------------
