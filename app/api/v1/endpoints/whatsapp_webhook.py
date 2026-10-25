@@ -14,7 +14,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from app.schemas.whatsapp import WhatsAppWebhookPayload
@@ -26,6 +26,20 @@ logger = logging.getLogger("WHATSAPP_WEBHOOK_INGESTION")
 router = APIRouter(tags=["WhatsApp Cloud API Webhook"])
 
 STREAM_NAME = "stream:whatsapp:inbound"
+
+async def _dispatch_to_traffic_splitter(payload: Dict[str, Any]) -> None:
+    """Dispatches inbound WhatsApp message directly to TrafficSplitter in background task."""
+    try:
+        from app.whatsapp.traffic_splitter import TrafficSplitter
+        status_code, result, trace = await TrafficSplitter.split_and_dispatch(payload)
+        logger.info(
+            f"[WHATSAPP WEBHOOK] Background dispatch to TrafficSplitter completed: HTTP {status_code} ({result.get('status')})"
+        )
+    except Exception as exc:
+        logger.error(
+            f"[WHATSAPP WEBHOOK] Error executing TrafficSplitter in background task: {exc}",
+            exc_info=True,
+        )
 
 def get_meta_verify_tokens() -> list[str]:
     """Retrieve officially configured Meta WhatsApp webhook verification tokens from environment."""
@@ -129,14 +143,18 @@ def _extract_messages_from_raw(
 
 @router.post("/webhook/whatsapp", summary="Meta WhatsApp Inbound Ingestion")
 @router.post("/api/v1/webhook/whatsapp", summary="Meta WhatsApp Inbound Ingestion (v1)")
-async def ingest_whatsapp_webhook(request: Request):
+async def ingest_whatsapp_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
     """Ingests incoming WhatsApp Cloud API events.
 
     Processing Steps:
     1. Parse and validate JSON envelope.
     2. Extract incoming messages.
     3. Run Idempotency Guard via IdempotencyService (SET NX whatsapp:wamid:{wamid} TTL 24h).
-    4. For non-duplicate messages, enqueue to Redis stream `stream:whatsapp:inbound`.
+    4. For non-duplicate messages, dispatch directly to TrafficSplitter (via FastAPI BackgroundTasks).
+       (Temporary bypass for stream:whatsapp:inbound xadd per CTO mandate).
     5. Return HTTP 200 immediately (non-blocking).
     """
     try:
@@ -235,29 +253,43 @@ async def ingest_whatsapp_webhook(request: Request):
                         duplicate_count += 1
                         continue
 
-                    # Construct stream & worker dispatch payload
-                    stream_entry = {
-                        "wamid": wamid,
-                        "event_id": event_id or "",
-                        "entry_id": entry_id,
-                        "tenant_id": resolved_tenant_id,
-                        "from": message.from_,
-                        "timestamp": message.timestamp,
-                        "type": message.type or "text",
-                        "phone_number_id": phone_number_id,
-                        "display_phone_number": metadata_dict.get("display_phone_number", ""),
-                        "message_data": json.dumps(message_dump),
-                        "metadata": json.dumps(metadata_dict),
-                        "received_at": str(time.time()),
+                    # Construct dispatch payload for TrafficSplitter
+                    contacts_dump = []
+                    if hasattr(value, "contacts") and value.contacts:
+                        contacts_dump = [
+                            c.model_dump(by_alias=True) if hasattr(c, "model_dump") else c
+                            for c in value.contacts
+                        ]
+                    elif isinstance(raw_payload, dict):
+                        contacts_dump = raw_payload.get("entry", [{}])[0].get("changes", [{}])[0].get("value", {}).get("contacts", [])
+
+                    dispatch_payload = {
+                        "object": "whatsapp_business_account",
+                        "entry": [
+                            {
+                                "id": entry_id,
+                                "changes": [
+                                    {
+                                        "value": {
+                                            "messaging_product": "whatsapp",
+                                            "metadata": metadata_dict,
+                                            "contacts": contacts_dump,
+                                            "messages": [message_dump],
+                                        },
+                                        "field": "messages",
+                                    }
+                                ],
+                            }
+                        ],
                     }
 
-                    # Enqueue to Redis stream / async worker pipeline
-                    stream_id = await idempotency_service.enqueue_to_stream(
-                        STREAM_NAME,
-                        stream_entry,
-                    )
+                    # Single Processing Owner: Dispatch directly to TrafficSplitter via BackgroundTasks
+                    background_tasks.add_task(_dispatch_to_traffic_splitter, dispatch_payload)
+
+                    # CTO Mandate: Temporarily disable xadd to stream:whatsapp:inbound to prevent double-processing
+                    # stream_id = await idempotency_service.enqueue_to_stream(STREAM_NAME, stream_entry)
                     logger.info(
-                        f"[WHATSAPP WEBHOOK] Enqueued message {wamid} for tenant '{resolved_tenant_id}' (event_id: {event_id}) to '{STREAM_NAME}' (stream_id: {stream_id})."
+                        f"[WHATSAPP WEBHOOK] Dispatched message {wamid} for tenant '{resolved_tenant_id}' (event_id: {event_id}) to TrafficSplitter via BackgroundTasks (stream:whatsapp:inbound xadd bypassed)."
                     )
                     enqueued_count += 1
 
@@ -297,22 +329,30 @@ async def ingest_whatsapp_webhook(request: Request):
                     duplicate_count += 1
                     continue
 
-                stream_entry = {
-                    "wamid": wamid,
-                    "event_id": event_id or "",
-                    "entry_id": entry_id,
-                    "tenant_id": resolved_tenant_id,
-                    "from": str(msg_dict.get("from", "")),
-                    "timestamp": str(msg_dict.get("timestamp", "")),
-                    "type": str(msg_dict.get("type", "text")),
-                    "phone_number_id": raw_phone_id,
-                    "display_phone_number": str(meta_dict.get("display_phone_number", "")),
-                    "message_data": json.dumps(msg_dict),
-                    "metadata": json.dumps(meta_dict),
-                    "received_at": str(time.time()),
+                fallback_dispatch_payload = {
+                    "object": "whatsapp_business_account",
+                    "entry": [
+                        {
+                            "id": entry_id,
+                            "changes": [
+                                {
+                                    "value": {
+                                        "messaging_product": "whatsapp",
+                                        "metadata": meta_dict,
+                                        "messages": [msg_dict],
+                                    },
+                                    "field": "messages",
+                                }
+                            ],
+                        }
+                    ],
                 }
 
-                await idempotency_service.enqueue_to_stream(STREAM_NAME, stream_entry)
+                # Single Processing Owner: Dispatch directly to TrafficSplitter via BackgroundTasks
+                background_tasks.add_task(_dispatch_to_traffic_splitter, fallback_dispatch_payload)
+
+                # CTO Mandate: Temporarily disable xadd to stream:whatsapp:inbound
+                # await idempotency_service.enqueue_to_stream(STREAM_NAME, stream_entry)
                 enqueued_count += 1
             except Exception as stream_err:
                 logger.error(f"[WHATSAPP WEBHOOK] Error processing message {wamid}: {stream_err}")
