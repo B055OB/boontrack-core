@@ -441,10 +441,35 @@ STATE_0_TRIGGER_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-# Directive 01: OnlineBoost Batch 1 Fast-Path Trigger "MAU METODE RAHASIA"
+# Directive 01: OnlineBoost Batch 1 Fast-Path Trigger (Expanded for Playbook v2.2)
 TRIGGER_PATTERN_ONLINEBOOST_BATCH1 = re.compile(
-    r"(?i)^\s*mau\s+metode\s+rahasia\s*$",
+    r"(?i)(^\s*mau\s*$|"
+    r"trigger_mau|"
+    r"mau\s+metode\s+rahasia|"
+    r"mau\s+ikut|"
+    r"bayar\s+via\s+qris|"
+    r"ikut\s+kelas|"
+    r"tertarik|"
+    r"^\s*halo[\s,!.]*$|"
+    r"^\s*hai[\s,!.]*$|"
+    r"^\s*hi[\s,!.]*$|"
+    r"siapkan\s+qris|"
+    r"siapkan_qris|"
+    r"tanya_dulu)",
     re.IGNORECASE
+)
+
+PLAYBOOK_V22_OFFER_SCRIPT = (
+    "Pilihan yang sangat tepat, Kak! Untuk program Kelas Inkubasi CTWA (Click to WhatsApp), kami fokus pada Paket Lengkap (Mesin Kasir WhatsApp Otomatis 24 Jam) seharga Rp249.000 (Sekali Bayar).\n\n"
+    "Fasilitas dan senjata bisnis yang langsung Kakak dapatkan bernilai lebih dari Rp1.700.000+:\n"
+    "🎓 Bimbingan Intensif 10 Langkah Praktis (Nilai Rp999.000) — Step-by-step dari nol sampai pecah telur, dirancang langsung praktik tanpa teori berbelit.\n"
+    "🤖 Setup Engine Bot WhatsApp Natural AI (Nilai Rp299.000/bln) — Persis seperti cara saya ngobrol luwes sama Kakak sekarang! Nggak kaku kayak bot jadul, dan setup bot pintar model begini susah banget dicari di luaran sana.\n"
+    "💳 Kasir Otomatis Dynamic QRIS 0% MDR Fee — Invoice verifikasi otomatis 24 jam dan uang hasil penjualan 100% utuh masuk ke rekening Kakak tanpa potongan komisi sepeser pun.\n"
+    "🎬 Generator Video Iklan 9-Scene (Nilai Rp199.000/bln) — Bikin video iklan konversi tinggi tanpa perlu sewa editor mahal.\n"
+    "📊 Ads Performance Tracker + Akun Whitelist (WL) — Iklan satset tanpa drama banned/checkpoint akun baru.\n"
+    "🔐 Lisensi Produk Siap Jual + Akses Supergroup Praktikum Eksklusif.\n\n"
+    "Total Nilai Fasilitas: ~Rp1.796.000~ 🔥 Spesial Hari Ini: Hanya Rp249.000\n\n"
+    "Cek detailnya di sini: 👉 https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale"
 )
 
 def classify_academy_trigger(text: str) -> Optional[str]:
@@ -1241,35 +1266,107 @@ class AcademyBotStateMachine:
         if trigger_campaign:
             logger.info(f"[AcademyState0] Matched '{trigger_campaign}' trigger from {clean_phone} ({resolved_name})")
 
-            # --- ROUTE 0: OnlineBoost Batch 1 Fast-Path ("MAU METODE RAHASIA") ---
+            # --- ROUTE 0: OnlineBoost Batch 1 Fast-Path (Playbook v2.2 & Dynamic QRIS) ---
             if trigger_campaign == "onlineboost_batch1":
-                # 1. Lookup staging_alumni_cpm (E.164)
-                staged_alumni = lookup_staging_alumni_cpm(clean_phone, tenant_id=tenant_id)
-                staged_email = None
-                if staged_alumni:
-                    resolved_name = staged_alumni.get("alumni_name") or resolved_name
-                    staged_email = (staged_alumni.get("metadata") or {}).get("email") or session.get("email")
-                else:
-                    staged_email = session.get("email")
+                clean_lower = clean_text.lower().strip()
+                is_direct_qris = any(kw in clean_lower for kw in [
+                    "bayar via qris", "siapkan qris", "siapkan_qris", "bayar qris", "metode rahasia"
+                ])
 
+                # 1. Jika tombol/teks permintaan langsung QRIS
+                if is_direct_qris:
+                    staged_alumni = lookup_staging_alumni_cpm(clean_phone, tenant_id=tenant_id)
+                    staged_email = None
+                    if staged_alumni:
+                        resolved_name = staged_alumni.get("alumni_name") or resolved_name
+                        staged_email = (staged_alumni.get("metadata") or {}).get("email") or session.get("email")
+                    else:
+                        staged_email = session.get("email")
+
+                    cls.set_session(
+                        clean_phone,
+                        state=STATE_1_PAYMENT_ISSUED,
+                        name=resolved_name,
+                        email=staged_email,
+                        campaign="onlineboost_batch1",
+                        tenant_id=tenant_id,
+                    )
+
+                    fast_res = await generate_fast_path_xendit_qris_batch1(
+                        customer_phone=clean_phone,
+                        customer_name=resolved_name,
+                        customer_email=staged_email,
+                        tenant_id=tenant_id,
+                        phone_number_id=phone_number_id,
+                    )
+                    return fast_res
+
+                # 2. Jika user menekan tombol Tanya Dulu
+                elif clean_text.strip().upper() == "TANYA_DULU":
+                    reply_text = (
+                        f"Halo {resolved_name}! 👋 Ada yang bisa kami bantu jelaskan lebih detail tentang "
+                        f"Kelas Inkubasi CTWA Batch 1? Silakan tanyakan materi, jadwal, atau fasilitasnya ya!"
+                    )
+                    try:
+                        await send_whatsapp_text(
+                            to_phone=clean_phone,
+                            text=reply_text,
+                            tenant_id=tenant_id,
+                            phone_number_id=phone_number_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+                    return {
+                        "handled": True,
+                        "state": 0,
+                        "action": "TANYA_DULU",
+                        "campaign": "onlineboost_batch1",
+                        "reply": reply_text,
+                        "tenant_id": tenant_id,
+                    }
+
+                # 3. Default (Pesan "MAU", "TRIGGER_MAU", "halo", "mau ikut", dsb):
+                # Balas dengan naskah Playbook v2.2 + link penawaran + interactive buttons (SIAPKAN QRIS SEKARANG & TANYA DULU)
                 cls.set_session(
                     clean_phone,
-                    state=STATE_1_PAYMENT_ISSUED,
+                    state=STATE_0_INIT,
                     name=resolved_name,
-                    email=staged_email,
                     campaign="onlineboost_batch1",
                     tenant_id=tenant_id,
                 )
+                buttons = [
+                    {"id": "SIAPKAN_QRIS", "title": "SIAPKAN QRIS SEKARANG"[:20]},
+                    {"id": "TANYA_DULU", "title": "TANYA DULU"}
+                ]
+                try:
+                    from app.services.whatsapp.cloud_api import send_whatsapp_buttons
+                    await send_whatsapp_buttons(
+                        to_phone=clean_phone,
+                        body_text=PLAYBOOK_V22_OFFER_SCRIPT,
+                        buttons=buttons,
+                        header_text="Kelas Inkubasi CTWA Batch 1",
+                        footer_text="OnlineBoost x BoonTrack",
+                        tenant_id=tenant_id,
+                        phone_number_id=phone_number_id,
+                    )
+                except Exception as btn_err:
+                    logger.warning(f"[AcademyState0] Button send fallback note: {btn_err}")
+                    await send_whatsapp_text(
+                        to_phone=clean_phone,
+                        text=f"{PLAYBOOK_V22_OFFER_SCRIPT}\n\nKetik *SIAPKAN QRIS* untuk langsung bayar atau *TANYA* untuk konsultasi.",
+                        tenant_id=tenant_id,
+                        phone_number_id=phone_number_id,
+                    )
 
-                # 2. Bypass Form -> Call Xendit Dynamic QRIS langsung (< 1.2s timeout cap, < 2.0s latency)
-                fast_res = await generate_fast_path_xendit_qris_batch1(
-                    customer_phone=clean_phone,
-                    customer_name=resolved_name,
-                    customer_email=staged_email,
-                    tenant_id=tenant_id,
-                    phone_number_id=phone_number_id,
-                )
-                return fast_res
+                return {
+                    "handled": True,
+                    "state": 0,
+                    "action": "PLAYBOOK_V22_PITCH",
+                    "campaign": "onlineboost_batch1",
+                    "reply": PLAYBOOK_V22_OFFER_SCRIPT,
+                    "buttons": buttons,
+                    "tenant_id": tenant_id,
+                }
 
             # --- ROUTE A: Kampanye A (ref=alumni_cpm) ---
             elif trigger_campaign == "alumni_cpm":
