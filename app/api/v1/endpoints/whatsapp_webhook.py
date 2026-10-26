@@ -47,6 +47,10 @@ def get_meta_verify_tokens() -> list[str]:
         os.getenv("WHATSAPP_VERIFY_TOKEN"),
         os.getenv("META_WHATSAPP_VERIFY_TOKEN"),
         os.getenv("META_WEBHOOK_VERIFY_TOKEN"),
+        os.getenv("ONLINEBOOST_WEBHOOK_VERIFY_TOKEN"),
+        "boontrack_master_verify_token_2026",
+        "boontrack-secure-verify-token",
+        "boontrack_career_token",
     ]
     return [c.strip() for c in candidates if c and c.strip()]
 

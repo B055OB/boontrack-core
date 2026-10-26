@@ -162,12 +162,16 @@ def record_durable_suppression(
         logger.warning(f"[SuppressionService] Redis fallback failed ({r_err}).")
 
     if pg_success:
+        for pv in phone_variants:
+            _IN_MEMORY_SUPPRESSIONS.add((tenant_id, pv))
         return True, "postgres"
 
     if redis_success:
         logger.warning(
             f"[SuppressionService] Operating on Redis fallback for {clean_phone} (PostgreSQL down)."
         )
+        for pv in phone_variants:
+            _IN_MEMORY_SUPPRESSIONS.add((tenant_id, pv))
         return True, "redis_fallback"
 
     # 3. In-memory fallback if explicitly enabled for testing
@@ -204,10 +208,6 @@ def is_phone_suppressed(phone: str, tenant_id: str) -> bool:
         if (tenant_id, pv) in _IN_MEMORY_SUPPRESSIONS:
             return True
 
-    if _allow_in_memory_fallback or os.getenv("PYTEST_CURRENT_TEST"):
-        # In test execution without matching in-memory suppression, fast-path to False
-        return False
-
     # 2. Redis Fallback / Fast Cache
     try:
         r_client = redis_module.get_redis_client()
@@ -221,6 +221,11 @@ def is_phone_suppressed(phone: str, tenant_id: str) -> bool:
                     return True
     except Exception as r_err:
         logger.debug(f"[PhoneSuppression] Redis check note: {r_err}")
+
+    if _allow_in_memory_fallback or os.getenv("PYTEST_CURRENT_TEST"):
+        # In test execution without matching in-memory or Redis suppression,
+        # skip live PostgreSQL query to avoid hanging or unmocked DB calls.
+        return False
 
     # 3. PostgreSQL Authority (RLS protected)
     conn = None

@@ -208,6 +208,29 @@ async def fulfill_onlineboost_ctwa_order(
     if existing_link:
         single_use_link = existing_link
         logger.info(f"[CTWA FULFILLMENT] Idempotency hit: Reusing existing invite link for Order {order_id}")
+        is_already_delivered = bool(
+            _ISSUED_TELEGRAM_LINKS_CACHE.get(f"{order_id}_DELIVERED")
+            or (order_record.get("metadata") or {}).get("fulfillment_status") == "DELIVERED"
+        )
+        if is_already_delivered:
+            confirmation_message = (
+                f"Selamat Kak {resolved_name}! Pembayaran sebesar Rp{amt_formatted} untuk Kelas Inkubasi CTWA Batch 1 telah BERHASIL diverifikasi ✅\n\n"
+                f"Berikut link akses eksklusif Kakak untuk bergabung ke Supergroup Praktikum: 🔗 {single_use_link}\n\n"
+                f"⚠️ Penting: Tautan di atas adalah link khusus 1 kali masuk dan berlaku selama 24 jam. Jangan dibagikan ke orang lain ya Kak!\n\n"
+                f"Sampai jumpa di ruang praktikum!"
+            )
+            return {
+                "status": "SUCCESS",
+                "order_id": order_id,
+                "single_use_invite_link": single_use_link,
+                "confirmation_message": confirmation_message,
+                "buyer_name": resolved_name,
+                "buyer_phone": clean_phone,
+                "amount": resolved_amount,
+                "wa_result": {"status": "skipped", "reason": "ALREADY_DELIVERED"},
+                "capi_result": {"status": "skipped", "reason": "ALREADY_DELIVERED"},
+                "idempotency_hit": True,
+            }
     else:
         # Panggil Telegram Bot API createChatInviteLink
         try:
@@ -372,6 +395,9 @@ async def fulfill_onlineboost_ctwa_order(
             logger.info(f"[CTWA FULFILLMENT] Meta CAPI Purchase dispatched for Order {order_id}")
         except Exception as capi_err:
             logger.warning(f"[CTWA FULFILLMENT] Meta CAPI Purchase dispatch note: {capi_err}")
+
+    if order_id:
+        _ISSUED_TELEGRAM_LINKS_CACHE[f"{order_id}_DELIVERED"] = single_use_link
 
     return {
         "status": "SUCCESS",

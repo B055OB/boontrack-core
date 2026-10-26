@@ -264,25 +264,37 @@ class CTWAStateEngine:
         now_iso = now.isoformat()
 
         # 2. Terbitkan Dynamic QRIS resmi via Xendit API akun PT Boontrack
-        xendit_qr_res = await xendit_service.create_dynamic_qris(
-            external_id=order_id,
-            amount=total_amount,
-            tenant_id="onlineboost",
-            customer_phone=clean_phone,
-            metadata={
-                "product_name": SINGLE_OFFER_NAME,
-                "product_slug": SINGLE_OFFER_SLUG,
-                "customer_name": name,
-                "ctwa_clid": ctwa_clid,
-            }
-        )
+        xendit_qr_res = {}
+        try:
+            xendit_qr_res = await xendit_service.create_dynamic_qris(
+                external_id=order_id,
+                amount=total_amount,
+                tenant_id="onlineboost",
+                customer_phone=clean_phone,
+                metadata={
+                    "product_name": SINGLE_OFFER_NAME,
+                    "product_slug": SINGLE_OFFER_SLUG,
+                    "customer_name": name,
+                    "ctwa_clid": ctwa_clid,
+                }
+            )
+        except Exception as x_err:
+            logger.warning(f"[GATEKEEPER] Xendit create_dynamic_qris note: {x_err}")
+            xendit_qr_res = {}
+
         qris_payload = str(xendit_qr_res.get("qr_string") or "").strip()
         if not qris_payload or not qris_payload.startswith("000201"):
-            qris_payload = generate_dynamic_qris_payload(
-                static_payload=DEFAULT_STATIC_QRIS,
-                amount=total_amount,
-                invoice_id=order_id,
-            )
+            try:
+                qris_payload = generate_dynamic_qris_payload(
+                    static_payload=DEFAULT_STATIC_QRIS,
+                    amount=total_amount,
+                    invoice_id=order_id,
+                )
+            except Exception as q_err:
+                logger.warning(f"[GATEKEEPER] QRIS payload generation fallback note: {q_err}")
+                qris_payload = ""
+
+        qris_payload = str(qris_payload or "").strip()
         invoice_url = str(xendit_qr_res.get("invoice_url") or "").strip()
         session["invoice_url"] = invoice_url
 
@@ -518,6 +530,9 @@ class CTWAStateEngine:
                 "Instruksi pembayaran akan diinformasikan setelah verifikasi batch resmi dibuka."
             )
             is_executed = bool(gk_result.get("status") == "GATEKEEPER_EXECUTED" or qris_payload)
+            if gk_result.get("status") == "GATEKEEPER_PENDING" and not qris_payload:
+                is_executed = False
+
             return {
                 "success": is_executed,
                 "action": "GATEKEEPER_QRIS_ISSUED" if is_executed else "GATEKEEPER_PENDING",
@@ -549,7 +564,20 @@ class CTWAStateEngine:
                     "current_state": "STATE_PAYMENT_PENDING",
                 }
 
-        # ─── 3. DEFAULT RESPONSE: VALUE STACKING HOOK & WHATSAPP FLOWS FORM ────
+        # ─── 3. INBOUND LANDING PAGE CTA: SATU PERTANYAAN KUALIFIKASI (NO LOOP) ─
+        if re.search(r"(?i)(saya\s+tertarik\s+ikut\s+kelas\s*nya\s*kang|tertarik\s+ikut\s+kelas|tertarik\s+kelas)", q):
+            from app.services.academy_service import QUALIFICATION_PRIMARY_QUESTION
+            session["current_state"] = "STATE_QUALIFYING"
+            self._save_session_to_db(session)
+            return {
+                "success": True,
+                "action": "QUALIFY_OFFER",
+                "reply": QUALIFICATION_PRIMARY_QUESTION,
+                "reply_text": QUALIFICATION_PRIMARY_QUESTION,
+                "current_state": "STATE_QUALIFYING",
+            }
+
+        # ─── 4. DEFAULT RESPONSE: VALUE STACKING HOOK & WHATSAPP FLOWS FORM ────
         # Fokuskan seluruh grounding dan respon bot HANYA pada Paket Lengkap 249K
         reply = SINGLE_OFFER_VALUE_STACKING_SCRIPT
 
