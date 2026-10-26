@@ -141,6 +141,113 @@ def _extract_messages_from_raw(
     return extracted
 
 
+async def _handle_synchronous_opt_out(
+    wamid: str,
+    sender_phone: str,
+    resolved_tenant_id: str,
+    phone_number_id: str,
+    text_body: str,
+    message_data: Dict[str, Any],
+    metadata: Dict[str, Any],
+    entry_id: str,
+) -> JSONResponse:
+    """Synchronously records opt-out before HTTP acknowledgment.
+
+    If persistence to all approved mechanisms fails, returns HTTP 503 so Meta
+    will retry delivery. If persistence succeeds, resets session, records
+    idempotency, dispatches confirmation, and returns HTTP 200.
+    """
+    from app.services.whatsapp.credentials import normalize_phone_number
+    from app.services.phone_suppression_service import record_durable_suppression
+
+    clean_phone = normalize_phone_number(sender_phone) or str(sender_phone).strip()
+
+    # 1. Fast check: if duplicate delivery, acknowledge safely without duplicate reply
+    is_dup = await idempotency_service.is_duplicate(wamid)
+    if is_dup:
+        logger.info(
+            f"[WHATSAPP WEBHOOK] Duplicate opt-out wamid '{wamid}' acknowledged safely without duplicate reply."
+        )
+        return JSONResponse(status_code=200, content={"status": "duplicate_opt_out_acknowledged"})
+
+    # 2. Synchronous durable suppression persistence
+    persisted, source = record_durable_suppression(
+        phone=clean_phone,
+        tenant_id=resolved_tenant_id,
+        reason=f"USER_REQUESTED_OPT_OUT_{text_body.strip().upper()}",
+    )
+
+    if not persisted:
+        logger.error(
+            f"[WHATSAPP WEBHOOK] All approved persistence mechanisms failed for {clean_phone} "
+            f"on tenant '{resolved_tenant_id}'. Returning HTTP 503 to trigger provider retry."
+        )
+        try:
+            await idempotency_service.delete(wamid)
+        except Exception as _del_err:
+            logger.debug(f"[WHATSAPP WEBHOOK] Failed to release idempotency key: {_del_err}")
+
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "message": "Suppression persistence unavailable. Retrying via webhook provider.",
+                "phone": clean_phone,
+                "tenant": resolved_tenant_id,
+            },
+        )
+
+    # 3. Reset conversation session in active bot state machines
+    try:
+        from app.services.academy_service import academy_bot
+
+        academy_bot.reset_session(clean_phone)
+    except Exception:
+        pass
+
+    # 4. Record durable idempotency event after suppression confirmation
+    await idempotency_service.record_inbound_event(
+        provider_message_id=wamid,
+        payload={
+            "message": message_data,
+            "metadata": metadata,
+            "entry_id": entry_id,
+            "tenant_id": resolved_tenant_id,
+            "opt_out": True,
+            "persistence": source,
+        },
+        channel_provider="whatsapp_meta",
+    )
+
+    # 5. Dispatch opt-out confirmation message
+    opt_out_msg = (
+        "Anda telah berhasil berhenti berlangganan dari notifikasi ini. "
+        "Kirim 'START' kapan saja untuk mengaktifkan kembali."
+    )
+    try:
+        from app.services.whatsapp.cloud_api import send_whatsapp_text
+
+        await send_whatsapp_text(
+            to_phone=clean_phone,
+            text=opt_out_msg,
+            tenant_id=resolved_tenant_id,
+            phone_number_id=phone_number_id,
+        )
+    except Exception as _send_err:
+        logger.warning(f"[WHATSAPP WEBHOOK] WA opt-out send note: {_send_err}")
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "success",
+            "action": "opt_out_confirmed",
+            "persistence": source,
+            "phone": clean_phone,
+            "tenant": resolved_tenant_id,
+        },
+    )
+
+
 @router.post("/webhook/whatsapp", summary="Meta WhatsApp Inbound Ingestion")
 @router.post("/api/v1/webhook/whatsapp", summary="Meta WhatsApp Inbound Ingestion (v1)")
 async def ingest_whatsapp_webhook(
@@ -152,10 +259,13 @@ async def ingest_whatsapp_webhook(
     Processing Steps:
     1. Parse and validate JSON envelope.
     2. Extract incoming messages.
-    3. Run Idempotency Guard via IdempotencyService (SET NX whatsapp:wamid:{wamid} TTL 24h).
-    4. For non-duplicate messages, dispatch directly to TrafficSplitter (via FastAPI BackgroundTasks).
-       (Temporary bypass for stream:whatsapp:inbound xadd per CTO mandate).
-    5. Return HTTP 200 immediately (non-blocking).
+    3. Check compliance keywords (STOP, BERHENTI, UNSUBSCRIBE).
+       - Opt-out messages are processed synchronously and must be durably persisted
+         before returning HTTP 200. If persistence fails, returns HTTP 503 so Meta
+         will retry delivery.
+    4. For non-opt-out messages, run Idempotency Guard and dispatch directly to
+       TrafficSplitter via BackgroundTasks.
+    5. Return HTTP 200 immediately for non-opt-out valid events.
     """
     try:
         raw_body = await request.body()
@@ -195,6 +305,8 @@ async def ingest_whatsapp_webhook(
     duplicate_count = 0
     unmapped_count = 0
 
+    from app.services.phone_suppression_service import is_opt_out_keyword
+
     try:
         # Validate through Pydantic Schema
         validated_payload = WhatsAppWebhookPayload.model_validate(raw_payload)
@@ -233,7 +345,42 @@ async def ingest_whatsapp_webhook(
                     if not wamid:
                         continue
 
-                    # Durable Idempotency Pattern (PostgreSQL Authority with Redis Accelerator)
+                    # Extract text body for compliance checks
+                    text_body = ""
+                    if getattr(message, "type", "") == "text" and message.text:
+                        text_body = message.text.body or ""
+                    elif getattr(message, "type", "") == "button" and message.button:
+                        text_body = message.button.text or message.button.payload or ""
+                    elif getattr(message, "type", "") == "interactive" and message.interactive:
+                        if getattr(message.interactive, "button_reply", None):
+                            text_body = (
+                                message.interactive.button_reply.title
+                                or message.interactive.button_reply.id
+                                or ""
+                            )
+                        elif getattr(message.interactive, "list_reply", None):
+                            text_body = (
+                                message.interactive.list_reply.title
+                                or message.interactive.list_reply.id
+                                or ""
+                            )
+
+                    # 1. OPT-OUT COMPLIANCE GUARD (Synchronous Durable Persistence before HTTP 200)
+                    if is_opt_out_keyword(text_body):
+                        sender_phone = message.from_
+                        message_dump = message.model_dump(by_alias=True)
+                        return await _handle_synchronous_opt_out(
+                            wamid=wamid,
+                            sender_phone=sender_phone,
+                            resolved_tenant_id=resolved_tenant_id,
+                            phone_number_id=phone_number_id,
+                            text_body=text_body,
+                            message_data=message_dump,
+                            metadata=metadata_dict,
+                            entry_id=entry_id,
+                        )
+
+                    # 2. Non-opt-out normal path: Durable Idempotency Pattern
                     message_dump = message.model_dump(by_alias=True)
                     is_new, event_id = await idempotency_service.record_inbound_event(
                         provider_message_id=wamid,
@@ -285,11 +432,8 @@ async def ingest_whatsapp_webhook(
 
                     # Single Processing Owner: Dispatch directly to TrafficSplitter via BackgroundTasks
                     background_tasks.add_task(_dispatch_to_traffic_splitter, dispatch_payload)
-
-                    # CTO Mandate: Temporarily disable xadd to stream:whatsapp:inbound to prevent double-processing
-                    # stream_id = await idempotency_service.enqueue_to_stream(STREAM_NAME, stream_entry)
                     logger.info(
-                        f"[WHATSAPP WEBHOOK] Dispatched message {wamid} for tenant '{resolved_tenant_id}' (event_id: {event_id}) to TrafficSplitter via BackgroundTasks (stream:whatsapp:inbound xadd bypassed)."
+                        f"[WHATSAPP WEBHOOK] Dispatched message {wamid} for tenant '{resolved_tenant_id}' (event_id: {event_id}) to TrafficSplitter via BackgroundTasks."
                     )
                     enqueued_count += 1
 
@@ -314,6 +458,40 @@ async def ingest_whatsapp_webhook(
                 resolved_tenant_id = str(raw_tenant_info.get("tenant_id", ""))
                 meta_dict["tenant_id"] = resolved_tenant_id
 
+                # Extract text body in loose extraction
+                text_body = ""
+                m_type = str(msg_dict.get("type", "text"))
+                if m_type == "text":
+                    text_body = msg_dict.get("text", {}).get("body", "")
+                elif m_type == "button":
+                    text_body = msg_dict.get("button", {}).get("text") or msg_dict.get("button", {}).get("payload", "")
+                elif m_type == "interactive":
+                    inter = msg_dict.get("interactive", {})
+                    btn_rep = inter.get("button_reply", {})
+                    list_rep = inter.get("list_reply", {})
+                    text_body = (
+                        btn_rep.get("title")
+                        or btn_rep.get("id")
+                        or list_rep.get("title")
+                        or list_rep.get("id")
+                        or ""
+                    )
+
+                # 1. OPT-OUT COMPLIANCE GUARD in loose extraction
+                if is_opt_out_keyword(text_body):
+                    sender_phone = str(msg_dict.get("from", ""))
+                    return await _handle_synchronous_opt_out(
+                        wamid=wamid,
+                        sender_phone=sender_phone,
+                        resolved_tenant_id=resolved_tenant_id,
+                        phone_number_id=raw_phone_id,
+                        text_body=text_body,
+                        message_data=msg_dict,
+                        metadata=meta_dict,
+                        entry_id=entry_id,
+                    )
+
+                # 2. Non-opt-out normal path in loose extraction
                 is_new, event_id = await idempotency_service.record_inbound_event(
                     provider_message_id=wamid,
                     payload={
@@ -350,14 +528,11 @@ async def ingest_whatsapp_webhook(
 
                 # Single Processing Owner: Dispatch directly to TrafficSplitter via BackgroundTasks
                 background_tasks.add_task(_dispatch_to_traffic_splitter, fallback_dispatch_payload)
-
-                # CTO Mandate: Temporarily disable xadd to stream:whatsapp:inbound
-                # await idempotency_service.enqueue_to_stream(STREAM_NAME, stream_entry)
                 enqueued_count += 1
             except Exception as stream_err:
                 logger.error(f"[WHATSAPP WEBHOOK] Error processing message {wamid}: {stream_err}")
 
-    # Non-blocking instant HTTP 200 response
+    # Non-blocking instant HTTP 200 response for non-opt-out valid events
     return JSONResponse(
         status_code=200,
         content={

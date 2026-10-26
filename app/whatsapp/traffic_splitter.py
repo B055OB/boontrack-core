@@ -1636,6 +1636,72 @@ class TenantWebhookRouter:
                 trace.log_step("InboundMessagePersistError", str(persist_err))
 
         # =====================================================================
+        # 0.85. COMPLIANCE GUARD: Meta WABA Opt-Out Policy (STOP, BERHENTI, UNSUBSCRIBE)
+        # =====================================================================
+        OPT_OUT_KEYWORDS = {"STOP", "BERHENTI", "UNSUBSCRIBE"}
+        is_opt_out = clean_text.upper() in OPT_OUT_KEYWORDS or any(
+            re.search(rf"\b{re.escape(k.lower())}\b", text_lower) for k in OPT_OUT_KEYWORDS
+        )
+        if is_opt_out:
+            trace.log_step("OptOutComplianceGuard", f"Opt-out keyword detected from {sender_phone} on tenant '{tenant_slug}'")
+            from app.services.phone_suppression_service import record_durable_suppression
+            persisted, persistence_src = record_durable_suppression(
+                phone=sender_phone,
+                tenant_id=tenant_slug,
+                reason=f"USER_REQUESTED_OPT_OUT_{clean_text.upper()}",
+            )
+
+            # Reset conversation sessions across session stores
+            try:
+                from app.services.academy_service import academy_bot
+                academy_bot.reset_session(sender_phone)
+            except Exception:
+                pass
+
+            if not persisted:
+                trace.log_step("OptOutComplianceGuard", f"CRITICAL: Failed to record suppression for {sender_phone} on {tenant_slug}")
+                res = {
+                    "status": "error",
+                    "purpose": "COMPLIANCE_OPT_OUT",
+                    "action": "suppression_failed",
+                    "message": "Suppression persistence unavailable. Retrying via webhook provider.",
+                    "tenant": tenant_slug,
+                }
+                trace.early_return = True
+                trace.response_status = 503
+                trace.response_payload = res
+                return res
+
+            opt_out_msg = (
+                "Anda telah berhasil berhenti berlangganan dari notifikasi ini. "
+                "Kirim 'START' kapan saja untuk mengaktifkan kembali."
+            )
+            try:
+                from app.services.whatsapp.cloud_api import send_whatsapp_text
+                await send_whatsapp_text(
+                    to_phone=sender_phone,
+                    text=opt_out_msg,
+                    tenant_id=tenant_slug,
+                    phone_number_id=phone_number_id,
+                )
+            except Exception as _send_err:
+                logger.warning(f"[OptOutComplianceGuard] WA send note: {_send_err}")
+
+            res = {
+                "status": "success",
+                "purpose": "COMPLIANCE_OPT_OUT",
+                "action": "opt_out_confirmed",
+                "suppressed": True,
+                "persistence": persistence_src,
+                "reply": opt_out_msg,
+                "tenant": tenant_slug,
+            }
+            trace.early_return = True
+            trace.response_status = 200
+            trace.response_payload = res
+            return res
+
+        # =====================================================================
         # 0.9. ONBOARDING PILOT LEAD INTENT (AUDIT OTOMASI BISNIS / SOLUTION ARCHITECT)
         # =====================================================================
         if any(kw in text_lower for kw in ONBOARDING_LEAD_KEYWORDS):
@@ -1740,7 +1806,7 @@ class TenantWebhookRouter:
         # =====================================================================
         # 0.95. BANTUAN ESCALATION (HUMAN REPRESENTATIVE DIRECT LINK)
         # =====================================================================
-        if "bantuan" in text_lower or re.search(r"\bbantuan\b", text_lower):
+        if tenant_slug != "onlineboost" and ("bantuan" in text_lower or re.search(r"\bbantuan\b", text_lower)):
             trace.log_step("TenantBantuanGuard", f"BANTUAN keyword detected from {sender_phone} on tenant '{tenant_slug}'")
             try:
                 await send_whatsapp_text(

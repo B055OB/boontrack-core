@@ -71,6 +71,8 @@ DEFAULT_STATIC_QRIS: str = (
 # STATE CONSTANTS
 STATE_0_TRIGGER = "STATE_0_TRIGGER"
 STATE_0_INIT = "STATE_0_TRIGGER"
+STATE_QUALIFYING = "STATE_QUALIFYING"
+STATE_CONSULTATION = "STATE_CONSULTATION"
 STATE_1_AWAITING_EMAIL = "STATE_1_AWAITING_EMAIL"
 STATE_1_PAYMENT_ISSUED = "STATE_1_PAYMENT_ISSUED"
 STATE_2_PAID = "STATE_2_PAID"
@@ -442,7 +444,101 @@ STATE_0_TRIGGER_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-# Directive 01: OnlineBoost Batch 1 Fast-Path Trigger (Expanded for Playbook v2.2)
+# Directive 04: Founder Mandate - Bot-Led Consultation & Closing Scripts
+# 1. Primary Qualification Question for Inbound Landing Page Message ("Saya tertarik ikut kelas nya Kang")
+QUALIFICATION_PRIMARY_QUESTION: str = (
+    "Siap, Kak! 😁 Gue bantu jelasin langsung di sini. "
+    "Biar arahnya pas, Kakak sudah punya produk/offer yang mau dipasarkan, atau masih mulai dari nol?"
+)
+
+# 2. Alumni Broadcast Response MAU Script (Aldi / OnlineBoost Mentor Persona)
+ALUMNI_MAU_GREETING: str = (
+    "Halo Kak! Mantap, terima kasih responsnya ya. 🙌 "
+    "Di Batch 1 ini, gue lagi siapkan metode baru yang fokus praktik: "
+    "Kelas Inkubasi CTWA (Click to WhatsApp) buat jalanin penjualan otomatis lewat WA.\n\n"
+    "Biar penjelasannya pas sama kebutuhan Kakak, "
+    "Kakak sekarang sudah punya produk/offer yang mau dipasarkan, atau masih mulai dari nol?"
+)
+
+# 3. Situation E: Bot-Led Assistant Inquiry Response (No fake human handoff)
+BOT_LED_ASSISTANT_RESPONSE: str = (
+    "Halo Kak! Di sini dengan asisten virtual resmi OnlineBoost. 😁 "
+    "Gue siap bantu jawab langsung semua pertanyaan seputar materi, fasilitas, biaya, "
+    "maupun pendaftaran Kelas Inkubasi CTWA Batch 1 di sini.\n\n"
+    "Ada bagian materi atau hal yang mau Kakak tanyakan lebih detail?"
+)
+
+# 4. Situation A: Prospect Already Has Product/Offer
+SITUATION_A_EXISTING_PRODUCT_SCRIPT: str = (
+    "Keren, kalau sudah ada produk/offer justru lebih enak gaspolnya! 🚀\n\n"
+    "Di Kelas Inkubasi CTWA Batch 1, kita akan langsung sambungkan produk Kakak ke workflow praktis:\n"
+    "1. Copywriting & Bot Natural AI yang luwes balas chat prospek dan arahkan ke checkout.\n"
+    "2. Kasir otomatis Dynamic QRIS 0% MDR fee (uang penjualan 100% utuh masuk ke rekening Kakak tanpa potongan komisi sepeser pun).\n"
+    "3. 10 langkah intensif scale traffic iklan langsung ke WhatsApp dengan konversi tinggi.\n\n"
+    "Investasi Batch 1 ini Rp249.000 (sekali bayar). Gimana Kak, mau gue bantu amankan slot pendaftarannya sekarang?"
+)
+
+# 5. Situation B: Prospect is a Beginner (Starting from zero)
+SITUATION_B_BEGINNER_SCRIPT: str = (
+    "Tenang aja Kak, banyak teman-teman di Batch 1 yang juga mulai dari nol kok! 👍\n\n"
+    "Di kelas ini kita dampingi langkah demi langkah secara bertahap:\n"
+    "• Memahami cara menentukan offer yang pas & riset target audiens\n"
+    "• Membuat materi promosi & video iklan konversi tinggi yang menarik\n"
+    "• Menata alur percakapan WhatsApp yang ramah sampai proses transaksi otomatis\n\n"
+    "Semua dipelajari lewat 10 langkah praktikum terarah tanpa teori yang berbelit-belit.\n\n"
+    "Investasi Batch 1 Rp249.000 (sekali bayar). Mau gue bantu amankan slotnya sekarang, Kak?"
+)
+
+# 6. Situation C: Specific Price & Benefits Inquiry
+SITUATION_C_PRICE_BENEFITS_SCRIPT: str = (
+    "Untuk program Kelas Inkubasi CTWA Batch 1, investasinya *Rp249.000* (sekali bayar tanpa biaya bulanan). "
+    "Fasilitas resmi yang langsung Kakak dapatkan:\n\n"
+    "1. 🎓 *Bimbingan 10 Langkah Intensif* — Panduan praktikum terarah step-by-step dari setup offer sampai pecah orderan.\n"
+    "2. 🤖 *Setup Engine Bot WhatsApp Natural AI* — Bot luwes anti-kaku yang mampu melayani prospek secara otomatis 24 jam.\n"
+    "3. 💳 *Kasir Otomatis Dynamic QRIS 0% MDR Fee* — Verifikasi pembayaran otomatis dalam hitungan detik tanpa potongan komisi sepeser pun.\n"
+    "4. 🎬 *Generator Video Iklan 9-Scene* — Tool bantu buat materi video promosi.\n"
+    "5. 📊 *Ads Performance Tracker + Akun Whitelist (WL)*.\n"
+    "6. 👥 *Akses Supergroup Praktikum & Forum Diskusi Eksklusif*.\n\n"
+    "Gimana Kak, mau langsung amankan slot Batch 1 sekarang?"
+)
+
+# Trigger Regex Patterns for OnlineBoost Consultation & Inbound
+TRIGGER_PATTERN_LANDING_PAGE_INTEREST = re.compile(
+    r"(?i)(saya\s+tertarik\s+ikut\s+kelas\s*nya\s*kang|tertarik\s+ikut\s+kelas|tertarik\s+kelas|minat\s+ikut\s+kelas)",
+    re.IGNORECASE
+)
+
+TRIGGER_PATTERN_ALUMNI_MAU = re.compile(
+    r"(?i)(^\s*mau\s*$|^\s*trigger_mau\s*$|mau\s+metode\s+rahasia|mau\s+ikut\b)",
+    re.IGNORECASE
+)
+
+TRIGGER_PATTERN_ADMIN_CS = re.compile(
+    r"(?i)(\badmin\b|\bcs\b|bisa\s+tanya|tanya[\s_]*dulu|hubungi\s+admin|bicara\s+admin|customer\s+service|asisten)",
+    re.IGNORECASE
+)
+
+TRIGGER_PATTERN_PRICE_BENEFITS = re.compile(
+    r"(?i)(onlineboost\s+itu\s+apa|apa\s+itu\s+onlineboost|apa\s+saja\s+yang\s+didapat|dapat\s+apa\s+aja|fasilitas|berapa\s+harganya|harganya\s+berapa|biaya|harga|materi|kurikulum|silabus|keuntungan|benefit|apa\s+yang\s+didapat)",
+    re.IGNORECASE
+)
+
+TRIGGER_PATTERN_REGISTRATION = re.compile(
+    r"(?i)(^\s*daftar\b|mau\s+daftar|daftar\s+sekarang|ikut\s+kelas|amankan\s+slot|cara\s+daftar|mau\s+join|registrasi|bantu\s+daftar|gas\b|lanjut\s+daftar|siap\s+daftar|mau\s+amankan)",
+    re.IGNORECASE
+)
+
+QUALIFY_PRODUCT_PATTERN = re.compile(
+    r"(?i)(sudah\s+punya|ada\s+produk|punya\s+produk|punya\s+offer|ada\s+offer|sudah\s+ada|jualan|produk\s+sendiri|olshop|toko\s+online|skincare|fashion|kuliner|jasa|sudah\s+jualan)",
+    re.IGNORECASE
+)
+
+QUALIFY_ZERO_PATTERN = re.compile(
+    r"(?i)(dari\s+nol|mulai\s+dari\s+nol|belum\s+punya|belum\s+ada|pemula|masih\s+nol|newbie|baru\s+mau|nol\b)",
+    re.IGNORECASE
+)
+
+# Directive 01 / Legacy Compatibility: OnlineBoost Batch 1 Fast-Path Trigger
 TRIGGER_PATTERN_ONLINEBOOST_BATCH1 = re.compile(
     r"(?i)(^\s*mau\s*$|"
     r"trigger_mau|"
@@ -456,22 +552,22 @@ TRIGGER_PATTERN_ONLINEBOOST_BATCH1 = re.compile(
     r"^\s*hi[\s,!.]*$|"
     r"siapkan\s+qris|"
     r"siapkan_qris|"
-    r"tanya_dulu)",
+    r"tanya_dulu|"
+    r"bisa\s+tanya|"
+    r"\badmin\b|"
+    r"\bcs\b|"
+    r"onlineboost\s+itu\s+apa|"
+    r"apa\s+itu\s+onlineboost|"
+    r"apa\s+saja\s+yang\s+didapat|"
+    r"fasilitas|"
+    r"berapa\s+harganya|"
+    r"harganya\s+berapa|"
+    r"biaya|"
+    r"daftar)",
     re.IGNORECASE
 )
 
-PLAYBOOK_V22_OFFER_SCRIPT = (
-    "Pilihan yang sangat tepat, Kak! Untuk program Kelas Inkubasi CTWA (Click to WhatsApp), kami fokus pada Paket Lengkap (Mesin Kasir WhatsApp Otomatis 24 Jam) seharga Rp249.000 (Sekali Bayar).\n\n"
-    "Fasilitas dan senjata bisnis yang langsung Kakak dapatkan bernilai lebih dari Rp1.700.000+:\n"
-    "🎓 Bimbingan Intensif 10 Langkah Praktis (Nilai Rp999.000) — Step-by-step dari nol sampai pecah telur, dirancang langsung praktik tanpa teori berbelit.\n"
-    "🤖 Setup Engine Bot WhatsApp Natural AI (Nilai Rp299.000/bln) — Persis seperti cara saya ngobrol luwes sama Kakak sekarang! Nggak kaku kayak bot jadul, dan setup bot pintar model begini susah banget dicari di luaran sana.\n"
-    "💳 Kasir Otomatis Dynamic QRIS 0% MDR Fee — Invoice verifikasi otomatis 24 jam dan uang hasil penjualan 100% utuh masuk ke rekening Kakak tanpa potongan komisi sepeser pun.\n"
-    "🎬 Generator Video Iklan 9-Scene (Nilai Rp199.000/bln) — Bikin video iklan konversi tinggi tanpa perlu sewa editor mahal.\n"
-    "📊 Ads Performance Tracker + Akun Whitelist (WL) — Iklan satset tanpa drama banned/checkpoint akun baru.\n"
-    "🔐 Lisensi Produk Siap Jual + Akses Supergroup Praktikum Eksklusif.\n\n"
-    "Total Nilai Fasilitas: ~Rp1.796.000~ 🔥 Spesial Hari Ini: Hanya Rp249.000\n\n"
-    "Cek detailnya di sini: 👉 https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale"
-)
+PLAYBOOK_V22_OFFER_SCRIPT = SITUATION_C_PRICE_BENEFITS_SCRIPT
 
 def classify_academy_trigger(text: str) -> Optional[str]:
     """
@@ -484,14 +580,14 @@ def classify_academy_trigger(text: str) -> Optional[str]:
     if not text or not isinstance(text, str):
         return None
     clean = text.strip()
-    if TRIGGER_PATTERN_ONLINEBOOST_BATCH1.search(clean):
-        return "onlineboost_batch1"
-    if TRIGGER_PATTERN_CAMPAIGN_A.search(clean) or STATE_0_TRIGGER_PATTERN.search(clean):
-        return "alumni_cpm"
     if TRIGGER_PATTERN_CAMPAIGN_B.search(clean):
         return "ads_ctwa"
+    if TRIGGER_PATTERN_CAMPAIGN_A.search(clean) or STATE_0_TRIGGER_PATTERN.search(clean):
+        return "alumni_cpm"
     if TRIGGER_PATTERN_STOREFRONT.search(clean):
         return "storefront_direct"
+    if TRIGGER_PATTERN_ONLINEBOOST_BATCH1.search(clean):
+        return "onlineboost_batch1"
     return None
 
 def is_academy_trigger_message(text: str) -> bool:
@@ -1225,12 +1321,17 @@ class AcademyBotStateMachine:
 
     @classmethod
     def is_in_active_flow(cls, phone: str) -> bool:
-        """Cek apakah nomor sedang berada di alur aktif Academy (menunggu email/pembayaran)."""
+        """Cek apakah nomor sedang berada di alur aktif Academy/OnlineBoost (kualifikasi, konsultasi, menunggu email/pembayaran)."""
         clean_phone = normalize_phone_number(phone) or phone
         session = _ACADEMY_SESSIONS.get(clean_phone)
         if not session:
             return False
-        return session.get("state") in (STATE_1_AWAITING_EMAIL, STATE_1_PAYMENT_ISSUED)
+        return session.get("state") in (
+            STATE_1_AWAITING_EMAIL,
+            STATE_1_PAYMENT_ISSUED,
+            STATE_QUALIFYING,
+            STATE_CONSULTATION,
+        )
 
     @classmethod
     async def process_inbound(
@@ -1264,17 +1365,28 @@ class AcademyBotStateMachine:
         # ---------------------------------------------------------------------
         trigger_campaign = classify_academy_trigger(clean_text)
 
+        # Prioritaskan State 1 jika user sedang menunggu email dan pesan memuat email/konfirmasi
+        if current_state == STATE_1_AWAITING_EMAIL:
+            has_email = bool(re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", clean_text))
+            has_confirm = bool(session.get("email") and re.search(r"\b(ok|ya|iya|siap|lanjut|benar|betul|konfirmasi|setuju)\b", clean_text.lower()))
+            if has_email or has_confirm:
+                trigger_campaign = None
+
+        # Jika sesi sedang berada di state kualifikasi atau konsultasi OnlineBoost, teruskan ke alur OnlineBoost
+        if current_state in (STATE_QUALIFYING, STATE_CONSULTATION) and not trigger_campaign:
+            trigger_campaign = "onlineboost_batch1"
+
         if trigger_campaign:
             logger.info(f"[AcademyState0] Matched '{trigger_campaign}' trigger from {clean_phone} ({resolved_name})")
 
-            # --- ROUTE 0: OnlineBoost Batch 1 Fast-Path (Playbook v2.2 & Dynamic QRIS) ---
+            # --- ROUTE 0: OnlineBoost Batch 1 Fast-Path & Bot-Led Consultation ---
             if trigger_campaign == "onlineboost_batch1":
                 clean_lower = clean_text.lower().strip()
-                is_direct_qris = any(kw in clean_lower for kw in [
-                    "bayar via qris", "siapkan qris", "siapkan_qris", "bayar qris", "metode rahasia"
-                ])
 
-                # 1. Jika tombol/teks permintaan langsung QRIS
+                # A. Tombol / teks permintaan langsung QRIS
+                is_direct_qris = any(kw in clean_lower for kw in [
+                    "bayar via qris", "siapkan qris", "siapkan_qris", "bayar qris", "metode rahasia", "minta qris", "kirim qris"
+                ])
                 if is_direct_qris:
                     staged_alumni = lookup_staging_alumni_cpm(clean_phone, tenant_id=tenant_id)
                     staged_email = None
@@ -1302,70 +1414,326 @@ class AcademyBotStateMachine:
                     )
                     return fast_res
 
-                # 2. Jika user menekan tombol Tanya Dulu
-                elif clean_text.strip().upper() == "TANYA_DULU":
-                    reply_text = (
-                        f"Halo {resolved_name}! 👋 Ada yang bisa kami bantu jelaskan lebih detail tentang "
-                        f"Kelas Inkubasi CTWA Batch 1? Silakan tanyakan materi, jadwal, atau fasilitasnya ya!"
+                # B. Inbound Landing Page CTA: "Saya tertarik ikut kelas nya Kang"
+                # Directive 2: SATU pertanyaan kualifikasi, JANGAN kirim ulang link landing page
+                is_landing_interest = bool(
+                    TRIGGER_PATTERN_LANDING_PAGE_INTEREST.search(clean_text)
+                    and not QUALIFY_PRODUCT_PATTERN.search(clean_text)
+                    and not QUALIFY_ZERO_PATTERN.search(clean_text)
+                )
+                if is_landing_interest:
+                    cls.set_session(
+                        clean_phone,
+                        state=STATE_QUALIFYING,
+                        name=resolved_name,
+                        campaign="onlineboost_batch1",
+                        tenant_id=tenant_id,
                     )
                     try:
                         await send_whatsapp_text(
                             to_phone=clean_phone,
-                            text=reply_text,
+                            text=QUALIFICATION_PRIMARY_QUESTION,
                             tenant_id=tenant_id,
                             phone_number_id=phone_number_id,
                         )
                     except Exception as e:
                         logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+
                     return {
                         "handled": True,
-                        "state": 0,
-                        "action": "TANYA_DULU",
+                        "state": STATE_QUALIFYING,
+                        "action": "QUALIFY_OFFER",
                         "campaign": "onlineboost_batch1",
-                        "reply": reply_text,
+                        "reply": QUALIFICATION_PRIMARY_QUESTION,
+                        "customer_name": resolved_name,
                         "tenant_id": tenant_id,
                     }
 
-                # 3. Default (Pesan "MAU", "TRIGGER_MAU", "halo", "mau ikut", dsb):
-                # Balas dengan naskah Playbook v2.2 + link penawaran + interactive buttons (SIAPKAN QRIS SEKARANG & TANYA DULU)
+                # C. Alumni Broadcast Response "MAU"
+                # Directive 5: Pisahkan trigger MAU dari landing page, sapa santai ala Aldi & ajukan kualifikasi
+                is_alumni_mau = bool(
+                    TRIGGER_PATTERN_ALUMNI_MAU.search(clean_text)
+                    and not TRIGGER_PATTERN_REGISTRATION.search(clean_text)
+                    and not TRIGGER_PATTERN_PRICE_BENEFITS.search(clean_text)
+                )
+                if is_alumni_mau:
+                    cls.set_session(
+                        clean_phone,
+                        state=STATE_QUALIFYING,
+                        name=resolved_name,
+                        campaign="onlineboost_batch1",
+                        tenant_id=tenant_id,
+                    )
+                    try:
+                        await send_whatsapp_text(
+                            to_phone=clean_phone,
+                            text=ALUMNI_MAU_GREETING,
+                            tenant_id=tenant_id,
+                            phone_number_id=phone_number_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+
+                    return {
+                        "handled": True,
+                        "state": STATE_QUALIFYING,
+                        "action": "ALUMNI_MAU_QUALIFY",
+                        "campaign": "onlineboost_batch1",
+                        "reply": ALUMNI_MAU_GREETING,
+                        "customer_name": resolved_name,
+                        "tenant_id": tenant_id,
+                    }
+
+                # D. Situation E: Prospek menanyakan Admin / CS / Tanya Dulu
+                # Directive 1: Bot adalah default conversation owner, TIDAK transfer ke human RotaryRouting,
+                # jawab langsung sebagai asisten virtual OnlineBoost.
+                is_admin_inquiry = bool(
+                    TRIGGER_PATTERN_ADMIN_CS.search(clean_text)
+                    and not TRIGGER_PATTERN_PRICE_BENEFITS.search(clean_text)
+                    and not TRIGGER_PATTERN_REGISTRATION.search(clean_text)
+                )
+                if is_admin_inquiry:
+                    cls.set_session(
+                        clean_phone,
+                        state=STATE_CONSULTATION,
+                        name=resolved_name,
+                        campaign="onlineboost_batch1",
+                        tenant_id=tenant_id,
+                    )
+                    try:
+                        await send_whatsapp_text(
+                            to_phone=clean_phone,
+                            text=BOT_LED_ASSISTANT_RESPONSE,
+                            tenant_id=tenant_id,
+                            phone_number_id=phone_number_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+
+                    return {
+                        "handled": True,
+                        "state": STATE_CONSULTATION,
+                        "action": "BOT_LED_ASSISTANT_REPLY",
+                        "campaign": "onlineboost_batch1",
+                        "reply": BOT_LED_ASSISTANT_RESPONSE,
+                        "customer_name": resolved_name,
+                        "tenant_id": tenant_id,
+                    }
+
+                # E. Situation C: Prospek menanyakan Harga / Fasilitas / Materi / OnlineBoost itu apa
+                # Jawab langsung Rp249.000 dan fasilitas yang terverifikasi, jangan dipaksa ulang pertanyaan kualifikasi.
+                is_price_inquiry = bool(
+                    TRIGGER_PATTERN_PRICE_BENEFITS.search(clean_text)
+                    and not TRIGGER_PATTERN_REGISTRATION.search(clean_text)
+                )
+                if is_price_inquiry:
+                    cls.set_session(
+                        clean_phone,
+                        state=STATE_CONSULTATION,
+                        name=resolved_name,
+                        campaign="onlineboost_batch1",
+                        tenant_id=tenant_id,
+                    )
+                    try:
+                        await send_whatsapp_text(
+                            to_phone=clean_phone,
+                            text=SITUATION_C_PRICE_BENEFITS_SCRIPT,
+                            tenant_id=tenant_id,
+                            phone_number_id=phone_number_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+
+                    return {
+                        "handled": True,
+                        "state": STATE_CONSULTATION,
+                        "action": "EXPLAIN_PRICE_AND_BENEFITS",
+                        "campaign": "onlineboost_batch1",
+                        "reply": SITUATION_C_PRICE_BENEFITS_SCRIPT,
+                        "customer_name": resolved_name,
+                        "tenant_id": tenant_id,
+                    }
+
+                # F. Situation A: Prospek sudah punya produk / offer
+                is_existing_product = bool(
+                    QUALIFY_PRODUCT_PATTERN.search(clean_text)
+                    and not QUALIFY_ZERO_PATTERN.search(clean_text)
+                )
+                if is_existing_product:
+                    cls.set_session(
+                        clean_phone,
+                        state=STATE_CONSULTATION,
+                        name=resolved_name,
+                        campaign="onlineboost_batch1",
+                        tenant_id=tenant_id,
+                    )
+                    try:
+                        await send_whatsapp_text(
+                            to_phone=clean_phone,
+                            text=SITUATION_A_EXISTING_PRODUCT_SCRIPT,
+                            tenant_id=tenant_id,
+                            phone_number_id=phone_number_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+
+                    return {
+                        "handled": True,
+                        "state": STATE_CONSULTATION,
+                        "action": "QUALIFY_EXISTING_PRODUCT",
+                        "campaign": "onlineboost_batch1",
+                        "reply": SITUATION_A_EXISTING_PRODUCT_SCRIPT,
+                        "customer_name": resolved_name,
+                        "tenant_id": tenant_id,
+                    }
+
+                # G. Situation B: Prospek pemula / mulai dari nol
+                is_beginner = bool(QUALIFY_ZERO_PATTERN.search(clean_text))
+                if is_beginner:
+                    cls.set_session(
+                        clean_phone,
+                        state=STATE_CONSULTATION,
+                        name=resolved_name,
+                        campaign="onlineboost_batch1",
+                        tenant_id=tenant_id,
+                    )
+                    try:
+                        await send_whatsapp_text(
+                            to_phone=clean_phone,
+                            text=SITUATION_B_BEGINNER_SCRIPT,
+                            tenant_id=tenant_id,
+                            phone_number_id=phone_number_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+
+                    return {
+                        "handled": True,
+                        "state": STATE_CONSULTATION,
+                        "action": "QUALIFY_BEGINNER",
+                        "campaign": "onlineboost_batch1",
+                        "reply": SITUATION_B_BEGINNER_SCRIPT,
+                        "customer_name": resolved_name,
+                        "tenant_id": tenant_id,
+                    }
+
+                # H. Situation D: Prospek menyatakan niat mendaftar / amankan slot
+                is_register_intent = bool(TRIGGER_PATTERN_REGISTRATION.search(clean_text))
+                if is_register_intent:
+                    reg_reply = (
+                        f"Siap Kak {resolved_name}! Mantap banget keputusannya. 🚀\n\n"
+                        f"Untuk pencatatan slot Kelas Inkubasi CTWA Batch 1 (Rp249.000), mohon balas pesan ini dengan:\n"
+                        f"• *Nama Lengkap:*\n"
+                        f"• *Alamat Email Aktif:*\n\n"
+                        f"(Contoh: *Budi Santoso - budi@gmail.com*)\n\n"
+                        f"Data Kakak akan langsung kami amankan ke antrean pendaftaran resmi Batch 1 ya!"
+                    )
+                    cls.set_session(
+                        clean_phone,
+                        state=STATE_1_AWAITING_EMAIL,
+                        name=resolved_name,
+                        campaign="onlineboost_batch1",
+                        tenant_id=tenant_id,
+                    )
+                    try:
+                        await send_whatsapp_text(
+                            to_phone=clean_phone,
+                            text=reg_reply,
+                            tenant_id=tenant_id,
+                            phone_number_id=phone_number_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+
+                    return {
+                        "handled": True,
+                        "state": 1,
+                        "next_state": 1,
+                        "action": "ASK_REGISTRATION_DETAILS",
+                        "campaign": "onlineboost_batch1",
+                        "reply": reg_reply,
+                        "customer_name": resolved_name,
+                        "tenant_id": tenant_id,
+                    }
+
+                # I. Jika sedang di STATE_QUALIFYING dan belum match keyword di atas
+                if current_state == STATE_QUALIFYING:
+                    follow_up = (
+                        "Biar arah penjelasannya pas sama kebutuhan Kakak, boleh tahu "
+                        "Kakak saat ini sudah punya produk/offer sendiri atau mau mulai belajar dari nol? 😁"
+                    )
+                    try:
+                        await send_whatsapp_text(
+                            to_phone=clean_phone,
+                            text=follow_up,
+                            tenant_id=tenant_id,
+                            phone_number_id=phone_number_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+
+                    return {
+                        "handled": True,
+                        "state": STATE_QUALIFYING,
+                        "action": "QUALIFY_OFFER",
+                        "campaign": "onlineboost_batch1",
+                        "reply": follow_up,
+                        "customer_name": resolved_name,
+                        "tenant_id": tenant_id,
+                    }
+
+                # J. Jika sedang di STATE_CONSULTATION dan belum match keyword di atas
+                if current_state == STATE_CONSULTATION:
+                    consult_follow_up = (
+                        "Siap Kak! Ada lagi yang ingin ditanyakan tentang materi atau fasilitas "
+                        "Kelas Inkubasi CTWA Batch 1, atau mau langsung gue bantu amankan slotnya (Rp249.000)?"
+                    )
+                    try:
+                        await send_whatsapp_text(
+                            to_phone=clean_phone,
+                            text=consult_follow_up,
+                            tenant_id=tenant_id,
+                            phone_number_id=phone_number_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+
+                    return {
+                        "handled": True,
+                        "state": STATE_CONSULTATION,
+                        "action": "CONSULTATION_NEXT_STEP",
+                        "campaign": "onlineboost_batch1",
+                        "reply": consult_follow_up,
+                        "customer_name": resolved_name,
+                        "tenant_id": tenant_id,
+                    }
+
+                # K. Default Initial Greeting (e.g. "halo", "hai", atau pesan awal lainnya):
+                # Ajukan 1 pertanyaan kualifikasi utama
                 cls.set_session(
                     clean_phone,
-                    state=STATE_0_INIT,
+                    state=STATE_QUALIFYING,
                     name=resolved_name,
                     campaign="onlineboost_batch1",
                     tenant_id=tenant_id,
                 )
-                buttons = [
-                    {"id": "SIAPKAN_QRIS", "title": "SIAPKAN QRIS SEKARANG"[:20]},
-                    {"id": "TANYA_DULU", "title": "TANYA DULU"}
-                ]
                 try:
-                    from app.services.whatsapp.cloud_api import send_whatsapp_buttons
-                    await send_whatsapp_buttons(
-                        to_phone=clean_phone,
-                        body_text=PLAYBOOK_V22_OFFER_SCRIPT,
-                        buttons=buttons,
-                        header_text="Kelas Inkubasi CTWA Batch 1",
-                        footer_text="OnlineBoost x BoonTrack",
-                        tenant_id=tenant_id,
-                        phone_number_id=phone_number_id,
-                    )
-                except Exception as btn_err:
-                    logger.warning(f"[AcademyState0] Button send fallback note: {btn_err}")
                     await send_whatsapp_text(
                         to_phone=clean_phone,
-                        text=f"{PLAYBOOK_V22_OFFER_SCRIPT}\n\nKetik *SIAPKAN QRIS* untuk langsung bayar atau *TANYA* untuk konsultasi.",
+                        text=QUALIFICATION_PRIMARY_QUESTION,
                         tenant_id=tenant_id,
                         phone_number_id=phone_number_id,
                     )
+                except Exception as e:
+                    logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
 
                 return {
                     "handled": True,
-                    "state": 0,
-                    "action": "PLAYBOOK_V22_PITCH",
+                    "state": STATE_QUALIFYING,
+                    "action": "QUALIFY_OFFER",
                     "campaign": "onlineboost_batch1",
-                    "reply": PLAYBOOK_V22_OFFER_SCRIPT,
-                    "buttons": buttons,
+                    "reply": QUALIFICATION_PRIMARY_QUESTION,
+                    "customer_name": resolved_name,
                     "tenant_id": tenant_id,
                 }
 
@@ -1910,14 +2278,25 @@ class AcademyBroadcastCampaignManager:
         campaign["status"] = "QUEUED"
         campaign["queued_at"] = datetime.now(timezone.utc).isoformat()
 
-        # Jalankan background broadcast
+        # Jalankan background broadcast dengan pre-queue suppression guard
+        from app.services.phone_suppression_service import is_phone_suppressed
+        from app.services.whatsapp.credentials import normalize_phone_number
+
+        valid_recipients = [
+            r for r in campaign["recipients"]
+            if not is_phone_suppressed(
+                normalize_phone_number(r.get("phone") if isinstance(r, dict) else str(r)),
+                tenant_id=tenant_id
+            )
+        ]
+
         asyncio.create_task(
             execute_meta_broadcast(
                 broadcast_id=broadcast_id,
                 template_name=campaign["template_name"],
                 language_code="id",
                 body_parameters=[],
-                recipients=campaign["recipients"],
+                recipients=valid_recipients,
                 phone_number_id=phone_number_id,
                 rate_limit_per_second=rate_limit_per_second,
                 tenant_id=tenant_id,

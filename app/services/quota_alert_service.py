@@ -21,56 +21,7 @@ from app.services.whatsapp.cloud_api import send_whatsapp_text
 logger = logging.getLogger("QUOTA_ALERT_SERVICE")
 
 
-def is_phone_suppressed(phone: str, tenant_id: str) -> bool:
-    """
-    Mengecek apakah nomor telepon terdaftar di tabel `public.phone_suppressions`.
-    Mematuhi Row-Level Security (RLS) dengan mengeset context tenant_id.
-    """
-    clean_p = normalize_phone_number(phone) or phone
-    clean_p = str(clean_p).strip()
-
-    phone_variants = [clean_p]
-    if clean_p.startswith("+"):
-        phone_variants.append(clean_p.lstrip("+"))
-    else:
-        phone_variants.append(f"+{clean_p}")
-    if clean_p.startswith("62"):
-        phone_variants.append("0" + clean_p[2:])
-    elif clean_p.startswith("+62"):
-        phone_variants.append("0" + clean_p[3:])
-
-    conn = None
-    cur = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        # Set tenant context for RLS
-        cur.execute(f"SET LOCAL app.current_tenant_id = '{tenant_id}';")
-        cur.execute(
-            """
-            SELECT id, reason, created_at 
-            FROM public.phone_suppressions 
-            WHERE tenant_id = %s AND phone_number = ANY(%s)
-            LIMIT 1;
-            """,
-            (tenant_id, phone_variants)
-        )
-        row = cur.fetchone()
-        if row:
-            logger.info(
-                f"[PhoneSuppression] Match found: phone={phone} (id={row[0]}, reason={row[1]}) for tenant='{tenant_id}'."
-            )
-            return True
-        return False
-    except Exception as e:
-        logger.error(f"[PhoneSuppression Error] Failed to query suppression list: {e}")
-        # Fail-closed for security: if table query fails, avoid sending unwanted messages
-        return False
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
+from app.services.phone_suppression_service import is_phone_suppressed
 
 
 async def trigger_quota_80_percent_alert(

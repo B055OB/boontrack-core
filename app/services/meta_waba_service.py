@@ -59,7 +59,37 @@ class MetaGraphAPIDispatcher:
         self.base_url = f"https://graph.facebook.com/{self.version}"
 
     def get_default_credentials(self, tenant_id: str = "boontrack-career") -> tuple[str, str]:
-        """Resolves phone_number_id and permanent_access_token from environment."""
+        """Resolves phone_number_id and permanent_access_token with strict tenant scoping."""
+        clean_tenant = (tenant_id or "").strip().lower()
+
+        # OnlineBoost MUST ONLY resolve to OnlineBoost-specific credentials or empty
+        if clean_tenant == "onlineboost":
+            ob_phone = (
+                os.getenv("ONLINEBOOST_WABA_PHONE_NUMBER_ID")
+                or os.getenv("ONLINEBOOST_PHONE_NUMBER_ID")
+                or ""
+            ).strip()
+            ob_token = (
+                os.getenv("ONLINEBOOST_PERMANENT_TOKEN")
+                or os.getenv("ONLINEBOOST_ACCESS_TOKEN")
+                or ""
+            ).strip()
+
+            # The approved OnlineBoost sender is 1419090974617162
+            if ob_phone and ob_phone != "1419090974617162":
+                logger.error(
+                    f"[Meta WABA Guard] OnlineBoost attempted to use non-approved phone ID '{ob_phone}'. Blocked."
+                )
+                return "", ""
+
+            return ob_phone, ob_token
+
+        # Explicit allowlist of platform tenants permitted to use legacy platform environment variables
+        platform_tenants = {"boontrack", "boontrack-platform", "boontrack-career", "career", "shop"}
+        if clean_tenant not in platform_tenants:
+            # Non-platform tenants must never fall back to platform credentials
+            return "", ""
+
         token = (
             os.getenv("META_WA_PERMANENT_TOKEN")
             or os.getenv("CAREER_ACCESS_TOKEN")
@@ -440,6 +470,20 @@ async def execute_meta_broadcast(
                 "phone": phone,
                 "status": "failed",
                 "error": "Invalid phone format",
+            })
+            continue
+
+        # [COMPLIANCE GUARD] Check phone suppression before sending broadcast template
+        from app.services.phone_suppression_service import is_phone_suppressed
+        if is_phone_suppressed(clean_phone, tenant_id=tenant_id):
+            logger.info(
+                f"[Broadcast Suppressed] Phone '{clean_phone}' is suppressed for tenant '{tenant_id}'. Skipping dispatch."
+            )
+            BROADCAST_LOGS[broadcast_id]["stats"]["failed"] += 1
+            BROADCAST_LOGS[broadcast_id]["results"].append({
+                "phone": clean_phone,
+                "status": "suppressed",
+                "error": "PHONE_NUMBER_SUPPRESSED",
             })
             continue
 

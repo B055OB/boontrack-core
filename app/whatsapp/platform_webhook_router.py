@@ -230,11 +230,49 @@ class PlatformWebhookRouter:
         # =====================================================================
         if clean_text.upper() in OPT_OUT_KEYWORDS:
             _log("ComplianceGuard", f"Matched opt-out keyword '{clean_text.upper()}'. Zero LLM call.")
+            target_tenant = "onlineboost"
+            try:
+                from app.services.tenant_context_resolver import tenant_context_resolver
+                resolved_t = tenant_context_resolver.resolve_tenant(phone_number_id)
+                if resolved_t and resolved_t.get("slug"):
+                    target_tenant = resolved_t.get("slug")
+            except Exception:
+                pass
+
+            from app.services.phone_suppression_service import record_durable_suppression
+            persisted, persistence_src = record_durable_suppression(
+                phone=sender_clean,
+                tenant_id=target_tenant,
+                reason=f"USER_OPT_OUT_{clean_text.upper()}",
+            )
+
+            try:
+                from app.services.academy_service import academy_bot
+                academy_bot.reset_session(sender_clean)
+            except Exception:
+                pass
+
+            if not persisted:
+                _log("ComplianceGuard.SuppressionError", f"Failed to record suppression for {sender_clean} on {target_tenant}")
+                res = {
+                    "status": "error",
+                    "action": "opt_out_failed",
+                    "lane": "COMPLIANCE_GUARD",
+                    "message": "Suppression persistence unavailable. Retrying via webhook provider.",
+                    "tenant": target_tenant,
+                    "early_return": True,
+                }
+                if trace:
+                    trace.early_return = True
+                    trace.response_status = 503
+                    trace.response_payload = res
+                return res
+
             try:
                 await send_whatsapp_text(
                     to_phone=sender_clean,
                     text=OPT_OUT_RESPONSE,
-                    tenant_id="shop",
+                    tenant_id=target_tenant,
                     phone_number_id=phone_number_id,
                 )
             except Exception as e:
@@ -245,6 +283,8 @@ class PlatformWebhookRouter:
                 "action": "opt_out",
                 "lane": "COMPLIANCE_GUARD",
                 "reply": OPT_OUT_RESPONSE,
+                "persistence": persistence_src,
+                "tenant": target_tenant,
                 "early_return": True,
             }
             if trace:
