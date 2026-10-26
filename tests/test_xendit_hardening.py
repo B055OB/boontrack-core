@@ -11,6 +11,7 @@ import sys
 import uuid
 import asyncio
 from datetime import datetime, timezone
+import pytest
 
 # Ensure project root is in sys.path
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -152,6 +153,12 @@ async def run_verification():
     print("\n" + "=" * 60)
     print("ALL 3 XENDIT HARDENING ASSERTIONS PASSED SUCCESSFULLY! (100% GREEN)")
     print("=" * 60)
+
+
+@pytest.mark.asyncio
+async def test_xendit_webhook_hardening_and_idempotency():
+    """Pytest wrapper for Xendit webhook live hardening & idempotency assertions."""
+    await run_verification()
 
 
 if __name__ == "__main__":

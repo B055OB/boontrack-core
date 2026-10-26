@@ -172,13 +172,14 @@ class TestIdempotencyService:
 
     async def test_redis_down_fallback_to_postgres_authority(self):
         """When Redis is DOWN (ConnectionError), system remains safe via PostgreSQL authority."""
+        import uuid
         mock_redis = AsyncMock()
         # Redis raises ConnectionError when accessed
         mock_redis.set.side_effect = ConnectionError("Redis daemon is down / offline")
         
         service = IdempotencyService(redis_client=mock_redis)
 
-        wamid = "wamid.REDIS_DOWN_TEST_999"
+        wamid = f"wamid.REDIS_DOWN_TEST_{uuid.uuid4().hex[:8]}"
         # 1st call: Succeeded via durable fallback
         is_new1, event_id1 = await service.record_inbound_event(
             provider_message_id=wamid,
@@ -226,6 +227,14 @@ class TestWhatsAppWebhookEndpoints(unittest.TestCase):
 
     def setUp(self):
         self.client = TestClient(app)
+        self.orig_token = os.environ.get("WHATSAPP_VERIFY_TOKEN")
+        os.environ["WHATSAPP_VERIFY_TOKEN"] = "boontrack_verify_secret"
+
+    def tearDown(self):
+        if self.orig_token is not None:
+            os.environ["WHATSAPP_VERIFY_TOKEN"] = self.orig_token
+        else:
+            os.environ.pop("WHATSAPP_VERIFY_TOKEN", None)
 
     def test_get_handshake_verification_success(self):
         resp = self.client.get(

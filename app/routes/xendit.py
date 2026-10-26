@@ -90,11 +90,8 @@ async def send_whatsapp_payment_notification(
     # Fallback product matching for onlineboost
     if not access_url and tenant_id == "onlineboost":
         if amount == 249000 or (248000 <= amount <= 249000):
-            item_name = "Kelas Inkubasi CTWA Batch 1 - Scale Bundle"
-            access_url = "https://onlineboost.id/ctwa-scale-bundle"
-        elif amount == 99000:
-            item_name = "Kelas Inkubasi CTWA Batch 1 - Paket Starter"
-            access_url = "https://onlineboost.id/ctwa-starter"
+            item_name = "Paket Lengkap Kelas Inkubasi CTWA Batch 1"
+            access_url = "https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale"
 
     access_block = f"🔗 *Detail Link Akses Kelas Instan:*\n{access_url}\n\n" if access_url else ""
     text = (
@@ -106,18 +103,22 @@ async def send_whatsapp_payment_notification(
         f"Jika membutuhkan bantuan atau pertanyaan teknis, silakan balas pesan ini kapan saja. Selamat belajar dan bertumbuh bersama *{store_name}*! 🚀"
     )
 
-    # SPECIALIZED CTWA STATE 5 AUTO-FULFILLMENT (OnlineBoost v1.2)
+    # SPECIALIZED CTWA SINGLE-MESSAGE FULFILLMENT (OnlineBoost Batch 1)
     if tenant_id == "onlineboost":
         try:
-            from app.services.ctwa_state_engine import ctwa_state_engine
-            text = ctwa_state_engine.generate_state_5_fulfillment_message(
-                phone=clean_phone,
-                external_id=external_id,
+            from app.services.ctwa_fulfillment_service import fulfill_onlineboost_ctwa_order
+            await fulfill_onlineboost_ctwa_order(
+                order_id=external_id,
+                buyer_name=None,
+                buyer_phone=clean_phone,
                 amount=amount,
-                customer_name=None,
+                tenant_id="onlineboost",
             )
-        except Exception as _ctwa_err:
-            logger.warning(f"[CTWA Fulfillment Generation Error] {_ctwa_err}")
+            logger.info(f"[Xendit WA Fulfillment] Single verified message fulfilled for OnlineBoost order '{external_id}'")
+            return
+        except Exception as _ful_err:
+            logger.error(f"[Xendit WA Fulfillment Error] {_ful_err}", exc_info=True)
+            return
 
     # 1. Primary Dispatch via WhatsApp Evolution API Gateway (In-Chat Instant Delivery)
     try:

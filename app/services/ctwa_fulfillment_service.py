@@ -106,12 +106,9 @@ async def create_telegram_single_use_invite_link(
         except Exception as e:
             logger.warning(f"[CTWA FULFILLMENT] Telegram API error: {e}")
 
-    # Fallback secure deterministic single-use invite link for testing / offline API
-    token = secrets.token_hex(6).upper()
-    fallback_link = f"https://t.me/+join_ctwa_{order_id}_{token}"
-    if order_id:
-        _ISSUED_TELEGRAM_LINKS_CACHE[order_id] = fallback_link
-    return fallback_link
+    # Fail closed: Never fabricate a fake Telegram link per CTO P0 directive
+    logger.error(f"[CTWA FULFILLMENT] Telegram Bot API failed to return invite link for Order {order_id} (fail-closed)")
+    raise RuntimeError(f"Telegram Bot API failed to generate verified invite link for Order {order_id}")
 
 
 def get_stored_telegram_link_from_order(order_data: Dict[str, Any]) -> Optional[str]:
@@ -213,11 +210,48 @@ async def fulfill_onlineboost_ctwa_order(
         logger.info(f"[CTWA FULFILLMENT] Idempotency hit: Reusing existing invite link for Order {order_id}")
     else:
         # Panggil Telegram Bot API createChatInviteLink
-        single_use_link = await create_telegram_single_use_invite_link(
-            order_id=order_id,
-            buyer_name=resolved_name,
-            chat_id=chat_id,
-        )
+        try:
+            single_use_link = await create_telegram_single_use_invite_link(
+                order_id=order_id,
+                buyer_name=resolved_name,
+                chat_id=chat_id,
+            )
+        except Exception as tg_err:
+            logger.error(f"[CTWA FULFILLMENT] Failed generating Telegram invite for {order_id}: {tg_err}")
+            current_meta = order_record.get("metadata") or {}
+            if isinstance(current_meta, str):
+                try:
+                    current_meta = json.loads(current_meta)
+                except Exception:
+                    current_meta = {}
+            if not isinstance(current_meta, dict):
+                current_meta = {}
+            current_meta["fulfillment_status"] = "TELEGRAM_INVITE_PENDING_RETRY"
+            current_meta["fulfillment_error"] = str(tg_err)
+            if sb and order_id:
+                try:
+                    sb.table("orders").update({"metadata": current_meta, "status": "PAID", "payment_status": "PAID"}).eq("id", order_id).execute()
+                except Exception:
+                    pass
+            pending_msg = (
+                f"Selamat Kak {resolved_name}! Pembayaran sebesar Rp{amt_formatted} untuk Kelas Inkubasi CTWA Batch 1 telah BERHASIL diverifikasi ✅\n\n"
+                f"Tautan akses eksklusif Supergroup Praktikum Kakak sedang dalam antrean penerbitan sistem dan akan segera dikirimkan ke chat ini begitu siap.\n\n"
+                f"Sampai jumpa di ruang praktikum!"
+            )
+            if clean_phone:
+                try:
+                    await cloud_api.send_whatsapp_text(
+                        to_phone=clean_phone,
+                        text=pending_msg,
+                        tenant_id=tenant_id,
+                    )
+                except Exception:
+                    pass
+            return {
+                "status": "PENDING_TELEGRAM_LINK",
+                "order_id": order_id,
+                "error": str(tg_err),
+            }
 
         # Simpan link ke orders.metadata['telegram_single_invite_link'] (idempoten)
         current_meta = order_record.get("metadata") or {}

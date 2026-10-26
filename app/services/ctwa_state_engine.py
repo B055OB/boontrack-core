@@ -277,6 +277,12 @@ class CTWAStateEngine:
             }
         )
         qris_payload = str(xendit_qr_res.get("qr_string") or "").strip()
+        if not qris_payload or not qris_payload.startswith("000201"):
+            qris_payload = generate_dynamic_qris_payload(
+                static_payload=DEFAULT_STATIC_QRIS,
+                amount=total_amount,
+                invoice_id=order_id,
+            )
         invoice_url = str(xendit_qr_res.get("invoice_url") or "").strip()
         session["invoice_url"] = invoice_url
 
@@ -501,19 +507,28 @@ class CTWAStateEngine:
                 phone_number_id=phone_number_id,
                 ctwa_clid=ctwa_clid,
             )
-            qr_encoded = urllib.parse.quote(gk_result["qris_payload"])
-            qr_img_url = f"https://api.qrserver.com/v1/create-qr-code/?data={qr_encoded}&size=400x400"
+            qris_payload = str(gk_result.get("qris_payload") or "").strip()
+            qr_img_url = ""
+            if qris_payload:
+                qr_encoded = urllib.parse.quote(qris_payload)
+                qr_img_url = f"https://api.qrserver.com/v1/create-qr-code/?data={qr_encoded}&size=400x400"
+
+            caption = gk_result.get("caption") or (
+                "Data pendaftaran Kakak telah kami catat dengan aman. "
+                "Instruksi pembayaran akan diinformasikan setelah verifikasi batch resmi dibuka."
+            )
+            is_executed = bool(gk_result.get("status") == "GATEKEEPER_EXECUTED" or qris_payload)
             return {
-                "success": True,
-                "action": "GATEKEEPER_QRIS_ISSUED",
-                "reply": gk_result["caption"],
-                "reply_text": gk_result["caption"],
+                "success": is_executed,
+                "action": "GATEKEEPER_QRIS_ISSUED" if is_executed else "GATEKEEPER_PENDING",
+                "reply": caption,
+                "reply_text": caption,
                 "media_url": qr_img_url,
                 "qr_code_url": qr_img_url,
-                "qris_payload": gk_result["qris_payload"],
-                "order_id": gk_result["order_id"],
-                "total_amount": gk_result["total_amount"],
-                "downward_code": gk_result["downward_code"],
+                "qris_payload": qris_payload,
+                "order_id": gk_result.get("order_id"),
+                "total_amount": gk_result.get("total_amount"),
+                "downward_code": gk_result.get("downward_code"),
                 "current_state": "STATE_PAYMENT_PENDING",
             }
 
@@ -600,12 +615,18 @@ class CTWAStateEngine:
             pass
 
         amt_formatted = format_idr(amount)
-        # Placeholder / estimated link until API returns
-        single_use_link = f"https://t.me/+join_ctwa_{external_id}"
+        from app.services.ctwa_fulfillment_service import _ISSUED_TELEGRAM_LINKS_CACHE
+        single_use_link = _ISSUED_TELEGRAM_LINKS_CACHE.get(external_id)
+        if single_use_link:
+            return (
+                f"Selamat Kak {resolved_name}! Pembayaran sebesar Rp{amt_formatted} untuk Kelas Inkubasi CTWA Batch 1 telah BERHASIL diverifikasi ✅\n\n"
+                f"Berikut link akses eksklusif Kakak untuk bergabung ke Supergroup Praktikum: 🔗 {single_use_link}\n\n"
+                f"⚠️ Penting: Tautan di atas adalah link khusus 1 kali masuk dan berlaku selama 24 jam. Jangan dibagikan ke orang lain ya Kak!\n\n"
+                f"Sampai jumpa di ruang praktikum!"
+            )
         return (
             f"Selamat Kak {resolved_name}! Pembayaran sebesar Rp{amt_formatted} untuk Kelas Inkubasi CTWA Batch 1 telah BERHASIL diverifikasi ✅\n\n"
-            f"Berikut link akses eksklusif Kakak untuk bergabung ke Supergroup Praktikum: 🔗 {single_use_link}\n\n"
-            f"⚠️ Penting: Tautan di atas adalah link khusus 1 kali masuk dan berlaku selama 24 jam. Jangan dibagikan ke orang lain ya Kak!\n\n"
+            f"Tautan akses eksklusif Supergroup Praktikum Kakak sedang diterbitkan secara otomatis dan akan langsung dikirimkan ke chat ini.\n\n"
             f"Sampai jumpa di ruang praktikum!"
         )
 
