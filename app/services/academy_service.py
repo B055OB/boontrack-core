@@ -78,6 +78,7 @@ STATE_CONSULTATION = "STATE_CONSULTATION"
 STATE_1_AWAITING_EMAIL = "STATE_1_AWAITING_EMAIL"
 STATE_1_PAYMENT_ISSUED = "STATE_1_PAYMENT_ISSUED"
 STATE_2_PAID = "STATE_2_PAID"
+STATE_FLOW_SENT = "STATE_FLOW_SENT"
 
 # In-memory stores (Fast, test-isolated, thread-safe for unit testing and runtime caching)
 _ACADEMY_SESSIONS: Dict[str, Dict[str, Any]] = {}       # phone -> session_dict
@@ -87,6 +88,7 @@ _SETTLED_ORDERS: Set[str] = set()                       # order_id idempotency s
 _PROCESSED_EVENTS: Set[str] = set()                     # event_id idempotency set
 _ISSUED_TELEGRAM_LINKS: Dict[str, str] = {}             # order_id -> single_use_link
 _MANUAL_RECONCILIATION_QUEUE: List[Dict[str, Any]] = [] # order entries routed to manual audit
+_DISPATCHED_FLOW_IDEMPOTENCY_KEYS: Set[str] = set()         # idempotency set for outbound flow dispatch
 _SETTLE_THREAD_LOCK = threading.Lock()                  # atomic lock for thread-safe mutations
 
 # ============================================================================
@@ -454,8 +456,8 @@ STATE_0_TRIGGER_PATTERN = re.compile(
 # Directive 04: Founder Mandate - Bot-Led Consultation & Closing Scripts
 # 1. Primary Qualification Question for Inbound Landing Page Message ("Saya tertarik ikut kelas nya Kang")
 QUALIFICATION_PRIMARY_QUESTION: str = (
-    "Siap, Kak! 😁 Gue bantu jelasin langsung di sini. "
-    "Biar arahnya pas, Kakak sudah punya produk/offer yang mau dipasarkan, atau masih mulai dari nol?"
+    "Siap, Kak! 😁 Biar gue jelasin yang paling relevan, "
+    "Kakak sudah punya produk/offer yang mau dipasarkan atau masih mulai dari nol?"
 )
 
 # 2. Alumni Broadcast Response MAU Script (Aldi / OnlineBoost Mentor Persona)
@@ -1321,15 +1323,15 @@ async def generate_single_use_telegram_link(
                             _ISSUED_TELEGRAM_LINKS[order_id] = invite_link
                         logger.info(f"[TelegramInvite] Created official single-use link for {customer_name}: {invite_link}")
                         return invite_link
+                    logger.warning(f"[TelegramInvite] Telegram response missing invite_link: {data}")
+                else:
+                    logger.warning(f"[TelegramInvite] Telegram API call failed HTTP {resp.status_code}: {resp.text}")
         except Exception as tg_err:
-            logger.warning(f"[TelegramInvite] Telegram Bot API call note: {tg_err}")
+            logger.warning(f"[TelegramInvite] Telegram API error: {tg_err}")
 
-    # 2. Fallback Secure Deterministic Single-Use Token Link
-    unique_hash = secrets.token_hex(6).upper()
-    invite_link = f"https://t.me/+BTA_{unique_hash}"
-    if order_id:
-        _ISSUED_TELEGRAM_LINKS[order_id] = invite_link
-    return invite_link
+    # Fail closed: Never fabricate a fake Telegram link per CTO P0 directive
+    logger.error(f"[TelegramInvite] Telegram Bot API failed to return invite link for Order {order_id} (fail-closed)")
+    raise RuntimeError(f"Telegram Bot API failed to generate verified invite link for Order {order_id}")
 
 
 # ============================================================================
@@ -1372,10 +1374,13 @@ class AcademyBotStateMachine:
         """Mereset sesi percakapan alumni."""
         clean_phone = normalize_phone_number(phone) or phone
         _ACADEMY_SESSIONS.pop(clean_phone, None)
+        to_remove = [k for k in _DISPATCHED_FLOW_IDEMPOTENCY_KEYS if clean_phone in k]
+        for k in to_remove:
+            _DISPATCHED_FLOW_IDEMPOTENCY_KEYS.discard(k)
 
     @classmethod
     def is_in_active_flow(cls, phone: str) -> bool:
-        """Cek apakah nomor sedang berada di alur aktif Academy/OnlineBoost (kualifikasi, konsultasi, menunggu email/pembayaran)."""
+        """Cek apakah nomor sedang berada di alur aktif Academy/OnlineBoost (kualifikasi, konsultasi, menunggu email/pembayaran, atau flow terkirim)."""
         clean_phone = normalize_phone_number(phone) or phone
         session = _ACADEMY_SESSIONS.get(clean_phone)
         if not session:
@@ -1385,6 +1390,7 @@ class AcademyBotStateMachine:
             STATE_1_PAYMENT_ISSUED,
             STATE_QUALIFYING,
             STATE_CONSULTATION,
+            STATE_FLOW_SENT,
         )
 
     @classmethod
@@ -1395,6 +1401,7 @@ class AcademyBotStateMachine:
         contact_name: Optional[str] = None,
         phone_number_id: Optional[str] = None,
         tenant_id: str = "onlineboost",
+        raw_msg: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Evaluasi pesan masuk dari pengirim.
@@ -1404,6 +1411,40 @@ class AcademyBotStateMachine:
         clean_phone = normalize_phone_number(sender_phone) or sender_phone
         session = cls.get_session(clean_phone)
         current_state = session.get("state")
+
+        # 0. Cek jika pesan adalah jawaban WhatsApp Flow (nfm_reply)
+        is_flow_reply = (
+            isinstance(raw_msg, dict)
+            and raw_msg.get("type") == "interactive"
+            and (raw_msg.get("interactive") or {}).get("type") == "nfm_reply"
+        )
+        if is_flow_reply and tenant_id == "onlineboost":
+            from app.services.ctwa_state_engine import ctwa_state_engine
+            ctwa_res = await ctwa_state_engine.process_turn(
+                phone=sender_phone,
+                incoming_text=incoming_text,
+                sender_name=contact_name,
+                raw_msg=raw_msg,
+                phone_number_id=phone_number_id,
+            )
+            if ctwa_res:
+                cls.set_session(
+                    clean_phone,
+                    state="STATE_LEAD_QUEUED",
+                    name=contact_name or session.get("name") or "Kak",
+                    tenant_id=tenant_id,
+                )
+                return {
+                    "handled": True,
+                    "state": "STATE_LEAD_QUEUED",
+                    "action": ctwa_res.get("action"),
+                    "campaign": "onlineboost_batch1",
+                    "reply": ctwa_res.get("reply"),
+                    "customer_name": contact_name or session.get("name") or "Kak",
+                    "tenant_id": tenant_id,
+                    "order_id": ctwa_res.get("order_id"),
+                    "total_amount": ctwa_res.get("total_amount"),
+                }
 
         # Ekstraksi marker [r=KODE_RESELLER] dan persistensi atribusi (First Valid Referral Wins)
         from app.services.referral_attribution_service import (
@@ -1478,7 +1519,7 @@ class AcademyBotStateMachine:
                     return fast_res
 
                 # B. Inbound Landing Page CTA: "Saya tertarik ikut kelas nya Kang"
-                # Directive 2: SATU pertanyaan kualifikasi, JANGAN kirim ulang link landing page
+                # Phase 5 Directive: Buka native WhatsApp Flow, jangan loop ke landing page atau transfer human
                 is_landing_interest = bool(
                     TRIGGER_PATTERN_LANDING_PAGE_INTEREST.search(clean_text)
                     and not QUALIFY_PRODUCT_PATTERN.search(clean_text)
@@ -1487,29 +1528,46 @@ class AcademyBotStateMachine:
                 if is_landing_interest:
                     cls.set_session(
                         clean_phone,
-                        state=STATE_QUALIFYING,
+                        state=STATE_FLOW_SENT,
                         name=resolved_name,
                         campaign="onlineboost_batch1",
                         tenant_id=tenant_id,
                     )
-                    try:
-                        await send_whatsapp_text(
-                            to_phone=clean_phone,
-                            text=QUALIFICATION_PRIMARY_QUESTION,
-                            tenant_id=tenant_id,
-                            phone_number_id=phone_number_id,
-                        )
-                    except Exception as e:
-                        logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+                    flow_intro = (
+                        "Halo Kang/Teh! Siap, yuk amankan kuota promo Rp249.000 Kelas Inkubasi CTWA Batch 1. "
+                        "Silakan lengkapi nama & email aktif melalui formulir di bawah ini untuk penerbitan invoice resmi:"
+                    )
+                    # Idempotency guard (inbound message ID + customer WhatsApp ID)
+                    inbound_msg_id = (raw_msg or {}).get("id") or ""
+                    idempotency_key = f"{inbound_msg_id}_{clean_phone}" if inbound_msg_id else f"flow_sent_{clean_phone}"
+                    if idempotency_key not in _DISPATCHED_FLOW_IDEMPOTENCY_KEYS:
+                        _DISPATCHED_FLOW_IDEMPOTENCY_KEYS.add(idempotency_key)
+                        try:
+                            from app.services.whatsapp.cloud_api import send_whatsapp_flow
+                            await send_whatsapp_flow(
+                                to_phone=clean_phone,
+                                flow_id="1663739061907747",
+                                flow_token="onlineboost_batch1_reg",
+                                flow_cta="Daftar & Amankan Slot",
+                                header_text="OnlineBoost Batch 1",
+                                body_text="Halo Kak! Klik tombol di bawah untuk melengkapi data pendaftaran dan mengamankan slot kelas Anda:",
+                                flow_action="navigate",
+                                flow_action_payload={"screen": "REGISTRATION"},
+                                tenant_id=tenant_id,
+                                phone_number_id=phone_number_id or "1419090974617162",
+                            )
+                        except Exception as e:
+                            logger.warning(f"[AcademyState0] WhatsApp flow send note: {e}")
 
                     return {
                         "handled": True,
-                        "state": STATE_QUALIFYING,
-                        "action": "QUALIFY_OFFER",
+                        "state": STATE_FLOW_SENT,
+                        "action": "SEND_REGISTRATION_FLOW",
                         "campaign": "onlineboost_batch1",
-                        "reply": QUALIFICATION_PRIMARY_QUESTION,
+                        "reply": flow_intro,
                         "customer_name": resolved_name,
                         "tenant_id": tenant_id,
+                        "flow_sent": True,
                     }
 
                 # C. Alumni Broadcast Response "MAU"
@@ -2211,26 +2269,44 @@ class AcademyBotStateMachine:
             )
 
             # Generate single-use Telegram Supergroup invite link
-            single_use_telegram_link = await generate_single_use_telegram_link(
-                customer_name=customer_name,
-                customer_email=customer_email,
-                order_id=order_id,
-            )
+            single_use_telegram_link = None
+            try:
+                single_use_telegram_link = await generate_single_use_telegram_link(
+                    customer_name=customer_name,
+                    customer_email=customer_email,
+                    order_id=order_id,
+                )
+            except Exception as tg_err:
+                logger.error(f"[AcademyState2] Failed generating Telegram invite for {order_id}: {tg_err}")
 
-            # Naskah resmi SOP STATE 2 (Delivery Payload Alumni Batch 1)
-            confirmation_msg = (
-                f"✅ PEMBAYARAN BERHASIL DIVERIFIKASI!\n\n"
-                f"Selamat datang di BoonTrack Academy, {customer_name}!\n\n"
-                f"Detail Transaksi:\n"
-                f"- Program: Kelas Inkubasi CTWA Batch 1 (Full Access)\n"
-                f"- Email: {customer_email}\n"
-                f"- Total: Rp 249.000 (LUNAS)\n\n"
-                f"Link Akses Forum Telegram:\n"
-                f"Silakan bergabung ke Supergroup Forum resmi melalui tautan khusus di bawah ini:\n"
-                f"👉 {single_use_telegram_link}\n\n"
-                f"Langkah Awal:\n"
-                f"Begitu masuk ke Telegram, buka topik #Announcement untuk membaca SOP kelas, lalu buka #Basic-Fase1 untuk memulai setup toko dan bot Anda hari ini."
-            )
+            if single_use_telegram_link:
+                # Naskah resmi SOP STATE 2 (Delivery Payload Alumni Batch 1)
+                confirmation_msg = (
+                    f"✅ PEMBAYARAN BERHASIL DIVERIFIKASI!\n\n"
+                    f"Selamat datang di BoonTrack Academy, {customer_name}!\n\n"
+                    f"Detail Transaksi:\n"
+                    f"- Program: Kelas Inkubasi CTWA Batch 1 (Full Access)\n"
+                    f"- Email: {customer_email}\n"
+                    f"- Total: Rp 249.000 (LUNAS)\n\n"
+                    f"Link Akses Forum Telegram:\n"
+                    f"Silakan bergabung ke Supergroup Forum resmi melalui tautan khusus di bawah ini:\n"
+                    f"👉 {single_use_telegram_link}\n\n"
+                    f"Langkah Awal:\n"
+                    f"Begitu masuk ke Telegram, buka topik #Announcement untuk membaca SOP kelas, lalu buka #Basic-Fase1 untuk memulai setup toko dan bot Anda hari ini."
+                )
+            else:
+                # Truthful pending retry message when Telegram Bot API is unavailable
+                confirmation_msg = (
+                    f"✅ PEMBAYARAN BERHASIL DIVERIFIKASI!\n\n"
+                    f"Selamat datang di BoonTrack Academy, {customer_name}!\n\n"
+                    f"Detail Transaksi:\n"
+                    f"- Program: Kelas Inkubasi CTWA Batch 1 (Full Access)\n"
+                    f"- Email: {customer_email}\n"
+                    f"- Total: Rp 249.000 (LUNAS)\n\n"
+                    f"Tautan akses eksklusif Supergroup Forum resmi sedang dalam antrean penerbitan sistem dan akan segera dikirimkan ke chat ini begitu siap.\n\n"
+                    f"Langkah Awal:\n"
+                    f"Begitu masuk ke Telegram, buka topik #Announcement untuk membaca SOP kelas, lalu buka #Basic-Fase1 untuk memulai setup toko dan bot Anda hari ini."
+                )
 
             # 2. Simpan entri Transactional Outbox untuk dispatch pesan Telegram & WA
             outbox_entry = AcademyOutboxManager.create_outbox_message(
@@ -2245,6 +2321,7 @@ class AcademyBotStateMachine:
                     "single_use_telegram_link": single_use_telegram_link,
                     "delivery_template": "BATCH_1_ALUMNI_PRIVILEGE",
                     "confirmation_message": confirmation_msg,
+                    "fulfillment_status": "DELIVERED" if single_use_telegram_link else "TELEGRAM_INVITE_PENDING_RETRY",
                 },
                 tenant_id=tenant_id,
             )
@@ -2281,6 +2358,7 @@ class AcademyBotStateMachine:
                 "customer_name": customer_name,
                 "customer_email": customer_email,
                 "single_use_telegram_link": single_use_telegram_link,
+                "fulfillment_status": "DELIVERED" if single_use_telegram_link else "TELEGRAM_INVITE_PENDING_RETRY",
                 "entitlement_id": entitlement.get("entitlement_id"),
                 "outbox_id": outbox_entry.get("id"),
                 "idempotency_hit": False,

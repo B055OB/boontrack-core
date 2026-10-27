@@ -1,0 +1,63 @@
+{
+  "version": "3.1",
+  "screens": [
+    {
+      "id": "REGISTRATION",
+      "title": "Pendaftaran Batch 1",
+      "terminal": true,
+      "data": {},
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "registration_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Pendaftaran Kelas Inkubasi"
+              },
+              {
+                "type": "TextSubheading",
+                "text": "OnlineBoost CTWA Batch 1 (Rp249.000)"
+              },
+              {
+                "type": "TextBody",
+                "text": "Lengkapi nama lengkap dan email aktif untuk penerbitan invoice resmi dan pengamanan slot pendaftaran Anda."
+              },
+              {
+                "type": "TextInput",
+                "name": "name",
+                "label": "Nama Lengkap",
+                "required": true,
+                "input-type": "text",
+                "min-chars": 2,
+                "max-chars": 80,
+                "helper-text": "Nama lengkap sesuai identitas"
+              },
+              {
+                "type": "TextInput",
+                "name": "email",
+                "label": "Email Aktif",
+                "required": true,
+                "input-type": "email",
+                "helper-text": "Invoice & akses kelas dikirim ke email ini"
+              },
+              {
+                "type": "Footer",
+                "label": "Lanjut ke Pembayaran",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "name": "${form.name}",
+                    "email": "${form.email}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -674,14 +674,15 @@ async def send_whatsapp_buttons(
 async def send_whatsapp_flow(
     to_phone: str,
     flow_id: Optional[str] = None,
-    flow_token: str = "ctwa_flow_token",
-    flow_cta: str = "📝 Isi Data Pendaftaran",
-    header_text: str = "Pendaftaran Batch 1",
+    flow_token: str = "onlineboost_batch1_reg",
+    flow_cta: str = "Daftar & Amankan Slot",
+    header_text: Optional[str] = "OnlineBoost Batch 1",
     body_text: str = (
-        "Amankan slot promo Rp249.000 dengan melengkapi data singkat di bawah ini. "
-        "Invoice resmi akan langsung diterbitkan:"
+        "Halo Kak! Klik tombol di bawah untuk melengkapi data pendaftaran dan mengamankan slot kelas Anda:"
     ),
-    footer_text: str = "OnlineBoost x BoonTrack",
+    footer_text: Optional[str] = None,
+    flow_action: str = "navigate",
+    flow_action_payload: Optional[Dict[str, Any]] = None,
     tenant_id: str = "onlineboost",
     phone_number_id: Optional[str] = None,
     access_token: Optional[str] = None,
@@ -692,9 +693,10 @@ async def send_whatsapp_flow(
 
     resolved_flow_id = (
         flow_id
+        or os.getenv("ONLINEBOOST_FLOW_ID")
         or os.getenv("FLOW_ID_ONLINEBOOST")
         or os.getenv("META_FLOW_ID")
-        or "<FLOW_ID_ONLINEBOOST>"
+        or "1663739061907747"
     )
 
     fallback_text = (
@@ -719,16 +721,20 @@ async def send_whatsapp_flow(
         "Content-Type": "application/json",
     }
 
+    flow_parameters: Dict[str, Any] = {
+        "flow_message_version": "3",
+        "flow_token": flow_token,
+        "flow_id": resolved_flow_id,
+        "flow_cta": flow_cta,
+        "flow_action": flow_action,
+        "flow_action_payload": flow_action_payload or {"screen": "REGISTRATION"},
+    }
+
     interactive_obj: Dict[str, Any] = {
         "type": "flow",
         "action": {
             "name": "flow",
-            "parameters": {
-                "flow_message_version": "3",
-                "flow_token": flow_token,
-                "flow_id": resolved_flow_id,
-                "flow_cta": flow_cta,
-            },
+            "parameters": flow_parameters,
         },
     }
 

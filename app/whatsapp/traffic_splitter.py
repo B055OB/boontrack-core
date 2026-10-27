@@ -1873,6 +1873,42 @@ class TenantWebhookRouter:
             return res
 
         # =====================================================================
+        # 1.45. WHATSAPP FLOWS SUBMISSION (nfm_reply) DIRECT ORCHESTRATION
+        # =====================================================================
+        is_flow_reply = (
+            isinstance(raw_msg, dict)
+            and raw_msg.get("type") == "interactive"
+            and (raw_msg.get("interactive") or {}).get("type") == "nfm_reply"
+        )
+        if is_flow_reply and tenant_slug == "onlineboost":
+            trace.log_step("TenantFlowReplyRouter", f"Flow submission (nfm_reply) detected from {sender_phone} on tenant '{tenant_slug}'")
+            try:
+                from app.services.ctwa_state_engine import ctwa_state_engine
+                ctwa_res = await ctwa_state_engine.process_turn(
+                    phone=sender_phone,
+                    incoming_text=clean_text,
+                    sender_name=contact_name,
+                    raw_msg=raw_msg,
+                    phone_number_id=phone_number_id,
+                )
+                if ctwa_res:
+                    res = {
+                        "status": "success" if ctwa_res.get("success", True) else "rejected",
+                        "purpose": "TENANT_SALES",
+                        "tenant": "onlineboost",
+                        "action": ctwa_res.get("action"),
+                        "reply": ctwa_res.get("reply"),
+                        "order_id": ctwa_res.get("order_id"),
+                        "total_amount": ctwa_res.get("total_amount"),
+                    }
+                    trace.early_return = True
+                    trace.response_status = 200
+                    trace.response_payload = res
+                    return res
+            except Exception as _flow_err:
+                logger.error(f"[TENANT_FLOW_REPLY_ERROR] {_flow_err}", exc_info=True)
+
+        # =====================================================================
         # 1.5. BOONTRACK ACADEMY: WARM LAUNCH ALUMNI STATE MACHINE (STATE 0 & 1)
         # =====================================================================
         try:
@@ -1884,6 +1920,7 @@ class TenantWebhookRouter:
                     contact_name=contact_name,
                     phone_number_id=phone_number_id,
                     tenant_id=tenant_slug,
+                    raw_msg=raw_msg,
                 )
                 if academy_res and academy_res.get("handled"):
                     trace.log_step("TenantAcademyBot", f"Handled by Academy State Machine: State {academy_res.get('state')}")

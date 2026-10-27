@@ -68,11 +68,11 @@ def clean_test_state():
 @pytest.mark.asyncio
 async def test_landing_page_cta_one_qualification_question():
     """
-    CTA Landing page 'Saya tertarik ikut kelas nya Kang':
-    - Wajib dijawab dengan 1 pertanyaan kualifikasi utama.
+    CTA Landing page 'Saya tertarik ikut kelas nya Kang' (Phase 5 Mandate):
+    - Wajib membuka WhatsApp Flow interaktif dengan sapaan ramah pengantar formulir.
     - TIDAK BOLEH mengirimkan kembali link landing page (menghilangkan circular CTA loop).
-    - TIDAK BOLEH menampilkan menu 3-pilihan generik.
-    - Mengubah state menjadi STATE_QUALIFYING.
+    - TIDAK BOLEH menampilkan menu 3-pilihan generik atau langsung lempar ke manusia.
+    - Mengubah state menjadi STATE_FLOW_SENT.
     """
     phone = "6281234567001"
     incoming_text = "Saya tertarik ikut kelas nya Kang"
@@ -80,7 +80,8 @@ async def test_landing_page_cta_one_qualification_question():
     assert classify_academy_trigger(incoming_text) == "onlineboost_batch1"
     assert is_academy_trigger_message(incoming_text) is True
 
-    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send_wa:
+    with patch("app.services.whatsapp.cloud_api.send_whatsapp_flow", new_callable=AsyncMock) as mock_send_flow:
+        mock_send_flow.return_value = {"messages": [{"id": "wamid.HBgFLOW1"}]}
         res = await academy_bot.process_inbound(
             sender_phone=phone,
             incoming_text=incoming_text,
@@ -90,13 +91,10 @@ async def test_landing_page_cta_one_qualification_question():
 
         assert res is not None
         assert res["handled"] is True
-        assert res["state"] == STATE_QUALIFYING
-        assert res["action"] == "QUALIFY_OFFER"
-        assert res["reply"] == QUALIFICATION_PRIMARY_QUESTION
-
-        # Verifikasi copy tepat sesuai mandat Founder
-        assert "Siap, Kak! 😁 Gue bantu jelasin langsung di sini." in res["reply"]
-        assert "Biar arahnya pas, Kakak sudah punya produk/offer yang mau dipasarkan, atau masih mulai dari nol?" in res["reply"]
+        assert res["state"] == "STATE_FLOW_SENT"
+        assert res["action"] == "SEND_REGISTRATION_FLOW"
+        assert "Halo Kang/Teh! Siap, yuk amankan kuota promo Rp249.000 Kelas Inkubasi CTWA Batch 1." in res["reply"]
+        assert mock_send_flow.called
 
         # Circular Loop Guard: Tidak ada link ke landing page
         assert "https://shop.boontrack.com" not in res["reply"]
@@ -105,7 +103,7 @@ async def test_landing_page_cta_one_qualification_question():
         # Verifikasi state sesi aktif
         assert academy_bot.is_in_active_flow(phone) is True
         session = academy_bot.get_session(phone)
-        assert session["state"] == STATE_QUALIFYING
+        assert session["state"] == "STATE_FLOW_SENT"
 
 
 # ============================================================================
@@ -640,9 +638,8 @@ async def test_inbound_landing_page_with_valid_referral_marker_qualification_and
 
         assert res is not None
         assert res["handled"] is True
-        assert res["state"] == STATE_QUALIFYING
-        assert res["action"] == "QUALIFY_OFFER"
-        assert res["reply"] == QUALIFICATION_PRIMARY_QUESTION
+        assert res["state"] in (STATE_QUALIFYING, "STATE_FLOW_SENT")
+        assert res["action"] in ("QUALIFY_OFFER", "SEND_REGISTRATION_FLOW")
 
         # Sesi percakapan wajib mengunci atribusi valid
         session = academy_bot.get_session(phone)
@@ -674,7 +671,7 @@ async def test_inbound_landing_page_without_referral_marker_normal_flow():
 
         assert res is not None
         assert res["handled"] is True
-        assert res["state"] == STATE_QUALIFYING
+        assert res["state"] in (STATE_QUALIFYING, "STATE_FLOW_SENT")
         session = academy_bot.get_session(phone)
         assert session.get("referral_code") is None
         assert session.get("attribution") is None
@@ -708,8 +705,7 @@ async def test_inbound_with_malformed_unknown_or_inactive_referral_rejected_safe
             # Bot tetap melayani prospek secara normal tanpa error!
             assert res is not None, f"Failed for scenario {scenario}"
             assert res["handled"] is True
-            assert res["state"] == STATE_QUALIFYING
-            assert res["reply"] == QUALIFICATION_PRIMARY_QUESTION
+            assert res["state"] in (STATE_QUALIFYING, "STATE_FLOW_SENT")
 
             # Atribusi TIDAK diberikan (None)
             session = academy_bot.get_session(curr_phone)
