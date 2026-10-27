@@ -265,8 +265,8 @@ async def test_state_1_issuing_payment_on_email_received():
         assert res_invalid["action"] == "INVALID_EMAIL_RETRY"
         assert "format email belum sesuai" in res_invalid["reply"].lower()
 
-    # 2. Kirim email valid -> Memasuki STATE 1 Issuing Payment
-    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send:
+    # 2. Kirim email valid -> Memasuki STATE 1 (Default Fail-Closed: Strict Hold blocks payment creation)
+    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send_hold:
         res_valid = await academy_bot.process_inbound(
             sender_phone=sender_phone,
             incoming_text="ahmad.fikri@gmail.com",
@@ -276,24 +276,55 @@ async def test_state_1_issuing_payment_on_email_received():
         assert res_valid is not None
         assert res_valid["handled"] is True
         assert res_valid["state"] == 1
-        assert res_valid["action"] == "PAYMENT_ISSUED"
-        assert res_valid["order_id"].startswith("BTA-ALUMNI-")
-        assert 249100 <= res_valid["total_amount"] <= 249999
+        # P0 STRICT HOLD ASSERTION: Default runtime is fail-closed
+        assert res_valid["action"] == "PAYMENT_STRICT_HOLD"
+        assert res_valid["strict_hold"] is True
+        assert res_valid["order_id"] is None
+        assert res_valid["customer_email"] == "ahmad.fikri@gmail.com"
+        assert "persiapan rilis" in res_valid["reply"].lower() or "strict hold" in res_valid["reply"].lower()
+
+        # Verifikasi state sesi pengguna tercatat namun order_id tidak dibuat
+        session = academy_bot.get_session(sender_phone)
+        assert session["state"] == STATE_1_PAYMENT_ISSUED
+        assert session["email"] == "ahmad.fikri@gmail.com"
+        assert session.get("order_id") is None
+
+    # 3. Explicit Isolated Happy Path: Ketika strict hold secara eksplisit dibuka via test-only config
+    import os
+    with patch.dict(os.environ, {"ONLINEBOOST_PAYMENT_STRICT_HOLD": "false"}), \
+         patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send_open:
+        # Reset session state ke awaiting email untuk pengujian happy path
+        academy_bot.set_session(
+            sender_phone,
+            state=STATE_1_AWAITING_EMAIL,
+            name=contact_name,
+        )
+        res_open = await academy_bot.process_inbound(
+            sender_phone=sender_phone,
+            incoming_text="ahmad.fikri@gmail.com",
+            contact_name=contact_name,
+        )
+        assert res_open is not None
+        assert res_open["handled"] is True
+        assert res_open["state"] == 1
+        assert res_open["action"] == "PAYMENT_ISSUED"
+        assert res_open["order_id"].startswith("BTA-ALUMNI-")
+        assert 249100 <= res_open["total_amount"] <= 249999
 
         # Cek isi pesan balasan
-        reply = res_valid["reply"]
+        reply = res_open["reply"]
         assert "INVOICE BOONTRACK ACADEMY" in reply
         assert contact_name in reply
         assert "ahmad.fikri@gmail.com" in reply
         assert "15 Menit" in reply
         assert "Instruksi Pembayaran QRIS" in reply
-        assert res_valid["qr_image_url"] in reply
+        assert res_open["qr_image_url"] in reply
 
-        # Verifikasi state sesi pengguna sekarang STATE_1_PAYMENT_ISSUED
-        session = academy_bot.get_session(sender_phone)
-        assert session["state"] == STATE_1_PAYMENT_ISSUED
-        assert session["email"] == "ahmad.fikri@gmail.com"
-        assert session["order_id"] == res_valid["order_id"]
+        # Verifikasi state sesi pengguna sekarang menyimpan order_id
+        session_open = academy_bot.get_session(sender_phone)
+        assert session_open["state"] == STATE_1_PAYMENT_ISSUED
+        assert session_open["email"] == "ahmad.fikri@gmail.com"
+        assert session_open["order_id"] == res_open["order_id"]
 
 
 @pytest.mark.asyncio

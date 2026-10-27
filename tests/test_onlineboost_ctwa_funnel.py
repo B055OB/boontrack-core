@@ -158,9 +158,16 @@ async def test_pre_llm_deterministic_gatekeeper_execution():
     test_name = "Budi Hartono"
     test_email = "budi.hartono@gmail.com"
 
-    with patch("app.services.whatsapp.cloud_api.send_whatsapp_image", new_callable=AsyncMock) as mock_send_img, \
+    with patch.dict(os.environ, {"ONLINEBOOST_PAYMENT_STRICT_HOLD": "false"}), \
+         patch("app.services.ctwa_state_engine.xendit_service.create_dynamic_qris", new_callable=AsyncMock) as mock_xendit_qr, \
+         patch("app.services.whatsapp.cloud_api.send_whatsapp_image", new_callable=AsyncMock) as mock_send_img, \
          patch("app.modules.tracking.capi_dispatcher.capi_dispatcher.dispatch_initiate_checkout", new_callable=AsyncMock) as mock_capi:
 
+        mock_xendit_qr.side_effect = lambda **kwargs: {
+            "qr_string": f"00020101021254{len(str(kwargs.get('amount', 249000))):02d}{kwargs.get('amount', 249000)}5802ID5909BoonTrack6012Kab. Bandung6105402866304ABCD",
+            "qr_id": "qr_mock_dynamic_123",
+            "invoice_url": f"https://checkout.xendit.co/web/INV-{kwargs.get('external_id')}",
+        }
         mock_send_img.return_value = {"messages": [{"id": "wamid.HBgQRIS123"}]}
         mock_capi.return_value = {"status": "SENT", "event_name": "InitiateCheckout"}
 

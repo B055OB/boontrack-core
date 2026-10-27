@@ -180,6 +180,21 @@ async def fulfill_onlineboost_ctwa_order(
         except Exception as db_err:
             logger.debug(f"[CTWA FULFILLMENT] DB lookup note: {db_err}")
 
+    # P0 RESTRICT TO VERIFIED PAID ORDERS ONLY:
+    # If an order record exists in DB, ensure payment status is PAID/SETTLED/LUNAS
+    if order_record:
+        order_st = str(order_record.get("status") or "").upper()
+        pay_st = str(order_record.get("payment_status") or "").upper()
+        if (order_st and order_st not in ("PAID", "SETTLED", "LUNAS")) or (pay_st and pay_st not in ("PAID", "SETTLED", "LUNAS")):
+            logger.error(
+                f"[CTWA FULFILLMENT] Order '{order_id}' is not in a verified paid state (status={order_st}, payment_status={pay_st}). Denying access."
+            )
+            return {
+                "status": "REJECTED_UNPAID",
+                "order_id": order_id,
+                "error": f"Order '{order_id}' has unverified payment status ({order_st}/{pay_st}). Access denied.",
+            }
+
     # Resolusi atribut pembeli & nominal
     resolved_name = (
         buyer_name

@@ -59,6 +59,8 @@ logger = logging.getLogger("CTWA_STATE_ENGINE")
 SINGLE_OFFER_PRICE: int = 249000  # Rp 249.000 (Sekali Bayar)
 SINGLE_OFFER_NAME: str = "Paket Lengkap Kelas Inkubasi CTWA Batch 1"
 SINGLE_OFFER_SLUG: str = "kelas-inkubasi-ctwa-batch-1-scale"
+CANONICAL_BATCH1_SKU: str = "OB-BATCH1-249K"
+LEGACY_BATCH1_SKU: str = "SKU-BTA-ALUMNI-249K"
 STOREFRONT_URL: str = "https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale"
 
 # Master Static QRIS fallback (Official BoonTrack / OnlineBoost QRIS)
@@ -249,6 +251,37 @@ class CTWAStateEngine:
         session = self.get_session(clean_phone)
         session["lead_name"] = name
         session["lead_email"] = email
+
+        # P0 STRICT HOLD GUARD: Reject request BEFORE Xendit invocation and BEFORE database mutations
+        from app.services.academy_service import is_onlineboost_payment_held
+        if is_onlineboost_payment_held():
+            logger.info(f"[GATEKEEPER] Payment STRICT HOLD active for OnlineBoost Batch 1. Request queued without Xendit or order mutation.")
+            session["current_state"] = "STATE_LEAD_QUEUED"
+            hold_caption = (
+                f"Terima kasih Kak {name}! Data pendaftaran Kakak ({email}) sudah kami catat dalam daftar antrean prioritas Batch 1.\n\n"
+                f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold). "
+                f"Begitu sistem pembayaran resmi dibuka, Kakak akan langsung menerima instruksi pembayaran di nomor WhatsApp ini."
+            )
+            if phone_number_id and clean_phone:
+                try:
+                    await cloud_api.send_whatsapp_text(
+                        to_phone=clean_phone,
+                        text=hold_caption,
+                        phone_number_id=phone_number_id,
+                        tenant_id="onlineboost",
+                    )
+                except Exception as _e:
+                    logger.debug(f"[GATEKEEPER] WA dispatch note: {_e}")
+
+            return {
+                "status": "STRICT_HOLD",
+                "strict_hold": True,
+                "order_id": None,
+                "total_amount": SINGLE_OFFER_PRICE,
+                "qris_payload": "",
+                "caption": hold_caption,
+            }
+
         session["current_state"] = "STATE_PAYMENT_PENDING"
 
         # 1. Hitung 3-digit kode unik downward (100 - 999)
@@ -284,15 +317,25 @@ class CTWAStateEngine:
 
         qris_payload = str(xendit_qr_res.get("qr_string") or "").strip()
         if not qris_payload or not qris_payload.startswith("000201"):
-            try:
-                qris_payload = generate_dynamic_qris_payload(
-                    static_payload=DEFAULT_STATIC_QRIS,
-                    amount=total_amount,
-                    invoice_id=order_id,
-                )
-            except Exception as q_err:
-                logger.warning(f"[GATEKEEPER] QRIS payload generation fallback note: {q_err}")
-                qris_payload = ""
+            # P0 FAIL-CLOSED: DILARANG KERAS mengganti QRIS transaksi dinamis yang gagal dengan QRIS statis (DEFAULT_STATIC_QRIS)
+            logger.error(
+                f"[GATEKEEPER] Xendit dynamic QRIS generation failed or returned invalid EMVCo payload for order {order_id}. "
+                f"Refusing static QRIS fallback per P0 fail-closed policy."
+            )
+            session["current_state"] = "STATE_QRIS_FAILED"
+            fail_caption = (
+                f"Mohon maaf Kak {name}, sistem gerbang pembayaran resmi sedang mengalami kendala. "
+                f"Data pendaftaran Kakak ({email}) sudah tersimpan aman di sistem kami. "
+                f"Silakan ketik 'DAFTAR' untuk mencoba kembali dalam beberapa saat."
+            )
+            return {
+                "status": "QRIS_GENERATION_FAILED",
+                "error": "Failed to acquire authoritative dynamic QRIS from payment gateway",
+                "order_id": None,
+                "total_amount": total_amount,
+                "qris_payload": "",
+                "caption": fail_caption,
+            }
 
         qris_payload = str(qris_payload or "").strip()
         invoice_url = str(xendit_qr_res.get("invoice_url") or "").strip()
@@ -301,18 +344,25 @@ class CTWAStateEngine:
         qr_png_bytes = generate_qris_png_bytes(qris_payload) if qris_payload else b""
 
         # 3. Buat baris order baru di Supabase pada tabel orders dengan status PENDING
+        from app.services.referral_attribution_service import get_attribution_snapshot_for_order
+        attr_snapshot = get_attribution_snapshot_for_order(session)
+
         order_metadata = {
             "flow_token": "ctwa_flow_token",
             "base_amount": SINGLE_OFFER_PRICE,
             "unique_code": downward_code,
             "unique_code_system": "DOWNWARD",
             "product_slug": SINGLE_OFFER_SLUG,
+            "sku_id": CANONICAL_BATCH1_SKU,
+            "sku": CANONICAL_BATCH1_SKU,
             "qris_payload": qris_payload,
             "qr_id": xendit_qr_res.get("qr_id"),
             "invoice_url": invoice_url,
             "payment_provider": "XENDIT",
             "ctwa_clid": ctwa_clid,
         }
+        if attr_snapshot:
+            order_metadata.update(attr_snapshot)
 
         sb = get_supabase()
         if sb:
@@ -463,7 +513,15 @@ class CTWAStateEngine:
         """
         clean_phone = normalize_phone_number(phone) or str(phone).strip()
         session = self.get_session(clean_phone)
-        q = incoming_text.strip()
+
+        # Ekstraksi marker [r=KODE_RESELLER] dan persistensi atribusi (First Valid Referral Wins)
+        from app.services.referral_attribution_service import (
+            extract_referral_marker,
+            apply_referral_attribution_to_session,
+        )
+        q, raw_ref_code = extract_referral_marker(incoming_text.strip())
+        if raw_ref_code:
+            apply_referral_attribution_to_session(session, raw_ref_code, tenant_id="onlineboost")
         q_lower = q.lower()
 
         # Update sapaan nama jika ada
@@ -519,6 +577,41 @@ class CTWAStateEngine:
                 phone_number_id=phone_number_id,
                 ctwa_clid=ctwa_clid,
             )
+            if gk_result.get("strict_hold"):
+                caption = gk_result.get("caption") or ""
+                return {
+                    "success": True,
+                    "action": "GATEKEEPER_STRICT_HOLD",
+                    "reply": caption,
+                    "reply_text": caption,
+                    "media_url": "",
+                    "qr_code_url": "",
+                    "qris_payload": "",
+                    "order_id": None,
+                    "total_amount": SINGLE_OFFER_PRICE,
+                    "downward_code": 0,
+                    "current_state": "STATE_LEAD_QUEUED",
+                }
+
+            if gk_result.get("status") == "QRIS_GENERATION_FAILED":
+                caption = gk_result.get("caption") or (
+                    "Mohon maaf Kak, terjadi kendala koneksi ke gerbang pembayaran resmi saat menyiapkan kode QRIS. "
+                    "Silakan ketik 'DAFTAR' untuk mencoba kembali."
+                )
+                return {
+                    "success": False,
+                    "action": "GATEKEEPER_FAILED",
+                    "reply": caption,
+                    "reply_text": caption,
+                    "media_url": "",
+                    "qr_code_url": "",
+                    "qris_payload": "",
+                    "order_id": None,
+                    "total_amount": SINGLE_OFFER_PRICE,
+                    "downward_code": 0,
+                    "current_state": "STATE_QRIS_FAILED",
+                }
+
             qris_payload = str(gk_result.get("qris_payload") or "").strip()
             qr_img_url = ""
             if qris_payload:

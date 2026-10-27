@@ -43,8 +43,11 @@ def reset_stores():
     """Ensure clean isolation between tests."""
     set_allow_in_memory_fallback(True)
     reset_suppression_test_state()
-    yield
-    reset_suppression_test_state()
+    try:
+        yield
+    finally:
+        reset_suppression_test_state()
+        set_allow_in_memory_fallback(False)
 
 
 def _build_meta_inbound_payload(phone: str, text: str, wamid: str) -> dict:

@@ -12,6 +12,15 @@ from app.services.whatsapp_service import normalize_phone_number
 
 class TestCtwaWhatsAppWebhookFlow(AioHTTPTestCase):
 
+    def setUp(self):
+        super().setUp()
+        self._env_patch = patch.dict("os.environ", {"ONLINEBOOST_PAYMENT_STRICT_HOLD": "false"})
+        self._env_patch.start()
+
+    def tearDown(self):
+        self._env_patch.stop()
+        super().tearDown()
+
     async def get_application(self):
         return create_web_app()
 

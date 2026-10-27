@@ -56,7 +56,9 @@ class TenantContextViolation(PermissionError):
 # ============================================================================
 
 ACADEMY_SKU_NAME: str = "BoonTrack Academy & CTWA Scale Engine (Alumni Privilege Pass)"
-ACADEMY_SKU_ID: str = "SKU-BTA-ALUMNI-249K"
+CANONICAL_BATCH1_SKU: str = "OB-BATCH1-249K"
+LEGACY_ACADEMY_SKU_ID: str = "SKU-BTA-ALUMNI-249K"
+ACADEMY_SKU_ID: str = "SKU-BTA-ALUMNI-249K"  # Preserved for Alumni warm launch backwards compatibility
 ACADEMY_SETTLEMENT_PRICE: int = 249000  # Rp 249.000
 ACADEMY_INVOICE_TTL_MINUTES: int = 15   # 15 menit
 
@@ -360,6 +362,11 @@ def reset_academy_test_state() -> None:
     AcademyEntitlementManager._ENTITLEMENTS.clear()
     AcademyEntitlementManager._ORDER_ENTITLEMENTS.clear()
     AcademyOutboxManager._OUTBOX.clear()
+    try:
+        from app.services.referral_attribution_service import reset_referral_registry
+        reset_referral_registry()
+    except Exception:
+        pass
 
 # ============================================================================
 # MASTER DATA ALUMNI REGISTRY & LOOKUP
@@ -579,7 +586,8 @@ def classify_academy_trigger(text: str) -> Optional[str]:
     """
     if not text or not isinstance(text, str):
         return None
-    clean = text.strip()
+    from app.services.referral_attribution_service import extract_referral_marker
+    clean, _ = extract_referral_marker(text.strip())
     if TRIGGER_PATTERN_CAMPAIGN_B.search(clean):
         return "ads_ctwa"
     if TRIGGER_PATTERN_CAMPAIGN_A.search(clean) or STATE_0_TRIGGER_PATTERN.search(clean):
@@ -649,6 +657,17 @@ def lookup_staging_alumni_cpm(phone: str, tenant_id: str = "onlineboost") -> Opt
 
     return None
 
+
+def is_onlineboost_payment_held() -> bool:
+    """
+    Check whether OnlineBoost Batch 1 payment is in STRICT HOLD mode.
+    Per CTO Directive: Batch 1 payment is strictly held until authorized by management.
+    Defaults to True (fail-closed) unless ONLINEBOOST_PAYMENT_STRICT_HOLD is explicitly 'false' or '0'.
+    """
+    val = os.getenv("ONLINEBOOST_PAYMENT_STRICT_HOLD", "true").strip().lower()
+    return val not in ("false", "0", "off", "no")
+
+
 async def generate_fast_path_xendit_qris_batch1(
     customer_phone: str,
     customer_name: str = "Kak",
@@ -664,6 +683,27 @@ async def generate_fast_path_xendit_qris_batch1(
     t0 = time.monotonic()
     clean_p = normalize_phone_number(customer_phone) or customer_phone
     amount = 249000
+
+    # P0 STRICT HOLD GUARD: Reject request BEFORE Xendit invocation and BEFORE database mutations
+    if is_onlineboost_payment_held():
+        logger.info(f"[FastPathQRIS] Payment STRICT HOLD active for tenant '{tenant_id}'. Rejecting before Xendit or order mutation.")
+        hold_caption = (
+            f"Terima kasih Kak {customer_name}! Data pendaftaran Kakak sudah kami catat dalam antrean prioritas Batch 1.\n\n"
+            f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold). "
+            f"Begitu sistem pembayaran resmi dibuka, Kakak akan langsung menerima instruksi pembayaran di nomor WhatsApp ini."
+        )
+        return {
+            "status": "STRICT_HOLD",
+            "strict_hold": True,
+            "order_id": None,
+            "amount": amount,
+            "qr_string": "",
+            "qr_image_url": "",
+            "invoice_url": "",
+            "message": hold_caption,
+            "latency_ms": int((time.monotonic() - t0) * 1000),
+        }
+
     order_id = f"OB1-{uuid.uuid4().hex[:8].upper()}"
     product_name = "Kelas Inkubasi OnlineBoost Batch 1"
 
@@ -705,25 +745,44 @@ async def generate_fast_path_xendit_qris_batch1(
     except Exception as xerr:
         logger.warning(f"[FastPathQRIS] Xendit 1.2s cap hit / network fallback ({xerr}). Generating resilient dynamic QRIS.")
 
-    # 2. Resilient Dynamic QRIS Fallback untuk jaminan total latensi < 2.0s
-    if not qr_string:
-        try:
-            base_qris = DEFAULT_STATIC_QRIS.strip()
-            qr_string = generate_dynamic_qris_payload(
-                static_payload=base_qris,
-                amount=amount,
-                invoice_id=order_id,
-            )
-        except Exception:
-            qr_string = f"00020101021254062490005802ID5909BoonTrack6012Kab. Bandung6105402866304ABCD"
-        qr_image_url = get_qr_code_image_url(qr_string, size=600)
-        invoice_url = f"https://checkout.boontrack.com/pay/{order_id}"
+    # 2. Fail-closed Dynamic QRIS Guard: DILARANG KERAS mengganti dynamic QRIS yang gagal dengan DEFAULT_STATIC_QRIS
+    if not qr_string or not qr_string.startswith("000201"):
+        logger.error(
+            f"[FastPathQRIS] Xendit dynamic QRIS generation failed for {order_id}. "
+            f"Refusing static QRIS fallback per P0 fail-closed policy."
+        )
+        return {
+            "status": "ERROR_GATEWAY_TIMEOUT",
+            "strict_hold": False,
+            "order_id": None,
+            "amount": amount,
+            "qr_string": "",
+            "qr_image_url": "",
+            "invoice_url": "",
+            "message": "Mohon maaf Kak, gerbang pembayaran resmi sedang sibuk. Mohon coba beberapa saat lagi.",
+            "latency_ms": int((time.monotonic() - t0) * 1000),
+        }
 
     # 3. Persist Pending Order ke PostgreSQL
     try:
         from app.core.database import get_db_connection
         conn = get_db_connection()
         cur = conn.cursor()
+        from app.services.referral_attribution_service import get_attribution_snapshot_for_order
+        session_snap = academy_bot.get_session(clean_p)
+        attr_snapshot = get_attribution_snapshot_for_order(session_snap)
+
+        order_meta_dict = {
+            "source": "waba_metode_rahasia",
+            "funnel": "onlineboost_batch1",
+            "sku_id": CANONICAL_BATCH1_SKU,
+            "sku": CANONICAL_BATCH1_SKU,
+            "qr_string": qr_string,
+            "invoice_url": invoice_url,
+        }
+        if attr_snapshot:
+            order_meta_dict.update(attr_snapshot)
+
         cur.execute(
             """
             INSERT INTO orders (
@@ -735,18 +794,13 @@ async def generate_fast_path_xendit_qris_batch1(
             (
                 order_id,
                 tenant_id,
-                "ONLINEBOOST_BATCH1",
+                CANONICAL_BATCH1_SKU,
                 product_name,
                 amount,
                 customer_name,
                 clean_p,
                 customer_email,
-                json.dumps({
-                    "source": "waba_metode_rahasia",
-                    "funnel": "onlineboost_batch1",
-                    "qr_string": qr_string,
-                    "invoice_url": invoice_url,
-                })
+                json.dumps(order_meta_dict),
             )
         )
         conn.commit()
@@ -1351,6 +1405,15 @@ class AcademyBotStateMachine:
         session = cls.get_session(clean_phone)
         current_state = session.get("state")
 
+        # Ekstraksi marker [r=KODE_RESELLER] dan persistensi atribusi (First Valid Referral Wins)
+        from app.services.referral_attribution_service import (
+            extract_referral_marker,
+            apply_referral_attribution_to_session,
+        )
+        clean_text, raw_ref_code = extract_referral_marker(clean_text)
+        if raw_ref_code:
+            apply_referral_attribution_to_session(session, raw_ref_code, tenant_id=tenant_id)
+
         # Fallback sapaan nama
         resolved_name = (
             contact_name
@@ -1954,6 +2017,44 @@ class AcademyBotStateMachine:
                             break
 
             effective_tenant = session.get("tenant_id") or tenant_id or "onlineboost"
+
+            # P0 STRICT HOLD GUARD: Reject request BEFORE invoice generation and database mutation
+            if effective_tenant == "onlineboost" and is_onlineboost_payment_held():
+                hold_reply = (
+                    f"Terima kasih Kak {resolved_name}! Data pendaftaran Kakak ({customer_email}) sudah kami catat dalam antrean prioritas Batch 1.\n\n"
+                    f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold). "
+                    f"Begitu sistem pembayaran resmi dibuka, Kakak akan langsung menerima instruksi pembayaran di nomor WhatsApp ini."
+                )
+                try:
+                    await send_whatsapp_text(
+                        to_phone=clean_phone,
+                        text=hold_reply,
+                        tenant_id=effective_tenant,
+                        phone_number_id=phone_number_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"[AcademyState1] WhatsApp hold reply note: {e}")
+
+                cls.set_session(
+                    clean_phone,
+                    state=STATE_1_PAYMENT_ISSUED,
+                    name=resolved_name,
+                    email=customer_email,
+                    tenant_id=effective_tenant,
+                )
+
+                return {
+                    "handled": True,
+                    "state": 1,
+                    "action": "PAYMENT_STRICT_HOLD",
+                    "campaign": session.get("campaign") or "onlineboost_batch1",
+                    "order_id": None,
+                    "strict_hold": True,
+                    "reply": hold_reply,
+                    "customer_name": resolved_name,
+                    "customer_email": customer_email,
+                    "tenant_id": effective_tenant,
+                }
 
             # Generate QRIS Invoice Rp 249.xxx (valid 15 menit)
             invoice = generate_academy_qris_invoice(

@@ -1603,7 +1603,18 @@ class TenantWebhookRouter:
         trace.target_tenant = tenant_slug
         trace.log_step("TenantWebhookRouter.handle", f"Entered isolated tenant pipeline for '{tenant_slug}' (User: {sender_phone})")
 
-        clean_text = incoming_text.strip()
+        from app.services.referral_attribution_service import (
+            extract_referral_marker,
+            apply_referral_attribution_to_session,
+        )
+        clean_text, raw_ref_code = extract_referral_marker(incoming_text.strip())
+        if raw_ref_code and tenant_slug == "onlineboost":
+            try:
+                from app.services.academy_service import academy_bot
+                sess = academy_bot.get_session(sender_phone)
+                apply_referral_attribution_to_session(sess, raw_ref_code, tenant_id="onlineboost")
+            except Exception:
+                pass
         text_lower = clean_text.lower()
         wamid = str(raw_msg.get("id") or getattr(trace, "message_id", "") or "").strip()
 
@@ -2090,6 +2101,12 @@ class TrafficSplitter:
                 incoming_text = str(text_field.get("body") or "").strip()
             elif isinstance(text_field, str):
                 incoming_text = text_field.strip()
+
+        # Ekstraksi & isolasi marker [r=CODE] sebelum intent routing
+        from app.services.referral_attribution_service import extract_referral_marker
+        clean_incoming_text, raw_ref_code = extract_referral_marker(incoming_text)
+        incoming_text = clean_incoming_text
+
         if not sender_phone:
             sender_phone = str(payload.get("from") or payload.get("from_phone") or "6281234567890").strip()
         if not incoming_phone_id or incoming_phone_id == "1268977686299719":
