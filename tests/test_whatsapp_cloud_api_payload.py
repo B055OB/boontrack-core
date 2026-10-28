@@ -206,3 +206,259 @@ class TestInboundMessagePersistence:
             user_call = user_calls[0]
             assert user_call["text"] == "AKTIVASI BT-XYZ123"
             assert user_call["user_phone"] == "628123456789"
+
+
+class TestSupabaseConversationIntegrity:
+    @pytest.mark.asyncio
+    async def test_log_to_supabase_messages_reuses_existing_conversation_before_message_insert(self):
+        """
+        Jika baris conversations untuk (tenant_id, phone_number) sudah ada dengan UUID berbeda
+        (mis. dibuat oleh RotaryRoutingService dengan UUIDv4), log_to_supabase_messages wajib:
+        1. Menggunakan kembali id conversation yang sudah ada (bukan memaksakan deterministic UUIDv5).
+        2. Melakukan update berdasarkan id tersebut (menghindari 409 Conflict pada upsert).
+        3. Menyertakan conversation_id yang valid tersebut ke tabel messages.
+        """
+        existing_uuid = "11111111-2222-4333-8444-555555555555"
+        mock_sb = MagicMock()
+
+        conv_table = MagicMock()
+        msg_table = MagicMock()
+
+        def table_router(name: str):
+            if name == "conversations":
+                return conv_table
+            if name == "messages":
+                return msg_table
+            return MagicMock()
+
+        mock_sb.table.side_effect = table_router
+
+        # SELECT id FROM conversations WHERE tenant_id=... AND phone_number=... returns existing_uuid
+        select_res = MagicMock()
+        select_res.data = [{"id": existing_uuid}]
+        (
+            conv_table.select.return_value
+            .eq.return_value
+            .eq.return_value
+            .limit.return_value
+            .execute.return_value
+        ) = select_res
+
+        with patch("app.services.whatsapp.credentials.get_supabase", return_value=mock_sb), \
+             patch("app.core.database.get_db_connection", side_effect=RuntimeError("No PG in unit test")):
+
+            ok = await log_to_supabase_messages(
+                sender="user",
+                text="Mau",
+                tenant_id="onlineboost",
+                user_phone="6281234567890",
+                user_name="Andi",
+            )
+            assert ok is True
+
+            # Harus memanggil update(update_payload).eq("id", existing_uuid), BUKAN upsert dengan UUIDv5 berbeda
+            conv_table.upsert.assert_not_called()
+            conv_table.update.assert_called_once()
+            conv_table.update.return_value.eq.assert_called_once_with("id", existing_uuid)
+
+            # Insert ke messages harus memakai existing_uuid yang terverifikasi
+            msg_table.insert.assert_called_once()
+            inserted_msg_payload = msg_table.insert.call_args[0][0]
+            assert inserted_msg_payload["conversation_id"] == existing_uuid
+
+    @pytest.mark.asyncio
+    async def test_log_to_supabase_messages_recovers_from_409_conflict_without_fk_violation(self):
+        """
+        Jika pre-lookup tidak menemukan baris (mis. race condition atau index global pada phone_number)
+        dan conversations.upsert melempar 409 Conflict, log_to_supabase_messages harus me-resolve id
+        conversation yang ada dan meneruskannya ke messages.insert agar tidak memicu
+        23503 messages_conversation_id_fkey.
+        """
+        recovered_uuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        mock_sb = MagicMock()
+        conv_table = MagicMock()
+        msg_table = MagicMock()
+
+        mock_sb.table.side_effect = lambda name: conv_table if name == "conversations" else msg_table
+
+        # Pre-lookup tenant+phone returns empty
+        empty_res = MagicMock()
+        empty_res.data = []
+        (
+            conv_table.select.return_value
+            .eq.return_value
+            .eq.return_value
+            .limit.return_value
+            .execute.return_value
+        ) = empty_res
+
+        # Upsert raises 409 Conflict
+        conv_table.upsert.return_value.execute.side_effect = RuntimeError(
+            "409 Conflict: duplicate key value violates unique constraint"
+        )
+
+        # Fallback lookup by phone_number returns recovered_uuid belonging to onlineboost
+        recovered_res = MagicMock()
+        recovered_res.data = [{"id": recovered_uuid, "tenant_id": "onlineboost", "tenant_slug": "onlineboost"}]
+        (
+            conv_table.select.return_value
+            .eq.return_value
+            .limit.return_value
+            .execute.return_value
+        ) = recovered_res
+
+        with patch("app.services.whatsapp.credentials.get_supabase", return_value=mock_sb), \
+             patch("app.core.database.get_db_connection", side_effect=RuntimeError("No PG in unit test")):
+
+            ok = await log_to_supabase_messages(
+                sender="bot",
+                text="Terima kasih Kak!",
+                tenant_id="onlineboost",
+                user_phone="6281234567890",
+                user_name="Andi",
+            )
+            assert ok is True
+
+            msg_table.insert.assert_called_once()
+            inserted_msg_payload = msg_table.insert.call_args[0][0]
+            assert inserted_msg_payload["conversation_id"] == recovered_uuid
+
+    @pytest.mark.asyncio
+    async def test_log_to_supabase_messages_sets_null_conversation_id_when_conversation_unverified(self):
+        """
+        Jika pembuatan/resolusi baris conversations gagal sepenuhnya, messages.insert
+        tidak boleh mengirim conversation_id yang tidak ada di tabel conversations (harus None)
+        sehingga tidak melanggar messages_conversation_id_fkey.
+        """
+        mock_sb = MagicMock()
+        conv_table = MagicMock()
+        msg_table = MagicMock()
+
+        mock_sb.table.side_effect = lambda name: conv_table if name == "conversations" else msg_table
+
+        empty_res = MagicMock()
+        empty_res.data = []
+        (
+            conv_table.select.return_value
+            .eq.return_value
+            .eq.return_value
+            .limit.return_value
+            .execute.return_value
+        ) = empty_res
+        (
+            conv_table.select.return_value
+            .eq.return_value
+            .limit.return_value
+            .execute.return_value
+        ) = empty_res
+
+        conv_table.upsert.return_value.execute.side_effect = RuntimeError("409 Conflict")
+
+        with patch("app.services.whatsapp.credentials.get_supabase", return_value=mock_sb), \
+             patch("app.core.database.get_db_connection", side_effect=RuntimeError("No PG in unit test")):
+
+            ok = await log_to_supabase_messages(
+                sender="user",
+                text="Halo",
+                tenant_id="onlineboost",
+                user_phone="6281234567890",
+                user_name="Andi",
+            )
+            assert ok is True
+
+            msg_table.insert.assert_called_once()
+            inserted_msg_payload = msg_table.insert.call_args[0][0]
+            assert inserted_msg_payload["conversation_id"] is None
+            assert inserted_msg_payload["metadata"]["conversation_persisted"] is False
+
+    @pytest.mark.asyncio
+    async def test_log_to_supabase_messages_rejects_cross_tenant_conversation_on_409_recovery(self):
+        """
+        Skenario Negatif Eksplisit (Cross-Tenant Rejection):
+        Nomor telepon yang sama ('6281234567890') sudah terdaftar di percakapan Tenant B ('tenant_b').
+        Ketika pesan masuk/keluar diproses untuk Tenant A ('onlineboost') dan pencarian fallback
+        nomor telepon menemukan row milik Tenant B:
+        a. _resolve_existing_supabase_conversation_id wajib menolak row Tenant B (mengembalikan None).
+        b. Pesan yang di-insert ke messages TIDAK memakai conversation_id milik Tenant B
+           (conversation_id = None dan metadata.conversation_persisted = False).
+        c. Pesan tetap memiliki tenant_id & tenant_slug milik Tenant A ('onlineboost'), tanpa kebocoran lintas tenant.
+        """
+        from app.services.whatsapp.cloud_api import (
+            _extract_valid_conv_id,
+            _resolve_existing_supabase_conversation_id,
+        )
+
+        tenant_b_conv_uuid = "99999999-8888-4777-8666-555555555555"
+        mock_sb = MagicMock()
+        conv_table = MagicMock()
+        msg_table = MagicMock()
+
+        mock_sb.table.side_effect = lambda name: conv_table if name == "conversations" else msg_table
+
+        # Pre-lookup untuk Tenant A ('onlineboost') + phone mengembalikan kosong
+        empty_res = MagicMock()
+        empty_res.data = []
+        (
+            conv_table.select.return_value
+            .eq.return_value
+            .eq.return_value
+            .limit.return_value
+            .execute.return_value
+        ) = empty_res
+
+        # Upsert melempar 409 Conflict
+        conv_table.upsert.return_value.execute.side_effect = RuntimeError("409 Conflict")
+
+        # Fallback phone-only lookup mengembalikan percakapan milik Tenant B ('tenant_b')
+        tenant_b_res = MagicMock()
+        tenant_b_res.data = [
+            {
+                "id": tenant_b_conv_uuid,
+                "tenant_id": "tenant_b",
+                "tenant_slug": "tenant_b",
+            }
+        ]
+        (
+            conv_table.select.return_value
+            .eq.return_value
+            .limit.return_value
+            .execute.return_value
+        ) = tenant_b_res
+
+        # Bukti (a): _extract_valid_conv_id & _resolve_existing_supabase_conversation_id menolak row Tenant B (return None)
+        assert _extract_valid_conv_id(tenant_b_res, expected_tenant="onlineboost", require_explicit_tenant_match=True) is None
+        resolved_id = _resolve_existing_supabase_conversation_id(
+            mock_sb,
+            clean_tenant="onlineboost",
+            clean_digits="6281234567890",
+            allow_phone_fallback=True,
+        )
+        assert resolved_id is None
+
+        with patch("app.services.whatsapp.credentials.get_supabase", return_value=mock_sb), \
+             patch("app.core.database.get_db_connection", side_effect=RuntimeError("No PG in unit test")):
+
+            ok = await log_to_supabase_messages(
+                sender="user",
+                text="Halo OnlineBoost",
+                tenant_id="onlineboost",
+                user_phone="6281234567890",
+                user_name="Andi",
+                metadata={"wamid": "wamid.cross_tenant_test_001"},
+            )
+            assert ok is True
+
+            # Tidak boleh melakukan update ke conversation milik Tenant B
+            conv_table.update.assert_not_called()
+
+            # Bukti (b) & (c): Insert ke messages TIDAK memakai conversation_id milik Tenant B
+            # dan tetap mengikat pesan pada Tenant A ('onlineboost')
+            msg_table.insert.assert_called_once()
+            inserted_msg_payload = msg_table.insert.call_args[0][0]
+            assert inserted_msg_payload["conversation_id"] is None
+            assert inserted_msg_payload["conversation_id"] != tenant_b_conv_uuid
+            assert inserted_msg_payload["tenant_id"] == "onlineboost"
+            assert inserted_msg_payload["tenant_slug"] == "onlineboost"
+            assert inserted_msg_payload["user_phone"] == "6281234567890"
+            assert inserted_msg_payload["metadata"]["wamid"] == "wamid.cross_tenant_test_001"
+            assert inserted_msg_payload["metadata"]["conversation_persisted"] is False

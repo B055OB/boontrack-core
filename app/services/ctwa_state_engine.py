@@ -329,9 +329,48 @@ class CTWAStateEngine:
         session["lead_email"] = clean_email
 
         # P0 STRICT HOLD GUARD: Reject request BEFORE Xendit invocation and BEFORE database mutations
-        from app.services.academy_service import is_onlineboost_payment_held, mask_phone_for_log
+        from app.services.academy_service import (
+            is_onlineboost_payment_held,
+            mask_phone_for_log,
+            persist_hold_registration_intent,
+        )
         if is_onlineboost_payment_held(clean_phone):
             logger.info(f"[GATEKEEPER] Payment STRICT HOLD active for OnlineBoost Batch 1. Request queued without Xendit or order mutation for {mask_phone_for_log(clean_phone)} ({mask_email(clean_email)}).")
+            persisted, persist_backend, is_duplicate = persist_hold_registration_intent(
+                phone=clean_phone,
+                tenant_id="onlineboost",
+                source_stage="CTWA_FLOW_SUBMISSION",
+                intent_text=f"{clean_name} <{clean_email}>",
+                lead_name=clean_name,
+                lead_email=clean_email,
+            )
+            if not persisted:
+                failure_caption = (
+                    f"Mohon maaf Kak {clean_name}, saat ini sistem pencatatan pendaftaran sedang mengalami gangguan teknis sementara "
+                    f"dan gerbang pembayaran Batch 1 sedang dalam masa persiapan rilis (strict hold).\n\n"
+                    f"Data Kakak *belum* berhasil tercatat ke antrean otomatis. Mohon kirim ulang beberapa saat lagi ya Kak."
+                )
+                if phone_number_id and clean_phone:
+                    try:
+                        await cloud_api.send_whatsapp_text(
+                            to_phone=clean_phone,
+                            text=failure_caption,
+                            phone_number_id=phone_number_id,
+                            tenant_id="onlineboost",
+                        )
+                    except Exception as _e:
+                        logger.debug(f"[GATEKEEPER] WA dispatch note: {_e}")
+                return {
+                    "status": "HOLD_PERSISTENCE_FAILED",
+                    "strict_hold": True,
+                    "persisted": False,
+                    "persistence_backend": persist_backend,
+                    "order_id": None,
+                    "total_amount": SINGLE_OFFER_PRICE,
+                    "qris_payload": "",
+                    "caption": failure_caption,
+                }
+
             session["current_state"] = "STATE_LEAD_QUEUED"
             self._save_session_to_db(session)
             hold_caption = (
@@ -353,6 +392,9 @@ class CTWAStateEngine:
             return {
                 "status": "STRICT_HOLD",
                 "strict_hold": True,
+                "persisted": True,
+                "persistence_backend": persist_backend,
+                "idempotent_reentry": is_duplicate,
                 "order_id": None,
                 "total_amount": SINGLE_OFFER_PRICE,
                 "qris_payload": "",
@@ -825,7 +867,25 @@ class CTWAStateEngine:
                 "current_state": "STATE_REGISTRATION_INVALID",
             }
 
-        # ─── 2. USER SUDAH DALAM STATUS MENUNGGU PEMBAYARAN ────────────────────
+        # ─── 2. USER SUDAH DALAM STATUS ANTREAN HOLD ATAU MENUNGGU PEMBAYARAN ───
+        if session.get("current_state") in ("STATE_LEAD_QUEUED", "STATE_HOLD_QUEUED"):
+            from app.services.academy_service import is_onlineboost_payment_held
+            if is_onlineboost_payment_held(clean_phone):
+                queued_reply = (
+                    "Halo Kak! 👋 Minat pendaftaran Kakak sudah tercatat di *Daftar Antrean Prioritas Batch 1*.\n\n"
+                    "Saat ini gerbang pembayaran resmi masih dalam tahap persiapan rilis (strict hold). "
+                    "Begitu pembayaran resmi dibuka, Kakak akan langsung menerima informasi pendaftaran lanjutan di nomor WhatsApp ini ya Kak. 🙏"
+                )
+                return {
+                    "success": True,
+                    "action": "PAYMENT_STRICT_HOLD",
+                    "strict_hold": True,
+                    "idempotent_reentry": True,
+                    "reply": queued_reply,
+                    "reply_text": queued_reply,
+                    "current_state": session.get("current_state"),
+                }
+
         if session.get("current_state") == "STATE_PAYMENT_PENDING":
             if any(w in q_lower for w in ["sudah bayar", "sudah tf", "sudah transfer", "bukti", "cek"]):
                 pending_reply = (

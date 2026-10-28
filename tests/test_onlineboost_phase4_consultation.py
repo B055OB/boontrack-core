@@ -241,45 +241,50 @@ async def test_situation_c_price_and_benefits_direct_answer():
 async def test_situation_d_registration_flow():
     """
     Situasi D: Prospek menyatakan niat mendaftar / amankan slot.
-    - Menjelaskan langkah pendaftaran resmi: meminta Nama Lengkap & Email Aktif.
-    - Transisi ke STATE_1_AWAITING_EMAIL.
-    - Saat nama & email dikirim, menerbitkan invoice QRIS tanpa error.
+    - Saat ONLINEBOOST_PAYMENT_STRICT_HOLD=true (default): keluar dari STATE_CONSULTATION
+      langsung menuju STATE_HOLD_QUEUED dengan pesan graceful hold jujur (tanpa meminta
+      email/membuat QRIS/memanggil gateway pembayaran).
+    - Saat ONLINEBOOST_PAYMENT_STRICT_HOLD=false (dengan allowlist terisolasi): meminta
+      Nama Lengkap & Email Aktif (STATE_1_AWAITING_EMAIL) lalu menerbitkan invoice QRIS.
     """
+    from app.services.academy_service import STATE_HOLD_QUEUED
+
     phone = "6281234567006"
     academy_bot.set_session(phone, state=STATE_CONSULTATION, name="Dimas", tenant_id="onlineboost")
 
     with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
-        # 1. Niat daftar
-        res_intent = await academy_bot.process_inbound(
+        # 1. Niat daftar saat strict hold aktif (default): langsung masuk STATE_HOLD_QUEUED
+        res_hold_intent = await academy_bot.process_inbound(
             sender_phone=phone,
             incoming_text="Oke siap, saya mau daftar sekarang kak",
             tenant_id="onlineboost",
         )
-        assert res_intent["handled"] is True
-        assert res_intent["action"] == "ASK_REGISTRATION_DETAILS"
-        assert res_intent["state"] == 1
-        assert "Nama Lengkap:" in res_intent["reply"]
-        assert "Alamat Email Aktif:" in res_intent["reply"]
+        assert res_hold_intent["handled"] is True
+        assert res_hold_intent["action"] == "PAYMENT_STRICT_HOLD"
+        assert res_hold_intent["strict_hold"] is True
+        assert res_hold_intent["persisted"] is True
+        assert res_hold_intent["state"] == STATE_HOLD_QUEUED
+        assert res_hold_intent["order_id"] is None
+        assert "Daftar Antrean Prioritas Batch 1" in res_hold_intent["reply"]
+        assert "Nama Lengkap:" not in res_hold_intent["reply"]
 
-        # 2. Kirim Nama & Email under strict hold (default):
-        res_email = await academy_bot.process_inbound(
-            sender_phone=phone,
-            incoming_text="Dimas Prasetyo - dimas@gmail.com",
-            tenant_id="onlineboost",
-        )
-        assert res_email["handled"] is True
-        assert res_email["action"] == "PAYMENT_STRICT_HOLD"
-        assert res_email["strict_hold"] is True
-        assert res_email["order_id"] is None
-        assert "antrean prioritas" in res_email["reply"]
-        assert "strict hold" in res_email["reply"]
-
-        # 3. Kirim Nama & Email saat strict hold dilepas (payment aktif dengan synthetic allowlist terisolasi):
+        # 2. Saat strict hold dilepas (payment aktif dengan synthetic allowlist terisolasi):
         with patch.dict(os.environ, {
             "ONLINEBOOST_PAYMENT_STRICT_HOLD": "false",
             "PILOT_INTERNAL_WHITELIST": phone,
         }):
-            academy_bot.set_session(phone, state=STATE_1_AWAITING_EMAIL, name="Dimas", tenant_id="onlineboost")
+            academy_bot.set_session(phone, state=STATE_CONSULTATION, name="Dimas", tenant_id="onlineboost")
+            res_intent = await academy_bot.process_inbound(
+                sender_phone=phone,
+                incoming_text="Oke siap, saya mau daftar sekarang kak",
+                tenant_id="onlineboost",
+            )
+            assert res_intent["handled"] is True
+            assert res_intent["action"] == "ASK_REGISTRATION_DETAILS"
+            assert res_intent["state"] == 1
+            assert "Nama Lengkap:" in res_intent["reply"]
+            assert "Alamat Email Aktif:" in res_intent["reply"]
+
             res_email_active = await academy_bot.process_inbound(
                 sender_phone=phone,
                 incoming_text="Dimas Prasetyo - dimas@gmail.com",
@@ -1555,3 +1560,302 @@ async def test_p0_order_fulfillment_rejects_unpaid_and_missing_access_url():
         assert res_no_url["success"] is False
         assert res_no_url["error"] == "MISSING_VERIFIED_ACCESS_URL"
         assert res_no_url["status"] == "REJECTED_NO_ACCESS_URL"
+
+
+# ============================================================================
+# 10. GRACEFUL PAYMENT-HOLD STATE & QUEUE PERSISTENCE INTEGRITY
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_affirmative_registration_intent_exits_offer_state_without_looping():
+    """
+    1. Affirmative registration intent in STATE_CONSULTATION exits the offer state
+       into STATE_HOLD_QUEUED without repeating the offer prompt or resetting to qualifying.
+    2. Subsequent follow-ups in STATE_HOLD_QUEUED receive a truthful hold reminder
+       without re-sending the sales offer prompt.
+    """
+    from app.services.academy_service import STATE_HOLD_QUEUED, reset_academy_test_state
+
+    reset_academy_test_state()
+    affirmative_phrases = [
+        "Mau",
+        "Mau kang",
+        "Boleh",
+        "Ya, amankan slotnya",
+        "Siap daftar",
+        "Oke gas",
+        "Mau ikut kelasnya",
+    ]
+
+    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
+        for idx, phrase in enumerate(affirmative_phrases):
+            phone = f"62812345990{idx}"
+            academy_bot.set_session(phone, state=STATE_CONSULTATION, name="Raka", tenant_id="onlineboost")
+
+            res = await academy_bot.process_inbound(
+                sender_phone=phone,
+                incoming_text=phrase,
+                tenant_id="onlineboost",
+            )
+            assert res["handled"] is True, f"Failed for phrase: {phrase}"
+            assert res["action"] == "PAYMENT_STRICT_HOLD", f"Unexpected action for phrase '{phrase}': {res['action']}"
+            assert res["state"] == STATE_HOLD_QUEUED
+            assert res["strict_hold"] is True
+            assert res["persisted"] is True
+            assert res["order_id"] is None
+            # Must NOT repeat the offer prompt
+            assert "ingin saya bantu amankan kuota Batch 1 sekarang?" not in res["reply"]
+            assert "Daftar Antrean Prioritas Batch 1" in res["reply"]
+
+            # Follow-up message while in STATE_HOLD_QUEUED must stay in STATE_HOLD_QUEUED and not loop offer
+            res_followup = await academy_bot.process_inbound(
+                sender_phone=phone,
+                incoming_text="Kapan dibuka kak?",
+                tenant_id="onlineboost",
+            )
+            assert res_followup["handled"] is True
+            assert res_followup["action"] == "PAYMENT_STRICT_HOLD"
+            assert res_followup["state"] == STATE_HOLD_QUEUED
+            assert res_followup["idempotent_reentry"] is True
+            assert "ingin saya bantu amankan kuota Batch 1 sekarang?" not in res_followup["reply"]
+
+
+@pytest.mark.asyncio
+async def test_payment_hold_creates_no_payment_artifacts_and_makes_no_gateway_calls():
+    """
+    Payment hold creates no QRIS, no invoices, no payment intents/orders,
+    and invokes no payment gateway (Xendit / EMVCo QRIS generator).
+    """
+    from app.services.academy_service import STATE_HOLD_QUEUED, reset_academy_test_state
+
+    reset_academy_test_state()
+    phone = "628123459910"
+    academy_bot.set_session(phone, state=STATE_CONSULTATION, name="Sinta", tenant_id="onlineboost")
+
+    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock), \
+         patch("app.services.whatsapp.cloud_api.send_whatsapp_image", new_callable=AsyncMock) as mock_send_img, \
+         patch("app.services.academy_service.generate_fast_path_xendit_qris_batch1", new_callable=AsyncMock) as mock_qris_gen, \
+         patch("app.services.academy_service.generate_academy_qris_invoice") as mock_invoice_gen, \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_http_post:
+
+        res = await academy_bot.process_inbound(
+            sender_phone=phone,
+            incoming_text="Mau daftar sekarang kang",
+            tenant_id="onlineboost",
+        )
+
+        assert res["handled"] is True
+        assert res["action"] == "PAYMENT_STRICT_HOLD"
+        assert res["state"] == STATE_HOLD_QUEUED
+        assert res["order_id"] is None
+        assert "qr_image_url" not in res
+        assert "qris_string" not in res
+        mock_qris_gen.assert_not_called()
+        mock_invoice_gen.assert_not_called()
+        mock_send_img.assert_not_called()
+        mock_http_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_successful_durable_queue_persistence_produces_accurate_acknowledgment():
+    """
+    Successful durable queue persistence to PostgreSQL conversation_sessions
+    (looking up existing session by tenant_id + user_identifier and upserting on PRIMARY KEY id)
+    produces an accurate acknowledgment with persisted=True.
+    """
+    from app.services.academy_service import (
+        STATE_HOLD_QUEUED,
+        get_hold_queue_entries,
+        reset_academy_test_state,
+    )
+
+    reset_academy_test_state()
+    phone = "628123459920"
+    academy_bot.set_session(phone, state=STATE_CONSULTATION, name="Bima", tenant_id="onlineboost")
+
+    mock_cur = MagicMock()
+    # First fetchone returns existing session UUID on (tenant_id, user_identifier)
+    mock_cur.fetchone.return_value = (
+        "11111111-2222-4333-8444-555555555555",
+        "STATE_CONSULTATION",
+        {},
+        f"wa_{phone}",
+    )
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+
+    with patch("app.core.database.get_db_connection", return_value=mock_conn), \
+         patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_wa:
+
+        res = await academy_bot.process_inbound(
+            sender_phone=phone,
+            incoming_text="Ya boleh kang, saya mau ikut",
+            tenant_id="onlineboost",
+            inbound_message_id="wamid.durable_ok_001",
+        )
+
+        assert res["handled"] is True
+        assert res["action"] == "PAYMENT_STRICT_HOLD"
+        assert res["persisted"] is True
+        assert res["persistence_backend"] == "postgres"
+        assert res["state"] == STATE_HOLD_QUEUED
+        assert "Daftar Antrean Prioritas Batch 1" in res["reply"]
+        mock_conn.commit.assert_called_once()
+        mock_wa.assert_called_once()
+
+        # Verify SQL used ON CONFLICT (id) DO UPDATE (matching conversation_sessions PRIMARY KEY)
+        executed_sqls = [call.args[0] for call in mock_cur.execute.call_args_list]
+        assert any("ON CONFLICT (id) DO UPDATE" in sql for sql in executed_sqls)
+
+        entries = get_hold_queue_entries("onlineboost")
+        assert len(entries) == 1
+        assert entries[0]["phone"] == phone
+        assert entries[0]["persistence_backend"] == "postgres"
+
+
+@pytest.mark.asyncio
+async def test_persistence_failure_does_not_produce_false_acknowledgment():
+    """
+    When durable queue persistence fails across all backends, the bot MUST NOT claim
+    that the user's registration intent is queued. It must return persisted=False
+    and an honest failure message.
+    """
+    from app.services.academy_service import (
+        reset_academy_test_state,
+        set_allow_hold_queue_in_memory_fallback,
+    )
+
+    reset_academy_test_state()
+    set_allow_hold_queue_in_memory_fallback(False)
+    phone = "628123459930"
+    academy_bot.set_session(phone, state=STATE_CONSULTATION, name="Citra", tenant_id="onlineboost")
+
+    with patch("app.core.database.get_db_connection", side_effect=RuntimeError("PG Connection Refused")), \
+         patch("app.services.whatsapp_service.get_supabase", return_value=None), \
+         patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_wa:
+
+        res = await academy_bot.process_inbound(
+            sender_phone=phone,
+            incoming_text="Mau daftar sekarang kang",
+            tenant_id="onlineboost",
+            inbound_message_id="wamid.persist_fail_001",
+        )
+
+        assert res["handled"] is True
+        assert res["action"] == "PAYMENT_HOLD_PERSISTENCE_FAILED"
+        assert res["persisted"] is False
+        assert res["strict_hold"] is True
+        assert res["order_id"] is None
+        # Must NOT falsely claim it is recorded in the queue
+        assert "sudah kami catat dalam" not in res["reply"]
+        assert "belum" in res["reply"].lower()
+        # Session stays in STATE_CONSULTATION so the user can retry cleanly
+        assert res["state"] == STATE_CONSULTATION
+
+        # Also verify CTWA gatekeeper fails closed when persistence fails
+        gatekeeper_res = await ctwa_state_engine.execute_deterministic_gatekeeper(
+            phone=phone,
+            name="Citra Kirana",
+            email="citra@example.com",
+        )
+        assert gatekeeper_res["status"] == "HOLD_PERSISTENCE_FAILED"
+        assert gatekeeper_res["persisted"] is False
+        assert gatekeeper_res["order_id"] is None
+        assert "sudah kami catat" not in gatekeeper_res["caption"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_webhook_delivery_does_not_create_duplicate_queue_entries():
+    """
+    Duplicate webhook deliveries (same wamid or repeated registration messages for an already
+    queued user) must be idempotent and never create duplicate queue entries.
+    """
+    from app.services.academy_service import (
+        STATE_HOLD_QUEUED,
+        get_hold_queue_entries,
+        reset_academy_test_state,
+    )
+
+    reset_academy_test_state()
+    phone = "628123459940"
+    academy_bot.set_session(phone, state=STATE_CONSULTATION, name="Deni", tenant_id="onlineboost")
+
+    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
+        # First delivery
+        res1 = await academy_bot.process_inbound(
+            sender_phone=phone,
+            incoming_text="Mau daftar kang",
+            tenant_id="onlineboost",
+            inbound_message_id="wamid.dup_test_001",
+        )
+        assert res1["action"] == "PAYMENT_STRICT_HOLD"
+        assert res1["persisted"] is True
+        assert res1["idempotent_reentry"] is False
+        assert res1["state"] == STATE_HOLD_QUEUED
+        assert len(get_hold_queue_entries("onlineboost")) == 1
+
+        # Duplicate webhook delivery with same wamid (even if state were still STATE_CONSULTATION)
+        academy_bot.set_session(phone, state=STATE_CONSULTATION, name="Deni", tenant_id="onlineboost")
+        res2 = await academy_bot.process_inbound(
+            sender_phone=phone,
+            incoming_text="Mau daftar kang",
+            tenant_id="onlineboost",
+            inbound_message_id="wamid.dup_test_001",
+        )
+        assert res2["action"] == "PAYMENT_STRICT_HOLD"
+        assert res2["persisted"] is True
+        assert res2["idempotent_reentry"] is True
+        assert len(get_hold_queue_entries("onlineboost")) == 1
+
+        # Subsequent affirmative message with a new wamid while in STATE_HOLD_QUEUED
+        res3 = await academy_bot.process_inbound(
+            sender_phone=phone,
+            incoming_text="Saya mau daftar lagi kak",
+            tenant_id="onlineboost",
+            inbound_message_id="wamid.dup_test_002",
+        )
+        assert res3["action"] == "PAYMENT_STRICT_HOLD"
+        assert res3["idempotent_reentry"] is True
+        assert len(get_hold_queue_entries("onlineboost")) == 1
+
+
+@pytest.mark.asyncio
+async def test_negative_replies_in_consultation_do_not_trigger_registration_hold():
+    """
+    Negative or hesitant responses in STATE_CONSULTATION (e.g. 'tidak', 'belum',
+    'nanti dulu', 'tidak mau daftar dulu', 'pikir-pikir dulu') must NOT be misclassified
+    as affirmative registration intent and must NOT enter STATE_HOLD_QUEUED.
+    """
+    from app.services.academy_service import (
+        STATE_HOLD_QUEUED,
+        get_hold_queue_entries,
+        reset_academy_test_state,
+    )
+
+    reset_academy_test_state()
+    negative_phrases = [
+        "Tidak",
+        "Belum",
+        "Nanti dulu",
+        "Tidak mau daftar dulu",
+        "Belum siap kak",
+        "Pikir-pikir dulu",
+        "Gak jadi dulu kang",
+    ]
+
+    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
+        for idx, phrase in enumerate(negative_phrases):
+            phone = f"62812345996{idx}"
+            academy_bot.set_session(phone, state=STATE_CONSULTATION, name="Fajar", tenant_id="onlineboost")
+
+            res = await academy_bot.process_inbound(
+                sender_phone=phone,
+                incoming_text=phrase,
+                tenant_id="onlineboost",
+            )
+            assert res["handled"] is True, f"Failed for negative phrase: {phrase}"
+            assert res["action"] != "PAYMENT_STRICT_HOLD", f"False positive hold on '{phrase}'"
+            assert res["state"] == STATE_CONSULTATION, f"State mutated on '{phrase}': {res['state']}"
+            assert res["state"] != STATE_HOLD_QUEUED
+
+    assert len(get_hold_queue_entries("onlineboost")) == 0
