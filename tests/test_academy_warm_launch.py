@@ -13,6 +13,7 @@ Verifies:
 6. FastAPI Endpoints (/api/v1/academy/*).
 """
 
+import os
 import pytest
 import re
 from datetime import datetime, timezone, timedelta
@@ -68,7 +69,7 @@ def clean_academy_state():
 def test_academy_sku_configuration():
     """Validasi SKU resmi, settlement price Rp 249.000, dan TTL 15 menit."""
     assert ACADEMY_SKU_NAME == "BoonTrack Academy & CTWA Scale Engine (Alumni Privilege Pass)"
-    assert ACADEMY_SKU_ID == "SKU-BTA-ALUMNI-249K"
+    assert ACADEMY_SKU_ID == "OB-BATCH1-249K"
     assert ACADEMY_SETTLEMENT_PRICE == 249000
     assert ACADEMY_INVOICE_TTL_MINUTES == 15
 
@@ -291,7 +292,10 @@ async def test_state_1_issuing_payment_on_email_received():
 
     # 3. Explicit Isolated Happy Path: Ketika strict hold secara eksplisit dibuka via test-only config
     import os
-    with patch.dict(os.environ, {"ONLINEBOOST_PAYMENT_STRICT_HOLD": "false"}), \
+    with patch.dict(os.environ, {
+        "ONLINEBOOST_PAYMENT_STRICT_HOLD": "false",
+        "PILOT_INTERNAL_WHITELIST": sender_phone,
+    }), \
          patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send_open:
         # Reset session state ke awaiting email untuk pengujian happy path
         academy_bot.set_session(
@@ -352,7 +356,17 @@ async def test_state_2_webhook_paid_handler_and_telegram_link():
     order_id = invoice["order_id"]
 
     # 2. Trigger STATE 2 Webhook PAID
-    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send:
+    mock_tg_resp = MagicMock()
+    mock_tg_resp.status_code = 200
+    mock_tg_resp.json.return_value = {
+        "ok": True,
+        "result": {
+            "invite_link": "https://t.me/+official_batch1_verified_link"
+        }
+    }
+    with patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "mock_tg_token", "TELEGRAM_ACADEMY_CHAT_ID": "-100123456789"}), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_tg_resp), \
+         patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send:
         res_paid = await academy_bot.handle_webhook_paid(
             order_id=order_id,
             event_id="evt_paid_test_123",
@@ -391,6 +405,41 @@ async def test_state_2_webhook_paid_handler_and_telegram_link():
         assert res_dup["status"] == "ALREADY_SETTLED"
         assert res_dup["idempotency_hit"] is True
         mock_send_dup.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_state_2_telegram_api_failure_truthful_pending_retry_no_fake_link():
+    """Memverifikasi bahwa kegagalan API Telegram tidak menghasilkan link palsu (fail-closed)
+    dan mengembalikan status TELEGRAM_INVITE_PENDING_RETRY dengan pesan yang jujur."""
+    customer_name = "Agus Failover"
+    customer_email = "agus.failover@test.com"
+    customer_phone = "6285811223399"
+
+    invoice = generate_academy_qris_invoice(
+        customer_name=customer_name,
+        customer_email=customer_email,
+        customer_phone=customer_phone,
+    )
+    order_id = invoice["order_id"]
+
+    mock_fail_resp = MagicMock()
+    mock_fail_resp.status_code = 500
+    mock_fail_resp.text = "Internal Server Error"
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_fail_resp), \
+         patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
+        res_paid = await academy_bot.handle_webhook_paid(
+            order_id=order_id,
+            event_id="evt_paid_test_fail",
+            provider="QRIS",
+            amount=invoice["total_amount"],
+        )
+
+        assert res_paid["status"] == "SUCCESS"
+        assert res_paid["single_use_telegram_link"] is None
+        assert res_paid["fulfillment_status"] == "TELEGRAM_INVITE_PENDING_RETRY"
+        assert "antrean penerbitan sistem" in res_paid["confirmation_message"]
+        assert "https://t.me/+" not in res_paid["confirmation_message"]
 
 
 # ============================================================================
@@ -487,7 +536,17 @@ def test_fastapi_academy_paid_webhook_endpoint_and_idempotency():
     }
 
     # 2. Webhook Pertama: Berhasil verifikasi
-    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
+    mock_tg_resp = MagicMock()
+    mock_tg_resp.status_code = 200
+    mock_tg_resp.json.return_value = {
+        "ok": True,
+        "result": {
+            "invite_link": "https://t.me/+official_batch1_verified_link"
+        }
+    }
+    with patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "mock_tg_token", "TELEGRAM_ACADEMY_CHAT_ID": "-100123456789"}), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_tg_resp), \
+         patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
         resp1 = client.post("/api/v1/academy/webhook/paid", json=webhook_payload)
         assert resp1.status_code == 200
         data1 = resp1.json()

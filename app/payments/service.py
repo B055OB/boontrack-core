@@ -458,8 +458,8 @@ class PaymentCoreService:
         except Exception as _waba_tx_err:
             logger.debug(f"[PaymentCore] PAYMENT_CONFIRMED dispatch note: {_waba_tx_err}")
 
-        # Trigger BoonTrack Academy Alumni STATE 2 handler if this is an Academy order
-        if str(matched_intent.order_id).startswith("BTA-ALUMNI-") or (matched_intent.metadata or {}).get("sku_id") in ("SKU-BTA-ALUMNI-249K", "OB-BATCH1-249K"):
+        # Trigger BoonTrack Academy Alumni STATE 2 handler if this is an Academy order (canonical OB-BATCH1-249K or legacy SKU-BTA-ALUMNI-249K)
+        if str(matched_intent.order_id).startswith("BTA-ALUMNI-") or (matched_intent.metadata or {}).get("sku_id") in ("OB-BATCH1-249K", "SKU-BTA-ALUMNI-249K"):
             try:
                 from app.services.academy_service import academy_bot
                 asyncio.create_task(

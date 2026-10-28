@@ -61,7 +61,6 @@ SINGLE_OFFER_PRICE: int = 249000  # Rp 249.000 (Sekali Bayar)
 SINGLE_OFFER_NAME: str = "Paket Lengkap Kelas Inkubasi CTWA Batch 1"
 SINGLE_OFFER_SLUG: str = "kelas-inkubasi-ctwa-batch-1-scale"
 CANONICAL_BATCH1_SKU: str = "OB-BATCH1-249K"
-LEGACY_BATCH1_SKU: str = "SKU-BTA-ALUMNI-249K"
 OFFICIAL_FLOW_ID: str = "1663739061907747"
 OFFICIAL_FLOW_TOKEN: str = "onlineboost_batch1_reg"
 OFFICIAL_FLOW_CTA: str = "Daftar & Amankan Slot"
@@ -330,9 +329,9 @@ class CTWAStateEngine:
         session["lead_email"] = clean_email
 
         # P0 STRICT HOLD GUARD: Reject request BEFORE Xendit invocation and BEFORE database mutations
-        from app.services.academy_service import is_onlineboost_payment_held
-        if is_onlineboost_payment_held():
-            logger.info(f"[GATEKEEPER] Payment STRICT HOLD active for OnlineBoost Batch 1. Request queued without Xendit or order mutation for {clean_phone} ({mask_email(clean_email)}).")
+        from app.services.academy_service import is_onlineboost_payment_held, mask_phone_for_log
+        if is_onlineboost_payment_held(clean_phone):
+            logger.info(f"[GATEKEEPER] Payment STRICT HOLD active for OnlineBoost Batch 1. Request queued without Xendit or order mutation for {mask_phone_for_log(clean_phone)} ({mask_email(clean_email)}).")
             session["current_state"] = "STATE_LEAD_QUEUED"
             self._save_session_to_db(session)
             hold_caption = (

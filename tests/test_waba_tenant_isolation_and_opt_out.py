@@ -427,3 +427,75 @@ async def test_normal_non_opt_out_traffic_retains_bot_consultation():
         # Contact is NOT suppressed
         assert is_phone_suppressed(sender, tenant_id="onlineboost") is False
 
+
+# ============================================================================
+# 8. DIRECT DISPATCH OPT-OUT ALL KEYWORDS & 503 FAIL-CLOSED REGRESSION (P0-D)
+# ============================================================================
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("keyword", ["STOP", "UNSUBSCRIBE", "BERHENTI", "stop", "berhenti", "unsubscribe"])
+async def test_direct_dispatch_opt_out_all_keywords(keyword):
+    """
+    Direct-dispatch path (TrafficSplitter.split_and_dispatch) must recognize all
+    Meta WABA compliance opt-out keywords (STOP, BERHENTI, UNSUBSCRIBE), persist
+    durable suppression, reset session, and acknowledge with 200 without bot promotion.
+    """
+    from app.whatsapp.traffic_splitter import TrafficSplitter
+    from app.services.academy_service import academy_bot, STATE_CONSULTATION
+
+    sender = f"62811{hash(keyword) % 10000000:07d}"
+    payload = _build_meta_inbound_payload(sender, keyword, f"wam_dd_{keyword}")
+
+    mock_tenant_ctx = MagicMock()
+    mock_tenant_ctx.slug = "onlineboost"
+    mock_tenant_ctx.tenant_id = "onlineboost"
+
+    academy_bot.set_session(sender, state=STATE_CONSULTATION, name="TestUser", tenant_id="onlineboost")
+    assert academy_bot.is_in_active_flow(sender) is True
+
+    with patch("app.services.tenant_context_resolver.tenant_context_resolver.resolve_by_phone_number_id", new_callable=AsyncMock) as mock_resolve, \
+         patch("app.services.whatsapp.cloud_api.send_whatsapp_text", new_callable=AsyncMock) as mock_send:
+
+        mock_resolve.return_value = mock_tenant_ctx
+
+        status_code, res, trace = await TrafficSplitter.split_and_dispatch(payload)
+
+        assert status_code == 200
+        assert res.get("purpose") == "COMPLIANCE_OPT_OUT"
+        assert res.get("action") == "opt_out_confirmed"
+        assert res.get("suppressed") is True
+        assert academy_bot.is_in_active_flow(sender) is False
+        assert is_phone_suppressed(sender, tenant_id="onlineboost") is True
+
+
+@pytest.mark.asyncio
+async def test_direct_dispatch_opt_out_persistence_failure_safe_handling():
+    """
+    Direct-dispatch path: If all durable suppression persistence mechanisms fail,
+    TrafficSplitter.split_and_dispatch sets trace.response_status = 503 and returns
+    action='suppression_failed' without executing promotional or bot workflows.
+    """
+    from app.whatsapp.traffic_splitter import TrafficSplitter
+
+    sender = "628999888111"
+    payload = _build_meta_inbound_payload(sender, "STOP", "wam_fail_503")
+
+    mock_tenant_ctx = MagicMock()
+    mock_tenant_ctx.slug = "onlineboost"
+    mock_tenant_ctx.tenant_id = "onlineboost"
+
+    with patch("app.services.tenant_context_resolver.tenant_context_resolver.resolve_by_phone_number_id", new_callable=AsyncMock) as mock_resolve, \
+         patch("app.services.phone_suppression_service.record_durable_suppression", return_value=(False, "all_persistence_unavailable")), \
+         patch("app.services.whatsapp.cloud_api.send_whatsapp_text", new_callable=AsyncMock) as mock_send:
+
+        mock_resolve.return_value = mock_tenant_ctx
+
+        status_code, res, trace = await TrafficSplitter.split_and_dispatch(payload)
+
+        assert status_code == 200
+        assert trace.response_status == 503
+        assert res.get("purpose") == "COMPLIANCE_OPT_OUT"
+        assert res.get("action") == "suppression_failed"
+        assert trace.early_return is True
+        assert not mock_send.called
+

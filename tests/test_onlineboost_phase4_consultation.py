@@ -68,11 +68,11 @@ def clean_test_state():
 @pytest.mark.asyncio
 async def test_landing_page_cta_one_qualification_question():
     """
-    CTA Landing page 'Saya tertarik ikut kelas nya Kang' (Phase 5 Mandate):
-    - Wajib membuka WhatsApp Flow interaktif dengan sapaan ramah pengantar formulir.
+    CTA Landing page 'Saya tertarik ikut kelas nya Kang' (Founder Decision Phase 5.7):
+    - Wajib dijawab dengan 1 pertanyaan kualifikasi utama.
     - TIDAK BOLEH mengirimkan kembali link landing page (menghilangkan circular CTA loop).
     - TIDAK BOLEH menampilkan menu 3-pilihan generik atau langsung lempar ke manusia.
-    - Mengubah state menjadi STATE_FLOW_SENT.
+    - Mengubah state menjadi STATE_QUALIFYING.
     """
     phone = "6281234567001"
     incoming_text = "Saya tertarik ikut kelas nya Kang"
@@ -80,8 +80,7 @@ async def test_landing_page_cta_one_qualification_question():
     assert classify_academy_trigger(incoming_text) == "onlineboost_batch1"
     assert is_academy_trigger_message(incoming_text) is True
 
-    with patch("app.services.whatsapp.cloud_api.send_whatsapp_flow", new_callable=AsyncMock) as mock_send_flow:
-        mock_send_flow.return_value = {"messages": [{"id": "wamid.HBgFLOW1"}]}
+    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send_wa:
         res = await academy_bot.process_inbound(
             sender_phone=phone,
             incoming_text=incoming_text,
@@ -91,10 +90,13 @@ async def test_landing_page_cta_one_qualification_question():
 
         assert res is not None
         assert res["handled"] is True
-        assert res["state"] == "STATE_FLOW_SENT"
-        assert res["action"] == "SEND_REGISTRATION_FLOW"
-        assert "Halo Kang/Teh! Siap, yuk amankan kuota promo Rp249.000 Kelas Inkubasi CTWA Batch 1." in res["reply"]
-        assert mock_send_flow.called
+        assert res["state"] == STATE_QUALIFYING
+        assert res["action"] == "QUALIFY_OFFER"
+        assert res["reply"] == QUALIFICATION_PRIMARY_QUESTION
+
+        # Verifikasi copy tepat sesuai mandat Founder
+        assert "Siap, Kak! 😁 Gue bantu jelasin langsung di sini." in res["reply"]
+        assert "Biar arahnya pas, Kakak sudah punya produk/offer yang mau dipasarkan, atau masih mulai dari nol?" in res["reply"]
 
         # Circular Loop Guard: Tidak ada link ke landing page
         assert "https://shop.boontrack.com" not in res["reply"]
@@ -103,7 +105,8 @@ async def test_landing_page_cta_one_qualification_question():
         # Verifikasi state sesi aktif
         assert academy_bot.is_in_active_flow(phone) is True
         session = academy_bot.get_session(phone)
-        assert session["state"] == "STATE_FLOW_SENT"
+        assert session["state"] == STATE_QUALIFYING
+
 
 
 # ============================================================================
@@ -271,8 +274,11 @@ async def test_situation_d_registration_flow():
         assert "antrean prioritas" in res_email["reply"]
         assert "strict hold" in res_email["reply"]
 
-        # 3. Kirim Nama & Email saat strict hold dilepas (payment aktif):
-        with patch.dict(os.environ, {"ONLINEBOOST_PAYMENT_STRICT_HOLD": "false"}):
+        # 3. Kirim Nama & Email saat strict hold dilepas (payment aktif dengan synthetic allowlist terisolasi):
+        with patch.dict(os.environ, {
+            "ONLINEBOOST_PAYMENT_STRICT_HOLD": "false",
+            "PILOT_INTERNAL_WHITELIST": phone,
+        }):
             academy_bot.set_session(phone, state=STATE_1_AWAITING_EMAIL, name="Dimas", tenant_id="onlineboost")
             res_email_active = await academy_bot.process_inbound(
                 sender_phone=phone,
@@ -819,7 +825,10 @@ async def test_attribution_snapshot_forwarded_to_order_boundary():
     mock_conn = MagicMock()
     mock_conn.cursor.return_value = mock_cursor
 
-    with patch.dict(os.environ, {"ONLINEBOOST_PAYMENT_STRICT_HOLD": "false"}), \
+    with patch.dict(os.environ, {
+        "ONLINEBOOST_PAYMENT_STRICT_HOLD": "false",
+        "PILOT_INTERNAL_WHITELIST": phone,
+    }), \
          patch("app.core.database.get_db_connection", return_value=mock_conn), \
          patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
 
@@ -934,7 +943,10 @@ async def test_canonical_sku_alignment_batch1_orders():
     engine = CTWAStateEngine()
     phone = "6289998887771"
 
-    with patch.dict(os.environ, {"ONLINEBOOST_PAYMENT_STRICT_HOLD": "false"}), \
+    with patch.dict(os.environ, {
+        "ONLINEBOOST_PAYMENT_STRICT_HOLD": "false",
+        "PILOT_INTERNAL_WHITELIST": phone,
+    }), \
          patch("app.services.ctwa_state_engine.get_supabase") as mock_sb, \
          patch("app.services.xendit_service.xendit_service.create_dynamic_qris", new_callable=AsyncMock, return_value={"qr_string": "00020101021254062490005802ID5909BoonTrack6012Kab. Bandung6105402866304ABCD", "qr_id": "qr_123"}), \
          patch("app.services.whatsapp.cloud_api.send_whatsapp_image", new_callable=AsyncMock, return_value={"status": "sent"}), \
@@ -971,9 +983,9 @@ async def test_legacy_sku_and_order_compatibility():
     from app.services.academy_service import ACADEMY_SKU_ID, LEGACY_ACADEMY_SKU_ID
     from app.payments.service import payment_core_service
 
-    # SKU lama tetap dikenali
-    assert LEGACY_ACADEMY_SKU_ID == "SKU-BTA-ALUMNI-249K"
-    assert ACADEMY_SKU_ID == "SKU-BTA-ALUMNI-249K"
+    # SKU kanonis tunggal
+    assert LEGACY_ACADEMY_SKU_ID == "OB-BATCH1-249K"
+    assert ACADEMY_SKU_ID == "OB-BATCH1-249K"
 
     # Intent legacy
     intent_legacy = MagicMock()
@@ -1329,7 +1341,10 @@ async def test_deterministic_gatekeeper_refuses_static_qris_fallback_when_xendit
     test_phone = "6289912340001"
     engine.reset_session(test_phone)
 
-    with patch.dict(os.environ, {"ONLINEBOOST_PAYMENT_STRICT_HOLD": "false"}), \
+    with patch.dict(os.environ, {
+        "ONLINEBOOST_PAYMENT_STRICT_HOLD": "false",
+        "PILOT_INTERNAL_WHITELIST": test_phone,
+    }), \
          patch("app.services.xendit_service.xendit_service.create_dynamic_qris", new_callable=AsyncMock) as mock_xendit, \
          patch("app.services.ctwa_state_engine.get_supabase") as mock_sb, \
          patch("app.services.whatsapp.cloud_api.send_whatsapp_image", new_callable=AsyncMock) as mock_img:
@@ -1381,7 +1396,10 @@ async def test_fast_path_xendit_qris_refuses_static_qris_fallback_when_xendit_fa
     from app.services.academy_service import generate_fast_path_xendit_qris_batch1
     test_phone = "6289912340002"
 
-    with patch.dict(os.environ, {"ONLINEBOOST_PAYMENT_STRICT_HOLD": "false"}), \
+    with patch.dict(os.environ, {
+        "ONLINEBOOST_PAYMENT_STRICT_HOLD": "false",
+        "PILOT_INTERNAL_WHITELIST": test_phone,
+    }), \
          patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_http_post, \
          patch("app.core.database.get_db_connection") as mock_db_conn:
 

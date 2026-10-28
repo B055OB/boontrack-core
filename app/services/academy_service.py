@@ -57,8 +57,8 @@ class TenantContextViolation(PermissionError):
 
 ACADEMY_SKU_NAME: str = "BoonTrack Academy & CTWA Scale Engine (Alumni Privilege Pass)"
 CANONICAL_BATCH1_SKU: str = "OB-BATCH1-249K"
-LEGACY_ACADEMY_SKU_ID: str = "SKU-BTA-ALUMNI-249K"
-ACADEMY_SKU_ID: str = "SKU-BTA-ALUMNI-249K"  # Preserved for Alumni warm launch backwards compatibility
+LEGACY_ACADEMY_SKU_ID: str = "OB-BATCH1-249K"
+ACADEMY_SKU_ID: str = "OB-BATCH1-249K"
 ACADEMY_SETTLEMENT_PRICE: int = 249000  # Rp 249.000
 ACADEMY_INVOICE_TTL_MINUTES: int = 15   # 15 menit
 
@@ -456,9 +456,10 @@ STATE_0_TRIGGER_PATTERN = re.compile(
 # Directive 04: Founder Mandate - Bot-Led Consultation & Closing Scripts
 # 1. Primary Qualification Question for Inbound Landing Page Message ("Saya tertarik ikut kelas nya Kang")
 QUALIFICATION_PRIMARY_QUESTION: str = (
-    "Siap, Kak! 😁 Biar gue jelasin yang paling relevan, "
-    "Kakak sudah punya produk/offer yang mau dipasarkan atau masih mulai dari nol?"
+    "Siap, Kak! 😁 Gue bantu jelasin langsung di sini. "
+    "Biar arahnya pas, Kakak sudah punya produk/offer yang mau dipasarkan, atau masih mulai dari nol?"
 )
+
 
 # 2. Alumni Broadcast Response MAU Script (Aldi / OnlineBoost Mentor Persona)
 ALUMNI_MAU_GREETING: str = (
@@ -660,14 +661,69 @@ def lookup_staging_alumni_cpm(phone: str, tenant_id: str = "onlineboost") -> Opt
     return None
 
 
-def is_onlineboost_payment_held() -> bool:
+def mask_phone_for_log(phone: Optional[str]) -> str:
+    """Mask customer phone number for audit logs (e.g., 6288****088)."""
+    if not phone:
+        return "[EMPTY]"
+    clean = re.sub(r"\D", "", str(phone))
+    if clean.startswith("0"):
+        clean = "62" + clean[1:]
+    if len(clean) <= 6:
+        return "***"
+    return clean[:4] + "****" + clean[-3:]
+
+
+def is_onlineboost_payment_held(customer_phone: Optional[str] = None) -> bool:
     """
-    Check whether OnlineBoost Batch 1 payment is in STRICT HOLD mode.
-    Per CTO Directive: Batch 1 payment is strictly held until authorized by management.
-    Defaults to True (fail-closed) unless ONLINEBOOST_PAYMENT_STRICT_HOLD is explicitly 'false' or '0'.
+    Check whether OnlineBoost Batch 1 payment is in STRICT HOLD mode or pilot-restricted.
+
+    P0-A Pilot Isolation Security Contract:
+    1. Global Strict Hold (Fail-Closed Default):
+       If ONLINEBOOST_PAYMENT_STRICT_HOLD is 'true' (or any value other than 'false'/'0'/'off'/'no'),
+       ALL payment creation is blocked for 100% of callers, including whitelisted numbers.
+    2. Controlled Pilot Isolation:
+       When ONLINEBOOST_PAYMENT_STRICT_HOLD is explicitly 'false', live payment creation is permitted
+       ONLY for customer phone numbers explicitly registered in the PILOT_INTERNAL_WHITELIST environment variable.
+    3. Fail-Closed Whitelist:
+       If PILOT_INTERNAL_WHITELIST is missing, empty, or unparseable, or if customer_phone is missing or
+       not on the whitelist, payment creation is held (returns True).
+    4. Privacy:
+       Customer phone numbers are never logged in plaintext (masked via mask_phone_for_log).
     """
     val = os.getenv("ONLINEBOOST_PAYMENT_STRICT_HOLD", "true").strip().lower()
-    return val not in ("false", "0", "off", "no")
+    # Case 1: Global strict hold active (default fail-closed)
+    if val not in ("false", "0", "off", "no"):
+        return True
+
+    # Case 2: Strict hold is set to false -> Must enforce server-side PILOT_INTERNAL_WHITELIST
+    raw_whitelist = os.getenv("PILOT_INTERNAL_WHITELIST", "").strip()
+    if not raw_whitelist:
+        logger.warning("[PaymentGuard] STRICT HOLD disabled but PILOT_INTERNAL_WHITELIST is empty or missing. Failing closed.")
+        return True
+
+    if not customer_phone or not str(customer_phone).strip():
+        logger.warning("[PaymentGuard] Payment creation attempted without customer phone in pilot mode. Failing closed.")
+        return True
+
+    def _clean_phone_digits(p: str) -> str:
+        digits = re.sub(r"\D", "", str(p))
+        if digits.startswith("0"):
+            digits = "62" + digits[1:]
+        return digits
+
+    clean_whitelist = {_clean_phone_digits(n) for n in raw_whitelist.split(",") if _clean_phone_digits(n)}
+    if not clean_whitelist:
+        logger.warning("[PaymentGuard] PILOT_INTERNAL_WHITELIST contains no valid phone digits. Failing closed.")
+        return True
+
+    clean_target = _clean_phone_digits(customer_phone)
+    if clean_target in clean_whitelist:
+        logger.info(f"[PaymentGuard] Authorized pilot customer phone {mask_phone_for_log(clean_target)} permitted for live payment.")
+        return False
+
+    logger.warning(f"[PaymentGuard] Customer phone {mask_phone_for_log(clean_target)} is NOT authorized in PILOT_INTERNAL_WHITELIST. Request held.")
+    return True
+
 
 
 async def generate_fast_path_xendit_qris_batch1(
@@ -687,7 +743,7 @@ async def generate_fast_path_xendit_qris_batch1(
     amount = 249000
 
     # P0 STRICT HOLD GUARD: Reject request BEFORE Xendit invocation and BEFORE database mutations
-    if is_onlineboost_payment_held():
+    if is_onlineboost_payment_held(clean_p):
         logger.info(f"[FastPathQRIS] Payment STRICT HOLD active for tenant '{tenant_id}'. Rejecting before Xendit or order mutation.")
         hold_caption = (
             f"Terima kasih Kak {customer_name}! Data pendaftaran Kakak sudah kami catat dalam antrean prioritas Batch 1.\n\n"
@@ -1519,7 +1575,7 @@ class AcademyBotStateMachine:
                     return fast_res
 
                 # B. Inbound Landing Page CTA: "Saya tertarik ikut kelas nya Kang"
-                # Phase 5 Directive: Buka native WhatsApp Flow, jangan loop ke landing page atau transfer human
+                # Directive Phase 5.7 (Founder Decision): Akui minat prospek dan ajukan tepat 1 pertanyaan kualifikasi
                 is_landing_interest = bool(
                     TRIGGER_PATTERN_LANDING_PAGE_INTEREST.search(clean_text)
                     and not QUALIFY_PRODUCT_PATTERN.search(clean_text)
@@ -1528,47 +1584,31 @@ class AcademyBotStateMachine:
                 if is_landing_interest:
                     cls.set_session(
                         clean_phone,
-                        state=STATE_FLOW_SENT,
+                        state=STATE_QUALIFYING,
                         name=resolved_name,
                         campaign="onlineboost_batch1",
                         tenant_id=tenant_id,
                     )
-                    flow_intro = (
-                        "Halo Kang/Teh! Siap, yuk amankan kuota promo Rp249.000 Kelas Inkubasi CTWA Batch 1. "
-                        "Silakan lengkapi nama & email aktif melalui formulir di bawah ini untuk penerbitan invoice resmi:"
-                    )
-                    # Idempotency guard (inbound message ID + customer WhatsApp ID)
-                    inbound_msg_id = (raw_msg or {}).get("id") or ""
-                    idempotency_key = f"{inbound_msg_id}_{clean_phone}" if inbound_msg_id else f"flow_sent_{clean_phone}"
-                    if idempotency_key not in _DISPATCHED_FLOW_IDEMPOTENCY_KEYS:
-                        _DISPATCHED_FLOW_IDEMPOTENCY_KEYS.add(idempotency_key)
-                        try:
-                            from app.services.whatsapp.cloud_api import send_whatsapp_flow
-                            await send_whatsapp_flow(
-                                to_phone=clean_phone,
-                                flow_id="1663739061907747",
-                                flow_token="onlineboost_batch1_reg",
-                                flow_cta="Daftar & Amankan Slot",
-                                header_text="OnlineBoost Batch 1",
-                                body_text="Halo Kak! Klik tombol di bawah untuk melengkapi data pendaftaran dan mengamankan slot kelas Anda:",
-                                flow_action="navigate",
-                                flow_action_payload={"screen": "REGISTRATION"},
-                                tenant_id=tenant_id,
-                                phone_number_id=phone_number_id or "1419090974617162",
-                            )
-                        except Exception as e:
-                            logger.warning(f"[AcademyState0] WhatsApp flow send note: {e}")
+                    try:
+                        await send_whatsapp_text(
+                            to_phone=clean_phone,
+                            text=QUALIFICATION_PRIMARY_QUESTION,
+                            tenant_id=tenant_id,
+                            phone_number_id=phone_number_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
 
                     return {
                         "handled": True,
-                        "state": STATE_FLOW_SENT,
-                        "action": "SEND_REGISTRATION_FLOW",
+                        "state": STATE_QUALIFYING,
+                        "action": "QUALIFY_OFFER",
                         "campaign": "onlineboost_batch1",
-                        "reply": flow_intro,
+                        "reply": QUALIFICATION_PRIMARY_QUESTION,
                         "customer_name": resolved_name,
                         "tenant_id": tenant_id,
-                        "flow_sent": True,
                     }
+
 
                 # C. Alumni Broadcast Response "MAU"
                 # Directive 5: Pisahkan trigger MAU dari landing page, sapa santai ala Aldi & ajukan kualifikasi
@@ -1958,6 +1998,45 @@ class AcademyBotStateMachine:
             # --- ROUTE C: Storefront Direct ---
             elif trigger_campaign == "storefront_direct":
                 customer_email = session.get("email") or f"order.{clean_phone[-6:]}@boontrack.id"
+                effective_tenant = session.get("tenant_id") or tenant_id or "onlineboost"
+
+                # P0 STRICT HOLD & PILOT ISOLATION GUARD: Reject before invoice generation
+                if effective_tenant == "onlineboost" and is_onlineboost_payment_held(clean_phone):
+                    hold_reply = (
+                        f"Terima kasih Kak {resolved_name}! Data pendaftaran Kakak ({customer_email}) sudah kami catat dalam antrean prioritas Batch 1.\n\n"
+                        f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold). "
+                        f"Begitu sistem pembayaran resmi dibuka, Kakak akan langsung menerima instruksi pembayaran di nomor WhatsApp ini."
+                    )
+                    try:
+                        await send_whatsapp_text(
+                            to_phone=clean_phone,
+                            text=hold_reply,
+                            tenant_id=tenant_id,
+                            phone_number_id=phone_number_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[AcademyRouteC] WhatsApp hold reply note: {e}")
+
+                    cls.set_session(
+                        clean_phone,
+                        state=STATE_1_PAYMENT_ISSUED,
+                        name=resolved_name,
+                        email=customer_email,
+                        tenant_id=tenant_id,
+                    )
+
+                    return {
+                        "handled": True,
+                        "state": 1,
+                        "action": "PAYMENT_STRICT_HOLD",
+                        "campaign": "storefront_direct",
+                        "order_id": None,
+                        "strict_hold": True,
+                        "reply": hold_reply,
+                        "customer_name": resolved_name,
+                        "customer_email": customer_email,
+                        "tenant_id": tenant_id,
+                    }
 
                 invoice = generate_academy_qris_invoice(
                     customer_name=resolved_name,
@@ -2077,7 +2156,7 @@ class AcademyBotStateMachine:
             effective_tenant = session.get("tenant_id") or tenant_id or "onlineboost"
 
             # P0 STRICT HOLD GUARD: Reject request BEFORE invoice generation and database mutation
-            if effective_tenant == "onlineboost" and is_onlineboost_payment_held():
+            if effective_tenant == "onlineboost" and is_onlineboost_payment_held(clean_phone):
                 hold_reply = (
                     f"Terima kasih Kak {resolved_name}! Data pendaftaran Kakak ({customer_email}) sudah kami catat dalam antrean prioritas Batch 1.\n\n"
                     f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold). "

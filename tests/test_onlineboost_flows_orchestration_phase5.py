@@ -611,7 +611,7 @@ async def test_13_existing_alumni_and_tenant_compatibility():
     """
     # 1. SKU Mappings
     assert CANONICAL_BATCH1_SKU == "OB-BATCH1-249K"
-    assert LEGACY_ACADEMY_SKU_ID == "SKU-BTA-ALUMNI-249K"
+    assert LEGACY_ACADEMY_SKU_ID == "OB-BATCH1-249K"
 
     # 2. Legacy 'MAU' trigger
     phone = "6282344556677"
