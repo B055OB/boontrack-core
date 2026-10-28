@@ -74,8 +74,20 @@ from app.whatsapp.traffic_splitter import (
 def reset_router_state():
     """Ensure clean state before each test."""
     PlatformWebhookRouter.reset_state()
+    from app.services.challenge_service import challenge_service
+    from app.services.safety_budget_service import safety_budget_service
+    from app.services.academy_service import reset_academy_test_state
+    from app.services.phone_suppression_service import reset_suppression_test_state
+    challenge_service.clear_all()
+    safety_budget_service.reset()
+    reset_academy_test_state()
+    reset_suppression_test_state()
     yield
     PlatformWebhookRouter.reset_state()
+    challenge_service.clear_all()
+    safety_budget_service.reset()
+    reset_academy_test_state()
+    reset_suppression_test_state()
 
 
 # =============================================================================
@@ -749,8 +761,10 @@ async def test_assistant_engine_catalog_intent_english():
     assert "IoT Doorlock & Smart Access Control" in reply
     assert "BoonTrack Shop (Commerce Engine)" in reply
 
-    # 2. Onboarding CTA dengan query parameter ?lang=en
-    assert "https://boontrack.com/onboarding?lang=en" in reply
+    # 2. Canonical domain CTA (deprecated onboarding link removed)
+    assert "https://boontrack.com" in reply
+    assert "boontrack.com/onboarding" not in reply
+    assert "onboarding.html" not in reply
 
     # 3. Teks eskalasi bantuan bahasa Inggris pada pesan pertama
     assert FOOTER_HELP_TEXT_EN in reply
@@ -776,13 +790,15 @@ async def test_assistant_engine_general_greeting_english():
     )
 
     assert "How can we assist you with enterprise business orchestration" in reply
-    assert "https://boontrack.com/onboarding?lang=en" in reply
+    assert "https://boontrack.com" in reply
+    assert "boontrack.com/onboarding" not in reply
+    assert "onboarding.html" not in reply
     assert FOOTER_HELP_TEXT_EN in reply
 
 
 @pytest.mark.asyncio
-async def test_assistant_engine_indonesian_preserves_id_onboarding_link():
-    """Pesan bahasa Indonesia tetap mempertahankan link tanpa ?lang=en dan footer bahasa Indonesia."""
+async def test_assistant_engine_indonesian_canonical_portfolio_link():
+    """Pesan bahasa Indonesia mengarahkan ke domain kanonikal boontrack.com tanpa link onboarding legacy."""
     context = TrustedSessionContext(
         context_id=uuid4(),
         tenant_id=PLATFORM_TENANT_ID,
@@ -796,9 +812,17 @@ async def test_assistant_engine_indonesian_preserves_id_onboarding_link():
         is_first_message=True,
     )
 
-    # Link onboarding Indonesia tanpa query parameter lang=en
-    assert "https://boontrack.com/onboarding" in reply
-    assert "https://boontrack.com/onboarding?lang=en" not in reply
+    # Link tujuan kanonikal resmi tanpa link onboarding legacy
+    assert "https://boontrack.com" in reply
+    assert "boontrack.com/onboarding" not in reply
+    assert "onboarding.html" not in reply
+
+    # Solusi portofolio tetap utuh
+    assert "BoonTrack Platform Orchestration" in reply
+    assert "WhatsApp Business API" in reply
+    assert "BoonTrack POS (Point of Sale)" in reply
+    assert "IoT Doorlock & Smart Access Control" in reply
+    assert "BoonTrack Shop" in reply
 
     # Footer bantuan bahasa Indonesia
     assert FOOTER_HELP_TEXT in reply
@@ -833,5 +857,80 @@ async def test_lane_3_human_handover_help_english():
         assert res["ai_muted"] is True
         assert res["reply"] == HANDOVER_RESPONSE_EN
         assert "Your request has been forwarded to a BoonTrack official representative" in res["reply"]
+
+
+@pytest.mark.asyncio
+async def test_waba_portfolio_copy_sanitization_and_canonical_domain():
+    """
+    Micro-Task Regression Test:
+    Memverifikasi bahwa seluruh outgoing portfolio & greeting bot response:
+    1. Menggunakan domain kanonikal https://boontrack.com.
+    2. Menghapus seluruh tautan manual-intake usang (boontrack.com/onboarding dan onboarding.html).
+    3. Mempertahankan 5 pilar solusi portofolio resmi tanpa regresi.
+    4. Menggunakan penunjukan resmi 'Meta Tech Provider' tanpa klaim akreditasi yang tidak diverifikasi.
+    """
+    context = TrustedSessionContext(
+        context_id=uuid4(),
+        tenant_id=PLATFORM_TENANT_ID,
+        role=RoleEnum.ANONYMOUS,
+        authenticated=True,
+        metadata={"ownership_domain": "PLATFORM"},
+    )
+
+    # 1. Indonesian Catalog Response
+    reply_id = await platform_assistant_engine.generate_response(
+        user_text="Katalog solusi platform BoonTrack",
+        context=context,
+        is_first_message=False,
+    )
+    assert "https://boontrack.com" in reply_id
+    assert "boontrack.com/onboarding" not in reply_id
+    assert "onboarding.html" not in reply_id
+    assert "BoonTrack Platform Orchestration" in reply_id
+    assert "WhatsApp Business API" in reply_id
+    assert "BoonTrack POS" in reply_id
+    assert "IoT Doorlock" in reply_id
+    assert "BoonTrack Shop" in reply_id
+
+    # 2. English Catalog Response
+    reply_en = await platform_assistant_engine.generate_response(
+        user_text="What is your solutions portfolio and pricing?",
+        context=context,
+        is_first_message=False,
+    )
+    assert "https://boontrack.com" in reply_en
+    assert "boontrack.com/onboarding" not in reply_en
+    assert "onboarding.html" not in reply_en
+    assert "BoonTrack Platform Orchestration" in reply_en
+    assert "WhatsApp Business API" in reply_en
+    assert "BoonTrack POS" in reply_en
+    assert "IoT Doorlock" in reply_en
+    assert "BoonTrack Shop" in reply_en
+
+    # 3. Indonesian General Greeting
+    greeting_id = await platform_assistant_engine.generate_response(
+        user_text="Halo selamat pagi",
+        context=context,
+        is_first_message=False,
+    )
+    assert "https://boontrack.com" in greeting_id
+    assert "boontrack.com/onboarding" not in greeting_id
+    assert "onboarding.html" not in greeting_id
+
+    # 4. English General Greeting
+    greeting_en = await platform_assistant_engine.generate_response(
+        user_text="Hello good morning",
+        context=context,
+        is_first_message=False,
+    )
+    assert "https://boontrack.com" in greeting_en
+    assert "boontrack.com/onboarding" not in greeting_en
+    assert "onboarding.html" not in greeting_en
+
+    # 5. Public Tool Catalog Compliance & Meta Tech Provider Designation
+    catalog = execute_public_tool("get_public_solution_catalog", context=context)
+    waba_sol = next(s for s in catalog["solutions"] if s["id"] == "waba_integration")
+    assert any("Meta Tech Provider" in feat for feat in waba_sol["features"])
+    assert not any("Direct Provider" in feat for feat in waba_sol["features"])
 
 

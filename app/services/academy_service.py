@@ -579,7 +579,9 @@ TRIGGER_PATTERN_ONLINEBOOST_BATCH1 = re.compile(
 
 PLAYBOOK_V22_OFFER_SCRIPT = SITUATION_C_PRICE_BENEFITS_SCRIPT
 
-def classify_academy_trigger(text: str) -> Optional[str]:
+ACADEMY_ALLOWED_TENANTS = frozenset({"onlineboost", "boon"})
+
+def classify_academy_trigger(text: str, tenant_id: Optional[str] = None) -> Optional[str]:
     """
     Mengidentifikasi route kampanye dari pesan masuk:
     - 'onlineboost_batch1': Fast-Path Inbound "MAU METODE RAHASIA" (Batch 1)
@@ -589,6 +591,9 @@ def classify_academy_trigger(text: str) -> Optional[str]:
     """
     if not text or not isinstance(text, str):
         return None
+    clean_tid = str(tenant_id).strip().lower() if tenant_id is not None else None
+    if clean_tid is not None and clean_tid not in ACADEMY_ALLOWED_TENANTS:
+        return None
     from app.services.referral_attribution_service import extract_referral_marker
     clean, _ = extract_referral_marker(text.strip())
     if TRIGGER_PATTERN_CAMPAIGN_B.search(clean):
@@ -597,13 +602,13 @@ def classify_academy_trigger(text: str) -> Optional[str]:
         return "alumni_cpm"
     if TRIGGER_PATTERN_STOREFRONT.search(clean):
         return "storefront_direct"
-    if TRIGGER_PATTERN_ONLINEBOOST_BATCH1.search(clean):
+    if (clean_tid is None or clean_tid == "onlineboost") and TRIGGER_PATTERN_ONLINEBOOST_BATCH1.search(clean):
         return "onlineboost_batch1"
     return None
 
-def is_academy_trigger_message(text: str) -> bool:
+def is_academy_trigger_message(text: str, tenant_id: Optional[str] = None) -> bool:
     """Mengecek apakah pesan masuk mencocokkan salah satu pattern trigger Academy / OnlineBoost."""
-    return classify_academy_trigger(text) is not None
+    return classify_academy_trigger(text, tenant_id=tenant_id) is not None
 
 def lookup_staging_alumni_cpm(phone: str, tenant_id: str = "onlineboost") -> Optional[Dict[str, Any]]:
     """
@@ -626,7 +631,7 @@ def lookup_staging_alumni_cpm(phone: str, tenant_id: str = "onlineboost") -> Opt
         from app.core.database import get_db_connection
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute(f"SET LOCAL app.current_tenant_id = '{tenant_id}';")
+        cur.execute("SELECT set_config('app.current_tenant_id', %s, true);", (str(tenant_id).strip(),))
         cur.execute(
             """
             SELECT id, tenant_id, lead_phone, alumni_name, campaign_id, status, metadata
@@ -1426,21 +1431,34 @@ class AcademyBotStateMachine:
         return session
 
     @classmethod
-    def reset_session(cls, phone: str) -> None:
+    def reset_session(cls, phone: str, tenant_id: Optional[str] = None) -> None:
         """Mereset sesi percakapan alumni."""
         clean_phone = normalize_phone_number(phone) or phone
+        if tenant_id is not None:
+            clean_tid = str(tenant_id).strip().lower()
+            if clean_tid not in ACADEMY_ALLOWED_TENANTS:
+                return
+            session = _ACADEMY_SESSIONS.get(clean_phone)
+            if session and session.get("tenant_id"):
+                if str(session.get("tenant_id")).strip().lower() != clean_tid:
+                    return
         _ACADEMY_SESSIONS.pop(clean_phone, None)
         to_remove = [k for k in _DISPATCHED_FLOW_IDEMPOTENCY_KEYS if clean_phone in k]
         for k in to_remove:
             _DISPATCHED_FLOW_IDEMPOTENCY_KEYS.discard(k)
 
     @classmethod
-    def is_in_active_flow(cls, phone: str) -> bool:
+    def is_in_active_flow(cls, phone: str, tenant_id: Optional[str] = None) -> bool:
         """Cek apakah nomor sedang berada di alur aktif Academy/OnlineBoost (kualifikasi, konsultasi, menunggu email/pembayaran, atau flow terkirim)."""
+        if tenant_id is not None and str(tenant_id).strip().lower() not in ACADEMY_ALLOWED_TENANTS:
+            return False
         clean_phone = normalize_phone_number(phone) or phone
         session = _ACADEMY_SESSIONS.get(clean_phone)
         if not session:
             return False
+        if tenant_id is not None and session.get("tenant_id"):
+            if str(session.get("tenant_id")).strip().lower() != str(tenant_id).strip().lower():
+                return False
         return session.get("state") in (
             STATE_1_AWAITING_EMAIL,
             STATE_1_PAYMENT_ISSUED,
@@ -1465,6 +1483,76 @@ class AcademyBotStateMachine:
         """
         clean_text = incoming_text.strip()
         clean_phone = normalize_phone_number(sender_phone) or sender_phone
+
+        # =====================================================================
+        # P0-A: COMPLIANCE GUARD - Opt-out enforcement (STOP, BERHENTI, UNSUBSCRIBE)
+        # Processed before any marketing reply, bot state transition, or sales closing
+        # =====================================================================
+        from app.services.phone_suppression_service import (
+            is_opt_out_keyword,
+            record_durable_suppression,
+            is_phone_suppressed,
+        )
+        if is_opt_out_keyword(clean_text):
+            logger.info(f"[AcademyBot] Matched opt-out keyword '{clean_text}' from {clean_phone} for tenant '{tenant_id}'.")
+            persisted, persistence_src = record_durable_suppression(
+                phone=clean_phone,
+                tenant_id=tenant_id,
+                reason=f"USER_REQUESTED_OPT_OUT_{clean_text.upper()}",
+            )
+            cls.reset_session(clean_phone, tenant_id=tenant_id)
+            if not persisted:
+                logger.error(
+                    f"[AcademyBot] Suppression persistence failed ({persistence_src}) for {clean_phone} on tenant '{tenant_id}'."
+                )
+                return {
+                    "handled": True,
+                    "status": "error",
+                    "action": "suppression_failed",
+                    "suppressed": False,
+                    "persistence": persistence_src,
+                    "reply": "",
+                    "message": "Suppression persistence unavailable. Retrying via webhook provider.",
+                    "customer_name": "Pelanggan",
+                    "tenant_id": tenant_id,
+                }
+            opt_out_msg = (
+                "Anda telah berhasil berhenti berlangganan dari notifikasi ini. "
+                "Kirim 'START' kapan saja untuk mengaktifkan kembali."
+            )
+            try:
+                await send_whatsapp_text(
+                    to_phone=clean_phone,
+                    text=opt_out_msg,
+                    tenant_id=tenant_id,
+                    phone_number_id=phone_number_id,
+                )
+            except Exception as e:
+                logger.warning(f"[AcademyBot] WhatsApp opt-out send note: {e}")
+
+            return {
+                "handled": True,
+                "status": "success",
+                "action": "opt_out_confirmed",
+                "suppressed": True,
+                "persistence": persistence_src,
+                "reply": opt_out_msg,
+                "customer_name": "Pelanggan",
+                "tenant_id": tenant_id,
+            }
+
+        # Check if caller is already suppressed for this tenant -> suppress all marketing/sales messages
+        if is_phone_suppressed(clean_phone, tenant_id=tenant_id):
+            logger.info(f"[AcademyBot] Sender {clean_phone} is suppressed on tenant '{tenant_id}'. Suppressing promotional reply.")
+            return {
+                "handled": True,
+                "status": "suppressed",
+                "action": "suppressed_silent_drop",
+                "reply": "",
+                "customer_name": "Pelanggan",
+                "tenant_id": tenant_id,
+            }
+
         session = cls.get_session(clean_phone)
         current_state = session.get("state")
 
@@ -1523,7 +1611,7 @@ class AcademyBotStateMachine:
         # ---------------------------------------------------------------------
         # STATE 0: Multi-Trigger Inbound Routing (Batch 1)
         # ---------------------------------------------------------------------
-        trigger_campaign = classify_academy_trigger(clean_text)
+        trigger_campaign = classify_academy_trigger(clean_text, tenant_id=tenant_id)
 
         # Prioritaskan State 1 jika user sedang menunggu email dan pesan memuat email/konfirmasi
         if current_state == STATE_1_AWAITING_EMAIL:
@@ -1533,7 +1621,7 @@ class AcademyBotStateMachine:
                 trigger_campaign = None
 
         # Jika sesi sedang berada di state kualifikasi atau konsultasi OnlineBoost, teruskan ke alur OnlineBoost
-        if current_state in (STATE_QUALIFYING, STATE_CONSULTATION) and not trigger_campaign:
+        if current_state in (STATE_QUALIFYING, STATE_CONSULTATION) and not trigger_campaign and str(tenant_id).strip().lower() == "onlineboost":
             trigger_campaign = "onlineboost_batch1"
 
         if trigger_campaign:

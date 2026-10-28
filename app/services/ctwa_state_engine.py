@@ -589,6 +589,75 @@ class CTWAStateEngine:
         - Jika bukan lead -> Tampilkan Value Stacking Script & WhatsApp Flows Form.
         """
         clean_phone = normalize_phone_number(phone) or str(phone).strip()
+
+        # =====================================================================
+        # P0-A: COMPLIANCE GUARD - Opt-out enforcement (STOP, BERHENTI, UNSUBSCRIBE)
+        # Processed before any marketing reply, bot state transition, or sales closing
+        # =====================================================================
+        from app.services.phone_suppression_service import (
+            is_opt_out_keyword,
+            record_durable_suppression,
+            is_phone_suppressed,
+        )
+        if is_opt_out_keyword(incoming_text):
+            logger.info(f"[CTWA_TURN] Matched opt-out keyword '{incoming_text}' from {clean_phone}.")
+            persisted, persistence_src = record_durable_suppression(
+                phone=clean_phone,
+                tenant_id="onlineboost",
+                reason=f"USER_REQUESTED_OPT_OUT_{incoming_text.strip().upper()}",
+            )
+            if not persisted:
+                logger.error(
+                    f"[CTWA_TURN_FAIL_CLOSED] Durable suppression persistence failed for {clean_phone}. "
+                    f"Skipping false opt-out confirmation."
+                )
+                return {
+                    "success": False,
+                    "action": "suppression_failed",
+                    "status": "error",
+                    "suppressed": False,
+                    "reply": "",
+                    "order_id": None,
+                    "total_amount": 0,
+                }
+            opt_out_msg = (
+                "Anda telah berhasil berhenti berlangganan dari notifikasi ini. "
+                "Kirim 'START' kapan saja untuk mengaktifkan kembali."
+            )
+            try:
+                await cloud_api.send_whatsapp_text(
+                    to_phone=clean_phone,
+                    text=opt_out_msg,
+                    tenant_id="onlineboost",
+                    phone_number_id=phone_number_id,
+                )
+            except Exception as e:
+                logger.warning(f"[CTWA_TURN] WhatsApp opt-out send note: {e}")
+
+            return {
+                "success": True,
+                "action": "opt_out_confirmed",
+                "status": "opt_out_confirmed",
+                "suppressed": True,
+                "reply": opt_out_msg,
+                "order_id": None,
+                "total_amount": 0,
+                "qris_payload": "",
+            }
+
+        # Check if caller is already suppressed for onlineboost -> suppress promotional/sales reply
+        if is_phone_suppressed(clean_phone, tenant_id="onlineboost"):
+            logger.info(f"[CTWA_TURN] Sender {clean_phone} is suppressed on tenant 'onlineboost'. Suppressing promotional reply.")
+            return {
+                "success": False,
+                "action": "suppressed_silent_drop",
+                "status": "suppressed",
+                "reply": "",
+                "order_id": None,
+                "total_amount": 0,
+                "qris_payload": "",
+            }
+
         session = self.get_session(clean_phone)
 
         # Ekstraksi marker [r=KODE_RESELLER] dan persistensi atribusi (First Valid Referral Wins)

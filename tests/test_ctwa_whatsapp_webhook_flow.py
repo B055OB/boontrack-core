@@ -14,7 +14,10 @@ class TestCtwaWhatsAppWebhookFlow(AioHTTPTestCase):
 
     def setUp(self):
         super().setUp()
-        self._env_patch = patch.dict("os.environ", {"ONLINEBOOST_PAYMENT_STRICT_HOLD": "false"})
+        self._env_patch = patch.dict("os.environ", {
+            "ONLINEBOOST_PAYMENT_STRICT_HOLD": "false",
+            "PILOT_INTERNAL_WHITELIST": "6281237450222,6281977655099",
+        })
         self._env_patch.start()
 
     def tearDown(self):

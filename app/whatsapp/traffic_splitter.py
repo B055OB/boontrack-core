@@ -1665,7 +1665,8 @@ class TenantWebhookRouter:
             # Reset conversation sessions across session stores
             try:
                 from app.services.academy_service import academy_bot
-                academy_bot.reset_session(sender_phone)
+                if str(tenant_slug).strip().lower() in ("onlineboost", "boon"):
+                    academy_bot.reset_session(sender_phone)
             except Exception:
                 pass
 
@@ -1705,6 +1706,23 @@ class TenantWebhookRouter:
                 "suppressed": True,
                 "persistence": persistence_src,
                 "reply": opt_out_msg,
+                "tenant": tenant_slug,
+            }
+            trace.early_return = True
+            trace.response_status = 200
+            trace.response_payload = res
+            return res
+
+        # Check if caller is already suppressed for this tenant -> suppress promotional/marketing dispatch
+        from app.services.phone_suppression_service import is_phone_suppressed
+        if is_phone_suppressed(sender_phone, tenant_id=tenant_slug):
+            trace.log_step("OptOutComplianceGuard", f"Sender {sender_phone} is suppressed on tenant '{tenant_slug}'. Suppressing promotional reply.")
+            res = {
+                "status": "suppressed",
+                "purpose": "COMPLIANCE_OPT_OUT",
+                "action": "suppressed_silent_drop",
+                "suppressed": True,
+                "reply": "",
                 "tenant": tenant_slug,
             }
             trace.early_return = True
@@ -1913,7 +1931,7 @@ class TenantWebhookRouter:
         # =====================================================================
         try:
             from app.services.academy_service import academy_bot, is_academy_trigger_message
-            if is_academy_trigger_message(clean_text) or academy_bot.is_in_active_flow(sender_phone):
+            if is_academy_trigger_message(clean_text, tenant_id=tenant_slug) or academy_bot.is_in_active_flow(sender_phone, tenant_id=tenant_slug):
                 academy_res = await academy_bot.process_inbound(
                     sender_phone=sender_phone,
                     incoming_text=clean_text,

@@ -1420,3 +1420,138 @@ async def test_fast_path_xendit_qris_refuses_static_qris_fallback_when_xendit_fa
 
         # Verifikasi: DB orders insert TIDAK dipanggil
         mock_db_conn.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_p0_academy_bot_process_inbound_opt_out_and_subsequent_suppression():
+    """
+    P0-A Verification:
+    - academy_bot.process_inbound processes STOP, BERHENTI, and UNSUBSCRIBE before any state transition.
+    - Durably records suppression and clears session.
+    - Subsequent inbound marketing messages from suppressed phone are silently suppressed.
+    """
+    from app.services.phone_suppression_service import (
+        is_phone_suppressed,
+        set_allow_in_memory_fallback,
+        reset_suppression_test_state,
+    )
+    set_allow_in_memory_fallback(True)
+    reset_suppression_test_state()
+
+    test_phone = "6281900112233"
+    tenant = "onlineboost"
+
+    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send_wa:
+        mock_send_wa.return_value = True
+
+        # 1. User sends BERHENTI
+        res_opt = await academy_bot.process_inbound(
+            sender_phone=test_phone,
+            incoming_text="BERHENTI",
+            tenant_id=tenant,
+        )
+        assert res_opt["handled"] is True
+        assert res_opt["action"] == "opt_out_confirmed"
+        assert res_opt["suppressed"] is True
+        assert is_phone_suppressed(test_phone, tenant) is True
+
+        # 2. Subsequent marketing trigger is suppressed
+        res_subseq = await academy_bot.process_inbound(
+            sender_phone=test_phone,
+            incoming_text="Saya tertarik ikut kelas nya Kang",
+            tenant_id=tenant,
+        )
+        assert res_subseq["handled"] is True
+        assert res_subseq["status"] == "suppressed"
+        assert res_subseq["action"] == "suppressed_silent_drop"
+        assert res_subseq["reply"] == ""
+
+
+@pytest.mark.asyncio
+async def test_p0_ctwa_process_turn_opt_out_and_subsequent_suppression():
+    """
+    P0-A Verification:
+    - ctwa_state_engine.process_turn processes STOP before any turn dispatch.
+    - Subsequent messages are suppressed.
+    """
+    from app.services.phone_suppression_service import (
+        is_phone_suppressed,
+        set_allow_in_memory_fallback,
+        reset_suppression_test_state,
+    )
+    set_allow_in_memory_fallback(True)
+    reset_suppression_test_state()
+
+    test_phone = "6281900445566"
+
+    with patch("app.services.whatsapp.cloud_api.send_whatsapp_text", new_callable=AsyncMock) as mock_send_wa:
+        mock_send_wa.return_value = True
+
+        # 1. User sends STOP
+        res_opt = await ctwa_state_engine.process_turn(
+            phone=test_phone,
+            incoming_text="STOP",
+        )
+        assert res_opt["success"] is True
+        assert res_opt["action"] == "opt_out_confirmed"
+        assert is_phone_suppressed(test_phone, "onlineboost") is True
+
+        # 2. Subsequent turn is suppressed
+        res_subseq = await ctwa_state_engine.process_turn(
+            phone=test_phone,
+            incoming_text="Mau daftar dong",
+        )
+        assert res_subseq["success"] is False
+        assert res_subseq["status"] == "suppressed"
+        assert res_subseq["action"] == "suppressed_silent_drop"
+
+
+@pytest.mark.asyncio
+async def test_p0_order_fulfillment_rejects_unpaid_and_missing_access_url():
+    """
+    P0-B & P0-C Verification:
+    - handle_order_paid_fulfillment rejects unpaid orders with REJECTED_UNPAID.
+    - Rejects missing verified access URL with MISSING_VERIFIED_ACCESS_URL and never fabricates placeholder Telegram link.
+    """
+    from app.services.order_fulfillment_service import handle_order_paid_fulfillment
+
+    # 1. Unpaid order
+    mock_unpaid_order = {
+        "id": "ORD-UNPAID-001",
+        "tenant_slug": "onlineboost",
+        "status": "PENDING",
+        "payment_status": "PENDING",
+        "customer_name": "Test Unpaid",
+        "customer_phone": "6281234567890",
+    }
+    with patch("app.services.order_fulfillment_service.get_db_connection") as mock_conn:
+        mock_cur = MagicMock()
+        mock_cur.fetchone.return_value = mock_unpaid_order
+        mock_conn.return_value.cursor.return_value.__enter__.return_value = mock_cur
+
+        res_unpaid = await handle_order_paid_fulfillment("ORD-UNPAID-001")
+        assert res_unpaid["success"] is False
+        assert res_unpaid["status"] == "REJECTED_UNPAID"
+
+    # 2. Paid order without verified access URL
+    mock_paid_no_url = {
+        "id": "ORD-PAID-NO-URL",
+        "tenant_slug": "buzzerukm",
+        "status": "PAID",
+        "payment_status": "PAID",
+        "customer_name": "Test Paid",
+        "customer_phone": "6281234567891",
+        "download_url": None,
+        "fulfillment_metadata": {},
+    }
+    with patch("app.services.order_fulfillment_service.get_db_connection") as mock_conn, \
+         patch("app.services.order_fulfillment_service.get_supabase") as mock_sb:
+        mock_cur = MagicMock()
+        mock_cur.fetchone.return_value = mock_paid_no_url
+        mock_conn.return_value.cursor.return_value.__enter__.return_value = mock_cur
+        mock_sb.return_value = None
+
+        res_no_url = await handle_order_paid_fulfillment("ORD-PAID-NO-URL", tenant_slug="buzzerukm")
+        assert res_no_url["success"] is False
+        assert res_no_url["error"] == "MISSING_VERIFIED_ACCESS_URL"
+        assert res_no_url["status"] == "REJECTED_NO_ACCESS_URL"

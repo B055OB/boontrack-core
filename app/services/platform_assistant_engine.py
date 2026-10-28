@@ -111,8 +111,8 @@ class PlatformAssistantEngine:
             lines.append(f"{idx}. *{s['name']}*")
             lines.append(f"   {s['description']}")
         lines.append("")
-        lines.append("Untuk pendaftaran, rancang otomatisasi, & simulasi pilot gratis 14 hari, silakan isi formulir resmi kami di:")
-        lines.append("👉 https://boontrack.com/onboarding")
+        lines.append("Untuk eksplorasi portofolio solusi, rancang otomatisasi, & informasi resmi, silakan kunjungi website kami di:")
+        lines.append("👉 https://boontrack.com")
         return "\n".join(lines)
 
     def _format_catalog_reply_en(self, catalog_data: Optional[Dict[str, Any]] = None) -> str:
@@ -131,8 +131,8 @@ class PlatformAssistantEngine:
             "5. *BoonTrack Shop (Commerce Engine)*",
             "   Sub-second instant e-commerce storefront for physical and digital goods with WhatsApp checkout and automated QRIS payments.",
             "",
-            "To register, design custom automations, & access your 14-day free pilot simulation, please complete our official form at:",
-            "👉 https://boontrack.com/onboarding?lang=en",
+            "To explore our solutions portfolio, design custom automations, & learn more, please visit our official website at:",
+            "👉 https://boontrack.com",
         ]
         return "\n".join(lines)
 
@@ -174,16 +174,16 @@ class PlatformAssistantEngine:
         return (
             f"Halo! Saya *{self.name}*.\n\n"
             "Ada yang bisa kami bantu seputar solusi orkestrasi bisnis, aktivasi akun, integrasi WhatsApp Business API, atau layanan BoonTrack Shop hari ini?\n\n"
-            "Untuk pendaftaran, rancang otomatisasi, & simulasi pilot gratis 14 hari, silakan isi formulir resmi kami di:\n"
-            "👉 https://boontrack.com/onboarding"
+            "Untuk eksplorasi solusi platform, rancang otomatisasi, & informasi resmi, silakan kunjungi website kami di:\n"
+            "👉 https://boontrack.com"
         )
 
     def _format_general_greeting_en(self) -> str:
         return (
             f"Hello! I am the *{self.name_en}*.\n\n"
             "How can we assist you with enterprise business orchestration, account activation, WhatsApp Business API integration, or BoonTrack Shop solutions today?\n\n"
-            "To register, design custom automations, & access your 14-day free pilot simulation, please complete our official form at:\n"
-            "👉 https://boontrack.com/onboarding?lang=en"
+            "To explore our solutions portfolio, design custom automations, & learn more, please visit our official website at:\n"
+            "👉 https://boontrack.com"
         )
 
     def _format_kelasbos_consulting_reply(self, data: Dict[str, Any]) -> str:

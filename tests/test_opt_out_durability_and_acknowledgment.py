@@ -15,6 +15,7 @@ Exercises the actual HTTP webhook handler and control-flow boundaries:
 
 import time
 import uuid
+from uuid import UUID
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -163,7 +164,7 @@ def test_http_normal_opt_out_persisted_before_acknowledgment():
         assert data.get("persistence") == "postgres"
 
         # 2. Assert PostgreSQL insert was executed before response
-        mock_cur.execute.assert_any_call("SET LOCAL app.current_tenant_id = 'onlineboost';")
+        mock_cur.execute.assert_any_call("SELECT set_config('app.current_tenant_id', %s, true);", ("onlineboost",))
         mock_conn.commit.assert_called()
 
         # 3. Assert active bot session was reset
@@ -475,3 +476,116 @@ def test_tenant_isolation_suppression_scoping():
         # 2. Check suppression across tenants
         assert is_phone_suppressed(phone, tenant_id=tenant_a) is True
         assert is_phone_suppressed(phone, tenant_id=tenant_b) is False
+
+
+# ============================================================================
+# 9. PLATFORM CANONICAL IDENTITY & HISTORICAL ALIAS RECONCILIATION
+# ============================================================================
+
+def test_platform_opt_out_canonical_identity_and_alias_consistency():
+    """Validates that opt-out persisted under canonical 'boontrack-platform'
+    is recognized across historical aliases and PLATFORM_TENANT_ID UUID,
+    while preserving strict isolation from other tenants.
+    """
+    phone = "6281299887766"
+    set_allow_in_memory_fallback(True)
+
+    with patch("app.core.database.get_db_connection", side_effect=RuntimeError("DB offline in test")):
+        # 1. Record under canonical 'boontrack-platform'
+        success, src = record_durable_suppression(phone, tenant_id="boontrack-platform")
+        assert success is True
+
+        # 2. Check canonical and all historical aliases
+        assert is_phone_suppressed(phone, tenant_id="boontrack-platform") is True
+        assert is_phone_suppressed(phone, tenant_id="boontrack-holding") is True
+        assert is_phone_suppressed(phone, tenant_id=UUID("00000000-0000-0000-0000-000000000001")) is True
+        assert is_phone_suppressed(phone, tenant_id="00000000-0000-0000-0000-000000000001") is True
+        assert is_phone_suppressed(phone, tenant_id="shop") is True
+
+        # 3. Unrelated tenant isolation
+        assert is_phone_suppressed(phone, tenant_id="onlineboost") is False
+        assert is_phone_suppressed(phone, tenant_id="career") is False
+
+
+def test_platform_opt_out_historical_alias_lookup():
+    """Validates that historical suppression records stored under 'boontrack-holding'
+    are successfully resolved when checked against canonical 'boontrack-platform'.
+    """
+    phone = "6281211223344"
+    set_allow_in_memory_fallback(True)
+
+    with patch("app.core.database.get_db_connection", side_effect=RuntimeError("DB offline in test")):
+        # 1. Record under historical alias 'boontrack-holding'
+        success, _ = record_durable_suppression(phone, tenant_id="boontrack-holding")
+        assert success is True
+
+        # 2. Lookup via canonical 'boontrack-platform' and UUID
+        assert is_phone_suppressed(phone, tenant_id="boontrack-platform") is True
+        assert is_phone_suppressed(phone, tenant_id=UUID("00000000-0000-0000-0000-000000000001")) is True
+
+        # 3. Unrelated tenant isolation
+        assert is_phone_suppressed(phone, tenant_id="onlineboost") is False
+
+
+@pytest.mark.asyncio
+async def test_platform_inbound_repeated_message_suppressed():
+    """End-to-end integration test:
+    1. Caller sends BERHENTI to platform WABA -> persisted under boontrack-platform.
+    2. Caller immediately sends repeated inbound message -> caught by ComplianceGuard
+       and dropped silently with ZERO LLM or bot response.
+    """
+    from app.whatsapp.traffic_splitter import TrafficSplitter
+    from app.services.phone_suppression_service import reset_suppression_test_state, set_allow_in_memory_fallback
+
+    set_allow_in_memory_fallback(True)
+    reset_suppression_test_state()
+
+    platform_pid = "1365010890024026"
+    test_phone = "6281988887777"
+
+    with patch("app.whatsapp.platform_webhook_router.send_whatsapp_text", new_callable=AsyncMock) as mock_send_wa,          patch("app.core.database.get_db_connection", side_effect=RuntimeError("DB offline")):
+
+        # 1. First inbound: BERHENTI
+        payload_opt = {
+            "entry": [{
+                "id": "e_opt",
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": platform_pid},
+                        "messages": [{
+                            "id": "wamid_opt_01",
+                            "from": test_phone,
+                            "type": "text",
+                            "text": {"body": "BERHENTI"},
+                        }],
+                    }
+                }]
+            }]
+        }
+        status1, res1, _ = await TrafficSplitter.split_and_dispatch(payload_opt)
+        assert status1 == 200
+        assert res1.get("action") == "opt_out"
+        assert res1.get("tenant") == "boontrack-platform"
+
+        # 2. Second inbound: Repeated general message ('Halo')
+        payload_subseq = {
+            "entry": [{
+                "id": "e_subseq",
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": platform_pid},
+                        "messages": [{
+                            "id": "wamid_subseq_01",
+                            "from": test_phone,
+                            "type": "text",
+                            "text": {"body": "Halo kak"},
+                        }],
+                    }
+                }]
+            }]
+        }
+        status2, res2, _ = await TrafficSplitter.split_and_dispatch(payload_subseq)
+        assert status2 == 200
+        assert res2.get("lane") == "COMPLIANCE_GUARD"
+        assert res2.get("action") == "suppressed_silent_drop"
+        assert res2.get("status") == "suppressed"
