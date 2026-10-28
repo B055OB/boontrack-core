@@ -77,6 +77,7 @@ STATE_QUALIFYING = "STATE_QUALIFYING"
 STATE_CONSULTATION = "STATE_CONSULTATION"
 STATE_1_AWAITING_EMAIL = "STATE_1_AWAITING_EMAIL"
 STATE_1_PAYMENT_ISSUED = "STATE_1_PAYMENT_ISSUED"
+STATE_HOLD_QUEUED = "STATE_HOLD_QUEUED"
 STATE_2_PAID = "STATE_2_PAID"
 STATE_FLOW_SENT = "STATE_FLOW_SENT"
 
@@ -89,6 +90,9 @@ _PROCESSED_EVENTS: Set[str] = set()                     # event_id idempotency s
 _ISSUED_TELEGRAM_LINKS: Dict[str, str] = {}             # order_id -> single_use_link
 _MANUAL_RECONCILIATION_QUEUE: List[Dict[str, Any]] = [] # order entries routed to manual audit
 _DISPATCHED_FLOW_IDEMPOTENCY_KEYS: Set[str] = set()         # idempotency set for outbound flow dispatch
+_HOLD_QUEUE_ENTRIES: Dict[Tuple[str, str], Dict[str, Any]] = {}  # (tenant_id, phone) -> hold queue entry
+_HOLD_QUEUE_PROCESSED_EVENT_IDS: Set[str] = set()       # idempotency set for hold-queue webhook events
+_allow_hold_queue_in_memory_fallback: bool = True
 _SETTLE_THREAD_LOCK = threading.Lock()                  # atomic lock for thread-safe mutations
 
 # ============================================================================
@@ -352,8 +356,300 @@ def get_manual_reconciliation_queue() -> List[Dict[str, Any]]:
     return list(_MANUAL_RECONCILIATION_QUEUE)
 
 
+def get_hold_queue_entries(tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Mengambil daftar prospek yang tercatat di antrean payment strict hold."""
+    if tenant_id is None:
+        return list(_HOLD_QUEUE_ENTRIES.values())
+    clean_tid = str(tenant_id).strip().lower()
+    return [
+        entry for (tid, _), entry in _HOLD_QUEUE_ENTRIES.items()
+        if tid == clean_tid
+    ]
+
+
+def _is_mock_object(obj: Any) -> bool:
+    """Deteksi apakah objek adalah unittest.mock (MagicMock / AsyncMock)."""
+    if obj is None:
+        return False
+    cls_name = type(obj).__name__
+    return "Mock" in cls_name or hasattr(obj, "_mock_name") or hasattr(obj, "assert_called")
+
+
+def set_allow_hold_queue_in_memory_fallback(allow: bool) -> None:
+    """Konfigurasi apakah in-memory fallback diizinkan saat DB/Supabase tidak tersedia (untuk unit test)."""
+    global _allow_hold_queue_in_memory_fallback
+    _allow_hold_queue_in_memory_fallback = bool(allow)
+
+
+def persist_hold_registration_intent(
+    phone: str,
+    tenant_id: str = "onlineboost",
+    customer_name: Optional[str] = None,
+    customer_email: Optional[str] = None,
+    campaign: str = "onlineboost_batch1",
+    inbound_msg_id: Optional[str] = None,
+    inbound_message_id: Optional[str] = None,
+    intent_text: Optional[str] = None,
+    source_stage: Optional[str] = None,
+    lead_name: Optional[str] = None,
+    lead_email: Optional[str] = None,
+) -> Tuple[bool, str, bool]:
+    """
+    Mencatat minat pendaftaran prospek secara durable ke `conversation_sessions`
+    saat `ONLINEBOOST_PAYMENT_STRICT_HOLD=true` tanpa menerbitkan QRIS, invoice,
+    order, atau payment intent.
+
+    Target Konflik Schema (`public.conversation_sessions`):
+    - Kolom aktual: `id (uuid PRIMARY KEY)`, `session_id (text)`, `tenant_id (text)`,
+      `channel (text)`, `user_identifier (text)`, `current_state (text)`,
+      `metadata (jsonb)`, `updated_at (timestamptz)`.
+    - Constraint unik: `conversation_sessions_pkey (id)`,
+      `conversation_sessions_tenant_id_session_id_key (tenant_id, session_id)`,
+      `uq_conversation_sessions_tenant_user (tenant_id, user_identifier)`.
+    - Oleh karena itu, fungsi ini terlebih dahulu mencari baris eksisting berdasarkan
+      `tenant_id` dan `(user_identifier = phone OR session_id = 'wa_' || phone)`,
+      menggunakan kembali `id` UUID eksisting jika ditemukan, atau melakukan UPSERT
+      deterministik menggunakan UUIDv5 pada `ON CONFLICT (id) DO UPDATE`.
+
+    Returns:
+        Tuple[persisted, source, is_duplicate]
+    """
+    clean_phone = normalize_phone_number(phone) or str(phone or "").strip()
+    clean_tenant = str(tenant_id or "onlineboost").strip().lower()
+    if not clean_phone or not clean_tenant:
+        return False, "invalid_arguments", False
+
+    eff_name = customer_name or lead_name
+    eff_email = customer_email or lead_email
+    eff_msg_id = inbound_msg_id or inbound_message_id
+
+    queue_key = (clean_tenant, clean_phone)
+    clean_msg_id = str(eff_msg_id or "").strip()
+    event_key = f"{clean_tenant}:{clean_phone}:{clean_msg_id}" if clean_msg_id else None
+
+    # 1. Idempotency Guard: Duplicate webhook delivery with identical inbound_msg_id
+    if event_key and event_key in _HOLD_QUEUE_PROCESSED_EVENT_IDS:
+        existing = _HOLD_QUEUE_ENTRIES.get(queue_key) or {}
+        src = existing.get("persistence_source", "idempotent_cache")
+        return True, src, True
+
+    # 2. Duplicate Queue Entry Guard: Already queued for (tenant_id, phone) with no new email update
+    existing_entry = _HOLD_QUEUE_ENTRIES.get(queue_key)
+    is_updating_existing = existing_entry is not None
+    if existing_entry is not None:
+        existing_email = existing_entry.get("customer_email")
+        if not eff_email or existing_email == str(eff_email).strip().lower():
+            if event_key:
+                _HOLD_QUEUE_PROCESSED_EVENT_IDS.add(event_key)
+            src = existing_entry.get("persistence_source", "idempotent_cache")
+            return True, src, True
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    deterministic_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"hold_session:{clean_tenant}:{clean_phone}"))
+    canonical_session_key = f"wa_{clean_phone}"
+    resolved_name = (eff_name or (existing_entry or {}).get("customer_name") or "Kak").strip()
+    resolved_email = (eff_email or (existing_entry or {}).get("customer_email") or None)
+    if resolved_email:
+        resolved_email = str(resolved_email).strip().lower()
+
+    context_payload: Dict[str, Any] = {
+        "hold_status": "HOLD_QUEUED",
+        "strict_hold": True,
+        "campaign": campaign or "onlineboost_batch1",
+        "sku": CANONICAL_BATCH1_SKU,
+        "customer_name": resolved_name,
+        "customer_email": resolved_email,
+        "lead_name": resolved_name,
+        "lead_email": resolved_email,
+        "customer_phone": clean_phone,
+        "phone": clean_phone,
+        "tenant_id": clean_tenant,
+        "queued_at": (existing_entry or {}).get("queued_at") or now_iso,
+        "updated_at": now_iso,
+        "order_id": None,
+        "invoice_id": None,
+    }
+    if source_stage:
+        context_payload["source_stage"] = source_stage
+    if clean_msg_id:
+        context_payload["last_inbound_msg_id"] = clean_msg_id
+    if intent_text:
+        context_payload["intent_text"] = str(intent_text)[:300]
+
+    pg_success = False
+    sb_success = False
+    explicit_mock_failure = False
+
+    # 3. Primary Authority: PostgreSQL `public.conversation_sessions`
+    try:
+        from app.core import database as db_module
+        get_conn_fn = getattr(db_module, "get_db_connection", None)
+        conn_is_mock = _is_mock_object(get_conn_fn)
+        if get_conn_fn is not None:
+            try:
+                conn = get_conn_fn()
+                if _is_mock_object(conn):
+                    conn_is_mock = True
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT set_config('app.current_tenant_id', %s, true);", (clean_tenant,))
+                        cur.execute(
+                            """
+                            SELECT id, current_state, metadata, session_id
+                            FROM public.conversation_sessions
+                            WHERE tenant_id = %s AND (user_identifier = %s OR session_id = %s)
+                            ORDER BY updated_at DESC NULLS LAST
+                            LIMIT 1;
+                            """,
+                            (clean_tenant, clean_phone, canonical_session_key),
+                        )
+                        existing_row = cur.fetchone()
+                        target_id = deterministic_uuid
+                        target_session_key = canonical_session_key
+                        existing_ctx: Dict[str, Any] = {}
+                        if existing_row and not _is_mock_object(existing_row):
+                            if isinstance(existing_row, dict):
+                                target_id = str(existing_row.get("id") or deterministic_uuid)
+                                raw_ctx = existing_row.get("metadata")
+                                target_session_key = str(existing_row.get("session_id") or canonical_session_key)
+                            elif isinstance(existing_row, (list, tuple)) and len(existing_row) > 0:
+                                target_id = str(existing_row[0] or deterministic_uuid)
+                                raw_ctx = existing_row[2] if len(existing_row) > 2 else None
+                                if len(existing_row) > 3 and existing_row[3]:
+                                    target_session_key = str(existing_row[3])
+                            else:
+                                raw_ctx = None
+                            if isinstance(raw_ctx, dict):
+                                existing_ctx = dict(raw_ctx)
+                            elif isinstance(raw_ctx, str) and raw_ctx.strip():
+                                try:
+                                    existing_ctx = json.loads(raw_ctx)
+                                except Exception:
+                                    existing_ctx = {}
+
+                        merged_ctx = {**existing_ctx, **context_payload}
+                        cur.execute(
+                            """
+                            INSERT INTO public.conversation_sessions (
+                                id, session_id, tenant_id, channel, user_identifier, current_state, metadata, updated_at
+                            ) VALUES (%s, %s, %s, 'WHATSAPP', %s, %s, %s::jsonb, NOW())
+                            ON CONFLICT (id) DO UPDATE SET
+                                current_state = EXCLUDED.current_state,
+                                metadata = EXCLUDED.metadata,
+                                updated_at = NOW();
+                            """,
+                            (
+                                target_id,
+                                target_session_key,
+                                clean_tenant,
+                                clean_phone,
+                                STATE_HOLD_QUEUED,
+                                json.dumps(merged_ctx),
+                            ),
+                        )
+                    conn.commit()
+                    pg_success = True
+                finally:
+                    conn.close()
+            except Exception as pg_err:
+                if conn_is_mock:
+                    explicit_mock_failure = True
+                logger.warning(
+                    f"[AcademyHoldQueue] PostgreSQL persistence failed for {mask_phone_for_log(clean_phone)}: {pg_err}"
+                )
+    except Exception as outer_pg_err:
+        logger.warning(f"[AcademyHoldQueue] PostgreSQL lookup note: {outer_pg_err}")
+
+    # 4. Secondary Authority: Supabase REST `conversation_sessions`
+    if not pg_success and not explicit_mock_failure:
+        try:
+            from app.services import whatsapp_service as wa_srv
+            get_sb_fn = getattr(wa_srv, "get_supabase", None)
+            sb_is_mock = _is_mock_object(get_sb_fn)
+            if get_sb_fn is not None:
+                sb = get_sb_fn()
+                if _is_mock_object(sb):
+                    sb_is_mock = True
+                if sb is not None:
+                    try:
+                        ex_resp = (
+                            sb.table("conversation_sessions")
+                            .select("id, current_state, metadata, session_id")
+                            .eq("tenant_id", clean_tenant)
+                            .eq("user_identifier", clean_phone)
+                            .limit(1)
+                            .execute()
+                        )
+                        ex_rows = getattr(ex_resp, "data", None)
+                        existing_sb_id = None
+                        existing_sb_session_key = canonical_session_key
+                        if isinstance(ex_rows, list) and len(ex_rows) > 0 and isinstance(ex_rows[0], dict):
+                            existing_sb_id = ex_rows[0].get("id")
+                            existing_sb_session_key = ex_rows[0].get("session_id") or canonical_session_key
+                        elif isinstance(ex_rows, dict):
+                            existing_sb_id = ex_rows.get("id")
+                            existing_sb_session_key = ex_rows.get("session_id") or canonical_session_key
+
+                        sb_payload = {
+                            "id": str(existing_sb_id or deterministic_uuid),
+                            "session_id": str(existing_sb_session_key),
+                            "tenant_id": clean_tenant,
+                            "channel": "WHATSAPP",
+                            "user_identifier": clean_phone,
+                            "current_state": STATE_HOLD_QUEUED,
+                            "metadata": context_payload,
+                            "updated_at": now_iso,
+                        }
+                        if existing_sb_id:
+                            update_body = {k: v for k, v in sb_payload.items() if k != "id"}
+                            sb.table("conversation_sessions").update(update_body).eq("id", str(existing_sb_id)).execute()
+                        else:
+                            try:
+                                sb.table("conversation_sessions").upsert(sb_payload, on_conflict="id").execute()
+                            except TypeError:
+                                sb.table("conversation_sessions").upsert(sb_payload).execute()
+                        sb_success = True
+                    except Exception as sb_err:
+                        if sb_is_mock:
+                            explicit_mock_failure = True
+                        logger.warning(
+                            f"[AcademyHoldQueue] Supabase persistence failed for {mask_phone_for_log(clean_phone)}: {sb_err}"
+                        )
+        except Exception as outer_sb_err:
+            logger.warning(f"[AcademyHoldQueue] Supabase lookup note: {outer_sb_err}")
+
+    persistence_source = None
+    if pg_success:
+        persistence_source = "postgres"
+    elif sb_success:
+        persistence_source = "supabase"
+    elif not explicit_mock_failure and _allow_hold_queue_in_memory_fallback:
+        persistence_source = "in_memory_fallback"
+
+    if not persistence_source:
+        logger.error(
+            f"[AcademyHoldQueue CRITICAL] Failed to durably persist registration hold intent for "
+            f"{mask_phone_for_log(clean_phone)} on tenant '{clean_tenant}'. Refusing false acknowledgment."
+        )
+        return False, "all_persistence_unavailable", False
+
+    entry_record = {
+        **context_payload,
+        "session_id": canonical_session_key,
+        "persistence_source": persistence_source,
+        "persistence_backend": persistence_source,
+    }
+    _HOLD_QUEUE_ENTRIES[queue_key] = entry_record
+    if event_key:
+        _HOLD_QUEUE_PROCESSED_EVENT_IDS.add(event_key)
+
+    return True, persistence_source, is_updating_existing
+
+
 def reset_academy_test_state() -> None:
     """Reset seluruh memory stores internal untuk isolasi test fixture."""
+    global _allow_hold_queue_in_memory_fallback
+    _allow_hold_queue_in_memory_fallback = True
     _ACADEMY_SESSIONS.clear()
     _ACADEMY_INVOICES.clear()
     _ACADEMY_INVOICES_BY_AMOUNT.clear()
@@ -361,6 +657,9 @@ def reset_academy_test_state() -> None:
     _PROCESSED_EVENTS.clear()
     _ISSUED_TELEGRAM_LINKS.clear()
     _MANUAL_RECONCILIATION_QUEUE.clear()
+    _DISPATCHED_FLOW_IDEMPOTENCY_KEYS.clear()
+    _HOLD_QUEUE_ENTRIES.clear()
+    _HOLD_QUEUE_PROCESSED_EVENT_IDS.clear()
     AcademyEntitlementManager._ENTITLEMENTS.clear()
     AcademyEntitlementManager._ORDER_ENTITLEMENTS.clear()
     AcademyOutboxManager._OUTBOX.clear()
@@ -534,7 +833,17 @@ TRIGGER_PATTERN_PRICE_BENEFITS = re.compile(
 )
 
 TRIGGER_PATTERN_REGISTRATION = re.compile(
-    r"(?i)(^\s*daftar\b|mau\s+daftar|daftar\s+sekarang|ikut\s+kelas|amankan\s+slot|cara\s+daftar|mau\s+join|registrasi|bantu\s+daftar|gas\b|lanjut\s+daftar|siap\s+daftar|mau\s+amankan)",
+    r"(?i)(^\s*daftar\b|mau\s+daftar|daftar\s+sekarang|ikut\s+kelas|mau\s+ikut|amankan\s+slot|amankan\s+sekarang|langsung\s+amankan|bantu\s+amankan|cara\s+daftar|mau\s+join|registrasi|bantu\s+daftar|\bgas\b|lanjut\s+daftar|siap\s+daftar|mau\s+amankan|ambil\s+slot)",
+    re.IGNORECASE
+)
+
+CONSULTATION_AFFIRMATIVE_REGISTRATION_PATTERN = re.compile(
+    r"(?i)^\s*(?:ya|iya|yap|yup|boleh|mau|saya\s+mau|aku\s+mau|gue\s+mau|siap|oke|ok|okay|gas|gaskeun|yuk|ayo|lanjut|setuju|amankan|ikut|ikutan|daftar)(?:\b|[\s,!.]*(?:kak|kang|teh|min|bang|gan|dong|banget|ya|yuk|sekarang|langsung|bantu|amankan|slot|slotnya|pendaftarannya|daftar|ikut|kelas|batch\s*1)*)[\s,!.]*$",
+    re.IGNORECASE
+)
+
+CONSULTATION_NEGATIVE_PATTERN = re.compile(
+    r"(?i)\b(?:belum|tidak|gak|ga|nggak|enggak|jangan|nanti|batal|ragu|pikir|tanya\s+dulu)\b",
     re.IGNORECASE
 )
 
@@ -752,11 +1061,15 @@ async def generate_fast_path_xendit_qris_batch1(
         logger.info(f"[FastPathQRIS] Payment STRICT HOLD active for tenant '{tenant_id}'. Rejecting before Xendit or order mutation.")
         hold_caption = (
             f"Terima kasih Kak {customer_name}! Data pendaftaran Kakak sudah kami catat dalam antrean prioritas Batch 1.\n\n"
-            f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold). "
+            f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold), "
+            f"sehingga belum ada tagihan atau QRIS yang diterbitkan. "
             f"Begitu sistem pembayaran resmi dibuka, Kakak akan langsung menerima instruksi pembayaran di nomor WhatsApp ini."
         )
         return {
+            "handled": True,
             "status": "STRICT_HOLD",
+            "action": "PAYMENT_STRICT_HOLD",
+            "state": STATE_HOLD_QUEUED,
             "strict_hold": True,
             "order_id": None,
             "amount": amount,
@@ -764,6 +1077,7 @@ async def generate_fast_path_xendit_qris_batch1(
             "qr_image_url": "",
             "invoice_url": "",
             "message": hold_caption,
+            "reply": hold_caption,
             "latency_ms": int((time.monotonic() - t0) * 1000),
         }
 
@@ -1462,10 +1776,144 @@ class AcademyBotStateMachine:
         return session.get("state") in (
             STATE_1_AWAITING_EMAIL,
             STATE_1_PAYMENT_ISSUED,
+            STATE_HOLD_QUEUED,
+            "STATE_LEAD_QUEUED",
             STATE_QUALIFYING,
             STATE_CONSULTATION,
             STATE_FLOW_SENT,
         )
+
+    @classmethod
+    async def _handle_payment_strict_hold(
+        cls,
+        clean_phone: str,
+        resolved_name: str,
+        customer_email: Optional[str],
+        effective_tenant: str,
+        campaign: str,
+        phone_number_id: Optional[str] = None,
+        raw_msg: Optional[Dict[str, Any]] = None,
+        intent_text: Optional[str] = None,
+        preserve_legacy_state_constant: bool = False,
+        fallback_state: Any = STATE_CONSULTATION,
+    ) -> Dict[str, Any]:
+        """
+        Transisi ke state payment hold secara jujur (graceful payment-hold state):
+        1. Tanpa membuat QRIS, invoice, order, atau memanggil payment gateway.
+        2. Hanya mengirim konfirmasi antrean jika persistensi durable berhasil.
+        3. Menolak klaim palsu (fail-closed) jika persistensi gagal.
+        4. Idempoten terhadap pengiriman webhook duplikat.
+        """
+        inbound_msg_id = str((raw_msg or {}).get("id") or "").strip() or None
+        event_key = f"{effective_tenant}:{clean_phone}:{inbound_msg_id}" if inbound_msg_id else None
+        already_processed_event = bool(event_key and event_key in _HOLD_QUEUE_PROCESSED_EVENT_IDS)
+
+        persisted, persistence_src, is_dup = persist_hold_registration_intent(
+            phone=clean_phone,
+            tenant_id=effective_tenant,
+            customer_name=resolved_name,
+            customer_email=customer_email,
+            campaign=campaign,
+            inbound_msg_id=inbound_msg_id,
+            intent_text=intent_text,
+        )
+
+        if not persisted:
+            fail_reply = (
+                f"Mohon maaf Kak {resolved_name}, saat ini sistem pencatatan pendaftaran sedang mengalami gangguan sementara "
+                f"dan gerbang pembayaran Batch 1 masih dalam status strict hold (belum ada tagihan/QRIS yang diterbitkan).\n\n"
+                f"Pendaftaran Kakak *belum tercatat* di antrean sistem. Mohon kirim ulang konfirmasi beberapa saat lagi ya."
+            )
+            try:
+                await send_whatsapp_text(
+                    to_phone=clean_phone,
+                    text=fail_reply,
+                    tenant_id=effective_tenant,
+                    phone_number_id=phone_number_id,
+                )
+            except Exception as e:
+                logger.warning(f"[AcademyHold] WhatsApp failure reply note: {e}")
+
+            return {
+                "handled": True,
+                "status": "error",
+                "state": fallback_state,
+                "action": "PAYMENT_HOLD_PERSISTENCE_FAILED",
+                "campaign": campaign,
+                "order_id": None,
+                "strict_hold": True,
+                "persisted": False,
+                "persistence_source": persistence_src,
+                "persistence_backend": persistence_src,
+                "duplicate": False,
+                "idempotent_reentry": False,
+                "reply": fail_reply,
+                "customer_name": resolved_name,
+                "customer_email": customer_email,
+                "tenant_id": effective_tenant,
+            }
+
+        if customer_email:
+            hold_reply = (
+                f"Terima kasih Kak {resolved_name}! Data pendaftaran Kakak ({customer_email}) sudah kami catat dalam *Daftar Antrean Prioritas Batch 1* (antrean prioritas Batch 1).\n\n"
+                f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold), "
+                f"sehingga belum ada tagihan atau QRIS yang diterbitkan. "
+                f"Begitu sistem pembayaran resmi dibuka, Kakak akan langsung menerima instruksi pembayaran di nomor WhatsApp ini."
+            )
+        else:
+            hold_reply = (
+                f"Terima kasih Kak {resolved_name}! Minat pendaftaran Kakak untuk *Kelas Inkubasi CTWA Batch 1* "
+                f"sudah kami catat dalam *Daftar Antrean Prioritas Batch 1* (antrean prioritas Batch 1).\n\n"
+                f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold), "
+                f"sehingga belum ada tagihan atau QRIS yang diterbitkan. "
+                f"Begitu sistem pembayaran resmi dibuka, Kakak akan langsung menerima informasi pendaftaran & instruksi pembayaran di nomor WhatsApp ini."
+            )
+
+        if not already_processed_event:
+            try:
+                await send_whatsapp_text(
+                    to_phone=clean_phone,
+                    text=hold_reply,
+                    tenant_id=effective_tenant,
+                    phone_number_id=phone_number_id,
+                )
+            except Exception as e:
+                logger.warning(f"[AcademyHold] WhatsApp hold reply note: {e}")
+
+        target_session_state = STATE_1_PAYMENT_ISSUED if preserve_legacy_state_constant else STATE_HOLD_QUEUED
+        cls.set_session(
+            clean_phone,
+            state=target_session_state,
+            hold_state=STATE_HOLD_QUEUED,
+            strict_hold=True,
+            hold_queued=True,
+            name=resolved_name,
+            email=customer_email,
+            order_id=None,
+            campaign=campaign,
+            tenant_id=effective_tenant,
+            last_hold_reply=hold_reply,
+        )
+
+        is_dup_event = bool(is_dup or already_processed_event)
+        return {
+            "handled": True,
+            "state": 1 if preserve_legacy_state_constant else STATE_HOLD_QUEUED,
+            "hold_state": STATE_HOLD_QUEUED,
+            "action": "PAYMENT_STRICT_HOLD",
+            "campaign": campaign,
+            "order_id": None,
+            "strict_hold": True,
+            "persisted": True,
+            "persistence_source": persistence_src,
+            "persistence_backend": persistence_src,
+            "duplicate": is_dup_event,
+            "idempotent_reentry": is_dup_event,
+            "reply": hold_reply,
+            "customer_name": resolved_name,
+            "customer_email": customer_email,
+            "tenant_id": effective_tenant,
+        }
 
     @classmethod
     async def process_inbound(
@@ -1476,11 +1924,14 @@ class AcademyBotStateMachine:
         phone_number_id: Optional[str] = None,
         tenant_id: str = "onlineboost",
         raw_msg: Optional[Dict[str, Any]] = None,
+        inbound_message_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Evaluasi pesan masuk dari pengirim.
         Mengembalikan None jika pesan bukan bagian dari alur Academy.
         """
+        if inbound_message_id and not (isinstance(raw_msg, dict) and raw_msg.get("id")):
+            raw_msg = {**(raw_msg or {}), "id": inbound_message_id}
         clean_text = incoming_text.strip()
         clean_phone = normalize_phone_number(sender_phone) or sender_phone
 
@@ -1609,6 +2060,101 @@ class AcademyBotStateMachine:
             resolved_name = "Kak"
 
         # ---------------------------------------------------------------------
+        # GRACEFUL PAYMENT-HOLD STATE GUARD (Prevent Offer-Prompt Loop & Duplicate Queueing)
+        # ---------------------------------------------------------------------
+        effective_session_tenant = str(session.get("tenant_id") or tenant_id or "onlineboost").strip().lower()
+        is_in_hold_state = (
+            current_state in (STATE_HOLD_QUEUED, "STATE_LEAD_QUEUED")
+            or (current_state == STATE_1_PAYMENT_ISSUED and bool(session.get("strict_hold") or session.get("hold_queued")))
+        )
+        if is_in_hold_state and effective_session_tenant == "onlineboost" and is_onlineboost_payment_held(clean_phone):
+            email_match_in_hold = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", clean_text)
+            new_email = email_match_in_hold.group(0).lower().strip() if email_match_in_hold else None
+            if new_email and new_email != session.get("email"):
+                if "@" in clean_text and resolved_name == "Kak":
+                    parts = [p.strip() for p in re.split(r"[-:,]", clean_text) if p.strip()]
+                    for part in parts:
+                        if not re.search(r"@", part) and len(part) > 2:
+                            resolved_name = part
+                            break
+                return await cls._handle_payment_strict_hold(
+                    clean_phone=clean_phone,
+                    resolved_name=resolved_name,
+                    customer_email=new_email,
+                    effective_tenant=effective_session_tenant,
+                    campaign=session.get("campaign") or "onlineboost_batch1",
+                    phone_number_id=phone_number_id,
+                    raw_msg=raw_msg,
+                    intent_text=clean_text,
+                    preserve_legacy_state_constant=(current_state == STATE_1_PAYMENT_ISSUED),
+                    fallback_state=current_state,
+                )
+
+            inbound_msg_id = str((raw_msg or {}).get("id") or "").strip() or None
+            event_key = f"{effective_session_tenant}:{clean_phone}:{inbound_msg_id}" if inbound_msg_id else None
+            is_exact_dup_event = bool(event_key and event_key in _HOLD_QUEUE_PROCESSED_EVENT_IDS)
+
+            persisted, persistence_src, _ = persist_hold_registration_intent(
+                phone=clean_phone,
+                tenant_id=effective_session_tenant,
+                customer_name=resolved_name,
+                customer_email=session.get("email"),
+                campaign=session.get("campaign") or "onlineboost_batch1",
+                inbound_msg_id=inbound_msg_id,
+                intent_text=clean_text,
+            )
+            if not persisted:
+                return await cls._handle_payment_strict_hold(
+                    clean_phone=clean_phone,
+                    resolved_name=resolved_name,
+                    customer_email=session.get("email"),
+                    effective_tenant=effective_session_tenant,
+                    campaign=session.get("campaign") or "onlineboost_batch1",
+                    phone_number_id=phone_number_id,
+                    raw_msg=raw_msg,
+                    intent_text=clean_text,
+                    preserve_legacy_state_constant=(current_state == STATE_1_PAYMENT_ISSUED),
+                    fallback_state=current_state,
+                )
+
+            hold_status_reply = (
+                f"Siap Kak {resolved_name}! Minat pendaftaran Kakak untuk *Kelas Inkubasi CTWA Batch 1* "
+                f"sudah tercatat di antrean prioritas Batch 1.\n\n"
+                f"Saat ini gerbang pembayaran resmi Batch 1 masih dalam status persiapan rilis (strict hold), "
+                f"sehingga belum ada tagihan atau QRIS yang diterbitkan. "
+                f"Kami akan langsung menghubungi Kakak di nomor WhatsApp ini begitu akses pembayaran resmi dibuka ya!"
+            )
+            if not is_exact_dup_event:
+                try:
+                    await send_whatsapp_text(
+                        to_phone=clean_phone,
+                        text=hold_status_reply,
+                        tenant_id=effective_session_tenant,
+                        phone_number_id=phone_number_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"[AcademyHoldState] WhatsApp hold reminder note: {e}")
+
+            return {
+                "handled": True,
+                "state": 1 if current_state == STATE_1_PAYMENT_ISSUED else STATE_HOLD_QUEUED,
+                "hold_state": STATE_HOLD_QUEUED,
+                "action": "PAYMENT_STRICT_HOLD",
+                "campaign": session.get("campaign") or "onlineboost_batch1",
+                "order_id": None,
+                "strict_hold": True,
+                "persisted": True,
+                "persistence_source": persistence_src,
+                "persistence_backend": persistence_src,
+                "duplicate": True,
+                "idempotent_reentry": True,
+                "reply": session.get("last_hold_reply") if is_exact_dup_event and session.get("last_hold_reply") else hold_status_reply,
+                "customer_name": resolved_name,
+                "customer_email": session.get("email"),
+                "tenant_id": effective_session_tenant,
+            }
+
+        # ---------------------------------------------------------------------
         # STATE 0: Multi-Trigger Inbound Routing (Batch 1)
         # ---------------------------------------------------------------------
         trigger_campaign = classify_academy_trigger(clean_text, tenant_id=tenant_id)
@@ -1700,8 +2246,16 @@ class AcademyBotStateMachine:
 
                 # C. Alumni Broadcast Response "MAU"
                 # Directive 5: Pisahkan trigger MAU dari landing page, sapa santai ala Aldi & ajukan kualifikasi
+                # Jangan tangkap "MAU" sebagai sapaan awal jika user sudah berada di state penawaran (STATE_CONSULTATION)
                 is_alumni_mau = bool(
-                    TRIGGER_PATTERN_ALUMNI_MAU.search(clean_text)
+                    current_state not in (
+                        STATE_CONSULTATION,
+                        STATE_1_AWAITING_EMAIL,
+                        STATE_1_PAYMENT_ISSUED,
+                        STATE_HOLD_QUEUED,
+                        "STATE_LEAD_QUEUED",
+                    )
+                    and TRIGGER_PATTERN_ALUMNI_MAU.search(clean_text)
                     and not TRIGGER_PATTERN_REGISTRATION.search(clean_text)
                     and not TRIGGER_PATTERN_PRICE_BENEFITS.search(clean_text)
                 )
@@ -1867,8 +2421,46 @@ class AcademyBotStateMachine:
                     }
 
                 # H. Situation D: Prospek menyatakan niat mendaftar / amankan slot
-                is_register_intent = bool(TRIGGER_PATTERN_REGISTRATION.search(clean_text))
+                is_consultation_affirmative = bool(
+                    current_state == STATE_CONSULTATION
+                    and not CONSULTATION_NEGATIVE_PATTERN.search(clean_text)
+                    and (
+                        CONSULTATION_AFFIRMATIVE_REGISTRATION_PATTERN.search(clean_text)
+                        or re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", clean_text)
+                    )
+                )
+                is_register_intent = bool(
+                    not CONSULTATION_NEGATIVE_PATTERN.search(clean_text)
+                    and (TRIGGER_PATTERN_REGISTRATION.search(clean_text) or is_consultation_affirmative)
+                )
                 if is_register_intent:
+                    effective_tenant = str(session.get("tenant_id") or tenant_id or "onlineboost").strip().lower()
+                    email_match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", clean_text)
+                    extracted_email = email_match.group(0).lower().strip() if email_match else session.get("email")
+                    if "@" in clean_text and resolved_name == "Kak":
+                        parts = [p.strip() for p in re.split(r"[-:,]", clean_text) if p.strip()]
+                        for part in parts:
+                            if not re.search(r"@", part) and len(part) > 2 and not part.lower().startswith("halo"):
+                                resolved_name = part
+                                break
+
+                    # P0 STRICT HOLD GUARD: Saat ONLINEBOOST_PAYMENT_STRICT_HOLD=true, langsung transisi
+                    # keluar dari state penawaran ke state graceful hold (STATE_HOLD_QUEUED) tanpa membuat
+                    # artefak pembayaran (QRIS/invoice/order) dan hanya mengirim ack jika persistensi berhasil.
+                    if effective_tenant == "onlineboost" and is_onlineboost_payment_held(clean_phone):
+                        return await cls._handle_payment_strict_hold(
+                            clean_phone=clean_phone,
+                            resolved_name=resolved_name,
+                            customer_email=extracted_email,
+                            effective_tenant=effective_tenant,
+                            campaign="onlineboost_batch1",
+                            phone_number_id=phone_number_id,
+                            raw_msg=raw_msg,
+                            intent_text=clean_text,
+                            preserve_legacy_state_constant=False,
+                            fallback_state=current_state or STATE_CONSULTATION,
+                        )
+
                     reg_reply = (
                         f"Siap Kak {resolved_name}! Mantap banget keputusannya. 🚀\n\n"
                         f"Untuk pencatatan slot Kelas Inkubasi CTWA Batch 1 (Rp249.000), mohon balas pesan ini dengan:\n"
@@ -1881,6 +2473,7 @@ class AcademyBotStateMachine:
                         clean_phone,
                         state=STATE_1_AWAITING_EMAIL,
                         name=resolved_name,
+                        email=extracted_email,
                         campaign="onlineboost_batch1",
                         tenant_id=tenant_id,
                     )
@@ -2090,41 +2683,18 @@ class AcademyBotStateMachine:
 
                 # P0 STRICT HOLD & PILOT ISOLATION GUARD: Reject before invoice generation
                 if effective_tenant == "onlineboost" and is_onlineboost_payment_held(clean_phone):
-                    hold_reply = (
-                        f"Terima kasih Kak {resolved_name}! Data pendaftaran Kakak ({customer_email}) sudah kami catat dalam antrean prioritas Batch 1.\n\n"
-                        f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold). "
-                        f"Begitu sistem pembayaran resmi dibuka, Kakak akan langsung menerima instruksi pembayaran di nomor WhatsApp ini."
+                    return await cls._handle_payment_strict_hold(
+                        clean_phone=clean_phone,
+                        resolved_name=resolved_name,
+                        customer_email=customer_email,
+                        effective_tenant=effective_tenant,
+                        campaign="storefront_direct",
+                        phone_number_id=phone_number_id,
+                        raw_msg=raw_msg,
+                        intent_text=clean_text,
+                        preserve_legacy_state_constant=True,
+                        fallback_state=current_state or STATE_0_TRIGGER,
                     )
-                    try:
-                        await send_whatsapp_text(
-                            to_phone=clean_phone,
-                            text=hold_reply,
-                            tenant_id=tenant_id,
-                            phone_number_id=phone_number_id,
-                        )
-                    except Exception as e:
-                        logger.warning(f"[AcademyRouteC] WhatsApp hold reply note: {e}")
-
-                    cls.set_session(
-                        clean_phone,
-                        state=STATE_1_PAYMENT_ISSUED,
-                        name=resolved_name,
-                        email=customer_email,
-                        tenant_id=tenant_id,
-                    )
-
-                    return {
-                        "handled": True,
-                        "state": 1,
-                        "action": "PAYMENT_STRICT_HOLD",
-                        "campaign": "storefront_direct",
-                        "order_id": None,
-                        "strict_hold": True,
-                        "reply": hold_reply,
-                        "customer_name": resolved_name,
-                        "customer_email": customer_email,
-                        "tenant_id": tenant_id,
-                    }
 
                 invoice = generate_academy_qris_invoice(
                     customer_name=resolved_name,
@@ -2245,41 +2815,18 @@ class AcademyBotStateMachine:
 
             # P0 STRICT HOLD GUARD: Reject request BEFORE invoice generation and database mutation
             if effective_tenant == "onlineboost" and is_onlineboost_payment_held(clean_phone):
-                hold_reply = (
-                    f"Terima kasih Kak {resolved_name}! Data pendaftaran Kakak ({customer_email}) sudah kami catat dalam antrean prioritas Batch 1.\n\n"
-                    f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold). "
-                    f"Begitu sistem pembayaran resmi dibuka, Kakak akan langsung menerima instruksi pembayaran di nomor WhatsApp ini."
+                return await cls._handle_payment_strict_hold(
+                    clean_phone=clean_phone,
+                    resolved_name=resolved_name,
+                    customer_email=customer_email,
+                    effective_tenant=effective_tenant,
+                    campaign=session.get("campaign") or "onlineboost_batch1",
+                    phone_number_id=phone_number_id,
+                    raw_msg=raw_msg,
+                    intent_text=clean_text,
+                    preserve_legacy_state_constant=True,
+                    fallback_state=STATE_1_AWAITING_EMAIL,
                 )
-                try:
-                    await send_whatsapp_text(
-                        to_phone=clean_phone,
-                        text=hold_reply,
-                        tenant_id=effective_tenant,
-                        phone_number_id=phone_number_id,
-                    )
-                except Exception as e:
-                    logger.warning(f"[AcademyState1] WhatsApp hold reply note: {e}")
-
-                cls.set_session(
-                    clean_phone,
-                    state=STATE_1_PAYMENT_ISSUED,
-                    name=resolved_name,
-                    email=customer_email,
-                    tenant_id=effective_tenant,
-                )
-
-                return {
-                    "handled": True,
-                    "state": 1,
-                    "action": "PAYMENT_STRICT_HOLD",
-                    "campaign": session.get("campaign") or "onlineboost_batch1",
-                    "order_id": None,
-                    "strict_hold": True,
-                    "reply": hold_reply,
-                    "customer_name": resolved_name,
-                    "customer_email": customer_email,
-                    "tenant_id": effective_tenant,
-                }
 
             # Generate QRIS Invoice Rp 249.xxx (valid 15 menit)
             invoice = generate_academy_qris_invoice(

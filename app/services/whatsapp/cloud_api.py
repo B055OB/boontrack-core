@@ -77,6 +77,89 @@ def sanitize_whatsapp_message_text(text: Any) -> str:
 # Supabase message logging
 # ---------------------------------------------------------------------------
 
+def _extract_valid_conv_id(resp: Any, expected_tenant: Optional[str] = None) -> Optional[str]:
+    """Ekstrak conversation ID valid dari response Supabase select."""
+    if resp is None:
+        return None
+    data = getattr(resp, "data", None)
+    rows: List[Dict[str, Any]] = []
+    if isinstance(data, list):
+        rows = [r for r in data if isinstance(r, dict)]
+    elif isinstance(data, dict):
+        rows = [data]
+    if not rows:
+        return None
+    if expected_tenant:
+        exp = str(expected_tenant).strip().lower()
+        for r in rows:
+            t_id = str(r.get("tenant_id") or "").strip().lower()
+            t_slug = str(r.get("tenant_slug") or "").strip().lower()
+            if t_id == exp or t_slug == exp or (not t_id and not t_slug):
+                cid = r.get("id")
+                if isinstance(cid, str) and cid.strip():
+                    return cid.strip()
+    cid = rows[0].get("id")
+    if isinstance(cid, str) and cid.strip():
+        return cid.strip()
+    return None
+
+
+def _resolve_existing_supabase_conversation_id(
+    supabase: Any,
+    clean_tenant: str,
+    clean_digits: str,
+    allow_phone_fallback: bool = False,
+) -> Optional[str]:
+    """
+    Cari baris percakapan yang sudah ada di tabel `conversations` berdasarkan
+    pasangan (tenant, phone) sebelum melakukan INSERT/UPSERT dengan UUID baru,
+    untuk mencegah HTTP 409 Conflict pada constraint unik sekunder dan
+    pelanggaran foreign key `messages_conversation_id_fkey`.
+    """
+    if not supabase or not clean_digits:
+        return None
+
+    lookup_pairs = [
+        ("tenant_id", clean_tenant, "phone_number", clean_digits),
+        ("tenant_slug", clean_tenant, "customer_phone", clean_digits),
+        ("tenant_id", clean_tenant, "customer_phone", clean_digits),
+        ("tenant_slug", clean_tenant, "phone_number", clean_digits),
+    ]
+    for col1, val1, col2, val2 in lookup_pairs:
+        try:
+            resp = (
+                supabase.table("conversations")
+                .select("id, tenant_id, tenant_slug")
+                .eq(col1, val1)
+                .eq(col2, val2)
+                .limit(1)
+                .execute()
+            )
+            found_id = _extract_valid_conv_id(resp, expected_tenant=clean_tenant)
+            if found_id:
+                return found_id
+        except Exception:
+            continue
+
+    if allow_phone_fallback:
+        for phone_col in ("phone_number", "customer_phone"):
+            try:
+                resp = (
+                    supabase.table("conversations")
+                    .select("id, tenant_id, tenant_slug")
+                    .eq(phone_col, clean_digits)
+                    .limit(5)
+                    .execute()
+                )
+                found_id = _extract_valid_conv_id(resp, expected_tenant=clean_tenant)
+                if found_id:
+                    return found_id
+            except Exception:
+                continue
+
+    return None
+
+
 async def log_to_supabase_messages(
     sender: str,
     text: Optional[str] = None,
@@ -191,7 +274,20 @@ async def log_to_supabase_messages(
             except Exception as _lookup_err:
                 logger.debug(f"[Strict Channel Binding Lookup Note] {_lookup_err}")
 
+        conv_persisted = False
         if conv_uuid and clean_digits:
+            # 1. Reuse existing conversation row if one already exists for (tenant, phone)
+            #    so we do not trigger a 409 Conflict when an existing row has a different id
+            #    (e.g. UUIDv4 created by RotaryRoutingService vs deterministic UUIDv5).
+            existing_conv_id = _resolve_existing_supabase_conversation_id(
+                supabase,
+                clean_tenant,
+                clean_digits,
+                allow_phone_fallback=False,
+            )
+            if existing_conv_id:
+                conv_uuid = existing_conv_id
+
             conv_payload = {
                 "id": conv_uuid,
                 "tenant_id": clean_tenant,
@@ -212,16 +308,60 @@ async def log_to_supabase_messages(
             if resolved_provider:
                 conv_payload["provider"] = resolved_provider
 
+            update_payload = {k: v for k, v in conv_payload.items() if k != "id"}
+
             try:
-                supabase.table("conversations").upsert(conv_payload).execute()
+                if existing_conv_id:
+                    supabase.table("conversations").update(update_payload).eq("id", conv_uuid).execute()
+                    conv_persisted = True
+                else:
+                    upsert_res = supabase.table("conversations").upsert(conv_payload).execute()
+                    reused_from_upsert = _extract_valid_conv_id(upsert_res, expected_tenant=clean_tenant)
+                    if reused_from_upsert:
+                        conv_uuid = reused_from_upsert
+                    conv_persisted = True
             except Exception as conv_err:
-                logger.debug(f"[Supabase Conv Upsert Warning] {conv_err}")
+                logger.warning(f"[Supabase Conv Upsert Warning] {conv_err}")
+                # Recover on 409 Conflict (secondary unique index collision on phone_number / customer_phone)
+                recovered_conv_id = _resolve_existing_supabase_conversation_id(
+                    supabase,
+                    clean_tenant,
+                    clean_digits,
+                    allow_phone_fallback=True,
+                )
+                if recovered_conv_id:
+                    conv_uuid = recovered_conv_id
+                    conv_persisted = True
+                    try:
+                        supabase.table("conversations").update(update_payload).eq("id", conv_uuid).execute()
+                    except Exception as _upd_err:
+                        logger.warning(f"[Supabase Conv Conflict Update Warning] {_upd_err}")
+                else:
+                    logger.warning(
+                        f"[Supabase Conv Resolution Failed] Could not upsert or recover conversation "
+                        f"for tenant='{clean_tenant}' phone='{clean_digits[:4]}***': {conv_err}"
+                    )
 
             # PostgreSQL Sync (P0 Strict Channel Binding)
             try:
                 from app.core.database import get_db_connection
                 pg_conn = get_db_connection()
                 with pg_conn.cursor() as pg_cur:
+                    pg_cur.execute(
+                        """
+                        SELECT id FROM conversations
+                        WHERE (tenant_id = %s OR tenant_slug = %s)
+                          AND (phone_number = %s OR customer_phone = %s)
+                        ORDER BY updated_at DESC NULLS LAST
+                        LIMIT 1;
+                        """,
+                        (clean_tenant, clean_tenant, clean_digits, clean_digits),
+                    )
+                    existing_pg_row = pg_cur.fetchone()
+                    if existing_pg_row and existing_pg_row[0]:
+                        conv_uuid = str(existing_pg_row[0])
+                        conv_persisted = True
+
                     pg_cur.execute(
                         """
                         INSERT INTO conversations (
@@ -251,9 +391,18 @@ async def log_to_supabase_messages(
                         )
                     )
                     pg_conn.commit()
+                    conv_persisted = True
                 pg_conn.close()
             except Exception as pg_conv_err:
                 logger.debug(f"[PostgreSQL Conv Upsert Note] {pg_conv_err}")
+
+        # Never reference an unverified/non-existent conversation_id in messages (prevents 23503 FK error)
+        effective_msg_conv_id = conv_uuid if conv_persisted else None
+        if conv_uuid and clean_digits and not conv_persisted:
+            logger.warning(
+                f"[Supabase Conv Unlinked Fallback] Persisting message with conversation_id=None "
+                f"for tenant='{clean_tenant}' because conversation row could not be verified."
+            )
 
         safe_meta = {}
         if metadata:
@@ -261,6 +410,7 @@ async def log_to_supabase_messages(
                 safe_meta = json.loads(json.dumps(metadata, default=str))
             except Exception:
                 safe_meta = {str(k): str(v) for k, v in metadata.items()}
+        safe_meta["conversation_persisted"] = bool(conv_persisted)
 
         payload = {
             "sender": normalized_sender,
@@ -273,7 +423,7 @@ async def log_to_supabase_messages(
             "user_id": resolved_uid,
             "user_phone": resolved_phone,
             "user_name": user_name,
-            "conversation_id": conv_uuid,
+            "conversation_id": effective_msg_conv_id,
             "created_at": now_iso,
             "media_url": media_url,
             "metadata": safe_meta,
@@ -282,6 +432,15 @@ async def log_to_supabase_messages(
             supabase.table("messages").insert(payload).execute()
         except Exception as insert_err:
             logger.debug(f"[Supabase Message Insert Fallback] {insert_err}")
+            err_str = str(insert_err).lower()
+            fallback_conv_id = effective_msg_conv_id
+            if "messages_conversation_id_fkey" in err_str or "23503" in err_str or "foreign key" in err_str:
+                fallback_conv_id = _resolve_existing_supabase_conversation_id(
+                    supabase,
+                    clean_tenant,
+                    clean_digits,
+                    allow_phone_fallback=True,
+                )
             minimal_payload = {
                 "sender": normalized_sender,
                 "text": content,
@@ -291,7 +450,7 @@ async def log_to_supabase_messages(
                 "user_id": resolved_uid,
                 "user_phone": resolved_phone,
                 "user_name": user_name,
-                "conversation_id": conv_uuid,
+                "conversation_id": fallback_conv_id,
                 "created_at": now_iso,
                 "media_url": media_url,
             }
