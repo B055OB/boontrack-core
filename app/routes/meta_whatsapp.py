@@ -44,11 +44,14 @@ meta_whatsapp_router = APIRouter(tags=["Meta WhatsApp Official Gateway"])
 router = meta_whatsapp_router
 
 def get_meta_verify_tokens() -> list[str]:
-    """Retrieve officially configured Meta WhatsApp webhook verification tokens from environment."""
+    """Retrieve officially configured Meta WhatsApp webhook verification tokens from environment.
+    Fails closed if no verification tokens are configured in the environment.
+    """
     candidates = [
         os.getenv("WHATSAPP_VERIFY_TOKEN"),
         os.getenv("META_WHATSAPP_VERIFY_TOKEN"),
         os.getenv("META_WEBHOOK_VERIFY_TOKEN"),
+        os.getenv("ONLINEBOOST_WEBHOOK_VERIFY_TOKEN"),
     ]
     return [c.strip() for c in candidates if c and c.strip()]
 
@@ -58,7 +61,6 @@ def get_meta_verify_tokens() -> list[str]:
 # =============================================================================
 
 @meta_whatsapp_router.get("/api/v1/whatsapp/webhook", summary="Meta Webhook Verification")
-@meta_whatsapp_router.get("/webhook/whatsapp", summary="Meta Webhook Verification Alias")
 @meta_whatsapp_router.get("/api/whatsapp/webhook", summary="Meta Webhook Verification Alias 2")
 async def verify_webhook_handshake(
     request: Request,
@@ -85,7 +87,6 @@ async def verify_webhook_handshake(
 # =============================================================================
 
 @meta_whatsapp_router.post("/api/v1/whatsapp/webhook", summary="Meta WhatsApp Inbound Receiver")
-@meta_whatsapp_router.post("/webhook/whatsapp", summary="Meta WhatsApp Inbound Receiver Alias")
 @meta_whatsapp_router.post("/api/whatsapp/webhook", summary="Meta WhatsApp Inbound Receiver Alias 2")
 async def handle_whatsapp_webhook(request: Request):
     """
