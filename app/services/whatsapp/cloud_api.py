@@ -77,8 +77,18 @@ def sanitize_whatsapp_message_text(text: Any) -> str:
 # Supabase message logging
 # ---------------------------------------------------------------------------
 
-def _extract_valid_conv_id(resp: Any, expected_tenant: Optional[str] = None) -> Optional[str]:
-    """Ekstrak conversation ID valid dari response Supabase select."""
+def _extract_valid_conv_id(
+    resp: Any,
+    expected_tenant: Optional[str] = None,
+    require_explicit_tenant_match: bool = False,
+) -> Optional[str]:
+    """
+    Ekstrak conversation ID valid dari response Supabase select.
+    Jika `expected_tenant` diberikan, tolak (return None) seluruh baris yang
+    `tenant_id` / `tenant_slug`-nya milik tenant lain.
+    Jika `require_explicit_tenant_match=True` (digunakan pada phone-only fallback),
+    wajibkan kecocokan eksplisit `t_id == exp` atau `t_slug == exp`.
+    """
     if resp is None:
         return None
     data = getattr(resp, "data", None)
@@ -94,10 +104,15 @@ def _extract_valid_conv_id(resp: Any, expected_tenant: Optional[str] = None) -> 
         for r in rows:
             t_id = str(r.get("tenant_id") or "").strip().lower()
             t_slug = str(r.get("tenant_slug") or "").strip().lower()
-            if t_id == exp or t_slug == exp or (not t_id and not t_slug):
+            if t_id == exp or t_slug == exp:
                 cid = r.get("id")
                 if isinstance(cid, str) and cid.strip():
                     return cid.strip()
+            elif not require_explicit_tenant_match and not t_id and not t_slug:
+                cid = r.get("id")
+                if isinstance(cid, str) and cid.strip():
+                    return cid.strip()
+        return None
     cid = rows[0].get("id")
     if isinstance(cid, str) and cid.strip():
         return cid.strip()
@@ -135,7 +150,11 @@ def _resolve_existing_supabase_conversation_id(
                 .limit(1)
                 .execute()
             )
-            found_id = _extract_valid_conv_id(resp, expected_tenant=clean_tenant)
+            found_id = _extract_valid_conv_id(
+                resp,
+                expected_tenant=clean_tenant,
+                require_explicit_tenant_match=False,
+            )
             if found_id:
                 return found_id
         except Exception:
@@ -151,7 +170,11 @@ def _resolve_existing_supabase_conversation_id(
                     .limit(5)
                     .execute()
                 )
-                found_id = _extract_valid_conv_id(resp, expected_tenant=clean_tenant)
+                found_id = _extract_valid_conv_id(
+                    resp,
+                    expected_tenant=clean_tenant,
+                    require_explicit_tenant_match=True,
+                )
                 if found_id:
                     return found_id
             except Exception:

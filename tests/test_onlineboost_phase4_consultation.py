@@ -1817,3 +1817,45 @@ async def test_duplicate_webhook_delivery_does_not_create_duplicate_queue_entrie
         assert res3["action"] == "PAYMENT_STRICT_HOLD"
         assert res3["idempotent_reentry"] is True
         assert len(get_hold_queue_entries("onlineboost")) == 1
+
+
+@pytest.mark.asyncio
+async def test_negative_replies_in_consultation_do_not_trigger_registration_hold():
+    """
+    Negative or hesitant responses in STATE_CONSULTATION (e.g. 'tidak', 'belum',
+    'nanti dulu', 'tidak mau daftar dulu', 'pikir-pikir dulu') must NOT be misclassified
+    as affirmative registration intent and must NOT enter STATE_HOLD_QUEUED.
+    """
+    from app.services.academy_service import (
+        STATE_HOLD_QUEUED,
+        get_hold_queue_entries,
+        reset_academy_test_state,
+    )
+
+    reset_academy_test_state()
+    negative_phrases = [
+        "Tidak",
+        "Belum",
+        "Nanti dulu",
+        "Tidak mau daftar dulu",
+        "Belum siap kak",
+        "Pikir-pikir dulu",
+        "Gak jadi dulu kang",
+    ]
+
+    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
+        for idx, phrase in enumerate(negative_phrases):
+            phone = f"62812345996{idx}"
+            academy_bot.set_session(phone, state=STATE_CONSULTATION, name="Fajar", tenant_id="onlineboost")
+
+            res = await academy_bot.process_inbound(
+                sender_phone=phone,
+                incoming_text=phrase,
+                tenant_id="onlineboost",
+            )
+            assert res["handled"] is True, f"Failed for negative phrase: {phrase}"
+            assert res["action"] != "PAYMENT_STRICT_HOLD", f"False positive hold on '{phrase}'"
+            assert res["state"] == STATE_CONSULTATION, f"State mutated on '{phrase}': {res['state']}"
+            assert res["state"] != STATE_HOLD_QUEUED
+
+    assert len(get_hold_queue_entries("onlineboost")) == 0
