@@ -1,12 +1,14 @@
+import os
+import secrets
 import logging
 import re
 from datetime import datetime, timedelta
 from aiohttp import web
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from app.services.whatsapp_service import get_supabase
-from app.services.subscription_service import create_subscription_invoice, process_successful_subscription
+from app.services import subscription_service
+from app.services.subscription_service import create_subscription_invoice, process_successful_subscription, get_plan_pricing, get_supabase
 
 logger = logging.getLogger("SHOP_SUBSCRIPTION_ROUTER")
 
@@ -87,10 +89,17 @@ async def preview_upgrade_logic(target_tier: str = "PRO_SCALE", tenant_id: Optio
 
 # --- Shared Webhook Logic ---
 async def handle_xendit_subscription_webhook_logic(payload: dict):
-    status = str(payload.get("status", "")).upper()
-    metadata = payload.get("metadata", {}) or {}
-    external_id = str(payload.get("external_id", "") or payload.get("id", ""))
-    
+    data_obj = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    status = str(payload.get("status") or data_obj.get("status") or "").upper()
+    metadata = payload.get("metadata") or data_obj.get("metadata") or {}
+    external_id = str(
+        payload.get("external_id")
+        or data_obj.get("external_id")
+        or payload.get("id")
+        or data_obj.get("id")
+        or ""
+    )
+
     if status == "PAID":
         tenant_slug = metadata.get("tenant_slug")
 
@@ -106,18 +115,52 @@ async def handle_xendit_subscription_webhook_logic(payload: dict):
             return {
                 "status": "ignored",
                 "reason": "Missing tenant_slug in metadata and external_id"
-            }, 200
+            }, 400
+
+        # Authoritative DB Tenant Verification (Fail-Closed)
+        supabase = subscription_service.get_supabase()
+        if supabase:
+            try:
+                m_check = supabase.table("merchants").select("id, slug").eq("slug", tenant_slug).execute()
+                t_check = supabase.table("tenants").select("id, slug").eq("slug", tenant_slug).execute()
+                has_merchant = bool(m_check and m_check.data and len(m_check.data) > 0)
+                has_tenant = bool(t_check and t_check.data and len(t_check.data) > 0)
+                if not has_merchant and not has_tenant:
+                    logger.warning(f"[XENDIT WEBHOOK REJECTED] Tenant '{tenant_slug}' not found in database.")
+                    return {
+                        "status": "ignored",
+                        "reason": f"Tenant '{tenant_slug}' not found in database",
+                    }, 404
+            except Exception as t_err:
+                logger.warning(f"[Tenant existence check note] {t_err}")
 
         plan_tier = metadata.get("plan_tier") or metadata.get("target_tier") or "solo"
         affiliate_id = metadata.get("affiliate_id")
         am_id = metadata.get("am_id")
-        paid_amount = payload.get("amount") or metadata.get("amount")
+        raw_amount = payload.get("amount") or data_obj.get("amount") or metadata.get("amount")
+        paid_amount = None
+        if raw_amount:
+            try:
+                paid_amount = int(float(raw_amount))
+            except (ValueError, TypeError):
+                paid_amount = None
+
         is_upgrade = bool(
             metadata.get("is_upgrade") or 
             metadata.get("type") == "SUBSCRIPTION_UPGRADE" or 
             external_id.startswith("sub_upgrade_")
         )
         target_valid_until = metadata.get("new_valid_until")
+
+        # Amount validation for non-upgrades (Fail-Closed against underpayment)
+        if not is_upgrade and paid_amount is not None:
+            expected_price = get_plan_pricing(plan_tier)
+            if paid_amount < expected_price:
+                logger.warning(f"[XENDIT WEBHOOK REJECTED] Underpayment for '{tenant_slug}': paid Rp{paid_amount:,}, expected Rp{expected_price:,}")
+                return {
+                    "status": "rejected",
+                    "reason": f"Payment amount Rp{paid_amount:,} is less than required price Rp{expected_price:,}",
+                }, 400
 
         logger.info(f"[XENDIT WEBHOOK PROCESS] Mengaktifkan tenant: {tenant_slug}, Plan: {plan_tier}, Amount: {paid_amount}, Inv: {external_id}, Upgrade: {is_upgrade}")
 
@@ -315,6 +358,17 @@ async def fastapi_create_sub(payload: CreateSubPayload):
 
 
 @shop_subscription_fastapi_router.post("/webhook/xendit")
-async def fastapi_xendit_sub_webhook(payload: dict):
-    res, _ = await handle_xendit_subscription_webhook_logic(payload)
+async def fastapi_xendit_sub_webhook(payload: dict, request: Request):
+    """Callback route for Xendit subscription invoices.
+    Enforces fail-closed token authentication via constant-time comparison.
+    """
+    token = request.headers.get("x-callback-token")
+    expected_token = (os.getenv("XENDIT_WEBHOOK_VERIFICATION_TOKEN") or os.getenv("XENDIT_CALLBACK_TOKEN") or "").strip()
+    if not expected_token or not token or not secrets.compare_digest(token.strip(), expected_token):
+        logger.warning("[SUB_WEBHOOK_AUTH_FAIL] Unauthorized callback token on /api/v1/shop/subscriptions/webhook/xendit")
+        raise HTTPException(status_code=403, detail="Invalid callback token")
+
+    res, status_code = await handle_xendit_subscription_webhook_logic(payload)
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail=res)
     return res

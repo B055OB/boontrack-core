@@ -53,5 +53,5 @@ def test_mutation_guard_expired_tenant():
         assert_tenant_mutation_allowed("nyka")
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail["error"] == "SUBSCRIPTION_REQUIRED"
-    assert "Masa trial telah habis" in exc_info.value.detail["message"]
+    assert "Masa aktif paket/trial telah berakhir" in exc_info.value.detail["message"]
 

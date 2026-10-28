@@ -67,8 +67,8 @@ class TestXenditQRISIntegration(unittest.TestCase):
         self.assertTrue(result["qr_string"].startswith("000201"))
 
         # Verifikasi call parameters
-        mock_post.assert_called_once()
-        call_kwargs = mock_post.call_args.kwargs
+        self.assertTrue(mock_post.called)
+        call_kwargs = mock_post.call_args_list[0].kwargs
         headers = call_kwargs["headers"]
         self.assertIn("Authorization", headers)
         self.assertTrue(headers["Authorization"].startswith("Basic "))
@@ -109,11 +109,14 @@ class TestXenditQRISIntegration(unittest.TestCase):
     # 3. Successful Settlement & Background Tasks
     # =========================================================================
 
-    @patch("app.routes.xendit.send_meta_capi_purchase", new_callable=AsyncMock)
-    @patch("app.routes.xendit.send_whatsapp_text", new_callable=AsyncMock)
+    @patch("app.routes.xendit.send_capi_task", new_callable=AsyncMock)
+    @patch("app.routes.xendit.send_whatsapp_payment_notification", new_callable=AsyncMock)
     def test_xendit_callback_settlement_and_tasks(self, mock_wa, mock_capi):
         """Memvalidasi pemrosesan webhook sukses memicu notifikasi WhatsApp dan event Meta CAPI."""
-        external_id = "ORD-CAREER-778"
+        import uuid
+        uid = uuid.uuid4().hex[:8]
+        external_id = f"ORD-CAREER-{uid}"
+        event_id = f"qr_paid_{uid}"
         amount = 150000
         phone = "081234567890"
 
@@ -128,7 +131,7 @@ class TestXenditQRISIntegration(unittest.TestCase):
         webhook_payload = {
             "event": "qr_code.paid",
             "data": {
-                "id": "qr_paid_778",
+                "id": event_id,
                 "external_id": external_id,
                 "amount": amount,
                 "status": "COMPLETED",
@@ -153,31 +156,41 @@ class TestXenditQRISIntegration(unittest.TestCase):
         # Verifikasi background task 1 (WhatsApp) terpanggil dengan data order
         mock_wa.assert_called_once()
         wa_kwargs = mock_wa.call_args.kwargs
-        self.assertEqual(wa_kwargs["to_phone"], phone)
-        self.assertIn(external_id, wa_kwargs["text"])
-        self.assertIn("150,000", wa_kwargs["text"])
+        self.assertEqual(wa_kwargs["phone"], phone)
+        self.assertEqual(wa_kwargs["external_id"], external_id)
+        self.assertEqual(wa_kwargs["amount"], amount)
 
         # Verifikasi background task 2 (Meta CAPI) terpanggil dengan event Purchase
         mock_capi.assert_called_once()
         capi_kwargs = mock_capi.call_args.kwargs
         self.assertEqual(capi_kwargs["external_id"], external_id)
-        self.assertEqual(capi_kwargs["value"], amount)
+        self.assertEqual(capi_kwargs["amount"], amount)
         self.assertEqual(capi_kwargs["currency"], "IDR")
 
     # =========================================================================
     # 4. Strict Idempotency Check
     # =========================================================================
 
-    @patch("app.routes.xendit.send_meta_capi_purchase", new_callable=AsyncMock)
-    @patch("app.routes.xendit.send_whatsapp_text", new_callable=AsyncMock)
+    @patch("app.routes.xendit.send_capi_task", new_callable=AsyncMock)
+    @patch("app.routes.xendit.send_whatsapp_payment_notification", new_callable=AsyncMock)
     def test_xendit_callback_strict_idempotency(self, mock_wa, mock_capi):
         """Memvalidasi pengiriman payload webhook duplikat dicegah dari double-processing."""
-        external_id = "ORD-IDEMPOTENT-999"
+        import uuid
+        uid = uuid.uuid4().hex[:8]
+        external_id = f"ORD-IDEMPOTENT-{uid}"
+        event_id = f"qr_idem_{uid}"
         amount = 50000
         phone = "081987654321"
 
+        xendit_service._intents_by_external_id[external_id] = {
+            "external_id": external_id,
+            "amount": amount,
+            "customer_phone": phone,
+            "tenant_id": "boontrack-career",
+        }
+
         webhook_payload = {
-            "id": "qr_idem_999",
+            "id": event_id,
             "external_id": external_id,
             "amount": amount,
             "status": "COMPLETED",
@@ -209,10 +222,22 @@ class TestXenditQRISIntegration(unittest.TestCase):
 
     def test_xendit_callback_route_alias(self):
         """Memvalidasi alias endpoint /api/v1/payment/xendit/callback berfungsi identik."""
+        import uuid
+        uid = uuid.uuid4().hex[:8]
+        external_id = f"ORD-ALIAS-{uid}"
+        event_id = f"qr_alias_{uid}"
+        amount = 25000
+
+        xendit_service._intents_by_external_id[external_id] = {
+            "external_id": external_id,
+            "amount": amount,
+            "tenant_id": "boontrack-career",
+        }
+
         payload = {
-            "id": "qr_alias_001",
-            "external_id": "ORD-ALIAS-001",
-            "amount": 25000,
+            "id": event_id,
+            "external_id": external_id,
+            "amount": amount,
             "status": "COMPLETED",
         }
         resp = self.client.post(

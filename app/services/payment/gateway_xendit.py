@@ -4,6 +4,7 @@ Implements PaymentAdapter interface according to ARCHITECTURE.md §10.1.
 """
 
 import os
+import secrets
 import logging
 from typing import Dict, Any, Optional, List
 import httpx
@@ -44,15 +45,15 @@ class XenditAdapter(PaymentAdapter):
         self.api_url = os.getenv("XENDIT_API_URL", "https://api.xendit.co").rstrip("/")
 
     def verify_webhook_token(self, token: Optional[str]) -> bool:
-        """Verifikasi token callback dari header 'x-callback-token'."""
+        """Verifikasi token callback dari header 'x-callback-token' menggunakan constant-time comparison."""
         if not token or not str(token).strip():
             return False
         clean_in = str(token).strip()
         expected = self.callback_token
         alt_token = (os.getenv("XENDIT_WEBHOOK_VERIFICATION_TOKEN") or os.getenv("XENDIT_CALLBACK_TOKEN") or "").strip()
-        if expected and clean_in == expected:
+        if expected and secrets.compare_digest(clean_in, expected):
             return True
-        if alt_token and clean_in == alt_token:
+        if alt_token and secrets.compare_digest(clean_in, alt_token):
             return True
         return False
 

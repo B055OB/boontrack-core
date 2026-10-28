@@ -700,8 +700,39 @@ async def process_xendit_webhook_core(
         correlation_id=external_id,
     )
 
+    # 1.7 BoonTrack Studio Credit & AI Utility Top-Up Handler (PT BoonTrack Inovasi Digital)
+    is_studio_topup = external_id.upper().startswith("TOPUP-STUDIO-") or external_id.upper().startswith("TOPUP_STUDIO_")
+    if is_studio_topup:
+        if event_status in _PAID_STATUSES:
+            logger.info(f"[XENDIT_STUDIO_TOPUP] Processing Studio credit top-up for '{external_id}' (Rp{amount:,})")
+            from app.services.studio_credit_service import studio_credit_service
+            studio_res = await studio_credit_service.process_studio_credit_topup(
+                external_id=external_id,
+                amount=amount,
+                event_id=event_id,
+                event_status=event_status,
+                payload=payload,
+                headers=headers,
+            )
+            xendit_service.mark_settled(external_id)
+            http_code = 200 if studio_res.get("success") else 400
+            return {
+                "http_status": http_code,
+                "response": studio_res,
+            }
+        else:
+            return {
+                "http_status": 200,
+                "response": {
+                    "status": "STUDIO_TOPUP_PENDING",
+                    "event_status": event_status,
+                    "external_id": external_id,
+                },
+            }
+
     # 1.8 SaaS Lifecycle AI Session Quota Top-Up Handler (PT BoonTrack Inovasi Digital)
-    if external_id.startswith("TOPUP-") or external_id.startswith("TOPUP_"):
+    # Strictly non-studio to prevent collision
+    if (external_id.startswith("TOPUP-") or external_id.startswith("TOPUP_")) and not is_studio_topup:
         if event_status in _PAID_STATUSES:
             logger.info(f"[XENDIT_TOPUP_SETTLED] Processing quota top-up for '{external_id}' (Rp{amount:,})")
             from app.services.quota_service import quota_service
@@ -737,6 +768,33 @@ async def process_xendit_webhook_core(
                     "status": "TOPUP_PENDING",
                     "event_status": event_status,
                 }
+            }
+
+    # 1.9 Official Store Subscription Packages (CHECKOUT_LITE, STARTER, PRO_SCALE, ENTERPRISE)
+    meta_type = str((payload.get("metadata") or data_obj.get("metadata") or {}).get("type") or "").upper()
+    is_subscription_order = (
+        external_id.startswith("sub_") or
+        external_id.startswith("sub-") or
+        meta_type in ("SUBSCRIPTION", "SUBSCRIPTION_UPGRADE")
+    )
+    if is_subscription_order:
+        if event_status in _PAID_STATUSES:
+            logger.info(f"[XENDIT_SUB_PROCESS] Dispatching subscription invoice '{external_id}' to subscription engine")
+            from app.routes.shop_subscription_routes import handle_xendit_subscription_webhook_logic
+            sub_res, sub_status = await handle_xendit_subscription_webhook_logic(payload)
+            xendit_service.mark_settled(external_id)
+            return {
+                "http_status": sub_status,
+                "response": sub_res,
+            }
+        else:
+            return {
+                "http_status": 200,
+                "response": {
+                    "status": "SUBSCRIPTION_PENDING",
+                    "event_status": event_status,
+                    "external_id": external_id,
+                },
             }
 
     # 2. Database Idempotency Check (SSOT Mutlak: Postgres orders.status & payment_events)
@@ -1121,7 +1179,7 @@ async def xendit_webhook_callback(
     response_body = result.get("response", {})
 
     if http_code != 200:
-        raise HTTPException(status_code=http_code, detail=response_body.get("error", "Webhook processing failed"))
+        raise HTTPException(status_code=http_code, detail=response_body if response_body else "Webhook processing failed")
 
     return response_body
 
