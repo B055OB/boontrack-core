@@ -39,13 +39,6 @@ async def handle_order_paid_fulfillment(
             row = cur.fetchone()
             if row:
                 order_data = dict(row)
-                if str(order_data.get("status") or "").upper() != "PAID":
-                    cur.execute(
-                        "UPDATE orders SET status = 'PAID', updated_at = NOW() WHERE id = %s RETURNING *;",
-                        (order_id,)
-                    )
-                    order_data = dict(cur.fetchone())
-                    conn.commit()
     except Exception as db_err:
         logger.warning(f"[FULFILLMENT DB NOTE] Postgres lookup error: {db_err}")
     finally:
@@ -59,15 +52,6 @@ async def handle_order_paid_fulfillment(
             res = sb.table("orders").select("*").eq("id", order_id).limit(1).execute()
             if res.data:
                 order_data = res.data[0]
-                if str(order_data.get("status") or "").upper() != "PAID":
-                    upd = sb.table("orders").update({
-                        "status": "PAID",
-                        "payment_status": "PAID",
-                        "paid_at": now_iso,
-                        "updated_at": now_iso
-                    }).eq("id", order_id).execute()
-                    if upd.data:
-                        order_data = upd.data[0]
         except Exception as sb_err:
             logger.warning(f"[FULFILLMENT SB NOTE] Supabase order error: {sb_err}")
 
@@ -75,12 +59,41 @@ async def handle_order_paid_fulfillment(
         logger.error(f"[FULFILLMENT ERROR] Order '{order_id}' tidak ditemukan di database.")
         return {"success": False, "error": f"Order {order_id} tidak ditemukan"}
 
+    # VERIFY PAYMENT STATUS STRICTLY (P0 Safeguard: Only genuine verified payments receive fulfillment)
+    order_st = str(order_data.get("status") or "").upper()
+    pay_st = str(order_data.get("payment_status") or "").upper()
+    if order_st not in ("PAID", "SETTLED", "LUNAS") and pay_st not in ("PAID", "SETTLED", "LUNAS"):
+        logger.error(
+            f"[FULFILLMENT ERROR] Order '{order_id}' is not in a verified paid state (status={order_st}, payment_status={pay_st}). Denying fulfillment."
+        )
+        return {
+            "success": False,
+            "status": "REJECTED_UNPAID",
+            "order_id": order_id,
+            "error": f"Order {order_id} has unverified payment status ({order_st}/{pay_st})",
+        }
+
     resolved_tenant = tenant_slug or order_data.get("tenant_slug") or "buzzerukm"
     product_title = order_data.get("product_title") or "Produk Digital"
     gross_amount = float(order_data.get("gross_amount") or order_data.get("total_amount") or 0)
     customer_name = order_data.get("customer_name") or "Pelanggan Setia"
     customer_phone = str(order_data.get("customer_phone") or "").strip()
     customer_email = str(order_data.get("customer_email") or "").strip()
+
+    # Check if already fulfilled / delivered to prevent duplicate fulfillment messages
+    if str(order_data.get("fulfillment_status") or "").upper() == "DELIVERED":
+        logger.info(f"[FULFILLMENT IDEMPOTENCY] Order '{order_id}' was already fulfilled and delivered. Skipping duplicate outbound messages.")
+        return {
+            "success": True,
+            "order_id": order_id,
+            "tenant_slug": resolved_tenant,
+            "status": "PAID",
+            "access_url": order_data.get("download_url") or (order_data.get("fulfillment_metadata") or {}).get("access_url"),
+            "wa_dispatched": False,
+            "capi_dispatched": False,
+            "idempotency_hit": True,
+            "message": f"Order {order_id} already fulfilled (idempotent skip)",
+        }
 
     # SPECIALIZED: OnlineBoost CTWA Single-Use Telegram Fulfillment
     if resolved_tenant == "onlineboost":
@@ -92,6 +105,14 @@ async def handle_order_paid_fulfillment(
             amount=gross_amount,
             tenant_id="onlineboost",
         )
+        if ob_res.get("status") in ("REJECTED_UNPAID", "REJECTED_NOT_FOUND") or not ob_res.get("single_use_invite_link"):
+            return {
+                "success": False,
+                "order_id": order_id,
+                "tenant_slug": "onlineboost",
+                "status": ob_res.get("status", "REJECTED_UNPAID"),
+                "error": ob_res.get("error", "Fulfillment rejected or missing verified single-use link"),
+            }
         return {
             "success": True,
             "order_id": order_id,
@@ -143,9 +164,15 @@ async def handle_order_paid_fulfillment(
         except Exception as prod_err:
             logger.debug(f"[FULFILLMENT PROD WARN] {prod_err}")
 
-    # Default fallback URL untuk Buzzer UKM / CTWA Mastery
+    # Safe fulfillment guard: never fabricate placeholder Telegram link
     if not access_url:
-        access_url = "https://t.me/+zhWxgGbzZxhmMjU1"
+        logger.error(f"[FULFILLMENT ERROR] No verified access URL or digital download link resolved for order '{order_id}'. Denying fulfillment.")
+        return {
+            "success": False,
+            "order_id": order_id,
+            "status": "REJECTED_NO_ACCESS_URL",
+            "error": "MISSING_VERIFIED_ACCESS_URL",
+        }
 
     # Simpan kembali download_url ke record orders
     try:
