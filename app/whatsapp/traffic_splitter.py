@@ -1603,7 +1603,18 @@ class TenantWebhookRouter:
         trace.target_tenant = tenant_slug
         trace.log_step("TenantWebhookRouter.handle", f"Entered isolated tenant pipeline for '{tenant_slug}' (User: {sender_phone})")
 
-        clean_text = incoming_text.strip()
+        from app.services.referral_attribution_service import (
+            extract_referral_marker,
+            apply_referral_attribution_to_session,
+        )
+        clean_text, raw_ref_code = extract_referral_marker(incoming_text.strip())
+        if raw_ref_code and tenant_slug == "onlineboost":
+            try:
+                from app.services.academy_service import academy_bot
+                sess = academy_bot.get_session(sender_phone)
+                apply_referral_attribution_to_session(sess, raw_ref_code, tenant_id="onlineboost")
+            except Exception:
+                pass
         text_lower = clean_text.lower()
         wamid = str(raw_msg.get("id") or getattr(trace, "message_id", "") or "").strip()
 
@@ -1654,7 +1665,8 @@ class TenantWebhookRouter:
             # Reset conversation sessions across session stores
             try:
                 from app.services.academy_service import academy_bot
-                academy_bot.reset_session(sender_phone)
+                if str(tenant_slug).strip().lower() in ("onlineboost", "boon"):
+                    academy_bot.reset_session(sender_phone)
             except Exception:
                 pass
 
@@ -1694,6 +1706,23 @@ class TenantWebhookRouter:
                 "suppressed": True,
                 "persistence": persistence_src,
                 "reply": opt_out_msg,
+                "tenant": tenant_slug,
+            }
+            trace.early_return = True
+            trace.response_status = 200
+            trace.response_payload = res
+            return res
+
+        # Check if caller is already suppressed for this tenant -> suppress promotional/marketing dispatch
+        from app.services.phone_suppression_service import is_phone_suppressed
+        if is_phone_suppressed(sender_phone, tenant_id=tenant_slug):
+            trace.log_step("OptOutComplianceGuard", f"Sender {sender_phone} is suppressed on tenant '{tenant_slug}'. Suppressing promotional reply.")
+            res = {
+                "status": "suppressed",
+                "purpose": "COMPLIANCE_OPT_OUT",
+                "action": "suppressed_silent_drop",
+                "suppressed": True,
+                "reply": "",
                 "tenant": tenant_slug,
             }
             trace.early_return = True
@@ -1862,17 +1891,54 @@ class TenantWebhookRouter:
             return res
 
         # =====================================================================
+        # 1.45. WHATSAPP FLOWS SUBMISSION (nfm_reply) DIRECT ORCHESTRATION
+        # =====================================================================
+        is_flow_reply = (
+            isinstance(raw_msg, dict)
+            and raw_msg.get("type") == "interactive"
+            and (raw_msg.get("interactive") or {}).get("type") == "nfm_reply"
+        )
+        if is_flow_reply and tenant_slug == "onlineboost":
+            trace.log_step("TenantFlowReplyRouter", f"Flow submission (nfm_reply) detected from {sender_phone} on tenant '{tenant_slug}'")
+            try:
+                from app.services.ctwa_state_engine import ctwa_state_engine
+                ctwa_res = await ctwa_state_engine.process_turn(
+                    phone=sender_phone,
+                    incoming_text=clean_text,
+                    sender_name=contact_name,
+                    raw_msg=raw_msg,
+                    phone_number_id=phone_number_id,
+                )
+                if ctwa_res:
+                    res = {
+                        "status": "success" if ctwa_res.get("success", True) else "rejected",
+                        "purpose": "TENANT_SALES",
+                        "tenant": "onlineboost",
+                        "action": ctwa_res.get("action"),
+                        "reply": ctwa_res.get("reply"),
+                        "order_id": ctwa_res.get("order_id"),
+                        "total_amount": ctwa_res.get("total_amount"),
+                    }
+                    trace.early_return = True
+                    trace.response_status = 200
+                    trace.response_payload = res
+                    return res
+            except Exception as _flow_err:
+                logger.error(f"[TENANT_FLOW_REPLY_ERROR] {_flow_err}", exc_info=True)
+
+        # =====================================================================
         # 1.5. BOONTRACK ACADEMY: WARM LAUNCH ALUMNI STATE MACHINE (STATE 0 & 1)
         # =====================================================================
         try:
             from app.services.academy_service import academy_bot, is_academy_trigger_message
-            if is_academy_trigger_message(clean_text) or academy_bot.is_in_active_flow(sender_phone):
+            if is_academy_trigger_message(clean_text, tenant_id=tenant_slug) or academy_bot.is_in_active_flow(sender_phone, tenant_id=tenant_slug):
                 academy_res = await academy_bot.process_inbound(
                     sender_phone=sender_phone,
                     incoming_text=clean_text,
                     contact_name=contact_name,
                     phone_number_id=phone_number_id,
                     tenant_id=tenant_slug,
+                    raw_msg=raw_msg,
                 )
                 if academy_res and academy_res.get("handled"):
                     trace.log_step("TenantAcademyBot", f"Handled by Academy State Machine: State {academy_res.get('state')}")
@@ -2090,6 +2156,12 @@ class TrafficSplitter:
                 incoming_text = str(text_field.get("body") or "").strip()
             elif isinstance(text_field, str):
                 incoming_text = text_field.strip()
+
+        # Ekstraksi & isolasi marker [r=CODE] sebelum intent routing
+        from app.services.referral_attribution_service import extract_referral_marker
+        clean_incoming_text, raw_ref_code = extract_referral_marker(incoming_text)
+        incoming_text = clean_incoming_text
+
         if not sender_phone:
             sender_phone = str(payload.get("from") or payload.get("from_phone") or "6281234567890").strip()
         if not incoming_phone_id or incoming_phone_id == "1268977686299719":

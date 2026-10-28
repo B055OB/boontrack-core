@@ -75,7 +75,7 @@ def get_public_solution_catalog() -> Dict[str, Any]:
                     "centang hijau resmi, pesan interaktif (CTA/Quick Reply), dan SLA pengiriman tinggi."
                 ),
                 "features": [
-                    "Meta Cloud API v26.0 Direct Provider",
+                    "Meta Tech Provider (Cloud API v26.0)",
                     "Automated 24-hour service window compliance",
                     "Deterministic verification & activation engine"
                 ],

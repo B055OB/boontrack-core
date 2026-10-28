@@ -995,8 +995,8 @@ async def process_xendit_webhook_core(
     )
 
     # 8. Decoupled Asynchronous Background Tasks (Non-blocking)
-    # Task 1: WhatsApp Customer Confirmation (LUNAS)
-    if customer_phone:
+    # Task 1: WhatsApp Customer Confirmation (LUNAS) (Tenants other than OnlineBoost; OnlineBoost uses Task 3b below)
+    if customer_phone and tenant_id != "onlineboost":
         asyncio.create_task(
             send_whatsapp_payment_notification(
                 phone=customer_phone,

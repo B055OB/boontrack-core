@@ -79,6 +79,9 @@ async def test_xendit_webhook_3x_consecutive_retry_idempotency():
     async def mock_wa(phone, external_id, amount, tenant_id="onlineboost", product_name=None):
         wa_calls.append({"phone": phone, "order_id": external_id})
 
+    async def mock_onlineboost_fulfill(order_id, buyer_name=None, buyer_phone=None, amount=None, tenant_id="onlineboost"):
+        wa_calls.append({"phone": buyer_phone, "order_id": order_id})
+
     async def mock_capi(external_id, amount, phone=None, email=None, product_name=None, currency="IDR", tenant_id="onlineboost"):
         capi_calls.append({"order_id": external_id, "amount": amount})
 
@@ -90,6 +93,7 @@ async def test_xendit_webhook_3x_consecutive_retry_idempotency():
             return res.status_code, res.json()
 
     with patch("app.routes.xendit.send_whatsapp_payment_notification", side_effect=mock_wa), \
+         patch("app.services.ctwa_fulfillment_service.fulfill_onlineboost_ctwa_order", side_effect=mock_onlineboost_fulfill), \
          patch("app.routes.xendit.send_capi_task", side_effect=mock_capi), \
          patch("app.routes.xendit.dispatch_payment_success_notifications", new_callable=AsyncMock), \
          patch("app.services.digital_fulfillment_service.fulfill_if_digital", new_callable=AsyncMock):

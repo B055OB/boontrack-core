@@ -47,6 +47,26 @@ _DEFAULT_PLATFORM_WABA_IDS = {
     "1268977686299719": "boontrack-platform",
 }
 
+ONLINEBOOST_PHONE_NUMBER_ID = (
+    os.getenv("ONLINEBOOST_PHONE_NUMBER_ID")
+    or "1419090974617162"
+).strip()
+
+_DEFAULT_KNOWN_TENANT_WABA_IDS: Dict[str, Dict[str, Any]] = {
+    ONLINEBOOST_PHONE_NUMBER_ID: {
+        "tenant_id": "onlineboost",
+        "waba_phone_number_id": ONLINEBOOST_PHONE_NUMBER_ID,
+        "is_active": True,
+        "display_phone_number": "6288226098088",
+    },
+    "1419090974617162": {
+        "tenant_id": "onlineboost",
+        "waba_phone_number_id": "1419090974617162",
+        "is_active": True,
+        "display_phone_number": "6288226098088",
+    },
+}
+
 
 class TenantNotFoundError(Exception):
     """Raised when a WhatsApp phone_number_id is not mapped to any active tenant."""
@@ -205,6 +225,10 @@ async def resolve_tenant_by_phone_number_id(
     tenant_data = await _query_postgres_tenant(clean_id)
     if not tenant_data:
         tenant_data = await _query_supabase_tenant(clean_id)
+
+    # Step 3b: Fallback to known default tenant mappings
+    if not tenant_data and clean_id in _DEFAULT_KNOWN_TENANT_WABA_IDS:
+        tenant_data = _DEFAULT_KNOWN_TENANT_WABA_IDS[clean_id]
 
     if tenant_data and tenant_data.get("is_active"):
         # Populate L1 Cache

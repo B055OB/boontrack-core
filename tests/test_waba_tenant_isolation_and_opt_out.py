@@ -43,8 +43,11 @@ def reset_stores():
     """Ensure clean isolation between tests."""
     set_allow_in_memory_fallback(True)
     reset_suppression_test_state()
-    yield
-    reset_suppression_test_state()
+    try:
+        yield
+    finally:
+        reset_suppression_test_state()
+        set_allow_in_memory_fallback(False)
 
 
 def _build_meta_inbound_payload(phone: str, text: str, wamid: str) -> dict:
@@ -423,4 +426,254 @@ async def test_normal_non_opt_out_traffic_retains_bot_consultation():
         assert "OnlineBoost" in reply or "Batch 1" in reply or "kelas" in reply.lower() or "produk" in reply.lower()
         # Contact is NOT suppressed
         assert is_phone_suppressed(sender, tenant_id="onlineboost") is False
+
+
+# ============================================================================
+# 8. DIRECT DISPATCH OPT-OUT ALL KEYWORDS & 503 FAIL-CLOSED REGRESSION (P0-D)
+# ============================================================================
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("keyword", ["STOP", "UNSUBSCRIBE", "BERHENTI", "stop", "berhenti", "unsubscribe"])
+async def test_direct_dispatch_opt_out_all_keywords(keyword):
+    """
+    Direct-dispatch path (TrafficSplitter.split_and_dispatch) must recognize all
+    Meta WABA compliance opt-out keywords (STOP, BERHENTI, UNSUBSCRIBE), persist
+    durable suppression, reset session, and acknowledge with 200 without bot promotion.
+    """
+    from app.whatsapp.traffic_splitter import TrafficSplitter
+    from app.services.academy_service import academy_bot, STATE_CONSULTATION
+
+    sender = f"62811{hash(keyword) % 10000000:07d}"
+    payload = _build_meta_inbound_payload(sender, keyword, f"wam_dd_{keyword}")
+
+    mock_tenant_ctx = MagicMock()
+    mock_tenant_ctx.slug = "onlineboost"
+    mock_tenant_ctx.tenant_id = "onlineboost"
+
+    academy_bot.set_session(sender, state=STATE_CONSULTATION, name="TestUser", tenant_id="onlineboost")
+    assert academy_bot.is_in_active_flow(sender) is True
+
+    with patch("app.services.tenant_context_resolver.tenant_context_resolver.resolve_by_phone_number_id", new_callable=AsyncMock) as mock_resolve, \
+         patch("app.services.whatsapp.cloud_api.send_whatsapp_text", new_callable=AsyncMock) as mock_send:
+
+        mock_resolve.return_value = mock_tenant_ctx
+
+        status_code, res, trace = await TrafficSplitter.split_and_dispatch(payload)
+
+        assert status_code == 200
+        assert res.get("purpose") == "COMPLIANCE_OPT_OUT"
+        assert res.get("action") == "opt_out_confirmed"
+        assert res.get("suppressed") is True
+        assert academy_bot.is_in_active_flow(sender) is False
+        assert is_phone_suppressed(sender, tenant_id="onlineboost") is True
+
+
+@pytest.mark.asyncio
+async def test_direct_dispatch_opt_out_persistence_failure_safe_handling():
+    """
+    Direct-dispatch path: If all durable suppression persistence mechanisms fail,
+    TrafficSplitter.split_and_dispatch sets trace.response_status = 503 and returns
+    action='suppression_failed' without executing promotional or bot workflows.
+    """
+    from app.whatsapp.traffic_splitter import TrafficSplitter
+
+    sender = "628999888111"
+    payload = _build_meta_inbound_payload(sender, "STOP", "wam_fail_503")
+
+    mock_tenant_ctx = MagicMock()
+    mock_tenant_ctx.slug = "onlineboost"
+    mock_tenant_ctx.tenant_id = "onlineboost"
+
+    with patch("app.services.tenant_context_resolver.tenant_context_resolver.resolve_by_phone_number_id", new_callable=AsyncMock) as mock_resolve, \
+         patch("app.services.phone_suppression_service.record_durable_suppression", return_value=(False, "all_persistence_unavailable")), \
+         patch("app.services.whatsapp.cloud_api.send_whatsapp_text", new_callable=AsyncMock) as mock_send:
+
+        mock_resolve.return_value = mock_tenant_ctx
+
+        status_code, res, trace = await TrafficSplitter.split_and_dispatch(payload)
+
+        assert status_code == 200
+        assert trace.response_status == 503
+        assert res.get("purpose") == "COMPLIANCE_OPT_OUT"
+        assert res.get("action") == "suppression_failed"
+        assert trace.early_return is True
+        assert not mock_send.called
+
+
+@pytest.mark.asyncio
+async def test_platform_and_other_tenant_not_hijacked_by_onlineboost_triggers():
+    """
+    Ensure generic OnlineBoost consultation triggers ('halo', 'berapa harganya?', 'daftar')
+    and active OnlineBoost sessions never hijack BoonTrack Platform WABA (1365010890024026)
+    or unrelated merchant tenants ('tenant-alpha').
+    """
+    from app.whatsapp.platform_webhook_router import PlatformWebhookRouter
+    from app.whatsapp.traffic_splitter import (
+        TenantWebhookRouter,
+        TenantRuntimeContext,
+        WebhookExecutionTrace,
+    )
+    from app.services.academy_service import (
+        academy_bot,
+        is_academy_trigger_message,
+        reset_academy_test_state,
+        STATE_QUALIFYING,
+    )
+
+    reset_academy_test_state()
+    PlatformWebhookRouter.reset_state()
+    sender = "6281233334444"
+
+    # 1. Trigger classifier must scope to allowed Academy tenants ('onlineboost', 'boon')
+    assert is_academy_trigger_message("halo", tenant_id="onlineboost") is True
+    assert is_academy_trigger_message("halo", tenant_id="boontrack-platform") is False
+    assert is_academy_trigger_message("berapa harganya?", tenant_id="tenant-alpha") is False
+
+    # 2. Active OnlineBoost session for same sender must not bleed into platform or tenant-alpha
+    academy_bot.set_session(sender, state=STATE_QUALIFYING, name="Pelanggan", tenant_id="onlineboost")
+    assert academy_bot.is_in_active_flow(sender, tenant_id="onlineboost") is True
+    assert academy_bot.is_in_active_flow(sender, tenant_id="boontrack-platform") is False
+    assert academy_bot.is_in_active_flow(sender, tenant_id="tenant-alpha") is False
+
+    # 3. Inbound 'halo' on BoonTrack Platform WABA (1365010890024026) routes to PlatformAssistantEngine, not OnlineBoost
+    with patch("app.whatsapp.platform_webhook_router.send_whatsapp_text", new_callable=AsyncMock, return_value=True):
+        plat_res = await PlatformWebhookRouter.handle(
+            sender_phone=sender,
+            incoming_text="halo",
+            phone_number_id="1365010890024026",
+            trace=WebhookExecutionTrace("msg_plat_halo", "1365010890024026", sender, "halo"),
+        )
+        assert plat_res.get("status") == "success"
+        assert plat_res.get("lane") == "CONVERSATIONAL_EXECUTION"
+        assert plat_res.get("campaign") != "onlineboost_batch1"
+        assert "BoonTrack Business Concierge" in plat_res.get("reply", "")
+
+    # 4. Inbound 'halo' on unrelated tenant ('tenant-alpha') routes to tenant storefront greeting, not OnlineBoost
+    tenant_ctx = TenantRuntimeContext(
+        tenant_id="tenant-alpha",
+        slug="tenant-alpha",
+        business_type="PHYSICAL",
+        capabilities={"catalog": True, "order": True},
+        metadata={"name": "Batik Cantik Alpha"},
+    )
+    with patch("app.whatsapp.traffic_splitter.send_whatsapp_text", new_callable=AsyncMock, return_value=True):
+        tenant_res = await TenantWebhookRouter.handle(
+            tenant_context=tenant_ctx,
+            sender_phone=sender,
+            incoming_text="halo",
+            phone_number_id="999888777666",
+            contact_name="Pelanggan",
+            raw_msg={"id": "wamid.ALPHA_HALO", "type": "text", "text": {"body": "halo"}},
+            trace=WebhookExecutionTrace("msg_alpha_halo", "999888777666", sender, "halo"),
+        )
+        assert tenant_res.get("status") == "success"
+        assert tenant_res.get("purpose") == "TENANT_SALES"
+        assert tenant_res.get("tenant") == "tenant-alpha"
+        assert "Batik Cantik Alpha" in tenant_res.get("reply", "") or "Tenant Alpha" in tenant_res.get("reply", "")
+        assert "OnlineBoost" not in tenant_res.get("reply", "")
+        assert tenant_res.get("campaign") != "onlineboost_batch1"
+
+    reset_academy_test_state()
+
+
+@pytest.mark.asyncio
+async def test_direct_opt_out_fail_closed_in_academy_and_ctwa_engines():
+    """
+    Remediation A: If durable suppression persistence fails in direct calls to
+    AcademyBotStateMachine.process_inbound or CTWAStateEngine.process_turn,
+    neither path may send a false opt-out confirmation message or return a
+    success/opt_out_confirmed status.
+    """
+    from app.services.academy_service import academy_bot, reset_academy_test_state
+    from app.services.ctwa_state_engine import ctwa_state_engine
+
+    reset_academy_test_state()
+    sender = "6281299990000"
+
+    # 1. AcademyBotStateMachine.process_inbound fail-closed
+    with patch("app.services.phone_suppression_service.record_durable_suppression", return_value=(False, "all_persistence_unavailable")), \
+         patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_acad_send:
+        acad_res = await academy_bot.process_inbound(
+            sender_phone=sender,
+            incoming_text="STOP",
+            contact_name="Pelanggan",
+            phone_number_id="1419090974617162",
+            tenant_id="onlineboost",
+        )
+        assert acad_res.get("handled") is True
+        assert acad_res.get("status") == "error"
+        assert acad_res.get("action") == "suppression_failed"
+        assert acad_res.get("suppressed") is False
+        assert acad_res.get("reply") == ""
+        assert not mock_acad_send.called
+
+    # 2. CTWAStateEngine.process_turn fail-closed
+    with patch("app.services.phone_suppression_service.record_durable_suppression", return_value=(False, "all_persistence_unavailable")), \
+         patch("app.services.ctwa_state_engine.cloud_api.send_whatsapp_text", new_callable=AsyncMock) as mock_ctwa_send:
+        ctwa_res = await ctwa_state_engine.process_turn(
+            phone=sender,
+            incoming_text="BERHENTI",
+            phone_number_id="1419090974617162",
+        )
+        assert ctwa_res.get("success") is False
+        assert ctwa_res.get("status") == "error"
+        assert ctwa_res.get("action") == "suppression_failed"
+        assert ctwa_res.get("suppressed") is False
+        assert ctwa_res.get("reply") == ""
+        assert not mock_ctwa_send.called
+
+
+@pytest.mark.asyncio
+async def test_platform_stop_does_not_reset_onlineboost_academy_session_and_boon_trigger_scoping():
+    """
+    Remediation B:
+    1. Generic OnlineBoost triggers ('halo', 'berapa harganya?') must not classify as
+       onlineboost_batch1 for tenant 'boon', while explicit Academy campaign triggers still match 'boon'.
+    2. A STOP event on PlatformWebhookRouter (1365010890024026 / boontrack-platform) must NOT
+       wipe an active OnlineBoost session for the same phone number.
+    """
+    from app.services.academy_service import (
+        academy_bot,
+        classify_academy_trigger,
+        is_academy_trigger_message,
+        reset_academy_test_state,
+        STATE_CONSULTATION,
+    )
+    from app.whatsapp.platform_webhook_router import PlatformWebhookRouter
+    from app.whatsapp.traffic_splitter import WebhookExecutionTrace
+
+    reset_academy_test_state()
+    PlatformWebhookRouter.reset_state()
+    sender = "6281277778888"
+
+    # 1. Generic OnlineBoost triggers blocked for 'boon', explicit Academy triggers preserved for 'boon'
+    assert classify_academy_trigger("halo", tenant_id="boon") is None
+    assert is_academy_trigger_message("halo", tenant_id="boon") is False
+    assert classify_academy_trigger(
+        "Halo, saya alumni CPM Mayar dan ingin amankan akses privilege Rp249.000.",
+        tenant_id="boon",
+    ) == "alumni_cpm"
+    assert is_academy_trigger_message(
+        "Halo, saya alumni CPM Mayar dan ingin amankan akses privilege Rp249.000.",
+        tenant_id="boon",
+    ) is True
+
+    # 2. Active OnlineBoost session survives Platform STOP on 1365010890024026
+    academy_bot.set_session(sender, state=STATE_CONSULTATION, name="Prospect", tenant_id="onlineboost")
+    assert academy_bot.is_in_active_flow(sender, tenant_id="onlineboost") is True
+
+    with patch("app.whatsapp.platform_webhook_router.send_whatsapp_text", new_callable=AsyncMock, return_value=True):
+        stop_res = await PlatformWebhookRouter.handle(
+            sender_phone=sender,
+            incoming_text="STOP",
+            phone_number_id="1365010890024026",
+            trace=WebhookExecutionTrace("msg_plat_stop", "1365010890024026", sender, "STOP"),
+        )
+        assert stop_res.get("action") == "opt_out"
+        # Platform is suppressed, OnlineBoost is NOT suppressed, and OnlineBoost session remains intact
+        assert is_phone_suppressed(sender, tenant_id="boontrack-platform") is True
+        assert is_phone_suppressed(sender, tenant_id="onlineboost") is False
+        assert academy_bot.is_in_active_flow(sender, tenant_id="onlineboost") is True
+
+    reset_academy_test_state()
 

@@ -42,11 +42,14 @@ async def _dispatch_to_traffic_splitter(payload: Dict[str, Any]) -> None:
         )
 
 def get_meta_verify_tokens() -> list[str]:
-    """Retrieve officially configured Meta WhatsApp webhook verification tokens from environment."""
+    """Retrieve officially configured Meta WhatsApp webhook verification tokens from environment.
+    Fails closed if no verification tokens are configured in the environment.
+    """
     candidates = [
         os.getenv("WHATSAPP_VERIFY_TOKEN"),
         os.getenv("META_WHATSAPP_VERIFY_TOKEN"),
         os.getenv("META_WEBHOOK_VERIFY_TOKEN"),
+        os.getenv("ONLINEBOOST_WEBHOOK_VERIFY_TOKEN"),
     ]
     return [c.strip() for c in candidates if c and c.strip()]
 
@@ -57,6 +60,7 @@ def get_meta_verify_tokens() -> list[str]:
 
 @router.get("/webhook/whatsapp", summary="Meta WhatsApp Webhook Verification")
 @router.get("/api/v1/webhook/whatsapp", summary="Meta WhatsApp Webhook Verification (v1)")
+@router.get("/api/webhook/whatsapp", summary="Meta WhatsApp Webhook Verification (api alias)")
 async def verify_webhook_handshake(
     request: Request,
     hub_mode: Optional[str] = Query(None, alias="hub.mode"),
@@ -250,6 +254,7 @@ async def _handle_synchronous_opt_out(
 
 @router.post("/webhook/whatsapp", summary="Meta WhatsApp Inbound Ingestion")
 @router.post("/api/v1/webhook/whatsapp", summary="Meta WhatsApp Inbound Ingestion (v1)")
+@router.post("/api/webhook/whatsapp", summary="Meta WhatsApp Inbound Ingestion (api alias)")
 async def ingest_whatsapp_webhook(
     request: Request,
     background_tasks: BackgroundTasks,

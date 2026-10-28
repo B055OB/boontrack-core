@@ -435,6 +435,37 @@ class TenantContextResolver:
                 }
             }
 
+        if not row and clean_slug in ("onlineboost", "online-boost"):
+            row = {
+                "id": "onlineboost",
+                "slug": "onlineboost",
+                "name": "OnlineBoost",
+                "business_type": "DIGITAL",
+                "tenant_kind": "SAAS",
+                "template_code": "ACADEMY_TEMPLATE",
+                "capabilities": {
+                    "catalog": True,
+                    "orders": True,
+                    "qris": True,
+                    "capi": True,
+                    "digital_fulfillment": True,
+                    "consultation": True,
+                },
+                "metadata": {
+                    "tenant_type": "ACADEMY_TEMPLATE",
+                    "runtime": "shared_core",
+                    "version": "1.0",
+                    "name": "OnlineBoost",
+                    "tenant_name": "OnlineBoost",
+                    "tenant_id": "onlineboost",
+                    "storefront_url": "https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale",
+                    "phone_number_id": "1419090974617162",
+                    "waba_phone_number_id": "1419090974617162",
+                    "phone": "6288226098088",
+                    "display_phone_number": "+6288226098088",
+                }
+            }
+
         if not row:
             logger.info(f"[TENANT_RESOLVER] Tenant '{clean_slug}' not found in database.")
             return None
@@ -700,6 +731,37 @@ class TenantContextResolver:
                     "kidmap_assessment_url": "https://screening.littlebitefeeding.com",
                     "screening_url": "https://screening.littlebitefeeding.com",
                     "storefront_url": "https://konsul.littlebitefeeding.com",
+                }
+            }
+
+        if not row and clean_slug in ("onlineboost", "online-boost"):
+            row = {
+                "id": "onlineboost",
+                "slug": "onlineboost",
+                "name": "OnlineBoost",
+                "business_type": "DIGITAL",
+                "tenant_kind": "SAAS",
+                "template_code": "ACADEMY_TEMPLATE",
+                "capabilities": {
+                    "catalog": True,
+                    "orders": True,
+                    "qris": True,
+                    "capi": True,
+                    "digital_fulfillment": True,
+                    "consultation": True,
+                },
+                "metadata": {
+                    "tenant_type": "ACADEMY_TEMPLATE",
+                    "runtime": "shared_core",
+                    "version": "1.0",
+                    "name": "OnlineBoost",
+                    "tenant_name": "OnlineBoost",
+                    "tenant_id": "onlineboost",
+                    "storefront_url": "https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale",
+                    "phone_number_id": "1419090974617162",
+                    "waba_phone_number_id": "1419090974617162",
+                    "phone": "6288226098088",
+                    "display_phone_number": "+6288226098088",
                 }
             }
 

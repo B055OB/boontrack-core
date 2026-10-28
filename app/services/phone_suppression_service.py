@@ -33,6 +33,45 @@ logger = logging.getLogger("PHONE_SUPPRESSION_SERVICE")
 
 OPT_OUT_KEYWORDS = frozenset({"STOP", "BERHENTI", "UNSUBSCRIBE"})
 
+# Canonical Platform Tenant Identity and Historical Aliases
+PLATFORM_CANONICAL_TENANT = "boontrack-platform"
+PLATFORM_TENANT_ALIASES = frozenset({
+    "boontrack-platform",
+    "boontrack-holding",
+    "00000000-0000-0000-0000-000000000001",
+    "shop",
+    "boontrack",
+})
+
+
+def canonicalize_tenant_id(tenant_id: object) -> str:
+    """Returns canonical tenant string for a given tenant identifier.
+    Maps platform aliases and UUID to 'boontrack-platform'.
+    Preserves exact tenant slug for all other tenants (e.g. 'onlineboost', 'career').
+    """
+    if not tenant_id:
+        return ""
+    clean = str(tenant_id).strip().lower()
+    if clean in PLATFORM_TENANT_ALIASES:
+        return PLATFORM_CANONICAL_TENANT
+    return str(tenant_id).strip()
+
+
+def get_tenant_suppression_aliases(tenant_id: object) -> List[str]:
+    """Returns list of tenant IDs to check for suppression.
+    If tenant_id is any platform alias or PLATFORM_TENANT_ID, returns all platform aliases
+    with the canonical identifier first. Otherwise returns [str(tenant_id).strip()].
+    """
+    if not tenant_id:
+        return []
+    clean = str(tenant_id).strip().lower()
+    if clean in PLATFORM_TENANT_ALIASES:
+        return [PLATFORM_CANONICAL_TENANT] + [
+            a for a in PLATFORM_TENANT_ALIASES if a != PLATFORM_CANONICAL_TENANT
+        ]
+    return [str(tenant_id).strip()]
+
+
 # In-memory test store (for unit tests / test isolation)
 _IN_MEMORY_SUPPRESSIONS: Set[Tuple[str, str]] = set()  # (tenant_id, phone_variant)
 _allow_in_memory_fallback: bool = False
@@ -94,14 +133,14 @@ def is_opt_out_keyword(text: str) -> bool:
 
 def record_durable_suppression(
     phone: str,
-    tenant_id: str,
+    tenant_id: object,
     reason: str = "USER_REQUESTED_OPT_OUT",
 ) -> Tuple[bool, str]:
     """Durably records a phone number suppression for a tenant.
 
     Persistence Hierarchy:
-    1. PostgreSQL `public.phone_suppressions` (Primary Authority).
-    2. Redis Set `whatsapp:suppressed:{tenant_id}` (Secondary Approved Fallback).
+    1. PostgreSQL `public.phone_suppressions` (Primary Authority under canonical tenant).
+    2. Redis Set `whatsapp:suppressed:{tenant_id}` (Secondary Approved Fallback across aliases).
 
     Returns:
         Tuple[success, source]:
@@ -114,15 +153,17 @@ def record_durable_suppression(
     if not clean_phone or not tenant_id:
         return False, "invalid_arguments"
 
+    canonical_tenant = canonicalize_tenant_id(tenant_id)
+    tenant_aliases = get_tenant_suppression_aliases(tenant_id)
     phone_variants = get_phone_variants(clean_phone)
     pg_success = False
 
-    # 1. Primary Authority: PostgreSQL with strict tenant RLS
+    # 1. Primary Authority: PostgreSQL with strict tenant RLS under canonical_tenant
     try:
         conn = db_module.get_db_connection()
         try:
             with conn.cursor() as cur:
-                cur.execute(f"SET LOCAL app.current_tenant_id = '{tenant_id}';")
+                cur.execute("SELECT set_config('app.current_tenant_id', %s, true);", (canonical_tenant,))
                 cur.execute(
                     """
                     INSERT INTO public.phone_suppressions (tenant_id, phone_number, reason, created_at)
@@ -130,13 +171,13 @@ def record_durable_suppression(
                     ON CONFLICT (tenant_id, phone_number) DO UPDATE
                     SET reason = EXCLUDED.reason, created_at = NOW();
                     """,
-                    (tenant_id, clean_phone, reason),
+                    (canonical_tenant, clean_phone, reason),
                 )
                 conn.commit()
                 pg_success = True
                 logger.info(
                     f"[SuppressionService] Durably persisted opt-out for {clean_phone} "
-                    f"in PostgreSQL (tenant: '{tenant_id}')."
+                    f"in PostgreSQL (tenant: '{canonical_tenant}')."
                 )
         finally:
             conn.close()
@@ -146,116 +187,127 @@ def record_durable_suppression(
             "Attempting approved durable fallback."
         )
 
-    # 2. Approved Secondary Fallback / Fast Cache: Redis
+    # 2. Approved Secondary Fallback / Fast Cache: Redis across canonical and aliases
     redis_success = False
     try:
         r_client = redis_module.get_redis_client()
         if r_client is not None:
-            redis_key = f"whatsapp:suppressed:{tenant_id}"
-            for pv in phone_variants:
-                r_client.sadd(redis_key, pv)
+            for t_key in tenant_aliases:
+                redis_key = f"whatsapp:suppressed:{t_key}"
+                for pv in phone_variants:
+                    r_client.sadd(redis_key, pv)
             redis_success = True
             logger.info(
-                f"[SuppressionService] Persisted opt-out for {clean_phone} in Redis set '{redis_key}'."
+                f"[SuppressionService] Persisted opt-out for {clean_phone} in Redis sets for '{canonical_tenant}'."
             )
     except Exception as r_err:
         logger.warning(f"[SuppressionService] Redis fallback failed ({r_err}).")
 
     if pg_success:
+        for t_key in tenant_aliases:
+            for pv in phone_variants:
+                _IN_MEMORY_SUPPRESSIONS.add((t_key, pv))
         return True, "postgres"
 
     if redis_success:
         logger.warning(
             f"[SuppressionService] Operating on Redis fallback for {clean_phone} (PostgreSQL down)."
         )
+        for t_key in tenant_aliases:
+            for pv in phone_variants:
+                _IN_MEMORY_SUPPRESSIONS.add((t_key, pv))
         return True, "redis_fallback"
 
     # 3. In-memory fallback if explicitly enabled for testing
     if _allow_in_memory_fallback:
-        for pv in phone_variants:
-            _IN_MEMORY_SUPPRESSIONS.add((tenant_id, pv))
+        for t_key in tenant_aliases:
+            for pv in phone_variants:
+                _IN_MEMORY_SUPPRESSIONS.add((t_key, pv))
         return True, "in_memory_fallback"
 
     # All approved persistence mechanisms failed!
     logger.error(
         f"[SuppressionService CRITICAL] All persistence mechanisms unavailable for {clean_phone} "
-        f"on tenant '{tenant_id}'. Refusing silent acknowledgment."
+        f"on tenant '{canonical_tenant}'. Refusing silent acknowledgment."
     )
     return False, "all_persistence_unavailable"
 
 
-def is_phone_suppressed(phone: str, tenant_id: str) -> bool:
-    """Checks whether a phone number is suppressed for the specified tenant.
+def is_phone_suppressed(phone: str, tenant_id: object) -> bool:
+    """Checks whether a phone number is suppressed for the specified tenant or its canonical identity.
 
     Checks:
-    1. In-memory test store.
-    2. Redis fallback cache set `whatsapp:suppressed:{tenant_id}`.
-    3. PostgreSQL `public.phone_suppressions` (Row Level Security protected).
+    1. In-memory test store (evaluates canonical tenant and aliases).
+    2. Redis fallback cache set `whatsapp:suppressed:{t_alias}`.
+    3. PostgreSQL `public.phone_suppressions` (Row Level Security protected per tenant alias).
     """
     clean_p = normalize_phone_number(phone) or phone
     clean_p = str(clean_p).strip()
     if not clean_p or not tenant_id:
         return False
 
+    tenant_aliases = get_tenant_suppression_aliases(tenant_id)
     phone_variants = get_phone_variants(clean_p)
 
-    # 1. In-memory test store
-    for pv in phone_variants:
-        if (tenant_id, pv) in _IN_MEMORY_SUPPRESSIONS:
-            return True
+    # 1. In-memory test store across canonical and aliases
+    for t_alias in tenant_aliases:
+        for pv in phone_variants:
+            if (t_alias, pv) in _IN_MEMORY_SUPPRESSIONS:
+                return True
 
-    if _allow_in_memory_fallback or os.getenv("PYTEST_CURRENT_TEST"):
-        # In test execution without matching in-memory suppression, fast-path to False
-        return False
-
-    # 2. Redis Fallback / Fast Cache
+    # 2. Redis Fallback / Fast Cache across canonical and aliases
     try:
         r_client = redis_module.get_redis_client()
         if r_client is not None:
-            redis_key = f"whatsapp:suppressed:{tenant_id}"
-            for pv in phone_variants:
-                if r_client.sismember(redis_key, pv):
-                    logger.info(
-                        f"[PhoneSuppression] Redis fallback match: phone={pv} for tenant='{tenant_id}'."
-                    )
-                    return True
+            for t_alias in tenant_aliases:
+                redis_key = f"whatsapp:suppressed:{t_alias}"
+                for pv in phone_variants:
+                    if r_client.sismember(redis_key, pv):
+                        logger.info(
+                            f"[PhoneSuppression] Redis fallback match: phone={pv} for tenant='{t_alias}'."
+                        )
+                        return True
     except Exception as r_err:
         logger.debug(f"[PhoneSuppression] Redis check note: {r_err}")
 
-    # 3. PostgreSQL Authority (RLS protected)
+    if _allow_in_memory_fallback or os.getenv("PYTEST_CURRENT_TEST"):
+        # In test execution without matching in-memory or Redis suppression,
+        # skip live PostgreSQL query to avoid hanging or unmocked DB calls.
+        return False
+
+    # 3. PostgreSQL Authority (RLS protected per tenant alias)
     conn = None
     cur = None
     try:
         conn = db_module.get_db_connection()
         cur = conn.cursor()
-        cur.execute(f"SET LOCAL app.current_tenant_id = '{tenant_id}';")
-        cur.execute(
-            """
-            SELECT id, reason, created_at
-            FROM public.phone_suppressions
-            WHERE tenant_id = %s AND phone_number = ANY(%s)
-            LIMIT 1;
-            """,
-            (tenant_id, phone_variants),
-        )
-        row = cur.fetchone()
-        if row:
-            logger.info(
-                f"[PhoneSuppression] PostgreSQL match: phone={clean_p} (id={row[0]}) for tenant='{tenant_id}'."
+        for t_alias in tenant_aliases:
+            cur.execute("SELECT set_config('app.current_tenant_id', %s, true);", (t_alias,))
+            cur.execute(
+                """
+                SELECT id, reason, created_at
+                FROM public.phone_suppressions
+                WHERE tenant_id = %s AND phone_number = ANY(%s)
+                LIMIT 1;
+                """,
+                (t_alias, phone_variants),
             )
-            # Sync to Redis cache if client is available
-            try:
-                r_client = redis_module.get_redis_client()
-                if r_client is not None:
-                    r_client.sadd(f"whatsapp:suppressed:{tenant_id}", clean_p)
-            except Exception:
-                pass
-            return True
+            row = cur.fetchone()
+            if row:
+                logger.info(
+                    f"[PhoneSuppression] PostgreSQL match: phone={clean_p} (id={row[0]}) for tenant='{t_alias}'."
+                )
+                try:
+                    r_client = redis_module.get_redis_client()
+                    if r_client is not None:
+                        for alias_key in tenant_aliases:
+                            r_client.sadd(f"whatsapp:suppressed:{alias_key}", clean_p)
+                except Exception:
+                    pass
+                return True
         return False
     except Exception as db_err:
         logger.error(f"[PhoneSuppression Error] Failed to query PostgreSQL suppression list: {db_err}")
-        # Fail-closed for promotional dispatch: if query fails and cannot be verified,
-        # caller must treat as non-suppressed ONLY if Redis also didn't have it.
         return False
     finally:
         if cur:

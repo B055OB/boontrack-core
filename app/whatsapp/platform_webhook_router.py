@@ -185,7 +185,7 @@ class PlatformWebhookRouter:
                 await log_to_supabase_messages(
                     sender="user",
                     text=clean_text,
-                    tenant_id=PLATFORM_TENANT_ID,
+                    tenant_id=str(PLATFORM_TENANT_ID),
                     channel="whatsapp",
                     user_phone=sender_clean,
                     user_name="Pelanggan",
@@ -199,47 +199,18 @@ class PlatformWebhookRouter:
                 logger.debug(f"[PlatformWebhookRouter] Inbound log error: {_p_log_err}")
 
         # =====================================================================
-        # 7-LAYER INGRESS WEBHOOK PROTECTION & CIRCUIT BREAKER (§4.2, §8.4, §9.8)
+        # JALUR 1: Compliance Guard (Wajib Meta WABA Policy - Opt-Out Evaluation)
+        # MUST be evaluated BEFORE ingress pipeline, circuit breaker, or rate limits
         # =====================================================================
-        from app.services.ingress_pipeline import ingress_pipeline
-        wa_msg_id = (raw_msg or {}).get("id") or (raw_msg or {}).get("key", {}).get("id")
-        ingress_decision = await ingress_pipeline.evaluate_ingress(
-            tenant_slug="boontrack-platform",
-            sender_phone=sender_clean,
-            incoming_text=clean_text,
-            wa_message_id=wa_msg_id,
-            from_me=False,
-            is_waba=True,
-            is_transactional=False,
-            raw_payload=raw_msg,
+        from app.services.phone_suppression_service import (
+            is_opt_out_keyword,
+            record_durable_suppression,
+            is_phone_suppressed,
         )
-        if not ingress_decision.allowed:
-            _log("IngressPipelineGuard", f"Blocked by 7-layer pipeline: {ingress_decision.action} ({ingress_decision.reason})")
-            if trace:
-                trace.early_return = True
-                trace.response_status = ingress_decision.status_code
-            return {
-                "status": "ignored",
-                "action": ingress_decision.action,
-                "reason": ingress_decision.reason,
-                "early_return": True,
-            }
-
-        # =====================================================================
-        # JALUR 1: Compliance Guard (Wajib Meta WABA Policy)
-        # =====================================================================
-        if clean_text.upper() in OPT_OUT_KEYWORDS:
+        if is_opt_out_keyword(clean_text):
             _log("ComplianceGuard", f"Matched opt-out keyword '{clean_text.upper()}'. Zero LLM call.")
-            target_tenant = "onlineboost"
-            try:
-                from app.services.tenant_context_resolver import tenant_context_resolver
-                resolved_t = tenant_context_resolver.resolve_tenant(phone_number_id)
-                if resolved_t and resolved_t.get("slug"):
-                    target_tenant = resolved_t.get("slug")
-            except Exception:
-                pass
+            target_tenant = "boontrack-platform"
 
-            from app.services.phone_suppression_service import record_durable_suppression
             persisted, persistence_src = record_durable_suppression(
                 phone=sender_clean,
                 tenant_id=target_tenant,
@@ -248,7 +219,7 @@ class PlatformWebhookRouter:
 
             try:
                 from app.services.academy_service import academy_bot
-                academy_bot.reset_session(sender_clean)
+                academy_bot.reset_session(sender_clean, tenant_id=target_tenant)
             except Exception:
                 pass
 
@@ -292,6 +263,50 @@ class PlatformWebhookRouter:
                 trace.response_status = 200
                 trace.response_payload = res
             return res
+
+        # Check if caller is already suppressed for this tenant (canonical platform identity & aliases)
+        target_tenant = "boontrack-platform"
+        if is_phone_suppressed(sender_clean, target_tenant):
+            _log("ComplianceGuard.Suppressed", f"Sender {sender_clean} is suppressed for {target_tenant}. Dropping promotional/marketing dispatch.")
+            res = {
+                "status": "suppressed",
+                "action": "suppressed_silent_drop",
+                "lane": "COMPLIANCE_GUARD",
+                "tenant": target_tenant,
+                "early_return": True,
+            }
+            if trace:
+                trace.early_return = True
+                trace.response_status = 200
+                trace.response_payload = res
+            return res
+
+        # =====================================================================
+        # 7-LAYER INGRESS WEBHOOK PROTECTION & CIRCUIT BREAKER (§4.2, §8.4, §9.8)
+        # =====================================================================
+        from app.services.ingress_pipeline import ingress_pipeline
+        wa_msg_id = (raw_msg or {}).get("id") or (raw_msg or {}).get("key", {}).get("id")
+        ingress_decision = await ingress_pipeline.evaluate_ingress(
+            tenant_slug="boontrack-platform",
+            sender_phone=sender_clean,
+            incoming_text=clean_text,
+            wa_message_id=wa_msg_id,
+            from_me=False,
+            is_waba=True,
+            is_transactional=False,
+            raw_payload=raw_msg,
+        )
+        if not ingress_decision.allowed:
+            _log("IngressPipelineGuard", f"Blocked by 7-layer pipeline: {ingress_decision.action} ({ingress_decision.reason})")
+            if trace:
+                trace.early_return = True
+                trace.response_status = ingress_decision.status_code
+            return {
+                "status": "ignored",
+                "action": ingress_decision.action,
+                "reason": ingress_decision.reason,
+                "early_return": True,
+            }
 
         # =====================================================================
         # JALUR 2: Deterministic Activation Command
@@ -350,21 +365,67 @@ class PlatformWebhookRouter:
                 return res
 
         # =====================================================================
+        # JALUR 3: Human Handover Interceptor (ADR REV-1 Compliant)
+        # =====================================================================
+        ticket = cls.get_or_create_ticket(sender_clean)
+        words = set(re.findall(r"\b\w+\b", clean_text.upper()))
+        is_escalation_intent = bool(words & ESCALATION_KEYWORDS) or (clean_text.upper() in ESCALATION_KEYWORDS)
+
+        if is_escalation_intent or ticket.is_ai_muted():
+            _log("HumanHandover", f"Handover triggered (escalation={is_escalation_intent}, state={ticket.state}). AI muted.")
+            if ticket.state == SupportTicketState.PENDING:
+                HumanHandOffManager.assign_to_human(ticket, agent_id="boontrack-support-queue")
+
+            handover_reply = (
+                HANDOVER_RESPONSE_EN
+                if detect_language(clean_text) == "en"
+                else HANDOVER_RESPONSE
+            )
+
+            try:
+                await send_whatsapp_text(
+                    to_phone=sender_clean,
+                    text=handover_reply,
+                    tenant_id="shop",
+                    phone_number_id=phone_number_id,
+                )
+            except Exception as e:
+                _log("HumanHandover.DispatchError", str(e))
+
+            res = {
+                "status": "success",
+                "action": "human_handover",
+                "lane": "HUMAN_HANDOVER",
+                "ticket_id": str(ticket.ticket_id),
+                "state": ticket.state.value,
+                "ai_muted": ticket.is_ai_muted(),
+                "reply": handover_reply,
+                "early_return": True,
+            }
+            if trace:
+                trace.early_return = True
+                trace.response_status = 200
+                trace.response_payload = res
+            return res
+
+        # =====================================================================
         # JALUR 2.4: BoonTrack Academy Warm Launch Alumni State Machine (State 0 & 1)
         # =====================================================================
         try:
             from app.services.academy_service import academy_bot, is_academy_trigger_message
             if is_academy_trigger_message(clean_text) or academy_bot.is_in_active_flow(sender_clean):
-                target_tenant = "onlineboost"
+                target_tenant = "boontrack-platform"
                 try:
                     from app.services.tenant_context_resolver import tenant_context_resolver
-                    resolved_t = tenant_context_resolver.resolve_tenant(phone_number_id)
-                    if resolved_t and resolved_t.get("slug"):
-                        target_tenant = resolved_t.get("slug")
+                    resolved_t = await tenant_context_resolver.resolve_by_phone_number_id(phone_number_id)
+                    if resolved_t and getattr(resolved_t, "slug", None):
+                        target_tenant = resolved_t.slug
                 except Exception:
                     pass
 
-                academy_res = await academy_bot.process_inbound(
+                academy_res = None
+                if is_academy_trigger_message(clean_text, tenant_id=target_tenant) or academy_bot.is_in_active_flow(sender_clean, tenant_id=target_tenant):
+                    academy_res = await academy_bot.process_inbound(
                     sender_phone=sender_clean,
                     incoming_text=clean_text,
                     contact_name="Pelanggan",
@@ -519,52 +580,6 @@ class PlatformWebhookRouter:
                 trace.response_payload = res
             return res
 
-        # =====================================================================
-        # JALUR 3: Human Handover Interceptor
-        # =====================================================================
-        ticket = cls.get_or_create_ticket(sender_clean)
-        words = set(re.findall(r"\b\w+\b", clean_text.upper()))
-        is_escalation_intent = bool(words & ESCALATION_KEYWORDS) or (clean_text.upper() in ESCALATION_KEYWORDS)
-
-        if is_escalation_intent or ticket.is_ai_muted():
-            _log("HumanHandover", f"Handover triggered (escalation={is_escalation_intent}, state={ticket.state}). AI muted.")
-            if ticket.state == SupportTicketState.PENDING:
-                HumanHandOffManager.assign_to_human(ticket, agent_id="boontrack-support-queue")
-
-            if "BANTUAN" in words or "bantuan" in clean_text.lower():
-                handover_reply = BANTUAN_REPRESENTATIVE_RESPONSE
-            else:
-                handover_reply = (
-                    HANDOVER_RESPONSE_EN
-                    if detect_language(clean_text) == "en"
-                    else HANDOVER_RESPONSE
-                )
-
-            try:
-                await send_whatsapp_text(
-                    to_phone=sender_clean,
-                    text=handover_reply,
-                    tenant_id="shop",
-                    phone_number_id=phone_number_id,
-                )
-            except Exception as e:
-                _log("HumanHandover.DispatchError", str(e))
-
-            res = {
-                "status": "success",
-                "action": "human_handover",
-                "lane": "HUMAN_HANDOVER",
-                "ticket_id": str(ticket.ticket_id),
-                "state": ticket.state.value,
-                "ai_muted": ticket.is_ai_muted(),
-                "reply": handover_reply,
-                "early_return": True,
-            }
-            if trace:
-                trace.early_return = True
-                trace.response_status = 200
-                trace.response_payload = res
-            return res
 
         # =====================================================================
         # JALUR 4: Rate Limit Guard (Atomic Lua / async Lock in Redis)

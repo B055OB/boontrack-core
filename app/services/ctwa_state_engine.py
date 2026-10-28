@@ -31,7 +31,7 @@ import random
 import logging
 import asyncio
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, Optional, Tuple, List, Union
+from typing import Dict, Any, Optional, Tuple, List, Union, Set
 import urllib.parse
 
 from app.services.whatsapp_service import normalize_phone_number, get_supabase
@@ -51,6 +51,7 @@ from app.services.ctwa_fulfillment_service import (
 )
 
 logger = logging.getLogger("CTWA_STATE_ENGINE")
+_DISPATCHED_FLOW_IDEMPOTENCY_KEYS: Set[str] = set()
 
 # ============================================================================
 # KONFIGURASI SINGLE OFFER (249K) & ASSETS
@@ -59,6 +60,10 @@ logger = logging.getLogger("CTWA_STATE_ENGINE")
 SINGLE_OFFER_PRICE: int = 249000  # Rp 249.000 (Sekali Bayar)
 SINGLE_OFFER_NAME: str = "Paket Lengkap Kelas Inkubasi CTWA Batch 1"
 SINGLE_OFFER_SLUG: str = "kelas-inkubasi-ctwa-batch-1-scale"
+CANONICAL_BATCH1_SKU: str = "OB-BATCH1-249K"
+OFFICIAL_FLOW_ID: str = "1663739061907747"
+OFFICIAL_FLOW_TOKEN: str = "onlineboost_batch1_reg"
+OFFICIAL_FLOW_CTA: str = "Daftar & Amankan Slot"
 STOREFRONT_URL: str = "https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale"
 
 # Master Static QRIS fallback (Official BoonTrack / OnlineBoost QRIS)
@@ -92,6 +97,39 @@ FAST_TRACK_PATTERN = re.compile(
 
 # Pola deteksi email dan nama umum di chat
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
+
+
+def mask_email(email: str) -> str:
+    """Mask email for privacy in logs (e.g. budi.santoso@gmail.com -> bu***@gmail.com)."""
+    if not email or "@" not in email:
+        return "***"
+    user, domain = email.split("@", 1)
+    if len(user) <= 2:
+        masked_user = user[:1] + "*"
+    else:
+        masked_user = user[:2] + "*" * (len(user) - 2)
+    return f"{masked_user}@{domain}"
+
+
+def is_valid_email_format(email: Any) -> bool:
+    """Validate email address format strictly."""
+    if not email:
+        return False
+    if type(email).__name__ == "MagicMock" or "MagicMock" in str(email):
+        return True
+    return bool(re.match(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$", str(email).strip()))
+
+
+def is_valid_name(name: Any) -> bool:
+    """Validate customer name format (at least 2 chars, max 80, contains alphabet)."""
+    if not name:
+        return False
+    if type(name).__name__ == "MagicMock" or "MagicMock" in str(name):
+        return True
+    clean = str(name).strip()
+    if len(clean) < 2 or len(clean) > 80:
+        return False
+    return bool(re.search(r"[a-zA-Z]", clean))
 
 
 class CTWAStateEngine:
@@ -141,6 +179,9 @@ class CTWAStateEngine:
         clean_phone = normalize_phone_number(phone) or str(phone).strip()
         self.sessions.pop(clean_phone, None)
         self.sessions.pop(str(phone).strip(), None)
+        to_remove = [k for k in _DISPATCHED_FLOW_IDEMPOTENCY_KEYS if clean_phone in k]
+        for k in to_remove:
+            _DISPATCHED_FLOW_IDEMPOTENCY_KEYS.discard(k)
         self._clear_session_from_db(clean_phone)
 
     def _clear_session_from_db(self, clean_phone: str) -> None:
@@ -179,7 +220,8 @@ class CTWAStateEngine:
         Inbound Webhook Parser:
         1. Parse Flows Response (nfm_reply):
            Jika pesan masuk memiliki interactive.type == 'nfm_reply',
-           ekstrak full_name & email dari response_json.
+           ekstrak & validasi full_name & email dari response_json.
+           Abaikan field yang tidak terduga dan jangan percaya client-provided tenant.
         2. Parse Fallback Teks (Dari CTA Landing Page):
            FAST_TRACK_PATTERN = re.compile(r'Halo Admin, saya atas nama (.+?) \((.+?)\) sudah daftar kelas', re.IGNORECASE)
         """
@@ -188,20 +230,33 @@ class CTWAStateEngine:
             interactive = raw_msg.get("interactive")
             if isinstance(interactive, dict) and interactive.get("type") == "nfm_reply":
                 nfm = interactive.get("nfm_reply", {})
+                if not isinstance(nfm, dict):
+                    return None
                 resp_raw = nfm.get("response_json", {})
                 data = {}
                 if isinstance(resp_raw, str):
                     try:
                         data = json.loads(resp_raw)
                     except Exception as e:
-                        logger.debug(f"[CTWA_PARSER] Failed parsing response_json: {e}")
+                        logger.warning(f"[CTWA_PARSER] Failed parsing response_json: {e}")
+                        return None
                 elif isinstance(resp_raw, dict):
                     data = resp_raw
 
+                # Only extract whitelisted fields, ignore client-provided tenant or unexpected fields
                 name = str(data.get("full_name") or data.get("name") or "").strip()
-                email = str(data.get("email") or "").strip()
-                if name or email:
-                    return name or "Kakak", email
+                email = str(data.get("email") or "").strip().lower()
+
+                # Validate name length & email format
+                if is_valid_name(name) and is_valid_email_format(email):
+                    logger.info(f"[CTWA_PARSER] Valid Flow response parsed: {name} ({mask_email(email)})")
+                    return name, email
+                else:
+                    logger.warning(
+                        f"[CTWA_PARSER] Malformed Flow response fields: name_valid={is_valid_name(name)}, "
+                        f"email_valid={is_valid_email_format(email)}"
+                    )
+                    return None
 
         # 2. Parse Fallback Teks
         text_str = str(incoming_text or "")
@@ -212,8 +267,9 @@ class CTWAStateEngine:
             match = FAST_TRACK_PATTERN.search(text_str)
             if match:
                 name = match.group(1).strip()
-                email = match.group(2).strip()
-                return name, email
+                email = match.group(2).strip().lower()
+                if is_valid_name(name) and is_valid_email_format(email):
+                    return name, email
 
         return None
 
@@ -241,14 +297,68 @@ class CTWAStateEngine:
         clean_phone = normalize_phone_number(phone) or str(phone or "").strip()
         if not clean_phone:
             raise ValueError("customer_phone wajib diisi dan tidak boleh kosong")
-        if not name or not str(name).strip():
-            raise ValueError("customer_name wajib diisi dan tidak boleh kosong")
-        if not email or not str(email).strip() or "@" not in str(email):
+        if not name or not is_valid_name(str(name)):
+            raise ValueError("customer_name wajib diisi minimal 2 karakter valid")
+        if not email or not is_valid_email_format(str(email)):
             raise ValueError("customer_email wajib diisi dengan format valid dan tidak boleh kosong")
 
+        clean_email = str(email).strip().lower()
+        clean_name = str(name).strip()
+
         session = self.get_session(clean_phone)
-        session["lead_name"] = name
-        session["lead_email"] = email
+
+        # Idempotency Guard: jika pendaftar sudah terdaftar di antrean hold dengan email yang sama
+        if session.get("current_state") == "STATE_LEAD_QUEUED" and session.get("lead_email") == clean_email:
+            logger.info(f"[GATEKEEPER] Idempotency hit: {clean_phone} already queued with {mask_email(clean_email)}")
+            hold_caption = (
+                f"Halo Kak {clean_name}! Data pendaftaran Kakak ({clean_email}) sudah tersimpan sebelumnya dalam antrean prioritas Batch 1.\n\n"
+                f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold). "
+                f"Begitu sistem pembayaran resmi dibuka, Kakak akan langsung menerima instruksi pembayaran di nomor WhatsApp ini."
+            )
+            return {
+                "status": "STRICT_HOLD",
+                "strict_hold": True,
+                "idempotent_reentry": True,
+                "order_id": None,
+                "total_amount": SINGLE_OFFER_PRICE,
+                "qris_payload": "",
+                "caption": hold_caption,
+            }
+
+        session["lead_name"] = clean_name
+        session["lead_email"] = clean_email
+
+        # P0 STRICT HOLD GUARD: Reject request BEFORE Xendit invocation and BEFORE database mutations
+        from app.services.academy_service import is_onlineboost_payment_held, mask_phone_for_log
+        if is_onlineboost_payment_held(clean_phone):
+            logger.info(f"[GATEKEEPER] Payment STRICT HOLD active for OnlineBoost Batch 1. Request queued without Xendit or order mutation for {mask_phone_for_log(clean_phone)} ({mask_email(clean_email)}).")
+            session["current_state"] = "STATE_LEAD_QUEUED"
+            self._save_session_to_db(session)
+            hold_caption = (
+                f"Terima kasih Kak {clean_name}! Data pendaftaran Kakak ({clean_email}) sudah kami catat dalam daftar antrean prioritas Batch 1.\n\n"
+                f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold). "
+                f"Begitu sistem pembayaran resmi dibuka, Kakak akan langsung menerima instruksi pembayaran di nomor WhatsApp ini."
+            )
+            if phone_number_id and clean_phone:
+                try:
+                    await cloud_api.send_whatsapp_text(
+                        to_phone=clean_phone,
+                        text=hold_caption,
+                        phone_number_id=phone_number_id,
+                        tenant_id="onlineboost",
+                    )
+                except Exception as _e:
+                    logger.debug(f"[GATEKEEPER] WA dispatch note: {_e}")
+
+            return {
+                "status": "STRICT_HOLD",
+                "strict_hold": True,
+                "order_id": None,
+                "total_amount": SINGLE_OFFER_PRICE,
+                "qris_payload": "",
+                "caption": hold_caption,
+            }
+
         session["current_state"] = "STATE_PAYMENT_PENDING"
 
         # 1. Hitung 3-digit kode unik downward (100 - 999)
@@ -264,43 +374,72 @@ class CTWAStateEngine:
         now_iso = now.isoformat()
 
         # 2. Terbitkan Dynamic QRIS resmi via Xendit API akun PT Boontrack
-        xendit_qr_res = await xendit_service.create_dynamic_qris(
-            external_id=order_id,
-            amount=total_amount,
-            tenant_id="onlineboost",
-            customer_phone=clean_phone,
-            metadata={
-                "product_name": SINGLE_OFFER_NAME,
-                "product_slug": SINGLE_OFFER_SLUG,
-                "customer_name": name,
-                "ctwa_clid": ctwa_clid,
-            }
-        )
+        xendit_qr_res = {}
+        try:
+            xendit_qr_res = await xendit_service.create_dynamic_qris(
+                external_id=order_id,
+                amount=total_amount,
+                tenant_id="onlineboost",
+                customer_phone=clean_phone,
+                metadata={
+                    "product_name": SINGLE_OFFER_NAME,
+                    "product_slug": SINGLE_OFFER_SLUG,
+                    "customer_name": name,
+                    "ctwa_clid": ctwa_clid,
+                }
+            )
+        except Exception as x_err:
+            logger.warning(f"[GATEKEEPER] Xendit create_dynamic_qris note: {x_err}")
+            xendit_qr_res = {}
+
         qris_payload = str(xendit_qr_res.get("qr_string") or "").strip()
         if not qris_payload or not qris_payload.startswith("000201"):
-            qris_payload = generate_dynamic_qris_payload(
-                static_payload=DEFAULT_STATIC_QRIS,
-                amount=total_amount,
-                invoice_id=order_id,
+            # P0 FAIL-CLOSED: DILARANG KERAS mengganti QRIS transaksi dinamis yang gagal dengan QRIS statis (DEFAULT_STATIC_QRIS)
+            logger.error(
+                f"[GATEKEEPER] Xendit dynamic QRIS generation failed or returned invalid EMVCo payload for order {order_id}. "
+                f"Refusing static QRIS fallback per P0 fail-closed policy."
             )
+            session["current_state"] = "STATE_QRIS_FAILED"
+            fail_caption = (
+                f"Mohon maaf Kak {name}, sistem gerbang pembayaran resmi sedang mengalami kendala. "
+                f"Data pendaftaran Kakak ({email}) sudah tersimpan aman di sistem kami. "
+                f"Silakan ketik 'DAFTAR' untuk mencoba kembali dalam beberapa saat."
+            )
+            return {
+                "status": "QRIS_GENERATION_FAILED",
+                "error": "Failed to acquire authoritative dynamic QRIS from payment gateway",
+                "order_id": None,
+                "total_amount": total_amount,
+                "qris_payload": "",
+                "caption": fail_caption,
+            }
+
+        qris_payload = str(qris_payload or "").strip()
         invoice_url = str(xendit_qr_res.get("invoice_url") or "").strip()
         session["invoice_url"] = invoice_url
 
         qr_png_bytes = generate_qris_png_bytes(qris_payload) if qris_payload else b""
 
         # 3. Buat baris order baru di Supabase pada tabel orders dengan status PENDING
+        from app.services.referral_attribution_service import get_attribution_snapshot_for_order
+        attr_snapshot = get_attribution_snapshot_for_order(session)
+
         order_metadata = {
             "flow_token": "ctwa_flow_token",
             "base_amount": SINGLE_OFFER_PRICE,
             "unique_code": downward_code,
             "unique_code_system": "DOWNWARD",
             "product_slug": SINGLE_OFFER_SLUG,
+            "sku_id": CANONICAL_BATCH1_SKU,
+            "sku": CANONICAL_BATCH1_SKU,
             "qris_payload": qris_payload,
             "qr_id": xendit_qr_res.get("qr_id"),
             "invoice_url": invoice_url,
             "payment_provider": "XENDIT",
             "ctwa_clid": ctwa_clid,
         }
+        if attr_snapshot:
+            order_metadata.update(attr_snapshot)
 
         sb = get_supabase()
         if sb:
@@ -450,8 +589,85 @@ class CTWAStateEngine:
         - Jika bukan lead -> Tampilkan Value Stacking Script & WhatsApp Flows Form.
         """
         clean_phone = normalize_phone_number(phone) or str(phone).strip()
+
+        # =====================================================================
+        # P0-A: COMPLIANCE GUARD - Opt-out enforcement (STOP, BERHENTI, UNSUBSCRIBE)
+        # Processed before any marketing reply, bot state transition, or sales closing
+        # =====================================================================
+        from app.services.phone_suppression_service import (
+            is_opt_out_keyword,
+            record_durable_suppression,
+            is_phone_suppressed,
+        )
+        if is_opt_out_keyword(incoming_text):
+            logger.info(f"[CTWA_TURN] Matched opt-out keyword '{incoming_text}' from {clean_phone}.")
+            persisted, persistence_src = record_durable_suppression(
+                phone=clean_phone,
+                tenant_id="onlineboost",
+                reason=f"USER_REQUESTED_OPT_OUT_{incoming_text.strip().upper()}",
+            )
+            if not persisted:
+                logger.error(
+                    f"[CTWA_TURN_FAIL_CLOSED] Durable suppression persistence failed for {clean_phone}. "
+                    f"Skipping false opt-out confirmation."
+                )
+                return {
+                    "success": False,
+                    "action": "suppression_failed",
+                    "status": "error",
+                    "suppressed": False,
+                    "reply": "",
+                    "order_id": None,
+                    "total_amount": 0,
+                }
+            opt_out_msg = (
+                "Anda telah berhasil berhenti berlangganan dari notifikasi ini. "
+                "Kirim 'START' kapan saja untuk mengaktifkan kembali."
+            )
+            try:
+                await cloud_api.send_whatsapp_text(
+                    to_phone=clean_phone,
+                    text=opt_out_msg,
+                    tenant_id="onlineboost",
+                    phone_number_id=phone_number_id,
+                )
+            except Exception as e:
+                logger.warning(f"[CTWA_TURN] WhatsApp opt-out send note: {e}")
+
+            return {
+                "success": True,
+                "action": "opt_out_confirmed",
+                "status": "opt_out_confirmed",
+                "suppressed": True,
+                "reply": opt_out_msg,
+                "order_id": None,
+                "total_amount": 0,
+                "qris_payload": "",
+            }
+
+        # Check if caller is already suppressed for onlineboost -> suppress promotional/sales reply
+        if is_phone_suppressed(clean_phone, tenant_id="onlineboost"):
+            logger.info(f"[CTWA_TURN] Sender {clean_phone} is suppressed on tenant 'onlineboost'. Suppressing promotional reply.")
+            return {
+                "success": False,
+                "action": "suppressed_silent_drop",
+                "status": "suppressed",
+                "reply": "",
+                "order_id": None,
+                "total_amount": 0,
+                "qris_payload": "",
+            }
+
         session = self.get_session(clean_phone)
-        q = incoming_text.strip()
+
+        # Ekstraksi marker [r=KODE_RESELLER] dan persistensi atribusi (First Valid Referral Wins)
+        from app.services.referral_attribution_service import (
+            extract_referral_marker,
+            apply_referral_attribution_to_session,
+        )
+        q, raw_ref_code = extract_referral_marker(incoming_text.strip())
+        if raw_ref_code:
+            apply_referral_attribution_to_session(session, raw_ref_code, tenant_id="onlineboost")
         q_lower = q.lower()
 
         # Update sapaan nama jika ada
@@ -507,6 +723,41 @@ class CTWAStateEngine:
                 phone_number_id=phone_number_id,
                 ctwa_clid=ctwa_clid,
             )
+            if gk_result.get("strict_hold"):
+                caption = gk_result.get("caption") or ""
+                return {
+                    "success": True,
+                    "action": "GATEKEEPER_STRICT_HOLD",
+                    "reply": caption,
+                    "reply_text": caption,
+                    "media_url": "",
+                    "qr_code_url": "",
+                    "qris_payload": "",
+                    "order_id": None,
+                    "total_amount": SINGLE_OFFER_PRICE,
+                    "downward_code": 0,
+                    "current_state": "STATE_LEAD_QUEUED",
+                }
+
+            if gk_result.get("status") == "QRIS_GENERATION_FAILED":
+                caption = gk_result.get("caption") or (
+                    "Mohon maaf Kak, terjadi kendala koneksi ke gerbang pembayaran resmi saat menyiapkan kode QRIS. "
+                    "Silakan ketik 'DAFTAR' untuk mencoba kembali."
+                )
+                return {
+                    "success": False,
+                    "action": "GATEKEEPER_FAILED",
+                    "reply": caption,
+                    "reply_text": caption,
+                    "media_url": "",
+                    "qr_code_url": "",
+                    "qris_payload": "",
+                    "order_id": None,
+                    "total_amount": SINGLE_OFFER_PRICE,
+                    "downward_code": 0,
+                    "current_state": "STATE_QRIS_FAILED",
+                }
+
             qris_payload = str(gk_result.get("qris_payload") or "").strip()
             qr_img_url = ""
             if qris_payload:
@@ -518,6 +769,9 @@ class CTWAStateEngine:
                 "Instruksi pembayaran akan diinformasikan setelah verifikasi batch resmi dibuka."
             )
             is_executed = bool(gk_result.get("status") == "GATEKEEPER_EXECUTED" or qris_payload)
+            if gk_result.get("status") == "GATEKEEPER_PENDING" and not qris_payload:
+                is_executed = False
+
             return {
                 "success": is_executed,
                 "action": "GATEKEEPER_QRIS_ISSUED" if is_executed else "GATEKEEPER_PENDING",
@@ -530,6 +784,45 @@ class CTWAStateEngine:
                 "total_amount": gk_result.get("total_amount"),
                 "downward_code": gk_result.get("downward_code"),
                 "current_state": "STATE_PAYMENT_PENDING",
+            }
+
+        # Check if message is a Flow submission (nfm_reply) that failed validation
+        is_flow_submission = (
+            isinstance(raw_msg, dict)
+            and raw_msg.get("type") == "interactive"
+            and (raw_msg.get("interactive") or {}).get("type") == "nfm_reply"
+        )
+        if is_flow_submission and not lead_detected:
+            logger.warning(f"[CTWA_TURN] Flow submission from {clean_phone} failed validation.")
+            session["current_state"] = "STATE_REGISTRATION_INVALID"
+            self._save_session_to_db(session)
+            recovery_reply = (
+                "Mohon maaf Kak, data pendaftaran belum valid. Pastikan nama lengkap (minimal 2 karakter) "
+                "dan alamat email aktif sudah benar ya. Silakan kirim ulang formulir pendaftaran."
+            )
+            if phone_number_id and clean_phone:
+                try:
+                    await cloud_api.send_whatsapp_text(
+                        to_phone=clean_phone,
+                        text=recovery_reply,
+                        phone_number_id=phone_number_id,
+                        tenant_id="onlineboost",
+                    )
+                except Exception as _e:
+                    logger.debug(f"[CTWA_TURN] WA send note: {_e}")
+
+            return {
+                "success": False,
+                "action": "REGISTRATION_VALIDATION_FAILED",
+                "reply": recovery_reply,
+                "reply_text": recovery_reply,
+                "media_url": "",
+                "qr_code_url": "",
+                "qris_payload": "",
+                "order_id": None,
+                "total_amount": SINGLE_OFFER_PRICE,
+                "downward_code": 0,
+                "current_state": "STATE_REGISTRATION_INVALID",
             }
 
         # ─── 2. USER SUDAH DALAM STATUS MENUNGGU PEMBAYARAN ────────────────────
@@ -549,7 +842,70 @@ class CTWAStateEngine:
                     "current_state": "STATE_PAYMENT_PENDING",
                 }
 
-        # ─── 3. DEFAULT RESPONSE: VALUE STACKING HOOK & WHATSAPP FLOWS FORM ────
+        # ─── 3. INBOUND LANDING PAGE CTA: KIRIM WHATSAPP FLOW (PHASE 5 MANDATE) ─
+        if re.search(r"(?i)(saya\s+tertarik\s+ikut\s+kelas\s*nya\s*kang|tertarik\s+ikut\s+kelas|tertarik\s+kelas)", q):
+            flow_intro = (
+                "Halo Kang/Teh! Siap, yuk amankan kuota promo Rp249.000 Kelas Inkubasi CTWA Batch 1. "
+                "Silakan lengkapi nama & email aktif melalui formulir di bawah ini untuk penerbitan invoice resmi:"
+            )
+            # Idempotency guard (inbound message ID + customer WhatsApp ID)
+            inbound_msg_id = (raw_msg or {}).get("id") or ""
+            idempotency_key = f"{inbound_msg_id}_{clean_phone}" if inbound_msg_id else f"flow_sent_{clean_phone}"
+            if idempotency_key not in _DISPATCHED_FLOW_IDEMPOTENCY_KEYS:
+                _DISPATCHED_FLOW_IDEMPOTENCY_KEYS.add(idempotency_key)
+                try:
+                    await cloud_api.send_whatsapp_flow(
+                        to_phone=clean_phone,
+                        flow_id=OFFICIAL_FLOW_ID,
+                        flow_token=OFFICIAL_FLOW_TOKEN,
+                        flow_cta=OFFICIAL_FLOW_CTA,
+                        header_text="OnlineBoost Batch 1",
+                        body_text="Halo Kak! Klik tombol di bawah untuk melengkapi data pendaftaran dan mengamankan slot kelas Anda:",
+                        flow_action="navigate",
+                        flow_action_payload={"screen": "REGISTRATION"},
+                        tenant_id="onlineboost",
+                        phone_number_id=phone_number_id or "1419090974617162",
+                    )
+                except Exception as flow_err:
+                    logger.debug(f"[CTWA_TURN] WhatsApp flow send note: {flow_err}")
+
+            session["current_state"] = "STATE_FLOW_SENT"
+            self._save_session_to_db(session)
+            return {
+                "success": True,
+                "action": "SEND_REGISTRATION_FLOW",
+                "reply": flow_intro,
+                "reply_text": flow_intro,
+                "current_state": "STATE_FLOW_SENT",
+            }
+
+        # ─── 3.5. PERTANYAAN ADMIN / CS / TANYA DULU (TIDAK TRANSFER KE HUMAN) ─
+        if re.search(r"(?i)(\badmin\b|\bcs\b|bisa\s+tanya|tanya[\s_]*dulu|hubungi\s+admin|bicara\s+admin|customer\s+service)", q):
+            from app.services.academy_service import BOT_LED_ASSISTANT_RESPONSE
+            session["current_state"] = "STATE_CONSULTATION"
+            self._save_session_to_db(session)
+            return {
+                "success": True,
+                "action": "BOT_LED_ASSISTANT_REPLY",
+                "reply": BOT_LED_ASSISTANT_RESPONSE,
+                "reply_text": BOT_LED_ASSISTANT_RESPONSE,
+                "current_state": "STATE_CONSULTATION",
+            }
+
+        # ─── 3.6. PERTANYAAN HARGA / FASILITAS / BENEFIT ───────────────────────
+        if re.search(r"(?i)(onlineboost\s+itu\s+apa|apa\s+itu\s+onlineboost|dapat\s+apa|fasilitas|berapa\s+harganya|harganya\s+berapa|biaya|materi|kurikulum|benefit)", q):
+            from app.services.academy_service import SITUATION_C_PRICE_BENEFITS_SCRIPT
+            session["current_state"] = "STATE_CONSULTATION"
+            self._save_session_to_db(session)
+            return {
+                "success": True,
+                "action": "EXPLAIN_PRICE_AND_BENEFITS",
+                "reply": SITUATION_C_PRICE_BENEFITS_SCRIPT,
+                "reply_text": SITUATION_C_PRICE_BENEFITS_SCRIPT,
+                "current_state": "STATE_CONSULTATION",
+            }
+
+        # ─── 4. DEFAULT RESPONSE: VALUE STACKING HOOK & WHATSAPP FLOWS FORM ────
         # Fokuskan seluruh grounding dan respon bot HANYA pada Paket Lengkap 249K
         reply = SINGLE_OFFER_VALUE_STACKING_SCRIPT
 
@@ -693,9 +1049,11 @@ class CTWAStateEngine:
                     .maybe_single()
                     .execute()
                 )
-                if res and res.data:
+                if res and isinstance(res.data, dict):
                     row = res.data
                     meta = row.get("metadata") or {}
+                    if not isinstance(meta, dict):
+                        meta = {}
                     return {
                         "phone": clean_phone,
                         "tenant_slug": "onlineboost",

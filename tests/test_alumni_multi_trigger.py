@@ -9,12 +9,14 @@ Verifikasi mencakup:
 5. Dual-tenant scoping untuk tenant 'onlineboost' dan 'boon'.
 """
 
+import os
 import uuid
 import asyncio
 from unittest.mock import patch, AsyncMock
 import pytest
 
 from app.services.academy_service import (
+    CANONICAL_BATCH1_SKU,
     classify_academy_trigger,
     is_academy_trigger_message,
     lookup_alumni_master_data,
@@ -87,8 +89,12 @@ async def test_trigger_campaign_a_with_known_master_data():
     assert session["name"] == "Budi Santoso"
     assert session["email"] == "budi.alumni@gmail.com"
 
-    # 2. State 1: Konfirmasi Email oleh Alumni
-    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send_wa2:
+    # 2. State 1: Konfirmasi Email oleh Alumni (dengan isolated test mode patch)
+    with patch.dict(os.environ, {
+        "ONLINEBOOST_PAYMENT_STRICT_HOLD": "false",
+        "PILOT_INTERNAL_WHITELIST": sender_phone,
+    }), \
+         patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send_wa2:
         res_state1 = await academy_bot.process_inbound(
             sender_phone=sender_phone,
             incoming_text="OK siap mas, lanjutkan",
@@ -193,8 +199,12 @@ async def test_trigger_campaign_b_ads_ctwa():
         assert "Email Aktif" in reply
         mock_send_wa.assert_awaited_once()
 
-    # 2. State 1: User balas dengan "Nama Lengkap - Email"
-    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send_wa2:
+    # 2. State 1: User balas dengan "Nama Lengkap - Email" (dengan isolated test mode patch)
+    with patch.dict(os.environ, {
+        "ONLINEBOOST_PAYMENT_STRICT_HOLD": "false",
+        "PILOT_INTERNAL_WHITELIST": sender_phone,
+    }), \
+         patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send_wa2:
         res1 = await academy_bot.process_inbound(
             sender_phone=sender_phone,
             incoming_text="Dewi Sartika - dewi.sartika@gmail.com",
@@ -291,9 +301,13 @@ async def test_post_paid_delivery_batch_1_template_and_outbox():
         tenant_id=tenant_id,
         use_unique_code=False,
     )
+    assert invoice["sku_id"] == "OB-BATCH1-249K", f"Expected canonical SKU OB-BATCH1-249K, got: {invoice.get('sku_id')}"
     order_id = invoice["order_id"]
 
-    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send_wa:
+    mock_invite = "https://t.me/+join_alumni_privilege_batch1_pass"
+    with patch("app.services.academy_service.generate_single_use_telegram_link", new_callable=AsyncMock) as mock_tg, \
+         patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send_wa:
+        mock_tg.return_value = mock_invite
         res = await academy_bot.handle_webhook_paid(
             order_id=order_id,
             event_id="evt_batch1_verified_001",
@@ -309,6 +323,7 @@ async def test_post_paid_delivery_batch_1_template_and_outbox():
         assert res["idempotency_hit"] is False
         assert "single_use_telegram_link" in res
         invite_link = res["single_use_telegram_link"]
+        assert invite_link == mock_invite
 
         # Validasi pesan konfirmasi persis dengan template Batch 1
         msg = res["confirmation_message"]
@@ -358,13 +373,23 @@ async def test_dual_tenant_scope_isolation_and_flow():
     Memastikan alur lengkap multi-trigger routing dan settlement berjalan
     sempurna untuk tenant 'onlineboost' dan tenant 'boon' secara terisolasi.
     """
-    for t_id in ("onlineboost", "boon"):
-        phone = f"62899{uuid.uuid4().hex[:6]}"
-        name = f"Student {t_id.capitalize()}"
-        email = f"student@{t_id}.id"
+    mock_invite = "https://t.me/+join_dual_tenant_test"
+    test_phones = {t_id: f"62899{uuid.uuid4().hex[:6]}" for t_id in ("onlineboost", "boon")}
+    allowed_whitelist = ",".join(test_phones.values())
 
-        # State 0 Trigger
-        with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
+    with patch.dict(os.environ, {
+        "ONLINEBOOST_PAYMENT_STRICT_HOLD": "false",
+        "PILOT_INTERNAL_WHITELIST": allowed_whitelist,
+    }), \
+         patch("app.services.academy_service.generate_single_use_telegram_link", new_callable=AsyncMock) as mock_tg, \
+         patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
+        mock_tg.return_value = mock_invite
+        for t_id in ("onlineboost", "boon"):
+            phone = test_phones[t_id]
+            name = f"Student {t_id.capitalize()}"
+            email = f"student@{t_id}.id"
+
+            # State 0 Trigger
             res0 = await academy_bot.process_inbound(
                 sender_phone=phone,
                 incoming_text="Halo kak, saya mau daftar Kelas Inkubasi CTWA Batch 1 promo Rp249.000.",
@@ -395,3 +420,31 @@ async def test_dual_tenant_scope_isolation_and_flow():
             assert res2["status"] == "SUCCESS"
             assert res2["idempotency_hit"] is False
             assert AcademyEntitlementManager.get_entitlements_count(order_id) == 1
+
+
+# ============================================================================
+# 6. DEFAULT FAIL-CLOSED STRICT HOLD VERIFICATION
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_onlineboost_payment_strict_hold_default_blocked():
+    """
+    Memastikan default environment fail-closed ONLINEBOOST_PAYMENT_STRICT_HOLD=true
+    menolak penerbitan invoice dan mengembalikan aksi PAYMENT_STRICT_HOLD.
+    """
+    sender_phone = f"62812{uuid.uuid4().hex[:8]}"
+    res0 = await academy_bot.process_inbound(
+        sender_phone=sender_phone,
+        incoming_text="Halo kak, mau daftar Kelas Inkubasi CTWA Batch 1",
+        contact_name="Joko Test",
+        tenant_id="onlineboost",
+    )
+    assert res0["handled"] is True
+
+    res1 = await academy_bot.process_inbound(
+        sender_phone=sender_phone,
+        incoming_text="Joko Test - joko.test@gmail.com",
+        tenant_id="onlineboost",
+    )
+    assert res1["action"] == "PAYMENT_STRICT_HOLD"
+    assert res1.get("strict_hold") is True

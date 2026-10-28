@@ -56,7 +56,9 @@ class TenantContextViolation(PermissionError):
 # ============================================================================
 
 ACADEMY_SKU_NAME: str = "BoonTrack Academy & CTWA Scale Engine (Alumni Privilege Pass)"
-ACADEMY_SKU_ID: str = "SKU-BTA-ALUMNI-249K"
+CANONICAL_BATCH1_SKU: str = "OB-BATCH1-249K"
+LEGACY_ACADEMY_SKU_ID: str = "OB-BATCH1-249K"
+ACADEMY_SKU_ID: str = "OB-BATCH1-249K"
 ACADEMY_SETTLEMENT_PRICE: int = 249000  # Rp 249.000
 ACADEMY_INVOICE_TTL_MINUTES: int = 15   # 15 menit
 
@@ -76,6 +78,7 @@ STATE_CONSULTATION = "STATE_CONSULTATION"
 STATE_1_AWAITING_EMAIL = "STATE_1_AWAITING_EMAIL"
 STATE_1_PAYMENT_ISSUED = "STATE_1_PAYMENT_ISSUED"
 STATE_2_PAID = "STATE_2_PAID"
+STATE_FLOW_SENT = "STATE_FLOW_SENT"
 
 # In-memory stores (Fast, test-isolated, thread-safe for unit testing and runtime caching)
 _ACADEMY_SESSIONS: Dict[str, Dict[str, Any]] = {}       # phone -> session_dict
@@ -85,6 +88,7 @@ _SETTLED_ORDERS: Set[str] = set()                       # order_id idempotency s
 _PROCESSED_EVENTS: Set[str] = set()                     # event_id idempotency set
 _ISSUED_TELEGRAM_LINKS: Dict[str, str] = {}             # order_id -> single_use_link
 _MANUAL_RECONCILIATION_QUEUE: List[Dict[str, Any]] = [] # order entries routed to manual audit
+_DISPATCHED_FLOW_IDEMPOTENCY_KEYS: Set[str] = set()         # idempotency set for outbound flow dispatch
 _SETTLE_THREAD_LOCK = threading.Lock()                  # atomic lock for thread-safe mutations
 
 # ============================================================================
@@ -360,6 +364,11 @@ def reset_academy_test_state() -> None:
     AcademyEntitlementManager._ENTITLEMENTS.clear()
     AcademyEntitlementManager._ORDER_ENTITLEMENTS.clear()
     AcademyOutboxManager._OUTBOX.clear()
+    try:
+        from app.services.referral_attribution_service import reset_referral_registry
+        reset_referral_registry()
+    except Exception:
+        pass
 
 # ============================================================================
 # MASTER DATA ALUMNI REGISTRY & LOOKUP
@@ -450,6 +459,7 @@ QUALIFICATION_PRIMARY_QUESTION: str = (
     "Siap, Kak! 😁 Gue bantu jelasin langsung di sini. "
     "Biar arahnya pas, Kakak sudah punya produk/offer yang mau dipasarkan, atau masih mulai dari nol?"
 )
+
 
 # 2. Alumni Broadcast Response MAU Script (Aldi / OnlineBoost Mentor Persona)
 ALUMNI_MAU_GREETING: str = (
@@ -569,7 +579,9 @@ TRIGGER_PATTERN_ONLINEBOOST_BATCH1 = re.compile(
 
 PLAYBOOK_V22_OFFER_SCRIPT = SITUATION_C_PRICE_BENEFITS_SCRIPT
 
-def classify_academy_trigger(text: str) -> Optional[str]:
+ACADEMY_ALLOWED_TENANTS = frozenset({"onlineboost", "boon"})
+
+def classify_academy_trigger(text: str, tenant_id: Optional[str] = None) -> Optional[str]:
     """
     Mengidentifikasi route kampanye dari pesan masuk:
     - 'onlineboost_batch1': Fast-Path Inbound "MAU METODE RAHASIA" (Batch 1)
@@ -579,20 +591,24 @@ def classify_academy_trigger(text: str) -> Optional[str]:
     """
     if not text or not isinstance(text, str):
         return None
-    clean = text.strip()
+    clean_tid = str(tenant_id).strip().lower() if tenant_id is not None else None
+    if clean_tid is not None and clean_tid not in ACADEMY_ALLOWED_TENANTS:
+        return None
+    from app.services.referral_attribution_service import extract_referral_marker
+    clean, _ = extract_referral_marker(text.strip())
     if TRIGGER_PATTERN_CAMPAIGN_B.search(clean):
         return "ads_ctwa"
     if TRIGGER_PATTERN_CAMPAIGN_A.search(clean) or STATE_0_TRIGGER_PATTERN.search(clean):
         return "alumni_cpm"
     if TRIGGER_PATTERN_STOREFRONT.search(clean):
         return "storefront_direct"
-    if TRIGGER_PATTERN_ONLINEBOOST_BATCH1.search(clean):
+    if (clean_tid is None or clean_tid == "onlineboost") and TRIGGER_PATTERN_ONLINEBOOST_BATCH1.search(clean):
         return "onlineboost_batch1"
     return None
 
-def is_academy_trigger_message(text: str) -> bool:
+def is_academy_trigger_message(text: str, tenant_id: Optional[str] = None) -> bool:
     """Mengecek apakah pesan masuk mencocokkan salah satu pattern trigger Academy / OnlineBoost."""
-    return classify_academy_trigger(text) is not None
+    return classify_academy_trigger(text, tenant_id=tenant_id) is not None
 
 def lookup_staging_alumni_cpm(phone: str, tenant_id: str = "onlineboost") -> Optional[Dict[str, Any]]:
     """
@@ -615,7 +631,7 @@ def lookup_staging_alumni_cpm(phone: str, tenant_id: str = "onlineboost") -> Opt
         from app.core.database import get_db_connection
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute(f"SET LOCAL app.current_tenant_id = '{tenant_id}';")
+        cur.execute("SELECT set_config('app.current_tenant_id', %s, true);", (str(tenant_id).strip(),))
         cur.execute(
             """
             SELECT id, tenant_id, lead_phone, alumni_name, campaign_id, status, metadata
@@ -649,6 +665,72 @@ def lookup_staging_alumni_cpm(phone: str, tenant_id: str = "onlineboost") -> Opt
 
     return None
 
+
+def mask_phone_for_log(phone: Optional[str]) -> str:
+    """Mask customer phone number for audit logs (e.g., 6288****088)."""
+    if not phone:
+        return "[EMPTY]"
+    clean = re.sub(r"\D", "", str(phone))
+    if clean.startswith("0"):
+        clean = "62" + clean[1:]
+    if len(clean) <= 6:
+        return "***"
+    return clean[:4] + "****" + clean[-3:]
+
+
+def is_onlineboost_payment_held(customer_phone: Optional[str] = None) -> bool:
+    """
+    Check whether OnlineBoost Batch 1 payment is in STRICT HOLD mode or pilot-restricted.
+
+    P0-A Pilot Isolation Security Contract:
+    1. Global Strict Hold (Fail-Closed Default):
+       If ONLINEBOOST_PAYMENT_STRICT_HOLD is 'true' (or any value other than 'false'/'0'/'off'/'no'),
+       ALL payment creation is blocked for 100% of callers, including whitelisted numbers.
+    2. Controlled Pilot Isolation:
+       When ONLINEBOOST_PAYMENT_STRICT_HOLD is explicitly 'false', live payment creation is permitted
+       ONLY for customer phone numbers explicitly registered in the PILOT_INTERNAL_WHITELIST environment variable.
+    3. Fail-Closed Whitelist:
+       If PILOT_INTERNAL_WHITELIST is missing, empty, or unparseable, or if customer_phone is missing or
+       not on the whitelist, payment creation is held (returns True).
+    4. Privacy:
+       Customer phone numbers are never logged in plaintext (masked via mask_phone_for_log).
+    """
+    val = os.getenv("ONLINEBOOST_PAYMENT_STRICT_HOLD", "true").strip().lower()
+    # Case 1: Global strict hold active (default fail-closed)
+    if val not in ("false", "0", "off", "no"):
+        return True
+
+    # Case 2: Strict hold is set to false -> Must enforce server-side PILOT_INTERNAL_WHITELIST
+    raw_whitelist = os.getenv("PILOT_INTERNAL_WHITELIST", "").strip()
+    if not raw_whitelist:
+        logger.warning("[PaymentGuard] STRICT HOLD disabled but PILOT_INTERNAL_WHITELIST is empty or missing. Failing closed.")
+        return True
+
+    if not customer_phone or not str(customer_phone).strip():
+        logger.warning("[PaymentGuard] Payment creation attempted without customer phone in pilot mode. Failing closed.")
+        return True
+
+    def _clean_phone_digits(p: str) -> str:
+        digits = re.sub(r"\D", "", str(p))
+        if digits.startswith("0"):
+            digits = "62" + digits[1:]
+        return digits
+
+    clean_whitelist = {_clean_phone_digits(n) for n in raw_whitelist.split(",") if _clean_phone_digits(n)}
+    if not clean_whitelist:
+        logger.warning("[PaymentGuard] PILOT_INTERNAL_WHITELIST contains no valid phone digits. Failing closed.")
+        return True
+
+    clean_target = _clean_phone_digits(customer_phone)
+    if clean_target in clean_whitelist:
+        logger.info(f"[PaymentGuard] Authorized pilot customer phone {mask_phone_for_log(clean_target)} permitted for live payment.")
+        return False
+
+    logger.warning(f"[PaymentGuard] Customer phone {mask_phone_for_log(clean_target)} is NOT authorized in PILOT_INTERNAL_WHITELIST. Request held.")
+    return True
+
+
+
 async def generate_fast_path_xendit_qris_batch1(
     customer_phone: str,
     customer_name: str = "Kak",
@@ -664,6 +746,27 @@ async def generate_fast_path_xendit_qris_batch1(
     t0 = time.monotonic()
     clean_p = normalize_phone_number(customer_phone) or customer_phone
     amount = 249000
+
+    # P0 STRICT HOLD GUARD: Reject request BEFORE Xendit invocation and BEFORE database mutations
+    if is_onlineboost_payment_held(clean_p):
+        logger.info(f"[FastPathQRIS] Payment STRICT HOLD active for tenant '{tenant_id}'. Rejecting before Xendit or order mutation.")
+        hold_caption = (
+            f"Terima kasih Kak {customer_name}! Data pendaftaran Kakak sudah kami catat dalam antrean prioritas Batch 1.\n\n"
+            f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold). "
+            f"Begitu sistem pembayaran resmi dibuka, Kakak akan langsung menerima instruksi pembayaran di nomor WhatsApp ini."
+        )
+        return {
+            "status": "STRICT_HOLD",
+            "strict_hold": True,
+            "order_id": None,
+            "amount": amount,
+            "qr_string": "",
+            "qr_image_url": "",
+            "invoice_url": "",
+            "message": hold_caption,
+            "latency_ms": int((time.monotonic() - t0) * 1000),
+        }
+
     order_id = f"OB1-{uuid.uuid4().hex[:8].upper()}"
     product_name = "Kelas Inkubasi OnlineBoost Batch 1"
 
@@ -705,25 +808,44 @@ async def generate_fast_path_xendit_qris_batch1(
     except Exception as xerr:
         logger.warning(f"[FastPathQRIS] Xendit 1.2s cap hit / network fallback ({xerr}). Generating resilient dynamic QRIS.")
 
-    # 2. Resilient Dynamic QRIS Fallback untuk jaminan total latensi < 2.0s
-    if not qr_string:
-        try:
-            base_qris = DEFAULT_STATIC_QRIS.strip()
-            qr_string = generate_dynamic_qris_payload(
-                static_payload=base_qris,
-                amount=amount,
-                invoice_id=order_id,
-            )
-        except Exception:
-            qr_string = f"00020101021254062490005802ID5909BoonTrack6012Kab. Bandung6105402866304ABCD"
-        qr_image_url = get_qr_code_image_url(qr_string, size=600)
-        invoice_url = f"https://checkout.boontrack.com/pay/{order_id}"
+    # 2. Fail-closed Dynamic QRIS Guard: DILARANG KERAS mengganti dynamic QRIS yang gagal dengan DEFAULT_STATIC_QRIS
+    if not qr_string or not qr_string.startswith("000201"):
+        logger.error(
+            f"[FastPathQRIS] Xendit dynamic QRIS generation failed for {order_id}. "
+            f"Refusing static QRIS fallback per P0 fail-closed policy."
+        )
+        return {
+            "status": "ERROR_GATEWAY_TIMEOUT",
+            "strict_hold": False,
+            "order_id": None,
+            "amount": amount,
+            "qr_string": "",
+            "qr_image_url": "",
+            "invoice_url": "",
+            "message": "Mohon maaf Kak, gerbang pembayaran resmi sedang sibuk. Mohon coba beberapa saat lagi.",
+            "latency_ms": int((time.monotonic() - t0) * 1000),
+        }
 
     # 3. Persist Pending Order ke PostgreSQL
     try:
         from app.core.database import get_db_connection
         conn = get_db_connection()
         cur = conn.cursor()
+        from app.services.referral_attribution_service import get_attribution_snapshot_for_order
+        session_snap = academy_bot.get_session(clean_p)
+        attr_snapshot = get_attribution_snapshot_for_order(session_snap)
+
+        order_meta_dict = {
+            "source": "waba_metode_rahasia",
+            "funnel": "onlineboost_batch1",
+            "sku_id": CANONICAL_BATCH1_SKU,
+            "sku": CANONICAL_BATCH1_SKU,
+            "qr_string": qr_string,
+            "invoice_url": invoice_url,
+        }
+        if attr_snapshot:
+            order_meta_dict.update(attr_snapshot)
+
         cur.execute(
             """
             INSERT INTO orders (
@@ -735,18 +857,13 @@ async def generate_fast_path_xendit_qris_batch1(
             (
                 order_id,
                 tenant_id,
-                "ONLINEBOOST_BATCH1",
+                CANONICAL_BATCH1_SKU,
                 product_name,
                 amount,
                 customer_name,
                 clean_p,
                 customer_email,
-                json.dumps({
-                    "source": "waba_metode_rahasia",
-                    "funnel": "onlineboost_batch1",
-                    "qr_string": qr_string,
-                    "invoice_url": invoice_url,
-                })
+                json.dumps(order_meta_dict),
             )
         )
         conn.commit()
@@ -1267,15 +1384,15 @@ async def generate_single_use_telegram_link(
                             _ISSUED_TELEGRAM_LINKS[order_id] = invite_link
                         logger.info(f"[TelegramInvite] Created official single-use link for {customer_name}: {invite_link}")
                         return invite_link
+                    logger.warning(f"[TelegramInvite] Telegram response missing invite_link: {data}")
+                else:
+                    logger.warning(f"[TelegramInvite] Telegram API call failed HTTP {resp.status_code}: {resp.text}")
         except Exception as tg_err:
-            logger.warning(f"[TelegramInvite] Telegram Bot API call note: {tg_err}")
+            logger.warning(f"[TelegramInvite] Telegram API error: {tg_err}")
 
-    # 2. Fallback Secure Deterministic Single-Use Token Link
-    unique_hash = secrets.token_hex(6).upper()
-    invite_link = f"https://t.me/+BTA_{unique_hash}"
-    if order_id:
-        _ISSUED_TELEGRAM_LINKS[order_id] = invite_link
-    return invite_link
+    # Fail closed: Never fabricate a fake Telegram link per CTO P0 directive
+    logger.error(f"[TelegramInvite] Telegram Bot API failed to return invite link for Order {order_id} (fail-closed)")
+    raise RuntimeError(f"Telegram Bot API failed to generate verified invite link for Order {order_id}")
 
 
 # ============================================================================
@@ -1314,23 +1431,40 @@ class AcademyBotStateMachine:
         return session
 
     @classmethod
-    def reset_session(cls, phone: str) -> None:
+    def reset_session(cls, phone: str, tenant_id: Optional[str] = None) -> None:
         """Mereset sesi percakapan alumni."""
         clean_phone = normalize_phone_number(phone) or phone
+        if tenant_id is not None:
+            clean_tid = str(tenant_id).strip().lower()
+            if clean_tid not in ACADEMY_ALLOWED_TENANTS:
+                return
+            session = _ACADEMY_SESSIONS.get(clean_phone)
+            if session and session.get("tenant_id"):
+                if str(session.get("tenant_id")).strip().lower() != clean_tid:
+                    return
         _ACADEMY_SESSIONS.pop(clean_phone, None)
+        to_remove = [k for k in _DISPATCHED_FLOW_IDEMPOTENCY_KEYS if clean_phone in k]
+        for k in to_remove:
+            _DISPATCHED_FLOW_IDEMPOTENCY_KEYS.discard(k)
 
     @classmethod
-    def is_in_active_flow(cls, phone: str) -> bool:
-        """Cek apakah nomor sedang berada di alur aktif Academy/OnlineBoost (kualifikasi, konsultasi, menunggu email/pembayaran)."""
+    def is_in_active_flow(cls, phone: str, tenant_id: Optional[str] = None) -> bool:
+        """Cek apakah nomor sedang berada di alur aktif Academy/OnlineBoost (kualifikasi, konsultasi, menunggu email/pembayaran, atau flow terkirim)."""
+        if tenant_id is not None and str(tenant_id).strip().lower() not in ACADEMY_ALLOWED_TENANTS:
+            return False
         clean_phone = normalize_phone_number(phone) or phone
         session = _ACADEMY_SESSIONS.get(clean_phone)
         if not session:
             return False
+        if tenant_id is not None and session.get("tenant_id"):
+            if str(session.get("tenant_id")).strip().lower() != str(tenant_id).strip().lower():
+                return False
         return session.get("state") in (
             STATE_1_AWAITING_EMAIL,
             STATE_1_PAYMENT_ISSUED,
             STATE_QUALIFYING,
             STATE_CONSULTATION,
+            STATE_FLOW_SENT,
         )
 
     @classmethod
@@ -1341,6 +1475,7 @@ class AcademyBotStateMachine:
         contact_name: Optional[str] = None,
         phone_number_id: Optional[str] = None,
         tenant_id: str = "onlineboost",
+        raw_msg: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Evaluasi pesan masuk dari pengirim.
@@ -1348,8 +1483,121 @@ class AcademyBotStateMachine:
         """
         clean_text = incoming_text.strip()
         clean_phone = normalize_phone_number(sender_phone) or sender_phone
+
+        # =====================================================================
+        # P0-A: COMPLIANCE GUARD - Opt-out enforcement (STOP, BERHENTI, UNSUBSCRIBE)
+        # Processed before any marketing reply, bot state transition, or sales closing
+        # =====================================================================
+        from app.services.phone_suppression_service import (
+            is_opt_out_keyword,
+            record_durable_suppression,
+            is_phone_suppressed,
+        )
+        if is_opt_out_keyword(clean_text):
+            logger.info(f"[AcademyBot] Matched opt-out keyword '{clean_text}' from {clean_phone} for tenant '{tenant_id}'.")
+            persisted, persistence_src = record_durable_suppression(
+                phone=clean_phone,
+                tenant_id=tenant_id,
+                reason=f"USER_REQUESTED_OPT_OUT_{clean_text.upper()}",
+            )
+            cls.reset_session(clean_phone, tenant_id=tenant_id)
+            if not persisted:
+                logger.error(
+                    f"[AcademyBot] Suppression persistence failed ({persistence_src}) for {clean_phone} on tenant '{tenant_id}'."
+                )
+                return {
+                    "handled": True,
+                    "status": "error",
+                    "action": "suppression_failed",
+                    "suppressed": False,
+                    "persistence": persistence_src,
+                    "reply": "",
+                    "message": "Suppression persistence unavailable. Retrying via webhook provider.",
+                    "customer_name": "Pelanggan",
+                    "tenant_id": tenant_id,
+                }
+            opt_out_msg = (
+                "Anda telah berhasil berhenti berlangganan dari notifikasi ini. "
+                "Kirim 'START' kapan saja untuk mengaktifkan kembali."
+            )
+            try:
+                await send_whatsapp_text(
+                    to_phone=clean_phone,
+                    text=opt_out_msg,
+                    tenant_id=tenant_id,
+                    phone_number_id=phone_number_id,
+                )
+            except Exception as e:
+                logger.warning(f"[AcademyBot] WhatsApp opt-out send note: {e}")
+
+            return {
+                "handled": True,
+                "status": "success",
+                "action": "opt_out_confirmed",
+                "suppressed": True,
+                "persistence": persistence_src,
+                "reply": opt_out_msg,
+                "customer_name": "Pelanggan",
+                "tenant_id": tenant_id,
+            }
+
+        # Check if caller is already suppressed for this tenant -> suppress all marketing/sales messages
+        if is_phone_suppressed(clean_phone, tenant_id=tenant_id):
+            logger.info(f"[AcademyBot] Sender {clean_phone} is suppressed on tenant '{tenant_id}'. Suppressing promotional reply.")
+            return {
+                "handled": True,
+                "status": "suppressed",
+                "action": "suppressed_silent_drop",
+                "reply": "",
+                "customer_name": "Pelanggan",
+                "tenant_id": tenant_id,
+            }
+
         session = cls.get_session(clean_phone)
         current_state = session.get("state")
+
+        # 0. Cek jika pesan adalah jawaban WhatsApp Flow (nfm_reply)
+        is_flow_reply = (
+            isinstance(raw_msg, dict)
+            and raw_msg.get("type") == "interactive"
+            and (raw_msg.get("interactive") or {}).get("type") == "nfm_reply"
+        )
+        if is_flow_reply and tenant_id == "onlineboost":
+            from app.services.ctwa_state_engine import ctwa_state_engine
+            ctwa_res = await ctwa_state_engine.process_turn(
+                phone=sender_phone,
+                incoming_text=incoming_text,
+                sender_name=contact_name,
+                raw_msg=raw_msg,
+                phone_number_id=phone_number_id,
+            )
+            if ctwa_res:
+                cls.set_session(
+                    clean_phone,
+                    state="STATE_LEAD_QUEUED",
+                    name=contact_name or session.get("name") or "Kak",
+                    tenant_id=tenant_id,
+                )
+                return {
+                    "handled": True,
+                    "state": "STATE_LEAD_QUEUED",
+                    "action": ctwa_res.get("action"),
+                    "campaign": "onlineboost_batch1",
+                    "reply": ctwa_res.get("reply"),
+                    "customer_name": contact_name or session.get("name") or "Kak",
+                    "tenant_id": tenant_id,
+                    "order_id": ctwa_res.get("order_id"),
+                    "total_amount": ctwa_res.get("total_amount"),
+                }
+
+        # Ekstraksi marker [r=KODE_RESELLER] dan persistensi atribusi (First Valid Referral Wins)
+        from app.services.referral_attribution_service import (
+            extract_referral_marker,
+            apply_referral_attribution_to_session,
+        )
+        clean_text, raw_ref_code = extract_referral_marker(clean_text)
+        if raw_ref_code:
+            apply_referral_attribution_to_session(session, raw_ref_code, tenant_id=tenant_id)
 
         # Fallback sapaan nama
         resolved_name = (
@@ -1363,7 +1611,7 @@ class AcademyBotStateMachine:
         # ---------------------------------------------------------------------
         # STATE 0: Multi-Trigger Inbound Routing (Batch 1)
         # ---------------------------------------------------------------------
-        trigger_campaign = classify_academy_trigger(clean_text)
+        trigger_campaign = classify_academy_trigger(clean_text, tenant_id=tenant_id)
 
         # Prioritaskan State 1 jika user sedang menunggu email dan pesan memuat email/konfirmasi
         if current_state == STATE_1_AWAITING_EMAIL:
@@ -1373,7 +1621,7 @@ class AcademyBotStateMachine:
                 trigger_campaign = None
 
         # Jika sesi sedang berada di state kualifikasi atau konsultasi OnlineBoost, teruskan ke alur OnlineBoost
-        if current_state in (STATE_QUALIFYING, STATE_CONSULTATION) and not trigger_campaign:
+        if current_state in (STATE_QUALIFYING, STATE_CONSULTATION) and not trigger_campaign and str(tenant_id).strip().lower() == "onlineboost":
             trigger_campaign = "onlineboost_batch1"
 
         if trigger_campaign:
@@ -1415,7 +1663,7 @@ class AcademyBotStateMachine:
                     return fast_res
 
                 # B. Inbound Landing Page CTA: "Saya tertarik ikut kelas nya Kang"
-                # Directive 2: SATU pertanyaan kualifikasi, JANGAN kirim ulang link landing page
+                # Directive Phase 5.7 (Founder Decision): Akui minat prospek dan ajukan tepat 1 pertanyaan kualifikasi
                 is_landing_interest = bool(
                     TRIGGER_PATTERN_LANDING_PAGE_INTEREST.search(clean_text)
                     and not QUALIFY_PRODUCT_PATTERN.search(clean_text)
@@ -1448,6 +1696,7 @@ class AcademyBotStateMachine:
                         "customer_name": resolved_name,
                         "tenant_id": tenant_id,
                     }
+
 
                 # C. Alumni Broadcast Response "MAU"
                 # Directive 5: Pisahkan trigger MAU dari landing page, sapa santai ala Aldi & ajukan kualifikasi
@@ -1837,6 +2086,45 @@ class AcademyBotStateMachine:
             # --- ROUTE C: Storefront Direct ---
             elif trigger_campaign == "storefront_direct":
                 customer_email = session.get("email") or f"order.{clean_phone[-6:]}@boontrack.id"
+                effective_tenant = session.get("tenant_id") or tenant_id or "onlineboost"
+
+                # P0 STRICT HOLD & PILOT ISOLATION GUARD: Reject before invoice generation
+                if effective_tenant == "onlineboost" and is_onlineboost_payment_held(clean_phone):
+                    hold_reply = (
+                        f"Terima kasih Kak {resolved_name}! Data pendaftaran Kakak ({customer_email}) sudah kami catat dalam antrean prioritas Batch 1.\n\n"
+                        f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold). "
+                        f"Begitu sistem pembayaran resmi dibuka, Kakak akan langsung menerima instruksi pembayaran di nomor WhatsApp ini."
+                    )
+                    try:
+                        await send_whatsapp_text(
+                            to_phone=clean_phone,
+                            text=hold_reply,
+                            tenant_id=tenant_id,
+                            phone_number_id=phone_number_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[AcademyRouteC] WhatsApp hold reply note: {e}")
+
+                    cls.set_session(
+                        clean_phone,
+                        state=STATE_1_PAYMENT_ISSUED,
+                        name=resolved_name,
+                        email=customer_email,
+                        tenant_id=tenant_id,
+                    )
+
+                    return {
+                        "handled": True,
+                        "state": 1,
+                        "action": "PAYMENT_STRICT_HOLD",
+                        "campaign": "storefront_direct",
+                        "order_id": None,
+                        "strict_hold": True,
+                        "reply": hold_reply,
+                        "customer_name": resolved_name,
+                        "customer_email": customer_email,
+                        "tenant_id": tenant_id,
+                    }
 
                 invoice = generate_academy_qris_invoice(
                     customer_name=resolved_name,
@@ -1954,6 +2242,44 @@ class AcademyBotStateMachine:
                             break
 
             effective_tenant = session.get("tenant_id") or tenant_id or "onlineboost"
+
+            # P0 STRICT HOLD GUARD: Reject request BEFORE invoice generation and database mutation
+            if effective_tenant == "onlineboost" and is_onlineboost_payment_held(clean_phone):
+                hold_reply = (
+                    f"Terima kasih Kak {resolved_name}! Data pendaftaran Kakak ({customer_email}) sudah kami catat dalam antrean prioritas Batch 1.\n\n"
+                    f"Saat ini gerbang pembayaran resmi Batch 1 sedang dalam masa persiapan rilis (strict hold). "
+                    f"Begitu sistem pembayaran resmi dibuka, Kakak akan langsung menerima instruksi pembayaran di nomor WhatsApp ini."
+                )
+                try:
+                    await send_whatsapp_text(
+                        to_phone=clean_phone,
+                        text=hold_reply,
+                        tenant_id=effective_tenant,
+                        phone_number_id=phone_number_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"[AcademyState1] WhatsApp hold reply note: {e}")
+
+                cls.set_session(
+                    clean_phone,
+                    state=STATE_1_PAYMENT_ISSUED,
+                    name=resolved_name,
+                    email=customer_email,
+                    tenant_id=effective_tenant,
+                )
+
+                return {
+                    "handled": True,
+                    "state": 1,
+                    "action": "PAYMENT_STRICT_HOLD",
+                    "campaign": session.get("campaign") or "onlineboost_batch1",
+                    "order_id": None,
+                    "strict_hold": True,
+                    "reply": hold_reply,
+                    "customer_name": resolved_name,
+                    "customer_email": customer_email,
+                    "tenant_id": effective_tenant,
+                }
 
             # Generate QRIS Invoice Rp 249.xxx (valid 15 menit)
             invoice = generate_academy_qris_invoice(
@@ -2110,26 +2436,44 @@ class AcademyBotStateMachine:
             )
 
             # Generate single-use Telegram Supergroup invite link
-            single_use_telegram_link = await generate_single_use_telegram_link(
-                customer_name=customer_name,
-                customer_email=customer_email,
-                order_id=order_id,
-            )
+            single_use_telegram_link = None
+            try:
+                single_use_telegram_link = await generate_single_use_telegram_link(
+                    customer_name=customer_name,
+                    customer_email=customer_email,
+                    order_id=order_id,
+                )
+            except Exception as tg_err:
+                logger.error(f"[AcademyState2] Failed generating Telegram invite for {order_id}: {tg_err}")
 
-            # Naskah resmi SOP STATE 2 (Delivery Payload Alumni Batch 1)
-            confirmation_msg = (
-                f"✅ PEMBAYARAN BERHASIL DIVERIFIKASI!\n\n"
-                f"Selamat datang di BoonTrack Academy, {customer_name}!\n\n"
-                f"Detail Transaksi:\n"
-                f"- Program: Kelas Inkubasi CTWA Batch 1 (Full Access)\n"
-                f"- Email: {customer_email}\n"
-                f"- Total: Rp 249.000 (LUNAS)\n\n"
-                f"Link Akses Forum Telegram:\n"
-                f"Silakan bergabung ke Supergroup Forum resmi melalui tautan khusus di bawah ini:\n"
-                f"👉 {single_use_telegram_link}\n\n"
-                f"Langkah Awal:\n"
-                f"Begitu masuk ke Telegram, buka topik #Announcement untuk membaca SOP kelas, lalu buka #Basic-Fase1 untuk memulai setup toko dan bot Anda hari ini."
-            )
+            if single_use_telegram_link:
+                # Naskah resmi SOP STATE 2 (Delivery Payload Alumni Batch 1)
+                confirmation_msg = (
+                    f"✅ PEMBAYARAN BERHASIL DIVERIFIKASI!\n\n"
+                    f"Selamat datang di BoonTrack Academy, {customer_name}!\n\n"
+                    f"Detail Transaksi:\n"
+                    f"- Program: Kelas Inkubasi CTWA Batch 1 (Full Access)\n"
+                    f"- Email: {customer_email}\n"
+                    f"- Total: Rp 249.000 (LUNAS)\n\n"
+                    f"Link Akses Forum Telegram:\n"
+                    f"Silakan bergabung ke Supergroup Forum resmi melalui tautan khusus di bawah ini:\n"
+                    f"👉 {single_use_telegram_link}\n\n"
+                    f"Langkah Awal:\n"
+                    f"Begitu masuk ke Telegram, buka topik #Announcement untuk membaca SOP kelas, lalu buka #Basic-Fase1 untuk memulai setup toko dan bot Anda hari ini."
+                )
+            else:
+                # Truthful pending retry message when Telegram Bot API is unavailable
+                confirmation_msg = (
+                    f"✅ PEMBAYARAN BERHASIL DIVERIFIKASI!\n\n"
+                    f"Selamat datang di BoonTrack Academy, {customer_name}!\n\n"
+                    f"Detail Transaksi:\n"
+                    f"- Program: Kelas Inkubasi CTWA Batch 1 (Full Access)\n"
+                    f"- Email: {customer_email}\n"
+                    f"- Total: Rp 249.000 (LUNAS)\n\n"
+                    f"Tautan akses eksklusif Supergroup Forum resmi sedang dalam antrean penerbitan sistem dan akan segera dikirimkan ke chat ini begitu siap.\n\n"
+                    f"Langkah Awal:\n"
+                    f"Begitu masuk ke Telegram, buka topik #Announcement untuk membaca SOP kelas, lalu buka #Basic-Fase1 untuk memulai setup toko dan bot Anda hari ini."
+                )
 
             # 2. Simpan entri Transactional Outbox untuk dispatch pesan Telegram & WA
             outbox_entry = AcademyOutboxManager.create_outbox_message(
@@ -2144,6 +2488,7 @@ class AcademyBotStateMachine:
                     "single_use_telegram_link": single_use_telegram_link,
                     "delivery_template": "BATCH_1_ALUMNI_PRIVILEGE",
                     "confirmation_message": confirmation_msg,
+                    "fulfillment_status": "DELIVERED" if single_use_telegram_link else "TELEGRAM_INVITE_PENDING_RETRY",
                 },
                 tenant_id=tenant_id,
             )
@@ -2180,6 +2525,7 @@ class AcademyBotStateMachine:
                 "customer_name": customer_name,
                 "customer_email": customer_email,
                 "single_use_telegram_link": single_use_telegram_link,
+                "fulfillment_status": "DELIVERED" if single_use_telegram_link else "TELEGRAM_INVITE_PENDING_RETRY",
                 "entitlement_id": entitlement.get("entitlement_id"),
                 "outbox_id": outbox_entry.get("id"),
                 "idempotency_hit": False,
