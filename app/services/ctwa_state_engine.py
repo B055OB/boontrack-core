@@ -75,18 +75,18 @@ DEFAULT_STATIC_QRIS: str = (
        "5909BoonTrack6012Kab. Bandung61054028663048DC1"
 ).strip()
 
-# Script Penawaran Bot Resmi (Value Stacking dengan Hook Bot Natural & QRIS 0%)
+# Script Penawaran Bot Resmi (Fasilitas Terverifikasi & Tanpa Klaim Fiktif)
 SINGLE_OFFER_VALUE_STACKING_SCRIPT: str = (
-    "Pilihan yang sangat tepat, Kak! Untuk program Kelas Inkubasi CTWA (Click to WhatsApp), kami fokus pada Paket Lengkap (Mesin Kasir WhatsApp Otomatis 24 Jam) seharga Rp249.000 (Sekali Bayar).\n\n"
-    "Fasilitas dan senjata bisnis yang langsung Kakak dapatkan bernilai lebih dari Rp1.700.000+:\n"
-    "🎓 Bimbingan Intensif 10 Langkah Praktis (Nilai Rp999.000) — Step-by-step dari nol sampai pecah telur, dirancang langsung praktik tanpa teori berbelit.\n"
-    "🤖 Setup Engine Bot WhatsApp Natural AI (Nilai Rp299.000/bln) — Persis seperti cara saya ngobrol luwes sama Kakak sekarang! Nggak kaku kayak bot jadul, dan setup bot pintar model begini susah banget dicari di luaran sana.\n"
-    "💳 Kasir Otomatis Dynamic QRIS 0% MDR Fee — Invoice verifikasi otomatis 24 jam dan uang hasil penjualan 100% utuh masuk ke rekening Kakak tanpa potongan komisi sepeser pun.\n"
-    "🎬 Generator Video Iklan 9-Scene (Nilai Rp199.000/bln) — Bikin video iklan konversi tinggi tanpa perlu sewa editor mahal.\n"
-    "📊 Ads Performance Tracker + Akun Whitelist (WL) — Iklan satset tanpa drama banned/checkpoint akun baru.\n"
+    "Pilihan yang sangat tepat, Kak! Untuk program Kelas Inkubasi CTWA (Click to WhatsApp), kami fokus pada Paket Lengkap Batch 1 seharga Rp249.000 (Sekali Bayar).\n\n"
+    "Fasilitas resmi yang langsung Kakak dapatkan:\n"
+    "🎓 Bimbingan Intensif 10 Langkah Praktis — Step-by-step dari nol sampai pecah telur, dirancang langsung praktik tanpa teori berbelit.\n"
+    "🤖 Setup Engine Bot WhatsApp Natural AI — Bot luwes responsif untuk memandu calon pembeli secara terarah.\n"
+    "💳 Integrasi Alur Transaksi Digital — Panduan penataan alur checkout digital dan pencatatan transaksi.\n"
+    "🎬 Generator Video Iklan 9-Scene — Bikin video promosi konversi tinggi tanpa perlu sewa editor mahal.\n"
+    "📊 Ads Performance Tracker + Akun Whitelist (WL) — Optimasi performa iklan terarah.\n"
     "🔐 Lisensi Produk Siap Jual + Akses Supergroup Praktikum Eksklusif.\n\n"
-    "Total Nilai Fasilitas: ~Rp1.796.000~ 🔥 Spesial Hari Ini: Hanya Rp249.000\n\n"
-    "Cek detailnya di sini: 👉 https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale"
+    "Investasi Batch 1: Rp249.000 (Sekali Bayar)\n\n"
+    "Gimana Kak, mau langsung amankan slot Batch 1 sekarang?"
 )
 
 # Pola regex resmi untuk redirect landing page (Fallback Teks)
@@ -1000,7 +1000,7 @@ class CTWAStateEngine:
             await cloud_api.send_whatsapp_flow(
                 to_phone=clean_phone,
                 header_text="Pendaftaran Batch 1",
-                body_text="Amankan slot promo Rp249.000 dengan melengkapi data singkat di bawah ini. Invoice resmi akan langsung diterbitkan:",
+                body_text="Amankan slot pendaftaran Batch 1 seharga Rp249.000 dengan melengkapi data singkat di bawah ini:",
                 footer_text="OnlineBoost x BoonTrack",
                 flow_cta="📝 Isi Data Pendaftaran",
                 tenant_id="onlineboost",

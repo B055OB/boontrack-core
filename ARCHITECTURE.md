@@ -5135,11 +5135,11 @@ Pada saat akun Studio diverifikasi (`activateStudioRegistrationByToken`):
 2. **Outbound Message Registry (TASK-102)**: Pelacakan pesan keluar berbasis in-memory registry (TTL 15 menit, compound key) di 4 titik layer dispatch untuk mengeliminasi false self-pause loop.
 3. **Unified Bot State Machine (TASK-103)**: Perintah kontrol teks (`#on`, `#off`, `#pause`, `#resume`) dan tombol toggle UI CS memanggil RPC/mutasi database yang identik; Single Source of Truth berada di tabel `conversations`.
 4. **Dynamic Resume & Timeout Policy (TASK-104)**: Evaluasi status bot berlangsung dinamis. Jika `now() > paused_until`, sistem otomatis mengaktifkan bot kembali (*fail-open for timeout*).
-5. **Automated Test Certification (TASK-105)**: 200/200 test case lulus di 19 test suite WhatsApp & Security; status HOLD dari CTO Office resmi dicabut 100%.
+5. **Automated Test Certification (TASK-105)**: 200/200 test case lulus di 19 test suite WhatsApp & Security; status kernel HOLD P1 resmi ditutup pada commit `6118290` (catatan: payment strict hold canary `ONLINEBOOST_PAYMENT_STRICT_HOLD=true` tetap aktif pada runtime).
 
 ### 62.3 Penutupan Ratifikasi & Sertifikasi Directive P1
 - **Status Sertifikasi**: 100% lulus pada 200 test cases di 19 test suite WhatsApp & Database Security.
-- **Pencabutan HOLD**: Status operasional HOLD dari CTO Office resmi dicabut penuh (Commit `6118290`) dan seluruh kebijakan keamanan kernel dinyatakan aktif mengikat (*enforced*) di lingkungan staging maupun production.
+- **Penyelesaian Kernel HOLD**: Status teknis kernel HOLD P1 resmi ditutup (Commit `6118290`) dan kebijakan keamanan kernel aktif (*enforced*). Namun, untuk operasional OnlineBoost Batch 1, status `ONLINEBOOST_PAYMENT_STRICT_HOLD=true` tetap aktif secara ketat di level runtime hingga otorisasi rilis live payment diterbitkan terpisah oleh CTO.
 
 ---
 
@@ -5462,34 +5462,33 @@ Backend di Railway bertindak sebagai **Single Source of Truth & Sole Financial A
 
 ---
 
-## § 63. G4-C RELEASE-GATE, CTWA FUNNEL & META TECH PROVIDER INVARIANTS (ADR 2026-10-29)
+## § 71. G4-C RELEASE-GATE, CTWA FUNNEL & META INTEGRATION INVARIANTS (ADR 2026-10-29)
 
 > **Architectural Status**: 🛡️ **LOCAL REMEDIATION ONLY — CANARY DEPLOYMENT PENDING CTO RELEASE APPROVAL (STRICT HOLD ACTIVE)**  
 > **Ratification Date**: Kamis, 29 Oktober 2026  
-> **Core Principle**: *"Meta Tech Provider compliance, authoritative single-price Rp249.000 OnlineBoost Batch 1, fail-closed release gates, and zero-FOUC presentation layer polish."*
+> **Core Principle**: *"Direct Meta Graph API compliance, authoritative single-price Rp249.000 OnlineBoost Batch 1, fail-closed release gates, and zero-FOUC presentation layer polish."*
 
-### 63.1 Meta Tech Provider Status & Ecosystem Compliance
-1. **Status Kemitraan Resmi (Meta Tech Provider)**:
-   - PT Boontrack Inovasi Digital beroperasi secara resmi sebagai **Meta Tech Provider** (Meta Business Partner).
-   - Seluruh integrasi WhatsApp Cloud API (WABA) beroperasi langsung melalui Meta Graph API v21.0 (`https://graph.facebook.com/v21.0`), infrastruktur Business Solution Provider (BSP), dan System User Access Tokens terotentikasi.
-   - Peniadaan perantara tidak resmi: seluruh komunikasi Click-to-WhatsApp (CTWA) dan server-side Conversions API (CAPI) terikat langsung ke aset Meta Business Manager terverifikasi.
+### 71.1 Direct Meta Graph API Integration & Ecosystem Compliance
+1. **Arsitektur Integrasi Meta Direct (Graph API v21.0 & WABA)**:
+   - Integrasi WhatsApp Cloud API (WABA) dan server-side Conversions API (CAPI) beroperasi langsung melalui endpoint resmi Meta Graph API v21.0 (`https://graph.facebook.com/v21.0`) menggunakan System User Access Tokens terotentikasi dan Meta Business Manager asset binding terverifikasi.
+   - Peniadaan perantara tidak resmi: seluruh komunikasi Click-to-WhatsApp (CTWA) dan pengiriman event konversi CAPI diproses langsung dari backend ke Meta Infrastructure tanpa proxy pihak ketiga. Catatan kepatuhan: konfigurasi teknis WABA dan aset Meta ini tidak diklaim secara sepihak sebagai status kemitraan resmi Meta Tech Provider / Meta Business Partner tanpa sertifikasi kemitraan resmi tertulis dari Meta.
 2. **Kepatuhan Meta Messaging & Anti-Spam Terms**:
    - **Opt-Out & Durable Phone Suppression**: Penegakan privasi dan standar Meta. Kontak yang mengirimkan kata kunci `STOP`, `BERHENTI`, atau `UNSUBSCRIBE` dicatat persisten di tabel supresi `phone_suppressions`; bot WhatsApp dilarang keras mengirimkan pesan keluar apa pun (0 outbound dispatch).
    - **Template Approval Enforcement**: Seluruh pesan outbound inisiasi bisnis di luar jendela layanan 24 jam (24-hour service window) wajib menggunakan template pesan Meta yang telah disetujui (*pre-approved message templates*).
    - **CAPI Server-Side Deduplication**: Setiap event konversi transaksi (`Purchase`, `CompleteRegistration`) memancarkan parameter atribusi `event_id`, `fbp`, `fbc`, dan `ctwa_clid` yang terdeduplikasi dengan pixel browser secara presisi.
 
-### 63.2 CTWA Funnel & Pricing Contract Rp249.000 OnlineBoost Batch 1
+### 71.2 CTWA Funnel & Pricing Contract Rp249.000 OnlineBoost Batch 1
 1. **Invarian Harga Tunggal Rp249.000 (Single Price Contract)**:
    - Investasi program Kelas Inkubasi CTWA Batch 1 OnlineBoost dikunci secara absolut pada **Rp249.000** (sekali bayar tanpa biaya bulanan / no recurring fees).
    - **DILARANG KERAS** memunculkan angka lama (seperti Rp1.499.000, Rp1.796.000, atau Rp999.000) pada respons bot konsultasi, naskah closing, sales script, maupun katalog toko publik.
    - **Paket Fasilitas Resmi**:
      * Bimbingan 10 langkah intensif (live mentoring + rekaman seumur hidup).
      * Setup bot WhatsApp AI sales rep natural multi-agent.
-     * Kasir checkout otomatis Dynamic QRIS 0% MDR fee.
+     * Integrasi alur transaksi digital & sistem checkout terstruktur.
      * Integrasi Meta CAPI & server-side event tracking.
 2. **Price Anchoring & Komparasi Fasilitas (Situation F)**:
    - Calon peserta yang menanyakan perbandingan fasilitas atau komparasi dengan paket lain dilayani dengan skrip Situation F resmi:
-     * Menyertakan referensi resmi `https://boontrack.com/pricing` secara kontekstual dan transparan.
+     * Menyertakan referensi resmi tautan komparasi fasilitas `https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale#tools` secara kontekstual dan transparan.
      * Menegaskan nilai investasi Rp249.000 sekali bayar untuk program Batch 1.
      * Meniadakan klaim diskon fiktif atau coret harga palsu.
 3. **Consultation-Led Fast Registration (Simple Line Parser)**:
@@ -5500,7 +5499,7 @@ Backend di Railway bertindak sebagai **Single Source of Truth & Sole Financial A
      ```
    - Adapter parser (`WabaProviderAdapter` & `AcademyBotStateMachine`) mengekstrak baris `Nama :` dan `Email :` secara deterministik dan langsung mengaitkan data ke sesi kontak tanpa memicu loop konsultasi berulang.
 
-### 63.3 Release-Gate G4-B / G4-C Protocols & Operational Safety
+### 71.3 Release-Gate G4-B / G4-C Protocols & Operational Safety
 1. **Canonical SKU: `OB-BATCH1-249K`**:
    - Seluruh pesanan, registrasi, invoice, dan pencatatan ledger OnlineBoost Batch 1 wajib menggunakan canonical SKU tunggal:
      ```text
@@ -5516,7 +5515,7 @@ Backend di Railway bertindak sebagai **Single Source of Truth & Sole Financial A
    - **P0-03 (Circuit Breaker & Tenant Boundary Guard)**: Request WhatsApp yang tidak terikat secara valid ke tenant `onlineboost` langsung di-abort dengan HTTP 403 Forbidden untuk menjamin isolasi multi-tenant tanpa kebocoran data (*zero data leak*).
    - **P0-04 (Opt-Out & Durable Suppression)**: Integrasi tabel database `phone_suppressions` memastikan penolakan total interaksi bot bagi pengguna yang telah menyatakan berhenti berlangganan.
 
-### 63.4 Presentation Layer Storefront Polish (Anti-FOUC & Deep-Link Anchor)
+### 71.4 Presentation Layer Storefront Polish (Anti-FOUC & Deep-Link Anchor)
 1. **Anti-FOUC (Flash of Unstyled Content) Dark Theme Guard**:
    - Storefront tenant `onlineboost` menerapkan tema gelap pekat `#0a0a0a` dengan teks `#f4f4f5` (`color-scheme: dark !important`).
    - Injeksi CSS inline kritis di tingkat Server-Side Rendering (`TenantStoreLayout` pada `app/[tenant]/layout.tsx`) dan Suspense fallback (`SingleProductPage`) menjamin halaman langsung berlatar belakang gelap sejak byte pertama tiba di browser pengguna, mengeliminasi kedipan putih (white flash) saat rehidrasi React.
@@ -5528,7 +5527,7 @@ Backend di Railway bertindak sebagai **Single Source of Truth & Sole Financial A
    - Tombol CTA utama dan sticky bar pada landing page OnlineBoost Batch 1 bernavigasi langsung ke WhatsApp resmi `6288226098088` dengan pesan awal `"Saya tertarik ikut kelas nya Kang"`.
    - CTA tidak memanggil `handleOpenCheckout`, tidak membuat order, dan tidak memanggil endpoint pembayaran apa pun.
 
-### 63.5 Boontrack Academy 5 Add-on Modules (Kurikulum & Capability Engine)
+### 71.5 Boontrack Academy 5 Add-on Modules (Kurikulum & Capability Engine)
 Ekosistem pembelajaran inkubasi CTWA Batch 1 didukung oleh 5 Modul Add-on Spesialisasi Tingkat Lanjut yang dikonfigurasi secara deklaratif melalui database metadata:
 1. **Modul 1: Organik & Viral Content Engineering**:
    - Arsitektur distribusi konten tanpa biaya iklan berbayar (Zero-Adspend Traffic).
@@ -5544,5 +5543,5 @@ Ekosistem pembelajaran inkubasi CTWA Batch 1 didukung oleh 5 Modul Add-on Spesia
    - Manajemen adset horizontal scaling, penargetan audiens bernilai tinggi (*high net-worth*), serta penguncian margin keuntungan bersih produk ritel.
 5. **Modul 5: Cost Per Acquisition (CPA) Masterclass & Conversion Rate Optimization (CRO)**:
    - Audit mendalam metrik CPA dan eliminasi friksi checkout pembeli.
-   - Penyusunan sales page dengan rasio konversi tinggi, integrasi pembayaran instan Dynamic QRIS tanpa biaya admin memberatkan, dan peningkatan Customer Lifetime Value (LTV) melalui automated broadcast CRM.
+   - Penyusunan sales page dengan rasio konversi tinggi, penataan alur checkout digital terintegrasi, dan peningkatan Customer Lifetime Value (LTV) melalui conversational CRM terarah.
 

@@ -781,9 +781,9 @@ BOT_LED_ASSISTANT_RESPONSE: str = (
 SITUATION_A_EXISTING_PRODUCT_SCRIPT: str = (
     "Keren, kalau sudah ada produk/offer justru lebih enak gaspolnya! 🚀\n\n"
     "Di Kelas Inkubasi CTWA Batch 1, kita akan langsung sambungkan produk Kakak ke workflow praktis:\n"
-    "1. Copywriting & Bot Natural AI yang luwes balas chat prospek dan arahkan ke checkout.\n"
-    "2. Kasir otomatis Dynamic QRIS 0% MDR fee (uang penjualan 100% utuh masuk ke rekening Kakak tanpa potongan komisi sepeser pun).\n"
-    "3. 10 langkah intensif scale traffic iklan langsung ke WhatsApp dengan konversi tinggi.\n\n"
+    "1. Copywriting & Bot Natural AI yang luwes membalas chat prospek dan mengarahkan konsultasi.\n"
+    "2. Integrasi alur transaksi digital dan penataan sistem checkout toko online.\n"
+    "3. 10 langkah intensif scale traffic iklan langsung ke WhatsApp dengan konversi terarah.\n\n"
     "Investasi Batch 1 ini Rp249.000 (sekali bayar). Gimana Kak, mau gue bantu amankan slot pendaftarannya sekarang?"
 )
 
@@ -793,7 +793,7 @@ SITUATION_B_BEGINNER_SCRIPT: str = (
     "Di kelas ini kita dampingi langkah demi langkah secara bertahap:\n"
     "• Memahami cara menentukan offer yang pas & riset target audiens\n"
     "• Membuat materi promosi & video iklan konversi tinggi yang menarik\n"
-    "• Menata alur percakapan WhatsApp yang ramah sampai proses transaksi otomatis\n\n"
+    "• Menata alur percakapan WhatsApp yang ramah sampai siap menerima pesanan\n\n"
     "Semua dipelajari lewat 10 langkah praktikum terarah tanpa teori yang berbelit-belit.\n\n"
     "Investasi Batch 1 Rp249.000 (sekali bayar). Mau gue bantu amankan slotnya sekarang, Kak?"
 )
@@ -802,26 +802,26 @@ SITUATION_B_BEGINNER_SCRIPT: str = (
 SITUATION_C_PRICE_BENEFITS_SCRIPT: str = (
     "Untuk program Kelas Inkubasi CTWA Batch 1, investasinya *Rp249.000* (sekali bayar tanpa biaya bulanan). "
     "Fasilitas resmi yang langsung Kakak dapatkan:\n\n"
-    "1. 🎓 *Bimbingan 10 Langkah Intensif* — Panduan praktikum terarah step-by-step dari setup offer sampai pecah orderan.\n"
-    "2. 🤖 *Setup Engine Bot WhatsApp Natural AI* — Bot luwes anti-kaku yang mampu melayani prospek secara otomatis 24 jam.\n"
-    "3. 💳 *Kasir Otomatis Dynamic QRIS 0% MDR Fee* — Verifikasi pembayaran otomatis dalam hitungan detik tanpa potongan komisi sepeser pun.\n"
+    "1. 🎓 *Bimbingan 10 Langkah Intensif* — Panduan praktikum terarah step-by-step dari setup offer sampai siap terima pesanan.\n"
+    "2. 🤖 *Setup Engine Bot WhatsApp Natural AI* — Bot luwes responsif untuk memandu calon pembeli secara terarah.\n"
+    "3. 💳 *Integrasi Alur Transaksi Digital* — Panduan setup checkout digital dan pengelolaan pesanan.\n"
     "4. 🎬 *Generator Video Iklan 9-Scene* — Tool bantu buat materi video promosi.\n"
     "5. 📊 *Ads Performance Tracker + Akun Whitelist (WL)*.\n"
     "6. 👥 *Akses Supergroup Praktikum & Forum Diskusi Eksklusif*.\n\n"
     "Gimana Kak, mau langsung amankan slot Batch 1 sekarang?"
 )
 
-# 7. Situation F: Facility Comparison & Price Anchoring (Official https://boontrack.com/pricing reference)
+# 7. Situation F: Facility Comparison & Price Anchoring (Official #tools comparison anchor)
 TRIGGER_PATTERN_FACILITY_COMPARISON = re.compile(
     r"(?i)(perbandingan\s+fasilitas|bandingkan\s+fasilitas|fasilitas\s+dibanding|komparasi|beda\s+fasilitas|beda\s+paket|bandingkan\s+paket|perbandingan\s+harga|bandingkan\s+harga|fitur\s+dibanding|harga\s+paket\s+lain)",
     re.IGNORECASE
 )
 
 FACILITY_COMPARISON_SCRIPT: str = (
-    "Untuk perbandingan fasilitas dan paket fitur BoonTrack secara lengkap dan resmi, "
-    "Kakak bisa langsung cek di https://boontrack.com/pricing .\n\n"
+    "Untuk perbandingan fasilitas dan tabel komparasi biaya secara transparan, "
+    "Kakak bisa langsung cek di https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale#tools .\n\n"
     "Khusus untuk program Kelas Inkubasi CTWA Batch 1, investasinya *Rp249.000* (sekali bayar tanpa biaya bulanan), "
-    "sudah mencakup bimbingan 10 langkah intensif, setup bot WhatsApp natural AI, dan kasir otomatis Dynamic QRIS 0% MDR fee.\n\n"
+    "sudah mencakup bimbingan 10 langkah intensif, setup bot WhatsApp natural AI, dan materi praktikum lengkap.\n\n"
     "Mau langsung amankan slot Batch 1 sekarang, Kak?"
 )
 

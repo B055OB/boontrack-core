@@ -171,7 +171,8 @@ async def test_situation_a_prospect_has_existing_product():
         assert res["action"] == "QUALIFY_EXISTING_PRODUCT"
         assert "Keren, kalau sudah ada produk/offer justru lebih enak gaspolnya! 🚀" in res["reply"]
         assert "Copywriting & Bot Natural AI" in res["reply"]
-        assert "Kasir otomatis Dynamic QRIS 0% MDR fee" in res["reply"]
+        assert "Integrasi alur transaksi digital" in res["reply"]
+        assert "0% MDR" not in res["reply"]
         assert "Rp249.000" in res["reply"]
         assert "bantu amankan slot pendaftarannya sekarang" in res["reply"]
 
@@ -231,7 +232,8 @@ async def test_situation_c_price_and_benefits_direct_answer():
             assert "Rp249.000" in res["reply"]
             assert "Bimbingan 10 Langkah Intensif" in res["reply"]
             assert "Setup Engine Bot WhatsApp Natural AI" in res["reply"]
-            assert "Kasir Otomatis Dynamic QRIS 0% MDR Fee" in res["reply"]
+            assert "Integrasi Alur Transaksi Digital" in res["reply"]
+            assert "0% MDR" not in res["reply"]
             assert "Generator Video Iklan 9-Scene" in res["reply"]
             assert "Ads Performance Tracker + Akun Whitelist (WL)" in res["reply"]
             assert "Supergroup Praktikum" in res["reply"]
@@ -1889,7 +1891,7 @@ async def test_facility_comparison_pricing_anchoring_contains_official_pricing_u
             assert res["handled"] is True
             assert res["state"] == STATE_CONSULTATION
             assert res["action"] == "EXPLAIN_FACILITY_COMPARISON"
-            assert "https://boontrack.com/pricing" in res["reply"]
+            assert "https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale#tools" in res["reply"]
             assert "Rp249.000" in res["reply"]
             assert "1.796.000" not in res["reply"]
             assert "999.000" not in res["reply"]
