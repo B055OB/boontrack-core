@@ -589,3 +589,73 @@ async def test_platform_inbound_repeated_message_suppressed():
         assert res2.get("lane") == "COMPLIANCE_GUARD"
         assert res2.get("action") == "suppressed_silent_drop"
         assert res2.get("status") == "suppressed"
+
+
+@pytest.mark.asyncio
+async def test_onlineboost_inbound_suppressed_contact_receives_zero_promotional_outbound_messages():
+    """Behavioral test proving suppressed contacts receive zero promotional outbound messages:
+    1. Caller sends STOP to OnlineBoost WABA (1419090974617162) -> suppression persisted.
+    2. Suppressed caller sends sales trigger ('Saya tertarik ikut kelas nya Kang').
+    3. TrafficSplitter intercepts via OptOutComplianceGuard and silently drops without sending promotional messages.
+    """
+    from app.whatsapp.traffic_splitter import TrafficSplitter
+    from app.services.phone_suppression_service import reset_suppression_test_state, set_allow_in_memory_fallback
+
+    set_allow_in_memory_fallback(True)
+    reset_suppression_test_state()
+
+    ob_pid = "1419090974617162"
+    test_phone = "6288899990000"
+
+    with patch("app.services.whatsapp.cloud_api.send_whatsapp_text", new_callable=AsyncMock) as mock_send_wa, \
+         patch("app.core.database.get_db_connection", side_effect=RuntimeError("DB offline in test")):
+
+        # 1. Opt-out turn
+        payload_opt = {
+            "entry": [{
+                "id": "e_opt_ob",
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": ob_pid, "display_phone_number": "6288226098088"},
+                        "messages": [{
+                            "id": "wamid_ob_opt_01",
+                            "from": test_phone,
+                            "type": "text",
+                            "text": {"body": "STOP"},
+                        }],
+                    }
+                }]
+            }]
+        }
+        status1, res1, _ = await TrafficSplitter.split_and_dispatch(payload_opt)
+        assert status1 == 200
+        assert res1.get("action") == "opt_out_confirmed"
+        assert res1.get("tenant") == "onlineboost"
+
+        # Reset mock send count from opt-out acknowledgment
+        mock_send_wa.reset_mock()
+
+        # 2. Subsequent sales trigger from suppressed contact
+        payload_subseq = {
+            "entry": [{
+                "id": "e_subseq_ob",
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": ob_pid, "display_phone_number": "6288226098088"},
+                        "messages": [{
+                            "id": "wamid_ob_subseq_01",
+                            "from": test_phone,
+                            "type": "text",
+                            "text": {"body": "Saya tertarik ikut kelas nya Kang"},
+                        }],
+                    }
+                }]
+            }]
+        }
+        status2, res2, _ = await TrafficSplitter.split_and_dispatch(payload_subseq)
+        assert status2 == 200
+        assert res2.get("action") == "suppressed_silent_drop"
+        assert res2.get("status") == "suppressed"
+        assert res2.get("reply") == ""
+        # Strictly assert ZERO promotional outbound messages were dispatched
+        assert mock_send_wa.call_count == 0

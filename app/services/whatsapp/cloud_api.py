@@ -884,7 +884,8 @@ async def send_whatsapp_flow(
     fallback_text = (
         f"{body_text}\n\n"
         "Silakan balas pesan ini dengan format:\n"
-        "Halo Admin, saya atas nama [Nama Lengkap] ([Email Aktif]) sudah daftar kelas"
+        "Nama :\n"
+        "Email :"
     )
 
     if not token or not phone_id:

@@ -133,12 +133,21 @@ class WabaProviderAdapter:
                 if name or email:
                     return name or "Kakak", email
 
-        # 2. Check fallback text pattern
+        # 2. Check line parser & fallback text pattern
         text_to_check = str(incoming_text or "")
         if not text_to_check and isinstance(raw_msg, dict):
             text_to_check = str(raw_msg.get("text", {}).get("body", "")).strip()
 
         if text_to_check:
+            name_line = re.search(r"(?im)^\s*nama\s*:\s*(.+)$", text_to_check)
+            email_line = re.search(r"(?im)^\s*email\s*:\s*(.+)$", text_to_check)
+            if name_line and email_line:
+                name_val = name_line.group(1).strip()
+                name_val = re.split(r"(?i)\s*(?:\\n|\n)?\s*email\s*:", name_val)[0].strip()
+                email_extracted = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", email_line.group(1).strip())
+                if email_extracted:
+                    return name_val, email_extracted.group(0).lower().strip()
+
             match = FAST_TRACK_PATTERN.search(text_to_check)
             if match:
                 name = match.group(1).strip()

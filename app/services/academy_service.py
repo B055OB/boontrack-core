@@ -755,7 +755,7 @@ STATE_0_TRIGGER_PATTERN = re.compile(
 # Directive 04: Founder Mandate - Bot-Led Consultation & Closing Scripts
 # 1. Primary Qualification Question for Inbound Landing Page Message ("Saya tertarik ikut kelas nya Kang")
 QUALIFICATION_PRIMARY_QUESTION: str = (
-    "Siap, Kak! 😁 Gue bantu jelasin langsung di sini. "
+    "Siap, Kak! Gue bantu jelasin langsung di sini. "
     "Biar arahnya pas, Kakak sudah punya produk/offer yang mau dipasarkan, atau masih mulai dari nol?"
 )
 
@@ -781,9 +781,9 @@ BOT_LED_ASSISTANT_RESPONSE: str = (
 SITUATION_A_EXISTING_PRODUCT_SCRIPT: str = (
     "Keren, kalau sudah ada produk/offer justru lebih enak gaspolnya! 🚀\n\n"
     "Di Kelas Inkubasi CTWA Batch 1, kita akan langsung sambungkan produk Kakak ke workflow praktis:\n"
-    "1. Copywriting & Bot Natural AI yang luwes balas chat prospek dan arahkan ke checkout.\n"
-    "2. Kasir otomatis Dynamic QRIS 0% MDR fee (uang penjualan 100% utuh masuk ke rekening Kakak tanpa potongan komisi sepeser pun).\n"
-    "3. 10 langkah intensif scale traffic iklan langsung ke WhatsApp dengan konversi tinggi.\n\n"
+    "1. Copywriting & Bot Natural AI yang luwes membalas chat prospek dan mengarahkan konsultasi.\n"
+    "2. Integrasi alur transaksi digital dan penataan sistem checkout toko online.\n"
+    "3. 10 langkah intensif scale traffic iklan langsung ke WhatsApp dengan konversi terarah.\n\n"
     "Investasi Batch 1 ini Rp249.000 (sekali bayar). Gimana Kak, mau gue bantu amankan slot pendaftarannya sekarang?"
 )
 
@@ -793,7 +793,7 @@ SITUATION_B_BEGINNER_SCRIPT: str = (
     "Di kelas ini kita dampingi langkah demi langkah secara bertahap:\n"
     "• Memahami cara menentukan offer yang pas & riset target audiens\n"
     "• Membuat materi promosi & video iklan konversi tinggi yang menarik\n"
-    "• Menata alur percakapan WhatsApp yang ramah sampai proses transaksi otomatis\n\n"
+    "• Menata alur percakapan WhatsApp yang ramah sampai siap menerima pesanan\n\n"
     "Semua dipelajari lewat 10 langkah praktikum terarah tanpa teori yang berbelit-belit.\n\n"
     "Investasi Batch 1 Rp249.000 (sekali bayar). Mau gue bantu amankan slotnya sekarang, Kak?"
 )
@@ -802,13 +802,27 @@ SITUATION_B_BEGINNER_SCRIPT: str = (
 SITUATION_C_PRICE_BENEFITS_SCRIPT: str = (
     "Untuk program Kelas Inkubasi CTWA Batch 1, investasinya *Rp249.000* (sekali bayar tanpa biaya bulanan). "
     "Fasilitas resmi yang langsung Kakak dapatkan:\n\n"
-    "1. 🎓 *Bimbingan 10 Langkah Intensif* — Panduan praktikum terarah step-by-step dari setup offer sampai pecah orderan.\n"
-    "2. 🤖 *Setup Engine Bot WhatsApp Natural AI* — Bot luwes anti-kaku yang mampu melayani prospek secara otomatis 24 jam.\n"
-    "3. 💳 *Kasir Otomatis Dynamic QRIS 0% MDR Fee* — Verifikasi pembayaran otomatis dalam hitungan detik tanpa potongan komisi sepeser pun.\n"
+    "1. 🎓 *Bimbingan 10 Langkah Intensif* — Panduan praktikum terarah step-by-step dari setup offer sampai siap terima pesanan.\n"
+    "2. 🤖 *Setup Engine Bot WhatsApp Natural AI* — Bot luwes responsif untuk memandu calon pembeli secara terarah.\n"
+    "3. 💳 *Integrasi Alur Transaksi Digital* — Panduan setup checkout digital dan pengelolaan pesanan.\n"
     "4. 🎬 *Generator Video Iklan 9-Scene* — Tool bantu buat materi video promosi.\n"
     "5. 📊 *Ads Performance Tracker + Akun Whitelist (WL)*.\n"
     "6. 👥 *Akses Supergroup Praktikum & Forum Diskusi Eksklusif*.\n\n"
     "Gimana Kak, mau langsung amankan slot Batch 1 sekarang?"
+)
+
+# 7. Situation F: Facility Comparison & Price Anchoring (Official #tools comparison anchor)
+TRIGGER_PATTERN_FACILITY_COMPARISON = re.compile(
+    r"(?i)(perbandingan\s+fasilitas|bandingkan\s+fasilitas|fasilitas\s+dibanding|komparasi|beda\s+fasilitas|beda\s+paket|bandingkan\s+paket|perbandingan\s+harga|bandingkan\s+harga|fitur\s+dibanding|harga\s+paket\s+lain)",
+    re.IGNORECASE
+)
+
+FACILITY_COMPARISON_SCRIPT: str = (
+    "Untuk perbandingan fasilitas dan tabel komparasi biaya secara transparan, "
+    "Kakak bisa langsung cek di https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale#tools .\n\n"
+    "Khusus untuk program Kelas Inkubasi CTWA Batch 1, investasinya *Rp249.000* (sekali bayar tanpa biaya bulanan), "
+    "sudah mencakup bimbingan 10 langkah intensif, setup bot WhatsApp natural AI, dan materi praktikum lengkap.\n\n"
+    "Mau langsung amankan slot Batch 1 sekarang, Kak?"
 )
 
 # Trigger Regex Patterns for OnlineBoost Consultation & Inbound
@@ -2323,10 +2337,44 @@ class AcademyBotStateMachine:
                         "tenant_id": tenant_id,
                     }
 
+                # E.0. Situation F: Prospek menanyakan Perbandingan Fasilitas / Price Anchoring (https://boontrack.com/pricing)
+                is_facility_comparison = bool(
+                    TRIGGER_PATTERN_FACILITY_COMPARISON.search(clean_text)
+                    and not TRIGGER_PATTERN_REGISTRATION.search(clean_text)
+                )
+                if is_facility_comparison:
+                    cls.set_session(
+                        clean_phone,
+                        state=STATE_CONSULTATION,
+                        name=resolved_name,
+                        campaign="onlineboost_batch1",
+                        tenant_id=tenant_id,
+                    )
+                    try:
+                        await send_whatsapp_text(
+                            to_phone=clean_phone,
+                            text=FACILITY_COMPARISON_SCRIPT,
+                            tenant_id=tenant_id,
+                            phone_number_id=phone_number_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+
+                    return {
+                        "handled": True,
+                        "state": STATE_CONSULTATION,
+                        "action": "EXPLAIN_FACILITY_COMPARISON",
+                        "campaign": "onlineboost_batch1",
+                        "reply": FACILITY_COMPARISON_SCRIPT,
+                        "customer_name": resolved_name,
+                        "tenant_id": tenant_id,
+                    }
+
                 # E. Situation C: Prospek menanyakan Harga / Fasilitas / Materi / OnlineBoost itu apa
                 # Jawab langsung Rp249.000 dan fasilitas yang terverifikasi, jangan dipaksa ulang pertanyaan kualifikasi.
                 is_price_inquiry = bool(
                     TRIGGER_PATTERN_PRICE_BENEFITS.search(clean_text)
+                    and not TRIGGER_PATTERN_FACILITY_COMPARISON.search(clean_text)
                     and not TRIGGER_PATTERN_REGISTRATION.search(clean_text)
                 )
                 if is_price_inquiry:
@@ -2435,9 +2483,27 @@ class AcademyBotStateMachine:
                 )
                 if is_register_intent:
                     effective_tenant = str(session.get("tenant_id") or tenant_id or "onlineboost").strip().lower()
+                    extracted_email = None
+                    # Ekstraksi baris Nama : dan Email : jika dikirim langsung
+                    name_line_match = re.search(r"(?im)^\s*nama\s*:\s*(.+)$", clean_text)
+                    email_line_match = re.search(r"(?im)^\s*email\s*:\s*(.+)$", clean_text)
+                    if name_line_match:
+                        extracted_name = name_line_match.group(1).strip()
+                        extracted_name = re.split(r"(?i)\s*(?:\\n|\n)?\s*email\s*:", extracted_name)[0].strip()
+                        if len(extracted_name) >= 2:
+                            resolved_name = extracted_name
+                    if email_line_match:
+                        parsed_email_match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", email_line_match.group(1).strip())
+                        if parsed_email_match:
+                            extracted_email = parsed_email_match.group(0).lower().strip()
+
                     email_match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", clean_text)
-                    extracted_email = email_match.group(0).lower().strip() if email_match else session.get("email")
-                    if "@" in clean_text and resolved_name == "Kak":
+                    if not extracted_email and email_match:
+                        extracted_email = email_match.group(0).lower().strip()
+                    if not extracted_email:
+                        extracted_email = session.get("email")
+
+                    if "@" in clean_text and resolved_name == "Kak" and not name_line_match:
                         parts = [p.strip() for p in re.split(r"[-:,]", clean_text) if p.strip()]
                         for part in parts:
                             if not re.search(r"@", part) and len(part) > 2 and not part.lower().startswith("halo"):
@@ -2463,10 +2529,9 @@ class AcademyBotStateMachine:
 
                     reg_reply = (
                         f"Siap Kak {resolved_name}! Mantap banget keputusannya. 🚀\n\n"
-                        f"Untuk pencatatan slot Kelas Inkubasi CTWA Batch 1 (Rp249.000), mohon balas pesan ini dengan:\n"
-                        f"• *Nama Lengkap:*\n"
-                        f"• *Alamat Email Aktif:*\n\n"
-                        f"(Contoh: *Budi Santoso - budi@gmail.com*)\n\n"
+                        f"Untuk pencatatan slot Kelas Inkubasi CTWA Batch 1 (Rp249.000), silakan balas pesan ini dengan format:\n"
+                        f"Nama :\n"
+                        f"Email :\n\n"
                         f"Data Kakak akan langsung kami amankan ke antrean pendaftaran resmi Batch 1 ya!"
                     )
                     cls.set_session(
@@ -2768,20 +2833,30 @@ class AcademyBotStateMachine:
         # STATE 1: Issuing Payment (User kirim email saat STATE_1_AWAITING_EMAIL)
         # ---------------------------------------------------------------------
         if current_state == STATE_1_AWAITING_EMAIL:
-            # Ekstrak kata yang menyerupai email dari pesan
-            email_match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", clean_text)
+            # Ekstraksi baris Nama : dan Email : jika dikirim langsung
+            name_line_match = re.search(r"(?im)^\s*nama\s*:\s*(.+)$", clean_text)
+            email_line_match = re.search(r"(?im)^\s*email\s*:\s*(.+)$", clean_text)
             customer_email = None
-            if email_match:
-                customer_email = email_match.group(0).lower().strip()
-            elif session.get("email") and re.search(r"\b(ok|ya|iya|siap|lanjut|benar|betul|konfirmasi|setuju)\b", clean_text.lower()):
-                customer_email = session.get("email").lower().strip()
+            if email_line_match:
+                parsed_email_match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", email_line_match.group(1).strip())
+                if parsed_email_match:
+                    customer_email = parsed_email_match.group(0).lower().strip()
+
+            if not customer_email:
+                email_match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", clean_text)
+                if email_match:
+                    customer_email = email_match.group(0).lower().strip()
+                elif session.get("email") and re.search(r"\b(ok|ya|iya|siap|lanjut|benar|betul|konfirmasi|setuju)\b", clean_text.lower()):
+                    customer_email = session.get("email").lower().strip()
 
             if not customer_email:
                 # Format email belum sesuai
                 retry_reply = (
                     f"Mohon maaf {resolved_name}, format email belum sesuai. 😊\n\n"
-                    f"Silakan balas dengan alamat email aktif yang valid (contoh: *nama@gmail.com*) "
-                    f"untuk penerbitan invoice & lisensi Anda."
+                    f"Silakan balas dengan format:\n"
+                    f"Nama :\n"
+                    f"Email :\n\n"
+                    f"untuk penerbitan antrean pendaftaran & lisensi Anda."
                 )
                 try:
                     await send_whatsapp_text(
@@ -2800,8 +2875,13 @@ class AcademyBotStateMachine:
                     "reply": retry_reply,
                 }
 
-            # Ekstrak nama jika belum ada di sesi atau nama di sesi masih generik
-            if session.get("name") and session.get("name") not in ("Kak", "Pelanggan", "User", "+62", "62", "null", ""):
+            # Ekstrak nama jika ada baris Nama: atau belum ada di sesi
+            if name_line_match:
+                extracted_name = name_line_match.group(1).strip()
+                extracted_name = re.split(r"(?i)\s*(?:\\n|\n)?\s*email\s*:", extracted_name)[0].strip()
+                if len(extracted_name) >= 2:
+                    resolved_name = extracted_name
+            elif session.get("name") and session.get("name") not in ("Kak", "Pelanggan", "User", "+62", "62", "null", ""):
                 resolved_name = session.get("name")
             else:
                 if "@" in clean_text:

@@ -45,19 +45,23 @@ async def test_single_offer_249k_constants_and_copywriting():
     assert SINGLE_OFFER_SLUG == "kelas-inkubasi-ctwa-batch-1-scale"
     assert "Kelas Inkubasi CTWA Batch 1" in SINGLE_OFFER_NAME
 
-    # 2. Pastikan copy teks memuat seluruh fasilitas & hook spesifikasi
+    # 2. Pastikan copy teks memuat seluruh fasilitas terverifikasi tanpa klaim fiktif/sirkular
     script = SINGLE_OFFER_VALUE_STACKING_SCRIPT
     assert "Rp249.000 (Sekali Bayar)" in script
-    assert "Bimbingan Intensif 10 Langkah Praktis (Nilai Rp999.000)" in script
-    assert "Setup Engine Bot WhatsApp Natural AI (Nilai Rp299.000/bln)" in script
-    assert "Kasir Otomatis Dynamic QRIS 0% MDR Fee" in script
-    assert "Generator Video Iklan 9-Scene (Nilai Rp199.000/bln)" in script
+    assert "Bimbingan Intensif 10 Langkah Praktis" in script
+    assert "Setup Engine Bot WhatsApp Natural AI" in script
+    assert "Integrasi Alur Transaksi Digital" in script
+    assert "Generator Video Iklan 9-Scene" in script
     assert "Ads Performance Tracker + Akun Whitelist (WL)" in script
     assert "Lisensi Produk Siap Jual + Akses Supergroup Praktikum Eksklusif" in script
-    assert "Total Nilai Fasilitas: ~Rp1.796.000~ 🔥 Spesial Hari Ini: Hanya Rp249.000" in script
-    assert "https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale" in script
 
-    # 3. Pastikan paket starter Rp49.000 / Rp99.000 tidak lagi ditawarkan
+    # 3. Pastikan tidak ada klaim fiktif, urgensi semu, atau link landing page yang sirkular
+    assert "~Rp1.796.000~" not in script
+    assert "Spesial Hari Ini" not in script
+    assert "0% MDR" not in script
+    assert "https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale" not in script
+
+    # 4. Pastikan paket starter Rp49.000 / Rp99.000 tidak lagi ditawarkan
     assert "Rp49.000" not in script
     assert "Rp99.000" not in script
     assert "Paket Starter" not in script
