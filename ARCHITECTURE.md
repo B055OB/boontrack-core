@@ -5464,7 +5464,7 @@ Backend di Railway bertindak sebagai **Single Source of Truth & Sole Financial A
 
 ## § 63. G4-C RELEASE-GATE, CTWA FUNNEL & META TECH PROVIDER INVARIANTS (ADR 2026-10-29)
 
-> **Architectural Status**: 🔒 **ACTIVE & ENFORCED IN PRODUCTION (CTO War Room Consensus)**  
+> **Architectural Status**: 🛡️ **LOCAL REMEDIATION ONLY — CANARY DEPLOYMENT PENDING CTO RELEASE APPROVAL (STRICT HOLD ACTIVE)**  
 > **Ratification Date**: Kamis, 29 Oktober 2026  
 > **Core Principle**: *"Meta Tech Provider compliance, authoritative single-price Rp249.000 OnlineBoost Batch 1, fail-closed release gates, and zero-FOUC presentation layer polish."*
 
@@ -5525,7 +5525,8 @@ Backend di Railway bertindak sebagai **Single Source of Truth & Sole Financial A
    - Aturan CSS `scroll-margin-top: 100px` dan `scroll-behavior: smooth` diterapkan pada `.comparison-section`, `.comparison-panel`, dan `.comparison-table-wrap` untuk mencegah konten tertutup header sticky.
    - Script client-side mengimplementasikan staggered retry timers (`200ms`, `500ms`, `1000ms`) dan listener `hashchange` guna memastikan navigasi tautan dalam (deep link) dari iklan atau chat mendarat presisi di viewport.
 3. **WhatsApp CTA Direct Routing**:
-   - Klik pada tombol `.btn-cta-onlineboost` pada custom landing page di-intercept untuk mengarahkan pengguna ke alur konsultasi WhatsApp kanonikal ke nomor `6288226098088` dengan prefilled text `"Saya tertarik ikut kelas nya Kang"`.
+   - Tombol CTA utama dan sticky bar pada landing page OnlineBoost Batch 1 bernavigasi langsung ke WhatsApp resmi `6288226098088` dengan pesan awal `"Saya tertarik ikut kelas nya Kang"`.
+   - CTA tidak memanggil `handleOpenCheckout`, tidak membuat order, dan tidak memanggil endpoint pembayaran apa pun.
 
 ### 63.5 Boontrack Academy 5 Add-on Modules (Kurikulum & Capability Engine)
 Ekosistem pembelajaran inkubasi CTWA Batch 1 didukung oleh 5 Modul Add-on Spesialisasi Tingkat Lanjut yang dikonfigurasi secara deklaratif melalui database metadata:
