@@ -258,12 +258,26 @@ class CTWAStateEngine:
                     )
                     return None
 
-        # 2. Parse Fallback Teks
+        # 2. Parse Fallback Teks & Clean Line Format (Nama : \n Email :)
         text_str = str(incoming_text or "")
         if not text_str and isinstance(raw_msg, dict):
             text_str = str(raw_msg.get("text", {}).get("body", "")).strip()
 
         if text_str:
+            # 2a. Simple line parser: Nama : ... \n Email : ...
+            name_line = re.search(r"(?im)^\s*nama\s*:\s*(.+)$", text_str)
+            email_line = re.search(r"(?im)^\s*email\s*:\s*(.+)$", text_str)
+            if name_line and email_line:
+                name_val = name_line.group(1).strip()
+                name_val = re.split(r"(?i)\s*(?:\\n|\n)?\s*email\s*:", name_val)[0].strip()
+                email_candidate = email_line.group(1).strip().lower()
+                email_extracted = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", email_candidate)
+                if email_extracted:
+                    email_val = email_extracted.group(0).lower().strip()
+                    if is_valid_name(name_val) and is_valid_email_format(email_val):
+                        return name_val, email_val
+
+            # 2b. Backward compatibility for legacy fast track pattern
             match = FAST_TRACK_PATTERN.search(text_str)
             if match:
                 name = match.group(1).strip()
@@ -953,6 +967,18 @@ class CTWAStateEngine:
             }
 
         # ─── 3.6. PERTANYAAN HARGA / FASILITAS / BENEFIT ───────────────────────
+        if re.search(r"(?i)(perbandingan\s+fasilitas|bandingkan\s+fasilitas|fasilitas\s+dibanding|komparasi|beda\s+fasilitas|beda\s+paket|bandingkan\s+paket|perbandingan\s+harga|bandingkan\s+harga|fitur\s+dibanding|harga\s+paket\s+lain)", q):
+            from app.services.academy_service import FACILITY_COMPARISON_SCRIPT
+            session["current_state"] = "STATE_CONSULTATION"
+            self._save_session_to_db(session)
+            return {
+                "success": True,
+                "action": "EXPLAIN_FACILITY_COMPARISON",
+                "reply": FACILITY_COMPARISON_SCRIPT,
+                "reply_text": FACILITY_COMPARISON_SCRIPT,
+                "current_state": "STATE_CONSULTATION",
+            }
+
         if re.search(r"(?i)(onlineboost\s+itu\s+apa|apa\s+itu\s+onlineboost|dapat\s+apa|fasilitas|berapa\s+harganya|harganya\s+berapa|biaya|materi|kurikulum|benefit)", q):
             from app.services.academy_service import SITUATION_C_PRICE_BENEFITS_SCRIPT
             session["current_state"] = "STATE_CONSULTATION"

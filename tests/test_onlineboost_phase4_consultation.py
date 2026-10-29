@@ -95,7 +95,7 @@ async def test_landing_page_cta_one_qualification_question():
         assert res["reply"] == QUALIFICATION_PRIMARY_QUESTION
 
         # Verifikasi copy tepat sesuai mandat Founder
-        assert "Siap, Kak! 😁 Gue bantu jelasin langsung di sini." in res["reply"]
+        assert "Siap, Kak! Gue bantu jelasin langsung di sini." in res["reply"]
         assert "Biar arahnya pas, Kakak sudah punya produk/offer yang mau dipasarkan, atau masih mulai dari nol?" in res["reply"]
 
         # Circular Loop Guard: Tidak ada link ke landing page
@@ -282,8 +282,8 @@ async def test_situation_d_registration_flow():
             assert res_intent["handled"] is True
             assert res_intent["action"] == "ASK_REGISTRATION_DETAILS"
             assert res_intent["state"] == 1
-            assert "Nama Lengkap:" in res_intent["reply"]
-            assert "Alamat Email Aktif:" in res_intent["reply"]
+            assert "Nama :" in res_intent["reply"]
+            assert "Email :" in res_intent["reply"]
 
             res_email_active = await academy_bot.process_inbound(
                 sender_phone=phone,
@@ -1859,3 +1859,93 @@ async def test_negative_replies_in_consultation_do_not_trigger_registration_hold
             assert res["state"] != STATE_HOLD_QUEUED
 
     assert len(get_hold_queue_entries("onlineboost")) == 0
+
+
+# ============================================================================
+# PHASE 4B CTO DIRECTIVE VERIFICATION TESTS
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_facility_comparison_pricing_anchoring_contains_official_pricing_url():
+    """
+    Price Anchoring (Directive Phase 4B):
+    Jika prospek menanyakan perbandingan fasilitas, sertakan referensi resmi https://boontrack.com/pricing
+    secara kontekstual tanpa hardcode klaim fiktif.
+    """
+    phone = "6281234567088"
+    queries = [
+        "Bagaimana perbandingan fasilitasnya dengan paket lain kak?",
+        "Bisa minta perbandingan fasilitas?",
+        "Beda fasilitasnya apa aja dibanding paket lain?",
+        "Perbandingan harga dan fiturnya gimana kak?",
+    ]
+    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
+        for q in queries:
+            res = await academy_bot.process_inbound(
+                sender_phone=phone,
+                incoming_text=q,
+                tenant_id="onlineboost",
+            )
+            assert res["handled"] is True
+            assert res["state"] == STATE_CONSULTATION
+            assert res["action"] == "EXPLAIN_FACILITY_COMPARISON"
+            assert "https://boontrack.com/pricing" in res["reply"]
+            assert "Rp249.000" in res["reply"]
+            assert "1.796.000" not in res["reply"]
+            assert "999.000" not in res["reply"]
+
+
+@pytest.mark.asyncio
+async def test_registration_simple_line_parser_nama_email():
+    """
+    Niat Daftar / Tangkap Data (Directive Phase 4B):
+    Gunakan parser data sederhana yang mencocokkan baris:
+    Nama :
+    Email :
+    Tanpa kurung siku [...] atau kalimat panjang.
+    """
+    phone = "6281234567089"
+    academy_bot.set_session(phone, state=STATE_CONSULTATION, name="Kak", tenant_id="onlineboost")
+    inbound_reg = "Nama : Kevin Sanjaya\nEmail : kevin.sanjaya@example.com"
+    
+    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
+        res = await academy_bot.process_inbound(
+            sender_phone=phone,
+            incoming_text=inbound_reg,
+            tenant_id="onlineboost",
+        )
+        assert res["handled"] is True
+        assert res["action"] == "PAYMENT_STRICT_HOLD"
+        assert res["strict_hold"] is True
+        assert res["customer_name"] == "Kevin Sanjaya"
+        assert res["customer_email"] == "kevin.sanjaya@example.com"
+
+
+@pytest.mark.asyncio
+async def test_all_price_responses_strictly_rp249000():
+    """
+    P0 Kontrak Harga (Directive Phase 4B):
+    Seluruh respons harga untuk OnlineBoost Batch 1 konsisten menyebutkan Rp249.000 (sekali bayar).
+    TIDAK PERNAH mengeluarkan Rp1.499.000.
+    """
+    phone = "6281234567090"
+    queries = [
+        "Berapa harganya?",
+        "Harganya berapa?",
+        "Biaya kelas berapa kak?",
+        "OnlineBoost itu apa?",
+        "Apa saja yang didapat?",
+        "Fasilitasnya apa aja kak?",
+        "Ada promo harga berapa?",
+    ]
+    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
+        for q in queries:
+            res = await academy_bot.process_inbound(
+                sender_phone=phone,
+                incoming_text=q,
+                tenant_id="onlineboost",
+            )
+            assert res["handled"] is True
+            assert "Rp249.000" in res["reply"]
+            assert "1.499.000" not in res["reply"]
+            assert "1499000" not in res["reply"]
