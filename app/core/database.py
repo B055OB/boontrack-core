@@ -3,15 +3,89 @@ import json
 import asyncio
 from datetime import datetime, timedelta
 import logging
-from typing import Optional, Dict, Any, List
+from collections.abc import Mapping, Sequence
+from typing import Optional, Dict, Any, List, Tuple, Union
 from contextlib import contextmanager
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, RealDictRow
 from app.core.config import settings
 from sqlalchemy.ext.declarative import declarative_base
 
 logger = logging.getLogger("APP_DATABASE")
 Base = declarative_base()
+
+
+class NormalizedRow(dict):
+    """
+    Normalized database row supporting both dictionary key access (`row['col']`, `row.get('col')`)
+    and positional integer index access (`row[0]`, `row[1]`).
+    Gracefully normalizes `dict`, `psycopg2.extras.RealDictRow`, and `tuple` / `list`.
+    """
+
+    def __init__(self, mapping: Dict[str, Any], positional: Tuple[Any, ...] = ()):
+        super().__init__(mapping)
+        self._positional: Tuple[Any, ...] = tuple(positional)
+
+    def __getitem__(self, key: Any) -> Any:
+        if isinstance(key, int):
+            if 0 <= key < len(self._positional):
+                return self._positional[key]
+            if -len(self._positional) <= key < 0:
+                return self._positional[len(self._positional) + key]
+            vals = list(self.values())
+            return vals[key]
+        return super().__getitem__(key)
+
+
+def normalize_db_row(
+    row: Any,
+    columns: Optional[Sequence[str]] = None,
+) -> Optional[NormalizedRow]:
+    """
+    Normalize a database row (`dict`, `RealDictRow`, `tuple`, `list`, or mapping-like object)
+    into a `NormalizedRow` (a `dict` subclass supporting both key and positional access).
+    Returns `None` if `row` is `None` or empty when not a valid row.
+    """
+    if row is None:
+        return None
+
+    if isinstance(row, NormalizedRow):
+        if columns:
+            pos = tuple(row.get(c) for c in columns)
+            return NormalizedRow(dict(row), pos)
+        return row
+
+    if isinstance(row, (RealDictRow, Mapping, dict)):
+        as_dict = dict(row)
+        if columns:
+            pos = tuple(as_dict.get(col) for col in columns)
+        else:
+            pos = tuple(as_dict.values())
+        return NormalizedRow(as_dict, pos)
+
+    if isinstance(row, (tuple, list)):
+        pos = tuple(row)
+        as_dict: Dict[str, Any] = {}
+        if columns:
+            for idx, col in enumerate(columns):
+                as_dict[col] = pos[idx] if idx < len(pos) else None
+        else:
+            for idx, val in enumerate(pos):
+                as_dict[str(idx)] = val
+        return NormalizedRow(as_dict, pos)
+
+    if hasattr(row, "_mapping"):
+        as_dict = dict(row._mapping)
+        pos = tuple(as_dict.get(col) for col in columns) if columns else tuple(as_dict.values())
+        return NormalizedRow(as_dict, pos)
+
+    if hasattr(row, "keys") and callable(row.keys):
+        as_dict = {k: row[k] for k in row.keys()}
+        pos = tuple(as_dict.get(col) for col in columns) if columns else tuple(as_dict.values())
+        return NormalizedRow(as_dict, pos)
+
+    return None
+
 
 
 def get_db_connection():
@@ -71,7 +145,7 @@ def close_and_reset_connection(conn):
 def get_tenant_db_connection(tenant_id: str):
     """Establishes database connection under transaction-scoped 'authenticated' role
     (NOBYPASSRLS, NOSUPERUSER) and transaction-local 'app.current_tenant_id'.
-    
+
     CTO Directive 09 Mandate:
     Eliminates session-wide state. Uses SET LOCAL within active transaction.
     """
@@ -90,11 +164,11 @@ def tenant_transaction(arg1, arg2: Optional[str] = None):
     """Executes a database transaction strictly under transaction-local 'authenticated' role
     (NOBYPASSRLS, NOSUPERUSER) and tenant-isolated 'app.current_tenant_id'
     using transaction-local scoping (SET LOCAL).
-    
+
     Supports:
       tenant_transaction(tenant_id: str, conn: Optional[connection] = None)
       tenant_transaction(conn: connection, tenant_id: str)
-      
+
     Guarantees:
     1. Transaction-Local Scoping: `SET LOCAL ROLE authenticated;` and
        `SELECT set_config('app.current_tenant_id', %s, true);` are strictly bound to the active transaction.
@@ -173,7 +247,7 @@ def close_worker_db_connection(conn, worker_name: str = "worker"):
 @contextmanager
 def worker_elevated_transaction(worker_name: str, conn: Optional[Any] = None):
     """Executes an elevated background worker database transaction under service_role.
-    
+
     CTO Directive 10 (P1-E) Mandate:
     Guarantees strict connection hygiene:
     1. Scoped elevation: `SET LOCAL ROLE service_role;`
@@ -210,7 +284,7 @@ def worker_elevated_transaction(worker_name: str, conn: Optional[Any] = None):
 def _init_db_sync():
     conn = get_db_connection()
     cur = conn.cursor()
-    
+
     # 1. Tabel users
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -227,7 +301,7 @@ def _init_db_sync():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
-    
+
     # 2. Tabel analytics
     cur.execute("""
         CREATE TABLE IF NOT EXISTS analytics (
@@ -260,7 +334,7 @@ def _init_db_sync():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
-    
+
     # 5. Tabel product_orders
     cur.execute("""
         CREATE TABLE IF NOT EXISTS product_orders (
@@ -344,7 +418,7 @@ def _init_db_sync():
             created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
     """)
-    
+
     # 10. Tabel demo_user_sessions (Persistent WhatsApp Session Lock)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS demo_user_sessions (
@@ -358,9 +432,9 @@ def _init_db_sync():
 
     # 11. Migration kolom tenants: timezone & currency
     cur.execute("""
-        DO $$ 
-        BEGIN 
-            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'tenants') THEN 
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'tenants') THEN
                 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS timezone VARCHAR(64) NOT NULL DEFAULT 'Asia/Jakarta';
                 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS currency VARCHAR(16) NOT NULL DEFAULT 'IDR';
             END IF;
@@ -485,6 +559,42 @@ def _init_db_sync():
         CREATE INDEX IF NOT EXISTS idx_financial_ledger_tenant ON financial_ledger(tenant_id);
         CREATE INDEX IF NOT EXISTS idx_financial_ledger_event ON financial_ledger(event_id);
         CREATE UNIQUE INDEX IF NOT EXISTS uq_financial_ledger_order_credit ON financial_ledger (order_id) WHERE (transaction_type = 'PAYMENT_CREDIT');
+
+        CREATE TABLE IF NOT EXISTS commission_ledger (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            event_type VARCHAR(64) DEFAULT 'ORDER_COMMISSION',
+            reference_id VARCHAR(128) UNIQUE,
+            affiliate_id VARCHAR(128),
+            order_id VARCHAR(128) UNIQUE,
+            affiliate_code VARCHAR(64),
+            manager_id VARCHAR(128),
+            tenant_slug VARCHAR(100),
+            gross_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+            commission_amount NUMERIC(14, 2) DEFAULT 0,
+            payout_status VARCHAR(32) DEFAULT 'UNPAID',
+            affiliate_commission_rate NUMERIC(8, 4) DEFAULT 0,
+            affiliate_commission_amount NUMERIC(14, 2) DEFAULT 0,
+            manager_override_rate NUMERIC(8, 4) DEFAULT 0,
+            manager_override_amount NUMERIC(14, 2) DEFAULT 0,
+            net_platform_revenue NUMERIC(14, 2) DEFAULT 0,
+            status VARCHAR(32) DEFAULT 'PENDING_PAYOUT',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_commission_ledger_reference ON commission_ledger (reference_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_commission_ledger_order_id ON commission_ledger (order_id);
+
+        CREATE TABLE IF NOT EXISTS affiliate_commissions (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            tenant_id VARCHAR(100) NOT NULL,
+            affiliate_id VARCHAR(128) NOT NULL,
+            order_id VARCHAR(128) NOT NULL,
+            order_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+            amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+            status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_affiliate_commissions_tenant_order UNIQUE (tenant_id, order_id)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_affiliate_commissions_tenant_order ON affiliate_commissions (tenant_id, order_id);
     """)
 
     # 18. Tabel cs_agents & Update Skema conversations (BoonTrack Inbox Rotary Engine)
@@ -507,14 +617,14 @@ def _init_db_sync():
         DO $$
         BEGIN
             IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns 
+                SELECT 1 FROM information_schema.columns
                 WHERE table_name = 'conversations' AND column_name = 'assigned_agent_id'
             ) THEN
                 ALTER TABLE conversations ADD COLUMN assigned_agent_id UUID REFERENCES cs_agents(id) ON DELETE SET NULL;
             END IF;
 
             IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns 
+                SELECT 1 FROM information_schema.columns
                 WHERE table_name = 'conversations' AND column_name = 'status'
             ) THEN
                 ALTER TABLE conversations ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'unassigned';
@@ -522,7 +632,7 @@ def _init_db_sync():
             END IF;
 
             IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns 
+                SELECT 1 FROM information_schema.columns
                 WHERE table_name = 'conversations' AND column_name = 'bot_mode'
             ) THEN
                 ALTER TABLE conversations ADD COLUMN bot_mode VARCHAR(20) NOT NULL DEFAULT 'AI_ACTIVE';
@@ -530,7 +640,7 @@ def _init_db_sync():
             END IF;
 
             IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns 
+                SELECT 1 FROM information_schema.columns
                 WHERE table_name = 'conversations' AND column_name = 'bot_paused'
             ) THEN
                 ALTER TABLE conversations ADD COLUMN bot_paused BOOLEAN NOT NULL DEFAULT FALSE;
@@ -616,7 +726,7 @@ def _save_user_sync(user: Any, meta: dict = None):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        
+
         meta = meta or {}
         first_src = meta.get("first_source", "direct")
         latest_src = meta.get("latest_source", "direct")
@@ -626,7 +736,7 @@ def _save_user_sync(user: Any, meta: dict = None):
 
         cur.execute("""
             INSERT INTO users (
-                telegram_id, username, first_name, last_name, language_code, 
+                telegram_id, username, first_name, last_name, language_code,
                 first_source, latest_source, utm_medium, utm_campaign, utm_content
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -642,7 +752,7 @@ def _save_user_sync(user: Any, meta: dict = None):
             user.id, user.username, user.first_name, user.last_name, user.language_code,
             first_src, latest_src, medium, campaign, content
         ))
-        
+
         conn.commit()
         cur.close()
         conn.close()
@@ -677,13 +787,13 @@ def _get_user_history_sync(user_id):
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        
+
         cur.execute("SELECT last_step, data FROM user_progress WHERE user_id = %s", (user_id,))
         progress = cur.fetchone()
-        
+
         cur.execute("SELECT version, position, data, created_at FROM cv_documents WHERE user_id = %s ORDER BY id DESC LIMIT 1", (user_id,))
         last_cv = cur.fetchone()
-        
+
         cur.close()
         conn.close()
         return progress, last_cv
@@ -701,7 +811,7 @@ def _save_cv_version_sync(user_id, position, data):
         cur.execute("SELECT COUNT(*) FROM cv_documents WHERE user_id = %s", (user_id,))
         count = cur.fetchone()[0]
         version = count + 1
-        
+
         cur.execute("""
             INSERT INTO cv_documents (user_id, version, position, data)
             VALUES (%s, %s, %s, %s)
@@ -720,7 +830,7 @@ def _count_referrals_sync(referrer_id: str) -> int:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            SELECT COUNT(DISTINCT user_id) FROM analytics 
+            SELECT COUNT(DISTINCT user_id) FROM analytics
             WHERE event = 'start' AND (meta->>'referrer_id') = %s
         """, (str(referrer_id),))
         count = cur.fetchone()[0]
@@ -786,7 +896,7 @@ def _match_and_complete_order_sync(amount):
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("""
-            SELECT * FROM product_orders 
+            SELECT * FROM product_orders
             WHERE total_amount = %s AND expires_at > CURRENT_TIMESTAMP
             LIMIT 1;
         """, (amount,))
@@ -835,9 +945,9 @@ def _match_and_complete_donation_sync(amount):
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("""
-            SELECT * FROM donation_sessions 
+            SELECT * FROM donation_sessions
             WHERE total_amount = %s AND status = 'PENDING'
-            ORDER BY created_at DESC 
+            ORDER BY created_at DESC
             LIMIT 1;
         """, (amount,))
         donation = cur.fetchone()

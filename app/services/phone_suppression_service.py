@@ -31,7 +31,7 @@ from app.services.whatsapp.credentials import normalize_phone_number
 
 logger = logging.getLogger("PHONE_SUPPRESSION_SERVICE")
 
-OPT_OUT_KEYWORDS = frozenset({"STOP", "BERHENTI", "UNSUBSCRIBE"})
+OPT_OUT_KEYWORDS = frozenset({"STOP", "BERHENTI", "BATAL", "UNSUBSCRIBE"})
 
 # Canonical Platform Tenant Identity and Historical Aliases
 PLATFORM_CANONICAL_TENANT = "boontrack-platform"

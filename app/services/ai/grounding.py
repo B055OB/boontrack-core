@@ -121,10 +121,31 @@ READER_INQUIRY_KEYWORDS = [
     "verifikasi mutasi",
 ]
 
-# Kata kunci / regex resmi untuk auto-handover ke CS manusia
+# Kata kunci / frasa resmi untuk auto-handover ke CS manusia
 HANDOVER_HUMAN_KEYWORDS = [
-    "admin", "cs", "manusia", "orang", "customer service",
-    "bicara langsung", "hubungi orang"
+    "bicara dengan manusia", "bicara sama manusia", "hubungkan ke manusia", "hubungkan dengan manusia",
+    "minta cs manusia", "mau cs manusia", "mau admin manusia", "bicara langsung",
+    "hubungi orang", "customer service", "admin", "cs", "manusia", "orang"
+]
+
+# Pola regex resmi untuk deteksi auto-handover ke CS manusia (mengharuskan frasa eksplisit)
+HANDOVER_INTENT_PATTERNS = [
+    # Explicit intent phrases: bicara/ngobrol/chat dengan manusia/admin/cs/orang/owner
+    r"\b(?:bicara|ngobrol|chat|diskusi)\s+(?:langsung\s+)?(?:dengan|sama|ke)\s+(?:manusia|orang|admin|cs|customer\s+service|owner|pemilik|staff|staf|kang\s+sakti)\b",
+    # hubungkan / sambungkan ke manusia/admin/cs
+    r"\b(?:hubungkan|sambungkan|koneksikan|oper|alihkan)\s+(?:(?:saya|kami|obrolan\s+ini)\s+)?(?:ke|dengan|sama)\s+(?:manusia|orang|admin|cs|customer\s+service|owner|pemilik|tim|staff|staf|bicara\s+langsung|hubungi\s+orang)\b",
+    # hubungi langsung orang/admin/cs
+    r"\b(?:hubungi|kontak)\s+(?:langsung\s+)?(?:orang|manusia|admin|cs|customer\s+service|owner|pemilik)\b",
+    # minta / mau / butuh cs / admin / manusia
+    r"\b(?:minta|mau|butuh|perlu|tolong)\s+(?:tolong\s+)?(?:bicara\s+(?:dengan\s+)?)?(?:cs\s+manusia|admin\s+manusia|orang\s+asli|cs\s+asli|admin\s+asli|manusia|admin|cs|customer\s+service|orang|owner|pemilik|bicara\s+langsung|hubungi\s+orang)(?:\s+(?:dong|ya|kak|min|gan|boss|bos))?(?:\s*$|\s+[\w])",
+    # panggil admin / cs
+    r"\b(?:panggil|panggilin)\s+(?:admin|cs|manusia|orang|owner)\b",
+    # bicara langsung
+    r"\b(?:bicara|ngobrol)\s+langsung\b",
+    # bantuan orang / manusia / admin
+    r"\b(?:bisa\s+hubungi\s+orang|bantuan\s+(?:orang|manusia|admin|cs))\b",
+    # live cs / human cs / chat owner / chat admin / chat cs / kang sakti (buzzerukm owner)
+    r"\b(?:live\s+cs|human\s+cs|chat\s+owner|chat\s+admin|chat\s+cs|kang\s+sakti|bukan\s+bot|jangan\s+bot|stop\s+bot)\b",
 ]
 
 HANDOVER_TRANSITION_REPLY = (
@@ -210,13 +231,14 @@ def is_reader_inquiry_intent(text: str, tenant_slug: Optional[str] = None) -> bo
 
 
 def is_handover_intent(text: str) -> bool:
-    """Mendeteksi apakah pengguna ingin berbicara langsung dengan orang / CS manual."""
+    """Mendeteksi apakah pengguna ingin berbicara langsung dengan orang / CS manual.
+    Mengharuskan frasa eksplisit (misal: 'bicara dengan manusia', 'hubungkan ke manusia', 'minta cs manusia')
+    dan TIDAK merespons substring kata tunggal 'manusia'/'admin'/'cs' pada kalimat umum/diskusi.
+    """
     if not text:
         return False
     lower = text.lower().strip()
-    return any(re.search(rf"\b{re.escape(kw)}\b", lower) for kw in HANDOVER_HUMAN_KEYWORDS) or any(
-        kw in lower for kw in ["bicara dengan orang", "bantuan orang", "live cs", "human cs", "kang sakti", "owner", "pemilik"]
-    )
+    return any(re.search(pat, lower) for pat in HANDOVER_INTENT_PATTERNS)
 
 
 def generate_setup_toko_consultation_reply(customer_name: str = "Kakak", tenant_slug: Optional[str] = None, **kwargs) -> str:

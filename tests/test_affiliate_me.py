@@ -227,28 +227,45 @@ def test_affiliate_portal_public_attribution_isolated(mock_supabase):
 @patch("app.routes.affiliate_auth.supabase")
 def test_affiliate_me_with_supabase_auth_email_token_returns_200(mock_supabase):
     """
-    Memverifikasi token JWT Supabase Auth berbasis Email & auth.uid (role='authenticated')
-    berhasil diotentikasi dan dipetakan ke data affiliate tanpa pencocokan nomor WhatsApp.
+    Memverifikasi pemisahan realm:
+    1. Token dengan klaim realm Supabase (aud='authenticated') ditolak (401) pada endpoint Core.
+    2. Token Core yang valid dengan sub=auth_user_id berhasil diotentikasi (200).
     """
     user_uid = "supa-auth-uid-7777"
     user_email = "mitra.sukses@boontrack.com"
 
-    # Supabase Auth JWT token payload
-    token_payload = {
-        "sub": user_uid,
-        "email": user_email,
-        "role": "authenticated",
-        "aud": "authenticated",
-        "exp": datetime.now(timezone.utc) + timedelta(days=1),
-    }
-    supabase_token = generate_jwt_token(token_payload)
+    # 1. Cross-realm token (aud='authenticated') wajib ditolak 401
+    cross_realm_token = generate_jwt_token(
+        {
+            "sub": user_uid,
+            "email": user_email,
+            "role": "authenticated",
+            "aud": "authenticated",
+            "exp": datetime.now(timezone.utc) + timedelta(days=1),
+        }
+    )
+    res_cross = client.get(
+        "/api/v1/affiliate/me",
+        headers={"Authorization": f"Bearer {cross_realm_token}"},
+    )
+    assert res_cross.status_code == 401
+
+    # 2. Valid Core token mapped via auth_user_id / id
+    core_token = generate_jwt_token(
+        {
+            "sub": user_uid,
+            "email": user_email,
+            "role": "AFFILIATE",
+            "exp": datetime.now(timezone.utc) + timedelta(days=1),
+        }
+    )
 
     def table_router(table_name):
         mock_t = MagicMock()
         if table_name == "affiliates":
-            # Mock lookup by email
             mock_t.select.return_value.eq.return_value.execute.return_value.data = [{
                 "id": "aff_from_email_001",
+                "auth_user_id": user_uid,
                 "name": "Mitra Email Sukses",
                 "email": user_email,
                 "phone": "6281122334455",
@@ -269,7 +286,7 @@ def test_affiliate_me_with_supabase_auth_email_token_returns_200(mock_supabase):
 
     response = client.get(
         "/api/v1/affiliate/me",
-        headers={"Authorization": f"Bearer {supabase_token}"}
+        headers={"Authorization": f"Bearer {core_token}"},
     )
     assert response.status_code == 200
     data = response.json()
@@ -279,4 +296,3 @@ def test_affiliate_me_with_supabase_auth_email_token_returns_200(mock_supabase):
     assert data["commission"]["available"] == 500000
     assert data["commission"]["pending"] == 100000
     assert response.headers["Cache-Control"] == "private, no-store, no-cache, must-revalidate"
-

@@ -16,8 +16,10 @@ async def magic_login_handler(request: web.Request) -> web.Response:
     secret = request.query.get('secret')
     if not slug or not secret:
         raise web.HTTPBadRequest(reason='Missing slug or secret')
-    expected_secret = os.getenv('INTERNAL_MAGIC_SECRET', 'boontrack-super-secret-2026')
-    if secret != expected_secret:
+    import hmac as _hmac
+    from app.core.jwt_secret import get_internal_magic_secret
+    expected_secret = get_internal_magic_secret()
+    if not expected_secret or not _hmac.compare_digest(str(secret or ""), expected_secret):
         raise web.HTTPForbidden(reason='Forbidden')
     # Lookup tenant config locally first
     tenant_config = LOADED_CONFIG_TENANTS.get(slug) or TENANT_REGISTRY.get(slug)

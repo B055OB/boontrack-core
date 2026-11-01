@@ -2,6 +2,7 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Header, Request, status, Query
 from pydantic import BaseModel, Field
 
+from app.routes.affiliate_payout_routes import payout_disbursement_locked
 from app.services.partner_service import (
     partner_service,
     validate_referral_slug,
@@ -23,21 +24,28 @@ class CheckSlugRequest(BaseModel):
 
 
 class ClaimSlugRequest(BaseModel):
+    model_config = {"extra": "allow"}
+
     slug: str = Field(..., description="Slug custom referral yang ingin diklaim (3-20 karakter alfanumerik)")
-    partner_id: Optional[str] = Field(None, description="Opsional jika tidak menyertakan Authorization Bearer header")
+    partner_id: Optional[str] = Field(None, description="Forbidden client-supplied identity field")
 
 
 class BankAccountRequest(BaseModel):
+    model_config = {"extra": "allow"}
+
     bank_name: str = Field(..., description="Nama Bank / E-Wallet (BCA, Mandiri, BRI, BNI, BSI, CIMB, GoPay, DANA, OVO)")
     account_number: str = Field(..., description="Nomor rekening bank atau nomor akun e-wallet")
     account_holder_name: str = Field(..., description="Nama lengkap pemilik rekening / akun")
-    partner_id: Optional[str] = Field(None, description="Opsional jika tidak menyertakan Authorization Bearer header")
+    partner_id: Optional[str] = Field(None, description="Forbidden client-supplied identity field")
 
 
 class PayoutRequestPayload(BaseModel):
+    model_config = {"extra": "allow"}
+
     amount: float = Field(..., ge=50000, description="Jumlah saldo komisi yang ingin ditarik (minimal Rp 50.000)")
     bank_account_id: Optional[str] = Field(None, description="ID rekening bank tujuan pencairan (opsional, default rekening utama)")
-    partner_id: Optional[str] = Field(None, description="Opsional jika tidak menyertakan Authorization Bearer header")
+    partner_id: Optional[str] = Field(None, description="Forbidden client-supplied identity field")
+
 
 
 class WhitelistPartnerRequest(BaseModel):
@@ -58,31 +66,76 @@ class MarkPaidRequest(BaseModel):
 # Auth Helper
 # =============================================================================
 
+FORBIDDEN_PARTNER_IDENTITY_FIELDS = {
+    "partner_id",
+    "affiliate_id",
+    "id",
+    "auth_user_id",
+    "user_id",
+    "phone",
+    "phone_number",
+    "email",
+}
+
+
+def _enforce_partner_field_policy(payload: BaseModel, allowed_fields: set, context_name: str) -> None:
+    supplied = set(getattr(payload, "model_fields_set", set()) or set())
+    extra = getattr(payload, "model_extra", None)
+    if isinstance(extra, dict):
+        supplied.update(extra.keys())
+
+    for key in supplied:
+        if key in FORBIDDEN_PARTNER_IDENTITY_FIELDS:
+            val = getattr(payload, key, None)
+            if val is None and isinstance(extra, dict):
+                val = extra.get(key)
+            if val is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Client-supplied identity field '{key}' is forbidden; partner identity is resolved strictly server-side.",
+                )
+
+    disallowed = [k for k in supplied if k not in allowed_fields and k not in FORBIDDEN_PARTNER_IDENTITY_FIELDS]
+    if disallowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Field tidak diizinkan pada {context_name}: {', '.join(sorted(disallowed))}",
+        )
+
+
 def resolve_partner_id(
     authorization: Optional[str] = None,
     x_partner_id: Optional[str] = None,
     explicit_partner_id: Optional[str] = None,
 ) -> str:
     """
-    Ekstraksi ID mitra dari Authorization Bearer Token, header X-Partner-Id,
-    atau eksplisit body partner_id.
+    Server-side partner identity resolution strictly from verified Authorization Bearer JWT.
+    Rejects unauthenticated calls (401) and rejects client-supplied partner_id / X-Partner-Id (403).
     """
-    if explicit_partner_id:
-        return explicit_partner_id
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Autentikasi diperlukan. Sertakan header Authorization: Bearer <token>.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    if x_partner_id:
-        return x_partner_id
+    token = authorization.split(" ", 1)[1].strip()
+    decoded = decode_jwt_token(token, realm="core")
+    if not decoded or not (decoded.get("sub") or decoded.get("partner_id")):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token autentikasi tidak valid atau telah kedaluwarsa.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.split(" ")[1]
-        decoded = decode_jwt_token(token)
-        if decoded and (decoded.get("sub") or decoded.get("partner_id")):
-            return str(decoded.get("sub") or decoded.get("partner_id"))
+    if explicit_partner_id is not None or x_partner_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Client-supplied partner_id or X-Partner-Id is forbidden; partner identity is resolved server-side.",
+        )
 
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Autentikasi diperlukan. Sertakan header Authorization: Bearer <token> atau partner_id.",
-    )
+    return str(decoded.get("sub") or decoded.get("partner_id"))
+
 
 
 # =============================================================================
@@ -102,6 +155,7 @@ async def check_referral_slug(payload: CheckSlugRequest):
 
 
 @partner_router.put("/claim-ref-slug", summary="Klaim dan Kunci Slug Custom")
+@partner_router.post("/claim-ref-slug", summary="Klaim dan Kunci Slug Custom")
 async def claim_referral_slug(
     payload: ClaimSlugRequest,
     authorization: Optional[str] = Header(None),
@@ -117,6 +171,7 @@ async def claim_referral_slug(
         x_partner_id=x_partner_id,
         explicit_partner_id=payload.partner_id,
     )
+    _enforce_partner_field_policy(payload, {"slug"}, "claim referral slug")
 
     success, message, partner_data = partner_service.claim_custom_referral_slug(
         partner_id=partner_id, slug=payload.slug
@@ -136,6 +191,7 @@ async def claim_referral_slug(
 
 
 @partner_router.post("/bank-account", summary="Simpan / Perbarui Rekening Bank Payout")
+@partner_router.patch("/bank-account", summary="Simpan / Perbarui Rekening Bank Payout")
 async def save_bank_account(
     payload: BankAccountRequest,
     authorization: Optional[str] = Header(None),
@@ -149,6 +205,11 @@ async def save_bank_account(
         authorization=authorization,
         x_partner_id=x_partner_id,
         explicit_partner_id=payload.partner_id,
+    )
+    _enforce_partner_field_policy(
+        payload,
+        {"bank_name", "account_number", "account_holder_name"},
+        "partner bank account update",
     )
 
     success, message, bank_record = partner_service.upsert_bank_account(
@@ -202,6 +263,7 @@ async def request_payout(
         x_partner_id=x_partner_id,
         explicit_partner_id=payload.partner_id,
     )
+    _enforce_partner_field_policy(payload, {"amount", "bank_account_id"}, "payout request")
 
     success, message, payout_record = partner_service.request_payout(
         partner_id=partner_id,
@@ -279,11 +341,16 @@ async def list_payout_queue(
 
 
 @manager_router.put("/payouts/{payout_id}/mark-paid", summary="Konfirmasi Pembayaran Payout")
+@manager_router.post("/payouts/{payout_id}/mark-paid", summary="Konfirmasi Pembayaran Payout")
 async def mark_payout_paid(payout_id: str, payload: MarkPaidRequest):
     """
     Mengonfirmasi pencairan dana kepada mitra oleh Admin/Finance.
     Mengubah status payout menjadi 'PAID', mencatat URL bukti transfer, dan waktu selesai.
+
+    FAIL-CLOSED: dikunci (HTTP 403 PAYOUT_DISBURSEMENT_LOCKED) hingga remediasi P0 selesai.
     """
+    raise payout_disbursement_locked()
+
     success, message, payout_data = partner_service.mark_payout_as_paid(
         payout_id=payout_id,
         proof_attachment_url=payload.proof_attachment_url,

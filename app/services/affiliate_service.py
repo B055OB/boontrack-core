@@ -9,8 +9,10 @@ Architectural Guarantees:
 
 import uuid
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
+from app.core.database import normalize_db_row
 from app.services.whatsapp_service import get_supabase
 
 logger = logging.getLogger("AFFILIATE_SERVICE")
@@ -24,6 +26,8 @@ class AffiliateService:
     def __init__(self):
         # In-memory ledger storage fallback {commission_id: {...}}
         self._commissions: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.RLock()
+
 
     def calculate_commission(
         self,
@@ -79,16 +83,25 @@ class AffiliateService:
                     t_res = t_query.eq("slug", str(tenant_id)).maybe_single().execute()
 
                 if t_res and t_res.data:
-                    row = t_res.data
-                    resolved_aff_id = row.get("affiliate_id") or (row.get("metadata") or {}).get("affiliate_id")
+                    row = normalize_db_row(
+                        t_res.data[0] if isinstance(t_res.data, list) else t_res.data,
+                        ("id", "affiliate_id", "affiliate_ref", "metadata"),
+                    ) or {}
+                    meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+                    resolved_aff_id = row.get("affiliate_id") or meta.get("affiliate_id")
                     if not resolved_aff_id and row.get("affiliate_ref"):
                         ref = row.get("affiliate_ref")
                         aff_res = supabase.table("affiliates").select("id, commission_rate").ilike("referral_code", ref).maybe_single().execute()
                         if aff_res and aff_res.data:
-                            resolved_aff_id = aff_res.data.get("id")
-                            if aff_res.data.get("commission_rate") is not None:
-                                rate_val = float(aff_res.data.get("commission_rate"))
+                            aff_data = normalize_db_row(
+                                aff_res.data[0] if isinstance(aff_res.data, list) else aff_res.data,
+                                ("id", "commission_rate"),
+                            ) or {}
+                            resolved_aff_id = aff_data.get("id")
+                            if aff_data.get("commission_rate") is not None:
+                                rate_val = float(aff_data.get("commission_rate"))
                                 resolved_rate = rate_val / 100.0 if rate_val > 1 else rate_val
+
             except Exception as e:
                 logger.debug(f"[AffiliateService] Affiliate resolution info: {e}")
 
@@ -183,40 +196,23 @@ class AffiliateService:
         base_amount = float(amount_paid or 0)
         supabase = get_supabase()
 
-        # 0. Idempotency Check: Pastikan komisi untuk invoice_id belum pernah dicatat
-        for existing in self._commissions.values():
-            if str(existing.get("invoice_id")) == str(invoice_id):
-                logger.info(f"[AffiliateService Idempotency Hit] Commission for invoice '{invoice_id}' already in memory.")
-                return {
-                    "status": "success",
-                    "idempotent": True,
-                    "message": f"Commission for invoice '{invoice_id}' already recorded",
-                    "tenant_id": clean_tenant,
-                    "invoice_id": invoice_id,
-                    "direct_commission": existing.get("amount", 0),
-                    "override_commission": 0,
-                    "revenue": base_amount,
-                }
-        if supabase and invoice_id:
-            try:
-                db_existing = supabase.table("affiliate_commissions").select("*").eq("order_id", str(invoice_id)).execute()
-                if not db_existing.data:
-                    db_existing = supabase.table("affiliate_commissions").select("*").eq("invoice_id", str(invoice_id)).execute()
-                if db_existing and db_existing.data:
-                    first_comm = db_existing.data[0]
-                    logger.info(f"[AffiliateService Idempotency Hit] Commission for invoice '{invoice_id}' already recorded in Supabase.")
+        # 0. Idempotency Check (under lock): Pastikan komisi untuk invoice_id belum pernah dicatat
+        with self._lock:
+            for existing in self._commissions.values():
+                if str(existing.get("invoice_id")) == str(invoice_id):
+                    logger.info(f"[AffiliateService Idempotency Hit] Commission for invoice '{invoice_id}' already in memory.")
                     return {
                         "status": "success",
                         "idempotent": True,
-                        "message": f"Commission for invoice '{invoice_id}' already recorded in DB",
+                        "message": f"Commission for invoice '{invoice_id}' already recorded",
                         "tenant_id": clean_tenant,
                         "invoice_id": invoice_id,
-                        "direct_commission": first_comm.get("amount", 0),
+                        "direct_commission": existing.get("amount", 0),
                         "override_commission": 0,
                         "revenue": base_amount,
                     }
-            except Exception as comm_check_err:
-                logger.debug(f"[AffiliateService Idempotency Check Note] {comm_check_err}")
+        # (Idempotency check berbasis DB dijalankan SETELAH early-exit organik di bawah,
+        #  sehingga tenant organik tidak pernah menyentuh tabel affiliate_commissions.)
 
         resolved_aff_id = affiliate_id
         resolved_ref_code = referral_code
@@ -232,16 +228,21 @@ class AffiliateService:
                     except Exception:
                         pass
                 if t_res and t_res.data:
-                    row = t_res.data[0]
-                    resolved_aff_id = row.get("affiliate_id") or (row.get("metadata") or {}).get("affiliate_id")
-                    resolved_ref_code = row.get("affiliate_ref") or (row.get("metadata") or {}).get("referral_code")
+                    raw_t = t_res.data[0] if isinstance(t_res.data, list) else t_res.data
+                    row = normalize_db_row(raw_t, ("id", "slug", "affiliate_id", "affiliate_ref", "metadata")) or {}
+                    meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+                    resolved_aff_id = row.get("affiliate_id") or meta.get("affiliate_id")
+                    resolved_ref_code = row.get("affiliate_ref") or meta.get("referral_code")
 
                 if not resolved_aff_id and not resolved_ref_code:
                     m_res = supabase.table("merchants").select("referral_code").eq("slug", clean_tenant).execute()
                     if m_res and m_res.data:
-                        resolved_ref_code = m_res.data[0].get("referral_code")
+                        raw_m = m_res.data[0] if isinstance(m_res.data, list) else m_res.data
+                        m_row = normalize_db_row(raw_m, ("referral_code",)) or {}
+                        resolved_ref_code = m_row.get("referral_code")
             except Exception as e:
                 logger.debug(f"[AffiliateService] Referral resolution note: {e}")
+
 
         # 2. Strict Null Check & Early Exit (Prinsip Zero Financial Leakage)
         if not resolved_aff_id and not resolved_ref_code:
@@ -272,11 +273,17 @@ class AffiliateService:
                 candidate = resolved_aff_id or resolved_ref_code
                 aff_query = supabase.table("affiliates").select("*").eq("id", str(candidate)).execute()
                 if aff_query.data:
-                    aff_record = aff_query.data[0]
+                    aff_record = normalize_db_row(
+                        aff_query.data[0] if isinstance(aff_query.data, list) else aff_query.data,
+                        ("id", "referral_code", "commission_rate", "status", "parent_am_id", "manager_id", "registered_by_am_id"),
+                    )
                 else:
                     ref_query = supabase.table("affiliates").select("*").ilike("referral_code", str(candidate)).execute()
                     if ref_query.data:
-                        aff_record = ref_query.data[0]
+                        aff_record = normalize_db_row(
+                            ref_query.data[0] if isinstance(ref_query.data, list) else ref_query.data,
+                            ("id", "referral_code", "commission_rate", "status", "parent_am_id", "manager_id", "registered_by_am_id"),
+                        )
             except Exception as aff_err:
                 logger.debug(f"[AffiliateService] Affiliate query note: {aff_err}")
 
@@ -302,83 +309,145 @@ class AffiliateService:
                 "commissions": []
             }
 
-        valid_aff_id = (aff_record.get("id") if aff_record else resolved_aff_id) or str(resolved_aff_id)
+        with self._lock:
+            for existing in self._commissions.values():
+                if str(existing.get("invoice_id")) == str(invoice_id):
+                    return {
+                        "status": "success",
+                        "idempotent": True,
+                        "message": f"Commission for invoice '{invoice_id}' already recorded",
+                        "tenant_id": clean_tenant,
+                        "invoice_id": invoice_id,
+                        "direct_commission": existing.get("amount", 0),
+                        "override_commission": 0,
+                        "revenue": base_amount,
+                    }
 
-        # Hitung Direct Affiliate Commission berbasis kas riil yang dibayar
-        if affiliate_direct_rate is not None:
-            effective_direct_rate = float(affiliate_direct_rate)
-        elif aff_record and aff_record.get("commission_rate") is not None:
-            r = float(aff_record.get("commission_rate"))
-            effective_direct_rate = r / 100.0 if r > 1.0 else r
-        else:
-            effective_direct_rate = DEFAULT_AFFILIATE_COMMISSION_RATE  # 0.20
+            if supabase and invoice_id:
+                try:
+                    db_existing = supabase.table("affiliate_commissions").select("*").eq("order_id", str(invoice_id)).execute()
+                    if not (db_existing and db_existing.data):
+                        db_existing = supabase.table("affiliate_commissions").select("*").eq("invoice_id", str(invoice_id)).execute()
+                    first_comm = None
+                    if db_existing and isinstance(db_existing.data, list) and db_existing.data:
+                        candidate_row = normalize_db_row(
+                            db_existing.data[0],
+                            ("id", "tenant_id", "affiliate_id", "order_id", "invoice_id", "order_amount", "amount", "status"),
+                        )
+                        if isinstance(candidate_row, dict) and str(
+                            candidate_row.get("order_id") or candidate_row.get("invoice_id")
+                        ) == str(invoice_id):
+                            first_comm = candidate_row
+                    if first_comm is not None:
+                        logger.info(f"[AffiliateService Idempotency Hit] Commission for invoice '{invoice_id}' already recorded in Supabase.")
+                        return {
+                            "status": "success",
+                            "idempotent": True,
+                            "message": f"Commission for invoice '{invoice_id}' already recorded in DB",
+                            "tenant_id": clean_tenant,
+                            "invoice_id": invoice_id,
+                            "direct_commission": first_comm.get("amount", 0),
+                            "override_commission": 0,
+                            "revenue": base_amount,
+                        }
+                except Exception as comm_check_err:
+                    logger.debug(f"[AffiliateService Idempotency Check Note] {comm_check_err}")
 
-        direct_commission = round(base_amount * effective_direct_rate)
 
-        comm_id_direct = str(uuid.uuid4())
-        now_iso = datetime.now(timezone.utc).isoformat()
-        direct_comm_record = {
-            "id": comm_id_direct,
-            "tenant_id": clean_tenant,
-            "affiliate_id": str(valid_aff_id),
-            "type": "SUBSCRIPTION_UPGRADE_PRORATED",
-            "amount": direct_commission,
-            "invoice_id": invoice_id,
-            "order_id": invoice_id,
-            "order_amount": float(base_amount),
-            "status": "HOLDING",
-            "created_at": now_iso
-        }
-        self._commissions[comm_id_direct] = direct_comm_record
-        if supabase:
-            try:
-                supabase.table("affiliate_commissions").insert(direct_comm_record).execute()
-            except Exception as sb_ins_err:
-                logger.debug(f"[AffiliateService] Supabase direct comm insert note: {sb_ins_err}")
+            valid_aff_id = (aff_record.get("id") if aff_record else resolved_aff_id) or str(resolved_aff_id)
 
-        # 4. Anti-Ghost AM Check
-        valid_am_id = None
-        override_commission = 0
-        am_comm_record = None
+            # Hitung Direct Affiliate Commission berbasis kas riil yang dibayar
+            if affiliate_direct_rate is not None:
+                effective_direct_rate = float(affiliate_direct_rate)
+            elif aff_record and aff_record.get("commission_rate") is not None:
+                r = float(aff_record.get("commission_rate"))
+                effective_direct_rate = r / 100.0 if r > 1.0 else r
+            else:
+                effective_direct_rate = DEFAULT_AFFILIATE_COMMISSION_RATE  # 0.20
 
-        am_candidate = am_id or (aff_record.get("parent_am_id") if aff_record else None) or (aff_record.get("manager_id") if aff_record else None) or (aff_record.get("registered_by_am_id") if aff_record else None)
+            direct_commission = round(base_amount * effective_direct_rate)
 
-        if am_candidate and supabase:
-            try:
-                am_query = supabase.table("affiliates").select("*").eq("id", str(am_candidate)).execute()
-                if not am_query.data:
-                    am_query = supabase.table("affiliates").select("*").ilike("referral_code", str(am_candidate)).execute()
-                if am_query.data:
-                    am_row = am_query.data[0]
-                    if am_row.get("status") in ("ACTIVE", "active", "APPROVED", None):
-                        valid_am_id = am_row.get("id") or str(am_candidate)
-            except Exception as am_lookup_err:
-                logger.debug(f"[AffiliateService] AM lookup note: {am_lookup_err}")
-        elif am_candidate and not supabase:
-            valid_am_id = str(am_candidate)
-
-        if valid_am_id:
-            effective_am_rate = float(am_override_rate) if am_override_rate is not None else 0.05
-            override_commission = round(base_amount * effective_am_rate)
-            comm_id_am = str(uuid.uuid4())
-            am_comm_record = {
-                "id": comm_id_am,
+            comm_id_direct = str(uuid.uuid4())
+            now_iso = datetime.now(timezone.utc).isoformat()
+            direct_comm_record = {
+                "id": comm_id_direct,
                 "tenant_id": clean_tenant,
-                "affiliate_id": str(valid_am_id),
-                "type": "AM_OVERRIDE_UPGRADE",
-                "amount": override_commission,
+                "affiliate_id": str(valid_aff_id),
+                "type": "SUBSCRIPTION_UPGRADE_PRORATED",
+                "amount": direct_commission,
                 "invoice_id": invoice_id,
-                "order_id": f"{invoice_id}_am",
+                "order_id": invoice_id,
                 "order_amount": float(base_amount),
                 "status": "HOLDING",
-                "created_at": now_iso
+                "created_at": now_iso,
             }
-            self._commissions[comm_id_am] = am_comm_record
             if supabase:
                 try:
-                    supabase.table("affiliate_commissions").insert(am_comm_record).execute()
-                except Exception as sb_am_err:
-                    logger.debug(f"[AffiliateService] Supabase AM comm insert note: {sb_am_err}")
+                    supabase.table("affiliate_commissions").insert(direct_comm_record).execute()
+                except Exception as sb_ins_err:
+                    err_s = str(sb_ins_err).lower()
+                    if "23505" in err_s or "duplicate key" in err_s or "unique constraint" in err_s:
+                        logger.info(f"[AffiliateService DB Unique Constraint Hit] Duplicate commission prevented for '{invoice_id}'.")
+                        return {
+                            "status": "success",
+                            "idempotent": True,
+                            "message": f"Commission for invoice '{invoice_id}' prevented by DB unique constraint",
+                            "tenant_id": clean_tenant,
+                            "invoice_id": invoice_id,
+                            "direct_commission": direct_commission,
+                            "override_commission": 0,
+                            "revenue": base_amount,
+                        }
+                    logger.debug(f"[AffiliateService] Supabase direct comm insert note: {sb_ins_err}")
+            self._commissions[comm_id_direct] = direct_comm_record
+
+            # 4. Anti-Ghost AM Check
+            valid_am_id = None
+            override_commission = 0
+            am_comm_record = None
+
+            am_candidate = am_id or (aff_record.get("parent_am_id") if aff_record else None) or (aff_record.get("manager_id") if aff_record else None) or (aff_record.get("registered_by_am_id") if aff_record else None)
+
+            if am_candidate and supabase:
+                try:
+                    am_query = supabase.table("affiliates").select("*").eq("id", str(am_candidate)).execute()
+                    if not am_query.data:
+                        am_query = supabase.table("affiliates").select("*").ilike("referral_code", str(am_candidate)).execute()
+                    if am_query.data:
+                        am_row = normalize_db_row(
+                            am_query.data[0] if isinstance(am_query.data, list) else am_query.data,
+                            ("id", "referral_code", "status"),
+                        ) or {}
+                        if am_row.get("status") in ("ACTIVE", "active", "APPROVED", None):
+                            valid_am_id = am_row.get("id") or str(am_candidate)
+                except Exception as am_lookup_err:
+                    logger.debug(f"[AffiliateService] AM lookup note: {am_lookup_err}")
+            elif am_candidate and not supabase:
+                valid_am_id = str(am_candidate)
+
+            if valid_am_id:
+                effective_am_rate = float(am_override_rate) if am_override_rate is not None else 0.05
+                override_commission = round(base_amount * effective_am_rate)
+                comm_id_am = str(uuid.uuid4())
+                am_comm_record = {
+                    "id": comm_id_am,
+                    "tenant_id": clean_tenant,
+                    "affiliate_id": str(valid_am_id),
+                    "type": "AM_OVERRIDE_UPGRADE",
+                    "amount": override_commission,
+                    "invoice_id": invoice_id,
+                    "order_id": f"{invoice_id}_am",
+                    "order_amount": float(base_amount),
+                    "status": "HOLDING",
+                    "created_at": now_iso,
+                }
+                if supabase:
+                    try:
+                        supabase.table("affiliate_commissions").insert(am_comm_record).execute()
+                    except Exception as sb_am_err:
+                        logger.debug(f"[AffiliateService] Supabase AM comm insert note: {sb_am_err}")
+                self._commissions[comm_id_am] = am_comm_record
+
 
         # 5. Observability Trace
         log_structured_event(
@@ -431,7 +500,7 @@ def resolve_dynamic_referral_urls(
 ) -> Dict[str, Any]:
     """
     Menghasilkan tautan dynamic referral link dan demo URL untuk WhatsApp Bot BoonPilot.
-    
+
     Mendukung skema:
     1. VIP Subdomain / Whitelabel (misal: Kang Sakti / buzzerukm):
        - register_url: https://{subdomain}.boontrack.com/register

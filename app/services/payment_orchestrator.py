@@ -6,7 +6,9 @@ from typing import Dict, Any, Optional
 from fastapi import HTTPException
 from supabase import Client
 
+from app.core.database import normalize_db_row
 from app.services.whatsapp_delivery_service import WhatsAppDeliveryService
+
 
 logger = logging.getLogger("boontrack.payment")
 
@@ -146,8 +148,23 @@ class PaymentOrchestrator:
                 logger.warning(f"[Payment] Auto-order insert note: {ins_err}")
                 order = new_order
         else:
-            order = order_res.data[0]
+            order = normalize_db_row(
+                order_res.data[0],
+                (
+                    "id",
+                    "order_id",
+                    "status",
+                    "gross_amount",
+                    "affiliate_id",
+                    "affiliate_code",
+                    "manager_id",
+                    "tenant_slug",
+                    "customer_phone",
+                    "product_title",
+                ),
+            ) or {}
             current_ord_status = str(order.get("status") or "").upper()
+
             if current_ord_status in ("PAID", "LUNAS", "CONFIRMED", "SETTLED"):
                 logger.warning(f"[Payment] Order {external_id} was already marked as {current_ord_status}.")
                 self.supabase.table("payment_events").update({"status": "PROCESSED_DUPLICATE_ORDER"}).eq("event_id", event_id).execute()
@@ -213,10 +230,11 @@ class PaymentOrchestrator:
                     ).eq(aff_lookup_key, aff_lookup_val).execute()
 
                     if aff_res.data:
-                        aff_row = aff_res.data[0]
+                        aff_row = normalize_db_row(aff_res.data[0], ("commission_rate",)) or {}
                         db_rate = aff_row.get("commission_rate")
                         if db_rate is not None:
                             affiliate_rate = float(db_rate)
+
 
                 # ── Jika AM direct (tidak ada affiliate mitra): 30% ke AM ──
                 if manager_id and not affiliate_id and not affiliate_code:
@@ -260,8 +278,16 @@ class PaymentOrchestrator:
                     "status": "PENDING_PAYOUT"
                 }
 
-                self.supabase.table("commission_ledger").insert(ledger_payload).execute()
-                logger.info(f"[Payment] Logged commission ledger for Order {external_id} (Ref: {affiliate_code})")
+                try:
+                    self.supabase.table("commission_ledger").insert(ledger_payload).execute()
+                    logger.info(f"[Payment] Logged commission ledger for Order {external_id} (Ref: {affiliate_code})")
+                except Exception as comm_ins_err:
+                    err_s = str(comm_ins_err).lower()
+                    if "23505" in err_s or "duplicate key" in err_s or "unique constraint" in err_s:
+                        logger.info(f"[Payment] Idempotent commission ledger hit for Order {external_id}; duplicate skipped.")
+                    else:
+                        raise
+
 
                 # Update Daily Aggregate Stats jika affiliate_id tersedia
                 if affiliate_id:

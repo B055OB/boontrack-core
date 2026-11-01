@@ -520,6 +520,10 @@ async def get_store_ads_config(tenant_slug: str = "kurastorenkrw"):
 
 @app.post("/payout/settle", summary="Batch Settle Affiliate Commission")
 async def settle_payout(payload: Dict[str, Any]):
+    # FAIL-CLOSED: disbursement locked pending P0 security remediation.
+    from app.routes.affiliate_payout_routes import payout_disbursement_locked
+    raise payout_disbursement_locked()
+
     code = payload.get("affiliate_code")
     notes = payload.get("notes", "Disbursement Manual Transfer")
     if not code:

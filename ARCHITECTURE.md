@@ -5464,8 +5464,8 @@ Backend di Railway bertindak sebagai **Single Source of Truth & Sole Financial A
 
 ## § 71. G4-C RELEASE-GATE, CTWA FUNNEL & META INTEGRATION INVARIANTS (ADR 2026-10-29)
 
-> **Architectural Status**: 🛡️ **LOCAL REMEDIATION ONLY — CANARY DEPLOYMENT PENDING CTO RELEASE APPROVAL (STRICT HOLD ACTIVE)**  
-> **Ratification Date**: Kamis, 29 Oktober 2026  
+> **Architectural Status**: 🛡️ **LOCAL REMEDIATION ONLY — CANARY DEPLOYMENT PENDING CTO RELEASE APPROVAL (STRICT HOLD ACTIVE)**
+> **Ratification Date**: Kamis, 29 Oktober 2026
 > **Core Principle**: *"Direct Meta Graph API compliance, authoritative single-price Rp249.000 OnlineBoost Batch 1, fail-closed release gates, and zero-FOUC presentation layer polish."*
 
 ### 71.1 Direct Meta Graph API Integration & Ecosystem Compliance

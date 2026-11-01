@@ -36,6 +36,14 @@ VERIFY_TOKENS = [
 
 # Approved Meta WABA Template Registry: Template Name -> Authorized Tenants & Registered Language
 APPROVED_WABA_TEMPLATES: Dict[str, Dict[str, Any]] = {
+    "alumni_cpm_metode_rahasia_v1": {
+        "allowed_tenants": {"onlineboost", "boontrack-academy", "boontrack"},
+        "registered_language": "en",
+    },
+    "alumni_cpm_metode": {
+        "allowed_tenants": {"onlineboost", "boontrack-academy", "boontrack"},
+        "registered_language": "en",
+    },
     "warm_launch_alumni_mayar_249k": {
         "allowed_tenants": {"onlineboost", "boontrack-academy", "boontrack"},
         "registered_language": "id",

@@ -46,7 +46,7 @@ from app.services.whatsapp.cloud_api import send_whatsapp_text
 logger = logging.getLogger("PLATFORM_WEBHOOK_ROUTER")
 
 # Official Meta Compliance & System Messages
-OPT_OUT_KEYWORDS = {"STOP", "BERHENTI", "UNSUBSCRIBE"}
+OPT_OUT_KEYWORDS = {"STOP", "BERHENTI", "BATAL", "UNSUBSCRIBE"}
 OPT_OUT_RESPONSE = (
     "Anda telah berhasil berhenti berlangganan dari notifikasi BoonTrack. "
     "Kirim 'START' kapan saja untuk mengaktifkan kembali."

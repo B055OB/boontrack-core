@@ -4,8 +4,10 @@ Bank Account Payout Routing, and Custom Referral Slug Mechanics.
 """
 
 import unittest
+from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 from app.main import app
+from app.routes.affiliate_auth import generate_jwt_token
 from app.services.partner_service import (
     partner_service,
     validate_referral_slug,
@@ -13,6 +15,7 @@ from app.services.partner_service import (
     ALLOWED_BANKS,
     MINIMUM_PAYOUT_AMOUNT,
 )
+
 from app.models.affiliate import (
     Partner,
     PartnerRole,
@@ -49,6 +52,25 @@ class TestPartnerWhitelistAndSlugs(unittest.TestCase):
             "updated_at": "2026-09-01T00:00:00Z",
         }
         partner_service._memory_partners[self.test_partner_id] = self.test_partner
+        self.partner_token = generate_jwt_token(
+            {
+                "sub": self.test_partner_id,
+                "role": "AFFILIATE",
+                "exp": datetime.now(timezone.utc) + timedelta(days=1),
+            }
+        )
+        self.partner_headers = {"Authorization": f"Bearer {self.partner_token}"}
+
+    def _auth_headers_for(self, partner_id: str) -> dict:
+        tok = generate_jwt_token(
+            {
+                "sub": partner_id,
+                "role": "AFFILIATE",
+                "exp": datetime.now(timezone.utc) + timedelta(days=1),
+            }
+        )
+        return {"Authorization": f"Bearer {tok}"}
+
 
     # =========================================================================
     # 1. SLUG REGEX & SYSTEM BLACKLIST VALIDATION
@@ -137,7 +159,8 @@ class TestPartnerWhitelistAndSlugs(unittest.TestCase):
         # 1. Klaim pertama: sukses
         claim_resp = self.client.put(
             "/api/v1/partners/claim-ref-slug",
-            json={"slug": "BUDISULTAN", "partner_id": self.test_partner_id},
+            json={"slug": "BUDISULTAN"},
+            headers=self.partner_headers,
         )
         self.assertEqual(claim_resp.status_code, 200)
         data = claim_resp.json()
@@ -153,7 +176,8 @@ class TestPartnerWhitelistAndSlugs(unittest.TestCase):
         # 2. Percobaan klaim kedua oleh user yang sama: wajib DITOLAK
         second_resp = self.client.put(
             "/api/v1/partners/claim-ref-slug",
-            json={"slug": "BUDIBARU", "partner_id": self.test_partner_id},
+            json={"slug": "BUDIBARU"},
+            headers=self.partner_headers,
         )
         self.assertEqual(second_resp.status_code, 400)
         self.assertIn("sudah dikunci", second_resp.json()["detail"].lower())
@@ -172,7 +196,8 @@ class TestPartnerWhitelistAndSlugs(unittest.TestCase):
 
         dup_resp = self.client.put(
             "/api/v1/partners/claim-ref-slug",
-            json={"slug": "budisultan", "partner_id": other_partner_id},  # case-insensitive
+            json={"slug": "budisultan"},  # case-insensitive
+            headers=self._auth_headers_for(other_partner_id),
         )
         self.assertEqual(dup_resp.status_code, 409)
         self.assertIn("sudah digunakan", dup_resp.json()["detail"].lower())
@@ -190,8 +215,8 @@ class TestPartnerWhitelistAndSlugs(unittest.TestCase):
                 "bank_name": "BCA",
                 "account_number": "8830123456",
                 "account_holder_name": "Budi Marketer",
-                "partner_id": self.test_partner_id,
             },
+            headers=self.partner_headers,
         )
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
@@ -200,7 +225,10 @@ class TestPartnerWhitelistAndSlugs(unittest.TestCase):
         self.assertEqual(data["data"]["account_number"], "8830123456")
 
         # 2. Get bank account endpoint
-        get_resp = self.client.get(f"/api/v1/partners/bank-account?partner_id={self.test_partner_id}")
+        get_resp = self.client.get(
+            "/api/v1/partners/bank-account",
+            headers=self.partner_headers,
+        )
         self.assertEqual(get_resp.status_code, 200)
         self.assertEqual(get_resp.json()["data"]["bank_name"], "BCA")
 
@@ -211,8 +239,8 @@ class TestPartnerWhitelistAndSlugs(unittest.TestCase):
                 "bank_name": "BANK_UNKNOWN_XYZ",
                 "account_number": "12345678",
                 "account_holder_name": "Budi Marketer",
-                "partner_id": self.test_partner_id,
             },
+            headers=self.partner_headers,
         )
         self.assertEqual(invalid_bank_resp.status_code, 400)
         self.assertIn("tidak didukung", invalid_bank_resp.json()["detail"].lower())
@@ -231,7 +259,8 @@ class TestPartnerWhitelistAndSlugs(unittest.TestCase):
         # 1. Coba request tanpa rekening bank: ditolak
         no_bank_resp = self.client.post(
             "/api/v1/partners/payouts/request",
-            json={"amount": 100000, "partner_id": self.test_partner_id},
+            json={"amount": 100000},
+            headers=self.partner_headers,
         )
         self.assertEqual(no_bank_resp.status_code, 400)
         self.assertIn("rekening bank", no_bank_resp.json()["detail"].lower())
@@ -243,27 +272,30 @@ class TestPartnerWhitelistAndSlugs(unittest.TestCase):
                 "bank_name": "MANDIRI",
                 "account_number": "1300098765432",
                 "account_holder_name": "Budi Marketer",
-                "partner_id": self.test_partner_id,
             },
+            headers=self.partner_headers,
         )
 
         # 2. Coba request di bawah batas minimum (misal Rp 40.000): ditolak
         under_min_resp = self.client.post(
             "/api/v1/partners/payouts/request",
-            json={"amount": 40000, "partner_id": self.test_partner_id},
+            json={"amount": 40000},
+            headers=self.partner_headers,
         )
         self.assertEqual(under_min_resp.status_code, 422)  # Pydantic ge=50000 validation
 
         # 3. Request valid >= Rp 50.000 (misal Rp 150.000): sukses
         valid_resp = self.client.post(
             "/api/v1/partners/payouts/request",
-            json={"amount": 150000, "partner_id": self.test_partner_id},
+            json={"amount": 150000},
+            headers=self.partner_headers,
         )
         self.assertEqual(valid_resp.status_code, 200)
         payout_data = valid_resp.json()["payout"]
         self.assertEqual(payout_data["amount"], 150000)
         self.assertEqual(payout_data["status"], "PENDING")
         self.assertEqual(payout_data["bank_name"], "MANDIRI")
+
 
     # =========================================================================
     # 6. MANAGER CONTROL TOWER (WHITELIST, LIST & MARK-PAID)
@@ -318,14 +350,16 @@ class TestPartnerWhitelistAndSlugs(unittest.TestCase):
                 "bank_name": "BCA",
                 "account_number": "123456789",
                 "account_holder_name": "Budi Marketer",
-                "partner_id": self.test_partner_id,
             },
+            headers=self.partner_headers,
         )
         req_resp = self.client.post(
             "/api/v1/partners/payouts/request",
-            json={"amount": 250000, "partner_id": self.test_partner_id},
+            json={"amount": 250000},
+            headers=self.partner_headers,
         )
         payout_id = req_resp.json()["payout"]["id"]
+
 
         # Cek antrean di manager
         queue_resp = self.client.get("/api/v1/manager/payouts?status=PENDING")
@@ -333,7 +367,7 @@ class TestPartnerWhitelistAndSlugs(unittest.TestCase):
         payouts = queue_resp.json()["payouts"]
         self.assertTrue(any(p["id"] == payout_id for p in payouts))
 
-        # Eksekusi Mark Paid
+        # Mark Paid (disbursement) WAJIB fail-closed: HTTP 403 PAYOUT_DISBURSEMENT_LOCKED
         proof_url = "https://storage.boontrack.com/proofs/transfer_bca_250k.jpg"
         paid_resp = self.client.put(
             f"/api/v1/manager/payouts/{payout_id}/mark-paid",
@@ -342,11 +376,12 @@ class TestPartnerWhitelistAndSlugs(unittest.TestCase):
                 "notes": "Transfer manual via BCA KlikBisnis ref TRX9988",
             },
         )
-        self.assertEqual(paid_resp.status_code, 200)
-        updated_payout = paid_resp.json()["payout"]
-        self.assertEqual(updated_payout["status"], "PAID")
-        self.assertEqual(updated_payout["proof_attachment_url"], proof_url)
-        self.assertIsNotNone(updated_payout["processed_at"])
+        self.assertEqual(paid_resp.status_code, 403)
+        self.assertEqual(paid_resp.json()["error"], "PAYOUT_DISBURSEMENT_LOCKED")
+
+        # Status payout tidak boleh berubah menjadi PAID
+        still_pending = self.client.get("/api/v1/manager/payouts?status=PENDING").json()["payouts"]
+        self.assertTrue(any(p["id"] == payout_id for p in still_pending))
 
     # =========================================================================
     # 7. ORM MODEL EXPORTS VERIFICATION

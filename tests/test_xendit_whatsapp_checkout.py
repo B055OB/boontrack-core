@@ -144,18 +144,36 @@ class TestXenditWhatsAppCheckout(unittest.IsolatedAsyncioTestCase):
 
     def test_api_v1_payments_xendit_callback_marks_lunas_cpm24jam(self):
         """Memvalidasi endpoint /api/v1/payments/xendit/callback merespons 200 OK dan mencatat LUNAS."""
-        with patch("app.routes.xendit.get_supabase") as mock_get_sb, \
-             patch("app.routes.xendit.send_whatsapp_payment_notification", new_callable=AsyncMock) as mock_wa:
-            mock_sb = MagicMock()
-            mock_tbl = MagicMock()
-            mock_get_sb.return_value = mock_sb
-            mock_sb.table.return_value = mock_tbl
-            mock_tbl.update.return_value = mock_tbl
-            mock_tbl.upsert.return_value = mock_tbl
-            mock_tbl.insert.return_value = mock_tbl
-            mock_tbl.eq.return_value = mock_tbl
-            mock_tbl.execute.return_value = MagicMock(data=[{"id": "INV-CPM-XENDIT-01", "status": "LUNAS"}])
+        mock_sb = MagicMock()
+        mock_tbl = MagicMock()
+        mock_sb.table.return_value = mock_tbl
+        mock_tbl.update.return_value = mock_tbl
+        mock_tbl.upsert.return_value = mock_tbl
+        mock_tbl.insert.return_value = mock_tbl
+        mock_tbl.eq.return_value = mock_tbl
+        mock_tbl.execute.return_value = MagicMock(data=[{"id": "INV-CPM-XENDIT-01", "status": "LUNAS"}])
 
+        def _fake_settle(**kwargs):
+            mock_tbl.update({"status": "LUNAS", "payment_status": "PAID"}).eq("id", kwargs.get("external_id")).execute()
+            return {"status": "SETTLED"}
+
+        with patch("app.routes.xendit.get_supabase", return_value=mock_sb), \
+             patch("app.routes.xendit._check_db_idempotency_sync", return_value=None), \
+             patch(
+                 "app.routes.xendit._lookup_persisted_order_sync",
+                 return_value={
+                     "id": "INV-CPM-XENDIT-01",
+                     "tenant_slug": "onlineboost",
+                     "gross_amount": 1000,
+                     "customer_phone": "081211112222",
+                     "product_title": "Modul Praktis CPM 24 Jam",
+                     "status": "PENDING",
+                 },
+             ), \
+             patch("app.routes.xendit._record_settlement_and_ledger_sync", side_effect=_fake_settle), \
+             patch("app.routes.xendit.send_whatsapp_payment_notification", new_callable=AsyncMock), \
+             patch("app.routes.xendit.send_capi_task", new_callable=AsyncMock), \
+             patch("app.services.digital_fulfillment_service.fulfill_if_digital", new_callable=AsyncMock):
             headers = {"x-callback-token": self.valid_token}
             payload = {
                 "event": "qr.payment",
@@ -179,6 +197,7 @@ class TestXenditWhatsAppCheckout(unittest.IsolatedAsyncioTestCase):
             update_calls = mock_tbl.update.call_args_list
             statuses = [c[0][0].get("status") for c in update_calls if isinstance(c[0][0], dict)]
             self.assertIn("LUNAS", statuses)
+
 
     async def test_xendit_api_failure_raises_explicit_error_without_fallback(self):
         """Memastikan jika Xendit API gagal (HTTP 400/500), error langsung di-raise dan TIDAK fallback ke DANA Bisnis."""
@@ -256,11 +275,8 @@ class TestXenditWhatsAppCheckout(unittest.IsolatedAsyncioTestCase):
                         product_key="cpm-24jam",
                     )
                 self.assertIn("Test invoice error", str(ctx.exception))
-                
+
                 # Pastikan error logger mencatat format [CHECKOUT_EXCEPTION] dan traceback
                 logged_messages = [str(c[0][0]) for c in mock_log_err.call_args_list if c[0]]
                 has_checkout_exception = any("[CHECKOUT_EXCEPTION]" in msg for msg in logged_messages)
                 self.assertTrue(has_checkout_exception)
-
-
-

@@ -26,7 +26,7 @@ from typing import Dict, Any, Optional
 from fastapi import APIRouter, Request, Header, HTTPException, status
 from aiohttp import web
 
-from app.core.database import get_db_connection
+from app.core.database import get_db_connection, normalize_db_row
 from app.services.xendit_service import xendit_service
 from app.services.payment.gateway_xendit import XenditAdapter
 from app.services.meta_capi_service import send_meta_capi_purchase
@@ -276,8 +276,8 @@ def _check_db_idempotency_sync(event_id: str, external_id: str) -> Optional[Dict
             "SELECT status FROM payment_events WHERE event_id = %s LIMIT 1;",
             (str(event_id),)
         )
-        row = cur.fetchone()
-        if row and row[0] in ("PROCESSED", "SETTLED", "PROCESSED_DUPLICATE_ORDER"):
+        row = normalize_db_row(cur.fetchone(), ("status",))
+        if row and str(row.get("status") or "").upper() in ("PROCESSED", "SETTLED", "PROCESSED_DUPLICATE_ORDER"):
             return {"status": "ALREADY_PROCESSED", "reason": "event_already_processed"}
 
         # 2. Cek tabel orders
@@ -285,10 +285,10 @@ def _check_db_idempotency_sync(event_id: str, external_id: str) -> Optional[Dict
             "SELECT status, payment_status FROM orders WHERE id = %s LIMIT 1;",
             (str(external_id),)
         )
-        order_row = cur.fetchone()
+        order_row = normalize_db_row(cur.fetchone(), ("status", "payment_status"))
         if order_row:
-            o_status = str(order_row[0] or "").upper()
-            o_pay_status = str(order_row[1] or "").upper()
+            o_status = str(order_row.get("status") or "").upper()
+            o_pay_status = str(order_row.get("payment_status") or "").upper()
             if o_status in _PAID_STATUSES or o_pay_status in _PAID_STATUSES:
                 # Update status payment_events
                 try:
@@ -341,20 +341,36 @@ def _lookup_persisted_order_sync(external_id: str) -> Optional[Dict[str, Any]]:
             """,
             (str(external_id),)
         )
-        row = cur.fetchone()
+        row = normalize_db_row(
+            cur.fetchone(),
+            (
+                "id",
+                "tenant_slug",
+                "tenant_id",
+                "gross_amount",
+                "customer_name",
+                "customer_phone",
+                "customer_email",
+                "product_title",
+                "status",
+                "payment_status",
+                "metadata",
+            ),
+        )
         if row:
+            raw_meta = row.get("metadata")
             return {
-                "id": str(row[0]),
-                "tenant_slug": str(row[1]) if row[1] else None,
-                "tenant_id": str(row[2]) if row[2] else None,
-                "gross_amount": row[3],
-                "customer_name": row[4],
-                "customer_phone": row[5],
-                "customer_email": row[6],
-                "product_title": row[7],
-                "status": row[8],
-                "payment_status": row[9],
-                "metadata": row[10] if isinstance(row[10], dict) else {},
+                "id": str(row.get("id")),
+                "tenant_slug": str(row.get("tenant_slug")) if row.get("tenant_slug") else None,
+                "tenant_id": str(row.get("tenant_id")) if row.get("tenant_id") else None,
+                "gross_amount": row.get("gross_amount"),
+                "customer_name": row.get("customer_name"),
+                "customer_phone": row.get("customer_phone"),
+                "customer_email": row.get("customer_email"),
+                "product_title": row.get("product_title"),
+                "status": row.get("status"),
+                "payment_status": row.get("payment_status"),
+                "metadata": raw_meta if isinstance(raw_meta, dict) else {},
             }
     except Exception as e:
         logger.warning(f"[Xendit Webhook] Order lookup failed for '{external_id}': {e}")
@@ -415,25 +431,31 @@ def _record_settlement_and_ledger_sync(
             )
         )
 
-        # 2. Update status orders menjadi PAID secara atomik
+        # 2. Update status orders menjadi PAID secara atomik (hanya jika belum PAID/LUNAS)
         cur.execute(
             """
-            UPDATE orders 
+            UPDATE orders
             SET status = 'PAID',
                 payment_status = 'PAID',
                 order_status = 'PAID',
                 paid_at = COALESCE(orders.paid_at, %s),
                 updated_at = %s
-            WHERE id = %s AND (status IN ('PENDING', 'pending', 'WAITING_PAYMENT', 'unpaid', 'LUNAS') OR payment_status IN ('PENDING', 'pending', 'WAITING_PAYMENT', 'unpaid') OR status IS NULL);
+            WHERE id = %s
+              AND (status IN ('PENDING', 'pending', 'WAITING_PAYMENT', 'unpaid') OR payment_status IN ('PENDING', 'pending', 'WAITING_PAYMENT', 'unpaid') OR status IS NULL)
+              AND COALESCE(UPPER(status), '') NOT IN ('PAID', 'SETTLED', 'COMPLETED', 'SUCCEEDED', 'LUNAS');
             """,
             (now_utc, now_utc, str(external_id))
         )
         if cur.rowcount == 0:
             cur.execute("SELECT status, payment_status FROM orders WHERE id = %s LIMIT 1;", (str(external_id),))
-            existing_ord = cur.fetchone()
-            if existing_ord and (str(existing_ord[0] or "").upper() in _PAID_STATUSES or str(existing_ord[1] or "").upper() in _PAID_STATUSES):
+            existing_ord = normalize_db_row(cur.fetchone(), ("status", "payment_status"))
+            if existing_ord and (
+                str(existing_ord.get("status") or "").upper() in _PAID_STATUSES
+                or str(existing_ord.get("payment_status") or "").upper() in _PAID_STATUSES
+            ):
                 logger.info(f"[Xendit Atomic Check] Order '{external_id}' already PAID/LUNAS. Idempotency hit.")
                 return {"status": "ALREADY_SETTLED"}
+
 
             # Jika order belum ada di database, auto-insert order lunas
             cur.execute(
@@ -491,13 +513,18 @@ def _record_settlement_and_ledger_sync(
             "SELECT affiliate_code, manager_id FROM orders WHERE id = %s LIMIT 1;",
             (str(external_id),)
         )
-        ord_info = cur.fetchone()
+        ord_info = normalize_db_row(cur.fetchone(), ("affiliate_code", "manager_id"))
         aff_code = (
-            (ord_info[0] if ord_info else None)
+            (ord_info.get("affiliate_code") if ord_info else None)
             or payload.get("affiliate_code")
             or data_obj_inner.get("affiliate_code")
         )
-        mgr_id = (ord_info[1] if ord_info else None) or payload.get("manager_id") or data_obj_inner.get("manager_id")
+        mgr_id = (
+            (ord_info.get("manager_id") if ord_info else None)
+            or payload.get("manager_id")
+            or data_obj_inner.get("manager_id")
+        )
+
 
         if aff_code or mgr_id:
             aff_rate = 25.0
@@ -547,8 +574,9 @@ def _record_settlement_and_ledger_sync(
 
         # 3c. Atomic Stock Deduction (FASE 4) if order has a specific product
         cur.execute("SELECT product_id FROM orders WHERE id = %s LIMIT 1;", (str(external_id),))
-        p_row = cur.fetchone()
-        prod_ref = p_row[0] if p_row else None
+        p_row = normalize_db_row(cur.fetchone(), ("product_id",))
+        prod_ref = p_row.get("product_id") if p_row else None
+
         if prod_ref and prod_ref not in ("prod_digital", "generic_digital", "cpm-24jam"):
             try:
                 from app.services.checkout_service import deduct_stock_atomic
@@ -630,8 +658,13 @@ def _record_settlement_and_ledger_sync(
                 "status": "PAID",
                 "raw_payload": payload,
             }, on_conflict="provider_ref").execute()
+            supabase.table("orders").update({
+                "status": "LUNAS",
+                "payment_status": "PAID",
+            }).eq("id", str(external_id)).execute()
         except Exception as sb_err:
             logger.debug(f"[Xendit Supabase Settlement Note] {sb_err}")
+
 
 
 # -----------------------------------------------------------------------------
@@ -739,12 +772,13 @@ async def process_xendit_webhook_core(
                 }
             }
 
-    # 2. Database Idempotency Check (SSOT Mutlak: Postgres orders.status & payment_events)
+    # 2. Database & L1 Idempotency Check (SSOT Mutlak: Postgres orders.status, payment_events, & L1 settled state)
     # Diproses sebelum locking agar duplicate replay instan 200 OK ALREADY_PROCESSED
     db_check = await asyncio.to_thread(_check_db_idempotency_sync, event_id, external_id)
-    if db_check:
-        xendit_service.mark_settled(external_id)
-        logger.info(f"[Xendit Webhook DB Hit] Event '{event_id}' / Order '{external_id}' already processed in DB. Returning 200 OK.")
+    if db_check or (external_id and xendit_service.is_settled(external_id) is True):
+        if external_id:
+            xendit_service.mark_settled(external_id)
+        logger.info(f"[Xendit Webhook DB/L1 Hit] Event '{event_id}' / Order '{external_id}' already processed. Returning 200 OK.")
         log_structured_event(
             service="xendit_webhook",
             event_type="IDEMPOTENCY_HIT",
@@ -763,6 +797,7 @@ async def process_xendit_webhook_core(
                 "idempotent": True,
             }
         }
+
 
     # 3. Non-paid event handler (e.g. EXPIRED, FAILED, PENDING)
     if event_status not in _PAID_STATUSES:
