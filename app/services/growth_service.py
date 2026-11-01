@@ -4,8 +4,10 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import Dict, Any, Optional
 from app.core.database import normalize_db_row
+from app.services.affiliate_service import is_class_1_commission_eligible
 from app.services.adapters import WhatsAppAdapter
 from app.services.meta_capi_service import send_meta_capi_purchase
+
 
 
 def get_db_connection():
@@ -140,8 +142,9 @@ async def process_order_paid_growth_event(
             ),
         )
 
-        if attribution_info and attribution_info.get("affiliate_id"):
+        if attribution_info and attribution_info.get("affiliate_id") and is_class_1_commission_eligible(attribution_info)[0]:
             aff_id = attribution_info["affiliate_id"]
+
             raw_rate = attribution_info.get("commission_rate")
 
             # Sinkronkan logic split 2-tier (Direct AM 30%, atau Mitra 25% + AM pembina 5%)

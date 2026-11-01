@@ -211,6 +211,64 @@ class TestJwtTrustPolicy(unittest.TestCase):
         with self.assertRaises(ValueError):
             verify_jwt_token_strict(hybrid_token, realm="supabase")
 
+    @patch("app.routes.affiliate_auth.supabase")
+    def test_jwt_request_state_user_cannot_be_forged_without_cryptographic_verification(self, mock_supabase):
+        """Blocker 1: Untrusted/forged `request.state.user` must be rejected (401) unless cryptographically verified."""
+        import asyncio
+        from types import SimpleNamespace
+        from fastapi import HTTPException
+        from app.routes.affiliate_auth import get_current_affiliate
+
+        # 1. Forged request.state.user without a valid cryptographic token or sentinel -> 401
+        fake_request = SimpleNamespace(
+            state=SimpleNamespace(user={"sub": "forged_victim_id", "role": "AFFILIATE"}),
+            cookies={},
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            asyncio.run(get_current_affiliate(fake_request, authorization=None))
+        self.assertEqual(ctx.exception.status_code, 401)
+
+        # 2. External client attempting to spoof state via headers without Bearer token -> 401
+        spoof_resp = self.client.get(
+            "/api/v1/affiliate/me",
+            headers={
+                "X-User": json.dumps({"sub": "forged_victim_id", "role": "AFFILIATE"}),
+                "X-Request-State-User": "forged_victim_id",
+                "X-Authenticated-User": "forged_victim_id",
+            },
+        )
+        self.assertEqual(spoof_resp.status_code, 401)
+
+        # 3. Pre-existing unverified request.state.user is ignored and overwritten when a valid Bearer JWT is supplied
+        mock_t = MagicMock()
+        mock_t.select.return_value.eq.return_value.execute.return_value.data = [
+            {
+                "id": "real_verified_aff",
+                "name": "Real Affiliate",
+                "role": "AFFILIATE",
+                "status": "ACTIVE",
+            }
+        ]
+        mock_supabase.table.return_value = mock_t
+
+        real_token = generate_jwt_token(
+            {
+                "sub": "real_verified_aff",
+                "role": "AFFILIATE",
+                "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+            }
+        )
+        tampered_state_req = SimpleNamespace(
+            state=SimpleNamespace(user={"sub": "spoofed_other_aff", "role": "AFFILIATE"}),
+            cookies={},
+        )
+        resolved_aff = asyncio.run(
+            get_current_affiliate(tampered_state_req, authorization=f"Bearer {real_token}")
+        )
+        self.assertEqual(resolved_aff["id"], "real_verified_aff")
+        self.assertEqual(tampered_state_req.state.user["sub"], "real_verified_aff")
+
+
 
 class TestPayoutDisbursementLock(unittest.TestCase):
     """P0 Regression Suite: Payout Disbursement Lock & Complete Payout/Bank Identity Boundary."""

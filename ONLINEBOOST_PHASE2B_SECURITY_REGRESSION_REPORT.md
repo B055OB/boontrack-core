@@ -1,8 +1,8 @@
 # ONLINEBOOST PHASE 2B SECURITY REGRESSION & VULNERABILITY VERIFICATION REPORT
-**Document Reference:** CTO-P0-PHASE2B-REGRESS-002  
-**Classification:** P0 Security Tooling — Restricted  
-**Governance Posture:** STRICT READ-ONLY STATIC VERIFICATION — ZERO PRODUCTION DB MUTATIONS — ZERO AUTO-LINK  
-**Authority:** Founder & Product Owner Gate B0 Rev 4 Formal Closure  
+**Document Reference:** CTO-P0-PHASE2B-REGRESS-002
+**Classification:** P0 Security Tooling — Restricted
+**Governance Posture:** STRICT READ-ONLY STATIC VERIFICATION — ZERO PRODUCTION DB MUTATIONS — ZERO AUTO-LINK
+**Authority:** Founder & Product Owner Gate B0 Rev 4 Formal Closure
 
 ---
 
@@ -33,16 +33,46 @@ The 19 execution vectors identified in Gate A (`CTO-P0-GATE-A-001`) have been au
 | **V-07** | `boontrack-inbox` | POST | `/api/v1/manager/payouts/mark-paid` | Requires verified manager signature & dual-custody audit log | Source + Sandbox |
 | **V-08** | `boontrack-inbox` | PATCH | `/api/v1/affiliate/me` | Stripped `parseJwt`; enforces GoTrue signature & `auth_user_id`; strict allowlist (`name`, `phone`) | Source + Sandbox |
 | **V-09** | `boontrack-inbox` | GET | `/api/v1/affiliate/me` | Stripped bypasses & raw UUID fallbacks; data minimization applied | Source + Sandbox |
-| **V-10** | `boontrack-core` | PATCH | `/payout-account` | Protected by `Depends(get_current_affiliate_user)`; resolves partner via `sub` | Source + Local Test |
-| **V-11** | `boontrack-core` | POST | `/payout-account` | Protected by `Depends(get_current_affiliate_user)`; payload allowlisted | Source + Local Test |
-| **V-12** | `boontrack-core` | POST | `/update-bank` | Protected by `Depends(get_current_affiliate_user)`; legacy alias secured | Source + Local Test |
-| **V-13** | `boontrack-core` | PATCH | `/api/v1/affiliate/payout-account` | Protected by `Depends(get_current_affiliate_user)`; target restricted to caller | Source + Local Test |
-| **V-14** | `boontrack-core` | POST | `/api/v1/affiliate/payout-account` | Protected by `Depends(get_current_affiliate_user)`; target restricted to caller | Source + Local Test |
-| **V-15** | `boontrack-core` | POST | `/api/v1/auth/affiliate/update-bank` | Protected by `Depends(get_current_affiliate_user)`; requires verified session | Source + Local Test |
-| **V-16** | `boontrack-core` | POST | `/payout/settle` | Enforces settlement idempotency key; reads bank coordinates strictly from immutable snapshot | Source + Local Test |
-| **V-17** | `boontrack-core` | POST | `/api/v1/partners/bank-account` | Eliminates raw `explicit_partner_id`; enforces session binding | Source + Local Test |
-| **V-18** | `boontrack-core` | POST | `/api/v1/partners/payouts/request` | Validates minimum payout balance, healthy identity status, and snapshots bank details | Source + Local Test |
-| **V-19** | `boontrack-core` | *ALL* | aiohttp payout runner handlers | Bound to port 8080 internal loopback; mirrors FastAPI authentication middleware | Source + Local Test |
+| **V-10** | `boontrack-core` | PATCH | `/payout-account` | Handler in `app/routes/affiliate_auth.py` (`update_affiliate_payout_account`); `Depends(get_current_affiliate)`; role `AFFILIATE`/`PARTNER` (`ACTIVE`); server-side `sub` resolution; strict allowlist | Source + Local Test |
+| **V-11** | `boontrack-core` | POST | `/payout-account` | Handler in `app/routes/affiliate_auth.py` (`update_affiliate_payout_account`); `Depends(get_current_affiliate)`; role `AFFILIATE`/`PARTNER` (`ACTIVE`); strict allowlist | Source + Local Test |
+| **V-12** | `boontrack-core` | POST | `/update-bank` | Handler in `app/routes/affiliate_auth.py` (`update_affiliate_payout_account`); `Depends(get_current_affiliate)`; legacy alias secured | Source + Local Test |
+| **V-13** | `boontrack-core` | PATCH | `/api/v1/affiliate/payout-account` | Handler in `app/routes/affiliate_auth.py` (`update_affiliate_payout_account`); `Depends(get_current_affiliate)`; target restricted to `current_affiliate["id"]` | Source + Local Test |
+| **V-14** | `boontrack-core` | POST | `/api/v1/affiliate/payout-account` | Handler in `app/routes/affiliate_auth.py` (`update_affiliate_payout_account`); `Depends(get_current_affiliate)`; target restricted to `current_affiliate["id"]` | Source + Local Test |
+| **V-15** | `boontrack-core` | POST | `/api/v1/auth/affiliate/update-bank` | Handler in `app/routes/affiliate_auth.py` (`update_affiliate_payout_account`); `Depends(get_current_affiliate)`; requires verified session | Source + Local Test |
+| **V-16** | `boontrack-core` | POST | `/payout/settle` | Handler in `app/main.py` (`settle_payout`); locked fail-closed via `payout_disbursement_locked()` helper from `app/routes/affiliate_payout_routes.py` (HTTP 403 `PAYOUT_DISBURSEMENT_LOCKED`) | Source + Local Test |
+| **V-17** | `boontrack-core` | POST | `/api/v1/partners/bank-account` | Handler in `app/routes/partner_routes.py` (`save_bank_account`); `resolve_partner_id` (Core Bearer JWT); rejects `partner_id`/`X-Partner-Id` (403); strict allowlist | Source + Local Test |
+| **V-18** | `boontrack-core` | POST | `/api/v1/partners/payouts/request` | Handler in `app/routes/partner_routes.py` (`request_payout`); `resolve_partner_id` (Core Bearer JWT); rejects `partner_id`/`X-Partner-Id` (403); snapshots immutable bank details | Source + Local Test |
+| **V-19** | `boontrack-core` | *ALL* | aiohttp payout runner handlers | Handlers in `app/routes/affiliate_auth.py` (`aiohttp_update_payout_account`, `aiohttp_update_slug`, `aiohttp_screening`); authenticated via `_aiohttp_resolve_affiliate` | Source + Local Test |
+
+### 2.1 Physical Module Boundary Clarification & Complete Route Inventory Matrix (Blocker 5)
+
+**Module Boundary Clarification:**
+- `app/routes/affiliate_payout_routes.py` does **NOT** house route handlers; it is strictly a fail-closed disbursement lock helper module exporting `PAYOUT_DISBURSEMENT_LOCKED` and `payout_disbursement_locked() -> HTTPException` (HTTP 403).
+- All actual FastAPI and aiohttp route handlers for affiliate profile, bank account, slug, and screening live in `app/routes/affiliate_auth.py`.
+- All partner bank account, slug claim, payout request, and manager payout endpoints live in `app/routes/partner_routes.py`.
+- The batch settlement endpoint `POST /payout/settle` lives in `app/main.py`.
+
+| # | HTTP Method(s) | Route Path | Physical Source File & Handler | Auth Dependency / Verifier | Role / Status Authorization | Identity & Allowlist Enforcement |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | `GET` | `/api/v1/affiliate/me` | `app/routes/affiliate_auth.py` :: `get_affiliate_me` | `Depends(get_current_affiliate)` (`verify_jwt_token_strict(realm="core")` + state sentinel) | `role in {'AFFILIATE', 'PARTNER'}` AND `status == 'ACTIVE'` (403) | Server-side `sub` -> `affiliates.id` / `auth_user_id` |
+| 2 | `PATCH`, `POST` | `/payout-account` | `app/routes/affiliate_auth.py` :: `update_affiliate_payout_account` | `Depends(get_current_affiliate)` | `role in {'AFFILIATE', 'PARTNER'}` AND `status == 'ACTIVE'` | Rejects client IDs (403); `BANK_UPDATE_ALLOWED_FIELDS` (400); `is_bank_verified=False` |
+| 3 | `POST` | `/update-bank` | `app/routes/affiliate_auth.py` :: `update_affiliate_payout_account` | `Depends(get_current_affiliate)` | `role in {'AFFILIATE', 'PARTNER'}` AND `status == 'ACTIVE'` | Rejects client IDs (403); `BANK_UPDATE_ALLOWED_FIELDS` (400); `is_bank_verified=False` |
+| 4 | `PATCH`, `POST` | `/api/v1/affiliate/payout-account` | `app/routes/affiliate_auth.py` :: `update_affiliate_payout_account` | `Depends(get_current_affiliate)` | `role in {'AFFILIATE', 'PARTNER'}` AND `status == 'ACTIVE'` | Rejects client IDs (403); `BANK_UPDATE_ALLOWED_FIELDS` (400); `is_bank_verified=False` |
+| 5 | `PATCH`, `POST` | `/api/v1/auth/affiliate/payout-account` | `app/routes/affiliate_auth.py` :: `update_affiliate_payout_account` | `Depends(get_current_affiliate)` | `role in {'AFFILIATE', 'PARTNER'}` AND `status == 'ACTIVE'` | Rejects client IDs (403); `BANK_UPDATE_ALLOWED_FIELDS` (400); `is_bank_verified=False` |
+| 6 | `POST` | `/api/v1/auth/affiliate/update-bank` | `app/routes/affiliate_auth.py` :: `update_affiliate_payout_account` | `Depends(get_current_affiliate)` | `role in {'AFFILIATE', 'PARTNER'}` AND `status == 'ACTIVE'` | Rejects client IDs (403); `BANK_UPDATE_ALLOWED_FIELDS` (400); `is_bank_verified=False` |
+| 7 | `PATCH`, `POST` | `/slug`, `/api/v1/affiliate/slug`, `/api/v1/auth/affiliate/slug` | `app/routes/affiliate_auth.py` :: `update_affiliate_slug` | `Depends(get_current_affiliate)` | `role in {'AFFILIATE', 'PARTNER'}` AND `status == 'ACTIVE'` | Rejects client IDs (403); `SLUG_UPDATE_ALLOWED_FIELDS` (400); 1x lock |
+| 8 | `POST` | `/api/v1/auth/affiliate/screening` | `app/routes/affiliate_auth.py` :: `submit_affiliate_screening` | `Depends(get_current_affiliate)` | `role in {'AFFILIATE', 'PARTNER'}` AND `status == 'ACTIVE'` | Rejects client IDs (403); `SCREENING_ALLOWED_FIELDS` (400); `is_bank_verified=False` |
+| 9 | `GET`, `POST`, `PATCH` | `aiohttp` `/api/v1/affiliate/me`, `.../payout-account`, `.../update-bank`, `.../slug`, `.../screening` | `app/routes/affiliate_auth.py` :: `aiohttp_*` | `_aiohttp_resolve_affiliate(request)` (`verify_jwt_token_strict(realm="core")`) | `role in {'AFFILIATE', 'PARTNER'}` AND `status == 'ACTIVE'` | Delegates to FastAPI handlers with server-resolved `current_affiliate` |
+| 10 | `POST` | `/api/v1/partners/check-ref-slug` | `app/routes/partner_routes.py` :: `check_referral_slug` | Public read-only availability check | Public read-only (no state mutation) | Validates regex `^[A-Z0-9]{3,20}$` & `RESERVED_SLUGS` |
+| 11 | `PUT`, `POST` | `/api/v1/partners/claim-ref-slug` | `app/routes/partner_routes.py` :: `claim_referral_slug` | `resolve_partner_id` (`verify_jwt_token_strict(realm="core")`) | Authenticated Partner (`sub` / `partner_id` in Core JWT) | Rejects `partner_id` / `X-Partner-Id` (403); allowlist `{"slug"}` (400); 1x lock |
+| 12 | `POST`, `PATCH` | `/api/v1/partners/bank-account` | `app/routes/partner_routes.py` :: `save_bank_account` | `resolve_partner_id` (`verify_jwt_token_strict(realm="core")`) | Authenticated Partner (`sub` / `partner_id` in Core JWT) | Rejects `partner_id` / `X-Partner-Id` (403); allowlist `{"bank_name", "account_number", "account_holder_name"}` (400) |
+| 13 | `GET` | `/api/v1/partners/bank-account` | `app/routes/partner_routes.py` :: `get_bank_account` | `resolve_partner_id` (`verify_jwt_token_strict(realm="core")`) | Authenticated Partner (`sub` / `partner_id` in Core JWT) | Rejects `?partner_id=` & `X-Partner-Id` (403); reads caller's own bank account only |
+| 14 | `POST` | `/api/v1/partners/payouts/request` | `app/routes/partner_routes.py` :: `request_payout` | `resolve_partner_id` (`verify_jwt_token_strict(realm="core")`) | Authenticated Partner (`sub` / `partner_id` in Core JWT) | Rejects `partner_id` / `X-Partner-Id` (403); allowlist `{"amount", "bank_account_id"}`; immutable `snapshot_*` fields |
+| 15 | `PUT`, `POST` | `/api/v1/manager/payouts/{payout_id}/mark-paid` | `app/routes/partner_routes.py` :: `mark_payout_paid` | `payout_disbursement_locked()` (`app/routes/affiliate_payout_routes.py`) | **FAIL-CLOSED LOCK** (HTTP 403 `PAYOUT_DISBURSEMENT_LOCKED`) | Blocks all disbursement mutations prior to any service call |
+| 16 | `POST` | `/payout/settle` | `app/main.py` :: `settle_payout` | `payout_disbursement_locked()` (`app/routes/affiliate_payout_routes.py`) | **FAIL-CLOSED LOCK** (HTTP 403 `PAYOUT_DISBURSEMENT_LOCKED`) | Blocks all batch commission settlements prior to any service call |
+
+
+
 
 ---
 
@@ -114,4 +144,3 @@ All 6 CTO Stop Conditions have been evaluated:
 6. **Provider vs Internal Ledger Reconciliation:** Exact 1:1 reconciliation formula enforced with zero drift -> **STOP CONDITION NOT TRIGGERED (PASS)**.
 
 **Governance Posture:** HALTED. Awaiting Founder & CTO written release decision.
-

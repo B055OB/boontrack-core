@@ -433,19 +433,28 @@ def test_commission_concurrent_callbacks_idempotency_at_db_constraint_level():
         mock_t = MagicMock()
         if table_name == "affiliates":
             mock_t.select.return_value.eq.return_value.execute.return_value = MagicMock(
-                data=[{"id": "aff-conc-1", "referral_code": "CONC1", "commission_rate": 20.0, "status": "ACTIVE"}]
+                data=[
+                    {
+                        "id": "aff-conc-1",
+                        "auth_user_id": "uid-conc-1",
+                        "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+                        "referral_code": "CONC1",
+                        "commission_rate": 20.0,
+                        "status": "ACTIVE",
+                    }
+                ]
             )
         elif table_name == "affiliate_commissions":
             def _select_order(*_a, **_kw):
                 m_eq = MagicMock()
                 def _eq(col, val):
                     m_exec = MagicMock()
-                    with db_lock:
-                        rows = [r for (t, o), r in persisted_commissions.items() if o == str(val)]
-                    m_exec.execute.return_value = MagicMock(data=rows)
+                    # Return empty on pre-check so all concurrent threads race into the DB unique constraint on insert
+                    m_exec.execute.return_value = MagicMock(data=[])
                     return m_exec
                 m_eq.eq = _eq
                 return m_eq
+
 
             def _insert_row(record):
                 m_exec = MagicMock()
@@ -466,28 +475,29 @@ def test_commission_concurrent_callbacks_idempotency_at_db_constraint_level():
     mock_supabase.table.side_effect = _table_router
 
     def _worker_upgrade():
-        with patch("app.services.affiliate_service.get_supabase", return_value=mock_supabase), \
-             patch("app.core.tracing.log_structured_event"):
-            return asyncio.run(
-                allocate_upgrade_commission(
-                    tenant_id="onlineboost",
-                    invoice_id="INV-CONC-UPG-001",
-                    amount_paid=100000.0,
-                    affiliate_id="aff-conc-1",
-                    affiliate_direct_rate=0.20,
-                )
+        return asyncio.run(
+            allocate_upgrade_commission(
+                tenant_id="onlineboost",
+                invoice_id="INV-CONC-UPG-001",
+                amount_paid=100000.0,
+                affiliate_id="aff-conc-1",
+                affiliate_direct_rate=0.20,
             )
+        )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
-        results = list(pool.map(lambda _: _worker_upgrade(), range(5)))
+    with patch("app.services.affiliate_service.get_supabase", return_value=mock_supabase), \
+         patch("app.core.tracing.log_structured_event"):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+            results = list(pool.map(lambda _: _worker_upgrade(), range(5)))
 
     assert all(r["status"] == "success" for r in results)
+    assert sum(1 for r in results if r.get("idempotent") is True) == 4
     assert len(persisted_commissions) == 1
     assert len(affiliate_service.get_commissions_by_invoice("INV-CONC-UPG-001")) == 1
 
     growth_db_state = {"approved": False, "wa_sent": 0}
 
-    def _growth_worker():
+    def _make_growth_conn():
         m_conn = MagicMock()
         m_cur = MagicMock()
         m_conn.cursor.return_value = m_cur
@@ -505,24 +515,27 @@ def test_commission_concurrent_callbacks_idempotency_at_db_constraint_level():
                         m_cur.rowcount = 0
 
         m_cur.execute.side_effect = _exec_sql
+        return m_conn
 
-        with patch("app.services.growth_service.get_db_connection", return_value=m_conn), \
-             patch("app.services.growth_service.WhatsAppAdapter") as m_wa, \
-             patch("app.services.growth_service.send_meta_capi_purchase", new_callable=AsyncMock):
-            async def _send_msg(*_a, **_kw):
-                with db_lock:
-                    growth_db_state["wa_sent"] += 1
-            m_wa.return_value.send_message = _send_msg
-            asyncio.run(
-                process_order_paid_growth_event(
-                    tenant_id="onlineboost",
-                    order_id="ORD-CONC-GRW-001",
-                    order_amount=100000.0,
-                )
+    def _growth_worker():
+        asyncio.run(
+            process_order_paid_growth_event(
+                tenant_id="onlineboost",
+                order_id="ORD-CONC-GRW-001",
+                order_amount=100000.0,
             )
+        )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-        list(pool.map(lambda _: _growth_worker(), range(4)))
+    with patch("app.services.growth_service.get_db_connection", side_effect=_make_growth_conn), \
+         patch("app.services.growth_service.WhatsAppAdapter") as m_wa, \
+         patch("app.services.growth_service.send_meta_capi_purchase", new_callable=AsyncMock):
+        async def _send_msg(*_a, **_kw):
+            with db_lock:
+                growth_db_state["wa_sent"] += 1
+        m_wa.return_value.send_message = _send_msg
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            list(pool.map(lambda _: _growth_worker(), range(4)))
+
 
     assert growth_db_state["approved"] is True
     assert growth_db_state["wa_sent"] == 1

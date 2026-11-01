@@ -305,3 +305,109 @@ async def test_e2e_webhook_organic_upgrade_zero_commission():
         assert split["affiliate_share"] == 0
         assert split["am_share"] == 0
         assert split["platform_net_70_percent"] == 66700
+
+
+@pytest.mark.asyncio
+async def test_scenario_4_class_2_unlinked_candidate_manual_review_only_zero_commission():
+    """
+    Blocker 2: Class 2 (unlinked candidate) WAJIB berstatus manual review only.
+    HANYA Class 1 (exact linked healthy) yang otomatis eligible mendapatkan alokasi komisi payable.
+    """
+    invoice_id = "sub_upgrade_class2_hold_1004"
+    prorated_paid = 100000
+
+    for class2_profile in (
+        {
+            "id": "aff_class2_explicit",
+            "referral_code": "c2promo",
+            "commission_rate": 20.0,
+            "status": "ACTIVE",
+            "identity_class": "CLASS_2_UNLINKED_CANDIDATE",
+            "reconciliation_action": "FLAG_FOR_MANUAL_REVIEW",
+        },
+        {
+            "id": "aff_class2_unlinked_uid",
+            "referral_code": "c2unlinked",
+            "commission_rate": 20.0,
+            "status": "ACTIVE",
+            "auth_user_id": None,
+        },
+    ):
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(
+            data=[class2_profile]
+        )
+
+        with patch("app.services.affiliate_service.get_supabase", return_value=mock_supabase), \
+             patch("app.core.tracing.log_structured_event") as mock_log:
+            res = await allocate_upgrade_commission(
+                tenant_id="store_class2_test",
+                invoice_id=invoice_id,
+                amount_paid=prorated_paid,
+                affiliate_id=class2_profile["id"],
+                affiliate_direct_rate=0.20,
+            )
+
+            assert res["status"] == "held_manual_review"
+            assert res["reason"] == "CLASS_2_MANUAL_REVIEW_ONLY"
+            assert res["payout_commission"] == 0
+            assert res["direct_commission"] == 0
+            assert res["override_commission"] == 0
+            assert res["net_platform_revenue"] == 100000
+            assert res["commissions"] == []
+            assert affiliate_service.get_commissions_by_invoice(invoice_id) == []
+
+            for call_args in mock_supabase.table.call_args_list:
+                assert call_args[0][0] != "affiliate_commissions", (
+                    "Class 2 unlinked candidate must NEVER trigger automatic affiliate_commissions insert!"
+                )
+            mock_log.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_scenario_5_fail_closed_commission_persistence_raises_on_db_error():
+    """
+    Blocker 3: Jika database insert/persistence gagal (di luar unique constraint conflict),
+    allocate_upgrade_commission() WAJIB melempar exception eksplisit dan TIDAK BOLEH
+    menyimpan ke in-memory ledger atau menganggap sukses.
+    """
+    invoice_id = "sub_upgrade_db_fail_1005"
+    aff_id = "aff_class1_healthy_01"
+
+    mock_supabase = MagicMock()
+
+    def _table_router(table_name):
+        mock_t = MagicMock()
+        if table_name == "affiliates":
+            mock_t.select.return_value.eq.return_value.execute.return_value = MagicMock(
+                data=[
+                    {
+                        "id": aff_id,
+                        "auth_user_id": "auth-uid-healthy-01",
+                        "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+                        "referral_code": "healthy01",
+                        "commission_rate": 20.0,
+                        "status": "ACTIVE",
+                    }
+                ]
+            )
+        elif table_name == "affiliate_commissions":
+            mock_t.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+            mock_t.insert.return_value.execute.side_effect = RuntimeError("FATAL: connection to database lost during insert")
+        return mock_t
+
+    mock_supabase.table.side_effect = _table_router
+
+    with patch("app.services.affiliate_service.get_supabase", return_value=mock_supabase), \
+         patch("app.core.tracing.log_structured_event"):
+        with pytest.raises(RuntimeError, match="Failed to persist direct affiliate commission"):
+            await allocate_upgrade_commission(
+                tenant_id="store_db_fail",
+                invoice_id=invoice_id,
+                amount_paid=100000,
+                affiliate_id=aff_id,
+                affiliate_direct_rate=0.20,
+            )
+
+    # In-memory ledger must remain empty when DB persistence fails
+    assert affiliate_service.get_commissions_by_invoice(invoice_id) == []

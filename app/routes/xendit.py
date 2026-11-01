@@ -306,7 +306,10 @@ def _check_db_idempotency_sync(event_id: str, external_id: str) -> Optional[Dict
                 return {"status": "ALREADY_PROCESSED", "reason": "order_already_paid"}
 
     except Exception as e:
-        logger.warning(f"[DB Idempotency Check Error] {e}")
+        logger.error(f"[DB Idempotency Check Error - Fail Closed] {e}", exc_info=True)
+        raise RuntimeError(
+            f"[SECURITY FAIL-CLOSED] Database idempotency lookup failed for event '{event_id}' / order '{external_id}': {e}"
+        ) from e
     finally:
         if cur:
             try:
@@ -320,6 +323,7 @@ def _check_db_idempotency_sync(event_id: str, external_id: str) -> Optional[Dict
                 pass
 
     return None
+
 
 
 
@@ -773,8 +777,31 @@ async def process_xendit_webhook_core(
             }
 
     # 2. Database & L1 Idempotency Check (SSOT Mutlak: Postgres orders.status, payment_events, & L1 settled state)
-    # Diproses sebelum locking agar duplicate replay instan 200 OK ALREADY_PROCESSED
-    db_check = await asyncio.to_thread(_check_db_idempotency_sync, event_id, external_id)
+    # Fail-closed: jika query idempotensi ke DB gagal, tolak pemrosesan efek finansial baru (HTTP 503).
+    try:
+        db_check = await asyncio.to_thread(_check_db_idempotency_sync, event_id, external_id)
+    except Exception as idem_err:
+        logger.error(f"[Xendit Webhook Fail-Closed] Idempotency DB check failed for '{external_id}': {idem_err}")
+        log_structured_event(
+            service="xendit_webhook",
+            event_type="DATABASE_OUTAGE_ERROR",
+            entity_type="payment",
+            entity_id=external_id,
+            status="FAILED",
+            provider="xendit",
+            provider_event_id=event_id,
+            correlation_id=external_id,
+            error_code="IDEMPOTENCY_DB_UNAVAILABLE",
+        )
+        return {
+            "http_status": 503,
+            "response": {
+                "status": "FAILED",
+                "error": "IDEMPOTENCY_CHECK_UNAVAILABLE",
+                "detail": str(idem_err),
+            },
+        }
+
     if db_check or (external_id and xendit_service.is_settled(external_id) is True):
         if external_id:
             xendit_service.mark_settled(external_id)
@@ -799,6 +826,7 @@ async def process_xendit_webhook_core(
         }
 
 
+
     # 3. Non-paid event handler (e.g. EXPIRED, FAILED, PENDING)
     if event_status not in _PAID_STATUSES:
         logger.info(f"[Xendit Webhook] Non-paid event received ({event_status}) for order '{external_id}'. Ignoring.")
@@ -819,8 +847,20 @@ async def process_xendit_webhook_core(
             # Poll DB check briefly for concurrent in-flight settlement
             for _ in range(6):
                 await asyncio.sleep(0.05)
-                db_check = await asyncio.to_thread(_check_db_idempotency_sync, event_id, external_id)
+                try:
+                    db_check = await asyncio.to_thread(_check_db_idempotency_sync, event_id, external_id)
+                except Exception as idem_err:
+                    logger.error(f"[Xendit Webhook Fail-Closed] Lock-poll idempotency check failed: {idem_err}")
+                    return {
+                        "http_status": 503,
+                        "response": {
+                            "status": "FAILED",
+                            "error": "IDEMPOTENCY_CHECK_UNAVAILABLE",
+                            "detail": str(idem_err),
+                        },
+                    }
                 if db_check:
+
                     xendit_service.mark_settled(external_id)
                     return {
                         "http_status": 200,

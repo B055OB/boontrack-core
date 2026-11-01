@@ -1,8 +1,8 @@
 # ONLINEBOOST QRIS & XENDIT PAYMENT CANARY VERIFICATION REPORT
-**Document Reference:** CTO-P0-PHASE2B-CANARY-003  
-**Classification:** P0 Security Tooling — Restricted  
-**Governance Posture:** STRICT READ-ONLY CANARY SIMULATION — ZERO PRODUCTION DB MUTATIONS  
-**Authority:** Founder & Product Owner Gate B0 Rev 4 Formal Closure  
+**Document Reference:** CTO-P0-PHASE2B-CANARY-003
+**Classification:** P0 Security Tooling — Restricted
+**Governance Posture:** STRICT READ-ONLY CANARY SIMULATION — ZERO PRODUCTION DB MUTATIONS
+**Authority:** Founder & Product Owner Gate B0 Rev 4 Formal Closure
 
 ---
 
@@ -71,7 +71,8 @@ To guarantee zero double-crediting or duplicate financial effects from webhook r
 **Invariant:** A successful payment does **NOT** automatically imply a payable commission until all business conditions are satisfied:
 1. **Payment Verification:** Webhook verified and settled.
 2. **Referral Linkage:** Valid affiliate code attached to order. Organic orders (no referral) route 100% of revenue to the platform with **zero** commission rows.
-3. **Affiliate Health:** Commission is allocated only if the affiliate profile is in an active, healthy state (Class 1 or verified Class 2; not stale or banned).
+3. **Affiliate Health (Class 1 Only):** Automatic payable commission is allocated **ONLY** if the affiliate profile is **Class 1 (`CLASS_1_EXACT_LINKED_HEALTHY`)** and active. **Class 2 (`CLASS_2_UNLINKED_CANDIDATE`)** profiles are strictly **Manual Review Only** (`status = 'held_manual_review'`, zero automatic commission allocation, zero auto-link).
+
 4. **Holding Period:** Commission enters `commission_ledger` with `status = 'PENDING_PAYOUT'` for a mandatory holding window (7–14 days) to absorb refund/chargeback risks.
 
 ---
@@ -107,4 +108,3 @@ To guarantee zero double-crediting or duplicate financial effects from webhook r
 - **Sandbox Environment:** Verified with mock Xendit dynamic QRIS endpoints.
 - **Staging / Production:** Zero live database connections; zero real payouts executed.
 - **Stop Condition Check:** No duplicate financial effect detected -> **PASS**.
-

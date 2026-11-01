@@ -84,17 +84,30 @@ def decode_jwt_token(
 
 
 
+_TRUSTED_AUTH_STATE_SENTINEL = object()
+
+
+def mark_request_state_cryptographically_verified(request: Request, payload: Dict[str, Any]) -> None:
+    """
+    Internal helper for trusted cryptographic authentication middleware/dependencies.
+    Marks `request.state.user` with an unforgeable in-process object identity sentinel
+    only after `verify_jwt_token_strict` has succeeded.
+    """
+    if hasattr(request, "state"):
+        request.state.user = dict(payload)
+        request.state._jwt_verified_sentinel = _TRUSTED_AUTH_STATE_SENTINEL
+
+
 async def get_current_affiliate(
     request: Request,
     authorization: Optional[str] = Header(None),
 ) -> Dict[str, Any]:
     """
     Ekstrak dan verifikasi identitas affiliate secara server-side dari token JWT terotentikasi.
-    - 401 Unauthorized: Jika tidak ada token, signature tidak valid, exp hilang/kedaluwarsa, atau iss/aud/realm salah.
+    - 401 Unauthorized: Jika tidak ada token, signature tidak valid, exp hilang/kedaluwarsa,
+      iss/aud/realm salah, atau `request.state.user` disuntikkan tanpa verifikasi kriptografis.
     - 403 Forbidden: Jika user terotentikasi tetapi bukan Affiliate aktif.
     """
-    user_state = getattr(request.state, "user", None) if hasattr(request, "state") else None
-
     token = None
     if authorization:
         if authorization.startswith("Bearer "):
@@ -111,19 +124,33 @@ async def get_current_affiliate(
         )
 
     payload = None
-    if user_state and isinstance(user_state, dict):
-        payload = user_state
-    elif token:
+    if token:
+        # Always verify explicit Bearer/cookie token cryptographically; never allow pre-existing state to override it
         payload = decode_jwt_token(token, realm="core")
-    else:
+        mark_request_state_cryptographically_verified(request, payload)
+    elif hasattr(request, "state"):
+        user_state = getattr(request.state, "user", None)
+        sentinel = getattr(request.state, "_jwt_verified_sentinel", None)
+        if (
+            isinstance(user_state, dict)
+            and sentinel is _TRUSTED_AUTH_STATE_SENTINEL
+        ):
+            payload = user_state
+        elif user_state is not None:
+            logger.warning("[SECURITY] Rejected unverified request.state.user without cryptographic sentinel.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="State autentikasi tidak terverifikasi secara kriptografis.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Autentikasi diperlukan. Sertakan Bearer token atau session cookie.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if hasattr(request, "state"):
-        request.state.user = payload
 
     user_id = payload.get("sub") or payload.get("user_id") or payload.get("id")
     user_role = str(payload.get("role") or "").strip().upper()

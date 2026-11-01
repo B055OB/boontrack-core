@@ -16,7 +16,9 @@ from unittest.mock import patch, AsyncMock, MagicMock
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.routes.xendit import _check_db_idempotency_sync as _real_check_db_idempotency_sync
 from app.services.xendit_service import XenditService, xendit_service
+
 
 
 class _InMemoryPaymentDB:
@@ -439,6 +441,49 @@ class TestXenditQRISIntegration(unittest.TestCase):
         self.assertEqual(self.fake_db.orders[external_id]["status"], "PAID")
         self.assertEqual(len(self.fake_db.settlements), 1)
         self.assertEqual(mock_wa.call_count, 1)
+
+    @patch("app.routes.xendit.send_meta_capi_purchase", new_callable=AsyncMock)
+    @patch("app.routes.xendit.send_whatsapp_text", new_callable=AsyncMock)
+    def test_xendit_idempotency_lookup_db_error_fails_closed(self, mock_wa, mock_capi):
+        """Blocker 4: If _check_db_idempotency_sync encounters a DB error, it must fail closed (raise / HTTP 503), never return None silently."""
+        # 1. Direct unit check on real _check_db_idempotency_sync implementation
+        with patch("app.routes.xendit.get_db_connection", side_effect=RuntimeError("Postgres connection timeout")):
+            with self.assertRaises(RuntimeError) as ctx:
+                _real_check_db_idempotency_sync("evt_db_err_1", "ord_db_err_1")
+            self.assertIn("FAIL-CLOSED", str(ctx.exception))
+
+        # 2. Webhook integration check: when _check_db_idempotency_sync raises DB error -> HTTP 503 fail-closed
+        external_id = "ORD-DB-FAIL-909"
+        amount = 150000
+        self._register_intent(external_id, amount, phone="081234500909")
+
+        with patch(
+            "app.routes.xendit._check_db_idempotency_sync",
+            side_effect=RuntimeError("[SECURITY FAIL-CLOSED] Database idempotency lookup failed"),
+        ):
+            resp = self.client.post(
+                "/api/v1/payments/xendit/callback",
+                json={
+                    "id": "evt_db_fail_909",
+                    "external_id": external_id,
+                    "amount": amount,
+                    "status": "PAID",
+                },
+                headers={"x-callback-token": self.valid_token},
+            )
+
+        self.assertEqual(resp.status_code, 503)
+        body = resp.json()
+        self.assertEqual(body.get("detail") or body.get("error"), "IDEMPOTENCY_CHECK_UNAVAILABLE")
+        self.assertFalse(xendit_service.is_settled(external_id))
+        self.assertEqual(len(self.fake_db.settlements), 0)
+        self._drain_background_tasks()
+        mock_wa.assert_not_called()
+        mock_capi.assert_not_called()
+
+
+
+
 
 
 

@@ -1,11 +1,11 @@
 # ONLINEBOOST PHASE 2B P0 REMEDIATION DIFF & SOURCE AUDIT
-**Document Reference:** CTO-P0-PHASE2B-REMED-001  
-**Classification:** P0 Security Tooling — Restricted  
-**Governance Posture:** STRICT READ-ONLY STATIC AUDIT & VERIFICATION — ZERO PRODUCTION WRITES — ZERO AUTO-LINK  
-**Authority:** Founder & Product Owner Gate B0 Rev 4 Formal Closure  
-**Target Codebases:**  
-- `boontrack-core` @ `70a8c5186437837c846c74a1eabca3d4465286d2`  
-- `boontrack-inbox` @ `9375975936eda8966ab2337e60ada0cfea885497`  
+**Document Reference:** CTO-P0-PHASE2B-REMED-001
+**Classification:** P0 Security Tooling — Restricted
+**Governance Posture:** STRICT READ-ONLY STATIC AUDIT & VERIFICATION — ZERO PRODUCTION WRITES — ZERO AUTO-LINK
+**Authority:** Founder & Product Owner Gate B0 Rev 4 Formal Closure
+**Target Codebases:**
+- `boontrack-core` @ `70a8c5186437837c846c74a1eabca3d4465286d2`
+- `boontrack-inbox` @ `9375975936eda8966ab2337e60ada0cfea885497`
 
 ---
 
@@ -223,7 +223,7 @@ Pursuant to the **CTO Directive — OnlineBoost Phase 2B Conditional Release**, 
 
      const body = await req.json();
 -    const { name, phone } = body;
-+    
++
 +    // STRICT ALLOWLIST: Only 'name' and 'phone' are updatable via /me PATCH
 +    // Mass-assignment vectors (role, status, auth_user_id, is_bank_verified, bank_*) are rejected
 +    const ALLOWED_FIELDS = new Set(['name', 'phone']);
@@ -288,7 +288,7 @@ Pursuant to the **CTO Directive — OnlineBoost Phase 2B Conditional Release**, 
 -      referral_code,
 -      ...
 -    } = body;
-+    
++
 +    // STRICT ALLOWLIST: Rejects arbitrary targets in payload
 +    const { bank_name, bank_account_number, bank_account_holder } = body;
 @@ -75,18 +95,19 @@ async function handleUpdatePayoutAccount(req: NextRequest) {
@@ -307,7 +307,7 @@ Pursuant to the **CTO Directive — OnlineBoost Phase 2B Conditional Release**, 
 +            is_bank_verified: false, // Bank update revokes verified status until screening
              updated_at: new Date().toISOString(),
            };
- 
+
            const { data: updated } = await supabase
              .from('affiliates')
              .update(updatePayload)
@@ -372,9 +372,9 @@ Pursuant to the **CTO Directive — OnlineBoost Phase 2B Conditional Release**, 
 +    if not res.data:
 +        raise HTTPException(status_code=403, detail="Akses ditolak: Akun GoTrue Anda belum tertaut ke profil mitra.")
 +    aff_record = res.data[0]
- 
+
      target_aff_id = aff_record["id"]
- 
+
      update_payload = {
          "bank_name": clean_bank,
          "bank_account_number": clean_account,
@@ -392,68 +392,41 @@ Pursuant to the **CTO Directive — OnlineBoost Phase 2B Conditional Release**, 
 
 ---
 
-### 2.4 Core & Inbox: Hardcoded Secrets Elimination
+### 2.4 Core & Inbox: Hardcoded Secrets Elimination & Strict JWT Realm Separation
 
 #### Problem Statement:
 - Default fallback `"boontrack-secret-key-production-3000"` in `app/routes/affiliate_auth.py:26`, `app/routes/auth_routes.py:32`, `app/services/partner_service.py:21`.
 - Default fallback `"boontrack-super-secret-2026"` in `app/routes/auth_routes.py:289`.
+- Cross-realm fallback between Core JWTs and Supabase GoTrue JWTs.
 
-#### Remediation Diff:
-```diff
---- a/boontrack-core/app/routes/affiliate_auth.py
-+++ b/boontrack-core/app/routes/affiliate_auth.py
-@@ -25,3 +25,8 @@
--JWT_SECRET = os.getenv("JWT_SECRET", "boontrack-secret-key-production-3000")
-+JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET") or os.getenv("JWT_SECRET")
-+if not JWT_SECRET:
-+    raise RuntimeError(
-+        "[SECURITY FAIL-CLOSED] JWT secret configuration missing in affiliate_auth. "
-+        "SUPABASE_JWT_SECRET or JWT_SECRET must be explicitly set. Hardcoded defaults are PROHIBITED."
-+    )
-```
-
-```diff
---- a/boontrack-core/app/routes/auth_routes.py
-+++ b/boontrack-core/app/routes/auth_routes.py
-@@ -288,4 +288,7 @@ async def magic_login(slug: str = Query(...), secret: str = Query(...)):
--    expected_secret = os.getenv("INTERNAL_MAGIC_SECRET", "boontrack-super-secret-2026")
-+    expected_secret = os.getenv("INTERNAL_MAGIC_SECRET")
-+    if not expected_secret:
-+        raise HTTPException(status_code=500, detail="Konfigurasi magic secret internal belum diatur.")
-     if not hmac.compare_digest(secret, expected_secret):
-         raise HTTPException(status_code=403, detail="Kredensial rahasia magic login tidak valid.")
-```
+#### Physical Implementation (`app/core/jwt_secret.py`):
+- `get_jwt_secret()` resolves `JWT_SECRET` exclusively for the `"core"` realm (`iss="boontrack-core"`, `aud="boontrack-core"`), rejecting compromised static fallbacks and failing closed in production.
+- `get_supabase_jwt_secret()` resolves `SUPABASE_JWT_SECRET` exclusively for the `"supabase"` realm (`iss="<SUPABASE_URL>/auth/v1"`, `aud="authenticated"`), with zero fallback to `JWT_SECRET`.
+- `verify_jwt_token_strict()` enforces HS256 signature verification, mandatory `exp`, explicit `iss` and `aud` per realm, and strict realm separation.
+- `app/routes/affiliate_auth.py` (`get_current_affiliate`) enforces cryptographic verification of `request.state.user` via an unforgeable in-process object identity sentinel (`_TRUSTED_AUTH_STATE_SENTINEL`), rejecting any unverified or client-spoofed `request.state.user` with HTTP 401.
 
 ---
 
-### 2.5 Payout Account Immutable Snapshot & Settlement Idempotency
+### 2.5 Payout Account Immutable Snapshot, Disbursement Lock & Physical Module Boundaries
 
-#### Problem Statement (TOCTOU Race Condition):
-When a partner requested a payout, `payout_requests` recorded only `partner_id` and `amount`. During manager disbursement execution, the system dynamically joined `public.affiliates` to retrieve bank coordinates. An attacker could request a payout, immediately update `public.affiliates.bank_account_number`, and intercept disbursement to an attacker-controlled bank account.
+#### Physical Module Boundaries (Blocker 5 Clarification):
+- **`app/routes/affiliate_payout_routes.py`**: Contains **ONLY** the fail-closed disbursement lock helper (`PAYOUT_DISBURSEMENT_LOCKED` and `payout_disbursement_locked() -> HTTPException` returning HTTP 403). Route handlers were **not** moved into this module.
+- **`app/routes/affiliate_auth.py`**: Houses the actual affiliate route handlers (`get_affiliate_me`, `update_affiliate_payout_account`, `update_affiliate_slug`, `submit_affiliate_screening`, and their `aiohttp` counterparts), all protected by `Depends(get_current_affiliate)` / `_aiohttp_resolve_affiliate`, role/status checks (`AFFILIATE`/`PARTNER` + `ACTIVE`), server-side identity resolution, and strict field allowlists.
+- **`app/routes/partner_routes.py`**: Houses the partner route handlers (`claim_referral_slug`, `save_bank_account`, `get_bank_account`, `request_payout`) protected by `resolve_partner_id` (Core Bearer JWT required; client-supplied `partner_id`/`X-Partner-Id` rejected with HTTP 403) and `mark_payout_paid` (locked with HTTP 403 via `payout_disbursement_locked()`).
+- **`app/main.py`**: Houses `POST /payout/settle` (`settle_payout`), locked with HTTP 403 via `payout_disbursement_locked()`.
 
-#### Remediation Specification:
-1. **Immutable Snapshot on Payout Request:**
-```python
-payout_request_payload = {
-    "id": str(uuid.uuid4()),
-    "affiliate_id": aff_record["id"],
-    "amount": requested_amount,
-    "status": "PENDING_APPROVAL",
-    # IMMUTABLE SNAPSHOT OF BANK COORDINATES:
-    "snapshot_bank_name": aff_record["bank_name"],
-    "snapshot_account_number": aff_record["bank_account_number"],
-    "snapshot_account_holder": aff_record["bank_account_holder"],
-    "idempotency_key": f"payout_req_{aff_record['id']}_{int(datetime.now(timezone.utc).timestamp())}",
-    "created_at": datetime.now(timezone.utc).isoformat(),
-}
-```
-2. **Disbursement Execution Guard:**
-The settlement disburser reads strictly from `snapshot_bank_name`, `snapshot_account_number`, and `snapshot_account_holder` inside `payout_requests`. Any subsequent mutation of `public.affiliates` has **zero effect** on pending or approved payouts.
-3. **Settlement Idempotency Key:**
-Each batch settlement computes a unique hash `sha256(affiliate_code + str(record_ids) + date)` passed as `settlement_idempotency_key` to prevent duplicate disbursements.
+---
+
+### 2.6 Fail-Closed Commission Persistence, Class 1 Eligibility & Xendit Idempotency (Blockers 2, 3 & 4)
+1. **Class 1-Only Automatic Commission Rule (`app/services/affiliate_service.py` :: `is_class_1_commission_eligible`):**
+   - **ONLY Class 1 (`CLASS_1_EXACT_LINKED_HEALTHY`)** active profiles are eligible for automatic payable commission allocation.
+   - **Class 2 (`CLASS_2_UNLINKED_CANDIDATE`)** profiles are strictly **Manual Review Only** (`status="held_manual_review"`, `reason="CLASS_2_MANUAL_REVIEW_ONLY"`, 0 rows inserted into `affiliate_commissions`, zero auto-link).
+2. **Fail-Closed Commission Persistence (`app/services/affiliate_service.py` :: `allocate_upgrade_commission`):**
+   - Database insert errors (outside of unique constraint conflicts `23505` / `uq_affiliate_commissions_tenant_order`) raise an explicit `RuntimeError` instead of logging to debug and falling back to the in-memory ledger.
+3. **Fail-Closed Xendit Idempotency Lookup (`app/routes/xendit.py` :: `_check_db_idempotency_sync`):**
+   - Database errors during idempotency lookup raise `RuntimeError` and return HTTP `503 Service Unavailable` (`IDEMPOTENCY_CHECK_UNAVAILABLE`) in `process_xendit_webhook_core`, preventing any silent pass (`return None`) or duplicate financial side effects during database outages.
 
 ---
 
 ## 3. AUDIT CONCLUSION & GOVERNANCE COMPLIANCE
-All 8 immediate execution scope items from CTO Directive Section B are resolved in the diff specifications above. No authentication mechanism is weakened for backward compatibility. All changes adhere to fail-closed security.
-
+All 8 immediate execution scope items from CTO Directive Section B and all 6 blockers from **CTO-PR24-REVIEW-001** are physically implemented and verified in the codebase. No authentication mechanism is weakened for backward compatibility. All changes adhere to fail-closed security.

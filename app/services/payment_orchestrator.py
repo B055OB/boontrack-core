@@ -7,7 +7,9 @@ from fastapi import HTTPException
 from supabase import Client
 
 from app.core.database import normalize_db_row
+from app.services.affiliate_service import is_class_1_commission_eligible
 from app.services.whatsapp_delivery_service import WhatsAppDeliveryService
+
 
 
 logger = logging.getLogger("boontrack.payment")
@@ -231,9 +233,17 @@ class PaymentOrchestrator:
 
                     if aff_res.data:
                         aff_row = normalize_db_row(aff_res.data[0], ("commission_rate",)) or {}
-                        db_rate = aff_row.get("commission_rate")
-                        if db_rate is not None:
-                            affiliate_rate = float(db_rate)
+                        if not is_class_1_commission_eligible(aff_row)[0]:
+                            logger.warning(
+                                f"[Payment] Affiliate '{aff_lookup_val}' is not Class 1 eligible (manual review only); skipping automatic commission for order {external_id}."
+                            )
+                            affiliate_rate = 0.0
+                            manager_rate = 0.0
+                        else:
+                            db_rate = aff_row.get("commission_rate")
+                            if db_rate is not None:
+                                affiliate_rate = float(db_rate)
+
 
 
                 # ── Jika AM direct (tidak ada affiliate mitra): 30% ke AM ──
