@@ -6,7 +6,9 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import json
 import os
+from app.core.database import normalize_db_row
 from app.services.growth_service import bind_attribution_session, process_order_paid_growth_event
+
 
 router = APIRouter(prefix="/api/v1/growth", tags=["Growth & Affiliate Engine"])
 
@@ -41,11 +43,14 @@ def fetch_portal_data(tenant_id: str, referral_code: str):
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("""
-            SELECT id, name, phone_number, referral_code, commission_rate, status 
-            FROM affiliates 
+            SELECT id, name, phone_number, referral_code, commission_rate, status
+            FROM affiliates
             WHERE tenant_id = %s AND referral_code = %s;
         """, (tenant_id, referral_code))
-        affiliate = cur.fetchone()
+        affiliate = normalize_db_row(
+            cur.fetchone(),
+            ("id", "name", "phone_number", "referral_code", "commission_rate", "status"),
+        )
 
         if not affiliate:
             return None
@@ -55,23 +60,29 @@ def fetch_portal_data(tenant_id: str, referral_code: str):
         # Hitung klik dari tabel attributions baru (dengan fallback ke attribution_sessions)
         try:
             cur.execute("SELECT COUNT(*) as total_clicks FROM attributions WHERE affiliate_id = %s;", (aff_id,))
-            click_row = cur.fetchone()
+            click_row = normalize_db_row(cur.fetchone(), ("total_clicks",))
             total_clicks = click_row["total_clicks"] if click_row else 0
         except Exception:
             conn.rollback()
             cur.execute("SELECT COUNT(*) as total_clicks FROM attribution_sessions WHERE affiliate_id = %s;", (aff_id,))
-            total_clicks = cur.fetchone()["total_clicks"]
+            fallback_row = normalize_db_row(cur.fetchone(), ("total_clicks",))
+            total_clicks = fallback_row["total_clicks"] if fallback_row else 0
 
         cur.execute("""
-            SELECT 
+            SELECT
                 COUNT(*) as total_orders,
                 COALESCE(SUM(CASE WHEN status = 'APPROVED' THEN amount ELSE 0 END), 0) as approved_balance,
                 COALESCE(SUM(CASE WHEN status = 'PAID' THEN amount ELSE 0 END), 0) as paid_balance
             FROM affiliate_commissions
             WHERE affiliate_id = %s;
         """, (aff_id,))
-        stats = cur.fetchone()
+        stats = normalize_db_row(cur.fetchone(), ("total_orders", "approved_balance", "paid_balance")) or {
+            "total_orders": 0,
+            "approved_balance": 0,
+            "paid_balance": 0,
+        }
         cur.close()
+
 
         aff_dict = dict(affiliate)
         aff_dict["id"] = str(aff_dict["id"])

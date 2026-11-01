@@ -3165,20 +3165,27 @@ class AcademyBotStateMachine:
 # 4. TEMPLATE BROADCAST WABA (400 ALUMNI MAYAR DRAFT CAMPAIGN)
 # ============================================================================
 
-ACADEMY_BROADCAST_TEMPLATE_NAME: str = "warm_launch_alumni_mayar_249k"
+ACADEMY_BROADCAST_TEMPLATE_NAME: str = "alumni_cpm_metode"
 
 ACADEMY_BROADCAST_NASKAH: str = (
-    "Halo {{1}},\n\n"
-    "Kabar gembira khusus untuk Anda alumni CPM Mayar! 🚀\n\n"
-    "Akses privilege resmi *BoonTrack Academy & CTWA Scale Engine* kini telah dibuka. Dapatkan ekosistem lengkap:\n"
-    "✅ 10 Langkah Scale Engine\n"
-    "✅ Bot WhatsApp Otomatis\n"
-    "✅ Studio & Tool Ads\n"
-    "✅ Supergroup Forum Privat\n\n"
-    "Investasi spesial alumni: *Hanya Rp 249.000* (dari harga normal Rp 499.000).\n\n"
-    "Untuk mengamankan akses privilege dan menerbitkan invoice resmi Anda, silakan balas pesan ini dengan:\n"
-    '*"Halo, saya alumni CPM Mayar dan ingin amankan akses privilege Rp249.000."*'
+    "Halo Kak {{1}}, apa kabar? 🤗\n\n"
+    "Ini Aldi, yang dulu buka kelas iklan CPM. Masih ingat kan?\n\n"
+    "Jujur, dari dulu sebenarnya ada satu metode dan sistem khusus yang belum pernah gue bagikan ke siapa pun. "
+    "Alasannya simpel: dulu tool yang dipakai itu mahal banget dan setup teknisnya bikin pusing kalau harus disiapkan sendiri.\n\n"
+    "Nah, sekarang sistem ini sudah gue racik ulang supaya teman-teman alumni bisa langsung pakai tanpa pusing biaya tool atau ribet coding.\n\n"
+    "Fokusnya murni praktik. Langkah-langkahnya sudah disederhanakan, jadi teman-teman bisa langsung setup dan menguji alurnya jalan hari itu juga.\n\n"
+    "Penasaran seperti apa metodenya?\n\n"
+    "Balas MAU aja, nanti gue bisikin detailnya."
 )
+
+
+def is_academy_broadcast_held() -> bool:
+    """
+    Evaluates whether the outbound WABA alumni broadcast execution gate is held.
+    Fail-closed: returns True by default unless ONLINEBOOST_ALUMNI_BROADCAST_HOLD is explicitly 'false'.
+    """
+    val = os.getenv("ONLINEBOOST_ALUMNI_BROADCAST_HOLD", "true").strip().lower()
+    return val not in ("false", "0", "off", "no")
 
 
 class AcademyBroadcastCampaignManager:
@@ -3200,23 +3207,23 @@ class AcademyBroadcastCampaignManager:
             mock_recipients = [
                 {
                     "phone": f"62812{i:08d}",
-                    "name": f"Alumni Mayar #{i+1}",
-                    "parameters": [f"Alumni Mayar #{i+1}"],
-                    "custom_data": {"segment": "CPM_MAYAR_ALUMNI", "index": i + 1},
+                    "name": f"Alumni #{i+1}",
+                    "parameters": [f"Alumni #{i+1}"],
+                    "custom_data": {"segment": "CPM_ALUMNI", "index": i + 1},
                 }
                 for i in range(total_recipients)
             ]
 
             cls._CAMPAIGNS[campaign_id] = {
                 "campaign_id": campaign_id,
-                "name": "Warm Launch Alumni Mayar Rp249k (BoonTrack Academy)",
+                "name": "Warm Launch Alumni CPM Metode Rahasia (BoonTrack Academy)",
                 "sku_id": ACADEMY_SKU_ID,
                 "price": ACADEMY_SETTLEMENT_PRICE,
                 "template_name": ACADEMY_BROADCAST_TEMPLATE_NAME,
-                "language_code": "id",
+                "language_code": "en",
                 "broadcast_text": ACADEMY_BROADCAST_NASKAH,
-                "cta_button_text": "Amankan Akses Rp249k",
-                "cta_payload": "Halo, saya alumni CPM Mayar dan ingin amankan akses privilege Rp249.000.",
+                "cta_button_text": "MAU",
+                "cta_payload": "MAU",
                 "total_recipients": total_recipients,
                 "recipients": mock_recipients,
                 "status": "DRAFT",
@@ -3234,6 +3241,52 @@ class AcademyBroadcastCampaignManager:
         return campaign
 
     @classmethod
+    def resolve_and_validate_credentials(
+        cls,
+        tenant_id: str = "onlineboost",
+        phone_number_id: Optional[str] = None,
+    ) -> tuple[str, str]:
+        """
+        Validates and resolves (phone_number_id, permanent_access_token) as a strictly paired entity.
+        Rejects mismatched or incomplete credentials fail-closed before dispatch.
+        """
+        from app.services.meta_waba_service import meta_waba_dispatcher
+
+        default_phone_id, default_token = meta_waba_dispatcher.get_default_credentials(tenant_id)
+
+        # 1. Reject if supplied phone_number_id conflicts with tenant registered credentials
+        if phone_number_id:
+            clean_supplied = str(phone_number_id).strip()
+            if default_phone_id and clean_supplied != default_phone_id:
+                raise ValueError(
+                    f"Credential pair mismatch for tenant '{tenant_id}': supplied phone_number_id '{clean_supplied}' "
+                    f"does not match registered phone_number_id '{default_phone_id}'."
+                )
+            if tenant_id.strip().lower() == "onlineboost" and clean_supplied != "1419090974617162":
+                raise ValueError(
+                    f"Credential pair mismatch for tenant 'onlineboost': phone_number_id '{clean_supplied}' "
+                    f"is not the approved OnlineBoost sender ID '1419090974617162'."
+                )
+            effective_phone_id = clean_supplied
+        else:
+            effective_phone_id = str(default_phone_id or "").strip()
+
+        effective_token = str(default_token or "").strip()
+
+        # 2. Reject incomplete credentials (missing either phone ID or permanent access token)
+        if not effective_phone_id or not effective_token:
+            missing = []
+            if not effective_phone_id:
+                missing.append("phone_number_id")
+            if not effective_token:
+                missing.append("permanent_access_token")
+            raise ValueError(
+                f"Incomplete credentials for tenant '{tenant_id}': missing {', '.join(missing)}."
+            )
+
+        return effective_phone_id, effective_token
+
+    @classmethod
     async def queue_broadcast(
         cls,
         phone_number_id: Optional[str] = None,
@@ -3242,16 +3295,32 @@ class AcademyBroadcastCampaignManager:
     ) -> Dict[str, Any]:
         """
         Memasukkan draft broadcast 400 alumni ke antrean eksekusi `execute_meta_broadcast`.
+        Enforces credential pair integrity and synchronizes lifecycle status with operational holds.
         """
         campaign = cls.get_or_create_draft_campaign()
         from app.services.meta_waba_service import execute_meta_broadcast
 
+        # 1. Validate credential-pair integrity before proceeding
+        effective_phone_id, effective_token = cls.resolve_and_validate_credentials(
+            tenant_id=tenant_id,
+            phone_number_id=phone_number_id,
+        )
+
         broadcast_id = f"bcast_bta_{uuid.uuid4().hex[:8]}"
         campaign["broadcast_id"] = broadcast_id
-        campaign["status"] = "QUEUED"
+
+        # 2. Campaign Lifecycle Consistency: evaluate active hold guard
+        is_held = is_academy_broadcast_held()
+        if is_held:
+            campaign["status"] = "HELD"
+            campaign["hold_reason"] = "ONLINEBOOST_ALUMNI_BROADCAST_HOLD_ACTIVE"
+        else:
+            campaign["status"] = "QUEUED"
+            campaign.pop("hold_reason", None)
+
         campaign["queued_at"] = datetime.now(timezone.utc).isoformat()
 
-        # Jalankan background broadcast dengan pre-queue suppression guard
+        # Pre-queue suppression guard
         from app.services.phone_suppression_service import is_phone_suppressed
         from app.services.whatsapp.credentials import normalize_phone_number
 
@@ -3267,23 +3336,27 @@ class AcademyBroadcastCampaignManager:
             execute_meta_broadcast(
                 broadcast_id=broadcast_id,
                 template_name=campaign["template_name"],
-                language_code="id",
+                language_code=campaign.get("language_code", "en"),
                 body_parameters=[],
                 recipients=valid_recipients,
-                phone_number_id=phone_number_id,
+                phone_number_id=effective_phone_id,
+                permanent_access_token=effective_token,
                 rate_limit_per_second=rate_limit_per_second,
                 tenant_id=tenant_id,
             )
         )
 
-        return {
-            "status": "QUEUED",
+        resp = {
+            "status": campaign["status"],
             "campaign_id": campaign["campaign_id"],
             "broadcast_id": broadcast_id,
             "total_recipients": campaign["total_recipients"],
             "template_name": campaign["template_name"],
             "rate_limit_per_second": rate_limit_per_second,
         }
+        if is_held:
+            resp["hold_reason"] = "ONLINEBOOST_ALUMNI_BROADCAST_HOLD_ACTIVE"
+        return resp
 
 
 # Global singleton references

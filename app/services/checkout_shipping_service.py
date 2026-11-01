@@ -2,8 +2,10 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import Dict, Any, List
+from app.core.database import normalize_db_row
 from app.services.biteship_adapter import BiteshipShippingAdapter
 from app.services.shipping_interface import BookingRequest
+
 
 def get_db():
     return psycopg2.connect(os.getenv("DATABASE_URL", "").strip())
@@ -38,7 +40,7 @@ def get_tenant_origin(tenant_id: str = None) -> Dict[str, Any]:
         warehouse_address = meta.get("warehouse_address")
 
         origin_obj = biteship_cfg.get("origin") or shipping_origin or {}
-        
+
         addr = origin_obj.get("address") or meta_shipping.get("origin_address") or meta.get("origin_address")
         if not addr and isinstance(warehouse_address, str):
             addr = warehouse_address
@@ -167,11 +169,11 @@ async def create_checkout_order_with_shipping(payload: Dict[str, Any]) -> Dict[s
     base_price = float(payload.get("base_price", 99000))
     shipping_cost = float(payload.get("shipping_cost", 0))
     total_amount = base_price + shipping_cost
-    
+
     payment_method = payload.get("payment_method", "DIRECT").upper()
     referral_code = payload.get("referral_code")
     manager_id = payload.get("manager_id") or payload.get("am_id")
-    
+
     conn = get_db()
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -184,7 +186,7 @@ async def create_checkout_order_with_shipping(payload: Dict[str, Any]) -> Dict[s
                 courier_code, courier_service_name, shipping_address
             ) VALUES (
                 %s, %s, %s, %s, %s,
-                %s, 'PENDING', 'UNFULFILLED', 
+                %s, 'PENDING', 'UNFULFILLED',
                 %s, %s, %s, %s
             ) RETURNING id, order_id;
         """, (
@@ -199,10 +201,10 @@ async def create_checkout_order_with_shipping(payload: Dict[str, Any]) -> Dict[s
             affiliate = None
             if referral_code:
                 cur.execute("""
-                    SELECT id, commission_rate FROM affiliates 
+                    SELECT id, commission_rate FROM affiliates
                     WHERE tenant_id = %s AND referral_code = %s AND status = 'ACTIVE';
                 """, (tenant_id, referral_code))
-                affiliate = cur.fetchone()
+                affiliate = normalize_db_row(cur.fetchone(), ("id", "commission_rate"))
 
             # Aturan Split 2-Tier (Maksimal total komisi 30%, Margin Platform minimal 70%):
             # 1. Direct AM (tanpa mitra referral): 30% ke AM
@@ -215,7 +217,8 @@ async def create_checkout_order_with_shipping(payload: Dict[str, Any]) -> Dict[s
                 db_rate = affiliate.get("commission_rate") if affiliate else None
                 affiliate_rate = float(db_rate) if db_rate is not None else 25.0
                 am_rate = 5.0 if manager_id else 0.0
-                target_aff_id = affiliate["id"] if affiliate else None
+                target_aff_id = affiliate.get("id") if affiliate else None
+
 
             # Clamp total komisi maksimal 30.0% (Margin platform minimal 70.0%)
             total_rate = affiliate_rate + am_rate
@@ -233,7 +236,7 @@ async def create_checkout_order_with_shipping(payload: Dict[str, Any]) -> Dict[s
                     INSERT INTO affiliate_commissions (
                         tenant_id, affiliate_id, order_id, order_amount, amount, status, created_at
                     ) VALUES (%s, %s, %s, %s, %s, 'PENDING', NOW())
-                    ON CONFLICT (tenant_id, order_id) DO UPDATE SET 
+                    ON CONFLICT (tenant_id, order_id) DO UPDATE SET
                         order_amount = EXCLUDED.order_amount,
                         amount = EXCLUDED.amount,
                         status = 'PENDING';

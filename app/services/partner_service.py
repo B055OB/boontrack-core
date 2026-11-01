@@ -18,7 +18,8 @@ from supabase import create_client, Client
 logger = logging.getLogger("PARTNER_SERVICE")
 
 # Configuration & Constants
-JWT_SECRET = os.getenv("JWT_SECRET", "boontrack-secret-key-production-3000")
+# JWT secret & trust policy resolved lazily from env via app.core.jwt_secret (no hardcoded fallback; fail-closed).
+from app.core.jwt_secret import get_jwt_secret, verify_jwt_token_strict
 JWT_ALGORITHM = "HS256"
 
 RESERVED_SLUGS = {
@@ -40,45 +41,24 @@ supabase_key = (os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", ""))
 supabase: Client = create_client(supabase_url, supabase_key) if (supabase_url and supabase_key) else None
 
 
-def decode_jwt_token(token: str) -> Optional[Dict[str, Any]]:
-    """Decode signed JWT token with multi-library and HMAC fallback support."""
-    clean_token = token.replace("Bearer ", "").strip()
-    if jwt is not None:
-        try:
-            return jwt.decode(clean_token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        except Exception as e:
-            logger.warning(f"JWT library decode failed: {e}")
-
-    # Manual HMAC-SHA256 decode fallback
+def decode_jwt_token(
+    token: str,
+    realm: str = "core",
+    expected_issuer: Optional[str] = None,
+    expected_audience: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Strictly decode and validate signed JWT token against the specified trust realm."""
     try:
-        import base64
-        import json
-        import hmac
-        import hashlib
-
-        parts = clean_token.split(".")
-        if len(parts) != 3:
-            return None
-        header_b64, body_b64, sig_b64 = parts
-
-        def b64_decode(data: str) -> bytes:
-            padding = 4 - (len(data) % 4)
-            if padding and padding != 4:
-                data += "=" * padding
-            return base64.urlsafe_b64decode(data.encode())
-
-        expected_sig = hmac.new(
-            JWT_SECRET.encode(), f"{header_b64}.{body_b64}".encode(), hashlib.sha256
-        ).digest()
-        actual_sig = b64_decode(sig_b64)
-        if not hmac.compare_digest(expected_sig, actual_sig):
-            return None
-
-        payload_bytes = b64_decode(body_b64)
-        return json.loads(payload_bytes.decode("utf-8"))
+        return verify_jwt_token_strict(
+            token=token,
+            realm=realm,
+            expected_issuer=expected_issuer,
+            expected_audience=expected_audience,
+        )
     except Exception as e:
-        logger.error(f"Fallback JWT decode error: {e}")
+        logger.warning(f"JWT verification failed in partner_service: {e}")
         return None
+
 
 
 class PartnerService:
@@ -408,10 +388,17 @@ class PartnerService:
         if not partner:
             return False, "Data mitra tidak ditemukan", {}
 
-        # Dapatkan rekening bank
+        # Dapatkan rekening bank (pastikan rekening milik partner yang bersangkutan)
         bank_account = None
         if bank_account_id:
-            bank_account = self._memory_bank_accounts.get(bank_account_id)
+            cand_acc = self._memory_bank_accounts.get(bank_account_id)
+            if not cand_acc or str(cand_acc.get("partner_id")) != str(partner_id):
+                return (
+                    False,
+                    "Rekening bank yang dipilih tidak valid atau bukan milik akun mitra Anda.",
+                    {},
+                )
+            bank_account = cand_acc
         if not bank_account:
             bank_account = self.get_bank_account_by_partner(partner_id)
 
@@ -424,13 +411,19 @@ class PartnerService:
 
         payout_id = str(uuid.uuid4())
         now_iso = datetime.now(timezone.utc).isoformat()
+        snap_bank = str(bank_account["bank_name"])
+        snap_acc = str(bank_account["account_number"])
+        snap_holder = str(bank_account["account_holder_name"])
         payout_record = {
             "id": payout_id,
             "partner_id": partner_id,
-            "bank_account_id": bank_account["id"],
-            "bank_name": bank_account["bank_name"],
-            "account_number": bank_account["account_number"],
-            "account_holder_name": bank_account["account_holder_name"],
+            "bank_account_id": str(bank_account["id"]),
+            "bank_name": snap_bank,
+            "account_number": snap_acc,
+            "account_holder_name": snap_holder,
+            "snapshot_bank_name": snap_bank,
+            "snapshot_account_number": snap_acc,
+            "snapshot_account_holder": snap_holder,
             "partner_name": partner["name"],
             "partner_phone": partner["phone"],
             "amount": float(amount),
@@ -440,6 +433,7 @@ class PartnerService:
             "processed_at": None,
         }
         self._memory_payouts[payout_id] = payout_record
+
 
         try:
             supabase.table("payout_requests").insert(payout_record).execute()
@@ -539,7 +533,7 @@ class PartnerService:
             # Performa dummy / akumulasi
             pid = p["id"]
             bank_acc = self.get_bank_account_by_partner(pid)
-            
+
             # Hitung sub-affiliate jika AM
             registered_affiliates = sum(
                 1 for sub in self._memory_partners.values() if sub.get("registered_by_am_id") == pid

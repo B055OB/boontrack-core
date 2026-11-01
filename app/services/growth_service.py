@@ -3,8 +3,12 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import Dict, Any, Optional
+from app.core.database import normalize_db_row
+from app.services.affiliate_service import is_class_1_commission_eligible
 from app.services.adapters import WhatsAppAdapter
 from app.services.meta_capi_service import send_meta_capi_purchase
+
+
 
 def get_db_connection():
     db_url = (os.getenv("DATABASE_URL") or "").strip()
@@ -36,12 +40,12 @@ def bind_attribution_session(
         affiliate_id = None
         if referral_code:
             cur.execute("""
-                SELECT id FROM affiliates 
+                SELECT id FROM affiliates
                 WHERE tenant_id = %s AND referral_code = %s AND status = 'ACTIVE'
             """, (tenant_id, referral_code))
-            aff = cur.fetchone()
+            aff = normalize_db_row(cur.fetchone(), ("id",))
             if aff:
-                affiliate_id = aff["id"]
+                affiliate_id = aff.get("id")
 
         # 1. Simpan ke tabel attributions (P3-A)
         cur.execute("""
@@ -57,23 +61,24 @@ def bind_attribution_session(
             utm_campaign, utm_content, utm_term, fbclid, ttclid,
             ip_hash, user_agent
         ))
-        attribution_row = cur.fetchone()
-        attribution_id = str(attribution_row["id"])
+        attribution_row = normalize_db_row(cur.fetchone(), ("id",))
+        attribution_id = str(attribution_row.get("id")) if attribution_row else ""
+
 
         # 2. Jika ada order_id, bind langsung ke product_orders
         if order_id:
             cur.execute("""
-                UPDATE product_orders 
-                SET attribution_id = %s 
+                UPDATE product_orders
+                SET attribution_id = %s
                 WHERE order_id = %s AND tenant_id = %s;
             """, (attribution_id, order_id, tenant_id))
 
         conn.commit()
         cur.close()
         return {
-            "success": True, 
-            "attribution_id": attribution_id, 
-            "session_id": sid, 
+            "success": True,
+            "attribution_id": attribution_id,
+            "session_id": sid,
             "affiliate_id": affiliate_id
         }
     except Exception as e:
@@ -108,14 +113,19 @@ async def process_order_paid_growth_event(
 
         # Cek apakah order ini terikat ke attributions atau legacy attribution_sessions
         cur.execute("""
-            SELECT 
+            SELECT
                 po.attribution_id,
                 COALESCE(att.affiliate_id, s.affiliate_id) as affiliate_id,
                 COALESCE(att.fbclid, s.fbclid) as fbclid,
                 COALESCE(att.user_agent, s.user_agent) as user_agent,
-                a.name, 
-                a.phone_number, 
-                a.commission_rate
+                a.name,
+                a.phone_number,
+                a.commission_rate,
+                a.role,
+                a.status,
+                a.auth_user_id,
+                a.identity_class,
+                a.is_linked
             FROM product_orders po
             LEFT JOIN attributions att ON po.attribution_id = att.id
             LEFT JOIN attribution_sessions s ON (po.order_id = s.order_id OR po.tenant_id = s.tenant_id)
@@ -123,12 +133,29 @@ async def process_order_paid_growth_event(
             WHERE po.tenant_id = %s AND po.order_id = %s
             ORDER BY po.created_at DESC LIMIT 1;
         """, (tenant_id, order_id))
-        attribution_info = cur.fetchone()
+        attribution_info = normalize_db_row(
+            cur.fetchone(),
+            (
+                "attribution_id",
+                "affiliate_id",
+                "fbclid",
+                "user_agent",
+                "name",
+                "phone_number",
+                "commission_rate",
+                "role",
+                "status",
+                "auth_user_id",
+                "identity_class",
+                "is_linked",
+            ),
+        )
 
-        if attribution_info and attribution_info.get("affiliate_id"):
+        if attribution_info and attribution_info.get("affiliate_id") and is_class_1_commission_eligible(attribution_info)[0]:
             aff_id = attribution_info["affiliate_id"]
+
             raw_rate = attribution_info.get("commission_rate")
-            
+
             # Sinkronkan logic split 2-tier (Direct AM 30%, atau Mitra 25% + AM pembina 5%)
             # Margin platform minimal 70.0%, total komisi maksimal 30.0%
             is_direct_am = str(attribution_info.get("role", "")).upper() == "AM"
@@ -147,28 +174,44 @@ async def process_order_paid_growth_event(
 
             comm_amount = round((order_amount * affiliate_rate) / 100.0, 2)
 
-            # Catat / Setujui ke Ledger Komisi
+            # Catat / Setujui ke Ledger Komisi secara Idempotent di level Transaksi/Constraint DB
+            # Hanya update jika status sebelumnya belum APPROVED / PAID / SETTLED
             cur.execute("""
                 INSERT INTO affiliate_commissions (
                     tenant_id, affiliate_id, order_id, order_amount, amount, status, created_at
                 ) VALUES (
                     %s, %s, %s, %s, %s, 'APPROVED', NOW()
-                ) ON CONFLICT (tenant_id, order_id) DO UPDATE SET 
+                ) ON CONFLICT (tenant_id, order_id) DO UPDATE SET
                     order_amount = EXCLUDED.order_amount,
                     amount = EXCLUDED.amount,
-                    status = 'APPROVED';
+                    status = 'APPROVED'
+                WHERE affiliate_commissions.status NOT IN ('APPROVED', 'PAID', 'SETTLED');
             """, (tenant_id, aff_id, order_id, order_amount, comm_amount))
             conn.commit()
 
+            # Jika rowcount == 0 (komisi sudah pernah di-approve oleh callback sebelumnya/konkuren), cegah duplikasi notifikasi
+            rowcount = getattr(cur, "rowcount", 1)
+            if isinstance(rowcount, int) and rowcount == 0:
+                cur.close()
+                return
+
             affiliate_info = {
-                "name": attribution_info["name"],
-                "phone": attribution_info["phone_number"],
-                "commission": comm_amount
+                "name": attribution_info.get("name"),
+                "phone": attribution_info.get("phone_number"),
+                "commission": comm_amount,
             }
+
 
         cur.close()
     except Exception as e:
-        print(f"[GROWTH WORKER ERROR] Ledger step error: {e}", flush=True)
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        raise RuntimeError(
+            f"[GROWTH WORKER FAIL-CLOSED] Failed to persist approved affiliate commission for order '{order_id}': {e}"
+        ) from e
     finally:
         if conn:
             conn.close()

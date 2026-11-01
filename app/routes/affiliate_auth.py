@@ -23,7 +23,14 @@ router = APIRouter(prefix="/api/v1/auth/affiliate", tags=["Affiliate Auth"])
 affiliate_payout_router = APIRouter(tags=["Affiliate Payout Account"])
 affiliate_router = APIRouter(prefix="/api/v1/affiliate", tags=["Affiliate Dashboard"])
 
-JWT_SECRET = os.getenv("JWT_SECRET", "boontrack-secret-key-production-3000")
+# JWT secret & trust policy resolved lazily from env via app.core.jwt_secret (no hardcoded fallback; fail-closed).
+from app.core.jwt_secret import (
+    get_jwt_secret,
+    get_core_jwt_issuer,
+    get_core_jwt_audience,
+    encode_jwt_token_strict,
+    verify_jwt_token_strict,
+)
 JWT_ALGORITHM = "HS256"
 
 supabase_url = os.getenv("SUPABASE_URL", "").strip()
@@ -31,136 +38,97 @@ supabase_key = (os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", ""))
 supabase: Client = create_client(supabase_url, supabase_key) if (supabase_url and supabase_key) else None
 
 
-def generate_jwt_token(payload: dict) -> str:
-    """Safely generates a signed JWT token supporting python-jose, PyJWT, and built-in fallback."""
-    if jwt is not None:
-        token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-        if isinstance(token, bytes):
-            return token.decode("utf-8")
-        return token
-    else:
-        import base64
-        import json
-        import hmac
-        import hashlib
-        header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).rstrip(b"=").decode()
-        clean_payload = {}
-        for k, v in payload.items():
-            if isinstance(v, datetime):
-                clean_payload[k] = int(v.timestamp())
-            else:
-                clean_payload[k] = v
-        body = base64.urlsafe_b64encode(json.dumps(clean_payload).encode()).rstrip(b"=").decode()
-        sig = hmac.new(JWT_SECRET.encode(), f"{header}.{body}".encode(), hashlib.sha256).digest()
-        sig_str = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
-        return f"{header}.{body}.{sig_str}"
+def generate_jwt_token(
+    payload: dict,
+    realm: str = "core",
+    include_default_claims: bool = True,
+) -> str:
+    """Safely generates a signed HS256 JWT token for the specified trust realm ('core' or 'supabase')."""
+    return encode_jwt_token_strict(
+        payload=payload,
+        realm=realm,
+        include_default_claims=include_default_claims,
+    )
 
 
-def decode_jwt_token(token: str) -> Dict[str, Any]:
+def decode_jwt_token(
+    token: str,
+    realm: str = "core",
+    expected_issuer: Optional[str] = None,
+    expected_audience: Optional[str] = None,
+) -> Dict[str, Any]:
     """
-    Safely decodes and validates a signed JWT token.
-    Raises HTTPException 401 if token is missing, invalid, or expired.
+    Strictly decodes and validates a signed JWT token against a single trust profile ('core' or 'supabase').
+    Enforces:
+    - Cryptographic signature verification.
+    - Mandatory expiration (`exp`) claim (rejects missing or expired `exp`).
+    - Explicit issuer (`iss`) and audience (`aud`) validation per trust profile.
+    - Strict realm separation (no automatic fallback between Core and Supabase tokens).
+    Raises HTTPException 401 on any validation failure.
     """
-    clean_token = token.replace("Bearer ", "").strip()
-    if not clean_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token autentikasi kosong",
-            headers={"WWW-Authenticate": "Bearer"},
+    try:
+        return verify_jwt_token_strict(
+            token=token,
+            realm=realm,
+            expected_issuer=expected_issuer,
+            expected_audience=expected_audience,
         )
-
-    # 1. Decode with python-jose or PyJWT
-    if jwt is not None:
-        try:
-            return jwt.decode(clean_token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_aud": False})
-        except Exception as e:
-            err_str = str(e).lower()
-            if "expired" in err_str or "signature has expired" in err_str:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Token telah kedaluwarsa",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            logger.warning(f"JWT library decode failed: {e}")
-
-    # 2. Try Supabase Auth get_user (for native Supabase Auth JWT tokens)
-    try:
-        if supabase is not None and hasattr(supabase, "auth") and callable(getattr(supabase.auth, "get_user", None)):
-            user_resp = supabase.auth.get_user(clean_token)
-            if user_resp and hasattr(user_resp, "user") and user_resp.user:
-                u = user_resp.user
-                return {
-                    "sub": str(u.id),
-                    "user_id": str(u.id),
-                    "email": u.email,
-                    "role": getattr(u, "role", "authenticated") or "authenticated",
-                    "aud": getattr(u, "aud", "authenticated") or "authenticated",
-                }
-    except Exception as supa_err:
-        err_msg = str(supa_err).lower()
-        if "expired" in err_msg:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token telah kedaluwarsa",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-    # 3. Manual HMAC-SHA256 fallback decode
-    try:
-        import base64
-        import json
-        import hmac
-        import hashlib
-
-        parts = clean_token.split(".")
-        if len(parts) != 3:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Format token autentikasi tidak valid",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        header_b64, body_b64, sig_b64 = parts
-
-        def b64_decode(data: str) -> bytes:
-            padding = 4 - (len(data) % 4)
-            if padding and padding != 4:
-                data += "=" * padding
-            return base64.urlsafe_b64decode(data.encode())
-
-        expected_sig = hmac.new(
-            JWT_SECRET.encode(), f"{header_b64}.{body_b64}".encode(), hashlib.sha256
-        ).digest()
-        actual_sig = b64_decode(sig_b64)
-        if not hmac.compare_digest(expected_sig, actual_sig):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Tanda tangan token tidak valid",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        payload_bytes = b64_decode(body_b64)
-        payload = json.loads(payload_bytes.decode("utf-8"))
-
-        # Check expiration timestamp
-        if "exp" in payload:
-            exp_val = payload["exp"]
-            now_ts = datetime.now(timezone.utc).timestamp()
-            if isinstance(exp_val, (int, float)) and now_ts > exp_val:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Token telah kedaluwarsa",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-        return payload
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Fallback JWT decode error: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token autentikasi tidak valid: {str(e)}",
+            detail=str(e),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from e
+
+
+
+_TRUSTED_AUTH_STATE_SENTINEL = object()
+
+
+def mark_request_state_cryptographically_verified(
+    request: Request,
+    payload: Optional[Dict[str, Any]] = None,
+    *,
+    token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Internal helper for trusted cryptographic authentication middleware/dependencies.
+    Strictly requires a raw JWT `token` and verifies it via `decode_jwt_token(token, realm="core")`
+    before marking `request.state.user` with the unforgeable in-process object identity sentinel.
+    Untrusted middleware or request data without a valid signed Core JWT cannot invoke or forge
+    this marker.
+    """
+    if hasattr(request, "state"):
+        setattr(request.state, "user", None)
+        setattr(request.state, "_jwt_verified_sentinel", None)
+
+    if not token or not isinstance(token, str) or not token.strip():
+        logger.warning("[SECURITY] Rejected attempt to invoke mark_request_state_cryptographically_verified without raw JWT token.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="State autentikasi tidak dapat ditandai tanpa verifikasi token JWT kriptografis.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    verified_payload = decode_jwt_token(token.strip(), realm="core")
+
+    if payload is not None:
+        if not isinstance(payload, dict) or dict(payload).get("sub") != verified_payload.get("sub"):
+            logger.warning("[SECURITY] Rejected mismatched payload in mark_request_state_cryptographically_verified.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Payload state autentikasi tidak cocok dengan klaim token kriptografis.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    verified_copy = dict(verified_payload)
+    if hasattr(request, "state"):
+        request.state.user = dict(verified_copy)
+        request.state._jwt_verified_sentinel = (_TRUSTED_AUTH_STATE_SENTINEL, dict(verified_copy))
+
+    return verified_copy
 
 
 async def get_current_affiliate(
@@ -168,13 +136,11 @@ async def get_current_affiliate(
     authorization: Optional[str] = Header(None),
 ) -> Dict[str, Any]:
     """
-    Ekstrak identitas user dari Request State, Authorization Header, atau Cookie.
-    Membaca identitas affiliate berdasarkan email atau auth.uid dari session Supabase Auth.
-    - 401 Unauthorized: Jika tidak ada token, token expired, atau tidak valid.
-    - 403 Forbidden: Jika user terotentikasi tetapi role/keanggotaannya bukan Affiliate aktif.
+    Ekstrak dan verifikasi identitas affiliate secara server-side dari token JWT terotentikasi.
+    - 401 Unauthorized: Jika tidak ada token, signature tidak valid, exp hilang/kedaluwarsa,
+      iss/aud/realm salah, atau `request.state.user` disuntikkan tanpa verifikasi kriptografis.
+    - 403 Forbidden: Jika user terotentikasi tetapi bukan Affiliate aktif.
     """
-    user_state = getattr(request.state, "user", None) if hasattr(request, "state") else None
-
     token = None
     if authorization:
         if authorization.startswith("Bearer "):
@@ -191,69 +157,76 @@ async def get_current_affiliate(
         )
 
     payload = None
-    if user_state and isinstance(user_state, dict):
-        payload = user_state
-    elif token:
-        payload = decode_jwt_token(token)
-    else:
+    if token:
+        # Always verify explicit Bearer/cookie token cryptographically; never allow pre-existing state to override it
+        payload = mark_request_state_cryptographically_verified(request, token=token)
+    elif hasattr(request, "state"):
+        user_state = getattr(request.state, "user", None)
+        sentinel_record = getattr(request.state, "_jwt_verified_sentinel", None)
+        if (
+            isinstance(user_state, dict)
+            and isinstance(sentinel_record, tuple)
+            and len(sentinel_record) == 2
+            and sentinel_record[0] is _TRUSTED_AUTH_STATE_SENTINEL
+            and isinstance(sentinel_record[1], dict)
+            and user_state == sentinel_record[1]
+        ):
+            payload = dict(sentinel_record[1])
+        elif user_state is not None or sentinel_record is not None:
+            logger.warning("[SECURITY] Rejected unverified or tampered request.state.user / sentinel.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="State autentikasi tidak terverifikasi secara kriptografis.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Autentikasi diperlukan. Sertakan Bearer token atau session cookie.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Simpan ke request.state.user untuk auth context downstream
-    if hasattr(request, "state"):
-        request.state.user = payload
 
     user_id = payload.get("sub") or payload.get("user_id") or payload.get("id")
-    user_email = payload.get("email")
     user_role = str(payload.get("role") or "").strip().upper()
 
-    # Note: Supabase Auth session tokens emit role="authenticated"
-    if user_role and user_role not in ["AFFILIATE", "PARTNER", "AUTHENTICATED"]:
+    if user_role and user_role not in ["AFFILIATE", "PARTNER"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Akses ditolak. Keanggotaan bukan Affiliate aktif.",
         )
 
-    # Query profil affiliate ke database Supabase:
-    # 1. Prioritaskan query berdasarkan email (Email Auth)
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token autentikasi tidak memiliki klaim identitas (sub).",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Server-side lookup strictly by authenticated subject ID / auth_user_id
     affiliate = None
-    if user_email:
-        clean_email = str(user_email).strip().lower()
+    try:
+        res = supabase.table("affiliates").select("*").eq("id", str(user_id)).execute()
+        if res.data:
+            affiliate = res.data[0]
+    except Exception as e:
+        logger.warning(f"[Auth] Supabase lookup by id failed: {e}")
+
+    if not affiliate:
         try:
-            res = supabase.table("affiliates").select("*").eq("email", clean_email).execute()
+            res = supabase.table("affiliates").select("*").eq("auth_user_id", str(user_id)).execute()
             if res.data:
                 affiliate = res.data[0]
-        except Exception as e:
-            logger.warning(f"[Auth] Supabase lookup by email failed: {e}")
+        except Exception:
+            pass
 
-    # 2. Query berdasarkan auth.uid / user_id
-    if not affiliate and user_id:
-        try:
-            res = supabase.table("affiliates").select("*").eq("id", str(user_id)).execute()
-            if res.data:
-                affiliate = res.data[0]
-        except Exception as e:
-            logger.warning(f"[Auth] Supabase lookup by id failed: {e}")
-
-        if not affiliate:
-            try:
-                res = supabase.table("affiliates").select("*").eq("auth_user_id", str(user_id)).execute()
-                if res.data:
-                    affiliate = res.data[0]
-            except Exception:
-                pass
-
-    # Jika tidak ditemukan di tabel affiliates -> bukan mitra affiliate
     if not affiliate:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Akses ditolak. Profil Affiliate tidak ditemukan untuk email/identitas ini.",
+            detail="Akses ditolak. Profil Affiliate tidak ditemukan untuk identitas sesi ini.",
         )
 
-    # Validasi role dan status keanggotaan
     db_role = str(affiliate.get("role") or "AFFILIATE").strip().upper()
     db_status = str(affiliate.get("status") or "ACTIVE").strip().upper()
 
@@ -477,7 +450,7 @@ async def send_affiliate_otp(payload: SendOTPRequest):
 async def verify_affiliate_otp(payload: VerifyOTPRequest):
     phone = normalize_phone(payload.phone)
     res = supabase.table("affiliate_auth_otps").select("*").eq("phone", phone).execute()
-    
+
     if not res.data:
         raise HTTPException(status_code=400, detail="Kode OTP tidak ditemukan atau belum diminta")
 
@@ -582,7 +555,9 @@ async def verify_affiliate_otp(payload: VerifyOTPRequest):
         "sub": affiliate_data.get("id"),
         "phone": affiliate_data.get("phone") or affiliate_data.get("phone_number") or phone,
         "affiliate_code": aff_code,
-        "exp": datetime.now(timezone.utc) + timedelta(days=7)
+        "iss": get_core_jwt_issuer(),
+        "aud": get_core_jwt_audience(),
+        "exp": datetime.now(timezone.utc) + timedelta(days=7),
     }
     access_token = generate_jwt_token(token_payload)
 
@@ -625,7 +600,7 @@ async def register_affiliate(payload: AffiliateRegisterRequest):
         clean_slug = re.sub(r"[^a-z0-9-]", "", custom_slug_input)
         if len(clean_slug) < 3 or len(clean_slug) > 30:
             raise HTTPException(status_code=400, detail="Custom slug minimal 3 karakter dan maksimal 30 karakter (hanya huruf kecil, angka, dan strip).")
-        
+
         # Cek keunikan slug di database Supabase
         slug_check = supabase.table("affiliates").select("id, referral_code").ilike("referral_code", clean_slug).execute()
         if slug_check.data:
@@ -743,7 +718,9 @@ async def register_affiliate(payload: AffiliateRegisterRequest):
         "sub": affiliate_data.get("id"),
         "phone": affiliate_data.get("phone") or affiliate_data.get("phone_number") or phone,
         "affiliate_code": aff_code,
-        "exp": datetime.now(timezone.utc) + timedelta(days=7)
+        "iss": get_core_jwt_issuer(),
+        "aud": get_core_jwt_audience(),
+        "exp": datetime.now(timezone.utc) + timedelta(days=7),
     }
     access_token = generate_jwt_token(token_payload)
 
@@ -755,33 +732,113 @@ async def register_affiliate(payload: AffiliateRegisterRequest):
     }
 
 
+FORBIDDEN_CLIENT_IDENTITY_FIELDS = {
+    "affiliate_id",
+    "partner_id",
+    "id",
+    "auth_user_id",
+    "user_id",
+    "phone",
+    "phone_number",
+    "email",
+    "current_code",
+    "referral_code",
+}
+
+BANK_UPDATE_ALLOWED_FIELDS = {
+    "bank_name",
+    "bank",
+    "bank_account_number",
+    "account_number",
+    "bank_account_holder",
+    "account_holder",
+    "account_name",
+    "payout_bank_details",
+}
+
+BANK_DETAILS_INNER_ALLOWED_FIELDS = {
+    "bank_name",
+    "bank",
+    "account_number",
+    "bank_account_number",
+    "account_holder",
+    "bank_account_holder",
+    "account_name",
+}
+
+ALLOWED_AFFILIATE_BANKS = {
+    "BCA", "MANDIRI", "BRI", "BNI", "BSI", "CIMB", "PERMATA",
+    "DANAMON", "BTN", "BTPN", "JAGO", "SEABANK",
+    "GOPAY", "DANA", "OVO", "SHOPEEPAY", "LINKAJA",
+}
+
+SLUG_UPDATE_ALLOWED_FIELDS = {
+    "new_slug",
+    "slug",
+}
+
+SCREENING_ALLOWED_FIELDS = {
+    "bank_name",
+    "bank_account_number",
+    "bank_account_holder",
+    "experience_level",
+    "promotion_strategy_notes",
+    "social_media_links",
+    "portfolio_url",
+    "agreed_to_rules",
+}
+
+
+def _extract_supplied_keys(payload: BaseModel) -> set:
+    supplied = set(getattr(payload, "model_fields_set", set()) or set())
+    extra = getattr(payload, "model_extra", None)
+    if isinstance(extra, dict):
+        supplied.update(extra.keys())
+    return supplied
+
+
+def _enforce_field_policy(payload: BaseModel, allowed_fields: set, context_name: str) -> None:
+    supplied = _extract_supplied_keys(payload)
+    for key in supplied:
+        if key in FORBIDDEN_CLIENT_IDENTITY_FIELDS:
+            val = getattr(payload, key, None)
+            if val is None and isinstance(getattr(payload, "model_extra", None), dict):
+                val = payload.model_extra.get(key)
+            if val is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Client-supplied identity field '{key}' is forbidden; affiliate identity is resolved server-side.",
+                )
+    disallowed = [k for k in supplied if k not in allowed_fields and k not in FORBIDDEN_CLIENT_IDENTITY_FIELDS]
+    if disallowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Field tidak diizinkan pada {context_name}: {', '.join(sorted(disallowed))}",
+        )
+
+
 @router.post("/screening")
-async def submit_affiliate_screening(payload: AffiliateScreeningRequest):
+async def submit_affiliate_screening(
+    payload: AffiliateScreeningRequest,
+    current_affiliate: Dict[str, Any] = Depends(get_current_affiliate),
+):
     """
     Endpoint khusus untuk memperbarui atau melengkapi data screening & rekening bank
-    bagi mitra affiliate yang sudah terdaftar.
+    bagi mitra affiliate yang sudah terotentikasi (server-side identity resolution).
     """
-    if not payload.phone and not payload.affiliate_id:
-        raise HTTPException(status_code=400, detail="Wajib menyertakan phone atau affiliate_id")
+    _enforce_field_policy(payload, SCREENING_ALLOWED_FIELDS, "screening update")
 
-    if payload.affiliate_id:
-        res = supabase.table("affiliates").select("*").eq("id", payload.affiliate_id).execute()
-    else:
-        clean_phone = normalize_phone(payload.phone)
-        res = supabase.table("affiliates").select("*").eq("phone", clean_phone).execute()
-        if not res.data:
-            res = supabase.table("affiliates").select("*").eq("phone_number", clean_phone).execute()
-
-    if not res.data:
-        raise HTTPException(status_code=404, detail="Data mitra affiliate tidak ditemukan")
-
-    affiliate_id = res.data[0]["id"]
+    affiliate_id = str(current_affiliate["id"])
     update_data: Dict[str, Any] = {
-        "screening_status": "PENDING"
+        "screening_status": "PENDING",
+        "is_bank_verified": False,
     }
 
     if payload.bank_name:
-        update_data["bank_name"] = payload.bank_name.strip()
+        clean_b = payload.bank_name.strip().upper()
+        if clean_b not in ALLOWED_AFFILIATE_BANKS:
+            raise HTTPException(status_code=400, detail=f"Bank/e-wallet '{payload.bank_name}' tidak didukung.")
+        update_data["bank_name"] = clean_b
     if payload.bank_account_number:
         update_data["bank_account_number"] = payload.bank_account_number.strip()
     if payload.bank_account_holder:
@@ -799,39 +856,60 @@ async def submit_affiliate_screening(payload: AffiliateScreeningRequest):
 
     if payload.bank_name or payload.bank_account_number or payload.bank_account_holder:
         update_data["payout_bank_details"] = {
-            "bank_name": payload.bank_name or res.data[0].get("bank_name"),
-            "account_number": payload.bank_account_number or res.data[0].get("bank_account_number"),
-            "account_holder": payload.bank_account_holder or res.data[0].get("bank_account_holder"),
+            "bank_name": update_data.get("bank_name") or current_affiliate.get("bank_name"),
+            "account_number": payload.bank_account_number or current_affiliate.get("bank_account_number"),
+            "account_holder": payload.bank_account_holder or current_affiliate.get("bank_account_holder"),
         }
 
     updated = save_affiliate_record(update_data, affiliate_id=affiliate_id)
     if not updated:
-        updated = res.data[0]
+        updated = {**current_affiliate, **update_data}
 
     return {
         "status": "success",
         "message": "Data kualifikasi screening dan rekening bank berhasil diperbarui",
-        "affiliate": updated
+        "affiliate": updated,
     }
+
 
 
 
 @router.patch("/payout-account")
 @router.post("/payout-account")
 @router.post("/update-bank")
+@affiliate_payout_router.patch("/payout-account")
+@affiliate_payout_router.post("/payout-account")
+@affiliate_payout_router.post("/update-bank")
 @affiliate_payout_router.patch("/api/v1/affiliate/payout-account")
 @affiliate_payout_router.post("/api/v1/affiliate/payout-account")
+@affiliate_payout_router.patch("/api/v1/auth/affiliate/payout-account")
+@affiliate_payout_router.post("/api/v1/auth/affiliate/payout-account")
 @affiliate_payout_router.post("/api/v1/auth/affiliate/update-bank")
-async def update_affiliate_payout_account(payload: UpdatePayoutAccountRequest):
+async def update_affiliate_payout_account(
+    payload: UpdatePayoutAccountRequest,
+    current_affiliate: Dict[str, Any] = Depends(get_current_affiliate),
+):
     """
     Endpoint pembaruan rekening bank / e-wallet pencairan komisi mitra affiliate.
-    Mendukung PATCH/POST /api/v1/affiliate/payout-account dan POST /api/v1/auth/affiliate/update-bank.
+    Wajib autentikasi sesi (Bearer JWT / cookie), resolusi identitas server-side,
+    dan validasi allowlist field ketat.
     """
-    # 1. Ekstraksi bank info dengan toleransi alias lengkap
+    _enforce_field_policy(payload, BANK_UPDATE_ALLOWED_FIELDS, "bank account update")
+
+    if isinstance(payload.payout_bank_details, dict):
+        extra_inner = set(payload.payout_bank_details.keys()) - BANK_DETAILS_INNER_ALLOWED_FIELDS
+        if extra_inner:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Field tidak diizinkan dalam payout_bank_details: {', '.join(sorted(extra_inner))}",
+            )
+
+    # 1. Ekstraksi bank info dari field yang diizinkan
     resolved_bank = (
         payload.bank_name
         or payload.bank
         or (payload.payout_bank_details.get("bank_name") if isinstance(payload.payout_bank_details, dict) else None)
+        or (payload.payout_bank_details.get("bank") if isinstance(payload.payout_bank_details, dict) else None)
     )
     resolved_account_number = (
         payload.bank_account_number
@@ -845,45 +923,38 @@ async def update_affiliate_payout_account(payload: UpdatePayoutAccountRequest):
         or payload.account_name
         or (payload.payout_bank_details.get("account_holder") if isinstance(payload.payout_bank_details, dict) else None)
         or (payload.payout_bank_details.get("bank_account_holder") if isinstance(payload.payout_bank_details, dict) else None)
+        or (payload.payout_bank_details.get("account_name") if isinstance(payload.payout_bank_details, dict) else None)
     )
 
     if not resolved_bank or not resolved_account_number or not resolved_account_holder:
         raise HTTPException(
             status_code=400,
-            detail="Pilihan bank/e-wallet, nomor rekening, dan nama pemilik rekening wajib diisi lengkap."
+            detail="Pilihan bank/e-wallet, nomor rekening, dan nama pemilik rekening wajib diisi lengkap.",
         )
 
     clean_bank = str(resolved_bank).strip().upper()
+    if clean_bank not in ALLOWED_AFFILIATE_BANKS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Nama bank/e-wallet '{resolved_bank}' tidak didukung.",
+        )
+
     clean_account = str(resolved_account_number).strip().replace(" ", "")
+    if not clean_account.isdigit() or len(clean_account) < 5 or len(clean_account) > 30:
+        raise HTTPException(
+            status_code=400,
+            detail="Nomor rekening/akun tidak valid (wajib 5-30 digit angka).",
+        )
+
     clean_holder = str(resolved_account_holder).strip().upper()
+    if len(clean_holder) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Nama pemilik rekening wajib diisi minimal 2 karakter.",
+        )
 
-    # 2. Cari partner / affiliate
-    aff_id = payload.affiliate_id or payload.partner_id or payload.id
-    target_phone = payload.phone or payload.phone_number
-
-    aff_record = None
-    if aff_id:
-        res = supabase.table("affiliates").select("*").eq("id", aff_id).execute()
-        if res.data:
-            aff_record = res.data[0]
-
-    if not aff_record and target_phone:
-        normalized = normalize_phone(target_phone)
-        res = supabase.table("affiliates").select("*").eq("phone", normalized).execute()
-        if not res.data:
-            res = supabase.table("affiliates").select("*").eq("phone_number", normalized).execute()
-        if res.data:
-            aff_record = res.data[0]
-
-    if not aff_record and payload.email:
-        res = supabase.table("affiliates").select("*").eq("email", str(payload.email).strip().lower()).execute()
-        if res.data:
-            aff_record = res.data[0]
-
-    if not aff_record:
-        raise HTTPException(status_code=404, detail="Data mitra affiliate tidak ditemukan.")
-
-    target_aff_id = aff_record["id"]
+    # 2. Server-side identity resolution strictly from authenticated affiliate
+    target_aff_id = str(current_affiliate["id"])
 
     update_payload = {
         "bank_name": clean_bank,
@@ -894,15 +965,15 @@ async def update_affiliate_payout_account(payload: UpdatePayoutAccountRequest):
             "account_number": clean_account,
             "account_holder": clean_holder,
         },
-        "is_bank_verified": True,
+        "is_bank_verified": False,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
     updated_aff = save_affiliate_record(update_payload, affiliate_id=target_aff_id)
     if not updated_aff:
-        updated_aff = {**aff_record, **update_payload}
+        updated_aff = {**current_affiliate, **update_payload}
 
-    logger.info(f"[AFFILIATE_BANK_UPDATE] Updated bank for affiliate {target_aff_id}: {clean_bank} - {clean_account} ({clean_holder})")
+    logger.info(f"[AFFILIATE_BANK_UPDATE] Updated bank for affiliate {target_aff_id}: {clean_bank}")
 
     return {
         "success": True,
@@ -913,8 +984,9 @@ async def update_affiliate_payout_account(payload: UpdatePayoutAccountRequest):
             "bank_name": clean_bank,
             "account_number": clean_account,
             "account_holder": clean_holder,
-        }
+        },
     }
+
 
 
 # ============================================================================
@@ -929,63 +1001,54 @@ class UpdateSlugRequest(BaseModel):
     current_code: Optional[str] = None
     referral_code: Optional[str] = None
     phone: Optional[str] = None
-    new_slug: str
+    new_slug: Optional[str] = None
+    slug: Optional[str] = None
 
 
 @router.patch("/slug")
 @router.post("/slug")
+@affiliate_payout_router.patch("/slug")
+@affiliate_payout_router.post("/slug")
 @affiliate_payout_router.patch("/api/v1/affiliate/slug")
 @affiliate_payout_router.post("/api/v1/affiliate/slug")
-async def update_affiliate_slug(payload: UpdateSlugRequest):
+@affiliate_payout_router.patch("/api/v1/auth/affiliate/slug")
+@affiliate_payout_router.post("/api/v1/auth/affiliate/slug")
+async def update_affiliate_slug(
+    payload: UpdateSlugRequest,
+    current_affiliate: Dict[str, Any] = Depends(get_current_affiliate),
+):
     """
     Endpoint update slug / kode referral kustom mitra affiliate.
-    Payload: { affiliate_id / current_code, new_slug }
+    Wajib autentikasi sesi (Bearer JWT / cookie), resolusi identitas server-side,
+    dan validasi allowlist field ketat.
     """
-    raw_slug = (payload.new_slug or "").strip().lower()
+    _enforce_field_policy(payload, SLUG_UPDATE_ALLOWED_FIELDS, "slug update")
+
+    raw_slug = (payload.new_slug or payload.slug or "").strip().lower()
     clean_slug = re.sub(r"[^a-z0-9-]", "", raw_slug)
 
-    if not clean_slug or len(clean_slug) < 3 or len(clean_slug) > 30:
+    if not clean_slug or len(clean_slug) < 3 or len(clean_slug) > 30 or clean_slug != raw_slug:
         raise HTTPException(
             status_code=400,
-            detail="Slug referral minimal 3 karakter dan maksimal 30 karakter (hanya huruf kecil, angka, dan strip)."
+            detail="Slug referral minimal 3 karakter dan maksimal 30 karakter (hanya huruf kecil, angka, dan strip).",
         )
 
     # Reserved keywords check
     RESERVED = {
         "login", "register", "daftar", "api", "dashboard", "auth", "admin",
-        "affiliate", "manager", "shop", "creator", "www", "app", "career", "static", "chat"
+        "affiliate", "manager", "shop", "creator", "www", "app", "career", "static", "chat",
+        "root", "support", "help", "official", "owner", "billing", "system",
     }
     if clean_slug in RESERVED:
         raise HTTPException(status_code=400, detail="Slug ini dicadangkan untuk sistem, gunakan nama lain.")
 
-    # Cari partner / affiliate
-    aff_id = payload.affiliate_id or payload.partner_id or payload.id
-    current_code = (payload.current_code or payload.referral_code or "").strip().lower()
-    target_phone = payload.phone
+    target_aff_id = str(current_affiliate["id"])
 
-    aff_record = None
-    if aff_id:
-        res = supabase.table("affiliates").select("*").eq("id", aff_id).execute()
-        if res.data:
-            aff_record = res.data[0]
-
-    if not aff_record and current_code:
-        res = supabase.table("affiliates").select("*").ilike("referral_code", current_code).execute()
-        if res.data:
-            aff_record = res.data[0]
-
-    if not aff_record and target_phone:
-        normalized = normalize_phone(target_phone)
-        res = supabase.table("affiliates").select("*").eq("phone", normalized).execute()
-        if not res.data:
-            res = supabase.table("affiliates").select("*").eq("phone_number", normalized).execute()
-        if res.data:
-            aff_record = res.data[0]
-
-    if not aff_record:
-        raise HTTPException(status_code=404, detail="Data mitra affiliate tidak ditemukan.")
-
-    target_aff_id = aff_record["id"]
+    if current_affiliate.get("is_ref_customized"):
+        raise HTTPException(
+            status_code=400,
+            detail="Kode referral kustom hanya dapat diklaim 1 kali dan sudah dikunci secara permanen.",
+        )
 
     # Cek apakah new_slug sudah dipakai affiliate lain
     slug_check = supabase.table("affiliates").select("id, referral_code").ilike("referral_code", clean_slug).execute()
@@ -1003,7 +1066,7 @@ async def update_affiliate_slug(payload: UpdateSlugRequest):
 
     updated_aff = save_affiliate_record(update_payload, affiliate_id=target_aff_id)
     if not updated_aff:
-        updated_aff = {**aff_record, **update_payload}
+        updated_aff = {**current_affiliate, **update_payload}
 
     logger.info(f"[AFFILIATE_SLUG_UPDATE] Affiliate {target_aff_id} successfully updated slug to '{clean_slug}'")
 
@@ -1013,8 +1076,9 @@ async def update_affiliate_slug(payload: UpdateSlugRequest):
         "message": "Slug berhasil diperbarui.",
         "slug": clean_slug,
         "referral_code": clean_slug,
-        "affiliate": updated_aff
+        "affiliate": updated_aff,
     }
+
 
 
 # ============================================================================
@@ -1160,83 +1224,80 @@ try:
         headers["Cache-Control"] = "private, no-store, no-cache, must-revalidate"
         return web.json_response(data, status=status_code, headers=headers)
 
+    async def _aiohttp_resolve_affiliate(request: web.Request) -> Dict[str, Any]:
+        auth_header = request.headers.get("Authorization")
+        token = None
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+        elif auth_header:
+            token = auth_header.strip()
+
+        if not token and request.cookies:
+            token = (
+                request.cookies.get("affiliate_token")
+                or request.cookies.get("authSession")
+                or request.cookies.get("access_token")
+                or request.cookies.get("token")
+            )
+
+        if not token:
+            raise HTTPException(
+                status_code=401,
+                detail="Autentikasi diperlukan. Sertakan Bearer token atau session cookie.",
+            )
+
+        payload = decode_jwt_token(token, realm="core")
+        user_id = payload.get("sub") or payload.get("user_id") or payload.get("id")
+        user_role = str(payload.get("role") or "").strip().upper()
+
+        if user_role and user_role not in ["AFFILIATE", "PARTNER"]:
+            raise HTTPException(
+                status_code=403,
+                detail="Akses ditolak. Keanggotaan bukan Affiliate aktif.",
+            )
+
+        if not user_id:
+            raise HTTPException(
+                status_code=401,
+                detail="Token autentikasi tidak memiliki klaim identitas (sub).",
+            )
+
+        affiliate = None
+        try:
+            res = supabase.table("affiliates").select("*").eq("id", str(user_id)).execute()
+            if res.data:
+                affiliate = res.data[0]
+        except Exception:
+            pass
+
+        if not affiliate:
+            try:
+                res = supabase.table("affiliates").select("*").eq("auth_user_id", str(user_id)).execute()
+                if res.data:
+                    affiliate = res.data[0]
+            except Exception:
+                pass
+
+        if not affiliate:
+            raise HTTPException(
+                status_code=403,
+                detail="Akses ditolak. Profil Affiliate tidak ditemukan untuk identitas sesi ini.",
+            )
+
+        db_role = str(affiliate.get("role") or "AFFILIATE").strip().upper()
+        db_status = str(affiliate.get("status") or "ACTIVE").strip().upper()
+
+        if db_role not in ["AFFILIATE", "PARTNER"] or db_status != "ACTIVE":
+            raise HTTPException(
+                status_code=403,
+                detail="Akses ditolak. Bukan Affiliate aktif.",
+            )
+
+        return affiliate
+
     async def aiohttp_affiliate_me(request: web.Request) -> web.Response:
         try:
-            auth_header = request.headers.get("Authorization")
-            token = None
-            if auth_header and auth_header.startswith("Bearer "):
-                token = auth_header.split(" ", 1)[1].strip()
-            elif auth_header:
-                token = auth_header.strip()
-
-            if not token and request.cookies:
-                token = (
-                    request.cookies.get("authSession")
-                    or request.cookies.get("access_token")
-                    or request.cookies.get("token")
-                )
-
-            if not token:
-                return _aiohttp_affiliate_json_response(
-                    {"status": "error", "detail": "Autentikasi diperlukan. Sertakan Bearer token atau session cookie."},
-                    status_code=401,
-                    request=request
-                )
-
-            payload = decode_jwt_token(token)
-            user_id = payload.get("sub") or payload.get("user_id") or payload.get("id")
-            user_email = payload.get("email")
-            user_role = str(payload.get("role") or "").strip().upper()
-
-            if user_role and user_role not in ["AFFILIATE", "PARTNER", "AUTHENTICATED"]:
-                return _aiohttp_affiliate_json_response(
-                    {"status": "error", "detail": "Akses ditolak. Keanggotaan bukan Affiliate aktif."},
-                    status_code=403,
-                    request=request
-                )
-
-            affiliate = None
-            if user_email:
-                clean_email = str(user_email).strip().lower()
-                try:
-                    res = supabase.table("affiliates").select("*").eq("email", clean_email).execute()
-                    if res.data:
-                        affiliate = res.data[0]
-                except Exception:
-                    pass
-
-            if not affiliate and user_id:
-                try:
-                    res = supabase.table("affiliates").select("*").eq("id", str(user_id)).execute()
-                    if res.data:
-                        affiliate = res.data[0]
-                except Exception:
-                    pass
-
-                if not affiliate:
-                    try:
-                        res = supabase.table("affiliates").select("*").eq("auth_user_id", str(user_id)).execute()
-                        if res.data:
-                            affiliate = res.data[0]
-                    except Exception:
-                        pass
-
-            if not affiliate:
-                return _aiohttp_affiliate_json_response(
-                    {"status": "error", "detail": "Akses ditolak. Profil Affiliate tidak ditemukan untuk email/identitas ini."},
-                    status_code=403,
-                    request=request
-                )
-
-            db_role = str(affiliate.get("role") or "AFFILIATE").strip().upper()
-            db_status = str(affiliate.get("status") or "ACTIVE").strip().upper()
-
-            if db_role not in ["AFFILIATE", "PARTNER"] or db_status != "ACTIVE":
-                return _aiohttp_affiliate_json_response(
-                    {"status": "error", "detail": "Akses ditolak. Bukan Affiliate aktif."},
-                    status_code=403,
-                    request=request
-                )
+            affiliate = await _aiohttp_resolve_affiliate(request)
 
             aff_id = str(affiliate.get("id"))
             aff_code = affiliate.get("referral_code") or affiliate.get("affiliate_code") or ""
@@ -1274,6 +1335,7 @@ try:
         except Exception as e:
             logger.error(f"[aiohttp Affiliate Me Error] {e}", exc_info=True)
             return _aiohttp_affiliate_json_response({"status": "error", "detail": str(e)}, status_code=500, request=request)
+
 
     async def aiohttp_affiliate_portal(request: web.Request) -> web.Response:
         cand_code = request.query.get("code") or request.query.get("ref") or request.query.get("referral_code")
@@ -1344,9 +1406,10 @@ try:
 
     async def aiohttp_screening(request: web.Request) -> web.Response:
         try:
+            current_aff = await _aiohttp_resolve_affiliate(request)
             body = await request.json()
             payload = AffiliateScreeningRequest(**body)
-            result = await submit_affiliate_screening(payload)
+            result = await submit_affiliate_screening(payload, current_affiliate=current_aff)
             return _aiohttp_affiliate_json_response(result, status_code=200, request=request)
         except HTTPException as he:
             return _aiohttp_affiliate_json_response({"status": "error", "detail": he.detail}, status_code=he.status_code, request=request)
@@ -1354,12 +1417,12 @@ try:
             logger.error(f"[aiohttp Affiliate Screening Error] {e}", exc_info=True)
             return _aiohttp_affiliate_json_response({"status": "error", "detail": str(e)}, status_code=400, request=request)
 
-    
     async def aiohttp_update_payout_account(request: web.Request) -> web.Response:
         try:
+            current_aff = await _aiohttp_resolve_affiliate(request)
             body = await request.json()
             payload = UpdatePayoutAccountRequest(**body)
-            result = await update_affiliate_payout_account(payload)
+            result = await update_affiliate_payout_account(payload, current_affiliate=current_aff)
             return _aiohttp_affiliate_json_response(result, status_code=200, request=request)
         except HTTPException as he:
             return _aiohttp_affiliate_json_response({"status": "error", "detail": he.detail, "message": he.detail}, status_code=he.status_code, request=request)
@@ -1367,18 +1430,19 @@ try:
             logger.error(f"[aiohttp Affiliate Update Payout Account Error] {e}", exc_info=True)
             return _aiohttp_affiliate_json_response({"status": "error", "detail": str(e), "message": str(e)}, status_code=400, request=request)
 
-
     async def aiohttp_update_slug(request: web.Request) -> web.Response:
         try:
+            current_aff = await _aiohttp_resolve_affiliate(request)
             body = await request.json()
             payload = UpdateSlugRequest(**body)
-            result = await update_affiliate_slug(payload)
+            result = await update_affiliate_slug(payload, current_affiliate=current_aff)
             return _aiohttp_affiliate_json_response(result, status_code=200, request=request)
         except HTTPException as he:
             return _aiohttp_affiliate_json_response({"status": "error", "detail": he.detail, "message": he.detail}, status_code=he.status_code, request=request)
         except Exception as e:
             logger.error(f"[aiohttp Affiliate Update Slug Error] {e}", exc_info=True)
             return _aiohttp_affiliate_json_response({"status": "error", "detail": str(e), "message": str(e)}, status_code=400, request=request)
+
 
     def register_affiliate_auth_routes(app: web.Application):
         """Mendaftarkan rute auth affiliate ke aiohttp web server dengan proteksi duplikasi penuh."""

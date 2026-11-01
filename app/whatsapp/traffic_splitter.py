@@ -1647,9 +1647,9 @@ class TenantWebhookRouter:
                 trace.log_step("InboundMessagePersistError", str(persist_err))
 
         # =====================================================================
-        # 0.85. COMPLIANCE GUARD: Meta WABA Opt-Out Policy (STOP, BERHENTI, UNSUBSCRIBE)
+        # 0.85. COMPLIANCE GUARD: Meta WABA Opt-Out Policy (STOP, BERHENTI, BATAL, UNSUBSCRIBE)
         # =====================================================================
-        OPT_OUT_KEYWORDS = {"STOP", "BERHENTI", "UNSUBSCRIBE"}
+        OPT_OUT_KEYWORDS = {"STOP", "BERHENTI", "BATAL", "UNSUBSCRIBE"}
         is_opt_out = clean_text.upper() in OPT_OUT_KEYWORDS or any(
             re.search(rf"\b{re.escape(k.lower())}\b", text_lower) for k in OPT_OUT_KEYWORDS
         )

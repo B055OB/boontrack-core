@@ -467,8 +467,17 @@ async def generate_fast_track_checkout_response(
                 selected_product = p
                 break
 
+    if not selected_product and product_key and str(product_key).replace("prod_", "").strip().lower() == "cpm-24jam":
+        selected_product = {
+            "id": "cpm-24jam",
+            "slug": "cpm-24jam",
+            "title": "Modul Praktis CPM 24 Jam",
+            "price": 1000,
+        }
+
     if not selected_product and products:
         selected_product = products[0]
+
 
     if not selected_product:
         empty_msg = f"Saat ini katalog produk untuk *{store_name}* sedang disiapkan oleh admin toko. Silakan hubungi admin kami ya, Kak! 🙏"
@@ -501,26 +510,65 @@ async def generate_fast_track_checkout_response(
     prod_slug = str((selected_product or {}).get("slug") or (selected_product or {}).get("id") or "").strip()
     prod_checkout_url = f"https://shop.boontrack.com/{clean_slug}/p/{prod_slug}" if prod_slug else f"https://shop.boontrack.com/{clean_slug}"
 
+    clean_gateway = str(gateway or "seller_qris").strip().lower()
+    if clean_gateway == "dana_bisnis":
+        from app.utils.qris_generator import get_dynamic_qris_string, get_qr_code_image_url
+        amount = base_amount
+        qr_string = get_dynamic_qris_string(amount=amount, invoice_id=external_id)
+        qr_img_target = get_qr_code_image_url(qr_string)
+        qr_bytes = generate_qris_image_bytes(qr_string)
+        amount_fmt = f"Rp{amount:,.0f}".replace(",", ".")
+        invoice = {
+            "external_id": external_id,
+            "order_id": external_id,
+            "amount": amount,
+            "base_amount": base_amount,
+            "unique_code": 0,
+            "product_name": product_name,
+            "provider": "DANA_BISNIS",
+            "status": "PENDING",
+            "is_manual": False,
+            "qr_string": qr_string,
+            "qr_code_url": qr_img_target,
+            "media_url": qr_img_target,
+            "image_url": qr_img_target,
+            "web_pay_url": prod_checkout_url,
+            "merchant_name": store_name,
+            "tenant_id": clean_slug,
+        }
+        caption = (
+            f"Berikut Kode QRIS Pembayaran Anda ✨\n\n"
+            f"📦 *Nama Paket:* {product_name}\n"
+            f"💰 *Total:* *{amount_fmt}*\n"
+            f"📄 *No. Invoice / Kode Bayar:* `{external_id}`\n\n"
+            f"📲 *Petunjuk Pembayaran:*\n"
+            f"Bisa di-screenshot lalu scan menggunakan m-Banking atau E-Wallet apa saja."
+        )
+        user_cart_sessions.pop(clean_phone, None)
+        return caption, invoice, qr_bytes
+
     # XENDIT IN-CHAT DYNAMIC QRIS (Nominal Pas, Tanpa Kode Unik Acak)
     if p_provider == "xendit" or clean_slug == "onlineboost":
         amount = base_amount
         unique_code = 0
         from app.services.xendit_service import xendit_service
         try:
-            xendit_res = await xendit_service.create_dynamic_qris(
-                external_id=external_id,
+            xendit_res = await xendit_service.create_qris_invoice(
+                tenant_slug=clean_slug,
                 amount=amount,
-                tenant_id=clean_slug,
+                product_name=product_name,
                 customer_phone=clean_phone,
-                metadata={"product_name": product_name, "product_slug": prod_slug}
             )
+            external_id = xendit_res.get("external_id") or external_id
+            invoice_url = xendit_res.get("invoice_url") or f"https://checkout.xendit.co/web/{external_id}"
             qr_img_target = xendit_res.get("qr_code_url")
             dynamic_qr_payload = xendit_res.get("qr_string", "")
         except Exception as _xerr:
-            logger.error(f"[XENDIT_FAST_TRACK_QRIS_ERROR] {_xerr}")
-            qr_img_target = None
-            dynamic_qr_payload = ""
+            import traceback
+            logger.error(f"[CHECKOUT_EXCEPTION] {_xerr}\n{traceback.format_exc()}")
+            raise
 
+        qr_bytes = generate_qris_image_bytes(dynamic_qr_payload or invoice_url)
         amount_fmt = f"Rp{amount:,.0f}".replace(",", ".")
         invoice = {
             "external_id": external_id,
@@ -536,22 +584,26 @@ async def generate_fast_track_checkout_response(
             "qr_code_url": qr_img_target,
             "media_url": qr_img_target,
             "image_url": qr_img_target,
-            "web_pay_url": prod_checkout_url,
+            "invoice_url": invoice_url,
+            "web_pay_url": invoice_url,
             "merchant_name": store_name,
             "tenant_id": clean_slug,
         }
 
         caption = (
-            f"Berikut Barcode QRIS Resmi untuk Pembayaran Kakak ✨\n\n"
+            f"Berikut Kode QRIS Pembayaran Anda ✨\n\n"
             f"📦 *Nama Paket:* {product_name}\n"
-            f"💰 *Nominal Pas:* *{amount_fmt}*\n"
-            f"⏱️ *Batas Waktu Pembayaran:* 15 Menit\n"
-            f"📄 *No. Invoice:* `{external_id}`\n\n"
-            f"💡 *Catatan:* Bisa di-screenshot lalu scan menggunakan m-Banking (BCA, Mandiri, BRI, BNI, dll) atau E-Wallet apa saja (GoPay, OVO, DANA, ShopeePay).\n\n"
+            f"💰 *Total:* *{amount_fmt}*\n"
+            f"📄 *No. Invoice / Kode Bayar:* `{external_id}`\n"
+            f"🔗 *Invoice Resmi:* {invoice_url}\n"
+            f"⏱️ *Batas Waktu Pembayaran:* 15 Menit\n\n"
+            f"📲 *Petunjuk Pembayaran:*\n"
+            f"Bisa di-screenshot lalu scan menggunakan m-Banking (BCA, Mandiri, BRI, BNI, dll) atau E-Wallet apa saja (GoPay, OVO, DANA, ShopeePay).\n\n"
             f"⚡ *Sistem Terverifikasi Otomatis:* Setelah pembayaran selesai, sistem akan langsung mengirimkan link akses kelas ke WhatsApp ini secara instan!"
         )
         user_cart_sessions.pop(clean_phone, None)
-        return caption, invoice, b""
+        return caption, invoice, qr_bytes
+
 
     # Native QRIS with Unique Code
     if not unique_code_enabled:

@@ -155,12 +155,15 @@ async def queue_broadcast_campaign(
     rate_limit_per_second: int = 20,
 ):
     """Memasukkan draft broadcast alumni ke antrean broadcast WABA berkecepatan tinggi."""
-    result = await academy_campaign_mgr.queue_broadcast(
-        phone_number_id=phone_number_id,
-        tenant_id=tenant_id,
-        rate_limit_per_second=rate_limit_per_second,
-    )
-    return result
+    try:
+        result = await academy_campaign_mgr.queue_broadcast(
+            phone_number_id=phone_number_id,
+            tenant_id=tenant_id,
+            rate_limit_per_second=rate_limit_per_second,
+        )
+        return result
+    except ValueError as val_err:
+        raise HTTPException(status_code=400, detail=str(val_err))
 
 
 def register_academy_routes(app):

@@ -29,7 +29,13 @@ from app.services.whatsapp_service import get_supabase
 logger = logging.getLogger("AUTH_ROUTES")
 router = APIRouter(prefix="/api/v1/auth/magic-link", tags=["Magic Link Auth"])
 
-JWT_SECRET = os.getenv("JWT_SECRET", "boontrack-secret-key-production-3000")
+# JWT secret is resolved lazily from env via app.core.jwt_secret (no hardcoded fallback; fail-closed).
+from app.core.jwt_secret import (
+    get_jwt_secret,
+    get_core_jwt_issuer,
+    get_core_jwt_audience,
+    encode_jwt_token_strict,
+)
 JWT_ALGORITHM = "HS256"
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://app.boontrack.com")
@@ -117,24 +123,12 @@ def generate_session_jwt(email: str, tenant_slug: Optional[str] = None, expires_
         "email": email,
         "tenant_slug": tenant_slug or "default",
         "role": "merchant",
+        "iss": get_core_jwt_issuer(),
+        "aud": get_core_jwt_audience(),
         "iat": int(now.timestamp()),
         "exp": int(exp.timestamp()),
     }
-
-    if jwt is not None:
-        token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-        if isinstance(token, bytes):
-            return token.decode("utf-8")
-        return token
-    else:
-        import base64
-        import hmac
-        import hashlib
-        header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).rstrip(b"=").decode()
-        body = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
-        sig = hmac.new(JWT_SECRET.encode(), f"{header}.{body}".encode(), hashlib.sha256).digest()
-        sig_str = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
-        return f"{header}.{body}.{sig_str}"
+    return encode_jwt_token_strict(payload, realm="core")
 
 
 # --- Request & Response Schemas ---
@@ -286,8 +280,10 @@ async def magic_login(slug: str = Query(..., description="Tenant slug"), secret:
     """Internal endpoint to impersonate a tenant and redirect to its dashboard.
     Protected by a secret token to prevent public misuse.
     """
-    expected_secret = os.getenv("INTERNAL_MAGIC_SECRET", "boontrack-super-secret-2026")
-    if secret != expected_secret:
+    import hmac as _hmac
+    from app.core.jwt_secret import get_internal_magic_secret
+    expected_secret = get_internal_magic_secret()
+    if not expected_secret or not _hmac.compare_digest(str(secret or ""), expected_secret):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     # Query tenant existence via in‑memory registry first, fallback to Supabase if needed
     tenant_config = LOADED_CONFIG_TENANTS.get(slug) or TENANT_REGISTRY.get(slug)
@@ -373,4 +369,3 @@ auth_general_router = APIRouter(prefix="/api/v1/auth", tags=["Merchant Auth"])
 async def register_merchant_general(req: RegisterRequest):
     """POST /api/v1/auth/register"""
     return await handle_register_logic(req)
-

@@ -554,6 +554,7 @@ async def check_and_handle_session_handover_and_toggle(
     sender_phone: str,
     incoming_text: str,
     sender_name: str = "Kakak",
+    conversation_scope: str = "DIRECT",
 ) -> Optional[Dict[str, Any]]:
     """
     Auto-Mute Handover & Toggle Command (Instance 081215567168 & Tenant):
@@ -564,8 +565,18 @@ async def check_and_handle_session_handover_and_toggle(
        - 24-hour locked duration (paused_until = now() + 24 hours)
     3. Auto-Mute Guard:
        - If session is currently paused/handover, drops auto-reply and holds message for manual CS.
+
+    SAFETY GUARD:
+    - Group discussions (conversation_scope == "GROUP") are strictly exempt from handover escalation
+      and auto-mute pause guards to prevent group messages or tech/AI discussions from muting the bot
+      or locking sessions to HUMAN_ACTIVE.
     """
     if not sender_phone or not incoming_text:
+        return None
+
+    # Guard: GROUP conversation scope is strictly exempt from handover and pause locks.
+    # Group discussions must never trigger handover to human CS, auto-mute, or lock sessions into HUMAN_ACTIVE.
+    if (conversation_scope or "").upper() == "GROUP":
         return None
 
     clean_digits = normalize_phone_number(sender_phone) or re.sub(r"\D", "", sender_phone)
@@ -827,6 +838,7 @@ async def process_inbound_message(payload: InboundPayload):
         sender_phone=clean_phone,
         incoming_text=incoming_text,
         sender_name=contact_name,
+        conversation_scope=conversation_scope,
     )
     if toggle_res and toggle_res.get("handled"):
         return {
@@ -948,13 +960,30 @@ async def process_inbound_message(payload: InboundPayload):
         logger.info(f"[GROWTH GATEWAY AUTO-REPLY] Matched custom keyword rule for '{tenant_slug}' from '{clean_phone}'")
         reply = custom_auto_reply
 
+    is_group_scope = payload.conversation_scope == "GROUP" and bool(payload.group_jid)
+    is_boon_tenant = tenant_slug.lower() in ("boon", "boontrack-app-shop", "boontrack_app_shop", "app_shop", "app-shop")
+
+    if is_group_scope and is_boon_tenant:
+        from app.whatsapp.traffic_splitter import generate_group_boonpilot_reply
+        text_for_boonpilot = re.sub(r"@[\w.]+", "", incoming_text).strip() or incoming_text.strip()
+        group_reply = await generate_group_boonpilot_reply(text_for_boonpilot)
+        return {
+            "status": "success",
+            "tenant_slug": tenant_slug,
+            "conversation_scope": "GROUP",
+            "group_jid": payload.group_jid,
+            "bot_strategy": "boonpilot_group",
+            "reply_text": group_reply,
+            "media_url": None,
+        }
+
     # Entitlement Guard (ARCHITECTURE.md): CHECKOUT_LITE DILARANG menggunakan Conversational AI / LLM
     if is_checkout_lite:
         logger.warning(
             f"[ENTITLEMENT_PROTECTION_BLOCKED] Tenant '{tenant_slug}' is on tier CHECKOUT_LITE (ai_bot disabled). "
             "Skipping AI pipelines and falling back to dynamic store template."
         )
-        if not reply:
+        if not reply and not is_group_scope:
             # 1. Ganti nama toko dengan tenant_name (ambil 'BoonTrack Official Shop')
             store_name = (
                 tenant_info.get("name")
@@ -974,36 +1003,6 @@ async def process_inbound_message(payload: InboundPayload):
                 tenant_meta=tenant_meta,
             )
     else:
-        is_group_scope = payload.conversation_scope == "GROUP" and bool(payload.group_jid)
-        is_boon_tenant = tenant_slug.lower() in ("boon", "boontrack-app-shop", "boontrack_app_shop", "app_shop", "app-shop")
-
-        # =====================================================================
-        # GROUP + BOON TENANT => BoonPilot Group Brain (early return)
-        # Pipeline checkout, lead-collection, dan menu flow DIBLOKIR di grup.
-        # =====================================================================
-        if is_group_scope and is_boon_tenant:
-            from app.whatsapp.traffic_splitter import generate_group_boonpilot_reply
-            # Strip semua token mention (@boon, @support, @boontrack, @081215567168, dll)
-            # agar BoonPilot Group Brain menerima pertanyaan bersih, bukan noise mention.
-            text_for_boonpilot = re.sub(r"@[\w.]+", "", incoming_text).strip()
-            if not text_for_boonpilot:
-                text_for_boonpilot = incoming_text.strip()
-            logger.info(
-                f"[GROUP_BOONPILOT] Routing mention from '{clean_phone}' in group '{payload.group_jid}' "
-                f"-> BoonPilot Group Brain | text_clean='{text_for_boonpilot[:80]}'"
-            )
-            group_reply = await generate_group_boonpilot_reply(text_for_boonpilot)
-            logger.info(f"[GROUP_BOONPILOT REPLY] ({len(group_reply)} chars): '{group_reply[:120]}'")
-            return {
-                "status": "success",
-                "tenant_slug": tenant_slug,
-                "conversation_scope": "GROUP",
-                "group_jid": payload.group_jid,
-                "bot_strategy": "boonpilot_group",
-                "reply_text": group_reply,
-                "media_url": None,
-            }
-
         engine_res = None
         inbound_history = []
         if not reply:
@@ -1306,7 +1305,7 @@ async def process_inbound_message(payload: InboundPayload):
                 f"Ada yang bisa kami bantu lagi untuk toko atau layanan *{store_name}*, Kak? 😊\n\n"
                 f"Katalog & pemesanan resmi: https://shop.boontrack.com/{tenant_slug}"
             )
-        else:
+        elif not is_group_scope:
             from app.whatsapp.traffic_splitter import get_tenant_greeting_message
             reply = get_tenant_greeting_message(
                 store_name=store_name,
@@ -2280,6 +2279,7 @@ async def process_evolution_webhook_payload(payload: Dict[str, Any], tenant_slug
         sender_phone=sender_phone,
         incoming_text=incoming_text,
         sender_name=sender_name,
+        conversation_scope=conversation_scope,
     )
     if evo_toggle_res and evo_toggle_res.get("handled"):
         action = evo_toggle_res.get("action")

@@ -234,15 +234,31 @@ XENDIT_PAID_PAYLOAD = {
 
 
 @patch.dict(os.environ, {"XENDIT_WEBHOOK_VERIFICATION_TOKEN": XENDIT_CALLBACK_TOKEN})
+@patch("app.routes.xendit._record_settlement_and_ledger_sync", return_value={"status": "SETTLED"})
+@patch("app.routes.xendit._lookup_persisted_order_sync", return_value=None)
+@patch("app.routes.xendit._check_db_idempotency_sync", return_value=None)
 @patch("app.routes.xendit.xendit_service")
 @patch("app.routes.xendit.get_supabase")
 @patch("app.routes.xendit.asyncio.create_task")
-def test_xendit_paid_triggers_digital_fulfillment(mock_create_task, mock_get_sb, mock_xendit_svc):
+def test_xendit_paid_triggers_digital_fulfillment(
+    mock_create_task, mock_get_sb, mock_xendit_svc, _mock_db_idem, _mock_db_lookup, _mock_db_settle
+):
     """POST /api/v1/payments/xendit/callback with status=PAID should schedule fulfill_if_digital."""
-    from unittest.mock import patch as _patch
+    def _close_coro(coro, *args, **kwargs):
+        if hasattr(coro, "close"):
+            coro.close()
+        return MagicMock()
 
+    mock_create_task.side_effect = _close_coro
     mock_xendit_svc.is_settled.return_value = False
     mock_xendit_svc.mark_settled.return_value = None
+    mock_xendit_svc.get_intent.return_value = {
+        "external_id": XENDIT_PAID_PAYLOAD["external_id"],
+        "amount": XENDIT_PAID_PAYLOAD["amount"],
+        "tenant_id": XENDIT_PAID_PAYLOAD["tenant_id"],
+        "customer_email": XENDIT_PAID_PAYLOAD["customer_email"],
+        "customer_phone": XENDIT_PAID_PAYLOAD["customer_phone"],
+    }
     mock_get_sb.return_value = None  # skip DB writes for this test
 
     res = client.post(
@@ -261,10 +277,13 @@ def test_xendit_paid_triggers_digital_fulfillment(mock_create_task, mock_get_sb,
 
 
 @patch.dict(os.environ, {"XENDIT_WEBHOOK_VERIFICATION_TOKEN": XENDIT_CALLBACK_TOKEN})
+@patch("app.routes.xendit._check_db_idempotency_sync", return_value=None)
 @patch("app.routes.xendit.xendit_service")
 @patch("app.routes.xendit.get_supabase")
 @patch("app.routes.xendit.asyncio.create_task")
-def test_xendit_failed_status_does_not_trigger_fulfillment(mock_create_task, mock_get_sb, mock_xendit_svc):
+def test_xendit_failed_status_does_not_trigger_fulfillment(
+    mock_create_task, mock_get_sb, mock_xendit_svc, _mock_db_idem
+):
     """Xendit FAILED/EXPIRED status must NOT trigger digital fulfillment."""
     mock_xendit_svc.is_settled.return_value = False
     mock_xendit_svc.mark_settled.return_value = None
@@ -306,9 +325,10 @@ def test_xendit_wrong_callback_token_returns_403():
 
 
 @patch.dict(os.environ, {"XENDIT_WEBHOOK_VERIFICATION_TOKEN": XENDIT_CALLBACK_TOKEN})
+@patch("app.routes.xendit._check_db_idempotency_sync", return_value=None)
 @patch("app.routes.xendit.xendit_service")
 @patch("app.routes.xendit.get_supabase")
-def test_xendit_idempotent_duplicate_returns_already_processed(mock_get_sb, mock_xendit_svc):
+def test_xendit_idempotent_duplicate_returns_already_processed(mock_get_sb, mock_xendit_svc, _mock_db_idem):
     """Duplicate Xendit callback for same external_id → ALREADY_PROCESSED (no double fulfillment)."""
     mock_xendit_svc.is_settled.return_value = True  # already settled
     mock_get_sb.return_value = None
@@ -323,4 +343,3 @@ def test_xendit_idempotent_duplicate_returns_already_processed(mock_get_sb, mock
     data = res.json()
     assert data["status"] == "ALREADY_PROCESSED"
     assert data.get("idempotent") is True
-

@@ -6,7 +6,11 @@ from typing import Dict, Any, Optional
 from fastapi import HTTPException
 from supabase import Client
 
+from app.core.database import normalize_db_row
+from app.services.affiliate_service import is_class_1_commission_eligible
 from app.services.whatsapp_delivery_service import WhatsAppDeliveryService
+
+
 
 logger = logging.getLogger("boontrack.payment")
 
@@ -146,8 +150,23 @@ class PaymentOrchestrator:
                 logger.warning(f"[Payment] Auto-order insert note: {ins_err}")
                 order = new_order
         else:
-            order = order_res.data[0]
+            order = normalize_db_row(
+                order_res.data[0],
+                (
+                    "id",
+                    "order_id",
+                    "status",
+                    "gross_amount",
+                    "affiliate_id",
+                    "affiliate_code",
+                    "manager_id",
+                    "tenant_slug",
+                    "customer_phone",
+                    "product_title",
+                ),
+            ) or {}
             current_ord_status = str(order.get("status") or "").upper()
+
             if current_ord_status in ("PAID", "LUNAS", "CONFIRMED", "SETTLED"):
                 logger.warning(f"[Payment] Order {external_id} was already marked as {current_ord_status}.")
                 self.supabase.table("payment_events").update({"status": "PROCESSED_DUPLICATE_ORDER"}).eq("event_id", event_id).execute()
@@ -209,14 +228,36 @@ class PaymentOrchestrator:
                 aff_lookup_val = affiliate_id or affiliate_code
                 if aff_lookup_val:
                     aff_res = self.supabase.table("affiliates").select(
-                        "commission_rate"
+                        "*"
                     ).eq(aff_lookup_key, aff_lookup_val).execute()
 
                     if aff_res.data:
-                        aff_row = aff_res.data[0]
-                        db_rate = aff_row.get("commission_rate")
-                        if db_rate is not None:
-                            affiliate_rate = float(db_rate)
+                        aff_row = normalize_db_row(
+                            aff_res.data[0],
+                            (
+                                "id",
+                                "auth_user_id",
+                                "identity_class",
+                                "classification",
+                                "status",
+                                "commission_rate",
+                                "reconciliation_action",
+                                "reconciliation_status",
+                                "metadata",
+                            ),
+                        ) or {}
+                        if not is_class_1_commission_eligible(aff_row)[0]:
+                            logger.warning(
+                                f"[Payment] Affiliate '{aff_lookup_val}' is not Class 1 eligible (manual review only); skipping automatic commission for order {external_id}."
+                            )
+                            affiliate_rate = 0.0
+                            manager_rate = 0.0
+                        else:
+                            db_rate = aff_row.get("commission_rate")
+                            if db_rate is not None:
+                                affiliate_rate = float(db_rate)
+
+
 
                 # ── Jika AM direct (tidak ada affiliate mitra): 30% ke AM ──
                 if manager_id and not affiliate_id and not affiliate_code:
@@ -260,39 +301,54 @@ class PaymentOrchestrator:
                     "status": "PENDING_PAYOUT"
                 }
 
-                self.supabase.table("commission_ledger").insert(ledger_payload).execute()
-                logger.info(f"[Payment] Logged commission ledger for Order {external_id} (Ref: {affiliate_code})")
-
-                # Update Daily Aggregate Stats jika affiliate_id tersedia
-                if affiliate_id:
-                    today_str = date.today().isoformat()
-                    stats_res = self.supabase.table("affiliate_daily_stats").select("*").match({
-                        "stat_date": today_str,
-                        "affiliate_id": affiliate_id
-                    }).execute()
-
-                    if stats_res.data:
-                        stat_row = stats_res.data[0]
-                        self.supabase.table("affiliate_daily_stats").update({
-                            "paid_orders": stat_row["paid_orders"] + 1,
-                            "total_revenue": float(stat_row["total_revenue"]) + amount,
-                            "total_commission": float(stat_row["total_commission"]) + affiliate_commission
-                        }).eq("id", stat_row["id"]).execute()
+                try:
+                    self.supabase.table("commission_ledger").insert(ledger_payload).execute()
+                    logger.info(f"[Payment] Logged commission ledger for Order {external_id} (Ref: {affiliate_code})")
+                except Exception as comm_ins_err:
+                    err_s = str(comm_ins_err).lower()
+                    if "23505" in err_s or "duplicate key" in err_s or "unique constraint" in err_s:
+                        logger.info(f"[Payment] Idempotent commission ledger hit for Order {external_id}; duplicate skipped.")
                     else:
-                        self.supabase.table("affiliate_daily_stats").insert({
+                        raise
+
+
+                # Update Daily Aggregate Stats jika affiliate_id tersedia (non-critical analytics)
+                if affiliate_id:
+                    try:
+                        today_str = date.today().isoformat()
+                        stats_res = self.supabase.table("affiliate_daily_stats").select("*").match({
                             "stat_date": today_str,
-                            "affiliate_id": affiliate_id,
-                            "total_clicks": 0,
-                            "total_orders": 1,
-                            "paid_orders": 1,
-                            "total_revenue": amount,
-                            "total_commission": affiliate_commission
+                            "affiliate_id": affiliate_id
                         }).execute()
+
+                        if stats_res.data:
+                            stat_row = stats_res.data[0]
+                            self.supabase.table("affiliate_daily_stats").update({
+                                "paid_orders": stat_row["paid_orders"] + 1,
+                                "total_revenue": float(stat_row["total_revenue"]) + amount,
+                                "total_commission": float(stat_row["total_commission"]) + affiliate_commission
+                            }).eq("id", stat_row["id"]).execute()
+                        else:
+                            self.supabase.table("affiliate_daily_stats").insert({
+                                "stat_date": today_str,
+                                "affiliate_id": affiliate_id,
+                                "total_clicks": 0,
+                                "total_orders": 1,
+                                "paid_orders": 1,
+                                "total_revenue": amount,
+                                "total_commission": affiliate_commission
+                            }).execute()
+                    except Exception as stats_err:
+                        logger.warning(f"[Payment] Daily stats update warning for order {external_id}: {stats_err}")
 
             except AssertionError as ae:
                 logger.error(f"[Payment] Commission guard FAILED for order {external_id}: {ae}")
+                raise RuntimeError(f"[Payment FAIL-CLOSED] Commission guard failed for order '{external_id}': {ae}") from ae
             except Exception as e:
-                logger.error(f"[Payment] Commission ledger recording error: {str(e)}")
+                logger.error(f"[Payment] Commission ledger recording error for order {external_id}: {str(e)}")
+                raise RuntimeError(
+                    f"[Payment FAIL-CLOSED] Failed to persist commission ledger for order '{external_id}': {e}"
+                ) from e
 
         # 6. TRIGGER WHATSAPP AUTO-DELIVERY
         customer_phone = order.get("customer_phone") or order.get("buyer_phone")

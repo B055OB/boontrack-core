@@ -432,6 +432,66 @@ async def execute_meta_broadcast(
     """Executes asynchronous broadcast sending with rate limiting and database logging."""
     logger.info(f"[Meta Broadcast Start] Broadcast ID: {broadcast_id} | Total Recipients: {len(recipients)}")
     
+    # [OPERATIONAL POLICY GUARD] Outbound Alumni Broadcast Hold
+    # Fail-closed: Alumni campaign broadcast execution is strictly held by default until separately authorized.
+    if template_name in ("alumni_cpm_metode", "alumni_cpm_metode_rahasia_v1"):
+        val = os.getenv("ONLINEBOOST_ALUMNI_BROADCAST_HOLD", "true").strip().lower()
+        if val not in ("false", "0", "off", "no"):
+            logger.warning(
+                f"[Meta Broadcast HOLD] Broadcast ID '{broadcast_id}' for template '{template_name}' "
+                f"blocked by ONLINEBOOST_ALUMNI_BROADCAST_HOLD=true. Zero outbound messages dispatched."
+            )
+            BROADCAST_LOGS[broadcast_id] = {
+                "broadcast_id": broadcast_id,
+                "template_name": template_name,
+                "language_code": language_code,
+                "total": len(recipients),
+                "status": "HELD",
+                "reason": "ONLINEBOOST_ALUMNI_BROADCAST_HOLD_ACTIVE",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "stats": {
+                    "sent": 0,
+                    "failed": 0,
+                    "delivered": 0,
+                    "read": 0,
+                },
+                "items_by_mid": {},
+                "results": [],
+            }
+            # Synchronize parent campaign status if this broadcast is tied to an Academy campaign
+            try:
+                from app.services.academy_service import AcademyBroadcastCampaignManager
+                for c_id, c_data in AcademyBroadcastCampaignManager._CAMPAIGNS.items():
+                    if c_data.get("broadcast_id") == broadcast_id:
+                        c_data["status"] = "HELD"
+                        c_data["hold_reason"] = "ONLINEBOOST_ALUMNI_BROADCAST_HOLD_ACTIVE"
+            except Exception as e:
+                logger.debug(f"[Broadcast Campaign Sync Note] {e}")
+            return
+
+    # [CREDENTIAL INTEGRITY GUARD] Fail-closed if phone ID or permanent token is missing
+    if not phone_number_id or not permanent_access_token:
+        logger.error(
+            f"[Meta Broadcast REJECTED] Incomplete credentials for tenant '{tenant_id}': "
+            f"phone_number_id='{phone_number_id}', token provided: {bool(permanent_access_token)}"
+        )
+        BROADCAST_LOGS[broadcast_id] = {
+            "broadcast_id": broadcast_id,
+            "template_name": template_name,
+            "language_code": language_code,
+            "total": len(recipients),
+            "status": "FAILED",
+            "error": "INCOMPLETE_CREDENTIALS",
+            "reason": "Missing phone_number_id or permanent_access_token",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "stats": {"sent": 0, "failed": len(recipients), "delivered": 0, "read": 0},
+            "items_by_mid": {},
+            "results": [],
+        }
+        return
+
     BROADCAST_LOGS[broadcast_id] = {
         "broadcast_id": broadcast_id,
         "template_name": template_name,
@@ -456,11 +516,14 @@ async def execute_meta_broadcast(
     for item in recipients:
         if isinstance(item, dict):
             phone = str(item.get("phone") or item.get("recipient") or item.get("number") or "")
-            # Support per-recipient parameter override
-            recipient_params = item.get("parameters") or item.get("params") or body_parameters
+            # Support per-recipient parameter override with fallback to 'name' or 'Kak'
+            recipient_params = item.get("parameters") or item.get("params")
+            if not recipient_params:
+                name_val = item.get("name") or (body_parameters[0] if body_parameters else "Kak")
+                recipient_params = [str(name_val)]
         else:
             phone = str(item)
-            recipient_params = body_parameters
+            recipient_params = body_parameters or ["Kak"]
 
         clean_phone = normalize_phone_number(phone)
         if not clean_phone:
@@ -543,6 +606,14 @@ async def execute_meta_broadcast(
 
     BROADCAST_LOGS[broadcast_id]["status"] = "completed"
     BROADCAST_LOGS[broadcast_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        from app.services.academy_service import AcademyBroadcastCampaignManager
+        for c_id, c_data in AcademyBroadcastCampaignManager._CAMPAIGNS.items():
+            if c_data.get("broadcast_id") == broadcast_id:
+                c_data["status"] = "COMPLETED"
+                c_data["completed_at"] = datetime.now(timezone.utc).isoformat()
+    except Exception:
+        pass
     logger.info(
         f"[Meta Broadcast Finished] ID: {broadcast_id} | "
         f"Sent: {BROADCAST_LOGS[broadcast_id]['stats']['sent']} | "

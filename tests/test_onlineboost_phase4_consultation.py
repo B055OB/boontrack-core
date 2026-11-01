@@ -1909,7 +1909,7 @@ async def test_registration_simple_line_parser_nama_email():
     phone = "6281234567089"
     academy_bot.set_session(phone, state=STATE_CONSULTATION, name="Kak", tenant_id="onlineboost")
     inbound_reg = "Nama : Kevin Sanjaya\nEmail : kevin.sanjaya@example.com"
-    
+
     with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
         res = await academy_bot.process_inbound(
             sender_phone=phone,

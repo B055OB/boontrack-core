@@ -122,12 +122,26 @@ class TestSprint1Tahap1(unittest.TestCase):
         self.assertIn("5802ID", dynamic_str)
 
     @patch("app.services.waba_notification_service.dispatch_payment_success_notifications", new_callable=AsyncMock)
+    @patch(
+        "app.routes.xendit._lookup_persisted_order_sync",
+        return_value={
+            "id": "ORDER-CPM-1000-NEW",
+            "tenant_slug": "onlineboost",
+            "gross_amount": 1000,
+            "customer_phone": "081299998888",
+            "product_title": "Modul Praktis CPM 24 Jam",
+            "status": "PENDING",
+        },
+    )
     @patch("app.routes.xendit._record_settlement_and_ledger_sync")
     @patch("app.routes.xendit._check_db_idempotency_sync", return_value=None)
     @patch("app.routes.xendit.get_supabase")
     @patch("app.routes.xendit.send_whatsapp_text", new_callable=AsyncMock)
     @patch("app.routes.xendit.send_ereceipt_whatsapp", new_callable=AsyncMock)
-    def test_xendit_callback_cpm_24jam_rp1000_records_lunas(self, mock_ereceipt, mock_send_text, mock_get_supabase, mock_db_check, mock_db_settle, mock_notif):
+    def test_xendit_callback_cpm_24jam_rp1000_records_lunas(
+        self, mock_ereceipt, mock_send_text, mock_get_supabase, mock_db_check, mock_db_settle, _mock_db_lookup, mock_notif
+    ):
+
         """Transaksi Rp1.000 pada 'Modul Praktis CPM 24 Jam' mencatat status LUNAS ke Supabase dan mengirim konfirmasi."""
         mock_supabase = MagicMock()
         mock_table = MagicMock()

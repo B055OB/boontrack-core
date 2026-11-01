@@ -14,6 +14,7 @@ Verifies:
 """
 
 import os
+import asyncio
 import pytest
 import re
 from datetime import datetime, timezone, timedelta
@@ -33,6 +34,7 @@ from app.services.academy_service import (
     generate_single_use_telegram_link,
     is_academy_trigger_message,
     academy_bot,
+
     academy_campaign_mgr,
     _ACADEMY_SESSIONS,
     _ACADEMY_INVOICES,
@@ -291,7 +293,6 @@ async def test_state_1_issuing_payment_on_email_received():
         assert session.get("order_id") is None
 
     # 3. Explicit Isolated Happy Path: Ketika strict hold secara eksplisit dibuka via test-only config
-    import os
     with patch.dict(os.environ, {
         "ONLINEBOOST_PAYMENT_STRICT_HOLD": "false",
         "PILOT_INTERNAL_WHITELIST": sender_phone,
@@ -453,28 +454,37 @@ def test_academy_broadcast_campaign_manager():
     assert campaign["campaign_id"] == "campaign_bta_alumni_mayar_400"
     assert campaign["total_recipients"] == 400
     assert len(campaign["recipients"]) == 400
-    assert campaign["template_name"] == "warm_launch_alumni_mayar_249k"
+    assert campaign["template_name"] == "alumni_cpm_metode"
+    assert campaign["language_code"] == "en"
     assert campaign["status"] == "DRAFT"
     assert campaign["price"] == 249000
 
     # Naskah broadcast harus memuat trigger Call to Action (CTA)
     naskah = campaign["broadcast_text"]
-    assert "alumni CPM Mayar" in naskah
-    assert "Rp 249.000" in naskah
-    assert "Halo, saya alumni CPM Mayar dan ingin amankan akses privilege Rp249.000." in naskah
+    assert "Halo Kak {{1}}" in naskah
+    assert "kelas iklan CPM" in naskah
+    assert "Balas MAU aja" in naskah
+    assert campaign["cta_button_text"] == "MAU"
+    assert campaign["cta_payload"] == "MAU"
+
 
 
 @pytest.mark.asyncio
 async def test_academy_broadcast_campaign_queue():
     """Validasi antrean broadcast campaign yang terhubung ke execute_meta_broadcast."""
-    with patch("app.services.meta_waba_service.execute_meta_broadcast", new_callable=AsyncMock) as mock_exec:
+    with patch.dict(os.environ, {
+        "ONLINEBOOST_WABA_PHONE_NUMBER_ID": "1419090974617162",
+        "ONLINEBOOST_PERMANENT_TOKEN": "mock_test_token",
+        "ONLINEBOOST_ALUMNI_BROADCAST_HOLD": "true",
+    }), patch("app.services.meta_waba_service.execute_meta_broadcast", new_callable=AsyncMock) as mock_exec:
         queue_res = await academy_campaign_mgr.queue_broadcast(
             phone_number_id="1419090974617162",
             tenant_id="onlineboost",
             rate_limit_per_second=25,
         )
 
-        assert queue_res["status"] == "QUEUED"
+        assert queue_res["status"] == "HELD"
+        assert queue_res["hold_reason"] == "ONLINEBOOST_ALUMNI_BROADCAST_HOLD_ACTIVE"
         assert queue_res["broadcast_id"].startswith("bcast_bta_")
         assert queue_res["total_recipients"] == 400
         assert queue_res["rate_limit_per_second"] == 25
@@ -573,14 +583,279 @@ def test_fastapi_academy_campaign_draft_and_queue_endpoints():
     draft_data = resp_draft.json()
     assert draft_data["status"] == "success"
     assert draft_data["campaign"]["total_recipients"] == 400
-    assert draft_data["campaign"]["template_name"] == "warm_launch_alumni_mayar_249k"
+    assert draft_data["campaign"]["template_name"] == "alumni_cpm_metode"
+    assert draft_data["campaign"]["language_code"] == "en"
 
     # POST Queue Campaign
-    with patch("app.services.meta_waba_service.execute_meta_broadcast", new_callable=AsyncMock):
+    with patch.dict(os.environ, {
+        "ONLINEBOOST_WABA_PHONE_NUMBER_ID": "1419090974617162",
+        "ONLINEBOOST_PERMANENT_TOKEN": "mock_test_token",
+        "ONLINEBOOST_ALUMNI_BROADCAST_HOLD": "true",
+    }), patch("app.services.meta_waba_service.execute_meta_broadcast", new_callable=AsyncMock):
         resp_queue = client.post(
             "/api/v1/academy/campaign/queue?phone_number_id=1419090974617162&tenant_id=onlineboost"
         )
         assert resp_queue.status_code == 200
         queue_data = resp_queue.json()
-        assert queue_data["status"] == "QUEUED"
+        assert queue_data["status"] == "HELD"
+        assert queue_data["hold_reason"] == "ONLINEBOOST_ALUMNI_BROADCAST_HOLD_ACTIVE"
         assert queue_data["total_recipients"] == 400
+
+# ============================================================================
+# 7. TEST RECONCILED WABA TEMPLATE alumni_cpm_metode (PR #24 & P1 Remediation)
+# ============================================================================
+
+def test_alumni_cpm_metode_payload_contract():
+    """Validasi transformasi payload Meta Graph API untuk template canonical alumni_cpm_metode."""
+    from app.services.meta_waba_service import meta_waba_dispatcher
+
+    # Case A: Recipient dengan nama spesifik
+    payload = meta_waba_dispatcher.transform_template_payload(
+        clean_phone_number="6288226098088",
+        template_name="alumni_cpm_metode",
+        language_code="en",
+        body_parameters=["Budi"],
+    )
+
+    assert payload == {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": "6288226098088",
+        "type": "template",
+        "template": {
+            "name": "alumni_cpm_metode",
+            "language": {"code": "en"},
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [{"type": "text", "text": "Budi"}],
+                }
+            ],
+        },
+    }
+
+    # Case B: Fallback nama alumni -> "Kak"
+    payload_fallback = meta_waba_dispatcher.transform_template_payload(
+        clean_phone_number="6288226098088",
+        template_name="alumni_cpm_metode",
+        language_code="en",
+        body_parameters=["Kak"],
+    )
+    assert payload_fallback["template"]["components"][0]["parameters"][0]["text"] == "Kak"
+
+
+def test_alumni_cpm_metode_template_registry_and_language_validation():
+    """Validasi registry template resmi alumni_cpm_metode dan backward-compatible alias."""
+    from fastapi import HTTPException
+    from app.routes.meta_waba_routes import validate_template_ownership_and_language
+
+    # 1. Valid: canonical template name alumni_cpm_metode pada tenant onlineboost
+    lang = validate_template_ownership_and_language(
+        template_name="alumni_cpm_metode",
+        language_code="en",
+        tenant_slug="onlineboost",
+    )
+    assert lang == "en"
+
+    # 2. Valid: backward-compatible alias alumni_cpm_metode_rahasia_v1
+    lang_alias = validate_template_ownership_and_language(
+        template_name="alumni_cpm_metode_rahasia_v1",
+        language_code="en",
+        tenant_slug="onlineboost",
+    )
+    assert lang_alias == "en"
+
+    # 3. Invalid: bahasa 'id' harus ditolak karena template di Meta terdaftar sebagai 'en'
+    with pytest.raises(HTTPException) as exc_lang:
+        validate_template_ownership_and_language(
+            template_name="alumni_cpm_metode",
+            language_code="id",
+            tenant_slug="onlineboost",
+        )
+    assert exc_lang.value.status_code == 400
+    assert "Invalid language code 'id'" in exc_lang.value.detail
+
+
+@pytest.mark.asyncio
+async def test_broadcast_execution_hold_default_fail_closed_zero_meta_dispatch():
+    """Fail-closed: broadcast hold aktif secara default, nol pesan dikirim ke Meta API."""
+    from app.services.meta_waba_service import execute_meta_broadcast, meta_waba_dispatcher, BROADCAST_LOGS
+
+    broadcast_id = "test_hold_bcast_001"
+    with patch.dict(os.environ, {"ONLINEBOOST_ALUMNI_BROADCAST_HOLD": "true"}),          patch.object(meta_waba_dispatcher, "send_template", new_callable=AsyncMock) as mock_send:
+
+        await execute_meta_broadcast(
+            broadcast_id=broadcast_id,
+            template_name="alumni_cpm_metode",
+            language_code="en",
+            body_parameters=["Budi"],
+            recipients=[{"phone": "6288226098088", "name": "Budi"}],
+            phone_number_id="1419090974617162",
+            permanent_access_token="mock_token",
+            tenant_id="onlineboost",
+        )
+
+        # Verifikasi dispatcher TIDAK dipanggil sama sekali (0 outbound messages)
+        mock_send.assert_not_called()
+        assert BROADCAST_LOGS[broadcast_id]["status"] == "HELD"
+        assert BROADCAST_LOGS[broadcast_id]["reason"] == "ONLINEBOOST_ALUMNI_BROADCAST_HOLD_ACTIVE"
+        assert BROADCAST_LOGS[broadcast_id]["stats"]["sent"] == 0
+
+
+@pytest.mark.asyncio
+async def test_execute_meta_broadcast_recipient_parameter_fallback_kak():
+    """Verifikasi fallback nama ke 'Kak' saat parameter kosong pada mode mock dispatch."""
+    from app.services.meta_waba_service import execute_meta_broadcast, meta_waba_dispatcher
+
+    broadcast_id = "test_fallback_bcast_002"
+    with patch.dict(os.environ, {"ONLINEBOOST_ALUMNI_BROADCAST_HOLD": "false"}),          patch.object(meta_waba_dispatcher, "send_template", new_callable=AsyncMock) as mock_send:
+
+        mock_send.return_value = {"success": True, "message_id": "wamid.HBgL..."}
+
+        await execute_meta_broadcast(
+            broadcast_id=broadcast_id,
+            template_name="alumni_cpm_metode",
+            language_code="en",
+            body_parameters=[],
+            recipients=[{"phone": "6288226098088"}],
+            phone_number_id="1419090974617162",
+            permanent_access_token="mock_token",
+            tenant_id="onlineboost",
+        )
+
+        mock_send.assert_called_once()
+        call_kwargs = mock_send.call_args[1]
+        assert call_kwargs["template_name"] == "alumni_cpm_metode"
+        assert call_kwargs["language_code"] == "en"
+        assert call_kwargs["body_parameters"] == ["Kak"]
+
+
+@pytest.mark.asyncio
+async def test_queue_to_execution_lifecycle_status_consistency_under_hold():
+    """
+    Validasi konsistensi status parent campaign dan broadcast logs:
+    Saat hold aktif, parent campaign dan broadcast log keduanya berstatus 'HELD'
+    dengan reason 'ONLINEBOOST_ALUMNI_BROADCAST_HOLD_ACTIVE', dan 0 panggilan dispatcher.
+    """
+    from app.services.meta_waba_service import meta_waba_dispatcher, BROADCAST_LOGS
+
+    with patch.dict(os.environ, {
+        "ONLINEBOOST_WABA_PHONE_NUMBER_ID": "1419090974617162",
+        "ONLINEBOOST_PERMANENT_TOKEN": "mock_test_token",
+        "ONLINEBOOST_ALUMNI_BROADCAST_HOLD": "true",
+    }), patch.object(meta_waba_dispatcher, "send_template", new_callable=AsyncMock) as mock_send:
+
+        res = await academy_campaign_mgr.queue_broadcast(
+            phone_number_id="1419090974617162",
+            tenant_id="onlineboost",
+        )
+
+        broadcast_id = res["broadcast_id"]
+        # Allow async task in queue_broadcast to run
+        await asyncio.sleep(0.05)
+
+        # 1. Response status is HELD (not misleadingly QUEUED)
+        assert res["status"] == "HELD"
+        assert res["hold_reason"] == "ONLINEBOOST_ALUMNI_BROADCAST_HOLD_ACTIVE"
+
+        # 2. Parent campaign status in campaign manager is HELD
+        campaign = academy_campaign_mgr.get_or_create_draft_campaign()
+        assert campaign["status"] == "HELD"
+        assert campaign["hold_reason"] == "ONLINEBOOST_ALUMNI_BROADCAST_HOLD_ACTIVE"
+
+        # 3. Broadcast execution log status is HELD
+        assert broadcast_id in BROADCAST_LOGS
+        assert BROADCAST_LOGS[broadcast_id]["status"] == "HELD"
+        assert BROADCAST_LOGS[broadcast_id]["reason"] == "ONLINEBOOST_ALUMNI_BROADCAST_HOLD_ACTIVE"
+
+        # 4. Zero messages dispatched to Meta API
+        mock_send.assert_not_called()
+        assert BROADCAST_LOGS[broadcast_id]["stats"]["sent"] == 0
+
+
+def test_credential_pair_integrity_in_queue_broadcast():
+    """Validasi integritas pasangan kredensial (phone_number_id, permanent_access_token)."""
+    # 1. Missing access token -> fails closed with Incomplete credentials
+    with patch.dict(os.environ, {
+        "ONLINEBOOST_WABA_PHONE_NUMBER_ID": "1419090974617162",
+        "ONLINEBOOST_PERMANENT_TOKEN": "",
+    }, clear=True):
+        with pytest.raises(ValueError) as exc1:
+            academy_campaign_mgr.resolve_and_validate_credentials(
+                tenant_id="onlineboost",
+                phone_number_id="1419090974617162",
+            )
+        assert "Incomplete credentials" in str(exc1.value)
+
+    # 2. Missing phone_number_id -> fails closed with Incomplete credentials
+    with patch.dict(os.environ, {
+        "ONLINEBOOST_WABA_PHONE_NUMBER_ID": "",
+        "ONLINEBOOST_PERMANENT_TOKEN": "mock_token",
+    }, clear=True):
+        with pytest.raises(ValueError) as exc2:
+            academy_campaign_mgr.resolve_and_validate_credentials(
+                tenant_id="onlineboost",
+                phone_number_id=None,
+            )
+        assert "Incomplete credentials" in str(exc2.value)
+
+    # 3. Mismatched phone_number_id override -> fails closed with Credential pair mismatch
+    with patch.dict(os.environ, {
+        "ONLINEBOOST_WABA_PHONE_NUMBER_ID": "1419090974617162",
+        "ONLINEBOOST_PERMANENT_TOKEN": "mock_token",
+    }, clear=True):
+        with pytest.raises(ValueError) as exc3:
+            academy_campaign_mgr.resolve_and_validate_credentials(
+                tenant_id="onlineboost",
+                phone_number_id="999999999999",
+            )
+        assert "Credential pair mismatch" in str(exc3.value)
+
+    # 4. Valid credential pair -> resolves successfully
+    with patch.dict(os.environ, {
+        "ONLINEBOOST_WABA_PHONE_NUMBER_ID": "1419090974617162",
+        "ONLINEBOOST_PERMANENT_TOKEN": "mock_token",
+    }, clear=True):
+        p_id, tok = academy_campaign_mgr.resolve_and_validate_credentials(
+            tenant_id="onlineboost",
+            phone_number_id="1419090974617162",
+        )
+        assert p_id == "1419090974617162"
+        assert tok == "mock_token"
+
+
+@pytest.mark.asyncio
+async def test_inbound_quick_reply_button_1_mau_triggers_qualification():
+    """Inbound button 1 'MAU' memicu bot greeting kualifikasi (STATE_QUALIFYING)."""
+    sender_phone = "6288226098088"
+    academy_bot.set_session(
+        sender_phone,
+        state=0,
+        name="Budi",
+        tenant_id="onlineboost",
+    )
+
+    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send:
+        res = await academy_bot.process_inbound(
+            sender_phone=sender_phone,
+            incoming_text="MAU",
+            contact_name="Budi",
+            tenant_id="onlineboost",
+        )
+
+        assert res["handled"] is True
+        assert res["action"] == "ALUMNI_MAU_QUALIFY"
+        assert res["state"] == "STATE_QUALIFYING"
+        assert "Halo Kak! Mantap, terima kasih responsnya ya" in res["reply"]
+        assert "Kelas Inkubasi CTWA" in res["reply"]
+        mock_send.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_inbound_quick_reply_button_2_stop_triggers_opt_out_suppression():
+    """Inbound button 2 'STOP' memicu supresi opt-out permanen tanpa pesan promosi."""
+    from app.services.phone_suppression_service import is_phone_suppressed, record_durable_suppression
+
+    sender_phone = "6288299881122"
+    record_durable_suppression(sender_phone, tenant_id="onlineboost", reason="OPT_OUT_KEYWORD_STOP")
+    assert is_phone_suppressed(sender_phone, tenant_id="onlineboost") is True

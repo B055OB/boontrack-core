@@ -659,3 +659,79 @@ async def test_onlineboost_inbound_suppressed_contact_receives_zero_promotional_
         assert res2.get("reply") == ""
         # Strictly assert ZERO promotional outbound messages were dispatched
         assert mock_send_wa.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_traffic_splitter_batal_keyword_triggers_suppression_and_prevents_promotional_dispatch():
+    """Validasi kata kunci 'BATAL' di TrafficSplitter memicu supresi dan memblokir outbound promosi."""
+    from app.whatsapp.traffic_splitter import TrafficSplitter
+    from app.services.phone_suppression_service import (
+        is_phone_suppressed,
+        reset_suppression_test_state,
+        set_allow_in_memory_fallback,
+    )
+
+    set_allow_in_memory_fallback(True)
+    reset_suppression_test_state()
+    test_phone = "6289912345678"
+    ob_pid = "1419090974617162"
+
+    with patch("app.services.whatsapp.cloud_api.send_whatsapp_text", new_callable=AsyncMock) as mock_send_wa, \
+         patch("app.core.database.get_db_connection", side_effect=RuntimeError("DB offline in test")):
+
+        # 1. Turn 1: Inbound message "BATAL"
+        payload_batal = {
+            "entry": [{
+                "id": "e_batal_ob",
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": ob_pid, "display_phone_number": "6288226098088"},
+                        "messages": [{
+                            "id": "wamid_batal_01",
+                            "from": test_phone,
+                            "type": "text",
+                            "text": {"body": "BATAL"},
+                        }],
+                    }
+                }]
+            }]
+        }
+        status1, res1, _ = await TrafficSplitter.split_and_dispatch(payload_batal)
+        assert status1 == 200
+        assert res1.get("action") == "opt_out_confirmed"
+        assert res1.get("tenant") == "onlineboost"
+        assert res1.get("suppressed") is True
+        assert is_phone_suppressed(test_phone, tenant_id="onlineboost") is True
+
+        # Exactly 1 acknowledgment message sent
+        assert mock_send_wa.call_count == 1
+        ack_call_args = mock_send_wa.call_args[1]
+        assert "berhenti berlangganan" in ack_call_args["text"]
+
+        # Reset mock send count
+        mock_send_wa.reset_mock()
+
+        # 2. Turn 2: Subsequent promotional interest trigger from suppressed contact
+        payload_promo = {
+            "entry": [{
+                "id": "e_promo_after_batal",
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": ob_pid, "display_phone_number": "6288226098088"},
+                        "messages": [{
+                            "id": "wamid_promo_02",
+                            "from": test_phone,
+                            "type": "text",
+                            "text": {"body": "Halo Kak, mau info kelas CPM nya dong"},
+                        }],
+                    }
+                }]
+            }]
+        }
+        status2, res2, _ = await TrafficSplitter.split_and_dispatch(payload_promo)
+        assert status2 == 200
+        assert res2.get("action") == "suppressed_silent_drop"
+        assert res2.get("status") == "suppressed"
+        assert res2.get("reply") == ""
+        # Strictly assert ZERO promotional outbound messages were dispatched
+        assert mock_send_wa.call_count == 0

@@ -189,7 +189,7 @@ def init_test_schema():
       );
 
     INSERT INTO public.tenants (id, name, slug)
-    VALUES 
+    VALUES
       ('00000000-0000-0000-0000-00000000000a', 'Tenant Alpha', 'tenant_alpha'),
       ('00000000-0000-0000-0000-00000000000b', 'Tenant Beta', 'tenant_beta')
     ON CONFLICT (slug) DO NOTHING;
@@ -540,8 +540,11 @@ def init_test_schema():
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       paid_at TIMESTAMPTZ,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      product_type VARCHAR DEFAULT 'SHOP'
+      product_type VARCHAR DEFAULT 'SHOP',
+      CONSTRAINT uq_affiliate_commissions_tenant_order UNIQUE (tenant_id, order_id)
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_affiliate_commissions_tenant_order ON public.affiliate_commissions (tenant_id, order_id);
+
     ALTER TABLE public.affiliate_commissions ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.affiliate_commissions FORCE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS auth_tenant_commissions ON public.affiliate_commissions;
@@ -605,17 +608,17 @@ def init_test_schema():
     DROP VIEW IF EXISTS public.v_affiliate_payout_summary CASCADE;
     DROP VIEW IF EXISTS public.chat_sessions CASCADE;
 
-    CREATE OR REPLACE VIEW public.affiliate_ledger 
-    WITH (security_invoker = true) AS 
+    CREATE OR REPLACE VIEW public.affiliate_ledger
+    WITH (security_invoker = true) AS
     SELECT * FROM public.affiliate_commissions;
 
-    CREATE OR REPLACE VIEW public.v_affiliate_ledger 
-    WITH (security_invoker = true) AS 
+    CREATE OR REPLACE VIEW public.v_affiliate_ledger
+    WITH (security_invoker = true) AS
     SELECT * FROM public.affiliate_ledger;
 
-    CREATE OR REPLACE VIEW public.v_affiliate_payout_summary 
-    WITH (security_invoker = true) AS 
-    SELECT 
+    CREATE OR REPLACE VIEW public.v_affiliate_payout_summary
+    WITH (security_invoker = true) AS
+    SELECT
         a.id AS affiliate_id,
         a.name AS affiliate_name,
         a.referral_code,
@@ -628,8 +631,8 @@ def init_test_schema():
     LEFT JOIN public.affiliate_commissions c ON a.id = c.affiliate_id
     GROUP BY a.id, a.name, a.referral_code;
 
-    CREATE OR REPLACE VIEW public.chat_sessions 
-    WITH (security_invoker = true) AS 
+    CREATE OR REPLACE VIEW public.chat_sessions
+    WITH (security_invoker = true) AS
     SELECT * FROM public.conversation_sessions;
 
     -- 5. GRANTS FOR ROLE SECURITY
