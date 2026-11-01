@@ -92,6 +92,7 @@ async def test_scenario_2_direct_affiliate_only_independent():
         "id": aff_id,
         "auth_user_id": "auth-uid-indie-99",
         "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+        "is_linked": True,
         "referral_code": "indiepromo",
         "commission_rate": 20.0,
         "status": "ACTIVE",
@@ -171,6 +172,7 @@ async def test_scenario_3_multi_tier_full_affiliate_and_am():
         "id": aff_id,
         "auth_user_id": "auth-uid-teamdeal-01",
         "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+        "is_linked": True,
         "referral_code": "teamdeal",
         "commission_rate": 20.0,
         "status": "ACTIVE",
@@ -180,6 +182,7 @@ async def test_scenario_3_multi_tier_full_affiliate_and_am():
         "id": am_id,
         "auth_user_id": "auth-uid-am-sakti",
         "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+        "is_linked": True,
         "name": "Sakti Alamsyah",
         "role": "am",
         "status": "ACTIVE"
@@ -391,6 +394,7 @@ async def test_scenario_5_fail_closed_commission_persistence_raises_on_db_error(
                         "id": aff_id,
                         "auth_user_id": "auth-uid-healthy-01",
                         "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+                        "is_linked": True,
                         "referral_code": "healthy01",
                         "commission_rate": 20.0,
                         "status": "ACTIVE",
@@ -483,12 +487,25 @@ async def test_scenario_6_identity_eligibility_fail_closed_six_cases():
             },
             False,
         ),
+        (
+            "case_7_class_1_label_valid_uid_missing_positive_link_proof",
+            {
+                "id": "aff_c7",
+                "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+                "auth_user_id": "auth-uid-no-proof-007",
+                "referral_code": "c7",
+                "commission_rate": 20.0,
+                "status": "ACTIVE",
+            },
+            False,
+        ),
     ]
 
     assert is_class_1_commission_eligible({
         "id": "aff_c6b",
         "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
         "auth_user_id": "auth-uid-claimed-006",
+        "is_linked": True,
         "auth_user": {"id": "auth-uid-other-999", "status": "ACTIVE"},
         "status": "ACTIVE",
     })[0] is False
@@ -496,10 +513,45 @@ async def test_scenario_6_identity_eligibility_fail_closed_six_cases():
         "id": "aff_c6c",
         "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
         "auth_user_id": "auth-uid-disc-006",
+        "is_linked": True,
         "reconciliation_action": "FLAG_FOR_MANUAL_OPERATOR_REVIEW",
         "has_discrepancy": True,
         "status": "ACTIVE",
     })[0] is False
+
+    # CTO-PR24-REVIEW-003 Blocker A: Class 1 label + valid auth_user_id WITHOUT positive link proof must fail closed
+    assert is_class_1_commission_eligible({
+        "id": "aff_no_pos_proof_1",
+        "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+        "auth_user_id": "auth-uid-valid-777",
+        "status": "ACTIVE",
+    }) == (False, "MISSING_POSITIVE_IDENTITY_LINK")
+    assert is_class_1_commission_eligible({
+        "id": "aff_no_pos_proof_2",
+        "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+        "auth_user_id": "auth-uid-valid-778",
+        "is_linked": None,
+        "link_status": "",
+        "metadata": {},
+        "status": "ACTIVE",
+    }) == (False, "MISSING_POSITIVE_IDENTITY_LINK")
+
+    # Positive link proof variants (relationship_valid, identity_verified, link_status, metadata) must pass
+    for pos_variant in (
+        {"relationship_valid": True},
+        {"identity_verified": True},
+        {"link_status": "LINKED"},
+        {"auth_link_status": "EXACT_LINKED_HEALTHY"},
+        {"metadata": {"is_linked": True}},
+        {"metadata": {"link_status": "VERIFIED"}},
+    ):
+        assert is_class_1_commission_eligible({
+            "id": "aff_pos_ok",
+            "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+            "auth_user_id": "auth-uid-pos-ok",
+            "status": "ACTIVE",
+            **pos_variant,
+        }) == (True, "CLASS_1_EXACT_LINKED_HEALTHY")
 
     passed_cases = []
     for case_name, profile, expected_eligible in cases:
@@ -572,7 +624,23 @@ async def test_scenario_7_payable_commission_writers_fail_closed_no_in_memory_fa
     assert affiliate_service.get_commissions_by_invoice("INV-PRORATA-NONE") == []
 
     mock_sb_err = MagicMock()
-    mock_sb_err.table.return_value.upsert.return_value.execute.side_effect = RuntimeError("DB write timeout")
+
+    def _prorata_err_table(name):
+        t = MagicMock()
+        if name == "affiliates":
+            t.select.return_value.eq.return_value.execute.return_value.data = [{
+                "id": "aff-1",
+                "auth_user_id": "auth-uid-prorata-err",
+                "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+                "is_linked": True,
+                "status": "ACTIVE",
+                "commission_rate": 20.0,
+            }]
+        elif name == "affiliate_commissions":
+            t.upsert.return_value.execute.side_effect = RuntimeError("DB write timeout")
+        return t
+
+    mock_sb_err.table.side_effect = _prorata_err_table
     with patch("app.services.affiliate_service.get_supabase", return_value=mock_sb_err):
         with pytest.raises(RuntimeError, match="Failed to persist prorated upgrade commission"):
             await affiliate_service.record_prorated_upgrade_commission(
@@ -601,6 +669,7 @@ async def test_scenario_7_payable_commission_writers_fail_closed_no_in_memory_fa
         "status": "ACTIVE",
         "auth_user_id": "auth-uid-grow-fail",
         "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+        "is_linked": True,
     }
 
     def _exec_side_effect(sql, params=None):
@@ -638,6 +707,7 @@ async def test_scenario_7_payable_commission_writers_fail_closed_no_in_memory_fa
                 "id": "aff-orch-1",
                 "auth_user_id": "auth-uid-orch-1",
                 "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+                "is_linked": True,
                 "status": "ACTIVE",
                 "commission_rate": 25.0,
             }]
@@ -654,3 +724,87 @@ async def test_scenario_7_payable_commission_writers_fail_closed_no_in_memory_fa
             "status": "PAID",
             "amount": 100000,
         })
+
+
+@pytest.mark.asyncio
+async def test_scenario_8_prorated_upgrade_writer_blocks_non_class_1_and_missing_link_proof():
+    """
+    CTO-PR24-REVIEW-003 Blocker B:
+    Verify `record_prorated_upgrade_commission` and `billing_service.mark_invoice_paid`
+    enforce `is_class_1_commission_eligible` and produce 0 payable commission records
+    in `affiliate_commissions` and `self._commissions` for non-Class 1 or unlinked affiliates.
+    """
+    from app.services.billing_service import billing_service
+
+    non_eligible_profiles = [
+        (
+            "class_2_unlinked",
+            {
+                "id": "aff-prorata-c2",
+                "identity_class": "CLASS_2_UNLINKED_CANDIDATE",
+                "reconciliation_action": "FLAG_FOR_MANUAL_REVIEW",
+                "status": "ACTIVE",
+                "commission_rate": 20.0,
+            },
+            "CLASS_2_MANUAL_REVIEW_ONLY",
+        ),
+        (
+            "class_1_missing_positive_link_proof",
+            {
+                "id": "aff-prorata-no-link",
+                "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+                "auth_user_id": "auth-uid-prorata-nolink",
+                "status": "ACTIVE",
+                "commission_rate": 20.0,
+            },
+            "MISSING_POSITIVE_IDENTITY_LINK",
+        ),
+    ]
+
+    for label, aff_prof, expected_reason in non_eligible_profiles:
+        comm_writes = []
+        mock_sb = MagicMock()
+
+        def _make_sb(prof):
+            def _router(table_name):
+                t = MagicMock()
+                if table_name == "tenants":
+                    t.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                        data={"id": f"ten-{label}", "slug": f"ten-{label}", "affiliate_id": prof["id"], "metadata": {}}
+                    )
+                    t.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{"id": f"ten-{label}"}])
+                elif table_name == "affiliates":
+                    t.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[prof])
+                elif table_name == "affiliate_commissions":
+                    def _upsert(payload, **_kw):
+                        comm_writes.append(payload)
+                        m = MagicMock()
+                        m.execute.return_value = MagicMock(data=[payload])
+                        return m
+                    t.upsert.side_effect = _upsert
+                elif table_name == "payment_intents":
+                    t.upsert.return_value.execute.return_value = MagicMock(data=[{"id": "pi-1"}])
+                    t.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{"id": "pi-1"}])
+                return t
+            return _router
+
+        mock_sb.table.side_effect = _make_sb(aff_prof)
+
+        with patch("app.services.affiliate_service.get_supabase", return_value=mock_sb), \
+             patch("app.services.billing_service.get_supabase", return_value=mock_sb):
+            proration = await billing_service.calculate_upgrade_proration(
+                tenant_id_or_slug=f"ten-{label}",
+                new_tier="PRO_SCALE",
+                override_days_remaining=15,
+                override_current_tier="SOLO",
+            )
+            pay_res = await billing_service.mark_invoice_paid(proration.invoice_id, payment_ref=f"REF-{label}")
+
+        comm_entry = pay_res.get("commission_entry")
+        assert comm_entry is not None
+        assert comm_entry["status"] == "held_manual_review"
+        assert comm_entry["reason"] == expected_reason
+        assert comm_entry["amount"] == 0.0
+        assert comm_entry["payout_commission"] == 0.0
+        assert comm_writes == [], f"Expected 0 DB writes for {label}, got {comm_writes}"
+        assert affiliate_service.get_commissions_by_invoice(proration.invoice_id) == []

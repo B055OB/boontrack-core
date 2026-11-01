@@ -93,17 +93,22 @@ $$\text{Provider Gross} = \text{Platform Gross Revenue} = \text{Platform Net Rev
 - **Result:** `PASSED`
 - **Verification:** An organic tenant upgrade without referral links allocated **Rp 0** commission, inserted **0 rows** into `affiliate_commissions`, and logged the observability event `ORGANIC_SUBSCRIPTION_PROCESSED` with 100% net platform revenue.
 
-### 5.2 Anti-Ghost AM Safeguard & Fail-Closed Class 1 Eligibility Verification (CTO-PR24-REVIEW-002 Section A)
+### 5.2 Anti-Ghost AM Safeguard & Fail-Closed Class 1 Eligibility Verification (CTO-PR24-REVIEW-002 & CTO-PR24-REVIEW-003)
 - **Anti-Ghost AM:** When an independent affiliate (lacking an Account Manager) drives a sale, the AM override is suppressed completely. Zero phantom rows are generated.
 - **Strict Fail-Closed Class 1 Eligibility (`is_class_1_commission_eligible` in `app/services/affiliate_service.py`):**
-  - Never infers Class 1 from the absence of a negative flag.
+  - Never infers Class 1 or identity linkage from the absence of a negative flag.
   - Rejects records when:
     1. Identity classification is missing (`MISSING_IDENTITY_CLASS`).
     2. Classification is not **exactly** `CLASS_1_EXACT_LINKED_HEALTHY` (`CLASS_2_MANUAL_REVIEW_ONLY` or `NON_CLASS_1_INELIGIBLE_*`).
     3. `auth_user_id` is missing, blank, or invalid (`MISSING_OR_INVALID_AUTH_USER_ID`).
     4. The authoritative identity relationship cannot be established or is stale/invalid (`STALE_OR_INVALID_IDENTITY_RELATIONSHIP`).
     5. The record has manual-review or discrepancy status (`MANUAL_REVIEW_STATUS_INELIGIBLE` / `DISCREPANCY_STATUS_INELIGIBLE` / `MANUAL_REVIEW_OR_DISCREPANCY_*`).
-  - Verified by `test_scenario_6_identity_eligibility_fail_closed_six_cases`: out of all 6 mandatory test cases, **ONLY Case 5** (explicit `CLASS_1_EXACT_LINKED_HEALTHY` with valid linked `auth_user_id`) passes automatically.
+    6. **Positive Authoritative Identity Link Proof is missing (`MISSING_POSITIVE_IDENTITY_LINK` — CTO-PR24-REVIEW-003 Blocker A):** The record (or its metadata) MUST explicitly confirm an active, verified relationship (`is_linked is True` OR `relationship_valid is True` OR `identity_verified is True` OR a recognized positive `link_status` / `auth_link_status` in `_ELIGIBLE_LINK_STATUSES`). A Class 1 label + valid `auth_user_id` without positive link proof is strictly rejected.
+  - Verified by `test_scenario_6_identity_eligibility_fail_closed_six_cases`: out of all 7 mandatory test cases (including Case 7 with Class 1 label + valid `auth_user_id` but missing positive link proof), **ONLY Case 5** (explicit `CLASS_1_EXACT_LINKED_HEALTHY` with valid linked `auth_user_id` and positive link proof) passes automatically.
+- **Prorated Upgrade Writer Eligibility Guard (`record_prorated_upgrade_commission` — CTO-PR24-REVIEW-003 Blocker B):**
+  - Fetches and normalizes the affiliate record using `_AFFILIATE_ELIGIBILITY_COLUMNS` and enforces `is_class_1_commission_eligible(aff_record)` prior to any commission persistence.
+  - When `is_eligible` is `False`, logs a warning, returns `status = 'held_manual_review'` (`amount = 0.0`, `payout_commission = 0.0`), and writes **0 rows** to `affiliate_commissions` and `self._commissions`.
+  - Verified end-to-end by `test_scenario_8_prorated_upgrade_writer_blocks_non_class_1_and_missing_link_proof` and `test_prorated_upgrade_blocks_non_class_1_affiliate_zero_commission`.
 - **Fail-Closed Commission Persistence (`test_scenario_5` & `test_scenario_7`):** Verified that database persistence errors (outside unique constraint conflicts) raise an explicit `RuntimeError` across every payable commission writer and never fall back to the in-memory ledger.
 
 ### 5.3 Stop Conditions Compliance
@@ -112,12 +117,12 @@ $$\text{Provider Gross} = \text{Platform Gross Revenue} = \text{Platform Net Rev
 
 ---
 
-## 6. COMPLETE COMMISSION WRITER INVENTORY (CTO-PR24-REVIEW-002 SECTION B)
+## 6. COMPLETE COMMISSION WRITER INVENTORY (CTO-PR24-REVIEW-002 SECTION B & REVIEW-003 BLOCKER B)
 
 | # | Target Storage / Table | Writer Function & File | Caller(s) | DB Persistence Behavior | Unique Constraint / Idempotency Behavior | Failure Handling | In-Memory Fallback as Success? |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | 1 | `affiliate_commissions` + `AffiliateService._commissions` | `AffiliateService.allocate_upgrade_commission` (`app/services/affiliate_service.py`) | `process_successful_subscription` (`app/services/subscription_service.py:419`); `allocate_upgrade_commission` wrapper | Enforces `is_class_1_commission_eligible()`; inserts direct & AM override rows (`HOLDING`) into `affiliate_commissions` before caching in `self._commissions` | Pre-checks `order_id == invoice_id`; protected by `UNIQUE (tenant_id, order_id)` (`uq_affiliate_commissions_tenant_order`); `23505` returns `idempotent=True` | Fail-closed: raises `RuntimeError` if `supabase is None` or on any non-unique DB error | **NO** |
-| 2 | `affiliate_commissions` + `AffiliateService._commissions` | `AffiliateService.record_prorated_upgrade_commission` (`app/services/affiliate_service.py`) | `BillingService.mark_invoice_paid` (`app/services/billing_service.py:285`) via `POST /api/v1/billing/webhook/payment` | Upserts row (`HOLDING`) into `affiliate_commissions` before caching in `self._commissions` | Upsert with `on_conflict="tenant_id, order_id"`; `_is_unique_constraint_conflict` handles `23505` | Fail-closed: raises `RuntimeError` if `supabase is None` or on any non-unique DB error | **NO** |
+| 2 | `affiliate_commissions` + `AffiliateService._commissions` | `AffiliateService.record_prorated_upgrade_commission` (`app/services/affiliate_service.py`) | `BillingService.mark_invoice_paid` (`app/services/billing_service.py:285`) via `POST /api/v1/billing/webhook/payment` | Normalizes affiliate via `_AFFILIATE_ELIGIBILITY_COLUMNS`, enforces `is_class_1_commission_eligible()` (returns `held_manual_review` with 0 writes when ineligible); upserts row (`HOLDING`) into `affiliate_commissions` before caching in `self._commissions` | Upsert with `on_conflict="tenant_id, order_id"`; `_is_unique_constraint_conflict` handles `23505` | Fail-closed: blocks non-Class 1 (`held_manual_review`), raises `RuntimeError` if `supabase is None` or on any non-unique DB error | **NO** |
 | 3 | `affiliate_commissions` | `process_order_paid_growth_event` (`app/services/growth_service.py`) | `simulate_order_paid_fastapi` / `aiohttp_simulate_paid_handler` (`POST /api/v1/growth/simulate/order-paid`) | Enforces `is_class_1_commission_eligible()`; executes PostgreSQL `INSERT INTO affiliate_commissions (..., status='APPROVED')` + `conn.commit()` | `ON CONFLICT (tenant_id, order_id) DO UPDATE ... WHERE status NOT IN ('APPROVED', 'PAID', 'SETTLED')` | Fail-closed: `conn.rollback()` and raises `RuntimeError` on any DB error | **NO** |
 | 4 | `affiliate_commissions` | `create_checkout_order_with_shipping` (`app/services/checkout_shipping_service.py`) | `handle_create_order_with_shipping` (`POST /api/v1/shipping/checkout-order`) | Non-payable checkout reservation (`status='PENDING'`) in atomic PostgreSQL transaction with `product_orders` (`conn.commit()`) | `ON CONFLICT (tenant_id, order_id) DO UPDATE SET status='PENDING'` | `conn.rollback()` and returns `{"success": False, "error": str(e)}` | **NO** |
 | 5 | `affiliate_commissions` | `reconcile_single_cod_order` (`app/services/cod_settlement_service.py`) | `handle_cod_reconciliation` (`POST /api/v1/shipping/cod/reconcile`) | Updates existing row `SET status='APPROVED'` in atomic PostgreSQL transaction with `product_orders` COD settlement (`conn.commit()`) | Conditional `UPDATE ... WHERE order_id = %s AND tenant_id = %s` | `conn.rollback()` and returns `{"success": False, "error": str(e)}` | **NO** |

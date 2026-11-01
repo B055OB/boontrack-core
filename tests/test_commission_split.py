@@ -26,6 +26,7 @@ def test_payment_orchestrator_commission_mitra_default():
         "id": "aff-123",
         "auth_user_id": "auth-uid-123",
         "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+        "is_linked": True,
         "status": "ACTIVE",
         "commission_rate": 25.0,
     }]
@@ -159,6 +160,7 @@ def test_payment_orchestrator_commission_clamp():
         "id": "aff-high-rate",
         "auth_user_id": "auth-uid-high-rate",
         "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+        "is_linked": True,
         "status": "ACTIVE",
         "commission_rate": 35.0,
     }]
@@ -296,6 +298,7 @@ def test_growth_service_commission_mitra_default_approved():
         "status": "ACTIVE",
         "auth_user_id": "auth-uid-grow-1",
         "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+        "is_linked": True,
     }
 
     with patch("app.services.growth_service.get_db_connection", return_value=mock_conn), \
@@ -342,6 +345,7 @@ def test_commission_db_row_normalization_dict_realdictrow_and_tuple():
         "status",
         "auth_user_id",
         "identity_class",
+        "is_linked",
     )
     raw_dict = {
         "attribution_id": "attr-norm-1",
@@ -355,6 +359,7 @@ def test_commission_db_row_normalization_dict_realdictrow_and_tuple():
         "status": "ACTIVE",
         "auth_user_id": "auth-uid-norm-1",
         "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+        "is_linked": True,
     }
     raw_real_dict = RealDictRow(list(raw_dict.items()))
     raw_tuple = tuple(raw_dict[c] for c in cols)
@@ -460,6 +465,7 @@ def test_commission_concurrent_callbacks_idempotency_at_db_constraint_level():
                         "id": "aff-conc-1",
                         "auth_user_id": "uid-conc-1",
                         "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+                        "is_linked": True,
                         "referral_code": "CONC1",
                         "commission_rate": 20.0,
                         "status": "ACTIVE",
@@ -525,7 +531,7 @@ def test_commission_concurrent_callbacks_idempotency_at_db_constraint_level():
         m_conn.cursor.return_value = m_cur
         m_cur.fetchone.return_value = (
             "attr-c-1", "aff-conc-1", None, "Mozilla", "Mitra Conc", "628123456789", 25.0, "AFFILIATE",
-            "ACTIVE", "uid-conc-1", "CLASS_1_EXACT_LINKED_HEALTHY"
+            "ACTIVE", "uid-conc-1", "CLASS_1_EXACT_LINKED_HEALTHY", True
         )
 
         def _exec_sql(sql, params=None):

@@ -124,7 +124,8 @@ async def process_order_paid_growth_event(
                 a.role,
                 a.status,
                 a.auth_user_id,
-                a.identity_class
+                a.identity_class,
+                a.is_linked
             FROM product_orders po
             LEFT JOIN attributions att ON po.attribution_id = att.id
             LEFT JOIN attribution_sessions s ON (po.order_id = s.order_id OR po.tenant_id = s.tenant_id)
@@ -146,6 +147,7 @@ async def process_order_paid_growth_event(
                 "status",
                 "auth_user_id",
                 "identity_class",
+                "is_linked",
             ),
         )
 

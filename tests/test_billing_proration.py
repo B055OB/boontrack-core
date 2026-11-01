@@ -15,14 +15,45 @@ from app.services.affiliate_service import affiliate_service
 def mock_supabase_for_billing_proration():
     """Provide deterministic offline Supabase mock for billing & prorated commission persistence."""
     mock_sb = MagicMock()
-    mock_sb.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
-        data=None
-    )
-    mock_sb.table.return_value.upsert.return_value.execute.return_value = MagicMock(data=[{"id": "ok"}])
-    mock_sb.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{"id": "ok"}])
+    affiliate_service.clear_commissions()
+
+    def _table_router(table_name):
+        t = MagicMock()
+        if table_name == "tenants":
+            t.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                data={
+                    "id": "tenant-prorata-default",
+                    "slug": "tenant_prorata_webhook_test",
+                    "tier": "SOLO",
+                    "affiliate_id": "aff-prorata-c1",
+                    "affiliate_ref": "PRORATA_C1",
+                    "metadata": {},
+                }
+            )
+            t.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{"id": "ok"}])
+        elif table_name == "affiliates":
+            c1_row = {
+                "id": "aff-prorata-c1",
+                "auth_user_id": "auth-uid-prorata-c1",
+                "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+                "is_linked": True,
+                "referral_code": "PRORATA_C1",
+                "commission_rate": 20.0,
+                "status": "ACTIVE",
+            }
+            t.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[c1_row])
+            t.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=c1_row)
+        else:
+            t.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=None)
+            t.upsert.return_value.execute.return_value = MagicMock(data=[{"id": "ok"}])
+            t.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{"id": "ok"}])
+        return t
+
+    mock_sb.table.side_effect = _table_router
     with patch("app.services.billing_service.get_supabase", return_value=mock_sb), \
          patch("app.services.affiliate_service.get_supabase", return_value=mock_sb):
         yield mock_sb
+    affiliate_service.clear_commissions()
 
 
 @pytest.mark.asyncio
@@ -149,3 +180,69 @@ async def test_affiliate_commission_strict_cash_collected():
     assert record["amount"] == 30000.0
     assert record["order_amount"] == 150000.0
     assert record["description"] == "Komisi Upgrade ke [TEAM_SCALE] (Prorata [10] Hari)"
+
+
+@pytest.mark.asyncio
+async def test_prorated_upgrade_blocks_non_class_1_affiliate_zero_commission():
+    """
+    Test 6 (CTO-PR24-REVIEW-003 Blocker B):
+    End-to-end regression test verifying that prorated upgrade flow and writer
+    (`billing_service.mark_invoice_paid` -> `record_prorated_upgrade_commission`)
+    block non-Class 1 affiliates and Class 1 records missing positive identity link proof,
+    producing 0 commission rows in `affiliate_commissions` and `self._commissions`.
+    """
+    comm_upserts = []
+    mock_sb = MagicMock()
+
+    def _non_eligible_router(table_name):
+        t = MagicMock()
+        if table_name == "tenants":
+            t.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                data={
+                    "id": "tenant-c2-prorata",
+                    "slug": "tenant_c2_prorata",
+                    "tier": "SOLO",
+                    "affiliate_id": "aff-c2-unlinked",
+                    "metadata": {},
+                }
+            )
+            t.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{"id": "ok"}])
+        elif table_name == "affiliates":
+            c2_row = {
+                "id": "aff-c2-unlinked",
+                "identity_class": "CLASS_2_UNLINKED_CANDIDATE",
+                "reconciliation_action": "FLAG_FOR_MANUAL_REVIEW",
+                "status": "ACTIVE",
+                "commission_rate": 20.0,
+            }
+            t.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[c2_row])
+        elif table_name == "affiliate_commissions":
+            def _track_upsert(payload, **_kw):
+                comm_upserts.append(payload)
+                m = MagicMock()
+                m.execute.return_value = MagicMock(data=[payload])
+                return m
+            t.upsert.side_effect = _track_upsert
+        else:
+            t.upsert.return_value.execute.return_value = MagicMock(data=[{"id": "ok"}])
+            t.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{"id": "ok"}])
+        return t
+
+    mock_sb.table.side_effect = _non_eligible_router
+    with patch("app.services.billing_service.get_supabase", return_value=mock_sb), \
+         patch("app.services.affiliate_service.get_supabase", return_value=mock_sb):
+        proration = await billing_service.calculate_upgrade_proration(
+            tenant_id_or_slug="tenant_c2_prorata",
+            new_tier="PRO_SCALE",
+            override_days_remaining=15,
+            override_current_tier="SOLO",
+        )
+        pay_res = await billing_service.mark_invoice_paid(proration.invoice_id, payment_ref="XENDIT-C2-BLOCK")
+
+    comm = pay_res.get("commission_entry")
+    assert comm is not None
+    assert comm["status"] == "held_manual_review"
+    assert comm["reason"] == "CLASS_2_MANUAL_REVIEW_ONLY"
+    assert comm["amount"] == 0.0
+    assert comm_upserts == []
+    assert affiliate_service.get_commissions_by_invoice(proration.invoice_id) == []

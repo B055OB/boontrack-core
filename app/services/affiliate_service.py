@@ -10,6 +10,7 @@ Architectural Guarantees:
 import uuid
 import logging
 import threading
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from app.core.database import normalize_db_row
@@ -67,16 +68,30 @@ _AFFILIATE_ELIGIBILITY_COLUMNS = (
     "taxonomy_class", "reconciliation_action", "reconciliation_status",
     "referral_code", "commission_rate", "status",
     "parent_am_id", "manager_id", "registered_by_am_id", "metadata",
+    "is_linked", "relationship_valid", "identity_verified",
+    "link_status", "auth_link_status",
 )
+
+
+def _extract_first_row(res: Any) -> Optional[Any]:
+    """Safely extract the first row dict/tuple from a Supabase execute() response."""
+    if not res:
+        return None
+    data = getattr(res, "data", None)
+    if isinstance(data, list):
+        return data[0] if (data and isinstance(data[0], (Mapping, tuple, list))) else None
+    if isinstance(data, (Mapping, tuple)):
+        return data
+    return None
 
 
 def is_class_1_commission_eligible(aff_record: Optional[Dict[str, Any]]) -> tuple[bool, str]:
     """
-    Enforce absolute fail-closed Class 1 eligibility rule (CTO-PR24-REVIEW-002 Section A):
+    Enforce absolute fail-closed Class 1 eligibility rule (CTO-PR24-REVIEW-002 & 003):
     ONLY Class 1 (CLASS_1_EXACT_LINKED_HEALTHY) active affiliates with a valid,
-    authoritative linked auth_user_id and zero discrepancy/manual-review flags
-    are eligible for automatic payable commission allocation.
-    Do NOT infer Class 1 from absence of a negative flag.
+    authoritative linked auth_user_id, positive authoritative identity link proof,
+    and zero discrepancy/manual-review flags are eligible for automatic payable commission.
+    Do NOT infer Class 1 or identity linkage from absence of a negative flag.
     """
     if not aff_record or not isinstance(aff_record, dict):
         return False, "AFFILIATE_NOT_FOUND"
@@ -202,6 +217,17 @@ def is_class_1_commission_eligible(aff_record: Optional[Dict[str, Any]]) -> tupl
         if not expected_uid or expected_uid != auth_uid:
             return False, "STALE_OR_INVALID_IDENTITY_RELATIONSHIP"
 
+    has_positive_link_proof = (
+        any(
+            src.get(k) is True
+            for src in (aff_record, meta)
+            for k in ("is_linked", "relationship_valid", "identity_verified")
+        )
+        or bool(norm_link_status and norm_link_status in _ELIGIBLE_LINK_STATUSES)
+    )
+    if not has_positive_link_proof:
+        return False, "MISSING_POSITIVE_IDENTITY_LINK"
+
     return True, "CLASS_1_EXACT_LINKED_HEALTHY"
 
 
@@ -255,14 +281,26 @@ class AffiliateService:
             logger.info(f"[AffiliateService] Zero amount paid for tenant '{tenant_id}', skipping commission.")
             return None
 
-        # 1. Resolve Affiliate jika belum diberikan
-        resolved_aff_id = affiliate_id
-        resolved_rate = affiliate_rate or DEFAULT_AFFILIATE_COMMISSION_RATE
+        commission_id = str(uuid.uuid4())
+        now_iso = datetime.now(timezone.utc).isoformat()
+        order_ref = invoice_id or f"inv_prorata_{commission_id[:8]}"
+        description = f"Komisi Upgrade ke [{new_tier}] (Prorata [{remaining_days}] Hari)"
 
         supabase = get_supabase()
-        if not resolved_aff_id and supabase:
+        if not supabase:
+            raise RuntimeError(
+                f"[SECURITY FAIL-CLOSED] Database client unavailable for prorated commission persistence on invoice '{order_ref}'. "
+                "In-memory ledger fallback is strictly prohibited."
+            )
+
+        # 1. Resolve Affiliate jika belum diberikan
+        resolved_aff_id = affiliate_id
+        resolved_ref_code = None
+        resolved_rate = affiliate_rate or DEFAULT_AFFILIATE_COMMISSION_RATE
+        aff_record = None
+
+        if not resolved_aff_id:
             try:
-                # Periksa apakah tenant_id adalah UUID valid
                 is_uuid = False
                 try:
                     uuid.UUID(str(tenant_id))
@@ -276,44 +314,79 @@ class AffiliateService:
                 else:
                     t_res = t_query.eq("slug", str(tenant_id)).maybe_single().execute()
 
-                if t_res and t_res.data:
+                raw_tenant = _extract_first_row(t_res)
+                if raw_tenant is not None:
                     row = normalize_db_row(
-                        t_res.data[0] if isinstance(t_res.data, list) else t_res.data,
+                        raw_tenant,
                         ("id", "affiliate_id", "affiliate_ref", "metadata"),
                     ) or {}
                     meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
                     resolved_aff_id = row.get("affiliate_id") or meta.get("affiliate_id")
-                    if not resolved_aff_id and row.get("affiliate_ref"):
-                        ref = row.get("affiliate_ref")
-                        aff_res = supabase.table("affiliates").select("id, commission_rate").ilike("referral_code", ref).maybe_single().execute()
-                        if aff_res and aff_res.data:
-                            aff_data = normalize_db_row(
-                                aff_res.data[0] if isinstance(aff_res.data, list) else aff_res.data,
-                                ("id", "commission_rate"),
-                            ) or {}
-                            resolved_aff_id = aff_data.get("id")
-                            if aff_data.get("commission_rate") is not None:
-                                rate_val = float(aff_data.get("commission_rate"))
-                                resolved_rate = rate_val / 100.0 if rate_val > 1 else rate_val
-
+                    resolved_ref_code = row.get("affiliate_ref") or meta.get("referred_by")
             except Exception as e:
                 logger.debug(f"[AffiliateService] Affiliate resolution info: {e}")
+
+        # 1b. Fetch and normalize affiliate record using _AFFILIATE_ELIGIBILITY_COLUMNS
+        aff_candidate = resolved_aff_id or resolved_ref_code
+        if aff_candidate:
+            try:
+                q_eq = supabase.table("affiliates").select("*").eq("id", str(aff_candidate))
+                raw_aff = _extract_first_row(q_eq.execute())
+                if raw_aff is None:
+                    raw_aff = _extract_first_row(q_eq.maybe_single().execute())
+                if raw_aff is None:
+                    q_ref = supabase.table("affiliates").select("*").ilike("referral_code", str(aff_candidate))
+                    raw_aff = _extract_first_row(q_ref.execute())
+                    if raw_aff is None:
+                        raw_aff = _extract_first_row(q_ref.maybe_single().execute())
+
+                if raw_aff is not None:
+                    aff_record = normalize_db_row(raw_aff, _AFFILIATE_ELIGIBILITY_COLUMNS)
+                    if aff_record:
+                        resolved_aff_id = aff_record.get("id") or resolved_aff_id
+                        if affiliate_rate is None and aff_record.get("commission_rate") is not None:
+                            rate_val = float(aff_record.get("commission_rate"))
+                            resolved_rate = rate_val / 100.0 if rate_val > 1 else rate_val
+            except Exception as e:
+                logger.debug(f"[AffiliateService] Affiliate eligibility lookup note: {e}")
+
+        # 1c. Enforce strict fail-closed Class 1 eligibility guard (CTO-PR24-REVIEW-003 Blocker B)
+        is_eligible, eligibility_reason = is_class_1_commission_eligible(aff_record)
+        if not is_eligible:
+            logger.warning(
+                f"[AffiliateService] Prorated upgrade commission blocked for tenant '{tenant_id}' "
+                f"affiliate '{aff_candidate}' on invoice '{order_ref}' ({eligibility_reason}). "
+                "Holding for manual review; zero payable commission recorded."
+            )
+            return {
+                "id": None,
+                "commission_id": None,
+                "tenant_id": str(tenant_id),
+                "affiliate_id": str(resolved_aff_id) if resolved_aff_id else None,
+                "invoice_id": invoice_id,
+                "order_id": order_ref,
+                "order_amount": float(amount_paid),
+                "amount": 0.0,
+                "payout_commission": 0.0,
+                "rate": 0.0,
+                "description": description,
+                "status": "held_manual_review",
+                "reason": eligibility_reason,
+                "created_at": now_iso,
+                "commissions": [],
+            }
 
         commission_amount = self.calculate_commission(amount_paid, resolved_rate)
         if commission_amount <= 0:
             return None
 
-        commission_id = str(uuid.uuid4())
-        now_iso = datetime.now(timezone.utc).isoformat()
-        description = f"Komisi Upgrade ke [{new_tier}] (Prorata [{remaining_days}] Hari)"
-
         record = {
             "id": commission_id,
             "commission_id": commission_id,
             "tenant_id": str(tenant_id),
-            "affiliate_id": str(resolved_aff_id or "PLATFORM_RESERVED"),
+            "affiliate_id": str(resolved_aff_id),
             "invoice_id": invoice_id,
-            "order_id": invoice_id or f"inv_prorata_{commission_id[:8]}",
+            "order_id": order_ref,
             "order_amount": float(amount_paid),
             "amount": commission_amount,
             "rate": resolved_rate,
@@ -323,16 +396,10 @@ class AffiliateService:
         }
 
         # 2. Simpan ke Supabase table affiliate_commissions (Fail-Closed: no in-memory fallback on DB failure)
-        if not supabase:
-            raise RuntimeError(
-                f"[SECURITY FAIL-CLOSED] Database client unavailable for prorated commission persistence on invoice '{record['order_id']}'. "
-                "In-memory ledger fallback is strictly prohibited."
-            )
-
         try:
             db_payload = {
                 "tenant_id": str(tenant_id),
-                "affiliate_id": str(resolved_aff_id) if (resolved_aff_id and resolved_aff_id != "PLATFORM_RESERVED") else None,
+                "affiliate_id": str(resolved_aff_id),
                 "order_id": record["order_id"],
                 "order_amount": float(amount_paid),
                 "amount": commission_amount,
