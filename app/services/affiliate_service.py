@@ -40,20 +40,43 @@ NON_ELIGIBLE_IDENTITY_CLASSES = {
 
 MANUAL_REVIEW_ACTIONS = {
     "FLAG_FOR_MANUAL_REVIEW",
+    "FLAG_FOR_MANUAL_OPERATOR_REVIEW",
     "HOLD_FOR_MANUAL_INVESTIGATION",
     "REQUIRE_SUPPORT_TRIAGE",
     "MANUAL_REVIEW",
     "MANUAL_REVIEW_ONLY",
 }
 
+_ELIGIBLE_RECONCILIATION_STATUSES = {
+    "NONE", "OK", "HEALTHY", "VERIFIED", "LINKED",
+    "AUTO_ELIGIBLE", "ELIGIBLE", "CLASS_1_EXACT_LINKED_HEALTHY",
+}
+
+_ELIGIBLE_LINK_STATUSES = {
+    "LINKED", "HEALTHY", "VALID", "VERIFIED", "ACTIVE",
+    "EXACT_LINKED_HEALTHY", "CLASS_1_EXACT_LINKED_HEALTHY",
+}
+
+_INVALID_AUTH_UID_TOKENS = {
+    "none", "null", "undefined", "unlinked", "orphan",
+    "stale", "invalid", "0", "false", "nan", "pending", "unknown",
+}
+
+_AFFILIATE_ELIGIBILITY_COLUMNS = (
+    "id", "auth_user_id", "identity_class", "classification",
+    "taxonomy_class", "reconciliation_action", "reconciliation_status",
+    "referral_code", "commission_rate", "status",
+    "parent_am_id", "manager_id", "registered_by_am_id", "metadata",
+)
+
 
 def is_class_1_commission_eligible(aff_record: Optional[Dict[str, Any]]) -> tuple[bool, str]:
     """
-    Enforce absolute Class 1 eligibility rule (CTO-PR24-REVIEW-001 Blocker 2):
-    ONLY Class 1 (CLASS_1_EXACT_LINKED_HEALTHY) active affiliates are eligible for
-    automatic payable commission allocation.
-    Class 2 (unlinked candidate) and any other discrepancy/orphan classes are strictly
-    MANUAL REVIEW ONLY (zero automatic commission allocation, zero auto-link).
+    Enforce absolute fail-closed Class 1 eligibility rule (CTO-PR24-REVIEW-002 Section A):
+    ONLY Class 1 (CLASS_1_EXACT_LINKED_HEALTHY) active affiliates with a valid,
+    authoritative linked auth_user_id and zero discrepancy/manual-review flags
+    are eligible for automatic payable commission allocation.
+    Do NOT infer Class 1 from absence of a negative flag.
     """
     if not aff_record or not isinstance(aff_record, dict):
         return False, "AFFILIATE_NOT_FOUND"
@@ -64,37 +87,120 @@ def is_class_1_commission_eligible(aff_record: Optional[Dict[str, Any]]) -> tupl
 
     meta = aff_record.get("metadata") if isinstance(aff_record.get("metadata"), dict) else {}
 
-    raw_class = (
-        aff_record.get("identity_class")
-        or aff_record.get("classification")
-        or aff_record.get("taxonomy_class")
-        or meta.get("identity_class")
-        or meta.get("classification")
-        or ""
-    )
-    norm_class = str(raw_class).strip().upper()
-    if norm_class:
-        if norm_class in NON_ELIGIBLE_IDENTITY_CLASSES or "CLASS_2" in norm_class:
-            return False, "CLASS_2_MANUAL_REVIEW_ONLY"
-        if norm_class not in ("CLASS_1", "CLASS_1_EXACT_LINKED_HEALTHY"):
-            return False, f"NON_CLASS_1_INELIGIBLE_{norm_class}"
+    raw_class = None
+    for src, key in (
+        (aff_record, "identity_class"),
+        (aff_record, "classification"),
+        (aff_record, "taxonomy_class"),
+        (meta, "identity_class"),
+        (meta, "classification"),
+        (meta, "taxonomy_class"),
+    ):
+        if src.get(key) is not None:
+            raw_class = src.get(key)
+            break
+    norm_class = str(raw_class or "").strip().upper()
+
+    if norm_class in ("CLASS_2", "CLASS_2_UNLINKED_CANDIDATE") or "CLASS_2" in norm_class:
+        return False, "CLASS_2_MANUAL_REVIEW_ONLY"
+
+    if any(
+        bool(src.get(flag) is True)
+        for src in (aff_record, meta)
+        for flag in ("manual_review", "requires_manual_review")
+    ):
+        return False, "MANUAL_REVIEW_STATUS_INELIGIBLE"
+
+    if (
+        aff_record.get("has_discrepancy") is True
+        or meta.get("has_discrepancy") is True
+        or bool(aff_record.get("discrepancies"))
+        or bool(meta.get("discrepancies"))
+    ):
+        return False, "DISCREPANCY_STATUS_INELIGIBLE"
 
     raw_action = (
         aff_record.get("reconciliation_action")
         or aff_record.get("reconciliation_status")
+        or aff_record.get("discrepancy_status")
         or meta.get("reconciliation_action")
         or meta.get("reconciliation_status")
+        or meta.get("discrepancy_status")
         or ""
     )
     norm_action = str(raw_action).strip().upper()
-    if norm_action in MANUAL_REVIEW_ACTIONS:
-        return False, "CLASS_2_MANUAL_REVIEW_ONLY"
+    if norm_action:
+        if (
+            norm_action in MANUAL_REVIEW_ACTIONS
+            or any(
+                tok in norm_action
+                for tok in ("MANUAL", "HOLD", "FLAG", "DISCREPANCY", "TRIAGE", "STALE", "MISMATCH", "COLLISION", "ORPHAN", "UNLINKED")
+            )
+            or norm_action not in _ELIGIBLE_RECONCILIATION_STATUSES
+        ):
+            return False, f"MANUAL_REVIEW_OR_DISCREPANCY_{norm_action}"
 
-    if "auth_user_id" in aff_record and not aff_record.get("auth_user_id"):
-        return False, "CLASS_2_MANUAL_REVIEW_ONLY"
+    if not norm_class:
+        return False, "MISSING_IDENTITY_CLASS"
 
-    if aff_record.get("is_linked") is False:
-        return False, "CLASS_2_MANUAL_REVIEW_ONLY"
+    if norm_class in NON_ELIGIBLE_IDENTITY_CLASSES or norm_class != "CLASS_1_EXACT_LINKED_HEALTHY":
+        return False, f"NON_CLASS_1_INELIGIBLE_{norm_class}"
+
+    raw_auth_uid = aff_record.get("auth_user_id") if aff_record.get("auth_user_id") is not None else meta.get("auth_user_id")
+    if raw_auth_uid is None or not isinstance(raw_auth_uid, (str, uuid.UUID)):
+        return False, "MISSING_OR_INVALID_AUTH_USER_ID"
+
+    auth_uid = str(raw_auth_uid).strip()
+    if not auth_uid or len(auth_uid) < 3 or any(ch.isspace() for ch in auth_uid) or auth_uid.lower() in _INVALID_AUTH_UID_TOKENS:
+        return False, "MISSING_OR_INVALID_AUTH_USER_ID"
+
+    if (
+        any(src.get(k) is False for src in (aff_record, meta) for k in ("is_linked", "auth_user_exists", "identity_verified", "relationship_valid"))
+        or any(src.get(k) is True for src in (aff_record, meta) for k in ("is_stale_auth_reference", "stale_auth_reference"))
+    ):
+        return False, "STALE_OR_INVALID_IDENTITY_RELATIONSHIP"
+
+    raw_link_status = (
+        aff_record.get("link_status")
+        or aff_record.get("auth_link_status")
+        or aff_record.get("identity_status")
+        or aff_record.get("relationship_status")
+        or meta.get("link_status")
+        or meta.get("auth_link_status")
+        or meta.get("identity_status")
+        or meta.get("relationship_status")
+        or ""
+    )
+    norm_link_status = str(raw_link_status).strip().upper()
+    if norm_link_status and norm_link_status not in _ELIGIBLE_LINK_STATUSES:
+        return False, "STALE_OR_INVALID_IDENTITY_RELATIONSHIP"
+
+    if "auth_user" in aff_record or "auth_user" in meta:
+        au = aff_record.get("auth_user") if "auth_user" in aff_record else meta.get("auth_user")
+        if not isinstance(au, dict):
+            return False, "STALE_OR_INVALID_IDENTITY_RELATIONSHIP"
+        au_id = str(au.get("id") or "").strip()
+        if not au_id or au_id != auth_uid:
+            return False, "STALE_OR_INVALID_IDENTITY_RELATIONSHIP"
+        if au.get("deleted_at") is not None or str(au.get("status") or "ACTIVE").strip().upper() in (
+            "DELETED", "BANNED", "INACTIVE", "DISABLED", "SUSPENDED", "STALE"
+        ):
+            return False, "STALE_OR_INVALID_IDENTITY_RELATIONSHIP"
+        aff_email = str(aff_record.get("email") or "").strip().lower()
+        au_email = str(au.get("email") or "").strip().lower()
+        if aff_email and au_email and aff_email != au_email:
+            return False, "STALE_OR_INVALID_IDENTITY_RELATIONSHIP"
+
+    if any(k in src for src in (aff_record, meta) for k in ("linked_auth_user_id", "verified_auth_user_id")):
+        expected_uid = str(
+            aff_record.get("linked_auth_user_id")
+            or aff_record.get("verified_auth_user_id")
+            or meta.get("linked_auth_user_id")
+            or meta.get("verified_auth_user_id")
+            or ""
+        ).strip()
+        if not expected_uid or expected_uid != auth_uid:
+            return False, "STALE_OR_INVALID_IDENTITY_RELATIONSHIP"
 
     return True, "CLASS_1_EXACT_LINKED_HEALTHY"
 
@@ -216,25 +322,41 @@ class AffiliateService:
             "created_at": now_iso,
         }
 
-        # 2. Simpan ke Supabase table affiliate_commissions
-        if supabase:
-            try:
-                db_payload = {
-                    "tenant_id": str(tenant_id),
-                    "affiliate_id": str(resolved_aff_id) if (resolved_aff_id and resolved_aff_id != "PLATFORM_RESERVED") else None,
-                    "order_id": record["order_id"],
-                    "order_amount": float(amount_paid),
-                    "amount": commission_amount,
-                    "status": "HOLDING",
-                    "created_at": now_iso,
-                }
-                supabase.table("affiliate_commissions").upsert(db_payload, on_conflict="tenant_id, order_id").execute()
-                logger.info(f"[AffiliateService] Commission '{commission_id}' saved to Supabase (Status: HOLDING)")
-            except Exception as sb_err:
-                logger.debug(f"[AffiliateService] Supabase ledger note: {sb_err}")
+        # 2. Simpan ke Supabase table affiliate_commissions (Fail-Closed: no in-memory fallback on DB failure)
+        if not supabase:
+            raise RuntimeError(
+                f"[SECURITY FAIL-CLOSED] Database client unavailable for prorated commission persistence on invoice '{record['order_id']}'. "
+                "In-memory ledger fallback is strictly prohibited."
+            )
 
-        # 3. Simpan ke in-memory ledger
-        self._commissions[commission_id] = record
+        try:
+            db_payload = {
+                "tenant_id": str(tenant_id),
+                "affiliate_id": str(resolved_aff_id) if (resolved_aff_id and resolved_aff_id != "PLATFORM_RESERVED") else None,
+                "order_id": record["order_id"],
+                "order_amount": float(amount_paid),
+                "amount": commission_amount,
+                "status": "HOLDING",
+                "created_at": now_iso,
+            }
+            supabase.table("affiliate_commissions").upsert(db_payload, on_conflict="tenant_id, order_id").execute()
+            logger.info(f"[AffiliateService] Commission '{commission_id}' saved to Supabase (Status: HOLDING)")
+        except Exception as sb_err:
+            if _is_unique_constraint_conflict(sb_err):
+                logger.info(
+                    f"[AffiliateService DB Unique Constraint Hit] Duplicate prorated commission prevented for '{record['order_id']}'."
+                )
+            else:
+                logger.error(
+                    f"[AffiliateService FAIL-CLOSED] Prorated commission persistence failed for '{record['order_id']}': {sb_err}"
+                )
+                raise RuntimeError(
+                    f"Failed to persist prorated upgrade commission for invoice '{record['order_id']}': {sb_err}"
+                ) from sb_err
+
+        # 3. Simpan ke in-memory read cache HANYA setelah DB persistence berhasil
+        with self._lock:
+            self._commissions[commission_id] = record
         logger.info(
             f"[AffiliateService] Logged commission '{commission_id}' for affiliate '{resolved_aff_id}': "
             f"Rp {commission_amount:,.0f} [HOLDING] - '{description}'"
@@ -350,14 +472,14 @@ class AffiliateService:
         if aff_query and aff_query.data:
             aff_record = normalize_db_row(
                 aff_query.data[0] if isinstance(aff_query.data, list) else aff_query.data,
-                ("id", "referral_code", "commission_rate", "status", "parent_am_id", "manager_id", "registered_by_am_id"),
+                _AFFILIATE_ELIGIBILITY_COLUMNS,
             )
         else:
             ref_query = supabase.table("affiliates").select("*").ilike("referral_code", str(candidate)).execute()
             if ref_query and ref_query.data:
                 aff_record = normalize_db_row(
                     ref_query.data[0] if isinstance(ref_query.data, list) else ref_query.data,
-                    ("id", "referral_code", "commission_rate", "status", "parent_am_id", "manager_id", "registered_by_am_id"),
+                    _AFFILIATE_ELIGIBILITY_COLUMNS,
                 )
 
         # Jika affiliate tidak ditemukan di tabel affiliate: Tolak komisi, 100% masuk platform
@@ -517,7 +639,7 @@ class AffiliateService:
             if am_query and am_query.data:
                 am_row = normalize_db_row(
                     am_query.data[0] if isinstance(am_query.data, list) else am_query.data,
-                    ("id", "referral_code", "status"),
+                    _AFFILIATE_ELIGIBILITY_COLUMNS,
                 ) or {}
                 am_eligible, _ = is_class_1_commission_eligible(am_row)
                 if am_eligible:

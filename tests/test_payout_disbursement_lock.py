@@ -268,6 +268,103 @@ class TestJwtTrustPolicy(unittest.TestCase):
         self.assertEqual(resolved_aff["id"], "real_verified_aff")
         self.assertEqual(tampered_state_req.state.user["sub"], "real_verified_aff")
 
+    @patch("app.routes.affiliate_auth.supabase")
+    def test_sentinel_boundary_untrusted_middleware_and_request_data_cannot_forge_or_invoke_marker(self, mock_supabase):
+        """CTO-PR24-REVIEW-002 Section D: Untrusted middleware/request data cannot invoke or forge the state marker."""
+        import asyncio
+        from types import SimpleNamespace
+        from fastapi import FastAPI, Depends, HTTPException, Request
+        from app.routes.affiliate_auth import (
+            get_current_affiliate,
+            mark_request_state_cryptographically_verified,
+            _TRUSTED_AUTH_STATE_SENTINEL,
+        )
+
+        # 1. Invoking mark_request_state_cryptographically_verified without a raw JWT token -> 401
+        untrusted_req = SimpleNamespace(
+            state=SimpleNamespace(user={"sub": "pre_injected"}, _jwt_verified_sentinel=object()),
+            cookies={},
+        )
+        with self.assertRaises(HTTPException) as ctx_no_tok:
+            mark_request_state_cryptographically_verified(untrusted_req, {"sub": "forged_victim_id", "role": "AFFILIATE"})
+        self.assertEqual(ctx_no_tok.exception.status_code, 401)
+        self.assertIsNone(untrusted_req.state.user)
+        self.assertIsNone(untrusted_req.state._jwt_verified_sentinel)
+
+        # 2. Invoking mark_request_state_cryptographically_verified with a Supabase-realm token -> 401
+        exp_ts = int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())
+        supabase_token = encode_jwt_token_strict(
+            {"sub": "sb_user_999", "role": "authenticated", "iss": get_supabase_jwt_issuer(), "aud": get_supabase_jwt_audience(), "exp": exp_ts},
+            realm="supabase",
+        )
+        with self.assertRaises(HTTPException) as ctx_sb_tok:
+            mark_request_state_cryptographically_verified(untrusted_req, {"sub": "sb_user_999"}, token=supabase_token)
+        self.assertEqual(ctx_sb_tok.exception.status_code, 401)
+
+        # 3. Valid Core JWT with mismatched payload -> 401
+        valid_core_token = generate_jwt_token(
+            {"sub": "real_aff_007", "role": "AFFILIATE", "exp": datetime.now(timezone.utc) + timedelta(hours=1)}
+        )
+        with self.assertRaises(HTTPException) as ctx_mismatch:
+            mark_request_state_cryptographically_verified(untrusted_req, {"sub": "victim_other_aff"}, token=valid_core_token)
+        self.assertEqual(ctx_mismatch.exception.status_code, 401)
+
+        # 4. Direct forged sentinel values on request.state -> 401
+        for forged_sentinel in (
+            object(),
+            True,
+            "_TRUSTED_AUTH_STATE_SENTINEL",
+            (_TRUSTED_AUTH_STATE_SENTINEL, {"sub": "someone_else", "role": "AFFILIATE"}),
+        ):
+            forged_req = SimpleNamespace(
+                state=SimpleNamespace(user={"sub": "forged_victim_id", "role": "AFFILIATE"}, _jwt_verified_sentinel=forged_sentinel),
+                cookies={},
+            )
+            with self.assertRaises(HTTPException) as ctx_forged:
+                asyncio.run(get_current_affiliate(forged_req, authorization=None))
+            self.assertEqual(ctx_forged.exception.status_code, 401)
+
+        # 5. Post-verification tampering in middleware -> 401
+        tampered_after_verify_req = SimpleNamespace(state=SimpleNamespace(), cookies={})
+        mark_request_state_cryptographically_verified(tampered_after_verify_req, token=valid_core_token)
+        tampered_after_verify_req.state.user["sub"] = "hijacked_after_verify"
+        with self.assertRaises(HTTPException) as ctx_post_tamper:
+            asyncio.run(get_current_affiliate(tampered_after_verify_req, authorization=None))
+        self.assertEqual(ctx_post_tamper.exception.status_code, 401)
+
+        # 6. Full FastAPI HTTP middleware integration path -> 401
+        isolated_app = FastAPI()
+
+        @isolated_app.middleware("http")
+        async def untrusted_header_state_injection_middleware(request: Request, call_next):
+            injected_sub = request.headers.get("X-Untrusted-Middleware-User")
+            if injected_sub:
+                request.state.user = {"sub": injected_sub, "role": "AFFILIATE"}
+                request.state._jwt_verified_sentinel = object()
+            if request.headers.get("X-Try-Invoke-Marker") == "1":
+                try:
+                    mark_request_state_cryptographically_verified(request, {"sub": injected_sub or "forged"})
+                except HTTPException:
+                    pass
+            return await call_next(request)
+
+        @isolated_app.get("/api/v1/affiliate/me-sentinel-test")
+        async def _protected_route(aff=Depends(get_current_affiliate)):
+            return {"affiliate_id": aff["id"]}
+
+        mw_client = TestClient(isolated_app)
+        self.assertEqual(
+            mw_client.get("/api/v1/affiliate/me-sentinel-test", headers={"X-Untrusted-Middleware-User": "forged_victim_id"}).status_code,
+            401,
+        )
+        self.assertEqual(
+            mw_client.get(
+                "/api/v1/affiliate/me-sentinel-test",
+                headers={"X-Untrusted-Middleware-User": "forged_victim_id", "X-Try-Invoke-Marker": "1"},
+            ).status_code,
+            401,
+        )
+
 
 
 class TestPayoutDisbursementLock(unittest.TestCase):

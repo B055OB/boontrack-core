@@ -87,15 +87,48 @@ def decode_jwt_token(
 _TRUSTED_AUTH_STATE_SENTINEL = object()
 
 
-def mark_request_state_cryptographically_verified(request: Request, payload: Dict[str, Any]) -> None:
+def mark_request_state_cryptographically_verified(
+    request: Request,
+    payload: Optional[Dict[str, Any]] = None,
+    *,
+    token: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Internal helper for trusted cryptographic authentication middleware/dependencies.
-    Marks `request.state.user` with an unforgeable in-process object identity sentinel
-    only after `verify_jwt_token_strict` has succeeded.
+    Strictly requires a raw JWT `token` and verifies it via `decode_jwt_token(token, realm="core")`
+    before marking `request.state.user` with the unforgeable in-process object identity sentinel.
+    Untrusted middleware or request data without a valid signed Core JWT cannot invoke or forge
+    this marker.
     """
     if hasattr(request, "state"):
-        request.state.user = dict(payload)
-        request.state._jwt_verified_sentinel = _TRUSTED_AUTH_STATE_SENTINEL
+        setattr(request.state, "user", None)
+        setattr(request.state, "_jwt_verified_sentinel", None)
+
+    if not token or not isinstance(token, str) or not token.strip():
+        logger.warning("[SECURITY] Rejected attempt to invoke mark_request_state_cryptographically_verified without raw JWT token.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="State autentikasi tidak dapat ditandai tanpa verifikasi token JWT kriptografis.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    verified_payload = decode_jwt_token(token.strip(), realm="core")
+
+    if payload is not None:
+        if not isinstance(payload, dict) or dict(payload).get("sub") != verified_payload.get("sub"):
+            logger.warning("[SECURITY] Rejected mismatched payload in mark_request_state_cryptographically_verified.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Payload state autentikasi tidak cocok dengan klaim token kriptografis.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    verified_copy = dict(verified_payload)
+    if hasattr(request, "state"):
+        request.state.user = dict(verified_copy)
+        request.state._jwt_verified_sentinel = (_TRUSTED_AUTH_STATE_SENTINEL, dict(verified_copy))
+
+    return verified_copy
 
 
 async def get_current_affiliate(
@@ -126,18 +159,21 @@ async def get_current_affiliate(
     payload = None
     if token:
         # Always verify explicit Bearer/cookie token cryptographically; never allow pre-existing state to override it
-        payload = decode_jwt_token(token, realm="core")
-        mark_request_state_cryptographically_verified(request, payload)
+        payload = mark_request_state_cryptographically_verified(request, token=token)
     elif hasattr(request, "state"):
         user_state = getattr(request.state, "user", None)
-        sentinel = getattr(request.state, "_jwt_verified_sentinel", None)
+        sentinel_record = getattr(request.state, "_jwt_verified_sentinel", None)
         if (
             isinstance(user_state, dict)
-            and sentinel is _TRUSTED_AUTH_STATE_SENTINEL
+            and isinstance(sentinel_record, tuple)
+            and len(sentinel_record) == 2
+            and sentinel_record[0] is _TRUSTED_AUTH_STATE_SENTINEL
+            and isinstance(sentinel_record[1], dict)
+            and user_state == sentinel_record[1]
         ):
-            payload = user_state
-        elif user_state is not None:
-            logger.warning("[SECURITY] Rejected unverified request.state.user without cryptographic sentinel.")
+            payload = dict(sentinel_record[1])
+        elif user_state is not None or sentinel_record is not None:
+            logger.warning("[SECURITY] Rejected unverified or tampered request.state.user / sentinel.")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="State autentikasi tidak terverifikasi secara kriptografis.",

@@ -87,9 +87,11 @@ async def test_scenario_2_direct_affiliate_only_independent():
     aff_id = "aff_independent_99"
 
     mock_supabase = MagicMock()
-    # Mock lookup affiliate: active, rate 20%, NO AM (parent_am_id=None, manager_id=None)
+    # Mock lookup affiliate: active Class 1 linked healthy, rate 20%, NO AM (parent_am_id=None, manager_id=None)
     mock_aff_record = {
         "id": aff_id,
+        "auth_user_id": "auth-uid-indie-99",
+        "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
         "referral_code": "indiepromo",
         "commission_rate": 20.0,
         "status": "ACTIVE",
@@ -164,9 +166,11 @@ async def test_scenario_3_multi_tier_full_affiliate_and_am():
     am_id = "am_sakti_leader"
 
     mock_supabase = MagicMock()
-    # Mock lookup affiliate with active parent AM
+    # Mock lookup affiliate with active Class 1 parent AM
     mock_aff_record = {
         "id": aff_id,
+        "auth_user_id": "auth-uid-teamdeal-01",
+        "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
         "referral_code": "teamdeal",
         "commission_rate": 20.0,
         "status": "ACTIVE",
@@ -174,6 +178,8 @@ async def test_scenario_3_multi_tier_full_affiliate_and_am():
     }
     mock_am_record = {
         "id": am_id,
+        "auth_user_id": "auth-uid-am-sakti",
+        "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
         "name": "Sakti Alamsyah",
         "role": "am",
         "status": "ACTIVE"
@@ -349,7 +355,7 @@ async def test_scenario_4_class_2_unlinked_candidate_manual_review_only_zero_com
             )
 
             assert res["status"] == "held_manual_review"
-            assert res["reason"] == "CLASS_2_MANUAL_REVIEW_ONLY"
+            assert res["reason"] in ("CLASS_2_MANUAL_REVIEW_ONLY", "MISSING_IDENTITY_CLASS", "MISSING_OR_INVALID_AUTH_USER_ID")
             assert res["payout_commission"] == 0
             assert res["direct_commission"] == 0
             assert res["override_commission"] == 0
@@ -411,3 +417,240 @@ async def test_scenario_5_fail_closed_commission_persistence_raises_on_db_error(
 
     # In-memory ledger must remain empty when DB persistence fails
     assert affiliate_service.get_commissions_by_invoice(invoice_id) == []
+
+
+@pytest.mark.asyncio
+async def test_scenario_6_identity_eligibility_fail_closed_six_cases():
+    """
+    CTO-PR24-REVIEW-002 Section A:
+    1. Missing identity_class.
+    2. Missing auth_user_id.
+    3. Missing both classification and auth_user_id.
+    4. Explicit Class 2.
+    5. Explicit Class 1 with valid linked identity (ONLY case that may pass).
+    6. Class 1 label with stale or invalid identity relationship.
+    """
+    from app.services.affiliate_service import is_class_1_commission_eligible
+
+    cases = [
+        (
+            "case_1_missing_identity_class",
+            {"id": "aff_c1", "auth_user_id": "auth-uid-001", "referral_code": "c1", "commission_rate": 20.0, "status": "ACTIVE"},
+            False,
+        ),
+        (
+            "case_2_missing_auth_user_id",
+            {"id": "aff_c2", "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY", "auth_user_id": None, "referral_code": "c2", "commission_rate": 20.0, "status": "ACTIVE"},
+            False,
+        ),
+        (
+            "case_3_missing_both_classification_and_auth_user_id",
+            {"id": "aff_c3", "referral_code": "c3", "commission_rate": 20.0, "status": "ACTIVE"},
+            False,
+        ),
+        (
+            "case_4_explicit_class_2",
+            {"id": "aff_c4", "identity_class": "CLASS_2_UNLINKED_CANDIDATE", "auth_user_id": "auth-uid-004", "referral_code": "c4", "commission_rate": 20.0, "status": "ACTIVE"},
+            False,
+        ),
+        (
+            "case_5_explicit_class_1_valid_linked_identity",
+            {
+                "id": "aff_c5",
+                "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+                "auth_user_id": "auth-uid-healthy-005",
+                "auth_user": {"id": "auth-uid-healthy-005", "email": "m5@boontrack.com", "status": "ACTIVE"},
+                "email": "m5@boontrack.com",
+                "is_linked": True,
+                "auth_user_exists": True,
+                "referral_code": "c5",
+                "commission_rate": 20.0,
+                "status": "ACTIVE",
+            },
+            True,
+        ),
+        (
+            "case_6_class_1_label_with_stale_or_invalid_identity_relationship",
+            {
+                "id": "aff_c6",
+                "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+                "auth_user_id": "auth-uid-stale-006",
+                "is_stale_auth_reference": True,
+                "auth_user_exists": False,
+                "referral_code": "c6",
+                "commission_rate": 20.0,
+                "status": "ACTIVE",
+            },
+            False,
+        ),
+    ]
+
+    assert is_class_1_commission_eligible({
+        "id": "aff_c6b",
+        "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+        "auth_user_id": "auth-uid-claimed-006",
+        "auth_user": {"id": "auth-uid-other-999", "status": "ACTIVE"},
+        "status": "ACTIVE",
+    })[0] is False
+    assert is_class_1_commission_eligible({
+        "id": "aff_c6c",
+        "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+        "auth_user_id": "auth-uid-disc-006",
+        "reconciliation_action": "FLAG_FOR_MANUAL_OPERATOR_REVIEW",
+        "has_discrepancy": True,
+        "status": "ACTIVE",
+    })[0] is False
+
+    passed_cases = []
+    for case_name, profile, expected_eligible in cases:
+        eligible, reason = is_class_1_commission_eligible(profile)
+        assert eligible is expected_eligible, f"{case_name}: got {eligible} ({reason})"
+
+        inv_id = f"inv_{case_name}"
+        mock_supabase = MagicMock()
+
+        def _make_router(prof):
+            def _router(table_name):
+                mock_t = MagicMock()
+                if table_name == "affiliates":
+                    mock_t.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[prof])
+                elif table_name == "affiliate_commissions":
+                    mock_t.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+                    mock_t.insert.return_value.execute.return_value = MagicMock(data=[{"id": f"comm_{prof['id']}"}])
+                return mock_t
+            return _router
+
+        mock_supabase.table.side_effect = _make_router(profile)
+
+        with patch("app.services.affiliate_service.get_supabase", return_value=mock_supabase), \
+             patch("app.core.tracing.log_structured_event"):
+            res = await allocate_upgrade_commission(
+                tenant_id=f"tenant_{case_name}",
+                invoice_id=inv_id,
+                amount_paid=100000,
+                affiliate_id=profile["id"],
+                affiliate_direct_rate=0.20,
+            )
+
+        if expected_eligible:
+            passed_cases.append(case_name)
+            assert res["status"] == "success"
+            assert res["direct_commission"] == 20000
+            assert len(affiliate_service.get_commissions_by_invoice(inv_id)) == 1
+        else:
+            assert res["status"] == "held_manual_review"
+            assert res["direct_commission"] == 0
+            assert res["payout_commission"] == 0
+            assert res["commissions"] == []
+            assert affiliate_service.get_commissions_by_invoice(inv_id) == []
+
+    assert passed_cases == ["case_5_explicit_class_1_valid_linked_identity"]
+
+
+@pytest.mark.asyncio
+async def test_scenario_7_payable_commission_writers_fail_closed_no_in_memory_fallback():
+    """
+    CTO-PR24-REVIEW-002 Section B:
+    Verify that every payable commission writer (`record_prorated_upgrade_commission`,
+    `process_order_paid_growth_event`, and `PaymentOrchestrator.process_xendit_webhook`)
+    fails closed when database persistence fails and never returns in-memory success.
+    """
+    from app.services.growth_service import process_order_paid_growth_event
+    from app.services.payment_orchestrator import PaymentOrchestrator
+
+    # 1. record_prorated_upgrade_commission fails closed when supabase is None or upsert raises
+    with patch("app.services.affiliate_service.get_supabase", return_value=None):
+        with pytest.raises(RuntimeError, match="Database client unavailable"):
+            await affiliate_service.record_prorated_upgrade_commission(
+                tenant_id="t_fail_none",
+                new_tier="PRO_SCALE",
+                remaining_days=15,
+                amount_paid=100000.0,
+                affiliate_id="aff-1",
+                invoice_id="INV-PRORATA-NONE",
+            )
+    assert affiliate_service.get_commissions_by_invoice("INV-PRORATA-NONE") == []
+
+    mock_sb_err = MagicMock()
+    mock_sb_err.table.return_value.upsert.return_value.execute.side_effect = RuntimeError("DB write timeout")
+    with patch("app.services.affiliate_service.get_supabase", return_value=mock_sb_err):
+        with pytest.raises(RuntimeError, match="Failed to persist prorated upgrade commission"):
+            await affiliate_service.record_prorated_upgrade_commission(
+                tenant_id="t_fail_upsert",
+                new_tier="PRO_SCALE",
+                remaining_days=15,
+                amount_paid=100000.0,
+                affiliate_id="aff-1",
+                invoice_id="INV-PRORATA-ERR",
+            )
+    assert affiliate_service.get_commissions_by_invoice("INV-PRORATA-ERR") == []
+
+    # 2. process_order_paid_growth_event fails closed and rolls back when DB insert raises
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_conn.cursor.return_value = mock_cur
+    mock_cur.fetchone.return_value = {
+        "attribution_id": "attr-fail-1",
+        "affiliate_id": "aff-grow-fail",
+        "fbclid": None,
+        "user_agent": "Mozilla",
+        "name": "Mitra",
+        "phone_number": "08123456789",
+        "commission_rate": 25.0,
+        "role": "AFFILIATE",
+        "status": "ACTIVE",
+        "auth_user_id": "auth-uid-grow-fail",
+        "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+    }
+
+    def _exec_side_effect(sql, params=None):
+        if "INSERT INTO affiliate_commissions" in sql:
+            raise RuntimeError("Postgres connection reset during INSERT INTO affiliate_commissions")
+
+    mock_cur.execute.side_effect = _exec_side_effect
+    with patch("app.services.growth_service.get_db_connection", return_value=mock_conn):
+        with pytest.raises(RuntimeError, match="Failed to persist approved affiliate commission"):
+            await process_order_paid_growth_event(
+                tenant_id="onlineboost",
+                order_id="ORD-GRW-FAIL-01",
+                order_amount=100000.0,
+            )
+    mock_conn.rollback.assert_called_once()
+
+    # 3. PaymentOrchestrator.process_xendit_webhook fails closed when commission_ledger insert raises
+    mock_sb_orch = MagicMock()
+
+    def _orch_table(name):
+        t = MagicMock()
+        if name == "payment_events":
+            t.select.return_value.eq.return_value.execute.return_value.data = []
+        elif name == "orders":
+            t.select.return_value.eq.return_value.execute.return_value.data = [{
+                "id": "ORD-ORCH-FAIL-01",
+                "gross_amount": 100000,
+                "affiliate_id": "aff-orch-1",
+                "affiliate_code": "ORCH1",
+                "tenant_slug": "onlineboost",
+                "status": "PENDING",
+            }]
+        elif name == "affiliates":
+            t.select.return_value.eq.return_value.execute.return_value.data = [{
+                "id": "aff-orch-1",
+                "auth_user_id": "auth-uid-orch-1",
+                "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+                "status": "ACTIVE",
+                "commission_rate": 25.0,
+            }]
+        elif name == "commission_ledger":
+            t.insert.return_value.execute.side_effect = RuntimeError("commission_ledger write failure")
+        return t
+
+    mock_sb_orch.table.side_effect = _orch_table
+    orchestrator = PaymentOrchestrator(supabase_client=mock_sb_orch)
+    with pytest.raises(RuntimeError, match="Failed to persist commission ledger"):
+        await orchestrator.process_xendit_webhook({
+            "id": "evt_orch_fail_01",
+            "external_id": "ORD-ORCH-FAIL-01",
+            "status": "PAID",
+            "amount": 100000,
+        })

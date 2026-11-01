@@ -120,7 +120,11 @@ async def process_order_paid_growth_event(
                 COALESCE(att.user_agent, s.user_agent) as user_agent,
                 a.name,
                 a.phone_number,
-                a.commission_rate
+                a.commission_rate,
+                a.role,
+                a.status,
+                a.auth_user_id,
+                a.identity_class
             FROM product_orders po
             LEFT JOIN attributions att ON po.attribution_id = att.id
             LEFT JOIN attribution_sessions s ON (po.order_id = s.order_id OR po.tenant_id = s.tenant_id)
@@ -139,6 +143,9 @@ async def process_order_paid_growth_event(
                 "phone_number",
                 "commission_rate",
                 "role",
+                "status",
+                "auth_user_id",
+                "identity_class",
             ),
         )
 
@@ -195,7 +202,14 @@ async def process_order_paid_growth_event(
 
         cur.close()
     except Exception as e:
-        print(f"[GROWTH WORKER ERROR] Ledger step error: {e}", flush=True)
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        raise RuntimeError(
+            f"[GROWTH WORKER FAIL-CLOSED] Failed to persist approved affiliate commission for order '{order_id}': {e}"
+        ) from e
     finally:
         if conn:
             conn.close()

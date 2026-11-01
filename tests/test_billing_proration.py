@@ -5,9 +5,24 @@ Unit Tests untuk Prorata Billing Engine & Komisi Affiliate.
 import pytest
 import asyncio
 from datetime import datetime, timezone, timedelta
+from unittest.mock import MagicMock, patch
 
 from app.services.billing_service import billing_service, BillingService
 from app.services.affiliate_service import affiliate_service
+
+
+@pytest.fixture(autouse=True)
+def mock_supabase_for_billing_proration():
+    """Provide deterministic offline Supabase mock for billing & prorated commission persistence."""
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+        data=None
+    )
+    mock_sb.table.return_value.upsert.return_value.execute.return_value = MagicMock(data=[{"id": "ok"}])
+    mock_sb.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{"id": "ok"}])
+    with patch("app.services.billing_service.get_supabase", return_value=mock_sb), \
+         patch("app.services.affiliate_service.get_supabase", return_value=mock_sb):
+        yield mock_sb
 
 
 @pytest.mark.asyncio

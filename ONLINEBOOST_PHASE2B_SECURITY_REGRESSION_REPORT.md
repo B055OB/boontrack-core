@@ -71,6 +71,17 @@ The 19 execution vectors identified in Gate A (`CTO-P0-GATE-A-001`) have been au
 | 15 | `PUT`, `POST` | `/api/v1/manager/payouts/{payout_id}/mark-paid` | `app/routes/partner_routes.py` :: `mark_payout_paid` | `payout_disbursement_locked()` (`app/routes/affiliate_payout_routes.py`) | **FAIL-CLOSED LOCK** (HTTP 403 `PAYOUT_DISBURSEMENT_LOCKED`) | Blocks all disbursement mutations prior to any service call |
 | 16 | `POST` | `/payout/settle` | `app/main.py` :: `settle_payout` | `payout_disbursement_locked()` (`app/routes/affiliate_payout_routes.py`) | **FAIL-CLOSED LOCK** (HTTP 403 `PAYOUT_DISBURSEMENT_LOCKED`) | Blocks all batch commission settlements prior to any service call |
 
+### 2.2 Fail-Closed Identity Eligibility Matrix (CTO-PR24-REVIEW-002 Section A)
+
+| Case # | Scenario | `identity_class` | `auth_user_id` | Relationship / Status State | `is_class_1_commission_eligible()` Result | `allocate_upgrade_commission()` Outcome |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Case 1** | Missing `identity_class` | `None` / omitted | `"auth-uid-001"` | Active | `(False, "MISSING_IDENTITY_CLASS")` | `status="held_manual_review"`, 0 commission rows |
+| **Case 2** | Missing `auth_user_id` | `"CLASS_1_EXACT_LINKED_HEALTHY"` | `None` / omitted / invalid | Active | `(False, "MISSING_OR_INVALID_AUTH_USER_ID")` | `status="held_manual_review"`, 0 commission rows |
+| **Case 3** | Missing both classification and `auth_user_id` | `None` / omitted | `None` / omitted | Active | `(False, "MISSING_IDENTITY_CLASS")` | `status="held_manual_review"`, 0 commission rows |
+| **Case 4** | Explicit Class 2 | `"CLASS_2_UNLINKED_CANDIDATE"` | `"auth-uid-004"` or `None` | Manual review candidate | `(False, "CLASS_2_MANUAL_REVIEW_ONLY")` | `status="held_manual_review"`, 0 commission rows |
+| **Case 5** | **Explicit Class 1 with valid linked identity** | `"CLASS_1_EXACT_LINKED_HEALTHY"` | `"auth-uid-healthy-005"` | Linked healthy (`is_linked=True`, `auth_user_exists=True`, matching `auth_user`) | `(True, "CLASS_1_EXACT_LINKED_HEALTHY")` | **`status="success"` (ONLY case that passes automatically)** |
+| **Case 6** | Class 1 label with stale or invalid identity relationship | `"CLASS_1_EXACT_LINKED_HEALTHY"` | `"auth-uid-stale-006"` | `is_stale_auth_reference=True`, `auth_user_exists=False`, mismatched `auth_user.id`, or discrepancy/manual-review flag | `(False, "STALE_OR_INVALID_IDENTITY_RELATIONSHIP")` / `MANUAL_REVIEW_*` | `status="held_manual_review"`, 0 commission rows |
+
 
 
 

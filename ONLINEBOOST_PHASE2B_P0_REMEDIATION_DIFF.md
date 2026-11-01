@@ -417,14 +417,18 @@ Pursuant to the **CTO Directive — OnlineBoost Phase 2B Conditional Release**, 
 
 ---
 
-### 2.6 Fail-Closed Commission Persistence, Class 1 Eligibility & Xendit Idempotency (Blockers 2, 3 & 4)
-1. **Class 1-Only Automatic Commission Rule (`app/services/affiliate_service.py` :: `is_class_1_commission_eligible`):**
-   - **ONLY Class 1 (`CLASS_1_EXACT_LINKED_HEALTHY`)** active profiles are eligible for automatic payable commission allocation.
-   - **Class 2 (`CLASS_2_UNLINKED_CANDIDATE`)** profiles are strictly **Manual Review Only** (`status="held_manual_review"`, `reason="CLASS_2_MANUAL_REVIEW_ONLY"`, 0 rows inserted into `affiliate_commissions`, zero auto-link).
-2. **Fail-Closed Commission Persistence (`app/services/affiliate_service.py` :: `allocate_upgrade_commission`):**
-   - Database insert errors (outside of unique constraint conflicts `23505` / `uq_affiliate_commissions_tenant_order`) raise an explicit `RuntimeError` instead of logging to debug and falling back to the in-memory ledger.
-3. **Fail-Closed Xendit Idempotency Lookup (`app/routes/xendit.py` :: `_check_db_idempotency_sync`):**
-   - Database errors during idempotency lookup raise `RuntimeError` and return HTTP `503 Service Unavailable` (`IDEMPOTENCY_CHECK_UNAVAILABLE`) in `process_xendit_webhook_core`, preventing any silent pass (`return None`) or duplicate financial side effects during database outages.
+### 2.6 Fail-Closed Commission Persistence, Class 1 Eligibility, Xendit Replay Audit & Sentinel Boundary (CTO-PR24-REVIEW-001 & 002)
+1. **Strict Fail-Closed Class 1 Eligibility (`app/services/affiliate_service.py` :: `is_class_1_commission_eligible`):**
+   - Never infers Class 1 from the absence of a negative flag.
+   - Rejects records when `identity_class` is missing, not **exactly** `CLASS_1_EXACT_LINKED_HEALTHY`, when `auth_user_id` is missing/invalid, when the authoritative identity relationship is stale/invalid, or when manual-review/discrepancy flags are present.
+   - Verified across all 6 mandatory cases (`test_scenario_6_identity_eligibility_fail_closed_six_cases`): **only Case 5** (explicit Class 1 with valid linked identity) passes automatically.
+2. **Fail-Closed Commission Persistence Across All Payable Writers (`app/services/affiliate_service.py`, `app/services/growth_service.py`, `app/services/payment_orchestrator.py`):**
+   - `allocate_upgrade_commission`, `record_prorated_upgrade_commission`, `process_order_paid_growth_event`, and `PaymentOrchestrator.process_xendit_webhook` all raise `RuntimeError` on non-unique DB persistence failures and never return in-memory state as success (`test_scenario_5` & `test_scenario_7`).
+3. **Fail-Closed Xendit Idempotency Lookup & Safe Replay Audit (`app/routes/xendit.py` :: `_check_db_idempotency_sync`):**
+   - Database errors during idempotency lookup raise `RuntimeError` and return HTTP `503 Service Unavailable` (`IDEMPOTENCY_CHECK_UNAVAILABLE`).
+   - When an order is already `PAID` in `orders` and a replay event arrives, failure of the best-effort `INSERT INTO payment_events ... 'PROCESSED_DUPLICATE_ORDER'` rolls back the aborted audit statement, logs a structured warning, and safely returns `ALREADY_PROCESSED` (`reason="order_already_paid"`) because the authoritative `orders` table already confirms settlement (`test_xendit_already_paid_order_replay_event_insert_failure_remains_safe`).
+4. **Unforgeable Sentinel Boundary (`app/routes/affiliate_auth.py` :: `mark_request_state_cryptographically_verified` & `get_current_affiliate`):**
+   - `mark_request_state_cryptographically_verified` strictly requires a raw `token: str` and verifies it via `decode_jwt_token(token, realm="core")` before binding `(_TRUSTED_AUTH_STATE_SENTINEL, verified_claims)` to `request.state`. Untrusted middleware or request data cannot invoke or forge the marker or mutate `request.state.user` post-verification (`test_sentinel_boundary_untrusted_middleware_and_request_data_cannot_forge_or_invoke_marker`).
 
 ---
 

@@ -481,6 +481,87 @@ class TestXenditQRISIntegration(unittest.TestCase):
         mock_wa.assert_not_called()
         mock_capi.assert_not_called()
 
+    @patch("app.routes.xendit.send_meta_capi_purchase", new_callable=AsyncMock)
+    @patch("app.routes.xendit.send_whatsapp_text", new_callable=AsyncMock)
+    def test_xendit_already_paid_order_replay_event_insert_failure_remains_safe(self, mock_wa, mock_capi):
+        """
+        CTO-PR24-REVIEW-002 Section C:
+        When an order is already PAID in `orders` and a replay event arrives whose audit INSERT
+        into `payment_events` (`PROCESSED_DUPLICATE_ORDER`) fails:
+        - `_check_db_idempotency_sync` rolls back the failed audit write, logs a warning, and still
+          returns `ALREADY_PROCESSED` (`reason='order_already_paid'`).
+        - Webhook returns HTTP 200 `ALREADY_PROCESSED` (`idempotent=True`).
+        - Zero duplicate settlement, zero duplicate financial_ledger or commission_ledger effects,
+          and zero duplicate WhatsApp / CAPI dispatches.
+        """
+        external_id = "ORD-ALREADY-PAID-REPLAY-910"
+        amount = 175000
+        self._register_intent(external_id, amount, phone="081234500910")
+        self.fake_db.orders[external_id] = {
+            "id": external_id,
+            "tenant_slug": "boontrack-career",
+            "tenant_id": "boontrack-career",
+            "gross_amount": amount,
+            "status": "PAID",
+            "payment_status": "PAID",
+        }
+        self.fake_db.settled_order_ids.add(external_id)
+
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value = mock_cur
+
+        executed_sql = []
+
+        def _cursor_execute(sql, params=None):
+            executed_sql.append(sql)
+            if "SELECT status FROM payment_events" in sql:
+                mock_cur.fetchone.return_value = None
+            elif "SELECT status, payment_status FROM orders" in sql:
+                mock_cur.fetchone.return_value = ("PAID", "PAID")
+            elif "INSERT INTO payment_events" in sql and "PROCESSED_DUPLICATE_ORDER" in sql:
+                raise RuntimeError("Simulated DB error during PROCESSED_DUPLICATE_ORDER replay audit insert")
+            elif "INSERT INTO financial_ledger" in sql or "INSERT INTO commission_ledger" in sql:
+                raise AssertionError("Must NEVER write financial_ledger or commission_ledger on replay!")
+
+        mock_cur.execute.side_effect = _cursor_execute
+
+        # 1. Direct unit verification on _real_check_db_idempotency_sync
+        with patch("app.routes.xendit.get_db_connection", return_value=mock_conn):
+            idem_res = _real_check_db_idempotency_sync("evt_replay_audit_fail_1", external_id)
+
+        self.assertIsNotNone(idem_res)
+        self.assertEqual(idem_res["status"], "ALREADY_PROCESSED")
+        self.assertEqual(idem_res["reason"], "order_already_paid")
+        mock_conn.rollback.assert_called_once()
+
+        # 2. Full webhook callback verification with _real_check_db_idempotency_sync wired in
+        settlements_before = len(self.fake_db.settlements)
+        with patch("app.routes.xendit._check_db_idempotency_sync", side_effect=_real_check_db_idempotency_sync), \
+             patch("app.routes.xendit.get_db_connection", return_value=mock_conn), \
+             patch("app.routes.xendit._record_settlement_and_ledger_sync") as mock_record_settlement:
+            resp = self.client.post(
+                "/api/v1/payments/xendit/callback",
+                json={
+                    "id": "evt_replay_audit_fail_2",
+                    "external_id": external_id,
+                    "amount": amount,
+                    "status": "PAID",
+                },
+                headers={"x-callback-token": self.valid_token},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["status"], "ALREADY_PROCESSED")
+        self.assertTrue(body["idempotent"])
+        mock_record_settlement.assert_not_called()
+        self.assertEqual(len(self.fake_db.settlements), settlements_before)
+        self.assertFalse(any("financial_ledger" in s or "commission_ledger" in s for s in executed_sql))
+        self._drain_background_tasks()
+        mock_wa.assert_not_called()
+        mock_capi.assert_not_called()
+
 
 
 

@@ -20,9 +20,15 @@ def test_payment_orchestrator_commission_mitra_default():
     }]
     mock_supabase.table.return_value.select.return_value.eq.return_value = mock_order_query
 
-    # Mock affiliates select: returns default 25%
+    # Mock affiliates select: returns default 25% for Class 1 linked healthy affiliate
     mock_aff_query = MagicMock()
-    mock_aff_query.execute.return_value.data = [{"commission_rate": 25.0}]
+    mock_aff_query.execute.return_value.data = [{
+        "id": "aff-123",
+        "auth_user_id": "auth-uid-123",
+        "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+        "status": "ACTIVE",
+        "commission_rate": 25.0,
+    }]
 
     tables = {}
     def get_table(name):
@@ -149,7 +155,13 @@ def test_payment_orchestrator_commission_clamp():
 
     # DB sets affiliate rate to 35% + 5% manager = 40% total -> clamped to 30%
     mock_aff_query = MagicMock()
-    mock_aff_query.execute.return_value.data = [{"commission_rate": 35.0}]
+    mock_aff_query.execute.return_value.data = [{
+        "id": "aff-high-rate",
+        "auth_user_id": "auth-uid-high-rate",
+        "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
+        "status": "ACTIVE",
+        "commission_rate": 35.0,
+    }]
 
     tables = {}
     def get_table(name):
@@ -279,7 +291,11 @@ def test_growth_service_commission_mitra_default_approved():
         "user_agent": "Mozilla",
         "name": "Mitra Joni",
         "phone_number": "08123456789",
-        "commission_rate": None  # None -> default 25%
+        "commission_rate": None,  # None -> default 25%
+        "role": "AFFILIATE",
+        "status": "ACTIVE",
+        "auth_user_id": "auth-uid-grow-1",
+        "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
     }
 
     with patch("app.services.growth_service.get_db_connection", return_value=mock_conn), \
@@ -323,6 +339,9 @@ def test_commission_db_row_normalization_dict_realdictrow_and_tuple():
         "phone_number",
         "commission_rate",
         "role",
+        "status",
+        "auth_user_id",
+        "identity_class",
     )
     raw_dict = {
         "attribution_id": "attr-norm-1",
@@ -333,6 +352,9 @@ def test_commission_db_row_normalization_dict_realdictrow_and_tuple():
         "phone_number": "628123456789",
         "commission_rate": 20.0,
         "role": "AFFILIATE",
+        "status": "ACTIVE",
+        "auth_user_id": "auth-uid-norm-1",
+        "identity_class": "CLASS_1_EXACT_LINKED_HEALTHY",
     }
     raw_real_dict = RealDictRow(list(raw_dict.items()))
     raw_tuple = tuple(raw_dict[c] for c in cols)
@@ -502,7 +524,8 @@ def test_commission_concurrent_callbacks_idempotency_at_db_constraint_level():
         m_cur = MagicMock()
         m_conn.cursor.return_value = m_cur
         m_cur.fetchone.return_value = (
-            "attr-c-1", "aff-conc-1", None, "Mozilla", "Mitra Conc", "628123456789", 25.0, "AFFILIATE"
+            "attr-c-1", "aff-conc-1", None, "Mozilla", "Mitra Conc", "628123456789", 25.0, "AFFILIATE",
+            "ACTIVE", "uid-conc-1", "CLASS_1_EXACT_LINKED_HEALTHY"
         )
 
         def _exec_sql(sql, params=None):

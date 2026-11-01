@@ -290,7 +290,10 @@ def _check_db_idempotency_sync(event_id: str, external_id: str) -> Optional[Dict
             o_status = str(order_row.get("status") or "").upper()
             o_pay_status = str(order_row.get("payment_status") or "").upper()
             if o_status in _PAID_STATUSES or o_pay_status in _PAID_STATUSES:
-                # Update status payment_events
+                # Best-effort audit record for duplicate order replay:
+                # Authoritative `orders` table check above has already confirmed the order is PAID.
+                # If the audit INSERT fails, rollback the aborted statement, log a warning, and still
+                # return ALREADY_PROCESSED so the replay never re-runs settlement or ledger mutations.
                 try:
                     cur.execute(
                         """
@@ -301,8 +304,15 @@ def _check_db_idempotency_sync(event_id: str, external_id: str) -> Optional[Dict
                         (str(event_id), str(external_id))
                     )
                     conn.commit()
-                except Exception:
-                    pass
+                except Exception as replay_audit_err:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    logger.warning(
+                        f"[Xendit Replay Audit Warning] Failed to insert PROCESSED_DUPLICATE_ORDER into payment_events "
+                        f"for replay event '{event_id}' on already-paid order '{external_id}': {replay_audit_err}"
+                    )
                 return {"status": "ALREADY_PROCESSED", "reason": "order_already_paid"}
 
     except Exception as e:
