@@ -1,34 +1,42 @@
-# FOUNDRY DIRECTIVE — REV 4.1.3 CTO RESIDUAL CLOSURE & FINAL DESIGN FREEZE SPECIFICATION
-## CRYPTOGRAPHIC KEYRING & LEGACY MIGRATION SOP (CLOSED/ACCEPTED), SECURITY PACKAGE CLEANUP, ATOMIC STATE-MACHINE REDIS LOCK LIFECYCLE, MIGRATION 031 DOWNSTREAM FK RECONCILIATION & INDEPENDENT GATE B2 CHECKS, AND GIT/SHA-256 METADATA SYNCHRONIZATION
+# FOUNDRY DIRECTIVE — REV 4.1.4 FINAL 5-POINT RESIDUAL CLOSURE & DESIGN FREEZE SPECIFICATION
+## CRYPTOGRAPHIC KEYRING & LEGACY MIGRATION SOP (CLOSED/ACCEPTED), SECURITY PACKAGE CLEANUP, REDIS LOCK LEASE/TOKEN OWNERSHIP & COMPARE-AND-DELETE, MIGRATION 031 QUARANTINE ISOLATION, POSTGRESQL FK CATALOG & FINANCIAL RECONCILIATION INVARIANTS, 9-TABLE GATE B2 TRANSPARENCY, AND GIT/SHA-256 METADATA INTEGRITY
 
 | Metadata Field | Value |
 | :--- | :--- |
-| **Document ID** | `BOONTRACK-AUTH-STG-2026-001-REV4.1.3-ADDENDUM` *(Supersedes & Incorporates `REV4.1.2-ADDENDUM` & `REV4.1.1-ADDENDUM`)* |
-| **Directive Reference** | `FOUNDRY DIRECTIVE — REV 4.1.3 (CTO RESIDUAL CLOSURE FOR DESIGN FREEZE SIGN-OFF)` |
-| **Parent Specifications** | 1. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.2` Commit `9d3bd09360f79bf02dacb1716804b2f76af57d80`, SHA-256: `E8C6D66A96DECA4BE185E40F3272409BD472CC7829F516465D316DC11A628062`)<br>2. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.1` Commit `11aa763b129cd89d731fe45df56c4fd1dde44c7b`)<br>3. `FOUNDRY_DIRECTIVE_REV4_1_REMEDIATION.md` (`BOONTRACK-AUTH-STG-2026-001-REV4.1-REMEDIATION`, SHA-256: `407E425739B38D5A43B4C22FE19BE9529CB9A95A7F8837733794B95315DFE086`) |
-| **Responds To Reviews & CTO Rulings** | 1. Putusan CTO atas Commit `9d3bd09360f79bf02dacb1716804b2f76af57d80` (`REV 4.1.2`): **`SUBSTANTIALLY ACCEPTED — DOCUMENTATION ONLY`** *(Bagian A Cryptographic Keyring dinyatakan **CLOSED/ACCEPTED** oleh CTO; 6 temuan residual `[CTO-REV412-01]` s/d `[CTO-REV412-06]` ditutup pada REV 4.1.3 untuk Design Freeze Sign-Off)*<br>2. Putusan CTO atas Commit `11aa763`: **`CONDITIONALLY ACCEPTED — REV 4.1.1 (DOCUMENTATION ONLY)`**<br>3. Putusan CTO atas REV 4.1: **`CONDITIONALLY ACCEPTED`**<br>4. `FOUNDRY_DIRECTIVE_REV4_1_INDEPENDENT_REVIEW.md` (`SHA-256: 23316A51C62369406C68F500BC44B91A8CBF3817E43CC875CF74AC988D21103D`)<br>5. `FOUNDRY_DIRECTIVE_REV4_1_REVIEW.md` (`SHA-256: 094EC4346A30D94F17260295174E195D8A6BD5E61E8603A6D0DD797F2D39CE2B`) |
-| **Revision** | `REV 4.1.3 (CTO Residual Closure for Design Freeze Sign-Off — Documentation Only / Zero Code Mutation)` |
+| **Document ID** | `BOONTRACK-AUTH-STG-2026-001-REV4.1.4-ADDENDUM` *(Supersedes & Incorporates `REV4.1.3-ADDENDUM`, `REV4.1.2-ADDENDUM` & `REV4.1.1-ADDENDUM`)* |
+| **Directive Reference** | `FOUNDRY DIRECTIVE — REV 4.1.4 (FINAL 5-POINT RESIDUAL CLOSURE FOR DESIGN FREEZE SIGN-OFF)` |
+| **Parent Specifications** | 1. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.3` Commit `370e63d3fc379630054621c3a8dadc0e2b2e3e03`, SHA-256: `00DC1E8401ED6B313F6ACEE2CBD676A255ED7B9AC5189BDFD77FFF60C2EFA2C0`, `203,397 bytes`, `2,920 lines`)<br>2. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.2` Commit `9d3bd09360f79bf02dacb1716804b2f76af57d80`, SHA-256: `E8C6D66A96DECA4BE185E40F3272409BD472CC7829F516465D316DC11A628062`, `2,118 lines`)<br>3. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.1` Commit `11aa763b129cd89d731fe45df56c4fd1dde44c7b`)<br>4. `FOUNDRY_DIRECTIVE_REV4_1_REMEDIATION.md` (`BOONTRACK-AUTH-STG-2026-001-REV4.1-REMEDIATION`, SHA-256: `407E425739B38D5A43B4C22FE19BE9529CB9A95A7F8837733794B95315DFE086`, `160,815 bytes`, `2,156 lines`) |
+| **Responds To Reviews & CTO Rulings** | 1. Putusan CTO atas PR #25 Commit `370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`REV 4.1.3`): **`FINAL 5-POINT RESIDUAL CLOSURE ([ID-01] s/d [ID-05]) — DOCUMENTATION ONLY`**<br>2. Putusan CTO atas Commit `9d3bd09360f79bf02dacb1716804b2f76af57d80` (`REV 4.1.2`): **`SUBSTANTIALLY ACCEPTED — DOCUMENTATION ONLY`** *(Bagian A Cryptographic Keyring dinyatakan **CLOSED/ACCEPTED** oleh CTO)*<br>3. Putusan CTO atas Commit `11aa763`: **`CONDITIONALLY ACCEPTED — REV 4.1.1 (DOCUMENTATION ONLY)`**<br>4. `FOUNDRY_DIRECTIVE_REV4_1_INDEPENDENT_REVIEW.md` (`SHA-256: 23316A51C62369406C68F500BC44B91A8CBF3817E43CC875CF74AC988D21103D`)<br>5. `FOUNDRY_DIRECTIVE_REV4_1_REVIEW.md` (`SHA-256: 094EC4346A30D94F17260295174E195D8A6BD5E61E8603A6D0DD797F2D39CE2B`) |
+| **Revision** | `REV 4.1.4 (Final 5-Point Residual Closure — Documentation Only / Zero Code Mutation)` |
 | **Date** | `2026-11-02` |
 | **Author** | `Cline Argon — Senior Core Engineer & Technical Documentation Author` |
 | **Repository** | `B055OB/boontrack-core` (`C:\boontrack-core`) |
 | **Active Git Branch** | `docs/rev4-1-remediation-and-review` |
 | **Source Code Baseline (`main`)** | `a82b6fdf76c043c9a3ee87f48c34062f05258437` (**100% UNMODIFIED — ZERO CODE MUTATION**) |
-| **Parent Branch Commit (`HEAD` / Verified REV 4.1.2)** | `9d3bd09360f79bf02dacb1716804b2f76af57d80` (`docs(foundry): update closing addendum to REV 4.1.2 addressing all final CTO directives`) |
-| **Preceding Addendum Commit (`HEAD~1` / REV 4.1.1)** | `11aa763b129cd89d731fe45df56c4fd1dde44c7b` (`docs(foundry): add REV 4.1.1 addendum addressing final CTO directives`) |
-| **Preceding Review Commit (`HEAD~2`)** | `af5f9edf43839df95cc8eee7d9d8f049b57af567` (`docs(foundry): add independent adversarial review for REV 4.1`) |
+| **Parent Branch Commit (`HEAD` / Verified REV 4.1.3 PR #25)** | `370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`370e63d` — `docs(foundry): complete REV 4.1.3 closing all 6 CTO residual directives (CTO-REV412-01 to 06)`) |
+| **Preceding Addendum Commit (`HEAD~1` / Verified REV 4.1.2)** | `9d3bd09360f79bf02dacb1716804b2f76af57d80` (`9d3bd09` — `docs(foundry): update closing addendum to REV 4.1.2 addressing all final CTO directives`) |
+| **Preceding Addendum Commit (`HEAD~2` / REV 4.1.1)** | `11aa763b129cd89d731fe45df56c4fd1dde44c7b` (`11aa763` — `docs(foundry): add REV 4.1.1 addendum addressing final CTO directives`) |
+| **Preceding Review Commit (`HEAD~3`)** | `af5f9edf43839df95cc8eee7d9d8f049b57af567` (`af5f9ed` — `docs(foundry): add independent adversarial review for REV 4.1`) |
 | **Execution Protocol** | `DOCUMENTATION ONLY (ZERO SOURCE CODE, CONFIG, OR PHYSICAL MIGRATION FILE MUTATION)` |
-| **Release Gate Posture** | **READY FOR CTO DESIGN FREEZE SIGN-OFF UPON VERIFICATION OF REV 4.1.3 RESIDUAL CLOSURE (GATE B1, GATE B2, AND GATE I REMAIN LOCKED UNTIL CTO AUTHORIZATION)** |
+| **Release Gate Posture** | **READY FOR CTO DESIGN FREEZE SIGN-OFF UPON VERIFICATION OF REV 4.1.4 5-POINT RESIDUAL CLOSURE (GATE B1, GATE B2, AND GATE I REMAIN LOCKED UNTIL CTO AUTHORIZATION)** |
 
 ---
 
-## 1. EXECUTIVE SUMMARY & MATRIKS PENUTUPAN SYARAT CTO (REV 4.1.1 -> REV 4.1.2 -> REV 4.1.3)
+## 1. EXECUTIVE SUMMARY & MATRIKS PENUTUPAN SYARAT CTO (REV 4.1.1 -> REV 4.1.2 -> REV 4.1.3 -> REV 4.1.4)
 
-Menyusul pemeriksaan langsung oleh Chief Technology Officer (CTO) di GitHub atas commit **`9d3bd09360f79bf02dacb1716804b2f76af57d80` (`REV 4.1.2`)**, CTO telah mengeluarkan putusan:
-> **`"SUBSTANTIALLY ACCEPTED — DOCUMENTATION ONLY"`**
-> - **Bagian A (Cryptographic Keyring — Bagian 2 & Bagian 3)** telah dinyatakan **CLOSED / ACCEPTED** oleh CTO dan **TIDAK DIUBAH / TIDAK DIHAPUS**.
-> - CTO meminta penambahan dan penyelarasan bagian **"REV 4.1.3 — CTO Residual Closure"** yang menutup secara eksak **6 ID temuan residual (`[CTO-REV412-01]` s/d `[CTO-REV412-06]`)** untuk penetapan **Design Freeze Sign-Off**, dengan tetap mempertahankan protokol **`ZERO CODE MUTATION`**.
+Menyusul evaluasi akhir Chief Technology Officer (CTO) atas PR #25 Commit **`370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`370e63d` / `REV 4.1.3`)**, revisi ringkas **`REV 4.1.4 — FINAL 5-POINT RESIDUAL CLOSURE`** ini menutup secara presisi **5 instruksi terakhir CTO (`[ID-01]` s/d `[ID-05]`)** tanpa merombak bagian yang sudah berstatus **CLOSED / ACCEPTED** dan dengan mematuhi protokol **`ZERO CODE MUTATION`** (`git diff --stat main -- app/ migrations/ tests/` = `0` file berubah).
 
-### 1.0 Matriks Penutupan 6 Temuan Residual CTO pada REV 4.1.3 (`CTO Residual Closure`)
+### 1.0A Matriks Penutupan 5 Instruksi Terakhir CTO pada REV 4.1.4 (`Final 5-Point Residual Closure`)
+
+| ID Instruksi CTO | Domain & Target Spesifikasi | Solusi Arsitektural & SQL Eksak pada REV 4.1.4 | Seksi Referensi | Status Akhir |
+| :--- | :--- | :--- | :--- | :--- |
+| **`[ID-01]`** | **Redis Lock Lease, Ownership Token & Compare-and-Delete (`Bagian 4` & `Bagian 7.1`)** | 1. **Ownership Token (`lock_token = str(uuid.uuid4())`)** saat akuisisi lock Redis (`SET key token NX EX 30`).<br>2. **Lease Renewal / Heartbeat Watchdog** (`_LockLeaseHeartbeatWatchdog`) via Lua Compare-and-PEXPIRE serta **Pre-Commit Lease Validity Check**: jika lease gagal diperpanjang atau sisa lease `< safety_margin` (`5.0s`) sebelum `conn.commit()`, worker **WAJIB `conn.rollback()`** dan berhenti sebelum commit tidak terlindungi.<br>3. **Atomic Lua Compare-and-Delete Script** (`if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`).<br>4. **Test 4 (`test_cto_rev414_01_lease_expiry_and_token_ownership_prevents_stale_commit_and_foreign_unlock`)**. | **Bagian 4 (§4.1–§4.4) & Bagian 7 (§7.1)** | **CLOSED (REV 4.1.4)** |
+| **`[ID-02]`** | **Batas Tegas Karantina Tenant pada `affiliate_commissions` (`Bagian 5.2` & `Appendix A Step 1C`)** | **KOREKSI KONSEP**: Menghapus total penggunaan string sentinel palsu `'__QUARANTINED_...'` sebagai pengganti `tenant_id` di tabel aktif. Baris anomali/yatim yang tidak dapat di-resolve dipindahkan secara utuh ke tabel karantina khusus **`public.migration_031_quarantined_affiliate_commissions`** (dengan lineage lengkap & alasan karantina) sehingga: (a) Karantina BUKAN tenant bisnis valid; (b) DILARANG KERAS masuk perhitungan komisi, payout, atau settlement; (c) Pemulihan wajib melalui prosedur approval & verifikasi lineage eksplisit; (d) `ALTER TABLE public.affiliate_commissions ALTER COLUMN tenant_id SET NOT NULL;` hanya dieksekusi setelah seluruh baris di tabel utama memiliki `tenant_id` bisnis yang sah. | **Bagian 5 (§5.2), Appendix A (§1C, §3), & Bagian 7 (§7.3)** | **CLOSED (REV 4.1.4)** |
+| **`[ID-03]`** | **Financial Lineage & Katalog FK Aktual PostgreSQL (`Bagian 7.4` & `Appendix A Step 2B/2D`)** | 1. Query inspeksi dinamis ke katalog sistem PostgreSQL (`pg_constraint`, `pg_class`, `information_schema.key_column_usage`).<br>2. Pemisahan inventaris menjadi **(a) Formal FK Constraints** dan **(b) Logical Non-FK Financial References**.<br>3. **Decision Matrix Per Jenis Relasi**: aturan tegas kapan relasi aman di-repoint ke `canonical_survivor_id` vs kapan relasi **DILARANG digabung** dan wajib dikarantina (konflik histori transaksi/pembayaran).<br>4. Query **Financial Reconciliation Invariant (Pre vs Post Migration)**: membandingkan `COUNT(*)` dan `SUM(amount)` per status sebelum & sesudah migrasi (wajib selisih `0`). | **Bagian 7 (§7.4) & Appendix A (§0B, §2B, §2D, §2F)** | **CLOSED (REV 4.1.4)** |
+| **`[ID-04]`** | **Revisi Independent Gate B2 Checks Tanpa Menyembunyikan Anomali (`Bagian 5.1C` & `Appendix A Step 2E`)** | Menghapus pengecualian `NOT LIKE '__QUARANTINED_%'` pada `B2-ASSERT-01` s/d `B2-ASSERT-04` dan menambahkan laporan per-tabel untuk ke-9 tabel sumber (`product_orders`, `delivery_orders`, `affiliate_commissions`, `attributions`, `attribution_sessions`, `orders`, `affiliates`, `shop_subscriptions`, `shop_commission_ledger`) dengan kolom eksplisit: `source_table`, `total_rows`, `valid_resolved_rows`, `quarantined_rows`, `unresolved_tenant_rows`, dan `cross_tenant_conflict_rows`. Lulus jika `unresolved_tenant_rows == 0` DAN `cross_tenant_conflict_rows == 0`, serta `quarantined_rows` cocok 100% dengan isi tabel karantina. | **Bagian 5 (§5.1C), Appendix A (§2E), & Bagian 7 (§7.5)** | **CLOSED (REV 4.1.4)** |
+| **`[ID-05]`** | **Integritas Metadata Git, Line Count & SHA-256 Aktual (`Bagian 6` & `Appendix B`)** | Mencatat secara akurat commit HEAD PR #25 sebelumnya **`370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`370e63d`)**, menghitung ulang SHA-256 aktual dari byte file di disk untuk seluruh 12 file di Tabel Inventaris SHA-256 (`Bagian 6.2`) via PowerShell `Get-FileHash -Algorithm SHA256` beserta ukuran byte (`Bytes`) dan jumlah baris (`Lines`), serta memastikan `git diff --stat main -- app/ migrations/ tests/` = `0`. | **Header, Bagian 6 (§6.1–§6.2), Bagian 7 (§7.6), & Appendix B** | **CLOSED (REV 4.1.4)** |
+
+### 1.0B Matriks Penutupan 6 Temuan Residual CTO pada REV 4.1.3 (`CTO Residual Closure`)
 
 | ID Temuan Residual CTO | Domain & Target Spesifikasi | Solusi Arsitektural & SQL Eksak pada REV 4.1.3 | Seksi Referensi | Status Akhir |
 | :--- | :--- | :--- | :--- | :--- |
@@ -758,33 +766,91 @@ __all__ = [
 
 ---
 
-## 4. CAKUPAN WAJIB 3 — REDIS LOCK LIFECYCLE, ELIMINASI DOUBLE-CLEANUP, & ATOMIC CANCELLATION/COMMIT STATE MACHINE (`REV4-HIGH-03` & `[CTO-REV412-01]`)
-*(Menutup Sepenuhnya Residual Risk **`REV4-HIGH-03`** dan **`[CTO-REV412-01]`** pada `app/routes/xendit.py`)*
+## 4. CAKUPAN WAJIB 3 — REDIS LOCK LIFECYCLE, OWNERSHIP TOKEN, LEASE RENEWAL WATCHDOG, COMPARE-AND-DELETE, & ATOMIC STATE MACHINE (`REV4-HIGH-03`, `[CTO-REV412-01]` & `[ID-01]`)
+*(Menutup Sepenuhnya Residual Risk **`REV4-HIGH-03`**, **`[CTO-REV412-01]`**, dan Instruksi CTO **`[ID-01]`** pada `app/routes/xendit.py`)*
 
-### 4.1 Analisis Residual Risk `REV4-HIGH-03` & Penutupan Eksak `[CTO-REV412-01]` pada REV 4.1.3
-Menindaklanjuti evaluasi CTO atas commit `9d3bd09360f79bf02dacb1716804b2f76af57d80` (`REV 4.1.2`), revisi **`REV 4.1.3`** mempertahankan eliminasi *double-cleanup* dan *shielded worker-thread join barrier* dari REV 4.1.2, sekaligus menutup **3 celah residual `[CTO-REV412-01]`** pada siklus hidup koneksi DB dan Redis lock di `app/routes/xendit.py`:
+### 4.1 Analisis Residual Risk `REV4-HIGH-03`, `[CTO-REV412-01]`, & Penutupan Eksak `[ID-01]` pada REV 4.1.4
+Menindaklanjuti evaluasi CTO atas commit `9d3bd09360f79bf02dacb1716804b2f76af57d80` (`REV 4.1.2`) dan commit `370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`REV 4.1.3`), revisi **`REV 4.1.4`** mempertahankan pemisahan `close_attempted` vs `conn_verified_closed` dan state machine 5-state dari REV 4.1.3, serta menutup secara presisi **3 mekanisme keamanan Redis Lock Lease & Token Ownership (`[ID-01]`)** pada `app/routes/xendit.py`:
 
 1. **Pemisahan Tegas `close_attempted: bool` vs. Observasi Fisik `conn_verified_closed: bool` (`[CTO-REV412-01a]`)**:
-   - Pada draft REV 4.1.2, `_XenditDbCleanupState` menyetel `state.conn_closed = True` *sebelum* `conn.close()` dipanggil. Jika `conn.close()` gagal atau melempar `OperationalError`/`InterfaceError` sehingga koneksi fisik PostgreSQL masih terbuka (`getattr(conn, "closed", 0) != 1`), flag tersebut keliru bernilai `True`.
-   - **Perbaikan REV 4.1.3**: `_XenditDbCleanupState` memisahkan secara tegas antara **`close_attempted: bool`** (penjaga idempotensi panggilan) dan **`conn_verified_closed: bool`** yang **HANYA** bernilai `True` jika `conn is not None and getattr(conn, "closed", 0) == 1` pasca-eksekusi `conn.close()`. Jika `conn.closed != 1`, state ditransisikan ke **`CLOSE_FAILED`**.
+   - `_XenditDbCleanupState` memisahkan secara tegas antara **`close_attempted: bool`** (penjaga idempotensi panggilan) dan **`conn_verified_closed: bool`** yang **HANYA** bernilai `True` jika `conn is not None and getattr(conn, "closed", 0) == 1` pasca-eksekusi `conn.close()`. Jika `conn.closed != 1`, state ditransisikan ke **`CLOSE_FAILED`**.
 2. **Invariant Pelepasan Redis Lock di Blok `finally:` Luar (`[CTO-REV412-01b]`)**:
-   - Di blok `finally:` luar `process_xendit_webhook_core()`, **`release_payment_lock(external_id)` HANYA boleh dipanggil jika `worker_task.done() == True` DAN `cleanup_state.conn_verified_closed == True`**.
-   - Jika `conn.close()` gagal atau `conn.closed != 1` (`cleanup_state.conn_verified_closed == False`), sistem **DILARANG melepas Redis lock secara manual**: pelepasan lock ditahan agar dilindungi TTL Redis (`30s`) disertai log `CRITICAL` / `SEV-1` (`REDIS_LOCK_RETAINED_DB_CLOSE_UNVERIFIED`).
+   - Di blok `finally:` luar `process_xendit_webhook_core()`, **`release_payment_lock(external_id, lock_token)` HANYA boleh dipanggil jika `worker_task.done() == True` DAN `cleanup_state.conn_verified_closed == True`**.
+   - Jika `conn.close()` gagal atau `conn.closed != 1` (`cleanup_state.conn_verified_closed == False`), sistem **DILARANG melepas Redis lock secara manual**: pelepasan lock ditahan agar dilindungi TTL Redis disertai log `CRITICAL` / `SEV-1` (`REDIS_LOCK_RETAINED_DB_CLOSE_UNVERIFIED`).
 3. **Penyelesaian Race Condition antara `cancel_event` dan `conn.commit()` via State Machine Atomik (`[CTO-REV412-01c]`)**:
    - Menggunakan state transisi atomik (`PRE_COMMIT`, `COMMITTING`, `COMMITTED_OK`, `ROLLED_BACK`, `CLOSE_FAILED`) di bawah `cleanup_state.state_lock`.
-   - Jika `cancel_event` tiba saat atau setelah `conn.commit()` berhasil dieksekusi (`tx_committed == True`), worker dan coroutine **WAJIB memperlakukan transaksi sebagai `COMMITTED_OK`** (`conn.rollback()` TIDAK dipanggil dan propagasi pembatalan/rollback palsu ditekan sehingga tidak pernah dilaporkan seolah rollback berhasil).
+   - Jika `cancel_event` tiba saat atau setelah `conn.commit()` berhasil dieksekusi (`tx_committed == True`), worker dan coroutine **WAJIB memperlakukan transaksi sebagai `COMMITTED_OK`** (`conn.rollback()` TIDAK dipanggil).
+4. **Mekanisme Ownership Token, Lease Renewal / Heartbeat Watchdog, Pre-Commit Lease Validity Check, & Atomic Lua Compare-and-Delete (`[ID-01]` — REV 4.1.4)**:
+   - **(a) Ownership Token (`lock_token = str(uuid.uuid4())`)**: Setiap eksekusi webhook menghasilkan token kepemilikan unik `lock_token = str(uuid.uuid4())` dan mengakuisisi lock Redis melalui `SET xendit:payment_lock:{external_id} {lock_token} NX EX 30`.
+   - **(b) Lease Renewal / Heartbeat Watchdog & Pre-Commit Lease Validity Check**: Selama worker masih aktif mengeksekusi transaksi DB, thread daemon/task `_LockLeaseHeartbeatWatchdog` memperpanjang lease secara periodik (setiap `10s` untuk TTL `30s`) menggunakan skrip Lua *Compare-and-PEXPIRE* yang memverifikasi nilai Redis `== lock_token`. Jika perpanjangan lease gagal (karena kunci kadaluwarsa, diambil alih worker lain, atau Redis terputus), watchdog menyetel `cleanup_state.mark_lease_lost("HEARTBEAT_LEASE_RENEWAL_FAILED")` dan `cancel_event.set()`. Lebih lanjut, **tepat sebelum `conn.commit()` (Pre-Commit Lease Validity Check)**, worker memeriksa bahwa:
+     1) `cleanup_state.lease_valid == True`,
+     2) sisa waktu lease monotonik `cleanup_state.remaining_lease_seconds(time.monotonic()) >= _PRE_COMMIT_LEASE_SAFETY_MARGIN_SECONDS` (`5.0` detik), dan
+     3) verifikasi kepemilikan aktif `renew_payment_lock_lease(external_id, lock_token, ttl_seconds=30)` bernilai `True`.
+     Apabila salah satu syarat tersebut gagal, worker **WAJIB membatalkan transaksi (`conn.rollback()` di `finally:`)**, mentransisikan state ke `ROLLED_BACK`, dan berhenti sebelum melakukan commit yang tidak terlindungi (`stale/unprotected commit prevention`).
+   - **(c) Atomic Lua Compare-and-Delete Script**: Pelepasan lock biasa (`DEL`) diganti sepenuhnya dengan evaluasi atomik skrip Lua di server Redis:
+     ```lua
+     if redis.call("get", KEYS[1]) == ARGV[1] then
+         return redis.call("del", KEYS[1])
+     else
+         return 0
+     end
+     ```
+     Dengan demikian, worker yang terlambat (*stale worker*) **tidak pernah bisa menghapus lock milik worker lain** (`foreign unlock prevention`).
 
-### 4.2 Spesifikasi Kode Lengkap `try / except / finally` (`[PROPOSAL — REV 4.1.3]`)
+### 4.2 Spesifikasi Kode Lengkap `try / except / finally` dengan Lease Token & Lua Compare-and-Delete (`[PROPOSAL — REV 4.1.4]`)
 
 ```python
-# [PROPOSAL — REV 4.1.3: app/routes/xendit.py — [CTO-REV412-01] ATOMIC STATE MACHINE & VERIFIED CONN CLOSE]
+# [PROPOSAL — REV 4.1.4: app/routes/xendit.py — [CTO-REV412-01] & [ID-01] LEASE TOKEN, WATCHDOG & LUA COMPARE-AND-DELETE]
 import asyncio
 import json
 import threading
+import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
+
+_LOCK_LEASE_TTL_SECONDS: int = 30
+_LOCK_HEARTBEAT_INTERVAL_SECONDS: float = 10.0
+_PRE_COMMIT_LEASE_SAFETY_MARGIN_SECONDS: float = 5.0
+
+# [ID-01] Atomic Lua Compare-and-Delete Script (prevents delayed worker from deleting another worker's lock)
+_LUA_COMPARE_AND_DELETE_SCRIPT: str = (
+    'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end'
+)
+
+# [ID-01] Atomic Lua Compare-and-PEXPIRE Script for Heartbeat Watchdog Lease Renewal
+_LUA_COMPARE_AND_RENEW_SCRIPT: str = (
+    'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("pexpire", KEYS[1], ARGV[2]) else return 0 end'
+)
+
+
+def _payment_lock_key(external_id: str) -> str:
+    return f"xendit:payment_lock:{external_id}"
+
+
+def acquire_payment_lock(external_id: str, lock_token: str, ttl_seconds: int = _LOCK_LEASE_TTL_SECONDS) -> bool:
+    """[ID-01] Acquires Redis payment lock with unique ownership token (`SET key lock_token NX EX ttl`)."""
+    if not external_id or not lock_token:
+        return False
+    return bool(get_redis_client().set(_payment_lock_key(external_id), lock_token, nx=True, ex=int(ttl_seconds)))
+
+
+def renew_payment_lock_lease(external_id: str, lock_token: str, ttl_seconds: int = _LOCK_LEASE_TTL_SECONDS) -> bool:
+    """[ID-01] Atomically renews Redis lock TTL iff the lock is still owned by `lock_token`."""
+    if not external_id or not lock_token:
+        return False
+    res = get_redis_client().eval(_LUA_COMPARE_AND_RENEW_SCRIPT, 1, _payment_lock_key(external_id), lock_token, int(ttl_seconds * 1000))
+    return int(res or 0) == 1
+
+
+def release_payment_lock(external_id: str, lock_token: str) -> bool:
+    """[ID-01] Atomically releases Redis lock via Lua Compare-and-Delete iff owned by `lock_token`."""
+    if not external_id or not lock_token:
+        return False
+    res = get_redis_client().eval(_LUA_COMPARE_AND_DELETE_SCRIPT, 1, _payment_lock_key(external_id), lock_token)
+    return int(res or 0) == 1
 
 
 class XenditTxLifecycleState(str, Enum):
@@ -798,8 +864,8 @@ class XenditTxLifecycleState(str, Enum):
 @dataclass
 class _XenditDbCleanupState:
     """
-    [CTO-REV412-01] Guarantees strict separation between `close_attempted: bool`
-    and physical verification `conn_verified_closed: bool` (True ONLY if getattr(conn, "closed", 0) == 1).
+    [CTO-REV412-01] & [ID-01] Guarantees strict separation between `close_attempted: bool`
+    and physical verification `conn_verified_closed: bool`, plus monotonic Redis lock lease tracking.
     """
     tx_state: str = XenditTxLifecycleState.PRE_COMMIT.value
     tx_committed: bool = False
@@ -810,7 +876,62 @@ class _XenditDbCleanupState:
     close_attempted: bool = False
     conn_verified_closed: bool = False
     last_close_error: Optional[str] = None
+    lock_token: Optional[str] = None
+    lease_valid: bool = True
+    lease_deadline_monotonic: float = field(default_factory=lambda: time.monotonic() + _LOCK_LEASE_TTL_SECONDS)
+    lease_loss_reason: Optional[str] = None
     state_lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def record_lease_renewal(self, ttl_seconds: float, now_mono: Optional[float] = None) -> None:
+        ts = time.monotonic() if now_mono is None else now_mono
+        with self.state_lock:
+            if self.lease_valid:
+                self.lease_deadline_monotonic = ts + float(ttl_seconds)
+
+    def mark_lease_lost(self, reason: str) -> None:
+        with self.state_lock:
+            self.lease_valid = False
+            if self.lease_loss_reason is None:
+                self.lease_loss_reason = reason
+
+    def remaining_lease_seconds(self, now_mono: Optional[float] = None) -> float:
+        ts = time.monotonic() if now_mono is None else now_mono
+        return self.lease_deadline_monotonic - ts
+
+
+class _LockLeaseHeartbeatWatchdog:
+    """[ID-01] Background lease renewal watchdog while worker thread is active."""
+    def __init__(
+        self, external_id: str, lock_token: str, cleanup_state: _XenditDbCleanupState, cancel_event: threading.Event,
+        *, ttl_seconds: int = _LOCK_LEASE_TTL_SECONDS, interval_seconds: float = _LOCK_HEARTBEAT_INTERVAL_SECONDS,
+        renew_fn: Callable[[str, str, int], bool] = renew_payment_lock_lease,
+    ) -> None:
+        self._external_id, self._lock_token, self._state, self._cancel_event = external_id, lock_token, cleanup_state, cancel_event
+        self._ttl_seconds, self._interval_seconds, self._renew_fn = ttl_seconds, interval_seconds, renew_fn
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run_loop, name=f"xendit-lease-{self._external_id}", daemon=True)
+        self._thread.start()
+
+    def _run_loop(self) -> None:
+        while not self._stop_event.wait(timeout=self._interval_seconds):
+            try:
+                ok = bool(self._renew_fn(self._external_id, self._lock_token, self._ttl_seconds))
+            except BaseException:
+                ok = False
+            if ok:
+                self._state.record_lease_renewal(self._ttl_seconds)
+            else:
+                self._state.mark_lease_lost("HEARTBEAT_LEASE_RENEWAL_FAILED")
+                self._cancel_event.set()
+                break
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
 
 
 def _close_xendit_db_resources(
@@ -875,10 +996,12 @@ def _record_settlement_and_ledger_sync(
     product_name: Optional[str] = None,
     cancel_event: Optional[threading.Event] = None,
     cleanup_state: Optional[_XenditDbCleanupState] = None,
+    lock_token: Optional[str] = None,
+    lease_verify_fn: Optional[Callable[[str, str, int], bool]] = None,
 ) -> Dict[str, Any]:
     """
     Atomic PostgreSQL transaction for Xendit settlement & commission ledger.
-    Enforces [CTO-REV412-01] state transitions: PRE_COMMIT -> COMMITTING -> COMMITTED_OK / ROLLED_BACK / CLOSE_FAILED.
+    Enforces [CTO-REV412-01] & [ID-01] Pre-Commit Lease Validity Check before conn.commit().
     """
     conn = None
     cur = None
@@ -1023,11 +1146,28 @@ def _record_settlement_and_ledger_sync(
                             f"[XENDIT COMMISSION FAIL-CLOSED] DB error on commission_ledger ({pgcode}): {pg_err}"
                         ) from pg_err
 
-        # 6. [CTO-REV412-01] Atomic Pre-Commit Check & State Transition (`PRE_COMMIT` -> `COMMITTING` -> `COMMITTED_OK`)
+        # 6. [CTO-REV412-01] & [ID-01] Atomic Pre-Commit Cancellation & Lease Validity Check
+        effective_token = lock_token or state.lock_token
+        if effective_token and lease_verify_fn is not None:
+            if not lease_verify_fn(external_id, effective_token, _LOCK_LEASE_TTL_SECONDS):
+                state.mark_lease_lost("PRE_COMMIT_REDIS_TOKEN_OWNERSHIP_LOST")
+            else:
+                state.record_lease_renewal(_LOCK_LEASE_TTL_SECONDS)
+
         with state.state_lock:
             if cancel_event is not None and cancel_event.is_set():
                 raise RuntimeError(
                     f"[XENDIT CANCELLED BEFORE COMMIT] external_id={external_id} aborted in PRE_COMMIT"
+                )
+            remaining_lease = state.remaining_lease_seconds()
+            if not state.lease_valid or remaining_lease < _PRE_COMMIT_LEASE_SAFETY_MARGIN_SECONDS:
+                state.lease_valid = False
+                state.lease_loss_reason = state.lease_loss_reason or (
+                    f"LEASE_BELOW_SAFETY_MARGIN({remaining_lease:.2f}s<{_PRE_COMMIT_LEASE_SAFETY_MARGIN_SECONDS:.2f}s)"
+                )
+                raise RuntimeError(
+                    f"[XENDIT LEASE EXPIRED BEFORE COMMIT] external_id={external_id} aborted in PRE_COMMIT: "
+                    f"reason={state.lease_loss_reason}, remaining_lease={remaining_lease:.2f}s"
                 )
             state.tx_state = XenditTxLifecycleState.COMMITTING.value
 
@@ -1070,10 +1210,10 @@ def _record_settlement_and_ledger_sync(
     }
 ```
 
-Berikut adalah blok pemanggil asinkron `process_xendit_webhook_core()` yang menegakkan **invariant pelepasan Redis lock (`worker_task.done() and cleanup_state.conn_verified_closed`)** serta **penanganan deterministik `COMMITTED_OK` saat `cancel_event` berpacu dengan `conn.commit()`**:
+Berikut adalah blok pemanggil asinkron `process_xendit_webhook_core()` yang menghasilkan **Ownership Token (`lock_token = str(uuid.uuid4())`)**, menjalankan **`_LockLeaseHeartbeatWatchdog`**, menegakkan **invariant pelepasan Redis lock via Lua Compare-and-Delete (`release_payment_lock(external_id, lock_token)`)**, serta menangani race `cancel_event` vs `conn.commit()`:
 
 ```python
-# [PROPOSAL — REV 4.1.3: app/routes/xendit.py (process_xendit_webhook_core — [CTO-REV412-01])]
+# [PROPOSAL — REV 4.1.4: app/routes/xendit.py (process_xendit_webhook_core — [CTO-REV412-01] & [ID-01])]
     # 3. Validate authoritative tenant_id BEFORE acquiring Redis lock
     if not tenant_id:
         logger.warning(f"[Xendit Webhook] Unresolved tenant for order '{external_id}'. Fail-closed.")
@@ -1086,8 +1226,9 @@ Berikut adalah blok pemanggil asinkron `process_xendit_webhook_core()` yang mene
             },
         }
 
-    # 4. Acquire Redis Distributed Payment Lock (TTL 30s, NX)
-    if external_id and not acquire_payment_lock(external_id):
+    # 4. [ID-01] Generate Ownership Token & Acquire Redis Distributed Payment Lock (TTL 30s, NX)
+    lock_token = str(uuid.uuid4())
+    if external_id and not acquire_payment_lock(external_id, lock_token, ttl_seconds=_LOCK_LEASE_TTL_SECONDS):
         log_structured_event(
             service="xendit_webhook",
             event_type="CONCURRENT_LOCK_CONTENTION",
@@ -1107,12 +1248,22 @@ Berikut adalah blok pemanggil asinkron `process_xendit_webhook_core()` yang mene
             },
         }
 
-    # SINGLE UNIFIED LOCK LIFECYCLE BLOCK ([CTO-REV412-01] CANCELLATION & CLOSE-FAILURE SAFE):
+    # SINGLE UNIFIED LOCK LIFECYCLE BLOCK ([CTO-REV412-01] & [ID-01] LEASE-AWARE & CLOSE-FAILURE SAFE):
     cancel_event = threading.Event()
-    cleanup_state = _XenditDbCleanupState()
+    cleanup_state = _XenditDbCleanupState(
+        lock_token=lock_token,
+        lease_deadline_monotonic=time.monotonic() + _LOCK_LEASE_TTL_SECONDS,
+    )
+    watchdog = _LockLeaseHeartbeatWatchdog(
+        external_id=external_id,
+        lock_token=lock_token,
+        cleanup_state=cleanup_state,
+        cancel_event=cancel_event,
+    )
     worker_task: Optional[asyncio.Task] = None
     try:
         set_trace_context(tenant_id=tenant_id)
+        watchdog.start()
 
         # 7. Execute Synchronous DB Settlement in Shielded Worker Task
         worker_task = asyncio.create_task(
@@ -1128,6 +1279,8 @@ Berikut adalah blok pemanggil asinkron `process_xendit_webhook_core()` yang mene
                 product_name=product_name,
                 cancel_event=cancel_event,
                 cleanup_state=cleanup_state,
+                lock_token=lock_token,
+                lease_verify_fn=renew_payment_lock_lease,
             )
         )
         settle_res = await asyncio.shield(worker_task)
@@ -1240,14 +1393,15 @@ Berikut adalah blok pemanggil asinkron `process_xendit_webhook_core()` yang mene
             },
         }
     finally:
-        # [CTO-REV412-01] STRICT OUTER FINALLY INVARIANT:
-        # release_payment_lock(external_id) MUST ONLY be called if:
+        watchdog.stop()
+        # [CTO-REV412-01] & [ID-01] STRICT OUTER FINALLY INVARIANT + ATOMIC LUA COMPARE-AND-DELETE:
+        # release_payment_lock(external_id, lock_token) MUST ONLY be called if:
         #   worker_task.done() == True AND cleanup_state.conn_verified_closed == True
         if external_id:
             worker_is_done = bool(worker_task is not None and worker_task.done())
             if worker_is_done and cleanup_state.conn_verified_closed:
                 try:
-                    release_payment_lock(external_id)
+                    release_payment_lock(external_id, lock_token)
                 except BaseException as lock_err:
                     logger.warning(f"[Xendit Redis Lock Release Warning] external_id={external_id}: {lock_err}")
             else:
@@ -1283,27 +1437,28 @@ Berikut adalah blok pemanggil asinkron `process_xendit_webhook_core()` yang mene
 
 ---
 
-### 4.3 Tabel State Machine Eksplisit (`[CTO-REV412-01]` Atomic State Transitions & Lock Release Invariant)
+### 4.3 Tabel State Machine Eksplisit (`[CTO-REV412-01]` & `[ID-01]` Atomic State Transitions, Lease Check & Lua Compare-and-Delete)
 
-| State Awal | Event / Trigger Pemicu | Kondisi Guard (`state_lock`) | State Transisi (`tx_state`) | Aksi DB (`rollback` / `commit` / `close`) | `tx_committed` | `close_attempted` | `conn_verified_closed` (`conn.closed == 1`) | Disposisi `release_payment_lock(external_id)` di Outer `finally:` |
+| State Awal | Event / Trigger Pemicu | Kondisi Guard (`state_lock` & Lease) | State Transisi (`tx_state`) | Aksi DB (`rollback` / `commit` / `close`) | `tx_committed` | `close_attempted` | `conn_verified_closed` (`conn.closed == 1`) | Disposisi `release_payment_lock(external_id, lock_token)` di Outer `finally:` |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`PRE_COMMIT`** | Seluruh SQL DML selesai; akan memasuki batas komit | `not cancel_event.is_set()` | **`COMMITTING`** | Masuk ke pemanggilan `conn.commit()` | `False` | `False` | `False` | Menunggu `worker_task.done()` |
-| **`COMMITTING`** | `conn.commit()` kembali secara normal (tanpa exception) | `conn.commit()` sukses (`cancel_event` diabaikan pasca-titik ini) | **`COMMITTED_OK`** | `do_rollback=False` -> `cur.close()` -> `conn.close()` sukses | **`True`** | **`True`** | **`True`** (`conn.closed == 1`) | **DIPANGGIL (`release_payment_lock` dieksekusi)** |
-| **`COMMITTING`** | `asyncio.CancelledError` tiba saat `conn.commit()` sedang berjalan dan `conn.commit()` berhasil selesai | `tx_committed == True` tercapai sebelum thread keluar | **`COMMITTED_OK`** | **`conn.rollback()` TIDAK DIPANGGIL** (`do_rollback=False`) -> `cur.close()` -> `conn.close()` sukses | **`True`** | **`True`** | **`True`** (`conn.closed == 1`) | **DIPANGGIL & Coroutine me-return HTTP 200 `COMMITTED_OK` (Zero False Rollback Report)** |
+| **`PRE_COMMIT`** | Seluruh SQL DML selesai; akan memasuki batas komit | `not cancel_event.is_set() and lease_valid and remaining_lease >= 5.0s` | **`COMMITTING`** | Masuk ke pemanggilan `conn.commit()` | `False` | `False` | `False` | Menunggu `worker_task.done()` |
+| **`COMMITTING`** | `conn.commit()` kembali secara normal (tanpa exception) | `conn.commit()` sukses (`cancel_event` diabaikan pasca-titik ini) | **`COMMITTED_OK`** | `do_rollback=False` -> `cur.close()` -> `conn.close()` sukses | **`True`** | **`True`** | **`True`** (`conn.closed == 1`) | **DIPANGGIL via Lua Compare-and-Delete (`KEYS[1]==lock_token`)** |
+| **`COMMITTING`** | `asyncio.CancelledError` tiba saat `conn.commit()` sedang berjalan dan `conn.commit()` berhasil selesai | `tx_committed == True` tercapai sebelum thread keluar | **`COMMITTED_OK`** | **`conn.rollback()` TIDAK DIPANGGIL** (`do_rollback=False`) -> `cur.close()` -> `conn.close()` sukses | **`True`** | **`True`** | **`True`** (`conn.closed == 1`) | **DIPANGGIL via Lua Compare-and-Delete & HTTP 200 `COMMITTED_OK` dikembalikan** |
 | **`PRE_COMMIT`** | `asyncio.CancelledError` tiba sebelum `COMMITTING` (`cancel_event.is_set() == True`) | `cancel_event.is_set() == True` saat cek pra-commit | **`ROLLED_BACK`** | Melempar `RuntimeError` pra-commit -> `conn.rollback()` -> `cur.close()` -> `conn.close()` sukses | `False` | **`True`** | **`True`** (`conn.closed == 1`) | **DIPANGGIL setelah `worker_task.done() == True` & `CancelledError` dipropagasi** |
-| **`PRE_COMMIT`** / **`COMMITTING`** | Exception SQL (`psycopg2.Error` non-`23505`, `RuntimeError` komisi, atau `conn.commit()` gagal) | `tx_committed == False` | **`ROLLED_BACK`** | `conn.rollback()` -> `cur.close()` -> `conn.close()` sukses | `False` | **`True`** | **`True`** (`conn.closed == 1`) | **DIPANGGIL & HTTP 503 dikembalikan** |
-| **`PRE_COMMIT`** | Idempotent hit (`ord_row` sudah `PAID`) -> early return `ALREADY_SETTLED` | `tx_committed == False` | **`ROLLED_BACK`** | `conn.rollback()` (melepas lock `FOR UPDATE`) -> `cur.close()` -> `conn.close()` sukses | `False` | **`True`** | **`True`** (`conn.closed == 1`) | **DIPANGGIL & HTTP 200 `ALREADY_PROCESSED` dikembalikan** |
+| **`PRE_COMMIT`** | **`[ID-01]` Lease gagal diperpanjang / token hilang / `remaining_lease < 5.0s` sebelum `conn.commit()`** | `not lease_valid or remaining_lease < 5.0s` | **`ROLLED_BACK`** | **WAJIB melempar `RuntimeError("[XENDIT LEASE EXPIRED BEFORE COMMIT]")` -> `conn.rollback()` -> `cur.close()` -> `conn.close()`** | `False` | **`True`** | **`True`** (`conn.closed == 1`) | **DIPANGGIL via Lua Compare-and-Delete (me-return `0` tanpa menghapus lock worker baru jika lock sudah diambil alih)** |
+| **`PRE_COMMIT`** / **`COMMITTING`** | Exception SQL (`psycopg2.Error` non-`23505`, `RuntimeError` komisi, atau `conn.commit()` gagal) | `tx_committed == False` | **`ROLLED_BACK`** | `conn.rollback()` -> `cur.close()` -> `conn.close()` sukses | `False` | **`True`** | **`True`** (`conn.closed == 1`) | **DIPANGGIL via Lua Compare-and-Delete & HTTP 503 dikembalikan** |
+| **`PRE_COMMIT`** | Idempotent hit (`ord_row` sudah `PAID`) -> early return `ALREADY_SETTLED` | `tx_committed == False` | **`ROLLED_BACK`** | `conn.rollback()` (melepas lock `FOR UPDATE`) -> `cur.close()` -> `conn.close()` sukses | `False` | **`True`** | **`True`** (`conn.closed == 1`) | **DIPANGGIL via Lua Compare-and-Delete & HTTP 200 `ALREADY_PROCESSED` dikembalikan** |
 | **Semua State (`COMMITTED_OK` / `ROLLED_BACK`)** | `conn.close()` melempar exception atau socket menggantung sehingga `getattr(conn, "closed", 0) != 1` | `getattr(conn, "closed", 0) == 0` (atau `conn is None`) | **`CLOSE_FAILED`** | `conn.close()` gagal memverifikasi penutupan fisik koneksi DB | Sesuai status komit (`True`/`False`) | **`True`** | **`False`** (`conn.closed == 0`) | **DILARANG DIPANGGIL (Lock ditahan hingga TTL Redis habis + pancarkan log `CRITICAL` / `SEV-1`)** |
 
-### 4.4 Pembuktian Formal Idempotensi & Referensi 3 Unit Test Deterministik Berbasis Barrier/Latch (`[CTO-REV412-01]`)
+### 4.4 Pembuktian Formal Idempotensi & Referensi 4 Unit Test Deterministik Berbasis Barrier/Latch (`[CTO-REV412-01]` & `[ID-01]`)
 
 1. **Isolasi Tiga Langkah Independen & Observasi Fisik `conn_verified_closed`**:
    - Langkah A (`conn.rollback()`), Langkah B (`cur.close()`), dan Langkah C (`conn.close()`) masing-masing dibungkus dalam blok `try ... except BaseException` yang terpisah.
    - `state.close_attempted` menjamin panggilan `conn.close()` bersifat idempoten ($f(f(x)) = f(x)$), sedangkan `state.conn_verified_closed` **HANYA** disetel menjadi `True` jika `conn is not None and getattr(conn, "closed", 0) == 1`.
-2. **Spesifikasi Lengkap 3 Unit Test Deterministik Berbasis `threading.Event` Latch**:
-   - Kode lengkap ketiga unit test deterministik (`Test 1: Cancel Before Commit -> ROLLED_BACK`, `Test 2: Cancel At/After Commit -> COMMITTED_OK without rollback`, dan `Test 3: Simulated conn.close() Failure -> Lock Retained + SEV-1`) disajikan secara utuh pada **Bagian 7 (`§7.1 [CTO-REV412-01]`)**.
+2. **Spesifikasi Lengkap 4 Unit Test Deterministik Berbasis `threading.Event` Latch (`Test 1` s/d `Test 4`)**:
+   - Kode lengkap keempat unit test deterministik (`Test 1: Cancel Before Commit -> ROLLED_BACK`, `Test 2: Cancel At/After Commit -> COMMITTED_OK without rollback`, `Test 3: Simulated conn.close() Failure -> Lock Retained + SEV-1`, dan **`Test 4 [ID-01]: test_cto_rev414_01_lease_expiry_and_token_ownership_prevents_stale_commit_and_foreign_unlock`**) disajikan secara utuh pada **Bagian 7 (`§7.1 [CTO-REV412-01] & [ID-01]`)**.
 
-Dengan demikian, seluruh sub-temuan pada **`REV4-HIGH-03`** dan **`[CTO-REV412-01]`** dinyatakan **DITUTUP SEPENUHNYA (`CLOSED`)**.
+Dengan demikian, seluruh sub-temuan pada **`REV4-HIGH-03`**, **`[CTO-REV412-01]`**, dan **`[ID-01]`** dinyatakan **DITUTUP SEPENUHNYA (`CLOSED`)**.
 
 ---
 
@@ -1320,13 +1475,13 @@ Dengan demikian, seluruh sub-temuan pada **`REV4-HIGH-03`** dan **`[CTO-REV412-0
 #### B. Hirarki Resolusi Multi-Sumber Tanpa Tebakan (*Deterministic 5-Table / 4-Domain Source Resolution + Conflict Quarantine — `[CTO-REV412-02]`*)
 Migration `031` pada Addendum REV 4.1.3 ini menambahkan tahap **Backfill & Karantina Konflik `product_orders.tenant_id`** yang mengevaluasi seluruh baris `product_orders` di mana `tenant_id IS NULL OR BTRIM(tenant_id) = ''` menggunakan **5 tabel sumber otoritatif secara eksplisit di dalam SQL CTE `candidate_tenants` (`[CTO-REV412-02]`)**:
 1. **Sumber Prioritas 1 (`public.delivery_orders`)**: `d.order_id = po.order_id AND NULLIF(BTRIM(d.tenant_id), '') IS NOT NULL`
-2. **Sumber Prioritas 2 (`public.affiliate_commissions`)**: `ac.order_id = po.order_id AND NULLIF(BTRIM(ac.tenant_id), '') IS NOT NULL AND ac.tenant_id NOT LIKE '__QUARANTINED_%'`
+2. **Sumber Prioritas 2 (`public.affiliate_commissions`)**: `ac.order_id = po.order_id AND NULLIF(BTRIM(ac.tenant_id), '') IS NOT NULL`
 3. **Sumber Prioritas 3A (`public.attributions`)**: `po.attribution_id IS NOT NULL AND att.id = po.attribution_id AND NULLIF(BTRIM(att.tenant_id), '') IS NOT NULL`
 4. **Sumber Prioritas 3B (`public.attribution_sessions` — `[CTO-REV412-02]`)**: `(ats.order_id = po.order_id OR (po.attribution_id IS NOT NULL AND ats.id = po.attribution_id)) AND NULLIF(BTRIM(ats.tenant_id), '') IS NOT NULL`
 5. **Sumber Prioritas 4 (`public.orders`)**: `o.id = po.order_id AND NULLIF(BTRIM(o.tenant_slug), '') IS NOT NULL`
 
 ```sql
--- [PROPOSAL — REV 4.1.3: EXPLICIT 5-SOURCE CTE `candidate_tenants` INCLUDING `public.attribution_sessions` ([CTO-REV412-02])]
+-- [PROPOSAL — REV 4.1.4: EXPLICIT 5-SOURCE CTE `candidate_tenants` WITHOUT FAKE SENTINEL MASKING ([CTO-REV412-02] & [ID-02]/[ID-04])]
 WITH candidate_tenants AS (
     SELECT po.id AS po_id, po.order_id, BTRIM(d.tenant_id) AS cand_tenant, 'delivery_orders' AS src
     FROM public.product_orders po
@@ -1338,7 +1493,6 @@ WITH candidate_tenants AS (
     JOIN public.affiliate_commissions ac ON ac.order_id = po.order_id
     WHERE NULLIF(BTRIM(po.tenant_id), '') IS NULL
       AND NULLIF(BTRIM(ac.tenant_id), '') IS NOT NULL
-      AND ac.tenant_id NOT LIKE '__QUARANTINED_%'
     UNION ALL
     SELECT po.id AS po_id, po.order_id, BTRIM(att.tenant_id) AS cand_tenant, 'attributions' AS src
     FROM public.product_orders po
@@ -1371,80 +1525,108 @@ GROUP BY po_id, order_id;
 - **Skenario 3 — Baris Yatim / Legacy Telegram Order (`distinct_tenant_count == 0`)**:
   Baris historis dari fitur bot Telegram lama (`database.py:L875`) yang tidak memiliki entri di kelima tabel sumber. `tenant_id` tetap `NULL` dan dicatat ke `public.migration_031_identifier_dedup_map` dengan `resolution_reason = 'UNRESOLVED_LEGACY_OR_ORPHAN_ORDER'`.
 
-#### C. Independent Gate B2 Checks — Query Langsung ke 9 Tabel Sumber Asli & Verifikasi Silang Lineage (`[PROPOSAL — REV 4.1.3 / CTO-REV412-05]`)
-Menindaklanjuti **`[CTO-REV412-05]`**, asersi **Gate B2 (`B2-ASSERT-01` s/d `B2-ASSERT-04`)** diperbarui agar **TIDAK HANYA** menghitung baris dari `public.migration_031_identifier_dedup_map`, melainkan menjalankan **query CTE independen langsung ke 9 tabel sumber asli** (`product_orders`, `delivery_orders`, `affiliate_commissions`, `attributions`, `attribution_sessions`, `orders`, `affiliates`, `shop_subscriptions`, `shop_commission_ledger`) lalu melakukan verifikasi silang terhadap `migration_031_identifier_dedup_map`:
+#### C. Independent Gate B2 Checks — Laporan Eksplisit 9 Tabel Sumber Tanpa Menyembunyikan Anomali (`[PROPOSAL — REV 4.1.4 / CTO-REV412-05 & [ID-04]]`)
+Menindaklanjuti **`[ID-04]`**, seluruh filter penyembunyian baris karantina (`NOT LIKE '__QUARANTINED_%'`) **DIHAPUS TOTAL** dari `B2-ASSERT-01` s/d `B2-ASSERT-04`. Query **Gate B2** wajib menghasilkan laporan per-tabel secara transparan untuk ke-9 tabel sumber (`product_orders`, `delivery_orders`, `affiliate_commissions`, `attributions`, `attribution_sessions`, `orders`, `affiliates`, `shop_subscriptions`, `shop_commission_ledger`) dengan **6 kolom eksplisit**:
+`source_table`, `total_rows`, `valid_resolved_rows`, `quarantined_rows`, `unresolved_tenant_rows`, dan `cross_tenant_conflict_rows`.
+
+**Kriteria Lulus Gate B2 (`[ID-04]`)**:
+1. Untuk seluruh 9 tabel sumber: **`unresolved_tenant_rows == 0` DAN `cross_tenant_conflict_rows == 0`**.
+2. **`quarantined_rows` terlapor secara transparan** (tidak disembunyikan) dan **cocok 100%** dengan jumlah baris aktual di tabel karantina (`public.migration_031_quarantined_affiliate_commissions` dan `public.migration_031_identifier_dedup_map`).
 
 ```sql
--- [GATE B2 INDEPENDENT SOURCE-TABLE & CROSS-VERIFICATION ASSERTION QUERY — REV 4.1.3 ([CTO-REV412-05])]
-WITH live_po_source_candidates AS (
-    SELECT po.id AS po_id, NULLIF(BTRIM(po.tenant_id), '') AS po_tenant, BTRIM(d.tenant_id) AS src_tenant
+-- [GATE B2 9-TABLE TRANSPARENT AUDIT REPORT QUERY — REV 4.1.4 ([ID-04]: ZERO ANOMALY MASKING)]
+WITH po_source_links AS (
+    SELECT po.id AS po_id, NULLIF(BTRIM(po.tenant_id), '') AS po_tenant, NULLIF(BTRIM(d.tenant_id), '') AS src_tenant
     FROM public.product_orders po JOIN public.delivery_orders d ON d.order_id = po.order_id
-    WHERE NULLIF(BTRIM(d.tenant_id), '') IS NOT NULL
     UNION ALL
-    SELECT po.id AS po_id, NULLIF(BTRIM(po.tenant_id), '') AS po_tenant, BTRIM(ac.tenant_id) AS src_tenant
+    SELECT po.id, NULLIF(BTRIM(po.tenant_id), ''), NULLIF(BTRIM(ac.tenant_id), '')
     FROM public.product_orders po JOIN public.affiliate_commissions ac ON ac.order_id = po.order_id
-    WHERE NULLIF(BTRIM(ac.tenant_id), '') IS NOT NULL AND ac.tenant_id NOT LIKE '__QUARANTINED_%'
     UNION ALL
-    SELECT po.id AS po_id, NULLIF(BTRIM(po.tenant_id), '') AS po_tenant, BTRIM(att.tenant_id) AS src_tenant
+    SELECT po.id, NULLIF(BTRIM(po.tenant_id), ''), NULLIF(BTRIM(att.tenant_id), '')
     FROM public.product_orders po JOIN public.attributions att ON po.attribution_id IS NOT NULL AND att.id = po.attribution_id
-    WHERE NULLIF(BTRIM(att.tenant_id), '') IS NOT NULL
     UNION ALL
-    SELECT po.id AS po_id, NULLIF(BTRIM(po.tenant_id), '') AS po_tenant, BTRIM(ats.tenant_id) AS src_tenant
+    SELECT po.id, NULLIF(BTRIM(po.tenant_id), ''), NULLIF(BTRIM(ats.tenant_id), '')
     FROM public.product_orders po JOIN public.attribution_sessions ats
       ON (ats.order_id = po.order_id OR (po.attribution_id IS NOT NULL AND ats.id = po.attribution_id))
-    WHERE NULLIF(BTRIM(ats.tenant_id), '') IS NOT NULL
     UNION ALL
-    SELECT po.id AS po_id, NULLIF(BTRIM(po.tenant_id), '') AS po_tenant, BTRIM(o.tenant_slug) AS src_tenant
+    SELECT po.id, NULLIF(BTRIM(po.tenant_id), ''), NULLIF(BTRIM(o.tenant_slug), '')
     FROM public.product_orders po JOIN public.orders o ON o.id = po.order_id
-    WHERE NULLIF(BTRIM(o.tenant_slug), '') IS NOT NULL
 ),
-live_po_conflicts AS (
-    SELECT po_id FROM live_po_source_candidates
+po_conflicts AS (
+    SELECT po_id FROM po_source_links WHERE src_tenant IS NOT NULL
     GROUP BY po_id, po_tenant
     HAVING COUNT(DISTINCT src_tenant) > 1 OR (po_tenant IS NOT NULL AND MIN(src_tenant) <> po_tenant)
 ),
-live_ac_source_candidates AS (
-    SELECT ac.id AS ac_id, NULLIF(BTRIM(ac.tenant_id), '') AS ac_tenant, BTRIM(o.tenant_slug) AS src_tenant
+ac_source_links AS (
+    SELECT ac.id AS ac_id, NULLIF(BTRIM(ac.tenant_id), '') AS ac_tenant, NULLIF(BTRIM(o.tenant_slug), '') AS src_tenant
     FROM public.affiliate_commissions ac JOIN public.orders o ON o.id = ac.order_id
-    WHERE NULLIF(BTRIM(o.tenant_slug), '') IS NOT NULL
     UNION ALL
-    SELECT ac.id AS ac_id, NULLIF(BTRIM(ac.tenant_id), '') AS ac_tenant, BTRIM(a.tenant_id) AS src_tenant
+    SELECT ac.id, NULLIF(BTRIM(ac.tenant_id), ''), NULLIF(BTRIM(a.tenant_id), '')
     FROM public.affiliate_commissions ac JOIN public.affiliates a ON a.id::text = ac.affiliate_id::text
-    WHERE NULLIF(BTRIM(a.tenant_id), '') IS NOT NULL
     UNION ALL
-    SELECT ac.id AS ac_id, NULLIF(BTRIM(ac.tenant_id), '') AS ac_tenant, BTRIM(d.tenant_id) AS src_tenant
+    SELECT ac.id, NULLIF(BTRIM(ac.tenant_id), ''), NULLIF(BTRIM(d.tenant_id), '')
     FROM public.affiliate_commissions ac JOIN public.delivery_orders d ON d.order_id = ac.order_id
-    WHERE NULLIF(BTRIM(d.tenant_id), '') IS NOT NULL
+    UNION ALL
+    SELECT ac.id, NULLIF(BTRIM(ac.tenant_id), ''), NULLIF(BTRIM(po.tenant_id), '')
+    FROM public.affiliate_commissions ac JOIN public.product_orders po ON po.order_id = ac.order_id
 ),
-live_ac_conflicts AS (
-    SELECT ac_id FROM live_ac_source_candidates
+ac_conflicts AS (
+    SELECT ac_id FROM ac_source_links WHERE src_tenant IS NOT NULL
     GROUP BY ac_id, ac_tenant
-    HAVING COUNT(DISTINCT src_tenant) > 1 OR ac_tenant IS NULL OR ac_tenant LIKE '__QUARANTINED_%' OR MIN(src_tenant) <> ac_tenant
+    HAVING COUNT(DISTINCT src_tenant) > 1 OR ac_tenant IS NULL OR MIN(src_tenant) <> ac_tenant
 ),
-live_source_duplicates AS (
-    SELECT COUNT(*) AS dup_groups FROM (SELECT tenant_id, order_id FROM public.affiliate_commissions GROUP BY tenant_id, order_id HAVING COUNT(*) > 1) t1
+nine_table_audit AS (
+    SELECT 'product_orders'::text AS source_table, COUNT(*) AS total_rows,
+           COUNT(*) FILTER (WHERE NULLIF(BTRIM(po.tenant_id), '') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM po_conflicts c WHERE c.po_id = po.id)) AS valid_resolved_rows,
+           (SELECT COUNT(*) FROM public.migration_031_identifier_dedup_map m WHERE m.table_name = 'product_orders' AND m.resolution_reason IN ('QUARANTINED_CROSS_SOURCE_TENANT_CONFLICT', 'UNRESOLVED_LEGACY_OR_ORPHAN_ORDER')) AS quarantined_rows,
+           COUNT(*) FILTER (WHERE NULLIF(BTRIM(po.tenant_id), '') IS NULL AND (UPPER(BTRIM(COALESCE(po.status, ''))) NOT IN ('CANCELLED', 'CANCELED', 'EXPIRED', 'FAILED', 'VOID', 'ABANDONED', 'DRAFT_ABANDONED') OR EXISTS (SELECT 1 FROM public.delivery_orders d WHERE d.order_id = po.order_id AND d.is_cod = TRUE))) AS unresolved_tenant_rows,
+           (SELECT COUNT(*) FROM po_conflicts) AS cross_tenant_conflict_rows
+    FROM public.product_orders po
     UNION ALL
-    SELECT COUNT(*) FROM (SELECT xendit_invoice_id FROM public.shop_subscriptions WHERE xendit_invoice_id IS NOT NULL GROUP BY xendit_invoice_id HAVING COUNT(*) > 1) t2
+    SELECT 'delivery_orders', COUNT(*), COUNT(*) FILTER (WHERE NULLIF(BTRIM(d.tenant_id), '') IS NOT NULL), 0::bigint,
+           COUNT(*) FILTER (WHERE NULLIF(BTRIM(d.tenant_id), '') IS NULL),
+           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM public.product_orders po WHERE po.order_id = d.order_id AND NULLIF(BTRIM(po.tenant_id), '') IS NOT NULL AND NULLIF(BTRIM(d.tenant_id), '') IS NOT NULL AND BTRIM(po.tenant_id) <> BTRIM(d.tenant_id)))
+    FROM public.delivery_orders d
     UNION ALL
-    SELECT COUNT(*) FROM (SELECT subscription_id FROM public.shop_commission_ledger WHERE subscription_id IS NOT NULL GROUP BY subscription_id HAVING COUNT(*) > 1) t3
+    SELECT 'affiliate_commissions',
+           (SELECT COUNT(*) FROM public.affiliate_commissions) + (SELECT COUNT(*) FROM public.migration_031_quarantined_affiliate_commissions),
+           (SELECT COUNT(*) FROM public.affiliate_commissions ac WHERE NULLIF(BTRIM(ac.tenant_id), '') IS NOT NULL AND ac.order_id NOT LIKE '%_dup_%' AND NOT EXISTS (SELECT 1 FROM ac_conflicts c WHERE c.ac_id = ac.id)),
+           (SELECT COUNT(*) FROM public.migration_031_quarantined_affiliate_commissions) + (SELECT COUNT(*) FROM public.affiliate_commissions ac WHERE ac.order_id LIKE '%_dup_%'),
+           (SELECT COUNT(*) FROM public.affiliate_commissions ac WHERE NULLIF(BTRIM(ac.tenant_id), '') IS NULL),
+           (SELECT COUNT(*) FROM ac_conflicts)
     UNION ALL
-    SELECT COUNT(*) FROM (SELECT tenant_id, UPPER(BTRIM(referral_code)) FROM public.affiliates WHERE referral_code IS NOT NULL AND BTRIM(referral_code) <> '' GROUP BY tenant_id, UPPER(BTRIM(referral_code)) HAVING COUNT(*) > 1) t4
+    SELECT 'attributions', COUNT(*), COUNT(*) FILTER (WHERE NULLIF(BTRIM(att.tenant_id), '') IS NOT NULL), 0::bigint,
+           COUNT(*) FILTER (WHERE NULLIF(BTRIM(att.tenant_id), '') IS NULL),
+           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM public.affiliates a WHERE a.id = att.affiliate_id AND NULLIF(BTRIM(a.tenant_id), '') IS NOT NULL AND NULLIF(BTRIM(att.tenant_id), '') IS NOT NULL AND BTRIM(a.tenant_id) <> BTRIM(att.tenant_id)))
+    FROM public.attributions att
+    UNION ALL
+    SELECT 'attribution_sessions', COUNT(*), COUNT(*) FILTER (WHERE NULLIF(BTRIM(ats.tenant_id), '') IS NOT NULL), 0::bigint,
+           COUNT(*) FILTER (WHERE NULLIF(BTRIM(ats.tenant_id), '') IS NULL),
+           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM public.affiliates a WHERE a.id = ats.affiliate_id AND NULLIF(BTRIM(a.tenant_id), '') IS NOT NULL AND NULLIF(BTRIM(ats.tenant_id), '') IS NOT NULL AND BTRIM(a.tenant_id) <> BTRIM(ats.tenant_id)))
+    FROM public.attribution_sessions ats
+    UNION ALL
+    SELECT 'orders', COUNT(*), COUNT(*) FILTER (WHERE NULLIF(BTRIM(o.tenant_slug), '') IS NOT NULL), 0::bigint,
+           COUNT(*) FILTER (WHERE NULLIF(BTRIM(o.tenant_slug), '') IS NULL),
+           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM public.product_orders po WHERE po.order_id = o.id AND NULLIF(BTRIM(po.tenant_id), '') IS NOT NULL AND NULLIF(BTRIM(o.tenant_slug), '') IS NOT NULL AND BTRIM(po.tenant_id) <> BTRIM(o.tenant_slug)))
+    FROM public.orders o
+    UNION ALL
+    SELECT 'affiliates', COUNT(*), COUNT(*) FILTER (WHERE NULLIF(BTRIM(a.tenant_id), '') IS NOT NULL AND UPPER(BTRIM(COALESCE(a.referral_code, ''))) NOT LIKE '%_DUP_%'),
+           COUNT(*) FILTER (WHERE UPPER(BTRIM(COALESCE(a.referral_code, ''))) LIKE '%_DUP_%'),
+           COUNT(*) FILTER (WHERE NULLIF(BTRIM(a.tenant_id), '') IS NULL), 0::bigint
+    FROM public.affiliates a
+    UNION ALL
+    SELECT 'shop_subscriptions', COUNT(*), COUNT(*) FILTER (WHERE NULLIF(BTRIM(ss.tenant_slug), '') IS NOT NULL AND COALESCE(ss.xendit_invoice_id, '') NOT LIKE '%_dup_%'),
+           COUNT(*) FILTER (WHERE COALESCE(ss.xendit_invoice_id, '') LIKE '%_dup_%'),
+           COUNT(*) FILTER (WHERE NULLIF(BTRIM(ss.tenant_slug), '') IS NULL), 0::bigint
+    FROM public.shop_subscriptions ss
+    UNION ALL
+    SELECT 'shop_commission_ledger', COUNT(*), COUNT(*) FILTER (WHERE COALESCE(scl.disbursement_status, '') <> 'HELD_DUPLICATE_QUARANTINE'),
+           COUNT(*) FILTER (WHERE COALESCE(scl.disbursement_status, '') = 'HELD_DUPLICATE_QUARANTINE'),
+           COUNT(*) FILTER (WHERE scl.subscription_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.shop_subscriptions ss WHERE ss.id = scl.subscription_id AND NULLIF(BTRIM(ss.tenant_slug), '') IS NOT NULL)), 0::bigint
+    FROM public.shop_commission_ledger scl
 )
-SELECT
-    (SELECT COUNT(*) FROM live_po_conflicts) + (SELECT COUNT(*) FROM live_ac_conflicts) AS independent_source_conflicts,
-    (SELECT COUNT(*) FROM public.migration_031_identifier_dedup_map
-     WHERE resolution_reason IN ('QUARANTINED_CROSS_SOURCE_TENANT_CONFLICT', 'QUARANTINED_COMMISSION_TENANT_CONFLICT')) AS mapped_conflict_rows,
-    COUNT(*) FILTER (
-        WHERE NULLIF(BTRIM(po.tenant_id), '') IS NULL
-          AND (UPPER(BTRIM(COALESCE(po.status, ''))) = 'COD' OR EXISTS (SELECT 1 FROM public.delivery_orders d WHERE d.order_id = po.order_id AND d.is_cod = TRUE))
-    ) AS cod_orders_missing_tenant,
-    COUNT(*) FILTER (
-        WHERE NULLIF(BTRIM(po.tenant_id), '') IS NULL
-          AND UPPER(BTRIM(COALESCE(po.status, ''))) NOT IN ('CANCELLED', 'CANCELED', 'EXPIRED', 'FAILED', 'VOID', 'ABANDONED', 'DRAFT_ABANDONED')
-    ) AS unresolved_operational_orders,
-    (SELECT COUNT(*) FROM public.affiliate_commissions WHERE NULLIF(BTRIM(tenant_id), '') IS NULL OR tenant_id LIKE '__QUARANTINED_%') AS invalid_commission_tenants,
-    (SELECT COALESCE(SUM(dup_groups), 0) FROM live_source_duplicates) AS independent_live_duplicates
-FROM public.product_orders po;
+SELECT source_table, total_rows, valid_resolved_rows, quarantined_rows, unresolved_tenant_rows, cross_tenant_conflict_rows
+FROM nine_table_audit;
 ```
 
 ---
@@ -1507,9 +1689,15 @@ Revisi **REV 4.1.2 (Direktif 4a & 4c)** memperkuat arsitektur **Capture-Before-M
    FROM preview_union WHERE rn > 1 ORDER BY tbl, orig_identifier, rn;
    ```
 
-4. **Preflight Deteksi `tenant_id IS NULL` & Duplikat `(tenant_id, order_id)` pada `public.affiliate_commissions` (`[CTO-REV412-03a]`)**:
+4. **Preflight & Batas Tegas Karantina Tenant pada `public.affiliate_commissions` (`[CTO-REV412-03]` & `[ID-02]`)**:
+   - **KOREKSI KONSEP (`[ID-02]`)**: Dilarang keras menggunakan string sentinel palsu `'__QUARANTINED_...'` sebagai pengganti `tenant_id` di tabel operasional `public.affiliate_commissions` untuk mengakali constraint `SET NOT NULL`.
+   - Baris anomali/yatim pada `public.affiliate_commissions` yang `tenant_id`-nya tidak dapat di-resolve secara tunggal (`distinct_tenants == 0` atau `distinct_tenants > 1`) **dipindahkan secara utuh (move-and-delete atomik di dalam transaksi yang sama)** ke tabel karantina khusus **`public.migration_031_quarantined_affiliate_commissions`** (beserta audit lineage di `public.migration_031_identifier_dedup_map`) dengan **4 aturan mengikat**:
+     - **(a) Karantina BUKAN tenant bisnis valid**: Tabel aktif `public.affiliate_commissions` menerapkan constraint `CHECK (BTRIM(tenant_id) <> '' AND tenant_id NOT LIKE '__QUARANTINED_%')` sehingga tidak ada tenant semu di tabel produksi.
+     - **(b) Baris karantina DILARANG KERAS masuk ke perhitungan komisi, payout, maupun settlement**: Karena dipisahkan secara fisik ke `public.migration_031_quarantined_affiliate_commissions` (`approval_status = 'QUARANTINED_LOCKED'`), seluruh agregasi komisi, payout, dan settlement dijamin 100% mengecualikan baris karantina.
+     - **(c) Pemulihan dari karantina wajib melalui prosedur approval & verifikasi lineage eksplisit**: Hanya boleh dikembalikan melalui prosedur otorisasi Finance & Security setelah verifikasi bukti lineage (`verified_tenant_id`, `approved_by`, `approved_at`, `approval_notes`).
+     - **(d) Urutan Eksekusi `SET NOT NULL`**: `ALTER TABLE public.affiliate_commissions ALTER COLUMN tenant_id SET NOT NULL;` hanya dieksekusi setelah seluruh baris di tabel utama `public.affiliate_commissions` benar-benar memiliki `tenant_id` bisnis yang sah (`unresolved_tenant_rows == 0`).
    ```sql
-   -- [GATE B1 PREFLIGHT QUERY FOR `public.affiliate_commissions` (`[CTO-REV412-03a]`)]
+   -- [GATE B1 PREFLIGHT QUERY FOR `public.affiliate_commissions` (`[CTO-REV412-03a]` & `[ID-02]`)]
    SELECT
        COUNT(*) AS total_commission_rows,
        COUNT(*) FILTER (WHERE NULLIF(BTRIM(tenant_id), '') IS NULL) AS null_or_empty_tenant_rows,
@@ -1524,8 +1712,8 @@ Revisi **REV 4.1.2 (Direktif 4a & 4c)** memperkuat arsitektur **Capture-Before-M
    FROM public.affiliate_commissions;
    ```
 
-5. **Financial Downstream Dependency Inventory & Rekonsiliasi Aktif (`[CTO-REV412-04]`)**:
-   Tabel inventaris lengkap seluruh tabel/kolom hilir yang mereferensikan `product_orders`, `affiliate_commissions`, `shop_subscriptions`, `shop_commission_ledger`, dan `affiliates` beserta blok SQL rekonsiliasi aktif (`UPDATE ... SET <fk_col> = map.canonical_survivor_id`) dan query verifikasi pascamigrasi disajikan pada **Appendix A (Step 2A–2D)** dan **Bagian 7 (`§7.4 [CTO-REV412-04]`)**.
+5. **Financial Downstream Dependency Inventory, Katalog FK Aktual PostgreSQL, Decision Matrix & Invariant Rekonsiliasi Finansial (`[CTO-REV412-04]` & `[ID-03]`)**:
+   Query inspeksi katalog sistem PostgreSQL (`pg_constraint`, `pg_class`, `information_schema.key_column_usage`), pemisahan **(a) Formal FK Constraints** vs **(b) Logical Non-FK Financial References**, **Decision Matrix Per Jenis Relasi** (kapan aman di-repoint ke `canonical_survivor_id` vs kapan DILARANG digabung dan wajib dikarantina), serta query **Financial Reconciliation Invariant (Pre vs Post Migration: selisih `COUNT(*)` dan `SUM(amount)` per status wajib `0`)** disajikan pada **Appendix A (Step 0B, Step 2A–2D, Step 2F)** dan **Bagian 7 (`§7.4 [CTO-REV412-04] & [ID-03]`)**.
 
 ---
 
@@ -1574,24 +1762,24 @@ Revisi **REV 4.1.2 (Direktif 4a & 4c)** memperkuat arsitektur **Capture-Before-M
 
 ---
 
-## APPENDIX A — UPDATED COMPLETE DRAFT SQL SPECIFICATION FOR `migrations/031_staging_schema_parity_and_snapshots.sql` (REV 4.1.3)
-*(Menggantikan Appendix A pada REV 4.1, REV 4.1.1, dan REV 4.1.2 dengan penambahan Konteks Batch Dinamis `_mig031_batch_ctx`, Sumber Eksplisit `public.attribution_sessions` (`[CTO-REV412-02]`), Backfill & Enforcement `affiliate_commissions.tenant_id NOT NULL` (`[CTO-REV412-03]`), Rekonsiliasi Aktif Foreign Reference Hilir (`[CTO-REV412-04]`), Independent Source-Table Gate B2 Assertions (`[CTO-REV412-05]`), dan View Rekonsiliasi `v_financial_identifier_lineage_031`. Sesuai protokol `REV4-BLK-04`, skrip ini adalah **DRAFT APPENDIX DOKUMEN** dan **DILARANG** dibuat di `C:\boontrack-core\migrations\` sebelum otorisasi Gate B1).*
+## APPENDIX A — UPDATED COMPLETE DRAFT SQL SPECIFICATION FOR `migrations/031_staging_schema_parity_and_snapshots.sql` (REV 4.1.4)
+*(Menggantikan Appendix A pada REV 4.1 s/d REV 4.1.3 dengan penambahan Tabel Karantina Terisolasi `public.migration_031_quarantined_affiliate_commissions` tanpa string sentinel palsu (`[ID-02]`), Inspeksi Dinamis Katalog FK PostgreSQL + Decision Matrix Repointing + Invariant Rekonsiliasi Finansial Pre-vs-Post (`[ID-03]`), dan Asersi Gate B2 9-Tabel Transparan tanpa penyembunyian anomali (`[ID-04]`). Sesuai protokol `REV4-BLK-04`, skrip ini adalah **DRAFT APPENDIX DOKUMEN** dan **DILARANG** dibuat di `C:\boontrack-core\migrations\` sebelum otorisasi Gate B1).*
 
 ```sql
 -- =============================================================================
--- DRAFT MIGRATION 031 (REV 4.1.3 — DO NOT MATERIALIZE UNTIL GATE B1 UNLOCK)
+-- DRAFT MIGRATION 031 (REV 4.1.4 — DO NOT MATERIALIZE UNTIL GATE B1 UNLOCK)
 -- Target File (Post-Gate B1): migrations/031_staging_schema_parity_and_snapshots.sql
 -- Target Environment        : Supabase Staging (xkhqirhurnjqglmajghn)
 -- Remediates Findings       : FINDING-DB-03, FINDING-WRT-06/07A/07B/08,
 --                             REV4-BLK-01, REV4-BLK-04, REV4-HIGH-02,
 --                             REV4-HIGH-04, REV4-HIGH-07, REV4-MED-04,
---                             CTO-REV412-02, CTO-REV412-03, CTO-REV412-04, CTO-REV412-05
+--                             CTO-REV412-02..05, ID-02, ID-03, ID-04
 -- =============================================================================
 
 BEGIN;
 
 -- -----------------------------------------------------------------------------
--- 0. CREATE EXECUTION BATCH CONTEXT & DURABLE LINEAGE MAPPING TABLE (REV 4.1.2)
+-- 0. CREATE EXECUTION BATCH CONTEXT, LINEAGE MAP & DEDICATED QUARANTINE TABLE ([ID-02])
 -- -----------------------------------------------------------------------------
 CREATE TEMP TABLE _mig031_batch_ctx ON COMMIT DROP AS
 SELECT
@@ -1633,6 +1821,65 @@ CREATE INDEX IF NOT EXISTS idx_mig031_dedup_survivor
     ON public.migration_031_identifier_dedup_map (table_name, canonical_survivor_id);
 CREATE INDEX IF NOT EXISTS idx_mig031_dedup_batch_id
     ON public.migration_031_identifier_dedup_map (migration_batch_id);
+
+-- [ID-02] Dedicated Quarantine Table for unresolved/conflicting affiliate_commissions rows:
+-- (a) Quarantine is NOT a valid business tenant in public.affiliate_commissions.
+-- (b) Quarantined rows are 100% excluded from commission, payout, and settlement calculations.
+-- (c) Restoration requires explicit lineage verification and Finance/Security approval.
+CREATE TABLE IF NOT EXISTS public.migration_031_quarantined_affiliate_commissions (
+    id UUID PRIMARY KEY,
+    migration_batch_id VARCHAR(64) NOT NULL,
+    original_tenant_id VARCHAR(100),
+    affiliate_id VARCHAR(128) NOT NULL,
+    order_id VARCHAR(128) NOT NULL,
+    order_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+    amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+    commission_type VARCHAR(64) NOT NULL DEFAULT 'PRODUCT_ORDER',
+    description TEXT,
+    original_status VARCHAR(32) NOT NULL,
+    product_type VARCHAR(32) DEFAULT 'SHOP',
+    paid_at TIMESTAMPTZ,
+    original_created_at TIMESTAMPTZ,
+    original_updated_at TIMESTAMPTZ,
+    quarantine_reason VARCHAR(128) NOT NULL,
+    candidate_sources TEXT,
+    distinct_tenant_count INTEGER NOT NULL DEFAULT 0,
+    row_snapshot JSONB NOT NULL,
+    approval_status VARCHAR(32) NOT NULL DEFAULT 'QUARANTINED_LOCKED',
+    verified_tenant_id VARCHAR(100),
+    approved_by VARCHAR(128),
+    approved_at TIMESTAMPTZ,
+    approval_notes TEXT,
+    quarantined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_mig031_qac_approval_status CHECK (
+        approval_status IN ('QUARANTINED_LOCKED', 'APPROVED_FOR_RESTORE', 'REJECTED_PERMANENT')
+    ),
+    CONSTRAINT chk_mig031_qac_verified_tenant_valid CHECK (
+        verified_tenant_id IS NULL OR (BTRIM(verified_tenant_id) <> '' AND verified_tenant_id NOT LIKE '__QUARANTINED_%')
+    )
+);
+
+-- -----------------------------------------------------------------------------
+-- 0B. DYNAMIC POSTGRESQL FK CATALOG SNAPSHOT ([ID-03])
+-- -----------------------------------------------------------------------------
+CREATE TEMP TABLE _mig031_actual_pg_fk_inventory ON COMMIT DROP AS
+SELECT
+    con.conname AS constraint_name,
+    src_ns.nspname || '.' || src_cls.relname AS child_table,
+    kcu.column_name AS child_column,
+    tgt_ns.nspname || '.' || tgt_cls.relname AS parent_table,
+    ccu.column_name AS parent_column
+FROM pg_catalog.pg_constraint con
+JOIN pg_catalog.pg_class src_cls ON src_cls.oid = con.conrelid
+JOIN pg_catalog.pg_namespace src_ns ON src_ns.oid = src_cls.relnamespace
+JOIN pg_catalog.pg_class tgt_cls ON tgt_cls.oid = con.confrelid
+JOIN pg_catalog.pg_namespace tgt_ns ON tgt_ns.oid = tgt_cls.relnamespace
+JOIN information_schema.key_column_usage kcu
+  ON kcu.constraint_name = con.conname AND kcu.table_schema = src_ns.nspname AND kcu.table_name = src_cls.relname
+JOIN information_schema.constraint_column_usage ccu
+  ON ccu.constraint_name = con.conname AND ccu.table_schema = tgt_ns.nspname AND ccu.table_name = tgt_cls.relname
+WHERE con.contype = 'f'
+  AND src_ns.nspname = 'public';
 
 -- -----------------------------------------------------------------------------
 -- 1. ENSURE BASE TABLES EXIST & ADD MISSING CANONICAL COLUMNS (IDEMPOTENT)
@@ -1681,6 +1928,27 @@ CREATE TABLE IF NOT EXISTS public.attribution_sessions (
 CREATE INDEX IF NOT EXISTS idx_attribution_sessions_order ON public.attribution_sessions (order_id);
 CREATE INDEX IF NOT EXISTS idx_attribution_sessions_tenant ON public.attribution_sessions (tenant_id);
 
+-- [ID-03] Capture Pre-Migration Financial Reconciliation Baseline (COUNT & SUM per table & status)
+CREATE TEMP TABLE _mig031_fin_pre_snapshot ON COMMIT DROP AS
+SELECT 'affiliate_commissions'::text AS fin_table, UPPER(COALESCE(status, 'UNKNOWN')) AS fin_status,
+       COUNT(*)::bigint AS pre_row_count, COALESCE(SUM(amount), 0)::numeric(18, 2) AS pre_total_amount
+FROM (
+    SELECT status, amount FROM public.affiliate_commissions
+    UNION ALL
+    SELECT original_status AS status, amount FROM public.migration_031_quarantined_affiliate_commissions
+) ac_all
+GROUP BY UPPER(COALESCE(status, 'UNKNOWN'))
+UNION ALL
+SELECT 'shop_subscriptions'::text, UPPER(COALESCE(status, 'UNKNOWN')),
+       COUNT(*)::bigint, COALESCE(SUM(amount), 0)::numeric(18, 2)
+FROM public.shop_subscriptions
+GROUP BY UPPER(COALESCE(status, 'UNKNOWN'))
+UNION ALL
+SELECT 'shop_commission_ledger'::text, UPPER(COALESCE(disbursement_status, 'UNKNOWN')),
+       COUNT(*)::bigint, COALESCE(SUM(commission_amount), 0)::numeric(18, 2)
+FROM public.shop_commission_ledger
+GROUP BY UPPER(COALESCE(disbursement_status, 'UNKNOWN'));
+
 -- -----------------------------------------------------------------------------
 -- 1B. BACKFILL & VERIFY product_orders.tenant_id FROM 5 AUTHORITATIVE SOURCES ([CTO-REV412-02])
 --     Resolves NULL tenant_id from delivery_orders, affiliate_commissions,
@@ -1697,7 +1965,6 @@ WITH candidate_tenants AS (
     JOIN public.affiliate_commissions ac ON ac.order_id = po.order_id
     WHERE NULLIF(BTRIM(po.tenant_id), '') IS NULL
       AND NULLIF(BTRIM(ac.tenant_id), '') IS NOT NULL
-      AND ac.tenant_id NOT LIKE '__QUARANTINED_%'
     UNION ALL
     SELECT po.id AS po_id, po.order_id, BTRIM(att.tenant_id) AS cand_tenant, 'attributions' AS src
     FROM public.product_orders po
@@ -1789,9 +2056,9 @@ CREATE INDEX IF NOT EXISTS idx_product_orders_tenant_order_id
     ON public.product_orders (tenant_id, order_id);
 
 -- -----------------------------------------------------------------------------
--- 1C. BACKFILL & ENFORCE `affiliate_commissions.tenant_id NOT NULL` ([CTO-REV412-03])
---     Resolves NULL/empty tenant_id on existing affiliate_commissions rows from
---     orders, affiliates, delivery_orders, and product_orders; quarantines orphans/conflicts.
+-- 1C. BACKFILL `affiliate_commissions.tenant_id` & MOVE UNRESOLVED/CONFLICT ROWS TO
+--     `public.migration_031_quarantined_affiliate_commissions` ([CTO-REV412-03] & [ID-02])
+--     PROHIBITS fake '__QUARANTINED_...' tenant strings in public.affiliate_commissions.
 -- -----------------------------------------------------------------------------
 WITH ac_tenant_candidates AS (
     SELECT ac.id AS ac_id, ac.order_id, BTRIM(o.tenant_slug) AS cand_tenant, 'orders' AS src
@@ -1816,9 +2083,9 @@ WITH ac_tenant_candidates AS (
 ),
 aggregated_ac_tenants AS (
     SELECT
-        ac.id AS ac_id,
-        ac.order_id,
-        ac.status AS orig_status,
+        ac.id AS ac_id, ac.tenant_id AS orig_tenant_id, ac.affiliate_id, ac.order_id,
+        ac.order_amount, ac.amount, ac.commission_type, ac.description,
+        ac.status AS orig_status, ac.product_type, ac.paid_at, ac.created_at, ac.updated_at,
         to_jsonb(ac) AS snap,
         COUNT(DISTINCT c.cand_tenant) AS distinct_tenants,
         MIN(c.cand_tenant) AS single_tenant,
@@ -1826,7 +2093,8 @@ aggregated_ac_tenants AS (
     FROM public.affiliate_commissions ac
     LEFT JOIN ac_tenant_candidates c ON c.ac_id = ac.id
     WHERE NULLIF(BTRIM(ac.tenant_id), '') IS NULL
-    GROUP BY ac.id, ac.order_id, ac.status, to_jsonb(ac)
+    GROUP BY ac.id, ac.tenant_id, ac.affiliate_id, ac.order_id, ac.order_amount, ac.amount,
+             ac.commission_type, ac.description, ac.status, ac.product_type, ac.paid_at, ac.created_at, ac.updated_at, to_jsonb(ac)
 ),
 logged_ac_tenant_backfill AS (
     INSERT INTO public.migration_031_identifier_dedup_map (
@@ -1835,16 +2103,12 @@ logged_ac_tenant_backfill AS (
         dedup_rank, resolution_reason, requires_finance_reconciliation, downstream_references, row_snapshot
     )
     SELECT
-        ctx.migration_batch_id,
-        'affiliate_commissions',
-        'tenant_id',
-        CASE WHEN aat.distinct_tenants = 1 THEN aat.single_tenant ELSE '__QUARANTINED_TENANT__' || SUBSTRING(aat.ac_id::text FROM 1 FOR 8) END,
-        aat.ac_id::text,
-        aat.ac_id::text,
-        NULL,
-        CASE WHEN aat.distinct_tenants = 1 THEN aat.single_tenant ELSE '__QUARANTINED_TENANT__' || SUBSTRING(aat.ac_id::text FROM 1 FOR 8) END,
+        ctx.migration_batch_id, 'affiliate_commissions', 'tenant_id',
+        CASE WHEN aat.distinct_tenants = 1 THEN aat.single_tenant ELSE NULL END,
+        aat.ac_id::text, aat.ac_id::text, NULL,
+        CASE WHEN aat.distinct_tenants = 1 THEN aat.single_tenant ELSE 'MOVED_TO_QUARANTINE_TABLE' END,
         aat.orig_status,
-        CASE WHEN aat.distinct_tenants = 1 THEN aat.orig_status ELSE 'HOLDING' END,
+        CASE WHEN aat.distinct_tenants = 1 THEN aat.orig_status ELSE 'QUARANTINED_LOCKED' END,
         1,
         CASE
             WHEN aat.distinct_tenants = 1 THEN 'BACKFILLED_AFFILIATE_COMMISSION_TENANT'
@@ -1871,21 +2135,39 @@ logged_ac_tenant_backfill AS (
         retry_count = public.migration_031_identifier_dedup_map.retry_count + 1,
         last_reconciled_at = CURRENT_TIMESTAMP
     RETURNING quarantined_row_id
+),
+quarantined_ac_rows AS (
+    INSERT INTO public.migration_031_quarantined_affiliate_commissions (
+        id, migration_batch_id, original_tenant_id, affiliate_id, order_id, order_amount, amount,
+        commission_type, description, original_status, product_type, paid_at, original_created_at, original_updated_at,
+        quarantine_reason, candidate_sources, distinct_tenant_count, row_snapshot, approval_status
+    )
+    SELECT
+        aat.ac_id, ctx.migration_batch_id, aat.orig_tenant_id, aat.affiliate_id, aat.order_id, aat.order_amount, aat.amount,
+        aat.commission_type, aat.description, aat.orig_status, aat.product_type, aat.paid_at, aat.created_at, aat.updated_at,
+        CASE WHEN aat.distinct_tenants > 1 THEN 'QUARANTINED_COMMISSION_TENANT_CONFLICT' ELSE 'QUARANTINED_ORPHAN_COMMISSION_MISSING_TENANT' END,
+        COALESCE(aat.sources_summary, 'NONE'), aat.distinct_tenants, aat.snap, 'QUARANTINED_LOCKED'
+    FROM aggregated_ac_tenants aat
+    CROSS JOIN _mig031_batch_ctx ctx
+    WHERE aat.distinct_tenants <> 1
+    ON CONFLICT (id) DO UPDATE SET
+        migration_batch_id = EXCLUDED.migration_batch_id,
+        quarantine_reason = EXCLUDED.quarantine_reason,
+        candidate_sources = EXCLUDED.candidate_sources,
+        distinct_tenant_count = EXCLUDED.distinct_tenant_count,
+        row_snapshot = EXCLUDED.row_snapshot
+    RETURNING id
+),
+backfilled_valid_ac AS (
+    UPDATE public.affiliate_commissions ac
+    SET tenant_id = aat.single_tenant, updated_at = CURRENT_TIMESTAMP
+    FROM aggregated_ac_tenants aat
+    WHERE ac.id = aat.ac_id AND aat.distinct_tenants = 1 AND NULLIF(BTRIM(ac.tenant_id), '') IS NULL
+    RETURNING ac.id
 )
-UPDATE public.affiliate_commissions ac
-SET
-    tenant_id = CASE
-        WHEN aat.distinct_tenants = 1 THEN aat.single_tenant
-        ELSE '__QUARANTINED_TENANT__' || SUBSTRING(aat.ac_id::text FROM 1 FOR 8)
-    END,
-    status = CASE
-        WHEN aat.distinct_tenants = 1 THEN ac.status
-        ELSE 'HOLDING'
-    END,
-    updated_at = CURRENT_TIMESTAMP
-FROM aggregated_ac_tenants aat
-WHERE ac.id = aat.ac_id
-  AND NULLIF(BTRIM(ac.tenant_id), '') IS NULL;
+DELETE FROM public.affiliate_commissions ac
+USING quarantined_ac_rows q
+WHERE ac.id = q.id;
 -- -----------------------------------------------------------------------------
 -- 2. PRE-INDEX DUPLICATE SANITIZATION WITH LINEAGE MAPPING (REV4-HIGH-07 & REV 4.1.1)
 --    Captures (quarantined_row_id -> canonical_survivor_id) + full JSONB snapshot
@@ -2068,14 +2350,37 @@ WHERE ss.id = rs.id
   AND rs.rn > 1
   AND ss.xendit_invoice_id NOT LIKE '%_dup_%';
 
--- 2B-RECONCILE ([CTO-REV412-04]): Actively repoint downstream shop_commission_ledger.subscription_id
--- from quarantined duplicate shop_subscriptions rows to canonical_survivor_id BEFORE Step 2C ledger dedup
+-- 2B-RECONCILE ([CTO-REV412-04] & [ID-03] DECISION MATRIX GUARD):
+-- Actively repoint downstream shop_commission_ledger.subscription_id to canonical_survivor_id
+-- ONLY when quarantined duplicate and survivor have identical tenant_slug and amount and DO NOT both have PAID/DISBURSED ledger history.
+-- Conflicting financial histories are flagged QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE and NOT merged.
+UPDATE public.migration_031_identifier_dedup_map map
+SET
+    resolution_reason = 'QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE',
+    requires_finance_reconciliation = TRUE
+FROM public.shop_subscriptions q_sub
+JOIN public.shop_subscriptions s_sub ON TRUE
+WHERE map.table_name = 'shop_subscriptions'
+  AND map.column_name = 'xendit_invoice_id'
+  AND map.quarantined_row_id <> map.canonical_survivor_id
+  AND q_sub.id::text = map.quarantined_row_id
+  AND s_sub.id::text = map.canonical_survivor_id
+  AND (
+      COALESCE(BTRIM(q_sub.tenant_slug), '') <> COALESCE(BTRIM(s_sub.tenant_slug), '')
+      OR COALESCE(q_sub.amount, 0) <> COALESCE(s_sub.amount, 0)
+      OR (
+          EXISTS (SELECT 1 FROM public.shop_commission_ledger l1 WHERE l1.subscription_id = q_sub.id AND UPPER(COALESCE(l1.disbursement_status, '')) IN ('PAID', 'DISBURSED', 'COMPLETED'))
+          AND EXISTS (SELECT 1 FROM public.shop_commission_ledger l2 WHERE l2.subscription_id = s_sub.id AND UPPER(COALESCE(l2.disbursement_status, '')) IN ('PAID', 'DISBURSED', 'COMPLETED'))
+      )
+  );
+
 UPDATE public.shop_commission_ledger scl
 SET subscription_id = public.try_cast_uuid(map.canonical_survivor_id)
 FROM public.migration_031_identifier_dedup_map map
 WHERE map.table_name = 'shop_subscriptions'
   AND map.column_name = 'xendit_invoice_id'
   AND map.quarantined_row_id <> map.canonical_survivor_id
+  AND map.resolution_reason <> 'QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE'
   AND scl.subscription_id IS NOT NULL
   AND scl.subscription_id::text = map.quarantined_row_id
   AND public.try_cast_uuid(map.canonical_survivor_id) IS NOT NULL;
@@ -2253,11 +2558,33 @@ WHERE a.id = ra.id
   AND UPPER(BTRIM(a.referral_code)) NOT LIKE '%_DUP_%';
 
 -- -----------------------------------------------------------------------------
--- 2D-RECONCILE ([CTO-REV412-04]): ACTIVE DOWNSTREAM FOREIGN REFERENCE RECONCILIATION
---     Physically repoints all downstream child FKs referencing quarantined rows
---     to `map.canonical_survivor_id` across financial, attribution, and order tables.
+-- 2D-RECONCILE ([CTO-REV412-04] & [ID-03] DECISION MATRIX GUARD):
+--     Evaluates duplicate affiliate rows against the Decision Matrix:
+--     - If both quarantined affiliate and survivor have PAID/SETTLED commissions or cross-tenant
+--       discrepancies that would alter historical payout meaning if merged, mark
+--       `QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE` and prohibit automatic repointing.
+--     - Otherwise (`SAFE_TO_REPOINT`), repoint downstream references to `map.canonical_survivor_id`.
 -- -----------------------------------------------------------------------------
--- (1) Repoint affiliate_commissions.affiliate_id -> canonical_survivor_id
+UPDATE public.migration_031_identifier_dedup_map map
+SET
+    resolution_reason = 'QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE',
+    requires_finance_reconciliation = TRUE
+FROM public.affiliates q_aff
+JOIN public.affiliates s_aff ON TRUE
+WHERE map.table_name = 'affiliates'
+  AND map.column_name = 'referral_code'
+  AND map.quarantined_row_id <> map.canonical_survivor_id
+  AND q_aff.id::text = map.quarantined_row_id
+  AND s_aff.id::text = map.canonical_survivor_id
+  AND (
+      COALESCE(BTRIM(q_aff.tenant_id), '') <> COALESCE(BTRIM(s_aff.tenant_id), '')
+      OR (
+          EXISTS (SELECT 1 FROM public.affiliate_commissions ac1 WHERE ac1.affiliate_id::text = q_aff.id::text AND UPPER(COALESCE(ac1.status, '')) IN ('PAID', 'SETTLED'))
+          AND EXISTS (SELECT 1 FROM public.affiliate_commissions ac2 WHERE ac2.affiliate_id::text = s_aff.id::text AND UPPER(COALESCE(ac2.status, '')) IN ('PAID', 'SETTLED'))
+      )
+  );
+
+-- (1) Repoint affiliate_commissions.affiliate_id -> canonical_survivor_id (ONLY WHEN SAFE_TO_REPOINT)
 UPDATE public.affiliate_commissions ac
 SET
     affiliate_id = map.canonical_survivor_id,
@@ -2266,37 +2593,45 @@ FROM public.migration_031_identifier_dedup_map map
 WHERE map.table_name = 'affiliates'
   AND map.column_name = 'referral_code'
   AND map.quarantined_row_id <> map.canonical_survivor_id
-  AND ac.affiliate_id::text = map.quarantined_row_id;
+  AND map.resolution_reason <> 'QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE'
+  AND ac.affiliate_id::text = map.quarantined_row_id
+  AND NOT EXISTS (
+      SELECT 1 FROM public.affiliate_commissions ac_s
+      WHERE ac_s.tenant_id = ac.tenant_id AND ac_s.order_id = ac.order_id AND ac_s.affiliate_id::text = map.canonical_survivor_id
+  );
 
--- (2) Repoint attributions.affiliate_id -> canonical_survivor_id
+-- (2) Repoint attributions.affiliate_id -> canonical_survivor_id (ONLY WHEN SAFE_TO_REPOINT)
 UPDATE public.attributions att
 SET affiliate_id = public.try_cast_uuid(map.canonical_survivor_id)
 FROM public.migration_031_identifier_dedup_map map
 WHERE map.table_name = 'affiliates'
   AND map.column_name = 'referral_code'
   AND map.quarantined_row_id <> map.canonical_survivor_id
+  AND map.resolution_reason <> 'QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE'
   AND att.affiliate_id IS NOT NULL
   AND att.affiliate_id::text = map.quarantined_row_id
   AND public.try_cast_uuid(map.canonical_survivor_id) IS NOT NULL;
 
--- (3) Repoint attribution_sessions.affiliate_id -> canonical_survivor_id
+-- (3) Repoint attribution_sessions.affiliate_id -> canonical_survivor_id (ONLY WHEN SAFE_TO_REPOINT)
 UPDATE public.attribution_sessions ats
 SET affiliate_id = public.try_cast_uuid(map.canonical_survivor_id)
 FROM public.migration_031_identifier_dedup_map map
 WHERE map.table_name = 'affiliates'
   AND map.column_name = 'referral_code'
   AND map.quarantined_row_id <> map.canonical_survivor_id
+  AND map.resolution_reason <> 'QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE'
   AND ats.affiliate_id IS NOT NULL
   AND ats.affiliate_id::text = map.quarantined_row_id
   AND public.try_cast_uuid(map.canonical_survivor_id) IS NOT NULL;
 
--- (4) Repoint orders.affiliate_id & orders.manager_id -> canonical_survivor_id
+-- (4) Repoint orders.affiliate_id & orders.manager_id -> canonical_survivor_id (ONLY WHEN SAFE_TO_REPOINT)
 UPDATE public.orders o
 SET affiliate_id = map.canonical_survivor_id
 FROM public.migration_031_identifier_dedup_map map
 WHERE map.table_name = 'affiliates'
   AND map.column_name = 'referral_code'
   AND map.quarantined_row_id <> map.canonical_survivor_id
+  AND map.resolution_reason <> 'QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE'
   AND o.affiliate_id IS NOT NULL
   AND o.affiliate_id::text = map.quarantined_row_id;
 
@@ -2306,16 +2641,18 @@ FROM public.migration_031_identifier_dedup_map map
 WHERE map.table_name = 'affiliates'
   AND map.column_name = 'referral_code'
   AND map.quarantined_row_id <> map.canonical_survivor_id
+  AND map.resolution_reason <> 'QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE'
   AND o.manager_id IS NOT NULL
   AND o.manager_id::text = map.quarantined_row_id;
 
--- (5) Repoint commission_ledger.affiliate_id & commission_ledger.manager_id -> canonical_survivor_id
+-- (5) Repoint commission_ledger.affiliate_id & commission_ledger.manager_id -> canonical_survivor_id (ONLY WHEN SAFE_TO_REPOINT)
 UPDATE public.commission_ledger cl
 SET affiliate_id = map.canonical_survivor_id
 FROM public.migration_031_identifier_dedup_map map
 WHERE map.table_name = 'affiliates'
   AND map.column_name = 'referral_code'
   AND map.quarantined_row_id <> map.canonical_survivor_id
+  AND map.resolution_reason <> 'QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE'
   AND cl.affiliate_id IS NOT NULL
   AND cl.affiliate_id::text = map.quarantined_row_id;
 
@@ -2325,16 +2662,18 @@ FROM public.migration_031_identifier_dedup_map map
 WHERE map.table_name = 'affiliates'
   AND map.column_name = 'referral_code'
   AND map.quarantined_row_id <> map.canonical_survivor_id
+  AND map.resolution_reason <> 'QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE'
   AND cl.manager_id IS NOT NULL
   AND cl.manager_id::text = map.quarantined_row_id;
 
--- (6) Repoint self-referencing upline AM hierarchy columns on public.affiliates
+-- (6) Repoint self-referencing upline AM hierarchy columns on public.affiliates (ONLY WHEN SAFE_TO_REPOINT)
 UPDATE public.affiliates a
 SET registered_by_am_id = public.try_cast_uuid(map.canonical_survivor_id)
 FROM public.migration_031_identifier_dedup_map map
 WHERE map.table_name = 'affiliates'
   AND map.column_name = 'referral_code'
   AND map.quarantined_row_id <> map.canonical_survivor_id
+  AND map.resolution_reason <> 'QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE'
   AND a.registered_by_am_id IS NOT NULL
   AND a.registered_by_am_id::text = map.quarantined_row_id
   AND public.try_cast_uuid(map.canonical_survivor_id) IS NOT NULL;
@@ -2348,29 +2687,31 @@ WHERE d.order_id = po.order_id
   AND NULLIF(BTRIM(po.tenant_id), '') IS NOT NULL;
 
 -- -----------------------------------------------------------------------------
--- 2E. IN-TRANSACTION INDEPENDENT GATE B2 FAIL-CLOSED ASSERTIONS (REV 4.1.3 — [CTO-REV412-05])
---     Queries authoritative source tables directly (NOT just migration_031_identifier_dedup_map)
---     and cross-verifies 100% reconciliation and 0 dangling downstream foreign keys.
+-- 2E. IN-TRANSACTION INDEPENDENT GATE B2 FAIL-CLOSED ASSERTIONS (REV 4.1.4 — [ID-03] & [ID-04])
+--     Zero '__QUARANTINED_%' anomaly masking; verifies all 9 source tables for
+--     unresolved_tenant_rows == 0 AND cross_tenant_conflict_rows == 0, 100% quarantine match,
+--     and Pre-vs-Post Financial Reconciliation Invariant (COUNT & SUM delta == 0).
 -- -----------------------------------------------------------------------------
 DO $$
 DECLARE
     v_indep_po_conflicts     INTEGER;
     v_indep_ac_conflicts     INTEGER;
-    v_mapped_conflicts       INTEGER;
     v_unresolved_op_count    INTEGER;
     v_invalid_ac_tenants     INTEGER;
+    v_quarantine_mismatch    INTEGER;
     v_live_dup_groups        INTEGER;
     v_broken_survivors       INTEGER;
     v_unmapped_fin_mutations INTEGER;
     v_dangling_downstream_fk INTEGER;
+    v_fin_reconcil_diff      INTEGER;
 BEGIN
-    -- B2-ASSERT-01 ([CTO-REV412-05]): Independent live-table multi-tenant conflict check across all 5 sources
+    -- B2-ASSERT-01 ([ID-04]): Independent live-table multi-tenant conflict check (ZERO '__QUARANTINED_%' EXCLUSION)
     WITH live_po_sources AS (
         SELECT po.id AS po_id, NULLIF(BTRIM(po.tenant_id), '') AS po_tenant, BTRIM(d.tenant_id) AS src_tenant
         FROM public.product_orders po JOIN public.delivery_orders d ON d.order_id = po.order_id WHERE NULLIF(BTRIM(d.tenant_id), '') IS NOT NULL
         UNION ALL
         SELECT po.id, NULLIF(BTRIM(po.tenant_id), ''), BTRIM(ac.tenant_id)
-        FROM public.product_orders po JOIN public.affiliate_commissions ac ON ac.order_id = po.order_id WHERE NULLIF(BTRIM(ac.tenant_id), '') IS NOT NULL AND ac.tenant_id NOT LIKE '__QUARANTINED_%'
+        FROM public.product_orders po JOIN public.affiliate_commissions ac ON ac.order_id = po.order_id WHERE NULLIF(BTRIM(ac.tenant_id), '') IS NOT NULL
         UNION ALL
         SELECT po.id, NULLIF(BTRIM(po.tenant_id), ''), BTRIM(att.tenant_id)
         FROM public.product_orders po JOIN public.attributions att ON po.attribution_id IS NOT NULL AND att.id = po.attribution_id WHERE NULLIF(BTRIM(att.tenant_id), '') IS NOT NULL
@@ -2393,6 +2734,12 @@ BEGIN
         UNION ALL
         SELECT ac.id, NULLIF(BTRIM(ac.tenant_id), ''), BTRIM(a.tenant_id)
         FROM public.affiliate_commissions ac JOIN public.affiliates a ON a.id::text = ac.affiliate_id::text WHERE NULLIF(BTRIM(a.tenant_id), '') IS NOT NULL
+        UNION ALL
+        SELECT ac.id, NULLIF(BTRIM(ac.tenant_id), ''), BTRIM(d.tenant_id)
+        FROM public.affiliate_commissions ac JOIN public.delivery_orders d ON d.order_id = ac.order_id WHERE NULLIF(BTRIM(d.tenant_id), '') IS NOT NULL
+        UNION ALL
+        SELECT ac.id, NULLIF(BTRIM(ac.tenant_id), ''), BTRIM(po.tenant_id)
+        FROM public.affiliate_commissions ac JOIN public.product_orders po ON po.order_id = ac.order_id WHERE NULLIF(BTRIM(po.tenant_id), '') IS NOT NULL
     )
     SELECT COUNT(*) INTO v_indep_ac_conflicts
     FROM (
@@ -2400,15 +2747,11 @@ BEGIN
         HAVING COUNT(DISTINCT src_tenant) > 1 OR ac_tenant IS NULL OR MIN(src_tenant) <> ac_tenant
     ) c_ac;
 
-    SELECT COUNT(*) INTO v_mapped_conflicts
-    FROM public.migration_031_identifier_dedup_map
-    WHERE resolution_reason IN ('QUARANTINED_CROSS_SOURCE_TENANT_CONFLICT', 'QUARANTINED_COMMISSION_TENANT_CONFLICT');
-
-    IF v_indep_po_conflicts > 0 OR v_indep_ac_conflicts > 0 OR v_mapped_conflicts > 0 THEN
-        RAISE EXCEPTION '[MIGRATION 031 ABORT - B2-ASSERT-01] Independent source conflict check failed (po_conflicts=%, ac_conflicts=%, mapped_conflicts=%).', v_indep_po_conflicts, v_indep_ac_conflicts, v_mapped_conflicts;
+    IF v_indep_po_conflicts > 0 OR v_indep_ac_conflicts > 0 THEN
+        RAISE EXCEPTION '[MIGRATION 031 ABORT - B2-ASSERT-01] Cross-tenant conflict detected in live tables (po_conflicts=%, ac_conflicts=%).', v_indep_po_conflicts, v_indep_ac_conflicts;
     END IF;
 
-    -- B2-ASSERT-02 ([CTO-REV412-03 & 05]): Operational product_orders & affiliate_commissions tenant_id completeness
+    -- B2-ASSERT-02 ([ID-02] & [ID-04]): 0 unresolved tenant_id & 100% quarantine table parity
     SELECT COUNT(*) INTO v_unresolved_op_count
     FROM public.product_orders po
     WHERE NULLIF(BTRIM(po.tenant_id), '') IS NULL
@@ -2419,8 +2762,13 @@ BEGIN
     SELECT COUNT(*) INTO v_invalid_ac_tenants
     FROM public.affiliate_commissions
     WHERE NULLIF(BTRIM(tenant_id), '') IS NULL OR tenant_id LIKE '__QUARANTINED_%';
-    IF v_unresolved_op_count > 0 OR v_invalid_ac_tenants > 0 THEN
-        RAISE EXCEPTION '[MIGRATION 031 ABORT - B2-ASSERT-02] Unresolved tenant_id found (operational_product_orders=%, invalid_affiliate_commissions=%).', v_unresolved_op_count, v_invalid_ac_tenants;
+    SELECT ABS(
+        (SELECT COUNT(*) FROM public.migration_031_quarantined_affiliate_commissions)
+        - (SELECT COUNT(*) FROM public.migration_031_identifier_dedup_map WHERE table_name = 'affiliate_commissions' AND column_name = 'tenant_id' AND resolution_reason IN ('QUARANTINED_COMMISSION_TENANT_CONFLICT', 'QUARANTINED_ORPHAN_COMMISSION_MISSING_TENANT'))
+    ) INTO v_quarantine_mismatch;
+
+    IF v_unresolved_op_count > 0 OR v_invalid_ac_tenants > 0 OR v_quarantine_mismatch > 0 THEN
+        RAISE EXCEPTION '[MIGRATION 031 ABORT - B2-ASSERT-02] Tenant completeness or quarantine parity failed (unresolved_po=%, invalid_ac=%, quarantine_mismatch=%).', v_unresolved_op_count, v_invalid_ac_tenants, v_quarantine_mismatch;
     END IF;
 
     -- B2-ASSERT-03 ([CTO-REV412-05]): Independent live-source duplicate check across all 4 tables + survivor integrity
@@ -2465,13 +2813,64 @@ BEGIN
     IF v_unmapped_fin_mutations > 0 OR v_dangling_downstream_fk > 0 THEN
         RAISE EXCEPTION '[MIGRATION 031 ABORT - B2-ASSERT-04] Lineage/FK integrity failed (unmapped_mutations=%, dangling_downstream_fks=%).', v_unmapped_fin_mutations, v_dangling_downstream_fk;
     END IF;
+
+    -- B2-ASSERT-05 ([ID-03]): Pre-vs-Post Financial Reconciliation Invariant (COUNT & SUM per status delta MUST BE 0)
+    WITH post_fin_snapshot AS (
+        SELECT 'affiliate_commissions'::text AS fin_table,
+               UPPER(COALESCE(m.original_status, ac.status, 'UNKNOWN')) AS fin_status,
+               COUNT(*)::bigint AS post_row_count,
+               COALESCE(SUM(ac.amount), 0)::numeric(18, 2) AS post_total_amount
+        FROM public.affiliate_commissions ac
+        LEFT JOIN public.migration_031_identifier_dedup_map m
+          ON m.table_name = 'affiliate_commissions' AND m.column_name = 'order_id' AND m.quarantined_row_id = ac.id::text
+        GROUP BY UPPER(COALESCE(m.original_status, ac.status, 'UNKNOWN'))
+        UNION ALL
+        SELECT 'affiliate_commissions'::text, UPPER(COALESCE(q.original_status, 'UNKNOWN')),
+               COUNT(*)::bigint, COALESCE(SUM(q.amount), 0)::numeric(18, 2)
+        FROM public.migration_031_quarantined_affiliate_commissions q
+        GROUP BY UPPER(COALESCE(q.original_status, 'UNKNOWN'))
+    ),
+    agg_post_ac AS (
+        SELECT fin_table, fin_status, SUM(post_row_count)::bigint AS post_row_count, SUM(post_total_amount)::numeric(18, 2) AS post_total_amount
+        FROM post_fin_snapshot GROUP BY fin_table, fin_status
+        UNION ALL
+        SELECT 'shop_subscriptions'::text, UPPER(COALESCE(m.original_status, ss.status, 'UNKNOWN')),
+               COUNT(*)::bigint, COALESCE(SUM(ss.amount), 0)::numeric(18, 2)
+        FROM public.shop_subscriptions ss
+        LEFT JOIN public.migration_031_identifier_dedup_map m
+          ON m.table_name = 'shop_subscriptions' AND m.column_name = 'xendit_invoice_id' AND m.quarantined_row_id = ss.id::text
+        GROUP BY UPPER(COALESCE(m.original_status, ss.status, 'UNKNOWN'))
+        UNION ALL
+        SELECT 'shop_commission_ledger'::text, UPPER(COALESCE(m.original_status, scl.disbursement_status, 'UNKNOWN')),
+               COUNT(*)::bigint, COALESCE(SUM(scl.commission_amount), 0)::numeric(18, 2)
+        FROM public.shop_commission_ledger scl
+        LEFT JOIN public.migration_031_identifier_dedup_map m
+          ON m.table_name = 'shop_commission_ledger' AND m.column_name = 'subscription_id' AND m.quarantined_row_id = scl.id::text
+        GROUP BY UPPER(COALESCE(m.original_status, scl.disbursement_status, 'UNKNOWN'))
+    )
+    SELECT COUNT(*) INTO v_fin_reconcil_diff
+    FROM _mig031_fin_pre_snapshot pre
+    FULL OUTER JOIN agg_post_ac post ON pre.fin_table = post.fin_table AND pre.fin_status = post.fin_status
+    WHERE COALESCE(pre.pre_row_count, 0) <> COALESCE(post.post_row_count, 0)
+       OR COALESCE(pre.pre_total_amount, 0) <> COALESCE(post.post_total_amount, 0);
+
+    IF v_fin_reconcil_diff > 0 THEN
+        RAISE EXCEPTION '[MIGRATION 031 ABORT - B2-ASSERT-05] Financial reconciliation invariant violated (pre_vs_post_status_mismatches=%).', v_fin_reconcil_diff;
+    END IF;
 END $$;
 
 -- -----------------------------------------------------------------------------
--- 3. ENFORCE `affiliate_commissions.tenant_id NOT NULL` ([CTO-REV412-03c]) & CREATE CANONICAL UNIQUE INDEXES
+-- 3. ENFORCE `affiliate_commissions.tenant_id NOT NULL` ([CTO-REV412-03c] & [ID-02d]) & CREATE CANONICAL UNIQUE INDEXES
+--    Executed ONLY after 100% of remaining rows in public.affiliate_commissions have a valid business tenant_id.
 -- -----------------------------------------------------------------------------
 ALTER TABLE public.affiliate_commissions
     ALTER COLUMN tenant_id SET NOT NULL;
+
+ALTER TABLE public.affiliate_commissions
+    DROP CONSTRAINT IF EXISTS chk_affiliate_commissions_valid_business_tenant;
+ALTER TABLE public.affiliate_commissions
+    ADD CONSTRAINT chk_affiliate_commissions_valid_business_tenant
+    CHECK (BTRIM(tenant_id) <> '' AND tenant_id NOT LIKE '__QUARANTINED_%');
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_affiliate_commissions_tenant_order
     ON public.affiliate_commissions (tenant_id, order_id);
@@ -2525,49 +2924,50 @@ COMMIT;
 
 ---
 
-## 6. CAKUPAN WAJIB 5 — SINKRONISASI METADATA GIT, COMMIT `9d3bd09` (`REV 4.1.2`), & TABEL INVENTARIS SHA-256 LENGKAP (`[CTO-REV412-06]`)
+## 6. CAKUPAN WAJIB 5 — INTEGRITAS METADATA GIT, COMMIT `370e63d` (`REV 4.1.3`), LINE COUNT & SHA-256 AKTUAL (`[CTO-REV412-06]` & `[ID-05]`)
 
-### 6.1 Sinkronisasi Riwayat Commit & Parent Commit `9d3bd09360f79bf02dacb1716804b2f76af57d80` (`9d3bd09`) pada Branch `docs/rev4-1-remediation-and-review` (`[SOURCE FACT — REV 4.1.3]`)
-Menindaklanjuti **`[CTO-REV412-06]`**, metadata Header, Bagian 6, dan Appendix B diperbarui ke revisi **`REV 4.1.3` (`BOONTRACK-AUTH-STG-2026-001-REV4.1.3-ADDENDUM`)** dan secara eksplisit mencatat commit **`9d3bd09360f79bf02dacb1716804b2f76af57d80` (`9d3bd09`)** sebagai commit **REV 4.1.2 yang telah terverifikasi di GitHub** dengan putusan CTO `"SUBSTANTIALLY ACCEPTED — DOCUMENTATION ONLY"`.
+### 6.1 Sinkronisasi Riwayat Commit & Parent Commit `370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`370e63d`) pada Branch `docs/rev4-1-remediation-and-review` (`[SOURCE FACT — REV 4.1.4]`)
+Menindaklanjuti **`[ID-05]`**, metadata Header, Bagian 6, dan Appendix B diperbarui ke revisi **`REV 4.1.4` (`BOONTRACK-AUTH-STG-2026-001-REV4.1.4-ADDENDUM`)** dan secara akurat mencatat commit HEAD PR #25 sebelumnya yaitu **`370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`370e63d`)** (`docs(foundry): complete REV 4.1.3 closing all 6 CTO residual directives (CTO-REV412-01 to 06)`), beserta commit pendahulunya **`9d3bd09360f79bf02dacb1716804b2f76af57d80` (`9d3bd09` / `REV 4.1.2`)**.
 
 Berikut adalah catatan sinkronisasi rantai commit terverifikasi pada `.git/logs/HEAD` dan `.git/refs/heads/docs/rev4-1-remediation-and-review` di `C:\boontrack-core`:
 
 | Urutan | Commit SHA (40-Hex & Short) | Timestamp (WIB) | Author | Pesan Commit & Cakupan Perubahan | Mutasi Kode Sumber (`.py`/`.sql`/`.yml`) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Baseline (`main`)** | `a82b6fdf76c043c9a3ee87f48c34062f05258437` (`a82b6fd`) | `2026-11-01 20:44:58 +0700` | `B055OB <onlineboost.id@gmail.com>` | `Merge pull request #24 from B055OB/fix/onlineboost-batch1-canary-readiness` | Baseline kode sumber resmi |
-| **Commit #1 (`PR Docs`)** | `19c74c3d8efb420325a77ea14485664e2d0300a9` (`19c74c3`) | `2026-11-02 10:46:34 +0700` | `BO55OB <onlineboost.id@gmail.com>` | `docs(foundry): add REV 4.1 remediation spec and independent review report`<br>• Menambahkan `FOUNDRY_DIRECTIVE_REV4_1_REMEDIATION.md` (`2,156 baris`)<br>• Menambahkan `FOUNDRY_DIRECTIVE_REV4_REVIEW.md` (`497 baris`) | **NIHIL (`0` file kode berubah)** |
-| **Commit #2 (`PR Docs`)** | `af5f9edf43839df95cc8eee7d9d8f049b57af567` (`af5f9ed`) | `2026-11-02 11:11:00 +0700` | `BO55OB <onlineboost.id@gmail.com>` | `docs(foundry): add independent adversarial review for REV 4.1`<br>• Menambahkan `FOUNDRY_DIRECTIVE_REV4_1_INDEPENDENT_REVIEW.md` (`958 baris`) | **NIHIL (`0` file kode berubah)** |
-| **Commit #3 (`REV 4.1.1`)** | `11aa763b129cd89d731fe45df56c4fd1dde44c7b` (`11aa763`) | `2026-11-02 17:20:40 +0700` | `BO55OB <onlineboost.id@gmail.com>` | `docs(foundry): add REV 4.1.1 addendum addressing final CTO directives`<br>• Menambahkan `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`1,576 baris` pada REV 4.1.1)<br>• **Status Putusan CTO**: `CONDITIONALLY ACCEPTED — REV 4.1.1 (DOCUMENTATION ONLY)` | **NIHIL (`0` file kode berubah)** |
-| **Commit #4 (`Parent Commit / Verified REV 4.1.2`)** | **`9d3bd09360f79bf02dacb1716804b2f76af57d80` (`9d3bd09`)** | `2026-11-02 18:14:41 +0700` | `BO55OB <onlineboost.id@gmail.com>` | `docs(foundry): update closing addendum to REV 4.1.2 addressing all final CTO directives`<br>• Memperbarui `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`2,118 baris`, SHA-256 blob REV 4.1.2: `E8C6D66A96DECA4BE185E40F3272409BD472CC7829F516465D316DC11A628062`)<br>• **Status Putusan CTO di GitHub**: **`SUBSTANTIALLY ACCEPTED — DOCUMENTATION ONLY`** *(Bagian A Cryptographic Keyring CLOSED/ACCEPTED; Parent Commit sah untuk REV 4.1.3)* | **NIHIL (`0` file kode berubah)** |
+| **Commit #1 (`PR Docs`)** | `19c74c3d8efb420325a77ea14485664e2d0300a9` (`19c74c3`) | `2026-11-02 10:46:34 +0700` | `BO55OB <onlineboost.id@gmail.com>` | `docs(foundry): add REV 4.1 remediation spec and independent review report`<br>• Menambahkan `FOUNDRY_DIRECTIVE_REV4_1_REMEDIATION.md` (`2,156 baris`, `160,815 bytes`)<br>• Menambahkan `FOUNDRY_DIRECTIVE_REV4_REVIEW.md` (`497 baris`, `38,687 bytes`) | **NIHIL (`0` file kode berubah)** |
+| **Commit #2 (`PR Docs`)** | `af5f9edf43839df95cc8eee7d9d8f049b57af567` (`af5f9ed`) | `2026-11-02 11:11:00 +0700` | `BO55OB <onlineboost.id@gmail.com>` | `docs(foundry): add independent adversarial review for REV 4.1`<br>• Menambahkan `FOUNDRY_DIRECTIVE_REV4_1_INDEPENDENT_REVIEW.md` (`958 baris`, `46,166 bytes`) | **NIHIL (`0` file kode berubah)** |
+| **Commit #3 (`REV 4.1.1`)** | `11aa763b129cd89d731fe45df56c4fd1dde44c7b` (`11aa763`) | `2026-11-02 11:44:10 +0700` | `BO55OB <onlineboost.id@gmail.com>` | `docs(foundry): add REV 4.1.1 addendum addressing final CTO directives`<br>• Menambahkan `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`1,576 baris` pada REV 4.1.1)<br>• **Status Putusan CTO**: `CONDITIONALLY ACCEPTED — REV 4.1.1 (DOCUMENTATION ONLY)` | **NIHIL (`0` file kode berubah)** |
+| **Commit #4 (`Verified REV 4.1.2`)** | `9d3bd09360f79bf02dacb1716804b2f76af57d80` (`9d3bd09`) | `2026-11-02 12:41:21 +0700` | `BO55OB <onlineboost.id@gmail.com>` | `docs(foundry): update closing addendum to REV 4.1.2 addressing all final CTO directives`<br>• Memperbarui `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`2,118 baris`, SHA-256 blob REV 4.1.2: `E8C6D66A96DECA4BE185E40F3272409BD472CC7829F516465D316DC11A628062`)<br>• **Status Putusan CTO**: `SUBSTANTIALLY ACCEPTED — DOCUMENTATION ONLY` | **NIHIL (`0` file kode berubah)** |
+| **Commit #5 (`Parent Commit / Verified REV 4.1.3 PR #25`)** | **`370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`370e63d`)** | `2026-11-02 13:25:29 +0700` | `BO55OB <onlineboost.id@gmail.com>` | `docs(foundry): complete REV 4.1.3 closing all 6 CTO residual directives (CTO-REV412-01 to 06)`<br>• Memperbarui `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`2,920 baris`, `203,397 bytes`, SHA-256 blob REV 4.1.3: `00DC1E8401ED6B313F6ACEE2CBD676A255ED7B9AC5189BDFD77FFF60C2EFA2C0`)<br>• **Parent Commit sah untuk `REV 4.1.4 — FINAL 5-POINT RESIDUAL CLOSURE`** | **NIHIL (`0` file kode berubah)** |
 
-**Bukti Verifikasi `git diff --stat main..9d3bd09360f79bf02dacb1716804b2f76af57d80`**:
+**Bukti Verifikasi `git diff --stat main..370e63d3fc379630054621c3a8dadc0e2b2e3e03` & `git diff --stat main -- app/ migrations/ tests/`**:
 ```text
- FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md         | 2118 +++++++++++++++++++++++
- FOUNDRY_DIRECTIVE_REV4_1_INDEPENDENT_REVIEW.md |  958 ++++++++++
- FOUNDRY_DIRECTIVE_REV4_1_REMEDIATION.md        | 2156 ++++++++++++++++++++++++
- FOUNDRY_DIRECTIVE_REV4_REVIEW.md               |  497 ++++++
- 4 files changed, 5729 insertions(+)
+ FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md         | 2920 ++++++++++++++++++++++++
+ FOUNDRY_DIRECTIVE_REV4_1_INDEPENDENT_REVIEW.md |  958 ++++++++
+ FOUNDRY_DIRECTIVE_REV4_1_REMEDIATION.md        | 2156 ++++++++++++++++++
+ FOUNDRY_DIRECTIVE_REV4_REVIEW.md               |  497 ++++
+ 4 files changed, 6531 insertions(+)
 ```
-Seluruh perubahan antara `main` (`a82b6fdf...`), commit `9d3bd09` (`REV 4.1.2`), dan pembaruan `REV 4.1.3` ini adalah **100% file dokumentasi Markdown (`.md`)**. Hasil eksekusi `git diff --stat main -- app/ migrations/ tests/` menghasilkan tepat **`0` baris perubahan** (**`ZERO CODE MUTATION PROTOCOL VERIFIED`**).
+Seluruh perubahan antara `main` (`a82b6fdf...`), commit `370e63d` (`REV 4.1.3`), dan pembaruan `REV 4.1.4` ini adalah **100% file dokumentasi Markdown (`.md`)**. Hasil eksekusi `git diff --stat main -- app/ migrations/ tests/` menghasilkan tepat **`0` file berubah** (**`ZERO CODE MUTATION PROTOCOL VERIFIED`**).
 
 ---
 
-### 6.2 Inventaris Lengkap Worktree & Hash SHA-256 Artefak Dokumentasi (`C:\boontrack-core` — Zero Empty/Placeholder Cells `[CTO-REV412-06]`)
+### 6.2 Inventaris Lengkap Worktree, Ukuran Byte, Jumlah Baris & Hash SHA-256 Aktual (`C:\boontrack-core` — Verified via `Get-FileHash -Algorithm SHA256` `[ID-05]`)
 
-| Nama File Artefak | Status Git (`docs/rev4-1-remediation-and-review`) | SHA-256 Terverifikasi (64-Hex Eksak) | Peran dalam Governance `BOONTRACK-AUTH-STG-2026-001` |
-| :--- | :--- | :--- | :--- |
-| `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` *(Baseline Commit `9d3bd09` REV 4.1.2 -> Updated In-Place to REV 4.1.3)* | Tracked (`9d3bd09`) -> Modified (`M`) untuk REV 4.1.3 | `E8C6D66A96DECA4BE185E40F3272409BD472CC7829F516465D316DC11A628062` | **Addendum Penutup & CTO Residual Closure (`BOONTRACK-AUTH-STG-2026-001-REV4.1.3-ADDENDUM`; Hash kolom ini adalah SHA-256 blob terverifikasi pada Commit `9d3bd09360f79bf02dacb1716804b2f76af57d80`)** |
-| `FOUNDRY_DIRECTIVE_REV4_1_REMEDIATION.md` | Tracked (`19c74c3d`) | `407E425739B38D5A43B4C22FE19BE9529CB9A95A7F8837733794B95315DFE086` | Spesifikasi Desain Utama REV 4.1 (`2,156 baris`) |
-| `FOUNDRY_DIRECTIVE_REV4_1_INDEPENDENT_REVIEW.md` | Tracked (`af5f9edf`) | `23316A51C62369406C68F500BC44B91A8CBF3817E43CC875CF74AC988D21103D` | Laporan Audit Independen REV 4.1 (`958 baris`, `CONDITIONALLY ACCEPTABLE`) |
-| `FOUNDRY_DIRECTIVE_REV4_1_REVIEW.md` | Untracked (`??`) | `094EC4346A30D94F17260295174E195D8A6BD5E61E8603A6D0DD797F2D39CE2B` | Laporan Review Internal REV 4.1 (`716 baris`) |
-| `FOUNDRY_DIRECTIVE_REV4_REVIEW.md` | Tracked (`19c74c3d`) | `821837CFC9FCEC81BB97616F77F2699C85D00F384ADE80A48082B6FB6DB287F3` | Laporan Audit REV 4.0 (`497 baris`, 18 Temuan) |
-| `FOUNDRY_DIRECTIVE_REV4_REMEDIATION.md` | Untracked (`??`) | `90C3EC89E1670065DEC6029BADD0AB678FFC606BA80CABC8B768326BC4639002` | Draf Awal REV 4.0 (`1,279 baris`, Digantikan oleh REV 4.1 + REV 4.1.3) |
-| `BOONTRACK_AUTH_STG_2026_001_REV3.md` | Untracked (`??`) | `3965C5DED25179C51CF43A4A1AA73FD28926ABD37EE9DB0ACC115D3680984525` | Artefak Kontrol Baseline REV 3 (`492 baris`) |
-| `COMMISSION_WRITER_INTEGRITY_MATRIX.md` | Untracked (`??`) | `5D500EBCD68A84CF086B751EE09F4E2564A88A02BAAC93B354DA4920D2E29707` | Matriks Integritas Writer Komisi Baseline REV 3 (`481 baris`) |
-| `STAGING_DATABASE_MIGRATION_PLAN.md` | Untracked (`??`) | `3D69B13A57C1D429E8C94B791EBB45A98F2D591CB7F591D89A31CED524C7EB5A` | Rencana Migrasi Database Staging Baseline REV 3 (`440 baris`) |
-| `STAGING_ENVIRONMENT_CONTRACT.md` | Untracked (`??`) | `47A3551C61920187197B39E817B674BEF12B2924607086295A3024E4B3DC50EB` | Kontrak Isolasi Environment Staging Baseline REV 3 (`261 baris`) |
-| `STAGING_READINESS_REPORT.md` | Untracked (`??`) | `A4F85E0F49EA748F3F91FE8564632B2E041FC1832A7220DE679CA9C439CE531F` | Laporan Kesiapan Staging Baseline REV 3 (`303 baris`) |
-| `STAGING_ROLLBACK_READINESS.md` | Untracked (`??`) | `88BD575B65C176866A8540FA67FB045E5549D0F344EC99A979498B4D95DCA421` | Prosedur Rollback Staging Baseline REV 3 (`414 baris`) |
+| Nama File Artefak | Status Git (`docs/rev4-1-remediation-and-review`) | Ukuran Aktual (`Bytes`) | Jumlah Baris (`Lines`) | SHA-256 Aktual (`Get-FileHash -Algorithm SHA256`) | Peran dalam Governance `BOONTRACK-AUTH-STG-2026-001` |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` *(Parent Commit `370e63d` REV 4.1.3 -> Updated In-Place to REV 4.1.4)* | Tracked (`370e63d`) -> Modified (`M`) untuk REV 4.1.4 | `203,397` *(pada `370e63d`)* | `2,920` *(pada `370e63d`)* -> `3,484` *(pada `REV 4.1.4`)* | `00DC1E8401ED6B313F6ACEE2CBD676A255ED7B9AC5189BDFD77FFF60C2EFA2C0` *(Blob `370e63d`)* | **Addendum Penutup & Final 5-Point Residual Closure (`BOONTRACK-AUTH-STG-2026-001-REV4.1.4-ADDENDUM`; Hash/Byte/Line baseline adalah nilai aktual blob parent commit `370e63d3fc379630054621c3a8dadc0e2b2e3e03`)** |
+| `FOUNDRY_DIRECTIVE_REV4_1_REMEDIATION.md` | Tracked (`19c74c3d`) | `160,815` | `2,156` | `407E425739B38D5A43B4C22FE19BE9529CB9A95A7F8837733794B95315DFE086` | Spesifikasi Desain Utama REV 4.1 (`2,156 baris`, `160,815 bytes`) |
+| `FOUNDRY_DIRECTIVE_REV4_1_INDEPENDENT_REVIEW.md` | Tracked (`af5f9edf`) | `46,166` | `958` | `23316A51C62369406C68F500BC44B91A8CBF3817E43CC875CF74AC988D21103D` | Laporan Audit Independen REV 4.1 (`958 baris`, `46,166 bytes`) |
+| `FOUNDRY_DIRECTIVE_REV4_1_REVIEW.md` | Untracked (`??`) | `37,042` | `716` | `094EC4346A30D94F17260295174E195D8A6BD5E61E8603A6D0DD797F2D39CE2B` | Laporan Review Internal REV 4.1 (`716 baris`, `37,042 bytes`) |
+| `FOUNDRY_DIRECTIVE_REV4_REVIEW.md` | Tracked (`19c74c3d`) | `38,687` | `497` | `821837CFC9FCEC81BB97616F77F2699C85D00F384ADE80A48082B6FB6DB287F3` | Laporan Audit REV 4.0 (`497 baris`, `38,687 bytes`, 18 Temuan) |
+| `FOUNDRY_DIRECTIVE_REV4_REMEDIATION.md` | Untracked (`??`) | `158,922` | `1,279` | `90C3EC89E1670065DEC6029BADD0AB678FFC606BA80CABC8B768326BC4639002` | Draf Awal REV 4.0 (`1,279 baris`, `158,922 bytes`) |
+| `BOONTRACK_AUTH_STG_2026_001_REV3.md` | Untracked (`??`) | `39,321` | `492` | `3965C5DED25179C51CF43A4A1AA73FD28926ABD37EE9DB0ACC115D3680984525` | Artefak Kontrol Baseline REV 3 (`492 baris`, `39,321 bytes`) |
+| `COMMISSION_WRITER_INTEGRITY_MATRIX.md` | Untracked (`??`) | `43,839` | `481` | `5D500EBCD68A84CF086B751EE09F4E2564A88A02BAAC93B354DA4920D2E29707` | Matriks Integritas Writer Komisi Baseline REV 3 (`481 baris`, `43,839 bytes`) |
+| `STAGING_DATABASE_MIGRATION_PLAN.md` | Untracked (`??`) | `36,125` | `440` | `3D69B13A57C1D429E8C94B791EBB45A98F2D591CB7F591D89A31CED524C7EB5A` | Rencana Migrasi Database Staging Baseline REV 3 (`440 baris`, `36,125 bytes`) |
+| `STAGING_ENVIRONMENT_CONTRACT.md` | Untracked (`??`) | `23,884` | `261` | `47A3551C61920187197B39E817B674BEF12B2924607086295A3024E4B3DC50EB` | Kontrak Isolasi Environment Staging Baseline REV 3 (`261 baris`, `23,884 bytes`) |
+| `STAGING_READINESS_REPORT.md` | Untracked (`??`) | `48,723` | `303` | `A4F85E0F49EA748F3F91FE8564632B2E041FC1832A7220DE679CA9C439CE531F` | Laporan Kesiapan Staging Baseline REV 3 (`303 baris`, `48,723 bytes`) |
+| `STAGING_ROLLBACK_READINESS.md` | Untracked (`??`) | `35,279` | `414` | `88BD575B65C176866A8540FA67FB045E5549D0F344EC99A979498B4D95DCA421` | Prosedur Rollback Staging Baseline REV 3 (`414 baris`, `35,279 bytes`) |
 
 ---
 
@@ -2600,23 +3000,27 @@ Sesuai putusan CTO `"SUBSTANTIALLY ACCEPTED — DOCUMENTATION ONLY"` atas commit
 
 ---
 
-## 7. REV 4.1.3 — CTO RESIDUAL CLOSURE (`[CTO-REV412-01]` s/d `[CTO-REV412-06]`)
+## 7. REV 4.1.3 & REV 4.1.4 — CTO RESIDUAL CLOSURE (`[CTO-REV412-01]` s/d `[CTO-REV412-06]` & FINAL 5-POINT CLOSURE `[ID-01]` s/d `[ID-05]`)
 
-Bagian ini merupakan konsolidasi normatif **REV 4.1.3 — CTO Residual Closure** yang menutup secara eksak **6 ID temuan residual CTO** pasca-evaluasi commit `9d3bd09360f79bf02dacb1716804b2f76af57d80` (`REV 4.1.2`, putusan `"SUBSTANTIALLY ACCEPTED — DOCUMENTATION ONLY"`). Sesuai instruksi CTO, **Bagian A (Cryptographic Keyring — Bagian 2 & Bagian 3)** telah berstatus **CLOSED / ACCEPTED** dan dipertahankan 100% tanpa perubahan.
+Bagian ini merupakan konsolidasi normatif **REV 4.1.3 & REV 4.1.4 — Final 5-Point Residual Closure** yang menutup secara eksak seluruh temuan residual CTO pasca-evaluasi commit `9d3bd09360f79bf02dacb1716804b2f76af57d80` (`REV 4.1.2`) dan commit `370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`REV 4.1.3`). Sesuai instruksi CTO, **Bagian A (Cryptographic Keyring — Bagian 2 & Bagian 3)** telah berstatus **CLOSED / ACCEPTED** dan dipertahankan 100% tanpa perubahan.
 
 ---
 
-### 7.1 `[CTO-REV412-01]` Redis Close Failure & Cancellation Race (`app/routes/xendit.py`)
+### 7.1 `[CTO-REV412-01]` & `[ID-01]` Redis Lock Lease, Ownership Token, Compare-and-Delete, Close Failure & Cancellation Race (`app/routes/xendit.py`)
 
-#### A. Ringkasan 3 Invarian Mengikat `[CTO-REV412-01]`
+#### A. Ringkasan 4 Invarian Mengikat `[CTO-REV412-01]` & `[ID-01]`
 1. **Pemisahan Tegas `close_attempted: bool` vs. Observasi Aktual `conn_verified_closed: bool`**:
    - Di dalam `_XenditDbCleanupState` dan `_close_xendit_db_resources()`, `state.close_attempted: bool` berfungsi semata-mata sebagai penjaga idempotensi agar `conn.close()` hanya dipanggil satu kali, sedangkan `state.conn_verified_closed: bool` **HANYA** bernilai `True` jika `conn is not None and getattr(conn, "closed", 0) == 1` pasca-eksekusi blok `conn.close()`.
 2. **Invariant Pelepasan Redis Lock di Blok `finally:` Luar**:
-   - `release_payment_lock(external_id)` **HANYA** boleh dipanggil jika `worker_task is not None and worker_task.done() == True and cleanup_state.conn_verified_closed == True`.
+   - `release_payment_lock(external_id, lock_token)` **HANYA** boleh dipanggil jika `worker_task is not None and worker_task.done() == True and cleanup_state.conn_verified_closed == True`.
    - Jika `conn.close()` gagal atau `getattr(conn, "closed", 0) != 1`, sistem **DILARANG melepas Redis lock secara manual**: pelepasan lock ditahan agar dilindungi TTL Redis (`30s`) disertai emisi log `CRITICAL` / `SEV-1` (`REDIS_LOCK_RETAINED_DB_CLOSE_UNVERIFIED`).
 3. **Penyelesaian Race Condition `cancel_event` vs. `conn.commit()` dengan State Transisi Atomik**:
    - Menggunakan 5 state transisi atomik di bawah `cleanup_state.state_lock` (`threading.Lock`): **`PRE_COMMIT`**, **`COMMITTING`**, **`COMMITTED_OK`**, **`ROLLED_BACK`**, dan **`CLOSE_FAILED`**.
    - Jika `cancel_event` tiba saat atau setelah `conn.commit()` berhasil dieksekusi (`tx_committed == True`), worker dan coroutine **WAJIB memperlakukan transaksi sebagai `COMMITTED_OK`** (`conn.rollback()` tidak pernah dipanggil, side-effect pasca-commit diselesaikan, dan propagasi pembatalan/rollback palsu ditekan sehingga tidak pernah dilaporkan seolah rollback berhasil).
+4. **Ownership Token, Lease Renewal Heartbeat Watchdog, Pre-Commit Lease Validity Check, & Atomic Lua Compare-and-Delete (`[ID-01]`)**:
+   - **Ownership Token**: Akuisisi lock Redis wajib menggunakan token kepemilikan unik per-worker (`lock_token = str(uuid.uuid4())`).
+   - **Lease Renewal & Pre-Commit Lease Validity Check**: Selama worker aktif, `_LockLeaseHeartbeatWatchdog` memperpanjang lease via Lua *Compare-and-PEXPIRE*. Sebelum `conn.commit()`, worker wajib memverifikasi `state.lease_valid == True`, `remaining_lease_seconds >= 5.0s` (safety margin), dan kepemilikan token aktif di Redis; jika gagal atau sisa lease `< safety_margin`, worker **WAJIB membatalkan transaksi (`conn.rollback()`)** dan berhenti di state `ROLLED_BACK` sebelum commit yang tidak terlindungi.
+   - **Atomic Lua Compare-and-Delete Script**: Pelepasan lock menggunakan skrip Lua `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end` sehingga worker yang terlambat tidak pernah dapat menghapus lock milik worker lain.
 
 #### B. Tabel State Machine Eksplisit `[CTO-REV412-01]`
 
@@ -2804,6 +3208,94 @@ async def test_cto_rev412_01_test3_conn_close_failure_blocks_manual_lock_release
     assert state.conn_verified_closed is False
     assert state.tx_state == "CLOSE_FAILED"
     assert released_locks == []  # release_payment_lock() MUST NOT be called
+
+
+# (d) Test 4 ([ID-01]): Lease expiry / remaining lease < safety margin aborts before commit (conn.rollback)
+#     and Lua Compare-and-Delete prevents delayed Worker A from unlocking Worker B's active lock.
+@pytest.mark.asyncio
+async def test_cto_rev414_01_lease_expiry_and_token_ownership_prevents_stale_commit_and_foreign_unlock(monkeypatch):
+    from app.routes import xendit as xendit_mod
+
+    class _FakeAtomicRedis:
+        def __init__(self) -> None:
+            self.store: dict[str, str] = {}
+            self.eval_calls: list[tuple[str, str, str]] = []
+
+        def set(self, key: str, value: str, nx: bool = False, ex: Optional[int] = None) -> bool:
+            if nx and key in self.store:
+                return False
+            self.store[key] = value
+            return True
+
+        def eval(self, script: str, numkeys: int, key: str, token: str, *extra: Any) -> int:
+            self.eval_calls.append((script, key, token))
+            current_owner = self.store.get(key)
+            if "pexpire" in script:
+                return 1 if current_owner == token else 0
+            if 'redis.call("del", KEYS[1])' in script:
+                if current_owner == token:
+                    del self.store[key]
+                    return 1
+                return 0
+            return 0
+
+    fake_redis = _FakeAtomicRedis()
+    pre_commit_reached = threading.Event()
+    pre_commit_gate = threading.Event()
+    conn = _LatchInstrumentedConnection(
+        pre_commit_reached=pre_commit_reached,
+        pre_commit_gate=pre_commit_gate,
+    )
+    monkeypatch.setattr(xendit_mod, "get_db_connection", lambda: conn)
+    monkeypatch.setattr(xendit_mod, "get_redis_client", lambda: fake_redis)
+
+    ext_id = "ord_t4_lease"
+    lock_key = xendit_mod._payment_lock_key(ext_id)
+    token_worker_a = "token-worker-A-1111"
+    token_worker_b = "token-worker-B-2222"
+
+    # 1. Worker A acquires lock with token_worker_a
+    assert xendit_mod.acquire_payment_lock(ext_id, token_worker_a, ttl_seconds=30) is True
+    assert fake_redis.store[lock_key] == token_worker_a
+
+    state_a = xendit_mod._XenditDbCleanupState(
+        lock_token=token_worker_a,
+        lease_deadline_monotonic=time.monotonic() + 2.0,  # < 5.0s safety margin
+    )
+    worker_a_task = asyncio.create_task(
+        asyncio.to_thread(
+            xendit_mod._record_settlement_and_ledger_sync,
+            event_id="evt_t4_a", external_id=ext_id, tenant_id="onlineboost",
+            amount=350000, payload={"id": "evt_t4_a"}, cleanup_state=state_a,
+            lock_token=token_worker_a, lease_verify_fn=xendit_mod.renew_payment_lock_lease,
+        )
+    )
+    assert await asyncio.to_thread(pre_commit_reached.wait, 5.0)
+
+    # 2. Simulate Worker A's Redis lock expiring and Worker B acquiring the lock with token_worker_b
+    fake_redis.store[lock_key] = token_worker_b
+    pre_commit_gate.set()
+
+    # 3. Worker A MUST fail Pre-Commit Lease Validity Check, abort before commit, and rollback
+    with pytest.raises(RuntimeError, match="XENDIT LEASE EXPIRED BEFORE COMMIT"):
+        await worker_a_task
+
+    assert conn.commit_calls == 0
+    assert conn.rollback_calls == 1
+    assert state_a.tx_committed is False
+    assert state_a.tx_state == "ROLLED_BACK"
+    assert state_a.conn_verified_closed is True
+
+    # 4. When Worker A's outer `finally:` runs Lua Compare-and-Delete with token_worker_a,
+    #    it MUST return False (0) and preserve Worker B's active lock in Redis.
+    unlocked_by_a = xendit_mod.release_payment_lock(ext_id, token_worker_a)
+    assert unlocked_by_a is False
+    assert fake_redis.store[lock_key] == token_worker_b
+
+    # 5. Worker B can legitimately release its own lock with token_worker_b
+    unlocked_by_b = xendit_mod.release_payment_lock(ext_id, token_worker_b)
+    assert unlocked_by_b is True
+    assert lock_key not in fake_redis.store
 ```
 
 ---
@@ -2824,87 +3316,158 @@ WHERE NULLIF(BTRIM(po.tenant_id), '') IS NULL
 
 ---
 
-### 7.3 `[CTO-REV412-03]` Integritas `tenant_id NOT NULL` pada Tabel Existing `affiliate_commissions`
+### 7.3 `[CTO-REV412-03]` & `[ID-02]` Batas Tegas Karantina Tenant & Integritas `tenant_id NOT NULL` pada `affiliate_commissions`
 
-Karena `CREATE TABLE IF NOT EXISTS public.affiliate_commissions` tidak memodifikasi constraint kolom pada tabel existing, **Appendix A (Step 1C & Step 3)** menambahkan 3 komponen wajib:
-1. **(a) Query Preflight Deteksi `tenant_id IS NULL` & Duplikat `(tenant_id, order_id)`**:
-   ```sql
-   SELECT
-       COUNT(*) AS total_rows,
-       COUNT(*) FILTER (WHERE NULLIF(BTRIM(tenant_id), '') IS NULL) AS null_tenant_rows,
-       (SELECT COUNT(*) FROM (
-           SELECT COALESCE(NULLIF(BTRIM(tenant_id), ''), '__NULL__'), order_id
-           FROM public.affiliate_commissions
-           GROUP BY 1, 2 HAVING COUNT(*) > 1
-       ) d) AS duplicate_tenant_order_groups
-   FROM public.affiliate_commissions;
-   ```
-2. **(b) Backfill Deterministik & Karantina Yatim/Konflik (Appendix A Step `1C`)**:
-   Mengisi `affiliate_commissions.tenant_id` yang bernilai `NULL`/kosong dari relasi `public.orders` (`o.id = ac.order_id`), `public.affiliates` (`a.id::text = ac.affiliate_id::text`), `public.delivery_orders`, dan `public.product_orders`. Jika `distinct_tenants == 1`, `tenant_id` di-backfill ke `single_tenant`. Jika yatim (`distinct_tenants == 0`) atau konflik (`distinct_tenants > 1`), baris dikarantina dengan status `'HOLDING'` dan dicatat di `public.migration_031_identifier_dedup_map` (`QUARANTINED_COMMISSION_TENANT_CONFLICT` / `QUARANTINED_ORPHAN_COMMISSION_MISSING_TENANT`).
-3. **(c) Statement DDL Eksplisit Sebelum Pembuatan Unique Index (Appendix A Step `3`)**:
-   ```sql
-   ALTER TABLE public.affiliate_commissions
-       ALTER COLUMN tenant_id SET NOT NULL;
+Menindaklanjuti **`[ID-02]`**, koreksi konsep diterapkan secara tegas pada **Bagian 5 (§5.2)** dan **Appendix A (Step 0, Step 1C, & Step 3)**:
+1. **Larangan Mutlak String Sentinel Palsu `'__QUARANTINED_...'` di Tabel Aktif**:
+   - Sistem **DILARANG KERAS** menyuntikkan nilai string palsu `'__QUARANTINED_...'` sebagai pengganti `tenant_id` di tabel operasional `public.affiliate_commissions` untuk mengakali constraint `SET NOT NULL`.
+2. **Pemindahan Utuh ke Tabel Karantina Khusus (`public.migration_031_quarantined_affiliate_commissions`)**:
+   - Baris anomali/yatim yang tidak dapat di-resolve `tenant_id`-nya secara tunggal (`distinct_tenants == 0` atau `distinct_tenants > 1`) dipindahkan secara atomik (beserta audit lineage lengkap di `public.migration_031_identifier_dedup_map` dan `row_snapshot JSONB`) ke tabel **`public.migration_031_quarantined_affiliate_commissions`** dan dihapus dari tabel aktif `public.affiliate_commissions`, sehingga menegakkan **4 aturan mengikat `[ID-02]`**:
+     - **(a) Karantina BUKAN tenant bisnis valid**: Tidak ada satu pun sentinel karantina yang hidup sebagai `tenant_id` di `public.affiliate_commissions`.
+     - **(b) Baris karantina DILARANG KERAS masuk ke perhitungan komisi, payout, maupun settlement**: Karena berada di tabel terpisah dengan status kunci `approval_status = 'QUARANTINED_LOCKED'`, baris karantina mustahil teragregasi oleh layanan perhitungan komisi, payout, atau settlement.
+     - **(c) Prosedur Approval & Verifikasi Lineage Eksplisit untuk Pemulihan**: Pemulihan dari `public.migration_031_quarantined_affiliate_commissions` ke `public.affiliate_commissions` wajib melalui verifikasi bukti lineage (`orders`, `affiliates`, `delivery_orders`, `product_orders`), pengisian `verified_tenant_id` bisnis yang sah (`CHECK (verified_tenant_id NOT LIKE '__QUARANTINED_%')`), dan otorisasi `approval_status = 'APPROVED_FOR_RESTORE'` oleh Finance & Security (`approved_by`, `approved_at`).
+     - **(d) Eksekusi `SET NOT NULL` Hanya Setelah 100% Baris Sah**:
+       ```sql
+       ALTER TABLE public.affiliate_commissions
+           ALTER COLUMN tenant_id SET NOT NULL;
 
-   CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_affiliate_commissions_tenant_order
-       ON public.affiliate_commissions (tenant_id, order_id);
-   ```
+       ALTER TABLE public.affiliate_commissions
+           ADD CONSTRAINT chk_affiliate_commissions_valid_business_tenant
+           CHECK (BTRIM(tenant_id) <> '' AND tenant_id NOT LIKE '__QUARANTINED_%');
+
+       CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_affiliate_commissions_tenant_order
+           ON public.affiliate_commissions (tenant_id, order_id);
+       ```
 
 ---
 
-### 7.4 `[CTO-REV412-04]` Financial Downstream Dependency Inventory & Rekonsiliasi Aktif Referensi Hilir
+### 7.4 `[CTO-REV412-04]` & `[ID-03]` Financial Lineage, Katalog FK Aktual PostgreSQL, Decision Matrix & Financial Reconciliation Invariant
 
-#### A. Tabel "Financial Downstream Dependency Inventory"
-
-| No | Tabel Entitas Induk (Deduplicated) | Kunci Unik & PK Survivor | Tabel Anak / Hilir (*Downstream Table*) | Kolom Foreign Reference Hilir | Statement Rekonsiliasi Aktif (`UPDATE ... SET <fk_col> = map.canonical_survivor_id`) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | `public.affiliates` | `(tenant_id, UPPER(BTRIM(referral_code)))` -> `id` (`UUID`) | `public.affiliate_commissions` | `affiliate_id` (`VARCHAR(128)`) | `UPDATE public.affiliate_commissions ac SET affiliate_id = map.canonical_survivor_id FROM public.migration_031_identifier_dedup_map map WHERE map.table_name = 'affiliates' AND map.quarantined_row_id <> map.canonical_survivor_id AND ac.affiliate_id::text = map.quarantined_row_id;` |
-| 2 | `public.affiliates` | `(tenant_id, UPPER(BTRIM(referral_code)))` -> `id` (`UUID`) | `public.attributions` | `affiliate_id` (`UUID`) | `UPDATE public.attributions att SET affiliate_id = public.try_cast_uuid(map.canonical_survivor_id) FROM public.migration_031_identifier_dedup_map map WHERE map.table_name = 'affiliates' AND map.quarantined_row_id <> map.canonical_survivor_id AND att.affiliate_id::text = map.quarantined_row_id;` |
-| 3 | `public.affiliates` | `(tenant_id, UPPER(BTRIM(referral_code)))` -> `id` (`UUID`) | `public.attribution_sessions` | `affiliate_id` (`UUID`) | `UPDATE public.attribution_sessions ats SET affiliate_id = public.try_cast_uuid(map.canonical_survivor_id) FROM public.migration_031_identifier_dedup_map map WHERE map.table_name = 'affiliates' AND map.quarantined_row_id <> map.canonical_survivor_id AND ats.affiliate_id::text = map.quarantined_row_id;` |
-| 4 | `public.affiliates` | `(tenant_id, UPPER(BTRIM(referral_code)))` -> `id` (`UUID`) | `public.orders` | `affiliate_id`, `manager_id` | `UPDATE public.orders o SET affiliate_id = map.canonical_survivor_id ...` & `SET manager_id = map.canonical_survivor_id ...` |
-| 5 | `public.affiliates` | `(tenant_id, UPPER(BTRIM(referral_code)))` -> `id` (`UUID`) | `public.commission_ledger` | `affiliate_id`, `manager_id` | `UPDATE public.commission_ledger cl SET affiliate_id = map.canonical_survivor_id ...` & `SET manager_id = map.canonical_survivor_id ...` |
-| 6 | `public.affiliates` | `(tenant_id, UPPER(BTRIM(referral_code)))` -> `id` (`UUID`) | `public.affiliates` (*Self-Ref AM*) | `registered_by_am_id` (`UUID`) | `UPDATE public.affiliates a SET registered_by_am_id = public.try_cast_uuid(map.canonical_survivor_id) ...` |
-| 7 | `public.shop_subscriptions` | `(xendit_invoice_id)` -> `id` (`UUID`) | `public.shop_commission_ledger` | `subscription_id` (`UUID`) | `UPDATE public.shop_commission_ledger scl SET subscription_id = public.try_cast_uuid(map.canonical_survivor_id) FROM public.migration_031_identifier_dedup_map map WHERE map.table_name = 'shop_subscriptions' AND map.quarantined_row_id <> map.canonical_survivor_id AND scl.subscription_id::text = map.quarantined_row_id;` |
-| 8 | `public.affiliate_commissions` | `(tenant_id, order_id)` -> `id` (`UUID`) | `public.commission_ledger` | `order_id` (`VARCHAR(128)`) | Survivor (`rn = 1`) mempertahankan `order_id` kanonis; baris sekunder (`rn > 1`) di-rename `_dup_` dan ditahan (`HOLDING`). |
-| 9 | `public.shop_commission_ledger` | `(subscription_id)` -> `id` (`UUID`) | `public.shop_subscriptions` | `subscription_id` (`UUID`) | Survivor (`rn = 1`) mempertahankan `subscription_id = canonical_survivor_id`; baris sekunder (`rn > 1`) menyimpan `quarantined_subscription_id_ref` dan di-set `subscription_id = NULL`, `disbursement_status = 'HELD_DUPLICATE_QUARANTINE'`. |
-| 10 | `public.product_orders` | `(tenant_id, order_id)` -> `id` (`INT`) | `public.delivery_orders` | `order_id`, `tenant_id` | `UPDATE public.delivery_orders d SET tenant_id = po.tenant_id FROM public.product_orders po WHERE d.order_id = po.order_id AND NULLIF(BTRIM(d.tenant_id), '') IS NULL AND NULLIF(BTRIM(po.tenant_id), '') IS NOT NULL;` |
-
-#### B. Query Verifikasi Pascamigrasi (`0` Broken / Dangling Reference ke Baris Karantina)
+#### A. Query Inspeksi Dinamis Katalog Sistem PostgreSQL (`pg_constraint`, `pg_class`, `information_schema.key_column_usage` — `[ID-03]`)
+Sebelum repointing referensi hilir dijalankan, sistem mengeksekusi query inspeksi dinamis ke katalog sistem PostgreSQL untuk menghasilkan inventaris constraint FK aktual di database:
 
 ```sql
--- [CTO-REV412-04]: Post-Migration Verification Query — MUST RETURN 0 ACROSS ALL COLUMNS
+-- [ID-03]: Dynamic PostgreSQL System Catalog FK Inspection Query
 SELECT
-    (SELECT COUNT(*) FROM public.affiliate_commissions ac JOIN public.migration_031_identifier_dedup_map m ON m.table_name = 'affiliates' AND m.quarantined_row_id <> m.canonical_survivor_id AND ac.affiliate_id::text = m.quarantined_row_id) AS dangling_ac_affiliate_refs,
-    (SELECT COUNT(*) FROM public.attributions att JOIN public.migration_031_identifier_dedup_map m ON m.table_name = 'affiliates' AND m.quarantined_row_id <> m.canonical_survivor_id AND att.affiliate_id::text = m.quarantined_row_id) AS dangling_attributions_affiliate_refs,
-    (SELECT COUNT(*) FROM public.attribution_sessions ats JOIN public.migration_031_identifier_dedup_map m ON m.table_name = 'affiliates' AND m.quarantined_row_id <> m.canonical_survivor_id AND ats.affiliate_id::text = m.quarantined_row_id) AS dangling_attr_sessions_affiliate_refs,
-    (SELECT COUNT(*) FROM public.orders o JOIN public.migration_031_identifier_dedup_map m ON m.table_name = 'affiliates' AND m.quarantined_row_id <> m.canonical_survivor_id AND (o.affiliate_id::text = m.quarantined_row_id OR o.manager_id::text = m.quarantined_row_id)) AS dangling_orders_affiliate_refs,
-    (SELECT COUNT(*) FROM public.commission_ledger cl JOIN public.migration_031_identifier_dedup_map m ON m.table_name = 'affiliates' AND m.quarantined_row_id <> m.canonical_survivor_id AND (cl.affiliate_id::text = m.quarantined_row_id OR cl.manager_id::text = m.quarantined_row_id)) AS dangling_comm_ledger_affiliate_refs,
-    (SELECT COUNT(*) FROM public.shop_commission_ledger scl JOIN public.migration_031_identifier_dedup_map m ON m.table_name = 'shop_subscriptions' AND m.quarantined_row_id <> m.canonical_survivor_id AND scl.subscription_id::text = m.quarantined_row_id) AS dangling_shop_ledger_sub_refs;
+    con.conname AS constraint_name,
+    src_ns.nspname || '.' || src_cls.relname AS child_table,
+    kcu.column_name AS child_column,
+    tgt_ns.nspname || '.' || tgt_cls.relname AS parent_table,
+    ccu.column_name AS parent_column,
+    CASE con.confdeltype
+        WHEN 'a' THEN 'NO ACTION' WHEN 'r' THEN 'RESTRICT'
+        WHEN 'c' THEN 'CASCADE'   WHEN 'n' THEN 'SET NULL'
+        WHEN 'd' THEN 'SET DEFAULT' ELSE con.confdeltype::text
+    END AS on_delete_action
+FROM pg_catalog.pg_constraint con
+JOIN pg_catalog.pg_class src_cls ON src_cls.oid = con.conrelid
+JOIN pg_catalog.pg_namespace src_ns ON src_ns.oid = src_cls.relnamespace
+JOIN pg_catalog.pg_class tgt_cls ON tgt_cls.oid = con.confrelid
+JOIN pg_catalog.pg_namespace tgt_ns ON tgt_ns.oid = tgt_cls.relnamespace
+JOIN information_schema.key_column_usage kcu
+  ON kcu.constraint_name = con.conname AND kcu.table_schema = src_ns.nspname AND kcu.table_name = src_cls.relname
+JOIN information_schema.constraint_column_usage ccu
+  ON ccu.constraint_name = con.conname AND ccu.table_schema = tgt_ns.nspname AND ccu.table_name = tgt_cls.relname
+WHERE con.contype = 'f'
+  AND src_ns.nspname = 'public'
+  AND tgt_cls.relname IN ('affiliates', 'affiliate_commissions', 'shop_subscriptions', 'shop_commission_ledger', 'product_orders', 'orders', 'delivery_orders', 'attributions', 'attribution_sessions', 'commission_ledger')
+ORDER BY parent_table, child_table, child_column;
+```
+
+#### B. Pemisahan Inventaris: (a) Formal FK Constraints vs (b) Logical Non-FK Financial References & Decision Matrix (`[ID-03]`)
+
+| No | Kategori Relasi (`[ID-03]`) | Tabel Induk (Deduplicated) | Tabel Anak / Hilir | Kolom Referensi | Kapan AMAN Di-Repoint (`SAFE_TO_REPOINT` -> `canonical_survivor_id`) | Kapan DILARANG Digabung & WAJIB Dikarantina (`PROHIBITED_MERGE_QUARANTINE_REQUIRED`) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | **(a) Formal FK Constraint** (`pg_constraint contype='f'`) | `public.affiliates` (`id UUID`) | `public.attributions` | `affiliate_id` (`UUID`) | Duplikat profil `affiliates` memiliki `tenant_id` identik dan tidak memiliki konflik histori settlement/payout (`SAFE_TO_REPOINT`). | Jika kedua record `affiliates` memiliki `tenant_id` berbeda atau sama-sama memiliki komisi `PAID`/`SETTLED` terpisah -> **DILARANG REPOINT**, tandai `QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE`. |
+| 2 | **(a) Formal FK Constraint** (`pg_constraint contype='f'`) | `public.affiliates` (`id UUID`) | `public.affiliates` (*Self-Ref AM*) | `registered_by_am_id` (`UUID`) | Duplikat profil AM identik dalam `tenant_id` yang sama tanpa konflik histori komisi `PAID`/`SETTLED`. | Jika profil duplikat memiliki histori pembayaran/settlement terpisah -> tahan di karantina untuk rekonsiliasi manual Finance. |
+| 3 | **(a) Formal FK Constraint** (`pg_constraint contype='f'`) | `public.shop_subscriptions` (`id UUID`) | `public.shop_commission_ledger` | `subscription_id` (`UUID`) | Duplikat `shop_subscriptions` memiliki `tenant_slug` dan `amount` identik pada `xendit_invoice_id` yang sama serta tidak sama-sama memiliki ledger `PAID`/`DISBURSED`. | Jika `tenant_slug` atau `amount` berbeda, atau kedua baris sama-sama memiliki ledger `PAID`/`DISBURSED` -> **DILARANG DIGABUNG (`NO MERGE`)**, tahan di karantina (`requires_finance_reconciliation = TRUE`). |
+| 4 | **(b) Logical Non-FK Financial Ref** | `public.affiliates` (`id UUID`) | `public.affiliate_commissions` | `affiliate_id` (`VARCHAR(128)`) | Duplikat profil `affiliates` belum sama-sama memiliki komisi `PAID`/`SETTLED` dan tidak menimbulkan tabrakan `(tenant_id, order_id)` pada survivor. | Jika kedua profil `affiliates` sama-sama memiliki histori komisi `PAID`/`SETTLED` atau akan menabrak `(tenant_id, order_id)` -> **DILARANG DIGABUNG**, tahan di karantina. |
+| 5 | **(b) Logical Non-FK Financial Ref** | `public.affiliates` (`id UUID`) | `public.attribution_sessions` | `affiliate_id` (`UUID`) | Duplikat profil `affiliates` identik dalam `tenant_id` yang sama (`SAFE_TO_REPOINT`). | Jika berkonflik histori pembayaran (`QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE`). |
+| 6 | **(b) Logical Non-FK Financial Ref** | `public.affiliates` (`id UUID`) | `public.orders` & `public.commission_ledger` | `affiliate_id`, `manager_id` | Duplikat profil `affiliates` identik dalam `tenant_id` yang sama tanpa konflik histori komisi `PAID`/`SETTLED`. | Jika penggabungan mengubah identitas penerima pembayaran historis yang sudah `PAID`/`SETTLED` -> **DILARANG REPOINT**. |
+| 7 | **(b) Logical Non-FK Financial Ref** | `public.affiliate_commissions` & `public.shop_commission_ledger` | Baris Sekunder Buku Besar (`rn > 1`) | `order_id`, `subscription_id` | Survivor (`rn = 1`) mempertahankan identifier kanonis; nilai uang **TIDAK PERNAH dijumlahkan/digabung** ke survivor. | Seluruh baris sekunder (`rn > 1`) **WAJIB DIKARANTINA** (`HOLDING` / `HELD_DUPLICATE_QUARANTINE`) dengan snapshot penuh. |
+| 8 | **(b) Logical Non-FK Financial Ref** | `public.product_orders` | `public.delivery_orders` | `order_id`, `tenant_id` | `product_orders.tenant_id` ter-resolve tunggal (`distinct_tenants == 1`) dan `delivery_orders.tenant_id` masih `NULL`. | Jika `delivery_orders.tenant_id` berbeda dengan `product_orders.tenant_id` -> **DILARANG DITIMPA** (`cross_tenant_conflict`). |
+
+#### C. Query Verifikasi Pascamigrasi (`0` Dangling Reference) & Financial Reconciliation Invariant (Pre vs Post Migration — `[ID-03]`)
+
+```sql
+-- [ID-03]: Financial Reconciliation Invariant Query (Pre vs Post Migration)
+-- Compares COUNT(*) and SUM(amount) per financial table and original status before vs after Migration 031.
+-- MANDATORY INVARIANT: delta_row_count == 0 AND delta_total_amount == 0.00 across all rows.
+WITH post_migration_reconstructed AS (
+    SELECT 'affiliate_commissions'::text AS fin_table,
+           UPPER(COALESCE(m.original_status, ac.status, 'UNKNOWN')) AS fin_status,
+           COUNT(*)::bigint AS post_row_count,
+           COALESCE(SUM(ac.amount), 0)::numeric(18, 2) AS post_total_amount
+    FROM public.affiliate_commissions ac
+    LEFT JOIN public.migration_031_identifier_dedup_map m
+      ON m.table_name = 'affiliate_commissions' AND m.column_name = 'order_id' AND m.quarantined_row_id = ac.id::text
+    GROUP BY UPPER(COALESCE(m.original_status, ac.status, 'UNKNOWN'))
+    UNION ALL
+    SELECT 'affiliate_commissions'::text,
+           UPPER(COALESCE(q.original_status, 'UNKNOWN')),
+           COUNT(*)::bigint,
+           COALESCE(SUM(q.amount), 0)::numeric(18, 2)
+    FROM public.migration_031_quarantined_affiliate_commissions q
+    GROUP BY UPPER(COALESCE(q.original_status, 'UNKNOWN'))
+),
+post_summary AS (
+    SELECT fin_table, fin_status, SUM(post_row_count)::bigint AS post_row_count, SUM(post_total_amount)::numeric(18, 2) AS post_total_amount
+    FROM post_migration_reconstructed GROUP BY fin_table, fin_status
+    UNION ALL
+    SELECT 'shop_subscriptions'::text, UPPER(COALESCE(m.original_status, ss.status, 'UNKNOWN')),
+           COUNT(*)::bigint, COALESCE(SUM(ss.amount), 0)::numeric(18, 2)
+    FROM public.shop_subscriptions ss
+    LEFT JOIN public.migration_031_identifier_dedup_map m
+      ON m.table_name = 'shop_subscriptions' AND m.column_name = 'xendit_invoice_id' AND m.quarantined_row_id = ss.id::text
+    GROUP BY UPPER(COALESCE(m.original_status, ss.status, 'UNKNOWN'))
+    UNION ALL
+    SELECT 'shop_commission_ledger'::text, UPPER(COALESCE(m.original_status, scl.disbursement_status, 'UNKNOWN')),
+           COUNT(*)::bigint, COALESCE(SUM(scl.commission_amount), 0)::numeric(18, 2)
+    FROM public.shop_commission_ledger scl
+    LEFT JOIN public.migration_031_identifier_dedup_map m
+      ON m.table_name = 'shop_commission_ledger' AND m.column_name = 'subscription_id' AND m.quarantined_row_id = scl.id::text
+    GROUP BY UPPER(COALESCE(m.original_status, scl.disbursement_status, 'UNKNOWN'))
+)
+SELECT
+    COALESCE(pre.fin_table, post.fin_table) AS fin_table,
+    COALESCE(pre.fin_status, post.fin_status) AS fin_status,
+    COALESCE(pre.pre_row_count, 0) AS pre_row_count,
+    COALESCE(post.post_row_count, 0) AS post_row_count,
+    (COALESCE(post.post_row_count, 0) - COALESCE(pre.pre_row_count, 0)) AS delta_row_count,
+    COALESCE(pre.pre_total_amount, 0.00) AS pre_total_amount,
+    COALESCE(post.post_total_amount, 0.00) AS post_total_amount,
+    (COALESCE(post.post_total_amount, 0.00) - COALESCE(pre.pre_total_amount, 0.00)) AS delta_total_amount
+FROM _mig031_fin_pre_snapshot pre
+FULL OUTER JOIN post_summary post
+  ON pre.fin_table = post.fin_table AND pre.fin_status = post.fin_status
+ORDER BY 1, 2;
 ```
 
 ---
 
-### 7.5 `[CTO-REV412-05]` Independent Gate B2 Checks (Query Langsung ke 9 Tabel Sumber Asli)
+### 7.5 `[CTO-REV412-05]` & `[ID-04]` Revisi Independent Gate B2 Checks Tanpa Menyembunyikan Anomali (Laporan Eksplisit 9 Tabel Sumber)
 
-Seluruh keempat blok asersi Gate B2 (**`B2-ASSERT-01` s/d `B2-ASSERT-04`** pada **Bagian 5 §5.1C** dan **Appendix A Step `2E`**) telah diperbarui agar menghitung konflik dan duplikat langsung dari **9 tabel sumber asli** (`product_orders`, `delivery_orders`, `affiliate_commissions`, `attributions`, `attribution_sessions`, `orders`, `affiliates`, `shop_subscriptions`, `shop_commission_ledger`) lalu melakukan verifikasi silang terhadap `public.migration_031_identifier_dedup_map`:
-1. **`B2-ASSERT-01` (`independent_source_conflicts == 0`)**: CTE `live_po_sources` (join langsung `product_orders` ke `delivery_orders`, `affiliate_commissions`, `attributions`, `attribution_sessions`, dan `orders`) dan `live_ac_sources` (join langsung `affiliate_commissions` ke `orders` dan `affiliates`) menghitung baris dengan `COUNT(DISTINCT src_tenant) > 1` atau ketidakcocokan `po_tenant <> src_tenant` langsung dari tabel sumber, lalu memverifikasi silang terhadap `migration_031_identifier_dedup_map`.
-2. **`B2-ASSERT-02` (`v_unresolved_op_count == 0 AND v_invalid_ac_tenants == 0`)**: Meng-query langsung `public.product_orders` (seluruh status operasional non-terminal + join `delivery_orders.is_cod = TRUE`) dan `public.affiliate_commissions` (`NULLIF(BTRIM(tenant_id), '') IS NULL OR tenant_id LIKE '__QUARANTINED_%'`).
-3. **`B2-ASSERT-03` (`v_live_dup_groups == 0 AND v_broken_survivors == 0`)**: Meng-query langsung grup duplikat aktif pada keempat tabel (`affiliate_commissions`, `shop_subscriptions`, `shop_commission_ledger`, `affiliates`) dan memverifikasi keberadaan fisik `canonical_survivor_id` di tabel sumber masing-masing.
-4. **`B2-ASSERT-04` (`v_unmapped_fin_mutations == 0 AND v_dangling_downstream_fk == 0`)**: Memverifikasi bahwa 100% baris bermutasi (`_dup_` / `_DUP_` / `HELD_DUPLICATE_QUARANTINE`) tercatat di `migration_031_identifier_dedup_map` serta `0` foreign key hilir masih menunjuk ke `quarantined_row_id`.
-
----
-
-### 7.6 `[CTO-REV412-06]` Sinkronisasi Metadata Git (`Commit 9d3bd09`) & Tabel Inventaris SHA-256 Lengkap
-
-1. **Identitas Dokumen & Commit REV 4.1.2**:
-   - Header, Bagian 6 (`§6.1–§6.2`), dan Appendix B telah diperbarui ke revisi **`REV 4.1.3` (`BOONTRACK-AUTH-STG-2026-001-REV4.1.3-ADDENDUM`)**.
-   - Commit **`9d3bd09360f79bf02dacb1716804b2f76af57d80` (`9d3bd09`)** tercatat secara eksplisit sebagai commit **REV 4.1.2 yang telah terverifikasi di GitHub** (SHA-256 blob REV 4.1.2: `E8C6D66A96DECA4BE185E40F3272409BD472CC7829F516465D316DC11A628062`).
-2. **Kelengkapan 100% Kolom SHA-256 Tanpa Placeholder**:
-   - Seluruh 12 baris dokumen pada tabel inventaris **Bagian 6 (§6.2)** memuat nilai hash SHA-256 64-heksadesimal aktual tanpa satu pun sel kosong atau teks placeholder.
+Menindaklanjuti **`[ID-04]`**, seluruh asersi Gate B2 (**`B2-ASSERT-01` s/d `B2-ASSERT-05`** pada **Bagian 5 §5.1C** dan **Appendix A Step `2E`**) telah diperbaiki:
+1. **Penghapusan Total Filter Penyembunyian Anomali (`NOT LIKE '__QUARANTINED_%'`)**: Tidak ada satu pun CTE atau query konflik yang mengecualikan baris karantina sebelum menghitung konflik.
+2. **Laporan Eksplisit Per-Tabel untuk Ke-9 Tabel Sumber**: Query Gate B2 pada **Bagian 5 (§5.1C)** menghasilkan 9 baris (`product_orders`, `delivery_orders`, `affiliate_commissions`, `attributions`, `attribution_sessions`, `orders`, `affiliates`, `shop_subscriptions`, `shop_commission_ledger`) dengan 6 kolom eksplisit:
+   - `source_table`, `total_rows`, `valid_resolved_rows`, `quarantined_rows`, `unresolved_tenant_rows`, dan `cross_tenant_conflict_rows`.
+3. **Kriteria Kelulusan Gate B2 (`PASS` Criteria)**:
+   - `unresolved_tenant_rows == 0` DAN `cross_tenant_conflict_rows == 0` di seluruh 9 tabel sumber, serta
+   - `quarantined_rows` terlapor secara transparan dan cocok 100% dengan jumlah baris di tabel karantina (`public.migration_031_quarantined_affiliate_commissions` dan `public.migration_031_identifier_dedup_map`).
 
 ---
 
-## APPENDIX B — CUMULATIVE DOCUMENT CHANGE LOG (REV 3.0 -> REV 4.0 -> REV 4.1 -> REV 4.1.1 -> REV 4.1.2 -> REV 4.1.3)
+### 7.6 `[CTO-REV412-06]` & `[ID-05]` Integritas Metadata Git (`Commit 370e63d`), Line Count & SHA-256 Aktual
+
+1. **Pencatatan Akurat Commit HEAD PR #25 Sebelumnya (`370e63d3fc379630054621c3a8dadc0e2b2e3e03` / `370e63d`)**:
+   - Header, Bagian 6 (`§6.1–§6.2`), dan Appendix B telah diperbarui ke revisi **`REV 4.1.4` (`BOONTRACK-AUTH-STG-2026-001-REV4.1.4-ADDENDUM`)** dan secara akurat mencatat commit HEAD PR #25 sebelumnya yaitu **`370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`370e63d`)** (`203,397 bytes`, `2,920 lines`, SHA-256: `00DC1E8401ED6B313F6ACEE2CBD676A255ED7B9AC5189BDFD77FFF60C2EFA2C0`).
+2. **Verifikasi Aktual `Get-FileHash -Algorithm SHA256`, Ukuran Byte & Jumlah Baris untuk Seluruh 12 File (`Bagian 6.2`)**:
+   - Seluruh 12 file di Tabel Inventaris SHA-256 (`Bagian 6.2`) dilengkapi dengan hash SHA-256 aktual dari byte file di disk (`Get-FileHash -Algorithm SHA256`), ukuran byte (`Bytes`), dan jumlah baris (`Lines`).
+   - `git diff --stat main -- app/ migrations/ tests/` terverifikasi menghasilkan **`0` file berubah**.
+
+---
+
+## APPENDIX B — CUMULATIVE DOCUMENT CHANGE LOG (REV 3.0 -> REV 4.0 -> REV 4.1 -> REV 4.1.1 -> REV 4.1.2 -> REV 4.1.3 -> REV 4.1.4)
 
 | Revisi | Tanggal | Penulis | Commit Ref | Ringkasan Perubahan |
 | :--- | :--- | :--- | :--- | :--- |
@@ -2914,7 +3477,8 @@ Seluruh keempat blok asersi Gate B2 (**`B2-ASSERT-01` s/d `B2-ASSERT-04`** pada 
 | `REV 4.1` | `2026-11-02` | `Cline Argon` | `19c74c3` | Spesifikasi `FOUNDRY_DIRECTIVE_REV4_1_REMEDIATION.md` (`407E425739B38D5A43B4C22FE19BE9529CB9A95A7F8837733794B95315DFE086`): menutup seluruh 5 BLOCKER, 6 HIGH, 4 MEDIUM, dan 2 LOW dari REV 4.0. |
 | `REV 4.1 REVIEW` | `2026-11-02` | `Antigravity Red-Team Reviewer` | `af5f9ed` | Laporan `FOUNDRY_DIRECTIVE_REV4_1_INDEPENDENT_REVIEW.md` (`23316A51C62369406C68F500BC44B91A8CBF3817E43CC875CF74AC988D21103D`): putusan `CONDITIONALLY ACCEPTABLE`. |
 | `REV 4.1.1` | `2026-11-02` | `Cline Argon` | `11aa763` | Addendum Penutup `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (Commit `11aa763b129cd89d731fe45df56c4fd1dde44c7b`): putusan CTO `"CONDITIONALLY ACCEPTED — REV 4.1.1 (DOCUMENTATION ONLY)"`. |
-| **`REV 4.1.2`** | **`2026-11-02`** | **`Cline Argon`** | **`9d3bd09` (`Parent: 11aa763`)** | **Revisi Penutup Final Pra-Design Freeze (`BOONTRACK-AUTH-STG-2026-001-REV4.1.2-ADDENDUM`, Commit `9d3bd09360f79bf02dacb1716804b2f76af57d80`)**: (1) Validasi penuh `PII_HASH_SALT_PREVIOUS` & `APP_MASTER_KEY_PREVIOUS` (anti-tabrakan seluruh ring & separasi domain lintas ring), pemetaan langsung $O(1)$ prefix versi `v{N}` tanpa brute-force, serta klarifikasi batasan format panjang byte vs. entropi teoretis (**Bagian A dinyatakan CLOSED/ACCEPTED oleh CTO**); (2) Matriks pengujian & SOP migrasi bertahap untuk 5 skenario kegagalan ciphertext/blind-index legacy + klausul mengikat **Zero-Deletion (`INV-SEC-ZERO-DELETION`)**; (3) Eliminasi double-cleanup pada `except`/`finally` dan mitigasi `asyncio.CancelledError` hazard via `cancel_event` & shielded worker-thread join barrier; (4) Penggantian `ON CONFLICT DO NOTHING` dengan `migration_batch_id` & rekonsiliasi retry deterministik `ON CONFLICT DO UPDATE`; (5) Sinkronisasi metadata Git Bagian 6 dengan parent commit `11aa763`. Putusan CTO: **`"SUBSTANTIALLY ACCEPTED — DOCUMENTATION ONLY"`**. |
-| **`REV 4.1.3`** | **`2026-11-02`** | **`Cline Argon`** | **`Parent: 9d3bd09`** | **CTO Residual Closure for Design Freeze Sign-Off (`BOONTRACK-AUTH-STG-2026-001-REV4.1.3-ADDENDUM`)**: Menutup secara eksak 6 ID temuan residual CTO tanpa mengubah Bagian A: (1) **`[CTO-REV412-01]`** Pemisahan tegas `close_attempted: bool` vs `conn_verified_closed: bool` (`getattr(conn, "closed", 0) == 1`), penahanan pelepasan Redis lock (`SEV-1` + TTL fallback) jika `conn.closed != 1`, penyelesaian race `cancel_event` vs `conn.commit()` via state machine atomik (`PRE_COMMIT`, `COMMITTING`, `COMMITTED_OK`, `ROLLED_BACK`, `CLOSE_FAILED`), Tabel State Machine eksplisit, dan 3 unit test deterministik berbasis `threading.Event` latch; (2) **`[CTO-REV412-02]`** Inklusi eksplisit `public.attribution_sessions` pada SQL CTE `candidate_tenants` di Bagian 5 & Appendix A; (3) **`[CTO-REV412-03]`** Query preflight, backfill deterministik + karantina yatim/konflik, dan DDL eksplisit `ALTER TABLE public.affiliate_commissions ALTER COLUMN tenant_id SET NOT NULL;` sebelum pembuatan unique index `(tenant_id, order_id)`; (4) **`[CTO-REV412-04]`** Tabel **Financial Downstream Dependency Inventory**, blok SQL rekonsiliasi aktif (`UPDATE ... SET <fk_col> = map.canonical_survivor_id`), dan query verifikasi `0` broken/dangling reference; (5) **`[CTO-REV412-05]`** Pembaruan `B2-ASSERT-01` s/d `B2-ASSERT-04` dengan query CTE independen langsung ke 9 tabel sumber asli + verifikasi silang terhadap `migration_031_identifier_dedup_map` (`independent_source_conflicts == 0`); (6) **`[CTO-REV412-06]`** Sinkronisasi metadata Git commit `9d3bd09360f79bf02dacb1716804b2f76af57d80` (`9d3bd09`) dan pengisian lengkap 100% kolom SHA-256 pada tabel inventaris dokumen tanpa sel kosong atau placeholder. |
+| `REV 4.1.2` | `2026-11-02` | `Cline Argon` | `9d3bd09` (`Parent: 11aa763`) | Revisi Penutup Final Pra-Design Freeze (`BOONTRACK-AUTH-STG-2026-001-REV4.1.2-ADDENDUM`, Commit `9d3bd09360f79bf02dacb1716804b2f76af57d80`, SHA-256: `E8C6D66A96DECA4BE185E40F3272409BD472CC7829F516465D316DC11A628062`). Putusan CTO: **`"SUBSTANTIALLY ACCEPTED — DOCUMENTATION ONLY"`** *(Bagian A Cryptographic Keyring CLOSED/ACCEPTED)*. |
+| `REV 4.1.3` | `2026-11-02` | `Cline Argon` | `370e63d` (`Parent: 9d3bd09`) | CTO Residual Closure (`BOONTRACK-AUTH-STG-2026-001-REV4.1.3-ADDENDUM`, Commit `370e63d3fc379630054621c3a8dadc0e2b2e3e03`, SHA-256: `00DC1E8401ED6B313F6ACEE2CBD676A255ED7B9AC5189BDFD77FFF60C2EFA2C0`, `203,397 bytes`, `2,920 lines`): Menutup `[CTO-REV412-01]` s/d `[CTO-REV412-06]`. |
+| **`REV 4.1.4`** | **`2026-11-02`** | **`Cline Argon`** | **`Parent: 370e63d`** | **Final 5-Point Residual Closure (`BOONTRACK-AUTH-STG-2026-001-REV4.1.4-ADDENDUM`)**: Menutup secara presisi 5 instruksi terakhir CTO (`[ID-01]` s/d `[ID-05]`) dengan protokol `ZERO CODE MUTATION`: (1) **`[ID-01]`** Ownership Token (`lock_token = str(uuid.uuid4())`), Lease Renewal / Heartbeat Watchdog (`_LockLeaseHeartbeatWatchdog`), Pre-Commit Lease Validity Check (`conn.rollback()` wajib jika lease gagal diperpanjang atau sisa lease `< safety_margin`), Atomic Lua Compare-and-Delete Script, dan `Test 4 (test_cto_rev414_01_lease_expiry_and_token_ownership_prevents_stale_commit_and_foreign_unlock)`; (2) **`[ID-02]`** Penghapusan total nilai string palsu `'__QUARANTINED_...'` pada `affiliate_commissions.tenant_id` dan isolasi fisik baris anomali/yatim ke `public.migration_031_quarantined_affiliate_commissions` dengan prosedur approval eksplisit sebelum `SET NOT NULL`; (3) **`[ID-03]`** Query inspeksi dinamis katalog FK PostgreSQL (`pg_constraint`, `pg_class`, `information_schema.key_column_usage`), pemisahan Formal FK Constraints vs Logical Non-FK Financial References, Decision Matrix per jenis relasi, dan query **Financial Reconciliation Invariant (Pre vs Post Migration: selisih `COUNT(*)` dan `SUM(amount)` per status `== 0`)**; (4) **`[ID-04]`** Penghapusan filter `NOT LIKE '__QUARANTINED_%'` pada Gate B2 dan laporan per-tabel eksplisit untuk ke-9 tabel sumber (`source_table`, `total_rows`, `valid_resolved_rows`, `quarantined_rows`, `unresolved_tenant_rows`, `cross_tenant_conflict_rows`); (5) **`[ID-05]`** Pencatatan akurat commit HEAD PR #25 `370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`370e63d`) serta tabel inventaris SHA-256 (`Get-FileHash -Algorithm SHA256`), ukuran byte, dan jumlah baris aktual untuk seluruh 12 file. |
 
-*End of Document — FOUNDRY DIRECTIVE REV 4.1.3 CTO RESIDUAL CLOSURE & FINAL DESIGN FREEZE SPECIFICATION (`BOONTRACK-AUTH-STG-2026-001-REV4.1.3-ADDENDUM`).*
+*End of Document — FOUNDRY DIRECTIVE REV 4.1.4 FINAL 5-POINT RESIDUAL CLOSURE & DESIGN FREEZE SPECIFICATION (`BOONTRACK-AUTH-STG-2026-001-REV4.1.4-ADDENDUM`).*
