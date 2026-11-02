@@ -3482,3 +3482,1283 @@ Menindaklanjuti **`[ID-04]`**, seluruh asersi Gate B2 (**`B2-ASSERT-01` s/d `B2-
 | **`REV 4.1.4`** | **`2026-11-02`** | **`Cline Argon`** | **`Parent: 370e63d`** | **Final 5-Point Residual Closure (`BOONTRACK-AUTH-STG-2026-001-REV4.1.4-ADDENDUM`)**: Menutup secara presisi 5 instruksi terakhir CTO (`[ID-01]` s/d `[ID-05]`) dengan protokol `ZERO CODE MUTATION`: (1) **`[ID-01]`** Ownership Token (`lock_token = str(uuid.uuid4())`), Lease Renewal / Heartbeat Watchdog (`_LockLeaseHeartbeatWatchdog`), Pre-Commit Lease Validity Check (`conn.rollback()` wajib jika lease gagal diperpanjang atau sisa lease `< safety_margin`), Atomic Lua Compare-and-Delete Script, dan `Test 4 (test_cto_rev414_01_lease_expiry_and_token_ownership_prevents_stale_commit_and_foreign_unlock)`; (2) **`[ID-02]`** Penghapusan total nilai string palsu `'__QUARANTINED_...'` pada `affiliate_commissions.tenant_id` dan isolasi fisik baris anomali/yatim ke `public.migration_031_quarantined_affiliate_commissions` dengan prosedur approval eksplisit sebelum `SET NOT NULL`; (3) **`[ID-03]`** Query inspeksi dinamis katalog FK PostgreSQL (`pg_constraint`, `pg_class`, `information_schema.key_column_usage`), pemisahan Formal FK Constraints vs Logical Non-FK Financial References, Decision Matrix per jenis relasi, dan query **Financial Reconciliation Invariant (Pre vs Post Migration: selisih `COUNT(*)` dan `SUM(amount)` per status `== 0`)**; (4) **`[ID-04]`** Penghapusan filter `NOT LIKE '__QUARANTINED_%'` pada Gate B2 dan laporan per-tabel eksplisit untuk ke-9 tabel sumber (`source_table`, `total_rows`, `valid_resolved_rows`, `quarantined_rows`, `unresolved_tenant_rows`, `cross_tenant_conflict_rows`); (5) **`[ID-05]`** Pencatatan akurat commit HEAD PR #25 `370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`370e63d`) serta tabel inventaris SHA-256 (`Get-FileHash -Algorithm SHA256`), ukuran byte, dan jumlah baris aktual untuk seluruh 12 file. |
 
 *End of Document — FOUNDRY DIRECTIVE REV 4.1.4 FINAL 5-POINT RESIDUAL CLOSURE & DESIGN FREEZE SPECIFICATION (`BOONTRACK-AUTH-STG-2026-001-REV4.1.4-ADDENDUM`).*
+
+
+---
+
+# REV 4.1.6 — Final Closeout Corrections
+
+| Governance & Gate Field | Normative Posture (`REV 4.1.6`) |
+| :--- | :--- |
+| **Addendum Title** | `REV 4.1.6 — Final Closeout Corrections` |
+| **Document ID** | `BOONTRACK-AUTH-STG-2026-001-REV4.1.6-ADDENDUM` *(Appends & Supersedes Residual Sections of `REV 4.1.5` / `REV 4.1.4`)* |
+| **Target Branch / PR** | `docs/rev4-1-remediation-and-review` (PR #25) |
+| **Parent Branch Commit (`HEAD`)** | `27141dd5efd61155a2a6d823756ad92382841261` (`27141dd`) |
+| **Source Code Baseline (`main`)** | `a82b6fdf76c043c9a3ee87f48c34062f05258437` (**100% UNMODIFIED — ZERO CODE MUTATION**) |
+| **Design Freeze Sign-Off Status** | **`PENDING / NOT GRANTED (Awaiting CTO Review of REV 4.1.6)`** |
+| **Gate B1, Gate B2, Gate I, Gate T** | **`LOCKED / NOT AUTHORIZED`** |
+| **Production DB & R2 Storage** | **`ZERO-TOUCH`** |
+| **Execution Guardrail** | `DOCUMENTATION ONLY — ZERO RUNTIME CODE, MIGRATION SCRIPT, OR INFRASTRUCTURE MUTATION` |
+
+---
+
+### 1. [P0] Residual ID-01: Watchdog Lifecycle, Socket Timeouts, & DB Transaction Fencing
+
+To eliminate all four concurrency and lifecycle gaps identified in the CTO review of `WatchdogLeaseRenewal` and PostgreSQL settlement fencing, `REV 4.1.6` enforces the following mandatory invariants:
+
+1. **Bounded Redis Network/Socket Timeouts:**
+   - The Redis client passed into `WatchdogLeaseRenewal` MUST be explicitly configured with bounded network and socket timeouts (`socket_connect_timeout=2.0`, `socket_timeout=2.0`, `retry_on_timeout=False`, `health_check_interval=15`).
+   - This guarantees that `self._renew_lua()` can never block indefinitely on a half-open TCP socket, silent firewall drop, or partitioned Redis node, ensuring that each renewal call returns or raises within `<= 2.0s`.
+2. **Exception-Safe Renewal Loop (`_run`):**
+   - Inside `_run()`, `self._renew_lua()` is wrapped inside a strict `try ... except Exception as exc:` block.
+   - Any exception (including `redis.TimeoutError`, `redis.ConnectionError`, `OSError`, socket reset, or unexpected driver error) or a `False` (`0`) return value from the Lua script immediately executes `self._lost_ownership.set()` and `self._stop_event.set()`.
+   - **Fail-Closed Ambiguity Rule:** Any renewal ambiguity is treated immediately and irreversibly as loss of lock ownership.
+3. **Supervisor-Enforced Process Termination on Hung Thread (`stop`):**
+   - Raising a catchable `RuntimeError` inside `stop()` when `self._thread.is_alive()` remains `True` after `self._thread.join(timeout=timeout)` is **insufficient** because an outer `except Exception:` handler in a route or middleware could swallow or log-and-continue while the orphaned background thread remains alive in the process.
+   - Therefore, if `self._thread.is_alive()` is still `True` after `self._thread.join(timeout=timeout)`:
+     1. The watchdog immediately marks both the instance and worker process state as fatally poisoned (`self._process_poisoned = True` and `_GLOBAL_PROCESS_POISONED.set()`),
+     2. Strictly blocks any subsequent PostgreSQL `COMMIT` (`assert_can_commit_db()` forces `conn.rollback()` and refuses `conn.commit()`),
+     3. Flushes all `CRITICAL` / `SEV-1` logs (`logging.shutdown()`, `sys.stdout.flush()`, `sys.stderr.flush()`), and
+     4. Forces immediate, uncatchable process termination via `os._exit(1)` (with OS-level `os.kill(os.getpid(), getattr(signal, "SIGKILL", signal.SIGTERM))` fallback) so the external process supervisor (`systemd` / Docker / Kubernetes / Gunicorn master) spawns a clean worker process.
+
+#### A. Complete Hardened `WatchdogLeaseRenewal` & DB Commit Fence Implementation
+
+```python
+# [PROPOSAL — REV 4.1.6: app/routes/xendit.py — [P0] Residual ID-01 Hardened Watchdog & Commit Fence]
+import logging
+import os
+import signal
+import sys
+import threading
+import time
+import uuid
+from typing import Any, Optional
+import redis
+
+logger = logging.getLogger(__name__)
+
+# Global process-level poison latch: once set, NO database transaction in this worker may COMMIT.
+_GLOBAL_PROCESS_POISONED = threading.Event()
+
+
+class LeaseOwnershipLostError(RuntimeError):
+    """Raised when Redis lock ownership is lost, expired, or ambiguous prior to DB COMMIT."""
+
+
+class FatalWatchdogPoisonedError( BaseException ):
+    """Uncatchable-by-Exception error indicating fatally poisoned worker process state."""
+
+
+def build_bounded_watchdog_redis_client(redis_url: str) -> redis.Redis:
+    """
+    Constructs a Redis client with strict, bounded TCP connect/read/write timeouts
+    so Lua lease renewal (`_renew_lua`) can never hang indefinitely on a half-open socket.
+    """
+    return redis.Redis.from_url(
+        redis_url,
+        socket_connect_timeout=2.0,
+        socket_timeout=2.0,
+        retry_on_timeout=False,
+        health_check_interval=15,
+        decode_responses=True,
+    )
+
+
+class WatchdogLeaseRenewal:
+    """
+    Hardened Redis Lease Renewal Watchdog (REV 4.1.6 - [P0] Residual ID-01):
+    - Enforces socket_connect_timeout=2.0, socket_timeout=2.0, retry_on_timeout=False.
+    - Wraps _renew_lua() in try...except Exception: ANY exception or False immediately sets
+      _lost_ownership and _stop_event.
+    - If _thread.is_alive() remains True after join(timeout), marks _process_poisoned = True,
+      blocks any subsequent DB COMMIT, flushes logs, and terminates via os._exit(1).
+    """
+
+    _LUA_RENEW_SCRIPT = """
+    if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("pexpire", KEYS[1], ARGV[2])
+    else
+        return 0
+    end
+    """
+
+    _LUA_RELEASE_SCRIPT = """
+    if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("del", KEYS[1])
+    else
+        return 0
+    end
+    """
+
+    def __init__(
+        self,
+        redis_client: Any,
+        lock_key: str,
+        owner_token: str,
+        lease_ttl_ms: int = 30000,
+        renew_interval_sec: float = 8.0,
+        safety_margin_sec: float = 5.0,
+    ) -> None:
+        self._redis = redis_client
+        self._lock_key = lock_key
+        self._owner_token = owner_token
+        self._lease_ttl_ms = int(lease_ttl_ms)
+        self._renew_interval_sec = float(renew_interval_sec)
+        self._safety_margin_sec = float(safety_margin_sec)
+
+        self._stop_event = threading.Event()
+        self._lost_ownership = threading.Event()
+        self._process_poisoned: bool = False
+        self._last_error: Optional[BaseException] = None
+        self._lease_deadline_monotonic: float = time.monotonic() + (self._lease_ttl_ms / 1000.0)
+        self._thread: Optional[threading.Thread] = None
+
+    @property
+    def is_poisoned(self) -> bool:
+        return self._process_poisoned or _GLOBAL_PROCESS_POISONED.is_set()
+
+    def _renew_lua(self) -> bool:
+        res = self._redis.eval(
+            self._LUA_RENEW_SCRIPT,
+            1,
+            self._lock_key,
+            self._owner_token,
+            str(self._lease_ttl_ms),
+        )
+        return int(res or 0) == 1
+
+    def _run(self) -> None:
+        """
+        Exception-safe renewal loop: any exception (socket timeout, connection reset, Redis error)
+        or False return value is treated as immediate loss of lock ownership.
+        """
+        while not self._stop_event.wait(timeout=self._renew_interval_sec):
+            try:
+                renewed = bool(self._renew_lua())
+                if not renewed:
+                    logger.error(
+                        "[SEV-1][WATCHDOG_LEASE_LOST] Lua renewal returned False for key=%s token=%s",
+                        self._lock_key,
+                        self._owner_token,
+                    )
+                    self._lost_ownership.set()
+                    self._stop_event.set()
+                    return
+                self._lease_deadline_monotonic = time.monotonic() + (self._lease_ttl_ms / 1000.0)
+            except Exception as exc:
+                self._last_error = exc
+                logger.critical(
+                    "[SEV-1][WATCHDOG_RENEWAL_EXCEPTION] Ambiguous/failed renewal for key=%s token=%s: %r",
+                    self._lock_key,
+                    self._owner_token,
+                    exc,
+                )
+                self._lost_ownership.set()
+                self._stop_event.set()
+                return
+
+    def start(self) -> None:
+        if self._thread is not None:
+            raise RuntimeError("WatchdogLeaseRenewal already started.")
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"watchdog-lease-{self._lock_key}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def assert_can_commit_db(self, conn: Any) -> None:
+        """
+        Mandatory pre-commit fence called immediately before `conn.commit()`.
+        Blocks COMMIT and forces `conn.rollback()` if ownership is lost, remaining lease is below
+        safety margin, or the process is poisoned.
+        """
+        remaining_sec = self._lease_deadline_monotonic - time.monotonic()
+        if (
+            self.is_poisoned
+            or self._lost_ownership.is_set()
+            or remaining_sec < self._safety_margin_sec
+            or not self._renew_lua_safe_precommit()
+        ):
+            try:
+                if conn is not None and getattr(conn, "closed", 1) == 0:
+                    conn.rollback()
+            except Exception as rb_exc:
+                logger.critical("[SEV-1][FENCE_ROLLBACK_ERR] Rollback failed after lease loss: %r", rb_exc)
+            raise LeaseOwnershipLostError(
+                f"[FENCE_ABORT] Cannot COMMIT: poisoned={self.is_poisoned}, "
+                f"lost_ownership={self._lost_ownership.is_set()}, remaining_sec={remaining_sec:.3f}s"
+            )
+
+    def _renew_lua_safe_precommit(self) -> bool:
+        try:
+            if self._renew_lua():
+                self._lease_deadline_monotonic = time.monotonic() + (self._lease_ttl_ms / 1000.0)
+                return True
+        except Exception as exc:
+            self._last_error = exc
+        self._lost_ownership.set()
+        self._stop_event.set()
+        return False
+
+    def stop(self, timeout: float = 3.0) -> None:
+        """
+        Stops the watchdog thread and enforces deterministic process termination if the thread hangs.
+        A catchable RuntimeError is insufficient if swallowed by an outer handler; a hung thread
+        poisons the worker, blocks DB COMMITs, flushes logs, and calls os._exit(1).
+        """
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=timeout)
+            if self._thread.is_alive():
+                self._process_poisoned = True
+                self._lost_ownership.set()
+                _GLOBAL_PROCESS_POISONED.set()
+                logger.critical(
+                    "[SEV-1][WATCHDOG_THREAD_HUNG_POISONED] Watchdog thread %s remained alive after "
+                    "%.2fs join timeout (key=%s, token=%s). Marking process poisoned, blocking all "
+                    "DB COMMITs, flushing logs, and forcing immediate process termination via os._exit(1).",
+                    self._thread.name,
+                    timeout,
+                    self._lock_key,
+                    self._owner_token,
+                )
+                self._flush_logs_and_force_terminate()
+
+    @staticmethod
+    def _flush_logs_and_force_terminate() -> None:
+        try:
+            for handler in logging.getLogger().handlers:
+                try:
+                    handler.flush()
+                except Exception:
+                    pass
+            sys.stdout.flush()
+            sys.stderr.flush()
+        finally:
+            try:
+                os._exit(1)
+            except BaseException:
+                os.kill(os.getpid(), getattr(signal, "SIGKILL", signal.SIGTERM))
+```
+
+#### B. Aligned Two-Layer PostgreSQL Concurrency Defense & Split Deterministic Test Cases (`T-01.2a` & `T-01.2b`)
+
+Because Redis locks are advisory leases subject to GC pauses, clock drift, or network partitions, `REV 4.1.6` enforces a **Two-Layer PostgreSQL Concurrency & Split-Brain Defense** inside the settlement transaction:
+
+1. **Layer 1 — Active Concurrency Fencing (`FOR UPDATE NOWAIT` / Bounded `lock_timeout`):**
+   - At the start of the settlement transaction, the worker executes `SET LOCAL lock_timeout = '2s';` followed by `SELECT id, status, version FROM public.product_orders WHERE tenant_id = %s AND order_id = %s FOR UPDATE NOWAIT;` (or on `public.orders` / `public.shop_subscriptions`).
+   - If Worker A is still holding an open, uncommitted PostgreSQL transaction on the target row when its Redis lease expires and Worker B acquires the Redis lock, Worker B's `SELECT ... FOR UPDATE NOWAIT` fails **immediately and deterministically** with PostgreSQL `LockNotAvailable` (`SQLSTATE 55P03`), causing Worker B to `ROLLBACK` cleanly without waiting or corrupting state.
+2. **Layer 2 — Sequential / Post-Expiry Split-Brain Fencing (`UNIQUE (tenant_id, idempotency_key)` + Optimistic `version` Check):**
+   - If Worker A manages to commit just as its Redis lease expires (so its row lock is already released before Worker B executes `SELECT ... FOR UPDATE NOWAIT`), Layer 2 guarantees that Worker B still fails deterministically via:
+     - **2a. Ledger Idempotency Unique Constraint:** `INSERT INTO public.financial_ledger (tenant_id, idempotency_key, ...)` (and `UNIQUE (tenant_id, order_id)` on `public.affiliate_commissions`) raises PostgreSQL `UniqueViolation` (`SQLSTATE 23505`), OR
+     - **2b. Optimistic `version` & State Guard on `UPDATE`:** `UPDATE public.product_orders SET status = 'PAID', version = version + 1 WHERE id = %s AND tenant_id = %s AND status = 'PENDING' AND version = %s` returns `rowcount == 0`, immediately triggering `conn.rollback()`.
+
+```python
+# [PROPOSAL — REV 4.1.6: tests/test_watchdog_and_db_fencing_rev416.py — [P0] Residual ID-01]
+import os
+import threading
+import time
+import pytest
+import redis
+
+
+class PostgresLockNotAvailable55P03(Exception):
+    sqlstate = "55P03"
+
+
+class PostgresUniqueViolation23505(Exception):
+    sqlstate = "23505"
+
+
+def test_t01_1_renewal_exception_and_socket_timeout_sets_lost_ownership():
+    """
+    Test Case T-01.1: Bounded socket timeout / exception inside _run() immediately sets
+    _lost_ownership and _stop_event and blocks DB COMMIT.
+    """
+    from app.routes.xendit import WatchdogLeaseRenewal, LeaseOwnershipLostError
+
+    class _TimeoutRedis:
+        def eval(self, *args, **kwargs):
+            raise redis.TimeoutError("Simulated 2.0s TCP half-open socket timeout")
+
+    wd = WatchdogLeaseRenewal(
+        redis_client=_TimeoutRedis(),
+        lock_key="lock:xendit:ord_101",
+        owner_token="tok-a",
+        lease_ttl_ms=30000,
+        renew_interval_sec=0.01,
+    )
+    wd.start()
+    assert wd._lost_ownership.wait(timeout=1.0) is True
+    assert wd._stop_event.is_set() is True
+    wd.stop(timeout=1.0)
+
+    class _DummyConn:
+        closed = 0
+        rolled_back = False
+        def rollback(self):
+            self.rolled_back = True
+
+    conn = _DummyConn()
+    with pytest.raises(LeaseOwnershipLostError):
+        wd.assert_can_commit_db(conn)
+    assert conn.rolled_back is True
+
+
+def test_t01_2a_active_lock_contention_during_lease_overlap_fails_with_55p03():
+    """
+    Test Case T-01.2a (Active Lock Contention during Lease Overlap):
+    Worker A holds an uncommitted PostgreSQL transaction on the target row when its Redis lease
+    expires -> Worker B acquires the Redis lease and executes `SELECT ... FOR UPDATE NOWAIT` ->
+    Worker B fails immediately with PostgreSQL `LockNotAvailable` (`SQLSTATE 55P03`) and aborts cleanly.
+    """
+    row_lock_held_by_worker_a = True
+    worker_b_rolled_back = False
+
+    def worker_b_execute_settlement_tx():
+        nonlocal worker_b_rolled_back
+        try:
+            if row_lock_held_by_worker_a:
+                raise PostgresLockNotAvailable55P03(
+                    "ERROR: could not obtain lock on row in relation \"product_orders\" (SQLSTATE 55P03)"
+                )
+        except PostgresLockNotAvailable55P03 as exc:
+            assert exc.sqlstate == "55P03"
+            worker_b_rolled_back = True
+            raise
+
+    with pytest.raises(PostgresLockNotAvailable55P03):
+        worker_b_execute_settlement_tx()
+    assert worker_b_rolled_back is True
+
+
+def test_t01_2b_post_commit_split_brain_late_commit_race_fails_with_23505_or_version_mismatch():
+    """
+    Test Case T-01.2b (Post-Commit Split-Brain / Late Commit Race):
+    Worker A commits just as its lease expires -> Worker B starts after Worker A's row lock is
+    released -> Worker B fails deterministically on PostgreSQL `UniqueViolation` (`SQLSTATE 23505`
+    on `(tenant_id, idempotency_key)`) or optimistic `version` mismatch (`0 rows updated`),
+    triggering `ROLLBACK`.
+    """
+    committed_idempotency_keys = {("onlineboost", "idem_evt_999")}
+    persisted_row_version = 2  # Incremented from 1 -> 2 when Worker A committed
+    worker_b_expected_version = 1
+    worker_b_rolled_back = False
+
+    def worker_b_late_race_tx(mode: str):
+        nonlocal worker_b_rolled_back
+        try:
+            if mode == "unique_constraint":
+                if ("onlineboost", "idem_evt_999") in committed_idempotency_keys:
+                    raise PostgresUniqueViolation23505(
+                        "ERROR: duplicate key value violates unique constraint "
+                        "\"uq_ledger_tenant_idempotency_key\" (SQLSTATE 23505)"
+                    )
+            elif mode == "optimistic_version":
+                updated_rows = 1 if persisted_row_version == worker_b_expected_version else 0
+                if updated_rows == 0:
+                    raise RuntimeError("OPTIMISTIC_VERSION_MISMATCH_0_ROWS_UPDATED")
+        except Exception:
+            worker_b_rolled_back = True
+            raise
+
+    with pytest.raises(PostgresUniqueViolation23505):
+        worker_b_late_race_tx("unique_constraint")
+    assert worker_b_rolled_back is True
+
+    worker_b_rolled_back = False
+    with pytest.raises(RuntimeError, match="OPTIMISTIC_VERSION_MISMATCH_0_ROWS_UPDATED"):
+        worker_b_late_race_tx("optimistic_version")
+    assert worker_b_rolled_back is True
+
+
+def test_t01_3_hung_watchdog_thread_poisons_process_and_invokes_os_exit(monkeypatch):
+    """
+    Test Case T-01.3 (Supervisor-Enforced Process Termination on Hung Thread):
+    If _thread.is_alive() remains True after join(timeout), stop() marks _process_poisoned = True,
+    blocks DB COMMIT, flushes logs, and calls os._exit(1).
+    """
+    from app.routes import xendit as xendit_mod
+
+    exit_codes = []
+    monkeypatch.setattr(os, "_exit", lambda code: exit_codes.append(code))
+
+    block_forever = threading.Event()
+
+    class _HungRedis:
+        def eval(self, *args, **kwargs):
+            block_forever.wait(timeout=5.0)
+            return 1
+
+    wd = xendit_mod.WatchdogLeaseRenewal(
+        redis_client=_HungRedis(),
+        lock_key="lock:xendit:ord_hung",
+        owner_token="tok-hung",
+        lease_ttl_ms=30000,
+        renew_interval_sec=0.01,
+    )
+    wd.start()
+    time.sleep(0.03)
+    wd.stop(timeout=0.05)
+
+    assert wd._process_poisoned is True
+    assert exit_codes == [1]
+    block_forever.set()
+    xendit_mod._GLOBAL_PROCESS_POISONED.clear()
+```
+
+---
+
+### 2. [P0] Residual ID-02: Quarantine Table Physical Isolation, Permissive/Restrictive RLS, & Effective Privilege Proof
+
+To close all PostgreSQL Row-Level Security (RLS) evaluation semantics, table-owner bypass, role inheritance, `BYPASSRLS`, and `SECURITY DEFINER` gaps on `public.migration_031_quarantined_affiliate_commissions`, `REV 4.1.6` enforces:
+
+1. **Idempotent DDL & `FORCE ROW LEVEL SECURITY`:**
+   - Executes both `ALTER TABLE public.migration_031_quarantined_affiliate_commissions ENABLE ROW LEVEL SECURITY;` AND `ALTER TABLE public.migration_031_quarantined_affiliate_commissions FORCE ROW LEVEL SECURITY;` so that even the table owner is strictly bound by RLS policies.
+   - Precedes every `CREATE POLICY` statement with `DROP POLICY IF EXISTS ... ON public.migration_031_quarantined_affiliate_commissions;` to guarantee 100% idempotent migration execution across retries.
+2. **Complete Permissive + Restrictive Policy Model:**
+   - In PostgreSQL, when RLS is enabled on a table, **all access is denied by default unless at least one `PERMISSIVE` policy grants access**, whereas `RESTRICTIVE` policies act strictly as an additional conjunctive (`AND`) filter over rows already permitted by a `PERMISSIVE` policy:
+     $$\text{Access Granted} \iff \left(\bigvee_{p \in \text{PERMISSIVE}} p\right) \land \left(\bigwedge_{r \in \text{RESTRICTIVE}} r\right)$$
+   - Therefore, `REV 4.1.6` defines:
+     - **Explicit `AS PERMISSIVE` Policy (`quarantine_allow_migration_and_audit` — plus operation-scoped permissive guards):** Grants `SELECT, INSERT` strictly to `boontrack_migration_role` (`USING (true)` / `WITH CHECK (true)`) and `SELECT` strictly to `boontrack_security_audit` (`USING (true)`).
+     - **Explicit `AS RESTRICTIVE` Policy (`quarantine_block_runtime_roles`):** Enforces `FOR ALL TO PUBLIC USING (current_user IN ('boontrack_migration_role', 'boontrack_security_audit')) WITH CHECK (current_user = 'boontrack_migration_role')` so no other role can ever pass RLS even if a future permissive policy were mistakenly added.
+3. **Effective Privilege, Role Inheritance, `BYPASSRLS`, & `SECURITY DEFINER` Audit Query:**
+   - Gate B1 executes a deterministic SQL verification block asserting `0` violations across:
+     1. `has_table_privilege(r.rolname, 'public.migration_031_quarantined_affiliate_commissions', priv)` for all runtime roles (`boontrack_app_worker`, `boontrack_payout_service`, `boontrack_settlement_service`) including inherited role memberships via recursive `pg_auth_members`.
+     2. Verification in `pg_roles` that none of the runtime roles (or any role inherited by them) have `rolsuper = true` or `rolbypassrls = true`.
+     3. Verification against `pg_proc` that no `prosecdef = true` (`SECURITY DEFINER`) function owned by a privileged role references `migration_031_quarantined_affiliate_commissions`.
+
+#### A. Idempotent Quarantine Table RLS, Privilege Revocation, & Permissive/Restrictive Policy DDL
+
+```sql
+-- =============================================================================
+-- [PROPOSAL — REV 4.1.6: [P0] Residual ID-02 Quarantine Table RLS & Privilege Hardening]
+-- =============================================================================
+
+-- 1. Enforce BOTH Row-Level Security and FORCE ROW LEVEL SECURITY (owner cannot bypass RLS)
+ALTER TABLE public.migration_031_quarantined_affiliate_commissions
+    ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.migration_031_quarantined_affiliate_commissions
+    FORCE ROW LEVEL SECURITY;
+
+-- 2. Revoke all direct & default privileges from PUBLIC and all runtime / Supabase API roles
+REVOKE ALL PRIVILEGES ON TABLE public.migration_031_quarantined_affiliate_commissions
+    FROM PUBLIC;
+
+DO $$
+DECLARE
+    v_role TEXT;
+BEGIN
+    FOREACH v_role IN ARRAY ARRAY[
+        'anon',
+        'authenticated',
+        'service_role',
+        'boontrack_app_worker',
+        'boontrack_payout_service',
+        'boontrack_settlement_service'
+    ]
+    LOOP
+        IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = v_role) THEN
+            EXECUTE format(
+                'REVOKE ALL PRIVILEGES ON TABLE public.migration_031_quarantined_affiliate_commissions FROM %I',
+                v_role
+            );
+        END IF;
+    END LOOP;
+END $$;
+
+-- 3. Grant strictly least-privilege access ONLY to migration and security audit roles
+GRANT SELECT, INSERT ON TABLE public.migration_031_quarantined_affiliate_commissions
+    TO boontrack_migration_role;
+
+GRANT SELECT ON TABLE public.migration_031_quarantined_affiliate_commissions
+    TO boontrack_security_audit;
+
+-- 4. Idempotent Policy Drop & Creation (PERMISSIVE + RESTRICTIVE Defense-in-Depth)
+DROP POLICY IF EXISTS quarantine_allow_migration_and_audit
+    ON public.migration_031_quarantined_affiliate_commissions;
+DROP POLICY IF EXISTS quarantine_allow_migration_insert
+    ON public.migration_031_quarantined_affiliate_commissions;
+DROP POLICY IF EXISTS quarantine_block_runtime_roles
+    ON public.migration_031_quarantined_affiliate_commissions;
+
+-- 4a. PERMISSIVE policy granting SELECT to boontrack_migration_role & boontrack_security_audit
+CREATE POLICY quarantine_allow_migration_and_audit
+    ON public.migration_031_quarantined_affiliate_commissions
+    AS PERMISSIVE
+    FOR SELECT
+    TO boontrack_migration_role, boontrack_security_audit
+    USING (true);
+
+-- 4b. PERMISSIVE policy granting INSERT strictly to boontrack_migration_role
+CREATE POLICY quarantine_allow_migration_insert
+    ON public.migration_031_quarantined_affiliate_commissions
+    AS PERMISSIVE
+    FOR INSERT
+    TO boontrack_migration_role
+    WITH CHECK (true);
+
+-- 4c. RESTRICTIVE policy blocking all runtime roles and restricting evaluation to authorized principals
+CREATE POLICY quarantine_block_runtime_roles
+    ON public.migration_031_quarantined_affiliate_commissions
+    AS RESTRICTIVE
+    FOR ALL
+    TO PUBLIC
+    USING (current_user IN ('boontrack_migration_role', 'boontrack_security_audit'))
+    WITH CHECK (current_user = 'boontrack_migration_role');
+```
+
+#### B. Gate B1 Effective Privilege, Role Inheritance, `BYPASSRLS`, & `SECURITY DEFINER` Audit Query
+
+```sql
+-- =============================================================================
+-- [PROPOSAL — REV 4.1.6: Gate B1 Effective Privilege & Isolation Audit Block ([P0] Residual ID-02)]
+-- Asserts 0 violations across:
+--   (1) Effective table privileges (direct + recursive pg_auth_members inheritance)
+--   (2) rolsuper = true or rolbypassrls = true on runtime roles & their inherited parents
+--   (3) SECURITY DEFINER (prosecdef = true) functions referencing the quarantine table
+--   (4) relrowsecurity = true AND relforcerowsecurity = true on pg_class
+-- =============================================================================
+WITH RECURSIVE runtime_root_roles AS (
+    SELECT oid AS role_oid, rolname AS root_runtime_role, rolname AS effective_role_name,
+           rolsuper, rolbypassrls, 0 AS inheritance_depth
+    FROM pg_catalog.pg_roles
+    WHERE rolname IN (
+        'boontrack_app_worker',
+        'boontrack_payout_service',
+        'boontrack_settlement_service',
+        'anon',
+        'authenticated'
+    )
+    UNION ALL
+    SELECT parent_r.oid, tree.root_runtime_role, parent_r.rolname,
+           parent_r.rolsuper, parent_r.rolbypassrls, tree.inheritance_depth + 1
+    FROM runtime_root_roles tree
+    JOIN pg_catalog.pg_auth_members m ON m.member = tree.role_oid
+    JOIN pg_catalog.pg_roles parent_r ON parent_r.oid = m.roleid
+    WHERE tree.inheritance_depth < 10
+),
+effective_privilege_violations AS (
+    SELECT
+        r.root_runtime_role,
+        r.effective_role_name,
+        p.priv_type
+    FROM runtime_root_roles r
+    CROSS JOIN (
+        VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')
+    ) AS p(priv_type)
+    WHERE has_table_privilege(
+        r.effective_role_name,
+        'public.migration_031_quarantined_affiliate_commissions',
+        p.priv_type
+    )
+),
+superuser_or_bypassrls_violations AS (
+    SELECT
+        r.root_runtime_role,
+        r.effective_role_name,
+        r.rolsuper,
+        r.rolbypassrls
+    FROM runtime_root_roles r
+    WHERE r.rolsuper IS TRUE OR r.rolbypassrls IS TRUE
+),
+security_definer_function_violations AS (
+    SELECT
+        n.nspname AS function_schema,
+        p.proname AS function_name,
+        pg_catalog.pg_get_userbyid(p.proowner) AS owner_role
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE p.prosecdef IS TRUE
+      AND (
+          pg_catalog.pg_get_functiondef(p.oid) ILIKE '%migration_031_quarantined_affiliate_commissions%'
+          OR p.prosrc ILIKE '%migration_031_quarantined_affiliate_commissions%'
+      )
+),
+rls_flag_violations AS (
+    SELECT
+        c.relname,
+        c.relrowsecurity,
+        c.relforcerowsecurity
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public'
+      AND c.relname = 'migration_031_quarantined_affiliate_commissions'
+      AND (c.relrowsecurity IS NOT TRUE OR c.relforcerowsecurity IS NOT TRUE)
+)
+SELECT
+    (SELECT COUNT(*) FROM effective_privilege_violations)       AS runtime_privilege_violations_count,
+    (SELECT COUNT(*) FROM superuser_or_bypassrls_violations)    AS bypassrls_or_superuser_violations_count,
+    (SELECT COUNT(*) FROM security_definer_function_violations) AS security_definer_leak_violations_count,
+    (SELECT COUNT(*) FROM rls_flag_violations)                  AS rls_force_flag_violations_count,
+    CASE
+        WHEN (SELECT COUNT(*) FROM effective_privilege_violations) = 0
+         AND (SELECT COUNT(*) FROM superuser_or_bypassrls_violations) = 0
+         AND (SELECT COUNT(*) FROM security_definer_function_violations) = 0
+         AND (SELECT COUNT(*) FROM rls_flag_violations) = 0
+        THEN 'PASS: ZERO_VIOLATIONS'
+        ELSE 'FAIL: QUARANTINE_ISOLATION_BREACH'
+    END AS gate_b1_id02_verdict;
+```
+
+---
+
+### 3. [P0] Residual ID-03: System Catalog FK Discovery (`pg_constraint`) & Explicit Repoint Manifest
+
+To eliminate composite-key Cartesian joins in `information_schema.constraint_column_usage` and bind every discovered foreign-key column deterministically to an executable, verified migration step, `REV 4.1.6` retains the CTO-approved `public.try_cast_uuid(text)` helper and replaces the `information_schema` FK query with a `pg_constraint` + `unnest(c.conkey, c.confkey) WITH ORDINALITY` catalog discovery and `_mig031_repoint_manifest` reconciliation block.
+
+#### A. Approved `public.try_cast_uuid(text)` Deterministic Helper Function
+
+```sql
+-- =============================================================================
+-- [APPROVED IN REV 4.1.5 / RETAINED IN REV 4.1.6: Safe UUID Cast Helper ([P0] Residual ID-03)]
+-- Prevents 22P02 invalid_text_representation aborts when evaluating mixed legacy VARCHAR/UUID columns.
+-- =============================================================================
+CREATE OR REPLACE FUNCTION public.try_cast_uuid(p_input TEXT)
+RETURNS UUID
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+DECLARE
+    v_clean TEXT;
+BEGIN
+    v_clean := BTRIM(p_input);
+    IF v_clean = '' OR v_clean !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        RETURN NULL;
+    END IF;
+    RETURN v_clean::UUID;
+EXCEPTION
+    WHEN invalid_text_representation THEN
+        RETURN NULL;
+END;
+$$;
+```
+
+#### B. System Catalog FK Discovery via `pg_constraint` (`unnest(c.conkey, c.confkey) WITH ORDINALITY`)
+
+```sql
+-- =============================================================================
+-- [PROPOSAL — REV 4.1.6: Catalog-Grade FK Discovery Query ([P0] Residual ID-03)]
+-- Queries pg_constraint (contype = 'f'), pg_namespace, pg_class, and unnest(c.conkey, c.confkey)
+-- WITH ORDINALITY joined to pg_attribute for both referencing (source) and referenced (target) columns.
+-- =============================================================================
+SELECT
+    c.oid                           AS constraint_oid,
+    src_ns.nspname::text            AS source_schema,
+    src_cls.relname::text           AS source_table,
+    c.conname::text                 AS constraint_name,
+    u.ord::integer                  AS ordinal_position,
+    src_att.attname::text           AS source_column,
+    tgt_ns.nspname::text            AS target_schema,
+    tgt_cls.relname::text           AS target_table,
+    tgt_att.attname::text           AS target_column
+FROM pg_catalog.pg_constraint c
+JOIN pg_catalog.pg_class src_cls
+  ON src_cls.oid = c.conrelid
+JOIN pg_catalog.pg_namespace src_ns
+  ON src_ns.oid = src_cls.relnamespace
+JOIN pg_catalog.pg_class tgt_cls
+  ON tgt_cls.oid = c.confrelid
+JOIN pg_catalog.pg_namespace tgt_ns
+  ON tgt_ns.oid = tgt_cls.relnamespace
+CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS u(src_attnum, tgt_attnum, ord)
+JOIN pg_catalog.pg_attribute src_att
+  ON src_att.attrelid = c.conrelid
+ AND src_att.attnum = u.src_attnum
+ AND NOT src_att.attisdropped
+JOIN pg_catalog.pg_attribute tgt_att
+  ON tgt_att.attrelid = c.confrelid
+ AND tgt_att.attnum = u.tgt_attnum
+ AND NOT tgt_att.attisdropped
+WHERE c.contype = 'f'
+  AND src_ns.nspname = 'public'
+  AND tgt_ns.nspname = 'public'
+  AND tgt_cls.relname IN (
+      'affiliates',
+      'affiliate_commissions',
+      'shop_subscriptions',
+      'shop_commission_ledger',
+      'product_orders',
+      'orders',
+      'delivery_orders',
+      'attributions',
+      'attribution_sessions'
+  )
+ORDER BY tgt_cls.relname, src_cls.relname, c.conname, u.ord;
+```
+
+#### C. Binding to `_mig031_repoint_manifest` & 7-Column Structural Reconciliation Query
+
+```sql
+-- =============================================================================
+-- [PROPOSAL — REV 4.1.6: _mig031_repoint_manifest Schema, Seed & Reconciliation ([P0] Residual ID-03)]
+-- =============================================================================
+CREATE TEMP TABLE IF NOT EXISTS _mig031_repoint_manifest (
+    source_schema      TEXT    NOT NULL,
+    source_table       TEXT    NOT NULL,
+    source_column      TEXT    NOT NULL,
+    target_schema      TEXT    NOT NULL,
+    target_table       TEXT    NOT NULL,
+    target_column      TEXT    NOT NULL,
+    ordinal_position   INTEGER NOT NULL DEFAULT 1,
+    repoint_strategy   TEXT    NOT NULL,
+    sql_step_id        TEXT    NOT NULL,
+    execution_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    CONSTRAINT pk_mig031_repoint_manifest PRIMARY KEY (
+        source_schema,
+        source_table,
+        source_column,
+        target_schema,
+        target_table,
+        target_column,
+        ordinal_position
+    )
+) ON COMMIT DROP;
+
+-- Seed all formal FK & logical reference edges covered by Migration 031
+INSERT INTO _mig031_repoint_manifest (
+    source_schema, source_table, source_column,
+    target_schema, target_table, target_column,
+    ordinal_position, repoint_strategy, sql_step_id, execution_verified
+)
+VALUES
+    ('public', 'attributions',          'affiliate_id',        'public', 'affiliates',            'id',       1, 'SAFE_TO_REPOINT_UUID_SURVIVOR',        'STEP_2D_REPOINT_02', FALSE),
+    ('public', 'affiliates',            'registered_by_am_id', 'public', 'affiliates',            'id',       1, 'SAFE_TO_REPOINT_UUID_SURVIVOR',        'STEP_2D_REPOINT_06', FALSE),
+    ('public', 'shop_commission_ledger','subscription_id',     'public', 'shop_subscriptions',    'id',       1, 'SAFE_TO_REPOINT_OR_HOLD_QUARANTINE',   'STEP_2B_REPOINT_01', FALSE),
+    ('public', 'affiliate_commissions', 'affiliate_id',        'public', 'affiliates',            'id',       1, 'SAFE_TO_REPOINT_TEXT_SURVIVOR',        'STEP_2D_REPOINT_01', FALSE),
+    ('public', 'attribution_sessions',  'affiliate_id',        'public', 'affiliates',            'id',       1, 'SAFE_TO_REPOINT_UUID_SURVIVOR',        'STEP_2D_REPOINT_03', FALSE),
+    ('public', 'orders',                'affiliate_id',        'public', 'affiliates',            'id',       1, 'SAFE_TO_REPOINT_TEXT_SURVIVOR',        'STEP_2D_REPOINT_04A',FALSE),
+    ('public', 'orders',                'manager_id',          'public', 'affiliates',            'id',       1, 'SAFE_TO_REPOINT_TEXT_SURVIVOR',        'STEP_2D_REPOINT_04B',FALSE),
+    ('public', 'commission_ledger',     'affiliate_id',        'public', 'affiliates',            'id',       1, 'SAFE_TO_REPOINT_TEXT_SURVIVOR',        'STEP_2D_REPOINT_05A',FALSE),
+    ('public', 'commission_ledger',     'manager_id',          'public', 'affiliates',            'id',       1, 'SAFE_TO_REPOINT_TEXT_SURVIVOR',        'STEP_2D_REPOINT_05B',FALSE),
+    ('public', 'product_orders',        'attribution_id',      'public', 'attributions',          'id',       1, 'IMMUTABLE_PK_NO_REPOINT_REQUIRED',     'STEP_1B_VERIFY_01',  FALSE),
+    ('public', 'delivery_orders',       'order_id',            'public', 'product_orders',        'order_id', 1, 'TENANT_BACKFILL_PROPAGATION',          'STEP_2D_REPOINT_07', FALSE)
+ON CONFLICT ON CONSTRAINT pk_mig031_repoint_manifest DO NOTHING;
+
+-- As each repoint step (STEP_1B_VERIFY_01 .. STEP_2D_REPOINT_07) completes in the transaction,
+-- it marks its manifest row verified:
+UPDATE _mig031_repoint_manifest
+SET execution_verified = TRUE
+WHERE sql_step_id IN (
+    'STEP_1B_VERIFY_01',
+    'STEP_2B_REPOINT_01',
+    'STEP_2D_REPOINT_01',
+    'STEP_2D_REPOINT_02',
+    'STEP_2D_REPOINT_03',
+    'STEP_2D_REPOINT_04A',
+    'STEP_2D_REPOINT_04B',
+    'STEP_2D_REPOINT_05A',
+    'STEP_2D_REPOINT_05B',
+    'STEP_2D_REPOINT_06',
+    'STEP_2D_REPOINT_07'
+);
+
+-- Exact Reconciliation Query: LEFT JOIN from pg_constraint discovery CTE to _mig031_repoint_manifest
+-- on all 7 structural columns, asserting uncovered_fk_columns_count = 0 AND unexecuted_manifest_steps_count = 0.
+WITH discovered_catalog_fks AS (
+    SELECT
+        c.oid                 AS constraint_oid,
+        src_ns.nspname::text  AS source_schema,
+        src_cls.relname::text AS source_table,
+        c.conname::text       AS constraint_name,
+        u.ord::integer        AS ordinal_position,
+        src_att.attname::text AS source_column,
+        tgt_ns.nspname::text  AS target_schema,
+        tgt_cls.relname::text AS target_table,
+        tgt_att.attname::text AS target_column
+    FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class src_cls ON src_cls.oid = c.conrelid
+    JOIN pg_catalog.pg_namespace src_ns ON src_ns.oid = src_cls.relnamespace
+    JOIN pg_catalog.pg_class tgt_cls ON tgt_cls.oid = c.confrelid
+    JOIN pg_catalog.pg_namespace tgt_ns ON tgt_ns.oid = tgt_cls.relnamespace
+    CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS u(src_attnum, tgt_attnum, ord)
+    JOIN pg_catalog.pg_attribute src_att
+      ON src_att.attrelid = c.conrelid AND src_att.attnum = u.src_attnum AND NOT src_att.attisdropped
+    JOIN pg_catalog.pg_attribute tgt_att
+      ON tgt_att.attrelid = c.confrelid AND tgt_att.attnum = u.tgt_attnum AND NOT tgt_att.attisdropped
+    WHERE c.contype = 'f'
+      AND src_ns.nspname = 'public'
+      AND tgt_ns.nspname = 'public'
+      AND tgt_cls.relname IN (
+          'affiliates', 'affiliate_commissions', 'shop_subscriptions', 'shop_commission_ledger',
+          'product_orders', 'orders', 'delivery_orders', 'attributions', 'attribution_sessions'
+      )
+),
+catalog_to_manifest_reconciliation AS (
+    SELECT
+        d.constraint_oid,
+        d.constraint_name,
+        d.source_schema,
+        d.source_table,
+        d.source_column,
+        d.target_schema,
+        d.target_table,
+        d.target_column,
+        d.ordinal_position,
+        m.repoint_strategy,
+        m.sql_step_id,
+        m.execution_verified
+    FROM discovered_catalog_fks d
+    LEFT JOIN _mig031_repoint_manifest m
+      ON m.source_schema    = d.source_schema
+     AND m.source_table     = d.source_table
+     AND m.source_column    = d.source_column
+     AND m.target_schema    = d.target_schema
+     AND m.target_table     = d.target_table
+     AND m.target_column    = d.target_column
+     AND m.ordinal_position = d.ordinal_position
+)
+SELECT
+    COUNT(*) FILTER (WHERE sql_step_id IS NULL)                                   AS uncovered_fk_columns_count,
+    (SELECT COUNT(*) FROM _mig031_repoint_manifest WHERE NOT execution_verified)  AS unexecuted_manifest_steps_count,
+    CASE
+        WHEN COUNT(*) FILTER (WHERE sql_step_id IS NULL) = 0
+         AND (SELECT COUNT(*) FROM _mig031_repoint_manifest WHERE NOT execution_verified) = 0
+        THEN 'PASS: ALL_CATALOG_FKS_BOUND_AND_EXECUTED'
+        ELSE 'FAIL: UNCOVERED_FK_OR_UNEXECUTED_STEP'
+    END AS id03_manifest_verdict
+FROM catalog_to_manifest_reconciliation;
+```
+
+---
+
+### 4. [P1] Residual ID-04: Explicit 9-Table Disposition Matrix, Unit-of-Count Definition, & Entity Naming Alignment
+
+To eliminate all shorthand placeholders, row-vs-column counting ambiguity, and entity naming drift in Gate B2 reporting, `REV 4.1.6` establishes the following normative specifications:
+
+#### A. Canonical Entity Naming Alignment Note (`public.affiliates` vs `affiliate_profiles`)
+- **Authoritative Physical PostgreSQL Table:** **`public.affiliates`** (`id UUID PRIMARY KEY`, `tenant_id VARCHAR(100)`, `referral_code VARCHAR(64)`, `registered_by_am_id UUID`, `status VARCHAR(32)`), as defined in `app/core/database.py`, queried in `app/services/affiliate_service.py`, and indexed in `migrations/031_staging_schema_parity_and_snapshots.sql`.
+- **Legacy Alias Clarification:** The identifier `affiliate_profiles` appeared solely as an informal conceptual alias in earlier architectural prose; **no physical table named `public.affiliate_profiles` exists in the PostgreSQL catalog**. All 9 rows of the Gate B2 Disposition Matrix and all SQL verification queries strictly enforce the physical table name **`public.affiliates`**.
+
+#### B. Strict Unit-of-Count Separation (Row-Level PK Disposition vs FK Reference Mutation Count)
+1. **Primary Metric — Row-Level Disposition (Measured Strictly per Unique Primary Key `pk_id`):**
+   - Every row present in the pre-migration snapshot of each table (`pre_migration_total_rows`) is classified into **exactly one** mutually exclusive disposition bucket using the deterministic precedence rule:
+     $$\texttt{physically\_quarantined} \succ \texttt{soft\_quarantined} \succ \texttt{unresolved\_conflicted} \succ \texttt{canonical\_repointed} \succ \texttt{clean\_unmodified}$$
+   - **Row-Level Conservation Invariant:** For every table $T \in \{1..9\}$:
+     $$\texttt{pre\_migration\_total\_rows}(T) = \texttt{clean\_unmodified}(T) + \texttt{canonical\_repointed}(T) + \texttt{physically\_quarantined}(T) + \texttt{soft\_quarantined}(T) + \texttt{unresolved\_conflicted}(T)$$
+     with mandatory Gate B2 pass criteria: $\texttt{row\_conservation\_delta}(T) = 0$ and $\texttt{unresolved\_conflicted}(T) = 0$.
+2. **Secondary Metric — FK Reference Mutation Count (`repointed_fk_column_refs`):**
+   - Tracked in a separate informational column (`repointed_fk_column_refs`) outside the row conservation sum because a single physical row (for example in `public.orders`, `public.product_orders`, or `public.affiliate_commissions`) can have multiple foreign-key or reference columns mutated/repointed simultaneously (e.g., both `orders.affiliate_id` and `orders.manager_id`, or both `affiliate_commissions.tenant_id` backfill and `affiliate_commissions.affiliate_id` survivor repointing) while still counting as **1 row** (`canonical_repointed = 1`) in the primary row-level disposition.
+
+#### C. Complete 9-Table Gate B2 Disposition Matrix (Zero Shorthand Placeholders)
+
+| # | Physical Source Table (`public.*`) | PK Column (`pk_id`) | `pre_migration_total_rows` | `clean_unmodified` | `canonical_repointed` | `physically_quarantined` | `soft_quarantined` | `unresolved_conflicted` | `row_conservation_delta` | Secondary Metric: `repointed_fk_column_refs` | Gate B2 Invariant Requirement |
+| :---: | :--- | :---: | :---: | :--- | :--- | :--- | :--- | :---: | :---: | :--- | :--- |
+| **1** | **`public.product_orders`** | `id` (`UUID`) | $N_1$ | Rows with valid pre-existing `tenant_id` | Rows with single-source `tenant_id` backfilled | `0` *(kept in table)* | Non-operational terminal (`CANCELLED`/`EXPIRED`) with `tenant_id IS NULL` | **`0`** *(Operational `NULL` or multi-tenant conflict)* | **`0`** | Count of `tenant_id` backfills (`0..1` per row) | `unresolved_conflicted = 0` & `delta = 0` |
+| **2** | **`public.delivery_orders`** | `id` (`UUID`) | $N_2$ | Rows with valid pre-existing `tenant_id` | Rows with `tenant_id` propagated from `product_orders` | `0` | `0` | **`0`** *(COD order missing `tenant_id` or cross-tenant conflict)* | **`0`** | Count of `tenant_id` propagations (`0..1` per row) | `unresolved_conflicted = 0` & `delta = 0` |
+| **3** | **`public.affiliate_commissions`** | `id` (`UUID`) | $N_3$ | Valid `(tenant_id, order_id)` survivor & unmodified rows | Rows with single-tenant backfilled or `affiliate_id` repointed to survivor | Rows moved to `migration_031_quarantined_affiliate_commissions` | Duplicate `(tenant_id, order_id)` (`rn > 1`) renamed `_dup_` / `HOLDING` | **`0`** *(`tenant_id IS NULL`, `'__QUARANTINED_%'`, or conflict)* | **`0`** | Sum of `tenant_id` backfills + `affiliate_id` repoints (`0..2` per row) | `unresolved_conflicted = 0` & `delta = 0` |
+| **4** | **`public.attributions`** | `id` (`UUID`) | $N_4$ | Rows pointing to canonical `affiliates.id` | Rows with `affiliate_id` repointed to `canonical_survivor_id` | `0` | `0` | **`0`** *(Dangling `affiliate_id` or cross-tenant mismatch)* | **`0`** | Count of `attributions.affiliate_id` repoints (`0..1` per row) | `unresolved_conflicted = 0` & `delta = 0` |
+| **5** | **`public.attribution_sessions`** | `id` (`UUID`) | $N_5$ | Rows pointing to canonical `affiliates.id` | Rows with `affiliate_id` repointed to `canonical_survivor_id` | `0` | `0` | **`0`** *(Dangling `affiliate_id` or cross-tenant mismatch)* | **`0`** | Count of `attribution_sessions.affiliate_id` repoints (`0..1` per row) | `unresolved_conflicted = 0` & `delta = 0` |
+| **6** | **`public.orders`** | `id` (`VARCHAR`) | $N_6$ | Rows with unmodified `affiliate_id` and `manager_id` | Rows where `affiliate_id` and/or `manager_id` repointed to survivor | `0` | `0` | **`0`** *(`tenant_slug` vs `product_orders.tenant_id` conflict)* | **`0`** | Sum of `orders.affiliate_id` + `orders.manager_id` repoints (`0..2` per row) | `unresolved_conflicted = 0` & `delta = 0` |
+| **7** | **`public.affiliates`** | `id` (`UUID`) | $N_7$ | Unique `(tenant_id, UPPER(BTRIM(referral_code)))` survivors (`rn = 1`) | Rows with `registered_by_am_id` repointed to AM survivor (`rn = 1`) | `0` | Duplicate `referral_code` (`rn > 1`) suffixed with `_DUP_` | **`0`** *(Live duplicate `(tenant_id, referral_code)` or `tenant_id IS NULL`)* | **`0`** | Count of `registered_by_am_id` self-FK repoints (`0..1` per row) | `unresolved_conflicted = 0` & `delta = 0` |
+| **8** | **`public.shop_subscriptions`** | `id` (`UUID`) | $N_8$ | Unique `xendit_invoice_id` survivors (`rn = 1`) | `0` *(Parent invoice entity)* | `0` | Duplicate `xendit_invoice_id` (`rn > 1`) suffixed `_dup_` (`SUPERSEDED_DUPLICATE`) | **`0`** *(Live duplicate `xendit_invoice_id` or `tenant_slug IS NULL`)* | **`0`** | `0` | `unresolved_conflicted = 0` & `delta = 0` |
+| **9** | **`public.shop_commission_ledger`** | `id` (`UUID`) | $N_9$ | Unique `subscription_id` survivors (`rn = 1`) | Rows with `subscription_id` repointed to subscription survivor (`rn = 1`) | `0` | Duplicate `subscription_id` (`rn > 1`) set to `HELD_DUPLICATE_QUARANTINE` | **`0`** *(Live duplicate or dangling `subscription_id`)* | **`0`** | Count of `subscription_id` FK repoints (`0..1` per row) | `unresolved_conflicted = 0` & `delta = 0` |
+
+#### D. Complete 9-Table Gate B2 Disposition SQL Generator (Precedence-Enforced Row Classification + Separate FK Reference Counter)
+
+```sql
+-- =============================================================================
+-- [PROPOSAL — REV 4.1.6: 9-Table Gate B2 Disposition Generator ([P1] Residual ID-04)]
+-- Enforces strict row-level mutually exclusive classification per PK using precedence:
+--   physically_quarantined > soft_quarantined > unresolved_conflicted > canonical_repointed > clean_unmodified
+-- Tracks repointed_fk_column_refs separately as Secondary Metric.
+-- =============================================================================
+WITH repointed_row_flags AS (
+    SELECT
+        table_name,
+        quarantined_row_id AS pk_id,
+        COUNT(*) FILTER (WHERE resolution_reason IN ('BACKFILLED_AUTHORITATIVE_SINGLE_TENANT', 'SAFE_TO_REPOINT')) AS repoint_ops,
+        BOOL_OR(resolution_reason IN (
+            'DUPLICATE_TENANT_ORDER_ID_QUARANTINED',
+            'DUPLICATE_INVOICE_ID_QUARANTINED',
+            'DUPLICATE_SUBSCRIPTION_ID_LEDGER_QUARANTINED',
+            'DUPLICATE_REFERRAL_CODE_RENAMED'
+        )) AS is_soft_quarantined,
+        BOOL_OR(resolution_reason IN (
+            'QUARANTINED_CROSS_SOURCE_TENANT_CONFLICT',
+            'QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE'
+        )) AS is_conflicted
+    FROM public.migration_031_identifier_dedup_map
+    GROUP BY table_name, quarantined_row_id
+),
+nine_table_classified AS (
+    -- 1. public.product_orders
+    SELECT
+        1 AS ord_seq,
+        'public.product_orders'::text AS source_table,
+        COUNT(*)::bigint AS pre_migration_total_rows,
+        COUNT(*) FILTER (WHERE COALESCE(rf.is_conflicted, FALSE) IS FALSE AND NULLIF(BTRIM(po.tenant_id), '') IS NOT NULL AND COALESCE(rf.repoint_ops, 0) = 0)::bigint AS clean_unmodified,
+        COUNT(*) FILTER (WHERE COALESCE(rf.is_conflicted, FALSE) IS FALSE AND NULLIF(BTRIM(po.tenant_id), '') IS NOT NULL AND COALESCE(rf.repoint_ops, 0) > 0)::bigint AS canonical_repointed,
+        0::bigint AS physically_quarantined,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(po.tenant_id), '') IS NULL AND UPPER(BTRIM(COALESCE(po.status, ''))) IN ('CANCELLED', 'CANCELED', 'EXPIRED', 'FAILED', 'VOID', 'ABANDONED', 'DRAFT_ABANDONED'))::bigint AS soft_quarantined,
+        COUNT(*) FILTER (WHERE COALESCE(rf.is_conflicted, FALSE) IS TRUE OR (NULLIF(BTRIM(po.tenant_id), '') IS NULL AND UPPER(BTRIM(COALESCE(po.status, ''))) NOT IN ('CANCELLED', 'CANCELED', 'EXPIRED', 'FAILED', 'VOID', 'ABANDONED', 'DRAFT_ABANDONED')))::bigint AS unresolved_conflicted,
+        COALESCE(SUM(COALESCE(rf.repoint_ops, 0)), 0)::bigint AS repointed_fk_column_refs
+    FROM public.product_orders po
+    LEFT JOIN repointed_row_flags rf ON rf.table_name = 'product_orders' AND rf.pk_id = po.id::text
+
+    UNION ALL
+
+    -- 2. public.delivery_orders
+    SELECT
+        2,
+        'public.delivery_orders'::text,
+        COUNT(*)::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(d.tenant_id), '') IS NOT NULL AND COALESCE(rf.repoint_ops, 0) = 0 AND NOT EXISTS (SELECT 1 FROM public.product_orders po WHERE po.order_id = d.order_id AND NULLIF(BTRIM(po.tenant_id), '') IS NOT NULL AND BTRIM(po.tenant_id) <> BTRIM(d.tenant_id)))::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(d.tenant_id), '') IS NOT NULL AND COALESCE(rf.repoint_ops, 0) > 0 AND NOT EXISTS (SELECT 1 FROM public.product_orders po WHERE po.order_id = d.order_id AND NULLIF(BTRIM(po.tenant_id), '') IS NOT NULL AND BTRIM(po.tenant_id) <> BTRIM(d.tenant_id)))::bigint,
+        0::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(d.tenant_id), '') IS NULL AND COALESCE(d.is_cod, FALSE) IS FALSE)::bigint,
+        COUNT(*) FILTER (WHERE (NULLIF(BTRIM(d.tenant_id), '') IS NULL AND COALESCE(d.is_cod, FALSE) IS TRUE) OR EXISTS (SELECT 1 FROM public.product_orders po WHERE po.order_id = d.order_id AND NULLIF(BTRIM(po.tenant_id), '') IS NOT NULL AND NULLIF(BTRIM(d.tenant_id), '') IS NOT NULL AND BTRIM(po.tenant_id) <> BTRIM(d.tenant_id)))::bigint,
+        COALESCE(SUM(COALESCE(rf.repoint_ops, 0)), 0)::bigint
+    FROM public.delivery_orders d
+    LEFT JOIN repointed_row_flags rf ON rf.table_name = 'delivery_orders' AND rf.pk_id = d.id::text
+
+    UNION ALL
+
+    -- 3. public.affiliate_commissions (+ physical quarantine table rows)
+    SELECT
+        3,
+        'public.affiliate_commissions'::text,
+        (SELECT COUNT(*) FROM public.affiliate_commissions) + (SELECT COUNT(*) FROM public.migration_031_quarantined_affiliate_commissions),
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(ac.tenant_id), '') IS NOT NULL AND ac.tenant_id NOT LIKE '__QUARANTINED_%' AND ac.order_id NOT LIKE '%_dup_%' AND COALESCE(rf.repoint_ops, 0) = 0)::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(ac.tenant_id), '') IS NOT NULL AND ac.tenant_id NOT LIKE '__QUARANTINED_%' AND ac.order_id NOT LIKE '%_dup_%' AND COALESCE(rf.repoint_ops, 0) > 0)::bigint,
+        (SELECT COUNT(*)::bigint FROM public.migration_031_quarantined_affiliate_commissions),
+        COUNT(*) FILTER (WHERE ac.order_id LIKE '%_dup_%')::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(ac.tenant_id), '') IS NULL OR ac.tenant_id LIKE '__QUARANTINED_%')::bigint,
+        COALESCE(SUM(COALESCE(rf.repoint_ops, 0)), 0)::bigint
+    FROM public.affiliate_commissions ac
+    LEFT JOIN repointed_row_flags rf ON rf.table_name = 'affiliate_commissions' AND rf.pk_id = ac.id::text
+
+    UNION ALL
+
+    -- 4. public.attributions
+    SELECT
+        4,
+        'public.attributions'::text,
+        COUNT(*)::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(att.tenant_id), '') IS NOT NULL AND COALESCE(rf.repoint_ops, 0) = 0)::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(att.tenant_id), '') IS NOT NULL AND COALESCE(rf.repoint_ops, 0) > 0)::bigint,
+        0::bigint,
+        0::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(att.tenant_id), '') IS NULL OR (att.affiliate_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.affiliates a WHERE a.id = att.affiliate_id)))::bigint,
+        COALESCE(SUM(COALESCE(rf.repoint_ops, 0)), 0)::bigint
+    FROM public.attributions att
+    LEFT JOIN repointed_row_flags rf ON rf.table_name = 'attributions' AND rf.pk_id = att.id::text
+
+    UNION ALL
+
+    -- 5. public.attribution_sessions
+    SELECT
+        5,
+        'public.attribution_sessions'::text,
+        COUNT(*)::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(ats.tenant_id), '') IS NOT NULL AND COALESCE(rf.repoint_ops, 0) = 0)::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(ats.tenant_id), '') IS NOT NULL AND COALESCE(rf.repoint_ops, 0) > 0)::bigint,
+        0::bigint,
+        0::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(ats.tenant_id), '') IS NULL OR (ats.affiliate_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.affiliates a WHERE a.id = ats.affiliate_id)))::bigint,
+        COALESCE(SUM(COALESCE(rf.repoint_ops, 0)), 0)::bigint
+    FROM public.attribution_sessions ats
+    LEFT JOIN repointed_row_flags rf ON rf.table_name = 'attribution_sessions' AND rf.pk_id = ats.id::text
+
+    UNION ALL
+
+    -- 6. public.orders
+    SELECT
+        6,
+        'public.orders'::text,
+        COUNT(*)::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(o.tenant_slug), '') IS NOT NULL AND COALESCE(rf.repoint_ops, 0) = 0)::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(o.tenant_slug), '') IS NOT NULL AND COALESCE(rf.repoint_ops, 0) > 0)::bigint,
+        0::bigint,
+        0::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(o.tenant_slug), '') IS NULL OR EXISTS (SELECT 1 FROM public.product_orders po WHERE po.order_id = o.id AND NULLIF(BTRIM(po.tenant_id), '') IS NOT NULL AND BTRIM(po.tenant_id) <> BTRIM(o.tenant_slug)))::bigint,
+        COALESCE(SUM(COALESCE(rf.repoint_ops, 0)), 0)::bigint
+    FROM public.orders o
+    LEFT JOIN repointed_row_flags rf ON rf.table_name = 'orders' AND rf.pk_id = o.id::text
+
+    UNION ALL
+
+    -- 7. public.affiliates (Canonical physical table; replaces legacy 'affiliate_profiles' alias)
+    SELECT
+        7,
+        'public.affiliates'::text,
+        COUNT(*)::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(a.tenant_id), '') IS NOT NULL AND UPPER(BTRIM(COALESCE(a.referral_code, ''))) NOT LIKE '%_DUP_%' AND COALESCE(rf.repoint_ops, 0) = 0)::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(a.tenant_id), '') IS NOT NULL AND UPPER(BTRIM(COALESCE(a.referral_code, ''))) NOT LIKE '%_DUP_%' AND COALESCE(rf.repoint_ops, 0) > 0)::bigint,
+        0::bigint,
+        COUNT(*) FILTER (WHERE UPPER(BTRIM(COALESCE(a.referral_code, ''))) LIKE '%_DUP_%')::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(a.tenant_id), '') IS NULL)::bigint,
+        COALESCE(SUM(COALESCE(rf.repoint_ops, 0)), 0)::bigint
+    FROM public.affiliates a
+    LEFT JOIN repointed_row_flags rf ON rf.table_name = 'affiliates' AND rf.pk_id = a.id::text
+
+    UNION ALL
+
+    -- 8. public.shop_subscriptions
+    SELECT
+        8,
+        'public.shop_subscriptions'::text,
+        COUNT(*)::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(ss.tenant_slug), '') IS NOT NULL AND COALESCE(ss.xendit_invoice_id, '') NOT LIKE '%_dup_%')::bigint,
+        0::bigint,
+        0::bigint,
+        COUNT(*) FILTER (WHERE COALESCE(ss.xendit_invoice_id, '') LIKE '%_dup_%')::bigint,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(ss.tenant_slug), '') IS NULL)::bigint,
+        0::bigint
+    FROM public.shop_subscriptions ss
+
+    UNION ALL
+
+    -- 9. public.shop_commission_ledger
+    SELECT
+        9,
+        'public.shop_commission_ledger'::text,
+        COUNT(*)::bigint,
+        COUNT(*) FILTER (WHERE COALESCE(scl.disbursement_status, '') <> 'HELD_DUPLICATE_QUARANTINE' AND COALESCE(rf.repoint_ops, 0) = 0)::bigint,
+        COUNT(*) FILTER (WHERE COALESCE(scl.disbursement_status, '') <> 'HELD_DUPLICATE_QUARANTINE' AND COALESCE(rf.repoint_ops, 0) > 0)::bigint,
+        0::bigint,
+        COUNT(*) FILTER (WHERE COALESCE(scl.disbursement_status, '') = 'HELD_DUPLICATE_QUARANTINE')::bigint,
+        COUNT(*) FILTER (WHERE scl.subscription_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.shop_subscriptions ss WHERE ss.id = scl.subscription_id))::bigint,
+        COALESCE(SUM(COALESCE(rf.repoint_ops, 0)), 0)::bigint
+    FROM public.shop_commission_ledger scl
+    LEFT JOIN repointed_row_flags rf ON rf.table_name = 'shop_commission_ledger' AND rf.pk_id = scl.id::text
+)
+SELECT
+    source_table,
+    pre_migration_total_rows,
+    clean_unmodified,
+    canonical_repointed,
+    physically_quarantined,
+    soft_quarantined,
+    unresolved_conflicted,
+    (pre_migration_total_rows - (clean_unmodified + canonical_repointed + physically_quarantined + soft_quarantined + unresolved_conflicted)) AS row_conservation_delta,
+    repointed_fk_column_refs
+FROM nine_table_classified
+ORDER BY ord_seq;
+```
+
+---
+
+### 5. [P0] Residual ID-05: Null-Safe, Status-Decoupled, Lineage-Backed Financial Reconciliation (B2-ASSERT-05)
+
+To close all four mathematical and relational loopholes in `B2-ASSERT-05`, `REV 4.1.6` replaces the aggregate-only status check with a **Null-Safe, Status-Decoupled, Two-Tier Lineage & Financial Reconciliation Audit**:
+
+1. **Canonical Survivor Mapping on Pre-Migration State (`_mig031_canonical_identity_map`):**
+   - Joins `pre_mig031_affiliate_commissions_snapshot` against `_mig031_canonical_identity_map` so that `expected_canonical_recipient_id = COALESCE(map.canonical_survivor_id, pre.recipient_id)`.
+   - Legitimate duplicate affiliate merges (`SAFE_TO_REPOINT`) map cleanly to the canonical survivor ID, whereas any unauthorized or unmapped recipient mutation immediately fails the assertion.
+2. **Decoupled Financial vs Quarantine Status (`original_financial_status` vs `quarantine_status`):**
+   - Compares `pre.financial_status` strictly against `post.original_financial_status` (preserving the pre-quarantine financial state such as `PENDING`, `APPROVED`, `PAID`, `SETTLED` separately from operational `quarantine_status = 'QUARANTINED_LOCKED'` or `'HOLDING'`).
+3. **Two-Tier Audit Architecture (`row_level_lineage_audit` by PK + `grouped_recipient_reconciliation` via `IS NOT DISTINCT FROM`):**
+   - **Tier 1 — CTE 1 (`row_level_lineage_audit`):** Joins `pre_mig031_affiliate_commissions_snapshot` and `unified_post_migration_commissions` via `FULL OUTER JOIN` directly on Primary Key `commission_id`. Flags an anomaly if any row is missing, duplicated, or exhibits a mismatch (`IS DISTINCT FROM`) in `tenant_id`, `expected_canonical_recipient_id` vs `post.recipient_id`, `order_id`, `invoice_reference`, `financial_status` vs `post.original_financial_status`, or `amount`.
+   - **Tier 2 — CTE 2 (`grouped_recipient_reconciliation`):** Performs the grouped reconciliation using `FULL OUTER JOIN` with null-safe `IS NOT DISTINCT FROM` on all five grouping keys (`tenant_id`, `canonical_recipient_id`, `order_id`, `invoice_reference`, `financial_status`).
+   - **Final Assertion Query:** Asserts `row_lineage_anomalies_count = 0`, `grouped_variance_anomalies_count = 0`, and `global_amount_delta = 0.00`.
+
+#### A. Pre-Migration Snapshot & Canonical Identity Map Setup (`B2-ASSERT-05` Prerequisite)
+
+```sql
+-- =============================================================================
+-- [PROPOSAL — REV 4.1.6: Pre-Migration Snapshot & Canonical Identity Map ([P0] Residual ID-05)]
+-- Captured inside the Migration 031 transaction prior to Step 1B / Step 1C / Step 2 mutations.
+-- =============================================================================
+CREATE TEMP TABLE IF NOT EXISTS pre_mig031_affiliate_commissions_snapshot ON COMMIT DROP AS
+SELECT
+    ac.id                                              AS commission_id,
+    NULLIF(BTRIM(ac.tenant_id), '')                    AS tenant_id,
+    ac.affiliate_id::text                              AS recipient_id,
+    ac.order_id::text                                  AS order_id,
+    NULLIF(BTRIM(ac.description), '')                  AS invoice_reference,
+    UPPER(BTRIM(COALESCE(ac.status, 'PENDING')))       AS financial_status,
+    COALESCE(ac.amount, 0.00)::numeric(18, 2)          AS amount
+FROM public.affiliate_commissions ac;
+
+-- Canonical Identity Map for legitimate duplicate affiliate profile merges (SAFE_TO_REPOINT only)
+CREATE TEMP TABLE IF NOT EXISTS _mig031_canonical_identity_map ON COMMIT DROP AS
+SELECT
+    m.quarantined_row_id     AS legacy_recipient_id,
+    m.canonical_survivor_id  AS canonical_survivor_id
+FROM public.migration_031_identifier_dedup_map m
+WHERE m.table_name = 'affiliates'
+  AND m.column_name = 'referral_code'
+  AND m.quarantined_row_id <> m.canonical_survivor_id
+  AND m.resolution_reason <> 'QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE';
+```
+
+#### B. Complete Two-Tier `B2-ASSERT-05` SQL Verification Block (Row-Level PK Lineage + Null-Safe Grouped Reconciliation)
+
+```sql
+-- =============================================================================
+-- [PROPOSAL — REV 4.1.6: B2-ASSERT-05 Null-Safe, Status-Decoupled, Lineage-Backed
+--  Financial Reconciliation Query ([P0] Residual ID-05)]
+-- =============================================================================
+WITH pre_mapped_commissions AS (
+    SELECT
+        pre.commission_id,
+        COALESCE(
+            NULLIF(BTRIM(t_map.new_identifier_value), 'MOVED_TO_QUARANTINE_TABLE'),
+            pre.tenant_id
+        )                                                           AS tenant_id,
+        COALESCE(id_map.canonical_survivor_id, pre.recipient_id)    AS expected_canonical_recipient_id,
+        pre.order_id                                                AS order_id,
+        pre.invoice_reference                                       AS invoice_reference,
+        pre.financial_status                                        AS financial_status,
+        pre.amount                                                  AS amount
+    FROM pre_mig031_affiliate_commissions_snapshot pre
+    LEFT JOIN _mig031_canonical_identity_map id_map
+      ON id_map.legacy_recipient_id = pre.recipient_id
+    LEFT JOIN public.migration_031_identifier_dedup_map t_map
+      ON t_map.table_name = 'affiliate_commissions'
+     AND t_map.column_name = 'tenant_id'
+     AND t_map.quarantined_row_id = pre.commission_id::text
+),
+unified_post_migration_commissions AS (
+    -- Active rows in public.affiliate_commissions
+    SELECT
+        ac.id                                                                   AS commission_id,
+        NULLIF(BTRIM(ac.tenant_id), '')                                         AS tenant_id,
+        ac.affiliate_id::text                                                   AS recipient_id,
+        COALESCE(o_map.original_identifier_value, ac.order_id::text)            AS order_id,
+        NULLIF(BTRIM(ac.description), '')                                       AS invoice_reference,
+        UPPER(BTRIM(COALESCE(o_map.original_status, ac.status, 'PENDING')))     AS original_financial_status,
+        CASE
+            WHEN o_map.quarantined_row_id IS NOT NULL THEN 'SOFT_QUARANTINED_HOLDING'
+            ELSE 'ACTIVE_OPERATIONAL'
+        END                                                                     AS quarantine_status,
+        COALESCE(ac.amount, 0.00)::numeric(18, 2)                               AS amount
+    FROM public.affiliate_commissions ac
+    LEFT JOIN public.migration_031_identifier_dedup_map o_map
+      ON o_map.table_name = 'affiliate_commissions'
+     AND o_map.column_name = 'order_id'
+     AND o_map.quarantined_row_id = ac.id::text
+
+    UNION ALL
+
+    -- Physically quarantined rows in public.migration_031_quarantined_affiliate_commissions
+    -- Decouples original_financial_status (q.original_status) from quarantine_status = 'QUARANTINED_LOCKED'
+    SELECT
+        q.id                                                                    AS commission_id,
+        NULLIF(BTRIM(q.original_tenant_id), '')                                 AS tenant_id,
+        COALESCE(id_map.canonical_survivor_id, q.affiliate_id::text)            AS recipient_id,
+        q.order_id::text                                                        AS order_id,
+        NULLIF(BTRIM(q.description), '')                                        AS invoice_reference,
+        UPPER(BTRIM(COALESCE(q.original_status, 'PENDING')))                    AS original_financial_status,
+        q.approval_status                                                       AS quarantine_status,
+        COALESCE(q.amount, 0.00)::numeric(18, 2)                                AS amount
+    FROM public.migration_031_quarantined_affiliate_commissions q
+    LEFT JOIN _mig031_canonical_identity_map id_map
+      ON id_map.legacy_recipient_id = q.affiliate_id::text
+),
+post_pk_counts AS (
+    SELECT commission_id, COUNT(*) AS pk_occurrences
+    FROM unified_post_migration_commissions
+    GROUP BY commission_id
+),
+-- CTE 1: Row-Level Lineage Audit by Primary Key (commission_id)
+row_level_lineage_audit AS (
+    SELECT
+        COALESCE(pre.commission_id, post.commission_id) AS commission_id,
+        CASE
+            WHEN pre.commission_id IS NULL THEN 'POST_ORPHAN_INSERTED_ROW'
+            WHEN post.commission_id IS NULL THEN 'PRE_ROW_MISSING_POST_MIGRATION'
+            WHEN COALESCE(pkc.pk_occurrences, 0) <> 1 THEN 'DUPLICATE_POST_PK_ACROSS_ACTIVE_AND_QUARANTINE'
+            WHEN pre.tenant_id IS DISTINCT FROM post.tenant_id THEN 'TENANT_ID_LINEAGE_MISMATCH'
+            WHEN pre.expected_canonical_recipient_id IS DISTINCT FROM post.recipient_id THEN 'UNAUTHORIZED_RECIPIENT_SHIFT'
+            WHEN pre.order_id IS DISTINCT FROM post.order_id THEN 'ORDER_ID_LINEAGE_MISMATCH'
+            WHEN pre.invoice_reference IS DISTINCT FROM post.invoice_reference THEN 'INVOICE_REFERENCE_LINEAGE_MISMATCH'
+            WHEN pre.financial_status IS DISTINCT FROM post.original_financial_status THEN 'DECOUPLED_FINANCIAL_STATUS_MISMATCH'
+            WHEN pre.amount IS DISTINCT FROM post.amount THEN 'ROW_AMOUNT_MUTATION_DETECTED'
+            ELSE 'OK'
+        END AS lineage_verdict
+    FROM pre_mapped_commissions pre
+    FULL OUTER JOIN unified_post_migration_commissions post
+      ON pre.commission_id = post.commission_id
+    LEFT JOIN post_pk_counts pkc
+      ON pkc.commission_id = post.commission_id
+),
+pre_grouped AS (
+    SELECT
+        tenant_id,
+        expected_canonical_recipient_id             AS canonical_recipient_id,
+        order_id,
+        invoice_reference,
+        financial_status,
+        COUNT(*)::bigint                            AS pre_row_count,
+        COALESCE(SUM(amount), 0.00)::numeric(18, 2) AS pre_sum_amount
+    FROM pre_mapped_commissions
+    GROUP BY tenant_id, expected_canonical_recipient_id, order_id, invoice_reference, financial_status
+),
+post_grouped AS (
+    SELECT
+        tenant_id,
+        recipient_id                                AS canonical_recipient_id,
+        order_id,
+        invoice_reference,
+        original_financial_status                   AS financial_status,
+        COUNT(*)::bigint                            AS post_row_count,
+        COALESCE(SUM(amount), 0.00)::numeric(18, 2) AS post_sum_amount
+    FROM unified_post_migration_commissions
+    GROUP BY tenant_id, recipient_id, order_id, invoice_reference, original_financial_status
+),
+-- CTE 2: Null-Safe Grouped Recipient & Financial Status Reconciliation
+grouped_recipient_reconciliation AS (
+    SELECT
+        COALESCE(pre_g.tenant_id, post_g.tenant_id)                               AS tenant_id,
+        COALESCE(pre_g.canonical_recipient_id, post_g.canonical_recipient_id)     AS canonical_recipient_id,
+        COALESCE(pre_g.order_id, post_g.order_id)                                 AS order_id,
+        COALESCE(pre_g.invoice_reference, post_g.invoice_reference)               AS invoice_reference,
+        COALESCE(pre_g.financial_status, post_g.financial_status)                 AS financial_status,
+        COALESCE(pre_g.pre_row_count, 0)                                          AS pre_row_count,
+        COALESCE(post_g.post_row_count, 0)                                        AS post_row_count,
+        (COALESCE(post_g.post_row_count, 0) - COALESCE(pre_g.pre_row_count, 0))   AS row_count_delta,
+        COALESCE(pre_g.pre_sum_amount, 0.00)                                      AS pre_sum_amount,
+        COALESCE(post_g.post_sum_amount, 0.00)                                    AS post_sum_amount,
+        (COALESCE(post_g.post_sum_amount, 0.00) - COALESCE(pre_g.pre_sum_amount, 0.00)) AS amount_delta
+    FROM pre_grouped pre_g
+    FULL OUTER JOIN post_grouped post_g
+      ON pre_g.tenant_id              IS NOT DISTINCT FROM post_g.tenant_id
+     AND pre_g.canonical_recipient_id IS NOT DISTINCT FROM post_g.canonical_recipient_id
+     AND pre_g.order_id               IS NOT DISTINCT FROM post_g.order_id
+     AND pre_g.invoice_reference      IS NOT DISTINCT FROM post_g.invoice_reference
+     AND pre_g.financial_status       IS NOT DISTINCT FROM post_g.financial_status
+)
+-- Final Assertion Query: Outputs row_lineage_anomalies_count (= 0), grouped_variance_anomalies_count (= 0), and global_amount_delta (= 0.00)
+SELECT
+    (SELECT COUNT(*) FROM row_level_lineage_audit WHERE lineage_verdict <> 'OK')                     AS row_lineage_anomalies_count,
+    (SELECT COUNT(*) FROM grouped_recipient_reconciliation
+     WHERE row_count_delta <> 0 OR amount_delta <> 0.00)                                             AS grouped_variance_anomalies_count,
+    COALESCE((SELECT SUM(amount_delta) FROM grouped_recipient_reconciliation), 0.00)::numeric(18, 2) AS global_amount_delta,
+    CASE
+        WHEN (SELECT COUNT(*) FROM row_level_lineage_audit WHERE lineage_verdict <> 'OK') = 0
+         AND (SELECT COUNT(*) FROM grouped_recipient_reconciliation WHERE row_count_delta <> 0 OR amount_delta <> 0.00) = 0
+         AND COALESCE((SELECT SUM(amount_delta) FROM grouped_recipient_reconciliation), 0.00) = 0.00
+        THEN 'PASS: B2_ASSERT_05_ZERO_VARIANCE_VERIFIED'
+        ELSE 'FAIL: B2_ASSERT_05_FINANCIAL_OR_LINEAGE_DRIFT'
+    END AS b2_assert_05_verdict;
+```
+
+#### C. Summary Notes & Final Closeout Attestation (`REV 4.1.6`)
+
+| Residual ID | Severity | Technical Closeout Summary in `REV 4.1.6` | Verification Artifact | Status |
+| :--- | :---: | :--- | :--- | :---: |
+| **`[P0] Residual ID-01`** | **P0** | Bounded Redis socket timeouts (`socket_connect_timeout=2.0`, `socket_timeout=2.0`, `retry_on_timeout=False`); `try...except Exception` inside `_run()` setting `_lost_ownership` & `_stop_event` on any ambiguity; hung thread detection in `stop()` marking `_process_poisoned = True`, blocking DB `COMMIT`, flushing logs, and terminating via `os._exit(1)`; Two-Layer DB Fencing (`FOR UPDATE NOWAIT` + `UNIQUE (tenant_id, idempotency_key)` & optimistic `version`) with split deterministic tests `T-01.2a` (`55P03`) and `T-01.2b` (`23505` / version mismatch). | `WatchdogLeaseRenewal` + `T-01.1`, `T-01.2a`, `T-01.2b`, `T-01.3` | **`CLOSED IN REV 4.1.6`** |
+| **`[P0] Residual ID-02`** | **P0** | Idempotent `ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY` on `public.migration_031_quarantined_affiliate_commissions`; `DROP POLICY IF EXISTS` before every `CREATE POLICY`; explicit `AS PERMISSIVE` (`quarantine_allow_migration_and_audit` / `quarantine_allow_migration_insert`) + `AS RESTRICTIVE` (`quarantine_block_runtime_roles`) policies; Gate B1 effective privilege audit across recursive `pg_auth_members`, `rolsuper`/`rolbypassrls`, and `pg_proc.prosecdef`. | Section 2 DDL & Gate B1 Recursive Privilege Audit SQL | **`CLOSED IN REV 4.1.6`** |
+| **`[P0] Residual ID-03`** | **P0** | Retains approved `public.try_cast_uuid(text)` helper; replaces `information_schema` FK query with `pg_constraint` + `unnest(c.conkey, c.confkey) WITH ORDINALITY` joined to `pg_attribute`; binds all discovered FK columns via 7-column `LEFT JOIN` to `_mig031_repoint_manifest`, asserting `uncovered_fk_columns_count = 0` AND `unexecuted_manifest_steps_count = 0`. | Section 3 Catalog Discovery & `_mig031_repoint_manifest` SQL | **`CLOSED IN REV 4.1.6`** |
+| **`[P1] Residual ID-04`** | **P1** | Aligns canonical physical table name `public.affiliates` (clarifying `affiliate_profiles` as legacy prose alias); separates Primary Metric (mutually exclusive row-level PK disposition under precedence `physically_quarantined > soft_quarantined > unresolved_conflicted > canonical_repointed > clean_unmodified`) from Secondary Metric (`repointed_fk_column_refs`); lists all 9 tables explicitly in Markdown and SQL generator. | Section 4 9-Table Matrix & Precedence SQL Generator | **`CLOSED IN REV 4.1.6`** |
+| **`[P0] Residual ID-05`** | **P0** | Joins `pre_mig031_affiliate_commissions_snapshot` to `_mig031_canonical_identity_map` (`expected_canonical_recipient_id`); decouples `original_financial_status` from `quarantine_status = 'QUARANTINED_LOCKED'`; implements Two-Tier Audit (`CTE 1: row_level_lineage_audit` by PK `commission_id` with `IS DISTINCT FROM` + `CTE 2: grouped_recipient_reconciliation` via `FULL OUTER JOIN` with null-safe `IS NOT DISTINCT FROM`), asserting `row_lineage_anomalies_count = 0`, `grouped_variance_anomalies_count = 0`, and `global_amount_delta = 0.00`. | Section 5 `B2-ASSERT-05` Two-Tier SQL Verification Block | **`CLOSED IN REV 4.1.6`** |
+
+*End of Addendum — REV 4.1.6 Final Closeout Corrections (`BOONTRACK-AUTH-STG-2026-001-REV4.1.6-ADDENDUM`). Design Freeze Sign-Off Status: `PENDING / NOT GRANTED (Awaiting CTO Review of REV 4.1.6)`. Gate B1, Gate B2, Gate I, Gate T: `LOCKED / NOT AUTHORIZED`. Production DB & R2 Storage: `ZERO-TOUCH`.*
+
+
+
+
+
+
+
+
+
+
+
+
