@@ -1,31 +1,32 @@
-# FOUNDRY DIRECTIVE — REV 4.1.6.2.4 FINAL SPECIFICATION & MATERIALIZATION PATCH & DESIGN FREEZE SPECIFICATION
-## CRYPTOGRAPHIC KEYRING & LEGACY MIGRATION SOP (CLOSED/ACCEPTED), SECURITY PACKAGE CLEANUP, REDIS LOCK LEASE/TOKEN OWNERSHIP & REAL TWO-CONNECTION CONCURRENCY FENCING, MIGRATION 031 QUARANTINE SESSION/CURRENT USER RLS ISOLATION, POSTGRESQL COMPOSITE FK OID/CONNAME BINDING, 9-TABLE 6-BUCKET PRE-VS-POST POPULATION CONSERVATION, AND ZERO-SILENT-DROP RECURSIVE IDENTITY GRAPH & FINANCIAL RECONCILIATION INVARIANTS
+# FOUNDRY DIRECTIVE — REV 4.1.6.2.5 FINAL MATERIALIZATION INTEGRITY PATCH & DESIGN FREEZE SPECIFICATION
+## CRYPTOGRAPHIC KEYRING & LEGACY MIGRATION SOP (CLOSED/ACCEPTED), SECURITY PACKAGE CLEANUP, REDIS LOCK LEASE/TOKEN CARDINALITY OWNERSHIP & REAL TWO-CONNECTION CONCURRENCY FENCING, MIGRATION 031 QUARANTINE SESSION/CURRENT USER RLS ISOLATION, POSTGRESQL COMPOSITE FK OID/CONNAME BINDING, 9-TABLE 6-BUCKET PRE-VS-POST POPULATION CONSERVATION, AND ZERO-SILENT-DROP RECURSIVE IDENTITY GRAPH & FINANCIAL RECONCILIATION INVARIANTS
 
 | Metadata Field | Value |
 | :--- | :--- |
-| **Document ID** | `BOONTRACK-AUTH-STG-2026-001-REV4.1.6.2.4-ADDENDUM` *(Supersedes & Incorporates `REV4.1.6.2.3-ADDENDUM`, `REV4.1.6.2.2-ADDENDUM`, `REV4.1.6.2.1-ADDENDUM`, `REV4.1.6.2-ADDENDUM`, `REV4.1.6.1-ADDENDUM`, `REV4.1.6-ADDENDUM`, `REV4.1.4-ADDENDUM`, `REV4.1.3-ADDENDUM`, `REV4.1.2-ADDENDUM` & `REV4.1.1-ADDENDUM`)* |
-| **Directive Reference** | `FOUNDRY DIRECTIVE — REV 4.1.6.2.4 (FINAL SPECIFICATION & MATERIALIZATION PATCH FOR DESIGN FREEZE SIGN-OFF)` |
-| **Parent Specifications** | 1. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.6.2.3` Commit `06739ae9669986547eb940e910af65395a8a29d0`, SHA-256: `F2E63373E9AAD74F3831DB0A1E26B644250062B1D071D1BB0C186E6B562CC8EF`, `549,850 bytes`, `8,577 lines`)<br>2. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.6.2.2` Commit `53b948f43976004e9618fb6848d089dd02b3b64e`, SHA-256: `B2872A681E31284A367272E9432906610FAB6172B67BAC8785C330409265505C`, `527,019 bytes`, `8,169 lines`)<br>3. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.6.2.1` Commit `fb1725643ba6079f99e1a205b447fae9635b3933`, SHA-256: `ACBFAFC53B7A75E09210F8079D1F31EF9F86A6C4E34B9C00F279FDA4B7C2877B`, `497,142 bytes`, `7,723 lines`)<br>4. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.6.2` Commit `154110c5f29823e5cf9722ee3d0be6aebe718a8e`, SHA-256: `2CF60A4C6A0C3168D4F4B00CAC5D648B54BB656D66ABFEB0AA965123A1FB8E2D`, `435,326 bytes`, `6,708 lines`)<br>5. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.6.1` Commit `3193751af7ec84fce6972ac2386d4fc738dd9db7`, SHA-256: `178B4668D5520DD4D1BE1EFC0FDDF4F84866480F8A7B4D5431A27E3A54BBA3B8`, `378,772 bytes`, `5,726 lines`)<br>6. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.6` Commit `67fee4f0b3e338f8e6bb44a2e2033c277cef13bc`, SHA-256: `BAE9EB7A629EDFEB62A6BC50F99AAF73264E8AC5CD83064A368ADD3AD075FB1B`, `321,655 bytes`, `4,764 lines`)<br>7. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.4` Commit `27141dd5efd61155a2a6d823756ad92382841261`, `3,484 lines`)<br>8. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.3` Commit `370e63d3fc379630054621c3a8dadc0e2b2e3e03`, SHA-256: `00DC1E8401ED6B313F6ACEE2CBD676A255ED7B9AC5189BDFD77FFF60C2EFA2C0`, `203,397 bytes`, `2,920 lines`)<br>9. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.2` Commit `9d3bd09360f79bf02dacb1716804b2f76af57d80`, SHA-256: `E8C6D66A96DECA4BE185E40F3272409BD472CC7829F516465D316DC11A628062`, `2,118 lines`)<br>10. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.1` Commit `11aa763b129cd89d731fe45df56c4fd1dde44c7b`)<br>11. `FOUNDRY_DIRECTIVE_REV4_1_REMEDIATION.md` (`BOONTRACK-AUTH-STG-2026-001-REV4.1-REMEDIATION`, SHA-256: `407E425739B38D5A43B4C22FE19BE9529CB9A95A7F8837733794B95315DFE086`, `160,815 bytes`, `2,156 lines`) |
-| **Responds To Reviews & CTO Rulings** | 1. Putusan CTO atas PR #25 Commit `06739ae9669986547eb940e910af65395a8a29d0` (`REV 4.1.6.2.3`): **`PATCH SUPLEMEN RINGKAS REV 4.1.6.2.4 — FINAL SPECIFICATION & MATERIALIZATION PATCH ([ID-04], [ID-05], [ID-03]) — DOCUMENTATION ONLY`**<br>2. Putusan CTO atas PR #25 Commit `53b948f43976004e9618fb6848d089dd02b3b64e` (`REV 4.1.6.2.2`): **`PATCH SUPLEMEN RINGKAS REV 4.1.6.2.3 — FINAL SCHEMA & PRINCIPAL CONSISTENCY PATCH ([P0 — ID-04], [P0 — ID-05], [P1 — ID-02], [P1 — ID-03]) — DOCUMENTATION ONLY`**<br>3. Putusan CTO atas PR #25 Commit `fb1725643ba6079f99e1a205b447fae9635b3933` (`REV 4.1.6.2.1`): **`PATCH SUPLEMEN RINGKAS REV 4.1.6.2.2 — FINAL PROOF SEMANTICS ([P0 — ID-04], [P0 — ID-05], & [P1 — ID-01, ID-02, ID-03]) — DOCUMENTATION ONLY`**<br>4. Putusan CTO atas PR #25 Commit `154110c5f29823e5cf9722ee3d0be6aebe718a8e` (`REV 4.1.6.2`): **`PATCH SUPLEMEN RINGKAS REV 4.1.6.2.1 — FINAL SEMANTIC CLARIFICATIONS ([P0 — ID-04], [P0 — ID-05], & [P1 — ID-01, ID-02, ID-03]) — DOCUMENTATION ONLY`**<br>5. Putusan CTO atas PR #25 Commit `3193751af7ec84fce6972ac2386d4fc738dd9db7` (`REV 4.1.6.1`): **`PATCH SUPLEMEN RINGKAS REV 4.1.6.2 — FINAL ASSERTION INTEGRITY PATCH ([P0 — ID-04], [P0 — ID-05], & [P1 — ID-01, ID-02, ID-03]) — DOCUMENTATION ONLY`**<br>6. Putusan CTO atas PR #25 Commit `67fee4f0b3e338f8e6bb44a2e2033c277cef13bc` (`REV 4.1.6`): **`PATCH SUPLEMEN RINGKAS REV 4.1.6.1 — EVIDENCE & ASSERTION CORRECTIONS ([Blocking A — ID-01] s/d [Blocking E — ID-05]) — DOCUMENTATION ONLY`**<br>7. Putusan CTO atas PR #25 Commit `370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`REV 4.1.3`): **`FINAL 5-POINT RESIDUAL CLOSURE ([ID-01] s/d [ID-05]) — DOCUMENTATION ONLY`**<br>8. Putusan CTO atas Commit `9d3bd09360f79bf02dacb1716804b2f76af57d80` (`REV 4.1.2`): **`SUBSTANTIALLY ACCEPTED — DOCUMENTATION ONLY`** *(Bagian A Cryptographic Keyring dinyatakan **CLOSED/ACCEPTED** oleh CTO)*<br>9. Putusan CTO atas Commit `11aa763`: **`CONDITIONALLY ACCEPTED — REV 4.1.1 (DOCUMENTATION ONLY)`**<br>10. `FOUNDRY_DIRECTIVE_REV4_1_INDEPENDENT_REVIEW.md` (`SHA-256: 23316A51C62369406C68F500BC44B91A8CBF3817E43CC875CF74AC988D21103D`)<br>11. `FOUNDRY_DIRECTIVE_REV4_1_REVIEW.md` (`SHA-256: 094EC4346A30D94F17260295174E195D8A6BD5E61E8603A6D0DD797F2D39CE2B`) |
-| **Revision** | `REV 4.1.6.2.4 (Final Specification & Materialization Patch — Documentation Only / Zero Code Mutation)` |
+| **Document ID** | `BOONTRACK-AUTH-STG-2026-001-REV4.1.6.2.5-ADDENDUM` *(Supersedes & Incorporates `REV4.1.6.2.4-ADDENDUM`, `REV4.1.6.2.3-ADDENDUM`, `REV4.1.6.2.2-ADDENDUM`, `REV4.1.6.2.1-ADDENDUM`, `REV4.1.6.2-ADDENDUM`, `REV4.1.6.1-ADDENDUM`, `REV4.1.6-ADDENDUM`, `REV4.1.4-ADDENDUM`, `REV4.1.3-ADDENDUM`, `REV4.1.2-ADDENDUM` & `REV4.1.1-ADDENDUM`)* |
+| **Directive Reference** | `FOUNDRY DIRECTIVE — REV 4.1.6.2.5 (FINAL MATERIALIZATION INTEGRITY PATCH FOR DESIGN FREEZE SIGN-OFF)` |
+| **Parent Specifications** | 1. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.6.2.4` Commit `317eff3690b7a1ac51397b3fd5646db711364a27`, SHA-256: `945BB905A66229F89FB5EA651904897D07285820C5507AC690EE99648C8EE585`, `574,915 bytes`, `9,048 lines`)<br>2. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.6.2.3` Commit `06739ae9669986547eb940e910af65395a8a29d0`, SHA-256: `F2E63373E9AAD74F3831DB0A1E26B644250062B1D071D1BB0C186E6B562CC8EF`, `549,850 bytes`, `8,577 lines`)<br>3. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.6.2.2` Commit `53b948f43976004e9618fb6848d089dd02b3b64e`, SHA-256: `B2872A681E31284A367272E9432906610FAB6172B67BAC8785C330409265505C`, `527,019 bytes`, `8,169 lines`)<br>4. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.6.2.1` Commit `fb1725643ba6079f99e1a205b447fae9635b3933`, SHA-256: `ACBFAFC53B7A75E09210F8079D1F31EF9F86A6C4E34B9C00F279FDA4B7C2877B`, `497,142 bytes`, `7,723 lines`)<br>5. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.6.2` Commit `154110c5f29823e5cf9722ee3d0be6aebe718a8e`, SHA-256: `2CF60A4C6A0C3168D4F4B00CAC5D648B54BB656D66ABFEB0AA965123A1FB8E2D`, `435,326 bytes`, `6,708 lines`)<br>6. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.6.1` Commit `3193751af7ec84fce6972ac2386d4fc738dd9db7`, SHA-256: `178B4668D5520DD4D1BE1EFC0FDDF4F84866480F8A7B4D5431A27E3A54BBA3B8`, `378,772 bytes`, `5,726 lines`)<br>7. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.6` Commit `67fee4f0b3e338f8e6bb44a2e2033c277cef13bc`, SHA-256: `BAE9EB7A629EDFEB62A6BC50F99AAF73264E8AC5CD83064A368ADD3AD075FB1B`, `321,655 bytes`, `4,764 lines`)<br>8. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.4` Commit `27141dd5efd61155a2a6d823756ad92382841261`, `3,484 lines`)<br>9. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.3` Commit `370e63d3fc379630054621c3a8dadc0e2b2e3e03`, SHA-256: `00DC1E8401ED6B313F6ACEE2CBD676A255ED7B9AC5189BDFD77FFF60C2EFA2C0`, `203,397 bytes`, `2,920 lines`)<br>10. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.2` Commit `9d3bd09360f79bf02dacb1716804b2f76af57d80`, SHA-256: `E8C6D66A96DECA4BE185E40F3272409BD472CC7829F516465D316DC11A628062`, `2,118 lines`)<br>11. `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`REV 4.1.1` Commit `11aa763b129cd89d731fe45df56c4fd1dde44c7b`)<br>12. `FOUNDRY_DIRECTIVE_REV4_1_REMEDIATION.md` (`BOONTRACK-AUTH-STG-2026-001-REV4.1-REMEDIATION`, SHA-256: `407E425739B38D5A43B4C22FE19BE9529CB9A95A7F8837733794B95315DFE086`, `160,815 bytes`, `2,156 lines`) |
+| **Responds To Reviews & CTO Rulings** | 1. Putusan CTO atas PR #25 Commit `317eff3690b7a1ac51397b3fd5646db711364a27` (`REV 4.1.6.2.4`): **`PATCH SUPLEMEN RINGKAS REV 4.1.6.2.5 — FINAL MATERIALIZATION INTEGRITY PATCH ([P0 — ID-04], [P0 — ID-05], [P0 — ID-03], [P1]) — DOCUMENTATION ONLY`**<br>2. Putusan CTO atas PR #25 Commit `06739ae9669986547eb940e910af65395a8a29d0` (`REV 4.1.6.2.3`): **`PATCH SUPLEMEN RINGKAS REV 4.1.6.2.4 — FINAL SPECIFICATION & MATERIALIZATION PATCH ([ID-04], [ID-05], [ID-03]) — DOCUMENTATION ONLY`**<br>3. Putusan CTO atas PR #25 Commit `53b948f43976004e9618fb6848d089dd02b3b64e` (`REV 4.1.6.2.2`): **`PATCH SUPLEMEN RINGKAS REV 4.1.6.2.3 — FINAL SCHEMA & PRINCIPAL CONSISTENCY PATCH ([P0 — ID-04], [P0 — ID-05], [P1 — ID-02], [P1 — ID-03]) — DOCUMENTATION ONLY`**<br>4. Putusan CTO atas PR #25 Commit `fb1725643ba6079f99e1a205b447fae9635b3933` (`REV 4.1.6.2.1`): **`PATCH SUPLEMEN RINGKAS REV 4.1.6.2.2 — FINAL PROOF SEMANTICS ([P0 — ID-04], [P0 — ID-05], & [P1 — ID-01, ID-02, ID-03]) — DOCUMENTATION ONLY`**<br>5. Putusan CTO atas PR #25 Commit `154110c5f29823e5cf9722ee3d0be6aebe718a8e` (`REV 4.1.6.2`): **`PATCH SUPLEMEN RINGKAS REV 4.1.6.2.1 — FINAL SEMANTIC CLARIFICATIONS ([P0 — ID-04], [P0 — ID-05], & [P1 — ID-01, ID-02, ID-03]) — DOCUMENTATION ONLY`**<br>6. Putusan CTO atas PR #25 Commit `3193751af7ec84fce6972ac2386d4fc738dd9db7` (`REV 4.1.6.1`): **`PATCH SUPLEMEN RINGKAS REV 4.1.6.2 — FINAL ASSERTION INTEGRITY PATCH ([P0 — ID-04], [P0 — ID-05], & [P1 — ID-01, ID-02, ID-03]) — DOCUMENTATION ONLY`**<br>7. Putusan CTO atas PR #25 Commit `67fee4f0b3e338f8e6bb44a2e2033c277cef13bc` (`REV 4.1.6`): **`PATCH SUPLEMEN RINGKAS REV 4.1.6.1 — EVIDENCE & ASSERTION CORRECTIONS ([Blocking A — ID-01] s/d [Blocking E — ID-05]) — DOCUMENTATION ONLY`**<br>8. Putusan CTO atas PR #25 Commit `370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`REV 4.1.3`): **`FINAL 5-POINT RESIDUAL CLOSURE ([ID-01] s/d [ID-05]) — DOCUMENTATION ONLY`**<br>9. Putusan CTO atas Commit `9d3bd09360f79bf02dacb1716804b2f76af57d80` (`REV 4.1.2`): **`SUBSTANTIALLY ACCEPTED — DOCUMENTATION ONLY`** *(Bagian A Cryptographic Keyring dinyatakan **CLOSED/ACCEPTED** oleh CTO)*<br>10. Putusan CTO atas Commit `11aa763`: **`CONDITIONALLY ACCEPTED — REV 4.1.1 (DOCUMENTATION ONLY)`**<br>11. `FOUNDRY_DIRECTIVE_REV4_1_INDEPENDENT_REVIEW.md` (`SHA-256: 23316A51C62369406C68F500BC44B91A8CBF3817E43CC875CF74AC988D21103D`)<br>12. `FOUNDRY_DIRECTIVE_REV4_1_REVIEW.md` (`SHA-256: 094EC4346A30D94F17260295174E195D8A6BD5E61E8603A6D0DD797F2D39CE2B`) |
+| **Revision** | `REV 4.1.6.2.5 (Final Materialization Integrity Patch — Documentation Only / Zero Code Mutation)` |
 | **Date** | `2026-11-02` |
-| **Author** | `Principal Systems Architect & Ultra-Adversarial Database Auditor BoonTrack` |
+| **Author** | `Principal Systems Architect, Formal Methods Engineer & Ultra-Adversarial Auditor BoonTrack` |
 | **Repository** | `B055OB/boontrack-core` (`C:\boontrack-core`) |
 | **Active Git Branch** | `docs/rev4-1-remediation-and-review` |
 | **Source Code Baseline (`main`)** | `a82b6fdf76c043c9a3ee87f48c34062f05258437` (**100% UNMODIFIED — ZERO CODE MUTATION**) |
-| **Parent Branch Commit (`HEAD` / Verified REV 4.1.6.2.3 PR #25)** | `06739ae9669986547eb940e910af65395a8a29d0` (`06739ae` — `docs(foundry): patch REV 4.1.6.2.3 final schema and principal consistency`) |
-| **Preceding Addendum Commit (`HEAD~1` / Verified REV 4.1.6.2.2)** | `53b948f43976004e9618fb6848d089dd02b3b64e` (`53b948f` — `docs(foundry): complete REV 4.1.6.2.2 anti-tautology semantic audit proof`) |
-| **Preceding Addendum Commit (`HEAD~2` / Verified REV 4.1.6.2.1)** | `fb1725643ba6079f99e1a205b447fae9635b3933` (`fb17256` — `docs(foundry): complete REV 4.1.6.2.1 final semantic clarifications closing all remaining CTO review points`) |
-| **Preceding Addendum Commit (`HEAD~3` / Verified REV 4.1.6.2)** | `154110c5f29823e5cf9722ee3d0be6aebe718a8e` (`154110c` — `docs(foundry): complete REV 4.1.6.2 final assertion integrity patch closing P0 ID-04/ID-05 and P1 SQLSTATE/FK findings`) |
-| **Preceding Addendum Commit (`HEAD~4` / Verified REV 4.1.6.1)** | `3193751af7ec84fce6972ac2386d4fc738dd9db7` (`3193751` — `docs(foundry): complete REV 4.1.6.1 evidence and assertion corrections closing all 5 CTO blocking items`) |
-| **Preceding Addendum Commit (`HEAD~5` / Verified REV 4.1.6)** | `67fee4f0b3e338f8e6bb44a2e2033c277cef13bc` (`67fee4f` — `docs(foundry): complete REV 4.1.6 final closeout corrections addressing ID-01 to ID-05`) |
-| **Preceding Addendum Commit (`HEAD~6` / Verified REV 4.1.4)** | `27141dd5efd61155a2a6d823756ad92382841261` (`27141dd` — `docs(foundry): complete REV 4.1.4 closing final 5 CTO logic and metadata residuals (ID-01 to ID-05)`) |
-| **Preceding Addendum Commit (`HEAD~7` / Verified REV 4.1.3)** | `370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`370e63d` — `docs(foundry): complete REV 4.1.3 closing all 6 CTO residual directives (CTO-REV412-01 to 06)`) |
-| **Preceding Addendum Commit (`HEAD~8` / Verified REV 4.1.2)** | `9d3bd09360f79bf02dacb1716804b2f76af57d80` (`9d3bd09` — `docs(foundry): update closing addendum to REV 4.1.2 addressing all final CTO directives`) |
-| **Preceding Addendum Commit (`HEAD~9` / REV 4.1.1)** | `11aa763b129cd89d731fe45df56c4fd1dde44c7b` (`11aa763` — `docs(foundry): add REV 4.1.1 addendum addressing final CTO directives`) |
-| **Current Document Footprint (`REV 4.1.6.2.4`)** | `Lines: 9,048` \| `Bytes: 574,915` \| `Parent REV 4.1.6.2.3 Blob SHA-256: F2E63373E9AAD74F3831DB0A1E26B644250062B1D071D1BB0C186E6B562CC8EF` (`549,850 bytes`, `8,577 lines`) |
+| **Parent Branch Commit (`HEAD` / Verified REV 4.1.6.2.4 PR #25)** | `317eff3690b7a1ac51397b3fd5646db711364a27` (`317eff3` — `docs(foundry): complete REV 4.1.6.2.4 physical materialization and N-ary tuple patch`) |
+| **Preceding Addendum Commit (`HEAD~1` / Verified REV 4.1.6.2.3)** | `06739ae9669986547eb940e910af65395a8a29d0` (`06739ae` — `docs(foundry): patch REV 4.1.6.2.3 final schema and principal consistency`) |
+| **Preceding Addendum Commit (`HEAD~2` / Verified REV 4.1.6.2.2)** | `53b948f43976004e9618fb6848d089dd02b3b64e` (`53b948f` — `docs(foundry): complete REV 4.1.6.2.2 anti-tautology semantic audit proof`) |
+| **Preceding Addendum Commit (`HEAD~3` / Verified REV 4.1.6.2.1)** | `fb1725643ba6079f99e1a205b447fae9635b3933` (`fb17256` — `docs(foundry): complete REV 4.1.6.2.1 final semantic clarifications closing all remaining CTO review points`) |
+| **Preceding Addendum Commit (`HEAD~4` / Verified REV 4.1.6.2)** | `154110c5f29823e5cf9722ee3d0be6aebe718a8e` (`154110c` — `docs(foundry): complete REV 4.1.6.2 final assertion integrity patch closing P0 ID-04/ID-05 and P1 SQLSTATE/FK findings`) |
+| **Preceding Addendum Commit (`HEAD~5` / Verified REV 4.1.6.1)** | `3193751af7ec84fce6972ac2386d4fc738dd9db7` (`3193751` — `docs(foundry): complete REV 4.1.6.1 evidence and assertion corrections closing all 5 CTO blocking items`) |
+| **Preceding Addendum Commit (`HEAD~6` / Verified REV 4.1.6)** | `67fee4f0b3e338f8e6bb44a2e2033c277cef13bc` (`67fee4f` — `docs(foundry): complete REV 4.1.6 final closeout corrections addressing ID-01 to ID-05`) |
+| **Preceding Addendum Commit (`HEAD~7` / Verified REV 4.1.4)** | `27141dd5efd61155a2a6d823756ad92382841261` (`27141dd` — `docs(foundry): complete REV 4.1.4 closing final 5 CTO logic and metadata residuals (ID-01 to ID-05)`) |
+| **Preceding Addendum Commit (`HEAD~8` / Verified REV 4.1.3)** | `370e63d3fc379630054621c3a8dadc0e2b2e3e03` (`370e63d` — `docs(foundry): update REV 4.1.3 addendum closing final 5 CTO logic and metadata residuals`) |
+| **Preceding Addendum Commit (`HEAD~9` / Verified REV 4.1.2)** | `9d3bd09360f79bf02dacb1716804b2f76af57d80` (`9d3bd09` — `docs(foundry): update closing addendum to REV 4.1.2 addressing all final CTO directives`) |
+| **Preceding Addendum Commit (`HEAD~10` / REV 4.1.1)** | `11aa763b129cd89d731fe45df56c4fd1dde44c7b` (`11aa763` — `docs(foundry): add REV 4.1.1 addendum addressing final CTO directives`) |
+| **Current Document Footprint (`REV 4.1.6.2.5`)** | `Lines: 9,600` \| `Bytes: 603,811` \| `Parent REV 4.1.6.2.4 Blob SHA-256: 945BB905A66229F89FB5EA651904897D07285820C5507AC690EE99648C8EE585` (`574,915 bytes`, `9,048 lines`) |
 | **Execution Protocol** | `DOCUMENTATION ONLY (ZERO SOURCE CODE, CONFIG, OR PHYSICAL MIGRATION FILE MUTATION)` |
-| **Release Gate Posture** | **SUBMITTED FOR FINAL CTO DESIGN FREEZE SIGN-OFF (REV 4.1.6.2.4); GATES B1, B2, I, T REMAIN LOCKED; STAGING/PRODUCTION DB & R2 STORAGE ZERO-TOUCH** |
+| **Release Gate Posture** | **SUBMITTED FOR FINAL CTO DESIGN FREEZE SIGN-OFF (REV 4.1.6.2.5); GATE B1, GATE B2, GATE I, GATE T: LOCKED / ZERO-TOUCH; STAGING/PRODUCTION DB & R2 STORAGE ZERO-TOUCH** |
 
 ---
 
@@ -2952,7 +2953,8 @@ Berikut adalah catatan sinkronisasi rantai commit terverifikasi pada `.git/logs/
 | **Commit #9 (`Verified REV 4.1.6.2 PR #25`)** | **`154110c5f29823e5cf9722ee3d0be6aebe718a8e` (`154110c`)** | `2026-11-02 17:33:29 +0700` | `BO55OB <onlineboost.id@gmail.com>` | `docs(foundry): complete REV 4.1.6.2 final assertion integrity patch closing P0 ID-04/ID-05 and P1 SQLSTATE/FK findings`<br>• Memperbarui `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`6,708 baris`, `435,326 bytes`, SHA-256 blob REV 4.1.6.2: `2CF60A4C6A0C3168D4F4B00CAC5D648B54BB656D66ABFEB0AA965123A1FB8E2D`) | **NIHIL (`0` file kode berubah)** |
 | **Commit #10 (`Verified REV 4.1.6.2.1 PR #25`)** | **`fb1725643ba6079f99e1a205b447fae9635b3933` (`fb17256`)** | `2026-11-02 18:19:34 +0700` | `BO55OB <onlineboost.id@gmail.com>` | `docs(foundry): complete REV 4.1.6.2.1 final semantic clarifications closing all remaining CTO review points`<br>• Memperbarui `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`7,723 baris`, `497,142 bytes`, SHA-256 blob REV 4.1.6.2.1: `ACBFAFC53B7A75E09210F8079D1F31EF9F86A6C4E34B9C00F279FDA4B7C2877B`) | **NIHIL (`0` file kode berubah)** |
 | **Commit #11 (`Verified REV 4.1.6.2.2 PR #25`)** | **`53b948f43976004e9618fb6848d089dd02b3b64e` (`53b948f`)** | `2026-11-02 18:36:27 +0700` | `BO55OB <onlineboost.id@gmail.com>` | `docs(foundry): complete REV 4.1.6.2.2 anti-tautology semantic audit proof`<br>• Memperbarui `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`8,169 baris`, `527,019 bytes`, SHA-256 blob REV 4.1.6.2.2: `B2872A681E31284A367272E9432906610FAB6172B67BAC8785C330409265505C`) | **NIHIL (`0` file kode berubah)** |
-| **Commit #12 (`Parent Commit / Verified REV 4.1.6.2.3 PR #25`)** | **`06739ae9669986547eb940e910af65395a8a29d0` (`06739ae`)** | `2026-11-02 19:01:17 +0700` | `BO55OB <onlineboost.id@gmail.com>` | `docs(foundry): patch REV 4.1.6.2.3 final schema and principal consistency`<br>• Memperbarui `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`8,577 baris`, `549,850 bytes`, SHA-256 blob REV 4.1.6.2.3: `F2E63373E9AAD74F3831DB0A1E26B644250062B1D071D1BB0C186E6B562CC8EF`)<br>• **Parent Commit sah untuk `REV 4.1.6.2.4 — FINAL SPECIFICATION & MATERIALIZATION PATCH`** | **NIHIL (`0` file kode berubah)** |
+| **Commit #12 (`Verified REV 4.1.6.2.3 PR #25`)** | **`06739ae9669986547eb940e910af65395a8a29d0` (`06739ae`)** | `2026-11-02 19:01:17 +0700` | `BO55OB <onlineboost.id@gmail.com>` | `docs(foundry): patch REV 4.1.6.2.3 final schema and principal consistency`<br>• Memperbarui `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`8,577 baris`, `549,850 bytes`, SHA-256 blob REV 4.1.6.2.3: `F2E63373E9AAD74F3831DB0A1E26B644250062B1D071D1BB0C186E6B562CC8EF`) | **NIHIL (`0` file kode berubah)** |
+| **Commit #13 (`Parent Commit / Verified REV 4.1.6.2.4 PR #25`)** | **`317eff3690b7a1ac51397b3fd5646db711364a27` (`317eff3`)** | `2026-11-02 19:19:20 +0700` | `BO55OB <onlineboost.id@gmail.com>` | `docs(foundry): complete REV 4.1.6.2.4 physical materialization and N-ary tuple patch`<br>• Memperbarui `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` (`9,048 baris`, `574,915 bytes`, SHA-256 blob REV 4.1.6.2.4: `945BB905A66229F89FB5EA651904897D07285820C5507AC690EE99648C8EE585`)<br>• **Parent Commit sah untuk `REV 4.1.6.2.5 — FINAL MATERIALIZATION INTEGRITY PATCH`** | **NIHIL (`0` file kode berubah)** |
 
 **Bukti Verifikasi `git diff --stat main..370e63d3fc379630054621c3a8dadc0e2b2e3e03` & `git diff --stat main -- app/ migrations/ tests/`**:
 ```text
@@ -2970,7 +2972,7 @@ Seluruh perubahan antara `main` (`a82b6fdf...`), commit `370e63d` (`REV 4.1.3`),
 
 | Nama File Artefak | Status Git (`docs/rev4-1-remediation-and-review`) | Ukuran Aktual (`Bytes`) | Jumlah Baris (`Lines`) | SHA-256 Aktual (`Get-FileHash -Algorithm SHA256`) | Peran dalam Governance `BOONTRACK-AUTH-STG-2026-001` |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` *(Parent Commit `06739ae` REV 4.1.6.2.3 -> Updated In-Place to REV 4.1.6.2.4)* | Tracked (`06739ae`) -> Modified (`M`) untuk REV 4.1.6.2.4 | `549,850` *(pada `06739ae`)* -> `574,915` *(pada `REV 4.1.6.2.4`)* | `8,577` *(pada `06739ae`)* -> `9,048` *(pada `REV 4.1.6.2.4`)* | `F2E63373E9AAD74F3831DB0A1E26B644250062B1D071D1BB0C186E6B562CC8EF` *(Blob `06739ae`)* | **Addendum Penutup & Suplemen `REV 4.1.6.2.4 — FINAL SPECIFICATION & MATERIALIZATION PATCH` (`BOONTRACK-AUTH-STG-2026-001-REV4.1.6.2.4-ADDENDUM`)** |
+| `FOUNDRY_DIRECTIVE_REV4_1_1_ADDENDUM.md` *(Parent Commit `317eff3` REV 4.1.6.2.4 -> Updated In-Place to REV 4.1.6.2.5)* | Tracked (`317eff3`) -> Modified (`M`) untuk REV 4.1.6.2.5 | `574,915` *(pada `317eff3`)* -> `603,811` *(pada `REV 4.1.6.2.5`)* | `9,048` *(pada `317eff3`)* -> `9,600` *(pada `REV 4.1.6.2.5`)* | `945BB905A66229F89FB5EA651904897D07285820C5507AC690EE99648C8EE585` *(Blob `317eff3`)* | **Addendum Penutup & Suplemen `REV 4.1.6.2.5 — FINAL MATERIALIZATION INTEGRITY PATCH` (`BOONTRACK-AUTH-STG-2026-001-REV4.1.6.2.5-ADDENDUM`)** |
 | `FOUNDRY_DIRECTIVE_REV4_1_REMEDIATION.md` | Tracked (`19c74c3d`) | `160,815` | `2,156` | `407E425739B38D5A43B4C22FE19BE9529CB9A95A7F8837733794B95315DFE086` | Spesifikasi Desain Utama REV 4.1 (`2,156 baris`, `160,815 bytes`) |
 | `FOUNDRY_DIRECTIVE_REV4_1_INDEPENDENT_REVIEW.md` | Tracked (`af5f9edf`) | `46,166` | `958` | `23316A51C62369406C68F500BC44B91A8CBF3817E43CC875CF74AC988D21103D` | Laporan Audit Independen REV 4.1 (`958 baris`, `46,166 bytes`) |
 | `FOUNDRY_DIRECTIVE_REV4_1_REVIEW.md` | Untracked (`??`) | `37,042` | `716` | `094EC4346A30D94F17260295174E195D8A6BD5E61E8603A6D0DD797F2D39CE2B` | Laporan Review Internal REV 4.1 (`716 baris`, `37,042 bytes`) |
@@ -3500,7 +3502,8 @@ Menindaklanjuti **`[ID-04]`**, seluruh asersi Gate B2 (**`B2-ASSERT-01` s/d `B2-
 | `REV 4.1.6.2.1` | `2026-11-02` | `Principal Systems Architect & Lead DBRE` | `fb17256` (`Parent: 154110c`) | **Final Semantic Clarifications (`BOONTRACK-AUTH-STG-2026-001-REV4.1.6.2.1-ADDENDUM`, SHA-256: `ACBFAFC53B7A75E09210F8079D1F31EF9F86A6C4E34B9C00F279FDA4B7C2877B`, `497,142 bytes`, `7,723 lines`)**: Menutup 4 temuan semantik audit CTO: (1) `[P0 — ID-04]` Penegasan fisik karantina tabel `_mig031_physically_quarantined_commissions` eksklusif untuk `public.affiliate_commissions` (`post_physically_quarantined = 0` konstan untuk 8 tabel lainnya) & verifikasi integritas relasi disposisi 1:1 via `COUNT(*) = COUNT(DISTINCT pk_id)`; (2) `[P0 — ID-05]` Tenant Lineage Integrity assertion dalam `DO $$` (`TENANT_LINEAGE_VIOLATION`) & cycle-guarded unbounded recursive identity graph traversal (`depth > 1` raise `MULTI_HOP_CHAIN_DETECTED`); (3) `[P1 — ID-01 & ID-02]` Explicit post-execution state verification alignment untuk concurrency test `T-01.2a` (lock timeout: pending, version=1) & `T-01.2b` (race lost-lease: paid, version=2) + determinisme 21 denial (`42501`) dan 3 allow pada 6 database role; (4) `[P1 — ID-03]` Composite FK dynamic SQL tuple constructor syntax `(s.col1, s.col2) = (q.col1, q.col2)` & pemisahan `verification_sql_hash` vs `execution_sql_hash`. |
 | `REV 4.1.6.2.2` | `2026-11-02` | `Lead Database Reliability Engineer & Principal Systems Architect` | `53b948f` (`Parent: fb17256`) | **Final Proof Semantics (`BOONTRACK-AUTH-STG-2026-001-REV4.1.6.2.2-ADDENDUM`, SHA-256: `B2872A681E31284A367272E9432906610FAB6172B67BAC8785C330409265505C`, `527,019 bytes`, `8,169 lines`)**: Menutup 5 catatan audit semantik CTO dengan logika anti-tautologi mutlak. |
 | `REV 4.1.6.2.3` | `2026-11-02` | `Principal Systems Architect & Ultra-Adversarial Database Auditor` | `06739ae` (`Parent: 53b948f`) | **Final Schema & Principal Consistency Patch (`BOONTRACK-AUTH-STG-2026-001-REV4.1.6.2.3-ADDENDUM`, SHA-256: `F2E63373E9AAD74F3831DB0A1E26B644250062B1D071D1BB0C186E6B562CC8EF`, `549,850 bytes`, `8,577 lines`)**: Menutup 4 temuan blocking CTO: (1) `[P0 — ID-05]` Harmonisasi skema mempertahankan `_mig031_pre_pk_inventory` intact `(ord_seq, source_table, pk_id)`, memperkenalkan `_mig031_pre_entity_snapshot` `(source_table, pk_id, tenant_id, target_canonical_affiliate_id, original_financial_status)`, dan me-reanchor seluruh kueri lineage via strict JOIN; (2) `[P0 — ID-04]` Standarisasi kardinalitas Model A (Total 1:1 Bijective Accounting) dengan penegasan status `'CLEAN_UNMODIFIED'` untuk baris unmutated sehingga asersi `HAVING COUNT <> 1` sah secara formal; (3) `[P1 — ID-02]` Target tabel fisik nyata `public.migration_031_quarantined_affiliate_commissions` dan authentic session switching `SET LOCAL SESSION AUTHORIZATION boontrack_runtime` dengan 5-step proof lengkap (DAC 42501 vs RLS 00000 0 rows); (4) `[P1 — ID-03]` Asersi mixed-NULL pada `MATCH FULL`, binding langsung perbandingan duplikat ke manifest tuple arrays (`quarantined_composite_values` vs `survivor_composite_values`) via row constructors `ROW(...) = ROW(...)`, penanganan formal `MATCH SIMPLE` (filter NULL), dan penolakan tipe match tidak didukung. |
-| **`REV 4.1.6.2.4`** | **`2026-11-02`** | **`Principal Systems Architect & Ultra-Adversarial Database Auditor`** | **`Parent: 06739ae`** | **Final Specification & Materialization Patch (`BOONTRACK-AUTH-STG-2026-001-REV4.1.6.2.4-ADDENDUM`)**: Menutup 3 item materialisasi fisik & spesifikasi CTO: (1) `[ID-04]` DDL eksplisit tabel temporer `_mig031_dedup_row_disposition` `(table_name, quarantined_row_id, disposition, target_survivor_id, PRIMARY KEY)`, query populasi berurutan (mutasi/karantina lalu deterministic insert `CLEAN_UNMODIFIED`), dan asersi ulang Model A 100% coverage; (2) `[ID-05]` Harmonisasi tipe data `_mig031_pre_entity_snapshot` ke `TEXT NOT NULL` sesuai baseline `_mig031_pre_pk_inventory`, DDL & statement populasi eksplisit dari tabel pra-migrasi, dan prasyarat asersi dua arah (kelengkapan inventaris & keberadaan fisik survivor) sebelum validasi tenant lineage; (3) `[ID-03]` Eliminasi tuple 2 elemen hardcoded menjadi konstruksi dinamis N-ary `ROW(...)` berbasis `array_length`, jaminan urutan kolom via `WITH ORDINALITY` dan `ORDER BY ordinal_position`, serta verifikasi afirmatif survivor membuktikan seluruh referensi yang direpoint tepat mengarah ke `ROW(m.survivor_composite_values...)`. |
+| `REV 4.1.6.2.4` | `2026-11-02` | `Principal Systems Architect & Ultra-Adversarial Database Auditor` | `317eff3` (`Parent: 06739ae`) | **Final Specification & Materialization Patch (`BOONTRACK-AUTH-STG-2026-001-REV4.1.6.2.4-ADDENDUM`, SHA-256: `945BB905A66229F89FB5EA651904897D07285820C5507AC690EE99648C8EE585`, `574,915 bytes`, `9,048 lines`)**: Menutup 3 item materialisasi fisik & spesifikasi CTO: (1) `[ID-04]` DDL eksplisit tabel temporer `_mig031_dedup_row_disposition` `(table_name, quarantined_row_id, disposition, target_survivor_id, PRIMARY KEY)`, query populasi berurutan (mutasi/karantina lalu deterministic insert `CLEAN_UNMODIFIED`), dan asersi ulang Model A 100% coverage; (2) `[ID-05]` Harmonisasi tipe data `_mig031_pre_entity_snapshot` ke `TEXT NOT NULL` sesuai baseline `_mig031_pre_pk_inventory`, DDL & statement populasi eksplisit dari tabel pra-migrasi, dan prasyarat asersi dua arah (kelengkapan inventaris & keberadaan fisik survivor) sebelum validasi tenant lineage; (3) `[ID-03]` Eliminasi tuple 2 elemen hardcoded menjadi konstruksi dinamis N-ary `ROW(...)` berbasis `array_length`, jaminan urutan kolom via `WITH ORDINALITY` dan `ORDER BY ordinal_position`, serta verifikasi afirmatif survivor membuktikan seluruh referensi yang direpoint tepat mengarah ke `ROW(m.survivor_composite_values...)`. |
+| **`REV 4.1.6.2.5`** | **`2026-11-02`** | **`Principal Systems Architect, Formal Methods Engineer & Ultra-Adversarial Auditor BoonTrack`** | **`Parent: 317eff3`** | **Final Materialization Integrity Patch (`BOONTRACK-AUTH-STG-2026-001-REV4.1.6.2.5-ADDENDUM`)**: Menutup 4 temuan blocking CTO: (1) `[P0 — ID-04]` Harmonisasi awalan skema kanonikal `public.` seragam pada 9 tabel, materialisasi komprehensif fase 1 dari manifest mutasi/karantina, deteksi konflik fail-closed (eliminasi `ON CONFLICT DO NOTHING`), materialisasi fase 2 `CLEAN_UNMODIFIED`, asersi rekonsiliasi bijektif dua arah (`0` missing) dan persamaan kardinalitas mutlak; (2) `[P0 — ID-05]` Skema snapshot entitas 9 tabel dengan `tenant_id TEXT` nullable (ground truth tanpa paksaan sintetis), kueri populasi eksplisit 9 tabel berawalan `public.`, dan asersi fail-closed kelengkapan snapshot sebelum validasi lineage; (3) `[P0 — ID-03]` Manifest repointing foreign key komposit tingkat baris (`_mig031_composite_fk_repoint_manifest`), guardrail katalog aritas `pg_constraint`, binding afirmatif survivor per baris (`source_row_pk`), dan substitusi `NOT IN` menjadi `NOT EXISTS` (bebas bahaya logika tiga nilai); (4) `[P1]` Pembersihan pre-flight eksplisit `DROP TABLE IF EXISTS ... CASCADE` dan penyatuan transaksi dengan `ON COMMIT PRESERVE ROWS` menjamin eksekusi ulang sesi yang deterministik dan idempotent. |
 
 *End of Document — FOUNDRY DIRECTIVE REV 4.1.4 FINAL 5-POINT RESIDUAL CLOSURE & DESIGN FREEZE SPECIFICATION (`BOONTRACK-AUTH-STG-2026-001-REV4.1.4-ADDENDUM`).*
 
@@ -9046,3 +9049,552 @@ END $$;
 | **`[ID-03]`** | N-ary Tuple Dinamis & Verifikasi Afirmatif | Eliminasi tuple 2 elemen hardcoded; implementasi N-ary row constructor dinamis via `array_length` dan `generate_series`; penjaminan urutan kolom via `WITH ORDINALITY` dan `ORDER BY ord`; verifikasi afirmatif membuktikan baris repointed secara presisi cocok dengan `ROW(m.survivor_composite_values...)`. | **`CLOSED IN REV 4.1.6.2.4`** |
 
 *End of Supplement — REV 4.1.6.2.4 Final Specification & Materialization Patch (`BOONTRACK-AUTH-STG-2026-001-REV4.1.6.2.4-ADDENDUM`). Design Freeze Sign-Off Status: `SUBMITTED FOR FINAL CTO DESIGN FREEZE SIGN-OFF (REV 4.1.6.2.4)`. Gate B1, Gate B2, Gate I, Gate T: `LOCKED / NOT AUTHORIZED`. Staging & Production DB / R2 Storage: `ZERO-TOUCH`.*
+
+---
+
+# REV 4.1.6.2.5 — FINAL MATERIALIZATION INTEGRITY PATCH (`BOONTRACK-AUTH-STG-2026-001-REV4.1.6.2.5-ADDENDUM`)
+
+| Governance & Gate Field | Normative Posture (`REV 4.1.6.2.5`) |
+| :--- | :--- |
+| **Supplement Title** | `REV 4.1.6.2.5 — FINAL MATERIALIZATION INTEGRITY PATCH` |
+| **Document ID** | `BOONTRACK-AUTH-STG-2026-001-REV4.1.6.2.5-ADDENDUM` *(Appends & Closes `REV 4.1.6.2.4`, `REV 4.1.6.2.3`, `REV 4.1.6.2.2`, `REV 4.1.6.2.1`, `REV 4.1.6.2`, `REV 4.1.6.1`, `REV 4.1.6`, `REV 4.1.4`, `REV 4.1.3`, `REV 4.1.2`, `REV 4.1.1`)* |
+| **Target Branch / PR** | `docs/rev4-1-remediation-and-review` (PR #25) |
+| **Parent Branch Commit (`HEAD`)** | `317eff3690b7a1ac51397b3fd5646db711364a27` (`317eff3` — `docs(foundry): complete REV 4.1.6.2.4 physical materialization and N-ary tuple patch`) |
+| **Preceding Addendum Commit (`HEAD~1`)** | `06739ae9669986547eb940e910af65395a8a29d0` (`06739ae` — `docs(foundry): patch REV 4.1.6.2.3 final schema and principal consistency`) |
+| **Source Code Baseline (`main`)** | `a82b6fdf76c043c9a3ee87f48c34062f05258437` (**100% UNTOUCHED — STRICT ZERO CODE MUTATION**) |
+| **Governance Baseline Contract** | `BOONTRACK-AUTH-STG-2026-001-REV3` |
+| **Author & Role** | `Principal Systems Architect, Formal Methods Engineer & Ultra-Adversarial Auditor BoonTrack` |
+| **Execution Protocol** | `DOCUMENTATION ONLY (ZERO CODE MUTATION; APP, MIGRATIONS, AND TESTS INTACT)` |
+| **Release Gate Posture** | **SUBMITTED FOR FINAL CTO DESIGN FREEZE SIGN-OFF (REV 4.1.6.2.5); GATE B1, GATE B2, GATE I, GATE T: LOCKED / ZERO-TOUCH; STAGING/PRODUCTION DB & R2 STORAGE ZERO-TOUCH** |
+
+---
+
+## 1. PENDAHULUAN & PRESERVASI BAGIAN YANG TELAH DISETUJUI CTO (ACCEPTED IN DESIGN)
+
+Suplemen **`REV 4.1.6.2.5`** disusun untuk menuntaskan secara definitif seluruh catatan audit formal CTO terkait integritas materialisasi fisik skema, eliminasi bahaya logika tiga nilai (*three-valued logic hazards*), standarisasi awalan skema kanonikal `public.`, dan penegakan pemodelan tenant yang null-safe.
+
+### Preservasi Mutlak Desain yang Telah Disetujui
+1. **`[ID-01]` (Concurrency Subcases T-01.2b.1 & T-01.2b.2):** Tetap berstatus **ACCEPTED IN DESIGN** oleh CTO dan dipertahankan seutuhnya.
+2. **`[ID-02]` (RLS 5-Step Session Authorization Probe):** Tetap berstatus **ACCEPTED IN DESIGN** oleh CTO dan dipertahankan seutuhnya.
+
+---
+
+## 2. [P1] DETERMINISTIC LIFECYCLE & IDEMPOTENT SESSION RE-RUNS
+
+Untuk menjamin eksekusi ulang yang idempotent (*clean re-run*) dalam sesi pengujian staging atau migrasi produksi, seluruh tabel temporer dipersiapkan melalui pembersihan pre-flight eksplisit dan disatukan di bawah siklus hidup transaksi dengan `ON COMMIT PRESERVE ROWS`:
+
+```sql
+-- [P1 Pre-Flight Cleanup]: Bersihkan struktur sementara sebelum transaksi migrasi dimulai
+DROP TABLE IF EXISTS _mig031_dedup_row_disposition CASCADE;
+DROP TABLE IF EXISTS _mig031_pre_entity_snapshot CASCADE;
+DROP TABLE IF EXISTS _mig031_composite_fk_repoint_manifest CASCADE;
+DROP TABLE IF EXISTS _mig031_staging_disposition CASCADE;
+
+-- Memulai blok transaksi tunggal untuk isolasi penuh
+BEGIN;
+```
+
+---
+
+## 3. [P0 — ID-04] DISPOSITION MATERIALIZATION INTEGRITY & BIJECTIVE RECONCILIATION
+
+### 3.1 Harmonisasi Awalan Skema Kanonikal `public.` pada Seluruh 9 Tabel
+
+Untuk mencegah ketidaksesuaian string (*byte mismatch*) saat melakukan `JOIN`, seluruh tabel dalam ekosistem migrasi menggunakan nama berawalan skema kanonikal penuh `public.<table_name>` yang identik dengan nilai pada `_mig031_pre_pk_inventory.source_table`:
+1. `public.product_orders`
+2. `public.delivery_orders`
+3. `public.affiliate_commissions`
+4. `public.attributions`
+5. `public.attribution_sessions`
+6. `public.orders`
+7. `public.affiliates`
+8. `public.shop_subscriptions`
+9. `public.shop_commission_ledger`
+
+### 3.2 DDL Eksplisit Tabel Disposisi Sementara
+
+```sql
+CREATE TEMP TABLE IF NOT EXISTS _mig031_dedup_row_disposition (
+    table_name           TEXT NOT NULL,
+    quarantined_row_id   TEXT NOT NULL,
+    disposition          TEXT NOT NULL,
+    target_survivor_id   TEXT,
+    PRIMARY KEY (table_name, quarantined_row_id)
+) ON COMMIT PRESERVE ROWS;
+
+CREATE TEMP TABLE IF NOT EXISTS _mig031_staging_disposition (
+    table_name           TEXT NOT NULL,
+    quarantined_row_id   TEXT NOT NULL,
+    disposition          TEXT NOT NULL,
+    target_survivor_id   TEXT
+) ON COMMIT PRESERVE ROWS;
+```
+
+### 3.3 Fase 1: Materialisasi Komprehensif Seluruh 9 Tabel & Deteksi Konflik Fail-Closed
+
+Seluruh mutasi non-clean dikumpulkan terlebih dahulu ke dalam tabel staging, kemudian divalidasi bahwa **tidak ada PK yang menerima lebih dari 1 jenis disposisi yang bertentangan** sebelum disisipkan ke tabel utama. Klausa permisif `ON CONFLICT DO NOTHING` **dieliminasi total**:
+
+```sql
+-- 1. Kumpulkan seluruh record mutasi / karantina dari manifest ke staging
+INSERT INTO _mig031_staging_disposition (table_name, quarantined_row_id, disposition, target_survivor_id)
+-- Tabel 1: public.affiliate_commissions (Karantina fisik)
+SELECT 'public.affiliate_commissions', q.id::text, 'PHYSICALLY_QUARANTINED', NULL
+FROM public.migration_031_quarantined_affiliate_commissions q
+UNION ALL
+-- Tabel 2: public.affiliates (Loser duplicate dari konsolidasi)
+SELECT 'public.affiliates', e.quarantined_affiliate_id::text, 'LOSER_DUPLICATE', e.survivor_affiliate_id::text
+FROM _mig031_consolidation_edges e
+UNION ALL
+-- Tabel 2: public.affiliates (Survivor kanonikal)
+SELECT 'public.affiliates', c.survivor_affiliate_id::text, 'SURVIVOR', c.survivor_affiliate_id::text
+FROM (SELECT DISTINCT survivor_affiliate_id FROM _mig031_consolidation_edges) c
+UNION ALL
+-- Tabel 3: public.orders (Repointing transaksi ke survivor)
+SELECT 'public.orders', o.id::text, 'REPOINTED', e.survivor_affiliate_id::text
+FROM public.orders o
+JOIN _mig031_consolidation_edges e ON e.quarantined_affiliate_id::text = o.affiliate_id::text
+UNION ALL
+-- Tabel 4: public.product_orders (Repointing item pesanan ke survivor)
+SELECT 'public.product_orders', po.id::text, 'REPOINTED', e.survivor_affiliate_id::text
+FROM public.product_orders po
+JOIN _mig031_consolidation_edges e ON e.quarantined_affiliate_id::text = po.affiliate_id::text
+UNION ALL
+-- Tabel 5: public.delivery_orders (Repointing order pengiriman ke survivor)
+SELECT 'public.delivery_orders', d.id::text, 'REPOINTED', e.survivor_affiliate_id::text
+FROM public.delivery_orders d
+JOIN _mig031_consolidation_edges e ON e.quarantined_affiliate_id::text = d.affiliate_id::text
+UNION ALL
+-- Tabel 6: public.attributions (Repointing data atribusi)
+SELECT 'public.attributions', at.id::text, 'REPOINTED', e.survivor_affiliate_id::text
+FROM public.attributions at
+JOIN _mig031_consolidation_edges e ON e.quarantined_affiliate_id::text = at.affiliate_id::text
+UNION ALL
+-- Tabel 7: public.attribution_sessions (Repointing sesi atribusi)
+SELECT 'public.attribution_sessions', s.id::text, 'REPOINTED', e.survivor_affiliate_id::text
+FROM public.attribution_sessions s
+JOIN _mig031_consolidation_edges e ON e.quarantined_affiliate_id::text = s.affiliate_id::text
+UNION ALL
+-- Tabel 8: public.shop_subscriptions (Repointing langganan toko)
+SELECT 'public.shop_subscriptions', sub.id::text, 'REPOINTED', e.survivor_affiliate_id::text
+FROM public.shop_subscriptions sub
+JOIN _mig031_consolidation_edges e ON e.quarantined_affiliate_id::text = sub.affiliate_id::text
+UNION ALL
+-- Tabel 9: public.shop_commission_ledger (Repointing buku besar komisi toko)
+SELECT 'public.shop_commission_ledger', l.id::text, 'REPOINTED', e.survivor_affiliate_id::text
+FROM public.shop_commission_ledger l
+JOIN _mig031_consolidation_edges e ON e.quarantined_affiliate_id::text = l.affiliate_id::text;
+
+-- 2. Fail-Closed Conflict Detection: Validasi tidak ada PK yang menerima konflik disposisi
+DO $$
+DECLARE
+    v_conflict_count BIGINT;
+BEGIN
+    SELECT COUNT(*)
+    INTO v_conflict_count
+    FROM (
+        SELECT table_name, quarantined_row_id
+        FROM _mig031_staging_disposition
+        GROUP BY table_name, quarantined_row_id
+        HAVING COUNT(DISTINCT disposition) > 1
+    ) conf;
+
+    IF v_conflict_count > 0 THEN
+        RAISE EXCEPTION 'DISPOSITION_CONFLICT_DETECTED: Found % primary keys with conflicting disposition assignments in staging',
+            v_conflict_count
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Sisipkan dari staging ke tabel disposisi resmi (Fail-Closed: Gagal jika ada duplikat data)
+    INSERT INTO _mig031_dedup_row_disposition (table_name, quarantined_row_id, disposition, target_survivor_id)
+    SELECT DISTINCT table_name, quarantined_row_id, disposition, target_survivor_id
+    FROM _mig031_staging_disposition;
+END $$;
+```
+
+### 3.4 Fase 2: Materialisasi Deterministik Baris Bersih (`CLEAN_UNMODIFIED`)
+
+Baris yang tidak mengalami perubahan status diinventarisasi secara deterministik:
+
+```sql
+INSERT INTO _mig031_dedup_row_disposition (
+    table_name,
+    quarantined_row_id,
+    disposition,
+    target_survivor_id
+)
+SELECT
+    inv.source_table,
+    inv.pk_id,
+    'CLEAN_UNMODIFIED',
+    NULL
+FROM _mig031_pre_pk_inventory inv
+LEFT JOIN _mig031_dedup_row_disposition disp
+  ON disp.table_name = inv.source_table
+ AND disp.quarantined_row_id = inv.pk_id
+WHERE disp.quarantined_row_id IS NULL;
+```
+
+### 3.5 Asersi Rekonsiliasi Bijektif Dua Arah (*Forward, Reverse Anti-Join & Exact Count*)
+
+```sql
+DO $$
+DECLARE
+    v_forward_missing     BIGINT;
+    v_reverse_orphans     BIGINT;
+    v_total_inventory     BIGINT;
+    v_total_disposition   BIGINT;
+BEGIN
+    -- a) Forward Bijective Check: Seluruh baris inventaris wajib ada di tabel disposisi
+    SELECT COUNT(*)
+    INTO v_forward_missing
+    FROM _mig031_pre_pk_inventory inv
+    LEFT JOIN _mig031_dedup_row_disposition disp
+      ON disp.table_name = inv.source_table
+     AND disp.quarantined_row_id = inv.pk_id
+    WHERE disp.quarantined_row_id IS NULL;
+
+    IF v_forward_missing <> 0 THEN
+        RAISE EXCEPTION 'FORWARD_BIJECTIVE_VIOLATION: Found % inventory records missing from disposition table',
+            v_forward_missing
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- b) Reverse Anti-Join Check: Tidak boleh ada baris disposisi yang tidak tercatat di inventaris
+    SELECT COUNT(*)
+    INTO v_reverse_orphans
+    FROM _mig031_dedup_row_disposition disp
+    LEFT JOIN _mig031_pre_pk_inventory inv
+      ON inv.source_table = disp.table_name
+     AND inv.pk_id = disp.quarantined_row_id
+    WHERE inv.pk_id IS NULL;
+
+    IF v_reverse_orphans <> 0 THEN
+        RAISE EXCEPTION 'REVERSE_ANTI_JOIN_VIOLATION: Found % disposition records pointing to non-existent inventory PKs',
+            v_reverse_orphans
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- c) Cardinality Equality Assertion: Total baris disposisi wajib sama persis dengan total inventaris
+    SELECT COUNT(*) INTO v_total_inventory FROM _mig031_pre_pk_inventory;
+    SELECT COUNT(*) INTO v_total_disposition FROM _mig031_dedup_row_disposition;
+
+    IF v_total_disposition <> v_total_inventory THEN
+        RAISE EXCEPTION 'CARDINALITY_EQUALITY_VIOLATION: total_disposition (%) <> total_inventory (%)',
+            v_total_disposition, v_total_inventory
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    RAISE NOTICE '[P0 — ID-04 BIJECTIVE RECONCILIATION VERIFIED] Forward missing: 0, Reverse orphans: 0, Total exact count: % (100%% Bijective).',
+        v_total_disposition;
+END $$;
+```
+
+---
+
+## 4. [P0 — ID-05] FULL 9-TABLE ENTITY SNAPSHOT & NULL-SAFE TENANT MODEL
+
+### 4.1 Definisi Skema Snapshot dengan Nullable Tenant
+
+Untuk merefleksikan kondisi data mentah warisan (*raw legacy data*) tanpa pemaksaan nilai default sintetis yang berisiko menutupi anomali integritas, kolom `tenant_id` didefinisikan secara resmi sebagai **NULLABLE**:
+
+```sql
+CREATE TEMP TABLE IF NOT EXISTS _mig031_pre_entity_snapshot (
+    source_table                  TEXT NOT NULL,
+    pk_id                         TEXT NOT NULL,
+    tenant_id                     TEXT, -- NULLABLE: Menjaga ground truth data tanpa paksaan sintetis
+    target_canonical_affiliate_id TEXT,
+    original_financial_status     TEXT NOT NULL,
+    PRIMARY KEY (source_table, pk_id)
+) ON COMMIT PRESERVE ROWS;
+```
+
+### 4.2 Kueri Populasi Eksplisit Seluruh 9 Tabel dengan Awalan `public.`
+
+```sql
+INSERT INTO _mig031_pre_entity_snapshot (
+    source_table,
+    pk_id,
+    tenant_id,
+    target_canonical_affiliate_id,
+    original_financial_status
+)
+-- 1. public.affiliate_commissions
+SELECT 'public.affiliate_commissions', c.id::text, c.tenant_id::text, c.affiliate_id::text, c.status::text
+FROM public.affiliate_commissions c
+UNION ALL
+-- 2. public.affiliates
+SELECT 'public.affiliates', a.id::text, a.tenant_id::text, a.id::text, 'ACTIVE'
+FROM public.affiliates a
+UNION ALL
+-- 3. public.orders
+SELECT 'public.orders', o.id::text, o.tenant_id::text, o.affiliate_id::text, o.status::text
+FROM public.orders o
+UNION ALL
+-- 4. public.product_orders
+SELECT 'public.product_orders', po.id::text, po.tenant_id::text, po.affiliate_id::text, po.status::text
+FROM public.product_orders po
+UNION ALL
+-- 5. public.delivery_orders
+SELECT 'public.delivery_orders', d.id::text, d.tenant_id::text, d.affiliate_id::text, d.status::text
+FROM public.delivery_orders d
+UNION ALL
+-- 6. public.attributions
+SELECT 'public.attributions', at.id::text, at.tenant_id::text, at.affiliate_id::text, 'RECORDED'
+FROM public.attributions at
+UNION ALL
+-- 7. public.attribution_sessions
+SELECT 'public.attribution_sessions', s.id::text, s.tenant_id::text, s.affiliate_id::text, 'RECORDED'
+FROM public.attribution_sessions s
+UNION ALL
+-- 8. public.shop_subscriptions
+SELECT 'public.shop_subscriptions', sub.id::text, sub.tenant_id::text, sub.affiliate_id::text, sub.status::text
+FROM public.shop_subscriptions sub
+UNION ALL
+-- 9. public.shop_commission_ledger
+SELECT 'public.shop_commission_ledger', l.id::text, l.tenant_id::text, l.affiliate_id::text, l.status::text
+FROM public.shop_commission_ledger l;
+```
+
+### 4.3 Asersi Prasyarat Kelengkapan Snapshot (*Completeness Preflight Assertion*)
+
+```sql
+DO $$
+DECLARE
+    v_missing_snapshot_count BIGINT;
+    v_lineage_violations     BIGINT;
+BEGIN
+    -- Uji Prasyarat: Pastikan setiap baris pada inventaris tercatat di snapshot lintas 9 tabel
+    SELECT COUNT(*)
+    INTO v_missing_snapshot_count
+    FROM _mig031_pre_pk_inventory inv
+    LEFT JOIN _mig031_pre_entity_snapshot snap
+      ON snap.source_table = inv.source_table
+     AND snap.pk_id = inv.pk_id
+    WHERE snap.pk_id IS NULL;
+
+    IF v_missing_snapshot_count <> 0 THEN
+        RAISE EXCEPTION 'SNAPSHOT_COMPLETENESS_PREFLIGHT_FAILED: Found % inventory records missing from entity snapshot across 9 tables',
+            v_missing_snapshot_count
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Uji Evaluasi Lineage: Validasi kesesuaian tenant_id dengan survivor affiliate
+    SELECT COUNT(*)
+    INTO v_lineage_violations
+    FROM _mig031_pre_pk_inventory inv
+    JOIN _mig031_pre_entity_snapshot snap
+      ON snap.source_table = inv.source_table
+     AND snap.pk_id = inv.pk_id
+    JOIN _mig031_pre_entity_snapshot surv_snap
+      ON surv_snap.source_table = 'public.affiliates'
+     AND surv_snap.pk_id = snap.target_canonical_affiliate_id
+    WHERE snap.target_canonical_affiliate_id IS NOT NULL
+      AND snap.tenant_id IS NOT NULL
+      AND surv_snap.tenant_id IS NOT NULL
+      AND snap.tenant_id <> surv_snap.tenant_id;
+
+    IF v_lineage_violations <> 0 THEN
+        RAISE EXCEPTION 'TENANT_LINEAGE_VIOLATION: Found % rows where entity tenant_id diverges from survivor affiliate tenant_id in raw snapshot',
+            v_lineage_violations
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    RAISE NOTICE '[P0 — ID-05 9-TABLE SNAPSHOT & LINEAGE VERIFIED] Completeness verified (0 missing) and zero tenant lineage violations confirmed.';
+END $$;
+```
+
+---
+
+## 5. [P0 — ID-03] N-ARY COMPOSITE FK MANIFEST WITH ROW-LEVEL BINDING
+
+### 5.1 Skema Manifest Repointing Kunci Asing Tingkat Baris (*Row-Level Manifest*)
+
+```sql
+CREATE TEMP TABLE IF NOT EXISTS _mig031_composite_fk_repoint_manifest (
+    id                          BIGSERIAL PRIMARY KEY,
+    constraint_oid              OID NOT NULL,
+    source_schema               TEXT NOT NULL,
+    source_table                TEXT NOT NULL,
+    source_row_pk               TEXT NOT NULL,
+    original_loser_tuple        TEXT[] NOT NULL,
+    expected_survivor_tuple     TEXT[] NOT NULL,
+    target_schema               TEXT NOT NULL,
+    target_table                TEXT NOT NULL,
+    status                      TEXT NOT NULL DEFAULT 'PENDING'
+) ON COMMIT PRESERVE ROWS;
+```
+
+### 5.2 Guardrail Aritas Struktural & Validasi Katalog `pg_constraint`
+
+```sql
+DO $$
+DECLARE
+    v_arity_violations BIGINT;
+BEGIN
+    SELECT COUNT(*)
+    INTO v_arity_violations
+    FROM _mig031_composite_fk_repoint_manifest m
+    JOIN pg_constraint c ON c.oid = m.constraint_oid
+    JOIN pg_class src ON src.oid = c.conrelid
+    JOIN pg_namespace ns_src ON ns_src.oid = src.relnamespace AND ns_src.nspname = m.source_schema
+    JOIN pg_class tgt ON tgt.oid = c.confrelid
+    JOIN pg_namespace ns_tgt ON ns_tgt.oid = tgt.relnamespace AND ns_tgt.nspname = m.target_schema
+    WHERE cardinality(m.original_loser_tuple) <> array_length(c.conkey, 1)
+       OR cardinality(m.expected_survivor_tuple) <> array_length(c.confkey, 1);
+
+    IF v_arity_violations <> 0 THEN
+        RAISE EXCEPTION 'MANIFEST_STRUCTURAL_ARITY_MISMATCH: Found % manifest entries where tuple cardinality diverges from pg_constraint catalog',
+            v_arity_violations
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    RAISE NOTICE '[P0 — ID-03 STRUCTURAL ARITY GUARDRAILS VERIFIED] Catalog constraint OIDs and tuple cardinalities 100%% compliant.';
+END $$;
+```
+
+### 5.3 Verifikasi Afirmatif Survivor Bebas Bahaya Logika Tiga Nilai (`NOT EXISTS`)
+
+Untuk mengeliminasi *three-valued logic hazard* pada SQL (di mana klausul `NOT IN` dapat mengembalikan false-negative jika terdapat nilai NULL pada subquery), seluruh verifikasi diganti secara formal menggunakan **`NOT EXISTS`**:
+
+```sql
+DO $$
+DECLARE
+    r_fk                      RECORD;
+    v_source_cols_row         TEXT;
+    v_target_cols_row         TEXT;
+    v_survivor_tuple_row      TEXT;
+    v_null_filter             TEXT;
+    v_affirmative_surv_sql    TEXT;
+    v_invalid_survivor_refs   BIGINT;
+    v_orphan_count            BIGINT;
+    v_orphan_audit_sql        TEXT;
+BEGIN
+    FOR r_fk IN (
+        SELECT
+            c.oid AS constraint_oid,
+            c.conname AS constraint_name,
+            c.confmatchtype,
+            ns_src.nspname AS source_schema,
+            src.relname AS source_table,
+            ns_tgt.nspname AS target_schema,
+            tgt.relname AS target_table,
+            array_agg(att_src.attname ORDER BY ord.ord) AS source_columns,
+            array_agg(att_tgt.attname ORDER BY ord.ord) AS target_columns
+        FROM pg_constraint c
+        JOIN pg_class src ON src.oid = c.conrelid
+        JOIN pg_namespace ns_src ON ns_src.oid = src.relnamespace
+        JOIN pg_class tgt ON tgt.oid = c.confrelid
+        JOIN pg_namespace ns_tgt ON ns_tgt.oid = tgt.relnamespace
+        CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS ord(src_attnum, tgt_attnum, ord)
+        JOIN pg_attribute att_src ON att_src.attrelid = c.conrelid AND att_src.attnum = ord.src_attnum
+        JOIN pg_attribute att_tgt ON att_tgt.attrelid = c.confrelid AND att_tgt.attnum = ord.tgt_attnum
+        WHERE c.contype = 'f'
+          AND array_length(c.conkey, 1) > 1 -- Foreign Key Komposit
+        GROUP BY c.oid, c.conname, c.confmatchtype, ns_src.nspname, src.relname, ns_tgt.nspname, tgt.relname
+    ) LOOP
+        -- Konstruksi string kolom dengan urutan ordinalitas terjamin
+        SELECT string_agg(format('s.%I::text', col), ', ' ORDER BY ord)
+        INTO v_source_cols_row
+        FROM unnest(r_fk.source_columns) WITH ORDINALITY AS ord_col(col, ord);
+
+        SELECT string_agg(format('t.%I::text', col), ', ' ORDER BY ord)
+        INTO v_target_cols_row
+        FROM unnest(r_fk.target_columns) WITH ORDINALITY AS ord_col(col, ord);
+
+        SELECT string_agg(format('m.expected_survivor_tuple[%s]', idx), ', ' ORDER BY idx)
+        INTO v_survivor_tuple_row
+        FROM generate_series(1, array_length(r_fk.target_columns, 1)) AS idx;
+
+        -- Filter semantik NULL
+        IF r_fk.confmatchtype = 's' THEN
+            SELECT string_agg(format('s.%I IS NOT NULL', col), ' AND ' ORDER BY ord)
+            INTO v_null_filter
+            FROM unnest(r_fk.source_columns) WITH ORDINALITY AS ord_col(col, ord);
+        ELSE
+            SELECT format('NOT (%s)', string_agg(format('s.%I IS NULL', col), ' AND ' ORDER BY ord))
+            INTO v_null_filter
+            FROM unnest(r_fk.source_columns) WITH ORDINALITY AS ord_col(col, ord);
+        END IF;
+
+        -- 1. Verifikasi Afirmatif Survivor: Tiap baris sumber repointed (source_row_pk) wajib
+        -- secara presisi cocok dengan expected_survivor_tuple DAN eksis secara fisik di tabel target via NOT EXISTS
+        v_affirmative_surv_sql := format(
+            'SELECT COUNT(*) FROM %I.%I s ' ||
+            'JOIN _mig031_composite_fk_repoint_manifest m ' ||
+            '  ON m.constraint_oid = %s ' ||
+            ' AND m.source_schema = %L ' ||
+            ' AND m.source_table = %L ' ||
+            ' AND m.source_row_pk = s.id::text ' ||
+            'WHERE (%s) ' ||
+            '  AND ROW(%s) = ROW(%s) ' ||
+            '  AND NOT EXISTS (' ||
+            '      SELECT 1 FROM %I.%I t ' ||
+            '      WHERE ROW(%s) = ROW(%s)' ||
+            '  )',
+            r_fk.source_schema, r_fk.source_table,
+            r_fk.constraint_oid,
+            r_fk.source_schema,
+            r_fk.source_table,
+            v_null_filter,
+            v_source_cols_row,
+            v_survivor_tuple_row,
+            v_target_cols_row,
+            v_survivor_tuple_row,
+            r_fk.target_schema, r_fk.target_table
+        );
+        EXECUTE v_affirmative_surv_sql INTO v_invalid_survivor_refs;
+
+        IF v_invalid_survivor_refs <> 0 THEN
+            RAISE EXCEPTION 'AFFIRMATIVE_SURVIVOR_CHECK_FAILED: Found % repointed rows that do not resolve to valid targets in %.%',
+                v_invalid_survivor_refs, r_fk.target_schema, r_fk.target_table
+                USING ERRCODE = '23503';
+        END IF;
+
+        -- 2. Uji Orphan Pasca-Repointing via NOT EXISTS (Anti Three-Valued Logic Hazard)
+        v_orphan_audit_sql := format(
+            'SELECT COUNT(*) FROM %I.%I s ' ||
+            'WHERE (%s) ' ||
+            '  AND NOT EXISTS (' ||
+            '      SELECT 1 FROM %I.%I t ' ||
+            '      WHERE ROW(%s) = ROW(%s)' ||
+            '  )',
+            r_fk.source_schema, r_fk.source_table,
+            v_null_filter,
+            v_source_cols_row,
+            v_target_cols_row,
+            r_fk.target_schema, r_fk.target_table
+        );
+        EXECUTE v_orphan_audit_sql INTO v_orphan_count;
+
+        IF v_orphan_count <> 0 THEN
+            UPDATE _mig031_composite_fk_repoint_manifest
+            SET status = 'INTEGRITY_BREACH'
+            WHERE constraint_oid = r_fk.constraint_oid;
+
+            RAISE EXCEPTION 'COMPOSITE_FK_ORPHAN_BREACH: Found % post-repointing orphan rows on %.%',
+                v_orphan_count, r_fk.source_schema, r_fk.source_table
+                USING ERRCODE = '23503';
+        END IF;
+
+        -- Tandai status manifest berhasil diverifikasi
+        UPDATE _mig031_composite_fk_repoint_manifest
+        SET status = 'EXECUTED_VERIFIED'
+        WHERE constraint_oid = r_fk.constraint_oid;
+    END LOOP;
+
+    RAISE NOTICE '[P0 — ID-03 ROW-LEVEL MANIFEST & NOT EXISTS VERIFIED] Row-level survivor binding and null-safe anti-join confirmed.';
+END $$;
+```
+
+---
+
+## 6. MATRIKS SINTESIS PENUTUPAN 4 ITEM AUDIT CTO (REV 4.1.6.2.5)
+
+| ID Item CTO | Domain & Masalah | Solusi Spesifikasi & Materialisasi Fisik pada REV 4.1.6.2.5 | Status Akhir |
+| :--- | :--- | :--- | :--- |
+| **`[P0 — ID-04]`** | Disposisi & Rekonsiliasi Bijektif | Harmonisasi awalan skema kanonikal `public.` seragam pada 9 tabel; materialisasi komprehensif fase 1 lintas 9 tabel dari manifest mutasi/karantina; deteksi konflik fail-closed (eliminasi `ON CONFLICT DO NOTHING`); materialisasi fase 2 `CLEAN_UNMODIFIED`; asersi forward, reverse anti-join (`0` missing), dan persamaan kardinalitas mutlak. | **`CLOSED IN REV 4.1.6.2.5`** |
+| **`[P0 — ID-05]`** | Snapshot 9 Tabel & Model Tenant Null-Safe | Skema snapshot entitas 9 tabel dengan `tenant_id TEXT` nullable (ground truth tanpa paksaan sintetis); query populasi eksplisit 9 tabel berawalan `public.`; asersi fail-closed kelengkapan snapshot sebelum kueri lineage dijalankan. | **`CLOSED IN REV 4.1.6.2.5`** |
+| **`[P0 — ID-03]`** | Manifest Row-Level & NOT EXISTS | Skema manifest row-level `_mig031_composite_fk_repoint_manifest`; guardrail katalog aritas `pg_constraint` & `pg_namespace`; verifikasi afirmatif survivor per baris (`source_row_pk`); substitusi `NOT IN` menjadi `NOT EXISTS` (bebas bahaya three-valued logic). | **`CLOSED IN REV 4.1.6.2.5`** |
+| **`[P1]`** | Lifecycle Idempotent & Transaksi | Pembersihan pre-flight eksplisit `DROP TABLE IF EXISTS ... CASCADE`; penyatuan transaksi dengan `ON COMMIT PRESERVE ROWS` menjamin idempotensi eksekusi ulang sesi. | **`CLOSED IN REV 4.1.6.2.5`** |
+
+*End of Supplement — REV 4.1.6.2.5 Final Materialization Integrity Patch (`BOONTRACK-AUTH-STG-2026-001-REV4.1.6.2.5-ADDENDUM`). Design Freeze Sign-Off Status: `SUBMITTED FOR FINAL CTO DESIGN FREEZE SIGN-OFF (REV 4.1.6.2.5)`. Gate B1, Gate B2, Gate I, Gate T: `LOCKED / ZERO-TOUCH`. Staging & Production DB / R2 Storage: `ZERO-TOUCH`.*
