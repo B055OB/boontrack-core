@@ -95,10 +95,10 @@ VALUES
 
 -- 5.7 Shop Commission Ledger
 INSERT INTO public.shop_commission_ledger (
-    id, tenant_slug, affiliate_id, gross_amount, affiliate_amount, am_amount, platform_net_amount
+    id, tenant_slug, tenant_id, affiliate_id, status, gross_amount, affiliate_amount, am_amount, platform_net_amount
 )
 VALUES 
-  ('44444444-4444-4444-4444-444444444448', '00000000-0000-0000-0000-000000000001', 
-   '22222222-2222-2222-2222-222222222222'::uuid, 299000, 29900, 0, 269100);
+  ('44444444-4444-4444-4444-444444444448', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001',
+   '22222222-2222-2222-2222-222222222222'::uuid, 'PENDING', 299000, 29900, 0, 269100);
 
 COMMIT;

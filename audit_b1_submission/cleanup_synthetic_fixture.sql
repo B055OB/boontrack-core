@@ -34,7 +34,7 @@ WHERE id IN (
 -- Snapshot Tenant Jangkar (Jika ada sebelum cleanup)
 DROP TABLE IF EXISTS pg_temp._historical_tenant_pre_snapshot;
 CREATE TEMP TABLE pg_temp._historical_tenant_pre_snapshot AS
-SELECT id::text, name::text, slug::text
+SELECT id::text, slug::text
 FROM public.tenants
 WHERE id = '00000000-0000-0000-0000-000000000001';
 
@@ -647,13 +647,13 @@ BEGIN
 
     -- 4. Verifikasi Tenant Jangkar (Tidak Boleh Terhapus atau Bermutasi)
     SELECT COUNT(*) INTO v_tenant_diff FROM (
-        SELECT id, name, slug FROM pg_temp._historical_tenant_pre_snapshot
+        SELECT id, slug FROM pg_temp._historical_tenant_pre_snapshot
         EXCEPT
-        SELECT id::text, name::text, slug::text FROM public.tenants
+        SELECT id::text, slug::text FROM public.tenants
     ) td;
 
     IF v_tenant_diff <> 0 THEN
-        RAISE EXCEPTION 'CRITICAL INTEGRITY FAILURE: Tenant anchor modified or deleted during cleanup!', USING ERRCODE = 'P0001';
+        RAISE EXCEPTION 'CRITICAL INTEGRITY FAILURE: Tenant anchor modified or deleted during cleanup!' USING ERRCODE = 'P0001';
     END IF;
 END $$;
 

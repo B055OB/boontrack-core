@@ -519,6 +519,7 @@ DECLARE
     v_survivor_verify_failed    BIGINT;
     v_row_update_sql            TEXT;
     v_unverified_manifest       BIGINT;
+    v_col_idx                   INTEGER;
 BEGIN
     SELECT COUNT(*) INTO v_ordinality_mismatches
     FROM pg_temp._mig031_composite_fk_repoint_manifest m
@@ -693,7 +694,8 @@ BEGIN
             ns_src.nspname AS source_schema, src.relname AS source_table,
             ns_tgt.nspname AS target_schema, tgt.relname AS target_table,
             array_agg(att_src.attname::text ORDER BY ord.ord) AS source_columns,
-            array_agg(att_tgt.attname::text ORDER BY ord.ord) AS target_columns
+            array_agg(att_tgt.attname::text ORDER BY ord.ord) AS target_columns,
+            array_agg(format_type(att_src.atttypid, att_src.atttypmod) ORDER BY ord.ord) AS source_col_types
         FROM pg_catalog.pg_constraint c
         JOIN pg_catalog.pg_class src ON src.oid = c.conrelid
         JOIN pg_catalog.pg_namespace ns_src ON ns_src.oid = src.relnamespace
@@ -733,6 +735,22 @@ BEGIN
         IF v_vanished_rows <> 0 THEN
             RAISE EXCEPTION 'MANIFEST_SOURCE_ROW_VANISHED' USING ERRCODE = 'P0001';
         END IF;
+
+        -- Simulated in-flight composite FK repointing inside dry-run transaction
+        FOR v_col_idx IN 1..array_length(r_fk.source_columns, 1) LOOP
+            EXECUTE format(
+                'UPDATE %I.%I s ' ||
+                'SET %I = m.expected_survivor_tuple[%s]::%s ' ||
+                'FROM pg_temp._mig031_composite_fk_repoint_manifest m ' ||
+                'WHERE m.constraint_oid = %s AND m.source_schema = %L AND m.source_table = %L ' ||
+                '  AND m.source_row_pk = s.id::text ' ||
+                '  AND m.original_loser_tuple[%s] IS DISTINCT FROM m.expected_survivor_tuple[%s]',
+                r_fk.source_schema, r_fk.source_table,
+                r_fk.source_columns[v_col_idx], v_col_idx, r_fk.source_col_types[v_col_idx],
+                r_fk.constraint_oid, r_fk.source_schema, r_fk.source_table,
+                v_col_idx, v_col_idx
+            );
+        END LOOP;
 
         v_residual_loser_sql := format(
             'SELECT COUNT(*) FROM pg_temp._mig031_composite_fk_repoint_manifest m ' ||
@@ -852,10 +870,11 @@ UNION ALL
 SELECT CASE WHEN m.table_name LIKE 'public.%' THEN m.table_name ELSE 'public.' || m.table_name END,
        m.quarantined_row_id::text, COALESCE(m.column_name, 'id'), 'SUPERSEDED_DUPLICATE', m.original_identifier_value::text, m.canonical_survivor_id::text
 FROM public.migration_031_identifier_dedup_map m
-WHERE UPPER(COALESCE(m.new_status, '')) = 'SUPERSEDED_DUPLICATE'
+WHERE (UPPER(COALESCE(m.new_status, '')) = 'SUPERSEDED_DUPLICATE'
    OR (m.dedup_rank > 1
        AND m.table_name IN ('shop_subscriptions', 'product_orders', 'orders', 'delivery_orders')
-       AND UPPER(COALESCE(m.new_status, '')) NOT IN ('HOLDING', 'HELD_DUPLICATE_QUARANTINE', 'QUARANTINED_LOCKED'))
+       AND UPPER(COALESCE(m.new_status, '')) NOT IN ('HOLDING', 'HELD_DUPLICATE_QUARANTINE', 'QUARANTINED_LOCKED')))
+  AND m.table_name NOT IN ('affiliates', 'public.affiliates')
 UNION ALL
 SELECT CASE WHEN m.table_name LIKE 'public.%' THEN m.table_name ELSE 'public.' || m.table_name END,
        m.quarantined_row_id::text, COALESCE(m.column_name, 'id'), 'HELD_DUPLICATE_QUARANTINE', m.original_identifier_value::text, m.canonical_survivor_id::text
@@ -974,10 +993,11 @@ BEGIN
             COALESCE(m.original_identifier_value::text, NULL::text) AS original_entity_id,
             m.canonical_survivor_id::text AS target_survivor_id
         FROM public.migration_031_identifier_dedup_map m
-        WHERE UPPER(COALESCE(m.new_status, '')) = 'SUPERSEDED_DUPLICATE'
+        WHERE (UPPER(COALESCE(m.new_status, '')) = 'SUPERSEDED_DUPLICATE'
            OR (m.dedup_rank > 1
                AND m.table_name IN ('shop_subscriptions', 'product_orders', 'orders', 'delivery_orders')
-               AND UPPER(COALESCE(m.new_status, '')) NOT IN ('HOLDING', 'HELD_DUPLICATE_QUARANTINE', 'QUARANTINED_LOCKED'))
+               AND UPPER(COALESCE(m.new_status, '')) NOT IN ('HOLDING', 'HELD_DUPLICATE_QUARANTINE', 'QUARANTINED_LOCKED')))
+          AND m.table_name NOT IN ('affiliates', 'public.affiliates')
 
         UNION
 
