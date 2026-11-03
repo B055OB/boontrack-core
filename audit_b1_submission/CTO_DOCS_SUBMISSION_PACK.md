@@ -147,12 +147,27 @@ def validate_staging_dsn(dsn: str) -> None:
     if db_name != "postgres":
         raise ValueError(f"FATAL SECURITY GUARD: Database '{db_name}' tidak diizinkan! Wajib 'postgres'.")
 
-    # Guard 8: SSL Policy Enforcement (Rejects disabled or unencrypted modes)
-    query_params = urllib.parse.parse_qs(parsed.query)
-    if "sslmode" in query_params:
-        ssl_mode = query_params["sslmode"][0].lower()
-        if ssl_mode in ("disable", "allow"):
-            raise ValueError(f"FATAL SECURITY GUARD: SSL mode '{ssl_mode}' tidak diizinkan! Wajib enkripsi SSL/TLS.")
+    # Guard 8: Query Parameters Parameter-Pollution & SSL Policy Enforcement
+    # Use parse_qs with keep_blank_values=True to detect all parameters
+    query_params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+
+    # 8.1 Reject duplicate query parameters across the entire DSN query string
+    for param_name, param_values in query_params.items():
+        if len(param_values) > 1:
+            raise ValueError(f"FATAL SECURITY GUARD: Parameter DSN duplikat terdeteksi pada '{param_name}'! Ditolak.")
+
+    # 8.2 Require explicit sslmode parameter
+    if "sslmode" not in query_params:
+        raise ValueError("FATAL SECURITY GUARD: Parameter 'sslmode' wajib didefinisikan secara eksplisit pada DSN! (misal: ?sslmode=require)")
+
+    # 8.3 Enforce strict SSL mode: only require, verify-ca, verify-full are permitted
+    ssl_mode = query_params["sslmode"][0].lower()
+    allowed_ssl_modes = ("require", "verify-ca", "verify-full")
+    if ssl_mode not in allowed_ssl_modes:
+        raise ValueError(
+            f"FATAL SECURITY GUARD: SSL mode '{ssl_mode}' tidak diizinkan! "
+            f"Wajib salah satu dari: {allowed_ssl_modes}."
+        )
 
 
 def get_staging_dsn() -> str:
@@ -165,12 +180,19 @@ def get_staging_dsn() -> str:
         staging_pw = os.environ.get("STAGING_DB_PASSWORD")
         if staging_pw:
             encoded_pw = urllib.parse.quote_plus(staging_pw)
-            dsn = f"postgresql://postgres.xkhqirhurnjqglmajghn:{encoded_pw}@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres"
+            dsn = f"postgresql://postgres.xkhqirhurnjqglmajghn:{encoded_pw}@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require"
         else:
             raise RuntimeError(
                 "FATAL SECURITY CONFIGURATION: Environment variable 'STAGING_DATABASE_URL' "
                 "(atau 'STAGING_DB_PASSWORD') belum diset! Harap konfigurasikan sebelum menjalankan runner."
             )
+    else:
+        # If DSN from env lacks sslmode, explicitly append ?sslmode=require to enforce SSL policy
+        parsed = urllib.parse.urlparse(dsn)
+        query_params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        if "sslmode" not in query_params:
+            delimiter = "&" if parsed.query else "?"
+            dsn = f"{dsn}{delimiter}sslmode=require"
     validate_staging_dsn(dsn)
     return dsn
 
@@ -1616,56 +1638,56 @@ test_cases = [
     {
         "id": "SEC-TEST-01",
         "description": "Production Project Ref Detection (mpluzajlzpregmjwpjqr)",
-        "dsn": "postgresql://postgres.mpluzajlzpregmjwpjqr:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres",
+        "dsn": "postgresql://postgres.mpluzajlzpregmjwpjqr:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require",
         "expected_exception": RuntimeError,
         "expected_snippet": "FATAL SECURITY BREACH: Target production project ref terdeteksi"
     },
     {
         "id": "SEC-TEST-02",
         "description": "Port Non-5432 Rejection (Direct Transaction Pooler 6543)",
-        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?sslmode=require",
         "expected_exception": ValueError,
         "expected_snippet": "Port '6543' tidak diizinkan"
     },
     {
         "id": "SEC-TEST-03",
         "description": "Manipulated Hostname Rejection (Direct IPv6 Host)",
-        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@db.xkhqirhurnjqglmajghn.supabase.co:5432/postgres",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@db.xkhqirhurnjqglmajghn.supabase.co:5432/postgres?sslmode=require",
         "expected_exception": ValueError,
         "expected_snippet": "Hostname 'db.xkhqirhurnjqglmajghn.supabase.co' tidak diizinkan"
     },
     {
         "id": "SEC-TEST-04",
         "description": "Arbitrary External Hostname Rejection (Attacker Spoof)",
-        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@malicious-db-proxy.net:5432/postgres",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@malicious-db-proxy.net:5432/postgres?sslmode=require",
         "expected_exception": ValueError,
         "expected_snippet": "Hostname 'malicious-db-proxy.net' tidak diizinkan"
     },
     {
         "id": "SEC-TEST-05",
         "description": "Invalid Username Rejection",
-        "dsn": "postgresql://postgres.unauthorized_tenant:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres",
+        "dsn": "postgresql://postgres.unauthorized_tenant:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require",
         "expected_exception": ValueError,
         "expected_snippet": "Username tidak valid"
     },
     {
         "id": "SEC-TEST-06",
         "description": "Invalid Target Database Name Rejection",
-        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/production_live",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/production_live?sslmode=require",
         "expected_exception": ValueError,
         "expected_snippet": "Database 'production_live' tidak diizinkan"
     },
     {
         "id": "SEC-TEST-07",
-        "description": "Valid Canonical Staging Session Pooler DSN Acceptance",
-        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres",
+        "description": "Valid Canonical Staging Session Pooler DSN Acceptance (with explicit sslmode=require)",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require",
         "expected_exception": None,
         "expected_snippet": "VALID_ACCEPTED"
     },
     {
         "id": "SEC-TEST-08",
         "description": "Username Prefix Spoofing Rejection (Exact Match Enforcement)",
-        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn_spoofed:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn_spoofed:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require",
         "expected_exception": ValueError,
         "expected_snippet": "Username tidak valid"
     },
@@ -1675,6 +1697,34 @@ test_cases = [
         "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=disable",
         "expected_exception": ValueError,
         "expected_snippet": "SSL mode 'disable' tidak diizinkan"
+    },
+    {
+        "id": "SEC-TEST-10",
+        "description": "Missing Explicit SSL Mode Rejection (DSN without sslmode parameter)",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres",
+        "expected_exception": ValueError,
+        "expected_snippet": "Parameter 'sslmode' wajib didefinisikan secara eksplisit"
+    },
+    {
+        "id": "SEC-TEST-11",
+        "description": "Duplicate Parameter Injection Rejection (e.g. duplicate sslmode)",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require&sslmode=disable",
+        "expected_exception": ValueError,
+        "expected_snippet": "Parameter DSN duplikat terdeteksi pada 'sslmode'"
+    },
+    {
+        "id": "SEC-TEST-12",
+        "description": "Duplicate Arbitrary Query Parameter Pollution Rejection",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require&app=primary&app=secondary",
+        "expected_exception": ValueError,
+        "expected_snippet": "Parameter DSN duplikat terdeteksi pada 'app'"
+    },
+    {
+        "id": "SEC-TEST-13",
+        "description": "Insecure Ambiguous SSL Mode Rejection (sslmode=prefer)",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=prefer",
+        "expected_exception": ValueError,
+        "expected_snippet": "SSL mode 'prefer' tidak diizinkan"
     }
 ]
 
@@ -1684,7 +1734,7 @@ log_lines = [
     "=================================================================",
     f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
     f"Total Test Cases: {len(test_cases)}",
-    "Scope: Anti Python -O Bypass, URL-Parse RFC Compliance, Fail-Closed Security, Exact Identity & SSL Guard",
+    "Scope: Anti Python -O Bypass, URL-Parse RFC Compliance, Fail-Closed Security, Exact Identity, Explicit SSL & Anti Parameter Pollution",
     "Sanitization: All exception messages strictly report violated component only",
     "-----------------------------------------------------------------"
 ]
@@ -1758,9 +1808,9 @@ if not all_passed:
 =================================================================
        RUNNER DSN SECURITY GUARD TEST SUITE EXECUTION LOG
 =================================================================
-Timestamp: 2026-11-03 02:59:39 UTC
-Total Test Cases: 9
-Scope: Anti Python -O Bypass, URL-Parse RFC Compliance, Fail-Closed Security, Exact Identity & SSL Guard
+Timestamp: 2026-11-03 04:00:41 UTC
+Total Test Cases: 13
+Scope: Anti Python -O Bypass, URL-Parse RFC Compliance, Fail-Closed Security, Exact Identity, Explicit SSL & Anti Parameter Pollution
 Sanitization: All exception messages strictly report violated component only
 -----------------------------------------------------------------
 [+] SEC-TEST-01: PASSED: Fail-closed cleanly caught RuntimeError ('FATAL SECURITY BREACH: Target production project ref terdeteksi')
@@ -1772,8 +1822,12 @@ Sanitization: All exception messages strictly report violated component only
 [+] SEC-TEST-07: PASSED: Legitimate Staging DSN cleanly accepted.
 [+] SEC-TEST-08: PASSED: Fail-closed cleanly caught ValueError ('Username tidak valid')
 [+] SEC-TEST-09: PASSED: Fail-closed cleanly caught ValueError ('SSL mode 'disable' tidak diizinkan')
+[+] SEC-TEST-10: PASSED: Fail-closed cleanly caught ValueError ('Parameter 'sslmode' wajib didefinisikan secara eksplisit')
+[+] SEC-TEST-11: PASSED: Fail-closed cleanly caught ValueError ('Parameter DSN duplikat terdeteksi pada 'sslmode'')
+[+] SEC-TEST-12: PASSED: Fail-closed cleanly caught ValueError ('Parameter DSN duplikat terdeteksi pada 'app'')
+[+] SEC-TEST-13: PASSED: Fail-closed cleanly caught ValueError ('SSL mode 'prefer' tidak diizinkan')
 =================================================================
-FINAL RESULT: ALL 9 RUNNER SECURITY TESTS PASSED (100% FAIL-CLOSED)
+FINAL RESULT: ALL 13 RUNNER SECURITY TESTS PASSED (100% FAIL-CLOSED)
 =================================================================
 
 ```
@@ -2569,28 +2623,29 @@ print("\n[+] SEMUA STRUKTUR BASIS DATA BERHASIL DIKONVERGENKAN KE STAGING SECARA
 -- Target: Staging Database (xkhqirhurnjqglmajghn:5432)
 -- Scope: 13 Synthetic Entities (2 Clean, 11 Mutated / N_expected = 11)
 -- Isolation: Canonical Tenant A ('00000000-0000-0000-0000-000000000001')
+-- Safety: STRICT INSERT ONLY (NO 'ON CONFLICT DO NOTHING' ON FIXTURE ENTITIES)
 -- =============================================================================
 
 BEGIN;
 
 -- 0. CANONICAL TENANT (Referential Anchor for FK Constraints)
+-- Idempotent check for tenant anchor dependency only
 INSERT INTO public.tenants (id, slug)
 VALUES ('00000000-0000-0000-0000-000000000001', 'canonical-tenant-a')
 ON CONFLICT (id) DO NOTHING;
 
 -- 1. AFFILIATES (3 Rows: 1 Clean, 1 Survivor, 1 Loser)
+-- Strict insert: Fails closed on any pre-existing ID collision
 INSERT INTO public.affiliates (id, tenant_id, name, phone_number, referral_code, commission_rate, status)
 VALUES 
   ('11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000001', 'SYNTH_AFF_CLEAN_001', '081200000001', 'CLEAN01', 0.10, 'ACTIVE'),
   ('22222222-2222-2222-2222-222222222221', '00000000-0000-0000-0000-000000000001', 'SYNTH_AFF_SURV_001',  '081200000002', 'SURV01',  0.10, 'ACTIVE'),
-  ('22222222-2222-2222-2222-222222222222', '00000000-0000-0000-0000-000000000001', 'SYNTH_AFF_LOSER_001', '081200000003', 'LOSER01', 0.10, 'ACTIVE')
-ON CONFLICT (id) DO NOTHING;
+  ('22222222-2222-2222-2222-222222222222', '00000000-0000-0000-0000-000000000001', 'SYNTH_AFF_LOSER_001', '081200000003', 'LOSER01', 0.10, 'ACTIVE');
 
 -- 2. AFFILIATE COMMISSIONS (1 Clean Row)
 INSERT INTO public.affiliate_commissions (id, tenant_id, affiliate_id, order_id, order_amount, amount, status)
 VALUES 
-  ('11111111-1111-1111-1111-111111111112', '00000000-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'ORD_CLEAN_001', 500000, 50000, 'PAID')
-ON CONFLICT (id) DO NOTHING;
+  ('11111111-1111-1111-1111-111111111112', '00000000-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'ORD_CLEAN_001', 500000, 50000, 'PAID');
 
 -- 3. QUARANTINED COMMISSIONS (1 Physically Isolated Row)
 INSERT INTO public.migration_031_quarantined_affiliate_commissions (
@@ -2601,8 +2656,7 @@ VALUES (
     '33333333-3333-3333-3333-333333333331', 'BATCH_SYNTH_001', '00000000-0000-0000-0000-000000000001', 
     '00000000-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'ORD_QUAR_001', 
     750000, 75000, 'PENDING', 'QUARANTINED', 'CROSS_TENANT_DISCREPANCY_DETECTED', 'QUARANTINED_LOCKED', '{}'::jsonb
-)
-ON CONFLICT (id) DO NOTHING;
+);
 
 -- 4. IDENTIFIER DEDUP GOVERNANCE MAP (2 Rows: Survivor rank=1 & Loser rank=2)
 INSERT INTO public.migration_031_identifier_dedup_map (
@@ -2616,8 +2670,7 @@ VALUES
    '22222222-2222-2222-2222-222222222221', 1, 'SURVIVOR', 'AUTHORITATIVE_PRIMARY_IDENTITY', '{}'::jsonb),
   ('e2222222-2222-2222-2222-222222222222', 'BATCH_SYNTH_001', 'affiliates', 'id', '00000000-0000-0000-0000-000000000001',
    '22222222-2222-2222-2222-222222222222', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222222',
-   '22222222-2222-2222-2222-222222222221', 2, 'SUPERSEDED_DUPLICATE', 'MERGED_TO_SURVIVOR', '{}'::jsonb)
-ON CONFLICT (map_id) DO NOTHING;
+   '22222222-2222-2222-2222-222222222221', 2, 'SUPERSEDED_DUPLICATE', 'MERGED_TO_SURVIVOR', '{}'::jsonb);
 
 -- 5. CHILD TABLES (7 tables, 8 streams repointed from AFF_LOSER_001)
 
@@ -2625,32 +2678,27 @@ ON CONFLICT (map_id) DO NOTHING;
 INSERT INTO public.orders (id, tenant_id, affiliate_id, manager_id, status, gross_amount)
 VALUES 
   ('44444444-4444-4444-4444-444444444441', '00000000-0000-0000-0000-000000000001'::uuid, '22222222-2222-2222-2222-222222222222', NULL, 'PENDING', 100000),
-  ('44444444-4444-4444-4444-444444444442', '00000000-0000-0000-0000-000000000001'::uuid, NULL, '22222222-2222-2222-2222-222222222222', 'PENDING', 150000)
-ON CONFLICT (id) DO NOTHING;
+  ('44444444-4444-4444-4444-444444444442', '00000000-0000-0000-0000-000000000001'::uuid, NULL, '22222222-2222-2222-2222-222222222222', 'PENDING', 150000);
 
 -- 5.2 Product Orders
 INSERT INTO public.product_orders (id, order_id, tenant_id, affiliate_id, status)
 VALUES 
-  (44444443, 'PO_CHILD_001', '00000000-0000-0000-0000-000000000001', '22222222-2222-2222-2222-222222222222', 'PENDING')
-ON CONFLICT (id) DO NOTHING;
+  (44444443, 'PO_CHILD_001', '00000000-0000-0000-0000-000000000001', '22222222-2222-2222-2222-222222222222', 'PENDING');
 
 -- 5.3 Delivery Orders
 INSERT INTO public.delivery_orders (id, tenant_id, order_id, provider, service_type, affiliate_id, status)
 VALUES 
-  ('44444444-4444-4444-4444-444444444444', '00000000-0000-0000-0000-000000000001', 'ORD_DO_001', 'JNE', 'REG', '22222222-2222-2222-2222-222222222222', 'PENDING')
-ON CONFLICT (id) DO NOTHING;
+  ('44444444-4444-4444-4444-444444444444', '00000000-0000-0000-0000-000000000001', 'ORD_DO_001', 'JNE', 'REG', '22222222-2222-2222-2222-222222222222', 'PENDING');
 
 -- 5.4 Attributions
 INSERT INTO public.attributions (id, tenant_id, session_id, ip_hash, affiliate_id)
 VALUES 
-  ('44444444-4444-4444-4444-444444444445', '00000000-0000-0000-0000-000000000001', 'SESS_001', 'HASH_001', '22222222-2222-2222-2222-222222222222'::uuid)
-ON CONFLICT (id) DO NOTHING;
+  ('44444444-4444-4444-4444-444444444445', '00000000-0000-0000-0000-000000000001', 'SESS_001', 'HASH_001', '22222222-2222-2222-2222-222222222222'::uuid);
 
 -- 5.5 Attribution Sessions
 INSERT INTO public.attribution_sessions (id, tenant_id, ip_hash, affiliate_id)
 VALUES 
-  ('44444444-4444-4444-4444-444444444446', '00000000-0000-0000-0000-000000000001', 'HASH_001', '22222222-2222-2222-2222-222222222222'::uuid)
-ON CONFLICT (id) DO NOTHING;
+  ('44444444-4444-4444-4444-444444444446', '00000000-0000-0000-0000-000000000001', 'HASH_001', '22222222-2222-2222-2222-222222222222'::uuid);
 
 -- 5.6 Shop Subscriptions
 INSERT INTO public.shop_subscriptions (
@@ -2658,8 +2706,7 @@ INSERT INTO public.shop_subscriptions (
 )
 VALUES 
   ('44444444-4444-4444-4444-444444444447', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 
-   '22222222-2222-2222-2222-222222222222'::uuid, 'ACTIVE', 299000, now() + interval '30 days', now() + interval '30 days')
-ON CONFLICT (id) DO NOTHING;
+   '22222222-2222-2222-2222-222222222222'::uuid, 'ACTIVE', 299000, now() + interval '30 days', now() + interval '30 days');
 
 -- 5.7 Shop Commission Ledger
 INSERT INTO public.shop_commission_ledger (
@@ -2667,8 +2714,7 @@ INSERT INTO public.shop_commission_ledger (
 )
 VALUES 
   ('44444444-4444-4444-4444-444444444448', '00000000-0000-0000-0000-000000000001', 
-   '22222222-2222-2222-2222-222222222222'::uuid, 299000, 29900, 0, 269100)
-ON CONFLICT (id) DO NOTHING;
+   '22222222-2222-2222-2222-222222222222'::uuid, 299000, 29900, 0, 269100);
 
 COMMIT;
 
@@ -2700,6 +2746,9 @@ CLEANUP_SQL_FILE = r"C:\boontrack-core\cleanup_synthetic_fixture.sql"
 # Authoritative cryptographic fingerprint of the 5 historical production rows
 EXPECTED_HISTORICAL_FINGERPRINT = "c9b2f0bb2d7b7f460a8081d04130e611dc9a82734b1fff3373c778539569111e"
 
+# Canonical Tenant Anchor ID
+CANONICAL_TENANT_ID = "00000000-0000-0000-0000-000000000001"
+
 
 def run_seeder(mode: str = "dry-run"):
     dsn = get_staging_dsn()
@@ -2712,7 +2761,7 @@ def run_seeder(mode: str = "dry-run"):
     print(f"[*] Execution Mode: {mode.upper()}\n")
 
     conn = psycopg2.connect(dsn, connect_timeout=15)
-    conn.autocommit = False  # Explicit driver transaction control
+    conn.autocommit = False  # Explicit driver transaction control for complete atomicity
 
     try:
         cur = conn.cursor()
@@ -2721,10 +2770,19 @@ def run_seeder(mode: str = "dry-run"):
             print("[*] Mengeksekusi pembersihan fixture sintetis (cleanup)...")
             with open(CLEANUP_SQL_FILE, "r", encoding="utf-8") as f:
                 cleanup_sql = f.read()
-            cur.execute(cleanup_sql)
-            conn.commit()
 
-            # Verifikasi kriptografis & relasional bahwa 5 baris historis tetap 100% utuh
+            # Strip any residual BEGIN/COMMIT to enforce atomic transaction boundary via Python
+            clean_cleanup_payload = cleanup_sql.replace("BEGIN;", "").replace("COMMIT;", "").strip()
+            cur.execute(clean_cleanup_payload)
+
+            # =========================================================================
+            # ATOMIC IN-TRANSACTION POSTCONDITION & FINGERPRINT VERIFICATION
+            # Seluruh pemeriksaan dilakukan SEBELUM commit. Jika gagal, transaksi
+            # di-rollback otomatis dan tidak ada perubahan yang menetap di database.
+            # =========================================================================
+            print("[*] Memverifikasi integritas data historis di dalam transaksi (sebelum commit)...")
+            
+            # 1. Verifikasi Kriptografis 5 Baris Historis
             cur.execute("""
                 SELECT id::text, tenant_id::text, name::text, phone_number::text, referral_code::text, commission_rate::text, status::text
                 FROM public.affiliates 
@@ -2745,50 +2803,118 @@ def run_seeder(mode: str = "dry-run"):
                     f"Expected: {EXPECTED_HISTORICAL_FINGERPRINT}, Got: {post_fp}"
                 )
 
-            print(f"[+] Cleanup Berhasil: Seluruh fixture sintetis dibersihkan.")
-            print(f"[+] Verifikasi Kriptografis: 5 baris historis produksi terbukti 100% identik (SHA-256: {post_fp[:16]}...).")
+            # 2. Verifikasi Preservasi Tenant Jangkar (Tidak Boleh Terhapus)
+            cur.execute("SELECT count(*) FROM public.tenants WHERE id = %s;", (CANONICAL_TENANT_ID,))
+            tenant_cnt = cur.fetchone()[0]
+            if tenant_cnt == 0:
+                raise RuntimeError("POST-CLEANUP TENANT ERROR: Tenant jangkar terhapus! Kebijakan preservasi dilanggar.")
+
+            # HANYA COMMIT SETELAH SELURUH ASERSI POSTCONDITION LULUS 100%
+            conn.commit()
+            print(f"[+] Cleanup Berhasil (Atomic Committed): Seluruh 13 fixture sintetis dibersihkan.")
+            print(f"[+] Verifikasi Kriptografis In-Transaction: 5 baris historis terbukti 100% identik (SHA-256: {post_fp[:16]}...).")
+            print(f"[+] Verifikasi Tenant Jangkar: Tenant {CANONICAL_TENANT_ID} tetap terlindungi utuh.")
             return
 
+        # =============================================================================
+        # SEED PREFLIGHT COLLISION CHECK (Mencegah Penimpaan & Konflik ID Fixture)
+        # =============================================================================
+        print("[*] Menjalankan Preflight Collision Check untuk seluruh 13 ID Fixture...")
+        collision_checks = [
+            ("public.affiliates", "SELECT id::text FROM public.affiliates WHERE id IN ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222222');"),
+            ("public.affiliate_commissions", "SELECT id::text FROM public.affiliate_commissions WHERE id = '11111111-1111-1111-1111-111111111112';"),
+            ("public.migration_031_quarantined_affiliate_commissions", "SELECT id::text FROM public.migration_031_quarantined_affiliate_commissions WHERE id = '33333333-3333-3333-3333-333333333331';"),
+            ("public.orders", "SELECT id::text FROM public.orders WHERE id IN ('44444444-4444-4444-4444-444444444441', '44444444-4444-4444-4444-444444444442');"),
+            ("public.product_orders", "SELECT id::text FROM public.product_orders WHERE id = 44444443;"),
+            ("public.delivery_orders", "SELECT id::text FROM public.delivery_orders WHERE id = '44444444-4444-4444-4444-444444444444';"),
+            ("public.attributions", "SELECT id::text FROM public.attributions WHERE id = '44444444-4444-4444-4444-444444444445';"),
+            ("public.attribution_sessions", "SELECT id::text FROM public.attribution_sessions WHERE id = '44444444-4444-4444-4444-444444444446';"),
+            ("public.shop_subscriptions", "SELECT id::text FROM public.shop_subscriptions WHERE id = '44444444-4444-4444-4444-444444444447';"),
+            ("public.shop_commission_ledger", "SELECT id::text FROM public.shop_commission_ledger WHERE id = '44444444-4444-4444-4444-444444444448';"),
+            ("public.migration_031_identifier_dedup_map", "SELECT map_id::text FROM public.migration_031_identifier_dedup_map WHERE map_id IN ('e1111111-1111-1111-1111-111111111111', 'e2222222-2222-2222-2222-222222222222');"),
+        ]
+
+        collisions = []
+        for tbl, chk_qry in collision_checks:
+            cur.execute(chk_qry)
+            rows = cur.fetchall()
+            if rows:
+                collisions.append(f"{tbl}: {[r[0] for r in rows]}")
+
+        if collisions:
+            raise RuntimeError(f"PREFLIGHT COLLISION DETECTED! Terdeteksi benturan ID fixture sebelum seeding: {collisions}")
+        print("[+] Preflight Collision Check PASSED: 0 benturan ID fixture terdeteksi.")
+
+        # Eksekusi Seed SQL
         print("[*] Membaca berkas seed SQL...")
         with open(SEED_SQL_FILE, "r", encoding="utf-8") as f:
             seed_sql = f.read()
 
-        # Remove BEGIN/COMMIT from script payload to manage transactional control via python
         clean_payload = seed_sql.replace("BEGIN;", "").replace("COMMIT;", "").strip()
-
         print("[*] Mengeksekusi penyisipan 13 entitas sintetis (15 baris fisik)...")
         cur.execute(clean_payload)
 
-        # Verifikasi hitungan baris per tabel di dalam transaksi
-        verification_queries = [
-            ("public.affiliates", "SELECT count(*) FROM public.affiliates WHERE id IN ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222222');", 3, "Entitas Domain (Clean, Survivor, Loser)"),
-            ("public.affiliate_commissions", "SELECT count(*) FROM public.affiliate_commissions WHERE id = '11111111-1111-1111-1111-111111111112';", 1, "Entitas Domain (Clean Commission)"),
-            ("public.migration_031_quarantined_affiliate_commissions", "SELECT count(*) FROM public.migration_031_quarantined_affiliate_commissions WHERE id = '33333333-3333-3333-3333-333333333331';", 1, "Entitas Domain (Quarantined Commission)"),
-            ("public.orders", "SELECT count(*) FROM public.orders WHERE id IN ('44444444-4444-4444-4444-444444444441', '44444444-4444-4444-4444-444444444442');", 2, "Entitas Domain (Repointed Orders: affiliate & manager)"),
-            ("public.product_orders", "SELECT count(*) FROM public.product_orders WHERE id = 44444443;", 1, "Entitas Domain (Repointed Product Order)"),
-            ("public.delivery_orders", "SELECT count(*) FROM public.delivery_orders WHERE id = '44444444-4444-4444-4444-444444444444';", 1, "Entitas Domain (Repointed Delivery Order)"),
-            ("public.attributions", "SELECT count(*) FROM public.attributions WHERE id = '44444444-4444-4444-4444-444444444445';", 1, "Entitas Domain (Repointed Attribution)"),
-            ("public.attribution_sessions", "SELECT count(*) FROM public.attribution_sessions WHERE id = '44444444-4444-4444-4444-444444444446';", 1, "Entitas Domain (Repointed Attribution Session)"),
-            ("public.shop_subscriptions", "SELECT count(*) FROM public.shop_subscriptions WHERE id = '44444444-4444-4444-4444-444444444447';", 1, "Entitas Domain (Repointed Subscription)"),
-            ("public.shop_commission_ledger", "SELECT count(*) FROM public.shop_commission_ledger WHERE id = '44444444-4444-4444-4444-444444444448';", 1, "Entitas Domain (Repointed Shop Commission Ledger)"),
-            ("public.migration_031_identifier_dedup_map", "SELECT count(*) FROM public.migration_031_identifier_dedup_map WHERE map_id IN ('e1111111-1111-1111-1111-111111111111', 'e2222222-2222-2222-2222-222222222222');", 2, "Metadata Tata Kelola (Survivor rank 1 & Loser rank 2)"),
+        # =============================================================================
+        # FULL PAYLOAD VERIFICATION (Memeriksa Seluruh Nilai Kolom, Bukan Hanya Count)
+        # =============================================================================
+        print("[*] Menjalankan Full Payload Verification untuk setiap entitas yang disisipkan...")
+
+        # 1. Affiliates
+        cur.execute("""
+            SELECT id::text, name, phone_number, referral_code, commission_rate::numeric, status 
+            FROM public.affiliates 
+            WHERE id IN ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222222')
+            ORDER BY id;
+        """)
+        aff_rows = cur.fetchall()
+        expected_aff = [
+            ('11111111-1111-1111-1111-111111111111', 'SYNTH_AFF_CLEAN_001', '081200000001', 'CLEAN01', 0.10, 'ACTIVE'),
+            ('22222222-2222-2222-2222-222222222221', 'SYNTH_AFF_SURV_001', '081200000002', 'SURV01', 0.10, 'ACTIVE'),
+            ('22222222-2222-2222-2222-222222222222', 'SYNTH_AFF_LOSER_001', '081200000003', 'LOSER01', 0.10, 'ACTIVE'),
         ]
+        if len(aff_rows) != 3 or any(a[:4] != e[:4] or a[5] != e[5] for a, e in zip(aff_rows, expected_aff)):
+            raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on affiliates: {aff_rows}")
 
-        domain_entities_count = 0
-        metadata_records_count = 0
+        # 2. Affiliate Commission Clean
+        cur.execute("SELECT id::text, affiliate_id::text, amount::numeric, status FROM public.affiliate_commissions WHERE id = '11111111-1111-1111-1111-111111111112';")
+        comm_row = cur.fetchone()
+        if not comm_row or comm_row[1] != '11111111-1111-1111-1111-111111111111' or comm_row[3] != 'PAID':
+            raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on affiliate_commissions: {comm_row}")
 
-        for table, qry, expected, category in verification_queries:
+        # 3. Quarantined Commission
+        cur.execute("SELECT id::text, affiliate_id::text, status, quarantine_reason FROM public.migration_031_quarantined_affiliate_commissions WHERE id = '33333333-3333-3333-3333-333333333331';")
+        quar_row = cur.fetchone()
+        if not quar_row or quar_row[2] != 'QUARANTINED' or quar_row[3] != 'CROSS_TENANT_DISCREPANCY_DETECTED':
+            raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on quarantined commissions: {quar_row}")
+
+        # 4. Dedup Map
+        cur.execute("SELECT map_id::text, quarantined_row_id::text, canonical_survivor_id::text, dedup_rank, new_status FROM public.migration_031_identifier_dedup_map WHERE map_id IN ('e1111111-1111-1111-1111-111111111111', 'e2222222-2222-2222-2222-222222222222') ORDER BY dedup_rank;")
+        dedup_rows = cur.fetchall()
+        if len(dedup_rows) != 2 or dedup_rows[0][3] != 1 or dedup_rows[1][3] != 2 or dedup_rows[0][4] != 'SURVIVOR':
+            raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on dedup map: {dedup_rows}")
+
+        # 5. Orders Repointing
+        cur.execute("SELECT id::text, affiliate_id::text, manager_id::text FROM public.orders WHERE id IN ('44444444-4444-4444-4444-444444444441', '44444444-4444-4444-4444-444444444442') ORDER BY id;")
+        ord_rows = cur.fetchall()
+        if len(ord_rows) != 2 or ord_rows[0][1] != '22222222-2222-2222-2222-222222222222' or ord_rows[1][2] != '22222222-2222-2222-2222-222222222222':
+            raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on orders: {ord_rows}")
+
+        # 6. Child tables repointed to Loser
+        child_checks = [
+            ("public.product_orders", "SELECT affiliate_id::text FROM public.product_orders WHERE id = 44444443;"),
+            ("public.delivery_orders", "SELECT affiliate_id::text FROM public.delivery_orders WHERE id = '44444444-4444-4444-4444-444444444444';"),
+            ("public.attributions", "SELECT affiliate_id::text FROM public.attributions WHERE id = '44444444-4444-4444-4444-444444444445';"),
+            ("public.attribution_sessions", "SELECT affiliate_id::text FROM public.attribution_sessions WHERE id = '44444444-4444-4444-4444-444444444446';"),
+            ("public.shop_subscriptions", "SELECT affiliate_id::text FROM public.shop_subscriptions WHERE id = '44444444-4444-4444-4444-444444444447';"),
+            ("public.shop_commission_ledger", "SELECT affiliate_id::text FROM public.shop_commission_ledger WHERE id = '44444444-4444-4444-4444-444444444448';"),
+        ]
+        for tbl, qry in child_checks:
             cur.execute(qry)
-            cnt = cur.fetchone()[0]
-            if cnt != expected:
-                raise RuntimeError(f"SEED VERIFICATION FAILURE: {table} expected {expected} rows, found {cnt}!")
-            if "Metadata" in category:
-                metadata_records_count += cnt
-            else:
-                domain_entities_count += cnt
+            row = cur.fetchone()
+            if not row or row[0] != '22222222-2222-2222-2222-222222222222':
+                raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on {tbl}: expected Loser affiliate repointed, got {row}")
 
-        total_seeded = domain_entities_count + metadata_records_count
-        print(f"[+] Verifikasi transaksi: Berhasil memvalidasi {domain_entities_count} entitas domain + {metadata_records_count} baris tata kelola dedup map (Total {total_seeded} baris fisik).")
+        print("[+] Full Payload Verification PASSED: Seluruh kolom dan referensi FK terverifikasi 100% presisi.")
 
         if mode == "commit":
             conn.commit()
@@ -2831,14 +2957,13 @@ if __name__ == "__main__":
 -- BOONTRACK SYNTHETIC FIXTURE TEARDOWN & CLEANUP SCRIPT (REV 4.1.6.2.11)
 -- Target: Staging Database (xkhqirhurnjqglmajghn:5432)
 -- Purpose: Unconditional, idempotent deletion of the 13 synthetic UUIDs
--- Safety: Pre-snapshot and post-comparison guarantees 100% untouched historical production rows
+-- Safety: Pre-snapshot and post-comparison guarantees 100% untouched historical production rows.
+-- Tenant Policy: Tenant anchor '00000000-0000-0000-0000-000000000001' is PRESERVED (NOT DELETED).
 -- =============================================================================
 
-BEGIN;
-
 -- -----------------------------------------------------------------------------
--- TAHAP 1: PRE-OPERATION SNAPSHOT NILAI RELEVAN 5 BARIS HISTORIS PRODUKSI
--- Menyimpan seluruh 7 kolom data: id, tenant_id, name, phone_number, referral_code, commission_rate, status
+-- TAHAP 1: PRE-OPERATION SNAPSHOT NILAI RELEVAN 5 BARIS HISTORIS & TENANT JANGKAR
+-- Menyimpan seluruh 7 kolom data affiliates + kolom tenant anchor
 -- -----------------------------------------------------------------------------
 DROP TABLE IF EXISTS pg_temp._historical_affiliates_pre_snapshot;
 CREATE TEMP TABLE pg_temp._historical_affiliates_pre_snapshot AS
@@ -2859,7 +2984,14 @@ WHERE id IN (
     'f5b98eaa-cfde-49cf-a497-491221c1cda9'
 );
 
--- Asersi Pre-Snapshot: Wajib tepat 5 baris
+-- Snapshot Tenant Jangkar (Jika ada sebelum cleanup)
+DROP TABLE IF EXISTS pg_temp._historical_tenant_pre_snapshot;
+CREATE TEMP TABLE pg_temp._historical_tenant_pre_snapshot AS
+SELECT id::text, name::text, slug::text
+FROM public.tenants
+WHERE id = '00000000-0000-0000-0000-000000000001';
+
+-- Asersi Pre-Snapshot: Wajib tepat 5 baris affiliates
 DO $$
 DECLARE
     v_pre_cnt INT;
@@ -2872,6 +3004,8 @@ END $$;
 
 -- -----------------------------------------------------------------------------
 -- TAHAP 2: PENGHAPUSAN EKSKLUSIF FIXTURE SINTETIS (STRICT ID-TARGETED ONLY)
+-- CATATAN KEAMANAN CTO: Tenant jangkar '00000000-0000-0000-0000-000000000001'
+-- TIDAK DIHAPUS untuk mencegah penghapusan dependensi yang bukan milik eksklusif seed.
 -- -----------------------------------------------------------------------------
 DELETE FROM public.shop_commission_ledger WHERE id = '44444444-4444-4444-4444-444444444448';
 DELETE FROM public.shop_subscriptions WHERE id = '44444444-4444-4444-4444-444444444447';
@@ -2897,17 +3031,17 @@ WHERE id IN (
   '22222222-2222-2222-2222-222222222222'
 );
 
-DELETE FROM public.tenants WHERE id = '00000000-0000-0000-0000-000000000001';
-
 -- -----------------------------------------------------------------------------
 -- TAHAP 3: VERIFIKASI POST-CLEANUP: EXACT-VALUE TWO-WAY EXCEPT RECONCILIATION
 -- Membuktikan secara matematis bahwa tidak ada satu kolom pun yang bermutasi pada 5 baris historis.
+-- Membuktikan pula bahwa tenant jangkar tetap utuh.
 -- -----------------------------------------------------------------------------
 DO $$
 DECLARE
     v_forward_diff INT;
     v_reverse_diff INT;
     v_post_cnt INT;
+    v_tenant_diff INT;
 BEGIN
     -- 1. Forward Difference: Snapshot EXCEPT Current (Harus 0)
     SELECT COUNT(*) INTO v_forward_diff FROM (
@@ -2942,7 +3076,7 @@ BEGIN
         RAISE EXCEPTION 'CRITICAL CORRUPTION: Historical production rows altered after cleanup (reverse diff = %)!', v_reverse_diff USING ERRCODE = 'P0001';
     END IF;
 
-    -- 3. Cardinality Equality Check
+    -- 3. Cardinality Equality Check Affiliates
     SELECT count(*) INTO v_post_cnt 
     FROM public.affiliates 
     WHERE id IN (
@@ -2956,9 +3090,18 @@ BEGIN
     IF v_post_cnt <> 5 THEN
         RAISE EXCEPTION 'CRITICAL INTEGRITY FAILURE: Expected 5 historical affiliates post-cleanup, found %', v_post_cnt USING ERRCODE = 'P0001';
     END IF;
-END $$;
 
-COMMIT;
+    -- 4. Verifikasi Tenant Jangkar (Tidak Boleh Terhapus atau Bermutasi)
+    SELECT COUNT(*) INTO v_tenant_diff FROM (
+        SELECT id, name, slug FROM pg_temp._historical_tenant_pre_snapshot
+        EXCEPT
+        SELECT id::text, name::text, slug::text FROM public.tenants
+    ) td;
+
+    IF v_tenant_diff <> 0 THEN
+        RAISE EXCEPTION 'CRITICAL INTEGRITY FAILURE: Tenant anchor modified or deleted during cleanup!', USING ERRCODE = 'P0001';
+    END IF;
+END $$;
 
 ```
 

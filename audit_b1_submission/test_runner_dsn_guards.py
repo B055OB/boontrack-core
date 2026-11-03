@@ -18,56 +18,56 @@ test_cases = [
     {
         "id": "SEC-TEST-01",
         "description": "Production Project Ref Detection (mpluzajlzpregmjwpjqr)",
-        "dsn": "postgresql://postgres.mpluzajlzpregmjwpjqr:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres",
+        "dsn": "postgresql://postgres.mpluzajlzpregmjwpjqr:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require",
         "expected_exception": RuntimeError,
         "expected_snippet": "FATAL SECURITY BREACH: Target production project ref terdeteksi"
     },
     {
         "id": "SEC-TEST-02",
         "description": "Port Non-5432 Rejection (Direct Transaction Pooler 6543)",
-        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?sslmode=require",
         "expected_exception": ValueError,
         "expected_snippet": "Port '6543' tidak diizinkan"
     },
     {
         "id": "SEC-TEST-03",
         "description": "Manipulated Hostname Rejection (Direct IPv6 Host)",
-        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@db.xkhqirhurnjqglmajghn.supabase.co:5432/postgres",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@db.xkhqirhurnjqglmajghn.supabase.co:5432/postgres?sslmode=require",
         "expected_exception": ValueError,
         "expected_snippet": "Hostname 'db.xkhqirhurnjqglmajghn.supabase.co' tidak diizinkan"
     },
     {
         "id": "SEC-TEST-04",
         "description": "Arbitrary External Hostname Rejection (Attacker Spoof)",
-        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@malicious-db-proxy.net:5432/postgres",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@malicious-db-proxy.net:5432/postgres?sslmode=require",
         "expected_exception": ValueError,
         "expected_snippet": "Hostname 'malicious-db-proxy.net' tidak diizinkan"
     },
     {
         "id": "SEC-TEST-05",
         "description": "Invalid Username Rejection",
-        "dsn": "postgresql://postgres.unauthorized_tenant:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres",
+        "dsn": "postgresql://postgres.unauthorized_tenant:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require",
         "expected_exception": ValueError,
         "expected_snippet": "Username tidak valid"
     },
     {
         "id": "SEC-TEST-06",
         "description": "Invalid Target Database Name Rejection",
-        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/production_live",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/production_live?sslmode=require",
         "expected_exception": ValueError,
         "expected_snippet": "Database 'production_live' tidak diizinkan"
     },
     {
         "id": "SEC-TEST-07",
-        "description": "Valid Canonical Staging Session Pooler DSN Acceptance",
-        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres",
+        "description": "Valid Canonical Staging Session Pooler DSN Acceptance (with explicit sslmode=require)",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require",
         "expected_exception": None,
         "expected_snippet": "VALID_ACCEPTED"
     },
     {
         "id": "SEC-TEST-08",
         "description": "Username Prefix Spoofing Rejection (Exact Match Enforcement)",
-        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn_spoofed:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn_spoofed:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require",
         "expected_exception": ValueError,
         "expected_snippet": "Username tidak valid"
     },
@@ -77,6 +77,34 @@ test_cases = [
         "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=disable",
         "expected_exception": ValueError,
         "expected_snippet": "SSL mode 'disable' tidak diizinkan"
+    },
+    {
+        "id": "SEC-TEST-10",
+        "description": "Missing Explicit SSL Mode Rejection (DSN without sslmode parameter)",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres",
+        "expected_exception": ValueError,
+        "expected_snippet": "Parameter 'sslmode' wajib didefinisikan secara eksplisit"
+    },
+    {
+        "id": "SEC-TEST-11",
+        "description": "Duplicate Parameter Injection Rejection (e.g. duplicate sslmode)",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require&sslmode=disable",
+        "expected_exception": ValueError,
+        "expected_snippet": "Parameter DSN duplikat terdeteksi pada 'sslmode'"
+    },
+    {
+        "id": "SEC-TEST-12",
+        "description": "Duplicate Arbitrary Query Parameter Pollution Rejection",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require&app=primary&app=secondary",
+        "expected_exception": ValueError,
+        "expected_snippet": "Parameter DSN duplikat terdeteksi pada 'app'"
+    },
+    {
+        "id": "SEC-TEST-13",
+        "description": "Insecure Ambiguous SSL Mode Rejection (sslmode=prefer)",
+        "dsn": "postgresql://postgres.xkhqirhurnjqglmajghn:DummyPassword123@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=prefer",
+        "expected_exception": ValueError,
+        "expected_snippet": "SSL mode 'prefer' tidak diizinkan"
     }
 ]
 
@@ -86,7 +114,7 @@ log_lines = [
     "=================================================================",
     f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
     f"Total Test Cases: {len(test_cases)}",
-    "Scope: Anti Python -O Bypass, URL-Parse RFC Compliance, Fail-Closed Security, Exact Identity & SSL Guard",
+    "Scope: Anti Python -O Bypass, URL-Parse RFC Compliance, Fail-Closed Security, Exact Identity, Explicit SSL & Anti Parameter Pollution",
     "Sanitization: All exception messages strictly report violated component only",
     "-----------------------------------------------------------------"
 ]

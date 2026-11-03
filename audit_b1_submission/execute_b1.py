@@ -60,12 +60,27 @@ def validate_staging_dsn(dsn: str) -> None:
     if db_name != "postgres":
         raise ValueError(f"FATAL SECURITY GUARD: Database '{db_name}' tidak diizinkan! Wajib 'postgres'.")
 
-    # Guard 8: SSL Policy Enforcement (Rejects disabled or unencrypted modes)
-    query_params = urllib.parse.parse_qs(parsed.query)
-    if "sslmode" in query_params:
-        ssl_mode = query_params["sslmode"][0].lower()
-        if ssl_mode in ("disable", "allow"):
-            raise ValueError(f"FATAL SECURITY GUARD: SSL mode '{ssl_mode}' tidak diizinkan! Wajib enkripsi SSL/TLS.")
+    # Guard 8: Query Parameters Parameter-Pollution & SSL Policy Enforcement
+    # Use parse_qs with keep_blank_values=True to detect all parameters
+    query_params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+
+    # 8.1 Reject duplicate query parameters across the entire DSN query string
+    for param_name, param_values in query_params.items():
+        if len(param_values) > 1:
+            raise ValueError(f"FATAL SECURITY GUARD: Parameter DSN duplikat terdeteksi pada '{param_name}'! Ditolak.")
+
+    # 8.2 Require explicit sslmode parameter
+    if "sslmode" not in query_params:
+        raise ValueError("FATAL SECURITY GUARD: Parameter 'sslmode' wajib didefinisikan secara eksplisit pada DSN! (misal: ?sslmode=require)")
+
+    # 8.3 Enforce strict SSL mode: only require, verify-ca, verify-full are permitted
+    ssl_mode = query_params["sslmode"][0].lower()
+    allowed_ssl_modes = ("require", "verify-ca", "verify-full")
+    if ssl_mode not in allowed_ssl_modes:
+        raise ValueError(
+            f"FATAL SECURITY GUARD: SSL mode '{ssl_mode}' tidak diizinkan! "
+            f"Wajib salah satu dari: {allowed_ssl_modes}."
+        )
 
 
 def get_staging_dsn() -> str:
@@ -78,12 +93,19 @@ def get_staging_dsn() -> str:
         staging_pw = os.environ.get("STAGING_DB_PASSWORD")
         if staging_pw:
             encoded_pw = urllib.parse.quote_plus(staging_pw)
-            dsn = f"postgresql://postgres.xkhqirhurnjqglmajghn:{encoded_pw}@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres"
+            dsn = f"postgresql://postgres.xkhqirhurnjqglmajghn:{encoded_pw}@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require"
         else:
             raise RuntimeError(
                 "FATAL SECURITY CONFIGURATION: Environment variable 'STAGING_DATABASE_URL' "
                 "(atau 'STAGING_DB_PASSWORD') belum diset! Harap konfigurasikan sebelum menjalankan runner."
             )
+    else:
+        # If DSN from env lacks sslmode, explicitly append ?sslmode=require to enforce SSL policy
+        parsed = urllib.parse.urlparse(dsn)
+        query_params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        if "sslmode" not in query_params:
+            delimiter = "&" if parsed.query else "?"
+            dsn = f"{dsn}{delimiter}sslmode=require"
     validate_staging_dsn(dsn)
     return dsn
 
