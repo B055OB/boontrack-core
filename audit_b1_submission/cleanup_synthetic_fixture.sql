@@ -256,7 +256,7 @@ BEGIN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Attribution Session 44444444-4444-4444-4444-444444444446 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
 
-    -- 10. Verifikasi Kepemilikan Shop Subscriptions (Seluruh 6 Kolom Ditulis Termasuk tenant_slug, status, amount)
+    -- 10. Verifikasi Kepemilikan Shop Subscriptions (Seluruh 8 Kolom Ditulis Termasuk current_period_ends_at & expires_at)
     IF EXISTS (
         SELECT 1 FROM public.shop_subscriptions 
         WHERE id = '44444444-4444-4444-4444-444444444447' 
@@ -264,7 +264,9 @@ BEGIN
             OR tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001' 
             OR affiliate_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222' 
             OR status IS DISTINCT FROM 'ACTIVE'
-            OR amount::numeric IS DISTINCT FROM 299000)
+            OR amount::numeric IS DISTINCT FROM 299000
+            OR current_period_ends_at::timestamptz IS DISTINCT FROM '2026-12-03 10:00:00+00'::timestamptz
+            OR expires_at::timestamptz IS DISTINCT FROM '2026-12-03 10:00:00+00'::timestamptz)
     ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Subscription 44444444-4444-4444-4444-444444444447 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
@@ -285,139 +287,303 @@ BEGIN
 END $$;
 
 -- -----------------------------------------------------------------------------
--- TAHAP 2: PENGHAPUSAN EKSKLUSIF DENGAN KUALIFIKASI KEPEMILIKAN LENGKAP
+-- TAHAP 2: PENGHAPUSAN EKSKLUSIF DENGAN KUALIFIKASI KEPEMILIKAN LENGKAP & EXECUTION AUDIT
 -- Menggunakan predikat seluruh payload untuk menjamin atomic safety terhadap concurrency.
+-- Mencatat diagnostik eksekusi eksak per tabel via GET DIAGNOSTICS ROW_COUNT untuk
+-- membuktikan kardinalitas baris yang benar-benar terhapus vs yang sudah absen.
 -- CATATAN: Tenant jangkar '00000000-0000-0000-0000-000000000001' TIDAK DIHAPUS.
 -- -----------------------------------------------------------------------------
-DELETE FROM public.shop_commission_ledger 
-WHERE id = '44444444-4444-4444-4444-444444444448'
-  AND tenant_slug = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222'
-  AND gross_amount = 299000
-  AND affiliate_amount = 29900
-  AND am_amount = 0
-  AND platform_net_amount = 269100;
+DROP TABLE IF EXISTS pg_temp._cleanup_execution_audit;
+CREATE TEMP TABLE pg_temp._cleanup_execution_audit (
+    table_name text PRIMARY KEY,
+    target_count int,
+    found_count int,
+    deleted_count int,
+    status text
+);
 
-DELETE FROM public.shop_subscriptions 
-WHERE id = '44444444-4444-4444-4444-444444444447'
-  AND tenant_slug = '00000000-0000-0000-0000-000000000001'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222'
-  AND status = 'ACTIVE'
-  AND amount = 299000;
+DO $$
+DECLARE
+    v_found int;
+    v_deleted int;
+    v_status text;
+    v_del_sub int;
+BEGIN
+    -- 1. shop_commission_ledger (1 baris)
+    SELECT count(*) INTO v_found FROM public.shop_commission_ledger WHERE id = '44444444-4444-4444-4444-444444444448';
+    DELETE FROM public.shop_commission_ledger 
+    WHERE id = '44444444-4444-4444-4444-444444444448'
+      AND tenant_slug = '00000000-0000-0000-0000-000000000001'
+      AND affiliate_id = '22222222-2222-2222-2222-222222222222'
+      AND gross_amount = 299000
+      AND affiliate_amount = 29900
+      AND am_amount = 0
+      AND platform_net_amount = 269100;
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.shop_commission_ledger', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.shop_commission_ledger | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.attribution_sessions 
-WHERE id = '44444444-4444-4444-4444-444444444446'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND ip_hash = 'HASH_001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222';
+    -- 2. shop_subscriptions (1 baris, seluruh 8 kolom termasuk timestamp)
+    SELECT count(*) INTO v_found FROM public.shop_subscriptions WHERE id = '44444444-4444-4444-4444-444444444447';
+    DELETE FROM public.shop_subscriptions 
+    WHERE id = '44444444-4444-4444-4444-444444444447'
+      AND tenant_slug = '00000000-0000-0000-0000-000000000001'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND affiliate_id = '22222222-2222-2222-2222-222222222222'
+      AND status = 'ACTIVE'
+      AND amount = 299000
+      AND current_period_ends_at = '2026-12-03 10:00:00+00'::timestamptz
+      AND expires_at = '2026-12-03 10:00:00+00'::timestamptz;
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.shop_subscriptions', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.shop_subscriptions | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.attributions 
-WHERE id = '44444444-4444-4444-4444-444444444445'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND session_id = 'SESS_001'
-  AND ip_hash = 'HASH_001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222';
+    -- 3. attribution_sessions (1 baris)
+    SELECT count(*) INTO v_found FROM public.attribution_sessions WHERE id = '44444444-4444-4444-4444-444444444446';
+    DELETE FROM public.attribution_sessions 
+    WHERE id = '44444444-4444-4444-4444-444444444446'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND ip_hash = 'HASH_001'
+      AND affiliate_id = '22222222-2222-2222-2222-222222222222';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.attribution_sessions', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.attribution_sessions | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.delivery_orders 
-WHERE id = '44444444-4444-4444-4444-444444444444'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND order_id = 'ORD_DO_001'
-  AND provider = 'JNE'
-  AND service_type = 'REG'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222'
-  AND status = 'PENDING';
+    -- 4. attributions (1 baris)
+    SELECT count(*) INTO v_found FROM public.attributions WHERE id = '44444444-4444-4444-4444-444444444445';
+    DELETE FROM public.attributions 
+    WHERE id = '44444444-4444-4444-4444-444444444445'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND session_id = 'SESS_001'
+      AND ip_hash = 'HASH_001'
+      AND affiliate_id = '22222222-2222-2222-2222-222222222222';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.attributions', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.attributions | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.product_orders 
-WHERE id = 44444443
-  AND order_id = 'PO_CHILD_001'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222'
-  AND status = 'PENDING';
+    -- 5. delivery_orders (1 baris)
+    SELECT count(*) INTO v_found FROM public.delivery_orders WHERE id = '44444444-4444-4444-4444-444444444444';
+    DELETE FROM public.delivery_orders 
+    WHERE id = '44444444-4444-4444-4444-444444444444'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND order_id = 'ORD_DO_001'
+      AND provider = 'JNE'
+      AND service_type = 'REG'
+      AND affiliate_id = '22222222-2222-2222-2222-222222222222'
+      AND status = 'PENDING';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.delivery_orders', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.delivery_orders | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.orders 
-WHERE id = '44444444-4444-4444-4444-444444444441'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222'
-  AND manager_id IS NULL
-  AND status = 'PENDING'
-  AND gross_amount = 100000;
+    -- 6. product_orders (1 baris)
+    SELECT count(*) INTO v_found FROM public.product_orders WHERE id = 44444443;
+    DELETE FROM public.product_orders 
+    WHERE id = 44444443
+      AND order_id = 'PO_CHILD_001'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND affiliate_id = '22222222-2222-2222-2222-222222222222'
+      AND status = 'PENDING';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.product_orders', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.product_orders | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.orders 
-WHERE id = '44444444-4444-4444-4444-444444444442'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id IS NULL
-  AND manager_id = '22222222-2222-2222-2222-222222222222'
-  AND status = 'PENDING'
-  AND gross_amount = 150000;
+    -- 7. orders (2 baris: affiliate stream & manager stream)
+    SELECT count(*) INTO v_found FROM public.orders WHERE id IN ('44444444-4444-4444-4444-444444444441', '44444444-4444-4444-4444-444444444442');
+    DELETE FROM public.orders 
+    WHERE id = '44444444-4444-4444-4444-444444444441'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND affiliate_id = '22222222-2222-2222-2222-222222222222'
+      AND manager_id IS NULL
+      AND status = 'PENDING'
+      AND gross_amount = 100000;
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
 
-DELETE FROM public.migration_031_identifier_dedup_map 
-WHERE map_id = 'e1111111-1111-1111-1111-111111111111'
-  AND migration_batch_id = 'BATCH_SYNTH_001'
-  AND table_name = 'affiliates'
-  AND column_name = 'id'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND quarantined_row_id = '22222222-2222-2222-2222-222222222221'
-  AND canonical_survivor_id = '22222222-2222-2222-2222-222222222221'
-  AND dedup_rank = 1
-  AND new_status = 'SURVIVOR';
+    DELETE FROM public.orders 
+    WHERE id = '44444444-4444-4444-4444-444444444442'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND affiliate_id IS NULL
+      AND manager_id = '22222222-2222-2222-2222-222222222222'
+      AND status = 'PENDING'
+      AND gross_amount = 150000;
+    GET DIAGNOSTICS v_del_sub = ROW_COUNT;
+    v_deleted := v_deleted + v_del_sub;
 
-DELETE FROM public.migration_031_identifier_dedup_map 
-WHERE map_id = 'e2222222-2222-2222-2222-222222222222'
-  AND migration_batch_id = 'BATCH_SYNTH_001'
-  AND table_name = 'affiliates'
-  AND column_name = 'id'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND quarantined_row_id = '22222222-2222-2222-2222-222222222222'
-  AND canonical_survivor_id = '22222222-2222-2222-2222-222222222221'
-  AND dedup_rank = 2
-  AND new_status = 'SUPERSEDED_DUPLICATE';
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.orders', 2, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.orders | Target: 2 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.migration_031_quarantined_affiliate_commissions 
-WHERE id = '33333333-3333-3333-3333-333333333331'
-  AND migration_batch_id = 'BATCH_SYNTH_001'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '11111111-1111-1111-1111-111111111111'
-  AND order_id = 'ORD_QUAR_001'
-  AND amount = 75000
-  AND status = 'QUARANTINED'
-  AND quarantine_reason = 'CROSS_TENANT_DISCREPANCY_DETECTED';
+    -- 8. migration_031_identifier_dedup_map (2 baris: survivor rank 1 & loser rank 2)
+    SELECT count(*) INTO v_found FROM public.migration_031_identifier_dedup_map WHERE map_id IN ('e1111111-1111-1111-1111-111111111111', 'e2222222-2222-2222-2222-222222222222');
+    DELETE FROM public.migration_031_identifier_dedup_map 
+    WHERE map_id = 'e1111111-1111-1111-1111-111111111111'
+      AND migration_batch_id = 'BATCH_SYNTH_001'
+      AND table_name = 'affiliates'
+      AND column_name = 'id'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND quarantined_row_id = '22222222-2222-2222-2222-222222222221'
+      AND canonical_survivor_id = '22222222-2222-2222-2222-222222222221'
+      AND dedup_rank = 1
+      AND new_status = 'SURVIVOR';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
 
-DELETE FROM public.affiliate_commissions 
-WHERE id = '11111111-1111-1111-1111-111111111112'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '11111111-1111-1111-1111-111111111111'
-  AND order_id = 'ORD_CLEAN_001'
-  AND order_amount = 500000
-  AND amount = 50000
-  AND status = 'PAID';
+    DELETE FROM public.migration_031_identifier_dedup_map 
+    WHERE map_id = 'e2222222-2222-2222-2222-222222222222'
+      AND migration_batch_id = 'BATCH_SYNTH_001'
+      AND table_name = 'affiliates'
+      AND column_name = 'id'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND quarantined_row_id = '22222222-2222-2222-2222-222222222222'
+      AND canonical_survivor_id = '22222222-2222-2222-2222-222222222221'
+      AND dedup_rank = 2
+      AND new_status = 'SUPERSEDED_DUPLICATE';
+    GET DIAGNOSTICS v_del_sub = ROW_COUNT;
+    v_deleted := v_deleted + v_del_sub;
 
-DELETE FROM public.affiliates 
-WHERE id = '11111111-1111-1111-1111-111111111111'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND name = 'SYNTH_AFF_CLEAN_001'
-  AND phone_number = '081200000001'
-  AND referral_code = 'CLEAN01'
-  AND commission_rate = 0.10
-  AND status = 'ACTIVE';
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.migration_031_identifier_dedup_map', 2, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.migration_031_identifier_dedup_map | Target: 2 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.affiliates 
-WHERE id = '22222222-2222-2222-2222-222222222221'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND name = 'SYNTH_AFF_SURV_001'
-  AND phone_number = '081200000002'
-  AND referral_code = 'SURV01'
-  AND commission_rate = 0.10
-  AND status = 'ACTIVE';
+    -- 9. migration_031_quarantined_affiliate_commissions (1 baris)
+    SELECT count(*) INTO v_found FROM public.migration_031_quarantined_affiliate_commissions WHERE id = '33333333-3333-3333-3333-333333333331';
+    DELETE FROM public.migration_031_quarantined_affiliate_commissions 
+    WHERE id = '33333333-3333-3333-3333-333333333331'
+      AND migration_batch_id = 'BATCH_SYNTH_001'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND affiliate_id = '11111111-1111-1111-1111-111111111111'
+      AND order_id = 'ORD_QUAR_001'
+      AND amount = 75000
+      AND status = 'QUARANTINED'
+      AND quarantine_reason = 'CROSS_TENANT_DISCREPANCY_DETECTED';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.migration_031_quarantined_affiliate_commissions', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.migration_031_quarantined_affiliate_commissions | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.affiliates 
-WHERE id = '22222222-2222-2222-2222-222222222222'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND name = 'SYNTH_AFF_LOSER_001'
-  AND phone_number = '081200000003'
-  AND referral_code = 'LOSER01'
-  AND commission_rate = 0.10
-  AND status = 'ACTIVE';
+    -- 10. affiliate_commissions (1 baris)
+    SELECT count(*) INTO v_found FROM public.affiliate_commissions WHERE id = '11111111-1111-1111-1111-111111111112';
+    DELETE FROM public.affiliate_commissions 
+    WHERE id = '11111111-1111-1111-1111-111111111112'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND affiliate_id = '11111111-1111-1111-1111-111111111111'
+      AND order_id = 'ORD_CLEAN_001'
+      AND order_amount = 500000
+      AND amount = 50000
+      AND status = 'PAID';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.affiliate_commissions', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.affiliate_commissions | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
+
+    -- 11. affiliates (3 baris: CLEAN, SURV, LOSER)
+    SELECT count(*) INTO v_found FROM public.affiliates WHERE id IN ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222222');
+    DELETE FROM public.affiliates 
+    WHERE id = '11111111-1111-1111-1111-111111111111'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND name = 'SYNTH_AFF_CLEAN_001'
+      AND phone_number = '081200000001'
+      AND referral_code = 'CLEAN01'
+      AND commission_rate = 0.10
+      AND status = 'ACTIVE';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+
+    DELETE FROM public.affiliates 
+    WHERE id = '22222222-2222-2222-2222-222222222221'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND name = 'SYNTH_AFF_SURV_001'
+      AND phone_number = '081200000002'
+      AND referral_code = 'SURV01'
+      AND commission_rate = 0.10
+      AND status = 'ACTIVE';
+    GET DIAGNOSTICS v_del_sub = ROW_COUNT;
+    v_deleted := v_deleted + v_del_sub;
+
+    DELETE FROM public.affiliates 
+    WHERE id = '22222222-2222-2222-2222-222222222222'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND name = 'SYNTH_AFF_LOSER_001'
+      AND phone_number = '081200000003'
+      AND referral_code = 'LOSER01'
+      AND commission_rate = 0.10
+      AND status = 'ACTIVE';
+    GET DIAGNOSTICS v_del_sub = ROW_COUNT;
+    v_deleted := v_deleted + v_del_sub;
+
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.affiliates', 3, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.affiliates | Target: 3 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
+END $$;
 
 -- -----------------------------------------------------------------------------
 -- TAHAP 3: VERIFIKASI POST-CLEANUP: EXACT-VALUE TWO-WAY EXCEPT RECONCILIATION

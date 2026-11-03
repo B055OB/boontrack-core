@@ -81,12 +81,17 @@ VALUES
   ('44444444-4444-4444-4444-444444444446', '00000000-0000-0000-0000-000000000001', 'HASH_001', '22222222-2222-2222-2222-222222222222'::uuid);
 
 -- 5.6 Shop Subscriptions
+-- Waktu kadaluarsa dijangkar secara deterministik:
+-- Reference Base: '2026-11-03 10:00:00+00'::timestamptz
+-- Interval: Tepat 30 hari (interval '30 days')
+-- Canonical Expiration: '2026-12-03 10:00:00+00'::timestamptz
 INSERT INTO public.shop_subscriptions (
     id, tenant_slug, tenant_id, affiliate_id, status, amount, current_period_ends_at, expires_at
 )
 VALUES 
   ('44444444-4444-4444-4444-444444444447', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 
-   '22222222-2222-2222-2222-222222222222'::uuid, 'ACTIVE', 299000, now() + interval '30 days', now() + interval '30 days');
+   '22222222-2222-2222-2222-222222222222'::uuid, 'ACTIVE', 299000, 
+   '2026-12-03 10:00:00+00'::timestamptz, '2026-12-03 10:00:00+00'::timestamptz);
 
 -- 5.7 Shop Commission Ledger
 INSERT INTO public.shop_commission_ledger (

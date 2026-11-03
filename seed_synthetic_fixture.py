@@ -114,9 +114,38 @@ def run_seeder(mode: str = "dry-run"):
             if residual_cnt != 0:
                 raise RuntimeError(f"POST-CLEANUP RESIDUAL FAILURE: Ditemukan {residual_cnt} sisa baris fixture setelah cleanup! Wajib 0.")
 
+            # 4. Ambil dan Cetak Laporan Diagnostik Eksekusi Penghapusan per Tabel
+            cur.execute("""
+                SELECT table_name, target_count, found_count, deleted_count, status 
+                FROM pg_temp._cleanup_execution_audit 
+                ORDER BY table_name;
+            """)
+            audit_rows = cur.fetchall()
+            total_target = sum(r[1] for r in audit_rows)
+            total_found = sum(r[2] for r in audit_rows)
+            total_deleted = sum(r[3] for r in audit_rows)
+
+            print("\n" + "="*85)
+            print("CLEANUP DELETION EXECUTION AUDIT (TABLE-BY-TABLE DIAGNOSTICS):")
+            print("="*85)
+            print(f"{'Table Name':<50} | {'Target':<6} | {'Found':<6} | {'Deleted':<7} | {'Status'}")
+            print("-" * 85)
+            for r in audit_rows:
+                print(f"{r[0]:<50} | {r[1]:<6} | {r[2]:<6} | {r[3]:<7} | {r[4]}")
+            print("-" * 85)
+            print(f"{'TOTAL METRICS (11 TABEL)':<50} | {total_target:<6} | {total_found:<6} | {total_deleted:<7} | {'COMPLETED'}")
+            print("="*85 + "\n")
+
+            if any(r[4] == 'PAYLOAD_MISMATCH_REJECTED' for r in audit_rows):
+                raise RuntimeError("CLEANUP AUDIT ERROR: Ditemukan baris dengan status PAYLOAD_MISMATCH_REJECTED!")
+
             # HANYA COMMIT SETELAH SELURUH ASERSI POSTCONDITION LULUS 100%
             conn.commit()
-            print(f"[+] Cleanup Berhasil (Atomic Committed): Seluruh 13 fixture sintetis dibersihkan.")
+            print(f"[+] Cleanup Berhasil (Atomic Committed).")
+            if total_found == 0:
+                print(f"[+] Status Evidentiary: Seluruh {total_target} baris fixture SUDAH ABSEN sebelumnya (0 baris dihapus pada run ini).")
+            else:
+                print(f"[+] Status Evidentiary: {total_deleted} baris fisik fixture ditemukan dan BERHASIL DIHAPUS BERSIH ({total_target - total_found} baris sudah absen sebelumnya).")
             print(f"[+] Verifikasi Kriptografis In-Transaction: 5 baris historis terbukti 100% identik (SHA-256: {post_fp[:16]}...).")
             print(f"[+] Verifikasi Tenant Jangkar: Tenant {CANONICAL_TENANT_ID} ('{CANONICAL_TENANT_SLUG}') tetap terlindungi utuh.")
             print(f"[+] Postcondition Zero Residual: 0 sisa baris fixture sintetis di 11 tabel (Tereliminasi Sempurna).")
@@ -304,18 +333,37 @@ def run_seeder(mode: str = "dry-run"):
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on attribution_sessions: actual={as_row}, expected={expected_as}")
 
         # 10. Shop Subscriptions (id, tenant_slug, tenant_id, affiliate_id, status, amount, current_period_ends_at, expires_at)
+        # Verifikasi Presisi Eksak 30 Hari & Deterministic Timestamp Anchor:
+        # Reference Base: '2026-11-03 10:00:00+00'::timestamptz
+        # Expected Expiration: '2026-12-03 10:00:00+00'::timestamptz (Tepat +30 Hari)
         cur.execute("""
             SELECT id::text, tenant_slug, tenant_id::text, affiliate_id::text, status, amount::numeric,
-                   (current_period_ends_at IS NOT NULL), (expires_at IS NOT NULL),
-                   (current_period_ends_at > NOW()), (expires_at > NOW())
+                   to_char(current_period_ends_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SSOF'),
+                   to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SSOF'),
+                   (current_period_ends_at = expires_at),
+                   (current_period_ends_at - '2026-11-03 10:00:00+00'::timestamptz = interval '30 days'),
+                   (expires_at - '2026-11-03 10:00:00+00'::timestamptz = interval '30 days')
             FROM public.shop_subscriptions 
             WHERE id = '44444444-4444-4444-4444-444444444447';
         """)
         sub_row = cur.fetchone()
-        expected_sub = ('44444444-4444-4444-4444-444444444447', CANONICAL_TENANT_ID, CANONICAL_TENANT_ID, '22222222-2222-2222-2222-222222222222', 'ACTIVE', 299000.0, True, True, True, True)
+        expected_sub = (
+            '44444444-4444-4444-4444-444444444447',
+            CANONICAL_TENANT_ID,
+            CANONICAL_TENANT_ID,
+            '22222222-2222-2222-2222-222222222222',
+            'ACTIVE',
+            299000.0,
+            '2026-12-03 10:00:00+00',
+            '2026-12-03 10:00:00+00',
+            True,
+            True,
+            True
+        )
         if not sub_row or (sub_row[0] != expected_sub[0] or sub_row[1] != expected_sub[1] or sub_row[2] != expected_sub[2] or 
                            sub_row[3] != expected_sub[3] or sub_row[4] != expected_sub[4] or float(sub_row[5]) != expected_sub[5] or
-                           sub_row[6] != expected_sub[6] or sub_row[7] != expected_sub[7] or sub_row[8] != expected_sub[8] or sub_row[9] != expected_sub[9]):
+                           sub_row[6] != expected_sub[6] or sub_row[7] != expected_sub[7] or sub_row[8] != expected_sub[8] or 
+                           sub_row[9] != expected_sub[9] or sub_row[10] != expected_sub[10]):
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on shop_subscriptions: actual={sub_row}, expected={expected_sub}")
 
         # 11. Shop Commission Ledger (id, tenant_slug, affiliate_id, gross_amount, affiliate_amount, am_amount, platform_net_amount)

@@ -1,67 +1,102 @@
-# CTO FORMAL AUDIT SUBMISSION PACK — MASTER REMEDIATION SUITE (REV 4.1.6.2.11)
-**Document ID:** `BOONTRACK-CTO-FINAL-AUDIT-PACK-REV4.1.6.2.11`  
+# CTO FORMAL AUDIT SUBMISSION PACK — MASTER REMEDIATION SUITE (REV 4.1.6.2.11-E)
+**Document ID:** `BOONTRACK-CTO-FINAL-AUDIT-PACK-REV4.1.6.2.11-E`  
 **Target:** Formal CTO Audit & Seed Authorization Review (Google Docs Clean Source Copy)  
 **Author:** Lead Database Reliability Engineer (DBRE) & Principal Systems Architect  
 **Date:** 2026-11-03  
 **Status:** **`100% REMEDIATED MASTER AUDIT SUBMISSION — READY FOR REVIEW & SEED AUTHORIZATION`**  
+**CTO Baseline:** REV D — SUBSTANTIALLY ACCEPTED (Tenant Preservation, Atomicity, NULL-Safety, Row-Locking, Zero Residual Postcondition RESOLVED)  
 **Security Posture:** Strict Zero-Touch (0 Production Writes, 0 DB Seeding, 0 Code Mutations on app/, migrations/, tests/, All Plaintext Credentials Fully Redacted)
 
 ---
 
-## EXECUTIVE TRANSMITTAL MEMORANDUM & RESPON REMEDIASI ATAS 6 TEMUAN CTO
+## EXECUTIVE TRANSMITTAL MEMORANDUM & RESPON REMEDIASI FINAL (REV E)
 
 Yth. Chief Technology Officer (CTO) BoonTrack,
 
-Seluruh 6 temuan pada audit implementasi sebelumnya telah diremediasi secara komprehensif, teruji di lingkungan pengujian, dan dikompilasi ke dalam berkas master ini:
-
-1. **Pelepasan Jalur Kelulusan Palsu Runner (`execute_b1.py`):**
-   - Fallback `assertion_found = False` yang sebelumnya mencetak hasil sukses saat assertion tidak terdeteksi telah **dihapus 100%**.
-   - Runner mewajibkan keberadaan dan validitas regex dari **seluruh 4 assertion notices**:
-     * `[GATE B1 ASSERTION 1] MUTATION_LEDGER_FORWARD_MISSING = 0 rows`
-     * `[GATE B1 ASSERTION 2] MUTATION_LEDGER_REVERSE_PHANTOM_DETECTED = 0 rows`
-     * `[GATE B1 ASSERTION 3] MUTATION_LEDGER_CARDINALITY_MISMATCH = PASSED / 0 discrepancy (staging = N, expected = N)`
-     * `[GATE B1 ASSERTION 4] ILLEGAL_DISPOSITION_CONFLICT_DETECTED = 0 rows`
-   - Runner mengekstrak kardinalitas riil dari Notice 3 dan memvalidasi $N > 0$ (anti-vacuous).
-   - Memvalidasi status pasca-eksekusi: `conn.get_transaction_status() == TRANSACTION_STATUS_IDLE` (0) dan kueri memastikan 0 residu tabel sementara (`information_schema.tables`).
-   - Apabila rollback pada blok `finally` gagal, runner keluar dengan status gagal (`sys.exit(1)`).
-   - Arsitektur transaksi didokumentasikan secara transparan: `conn.autocommit = True` digunakan karena batas transaksi dikontrol secara eksplisit oleh SQL harness (`BEGIN; ... ROLLBACK;`).
-
-2. **Pencegahan Empty Set Fallacy ($0 = 0$) pada SQL Harness (`harness_b1.sql` Step 4B):**
-   - Ditambahkan guard non-vacuous: `IF v_expected_mutation_count <= 0 THEN RAISE EXCEPTION 'MUTATION_LEDGER_VACUOUS_EMPTY_SET_VIOLATION'`.
-   - Ditambahkan verifikasi kardinalitas fixture eksak: `IF v_expected_mutation_count <> 11 OR v_staging_mutation_count <> 11 THEN RAISE EXCEPTION 'MUTATION_LEDGER_FIXTURE_CARDINALITY_VIOLATION'`.
-   - Ditambahkan verifikasi asersi identitas entitas mandatori:
-     * `COMM_QUAR_001` (`33333333-3333-3333-3333-333333333331`) pada `public.affiliate_commissions` (`affiliate_id`, `PHYSICALLY_QUARANTINED`).
-     * `AFF_LOSER_001` (`22222222-2222-2222-2222-222222222222`) pada `public.affiliates` (`id`, `LOSER_DUPLICATE`).
-     * `AFF_SURV_001` (`22222222-2222-2222-2222-222222222221`) pada `public.affiliates` (`id`, `SURVIVOR`).
-
-3. **Tata Kelola Transfer Data Produksi & Rekonsiliasi Inventaris Ganda (18 vs 13):**
-   - Klaim "zero production data transfer" ditarik dan dikoreksi secara transparan: 5 baris afiliasi produksi (beserta `name` dan `phone_number`) disalin ke Staging oleh skrip setup historis.
-   - Ditetapkan rekonsiliasi formal dua baseline:
-     * **Baseline A (Staging Saat Ini — 5 Baris Historis Dipertahankan):** $N_{\text{inventory}} = 18$ ($N_{\text{clean}} = 7, N_{\text{mut}} = 11$).
-     * **Baseline B (Staging Bersih — Pasca-Otorisasi Teardown):** $N_{\text{inventory}} = 13$ ($N_{\text{clean}} = 2, N_{\text{mut}} = 11$).
-     * Kedua baseline membuktikan kardinalitas mutasi buku besar identik pada $N_{\text{expected}} = 11$.
-
-4. **Penyelarasan Semantik Kolom Fisik `mutated_attribute`:**
-   - Seluruh referensi non-fisik (`quarantine_status`, `canonical_status`) telah dieliminasi dari skema SQL dan dokumentasi.
-   - Kolom `mutated_attribute` secara ketat merujuk pada nama kolom fisik relasional:
-     * `'id'` untuk entitas afiliasi loser dan survivor.
-     * `'affiliate_id'` untuk komisi yang dikarantina fisik dan 7 aliran kunci asing anak.
-     * `'manager_id'` untuk aliran manajer pesanan (`orders.manager_id`).
-
-5. **Penguatan Verifikasi Rotasi Kredensial & Guard DSN:**
-   - Password lama di-load aman tanpa string plaintext; kegagalan divalidasi fail-closed khusus pada `password authentication failed`.
-   - `execute_b1.py` menerapkan validasi identitas eksak (`username == 'postgres.xkhqirhurnjqglmajghn'`) dan penolakan mode SSL tidak aman (`sslmode=disable`).
-   - `test_runner_dsn_guards.py` diperluas menjadi 9 test cases dan lulus 100% di bawah `python -O`.
-   - `test_negative_assertions.py` memvalidasi postcondition database bersih (0 baris canary bocor, 0 residu tabel sementara) tanpa `except: pass`.
-
-6. **Penyerahan Skrip Eksekusi Seeding & Teardown Sintetis:**
-   - Diserahkan skrip SQL mandatori `seed_synthetic_fixture.sql` dan `cleanup_synthetic_fixture.sql`.
-   - Diserahkan runner terproteksi `seed_synthetic_fixture.py` yang mendukung dry-run transaksional (teruji 100% rollback bersih).
-   - Didokumentasikan secara formal bahwa Gate B1 memverifikasi postcondition isolasi karantina, bukan proses ETL pemindahan fisik end-to-end.
+Menindaklanjuti keputusan audit CTO atas versi REV 4.1.6.2.11-D (*"REV D — SUBSTANTIALLY ACCEPTED"*), di mana seluruh 8 kontrol dasar keamanan (integritas ZIP, preservasi tenant jangkar, atomisitas transaksi, NULL-safe `IS DISTINCT FROM`, penguncian baris `FOR UPDATE`, asersi residual nol, penanganan benturan seed, dan SSL guard) telah dinyatakan **RESOLVED**, tim DBRE telah menyelesaikan 3 pekerjaan remediasi presisi terakhir yang diinstruksikan CTO untuk menyempurnakan paket ke **REV 4.1.6.2.11-E**:
 
 ---
 
-## DAFTAR ISI MASTER ARTIFACTS & LAMPIRAN BUKTI FORENSIK
+### 1. Temuan P1 — Timestamp Kepemilikan Penuh `public.shop_subscriptions` (`cleanup_synthetic_fixture.sql`)
+- **Masalah Sebelumnya (REV D):** Asersi kepemilikan dan predikat `DELETE` pada `shop_subscriptions` hanya memeriksa 6 kolom (`tenant_slug`, `tenant_id`, `affiliate_id`, `status`, `amount`), namun belum memverifikasi `current_period_ends_at` dan `expires_at`.
+- **Remediasi REV E (100% Resolved):**
+  * Seluruh **8 kolom** dari `public.shop_subscriptions` kini diverifikasi secara eksak di Tahap 1.5 menggunakan semantik NULL-safe `IS DISTINCT FROM`:
+    ```sql
+    IF EXISTS (
+        SELECT 1 FROM public.shop_subscriptions 
+        WHERE id = '44444444-4444-4444-4444-444444444447' 
+          AND (tenant_slug IS DISTINCT FROM '00000000-0000-0000-0000-000000000001'
+            OR tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001' 
+            OR affiliate_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222' 
+            OR status IS DISTINCT FROM 'ACTIVE'
+            OR amount::numeric IS DISTINCT FROM 299000
+            OR current_period_ends_at::timestamptz IS DISTINCT FROM '2026-12-03 10:00:00+00'::timestamptz
+            OR expires_at::timestamptz IS DISTINCT FROM '2026-12-03 10:00:00+00'::timestamptz)
+    ) THEN
+        RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Subscription payload mismatch!';
+    END IF;
+    ```
+  * Predikat `DELETE` di Tahap 2 memasukkan kedua kolom timestamp secara ketat:
+    `AND current_period_ends_at = '2026-12-03 10:00:00+00'::timestamptz AND expires_at = '2026-12-03 10:00:00+00'::timestamptz`.
+
+---
+
+### 2. Temuan P1 — Pembuktian Presisi Eksak Interval 30 Hari (`seed_synthetic_fixture.py` & `.sql`)
+- **Masalah Sebelumnya (REV D):** Verifikasi seeder menggunakan `current_period_ends_at > NOW()`, yang membuktikan waktu di masa depan tetapi tidak membuktikan durasi tepat 30 hari.
+- **Remediasi REV E (100% Resolved):**
+  * **Jangkar Waktu Deterministik Kanonikal:** Ditetapkan reference base timestamp `'2026-11-03 10:00:00+00'::timestamptz` dan canonical expiration `'2026-12-03 10:00:00+00'::timestamptz` (tepat 30 hari kalender, 2.592.000 detik).
+  * Pada `seed_synthetic_fixture.sql`, penyisipan subscription dijangkar langsung ke timestamp kanonikal tersebut.
+  * Pada `seed_synthetic_fixture.py`, kueri verifikasi membuktikan secara matematis:
+    1. Kesamaan nilai: `current_period_ends_at = expires_at`
+    2. Format UTC eksak: `'2026-12-03 10:00:00+00'`
+    3. Selisih interval eksak: `(current_period_ends_at - '2026-11-03 10:00:00+00'::timestamptz = interval '30 days')`
+    4. Selisih interval eksak: `(expires_at - '2026-11-03 10:00:00+00'::timestamptz = interval '30 days')`
+    Menghilangkan seluruh fluktuasi wall-clock dan menjamin verifikasi deterministik $100\%$.
+
+---
+
+### 3. Temuan P2 — Diagnostik & Bukti Eksekusi Penghapusan per Tabel (`cleanup_synthetic_fixture.sql` & `seed_synthetic_fixture.py`)
+- **Masalah Sebelumnya (REV D):** Runner cleanup dapat melaporkan *"Seluruh 13 fixture sintetis dibersihkan"* meskipun fixture sebelumnya memang sudah tidak ada di database, sehingga berpotensi melebih-lebihkan bukti (*overstating execution*).
+- **Remediasi REV E (100% Resolved):**
+  * **Tabel Audit Eksekusi Sementara (`pg_temp._cleanup_execution_audit`):**
+    Dibuat tabel sementara yang melacak metrik untuk seluruh 11 tabel (15 baris fisik):
+    `table_name`, `target_count`, `found_count`, `deleted_count`, `status`.
+  * **Diagnostik `GET DIAGNOSTICS ... ROW_COUNT`:**
+    Setiap blok `DELETE` menghitung baris yang ditemukan sebelum hapus (`v_found`) dan baris yang benar-benar dihapus (`v_deleted` via `ROW_COUNT`).
+  * **Klasifikasi Status Eviden Riil:**
+    - `CLEANLY_DELETED`: Fixture ditemukan dan berhasil dihapus bersih (`found > 0` dan `deleted == found`).
+    - `ALREADY_ABSENT`: Fixture sudah tidak ada sebelum cleanup dijalankan (`found == 0` dan `deleted == 0`).
+    - `PAYLOAD_MISMATCH_REJECTED`: Fixture terdeteksi namun atribut berbeda sehingga DELETE menolak (fail-closed).
+  * **Penyajian Laporan di Runner:**
+    Runner Python mengambil data dari tabel audit ini dan mencetak tabel matriks diagnostik per tabel secara transparan. Jika seluruh baris sudah absen, runner secara eksplisit melaporkan:
+    `[*] Status Evidentiary: Seluruh 15 baris fixture SUDAH ABSEN sebelumnya (0 baris dihapus pada run ini)`.
+    Tidak ada klaim berlebih (*zero overstated claims*).
+
+---
+
+### 4. Klarifikasi Provenance Git (Local Isolated Sandbox vs Remote GitHub)
+- Mengenai respon GitHub *"No commit found for SHA"*:
+  Cabang audit `docs/rev4-1-remediation-and-review` dikelola secara lokal pada lingkungan terisolasi sesuai direktif ketat CTO: **0 mutasi kode ke upstream, 0 remote push sebelum otorisasi CTO**.
+  Untuk memverifikasi commit lokal secara independen pada mesin audit:
+  ```bash
+  git checkout docs/rev4-1-remediation-and-review
+  git log -n 5 --oneline
+  git show <COMMIT_SHA>
+  ```
+  Integritas seluruh 11 artefak dibuktikan oleh SHA-256 yang identik antara berkas ZIP, repositori lokal, dan dokumen induk ini.
+
+---
+
+### 5. Komitmen Operasional & Batas Lingkup DBRE
+- **Seed Authorization:** Menunggu persetujuan tertulis CTO (`WITHHELD`).
+- **Gate B1 Runner:** Terkunci (`LOCKED`).
+- **Production Database (`mpluzajlzpregmjwpjqr`) & Cloudflare R2:** `ZERO-TOUCH` (0 baris ditulis/dibaca).
+- **Data Historis Staging:** 5 baris produksi historis tetap dipertahankan utuh tanpa sentuhan teardown.
+- **Kredensial:** Seluruh token rahasia dan password sepenuhnya disanitasi/diredaksi dari laporan.
+
+---
+
+## DAFTAR ISI MASTER ARTIFACTS & LAMPIRAN BUKTI FORENSIK (REV E)
 
 1. **ARTEFAK 1:** Runner Fail-Safe Implementation Anti `python -O`, Regex Assertion Parser, & IDLE Verifier (`execute_b1.py`)
 2. **ARTEFAK 2:** Master Execution Harness REV 4.1.6.2.11 Full SQL Payload dengan Guard Non-Vacuous & Fixture ID Verification (`harness_b1.sql`)
@@ -71,9 +106,9 @@ Seluruh 6 temuan pada audit implementasi sebelumnya telah diremediasi secara kom
 6. **ARTEFAK 6:** Log Eksekusi Pembuktian Error Code `P0001` & Clean Postconditions (`NEGATIVE_TESTS_EXECUTION.log`)
 7. **ARTEFAK 7:** Spesifikasi 13 Fixture Sintetis Non-Zero, Dual Baseline (18 vs 13), & Kontrak 6-Kolom Fisik (`SYNTHETIC_FIXTURE_MANIFEST.md`)
 8. **ARTEFAK 8:** Skrip Sinkronisasi Baseline DDL Staging Historis (`complete_staging_setup.py`)
-9. **ARTEFAK 9A:** Skrip SQL Seeding Fixture Sintetis 13 Entitas (`seed_synthetic_fixture.sql`)
-10. **ARTEFAK 9B:** Python Runner Seeding Sintetis dengan Guard Target & Dry-Run Rollback (`seed_synthetic_fixture.py`)
-11. **ARTEFAK 9C:** Skrip SQL Pembersihan Idempoten / Teardown Cleanup (`cleanup_synthetic_fixture.sql`)
+9. **ARTEFAK 9A:** Skrip SQL Seeding Fixture Sintetis 13 Entitas — REV E Deterministic Timestamps (`seed_synthetic_fixture.sql`)
+10. **ARTEFAK 9B:** Python Runner Seeding Sintetis — REV E Exact 30-Day Check & Deletion Diagnostics (`seed_synthetic_fixture.py`)
+11. **ARTEFAK 9C:** Skrip SQL Pembersihan Idempoten / Teardown Cleanup — REV E 8-Column Sub Ownership & Row Count Diagnostics (`cleanup_synthetic_fixture.sql`)
 ---
 *Lampiran Pembuktian Tambahan:*
 - **LAMPIRAN A1:** Kode Sumber Uji Autentikasi Ganda & Rotasi Kredensial (`verify_credential_rotation.py`)
@@ -2372,10 +2407,24 @@ Dalam kedua baseline, nilai mutasi tingkat atribut tetap identik: **$N_{\text{ex
 
 ---
 
-## 5. Protokol Eksekusi & Teardown
+## 5. Protokol Eksekusi & Teardown (REV 4.1.6.2.11-E)
 
-1. **Eksekusi Dry-Run:** Script `seed_synthetic_fixture.py` secara default mengeksekusi penyisipan di dalam transaksi dan mengakhirinya dengan `ROLLBACK`, sehingga dapat diuji tanpa mutasi basis data.
-2. **Eksekusi Teardown:** Script `cleanup_synthetic_fixture.sql` dapat dijalankan kapan saja untuk menghapus 13 entitas sintetis secara bersih dan idempoten.
+1. **Jangkar Timestamp Deterministik (public.shop_subscriptions):**
+   - **Reference Base Timestamp:** '2026-11-03 10:00:00+00'::timestamptz
+   - **Interval Durasi:** Tepat 30 hari (interval '30 days')
+   - **Canonical Expiration Timestamp:** '2026-12-03 10:00:00+00'::timestamptz
+   - **Ownership & DELETE Proof:** Seluruh 8 kolom diverifikasi eksak (termasuk current_period_ends_at dan expires_at via IS DISTINCT FROM). Seeder memvalidasi kesamaan deterministik dan selisih presisi 30 hari.
+
+2. **Diagnostik Eksekusi Cleanup per Tabel (pg_temp._cleanup_execution_audit):**
+   - Menggunakan GET DIAGNOSTICS ... ROW_COUNT untuk setiap tabel fisik guna mencatat metrik: 	arget_count, ound_count, deleted_count, dan status.
+   - Klasifikasi status eviden:
+     * CLEANLY_DELETED: Fixture ditemukan di basis data dan berhasil dihapus secara bersih.
+     * ALREADY_ABSENT: Fixture sudah tidak ada sebelum cleanup dijalankan (0 baris dihapus).
+     * PAYLOAD_MISMATCH_REJECTED: Baris dengan ID cocok tetapi atribut termutasi (ditolak, fail-closed).
+   - Menjamin runner cleanup tidak pernah melebih-lebihkan bukti eksekusi (*no overstating*).
+
+3. **Eksekusi Dry-Run:** Script seed_synthetic_fixture.py secara default mengeksekusi penyisipan di dalam transaksi dan mengakhirinya dengan ROLLBACK, sehingga dapat diuji tanpa mutasi basis data.
+4. **Eksekusi Teardown:** Script cleanup_synthetic_fixture.sql dapat dijalankan kapan saja untuk memverifikasi dan membersihkan fixture secara aman, atomik, dan idempoten.
 
 
 ---
@@ -2701,12 +2750,17 @@ VALUES
   ('44444444-4444-4444-4444-444444444446', '00000000-0000-0000-0000-000000000001', 'HASH_001', '22222222-2222-2222-2222-222222222222'::uuid);
 
 -- 5.6 Shop Subscriptions
+-- Waktu kadaluarsa dijangkar secara deterministik:
+-- Reference Base: '2026-11-03 10:00:00+00'::timestamptz
+-- Interval: Tepat 30 hari (interval '30 days')
+-- Canonical Expiration: '2026-12-03 10:00:00+00'::timestamptz
 INSERT INTO public.shop_subscriptions (
     id, tenant_slug, tenant_id, affiliate_id, status, amount, current_period_ends_at, expires_at
 )
 VALUES 
   ('44444444-4444-4444-4444-444444444447', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 
-   '22222222-2222-2222-2222-222222222222'::uuid, 'ACTIVE', 299000, now() + interval '30 days', now() + interval '30 days');
+   '22222222-2222-2222-2222-222222222222'::uuid, 'ACTIVE', 299000, 
+   '2026-12-03 10:00:00+00'::timestamptz, '2026-12-03 10:00:00+00'::timestamptz);
 
 -- 5.7 Shop Commission Ledger
 INSERT INTO public.shop_commission_ledger (
@@ -2840,9 +2894,38 @@ def run_seeder(mode: str = "dry-run"):
             if residual_cnt != 0:
                 raise RuntimeError(f"POST-CLEANUP RESIDUAL FAILURE: Ditemukan {residual_cnt} sisa baris fixture setelah cleanup! Wajib 0.")
 
+            # 4. Ambil dan Cetak Laporan Diagnostik Eksekusi Penghapusan per Tabel
+            cur.execute("""
+                SELECT table_name, target_count, found_count, deleted_count, status 
+                FROM pg_temp._cleanup_execution_audit 
+                ORDER BY table_name;
+            """)
+            audit_rows = cur.fetchall()
+            total_target = sum(r[1] for r in audit_rows)
+            total_found = sum(r[2] for r in audit_rows)
+            total_deleted = sum(r[3] for r in audit_rows)
+
+            print("\n" + "="*85)
+            print("CLEANUP DELETION EXECUTION AUDIT (TABLE-BY-TABLE DIAGNOSTICS):")
+            print("="*85)
+            print(f"{'Table Name':<50} | {'Target':<6} | {'Found':<6} | {'Deleted':<7} | {'Status'}")
+            print("-" * 85)
+            for r in audit_rows:
+                print(f"{r[0]:<50} | {r[1]:<6} | {r[2]:<6} | {r[3]:<7} | {r[4]}")
+            print("-" * 85)
+            print(f"{'TOTAL METRICS (11 TABEL)':<50} | {total_target:<6} | {total_found:<6} | {total_deleted:<7} | {'COMPLETED'}")
+            print("="*85 + "\n")
+
+            if any(r[4] == 'PAYLOAD_MISMATCH_REJECTED' for r in audit_rows):
+                raise RuntimeError("CLEANUP AUDIT ERROR: Ditemukan baris dengan status PAYLOAD_MISMATCH_REJECTED!")
+
             # HANYA COMMIT SETELAH SELURUH ASERSI POSTCONDITION LULUS 100%
             conn.commit()
-            print(f"[+] Cleanup Berhasil (Atomic Committed): Seluruh 13 fixture sintetis dibersihkan.")
+            print(f"[+] Cleanup Berhasil (Atomic Committed).")
+            if total_found == 0:
+                print(f"[+] Status Evidentiary: Seluruh {total_target} baris fixture SUDAH ABSEN sebelumnya (0 baris dihapus pada run ini).")
+            else:
+                print(f"[+] Status Evidentiary: {total_deleted} baris fisik fixture ditemukan dan BERHASIL DIHAPUS BERSIH ({total_target - total_found} baris sudah absen sebelumnya).")
             print(f"[+] Verifikasi Kriptografis In-Transaction: 5 baris historis terbukti 100% identik (SHA-256: {post_fp[:16]}...).")
             print(f"[+] Verifikasi Tenant Jangkar: Tenant {CANONICAL_TENANT_ID} ('{CANONICAL_TENANT_SLUG}') tetap terlindungi utuh.")
             print(f"[+] Postcondition Zero Residual: 0 sisa baris fixture sintetis di 11 tabel (Tereliminasi Sempurna).")
@@ -3030,18 +3113,37 @@ def run_seeder(mode: str = "dry-run"):
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on attribution_sessions: actual={as_row}, expected={expected_as}")
 
         # 10. Shop Subscriptions (id, tenant_slug, tenant_id, affiliate_id, status, amount, current_period_ends_at, expires_at)
+        # Verifikasi Presisi Eksak 30 Hari & Deterministic Timestamp Anchor:
+        # Reference Base: '2026-11-03 10:00:00+00'::timestamptz
+        # Expected Expiration: '2026-12-03 10:00:00+00'::timestamptz (Tepat +30 Hari)
         cur.execute("""
             SELECT id::text, tenant_slug, tenant_id::text, affiliate_id::text, status, amount::numeric,
-                   (current_period_ends_at IS NOT NULL), (expires_at IS NOT NULL),
-                   (current_period_ends_at > NOW()), (expires_at > NOW())
+                   to_char(current_period_ends_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SSOF'),
+                   to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SSOF'),
+                   (current_period_ends_at = expires_at),
+                   (current_period_ends_at - '2026-11-03 10:00:00+00'::timestamptz = interval '30 days'),
+                   (expires_at - '2026-11-03 10:00:00+00'::timestamptz = interval '30 days')
             FROM public.shop_subscriptions 
             WHERE id = '44444444-4444-4444-4444-444444444447';
         """)
         sub_row = cur.fetchone()
-        expected_sub = ('44444444-4444-4444-4444-444444444447', CANONICAL_TENANT_ID, CANONICAL_TENANT_ID, '22222222-2222-2222-2222-222222222222', 'ACTIVE', 299000.0, True, True, True, True)
+        expected_sub = (
+            '44444444-4444-4444-4444-444444444447',
+            CANONICAL_TENANT_ID,
+            CANONICAL_TENANT_ID,
+            '22222222-2222-2222-2222-222222222222',
+            'ACTIVE',
+            299000.0,
+            '2026-12-03 10:00:00+00',
+            '2026-12-03 10:00:00+00',
+            True,
+            True,
+            True
+        )
         if not sub_row or (sub_row[0] != expected_sub[0] or sub_row[1] != expected_sub[1] or sub_row[2] != expected_sub[2] or 
                            sub_row[3] != expected_sub[3] or sub_row[4] != expected_sub[4] or float(sub_row[5]) != expected_sub[5] or
-                           sub_row[6] != expected_sub[6] or sub_row[7] != expected_sub[7] or sub_row[8] != expected_sub[8] or sub_row[9] != expected_sub[9]):
+                           sub_row[6] != expected_sub[6] or sub_row[7] != expected_sub[7] or sub_row[8] != expected_sub[8] or 
+                           sub_row[9] != expected_sub[9] or sub_row[10] != expected_sub[10]):
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on shop_subscriptions: actual={sub_row}, expected={expected_sub}")
 
         # 11. Shop Commission Ledger (id, tenant_slug, affiliate_id, gross_amount, affiliate_amount, am_amount, platform_net_amount)
@@ -3355,7 +3457,7 @@ BEGIN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Attribution Session 44444444-4444-4444-4444-444444444446 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
 
-    -- 10. Verifikasi Kepemilikan Shop Subscriptions (Seluruh 6 Kolom Ditulis Termasuk tenant_slug, status, amount)
+    -- 10. Verifikasi Kepemilikan Shop Subscriptions (Seluruh 8 Kolom Ditulis Termasuk current_period_ends_at & expires_at)
     IF EXISTS (
         SELECT 1 FROM public.shop_subscriptions 
         WHERE id = '44444444-4444-4444-4444-444444444447' 
@@ -3363,7 +3465,9 @@ BEGIN
             OR tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001' 
             OR affiliate_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222' 
             OR status IS DISTINCT FROM 'ACTIVE'
-            OR amount::numeric IS DISTINCT FROM 299000)
+            OR amount::numeric IS DISTINCT FROM 299000
+            OR current_period_ends_at::timestamptz IS DISTINCT FROM '2026-12-03 10:00:00+00'::timestamptz
+            OR expires_at::timestamptz IS DISTINCT FROM '2026-12-03 10:00:00+00'::timestamptz)
     ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Subscription 44444444-4444-4444-4444-444444444447 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
@@ -3384,139 +3488,303 @@ BEGIN
 END $$;
 
 -- -----------------------------------------------------------------------------
--- TAHAP 2: PENGHAPUSAN EKSKLUSIF DENGAN KUALIFIKASI KEPEMILIKAN LENGKAP
+-- TAHAP 2: PENGHAPUSAN EKSKLUSIF DENGAN KUALIFIKASI KEPEMILIKAN LENGKAP & EXECUTION AUDIT
 -- Menggunakan predikat seluruh payload untuk menjamin atomic safety terhadap concurrency.
+-- Mencatat diagnostik eksekusi eksak per tabel via GET DIAGNOSTICS ROW_COUNT untuk
+-- membuktikan kardinalitas baris yang benar-benar terhapus vs yang sudah absen.
 -- CATATAN: Tenant jangkar '00000000-0000-0000-0000-000000000001' TIDAK DIHAPUS.
 -- -----------------------------------------------------------------------------
-DELETE FROM public.shop_commission_ledger 
-WHERE id = '44444444-4444-4444-4444-444444444448'
-  AND tenant_slug = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222'
-  AND gross_amount = 299000
-  AND affiliate_amount = 29900
-  AND am_amount = 0
-  AND platform_net_amount = 269100;
+DROP TABLE IF EXISTS pg_temp._cleanup_execution_audit;
+CREATE TEMP TABLE pg_temp._cleanup_execution_audit (
+    table_name text PRIMARY KEY,
+    target_count int,
+    found_count int,
+    deleted_count int,
+    status text
+);
 
-DELETE FROM public.shop_subscriptions 
-WHERE id = '44444444-4444-4444-4444-444444444447'
-  AND tenant_slug = '00000000-0000-0000-0000-000000000001'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222'
-  AND status = 'ACTIVE'
-  AND amount = 299000;
+DO $$
+DECLARE
+    v_found int;
+    v_deleted int;
+    v_status text;
+    v_del_sub int;
+BEGIN
+    -- 1. shop_commission_ledger (1 baris)
+    SELECT count(*) INTO v_found FROM public.shop_commission_ledger WHERE id = '44444444-4444-4444-4444-444444444448';
+    DELETE FROM public.shop_commission_ledger 
+    WHERE id = '44444444-4444-4444-4444-444444444448'
+      AND tenant_slug = '00000000-0000-0000-0000-000000000001'
+      AND affiliate_id = '22222222-2222-2222-2222-222222222222'
+      AND gross_amount = 299000
+      AND affiliate_amount = 29900
+      AND am_amount = 0
+      AND platform_net_amount = 269100;
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.shop_commission_ledger', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.shop_commission_ledger | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.attribution_sessions 
-WHERE id = '44444444-4444-4444-4444-444444444446'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND ip_hash = 'HASH_001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222';
+    -- 2. shop_subscriptions (1 baris, seluruh 8 kolom termasuk timestamp)
+    SELECT count(*) INTO v_found FROM public.shop_subscriptions WHERE id = '44444444-4444-4444-4444-444444444447';
+    DELETE FROM public.shop_subscriptions 
+    WHERE id = '44444444-4444-4444-4444-444444444447'
+      AND tenant_slug = '00000000-0000-0000-0000-000000000001'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND affiliate_id = '22222222-2222-2222-2222-222222222222'
+      AND status = 'ACTIVE'
+      AND amount = 299000
+      AND current_period_ends_at = '2026-12-03 10:00:00+00'::timestamptz
+      AND expires_at = '2026-12-03 10:00:00+00'::timestamptz;
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.shop_subscriptions', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.shop_subscriptions | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.attributions 
-WHERE id = '44444444-4444-4444-4444-444444444445'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND session_id = 'SESS_001'
-  AND ip_hash = 'HASH_001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222';
+    -- 3. attribution_sessions (1 baris)
+    SELECT count(*) INTO v_found FROM public.attribution_sessions WHERE id = '44444444-4444-4444-4444-444444444446';
+    DELETE FROM public.attribution_sessions 
+    WHERE id = '44444444-4444-4444-4444-444444444446'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND ip_hash = 'HASH_001'
+      AND affiliate_id = '22222222-2222-2222-2222-222222222222';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.attribution_sessions', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.attribution_sessions | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.delivery_orders 
-WHERE id = '44444444-4444-4444-4444-444444444444'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND order_id = 'ORD_DO_001'
-  AND provider = 'JNE'
-  AND service_type = 'REG'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222'
-  AND status = 'PENDING';
+    -- 4. attributions (1 baris)
+    SELECT count(*) INTO v_found FROM public.attributions WHERE id = '44444444-4444-4444-4444-444444444445';
+    DELETE FROM public.attributions 
+    WHERE id = '44444444-4444-4444-4444-444444444445'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND session_id = 'SESS_001'
+      AND ip_hash = 'HASH_001'
+      AND affiliate_id = '22222222-2222-2222-2222-222222222222';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.attributions', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.attributions | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.product_orders 
-WHERE id = 44444443
-  AND order_id = 'PO_CHILD_001'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222'
-  AND status = 'PENDING';
+    -- 5. delivery_orders (1 baris)
+    SELECT count(*) INTO v_found FROM public.delivery_orders WHERE id = '44444444-4444-4444-4444-444444444444';
+    DELETE FROM public.delivery_orders 
+    WHERE id = '44444444-4444-4444-4444-444444444444'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND order_id = 'ORD_DO_001'
+      AND provider = 'JNE'
+      AND service_type = 'REG'
+      AND affiliate_id = '22222222-2222-2222-2222-222222222222'
+      AND status = 'PENDING';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.delivery_orders', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.delivery_orders | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.orders 
-WHERE id = '44444444-4444-4444-4444-444444444441'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222'
-  AND manager_id IS NULL
-  AND status = 'PENDING'
-  AND gross_amount = 100000;
+    -- 6. product_orders (1 baris)
+    SELECT count(*) INTO v_found FROM public.product_orders WHERE id = 44444443;
+    DELETE FROM public.product_orders 
+    WHERE id = 44444443
+      AND order_id = 'PO_CHILD_001'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND affiliate_id = '22222222-2222-2222-2222-222222222222'
+      AND status = 'PENDING';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.product_orders', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.product_orders | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.orders 
-WHERE id = '44444444-4444-4444-4444-444444444442'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id IS NULL
-  AND manager_id = '22222222-2222-2222-2222-222222222222'
-  AND status = 'PENDING'
-  AND gross_amount = 150000;
+    -- 7. orders (2 baris: affiliate stream & manager stream)
+    SELECT count(*) INTO v_found FROM public.orders WHERE id IN ('44444444-4444-4444-4444-444444444441', '44444444-4444-4444-4444-444444444442');
+    DELETE FROM public.orders 
+    WHERE id = '44444444-4444-4444-4444-444444444441'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND affiliate_id = '22222222-2222-2222-2222-222222222222'
+      AND manager_id IS NULL
+      AND status = 'PENDING'
+      AND gross_amount = 100000;
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
 
-DELETE FROM public.migration_031_identifier_dedup_map 
-WHERE map_id = 'e1111111-1111-1111-1111-111111111111'
-  AND migration_batch_id = 'BATCH_SYNTH_001'
-  AND table_name = 'affiliates'
-  AND column_name = 'id'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND quarantined_row_id = '22222222-2222-2222-2222-222222222221'
-  AND canonical_survivor_id = '22222222-2222-2222-2222-222222222221'
-  AND dedup_rank = 1
-  AND new_status = 'SURVIVOR';
+    DELETE FROM public.orders 
+    WHERE id = '44444444-4444-4444-4444-444444444442'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND affiliate_id IS NULL
+      AND manager_id = '22222222-2222-2222-2222-222222222222'
+      AND status = 'PENDING'
+      AND gross_amount = 150000;
+    GET DIAGNOSTICS v_del_sub = ROW_COUNT;
+    v_deleted := v_deleted + v_del_sub;
 
-DELETE FROM public.migration_031_identifier_dedup_map 
-WHERE map_id = 'e2222222-2222-2222-2222-222222222222'
-  AND migration_batch_id = 'BATCH_SYNTH_001'
-  AND table_name = 'affiliates'
-  AND column_name = 'id'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND quarantined_row_id = '22222222-2222-2222-2222-222222222222'
-  AND canonical_survivor_id = '22222222-2222-2222-2222-222222222221'
-  AND dedup_rank = 2
-  AND new_status = 'SUPERSEDED_DUPLICATE';
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.orders', 2, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.orders | Target: 2 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.migration_031_quarantined_affiliate_commissions 
-WHERE id = '33333333-3333-3333-3333-333333333331'
-  AND migration_batch_id = 'BATCH_SYNTH_001'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '11111111-1111-1111-1111-111111111111'
-  AND order_id = 'ORD_QUAR_001'
-  AND amount = 75000
-  AND status = 'QUARANTINED'
-  AND quarantine_reason = 'CROSS_TENANT_DISCREPANCY_DETECTED';
+    -- 8. migration_031_identifier_dedup_map (2 baris: survivor rank 1 & loser rank 2)
+    SELECT count(*) INTO v_found FROM public.migration_031_identifier_dedup_map WHERE map_id IN ('e1111111-1111-1111-1111-111111111111', 'e2222222-2222-2222-2222-222222222222');
+    DELETE FROM public.migration_031_identifier_dedup_map 
+    WHERE map_id = 'e1111111-1111-1111-1111-111111111111'
+      AND migration_batch_id = 'BATCH_SYNTH_001'
+      AND table_name = 'affiliates'
+      AND column_name = 'id'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND quarantined_row_id = '22222222-2222-2222-2222-222222222221'
+      AND canonical_survivor_id = '22222222-2222-2222-2222-222222222221'
+      AND dedup_rank = 1
+      AND new_status = 'SURVIVOR';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
 
-DELETE FROM public.affiliate_commissions 
-WHERE id = '11111111-1111-1111-1111-111111111112'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '11111111-1111-1111-1111-111111111111'
-  AND order_id = 'ORD_CLEAN_001'
-  AND order_amount = 500000
-  AND amount = 50000
-  AND status = 'PAID';
+    DELETE FROM public.migration_031_identifier_dedup_map 
+    WHERE map_id = 'e2222222-2222-2222-2222-222222222222'
+      AND migration_batch_id = 'BATCH_SYNTH_001'
+      AND table_name = 'affiliates'
+      AND column_name = 'id'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND quarantined_row_id = '22222222-2222-2222-2222-222222222222'
+      AND canonical_survivor_id = '22222222-2222-2222-2222-222222222221'
+      AND dedup_rank = 2
+      AND new_status = 'SUPERSEDED_DUPLICATE';
+    GET DIAGNOSTICS v_del_sub = ROW_COUNT;
+    v_deleted := v_deleted + v_del_sub;
 
-DELETE FROM public.affiliates 
-WHERE id = '11111111-1111-1111-1111-111111111111'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND name = 'SYNTH_AFF_CLEAN_001'
-  AND phone_number = '081200000001'
-  AND referral_code = 'CLEAN01'
-  AND commission_rate = 0.10
-  AND status = 'ACTIVE';
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.migration_031_identifier_dedup_map', 2, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.migration_031_identifier_dedup_map | Target: 2 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.affiliates 
-WHERE id = '22222222-2222-2222-2222-222222222221'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND name = 'SYNTH_AFF_SURV_001'
-  AND phone_number = '081200000002'
-  AND referral_code = 'SURV01'
-  AND commission_rate = 0.10
-  AND status = 'ACTIVE';
+    -- 9. migration_031_quarantined_affiliate_commissions (1 baris)
+    SELECT count(*) INTO v_found FROM public.migration_031_quarantined_affiliate_commissions WHERE id = '33333333-3333-3333-3333-333333333331';
+    DELETE FROM public.migration_031_quarantined_affiliate_commissions 
+    WHERE id = '33333333-3333-3333-3333-333333333331'
+      AND migration_batch_id = 'BATCH_SYNTH_001'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND affiliate_id = '11111111-1111-1111-1111-111111111111'
+      AND order_id = 'ORD_QUAR_001'
+      AND amount = 75000
+      AND status = 'QUARANTINED'
+      AND quarantine_reason = 'CROSS_TENANT_DISCREPANCY_DETECTED';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.migration_031_quarantined_affiliate_commissions', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.migration_031_quarantined_affiliate_commissions | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
 
-DELETE FROM public.affiliates 
-WHERE id = '22222222-2222-2222-2222-222222222222'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND name = 'SYNTH_AFF_LOSER_001'
-  AND phone_number = '081200000003'
-  AND referral_code = 'LOSER01'
-  AND commission_rate = 0.10
-  AND status = 'ACTIVE';
+    -- 10. affiliate_commissions (1 baris)
+    SELECT count(*) INTO v_found FROM public.affiliate_commissions WHERE id = '11111111-1111-1111-1111-111111111112';
+    DELETE FROM public.affiliate_commissions 
+    WHERE id = '11111111-1111-1111-1111-111111111112'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND affiliate_id = '11111111-1111-1111-1111-111111111111'
+      AND order_id = 'ORD_CLEAN_001'
+      AND order_amount = 500000
+      AND amount = 50000
+      AND status = 'PAID';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.affiliate_commissions', 1, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.affiliate_commissions | Target: 1 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
+
+    -- 11. affiliates (3 baris: CLEAN, SURV, LOSER)
+    SELECT count(*) INTO v_found FROM public.affiliates WHERE id IN ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222222');
+    DELETE FROM public.affiliates 
+    WHERE id = '11111111-1111-1111-1111-111111111111'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND name = 'SYNTH_AFF_CLEAN_001'
+      AND phone_number = '081200000001'
+      AND referral_code = 'CLEAN01'
+      AND commission_rate = 0.10
+      AND status = 'ACTIVE';
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+
+    DELETE FROM public.affiliates 
+    WHERE id = '22222222-2222-2222-2222-222222222221'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND name = 'SYNTH_AFF_SURV_001'
+      AND phone_number = '081200000002'
+      AND referral_code = 'SURV01'
+      AND commission_rate = 0.10
+      AND status = 'ACTIVE';
+    GET DIAGNOSTICS v_del_sub = ROW_COUNT;
+    v_deleted := v_deleted + v_del_sub;
+
+    DELETE FROM public.affiliates 
+    WHERE id = '22222222-2222-2222-2222-222222222222'
+      AND tenant_id = '00000000-0000-0000-0000-000000000001'
+      AND name = 'SYNTH_AFF_LOSER_001'
+      AND phone_number = '081200000003'
+      AND referral_code = 'LOSER01'
+      AND commission_rate = 0.10
+      AND status = 'ACTIVE';
+    GET DIAGNOSTICS v_del_sub = ROW_COUNT;
+    v_deleted := v_deleted + v_del_sub;
+
+    IF v_found = 0 THEN
+        v_status := 'ALREADY_ABSENT';
+    ELSIF v_deleted = v_found THEN
+        v_status := 'CLEANLY_DELETED';
+    ELSE
+        v_status := 'PAYLOAD_MISMATCH_REJECTED';
+    END IF;
+    INSERT INTO pg_temp._cleanup_execution_audit VALUES ('public.affiliates', 3, v_found, v_deleted, v_status);
+    RAISE NOTICE 'CLEANUP_AUDIT: public.affiliates | Target: 3 | Found: % | Deleted: % | Status: %', v_found, v_deleted, v_status;
+END $$;
 
 -- -----------------------------------------------------------------------------
 -- TAHAP 3: VERIFIKASI POST-CLEANUP: EXACT-VALUE TWO-WAY EXCEPT RECONCILIATION

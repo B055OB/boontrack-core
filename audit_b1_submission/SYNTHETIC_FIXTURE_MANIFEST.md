@@ -221,7 +221,21 @@ Dalam kedua baseline, nilai mutasi tingkat atribut tetap identik: **$N_{\text{ex
 
 ---
 
-## 5. Protokol Eksekusi & Teardown
+## 5. Protokol Eksekusi & Teardown (REV 4.1.6.2.11-E)
 
-1. **Eksekusi Dry-Run:** Script `seed_synthetic_fixture.py` secara default mengeksekusi penyisipan di dalam transaksi dan mengakhirinya dengan `ROLLBACK`, sehingga dapat diuji tanpa mutasi basis data.
-2. **Eksekusi Teardown:** Script `cleanup_synthetic_fixture.sql` dapat dijalankan kapan saja untuk menghapus 13 entitas sintetis secara bersih dan idempoten.
+1. **Jangkar Timestamp Deterministik (public.shop_subscriptions):**
+   - **Reference Base Timestamp:** '2026-11-03 10:00:00+00'::timestamptz
+   - **Interval Durasi:** Tepat 30 hari (interval '30 days')
+   - **Canonical Expiration Timestamp:** '2026-12-03 10:00:00+00'::timestamptz
+   - **Ownership & DELETE Proof:** Seluruh 8 kolom diverifikasi eksak (termasuk current_period_ends_at dan expires_at via IS DISTINCT FROM). Seeder memvalidasi kesamaan deterministik dan selisih presisi 30 hari.
+
+2. **Diagnostik Eksekusi Cleanup per Tabel (pg_temp._cleanup_execution_audit):**
+   - Menggunakan GET DIAGNOSTICS ... ROW_COUNT untuk setiap tabel fisik guna mencatat metrik: 	arget_count, ound_count, deleted_count, dan status.
+   - Klasifikasi status eviden:
+     * CLEANLY_DELETED: Fixture ditemukan di basis data dan berhasil dihapus secara bersih.
+     * ALREADY_ABSENT: Fixture sudah tidak ada sebelum cleanup dijalankan (0 baris dihapus).
+     * PAYLOAD_MISMATCH_REJECTED: Baris dengan ID cocok tetapi atribut termutasi (ditolak, fail-closed).
+   - Menjamin runner cleanup tidak pernah melebih-lebihkan bukti eksekusi (*no overstating*).
+
+3. **Eksekusi Dry-Run:** Script seed_synthetic_fixture.py secara default mengeksekusi penyisipan di dalam transaksi dan mengakhirinya dengan ROLLBACK, sehingga dapat diuji tanpa mutasi basis data.
+4. **Eksekusi Teardown:** Script cleanup_synthetic_fixture.sql dapat dijalankan kapan saja untuk memverifikasi dan membersihkan fixture secara aman, atomik, dan idempoten.
