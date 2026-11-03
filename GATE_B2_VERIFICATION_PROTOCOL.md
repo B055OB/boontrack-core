@@ -1,12 +1,12 @@
 # GATE B2 FORMAL VERIFICATION PROTOCOL
 ## Schema Integrity, Multi-Source Backfill, Active FK Reconciliation & Lineage Verification
-**Document ID:** `BOONTRACK-SPEC-GATE-B2-PROTOCOL-REV2.7`  
+**Document ID:** `BOONTRACK-SPEC-GATE-B2-PROTOCOL-REV2.8`  
 **Classification:** Internal Technical Architecture & Formal Verification Protocol  
 **Author:** Lead Database Reliability Engineer (DBRE) & Principal Systems Architect  
 **Date:** 2026-11-04  
-**Status:** **`REMEDIATED PROTOCOL REV 2.7 — STANDBY FOR CTO DESIGN APPROVAL`**  
-**Supersedes:** `BOONTRACK-SPEC-GATE-B2-PROTOCOL-REV2.6` (Commit [`a62bbe2`](https://github.com/B055OB/boontrack-core/commit/a62bbe2))  
-**Remediation Mandate:** Formal Closure of CTO Findings `R8-F01` (NULL Target Mapping Must Fail), `R8-F02` (Tenant-Scoped Mapping Join Required), and `R8-F03` (NULL Mapping Status Must Fail in TVL), alongside Static Adversarial Proof Suite (`ADV-01` s/d `ADV-04`)  
+**Status:** **`REMEDIATED PROTOCOL REV 2.8 — STANDBY FOR CTO DESIGN APPROVAL`**  
+**Supersedes:** `BOONTRACK-SPEC-GATE-B2-PROTOCOL-REV2.7` (Commit [`8e91eb8`](https://github.com/B055OB/boontrack-core/commit/8e91eb8))  
+**Remediation Mandate:** Formal Closure of CTO Finding `R9-F01` (Universal Mapping Status Whitelist & Zero-Bypass Isolation in Physical Cardinality & Lineage Audit A -> B, with Adversarial Proofs `ADV-03A` and `ADV-03B`)  
 **Prerequisite:** Gate B1 Ratified & Formally Closed (`REV 4.1.6.2.11-E`, Commit [`d418367`](https://github.com/B055OB/boontrack-core/commit/d418367a73fbb36270bca57e3bf5d428bf9e08fc))  
 **Execution Posture:** `STRICT READ-ONLY / ZERO STAGING MUTATION / ZERO-TOUCH PRODUCTION & R2`  
 
@@ -98,7 +98,7 @@ Gate B2 dirancang untuk memverifikasi keabsahan struktur skema fisik, kelengkapa
   * **Nol referensi menggantung (*zero orphaned child rows*):** Tidak ada pasangan `(tenant_id, affiliate_id)` atau `(tenant_id, manager_id)` yang tidak eksis di `public.affiliates`.
   * **Nol referensi ke loser (*zero loser references*):** Tidak ada baris anak yang masih menunjuk ke ID loser yang telah digabungkan/dikarantina (`dedup_rank > 1` atau status superseded).
 
-### Scope 5: 3-Tier Linear Lineage Proof, Exact-One Occurrence, Authoritative Tenant Mapping & Adversarial Hardening (`R6-F01` s/d `R6-F03`, `R7-F01`, `R7-F02`, `R8-F01` s/d `R8-F03`)
+### Scope 5: 3-Tier Linear Lineage Proof, Exact-One Occurrence, Authoritative Tenant Mapping, Universal Status Whitelist & Adversarial Hardening (`R6-F01` s/d `R6-F03`, `R7-F01`, `R7-F02`, `R8-F01` s/d `R8-F03`, `R9-F01`)
 - **Prosedur Snapshot Segar Otoritatif (Fail-Closed Fresh Snapshot):** Menghapus klausul `IF NOT EXISTS` dan menerapkan eksekusi `DROP TABLE IF EXISTS pre_mig031_affiliate_commissions_snapshot; CREATE TEMP TABLE ...` untuk mencegah penggunaan tabel snapshot basi antar-sesi.
 - **Serialisasi Kanonikal & Agregasi Array Terstruktur JSONB Collision-Safe (`R6-F01`):**
   * Menghapus total seluruh konkatenasi berbasis pemisah teks primitif `string_agg(..., '|' ORDER BY commission_id)`.
@@ -116,22 +116,27 @@ Gate B2 dirancang untuk memverifikasi keabsahan struktur skema fisik, kelengkapa
     - Menangkap `ORPHAN_EXPECTED_COMMISSION_ROW` (pre IS NULL) dan `MISSING_SNAPSHOT_ROW_IN_EXPECTED` (exp_c IS NULL).
     - Memverifikasi kesetaraan total nominal finansial global: `expected_total_amount = snapshot_total_amount`.
   * Syarat kelulusan mutlak: `lineage_a_to_b_anomalies_count = 0`, `actual_post_row_count = snapshot_row_count`, `actual_post_total_amount = snapshot_total_amount`, dan `actual_post_migration_fingerprint = expected_transformed_fingerprint`.
-- **Pemetaan Tenant Otoritatif, Perluasan Kardinalitas & Anti-Null Target (`R7-F02`, `R8-F01` s/d `R8-F03`):**
+- **Pemetaan Tenant Otoritatif, Perluasan Kardinalitas, Anti-Null Target & Universal Status Whitelist (`R7-F02`, `R8-F01` s/d `R8-F03`, `R9-F01`):**
   * Memperluas cakupan pemeriksaan `_mig031_mapping_physical_cardinality` untuk mengevaluasi kardinalitas baris fisik pada `table_name = 'affiliates'` DAN `table_name = 'affiliate_commissions' AND column_name = 'tenant_id'`.
   * **Evaluasi Target Nilai Bersih & Penolakan Target NULL (`R8-F01`):**
     - Mengevaluasi ekspresi: `target_value = NULLIF(BTRIM(COALESCE(canonical_survivor_id, new_identifier_value)), '')`.
     - Mengklasifikasikan `target_value IS NULL` sebagai `'NULL_OR_BLANK_TARGET_MAPPING'` yang secara otomatis menggagalkan asersi.
-    - Status `'UNIQUE_VALID_MAPPING'` hanya diberikan apabila `physical_mapping_rows = 1 AND distinct_target_count = 1 AND target_value IS NOT NULL`.
+  * **Penegakan Universal Status Whitelist pada Kardinalitas Fisik (`R9-F01`):**
+    - Memeriksa `new_status` secara universal di `_mig031_mapping_physical_cardinality`.
+    - Status NULL atau di luar whitelist langsung diklasifikasikan sebagai `'INVALID_OR_NULL_MAPPING_STATUS'`.
+    - Status `'UNIQUE_VALID_MAPPING'` hanya diberikan apabila:
+      $$\text{physical\_mapping\_rows} = 1 \land \text{distinct\_target\_count} = 1 \land \text{target\_value IS NOT NULL} \land \text{bool\_and}(new\_status \in W) = \text{TRUE}$$
+  * **Pemisahan Validasi Status Independen dari Pergeseran Tenant (`R9-F01`):**
+    - Pada `lineage_a_to_b_audit`, validasi status dipisahkan menjadi evaluasi universal sebelum memeriksa pergeseran tenant:
+      `WHEN t_map.quarantined_row_id IS NOT NULL AND (t_map.new_status IS NULL OR t_map.new_status NOT IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE', 'QUARANTINED')) THEN 'INVALID_MAPPING_STATUS_APPLIED'`.
+    - Menutup celah penyamaran status NULL pada baris yang tidak mengalami perubahan tenant.
   * **Pengikatan Relasional Tenant-Scoped Wajib (`R8-F02`):**
     - Seluruh join ke `t_map` dan `t_card` pada `pre_mapped_commissions` dan `lineage_a_to_b_audit` wajib menyertakan:
       `AND t_map.tenant_id IS NOT DISTINCT FROM pre.tenant_id` serta `AND t_card.tenant_id IS NOT DISTINCT FROM pre.tenant_id`.
     - Menutup celah penyamaran benturan ID identik lintas tenant (*cross-tenant ID collision*).
-  * **Penegakan Three-Valued Logic SQL Fail-Closed pada Status Dedup Map (`R8-F03`):**
-    - Mengevaluasi secara eksplisit: `(t_map.new_status IS NULL OR t_map.new_status NOT IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE', 'QUARANTINED'))`.
-    - Status NULL secara deterministik ditangkap sebagai anomali fatal `'UNAUTHORIZED_TENANT_SHIFT'` tanpa celah evaluasi `UNKNOWN`.
   * **Validasi Tenant Otoritatif & Klasifikasi Pergeseran Tenant:**
     - Pergeseran `tenant_id` tanpa entri mapping sah pada dedup map ditandai sebagai `UNAUTHORIZED_TENANT_SHIFT`.
-    - Pergeseran dengan pemetaan yang duplikat, ambigu, atau bernilai target NULL ditandai sebagai `AMBIGUOUS_TENANT_MAPPING`.
+    - Pergeseran dengan pemetaan yang duplikat, ambigu, status tidak valid, atau bernilai target NULL ditandai sebagai `AMBIGUOUS_TENANT_MAPPING`.
     - Pergeseran yang menghasilkan target tenant di luar katalog otoritatif `public.tenants` atau tidak selaras dengan nilai `t_map` ditandai sebagai `UNAUTHORIZED_TENANT_MAPPING`.
     - Seluruh evaluasi tenant menggunakan semantik NULL-safe `IS DISTINCT FROM`.
   * Mewajibkan `mapping_cardinality_anomalies_count = 0` pada asersi akhir.
@@ -251,7 +256,7 @@ Seluruh tabel anak terikat ke tabel induk melalui kunci asing komposit `(tenant_
 | **RSK-03** | **Pesanan Operasional Yatim (*Unresolved Operational Orders*)** | Tinggi | Rendah | Mengisolasi pesanan berstatus operasional (`is_cod = true` atau status aktif) yang kehilangan `tenant_id`. | `B2-ASSERT-02`: Asersi mewajibkan `unresolved_operational_orders == 0` pada pesanan aktif non-void. |
 | **RSK-04** | **Ketidaksesuaian Baris Karantina, Status & Kardinalitas Survivor Kluster** | Tinggi | Rendah | Menguji kesetaraan dua arah (`EXCEPT`), validasi status fail-closed tanpa fallback permisif, pengelompokan survivor berbasis identitas kluster asli bebas sentinel (`__GLOBAL__` dieliminasi — `R5-F01`), deteksi `UNRESOLVED_CLUSTER_IDENTITY`, dan verifikasi fisik survivor dengan penyelarasan tenant (`parent.tenant_id = map.tenant_id`). | `B2-ASSERT-03`: Pengecekan paritas dua arah ($(\text{Q} \setminus \text{M}) \cup (\text{M} \setminus \text{Q}) = \emptyset$), kardinalitas survivor kluster universal tepat 1 (`survivor_count = 1`), 0 unresolvable cluster identity, dan bukti eksistensi fisik serta keselarasan tenant survivor. |
 | **RSK-05** | **Referensi Menggantung Pasca-Repointing (*Dangling Downstream FK*)** | Kritis | Rendah | Memeriksa seluruh 8 jalur kunci asing komposit menggunakan manifest formal dan kueri `FULL OUTER JOIN` ke `pg_constraint`. | `B2-ASSERT-04`: Membuktikan ke-8 FK terdaftar `MATCH` (`discrepancy = 0`) serta 0 baris anak yang mereferensikan loser tuple atau parent non-existent. |
-| **RSK-06** | **Pergeseran Finansial Komisi, Anomali Kardinalitas & Pergeseran Tenant Liar** | Kritis | Sangat Rendah | Prosedur fresh snapshot (`DROP TABLE IF EXISTS` + `CREATE TEMP TABLE`), agregasi array terstruktur JSONB native `jsonb_agg` collision-safe (`R6-F01`), bukti exact-one occurrence snapshot-ke-expected (`R7-F01`), pemetaan tenant otoritatif database & perluasan kardinalitas fisik (`R7-F02`), eliminasi target mapping null/blank via `NULL_OR_BLANK_TARGET_MAPPING` (`R8-F01`), pengikatan relasional tenant-scoped `AND tenant_id IS NOT DISTINCT FROM` (`R8-F02`), penegakan fail-closed Three-Valued Logic SQL status dedup map (`R8-F03`), deteksi mutasi identitas liar `UNMAPPED_IDENTITY_MUTATION` (`R6-F02`), ketiadaan penyamaran `SELECT DISTINCT` (`R6-F03`), serta audit dua arah komposit tenant (`R5-F03`). | `B2-ASSERT-05`: Membuktikan kesetaraan mutlak hitungan baris baseline, total nominal, sidik jari array JSONB (`actual == expected`), 0 anomali lineage $A \to B$ (exact-one occurrence), 0 anomali kardinalitas pemetaan (affiliates & commissions tenant), `global_amount_delta == 0.00`, `row_lineage_anomalies == 0`, `grouped_variance == 0`, dan 0 anomali rekonsiliasi kanonikal. |
+| **RSK-06** | **Pergeseran Finansial Komisi, Anomali Kardinalitas & Pergeseran Tenant Liar** | Kritis | Sangat Rendah | Prosedur fresh snapshot (`DROP TABLE IF EXISTS` + `CREATE TEMP TABLE`), agregasi array terstruktur JSONB native `jsonb_agg` collision-safe (`R6-F01`), bukti exact-one occurrence snapshot-ke-expected (`R7-F01`), pemetaan tenant otoritatif database & perluasan kardinalitas fisik (`R7-F02`), eliminasi target mapping null/blank via `NULL_OR_BLANK_TARGET_MAPPING` (`R8-F01`), pengikatan relasional tenant-scoped `AND tenant_id IS NOT DISTINCT FROM` (`R8-F02`), penegakan universal whitelist status dedup map pada kardinalitas fisik via `INVALID_OR_NULL_MAPPING_STATUS` dan isolasi audit lineage tanpa bypass tenant via `INVALID_MAPPING_STATUS_APPLIED` (`R8-F03` & `R9-F01`), deteksi mutasi identitas liar `UNMAPPED_IDENTITY_MUTATION` (`R6-F02`), ketiadaan penyamaran `SELECT DISTINCT` (`R6-F03`), serta audit dua arah komposit tenant (`R5-F03`). | `B2-ASSERT-05`: Membuktikan kesetaraan mutlak hitungan baris baseline, total nominal, sidik jari array JSONB (`actual == expected`), 0 anomali lineage $A \to B$ (exact-one occurrence), 0 anomali kardinalitas pemetaan (affiliates & commissions tenant), `global_amount_delta == 0.00`, `row_lineage_anomalies == 0`, `grouped_variance == 0`, dan 0 anomali rekonsiliasi kanonikal. |
 
 ---
 
@@ -974,16 +979,21 @@ FROM anomalous_child_rows;
        - Memvalidasi nominal global snapshot A == nominal global expected B (`exp.expected_total_amount = meta.snapshot_total_amount`).
      * Mengikat klausul evaluasi kegagalan:
        `WHEN exp.expected_row_count <> meta.snapshot_row_count OR exp.expected_total_amount <> meta.snapshot_total_amount OR (SELECT COUNT(*) FROM lineage_a_to_b_anomalies) > 0 THEN 'FAIL: B2_ASSERT_05_BASELINE_TO_EXPECTED_LINEAGE_BROKEN'`.
-  4. **Pemeriksaan Kardinalitas Baris Fisik, Anti-Null Target & Tenant-Scoped Mapping (`R7-F02`, `R8-F01`, `R8-F02`, `R8-F03`, `R6-F03`):**
+  4. **Pemeriksaan Kardinalitas Baris Fisik, Anti-Null Target, Universal Status Whitelist & Tenant-Scoped Mapping (`R7-F02`, `R8-F01`, `R8-F02`, `R8-F03`, `R9-F01`, `R6-F03`):**
      * Memperluas cakupan pemeriksaan `_mig031_mapping_physical_cardinality` untuk mengevaluasi kardinalitas baris fisik pada seluruh pemetaan dedup map: `table_name = 'affiliates'` DAN `(table_name = 'affiliate_commissions' AND column_name = 'tenant_id')`.
      * **Evaluasi Target Bersih & Penolakan Target NULL (`R8-F01`):**
        - Mengevaluasi `target_value = NULLIF(BTRIM(COALESCE(canonical_survivor_id, new_identifier_value)), '')`.
        - Mengklasifikasikan anomali secara transparan:
          * `COUNT(DISTINCT target_value) > 1` $\to$ `AMBIGUOUS_CANONICAL_MAPPING`
          * `COUNT(target_value) = 0 OR MAX(target_value) IS NULL OR COUNT(*) FILTER (WHERE target_value IS NULL) > 0` $\to$ `NULL_OR_BLANK_TARGET_MAPPING`
+         * `COUNT(*) FILTER (WHERE new_status IS NULL OR new_status NOT IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE', 'QUARANTINED')) > 0` $\to$ `INVALID_OR_NULL_MAPPING_STATUS`
          * `COUNT(*) > 1 AND COUNT(DISTINCT target_value) = 1` $\to$ `DUPLICATE_IDENTICAL_MAPPING_DETECTED`
-         * `COUNT(*) = 1 AND COUNT(DISTINCT target_value) = 1 AND MAX(target_value) IS NOT NULL` $\to$ `UNIQUE_VALID_MAPPING`
-       - Status `NULL_OR_BLANK_TARGET_MAPPING` secara otomatis menaikkan hitungan `mapping_cardinality_anomalies_count > 0` dan menggagalkan asersi.
+         * `COUNT(*) = 1 AND COUNT(DISTINCT target_value) = 1 AND MAX(target_value) IS NOT NULL AND bool_and(new_status IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE', 'QUARANTINED')) = TRUE` $\to$ `UNIQUE_VALID_MAPPING`
+       - Status `NULL_OR_BLANK_TARGET_MAPPING` dan `INVALID_OR_NULL_MAPPING_STATUS` secara otomatis menaikkan hitungan `mapping_cardinality_anomalies_count > 0` dan menggagalkan asersi.
+     * **Validasi Independen Status Pemetaan pada Audit Lineage $A \to B$ (`R9-F01`):**
+       - Memisahkan evaluasi keabsahan status dari kondisi pergeseran tenant:
+         `WHEN t_map.quarantined_row_id IS NOT NULL AND (t_map.new_status IS NULL OR t_map.new_status NOT IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE', 'QUARANTINED')) THEN 'INVALID_MAPPING_STATUS_APPLIED'`.
+       - Menjamin baris pemetaan berstatus tidak sah/NULL langsung terdeteksi sebagai anomali fatal, baik ketika `tenant_id` bergeser maupun ketika `tenant_id` bernilai tetap.
      * **Pengikatan Relasional Tenant-Scoped Wajib (`R8-F02`):**
        - Seluruh join ke `t_map` dan `t_card` pada `pre_mapped_commissions` dan `lineage_a_to_b_audit` wajib menyertakan `AND t_map.tenant_id IS NOT DISTINCT FROM pre.tenant_id` serta `AND t_card.tenant_id IS NOT DISTINCT FROM pre.tenant_id`.
        - Menjamin komisi hanya dapat dipetakan oleh entri dedup map yang memiliki `tenant_id` identik dengan snapshot awal.
@@ -991,11 +1001,11 @@ FROM anomalous_child_rows;
        - Menangani kasus status NULL secara deterministik:
          `WHEN pre.tenant_id IS DISTINCT FROM exp_c.tenant_id AND (t_map.quarantined_row_id IS NULL OR t_map.new_status IS NULL OR t_map.new_status NOT IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE', 'QUARANTINED') OR NULLIF(BTRIM(t_map.new_identifier_value), '') IS NULL) THEN 'UNAUTHORIZED_TENANT_SHIFT'`.
        - Mencegah evaluasi `UNKNOWN` pada klausa `NOT IN` meloloskan status NULL.
-     * **Validasi Tenant Otoritatif & Klasifikasi Pergeseran Tenant (`R7-F02`):**
+     * **Validasi Tenant Otoritatif & Klasifikasi Pergeseran Tenant (`R7-F02`, `R8-F02`, `R8-F03`, `R9-F01`):**
        - Membangun CTE `authoritative_tenants` dari `public.tenants` (`id::text` dan `slug`) ditambah distinct active `affiliates.tenant_id`.
        - Menegakkan klasifikasi fail-closed bila terjadi perbedaan tenant (`pre.tenant_id IS DISTINCT FROM exp_c.tenant_id`):
-         * `t_map` tidak ditemukan, status di luar whitelist resmi, status bernilai NULL, atau nilai target NULL $\to$ `UNAUTHORIZED_TENANT_SHIFT`.
-         * Status kardinalitas `t_card` terdeteksi duplikat, ambigu, atau bernilai target NULL/blank $\to$ `AMBIGUOUS_TENANT_MAPPING`.
+         * `t_map` tidak ditemukan atau nilai target NULL $\to$ `UNAUTHORIZED_TENANT_SHIFT`.
+         * Status kardinalitas `t_card` terdeteksi duplikat, ambigu, berstatus tidak sah (`INVALID_OR_NULL_MAPPING_STATUS`), atau bernilai target NULL/blank $\to$ `AMBIGUOUS_TENANT_MAPPING`.
          * Target tenant tidak terdaftar dalam katalog `authoritative_tenants` atau tidak identik dengan `t_map.new_identifier_value` $\to$ `UNAUTHORIZED_TENANT_MAPPING`.
      * **Dilarang Keras Menggunakan `SELECT DISTINCT`:** Membangun `_mig031_canonical_identity_map` tanpa `SELECT DISTINCT` agar tidak menutupi baris duplikat fisik di database.
      * Mewajibkan total `mapping_cardinality_anomalies_count = 0` pada asersi akhir.
@@ -1069,7 +1079,7 @@ SELECT
     )                                                                AS baseline_snapshot_fingerprint
 FROM pre_mig031_affiliate_commissions_snapshot;
 
--- 4. Pemeriksaan Kardinalitas Baris Fisik Pemetaan Dedup Map (Anti-Duplicate, Anti-Ambiguity & Anti-Null-Target - R7-F02, R8-F01, R6-F03)
+-- 4. Pemeriksaan Kardinalitas Baris Fisik Pemetaan Dedup Map (Anti-Duplicate, Anti-Ambiguity, Anti-Null-Target & Universal Status Whitelist - R7-F02, R8-F01, R9-F01, R6-F03)
 CREATE TEMP TABLE _mig031_mapping_physical_cardinality ON COMMIT DROP AS
 WITH candidate_universe AS (
     SELECT
@@ -1079,7 +1089,8 @@ WITH candidate_universe AS (
         m.quarantined_row_id                                                          AS quarantined_row_id,
         NULLIF(BTRIM(m.canonical_survivor_id), '')                                    AS canonical_survivor_id,
         NULLIF(BTRIM(m.new_identifier_value), '')                                     AS new_identifier_value,
-        NULLIF(BTRIM(COALESCE(m.canonical_survivor_id, m.new_identifier_value)), '')  AS target_value
+        NULLIF(BTRIM(COALESCE(m.canonical_survivor_id, m.new_identifier_value)), '')  AS target_value,
+        m.new_status
     FROM public.migration_031_identifier_dedup_map m
     WHERE (m.table_name = 'affiliates')
        OR (m.table_name = 'affiliate_commissions' AND m.column_name = 'tenant_id')
@@ -1097,9 +1108,14 @@ SELECT
             THEN 'AMBIGUOUS_CANONICAL_MAPPING'
         WHEN COUNT(target_value) = 0 OR MAX(target_value) IS NULL OR COUNT(*) FILTER (WHERE target_value IS NULL) > 0
             THEN 'NULL_OR_BLANK_TARGET_MAPPING'
+        WHEN COUNT(*) FILTER (WHERE new_status IS NULL OR new_status NOT IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE', 'QUARANTINED')) > 0
+            THEN 'INVALID_OR_NULL_MAPPING_STATUS'
         WHEN COUNT(*) > 1 AND COUNT(DISTINCT target_value) = 1 
             THEN 'DUPLICATE_IDENTICAL_MAPPING_DETECTED'
-        WHEN COUNT(*) = 1 AND COUNT(DISTINCT target_value) = 1 AND MAX(target_value) IS NOT NULL 
+        WHEN COUNT(*) = 1 
+             AND COUNT(DISTINCT target_value) = 1 
+             AND MAX(target_value) IS NOT NULL 
+             AND bool_and(new_status IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE', 'QUARANTINED')) = TRUE
             THEN 'UNIQUE_VALID_MAPPING'
         ELSE 'INVALID_MAPPING_CARDINALITY_STATE'
     END AS mapping_cardinality_status
@@ -1142,6 +1158,7 @@ SELECT
         WHEN card.mapping_cardinality_status = 'AMBIGUOUS_CANONICAL_MAPPING' THEN 'AMBIGUOUS_CANONICAL_MAPPING'
         WHEN card.mapping_cardinality_status = 'DUPLICATE_IDENTICAL_MAPPING_DETECTED' THEN 'DUPLICATE_IDENTICAL_MAPPING_DETECTED'
         WHEN card.mapping_cardinality_status = 'NULL_OR_BLANK_TARGET_MAPPING' THEN 'NULL_OR_BLANK_TARGET_MAPPING'
+        WHEN card.mapping_cardinality_status = 'INVALID_OR_NULL_MAPPING_STATUS' THEN 'INVALID_OR_NULL_MAPPING_STATUS'
         WHEN card.mapping_cardinality_status <> 'UNIQUE_VALID_MAPPING' THEN 'INVALID_MAPPING_CARDINALITY'
         WHEN u.canonical_survivor_id IS NULL THEN 'MISSING_CANONICAL_MAPPING'
         WHEN p.survivor_id IS NULL THEN 'BROKEN_SURVIVOR_REFERENCE'
@@ -1253,24 +1270,27 @@ lineage_a_to_b_audit AS (
             -- 2. Conservation of Amount
             WHEN pre.amount IS DISTINCT FROM exp_c.amount THEN 'AMOUNT_DRIFT_IN_EXPECTED_TRANSFORMATION'
 
-            -- 3. Authoritative Tenant Shift & Mapping Classification (R7-F02, R8-F02, R8-F03)
+            -- 3. Universal Mapping Status Validation Independent of Tenant Shift (R9-F01)
+            WHEN t_map.quarantined_row_id IS NOT NULL 
+                 AND (t_map.new_status IS NULL OR t_map.new_status NOT IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE', 'QUARANTINED'))
+            THEN 'INVALID_MAPPING_STATUS_APPLIED'
+
+            -- 4. Authoritative Tenant Shift & Mapping Classification (R7-F02, R8-F02, R8-F03, R9-F01)
             WHEN pre.tenant_id IS DISTINCT FROM exp_c.tenant_id
                  AND (t_map.quarantined_row_id IS NULL 
-                      OR t_map.new_status IS NULL
-                      OR t_map.new_status NOT IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE', 'QUARANTINED')
                       OR NULLIF(BTRIM(t_map.new_identifier_value), '') IS NULL)
             THEN 'UNAUTHORIZED_TENANT_SHIFT'
 
             WHEN pre.tenant_id IS DISTINCT FROM exp_c.tenant_id
                  AND (t_card.mapping_cardinality_status IS NULL
-                      OR t_card.mapping_cardinality_status IN ('DUPLICATE_IDENTICAL_MAPPING_DETECTED', 'AMBIGUOUS_CANONICAL_MAPPING', 'NULL_OR_BLANK_TARGET_MAPPING'))
+                      OR t_card.mapping_cardinality_status IN ('DUPLICATE_IDENTICAL_MAPPING_DETECTED', 'AMBIGUOUS_CANONICAL_MAPPING', 'NULL_OR_BLANK_TARGET_MAPPING', 'INVALID_OR_NULL_MAPPING_STATUS'))
             THEN 'AMBIGUOUS_TENANT_MAPPING'
 
             WHEN pre.tenant_id IS DISTINCT FROM exp_c.tenant_id
                  AND (auth_t.tenant_id IS NULL OR t_map.new_identifier_value IS DISTINCT FROM exp_c.tenant_id)
             THEN 'UNAUTHORIZED_TENANT_MAPPING'
 
-            -- 4. Authoritative Recipient Shift & Mapping Classification
+            -- 5. Authoritative Recipient Shift & Mapping Classification
             WHEN pre.recipient_id IS DISTINCT FROM exp_c.expected_canonical_recipient_id
                  AND id_map.canonical_survivor_id IS NULL
             THEN 'UNMAPPED_IDENTITY_MUTATION'
@@ -1357,6 +1377,7 @@ mapping_cardinality_check AS (
         COUNT(*) FILTER (WHERE mapping_cardinality_status = 'DUPLICATE_IDENTICAL_MAPPING_DETECTED') AS duplicate_mapping_rows_count,
         COUNT(*) FILTER (WHERE mapping_cardinality_status = 'AMBIGUOUS_CANONICAL_MAPPING') AS ambiguous_canonical_mapping_count,
         COUNT(*) FILTER (WHERE mapping_cardinality_status = 'NULL_OR_BLANK_TARGET_MAPPING') AS null_target_mapping_count,
+        COUNT(*) FILTER (WHERE mapping_cardinality_status = 'INVALID_OR_NULL_MAPPING_STATUS') AS invalid_status_mapping_count,
         COUNT(*) FILTER (WHERE table_name = 'affiliates' AND mapping_cardinality_status <> 'UNIQUE_VALID_MAPPING') AS affiliate_cardinality_anomalies_count,
         COUNT(*) FILTER (WHERE table_name = 'affiliate_commissions' AND mapping_cardinality_status <> 'UNIQUE_VALID_MAPPING') AS commission_tenant_cardinality_anomalies_count
     FROM _mig031_mapping_physical_cardinality
@@ -1524,6 +1545,7 @@ SELECT
     (SELECT duplicate_mapping_rows_count FROM mapping_cardinality_check)                                 AS duplicate_mapping_rows_count,
     (SELECT ambiguous_canonical_mapping_count FROM mapping_cardinality_check)                            AS ambiguous_canonical_mapping_count,
     (SELECT null_target_mapping_count FROM mapping_cardinality_check)                                    AS null_target_mapping_count,
+    (SELECT invalid_status_mapping_count FROM mapping_cardinality_check)                                 AS invalid_status_mapping_count,
     (SELECT affiliate_cardinality_anomalies_count FROM mapping_cardinality_check)                        AS affiliate_cardinality_anomalies_count,
     (SELECT commission_tenant_cardinality_anomalies_count FROM mapping_cardinality_check)                AS commission_tenant_cardinality_anomalies_count,
     (SELECT canonical_reconciliation_anomalies_count FROM canonical_reconciliation_check)               AS canonical_reconciliation_anomalies_count,
@@ -1533,13 +1555,13 @@ SELECT
           OR act.baseline_run_id IS DISTINCT FROM meta.baseline_run_id
         THEN 'FAIL: B2_ASSERT_05_BASELINE_RUN_ID_BINDING_MISMATCH'
 
-        -- 2. Evaluasi Lineage Eksplisit Snapshot A ke Expected Transformed B (R6-F02, R7-F01, R7-F02, R8-F02, R8-F03)
+        -- 2. Evaluasi Lineage Eksplisit Snapshot A ke Expected Transformed B (R6-F02, R7-F01, R7-F02, R8-F02, R8-F03, R9-F01)
         WHEN exp.expected_row_count <> meta.snapshot_row_count
           OR exp.expected_total_amount <> meta.snapshot_total_amount
           OR (SELECT COUNT(*) FROM lineage_a_to_b_anomalies) > 0
         THEN 'FAIL: B2_ASSERT_05_BASELINE_TO_EXPECTED_LINEAGE_BROKEN'
 
-        -- 3. Evaluasi Kardinalitas Baris Fisik Pemetaan Dedup Map (R7-F02, R8-F01 & R6-F03)
+        -- 3. Evaluasi Kardinalitas Baris Fisik Pemetaan Dedup Map (R7-F02, R8-F01, R9-F01 & R6-F03)
         WHEN (SELECT mapping_cardinality_anomalies_count FROM mapping_cardinality_check) > 0
         THEN 'FAIL: B2_ASSERT_05_MAPPING_CARDINALITY_OR_DUPLICATE_ANOMALY'
 
@@ -1570,35 +1592,42 @@ CROSS JOIN actual_post_migration_meta act;
 -- Syarat Lolos Mutlak: lineage_a_to_b = 0 (exact-one occurrence), mapping_cardinality = 0 (affiliates & commissions tenant), actual_post_row_count = snapshot_row_count, actual_post_total_amount = snapshot_total_amount, actual_post_migration_fingerprint = expected_transformed_fingerprint, row_lineage = 0, grouped_variance = 0, global_delta = 0.00, canonical_reconciliation_anomalies = 0, verdict = PASS
 ```
 
-#### C. Matriks Bukti Pengujian Adversarial Statis (Static Adversarial Proof Suite — R7-F01, R8-F01, R8-F02, R8-F03)
+#### C. Matriks Bukti Pengujian Adversarial Statis (Static Adversarial Proof Suite — R7-F01, R8-F01, R8-F02, R8-F03, R9-F01)
 
-Untuk menjamin kepatuhan matematis tanpa kompromi (*zero tolerance*) dan membuktikan ketahanan protokol terhadap manipulasi data atau celah SQL tersembunyi, protokol verifikasi Gate B2 REV 2.7 dilengkapi dengan suite pembuktian adversarial statis (*static adversarial suite*). Suite ini mendokumentasikan skenario anomali ekstrem dan membuktikan secara formal bahwa seluruh mekanisme sirkuit *fail-closed* akan terpicu $100\%$ tanpa lolos palsu (*zero false negatives*):
+Untuk menjamin kepatuhan matematis tanpa kompromi (*zero tolerance*) dan membuktikan ketahanan protokol terhadap manipulasi data atau celah SQL tersembunyi, protokol verifikasi Gate B2 REV 2.8 dilengkapi dengan suite pembuktian adversarial statis (*static adversarial suite*). Suite ini mendokumentasikan skenario anomali ekstrem dan membuktikan secara formal bahwa seluruh mekanisme sirkuit *fail-closed* akan terpicu $100\%$ tanpa lolos palsu (*zero false negatives*):
 
-| ID Skenario | Vektor Injeksi Adversarial | Mekanisme Deteksi Protokol REV 2.7 | Status & Kolom Anomali Terpicu | Vonis Sirkuit Fail-Closed |
+| ID Skenario | Vektor Injeksi Adversarial | Mekanisme Deteksi Protokol REV 2.8 | Status & Kolom Anomali Terpicu | Vonis Sirkuit Fail-Closed |
 | :---: | :--- | :--- | :--- | :--- |
 | **ADV-01** | **Injeksi Target Mapping NULL / Blank (`R8-F01`)**<br>Entri dedup map memiliki `canonical_survivor_id IS NULL` DAN `new_identifier_value IS NULL` (atau hanya string kosong/whitespace). | Evaluasi target ekspresi pada `_mig031_mapping_physical_cardinality`: `target_value = NULLIF(BTRIM(COALESCE(canonical_survivor_id, new_identifier_value)), '')`. Syarat `UNIQUE_VALID_MAPPING` mewajibkan `target_value IS NOT NULL`. | `mapping_cardinality_status = 'NULL_OR_BLANK_TARGET_MAPPING'`<br>`mapping_cardinality_anomalies_count > 0`<br>`null_target_mapping_count > 0` | **`FAIL: B2_ASSERT_05_MAPPING_CARDINALITY_OR_DUPLICATE_ANOMALY`**<br>Gate B2 terkunci permanen. |
 | **ADV-02** | **Injeksi Tabrakan ID Antar-Tenant (`R8-F02`)**<br>Dua komisi pada tenant berbeda (`tenant_A` dan `tenant_B`) memiliki `id` identik, atau dedup map memiliki pemetaan untuk ID tersebut tetapi di bawah `tenant_B`. | Seluruh join ke `t_map` dan `t_card` pada `pre_mapped_commissions` dan `lineage_a_to_b_audit` mewajibkan pengikatan komposit tenant: `AND t_map.tenant_id IS NOT DISTINCT FROM pre.tenant_id`. | `t_map` tidak cocok dengan baris `tenant_A` $\implies$ `t_map.quarantined_row_id IS NULL`.<br>`a_to_b_lineage_verdict = 'UNAUTHORIZED_TENANT_SHIFT'`<br>`lineage_a_to_b_anomalies_count > 0` | **`FAIL: B2_ASSERT_05_BASELINE_TO_EXPECTED_LINEAGE_BROKEN`**<br>Gate B2 terkunci permanen. |
-| **ADV-03** | **Injeksi Status Pemetaan NULL dalam TVL SQL (`R8-F03`)**<br>Entri dedup map memiliki `new_status = NULL`. Pada SQL klasik, `NULL NOT IN (...)` menghasilkan `UNKNOWN`, yang berisiko meloloskan baris secara diam-diam (*masking*). | Penanganan eksplisit Three-Valued Logic SQL pada `lineage_a_to_b_audit`: `(t_map.new_status IS NULL OR t_map.new_status NOT IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE', 'QUARANTINED'))`. | `t_map.new_status IS NULL` bernilai `TRUE` deterministik.<br>`a_to_b_lineage_verdict = 'UNAUTHORIZED_TENANT_SHIFT'`<br>`lineage_a_to_b_anomalies_count > 0` | **`FAIL: B2_ASSERT_05_BASELINE_TO_EXPECTED_LINEAGE_BROKEN`**<br>Gate B2 terkunci permanen. |
+| **ADV-03A** | **Injeksi Status Pemetaan NULL dengan Pergeseran Tenant (`R8-F03` & `R9-F01`)**<br>Entri dedup map memiliki `new_status IS NULL` (atau di luar whitelist) dan komisi terkait mengalami pergeseran tenant (`pre.tenant_id IS DISTINCT FROM exp_c.tenant_id`). | Deteksi berlapis: (1) Validasi status independen pada `lineage_a_to_b_audit` menangkap status tidak sah via `INVALID_MAPPING_STATUS_APPLIED`, (2) Evaluasi pergeseran tenant menangkap status NULL via TVL SQL fail-closed pada `UNAUTHORIZED_TENANT_SHIFT`, dan (3) `_mig031_mapping_physical_cardinality` menandai entri sebagai `INVALID_OR_NULL_MAPPING_STATUS`. | `mapping_cardinality_status = 'INVALID_OR_NULL_MAPPING_STATUS'`<br>`invalid_status_mapping_count > 0`<br>`mapping_cardinality_anomalies_count > 0`<br>`a_to_b_lineage_verdict = 'INVALID_MAPPING_STATUS_APPLIED'`<br>`lineage_a_to_b_anomalies_count > 0` | **`FAIL: B2_ASSERT_05_BASELINE_TO_EXPECTED_LINEAGE_BROKEN`** & **`FAIL: B2_ASSERT_05_MAPPING_CARDINALITY_OR_DUPLICATE_ANOMALY`**<br>Gate B2 terkunci permanen. |
+| **ADV-03B** | **Injeksi Status Pemetaan NULL tanpa Pergeseran Tenant / Tenant Tetap (`R9-F01`)**<br>Entri dedup map memiliki `new_status IS NULL` (atau di luar whitelist), namun komisi terkait **tidak mengalami pergeseran tenant** (`pre.tenant_id IS NOT DISTINCT FROM exp_c.tenant_id`). | Isolasi nol-celah (*zero-bypass isolation*): klausa evaluasi status pada `lineage_a_to_b_audit` (`WHEN t_map.quarantined_row_id IS NOT NULL AND (t_map.new_status IS NULL OR t_map.new_status NOT IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE', 'QUARANTINED')) THEN 'INVALID_MAPPING_STATUS_APPLIED'`) dieksekusi secara independen tanpa mensyaratkan `pre.tenant_id IS DISTINCT FROM exp_c.tenant_id`. Selain itu, kardinalitas fisik menandai `INVALID_OR_NULL_MAPPING_STATUS`. | `mapping_cardinality_status = 'INVALID_OR_NULL_MAPPING_STATUS'`<br>`invalid_status_mapping_count > 0`<br>`mapping_cardinality_anomalies_count > 0`<br>`a_to_b_lineage_verdict = 'INVALID_MAPPING_STATUS_APPLIED'`<br>`lineage_a_to_b_anomalies_count > 0` | **`FAIL: B2_ASSERT_05_BASELINE_TO_EXPECTED_LINEAGE_BROKEN`** & **`FAIL: B2_ASSERT_05_MAPPING_CARDINALITY_OR_DUPLICATE_ANOMALY`**<br>Gate B2 terkunci permanen. |
 | **ADV-04** | **Injeksi Pelanggaran Exact-One Occurrence (`R7-F01`)**<br>Terjadi duplikasi baris fisik di snapshot awal baseline (`snapshot_pk_count <> 1`) atau di expected transformed (`expected_pk_count <> 1`), atau baris yatim/hilang. | CTE `snapshot_pk_counts` dan `expected_pk_counts` mengukur frekuensi kemunculan eksak per primary key sebelum evaluasi nominal dan identitas. | `a_to_b_lineage_verdict` terpicu salah satu:<br>- `'DUPLICATE_ROW_IN_SNAPSHOT'`<br>- `'DUPLICATE_ROW_IN_EXPECTED'`<br>- `'ORPHAN_EXPECTED_COMMISSION_ROW'`<br>- `'MISSING_SNAPSHOT_ROW_IN_EXPECTED'`<br>`lineage_a_to_b_anomalies_count > 0` | **`FAIL: B2_ASSERT_05_BASELINE_TO_EXPECTED_LINEAGE_BROKEN`**<br>Gate B2 terkunci permanen. |
 
 ##### Bukti Aljabar Relasional Ketahanan Adversarial
 1. **Ketahanan terhadap Nilai Kosong/NULL ($\text{ADV-01}$):**
    $$\text{target\_value} = \text{NULLIF}(\text{BTRIM}(\text{COALESCE}(canonical, new)), '') \implies \text{target\_value} \in \{\text{string non-empty}\} \cup \{\text{NULL}\}$$
    Himpunan status kardinalitas didefinisikan secara partisi disjoin:
-   $$\text{Status} = \begin{cases} \text{AMBIGUOUS\_CANONICAL\_MAPPING} & \text{bila } \text{distinct\_targets} > 1 \\ \text{NULL\_OR\_BLANK\_TARGET\_MAPPING} & \text{bila } \text{target\_count} = 0 \lor \text{target\_value} \text{ IS NULL} \\ \text{DUPLICATE\_IDENTICAL\_MAPPING\_DETECTED} & \text{bila } \text{rows} > 1 \land \text{distinct\_targets} = 1 \\ \text{UNIQUE\_VALID\_MAPPING} & \text{bila } \text{rows} = 1 \land \text{distinct\_targets} = 1 \land \text{target\_value} \text{ IS NOT NULL} \\ \text{INVALID\_MAPPING\_CARDINALITY\_STATE} & \text{kasus lain} \end{cases}$$
-   Karena asersi akhir mewajibkan $\sum \mathbb{I}(\text{Status} \neq \text{UNIQUE\_VALID\_MAPPING}) = 0$, keberadaan $\ge 1$ target null/blank secara matematis menjamin kegagalan asersi.
+   $$\text{Status} = \begin{cases} \text{AMBIGUOUS\_CANONICAL\_MAPPING} & \text{bila } \text{distinct\_targets} > 1 \\ \text{NULL\_OR\_BLANK\_TARGET\_MAPPING} & \text{bila } \text{target\_count} = 0 \lor \text{target\_value} \text{ IS NULL} \\ \text{INVALID\_OR\_NULL\_MAPPING\_STATUS} & \text{bila } \exists m \text{ s.t. } m.\text{new\_status IS NULL} \lor m.\text{new\_status} \notin W \\ \text{DUPLICATE\_IDENTICAL\_MAPPING\_DETECTED} & \text{bila } \text{rows} > 1 \land \text{distinct\_targets} = 1 \\ \text{UNIQUE\_VALID\_MAPPING} & \text{bila } \text{rows} = 1 \land \text{distinct\_targets} = 1 \land \text{target\_value} \text{ IS NOT NULL} \land \forall m (m.\text{new\_status} \in W) \\ \text{INVALID\_MAPPING\_CARDINALITY\_STATE} & \text{kasus lain} \end{cases}$$
+   Karena asersi akhir mewajibkan $\sum \mathbb{I}(\text{Status} \neq \text{UNIQUE\_VALID\_MAPPING}) = 0$, keberadaan $\ge 1$ target null/blank atau status invalid secara matematis menjamin kegagalan asersi.
 
 2. **Ketahanan terhadap Benturan Tenant ($\text{ADV-02}$):**
    Join relasional terikat pada relasi komposit ketat:
    $$R_{\text{join}} = \{ (c, m) \mid c.\text{commission\_id} = m.\text{quarantined\_row\_id} \land c.\text{tenant\_id} \equiv m.\text{tenant\_id} \}$$
    Bila $m.\text{tenant\_id} \not\equiv c.\text{tenant\_id}$, maka tupel $(c, m) \notin R_{\text{join}} \implies m \text{ IS NULL}$. Jika terjadi pergeseran tenant pada komisi $c$, maka $m.\text{quarantined\_row\_id IS NULL}$ bernilai `TRUE`, memicu status `UNAUTHORIZED_TENANT_SHIFT`.
 
-3. **Ketahanan terhadap Three-Valued Logic SQL ($\text{ADV-03}$):**
-   Dalam logika predikat ternary SQL ($T, F, U$):
-   $$\text{status} \notin W \implies \begin{cases} T & \text{bila } \text{status} \text{ non-null dan } \text{status} \notin W \\ F & \text{bila } \text{status} \in W \\ U & \text{bila } \text{status} \text{ IS NULL} \end{cases}$$
-   Dengan menambahkan disjungsi eksplisit $(\text{status IS NULL} \lor \text{status} \notin W)$, predikat menjadi biner penuh ($T, F$):
-   $$\text{status IS NULL} \lor \text{status} \notin W \implies \begin{cases} T & \text{bila } \text{status IS NULL} \lor \text{status} \notin W \\ F & \text{bila } \text{status} \in W \end{cases}$$
-   Hal ini menghilangkan kemungkinan lolos palsu akibat nilai *unknown*.
+3. **Ketahanan Universal terhadap Status Pemetaan Tidak Sah & Partisi Invarian Status ($\text{ADV-03A}$ & $\text{ADV-03B}$):**
+   Didefinisikan himpunan whitelist status pemetaan resmi:
+   $$W = \{\text{'SURVIVOR'}, \text{'SUPERSEDED\_DUPLICATE'}, \text{'QUARANTINED'}\}$$
+   Dalam logika predikat ternary SQL ($T, F, U$), predikat status diperluas secara deterministik menjadi predikat biner penuh:
+   $$P_{\text{invalid\_status}}(m) \equiv (m.\text{new\_status IS NULL} \lor m.\text{new\_status} \notin W) \in \{T, F\}$$
+   Pada lineage $A \to B$, evaluasi status dieksekusi secara independen tanpa dipersyaratkan oleh pergeseran tenant:
+   $$V_{\text{lineage}}(c, m) = \begin{cases} \text{INVALID\_MAPPING\_STATUS\_APPLIED} & \text{bila } m.\text{quarantined\_row\_id IS NOT NULL} \land P_{\text{invalid\_status}}(m) = T \\ \dots & \dots \end{cases}$$
+   Partisi semesta komisi terhadap pergeseran tenant:
+   $$\Omega_{\text{commissions}} = \Omega_{\Delta\text{tenant}} \cup \Omega_{\text{same\_tenant}}$$
+   - **Kasus 1 ($\Omega_{\Delta\text{tenant}}$, $\text{ADV-03A}$):** Komisi mengalami pergeseran tenant ($c.\text{tenant\_id} \not\equiv c_{\text{exp}}.\text{tenant\_id}$). Jika $P_{\text{invalid\_status}}(m) = T$, sirkuit memicu `INVALID_MAPPING_STATUS_APPLIED` dan sirkuit kardinalitas memicu `INVALID_OR_NULL_MAPPING_STATUS`.
+   - **Kasus 2 ($\Omega_{\text{same\_tenant}}$, $\text{ADV-03B}$):** Komisi tidak mengalami pergeseran tenant ($c.\text{tenant\_id} \equiv c_{\text{exp}}.\text{tenant\_id}$). Karena aturan evaluasi status tidak memiliki klausa guard $c.\text{tenant\_id} \not\equiv c_{\text{exp}}.\text{tenant\_id}$, jika $m$ terasosiasi dan $P_{\text{invalid\_status}}(m) = T$, sirkuit seketika memicu $V_{\text{lineage}} = \text{INVALID_MAPPING_STATUS_APPLIED}$ serta sirkuit kardinalitas memicu $\text{Status}_{\text{card}} = \text{INVALID_OR_NULL_MAPPING_STATUS}$.
+   Kedua skenario partisi secara matematis menjamin $\text{lineage\_a\_to\_b\_anomalies\_count} > 0$ dan $\text{mapping\_cardinality\_anomalies\_count} > 0$, menghasilkan vonis sirkuit *fail-closed* deterministik tanpa celah *bypass*.
 
 ---
 
@@ -1623,7 +1652,7 @@ Melewati (*skipping*), menonaktifkan, atau mengecualikan satu kueri/tahapan aser
 Kelulusan Gate B2 didefinisikan sebagai fungsi konjungtif murni (*strict logical AND*) atas seluruh asersi:
 $$\text{GATE\_B2\_PASS} \iff \text{SCHEMA\_GATE} \land \text{ASSERT\_01} \land \text{ASSERT\_02} \land \text{ASSERT\_03} \land \text{ASSERT\_04} \land \text{ASSERT\_05}$$
 
-Jika salah satu dari asersi tersebut gagal (misalnya ditemukan $\ge 1$ ketidakcocokan skema SCH, $\ge 1$ konflik tenant, paritas karantina tidak cocok, terdapat anomali status dedup map / kardinalitas survivor kluster $\ne 1$, kegagalan eksistensi fisik atau keselarasan tenant survivor, selisih manifest kunci asing $> 0$, terdapat kunci asing menggantung, kegagalan lineage linear A $\to$ B (termasuk pelanggaran exact-one occurrence, pergeseran tenant tidak terotorisasi, benturan tenant komposit, status dedup NULL dalam Three-Valued Logic SQL, atau mutasi penerima tanpa peta), anomali kardinalitas baris pemetaan dedup map (termasuk status `NULL_OR_BLANK_TARGET_MAPPING` pada affiliates maupun commissions tenant), diskrepansi sidik jari array JSONB 3-tier (baseline vs expected vs actual) atau hitungan baris baseline B2-ASSERT-05, anomali rekonsiliasi kanonikal dua arah, atau terjadi pergeseran nominal finansial sekecil $\Delta = 0.01$):
+Jika salah satu dari asersi tersebut gagal (misalnya ditemukan $\ge 1$ ketidakcocokan skema SCH, $\ge 1$ konflik tenant, paritas karantina tidak cocok, terdapat anomali status dedup map / kardinalitas survivor kluster $\ne 1$, kegagalan eksistensi fisik atau keselarasan tenant survivor, selisih manifest kunci asing $> 0$, terdapat kunci asing menggantung, kegagalan lineage linear A $\to$ B (termasuk pelanggaran exact-one occurrence, pergeseran tenant tidak terotorisasi, benturan tenant komposit, status dedup NULL/invalid yang memicu `INVALID_MAPPING_STATUS_APPLIED` baik pada tenant berubah maupun tenant tetap, atau mutasi penerima tanpa peta), anomali kardinalitas baris pemetaan dedup map (termasuk status `NULL_OR_BLANK_TARGET_MAPPING` atau `INVALID_OR_NULL_MAPPING_STATUS` pada affiliates maupun commissions tenant), diskrepansi sidik jari array JSONB 3-tier (baseline vs expected vs actual) atau hitungan baris baseline B2-ASSERT-05, anomali rekonsiliasi kanonikal dua arah, atau terjadi pergeseran nominal finansial sekecil $\Delta = 0.01$):
 1. Seluruh Gate B2 **GAGAL TOTAL (`REJECTED`)**.
 2. Gerbang hilir **Gate I** (Penggelaran kode aplikasi Python) dan **Gate T** (Integrasi Webhook) **TETAP TERKUNCI PERMANEN (*PERMANENTLY LOCKED*)**.
 3. DILARANG melakukan penggelaran migrasi fisik ke lingkungan berikutnya sampai seluruh akar penyebab anomali diremediasi dan disetujui kembali oleh CTO.
