@@ -1,12 +1,12 @@
 # GATE B2 FORMAL VERIFICATION PROTOCOL
 ## Schema Integrity, Multi-Source Backfill, Active FK Reconciliation & Lineage Verification
-**Document ID:** `BOONTRACK-SPEC-GATE-B2-PROTOCOL-REV2.5`  
+**Document ID:** `BOONTRACK-SPEC-GATE-B2-PROTOCOL-REV2.6`  
 **Classification:** Internal Technical Architecture & Formal Verification Protocol  
 **Author:** Lead Database Reliability Engineer (DBRE) & Principal Systems Architect  
 **Date:** 2026-11-03  
-**Status:** **`REMEDIATED PROTOCOL REV 2.5 — STANDBY FOR CTO DESIGN APPROVAL`**  
-**Supersedes:** `BOONTRACK-SPEC-GATE-B2-PROTOCOL-REV2.4` (Commit [`53a5cb7`](https://github.com/B055OB/boontrack-core/commit/53a5cb7b2d539ef2f2e0d8023d6d15b08c91a9ab))  
-**Remediation Mandate:** Formal Closure of CTO Findings `R6-F01` s/d `R6-F03` (Collision-Safe Array Aggregation via jsonb_agg, Three-Tier Linear Lineage Proof A -> B -> C, and Physical Row Cardinality & Duplicate Mapping Detection)  
+**Status:** **`REMEDIATED PROTOCOL REV 2.6 — STANDBY FOR CTO DESIGN APPROVAL`**  
+**Supersedes:** `BOONTRACK-SPEC-GATE-B2-PROTOCOL-REV2.5` (Commit [`d0748e2`](https://github.com/B055OB/boontrack-core/commit/d0748e20230c8b527edcee481e96c2bab5c7c21d))  
+**Remediation Mandate:** Formal Closure of CTO Findings `R7-F01` (Exact-One Occurrence Proof Snapshot A & Expected B) & `R7-F02` (Authoritative Tenant Mapping & Physical Cardinality)  
 **Prerequisite:** Gate B1 Ratified & Formally Closed (`REV 4.1.6.2.11-E`, Commit [`d418367`](https://github.com/B055OB/boontrack-core/commit/d418367a73fbb36270bca57e3bf5d428bf9e08fc))  
 **Execution Posture:** `STRICT READ-ONLY / ZERO STAGING MUTATION / ZERO-TOUCH PRODUCTION & R2`  
 
@@ -98,7 +98,7 @@ Gate B2 dirancang untuk memverifikasi keabsahan struktur skema fisik, kelengkapa
   * **Nol referensi menggantung (*zero orphaned child rows*):** Tidak ada pasangan `(tenant_id, affiliate_id)` atau `(tenant_id, manager_id)` yang tidak eksis di `public.affiliates`.
   * **Nol referensi ke loser (*zero loser references*):** Tidak ada baris anak yang masih menunjuk ke ID loser yang telah digabungkan/dikarantina (`dedup_rank > 1` atau status superseded).
 
-### Scope 5: 3-Tier Linear Lineage Proof, Collision-Safe Array Aggregation (jsonb_agg) & Physical Mapping Cardinality (`R6-F01`, `R6-F02`, `R6-F03`)
+### Scope 5: 3-Tier Linear Lineage Proof, Exact-One Occurrence & Authoritative Tenant Mapping (`R6-F01`, `R6-F02`, `R7-F01`, `R7-F02`)
 - **Prosedur Snapshot Segar Otoritatif (Fail-Closed Fresh Snapshot):** Menghapus klausul `IF NOT EXISTS` dan menerapkan eksekusi `DROP TABLE IF EXISTS pre_mig031_affiliate_commissions_snapshot; CREATE TEMP TABLE ...` untuk mencegah penggunaan tabel snapshot basi antar-sesi.
 - **Serialisasi Kanonikal & Agregasi Array Terstruktur JSONB Collision-Safe (`R6-F01`):**
   * Menghapus total seluruh konkatenasi berbasis pemisah teks primitif `string_agg(..., '|' ORDER BY commission_id)`.
@@ -106,19 +106,25 @@ Gate B2 dirancang untuk memverifikasi keabsahan struktur skema fisik, kelengkapa
     `encode(sha256(COALESCE(jsonb_agg(jsonb_build_object(...) ORDER BY commission_id)::text, '[]')::bytea), 'hex')`.
   * Himpunan data kosong terbukti secara deterministik menghasilkan `'[]'` tanpa risiko kolisi *delimiter*.
   * Presisi desimal diformat deterministik via `to_char(amount, 'FM999999999999999990.00')`.
-- **Rantai Pembuktian Lineage Linear 3-Lapis $A \to B \to C$ (`R6-F02`):**
+- **Rantai Pembuktian Lineage Linear 3-Lapis $A \to B \to C$ & Exact-One Occurrence (`R6-F02` & `R7-F01`):**
   1. **Tier A (`baseline_snapshot_fingerprint`):** Sidik jari kriptografis SHA-256 dari snapshot awal `pre_mig031_affiliate_commissions_snapshot` terikat ke `baseline_run_id`.
   2. **Tier B (`expected_transformed_fingerprint`):** Sidik jari dari snapshot awal yang ditransformasikan dengan peta kanonikal teresolusi dan backfill tenant, mengikat `baseline_run_id` yang identik.
   3. **Tier C (`actual_post_migration_fingerprint`):** Sidik jari yang dihitung ulang langsung dari gabungan aktual baris aktif (`public.affiliate_commissions`) dan karantina fisik (`public.migration_031_quarantined_affiliate_commissions`), mengikat `baseline_run_id` yang identik.
-  * **Audit Eksplisit Lineage $A \to B$ (`lineage_a_to_b_audit`):**
-    - Memverifikasi bahwa setiap `commission_id` dari snapshot awal muncul tepat 1 kali pada data yang diharapkan (`COUNT(*)` delta = 0).
+  * **Bukti Exact-One Occurrence Snapshot A dan Expected B (`R7-F01`):**
+    - Menghitung kemunculan fisik per `commission_id` via CTE `snapshot_pk_counts` dan `expected_pk_counts`.
+    - Menangkap secara tegas `DUPLICATE_ROW_IN_SNAPSHOT` bila `snapshot_pk_count <> 1` dan `DUPLICATE_ROW_IN_EXPECTED` bila `expected_pk_count <> 1`.
+    - Menangkap `ORPHAN_EXPECTED_COMMISSION_ROW` (pre IS NULL) dan `MISSING_SNAPSHOT_ROW_IN_EXPECTED` (exp_c IS NULL).
     - Memverifikasi kesetaraan total nominal finansial global: `expected_total_amount = snapshot_total_amount`.
-    - Memvalidasi bahwa pergeseran penerima (`recipient_id`) hanya terjadi bila terdaftar pada `_mig031_canonical_identity_map` yang berstatus `VALID`. Pergeseran penerima tanpa pemetaan sah ditandai seketika sebagai anomali fatal `UNMAPPED_IDENTITY_MUTATION`.
   * Syarat kelulusan mutlak: `lineage_a_to_b_anomalies_count = 0`, `actual_post_row_count = snapshot_row_count`, `actual_post_total_amount = snapshot_total_amount`, dan `actual_post_migration_fingerprint = expected_transformed_fingerprint`.
-- **Deteksi Kardinalitas Baris Fisik & Anti-Penyamaran Duplikasi (`R6-F03`):**
-  * Memeriksa kardinalitas baris fisik pemetaan dedup map sebelum membentuk tabel peta kanonikal via `_mig031_mapping_physical_cardinality`.
-  * Mengklasifikasikan anomali: `physical_mapping_rows > 1 AND distinct_survivor_count = 1` sebagai `DUPLICATE_IDENTICAL_MAPPING_DETECTED`, `distinct_survivor_count > 1` sebagai `AMBIGUOUS_CANONICAL_MAPPING`, dan `physical_mapping_rows = 1` sebagai `UNIQUE_VALID_MAPPING`.
+- **Pemetaan Tenant Otoritatif & Perluasan Kardinalitas Baris Fisik (`R7-F02` & `R6-F03`):**
+  * Memperluas cakupan pemeriksaan `_mig031_mapping_physical_cardinality` untuk mengevaluasi kardinalitas baris fisik pada `table_name = 'affiliates'` DAN `table_name = 'affiliate_commissions' AND column_name = 'tenant_id'`.
+  * Mengklasifikasikan anomali kardinalitas: `physical_mapping_rows > 1 AND distinct_target_count = 1` $\to$ `DUPLICATE_IDENTICAL_MAPPING_DETECTED`, `distinct_target_count > 1` $\to$ `AMBIGUOUS_CANONICAL_MAPPING`, dan `physical_mapping_rows = 1` $\to$ `UNIQUE_VALID_MAPPING`.
   * **Dilarang Keras Menggunakan `SELECT DISTINCT`:** Pembentukan `_mig031_canonical_identity_map` tidak boleh menggunakan `SELECT DISTINCT` untuk menutupi keberadaan baris duplikat fisik di database.
+  * **Validasi Tenant Otoritatif & Klasifikasi Pergeseran Tenant:**
+    - Pergeseran `tenant_id` tanpa entri mapping sah pada dedup map ditandai sebagai `UNAUTHORIZED_TENANT_SHIFT`.
+    - Pergeseran dengan pemetaan yang duplikat/ambigu ditandai sebagai `AMBIGUOUS_TENANT_MAPPING`.
+    - Pergeseran yang menghasilkan target tenant di luar katalog otoritatif `public.tenants` atau tidak selaras dengan nilai `t_map` ditandai sebagai `UNAUTHORIZED_TENANT_MAPPING`.
+    - Seluruh evaluasi tenant menggunakan semantik NULL-safe `IS DISTINCT FROM`.
   * Mewajibkan `mapping_cardinality_anomalies_count = 0` pada asersi akhir.
 - **Semesta Kandidat Lengkap, Skop Komposit Tenant & Strict Bi-Directional Audit (`R5-F03`):**
   * Mendefinisikan `candidate_universe` tanpa filter `WHERE` parsial yang berisiko menyembunyikan anomali.
@@ -236,7 +242,7 @@ Seluruh tabel anak terikat ke tabel induk melalui kunci asing komposit `(tenant_
 | **RSK-03** | **Pesanan Operasional Yatim (*Unresolved Operational Orders*)** | Tinggi | Rendah | Mengisolasi pesanan berstatus operasional (`is_cod = true` atau status aktif) yang kehilangan `tenant_id`. | `B2-ASSERT-02`: Asersi mewajibkan `unresolved_operational_orders == 0` pada pesanan aktif non-void. |
 | **RSK-04** | **Ketidaksesuaian Baris Karantina, Status & Kardinalitas Survivor Kluster** | Tinggi | Rendah | Menguji kesetaraan dua arah (`EXCEPT`), validasi status fail-closed tanpa fallback permisif, pengelompokan survivor berbasis identitas kluster asli bebas sentinel (`__GLOBAL__` dieliminasi — `R5-F01`), deteksi `UNRESOLVED_CLUSTER_IDENTITY`, dan verifikasi fisik survivor dengan penyelarasan tenant (`parent.tenant_id = map.tenant_id`). | `B2-ASSERT-03`: Pengecekan paritas dua arah ($(\text{Q} \setminus \text{M}) \cup (\text{M} \setminus \text{Q}) = \emptyset$), kardinalitas survivor kluster universal tepat 1 (`survivor_count = 1`), 0 unresolvable cluster identity, dan bukti eksistensi fisik serta keselarasan tenant survivor. |
 | **RSK-05** | **Referensi Menggantung Pasca-Repointing (*Dangling Downstream FK*)** | Kritis | Rendah | Memeriksa seluruh 8 jalur kunci asing komposit menggunakan manifest formal dan kueri `FULL OUTER JOIN` ke `pg_constraint`. | `B2-ASSERT-04`: Membuktikan ke-8 FK terdaftar `MATCH` (`discrepancy = 0`) serta 0 baris anak yang mereferensikan loser tuple atau parent non-existent. |
-| **RSK-06** | **Pergeseran Finansial Komisi, Kolisi Pemisah String & Duplikasi Pemetaan** | Kritis | Sangat Rendah | Prosedur fresh snapshot (`DROP TABLE IF EXISTS` + `CREATE TEMP TABLE`), agregasi array terstruktur JSONB native `jsonb_agg` collision-safe (`R6-F01`), bukti lineage linear 3-lapis $A \to B \to C$ dengan deteksi mutasi identitas liar `UNMAPPED_IDENTITY_MUTATION` (`R6-F02`), deteksi kardinalitas baris fisik pemetaan tanpa `SELECT DISTINCT` (`R6-F03`), serta semesta kandidat lengkap dan audit dua arah komposit tenant (`R5-F03`). | `B2-ASSERT-05`: Membuktikan kesetaraan mutlak hitungan baris baseline, total nominal, sidik jari array JSONB (`actual == expected`), 0 anomali lineage $A \to B$, 0 anomali kardinalitas pemetaan, `global_amount_delta == 0.00`, `row_lineage_anomalies == 0`, `grouped_variance == 0`, dan 0 anomali rekonsiliasi kanonikal. |
+| **RSK-06** | **Pergeseran Finansial Komisi, Anomali Kardinalitas & Pergeseran Tenant Liar** | Kritis | Sangat Rendah | Prosedur fresh snapshot (`DROP TABLE IF EXISTS` + `CREATE TEMP TABLE`), agregasi array terstruktur JSONB native `jsonb_agg` collision-safe (`R6-F01`), bukti exact-one occurrence snapshot-ke-expected (`R7-F01`), pemetaan tenant otoritatif database & perluasan kardinalitas fisik (`R7-F02`), deteksi mutasi identitas liar `UNMAPPED_IDENTITY_MUTATION` (`R6-F02`), ketiadaan penyamaran `SELECT DISTINCT` (`R6-F03`), serta audit dua arah komposit tenant (`R5-F03`). | `B2-ASSERT-05`: Membuktikan kesetaraan mutlak hitungan baris baseline, total nominal, sidik jari array JSONB (`actual == expected`), 0 anomali lineage $A \to B$ (exact-one occurrence), 0 anomali kardinalitas pemetaan (affiliates & commissions tenant), `global_amount_delta == 0.00`, `row_lineage_anomalies == 0`, `grouped_variance == 0`, dan 0 anomali rekonsiliasi kanonikal. |
 
 ---
 
@@ -933,7 +939,7 @@ FROM anomalous_child_rows;
 
 ---
 
-### Asersi B2-ASSERT-05: 3-Tier Linear Lineage Proof, Collision-Safe Array Aggregation (jsonb_agg) & Physical Mapping Cardinality (`R6-F01`, `R6-F02`, `R6-F03`)
+### Asersi B2-ASSERT-05: 3-Tier Linear Lineage Proof, Exact-One Occurrence & Authoritative Tenant Mapping (`R6-F01`, `R6-F02`, `R7-F01`, `R7-F02`)
 - **Deskripsi:** Melakukan rekonsiliasi komprehensif atas seluruh nilai komisi sebelum dan sesudah migrasi melalui:
   1. **Authoritative Fresh Snapshot Procedure:** Menghapus klausul `IF NOT EXISTS` dan menerapkan eksekusi `DROP TABLE IF EXISTS` + `CREATE TEMP TABLE ...` segar untuk menjamin keaslian data baseline dalam setiap sesi evaluasi.
   2. **Collision-Safe Structured Array Aggregation via `jsonb_agg` (`R6-F01`):**
@@ -943,22 +949,35 @@ FROM anomalous_child_rows;
      * Mengeliminasi total seluruh string sentinel buatan (`'__NULL_*__'`); nilai `NULL` diekspresikan secara native oleh PostgreSQL sebagai JSON `null`.
      * Menjamin himpunan data kosong secara deterministik menghasilkan `'[]'`.
      * Presisi desimal diformat deterministik via `to_char(amount, 'FM999999999999999990.00')`.
-  3. **Rantai Pembuktian Lineage Linear 3-Lapis $A \to B \to C$ (`R6-F02`):**
+  3. **Rantai Pembuktian Lineage Linear 3-Lapis $A \to B \to C$ & Exact-One Occurrence Proof (`R6-F02` & `R7-F01`):**
      * **Tier A (Baseline Snapshot):** `baseline_snapshot_fingerprint` dihitung dari snapshot awal `pre_mig031_affiliate_commissions_snapshot` dan diikat ke `baseline_run_id`.
-     * **Tier B (Expected Transformed):** `expected_transformed_fingerprint` dihitung dari `pre_mapped_commissions` menggunakan `expected_canonical_recipient_id` hasil mapping kanonikal yang sah, mengikat `baseline_run_id` yang identik.
+     * **Tier B (Expected Transformed):** `expected_transformed_fingerprint` dihitung dari `pre_mapped_commissions` menggunakan `expected_canonical_recipient_id` hasil mapping kanonikal yang sah serta backfill tenant otoritatif, mengikat `baseline_run_id` yang identik.
      * **Tier C (Actual Post-Migration):** `actual_post_migration_fingerprint` dihitung dari gabungan baris aktif operasional (`public.affiliate_commissions`) dan baris karantina fisik (`public.migration_031_quarantined_affiliate_commissions`), mengikat `baseline_run_id` yang identik.
-     * **Audit Eksplisit Lineage $A \to B$ (`lineage_a_to_b_audit`):**
-       - Memvalidasi bahwa setiap `commission_id` dari snapshot awal muncul tepat 1 kali di `pre_mapped_commissions` (`COUNT(*)` delta = 0).
+     * **Pembuktian Exact-One Occurrence ($A \to B$) via CTE `snapshot_pk_counts` & `expected_pk_counts` (`R7-F01`):**
+       - Menghitung kemunculan fisik per `commission_id` pada snapshot baseline A (`snapshot_pk_count`) dan expected B (`expected_pk_count`).
+       - Memvalidasi secara matematis bahwa setiap baris komisi eksis tepat 1 kali di kedua sisi (`spk.snapshot_pk_count = 1` DAN `epk.expected_pk_count = 1`).
+       - Menangkap anomali eksplisit pada `lineage_a_to_b_audit`:
+         * `pre.commission_id IS NULL` $\to$ `ORPHAN_EXPECTED_COMMISSION_ROW`
+         * `exp_c.commission_id IS NULL` $\to$ `MISSING_SNAPSHOT_ROW_IN_EXPECTED`
+         * `spk.snapshot_pk_count <> 1` $\to$ `DUPLICATE_ROW_IN_SNAPSHOT`
+         * `epk.expected_pk_count <> 1` $\to$ `DUPLICATE_ROW_IN_EXPECTED`
+       - Memvalidasi kekekalan nominal per baris (`pre.amount IS DISTINCT FROM exp_c.amount` $\to$ `AMOUNT_DRIFT_IN_EXPECTED_TRANSFORMATION`).
        - Memvalidasi nominal global snapshot A == nominal global expected B (`exp.expected_total_amount = meta.snapshot_total_amount`).
-       - Memvalidasi bahwa perubahan `recipient_id` (legacy $\to$ canonical) hanya terjadi bila terdapat entri di `_mig031_canonical_identity_map` yang berstatus `VALID`. Perubahan penerima tanpa pemetaan sah seketika ditandai sebagai anomali fatal `UNMAPPED_IDENTITY_MUTATION`.
      * Mengikat klausul evaluasi kegagalan:
        `WHEN exp.expected_row_count <> meta.snapshot_row_count OR exp.expected_total_amount <> meta.snapshot_total_amount OR (SELECT COUNT(*) FROM lineage_a_to_b_anomalies) > 0 THEN 'FAIL: B2_ASSERT_05_BASELINE_TO_EXPECTED_LINEAGE_BROKEN'`.
-  4. **Pemeriksaan Kardinalitas Baris Fisik & Deteksi Duplikasi Pemetaan (`R6-F03`):**
-     * Memeriksa kardinalitas baris fisik pemetaan dedup map sebelum membentuk tabel peta kanonikal via `_mig031_mapping_physical_cardinality`.
+  4. **Pemeriksaan Kardinalitas Baris Fisik & Pemetaan Tenant Otoritatif (`R7-F02` & `R6-F03`):**
+     * Memperluas cakupan pemeriksaan `_mig031_mapping_physical_cardinality` untuk mengevaluasi kardinalitas baris fisik pada seluruh pemetaan dedup map: `table_name = 'affiliates'` DAN `(table_name = 'affiliate_commissions' AND column_name = 'tenant_id')`.
+     * Mengelompokkan berdasarkan `(table_name, column_name, tenant_id, quarantined_row_id)` dan menghitung metrik `distinct_target_count = COUNT(DISTINCT COALESCE(canonical_survivor_id, new_identifier_value))`.
      * Mengklasifikasikan anomali secara transparan:
-       - `physical_mapping_rows > 1 AND distinct_survivor_count = 1` $\to$ `DUPLICATE_IDENTICAL_MAPPING_DETECTED`
-       - `distinct_survivor_count > 1` $\to$ `AMBIGUOUS_CANONICAL_MAPPING`
+       - `physical_mapping_rows > 1 AND distinct_target_count = 1` $\to$ `DUPLICATE_IDENTICAL_MAPPING_DETECTED`
+       - `distinct_target_count > 1` $\to$ `AMBIGUOUS_CANONICAL_MAPPING`
        - `physical_mapping_rows = 1` $\to$ `UNIQUE_VALID_MAPPING`
+     * **Validasi Tenant Otoritatif & Klasifikasi Pergeseran Tenant (`R7-F02`):**
+       - Membangun CTE `authoritative_tenants` dari `public.tenants` (`id::text` dan `slug`) ditambah distinct active `affiliates.tenant_id`.
+       - Menegakkan klasifikasi fail-closed bila terjadi perbedaan tenant (`pre.tenant_id IS DISTINCT FROM exp_c.tenant_id`):
+         * `t_map` tidak ditemukan, status di luar whitelist resmi (`SURVIVOR`, `SUPERSEDED_DUPLICATE`, `QUARANTINED`), atau bernilai NULL $\to$ `UNAUTHORIZED_TENANT_SHIFT`.
+         * Status kardinalitas `t_card` terdeteksi duplikat atau ambigu $\to$ `AMBIGUOUS_TENANT_MAPPING`.
+         * Target tenant tidak terdaftar dalam katalog `authoritative_tenants` atau tidak identik dengan `t_map.new_identifier_value` $\to$ `UNAUTHORIZED_TENANT_MAPPING`.
      * **Dilarang Keras Menggunakan `SELECT DISTINCT`:** Membangun `_mig031_canonical_identity_map` tanpa `SELECT DISTINCT` agar tidak menutupi baris duplikat fisik di database.
      * Mewajibkan total `mapping_cardinality_anomalies_count = 0` pada asersi akhir.
   5. **Semesta Kandidat Lengkap, Skop Komposit Tenant & Strict Bi-Directional Reconciliation Audit (`R5-F03`):**
@@ -1031,29 +1050,35 @@ SELECT
     )                                                                AS baseline_snapshot_fingerprint
 FROM pre_mig031_affiliate_commissions_snapshot;
 
--- 4. Pemeriksaan Kardinalitas Baris Fisik Pemetaan Dedup Map (Anti-Duplicate & Anti-Ambiguity - R6-F03)
+-- 4. Pemeriksaan Kardinalitas Baris Fisik Pemetaan Dedup Map (Anti-Duplicate & Anti-Ambiguity - R7-F02 & R6-F03)
 CREATE TEMP TABLE _mig031_mapping_physical_cardinality ON COMMIT DROP AS
 WITH candidate_universe AS (
     SELECT
+        m.table_name,
+        m.column_name,
         NULLIF(BTRIM(m.tenant_id), '')             AS tenant_id,
-        m.quarantined_row_id                       AS legacy_recipient_id,
-        NULLIF(BTRIM(m.canonical_survivor_id), '') AS canonical_survivor_id
+        m.quarantined_row_id                       AS quarantined_row_id,
+        NULLIF(BTRIM(m.canonical_survivor_id), '') AS canonical_survivor_id,
+        NULLIF(BTRIM(m.new_identifier_value), '')  AS new_identifier_value
     FROM public.migration_031_identifier_dedup_map m
-    WHERE m.table_name = 'affiliates'
+    WHERE (m.table_name = 'affiliates')
+       OR (m.table_name = 'affiliate_commissions' AND m.column_name = 'tenant_id')
 )
 SELECT
+    table_name,
+    column_name,
     tenant_id,
-    legacy_recipient_id,
+    quarantined_row_id,
     COUNT(*) AS physical_mapping_rows,
-    COUNT(DISTINCT canonical_survivor_id) AS distinct_survivor_count,
+    COUNT(DISTINCT COALESCE(canonical_survivor_id, new_identifier_value)) AS distinct_target_count,
     CASE
-        WHEN COUNT(DISTINCT canonical_survivor_id) > 1 THEN 'AMBIGUOUS_CANONICAL_MAPPING'
-        WHEN COUNT(*) > 1 AND COUNT(DISTINCT canonical_survivor_id) = 1 THEN 'DUPLICATE_IDENTICAL_MAPPING_DETECTED'
+        WHEN COUNT(DISTINCT COALESCE(canonical_survivor_id, new_identifier_value)) > 1 THEN 'AMBIGUOUS_CANONICAL_MAPPING'
+        WHEN COUNT(*) > 1 AND COUNT(DISTINCT COALESCE(canonical_survivor_id, new_identifier_value)) = 1 THEN 'DUPLICATE_IDENTICAL_MAPPING_DETECTED'
         WHEN COUNT(*) = 1 THEN 'UNIQUE_VALID_MAPPING'
         ELSE 'EMPTY_MAPPING_ANOMALY'
     END AS mapping_cardinality_status
 FROM candidate_universe
-GROUP BY tenant_id, legacy_recipient_id;
+GROUP BY table_name, column_name, tenant_id, quarantined_row_id;
 
 -- 5. Rekonsiliasi Identitas Kanonikal Dua Arah (Full Candidate Universe & Composite Scope - R5-F03 & R6-F03)
 CREATE TEMP TABLE _mig031_canonical_identity_reconciliation ON COMMIT DROP AS
@@ -1085,7 +1110,7 @@ SELECT
     u.new_status,
     u.resolution_reason,
     card.physical_mapping_rows,
-    card.distinct_survivor_count,
+    card.distinct_target_count                     AS distinct_survivor_count,
     card.mapping_cardinality_status,
     CASE
         WHEN card.mapping_cardinality_status = 'AMBIGUOUS_CANONICAL_MAPPING' THEN 'AMBIGUOUS_CANONICAL_MAPPING'
@@ -1099,8 +1124,9 @@ SELECT
     END AS reconciliation_status
 FROM candidate_universe u
 LEFT JOIN _mig031_mapping_physical_cardinality card
-  ON card.tenant_id IS NOT DISTINCT FROM u.tenant_id
- AND card.legacy_recipient_id = u.legacy_recipient_id
+  ON card.table_name = 'affiliates'
+ AND card.tenant_id IS NOT DISTINCT FROM u.tenant_id
+ AND card.quarantined_row_id = u.legacy_recipient_id
 LEFT JOIN physical_survivors p
   ON p.survivor_id = u.canonical_survivor_id;
 
@@ -1166,25 +1192,71 @@ WITH pre_mapped_commissions AS (
      AND t_map.column_name = 'tenant_id'
      AND t_map.quarantined_row_id = pre.commission_id::text
 ),
--- LINEAGE PROOF TIER A -> TIER B: Snapshot A to Expected B Linear Lineage (R6-F02)
+-- EXACT-ONE OCCURRENCE COUNTS (R7-F01) & AUTHORITATIVE TENANTS (R7-F02)
+snapshot_pk_counts AS (
+    SELECT commission_id, COUNT(*) AS snapshot_pk_count
+    FROM pre_mig031_affiliate_commissions_snapshot
+    GROUP BY commission_id
+),
+expected_pk_counts AS (
+    SELECT commission_id, COUNT(*) AS expected_pk_count
+    FROM pre_mapped_commissions
+    GROUP BY commission_id
+),
+authoritative_tenants AS (
+    SELECT id::text AS tenant_id FROM public.tenants
+    UNION
+    SELECT slug AS tenant_id FROM public.tenants WHERE slug IS NOT NULL
+    UNION
+    SELECT DISTINCT NULLIF(BTRIM(tenant_id), '') AS tenant_id FROM public.affiliates WHERE NULLIF(BTRIM(tenant_id), '') IS NOT NULL
+),
+-- LINEAGE PROOF TIER A -> TIER B: Snapshot A to Expected B Linear Lineage (R6-F02, R7-F01, R7-F02)
 lineage_a_to_b_audit AS (
     SELECT
         COALESCE(pre.commission_id, exp_c.commission_id) AS commission_id,
         CASE
+            -- 1. Exact-One Occurrence & Existence Proof (R7-F01)
             WHEN pre.commission_id IS NULL THEN 'ORPHAN_EXPECTED_COMMISSION_ROW'
             WHEN exp_c.commission_id IS NULL THEN 'MISSING_SNAPSHOT_ROW_IN_EXPECTED'
+            WHEN COALESCE(spk.snapshot_pk_count, 0) <> 1 THEN 'DUPLICATE_ROW_IN_SNAPSHOT'
+            WHEN COALESCE(epk.expected_pk_count, 0) <> 1 THEN 'DUPLICATE_ROW_IN_EXPECTED'
+
+            -- 2. Conservation of Amount
             WHEN pre.amount IS DISTINCT FROM exp_c.amount THEN 'AMOUNT_DRIFT_IN_EXPECTED_TRANSFORMATION'
+
+            -- 3. Authoritative Tenant Shift & Mapping Classification (R7-F02)
             WHEN pre.tenant_id IS DISTINCT FROM exp_c.tenant_id
-                 AND t_map.new_identifier_value IS NULL THEN 'UNAUTHORIZED_TENANT_SHIFT_IN_EXPECTED'
+                 AND (t_map.quarantined_row_id IS NULL 
+                      OR t_map.new_status NOT IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE', 'QUARANTINED')
+                      OR NULLIF(BTRIM(t_map.new_identifier_value), '') IS NULL)
+            THEN 'UNAUTHORIZED_TENANT_SHIFT'
+
+            WHEN pre.tenant_id IS DISTINCT FROM exp_c.tenant_id
+                 AND t_card.mapping_cardinality_status IN ('DUPLICATE_IDENTICAL_MAPPING_DETECTED', 'AMBIGUOUS_CANONICAL_MAPPING')
+            THEN 'AMBIGUOUS_TENANT_MAPPING'
+
+            WHEN pre.tenant_id IS DISTINCT FROM exp_c.tenant_id
+                 AND (auth_t.tenant_id IS NULL OR t_map.new_identifier_value IS DISTINCT FROM exp_c.tenant_id)
+            THEN 'UNAUTHORIZED_TENANT_MAPPING'
+
+            -- 4. Authoritative Recipient Shift & Mapping Classification
             WHEN pre.recipient_id IS DISTINCT FROM exp_c.expected_canonical_recipient_id
-                 AND id_map.canonical_survivor_id IS NULL THEN 'UNMAPPED_IDENTITY_MUTATION'
+                 AND id_map.canonical_survivor_id IS NULL
+            THEN 'UNMAPPED_IDENTITY_MUTATION'
+
             WHEN pre.recipient_id IS DISTINCT FROM exp_c.expected_canonical_recipient_id
-                 AND id_map.canonical_survivor_id IS DISTINCT FROM exp_c.expected_canonical_recipient_id THEN 'INCONSISTENT_CANONICAL_MAPPING_APPLIED'
+                 AND id_map.canonical_survivor_id IS DISTINCT FROM exp_c.expected_canonical_recipient_id
+            THEN 'INCONSISTENT_CANONICAL_MAPPING_APPLIED'
+
             ELSE 'OK'
         END AS a_to_b_lineage_verdict
     FROM pre_mig031_affiliate_commissions_snapshot pre
     FULL OUTER JOIN pre_mapped_commissions exp_c
       ON pre.commission_id = exp_c.commission_id
+    LEFT JOIN snapshot_pk_counts spk
+      ON spk.commission_id = pre.commission_id
+    LEFT JOIN expected_pk_counts epk
+      ON epk.commission_id = exp_c.commission_id
     LEFT JOIN _mig031_canonical_identity_map id_map
       ON id_map.tenant_id IS NOT DISTINCT FROM pre.tenant_id
      AND id_map.legacy_recipient_id = pre.recipient_id
@@ -1192,6 +1264,12 @@ lineage_a_to_b_audit AS (
       ON t_map.table_name = 'affiliate_commissions'
      AND t_map.column_name = 'tenant_id'
      AND t_map.quarantined_row_id = pre.commission_id::text
+    LEFT JOIN _mig031_mapping_physical_cardinality t_card
+      ON t_card.table_name = 'affiliate_commissions'
+     AND t_card.column_name = 'tenant_id'
+     AND t_card.quarantined_row_id = pre.commission_id::text
+    LEFT JOIN authoritative_tenants auth_t
+      ON auth_t.tenant_id IS NOT DISTINCT FROM exp_c.tenant_id
 ),
 lineage_a_to_b_anomalies AS (
     SELECT commission_id, a_to_b_lineage_verdict
@@ -1244,7 +1322,9 @@ mapping_cardinality_check AS (
     SELECT
         COUNT(*) FILTER (WHERE mapping_cardinality_status <> 'UNIQUE_VALID_MAPPING') AS mapping_cardinality_anomalies_count,
         COUNT(*) FILTER (WHERE mapping_cardinality_status = 'DUPLICATE_IDENTICAL_MAPPING_DETECTED') AS duplicate_mapping_rows_count,
-        COUNT(*) FILTER (WHERE mapping_cardinality_status = 'AMBIGUOUS_CANONICAL_MAPPING') AS ambiguous_canonical_mapping_count
+        COUNT(*) FILTER (WHERE mapping_cardinality_status = 'AMBIGUOUS_CANONICAL_MAPPING') AS ambiguous_canonical_mapping_count,
+        COUNT(*) FILTER (WHERE table_name = 'affiliates' AND mapping_cardinality_status <> 'UNIQUE_VALID_MAPPING') AS affiliate_cardinality_anomalies_count,
+        COUNT(*) FILTER (WHERE table_name = 'affiliate_commissions' AND mapping_cardinality_status <> 'UNIQUE_VALID_MAPPING') AS commission_tenant_cardinality_anomalies_count
     FROM _mig031_mapping_physical_cardinality
 ),
 canonical_reconciliation_check AS (
@@ -1407,6 +1487,10 @@ SELECT
      WHERE row_count_delta <> 0 OR amount_delta <> 0.00)                                                AS grouped_variance_anomalies_count,
     COALESCE((SELECT SUM(amount_delta) FROM grouped_recipient_reconciliation), 0.00)::numeric(18, 2)    AS global_amount_delta,
     (SELECT mapping_cardinality_anomalies_count FROM mapping_cardinality_check)                         AS mapping_cardinality_anomalies_count,
+    (SELECT duplicate_mapping_rows_count FROM mapping_cardinality_check)                                 AS duplicate_mapping_rows_count,
+    (SELECT ambiguous_canonical_mapping_count FROM mapping_cardinality_check)                            AS ambiguous_canonical_mapping_count,
+    (SELECT affiliate_cardinality_anomalies_count FROM mapping_cardinality_check)                        AS affiliate_cardinality_anomalies_count,
+    (SELECT commission_tenant_cardinality_anomalies_count FROM mapping_cardinality_check)                AS commission_tenant_cardinality_anomalies_count,
     (SELECT canonical_reconciliation_anomalies_count FROM canonical_reconciliation_check)               AS canonical_reconciliation_anomalies_count,
     CASE
         -- 1. Evaluasi Kesetaraan Mutlak Baseline Run ID (Integritas Pengikatan Sesi)
@@ -1414,13 +1498,13 @@ SELECT
           OR act.baseline_run_id IS DISTINCT FROM meta.baseline_run_id
         THEN 'FAIL: B2_ASSERT_05_BASELINE_RUN_ID_BINDING_MISMATCH'
 
-        -- 2. Evaluasi Lineage Eksplisit Snapshot A ke Expected Transformed B (R6-F02)
+        -- 2. Evaluasi Lineage Eksplisit Snapshot A ke Expected Transformed B (R6-F02, R7-F01, R7-F02)
         WHEN exp.expected_row_count <> meta.snapshot_row_count
           OR exp.expected_total_amount <> meta.snapshot_total_amount
           OR (SELECT COUNT(*) FROM lineage_a_to_b_anomalies) > 0
         THEN 'FAIL: B2_ASSERT_05_BASELINE_TO_EXPECTED_LINEAGE_BROKEN'
 
-        -- 3. Evaluasi Kardinalitas Baris Fisik Pemetaan Dedup Map (R6-F03)
+        -- 3. Evaluasi Kardinalitas Baris Fisik Pemetaan Dedup Map (R7-F02 & R6-F03)
         WHEN (SELECT mapping_cardinality_anomalies_count FROM mapping_cardinality_check) > 0
         THEN 'FAIL: B2_ASSERT_05_MAPPING_CARDINALITY_OR_DUPLICATE_ANOMALY'
 
@@ -1448,9 +1532,8 @@ SELECT
 FROM pre_mig031_snapshot_metadata meta
 CROSS JOIN expected_transformed_meta exp
 CROSS JOIN actual_post_migration_meta act;
--- Syarat Lolos Mutlak: lineage_a_to_b = 0, mapping_cardinality = 0, actual_post_row_count = snapshot_row_count, actual_post_total_amount = snapshot_total_amount, actual_post_migration_fingerprint = expected_transformed_fingerprint, row_lineage = 0, grouped_variance = 0, global_delta = 0.00, canonical_reconciliation_anomalies = 0, verdict = PASS
+-- Syarat Lolos Mutlak: lineage_a_to_b = 0 (exact-one occurrence), mapping_cardinality = 0 (affiliates & commissions tenant), actual_post_row_count = snapshot_row_count, actual_post_total_amount = snapshot_total_amount, actual_post_migration_fingerprint = expected_transformed_fingerprint, row_lineage = 0, grouped_variance = 0, global_delta = 0.00, canonical_reconciliation_anomalies = 0, verdict = PASS
 ```
-
 ---
 
 ## 7. Failure Semantics & Fail-Closed Circuit Breaker (Mandatory Architecture)
@@ -1474,7 +1557,7 @@ Melewati (*skipping*), menonaktifkan, atau mengecualikan satu kueri/tahapan aser
 Kelulusan Gate B2 didefinisikan sebagai fungsi konjungtif murni (*strict logical AND*) atas seluruh asersi:
 $$\text{GATE\_B2\_PASS} \iff \text{SCHEMA\_GATE} \land \text{ASSERT\_01} \land \text{ASSERT\_02} \land \text{ASSERT\_03} \land \text{ASSERT\_04} \land \text{ASSERT\_05}$$
 
-Jika salah satu dari asersi tersebut gagal (misalnya ditemukan $\ge 1$ ketidakcocokan skema SCH, $\ge 1$ konflik tenant, paritas karantina tidak cocok, terdapat anomali status dedup map / kardinalitas survivor kluster $\ne 1$, kegagalan eksistensi fisik atau keselarasan tenant survivor, selisih manifest kunci asing $> 0$, terdapat kunci asing menggantung, kegagalan lineage linear A $\to$ B, anomali kardinalitas baris pemetaan dedup map, diskrepansi sidik jari array JSONB 3-tier (baseline vs expected vs actual) atau hitungan baris baseline B2-ASSERT-05, anomali rekonsiliasi kanonikal dua arah, atau terjadi pergeseran nominal finansial sekecil $\Delta = 0.01$):
+Jika salah satu dari asersi tersebut gagal (misalnya ditemukan $\ge 1$ ketidakcocokan skema SCH, $\ge 1$ konflik tenant, paritas karantina tidak cocok, terdapat anomali status dedup map / kardinalitas survivor kluster $\ne 1$, kegagalan eksistensi fisik atau keselarasan tenant survivor, selisih manifest kunci asing $> 0$, terdapat kunci asing menggantung, kegagalan lineage linear A $\to$ B (termasuk pelanggaran exact-one occurrence, pergeseran tenant tidak terotorisasi, atau mutasi penerima tanpa peta), anomali kardinalitas baris pemetaan dedup map (affiliates maupun commissions tenant), diskrepansi sidik jari array JSONB 3-tier (baseline vs expected vs actual) atau hitungan baris baseline B2-ASSERT-05, anomali rekonsiliasi kanonikal dua arah, atau terjadi pergeseran nominal finansial sekecil $\Delta = 0.01$):
 1. Seluruh Gate B2 **GAGAL TOTAL (`REJECTED`)**.
 2. Gerbang hilir **Gate I** (Penggelaran kode aplikasi Python) dan **Gate T** (Integrasi Webhook) **TETAP TERKUNCI PERMANEN (*PERMANENTLY LOCKED*)**.
 3. DILARANG melakukan penggelaran migrasi fisik ke lingkungan berikutnya sampai seluruh akar penyebab anomali diremediasi dan disetujui kembali oleh CTO.
