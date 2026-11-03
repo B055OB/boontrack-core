@@ -2,16 +2,116 @@ import os
 import sys
 import time
 import urllib.parse
+from pathlib import Path
 import psycopg2
 from dotenv import load_dotenv
 
-# Load environment configuration
-load_dotenv(r"C:\boontrack-core\.env")
+# Deterministic cross-platform path resolution using pathlib
+CURRENT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = CURRENT_DIR.parent
+ENV_FILE = REPO_ROOT / ".env"
+LOG_FILE = CURRENT_DIR / "CREDENTIAL_ROTATION_PROOF.log"
 
-# Import DSN validator from execute_b1
-from execute_b1 import validate_staging_dsn, get_staging_dsn
+# Load environment configuration if available
+if ENV_FILE.exists():
+    load_dotenv(ENV_FILE)
+else:
+    load_dotenv()
 
-LOG_FILE = r"C:\boontrack-core\audit_b1_submission\CREDENTIAL_ROTATION_PROOF.log"
+
+def validate_staging_dsn(dsn: str) -> None:
+    """
+    Validates that the provided DSN points strictly and exclusively to the
+    authorized Supabase Staging environment on port 5432.
+    Rejects production credentials, unexpected hosts, wrong ports, invalid databases,
+    or non-exact usernames. Enforces fail-closed defense against Python -O bytecode stripping.
+    Sanitizes all error messages to ensure zero credential leakage.
+    """
+    if not dsn or not isinstance(dsn, str):
+        raise ValueError("FATAL SECURITY GUARD: DSN tidak boleh kosong!")
+
+    # Guard 1: Hard rejection of production project ref anywhere in DSN
+    if "mpluzajlzpregmjwpjqr" in dsn:
+        raise RuntimeError("FATAL SECURITY BREACH: Target production project ref terdeteksi! DSN ditolak.")
+
+    # Guard 2: RFC-compliant URL parsing via urllib.parse
+    try:
+        parsed = urllib.parse.urlparse(dsn)
+    except Exception:
+        raise ValueError("FATAL SECURITY GUARD: Format URL DSN tidak valid.")
+
+    # Guard 3: Strict scheme enforcement
+    if parsed.scheme not in ("postgresql", "postgres"):
+        raise ValueError(f"FATAL SECURITY GUARD: Scheme '{parsed.scheme}' tidak diizinkan! Wajib 'postgresql' atau 'postgres'.")
+
+    # Guard 4: Hostname verification (AWS ap-southeast-1 Pooler)
+    expected_host = "aws-0-ap-southeast-1.pooler.supabase.com"
+    if parsed.hostname != expected_host:
+        raise ValueError(f"FATAL SECURITY GUARD: Hostname '{parsed.hostname}' tidak diizinkan! Wajib '{expected_host}'.")
+
+    # Guard 5: Port verification (5432 Session Pooler IPv4 only)
+    if parsed.port != 5432:
+        raise ValueError(f"FATAL SECURITY GUARD: Port '{parsed.port}' tidak diizinkan! Wajib port 5432 (Session Pooler IPv4).")
+
+    # Guard 6: Username verification (must exactly match staging project ref)
+    expected_user = "postgres.xkhqirhurnjqglmajghn"
+    if parsed.username != expected_user:
+        raise ValueError(f"FATAL SECURITY GUARD: Username tidak valid! Wajib '{expected_user}'.")
+
+    # Guard 7: Database name verification
+    db_name = parsed.path.lstrip("/")
+    if db_name != "postgres":
+        raise ValueError(f"FATAL SECURITY GUARD: Database '{db_name}' tidak diizinkan! Wajib 'postgres'.")
+
+    # Guard 8: Query Parameters Parameter-Pollution & SSL Policy Enforcement
+    # Use parse_qs with keep_blank_values=True to detect all parameters
+    query_params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+
+    # 8.1 Reject duplicate query parameters across the entire DSN query string
+    for param_name, param_values in query_params.items():
+        if len(param_values) > 1:
+            raise ValueError(f"FATAL SECURITY GUARD: Parameter DSN duplikat terdeteksi pada '{param_name}'! Ditolak.")
+
+    # 8.2 Require explicit sslmode parameter
+    if "sslmode" not in query_params:
+        raise ValueError("FATAL SECURITY GUARD: Parameter 'sslmode' wajib didefinisikan secara eksplisit pada DSN! (misal: ?sslmode=require)")
+
+    # 8.3 Enforce strict SSL mode: only require, verify-ca, verify-full are permitted
+    ssl_mode = query_params["sslmode"][0].lower()
+    allowed_ssl_modes = ("require", "verify-ca", "verify-full")
+    if ssl_mode not in allowed_ssl_modes:
+        raise ValueError(
+            f"FATAL SECURITY GUARD: SSL mode '{ssl_mode}' tidak diizinkan! "
+            f"Wajib salah satu dari: {allowed_ssl_modes}."
+        )
+
+
+def get_staging_dsn() -> str:
+    """
+    Retrieves and validates Staging DSN from environment variables.
+    Plaintext DSNs in code are strictly forbidden.
+    """
+    dsn = os.environ.get("STAGING_DATABASE_URL")
+    if not dsn:
+        staging_pw = os.environ.get("STAGING_DB_PASSWORD")
+        if staging_pw:
+            encoded_pw = urllib.parse.quote_plus(staging_pw)
+            dsn = f"postgresql://postgres.xkhqirhurnjqglmajghn:{encoded_pw}@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require"
+        else:
+            raise RuntimeError(
+                "FATAL SECURITY CONFIGURATION: Environment variable 'STAGING_DATABASE_URL' "
+                "(atau 'STAGING_DB_PASSWORD') belum diset! Harap konfigurasikan sebelum menjalankan runner."
+            )
+    else:
+        # If DSN from env lacks sslmode, explicitly append ?sslmode=require to enforce SSL policy
+        parsed = urllib.parse.urlparse(dsn)
+        query_params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        if "sslmode" not in query_params:
+            delimiter = "&" if parsed.query else "?"
+            dsn = f"{dsn}{delimiter}sslmode=require"
+    validate_staging_dsn(dsn)
+    return dsn
+
 
 print("=================================================================")
 print("  CREDENTIAL ROTATION & DUAL AUTHENTICATION PROOF VERIFIER")
@@ -44,7 +144,7 @@ if not revoked_pw:
     )
 
 encoded_revoked_pw = urllib.parse.quote_plus(revoked_pw)
-old_dsn = f"postgresql://postgres.xkhqirhurnjqglmajghn:{encoded_revoked_pw}@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres"
+old_dsn = f"postgresql://postgres.xkhqirhurnjqglmajghn:{encoded_revoked_pw}@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require"
 
 try:
     conn_old = psycopg2.connect(old_dsn, connect_timeout=10)
@@ -115,7 +215,7 @@ else:
     print("\n[-] DUAL AUTHENTICATION PROOF GAGAL.")
 log_entries.append("=================================================================\n")
 
-os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+os.makedirs(LOG_FILE.parent, exist_ok=True)
 with open(LOG_FILE, "w", encoding="utf-8") as f:
     f.write("\n".join(log_entries))
 
