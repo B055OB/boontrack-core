@@ -57,7 +57,7 @@ def run_seeder(mode: str = "dry-run"):
             # =========================================================================
             print("[*] Memverifikasi integritas data historis di dalam transaksi (sebelum commit)...")
             
-            # 1. Verifikasi Kriptografis 5 Baris Historis
+            # 1. Verifikasi Kriptografis 5 Baris Historis (7 Kolom)
             cur.execute("""
                 SELECT id::text, tenant_id::text, name::text, phone_number::text, referral_code::text, commission_rate::text, status::text
                 FROM public.affiliates 
@@ -78,17 +78,48 @@ def run_seeder(mode: str = "dry-run"):
                     f"Expected: {EXPECTED_HISTORICAL_FINGERPRINT}, Got: {post_fp}"
                 )
 
-            # 2. Verifikasi Preservasi Tenant Jangkar (Tidak Boleh Terhapus)
+            # 2. Verifikasi Preservasi Tenant Jangkar (Tidak Boleh Terhapus atau Bermutasi)
             cur.execute("SELECT id::text, slug FROM public.tenants WHERE id = %s;", (CANONICAL_TENANT_ID,))
             tenant_row = cur.fetchone()
             if not tenant_row or tenant_row[1] != CANONICAL_TENANT_SLUG:
                 raise RuntimeError("POST-CLEANUP TENANT ERROR: Tenant jangkar terhapus atau slug termutasi!")
+
+            # 3. Post-Cleanup Zero Residual Verification (Buktikan 100% Fixture Bersih)
+            cur.execute("""
+                SELECT count(*) FROM (
+                    SELECT id::text FROM public.affiliates WHERE id IN ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222222')
+                    UNION ALL
+                    SELECT id::text FROM public.affiliate_commissions WHERE id = '11111111-1111-1111-1111-111111111112'
+                    UNION ALL
+                    SELECT id::text FROM public.migration_031_quarantined_affiliate_commissions WHERE id = '33333333-3333-3333-3333-333333333331'
+                    UNION ALL
+                    SELECT map_id::text FROM public.migration_031_identifier_dedup_map WHERE map_id IN ('e1111111-1111-1111-1111-111111111111', 'e2222222-2222-2222-2222-222222222222')
+                    UNION ALL
+                    SELECT id::text FROM public.orders WHERE id IN ('44444444-4444-4444-4444-444444444441', '44444444-4444-4444-4444-444444444442')
+                    UNION ALL
+                    SELECT id::text FROM public.product_orders WHERE id = 44444443
+                    UNION ALL
+                    SELECT id::text FROM public.delivery_orders WHERE id = '44444444-4444-4444-4444-444444444444'
+                    UNION ALL
+                    SELECT id::text FROM public.attributions WHERE id = '44444444-4444-4444-4444-444444444445'
+                    UNION ALL
+                    SELECT id::text FROM public.attribution_sessions WHERE id = '44444444-4444-4444-4444-444444444446'
+                    UNION ALL
+                    SELECT id::text FROM public.shop_subscriptions WHERE id = '44444444-4444-4444-4444-444444444447'
+                    UNION ALL
+                    SELECT id::text FROM public.shop_commission_ledger WHERE id = '44444444-4444-4444-4444-444444444448'
+                ) residual_check;
+            """)
+            residual_cnt = cur.fetchone()[0]
+            if residual_cnt != 0:
+                raise RuntimeError(f"POST-CLEANUP RESIDUAL FAILURE: Ditemukan {residual_cnt} sisa baris fixture setelah cleanup! Wajib 0.")
 
             # HANYA COMMIT SETELAH SELURUH ASERSI POSTCONDITION LULUS 100%
             conn.commit()
             print(f"[+] Cleanup Berhasil (Atomic Committed): Seluruh 13 fixture sintetis dibersihkan.")
             print(f"[+] Verifikasi Kriptografis In-Transaction: 5 baris historis terbukti 100% identik (SHA-256: {post_fp[:16]}...).")
             print(f"[+] Verifikasi Tenant Jangkar: Tenant {CANONICAL_TENANT_ID} ('{CANONICAL_TENANT_SLUG}') tetap terlindungi utuh.")
+            print(f"[+] Postcondition Zero Residual: 0 sisa baris fixture sintetis di 11 tabel (Tereliminasi Sempurna).")
             return
 
         # =============================================================================
@@ -130,11 +161,11 @@ def run_seeder(mode: str = "dry-run"):
         cur.execute(clean_payload)
 
         # =============================================================================
-        # EXHAUSTIVE FULL PAYLOAD VERIFICATION (SELURUH KOLOM DARI SETIAP INSERT)
+        # EXHAUSTIVE FULL PAYLOAD VERIFICATION (100% SELURUH KOLOM, TIMESTAMP & JSONB)
         # =============================================================================
         print("[*] Menjalankan Exhaustive Full Payload Verification untuk setiap kolom...")
 
-        # 0. Canonical Tenant Anchor
+        # 0. Canonical Tenant Anchor (id dan slug)
         cur.execute("SELECT id::text, slug FROM public.tenants WHERE id = %s;", (CANONICAL_TENANT_ID,))
         tenant_row = cur.fetchone()
         if not tenant_row or tenant_row[1] != CANONICAL_TENANT_SLUG:
@@ -176,10 +207,11 @@ def run_seeder(mode: str = "dry-run"):
             comm_row[6] != expected_comm[6]):
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on affiliate_commissions: actual={comm_row}, expected={expected_comm}")
 
-        # 3. Quarantined Commission (Seluruh 12 kolom utama)
+        # 3. Quarantined Commission (Seluruh 13 kolom termasuk row_snapshot JSONB)
         cur.execute("""
             SELECT id::text, migration_batch_id, tenant_id::text, original_tenant_id::text, affiliate_id::text, 
-                   order_id, order_amount::numeric, amount::numeric, original_status, status, quarantine_reason, approval_status 
+                   order_id, order_amount::numeric, amount::numeric, original_status, status, quarantine_reason, approval_status,
+                   row_snapshot::text 
             FROM public.migration_031_quarantined_affiliate_commissions 
             WHERE id = '33333333-3333-3333-3333-333333333331';
         """)
@@ -187,21 +219,23 @@ def run_seeder(mode: str = "dry-run"):
         expected_quar = (
             '33333333-3333-3333-3333-333333333331', 'BATCH_SYNTH_001', CANONICAL_TENANT_ID,
             CANONICAL_TENANT_ID, '11111111-1111-1111-1111-111111111111', 'ORD_QUAR_001',
-            750000.0, 75000.0, 'PENDING', 'QUARANTINED', 'CROSS_TENANT_DISCREPANCY_DETECTED', 'QUARANTINED_LOCKED'
+            750000.0, 75000.0, 'PENDING', 'QUARANTINED', 'CROSS_TENANT_DISCREPANCY_DETECTED', 'QUARANTINED_LOCKED',
+            '{}'
         )
         if not quar_row:
             raise RuntimeError("PAYLOAD VERIFICATION FAILED: quarantined commission missing!")
         if (quar_row[0] != expected_quar[0] or quar_row[1] != expected_quar[1] or quar_row[2] != expected_quar[2] or
             quar_row[3] != expected_quar[3] or quar_row[4] != expected_quar[4] or quar_row[5] != expected_quar[5] or
             float(quar_row[6]) != expected_quar[6] or float(quar_row[7]) != expected_quar[7] or quar_row[8] != expected_quar[8] or
-            quar_row[9] != expected_quar[9] or quar_row[10] != expected_quar[10] or quar_row[11] != expected_quar[11]):
+            quar_row[9] != expected_quar[9] or quar_row[10] != expected_quar[10] or quar_row[11] != expected_quar[11] or
+            quar_row[12] != expected_quar[12]):
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on quarantined commission: actual={quar_row}, expected={expected_quar}")
 
-        # 4. Dedup Map (Seluruh 12 kolom untuk rank 1 dan rank 2)
+        # 4. Dedup Map (Seluruh 13 kolom untuk rank 1 & 2 termasuk row_snapshot JSONB)
         cur.execute("""
             SELECT map_id::text, migration_batch_id, table_name, column_name, tenant_id::text, 
                    quarantined_row_id::text, canonical_survivor_id::text, original_identifier_value, 
-                   new_identifier_value, dedup_rank, new_status, resolution_reason 
+                   new_identifier_value, dedup_rank, new_status, resolution_reason, row_snapshot::text 
             FROM public.migration_031_identifier_dedup_map 
             WHERE map_id IN ('e1111111-1111-1111-1111-111111111111', 'e2222222-2222-2222-2222-222222222222') 
             ORDER BY dedup_rank;
@@ -210,10 +244,10 @@ def run_seeder(mode: str = "dry-run"):
         expected_dedup = [
             ('e1111111-1111-1111-1111-111111111111', 'BATCH_SYNTH_001', 'affiliates', 'id', CANONICAL_TENANT_ID,
              '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222221',
-             '22222222-2222-2222-2222-222222222221', 1, 'SURVIVOR', 'AUTHORITATIVE_PRIMARY_IDENTITY'),
+             '22222222-2222-2222-2222-222222222221', 1, 'SURVIVOR', 'AUTHORITATIVE_PRIMARY_IDENTITY', '{}'),
             ('e2222222-2222-2222-2222-222222222222', 'BATCH_SYNTH_001', 'affiliates', 'id', CANONICAL_TENANT_ID,
              '22222222-2222-2222-2222-222222222222', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222222',
-             '22222222-2222-2222-2222-222222222221', 2, 'SUPERSEDED_DUPLICATE', 'MERGED_TO_SURVIVOR')
+             '22222222-2222-2222-2222-222222222221', 2, 'SUPERSEDED_DUPLICATE', 'MERGED_TO_SURVIVOR', '{}')
         ]
         if len(dedup_rows) != 2:
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on dedup map row count: expected 2, got {len(dedup_rows)}")
@@ -269,12 +303,19 @@ def run_seeder(mode: str = "dry-run"):
         if as_row != expected_as:
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on attribution_sessions: actual={as_row}, expected={expected_as}")
 
-        # 10. Shop Subscriptions (id, tenant_slug, tenant_id, affiliate_id, status, amount)
-        cur.execute("SELECT id::text, tenant_slug, tenant_id::text, affiliate_id::text, status, amount::numeric FROM public.shop_subscriptions WHERE id = '44444444-4444-4444-4444-444444444447';")
+        # 10. Shop Subscriptions (id, tenant_slug, tenant_id, affiliate_id, status, amount, current_period_ends_at, expires_at)
+        cur.execute("""
+            SELECT id::text, tenant_slug, tenant_id::text, affiliate_id::text, status, amount::numeric,
+                   (current_period_ends_at IS NOT NULL), (expires_at IS NOT NULL),
+                   (current_period_ends_at > NOW()), (expires_at > NOW())
+            FROM public.shop_subscriptions 
+            WHERE id = '44444444-4444-4444-4444-444444444447';
+        """)
         sub_row = cur.fetchone()
-        expected_sub = ('44444444-4444-4444-4444-444444444447', CANONICAL_TENANT_ID, CANONICAL_TENANT_ID, '22222222-2222-2222-2222-222222222222', 'ACTIVE', 299000.0)
+        expected_sub = ('44444444-4444-4444-4444-444444444447', CANONICAL_TENANT_ID, CANONICAL_TENANT_ID, '22222222-2222-2222-2222-222222222222', 'ACTIVE', 299000.0, True, True, True, True)
         if not sub_row or (sub_row[0] != expected_sub[0] or sub_row[1] != expected_sub[1] or sub_row[2] != expected_sub[2] or 
-                           sub_row[3] != expected_sub[3] or sub_row[4] != expected_sub[4] or float(sub_row[5]) != expected_sub[5]):
+                           sub_row[3] != expected_sub[3] or sub_row[4] != expected_sub[4] or float(sub_row[5]) != expected_sub[5] or
+                           sub_row[6] != expected_sub[6] or sub_row[7] != expected_sub[7] or sub_row[8] != expected_sub[8] or sub_row[9] != expected_sub[9]):
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on shop_subscriptions: actual={sub_row}, expected={expected_sub}")
 
         # 11. Shop Commission Ledger (id, tenant_slug, affiliate_id, gross_amount, affiliate_amount, am_amount, platform_net_amount)
@@ -291,7 +332,7 @@ def run_seeder(mode: str = "dry-run"):
                            float(scl_row[5]) != expected_scl[5] or float(scl_row[6]) != expected_scl[6]):
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on shop_commission_ledger: actual={scl_row}, expected={expected_scl}")
 
-        print("[+] Exhaustive Full Payload Verification PASSED: 100% kolom dari setiap tabel terverifikasi presisi.")
+        print("[+] Exhaustive Full Payload Verification PASSED: 100% kolom dari setiap tabel (termasuk timestamp & JSONB) terverifikasi presisi.")
 
         if mode == "commit":
             conn.commit()

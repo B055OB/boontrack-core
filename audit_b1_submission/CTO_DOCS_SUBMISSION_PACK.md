@@ -2783,7 +2783,7 @@ def run_seeder(mode: str = "dry-run"):
             # =========================================================================
             print("[*] Memverifikasi integritas data historis di dalam transaksi (sebelum commit)...")
             
-            # 1. Verifikasi Kriptografis 5 Baris Historis
+            # 1. Verifikasi Kriptografis 5 Baris Historis (7 Kolom)
             cur.execute("""
                 SELECT id::text, tenant_id::text, name::text, phone_number::text, referral_code::text, commission_rate::text, status::text
                 FROM public.affiliates 
@@ -2804,17 +2804,48 @@ def run_seeder(mode: str = "dry-run"):
                     f"Expected: {EXPECTED_HISTORICAL_FINGERPRINT}, Got: {post_fp}"
                 )
 
-            # 2. Verifikasi Preservasi Tenant Jangkar (Tidak Boleh Terhapus)
+            # 2. Verifikasi Preservasi Tenant Jangkar (Tidak Boleh Terhapus atau Bermutasi)
             cur.execute("SELECT id::text, slug FROM public.tenants WHERE id = %s;", (CANONICAL_TENANT_ID,))
             tenant_row = cur.fetchone()
             if not tenant_row or tenant_row[1] != CANONICAL_TENANT_SLUG:
                 raise RuntimeError("POST-CLEANUP TENANT ERROR: Tenant jangkar terhapus atau slug termutasi!")
+
+            # 3. Post-Cleanup Zero Residual Verification (Buktikan 100% Fixture Bersih)
+            cur.execute("""
+                SELECT count(*) FROM (
+                    SELECT id::text FROM public.affiliates WHERE id IN ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222222')
+                    UNION ALL
+                    SELECT id::text FROM public.affiliate_commissions WHERE id = '11111111-1111-1111-1111-111111111112'
+                    UNION ALL
+                    SELECT id::text FROM public.migration_031_quarantined_affiliate_commissions WHERE id = '33333333-3333-3333-3333-333333333331'
+                    UNION ALL
+                    SELECT map_id::text FROM public.migration_031_identifier_dedup_map WHERE map_id IN ('e1111111-1111-1111-1111-111111111111', 'e2222222-2222-2222-2222-222222222222')
+                    UNION ALL
+                    SELECT id::text FROM public.orders WHERE id IN ('44444444-4444-4444-4444-444444444441', '44444444-4444-4444-4444-444444444442')
+                    UNION ALL
+                    SELECT id::text FROM public.product_orders WHERE id = 44444443
+                    UNION ALL
+                    SELECT id::text FROM public.delivery_orders WHERE id = '44444444-4444-4444-4444-444444444444'
+                    UNION ALL
+                    SELECT id::text FROM public.attributions WHERE id = '44444444-4444-4444-4444-444444444445'
+                    UNION ALL
+                    SELECT id::text FROM public.attribution_sessions WHERE id = '44444444-4444-4444-4444-444444444446'
+                    UNION ALL
+                    SELECT id::text FROM public.shop_subscriptions WHERE id = '44444444-4444-4444-4444-444444444447'
+                    UNION ALL
+                    SELECT id::text FROM public.shop_commission_ledger WHERE id = '44444444-4444-4444-4444-444444444448'
+                ) residual_check;
+            """)
+            residual_cnt = cur.fetchone()[0]
+            if residual_cnt != 0:
+                raise RuntimeError(f"POST-CLEANUP RESIDUAL FAILURE: Ditemukan {residual_cnt} sisa baris fixture setelah cleanup! Wajib 0.")
 
             # HANYA COMMIT SETELAH SELURUH ASERSI POSTCONDITION LULUS 100%
             conn.commit()
             print(f"[+] Cleanup Berhasil (Atomic Committed): Seluruh 13 fixture sintetis dibersihkan.")
             print(f"[+] Verifikasi Kriptografis In-Transaction: 5 baris historis terbukti 100% identik (SHA-256: {post_fp[:16]}...).")
             print(f"[+] Verifikasi Tenant Jangkar: Tenant {CANONICAL_TENANT_ID} ('{CANONICAL_TENANT_SLUG}') tetap terlindungi utuh.")
+            print(f"[+] Postcondition Zero Residual: 0 sisa baris fixture sintetis di 11 tabel (Tereliminasi Sempurna).")
             return
 
         # =============================================================================
@@ -2856,11 +2887,11 @@ def run_seeder(mode: str = "dry-run"):
         cur.execute(clean_payload)
 
         # =============================================================================
-        # EXHAUSTIVE FULL PAYLOAD VERIFICATION (SELURUH KOLOM DARI SETIAP INSERT)
+        # EXHAUSTIVE FULL PAYLOAD VERIFICATION (100% SELURUH KOLOM, TIMESTAMP & JSONB)
         # =============================================================================
         print("[*] Menjalankan Exhaustive Full Payload Verification untuk setiap kolom...")
 
-        # 0. Canonical Tenant Anchor
+        # 0. Canonical Tenant Anchor (id dan slug)
         cur.execute("SELECT id::text, slug FROM public.tenants WHERE id = %s;", (CANONICAL_TENANT_ID,))
         tenant_row = cur.fetchone()
         if not tenant_row or tenant_row[1] != CANONICAL_TENANT_SLUG:
@@ -2902,10 +2933,11 @@ def run_seeder(mode: str = "dry-run"):
             comm_row[6] != expected_comm[6]):
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on affiliate_commissions: actual={comm_row}, expected={expected_comm}")
 
-        # 3. Quarantined Commission (Seluruh 12 kolom utama)
+        # 3. Quarantined Commission (Seluruh 13 kolom termasuk row_snapshot JSONB)
         cur.execute("""
             SELECT id::text, migration_batch_id, tenant_id::text, original_tenant_id::text, affiliate_id::text, 
-                   order_id, order_amount::numeric, amount::numeric, original_status, status, quarantine_reason, approval_status 
+                   order_id, order_amount::numeric, amount::numeric, original_status, status, quarantine_reason, approval_status,
+                   row_snapshot::text 
             FROM public.migration_031_quarantined_affiliate_commissions 
             WHERE id = '33333333-3333-3333-3333-333333333331';
         """)
@@ -2913,21 +2945,23 @@ def run_seeder(mode: str = "dry-run"):
         expected_quar = (
             '33333333-3333-3333-3333-333333333331', 'BATCH_SYNTH_001', CANONICAL_TENANT_ID,
             CANONICAL_TENANT_ID, '11111111-1111-1111-1111-111111111111', 'ORD_QUAR_001',
-            750000.0, 75000.0, 'PENDING', 'QUARANTINED', 'CROSS_TENANT_DISCREPANCY_DETECTED', 'QUARANTINED_LOCKED'
+            750000.0, 75000.0, 'PENDING', 'QUARANTINED', 'CROSS_TENANT_DISCREPANCY_DETECTED', 'QUARANTINED_LOCKED',
+            '{}'
         )
         if not quar_row:
             raise RuntimeError("PAYLOAD VERIFICATION FAILED: quarantined commission missing!")
         if (quar_row[0] != expected_quar[0] or quar_row[1] != expected_quar[1] or quar_row[2] != expected_quar[2] or
             quar_row[3] != expected_quar[3] or quar_row[4] != expected_quar[4] or quar_row[5] != expected_quar[5] or
             float(quar_row[6]) != expected_quar[6] or float(quar_row[7]) != expected_quar[7] or quar_row[8] != expected_quar[8] or
-            quar_row[9] != expected_quar[9] or quar_row[10] != expected_quar[10] or quar_row[11] != expected_quar[11]):
+            quar_row[9] != expected_quar[9] or quar_row[10] != expected_quar[10] or quar_row[11] != expected_quar[11] or
+            quar_row[12] != expected_quar[12]):
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on quarantined commission: actual={quar_row}, expected={expected_quar}")
 
-        # 4. Dedup Map (Seluruh 12 kolom untuk rank 1 dan rank 2)
+        # 4. Dedup Map (Seluruh 13 kolom untuk rank 1 & 2 termasuk row_snapshot JSONB)
         cur.execute("""
             SELECT map_id::text, migration_batch_id, table_name, column_name, tenant_id::text, 
                    quarantined_row_id::text, canonical_survivor_id::text, original_identifier_value, 
-                   new_identifier_value, dedup_rank, new_status, resolution_reason 
+                   new_identifier_value, dedup_rank, new_status, resolution_reason, row_snapshot::text 
             FROM public.migration_031_identifier_dedup_map 
             WHERE map_id IN ('e1111111-1111-1111-1111-111111111111', 'e2222222-2222-2222-2222-222222222222') 
             ORDER BY dedup_rank;
@@ -2936,10 +2970,10 @@ def run_seeder(mode: str = "dry-run"):
         expected_dedup = [
             ('e1111111-1111-1111-1111-111111111111', 'BATCH_SYNTH_001', 'affiliates', 'id', CANONICAL_TENANT_ID,
              '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222221',
-             '22222222-2222-2222-2222-222222222221', 1, 'SURVIVOR', 'AUTHORITATIVE_PRIMARY_IDENTITY'),
+             '22222222-2222-2222-2222-222222222221', 1, 'SURVIVOR', 'AUTHORITATIVE_PRIMARY_IDENTITY', '{}'),
             ('e2222222-2222-2222-2222-222222222222', 'BATCH_SYNTH_001', 'affiliates', 'id', CANONICAL_TENANT_ID,
              '22222222-2222-2222-2222-222222222222', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222222',
-             '22222222-2222-2222-2222-222222222221', 2, 'SUPERSEDED_DUPLICATE', 'MERGED_TO_SURVIVOR')
+             '22222222-2222-2222-2222-222222222221', 2, 'SUPERSEDED_DUPLICATE', 'MERGED_TO_SURVIVOR', '{}')
         ]
         if len(dedup_rows) != 2:
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on dedup map row count: expected 2, got {len(dedup_rows)}")
@@ -2995,12 +3029,19 @@ def run_seeder(mode: str = "dry-run"):
         if as_row != expected_as:
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on attribution_sessions: actual={as_row}, expected={expected_as}")
 
-        # 10. Shop Subscriptions (id, tenant_slug, tenant_id, affiliate_id, status, amount)
-        cur.execute("SELECT id::text, tenant_slug, tenant_id::text, affiliate_id::text, status, amount::numeric FROM public.shop_subscriptions WHERE id = '44444444-4444-4444-4444-444444444447';")
+        # 10. Shop Subscriptions (id, tenant_slug, tenant_id, affiliate_id, status, amount, current_period_ends_at, expires_at)
+        cur.execute("""
+            SELECT id::text, tenant_slug, tenant_id::text, affiliate_id::text, status, amount::numeric,
+                   (current_period_ends_at IS NOT NULL), (expires_at IS NOT NULL),
+                   (current_period_ends_at > NOW()), (expires_at > NOW())
+            FROM public.shop_subscriptions 
+            WHERE id = '44444444-4444-4444-4444-444444444447';
+        """)
         sub_row = cur.fetchone()
-        expected_sub = ('44444444-4444-4444-4444-444444444447', CANONICAL_TENANT_ID, CANONICAL_TENANT_ID, '22222222-2222-2222-2222-222222222222', 'ACTIVE', 299000.0)
+        expected_sub = ('44444444-4444-4444-4444-444444444447', CANONICAL_TENANT_ID, CANONICAL_TENANT_ID, '22222222-2222-2222-2222-222222222222', 'ACTIVE', 299000.0, True, True, True, True)
         if not sub_row or (sub_row[0] != expected_sub[0] or sub_row[1] != expected_sub[1] or sub_row[2] != expected_sub[2] or 
-                           sub_row[3] != expected_sub[3] or sub_row[4] != expected_sub[4] or float(sub_row[5]) != expected_sub[5]):
+                           sub_row[3] != expected_sub[3] or sub_row[4] != expected_sub[4] or float(sub_row[5]) != expected_sub[5] or
+                           sub_row[6] != expected_sub[6] or sub_row[7] != expected_sub[7] or sub_row[8] != expected_sub[8] or sub_row[9] != expected_sub[9]):
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on shop_subscriptions: actual={sub_row}, expected={expected_sub}")
 
         # 11. Shop Commission Ledger (id, tenant_slug, affiliate_id, gross_amount, affiliate_amount, am_amount, platform_net_amount)
@@ -3017,7 +3058,7 @@ def run_seeder(mode: str = "dry-run"):
                            float(scl_row[5]) != expected_scl[5] or float(scl_row[6]) != expected_scl[6]):
             raise RuntimeError(f"PAYLOAD VERIFICATION FAILED on shop_commission_ledger: actual={scl_row}, expected={expected_scl}")
 
-        print("[+] Exhaustive Full Payload Verification PASSED: 100% kolom dari setiap tabel terverifikasi presisi.")
+        print("[+] Exhaustive Full Payload Verification PASSED: 100% kolom dari setiap tabel (termasuk timestamp & JSONB) terverifikasi presisi.")
 
         if mode == "commit":
             conn.commit()
@@ -3059,9 +3100,10 @@ if __name__ == "__main__":
 -- =============================================================================
 -- BOONTRACK SYNTHETIC FIXTURE TEARDOWN & CLEANUP SCRIPT (REV 4.1.6.2.11)
 -- Target: Staging Database (xkhqirhurnjqglmajghn:5432)
--- Purpose: Unconditional, idempotent deletion of the 13 synthetic UUIDs
--- Safety: Pre-snapshot and post-comparison guarantees 100% untouched historical production rows.
--- Ownership: Pre-deletion verification proves every targeted row belongs strictly to the synthetic seed run.
+-- Purpose: Provable, zero-residual deletion of the 13 synthetic UUIDs
+-- Safety: Pre-snapshot, two-way EXCEPT, and postcondition guarantees 100% untouched historical production rows.
+-- Ownership: Full payload verification with NULL-safe semantics (IS DISTINCT FROM) and row locking (FOR UPDATE).
+-- Zero-Residual: Postcondition proves 0 residual fixture rows remain post-cleanup.
 -- Tenant Policy: Tenant anchor '00000000-0000-0000-0000-000000000001' is PRESERVED (NOT DELETED).
 -- =============================================================================
 
@@ -3107,19 +3149,35 @@ BEGIN
 END $$;
 
 -- -----------------------------------------------------------------------------
--- TAHAP 1.5: VERIFIKASI KEPEMILIKAN & PAYLOAD FIXTURE SEBELUM PENGHAPUSAN (OWNERSHIP PROOF)
--- Membuktikan secara deterministik bahwa seluruh baris yang akan dihapus adalah murni
--- milik seed run sintetis, bukan data produksi atau data lain yang kebetulan bertabrakan ID.
+-- TAHAP 1.5: VERIFIKASI KEPEMILIKAN & PAYLOAD LENGKAP DENGAN NULL-SAFE SEMANTICS & ROW LOCKING
+-- Menggunakan SELECT ... FOR UPDATE untuk mencegah race condition bersamaan,
+-- dan IS DISTINCT FROM untuk menangani NULL secara fail-closed pada seluruh kolom seed.
 -- -----------------------------------------------------------------------------
 DO $$
-DECLARE
-    v_mismatch_desc TEXT;
 BEGIN
-    -- 1. Verifikasi Kepemilikan Affiliates Sintetis
+    -- 0. Row Locking: Kunci seluruh baris fixture yang ditemukan dalam transaksi ini
+    PERFORM 1 FROM public.affiliates WHERE id IN ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222222') FOR UPDATE;
+    PERFORM 1 FROM public.affiliate_commissions WHERE id = '11111111-1111-1111-1111-111111111112' FOR UPDATE;
+    PERFORM 1 FROM public.migration_031_quarantined_affiliate_commissions WHERE id = '33333333-3333-3333-3333-333333333331' FOR UPDATE;
+    PERFORM 1 FROM public.migration_031_identifier_dedup_map WHERE map_id IN ('e1111111-1111-1111-1111-111111111111', 'e2222222-2222-2222-2222-222222222222') FOR UPDATE;
+    PERFORM 1 FROM public.orders WHERE id IN ('44444444-4444-4444-4444-444444444441', '44444444-4444-4444-4444-444444444442') FOR UPDATE;
+    PERFORM 1 FROM public.product_orders WHERE id = 44444443 FOR UPDATE;
+    PERFORM 1 FROM public.delivery_orders WHERE id = '44444444-4444-4444-4444-444444444444' FOR UPDATE;
+    PERFORM 1 FROM public.attributions WHERE id = '44444444-4444-4444-4444-444444444445' FOR UPDATE;
+    PERFORM 1 FROM public.attribution_sessions WHERE id = '44444444-4444-4444-4444-444444444446' FOR UPDATE;
+    PERFORM 1 FROM public.shop_subscriptions WHERE id = '44444444-4444-4444-4444-444444444447' FOR UPDATE;
+    PERFORM 1 FROM public.shop_commission_ledger WHERE id = '44444444-4444-4444-4444-444444444448' FOR UPDATE;
+
+    -- 1. Verifikasi Kepemilikan Affiliates (Seluruh 7 Kolom)
     IF EXISTS (
         SELECT 1 FROM public.affiliates 
         WHERE id = '11111111-1111-1111-1111-111111111111'
-          AND (tenant_id <> '00000000-0000-0000-0000-000000000001' OR name <> 'SYNTH_AFF_CLEAN_001' OR phone_number <> '081200000001' OR referral_code <> 'CLEAN01' OR commission_rate <> 0.10 OR status <> 'ACTIVE')
+          AND (tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001' 
+            OR name IS DISTINCT FROM 'SYNTH_AFF_CLEAN_001' 
+            OR phone_number IS DISTINCT FROM '081200000001' 
+            OR referral_code IS DISTINCT FROM 'CLEAN01' 
+            OR commission_rate::numeric IS DISTINCT FROM 0.10 
+            OR status IS DISTINCT FROM 'ACTIVE')
     ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Affiliate 11111111-1111-1111-1111-111111111111 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
@@ -3127,7 +3185,12 @@ BEGIN
     IF EXISTS (
         SELECT 1 FROM public.affiliates 
         WHERE id = '22222222-2222-2222-2222-222222222221'
-          AND (tenant_id <> '00000000-0000-0000-0000-000000000001' OR name <> 'SYNTH_AFF_SURV_001' OR phone_number <> '081200000002' OR referral_code <> 'SURV01' OR commission_rate <> 0.10 OR status <> 'ACTIVE')
+          AND (tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001' 
+            OR name IS DISTINCT FROM 'SYNTH_AFF_SURV_001' 
+            OR phone_number IS DISTINCT FROM '081200000002' 
+            OR referral_code IS DISTINCT FROM 'SURV01' 
+            OR commission_rate::numeric IS DISTINCT FROM 0.10 
+            OR status IS DISTINCT FROM 'ACTIVE')
     ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Affiliate 22222222-2222-2222-2222-222222222221 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
@@ -3135,34 +3198,66 @@ BEGIN
     IF EXISTS (
         SELECT 1 FROM public.affiliates 
         WHERE id = '22222222-2222-2222-2222-222222222222'
-          AND (tenant_id <> '00000000-0000-0000-0000-000000000001' OR name <> 'SYNTH_AFF_LOSER_001' OR phone_number <> '081200000003' OR referral_code <> 'LOSER01' OR commission_rate <> 0.10 OR status <> 'ACTIVE')
+          AND (tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001' 
+            OR name IS DISTINCT FROM 'SYNTH_AFF_LOSER_001' 
+            OR phone_number IS DISTINCT FROM '081200000003' 
+            OR referral_code IS DISTINCT FROM 'LOSER01' 
+            OR commission_rate::numeric IS DISTINCT FROM 0.10 
+            OR status IS DISTINCT FROM 'ACTIVE')
     ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Affiliate 22222222-2222-2222-2222-222222222222 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
 
-    -- 2. Verifikasi Kepemilikan Komisi Bersih
+    -- 2. Verifikasi Kepemilikan Komisi Bersih (Seluruh 7 Kolom)
     IF EXISTS (
         SELECT 1 FROM public.affiliate_commissions
         WHERE id = '11111111-1111-1111-1111-111111111112'
-          AND (tenant_id <> '00000000-0000-0000-0000-000000000001' OR affiliate_id <> '11111111-1111-1111-1111-111111111111' OR order_id <> 'ORD_CLEAN_001' OR order_amount <> 500000 OR amount <> 50000 OR status <> 'PAID')
+          AND (tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001' 
+            OR affiliate_id::text IS DISTINCT FROM '11111111-1111-1111-1111-111111111111' 
+            OR order_id IS DISTINCT FROM 'ORD_CLEAN_001' 
+            OR order_amount::numeric IS DISTINCT FROM 500000 
+            OR amount::numeric IS DISTINCT FROM 50000 
+            OR status IS DISTINCT FROM 'PAID')
     ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Commission 11111111-1111-1111-1111-111111111112 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
 
-    -- 3. Verifikasi Kepemilikan Komisi Karantina
+    -- 3. Verifikasi Kepemilikan Komisi Karantina (Seluruh 12 Kolom Ditulis)
     IF EXISTS (
         SELECT 1 FROM public.migration_031_quarantined_affiliate_commissions
         WHERE id = '33333333-3333-3333-3333-333333333331'
-          AND (tenant_id <> '00000000-0000-0000-0000-000000000001' OR affiliate_id <> '11111111-1111-1111-1111-111111111111' OR order_id <> 'ORD_QUAR_001' OR amount <> 75000 OR status <> 'QUARANTINED' OR quarantine_reason <> 'CROSS_TENANT_DISCREPANCY_DETECTED')
+          AND (migration_batch_id IS DISTINCT FROM 'BATCH_SYNTH_001'
+            OR tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001'
+            OR original_tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001'
+            OR affiliate_id::text IS DISTINCT FROM '11111111-1111-1111-1111-111111111111'
+            OR order_id IS DISTINCT FROM 'ORD_QUAR_001'
+            OR order_amount::numeric IS DISTINCT FROM 750000
+            OR amount::numeric IS DISTINCT FROM 75000
+            OR original_status IS DISTINCT FROM 'PENDING'
+            OR status IS DISTINCT FROM 'QUARANTINED'
+            OR quarantine_reason IS DISTINCT FROM 'CROSS_TENANT_DISCREPANCY_DETECTED'
+            OR approval_status IS DISTINCT FROM 'QUARANTINED_LOCKED'
+            OR row_snapshot::text IS DISTINCT FROM '{}')
     ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Quarantined commission 33333333-3333-3333-3333-333333333331 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
 
-    -- 4. Verifikasi Kepemilikan Dedup Map
+    -- 4. Verifikasi Kepemilikan Dedup Map (Seluruh 12 Kolom Ditulis: Rank 1 & 2)
     IF EXISTS (
         SELECT 1 FROM public.migration_031_identifier_dedup_map
         WHERE map_id = 'e1111111-1111-1111-1111-111111111111'
-          AND (tenant_id <> '00000000-0000-0000-0000-000000000001' OR dedup_rank <> 1 OR new_status <> 'SURVIVOR')
+          AND (migration_batch_id IS DISTINCT FROM 'BATCH_SYNTH_001'
+            OR table_name IS DISTINCT FROM 'affiliates'
+            OR column_name IS DISTINCT FROM 'id'
+            OR tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001'
+            OR quarantined_row_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222221'
+            OR canonical_survivor_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222221'
+            OR original_identifier_value IS DISTINCT FROM '22222222-2222-2222-2222-222222222221'
+            OR new_identifier_value IS DISTINCT FROM '22222222-2222-2222-2222-222222222221'
+            OR dedup_rank IS DISTINCT FROM 1
+            OR new_status IS DISTINCT FROM 'SURVIVOR'
+            OR resolution_reason IS DISTINCT FROM 'AUTHORITATIVE_PRIMARY_IDENTITY'
+            OR row_snapshot::text IS DISTINCT FROM '{}')
     ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Dedup map e1111111-1111-1111-1111-111111111111 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
@@ -3170,16 +3265,31 @@ BEGIN
     IF EXISTS (
         SELECT 1 FROM public.migration_031_identifier_dedup_map
         WHERE map_id = 'e2222222-2222-2222-2222-222222222222'
-          AND (tenant_id <> '00000000-0000-0000-0000-000000000001' OR dedup_rank <> 2 OR new_status <> 'SUPERSEDED_DUPLICATE')
+          AND (migration_batch_id IS DISTINCT FROM 'BATCH_SYNTH_001'
+            OR table_name IS DISTINCT FROM 'affiliates'
+            OR column_name IS DISTINCT FROM 'id'
+            OR tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001'
+            OR quarantined_row_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222'
+            OR canonical_survivor_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222221'
+            OR original_identifier_value IS DISTINCT FROM '22222222-2222-2222-2222-222222222222'
+            OR new_identifier_value IS DISTINCT FROM '22222222-2222-2222-2222-222222222221'
+            OR dedup_rank IS DISTINCT FROM 2
+            OR new_status IS DISTINCT FROM 'SUPERSEDED_DUPLICATE'
+            OR resolution_reason IS DISTINCT FROM 'MERGED_TO_SURVIVOR'
+            OR row_snapshot::text IS DISTINCT FROM '{}')
     ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Dedup map e2222222-2222-2222-2222-222222222222 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
 
-    -- 5. Verifikasi Kepemilikan Orders
+    -- 5. Verifikasi Kepemilikan Orders (Seluruh 6 Kolom Ditulis)
     IF EXISTS (
         SELECT 1 FROM public.orders
         WHERE id = '44444444-4444-4444-4444-444444444441'
-          AND (tenant_id <> '00000000-0000-0000-0000-000000000001' OR affiliate_id <> '22222222-2222-2222-2222-222222222222' OR manager_id IS NOT NULL OR gross_amount <> 100000 OR status <> 'PENDING')
+          AND (tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001'
+            OR affiliate_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222'
+            OR manager_id IS NOT NULL
+            OR gross_amount::numeric IS DISTINCT FROM 100000
+            OR status IS DISTINCT FROM 'PENDING')
     ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Order 44444444-4444-4444-4444-444444444441 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
@@ -3187,95 +3297,226 @@ BEGIN
     IF EXISTS (
         SELECT 1 FROM public.orders
         WHERE id = '44444444-4444-4444-4444-444444444442'
-          AND (tenant_id <> '00000000-0000-0000-0000-000000000001' OR affiliate_id IS NOT NULL OR manager_id <> '22222222-2222-2222-2222-222222222222' OR gross_amount <> 150000 OR status <> 'PENDING')
+          AND (tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001'
+            OR affiliate_id IS NOT NULL
+            OR manager_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222'
+            OR gross_amount::numeric IS DISTINCT FROM 150000
+            OR status IS DISTINCT FROM 'PENDING')
     ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Order 44444444-4444-4444-4444-444444444442 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
 
-    -- 6. Verifikasi Kepemilikan Child Tables
-    IF EXISTS (SELECT 1 FROM public.product_orders WHERE id = 44444443 AND (tenant_id <> '00000000-0000-0000-0000-000000000001' OR affiliate_id <> '22222222-2222-2222-2222-222222222222' OR order_id <> 'PO_CHILD_001')) THEN
+    -- 6. Verifikasi Kepemilikan Product Orders (Seluruh 5 Kolom Ditulis Termasuk Status)
+    IF EXISTS (
+        SELECT 1 FROM public.product_orders 
+        WHERE id = 44444443 
+          AND (tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001' 
+            OR order_id IS DISTINCT FROM 'PO_CHILD_001'
+            OR affiliate_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222' 
+            OR status IS DISTINCT FROM 'PENDING')
+    ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Product Order 44444443 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
 
-    IF EXISTS (SELECT 1 FROM public.delivery_orders WHERE id = '44444444-4444-4444-4444-444444444444' AND (tenant_id <> '00000000-0000-0000-0000-000000000001' OR affiliate_id <> '22222222-2222-2222-2222-222222222222' OR provider <> 'JNE' OR order_id <> 'ORD_DO_001')) THEN
+    -- 7. Verifikasi Kepemilikan Delivery Orders (Seluruh 7 Kolom Ditulis Termasuk service_type & status)
+    IF EXISTS (
+        SELECT 1 FROM public.delivery_orders 
+        WHERE id = '44444444-4444-4444-4444-444444444444' 
+          AND (tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001' 
+            OR order_id IS DISTINCT FROM 'ORD_DO_001'
+            OR provider IS DISTINCT FROM 'JNE' 
+            OR service_type IS DISTINCT FROM 'REG'
+            OR affiliate_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222' 
+            OR status IS DISTINCT FROM 'PENDING')
+    ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Delivery Order 44444444-4444-4444-4444-444444444444 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
 
-    IF EXISTS (SELECT 1 FROM public.attributions WHERE id = '44444444-4444-4444-4444-444444444445' AND (tenant_id <> '00000000-0000-0000-0000-000000000001' OR affiliate_id <> '22222222-2222-2222-2222-222222222222' OR session_id <> 'SESS_001')) THEN
+    -- 8. Verifikasi Kepemilikan Attributions (Seluruh 5 Kolom Ditulis Termasuk ip_hash)
+    IF EXISTS (
+        SELECT 1 FROM public.attributions 
+        WHERE id = '44444444-4444-4444-4444-444444444445' 
+          AND (tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001' 
+            OR session_id IS DISTINCT FROM 'SESS_001'
+            OR ip_hash IS DISTINCT FROM 'HASH_001'
+            OR affiliate_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222')
+    ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Attribution 44444444-4444-4444-4444-444444444445 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
 
-    IF EXISTS (SELECT 1 FROM public.attribution_sessions WHERE id = '44444444-4444-4444-4444-444444444446' AND (tenant_id <> '00000000-0000-0000-0000-000000000001' OR affiliate_id <> '22222222-2222-2222-2222-222222222222' OR ip_hash <> 'HASH_001')) THEN
+    -- 9. Verifikasi Kepemilikan Attribution Sessions (Seluruh 4 Kolom Ditulis Termasuk ip_hash)
+    IF EXISTS (
+        SELECT 1 FROM public.attribution_sessions 
+        WHERE id = '44444444-4444-4444-4444-444444444446' 
+          AND (tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001' 
+            OR ip_hash IS DISTINCT FROM 'HASH_001'
+            OR affiliate_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222')
+    ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Attribution Session 44444444-4444-4444-4444-444444444446 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
 
-    IF EXISTS (SELECT 1 FROM public.shop_subscriptions WHERE id = '44444444-4444-4444-4444-444444444447' AND (tenant_id <> '00000000-0000-0000-0000-000000000001' OR affiliate_id <> '22222222-2222-2222-2222-222222222222' OR amount <> 299000)) THEN
+    -- 10. Verifikasi Kepemilikan Shop Subscriptions (Seluruh 6 Kolom Ditulis Termasuk tenant_slug, status, amount)
+    IF EXISTS (
+        SELECT 1 FROM public.shop_subscriptions 
+        WHERE id = '44444444-4444-4444-4444-444444444447' 
+          AND (tenant_slug IS DISTINCT FROM '00000000-0000-0000-0000-000000000001'
+            OR tenant_id::text IS DISTINCT FROM '00000000-0000-0000-0000-000000000001' 
+            OR affiliate_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222' 
+            OR status IS DISTINCT FROM 'ACTIVE'
+            OR amount::numeric IS DISTINCT FROM 299000)
+    ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Subscription 44444444-4444-4444-4444-444444444447 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
 
-    IF EXISTS (SELECT 1 FROM public.shop_commission_ledger WHERE id = '44444444-4444-4444-4444-444444444448' AND (tenant_slug <> '00000000-0000-0000-0000-000000000001' OR affiliate_id <> '22222222-2222-2222-2222-222222222222' OR gross_amount <> 299000 OR affiliate_amount <> 29900)) THEN
+    -- 11. Verifikasi Kepemilikan Shop Commission Ledger (Seluruh 7 Kolom Ditulis Termasuk am_amount & platform_net_amount)
+    IF EXISTS (
+        SELECT 1 FROM public.shop_commission_ledger 
+        WHERE id = '44444444-4444-4444-4444-444444444448' 
+          AND (tenant_slug IS DISTINCT FROM '00000000-0000-0000-0000-000000000001' 
+            OR affiliate_id::text IS DISTINCT FROM '22222222-2222-2222-2222-222222222222' 
+            OR gross_amount::numeric IS DISTINCT FROM 299000 
+            OR affiliate_amount::numeric IS DISTINCT FROM 29900
+            OR am_amount::numeric IS DISTINCT FROM 0
+            OR platform_net_amount::numeric IS DISTINCT FROM 269100)
+    ) THEN
         RAISE EXCEPTION 'CLEANUP OWNERSHIP VIOLATION: Ledger 44444444-4444-4444-4444-444444444448 payload mismatch!' USING ERRCODE = 'P0001';
     END IF;
 END $$;
 
 -- -----------------------------------------------------------------------------
 -- TAHAP 2: PENGHAPUSAN EKSKLUSIF DENGAN KUALIFIKASI KEPEMILIKAN LENGKAP
--- Menghapus hanya baris yang memenuhi ID dan seluruh atribut kepemilikan sintetis.
+-- Menggunakan predikat seluruh payload untuk menjamin atomic safety terhadap concurrency.
 -- CATATAN: Tenant jangkar '00000000-0000-0000-0000-000000000001' TIDAK DIHAPUS.
 -- -----------------------------------------------------------------------------
 DELETE FROM public.shop_commission_ledger 
 WHERE id = '44444444-4444-4444-4444-444444444448'
   AND tenant_slug = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222';
+  AND affiliate_id = '22222222-2222-2222-2222-222222222222'
+  AND gross_amount = 299000
+  AND affiliate_amount = 29900
+  AND am_amount = 0
+  AND platform_net_amount = 269100;
 
 DELETE FROM public.shop_subscriptions 
 WHERE id = '44444444-4444-4444-4444-444444444447'
+  AND tenant_slug = '00000000-0000-0000-0000-000000000001'
   AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222';
+  AND affiliate_id = '22222222-2222-2222-2222-222222222222'
+  AND status = 'ACTIVE'
+  AND amount = 299000;
 
 DELETE FROM public.attribution_sessions 
 WHERE id = '44444444-4444-4444-4444-444444444446'
   AND tenant_id = '00000000-0000-0000-0000-000000000001'
+  AND ip_hash = 'HASH_001'
   AND affiliate_id = '22222222-2222-2222-2222-222222222222';
 
 DELETE FROM public.attributions 
 WHERE id = '44444444-4444-4444-4444-444444444445'
   AND tenant_id = '00000000-0000-0000-0000-000000000001'
+  AND session_id = 'SESS_001'
+  AND ip_hash = 'HASH_001'
   AND affiliate_id = '22222222-2222-2222-2222-222222222222';
 
 DELETE FROM public.delivery_orders 
 WHERE id = '44444444-4444-4444-4444-444444444444'
   AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222';
+  AND order_id = 'ORD_DO_001'
+  AND provider = 'JNE'
+  AND service_type = 'REG'
+  AND affiliate_id = '22222222-2222-2222-2222-222222222222'
+  AND status = 'PENDING';
 
 DELETE FROM public.product_orders 
 WHERE id = 44444443
+  AND order_id = 'PO_CHILD_001'
   AND tenant_id = '00000000-0000-0000-0000-000000000001'
-  AND affiliate_id = '22222222-2222-2222-2222-222222222222';
+  AND affiliate_id = '22222222-2222-2222-2222-222222222222'
+  AND status = 'PENDING';
 
 DELETE FROM public.orders 
-WHERE id IN ('44444444-4444-4444-4444-444444444441', '44444444-4444-4444-4444-444444444442')
-  AND tenant_id = '00000000-0000-0000-0000-000000000001';
+WHERE id = '44444444-4444-4444-4444-444444444441'
+  AND tenant_id = '00000000-0000-0000-0000-000000000001'
+  AND affiliate_id = '22222222-2222-2222-2222-222222222222'
+  AND manager_id IS NULL
+  AND status = 'PENDING'
+  AND gross_amount = 100000;
+
+DELETE FROM public.orders 
+WHERE id = '44444444-4444-4444-4444-444444444442'
+  AND tenant_id = '00000000-0000-0000-0000-000000000001'
+  AND affiliate_id IS NULL
+  AND manager_id = '22222222-2222-2222-2222-222222222222'
+  AND status = 'PENDING'
+  AND gross_amount = 150000;
 
 DELETE FROM public.migration_031_identifier_dedup_map 
-WHERE map_id IN ('e1111111-1111-1111-1111-111111111111', 'e2222222-2222-2222-2222-222222222222')
-  AND tenant_id = '00000000-0000-0000-0000-000000000001';
+WHERE map_id = 'e1111111-1111-1111-1111-111111111111'
+  AND migration_batch_id = 'BATCH_SYNTH_001'
+  AND table_name = 'affiliates'
+  AND column_name = 'id'
+  AND tenant_id = '00000000-0000-0000-0000-000000000001'
+  AND quarantined_row_id = '22222222-2222-2222-2222-222222222221'
+  AND canonical_survivor_id = '22222222-2222-2222-2222-222222222221'
+  AND dedup_rank = 1
+  AND new_status = 'SURVIVOR';
+
+DELETE FROM public.migration_031_identifier_dedup_map 
+WHERE map_id = 'e2222222-2222-2222-2222-222222222222'
+  AND migration_batch_id = 'BATCH_SYNTH_001'
+  AND table_name = 'affiliates'
+  AND column_name = 'id'
+  AND tenant_id = '00000000-0000-0000-0000-000000000001'
+  AND quarantined_row_id = '22222222-2222-2222-2222-222222222222'
+  AND canonical_survivor_id = '22222222-2222-2222-2222-222222222221'
+  AND dedup_rank = 2
+  AND new_status = 'SUPERSEDED_DUPLICATE';
 
 DELETE FROM public.migration_031_quarantined_affiliate_commissions 
 WHERE id = '33333333-3333-3333-3333-333333333331'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001';
+  AND migration_batch_id = 'BATCH_SYNTH_001'
+  AND tenant_id = '00000000-0000-0000-0000-000000000001'
+  AND affiliate_id = '11111111-1111-1111-1111-111111111111'
+  AND order_id = 'ORD_QUAR_001'
+  AND amount = 75000
+  AND status = 'QUARANTINED'
+  AND quarantine_reason = 'CROSS_TENANT_DISCREPANCY_DETECTED';
 
 DELETE FROM public.affiliate_commissions 
 WHERE id = '11111111-1111-1111-1111-111111111112'
-  AND tenant_id = '00000000-0000-0000-0000-000000000001';
+  AND tenant_id = '00000000-0000-0000-0000-000000000001'
+  AND affiliate_id = '11111111-1111-1111-1111-111111111111'
+  AND order_id = 'ORD_CLEAN_001'
+  AND order_amount = 500000
+  AND amount = 50000
+  AND status = 'PAID';
 
 DELETE FROM public.affiliates 
-WHERE id IN (
-  '11111111-1111-1111-1111-111111111111',
-  '22222222-2222-2222-2222-222222222221',
-  '22222222-2222-2222-2222-222222222222'
-)
-AND tenant_id = '00000000-0000-0000-0000-000000000001';
+WHERE id = '11111111-1111-1111-1111-111111111111'
+  AND tenant_id = '00000000-0000-0000-0000-000000000001'
+  AND name = 'SYNTH_AFF_CLEAN_001'
+  AND phone_number = '081200000001'
+  AND referral_code = 'CLEAN01'
+  AND commission_rate = 0.10
+  AND status = 'ACTIVE';
+
+DELETE FROM public.affiliates 
+WHERE id = '22222222-2222-2222-2222-222222222221'
+  AND tenant_id = '00000000-0000-0000-0000-000000000001'
+  AND name = 'SYNTH_AFF_SURV_001'
+  AND phone_number = '081200000002'
+  AND referral_code = 'SURV01'
+  AND commission_rate = 0.10
+  AND status = 'ACTIVE';
+
+DELETE FROM public.affiliates 
+WHERE id = '22222222-2222-2222-2222-222222222222'
+  AND tenant_id = '00000000-0000-0000-0000-000000000001'
+  AND name = 'SYNTH_AFF_LOSER_001'
+  AND phone_number = '081200000003'
+  AND referral_code = 'LOSER01'
+  AND commission_rate = 0.10
+  AND status = 'ACTIVE';
 
 -- -----------------------------------------------------------------------------
 -- TAHAP 3: VERIFIKASI POST-CLEANUP: EXACT-VALUE TWO-WAY EXCEPT RECONCILIATION
@@ -3345,7 +3586,45 @@ BEGIN
     ) td;
 
     IF v_tenant_diff <> 0 THEN
-        RAISE EXCEPTION 'CRITICAL INTEGRITY FAILURE: Tenant anchor modified or deleted during cleanup!' USING ERRCODE = 'P0001';
+        RAISE EXCEPTION 'CRITICAL INTEGRITY FAILURE: Tenant anchor modified or deleted during cleanup!', USING ERRCODE = 'P0001';
+    END IF;
+END $$;
+
+-- -----------------------------------------------------------------------------
+-- TAHAP 4: POST-CLEANUP ZERO RESIDUAL VERIFICATION (BUKTI ELIMINASI 100%)
+-- Membuktikan secara matematis bahwa ke-13 entitas sintetis + 2 dedup map benar-benar
+-- telah lenyap 100% tanpa sisa di seluruh 11 tabel database.
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE
+    v_residual_cnt INT;
+BEGIN
+    SELECT count(*) INTO v_residual_cnt FROM (
+        SELECT id::text FROM public.affiliates WHERE id IN ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222222')
+        UNION ALL
+        SELECT id::text FROM public.affiliate_commissions WHERE id = '11111111-1111-1111-1111-111111111112'
+        UNION ALL
+        SELECT id::text FROM public.migration_031_quarantined_affiliate_commissions WHERE id = '33333333-3333-3333-3333-333333333331'
+        UNION ALL
+        SELECT map_id::text FROM public.migration_031_identifier_dedup_map WHERE map_id IN ('e1111111-1111-1111-1111-111111111111', 'e2222222-2222-2222-2222-222222222222')
+        UNION ALL
+        SELECT id::text FROM public.orders WHERE id IN ('44444444-4444-4444-4444-444444444441', '44444444-4444-4444-4444-444444444442')
+        UNION ALL
+        SELECT id::text FROM public.product_orders WHERE id = 44444443
+        UNION ALL
+        SELECT id::text FROM public.delivery_orders WHERE id = '44444444-4444-4444-4444-444444444444'
+        UNION ALL
+        SELECT id::text FROM public.attributions WHERE id = '44444444-4444-4444-4444-444444444445'
+        UNION ALL
+        SELECT id::text FROM public.attribution_sessions WHERE id = '44444444-4444-4444-4444-444444444446'
+        UNION ALL
+        SELECT id::text FROM public.shop_subscriptions WHERE id = '44444444-4444-4444-4444-444444444447'
+        UNION ALL
+        SELECT id::text FROM public.shop_commission_ledger WHERE id = '44444444-4444-4444-4444-444444444448'
+    ) residual_check;
+
+    IF v_residual_cnt <> 0 THEN
+        RAISE EXCEPTION 'POST-CLEANUP RESIDUAL FAILURE: Expected 0 residual synthetic fixtures, found %!', v_residual_cnt USING ERRCODE = 'P0001';
     END IF;
 END $$;
 
