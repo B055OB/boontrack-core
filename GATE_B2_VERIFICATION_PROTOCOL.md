@@ -1,12 +1,12 @@
 # GATE B2 FORMAL VERIFICATION PROTOCOL
 ## Schema Integrity, Multi-Source Backfill, Active FK Reconciliation & Lineage Verification
-**Document ID:** `BOONTRACK-SPEC-GATE-B2-PROTOCOL-REV2.3`  
+**Document ID:** `BOONTRACK-SPEC-GATE-B2-PROTOCOL-REV2.4`  
 **Classification:** Internal Technical Architecture & Formal Verification Protocol  
 **Author:** Lead Database Reliability Engineer (DBRE) & Principal Systems Architect  
 **Date:** 2026-11-03  
-**Status:** **`REMEDIATED PROTOCOL REV 2.3 — STANDBY FOR CTO DESIGN APPROVAL`**  
-**Supersedes:** `BOONTRACK-SPEC-GATE-B2-PROTOCOL-REV2.2` (Commit [`e034cb4`](https://github.com/B055OB/boontrack-core/commit/e034cb4a8f90ea262c50e7b8c7ba2ee0ad0956b6))  
-**Remediation Mandate:** Formal Closure of CTO Findings `B2-R4-F01` s/d `B2-R4-F04` (Exact Identity-Cluster Manifest & Survivor Cardinality, NULL-Safe Complete Baseline Fingerprint & Assertion Binding, Bidirectional Canonical Mapping Completeness & Anti-Ambiguity, and Standalone Script Portability)  
+**Status:** **`REMEDIATED PROTOCOL REV 2.4 — STANDBY FOR CTO DESIGN APPROVAL`**  
+**Supersedes:** `BOONTRACK-SPEC-GATE-B2-PROTOCOL-REV2.3` (Commit [`abcfb77`](https://github.com/B055OB/boontrack-core/commit/abcfb7721822a8ca607ade30db4580d5e544c0d0))  
+**Remediation Mandate:** Formal Closure of CTO Findings `R5-F01` s/d `R5-F03` & Continuation of `R5-F04` (Eliminasi Sentinel Tenant & Formal Cluster Manifest, Canonical JSONB Collision-Safe Serialization & 3-Tier Baseline Lineage, Full Candidate Universe, Composite Tenant Scope & Strict Bi-Direction, and Standalone Script Portability Preservation)  
 **Prerequisite:** Gate B1 Ratified & Formally Closed (`REV 4.1.6.2.11-E`, Commit [`d418367`](https://github.com/B055OB/boontrack-core/commit/d418367a73fbb36270bca57e3bf5d428bf9e08fc))  
 **Execution Posture:** `STRICT READ-ONLY / ZERO STAGING MUTATION / ZERO-TOUCH PRODUCTION & R2`  
 
@@ -72,16 +72,18 @@ Gate B2 dirancang untuk memverifikasi keabsahan struktur skema fisik, kelengkapa
 - Menghasilkan matriks laporan 6-kolom eksplisit untuk seluruh 9 tabel sumber:
   `source_table`, `total_rows`, `valid_resolved_rows`, `quarantined_rows`, `unresolved_tenant_rows`, `cross_tenant_conflict_rows`.
 
-### Scope 3: Deduplication Lineage Map, Full Fail-Closed Status & Manifest-Driven Cluster Survivor Cardinality (`B2-R3-F01` & `B2-R4-F01`)
+### Scope 3: Deduplication Lineage Map, Formal Cluster Manifest & Direct Tenant Grouping (`B2-R3-F01`, `B2-R4-F01`, `R5-F01`)
 - Memverifikasi tabel pemetaan tata kelola `public.migration_031_identifier_dedup_map`:
   * Tepat satu survivor kanonikal (`dedup_rank = 1`, `new_status = 'SURVIVOR'`, `resolution_reason = 'AUTHORITATIVE_PRIMARY_IDENTITY'`).
   * Seluruh duplikat sekunder terpetakan (`dedup_rank > 1`, wajib berstatus tepat `new_status = 'SUPERSEDED_DUPLICATE'`, `resolution_reason = 'MERGED_TO_SURVIVOR'`).
   * Imutabilitas baseline: `original_identifier_value` tidak pernah tertimpa string mutasi.
 - **Penanganan Status Fail-Closed Murni:** Mengeliminasi klausa fallback permisif `ELSE 'VALID'`. Status `NULL` ditandai sebagai `NULL_NEW_STATUS`, dan status di luar whitelist resmi (`SURVIVOR`, `SUPERSEDED_DUPLICATE`, `QUARANTINED`) ditandai sebagai `UNKNOWN_NEW_STATUS`.
-- **Manifest Identitas Kontraktual & Pengelompokan Berbasis Kluster Asli (`B2-R4-F01`):**
-  * Mendefinisikan manifest target deduplikasi eksplisit untuk ke-4 tabel: `affiliates` (`referral_code`, `id`), `shop_subscriptions` (`xendit_invoice_id`), `shop_commission_ledger` (`subscription_id`), dan `affiliate_commissions` (`tenant_id`, `order_id`).
-  * Mengelompokkan evaluasi `survivor_cardinality_check` bukan berdasarkan `canonical_survivor_id`, melainkan berdasarkan identitas kluster asli: `(table_name, column_name, tenant_id, cluster_identifier)` di mana `cluster_identifier = COALESCE(NULLIF(BTRIM(original_identifier_value), ''), quarantined_row_id)`.
-  * Membuktikan secara universal bahwa setiap kluster memiliki tepat satu survivor: `COUNT(*) FILTER (WHERE new_status = 'SURVIVOR') = 1` (anomali jika = 0 atau > 1).
+- **Manifest Identitas Kontraktual Formal & Eliminasi Sentinel (`R5-F01`):**
+  * Mendefinisikan manifest target deduplikasi formal dengan 5 kolom aturan: `(table_name, column_name, identity_source, null_allowed, clustering_key_rule)` untuk ke-4 tabel target: `affiliates`, `shop_subscriptions`, `shop_commission_ledger`, dan `affiliate_commissions`.
+  * Mengeliminasi total seluruh penggunaan string sentinel artifisial seperti `'__GLOBAL__'`. Pengelompokan `GROUP BY` menggunakan `m.tenant_id` secara langsung (PostgreSQL secara native mengelompokkan nilai `NULL`).
+  * Mengeliminasi total fallback permisif `COALESCE(..., m.quarantined_row_id)` yang berpotensi memecah baris menjadi kluster hantu individual.
+  * Jika `original_identifier_value` bernilai `NULL` atau kosong pada kolom yang mewajibkan identitas bisnis (`null_allowed = FALSE`), baris ditandai sebagai anomali fatal `UNRESOLVED_CLUSTER_IDENTITY`.
+  * Membuktikan secara universal bahwa setiap kluster identitas asli memiliki tepat satu survivor: `COUNT(*) FILTER (WHERE new_status = 'SURVIVOR') = 1` (anomali jika = 0 atau > 1).
 - **Integritas Referensial Fisik & Keselarasan Tenant Survivor (`B2-R4-F01`):**
   * Membuktikan bahwa setiap `canonical_survivor_id` benar-benar ada secara fisik di tabel sumber terkait (`public.affiliates`, `public.shop_subscriptions`, `public.shop_commission_ledger`, atau `public.affiliate_commissions`).
   * Mewajibkan kecocokan partisi tenant secara ketat (`parent.tenant_id IS NOT DISTINCT FROM map.tenant_id`). Jika survivor ada namun berbeda tenant, asersi langsung gagal (*fail-closed*).
@@ -96,19 +98,23 @@ Gate B2 dirancang untuk memverifikasi keabsahan struktur skema fisik, kelengkapa
   * **Nol referensi menggantung (*zero orphaned child rows*):** Tidak ada pasangan `(tenant_id, affiliate_id)` atau `(tenant_id, manager_id)` yang tidak eksis di `public.affiliates`.
   * **Nol referensi ke loser (*zero loser references*):** Tidak ada baris anak yang masih menunjuk ke ID loser yang telah digabungkan/dikarantina (`dedup_rank > 1` atau status superseded).
 
-### Scope 5: Two-Tier Financial Reconciliation, NULL-Safe Complete Baseline Fingerprint & Bidirectional Canonical Mapping (`B2-R3-F02`, `B2-R3-F03`, `B2-R4-F02`, `B2-R4-F03`)
+### Scope 5: 3-Tier Lineage Chain, Canonical JSONB Collision-Safe Serialization & Full Bidirectional Composite Reconciliation (`R5-F02` & `R5-F03`)
 - **Prosedur Snapshot Segar Otoritatif (Fail-Closed Fresh Snapshot):** Menghapus klausul `IF NOT EXISTS` dan menerapkan eksekusi `DROP TABLE IF EXISTS pre_mig031_affiliate_commissions_snapshot; CREATE TEMP TABLE ...` untuk mencegah penggunaan tabel snapshot basi antar-sesi.
-- **Blok Metadata Baseline & Sidik Jari Kriptografis 7 Atribut Lengkap (`B2-R4-F02`):**
-  * Snapshot dilengkapi tabel metadata `pre_mig031_snapshot_metadata` yang mencatat `baseline_run_id`, `snapshot_taken_at`, `snapshot_row_count`, `snapshot_total_amount`, dan `snapshot_fingerprint`.
-  * Sidik jari agregat dibangun menggunakan fungsi deterministik 100% NULL-safe `CONCAT_WS` yang mencakup ke-7 atribut rekonsiliasi kontraktual: `(commission_id, tenant_id, recipient_id, order_id, invoice_reference, financial_status, amount)`.
-  * **Pengikatan Asersi Metrik Baseline:** Hitungan baris pasca-migrasi (`post_row_count`) dan sidik jari terhitung ulang dari seluruh baris aktif dan karantina diikat langsung sebagai asersi kesetaraan matematis mutlak terhadap metadata snapshot baseline (`snapshot_row_count` dan `snapshot_fingerprint`). Setiap selisih langsung memicu kegagalan fatal.
-- **Rekonsiliasi Identitas Kanonikal Dua Arah & Anti-Ambiguitas Bebas Drop (`B2-R4-F03`):**
-  * Mengganti konstruksi `INNER JOIN` permisif dengan tabel rekonsiliasi dua arah `_mig031_canonical_identity_reconciliation` berbasis `LEFT JOIN`.
-  * Seluruh baris entri dedup map dievaluasi dan diklasifikasikan secara transparan tanpa ada anomali yang disamarkan atau didrop:
-    `UNRESOLVED_LEGACY_RECIPIENT`, `AMBIGUOUS_MAPPING`, `BROKEN_SURVIVOR_REFERENCE`, `TENANT_MISMATCH_SURVIVOR`, `INACTIVE_SURVIVOR`, atau `VALID`.
-  * Mewajibkan hitungan anomali rekonsiliasi bernilai tepat 0 (`canonical_reconciliation_anomalies_count = 0`).
-  * Membangun `_mig031_canonical_identity_map` hanya dari baris yang berstatus `VALID`.
-- Menegakkan presisi aritmatika `numeric(18, 2)` di seluruh penghitungan saldo dan agregasi untuk mengeliminasi *floating-point drift*.
+- **Serialisasi Kanonikal JSONB Collision-Safe & Eliminasi Sentinel (`R5-F02`):**
+  * Mengganti konkatenasi string `CONCAT_WS` dengan serialisasi kanonikal `jsonb_build_object('cid', ..., 'tid', ..., 'rid', ..., 'oid', ..., 'inv', ..., 'sts', ..., 'amt', ...)::text`.
+  * Mengeliminasi total seluruh string sentinel buatan (`'__NULL_*__'`); nilai `NULL` diekspresikan secara native oleh PostgreSQL sebagai JSON `null`.
+  * Presisi desimal diformat deterministik via `to_char(amount, 'FM999999999999999990.00')`.
+- **Rantai Pembuktian 3-Lapis (3-Tier Baseline Lineage Chain — `R5-F02`):**
+  1. `baseline_snapshot_fingerprint`: Sidik jari kriptografis SHA-256 dari snapshot aktual awal.
+  2. `expected_transformed_fingerprint`: Sidik jari dari snapshot awal yang ditransformasikan dengan peta kanonikal teresolusi dan backfill tenant.
+  3. `actual_post_migration_fingerprint`: Sidik jari yang dihitung ulang langsung dari gabungan aktual baris aktif (`public.affiliate_commissions`) dan karantina fisik (`public.migration_031_quarantined_affiliate_commissions`).
+  * Syarat kelulusan mutlak: `actual_post_row_count = snapshot_row_count`, `actual_post_total_amount = snapshot_total_amount`, dan `actual_post_migration_fingerprint = expected_transformed_fingerprint`.
+- **Semesta Kandidat Lengkap, Skop Komposit Tenant & Strict Bi-Directional Audit (`R5-F03`):**
+  * Mendefinisikan `candidate_universe` tanpa filter `WHERE` parsial yang berisiko menyembunyikan anomali.
+  * Mengevaluasi ambiguitas pemetaan dalam skop komposit tenant: `GROUP BY tenant_id, legacy_recipient_id HAVING COUNT(DISTINCT canonical_survivor_id) > 1`.
+  * Melakukan pengujian dua arah penuh (`FULL OUTER JOIN` antara `candidate_universe` dan `_mig031_canonical_identity_map`) untuk menangkap secara transparan:
+    `MISSING_CANONICAL_MAPPING`, `ORPHAN_CANONICAL_MAPPING`, `SURVIVOR_MISMATCH_IN_MAP`, `TENANT_MISMATCH_SURVIVOR`, `BROKEN_SURVIVOR_REFERENCE`, dan `INACTIVE_SURVIVOR`.
+  * Mewajibkan hitungan total anomali rekonsiliasi bernilai tepat 0 (`canonical_reconciliation_anomalies_count = 0`).
 - Menguji kesetaraan matematis sebelum dan sesudah migrasi melalui arsitektur audit dua tingkat:
   * **Tingkat 1 (Row-Level PK Lineage Audit):** Audit baris-ke-baris berbasis primary key (`commission_id`) membandingkan snapshot awal terhadap tabel aktif + tabel karantina fisik menggunakan semantik NULL-safe `IS DISTINCT FROM`.
   * **Tingkat 2 (Grouped Recipient & Financial Status Reconciliation):** Rekonsiliasi agregat per kelompok penerima kanonikal `(tenant_id, canonical_recipient_id, order_id, invoice_reference, financial_status)` via `FULL OUTER JOIN` dengan `IS NOT DISTINCT FROM`, membuktikan kesetaraan hitungan baris (`row_count_delta = 0`) dan nominal (`amount_delta = 0.00`).
@@ -126,7 +132,7 @@ Sesuai instruksi CTO (`B2-R3-F04`), seluruh prakondisi diklasifikasikan ke dalam
 | **PRE-01** | **Ratifikasi & Penutupan Formal Gate B1** | **YES (MANDATORY)** | 1. Git Commit SHA: [`d418367`](https://github.com/B055OB/boontrack-core/commit/d418367a73fbb36270bca57e3bf5d428bf9e08fc)<br>2. Arsip Audit Ter-track: `audit_b1_submission/CTO_AUDIT_ARTIFACTS_REV4.1.6.2.11_FINAL.zip`<br>   - File SHA-256: `7ba7eaf4c5cc7d596e29f3587fc991f99f4f4469f30676b05093515139849044`<br>   - Ukuran: 86.028 bytes | **VERIFIED BY CTO & DBRE**<br>Semua 4 asersi mutasi lulus $100\%$, $\Delta_{\text{residual}} = 0$, sidik jari 5 baris historis `c9b2f0bb2d...` cocok identik. |
 | **PRE-02** | **Koneksi Staging Terisolasi & Enforced SSL** | **YES (MANDATORY)** | 1. DSN Host: `postgres.xkhqirhurnjqglmajghn` di AWS ap-southeast-1 pooler port 5432.<br>2. Flag `sslmode=require` terpasang paten di seluruh konektor Python & SQL.<br>3. Log Eksekusi: `audit_b1_submission/gate_b1_staging_dryrun.log` | **VERIFIED BY DBRE**<br>Koneksi pooler aktif, handshake TLS terverifikasi, DSN non-staging langsung memicu abort via `test_runner_dsn_guards.py`. |
 | **PRE-03** | **Zero-Touch Produksi & Cloudflare R2** | **YES (MANDATORY)** | 1. DSN Guardrail: string regex memblokir host `mpluzajlzpregmjwpjqr` (Prod DB).<br>2. R2 Guardrail: token `boontrack-production` diisolasi dari runtime Staging.<br>3. Log Uji Negatif: `audit_b1_submission/RUNNER_SECURITY_TESTS.log` | **VERIFIED BY CTO & DBRE**<br>Upaya koneksi silang ke host produksi atau bucket produksi memicu `SecurityException` / `SystemExit(1)` instan. |
-| **PRE-04** | **Isolasi Rahasia & Rotasi Kredensial (Non-Secret Proof Ter-track)** | **YES (MANDATORY)** | 1. Berkas Log Rotasi (Git Tracked): `audit_b1_submission/CREDENTIAL_ROTATION_PROOF.log`<br>   - File SHA-256: `1e1093d7a9267a3fcb5cffcff3f09b0ce69668d2e889c135fa23576971224ad5`<br>   - Ukuran: 1.144 bytes<br>2. Skrip Verifikasi Mandiri (Git Tracked — `B2-R4-F04`): `audit_b1_submission/verify_credential_rotation.py`<br>   - File SHA-256: `c2a2a497dfc0d6f7e8c600e1304d8d983f77848e4f7032c334a8c252a8e06059`<br>   - Ukuran: 10.587 bytes<br>   - Portabilitas Penuh: Resolusi dinamis via `pathlib.Path`, 100% mandiri tanpa dependensi import lokal `execute_b1`, dan bebas path Windows absolut.<br>3. Non-Secret Cryptographic Fingerprint:<br>   - Staging Salt Fingerprint: SHA-256 digest dari `PII_HASH_SALT` dan `APP_MASTER_KEY` terbukti terisolasi penuh ($\text{Digest}_{\text{stg}} \neq \text{Digest}_{\text{prod}}$). | **VERIFIED INDEPENDENTLY**<br>Dual authentication test terbukti: kredensial lama ditolak (`OperationalError: password authentication failed for user postgres`), kredensial baru terotentikasi penuh tanpa kebocoran plaintext. |
+| **PRE-04** | **Isolasi Rahasia & Rotasi Kredensial (Non-Secret Proof Ter-track)** | **YES (MANDATORY)** | 1. Berkas Log Rotasi (Git Tracked): `audit_b1_submission/CREDENTIAL_ROTATION_PROOF.log`<br>   - File SHA-256: `1e1093d7a9267a3fcb5cffcff3f09b0ce69668d2e889c135fa23576971224ad5`<br>   - Ukuran: 1.144 bytes<br>2. Skrip Verifikasi Mandiri (Git Tracked — `B2-R4-F04` & `R5-F04`): `audit_b1_submission/verify_credential_rotation.py`<br>   - File SHA-256: `c2a2a497dfc0d6f7e8c600e1304d8d983f77848e4f7032c334a8c252a8e06059`<br>   - Ukuran: 10.587 bytes<br>   - Portabilitas Penuh: Resolusi dinamis via `pathlib.Path`, 100% mandiri tanpa dependensi import lokal `execute_b1`, dan bebas path Windows absolut.<br>   - Postur Operasional (`R5-F04`): Eksekusi uji konektivitas dual-auth staging tetap berada dalam mode standby menunggu otorisasi eksekusi dari CTO.<br>3. Non-Secret Cryptographic Fingerprint:<br>   - Staging Salt Fingerprint: SHA-256 digest dari `PII_HASH_SALT` dan `APP_MASTER_KEY` terbukti terisolasi penuh ($\text{Digest}_{\text{stg}} \neq \text{Digest}_{\text{prod}}$). | **VERIFIED INDEPENDENTLY**<br>Dual authentication test terbukti: kredensial lama ditolak (`OperationalError: password authentication failed for user postgres`), kredensial baru terotentikasi penuh tanpa kebocoran plaintext. |
 | **PRE-05** | **Model Eksekusi Transaksi Read-Only** | **YES (MANDATORY)** | 1. Protokol Gate B2 dirancang sebagai evaluasi verifikasi skema dan data statis.<br>2. Seluruh kueri evaluasi dieksekusi dalam transaksi `BEGIN TRANSACTION READ ONLY` atau blok `DO $$` asersi tanpa mutasi DML liar. | **VERIFIED BY DBRE**<br>Zero unauthorized staging mutation. Skrip tidak melakukan `INSERT`, `UPDATE`, atau `DELETE` di luar blok verifikasi berpagar. |
 
 ---
@@ -217,9 +223,9 @@ Seluruh tabel anak terikat ke tabel induk melalui kunci asing komposit `(tenant_
 | **RSK-01** | **Penyembunyian Anomali (*Anomaly Masking Fallacy*)** | Kritis | Rendah | Menghapus total seluruh filter pengecualian seperti `NOT LIKE '__QUARANTINED_%'` atau `WHERE NOT EXISTS`. | `B2-ASSERT-01`: Menjalankan evaluasi independen langsung ke tabel aktif tanpa filter penenang. |
 | **RSK-02** | **Benturan Tenant Lintas-Tabel (*Cross-Tenant Discrepancy*)** | Kritis | Sedang | Memvalidasi integritas `tenant_id` antara `orders`, `product_orders`, `delivery_orders`, dan `affiliate_commissions` dengan query terpisah dan semantik NULL-safe `IS DISTINCT FROM`. | `B2-ASSERT-01`: Dua kueri terpisah (`v_indep_po_conflicts` dan `v_indep_ac_conflicts`) memeriksa kesesuaian tenant lintas tabel sumber asli. |
 | **RSK-03** | **Pesanan Operasional Yatim (*Unresolved Operational Orders*)** | Tinggi | Rendah | Mengisolasi pesanan berstatus operasional (`is_cod = true` atau status aktif) yang kehilangan `tenant_id`. | `B2-ASSERT-02`: Asersi mewajibkan `unresolved_operational_orders == 0` pada pesanan aktif non-void. |
-| **RSK-04** | **Ketidaksesuaian Baris Karantina, Status & Kardinalitas Survivor Kluster** | Tinggi | Rendah | Menguji kesetaraan dua arah (`EXCEPT`), validasi status fail-closed tanpa fallback permisif, pengelompokan survivor berbasis identitas kluster asli (`B2-R4-F01`), dan verifikasi fisik survivor dengan penyelarasan tenant (`parent.tenant_id = map.tenant_id`). | `B2-ASSERT-03`: Pengecekan paritas dua arah ($(\text{Q} \setminus \text{M}) \cup (\text{M} \setminus \text{Q}) = \emptyset$), kardinalitas survivor kluster universal tepat 1 (`survivor_count = 1`), dan bukti eksistensi fisik serta keselarasan tenant survivor. |
+| **RSK-04** | **Ketidaksesuaian Baris Karantina, Status & Kardinalitas Survivor Kluster** | Tinggi | Rendah | Menguji kesetaraan dua arah (`EXCEPT`), validasi status fail-closed tanpa fallback permisif, pengelompokan survivor berbasis identitas kluster asli bebas sentinel (`__GLOBAL__` dieliminasi — `R5-F01`), deteksi `UNRESOLVED_CLUSTER_IDENTITY`, dan verifikasi fisik survivor dengan penyelarasan tenant (`parent.tenant_id = map.tenant_id`). | `B2-ASSERT-03`: Pengecekan paritas dua arah ($(\text{Q} \setminus \text{M}) \cup (\text{M} \setminus \text{Q}) = \emptyset$), kardinalitas survivor kluster universal tepat 1 (`survivor_count = 1`), 0 unresolvable cluster identity, dan bukti eksistensi fisik serta keselarasan tenant survivor. |
 | **RSK-05** | **Referensi Menggantung Pasca-Repointing (*Dangling Downstream FK*)** | Kritis | Rendah | Memeriksa seluruh 8 jalur kunci asing komposit menggunakan manifest formal dan kueri `FULL OUTER JOIN` ke `pg_constraint`. | `B2-ASSERT-04`: Membuktikan ke-8 FK terdaftar `MATCH` (`discrepancy = 0`) serta 0 baris anak yang mereferensikan loser tuple atau parent non-existent. |
-| **RSK-06** | **Pergeseran Finansial Komisi, Snapshot Basi & Ambiguitas Drop Siluman** | Kritis | Sangat Rendah | Prosedur fresh snapshot (`DROP TABLE IF EXISTS` + `CREATE TEMP TABLE`), pengikatan sidik jari 100% NULL-safe 7 atribut (`B2-R4-F02`), dan tabel rekonsiliasi identitas kanonikal dua arah bebas drop (`_mig031_canonical_identity_reconciliation` — `B2-R4-F03`). | `B2-ASSERT-05`: Membuktikan kesetaraan mutlak hitungan baris baseline dan sidik jari 7 atribut, `global_amount_delta == 0.00`, `row_lineage_anomalies == 0`, `grouped_variance == 0`, dan 0 anomali rekonsiliasi kanonikal. |
+| **RSK-06** | **Pergeseran Finansial Komisi, Snapshot Basi & Collision Invariant** | Kritis | Sangat Rendah | Prosedur fresh snapshot (`DROP TABLE IF EXISTS` + `CREATE TEMP TABLE`), serialisasi kanonikal JSONB collision-safe 7-atribut tanpa sentinel (`R5-F02`), rantai pembuktian 3-lapis (baseline $\to$ expected $\to$ actual), serta semesta kandidat lengkap dan audit dua arah komposit tenant (`R5-F03`). | `B2-ASSERT-05`: Membuktikan kesetaraan mutlak hitungan baris baseline, total nominal, dan sidik jari kanonikal JSONB (`actual == expected`), `global_amount_delta == 0.00`, `row_lineage_anomalies == 0`, `grouped_variance == 0`, dan 0 anomali rekonsiliasi kanonikal. |
 
 ---
 
@@ -558,14 +564,15 @@ SELECT COUNT(*) AS v_indep_ac_conflicts FROM ac_conflicts;
 
 ---
 
-### Asersi B2-ASSERT-03: Quarantine Parity, Fail-Closed Lineage, Exact Cluster Survivor Cardinality & Tenant-Aligned Physical Existence (`B2-R3-F01` & `B2-R4-F01`)
-- **Deskripsi:** Membuktikan paritas dua arah (*two-way set difference*) antara tabel karantina fisik `public.migration_031_quarantined_affiliate_commissions` dengan pencatatan pada `public.migration_031_identifier_dedup_map` menggunakan operator `EXCEPT`, menangani Three-Valued Logic SQL secara eksplisit pada alasan karantina, menegakkan verifikasi status fail-closed tanpa fallback permisif, memvalidasi kardinalitas tepat 1 survivor per kluster identitas asli berdasarkan manifest identitas kontraktual (`B2-R4-F01`), serta membuktikan keberadaan fisik dan keselarasan tenant survivor pada tabel sumber database.
+### Asersi B2-ASSERT-03: Quarantine Parity, Fail-Closed Lineage, Formal Cluster Manifest & Direct Tenant Grouping (`B2-R3-F01`, `B2-R4-F01`, `R5-F01`)
+- **Deskripsi:** Membuktikan paritas dua arah (*two-way set difference*) antara tabel karantina fisik `public.migration_031_quarantined_affiliate_commissions` dengan pencatatan pada `public.migration_031_identifier_dedup_map` menggunakan operator `EXCEPT`, menangani Three-Valued Logic SQL secara eksplisit pada alasan karantina, menegakkan verifikasi status fail-closed tanpa fallback permisif, memvalidasi kardinalitas tepat 1 survivor per kluster identitas asli berdasarkan manifest identitas kontraktual formal 5-kolom (`R5-F01`), mengeliminasi total sentinel string `'__GLOBAL__'`, serta membuktikan keberadaan fisik dan keselarasan tenant survivor pada tabel sumber database.
 - **Aturan Kardinalitas & Whitelist Invarian:**
   * **Kardinalitas Bijektif $1:1$:** Setiap baris pada tabel karantina fisik memiliki tepat 1 entri pada dedup map (`COUNT(*) = 1`), dan sebaliknya.
   * **Pencegahan Duplikasi:** Dilarang keras terdapat duplikasi `quarantined_row_id` pada dedup map untuk partisi tabel komisi.
   * **Explicit NULL & Whitelist Handling (TVL Safe):** Klausa eksplisit `WHERE resolution_reason IS NULL OR resolution_reason NOT IN (...)` memastikan nilai `NULL` tidak lolos secara diam-diam.
   * **Fail-Closed Lineage Status:** Status `NULL` ditolak sebagai `NULL_NEW_STATUS`, status di luar whitelist resmi (`SURVIVOR`, `SUPERSEDED_DUPLICATE`, `QUARANTINED`) ditolak sebagai `UNKNOWN_NEW_STATUS`, dan `dedup_rank > 1` wajib berstatus tepat `SUPERSEDED_DUPLICATE`.
-  * **Manifest Identitas Kontraktual & Kardinalitas Survivor Kluster Asli (`B2-R4-F01`):** Manifest target mendefinisikan seluruh tabel dan kolom deduplikasi (`affiliates`, `shop_subscriptions`, `shop_commission_ledger`, `affiliate_commissions`). Evaluasi dikelompokkan berdasarkan identitas kluster asli `(table_name, column_name, tenant_id, cluster_identifier)` — BUKAN `canonical_survivor_id` — dan menegakkan tepat 1 survivor per kluster (`survivor_count = 1`). Jika kluster kehilangan survivor atau memiliki multi-survivor, asersi gagal.
+  * **Manifest Identitas Kontraktual Formal & Pengelompokan Tenant Murni (`R5-F01`):** Manifest target mendefinisikan seluruh tabel dan kolom deduplikasi beserta atribut aturan: `(table_name, column_name, identity_source, null_allowed, clustering_key_rule)`. Pengelompokan dilakukan langsung menggunakan `m.tenant_id` tanpa sentinel `'__GLOBAL__'`. Fallback permisif ke row ID dihapus; jika `original_identifier_value` bernilai `NULL`/kosong pada kolom bisnis (`null_allowed = FALSE`), sistem menandai sebagai anomali fatal `UNRESOLVED_CLUSTER_IDENTITY`, bukan membentuk kluster baru.
+  * **Kardinalitas Survivor Universal:** Membuktikan bahwa setiap kluster identitas asli memiliki tepat 1 survivor (`survivor_count = 1`). Jika kluster kehilangan survivor atau memiliki multi-survivor, asersi gagal.
   * **Eksistensi Fisik & Keselarasan Tenant Survivor (`B2-R4-F01`):** Setiap `canonical_survivor_id` wajib ada secara fisik di tabel induk database dan wajib memiliki `tenant_id` yang identik dengan partisi tenant pada dedup map (`parent.tenant_id IS NOT DISTINCT FROM m.tenant_id`).
 - **Kriteria Lolos:**
   * `quarantine_set_difference_count == 0`
@@ -575,9 +582,9 @@ SELECT COUNT(*) AS v_indep_ac_conflicts FROM ac_conflicts;
   * `survivor_cardinality_anomalies_count == 0`
   * `broken_physical_survivors_count == 0`
 
-#### Kueri Spesifikasi Dua Arah (`EXCEPT`), Full Lineage, Cluster Survivor Cardinality & Tenant Alignment
+#### Kueri Spesifikasi Dua Arah (`EXCEPT`), Full Lineage, Formal Cluster Manifest & Direct Tenant Grouping
 ```sql
--- B2-ASSERT-03: Two-Way EXCEPT Parity, TVL-Safe Whitelist, Full Lineage, Cluster Survivor Cardinality & Tenant Alignment
+-- B2-ASSERT-03: Two-Way EXCEPT Parity, TVL-Safe Whitelist, Full Lineage, Formal Cluster Manifest & Tenant-Aligned Physical Check
 WITH quarantined_physical AS (
     SELECT
         q.id::text                 AS quarantined_row_id,
@@ -688,38 +695,57 @@ dedup_map_lineage_consistency AS (
         END AS consistency_verdict
     FROM public.migration_031_identifier_dedup_map
 ),
--- 3. Manifest Identitas Kontraktual & Pemeriksaan Kardinalitas Survivor Berbasis Kluster Asli (B2-R4-F01)
+-- 3. Manifest Identitas Kontraktual Formal & Validasi Kluster Asli Bebas Sentinel (R5-F01)
 dedup_identity_manifest AS (
     SELECT * FROM (VALUES
-        ('affiliates',             'referral_code'),
-        ('affiliates',             'id'),
-        ('shop_subscriptions',     'xendit_invoice_id'),
-        ('shop_commission_ledger', 'subscription_id'),
-        ('affiliate_commissions',  'tenant_id'),
-        ('affiliate_commissions',  'order_id')
-    ) AS man(table_name, column_name)
+        ('affiliates',             'referral_code',      'NATURAL_KEY_REFERRAL_CODE', FALSE, 'TENANT_SCOPED_NATURAL_KEY'),
+        ('affiliates',             'id',                 'PRIMARY_KEY_SURVIVOR_ID',   FALSE, 'TENANT_SCOPED_PRIMARY_KEY'),
+        ('shop_subscriptions',     'xendit_invoice_id',  'INVOICE_REFERENCE_ID',      FALSE, 'TENANT_SCOPED_INVOICE_KEY'),
+        ('shop_commission_ledger', 'subscription_id',   'SUBSCRIPTION_LEDGER_ID',    FALSE, 'TENANT_SCOPED_SUBSCRIPTION_KEY'),
+        ('affiliate_commissions',  'tenant_id',          'TENANT_PARTITION_KEY',      FALSE, 'TENANT_PARTITION_AUDIT'),
+        ('affiliate_commissions',  'order_id',           'FINANCIAL_ORDER_REFERENCE', FALSE, 'TENANT_SCOPED_ORDER_KEY')
+    ) AS man(table_name, column_name, identity_source, null_allowed, clustering_key_rule)
+),
+cluster_raw_entries AS (
+    SELECT
+        m.map_id,
+        m.table_name,
+        m.column_name,
+        m.tenant_id,
+        NULLIF(BTRIM(m.original_identifier_value), '') AS cluster_identifier,
+        m.quarantined_row_id,
+        m.canonical_survivor_id,
+        m.new_status,
+        man.null_allowed,
+        CASE
+            WHEN man.null_allowed IS FALSE AND NULLIF(BTRIM(m.original_identifier_value), '') IS NULL
+            THEN 'UNRESOLVED_CLUSTER_IDENTITY'
+            ELSE 'VALID_IDENTITY'
+        END AS identity_resolution_status
+    FROM public.migration_031_identifier_dedup_map m
+    JOIN dedup_identity_manifest man
+      ON man.table_name = m.table_name
+     AND man.column_name = m.column_name
+    WHERE m.new_status IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE')
 ),
 survivor_cardinality_check AS (
     SELECT
-        m.table_name,
-        m.column_name,
-        COALESCE(m.tenant_id, '__GLOBAL__') AS tenant_id,
-        COALESCE(NULLIF(BTRIM(m.original_identifier_value), ''), m.quarantined_row_id) AS cluster_identifier,
+        table_name,
+        column_name,
+        tenant_id,
+        cluster_identifier,
         COUNT(*) AS total_cluster_rows,
-        COUNT(*) FILTER (WHERE m.new_status = 'SURVIVOR') AS survivor_count,
+        COUNT(*) FILTER (WHERE new_status = 'SURVIVOR') AS survivor_count,
         CASE
-            WHEN COUNT(*) FILTER (WHERE m.new_status = 'SURVIVOR') = 0 THEN 'ZERO_SURVIVOR_IN_CLUSTER'
-            WHEN COUNT(*) FILTER (WHERE m.new_status = 'SURVIVOR') > 1 THEN 'MULTIPLE_SURVIVORS_IN_CLUSTER'
+            WHEN bool_or(identity_resolution_status = 'UNRESOLVED_CLUSTER_IDENTITY') THEN 'UNRESOLVED_CLUSTER_IDENTITY'
+            WHEN COUNT(*) FILTER (WHERE new_status = 'SURVIVOR') = 0 THEN 'ZERO_SURVIVOR_IN_CLUSTER'
+            WHEN COUNT(*) FILTER (WHERE new_status = 'SURVIVOR') > 1 THEN 'MULTIPLE_SURVIVORS_IN_CLUSTER'
             ELSE 'VALID'
         END AS cardinality_verdict
-    FROM public.migration_031_identifier_dedup_map m
-    JOIN dedup_identity_manifest dim
-      ON dim.table_name = m.table_name
-     AND dim.column_name = m.column_name
-    WHERE m.new_status IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE')
-    GROUP BY m.table_name, m.column_name, COALESCE(m.tenant_id, '__GLOBAL__'), COALESCE(NULLIF(BTRIM(m.original_identifier_value), ''), m.quarantined_row_id)
+    FROM cluster_raw_entries
+    GROUP BY table_name, column_name, tenant_id, cluster_identifier
 ),
--- 4. Pemeriksaan Keberadaan Fisik & Keselarasan Tenant Survivor (B2-R4-F01)
+-- 4. Pemeriksaan Keberadaan Fisik & Keselarasan Tenant Survivor (Referential Integrity)
 survivor_referential_integrity_check AS (
     SELECT
         m.map_id,
@@ -896,25 +922,31 @@ FROM anomalous_child_rows;
 
 ---
 
-### Asersi B2-ASSERT-05: Two-Tier Financial Reconciliation, NULL-Safe Complete Baseline Fingerprint & Bidirectional Canonical Mapping (`B2-R3-F02`, `B2-R3-F03`, `B2-R4-F02`, `B2-R4-F03`)
+### Asersi B2-ASSERT-05: 3-Tier Lineage Reconciliation, Collision-Safe Canonical JSONB Fingerprint & Strict Bidirectional Composite Canonical Audit (`R5-F02` & `R5-F03`)
 - **Deskripsi:** Melakukan rekonsiliasi komprehensif atas seluruh nilai komisi sebelum dan sesudah migrasi melalui:
-  1. **Authoritative Fresh Snapshot Procedure:** Menghapus klausul `IF NOT EXISTS` dan menerapkan eksekusi `DROP TABLE IF EXISTS` + `CREATE TEMP TABLE ...` segar.
-  2. **Deterministic Baseline Metadata & 7-Attribute Fingerprint Binding (`B2-R4-F02`):**
-     * Menyimpan `baseline_run_id`, `snapshot_taken_at`, `snapshot_row_count`, `snapshot_total_amount`, dan `snapshot_fingerprint` menggunakan agregasi 100% NULL-safe `CONCAT_WS` atas ke-7 atribut kontraktual:
-       `(commission_id, tenant_id, recipient_id, order_id, invoice_reference, financial_status, amount)`.
-     * Mengikat `post_row_count = meta.snapshot_row_count`, `post_total_amount = meta.snapshot_total_amount`, dan `post_recalculated_fingerprint = pre_mapped_meta.pre_mapped_fingerprint` secara ketat. Diskrepansi apa pun memicu verdict: `FAIL: B2_ASSERT_05_BASELINE_FINGERPRINT_OR_COUNT_MISMATCH`.
-  3. **Presisi `numeric(18, 2)`:** Memastikan tidak ada pembulatan mengambang (*floating-point drift*).
-  4. **Rekonsiliasi Identitas Kanonikal Dua Arah & Anti-Ambiguitas Bebas Drop (`_mig031_canonical_identity_reconciliation` — `B2-R4-F03`):**
-     * Mengganti `INNER JOIN` permisif dengan tabel rekonsiliasi dua arah berbasis `LEFT JOIN`.
-     * Mengklasifikasikan seluruh baris entri dedup map secara transparan: `UNRESOLVED_LEGACY_RECIPIENT`, `AMBIGUOUS_MAPPING`, `BROKEN_SURVIVOR_REFERENCE`, `TENANT_MISMATCH_SURVIVOR`, `INACTIVE_SURVIVOR`, atau `VALID`.
-     * Mewajibkan 0 anomali rekonsiliasi (`canonical_reconciliation_anomalies_count = 0`). Jika ada anomali, sistem memicu verdict: `FAIL: B2_ASSERT_05_CANONICAL_IDENTITY_RECONCILIATION_ANOMALY`.
-     * Membangun `_mig031_canonical_identity_map` hanya dari baris yang berstatus `VALID`.
-  5. **Tier 1 (Row-Level PK Lineage Audit):** Memverifikasi konsistensi primary key `commission_id`, preservasi nominal per baris, dan penegakan pergeseran penerima yang sah.
+  1. **Authoritative Fresh Snapshot Procedure:** Menghapus klausul `IF NOT EXISTS` dan menerapkan eksekusi `DROP TABLE IF EXISTS` + `CREATE TEMP TABLE ...` segar untuk menjamin keaslian data baseline dalam setiap sesi evaluasi.
+  2. **Canonical JSONB Collision-Safe Serialization & Eliminasi Sentinel (`R5-F02`):**
+     * Mengganti konkatenasi string primitif `CONCAT_WS` dengan serialisasi kanonikal `jsonb_build_object('cid', ..., 'tid', ..., 'rid', ..., 'oid', ..., 'inv', ..., 'sts', ..., 'amt', ...)::text`.
+     * Mengeliminasi total seluruh string sentinel buatan (`'__NULL_*__'`); nilai `NULL` diekspresikan secara native oleh PostgreSQL sebagai JSON `null`.
+     * Mengunci format nominal finansial desimal secara deterministik melalui `to_char(amount, 'FM999999999999999990.00')`.
+  3. **Rantai Pembuktian 3-Lapis (3-Tier Baseline Lineage Chain — `R5-F02`):**
+     * **Tier A (Baseline Snapshot):** `baseline_snapshot_fingerprint` dihitung dari snapshot awal `pre_mig031_affiliate_commissions_snapshot`.
+     * **Tier B (Expected Transformed):** `expected_transformed_fingerprint` dihitung dari `pre_mapped_commissions` menggunakan `expected_canonical_recipient_id` hasil mapping kanonikal yang sah.
+     * **Tier C (Actual Post-Migration):** `actual_post_migration_fingerprint` dihitung dari gabungan baris aktif operasional (`public.affiliate_commissions`) dan baris karantina fisik (`public.migration_031_quarantined_affiliate_commissions`).
+     * Mengikat kesetaraan: `actual_post_row_count = meta.snapshot_row_count`, `actual_post_total_amount = meta.snapshot_total_amount`, dan `actual_post_migration_fingerprint = exp.expected_transformed_fingerprint`. Diskrepansi apa pun memicu kegagalan sirkuit *fail-closed*.
+  4. **Semesta Kandidat Lengkap, Skop Komposit Tenant & Strict Bi-Directional Reconciliation Audit (`R5-F03`):**
+     * Membangun `candidate_universe` dari seluruh baris dedup map afiliasi tanpa filter parsial (`WHERE table_name = 'affiliates'`).
+     * Mengevaluasi potensi ambiguitas dalam skop komposit tenant: `GROUP BY tenant_id, legacy_recipient_id HAVING COUNT(DISTINCT canonical_survivor_id) > 1`.
+     * Membangun `_mig031_canonical_identity_map` secara ketat hanya dari entri yang berstatus `reconciliation_status = 'VALID' AND new_status = 'SUPERSEDED_DUPLICATE'`.
+     * Membentuk tabel audit dua arah `_mig031_canonical_map_bidirectional_audit` melalui `FULL OUTER JOIN` antara kandidat `SUPERSEDED_DUPLICATE` dan peta kanonikal terpasang, mengidentifikasi secara transparan `ORPHAN_CANONICAL_MAPPING`, `MISSING_CANONICAL_MAPPING`, atau `SURVIVOR_MISMATCH_IN_MAP`.
+     * Mengintegrasikan pemetaan identitas kanonikal ke data komisi menggunakan pencocokan komposit tenant:
+       `ON id_map.tenant_id IS NOT DISTINCT FROM pre.tenant_id AND id_map.legacy_recipient_id = pre.recipient_id`.
+  5. **Tier 1 (Row-Level PK Lineage Audit):** Memverifikasi konsistensi primary key `commission_id`, kesesuaian `tenant_id`, preservasi nominal per baris, dan penegakan pergeseran penerima yang sah.
   6. **Tier 2 (Grouped Recipient Reconciliation):** Memverifikasi kesetaraan hitungan baris (`row_count_delta = 0`) dan nominal agregat (`amount_delta = 0.00`) per kelompok penerima kanonikal via `FULL OUTER JOIN` dengan `IS NOT DISTINCT FROM`.
 - **Kriteria Lolos:**
-  * `post_row_count == snapshot_row_count`
-  * `post_total_amount == snapshot_total_amount`
-  * `post_recalculated_fingerprint IS NOT DISTINCT FROM pre_mapped_fingerprint`
+  * `actual_post_row_count == snapshot_row_count`
+  * `actual_post_total_amount == snapshot_total_amount`
+  * `actual_post_migration_fingerprint IS NOT DISTINCT FROM expected_transformed_fingerprint`
   * `row_lineage_anomalies_count == 0`
   * `grouped_variance_anomalies_count == 0`
   * `global_amount_delta == 0.00`
@@ -928,6 +960,7 @@ DROP TABLE IF EXISTS pre_mig031_affiliate_commissions_snapshot;
 DROP TABLE IF EXISTS pre_mig031_snapshot_metadata;
 DROP TABLE IF EXISTS _mig031_canonical_identity_reconciliation;
 DROP TABLE IF EXISTS _mig031_canonical_identity_map;
+DROP TABLE IF EXISTS _mig031_canonical_map_bidirectional_audit;
 
 -- 2. Snapshot Awal Otoritatif (Dibuat Segar Langsung dari Data Aktual 7 Atribut Kontraktual)
 CREATE TEMP TABLE pre_mig031_affiliate_commissions_snapshot ON COMMIT DROP AS
@@ -941,7 +974,7 @@ SELECT
     COALESCE(ac.amount, 0.00)::numeric(18, 2)          AS amount
 FROM public.affiliate_commissions ac;
 
--- 3. Blok Metadata Baseline Otoritatif (Deterministic 100% NULL-Safe 7-Attribute Fingerprint Binding - B2-R4-F02)
+-- 3. Blok Metadata Baseline Otoritatif (Deterministic JSONB Collision-Safe 7-Attribute Fingerprint - R5-F02)
 CREATE TEMP TABLE pre_mig031_snapshot_metadata ON COMMIT DROP AS
 SELECT
     'B2-STG-RUN-' || to_char(clock_timestamp(), 'YYYYMMDD-HH24MISS') AS baseline_run_id,
@@ -952,85 +985,120 @@ SELECT
         sha256(
             COALESCE(
                 string_agg(
-                    CONCAT_WS(':',
-                        commission_id::text,
-                        COALESCE(tenant_id, '__NULL_TENANT__'),
-                        COALESCE(recipient_id, '__NULL_RECIPIENT__'),
-                        COALESCE(order_id, '__NULL_ORDER__'),
-                        COALESCE(invoice_reference, '__NULL_INVOICE__'),
-                        COALESCE(financial_status, '__NULL_STATUS__'),
-                        COALESCE(amount::text, '0.00')
-                    ),
+                    jsonb_build_object(
+                        'cid', commission_id::text,
+                        'tid', tenant_id,
+                        'rid', recipient_id,
+                        'oid', order_id,
+                        'inv', invoice_reference,
+                        'sts', financial_status,
+                        'amt', to_char(amount, 'FM999999999999999990.00')
+                    )::text,
                     '|' ORDER BY commission_id
                 ),
-                'EMPTY_BASELINE'
+                'EMPTY_FINGERPRINT_SET'
             )::bytea
         ),
         'hex'
-    )                                                                AS snapshot_fingerprint
+    )                                                                AS baseline_snapshot_fingerprint
 FROM pre_mig031_affiliate_commissions_snapshot;
 
--- 4. Rekonsiliasi Identitas Kanonikal Dua Arah (Bidirectional Mapping Completeness & Anti-Ambiguity - B2-R4-F03)
+-- 4. Rekonsiliasi Identitas Kanonikal Dua Arah (Full Candidate Universe & Composite Scope - R5-F03)
 CREATE TEMP TABLE _mig031_canonical_identity_reconciliation ON COMMIT DROP AS
-WITH dedup_entries AS (
+WITH candidate_universe AS (
     SELECT
         m.map_id,
-        m.tenant_id             AS map_tenant_id,
-        m.quarantined_row_id    AS legacy_recipient_id,
-        m.canonical_survivor_id AS canonical_survivor_id,
+        NULLIF(BTRIM(m.tenant_id), '')             AS tenant_id,
+        m.quarantined_row_id                       AS legacy_recipient_id,
+        NULLIF(BTRIM(m.canonical_survivor_id), '') AS canonical_survivor_id,
         m.resolution_reason,
         m.new_status
     FROM public.migration_031_identifier_dedup_map m
     WHERE m.table_name = 'affiliates'
-      AND (
-          m.new_status = 'SUPERSEDED_DUPLICATE'
-          OR m.resolution_reason IN ('CANONICAL_SURVIVOR_PRIMARY_KEY', 'MERGED_VALID_LINEAGE', 'MERGED_TO_SURVIVOR')
-          OR (m.quarantined_row_id IS DISTINCT FROM m.canonical_survivor_id AND m.canonical_survivor_id IS NOT NULL)
-      )
 ),
-survivor_counts AS (
+tenant_composite_ambiguity AS (
     SELECT
+        tenant_id,
         legacy_recipient_id,
         COUNT(DISTINCT canonical_survivor_id) AS distinct_survivor_count
-    FROM dedup_entries
-    WHERE NULLIF(BTRIM(canonical_survivor_id), '') IS NOT NULL
-    GROUP BY legacy_recipient_id
+    FROM candidate_universe
+    WHERE canonical_survivor_id IS NOT NULL
+    GROUP BY tenant_id, legacy_recipient_id
+    HAVING COUNT(DISTINCT canonical_survivor_id) > 1
+),
+physical_survivors AS (
+    SELECT
+        a.id::text                                 AS survivor_id,
+        NULLIF(BTRIM(a.tenant_id), '')             AS survivor_tenant_id,
+        a.status                                   AS survivor_status
+    FROM public.affiliates a
 )
 SELECT
-    d.map_id,
-    d.legacy_recipient_id,
-    d.canonical_survivor_id,
-    d.map_tenant_id,
-    a.tenant_id AS physical_survivor_tenant_id,
-    a.status    AS physical_survivor_status,
+    u.map_id,
+    u.tenant_id,
+    u.legacy_recipient_id,
+    u.canonical_survivor_id,
+    p.survivor_tenant_id                           AS physical_survivor_tenant_id,
+    p.survivor_status                              AS physical_survivor_status,
+    u.new_status,
+    u.resolution_reason,
     CASE
-        WHEN NULLIF(BTRIM(d.canonical_survivor_id), '') IS NULL THEN 'UNRESOLVED_LEGACY_RECIPIENT'
-        WHEN sc.distinct_survivor_count > 1 THEN 'AMBIGUOUS_MAPPING'
-        WHEN a.id IS NULL THEN 'BROKEN_SURVIVOR_REFERENCE'
-        WHEN a.tenant_id IS DISTINCT FROM d.map_tenant_id THEN 'TENANT_MISMATCH_SURVIVOR'
-        WHEN UPPER(BTRIM(COALESCE(a.status, ''))) <> 'ACTIVE' THEN 'INACTIVE_SURVIVOR'
+        WHEN amb.legacy_recipient_id IS NOT NULL THEN 'AMBIGUOUS_CANONICAL_MAPPING'
+        WHEN u.canonical_survivor_id IS NULL THEN 'MISSING_CANONICAL_MAPPING'
+        WHEN p.survivor_id IS NULL THEN 'BROKEN_SURVIVOR_REFERENCE'
+        WHEN p.survivor_tenant_id IS DISTINCT FROM u.tenant_id THEN 'TENANT_MISMATCH_SURVIVOR'
+        WHEN UPPER(BTRIM(COALESCE(p.survivor_status, ''))) <> 'ACTIVE' THEN 'INACTIVE_SURVIVOR'
+        WHEN u.new_status NOT IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE') THEN 'INVALID_CANDIDATE_STATUS'
         ELSE 'VALID'
     END AS reconciliation_status
-FROM dedup_entries d
-LEFT JOIN public.affiliates a
-  ON a.id::text = d.canonical_survivor_id
-LEFT JOIN survivor_counts sc
-  ON sc.legacy_recipient_id = d.legacy_recipient_id;
+FROM candidate_universe u
+LEFT JOIN tenant_composite_ambiguity amb
+  ON amb.tenant_id IS NOT DISTINCT FROM u.tenant_id
+ AND amb.legacy_recipient_id = u.legacy_recipient_id
+LEFT JOIN physical_survivors p
+  ON p.survivor_id = u.canonical_survivor_id;
 
--- 5. Peta Identitas Kanonikal Bersih (Hanya Baris yang Terverifikasi VALID)
+-- 5. Peta Identitas Kanonikal Bersih (Hanya Baris Terverifikasi VALID dan SUPERSEDED_DUPLICATE - R5-F03)
 CREATE TEMP TABLE _mig031_canonical_identity_map ON COMMIT DROP AS
-SELECT
+SELECT DISTINCT
+    tenant_id,
     legacy_recipient_id,
     canonical_survivor_id,
     physical_survivor_tenant_id AS canonical_tenant_id,
     physical_survivor_status    AS canonical_status
 FROM _mig031_canonical_identity_reconciliation
-WHERE reconciliation_status = 'VALID';
+WHERE reconciliation_status = 'VALID'
+  AND new_status = 'SUPERSEDED_DUPLICATE';
+
+-- 6. Audit Dua Arah Peta Kanonikal (Strict Bi-Directional Reconciliation Audit - R5-F03)
+CREATE TEMP TABLE _mig031_canonical_map_bidirectional_audit ON COMMIT DROP AS
+WITH candidate_superseded AS (
+    SELECT DISTINCT
+        NULLIF(BTRIM(tenant_id), '')               AS tenant_id,
+        quarantined_row_id                         AS legacy_recipient_id,
+        NULLIF(BTRIM(canonical_survivor_id), '')   AS canonical_survivor_id
+    FROM public.migration_031_identifier_dedup_map
+    WHERE table_name = 'affiliates'
+      AND new_status = 'SUPERSEDED_DUPLICATE'
+)
+SELECT
+    COALESCE(c.tenant_id, m.tenant_id)                     AS tenant_id,
+    COALESCE(c.legacy_recipient_id, m.legacy_recipient_id) AS legacy_recipient_id,
+    CASE
+        WHEN c.legacy_recipient_id IS NULL THEN 'ORPHAN_CANONICAL_MAPPING'
+        WHEN m.legacy_recipient_id IS NULL THEN 'MISSING_CANONICAL_MAPPING'
+        WHEN c.canonical_survivor_id IS DISTINCT FROM m.canonical_survivor_id THEN 'SURVIVOR_MISMATCH_IN_MAP'
+        ELSE 'VALID'
+    END AS bidirectional_status
+FROM candidate_superseded c
+FULL OUTER JOIN _mig031_canonical_identity_map m
+  ON c.tenant_id IS NOT DISTINCT FROM m.tenant_id
+ AND c.legacy_recipient_id = m.legacy_recipient_id;
 ```
 
-#### B. Blok Verifikasi Lengkap Two-Tier `B2-ASSERT-05`
+#### B. Blok Verifikasi Lengkap 3-Tier Lineage & Grouped Reconciliation `B2-ASSERT-05`
 ```sql
--- Blok Kueri Verifikasi Two-Tier Lineage & Grouped Financial Reconciliation
+-- Blok Kueri Verifikasi 3-Tier Lineage & Grouped Financial Reconciliation
 WITH pre_mapped_commissions AS (
     SELECT
         pre.commission_id,
@@ -1045,7 +1113,8 @@ WITH pre_mapped_commissions AS (
         pre.amount::numeric(18, 2)                                  AS amount
     FROM pre_mig031_affiliate_commissions_snapshot pre
     LEFT JOIN _mig031_canonical_identity_map id_map
-      ON id_map.legacy_recipient_id = pre.recipient_id
+      ON id_map.tenant_id IS NOT DISTINCT FROM pre.tenant_id
+     AND id_map.legacy_recipient_id = pre.recipient_id
     LEFT JOIN public.migration_031_identifier_dedup_map t_map
       ON t_map.table_name = 'affiliate_commissions'
      AND t_map.column_name = 'tenant_id'
@@ -1085,7 +1154,8 @@ unified_post_migration_commissions AS (
         COALESCE(q.amount, 0.00)::numeric(18, 2)                                AS amount
     FROM public.migration_031_quarantined_affiliate_commissions q
     LEFT JOIN _mig031_canonical_identity_map id_map
-      ON id_map.legacy_recipient_id = q.affiliate_id::text
+      ON id_map.tenant_id IS NOT DISTINCT FROM NULLIF(BTRIM(q.original_tenant_id), '')
+     AND id_map.legacy_recipient_id = q.affiliate_id::text
 ),
 post_pk_counts AS (
     SELECT commission_id, COUNT(*) AS pk_occurrences
@@ -1094,9 +1164,19 @@ post_pk_counts AS (
 ),
 canonical_reconciliation_check AS (
     SELECT
-        COUNT(*) FILTER (WHERE reconciliation_status <> 'VALID') AS canonical_reconciliation_anomalies_count,
-        COUNT(*) FILTER (WHERE reconciliation_status = 'AMBIGUOUS_MAPPING') AS ambiguous_mappings_count
-    FROM _mig031_canonical_identity_reconciliation
+        (SELECT COUNT(*) FROM _mig031_canonical_identity_reconciliation WHERE reconciliation_status <> 'VALID')
+        +
+        (SELECT COUNT(*) FROM _mig031_canonical_map_bidirectional_audit WHERE bidirectional_status <> 'VALID')
+        AS canonical_reconciliation_anomalies_count,
+
+        (SELECT COUNT(*) FROM _mig031_canonical_identity_reconciliation WHERE reconciliation_status = 'AMBIGUOUS_CANONICAL_MAPPING')
+        AS ambiguous_mappings_count,
+
+        (SELECT COUNT(*) FROM _mig031_canonical_map_bidirectional_audit WHERE bidirectional_status = 'ORPHAN_CANONICAL_MAPPING')
+        AS orphan_mappings_count,
+
+        (SELECT COUNT(*) FROM _mig031_canonical_map_bidirectional_audit WHERE bidirectional_status = 'MISSING_CANONICAL_MAPPING')
+        AS missing_mappings_count
 ),
 -- TIER 1: Row-Level Lineage Audit Berbasis Primary Key (commission_id)
 row_level_lineage_audit AS (
@@ -1166,87 +1246,95 @@ grouped_recipient_reconciliation AS (
      AND pre_g.order_id               IS NOT DISTINCT FROM post_g.order_id
      AND pre_g.invoice_reference      IS NOT DISTINCT FROM post_g.invoice_reference
      AND pre_g.financial_status       IS NOT DISTINCT FROM post_g.financial_status
-)
--- PENGHITUNGAN SIDIK JARI PASCA-MIGRASI LENGKAP & REKONSILIASI ROW COUNT BASELINE (B2-R4-F02)
-post_recalculated_meta AS (
-    SELECT
-        COUNT(*)::bigint                            AS post_row_count,
-        COALESCE(SUM(amount), 0.00)::numeric(18, 2) AS post_total_amount,
-        encode(
-            sha256(
-                COALESCE(
-                    string_agg(
-                        CONCAT_WS(':',
-                            commission_id::text,
-                            COALESCE(tenant_id, '__NULL_TENANT__'),
-                            COALESCE(recipient_id, '__NULL_RECIPIENT__'),
-                            COALESCE(order_id, '__NULL_ORDER__'),
-                            COALESCE(invoice_reference, '__NULL_INVOICE__'),
-                            COALESCE(original_financial_status, '__NULL_STATUS__'),
-                            COALESCE(amount::text, '0.00')
-                        ),
-                        '|' ORDER BY commission_id
-                    ),
-                    'EMPTY_POST'
-                )::bytea
-            ),
-            'hex'
-        )                                           AS post_recalculated_fingerprint
-    FROM unified_post_migration_commissions
 ),
-pre_mapped_meta AS (
+-- TIER 3: PENGHITUNGAN SIDIK JARI 3-TIER BERBASIS SERIALISASI KANONIKAL JSONB (R5-F02)
+expected_transformed_meta AS (
     SELECT
-        COUNT(*)::bigint                            AS pre_mapped_row_count,
-        COALESCE(SUM(amount), 0.00)::numeric(18, 2) AS pre_mapped_total_amount,
+        COUNT(*)::bigint                            AS expected_row_count,
+        COALESCE(SUM(amount), 0.00)::numeric(18, 2) AS expected_total_amount,
         encode(
             sha256(
                 COALESCE(
                     string_agg(
-                        CONCAT_WS(':',
-                            commission_id::text,
-                            COALESCE(tenant_id, '__NULL_TENANT__'),
-                            COALESCE(expected_canonical_recipient_id, '__NULL_RECIPIENT__'),
-                            COALESCE(order_id, '__NULL_ORDER__'),
-                            COALESCE(invoice_reference, '__NULL_INVOICE__'),
-                            COALESCE(financial_status, '__NULL_STATUS__'),
-                            COALESCE(amount::text, '0.00')
-                        ),
+                        jsonb_build_object(
+                            'cid', commission_id::text,
+                            'tid', tenant_id,
+                            'rid', expected_canonical_recipient_id,
+                            'oid', order_id,
+                            'inv', invoice_reference,
+                            'sts', financial_status,
+                            'amt', to_char(amount, 'FM999999999999999990.00')
+                        )::text,
                         '|' ORDER BY commission_id
                     ),
-                    'EMPTY_PRE'
+                    'EMPTY_FINGERPRINT_SET'
                 )::bytea
             ),
             'hex'
-        )                                           AS pre_mapped_fingerprint
+        )                                           AS expected_transformed_fingerprint
     FROM pre_mapped_commissions
+),
+actual_post_migration_meta AS (
+    SELECT
+        COUNT(*)::bigint                            AS actual_post_row_count,
+        COALESCE(SUM(amount), 0.00)::numeric(18, 2) AS actual_post_total_amount,
+        encode(
+            sha256(
+                COALESCE(
+                    string_agg(
+                        jsonb_build_object(
+                            'cid', commission_id::text,
+                            'tid', tenant_id,
+                            'rid', recipient_id,
+                            'oid', order_id,
+                            'inv', invoice_reference,
+                            'sts', original_financial_status,
+                            'amt', to_char(amount, 'FM999999999999999990.00')
+                        )::text,
+                        '|' ORDER BY commission_id
+                    ),
+                    'EMPTY_FINGERPRINT_SET'
+                )::bytea
+            ),
+            'hex'
+        )                                           AS actual_post_migration_fingerprint
+    FROM unified_post_migration_commissions
 )
--- Asersi Akhir B2-ASSERT-05: Mengikat Metadata Baseline dan Membuktikan Zero Drift
+-- Asersi Akhir B2-ASSERT-05: Mengikat Metadata Baseline dan Membuktikan Zero Drift 3-Tier Lineage
 SELECT
     meta.baseline_run_id,
     meta.snapshot_taken_at,
     meta.snapshot_row_count,
     meta.snapshot_total_amount,
-    meta.snapshot_fingerprint,
-    p_meta.post_row_count,
-    p_meta.post_total_amount,
-    p_meta.post_recalculated_fingerprint,
+    meta.baseline_snapshot_fingerprint,
+    exp.expected_row_count,
+    exp.expected_total_amount,
+    exp.expected_transformed_fingerprint,
+    act.actual_post_row_count,
+    act.actual_post_total_amount,
+    act.actual_post_migration_fingerprint,
     (SELECT COUNT(*) FROM row_level_lineage_audit WHERE lineage_verdict <> 'OK')                        AS row_lineage_anomalies_count,
     (SELECT COUNT(*) FROM grouped_recipient_reconciliation
      WHERE row_count_delta <> 0 OR amount_delta <> 0.00)                                                AS grouped_variance_anomalies_count,
     COALESCE((SELECT SUM(amount_delta) FROM grouped_recipient_reconciliation), 0.00)::numeric(18, 2)    AS global_amount_delta,
     (SELECT canonical_reconciliation_anomalies_count FROM canonical_reconciliation_check)               AS canonical_reconciliation_anomalies_count,
     CASE
-        -- 1. Evaluasi Kesetaraan Mutlak Baseline Row Count, Total Amount & Sidik Jari Kriptografis (B2-R4-F02)
-        WHEN p_meta.post_row_count <> meta.snapshot_row_count
-          OR p_meta.post_total_amount <> meta.snapshot_total_amount
-          OR p_meta.post_recalculated_fingerprint IS DISTINCT FROM pr_meta.pre_mapped_fingerprint
-        THEN 'FAIL: B2_ASSERT_05_BASELINE_FINGERPRINT_OR_COUNT_MISMATCH'
+        -- 1. Evaluasi Kesetaraan Mutlak Baseline Row Count & Total Finansial (Snapshot vs Actual Post)
+        WHEN act.actual_post_row_count <> meta.snapshot_row_count
+          OR act.actual_post_total_amount <> meta.snapshot_total_amount
+          OR exp.expected_row_count <> meta.snapshot_row_count
+          OR exp.expected_total_amount <> meta.snapshot_total_amount
+        THEN 'FAIL: B2_ASSERT_05_BASELINE_COUNT_OR_TOTAL_AMOUNT_MISMATCH'
 
-        -- 2. Evaluasi Anomali Pemetaan Identitas Kanonikal Dua Arah (B2-R4-F03)
+        -- 2. Evaluasi Kesetaraan Sidik Jari Kriptografis 3-Tier JSONB (Actual Post vs Expected Transformed - R5-F02)
+        WHEN act.actual_post_migration_fingerprint IS DISTINCT FROM exp.expected_transformed_fingerprint
+        THEN 'FAIL: B2_ASSERT_05_FINGERPRINT_TRANSFORMATION_MISMATCH'
+
+        -- 3. Evaluasi Anomali Pemetaan Identitas Kanonikal Dua Arah & Audit Bidirectional (R5-F03)
         WHEN (SELECT canonical_reconciliation_anomalies_count FROM canonical_reconciliation_check) > 0
         THEN 'FAIL: B2_ASSERT_05_CANONICAL_IDENTITY_RECONCILIATION_ANOMALY'
 
-        -- 3. Evaluasi Lineage & Grouped Varians Finansial
+        -- 4. Evaluasi Lineage & Grouped Varians Finansial
         WHEN (SELECT COUNT(*) FROM row_level_lineage_audit WHERE lineage_verdict <> 'OK') = 0
          AND (SELECT COUNT(*) FROM grouped_recipient_reconciliation WHERE row_count_delta <> 0 OR amount_delta <> 0.00) = 0
          AND COALESCE((SELECT SUM(amount_delta) FROM grouped_recipient_reconciliation), 0.00) = 0.00
@@ -1255,9 +1343,9 @@ SELECT
         ELSE 'FAIL: B2_ASSERT_05_FINANCIAL_OR_LINEAGE_DRIFT'
     END AS b2_assert_05_verdict
 FROM pre_mig031_snapshot_metadata meta
-CROSS JOIN post_recalculated_meta p_meta
-CROSS JOIN pre_mapped_meta pr_meta;
--- Syarat Lolos Mutlak: post_row_count = snapshot_row_count, post_total_amount = snapshot_total_amount, post_fingerprint = pre_mapped_fingerprint, row_lineage = 0, grouped_variance = 0, global_delta = 0.00, canonical_reconciliation_anomalies = 0, verdict = PASS
+CROSS JOIN expected_transformed_meta exp
+CROSS JOIN actual_post_migration_meta act;
+-- Syarat Lolos Mutlak: actual_post_row_count = snapshot_row_count, actual_post_total_amount = snapshot_total_amount, actual_post_migration_fingerprint = expected_transformed_fingerprint, row_lineage = 0, grouped_variance = 0, global_delta = 0.00, canonical_reconciliation_anomalies = 0, verdict = PASS
 ```
 
 ---
@@ -1272,7 +1360,7 @@ Sistem WAJIB seketika melempar pengecualian fatal (`ERRCODE = '42P01'` / `undefi
 $$\text{STATUS}(\text{GATE\_B2}) = \text{FAILED\_CLOSED}$$
 
 ### Klausul 2: Ambiguous / Indefinite Result (Query Returning NULL) $\to$ Immediate FATAL FAIL
-Jika suatu kueri asersi menghasilkan nilai `NULL` pada kolom skalar penghitung hasil atau indikator logika (misalnya `v_indep_po_conflicts IS NULL`, `quarantine_set_difference_count IS NULL`, `fk_manifest_discrepancy_count IS NULL`, `survivor_cardinality_anomalies_count IS NULL`, `broken_physical_survivors_count IS NULL`, `canonical_reconciliation_anomalies_count IS NULL`, `post_recalculated_fingerprint IS NULL`, `post_row_count IS NULL`, atau `global_amount_delta IS NULL`), kondisi ini **DILARANG DIASUMSIKAN LOLOS** ($\text{NULL} \neq 0$).  
+Jika suatu kueri asersi menghasilkan nilai `NULL` pada kolom skalar penghitung hasil atau indikator logika (misalnya `v_indep_po_conflicts IS NULL`, `quarantine_set_difference_count IS NULL`, `fk_manifest_discrepancy_count IS NULL`, `survivor_cardinality_anomalies_count IS NULL`, `broken_physical_survivors_count IS NULL`, `canonical_reconciliation_anomalies_count IS NULL`, `actual_post_migration_fingerprint IS NULL`, `expected_transformed_fingerprint IS NULL`, `baseline_snapshot_fingerprint IS NULL`, `actual_post_row_count IS NULL`, atau `global_amount_delta IS NULL`), kondisi ini **DILARANG DIASUMSIKAN LOLOS** ($\text{NULL} \neq 0$).  
 Hasil `NULL` diartikan sebagai kegagalan integritas data atau kesalahan ekspresi query (*evaluation ambiguity*). Sistem wajib memperlakukan nilai `NULL` sebagai kegagalan asersi fatal dan memicu sirkuit *fail-closed* seketika.
 
 ### Klausul 3: Unexecuted or Skipped Assertions $\to$ Immediate FATAL FAIL
@@ -1283,7 +1371,7 @@ Melewati (*skipping*), menonaktifkan, atau mengecualikan satu kueri/tahapan aser
 Kelulusan Gate B2 didefinisikan sebagai fungsi konjungtif murni (*strict logical AND*) atas seluruh asersi:
 $$\text{GATE\_B2\_PASS} \iff \text{SCHEMA\_GATE} \land \text{ASSERT\_01} \land \text{ASSERT\_02} \land \text{ASSERT\_03} \land \text{ASSERT\_04} \land \text{ASSERT\_05}$$
 
-Jika salah satu dari asersi tersebut gagal (misalnya ditemukan $\ge 1$ ketidakcocokan skema SCH, $\ge 1$ konflik tenant, paritas karantina tidak cocok, terdapat anomali status dedup map / kardinalitas survivor kluster $\ne 1$, kegagalan eksistensi fisik atau keselarasan tenant survivor, selisih manifest kunci asing $> 0$, terdapat kunci asing menggantung, diskrepansi sidik jari 7-atribut atau hitungan baris baseline B2-ASSERT-05, anomali rekonsiliasi kanonikal dua arah, atau terjadi pergeseran nominal finansial sekecil $\Delta = 0.01$):
+Jika salah satu dari asersi tersebut gagal (misalnya ditemukan $\ge 1$ ketidakcocokan skema SCH, $\ge 1$ konflik tenant, paritas karantina tidak cocok, terdapat anomali status dedup map / kardinalitas survivor kluster $\ne 1$, kegagalan eksistensi fisik atau keselarasan tenant survivor, selisih manifest kunci asing $> 0$, terdapat kunci asing menggantung, diskrepansi sidik jari JSONB 3-tier (baseline vs expected vs actual) atau hitungan baris baseline B2-ASSERT-05, anomali rekonsiliasi kanonikal dua arah, atau terjadi pergeseran nominal finansial sekecil $\Delta = 0.01$):
 1. Seluruh Gate B2 **GAGAL TOTAL (`REJECTED`)**.
 2. Gerbang hilir **Gate I** (Penggelaran kode aplikasi Python) dan **Gate T** (Integrasi Webhook) **TETAP TERKUNCI PERMANEN (*PERMANENTLY LOCKED*)**.
 3. DILARANG melakukan penggelaran migrasi fisik ke lingkungan berikutnya sampai seluruh akar penyebab anomali diremediasi dan disetujui kembali oleh CTO.
