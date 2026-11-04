@@ -277,6 +277,51 @@ def compute_schema_fingerprint(cursor):
     fingerprint = hashlib.sha256(serialized.encode('utf-8')).hexdigest()
     return fingerprint, cols, cons, indexes, triggers
 
+EXPECTED_SEEDER_LOCK_TABLES = [
+    "public.tenants",
+    "public.affiliates",
+    "public.orders",
+    "public.product_orders",
+    "public.delivery_orders",
+    "public.attributions",
+    "public.attribution_sessions",
+    "public.shop_subscriptions",
+    "public.shop_commission_ledger",
+    "public.affiliate_commissions",
+    "public.migration_031_quarantined_affiliate_commissions",
+    "public.migration_031_identifier_dedup_map"
+]
+
+def extract_seeder_lock_tables(seeder_file="staging_seeder_fixture.sql"):
+    """
+    Dynamically extracts the list of locked tables and the raw statement from
+    the Stage 0 LOCK TABLE ... IN ACCESS EXCLUSIVE MODE clause in staging_seeder_fixture.sql.
+    """
+    import re
+    if not os.path.exists(seeder_file):
+        raise FileNotFoundError(f"Seeder fixture file '{seeder_file}' does not exist.")
+
+    with open(seeder_file, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    match = re.search(r"LOCK\s+TABLE\s+(.*?)\s+IN\s+ACCESS\s+EXCLUSIVE\s+MODE;", content, re.DOTALL | re.IGNORECASE)
+    if not match:
+        raise ValueError(f"Could not find 'LOCK TABLE ... IN ACCESS EXCLUSIVE MODE;' statement in {seeder_file}")
+
+    raw_tables_clause = match.group(1).strip()
+    tables = []
+    for line in raw_tables_clause.splitlines():
+        line = line.strip()
+        if not line or line.startswith('--'):
+            continue
+        for token in line.split(','):
+            tbl = token.strip()
+            if tbl:
+                tables.append(tbl)
+
+    lock_statement = match.group(0).strip()
+    return tables, lock_statement
+
 def audit_staging_tenant_id_casing():
     """
     Strictly read-only audit against Staging Supabase to inspect whether
@@ -833,107 +878,93 @@ def main():
     target_conn.rollback()
 
     # -------------------------------------------------------------------------
-    # 3.2 SEEDER CONCURRENCY LOCKING & RACE TEST (CTO BLOCKER 3)
+    # 3.2 SEEDER CONCURRENCY LOCKING & RACE TEST (CTO BLOCKER 3 & COMMIT d488288 REFINEMENT)
     # -------------------------------------------------------------------------
     print("\n--- [SEEDER CONCURRENCY GUARD] Multi-Connection Lock Contention & Exclusivity Race Proof ---")
+
+    # 1. Dynamic Lock Table Validation (CTO Item 1)
+    seeder_locked_tables, seeder_lock_stmt = extract_seeder_lock_tables("staging_seeder_fixture.sql")
+    print(f"[*] Dynamically extracted {len(seeder_locked_tables)} tables from staging_seeder_fixture.sql Stage 0:")
+    for idx, tbl in enumerate(seeder_locked_tables, 1):
+        print(f"    {idx:<2}. {tbl}")
+
+    # Assert 100% identity with expected 12-table manifest
+    assert seeder_locked_tables == EXPECTED_SEEDER_LOCK_TABLES, (
+        f"Dynamic lock validation mismatch!\nExpected: {EXPECTED_SEEDER_LOCK_TABLES}\nExtracted: {seeder_locked_tables}"
+    )
+    print(f"[+] Dynamic Lock Table Validation: 12/12 tables match expected deterministic manifest 100% bit-for-bit.")
+
     conn_seed_1 = psycopg2.connect(target_conn_str)
     cur_seed_1 = conn_seed_1.cursor()
     conn_seed_2 = psycopg2.connect(target_conn_str)
     cur_seed_2 = conn_seed_2.cursor()
 
-    print("[*] Connection 1: Simulating staging_seeder_fixture.sql Stage 0 upfront lock on all 12 tables...")
+    print("[*] Connection 1: Executing dynamically extracted Stage 0 upfront lock on all 12 tables...")
     cur_seed_1.execute("BEGIN;")
     cur_seed_1.execute("SET LOCAL lock_timeout = '2s';")
-    cur_seed_1.execute("""
-        LOCK TABLE
-            public.tenants,
-            public.affiliates,
-            public.orders,
-            public.product_orders,
-            public.delivery_orders,
-            public.attributions,
-            public.attribution_sessions,
-            public.shop_subscriptions,
-            public.shop_commission_ledger,
-            public.affiliate_commissions,
-            public.migration_031_quarantined_affiliate_commissions,
-            public.migration_031_identifier_dedup_map
-        IN ACCESS EXCLUSIVE MODE;
-    """)
+    cur_seed_1.execute(seeder_lock_stmt)
 
-    # Attempt 1: Concurrent insert with colliding tenant_slug
-    print("[*] Connection 2: Attempting concurrent insert of colliding tenant_slug = 'seed_tenant_a' (lock_timeout = '1s')...")
-    cur_seed_2.execute("SET lock_timeout = '1s';")
-    seed_slug_caught = False
-    try:
-        t_start = time.time()
-        cur_seed_2.execute("""
-            INSERT INTO public.tenants (id, slug) 
-            VALUES ('de000000-0000-0000-0000-000000000099'::uuid, 'seed_tenant_a');
-        """)
-        conn_seed_2.commit()
-    except psycopg2.Error as ex:
-        conn_seed_2.rollback()
-        t_elapsed = time.time() - t_start
-        if ex.pgcode == '55P03':
-            seed_slug_caught = True
-            print(f"[+] Connection 2 was BLOCKED on public.tenants and timed out after {t_elapsed:.2f}s with SQLSTATE 55P03 ({ex.diag.message_primary})")
-        else:
-            raise AssertionError(f"Expected 55P03 lock timeout on tenants, got {ex.pgcode}: {ex}")
+    # 2. Concurrency Adversarial Test Extension (CTO Item 2):
+    # Tested across 6 diverse tables including the 3 required new ones
+    contention_test_cases = [
+        {
+            "table": "public.tenants",
+            "name": "colliding tenant_slug = 'seed_tenant_a'",
+            "sql": "INSERT INTO public.tenants (id, slug) VALUES ('de000000-0000-0000-0000-000000000099'::uuid, 'seed_tenant_a');"
+        },
+        {
+            "table": "public.affiliates",
+            "name": "colliding referral_code = 'seed_surv_01'",
+            "sql": f"INSERT INTO public.affiliates (id, tenant_id, name, phone_number, referral_code) VALUES ('de000000-0000-0000-0000-000000000098'::uuid, '{t1}', 'Rogue Affiliate', '08999999', 'seed_surv_01');"
+        },
+        {
+            "table": "public.orders",
+            "name": "colliding order id = 'seed_ord_001'",
+            "sql": f"INSERT INTO public.orders (id, tenant_id, status) VALUES ('seed_ord_001', '{t1}', 'ROGUE');"
+        },
+        {
+            "table": "public.affiliate_commissions",
+            "name": "colliding commission id = '5eed3333-3333-3333-3333-333333333331'",
+            "sql": f"INSERT INTO public.affiliate_commissions (id, tenant_id, affiliate_id, order_id, amount) VALUES ('5eed3333-3333-3333-3333-333333333331'::uuid, '{t1}', '{aff_sub_01}', 'seed_ord_001', 50000.00);"
+        },
+        {
+            "table": "public.migration_031_quarantined_affiliate_commissions",
+            "name": "quarantined commission row",
+            "sql": "INSERT INTO public.migration_031_quarantined_affiliate_commissions (id, migration_batch_id, affiliate_id, order_id, original_status, quarantine_reason, row_snapshot) VALUES ('de000000-0000-0000-0000-000000000092'::uuid, 'batch-concurrency-test', 'aff-rogue', 'ord-rogue', 'PENDING', 'TEST', '{}'::jsonb);"
+        },
+        {
+            "table": "public.migration_031_identifier_dedup_map",
+            "name": "identifier dedup map row",
+            "sql": "INSERT INTO public.migration_031_identifier_dedup_map (map_id, migration_batch_id, table_name, column_name, quarantined_row_id, canonical_survivor_id, dedup_rank, resolution_reason) VALUES ('de000000-0000-0000-0000-000000000093'::uuid, 'batch-concurrency-test', 'affiliates', 'referral_code', 'q-1', 's-1', 1, 'TEST');"
+        }
+    ]
 
-    if not seed_slug_caught:
-        raise AssertionError("FATAL CONCURRENCY BREACH: Connection 2 was able to write to locked public.tenants during seeder run!")
+    for tc_idx, tc in enumerate(contention_test_cases, 1):
+        tbl = tc["table"]
+        t_name = tc["name"]
+        print(f"[*] Connection 2 [{tc_idx}/6]: Attempting concurrent insert into {tbl} ({t_name}, lock_timeout = '1s')...")
+        lock_blocked = False
+        cur_seed_2.execute("SET lock_timeout = '1s';")
+        try:
+            t_start = time.time()
+            cur_seed_2.execute(tc["sql"])
+            conn_seed_2.commit()
+        except psycopg2.Error as ex:
+            conn_seed_2.rollback()
+            t_elapsed = time.time() - t_start
+            if ex.pgcode == '55P03':
+                lock_blocked = True
+                print(f"[+] Connection 2 [{tc_idx}/6] was BLOCKED on {tbl} and timed out after {t_elapsed:.2f}s with SQLSTATE 55P03 ({ex.diag.message_primary})")
+            else:
+                raise AssertionError(f"Expected 55P03 lock timeout on {tbl}, got {ex.pgcode}: {ex}")
 
-    # Attempt 2: Concurrent insert with colliding referral_code
-    print("[*] Connection 2: Attempting concurrent insert of colliding affiliate referral_code = 'seed_surv_01' (lock_timeout = '1s')...")
-    cur_seed_2.execute("SET lock_timeout = '1s';")
-    seed_ref_caught = False
-    try:
-        t_start = time.time()
-        cur_seed_2.execute(f"""
-            INSERT INTO public.affiliates (id, tenant_id, name, phone_number, referral_code) 
-            VALUES ('de000000-0000-0000-0000-000000000098'::uuid, '{t1}', 'Rogue Affiliate', '08999999', 'seed_surv_01');
-        """)
-        conn_seed_2.commit()
-    except psycopg2.Error as ex:
-        conn_seed_2.rollback()
-        t_elapsed = time.time() - t_start
-        if ex.pgcode == '55P03':
-            seed_ref_caught = True
-            print(f"[+] Connection 2 was BLOCKED on public.affiliates and timed out after {t_elapsed:.2f}s with SQLSTATE 55P03 ({ex.diag.message_primary})")
-        else:
-            raise AssertionError(f"Expected 55P03 lock timeout on affiliates, got {ex.pgcode}: {ex}")
-
-    if not seed_ref_caught:
-        raise AssertionError("FATAL CONCURRENCY BREACH: Connection 2 was able to write to locked public.affiliates during seeder run!")
-
-    # Attempt 3: Concurrent insert into public.orders
-    print("[*] Connection 2: Attempting concurrent insert of colliding order id = 'seed_ord_001' (lock_timeout = '1s')...")
-    cur_seed_2.execute("SET lock_timeout = '1s';")
-    seed_ord_caught = False
-    try:
-        t_start = time.time()
-        cur_seed_2.execute(f"""
-            INSERT INTO public.orders (id, tenant_id, status)
-            VALUES ('seed_ord_001', '{t1}', 'ROGUE');
-        """)
-        conn_seed_2.commit()
-    except psycopg2.Error as ex:
-        conn_seed_2.rollback()
-        t_elapsed = time.time() - t_start
-        if ex.pgcode == '55P03':
-            seed_ord_caught = True
-            print(f"[+] Connection 2 was BLOCKED on public.orders and timed out after {t_elapsed:.2f}s with SQLSTATE 55P03 ({ex.diag.message_primary})")
-        else:
-            raise AssertionError(f"Expected 55P03 lock timeout on orders, got {ex.pgcode}: {ex}")
-
-    if not seed_ord_caught:
-        raise AssertionError("FATAL CONCURRENCY BREACH: Connection 2 was able to write to locked public.orders during seeder run!")
+        if not lock_blocked:
+            raise AssertionError(f"FATAL CONCURRENCY BREACH: Connection 2 was able to write to locked table {tbl} during seeder run!")
 
     cur_seed_1.execute("ROLLBACK;")
     conn_seed_1.close()
     conn_seed_2.close()
-    print("[+] Seeder ACCESS EXCLUSIVE lock serialization confirmed across all 12 tables: ZERO concurrent writes can slip in!")
+    print("[+] Seeder ACCESS EXCLUSIVE lock serialization confirmed across all 12 tables (6/6 adversarial contention proofs BLOCKED with 55P03)!")
 
     # -------------------------------------------------------------------------
     # 3.3 SEEDER CLEANUP ISOLATION & NEGATIVE CONTROL TEST (CTO BLOCKER 2)
@@ -1208,15 +1239,14 @@ def main():
         raise AssertionError("FAIL: Deleting isolated manager was NOT restricted!")
     except psycopg2.Error as ex:
         target_cur.execute("ROLLBACK TO SAVEPOINT restrict_mgr_self_sp;")
-        if ex.pgcode in ('23503', '23001'):
-            triggered_constraint = ex.diag.constraint_name
-            if triggered_constraint != 'fk_affiliates_manager_composite':
-                raise AssertionError(
-                    f"FAIL: Expected fk_affiliates_manager_composite to restrict deletion, but got {triggered_constraint}!"
-                )
-            print(f"[+] Manager Self-Reference RESTRICT verified: Deleting manager with active subordinates correctly rejected by '{triggered_constraint}' with SQLSTATE {ex.pgcode} ({ex.diag.message_primary})")
-        else:
-            raise AssertionError(f"Expected 23503/23001 restrict violation, got {ex.pgcode}: {ex}")
+        # Kunci asersi secara ketat per CTO item 3: assert sqlstate == '23001' (HAPUS toleransi 23503)
+        assert ex.pgcode == '23001', f"Expected SQLSTATE '23001' (RESTRICT violation), but got '{ex.pgcode}'"
+        # Asersi constraint name: assert 'fk_affiliates_manager_composite' in error_message
+        error_message = f"{ex} {ex.diag.message_primary or ''} {ex.diag.constraint_name or ''}"
+        assert 'fk_affiliates_manager_composite' in error_message, (
+            f"Expected 'fk_affiliates_manager_composite' in error_message, but got: {error_message}"
+        )
+        print(f"[+] Manager Self-Reference RESTRICT verified: Deleting manager with active subordinates strictly rejected with SQLSTATE {ex.pgcode} by 'fk_affiliates_manager_composite' ({ex.diag.message_primary})")
 
     # Clean up isolated test entities
     target_cur.execute(f"DELETE FROM public.affiliates WHERE id = '{iso_sub_id}'::uuid;")
@@ -1231,10 +1261,12 @@ def main():
         raise AssertionError("FAIL: Deleting manager with active orders was NOT restricted!")
     except psycopg2.Error as ex:
         target_cur.execute("ROLLBACK TO SAVEPOINT restrict_order_mgr_sp;")
-        if ex.pgcode in ('23503', '23001'):
-            print(f"[+] Order Manager RESTRICT verified: Deleting manager with active orders correctly rejected by '{ex.diag.constraint_name}' with SQLSTATE {ex.pgcode} ({ex.diag.message_primary})")
-        else:
-            raise AssertionError(f"Expected 23503/23001 restrict violation, got {ex.pgcode}")
+        # Asersi constraint name secara eksplisit per CTO item 3: assert 'fk_orders_manager_composite' in error_message
+        error_message = f"{ex} {ex.diag.message_primary or ''} {ex.diag.constraint_name or ''}"
+        assert 'fk_orders_manager_composite' in error_message, (
+            f"Expected 'fk_orders_manager_composite' in error_message, but got: {error_message}"
+        )
+        print(f"[+] Order Manager RESTRICT verified: Deleting manager with active orders correctly rejected by 'fk_orders_manager_composite' with SQLSTATE {ex.pgcode} ({ex.diag.message_primary})")
 
     print("\n[+] Extended Catalog Audit Complete: 8/8 FKs (All 7 Properties), Columns, Functional Relations & RESTRICT Verified (AC-04 PASS).")
 

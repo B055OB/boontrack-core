@@ -2,7 +2,7 @@
 ================================================================================
  BOONTRACK P1 DISPOSABLE DB REHEARSAL HARNESS EXECUTION
 ================================================================================
-Timestamp: 2026-11-04T16:37:02+0700
+Timestamp: 2026-11-04T17:10:05+0700
 Role: Lead DBRE & Principal Systems Architect
 Security Posture: ZERO MUTATION STAGING/PROD; LOCAL DISPOSABLE REHEARSAL
 Connection String Security Scan: Zero cloud markers ('xkhqir', 'mpluz') present (VERIFIED).
@@ -78,14 +78,34 @@ Negative Control 5   | P0003              | P0003              | PASS       | Or
 [+] All 5 Adversarial Precondition Controls verified: strict abort with P0005, P0006, P0002, P0003.
 
 --- [SEEDER CONCURRENCY GUARD] Multi-Connection Lock Contention & Exclusivity Race Proof ---
-[*] Connection 1: Simulating staging_seeder_fixture.sql Stage 0 upfront lock on all 12 tables...
-[*] Connection 2: Attempting concurrent insert of colliding tenant_slug = 'seed_tenant_a' (lock_timeout = '1s')...
-[+] Connection 2 was BLOCKED on public.tenants and timed out after 1.01s with SQLSTATE 55P03 (canceling statement due to lock timeout)
-[*] Connection 2: Attempting concurrent insert of colliding affiliate referral_code = 'seed_surv_01' (lock_timeout = '1s')...
-[+] Connection 2 was BLOCKED on public.affiliates and timed out after 1.01s with SQLSTATE 55P03 (canceling statement due to lock timeout)
-[*] Connection 2: Attempting concurrent insert of colliding order id = 'seed_ord_001' (lock_timeout = '1s')...
-[+] Connection 2 was BLOCKED on public.orders and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
-[+] Seeder ACCESS EXCLUSIVE lock serialization confirmed across all 12 tables: ZERO concurrent writes can slip in!
+[*] Dynamically extracted 12 tables from staging_seeder_fixture.sql Stage 0:
+    1 . public.tenants
+    2 . public.affiliates
+    3 . public.orders
+    4 . public.product_orders
+    5 . public.delivery_orders
+    6 . public.attributions
+    7 . public.attribution_sessions
+    8 . public.shop_subscriptions
+    9 . public.shop_commission_ledger
+    10. public.affiliate_commissions
+    11. public.migration_031_quarantined_affiliate_commissions
+    12. public.migration_031_identifier_dedup_map
+[+] Dynamic Lock Table Validation: 12/12 tables match expected deterministic manifest 100% bit-for-bit.
+[*] Connection 1: Executing dynamically extracted Stage 0 upfront lock on all 12 tables...
+[*] Connection 2 [1/6]: Attempting concurrent insert into public.tenants (colliding tenant_slug = 'seed_tenant_a', lock_timeout = '1s')...
+[+] Connection 2 [1/6] was BLOCKED on public.tenants and timed out after 1.01s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[*] Connection 2 [2/6]: Attempting concurrent insert into public.affiliates (colliding referral_code = 'seed_surv_01', lock_timeout = '1s')...
+[+] Connection 2 [2/6] was BLOCKED on public.affiliates and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[*] Connection 2 [3/6]: Attempting concurrent insert into public.orders (colliding order id = 'seed_ord_001', lock_timeout = '1s')...
+[+] Connection 2 [3/6] was BLOCKED on public.orders and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[*] Connection 2 [4/6]: Attempting concurrent insert into public.affiliate_commissions (colliding commission id = '5eed3333-3333-3333-3333-333333333331', lock_timeout = '1s')...
+[+] Connection 2 [4/6] was BLOCKED on public.affiliate_commissions and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[*] Connection 2 [5/6]: Attempting concurrent insert into public.migration_031_quarantined_affiliate_commissions (quarantined commission row, lock_timeout = '1s')...
+[+] Connection 2 [5/6] was BLOCKED on public.migration_031_quarantined_affiliate_commissions and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[*] Connection 2 [6/6]: Attempting concurrent insert into public.migration_031_identifier_dedup_map (identifier dedup map row, lock_timeout = '1s')...
+[+] Connection 2 [6/6] was BLOCKED on public.migration_031_identifier_dedup_map and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[+] Seeder ACCESS EXCLUSIVE lock serialization confirmed across all 12 tables (6/6 adversarial contention proofs BLOCKED with 55P03)!
 
 --- [SEEDER CLEANUP ISOLATION] Exact Predicates & Adversarial Negative Control Audit ---
 [*] Executing staging_seeder_fixture.sql...
@@ -131,7 +151,7 @@ Physical Column Audit (attributions.order_id): Present in catalog = True
 [+] Negative control: Fictitious order_id update correctly rejected with SQLSTATE 23503 (insert or update on table "attributions" violates foreign key constraint "fk_attributions_order_composite")
 
 --- Referential Action Audit: ON DELETE RESTRICT on Manager Hierarchy ---
-[+] Manager Self-Reference RESTRICT verified: Deleting manager with active subordinates correctly rejected by 'fk_affiliates_manager_composite' with SQLSTATE 23001 (update or delete on table "affiliates" violates RESTRICT setting of foreign key constraint "fk_affiliates_manager_composite" on table "affiliates")
+[+] Manager Self-Reference RESTRICT verified: Deleting manager with active subordinates strictly rejected with SQLSTATE 23001 by 'fk_affiliates_manager_composite' (update or delete on table "affiliates" violates RESTRICT setting of foreign key constraint "fk_affiliates_manager_composite" on table "affiliates")
 [+] Order Manager RESTRICT verified: Deleting manager with active orders correctly rejected by 'fk_orders_manager_composite' with SQLSTATE 23503 (update or delete on table "affiliates" violates foreign key constraint "fk_orders_manager_composite" on table "orders")
 
 [+] Extended Catalog Audit Complete: 8/8 FKs (All 7 Properties), Columns, Functional Relations & RESTRICT Verified (AC-04 PASS).
