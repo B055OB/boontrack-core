@@ -1053,11 +1053,11 @@ def main():
                 LEFT JOIN public.shop_subscriptions ss
                   ON m.table_name = 'shop_subscriptions'
                  AND ss.id::text = m.canonical_survivor_id
-                 AND ss.tenant_id IS NOT DISTINCT FROM m.tenant_id
+                 AND ss.tenant_id::text IS NOT DISTINCT FROM m.tenant_id::text
                 LEFT JOIN public.shop_commission_ledger scl
                   ON m.table_name = 'shop_commission_ledger'
                  AND scl.id::text = m.canonical_survivor_id
-                 AND scl.tenant_id IS NOT DISTINCT FROM m.tenant_id
+                 AND scl.tenant_id::text IS NOT DISTINCT FROM m.tenant_id::text
                 LEFT JOIN public.affiliate_commissions ac
                   ON m.table_name = 'affiliate_commissions'
                  AND ac.id::text = m.canonical_survivor_id
@@ -1262,9 +1262,9 @@ def main():
                 UNION ALL
                 SELECT 'attribution_sessions.affiliate_id', id::text, tenant_id, affiliate_id::text FROM public.attribution_sessions WHERE affiliate_id IS NOT NULL
                 UNION ALL
-                SELECT 'shop_subscriptions.affiliate_id', id::text, tenant_id, affiliate_id::text FROM public.shop_subscriptions WHERE affiliate_id IS NOT NULL
+                SELECT 'shop_subscriptions.affiliate_id', id::text, tenant_id::text, affiliate_id::text FROM public.shop_subscriptions WHERE affiliate_id IS NOT NULL
                 UNION ALL
-                SELECT 'shop_commission_ledger.affiliate_id', id::text, tenant_id, affiliate_id::text FROM public.shop_commission_ledger WHERE affiliate_id IS NOT NULL
+                SELECT 'shop_commission_ledger.affiliate_id', id::text, tenant_id::text, affiliate_id::text FROM public.shop_commission_ledger WHERE affiliate_id IS NOT NULL
             ),
             anomalous_child_rows AS (
                 SELECT cr.stream, cr.row_id, cr.tenant_id, cr.ref_id, 'ORPHAN_CHILD_ROW' AS anomaly_type
@@ -1894,7 +1894,7 @@ def main():
 
         matrix = [
             ("TRANSACTION_ISOLATION", "Transaction Read-Only Enforcement", ro_val.upper() == "ON", "PASS", "Strict Read-Only Session Verified (0 Mutations)"),
-            ("SCH_01_TO_13", "Catalog Physical Schema Parity", sch_fail == 0, "PENDING DDL", f"{sch_pass}/13 Pass, {sch_fail}/13 Pending Migration 031 DDL"),
+            ("SCH_01_TO_13", "Catalog Physical Schema Parity", sch_fail == 0, "PASS" if sch_fail == 0 else "PENDING DDL", f"{sch_pass}/13 Pass, {sch_fail}/13 Pending Migration 031 DDL"),
             ("B2_ASSERT_01", "Baseline Ledger Volume & Multi-Tenant Conflict", po_conflicts == 0 and ac_conflicts == 0, "PASS", "0 Conflicts across PO & AC (Clean Multi-Tenancy)"),
             ("B2_ASSERT_02", "Cross-Tenant Leakage Check", leakage['mismatched_tenant_count'] == 0 and orders_eval['unresolved_operational_orders'] == 0, "PASS", "0 Cross-Tenant Mismatches, 0 Unresolved Operational Orders"),
             ("B2_ASSERT_03", "Quarantine Parity & Survivor Cardinality", True, "UNPROVEN / EMPTY BASELINE", "Query engine 0 anomalies; tables unpopulated awaiting seeder"),
@@ -1910,11 +1910,14 @@ def main():
         print("\n" + "=" * 80)
         print("EXECUTIVE DBRE AUDIT SUMMARY:")
         print("1. All queries executed strictly under SET TRANSACTION READ ONLY with ZERO mutations.")
-        print("2. Staging Database (xkhqirhurnjqglmajghn:5432) is verified in clean pre-migration baseline state.")
+        db_state_desc = "post-DDL 031 ratified state" if (sch_fail == 0 and b2_assert_04_pass) else "clean pre-migration baseline state"
+        print(f"2. Staging Database (xkhqirhurnjqglmajghn:5432) is verified in {db_state_desc}.")
         print("3. Production DB (mpluzajlzpregmjwpjqr) and Cloudflare R2: STRICT ZERO-TOUCH (0 bytes read/written).")
-        print("4. Contractual 8 FK relations audited: Status UNPROVEN / PENDING DDL (0/8 composite FKs active in baseline, attributions.order_id pending DDL, 0 dangling references on existing rows).")
+        fk_desc = "PASS (8/8 composite FKs active and convalidated, attributions.order_id confirmed, 0 dangling references)" if b2_assert_04_pass else "UNPROVEN / PENDING DDL (0/8 composite FKs active in baseline, attributions.order_id pending DDL, 0 dangling references on existing rows)"
+        print(f"4. Contractual 8 FK relations audited: Status {fk_desc}.")
         print("5. 3-Tier Linear Lineage and Exact-One occurrence verified mathematically via in-memory query engine.")
-        print("6. In accordance with CTO Directive (No False Labeling), Gate B2 remains: CONDITIONAL -- STANDBY.")
+        overall_gate = "POST-DDL 031 RATIFIED (Awaiting Seeder Stage 2B)" if (sch_fail == 0 and b2_assert_04_pass) else "CONDITIONAL -- STANDBY"
+        print(f"6. In accordance with CTO Directive (No False Labeling), Gate B2 status: {overall_gate}.")
         print("=" * 80)
 
     except Exception as e:
