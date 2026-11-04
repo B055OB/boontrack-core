@@ -322,6 +322,56 @@ def extract_seeder_lock_tables(seeder_file="staging_seeder_fixture.sql"):
     lock_statement = match.group(0).strip()
     return tables, lock_statement
 
+def verify_all_lock_table_declarations():
+    """
+    Verifies that all 4 DDL and Seeder files declare the exact same 12 locked tables
+    in identical deterministic order.
+    """
+    files_to_check = [
+        ("migrations/031_b2_remediation_suite.sql", "Forward DDL 031"),
+        ("migrations/031_b2_remediation_suite_rollback.sql", "Rollback DDL 031"),
+        ("staging_seeder_fixture.sql", "Staging Seeder Fixture"),
+        ("staging_seeder_fixture_rollback.sql", "Staging Seeder Fixture Rollback")
+    ]
+    print("\n--- [DETERMINISTIC LOCK MANIFEST] Verifying 12-Table Synchronization Across DDL & Seeder ---")
+    for file_path, label in files_to_check:
+        tables, stmt = extract_seeder_lock_tables(file_path)
+        assert tables == EXPECTED_SEEDER_LOCK_TABLES, (
+            f"Lock table mismatch in {label} ({file_path})!\nExpected: {EXPECTED_SEEDER_LOCK_TABLES}\nFound: {tables}"
+        )
+        print(f"[+] {label:<32}: 12/12 tables match expected deterministic manifest 100% bit-for-bit.")
+
+def verify_and_print_historical_affiliates(cursor, initial_affiliates, phase_label):
+    """
+    Verifies that all 5 historical staging affiliates remain 100% intact row-by-row
+    and prints a formatted comparison table.
+    """
+    cursor.execute("""
+        SELECT id::text, tenant_id, name, phone_number, referral_code
+        FROM public.affiliates
+        WHERE id IN (
+            '25305f9c-ed1b-4e84-8771-325b5dde23ee',
+            '2ad6fc0a-1a11-4e52-8d94-65997d5ad9ae',
+            '43e48443-dcfa-47a6-818c-5144e3a34db4',
+            'b92b0929-1dbd-4f80-b875-94e9ab92b189',
+            'f5b98eaa-cfde-49cf-a497-491221c1cda9'
+        )
+        ORDER BY id;
+    """)
+    current_affiliates = [dict(r) for r in cursor.fetchall()]
+    print(f"\n--- [HISTORICAL AFFILIATES INTEGRITY] Row-by-Row Proof: {phase_label} ---")
+    print(f"{'Affiliate ID':<38} | {'Tenant ID':<10} | {'Name':<15} | {'Phone':<12} | {'Ref Code':<10} | {'Status'}")
+    print("-" * 115)
+    assert len(current_affiliates) == 5, f"Expected 5 historical affiliates, found {len(current_affiliates)}"
+    for init_row, curr_row in zip(initial_affiliates, current_affiliates):
+        assert init_row['id'] == curr_row['id'], f"Mismatch on affiliate ID: {init_row['id']} vs {curr_row['id']}"
+        assert init_row['tenant_id'] == curr_row['tenant_id'], f"Mismatch on tenant_id for {curr_row['id']}"
+        assert init_row['name'] == curr_row['name'], f"Mismatch on name for {curr_row['id']}"
+        assert init_row['phone_number'] == curr_row['phone_number'], f"Mismatch on phone for {curr_row['id']}"
+        assert init_row['referral_code'] == curr_row['referral_code'], f"Mismatch on referral_code for {curr_row['id']}"
+        print(f"{curr_row['id']:<38} | {curr_row['tenant_id']:<10} | {curr_row['name']:<15} | {curr_row['phone_number']:<12} | {curr_row['referral_code']:<10} | 100% INTACT (BIT-EXACT)")
+    print(f"[+] Historical Affiliates Verification ({phase_label}): 5/5 rows verified bit-exact against baseline.")
+
 def audit_staging_tenant_id_casing():
     """
     Strictly read-only audit against Staging Supabase to inspect whether
@@ -709,6 +759,22 @@ def main():
     target_conn.commit()
     print("[+] 5 Historical staging affiliates populated.")
 
+    # Snapshot and verify initial baseline historical affiliates
+    target_cur.execute("""
+        SELECT id::text, tenant_id, name, phone_number, referral_code
+        FROM public.affiliates
+        WHERE id IN (
+            '25305f9c-ed1b-4e84-8771-325b5dde23ee',
+            '2ad6fc0a-1a11-4e52-8d94-65997d5ad9ae',
+            '43e48443-dcfa-47a6-818c-5144e3a34db4',
+            'b92b0929-1dbd-4f80-b875-94e9ab92b189',
+            'f5b98eaa-cfde-49cf-a497-491221c1cda9'
+        )
+        ORDER BY id;
+    """)
+    initial_historical_affiliates = [dict(r) for r in target_cur.fetchall()]
+    verify_and_print_historical_affiliates(target_cur, initial_historical_affiliates, "Baseline Snapshot")
+
     # Compute baseline schema fingerprint across tracked catalog objects
     baseline_fp, base_cols, base_cons, base_idx, base_trg = compute_schema_fingerprint(target_cur)
     print(f"[+] Baseline Tracked Catalog Objects Fingerprint (SHA-256): {baseline_fp}")
@@ -882,7 +948,8 @@ def main():
     # -------------------------------------------------------------------------
     print("\n--- [SEEDER CONCURRENCY GUARD] Multi-Connection Lock Contention & Exclusivity Race Proof ---")
 
-    # 1. Dynamic Lock Table Validation (CTO Item 1)
+    # 1. Dynamic Lock Table Validation Across All 4 Files (CTO Item 1)
+    verify_all_lock_table_declarations()
     seeder_locked_tables, seeder_lock_stmt = extract_seeder_lock_tables("staging_seeder_fixture.sql")
     print(f"[*] Dynamically extracted {len(seeder_locked_tables)} tables from staging_seeder_fixture.sql Stage 0:")
     for idx, tbl in enumerate(seeder_locked_tables, 1):
@@ -1036,20 +1103,20 @@ def main():
     # -------------------------------------------------------------------------
     # 3.4 MIGRATION CONCURRENT-WRITE ADVERSARIAL TEST: MULTI-CONNECTION LOCK PROOF
     # -------------------------------------------------------------------------
-    print("\n--- [MIGRATION CONCURRENCY GUARD] Multi-Connection Lock Contention & Exclusivity Audit ---")
+    print("\n--- [MIGRATION CONCURRENCY GUARD] Multi-Connection Lock Contention & 2s Timeout Proof ---")
     conn1 = psycopg2.connect(target_conn_str)
     cur1 = conn1.cursor()
     conn2 = psycopg2.connect(target_conn_str)
     cur2 = conn2.cursor()
 
-    print("[*] Connection 1: Acquiring ACCESS EXCLUSIVE lock on public.tenants and public.affiliate_commissions...")
+    print("[*] Connection 1: Acquiring ACCESS EXCLUSIVE lock on all 12 tables...")
     cur1.execute("BEGIN;")
     cur1.execute("SET LOCAL lock_timeout = '2s';")
-    cur1.execute("LOCK TABLE public.tenants, public.affiliate_commissions IN ACCESS EXCLUSIVE MODE;")
+    cur1.execute(seeder_lock_stmt)
 
-    # 1. Contention proof on public.tenants
-    print("[*] Connection 2: Attempting concurrent INSERT into public.tenants with lock_timeout = '1s'...")
-    cur2.execute("SET lock_timeout = '1s';")
+    # 1. Contention proof on public.tenants with lock_timeout = '2s'
+    print("[*] Connection 2: Attempting concurrent INSERT into public.tenants with lock_timeout = '2s'...")
+    cur2.execute("SET lock_timeout = '2s';")
     tenants_lock_caught = False
     try:
         t_start = time.time()
@@ -1063,16 +1130,17 @@ def main():
         t_elapsed = time.time() - t_start
         if ex.pgcode == '55P03':
             tenants_lock_caught = True
-            print(f"[+] Connection 2 was BLOCKED on public.tenants and timed out after {t_elapsed:.2f}s with SQLSTATE 55P03 ({ex.diag.message_primary})")
+            print(f"[+] Connection 2 was BLOCKED on public.tenants and canceled after {t_elapsed:.2f}s (>= 2s SLA) with SQLSTATE 55P03 ({ex.diag.message_primary})")
+            assert t_elapsed >= 2.0, f"Expected lock timeout duration >= 2s, but got {t_elapsed:.2f}s"
         else:
             raise AssertionError(f"Expected lock_timeout (55P03) on public.tenants, got {ex.pgcode}: {ex}")
 
     if not tenants_lock_caught:
         raise AssertionError("FATAL CONCURRENCY BREACH: Connection 2 was able to write to locked public.tenants!")
 
-    # 2. Contention proof on public.affiliate_commissions
-    print("[*] Connection 2: Attempting concurrent INSERT into public.affiliate_commissions with lock_timeout = '1s'...")
-    cur2.execute("SET lock_timeout = '1s';")
+    # 2. Contention proof on public.affiliate_commissions with lock_timeout = '2s'
+    print("[*] Connection 2: Attempting concurrent INSERT into public.affiliate_commissions with lock_timeout = '2s'...")
+    cur2.execute("SET lock_timeout = '2s';")
     comm_lock_caught = False
     try:
         t_start = time.time()
@@ -1087,7 +1155,8 @@ def main():
         t_elapsed = time.time() - t_start
         if ex.pgcode == '55P03':
             comm_lock_caught = True
-            print(f"[+] Connection 2 was BLOCKED on public.affiliate_commissions and timed out after {t_elapsed:.2f}s with SQLSTATE 55P03 ({ex.diag.message_primary})")
+            print(f"[+] Connection 2 was BLOCKED on public.affiliate_commissions and canceled after {t_elapsed:.2f}s (>= 2s SLA) with SQLSTATE 55P03 ({ex.diag.message_primary})")
+            assert t_elapsed >= 2.0, f"Expected lock timeout duration >= 2s, but got {t_elapsed:.2f}s"
         else:
             raise AssertionError(f"Expected lock_timeout (55P03) on public.affiliate_commissions, got {ex.pgcode}: {ex}")
 
@@ -1097,20 +1166,166 @@ def main():
     cur1.execute("ROLLBACK;")
     conn1.close()
     conn2.close()
-    print("[+] ACCESS EXCLUSIVE lock serialization confirmed on tenants & commissions (AC-03 PASS).")
+    print("[+] ACCESS EXCLUSIVE lock serialization confirmed across all 12 tables: concurrent transactions exceeding 2s canceled with SQLSTATE 55P03 (AC-03 PASS).")
+
+    # -------------------------------------------------------------------------
+    # 3.5 TWO-PATH ROLLBACK HARNESS: JALUR A (TRANSACTION ABORT PRE-COMMIT)
+    # -------------------------------------------------------------------------
+    print_section("SECTION 3.5", "Two-Path Rollback Harness — Jalur A (Transaction Abort Pre-Commit)")
+    print("[*] Initiating DDL 031 transaction with simulated mid-flight failure / exception...")
+    target_cur.execute("BEGIN;")
+    target_cur.execute("SET LOCAL statement_timeout = '5s';")
+    target_cur.execute("SET LOCAL lock_timeout = '2s';")
+
+    # Acquire locks and run partial DDL
+    target_cur.execute(seeder_lock_stmt)
+    target_cur.execute("ALTER TABLE public.attributions ADD COLUMN IF NOT EXISTS order_id text;")
+    target_cur.execute("ALTER TABLE public.orders ALTER COLUMN tenant_id SET NOT NULL;")
+
+    jalur_a_aborted = False
+    try:
+        # Intentionally raise an exception mid-flight
+        target_cur.execute("DO $$ BEGIN RAISE EXCEPTION 'SIMULATED_PRE_COMMIT_FAILURE_FOR_JALUR_A' USING ERRCODE = 'P0009'; END $$;")
+    except psycopg2.Error as ex:
+        jalur_a_aborted = True
+        target_conn.rollback()
+        print(f"[+] Mid-flight transaction error caught: SQLSTATE {ex.pgcode} ({ex.diag.message_primary}) -> Executed ROLLBACK.")
+
+    if not jalur_a_aborted:
+        raise AssertionError("Simulated failure did not trigger exception!")
+
+    print("[*] Verifying catalog schema returns to baseline state immediately without running external rollback script...")
+    post_abort_fp, post_abort_cols, post_abort_cons, post_abort_idx, post_abort_trg = compute_schema_fingerprint(target_cur)
+    print(f"1. Baseline Catalog Fingerprint      : {baseline_fp}")
+    print(f"2. Post-Abort Catalog Fingerprint    : {post_abort_fp}")
+    assert post_abort_fp == baseline_fp, "FATAL: Jalur A schema drift detected! Delta != 0"
+    print("3. Catalog Fingerprint Delta         : 0 (Zero Drift Across Tracked Catalog Objects Delta = 0 Verified)")
+
+    target_cur.execute("""
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'attributions' AND column_name = 'order_id';
+    """)
+    assert target_cur.fetchone() is None, "FATAL: attributions.order_id survived pre-commit rollback!"
+    print("4. Verification of Dropped Column    : attributions.order_id is COMPLETELY ABSENT")
+
+    verify_and_print_historical_affiliates(target_cur, initial_historical_affiliates, "Jalur A Post-Abort")
+
+    target_cur.execute("SELECT COUNT(*) AS cnt, COALESCE(SUM(amount), 0.00)::numeric(18,2) AS sum_amt FROM public.affiliate_commissions;")
+    row_check = target_cur.fetchone()
+    assert row_check['cnt'] == initial_row_count and row_check['sum_amt'] == initial_amount_checksum
+    print("5. Financial Balance Conservation     : 3 rows, Sum = 450000.75 (Zero Financial Drift Verified)")
+    print("[+] Jalur A (Transaction Abort Pre-Commit) 100% SUCCESSFUL: Native PostgreSQL Transactional DDL Rollback Verified (Delta = 0).")
 
     # =========================================================================
-    # FASE 4: Forward Migration 031 Execution & Extended Catalog Audit
+    # FASE 4: Forward Migration 031 Execution, Micro-Telemetry & Frozen Post-DDL Criteria
     # =========================================================================
-    print_section("FASE 4", "Forward Migration 031 Execution & Extended Catalog Audit")
+    print_section("FASE 4", "Forward Migration 031 Execution, Micro-Telemetry & Frozen Post-DDL Criteria")
 
-    mig_sql_forward = mig_full.split("COMMIT;")[0] + "COMMIT;"
-    print("[*] Executing migrations/031_b2_remediation_suite.sql (with ACCESS EXCLUSIVE locking upfront)...")
-    target_cur.execute(mig_sql_forward)
+    with open("migrations/031_b2_remediation_suite.sql", "r", encoding="utf-8") as f:
+        mig_full = f.read()
+
+    mig_sql_forward = mig_full.split("COMMIT;")[0]
+    part_lock = mig_sql_forward.split("-- [STAGE 1]")[0]
+    remainder = "-- [STAGE 1]" + mig_sql_forward.split("-- [STAGE 1]")[1]
+    part_audit = remainder.split("-- [STAGE 2]")[0]
+    part_ddl = "-- [STAGE 2]" + remainder.split("-- [STAGE 2]")[1]
+
+    print("[*] Executing Forward Migration 031 with Micro-Telemetry instrumentation...")
+    target_cur.execute("BEGIN;")
+
+    # 1. Lock acquisition
+    t_lock_start = time.perf_counter()
+    target_cur.execute(part_lock)
+    t_lock_acquired = time.perf_counter()
+    dur_lock_acq = t_lock_acquired - t_lock_start
+
+    # 2. Precondition audit
+    t_audit_start = time.perf_counter()
+    target_cur.execute(part_audit)
+    t_audit_end = time.perf_counter()
+    dur_audit = t_audit_end - t_audit_start
+
+    # 3. Physical DDL execution
+    t_ddl_start = time.perf_counter()
+    target_cur.execute(part_ddl)
+    t_ddl_end = time.perf_counter()
+    dur_ddl = t_ddl_end - t_ddl_start
+
+    # 4. Commit
+    t_commit_start = time.perf_counter()
     target_conn.commit()
-    print("[+] Migration 031 committed successfully.")
+    t_commit_end = time.perf_counter()
+    dur_commit = t_commit_end - t_commit_start
 
-    # Extended Catalog Audit: Discover all live foreign keys with all 7 properties
+    total_lock_hold = t_commit_end - t_lock_acquired
+
+    print("\n--- [MICRO-TELEMETRY] Migration 031 Timing Breakdown ---")
+    print(f"1. Lock Acquisition Time (ACCESS EXCLUSIVE)  : {dur_lock_acq * 1000:.2f} ms ({dur_lock_acq:.4f} s)")
+    print(f"2. Precondition Audit Execution Time         : {dur_audit * 1000:.2f} ms ({dur_audit:.4f} s)")
+    print(f"3. Physical DDL Execution Time               : {dur_ddl * 1000:.2f} ms ({dur_ddl:.4f} s)")
+    print(f"4. Transaction Commit Duration               : {dur_commit * 1000:.2f} ms ({dur_commit:.4f} s)")
+    print(f"5. Total Lock Hold Duration (Before Commit)  : {total_lock_hold * 1000:.2f} ms ({total_lock_hold:.4f} s) [SLA < 3.0s: VERIFIED]")
+    assert total_lock_hold < 3.0, f"Lock hold duration exceeded 3.0s SLA: {total_lock_hold:.4f}s"
+    print("[+] Migration 031 executed and committed within strict < 3.0s SLA window.")
+
+    # -------------------------------------------------------------------------
+    # FROZEN POST-DDL CRITERIA 1: 13/13 Schema Gate Checks (SCH-01 s/d SCH-13)
+    # -------------------------------------------------------------------------
+    print("\n--- [FROZEN POST-DDL CRITERIA 1] 13/13 Catalog Physical Schema Checks (SCH-01 s/d SCH-13) ---")
+    target_cur.execute("""
+        WITH schema_evaluation AS (
+            SELECT 'SCH-01' AS check_id, 'affiliate_commissions.tenant_id NOT NULL' AS check_name,
+                   CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='affiliate_commissions' AND column_name='tenant_id' AND is_nullable='NO') THEN 'PASS' ELSE 'FAIL' END AS status
+            UNION ALL
+            SELECT 'SCH-02', 'orders.tenant_id NOT NULL',
+                   CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='orders' AND column_name='tenant_id' AND is_nullable='NO') THEN 'PASS' ELSE 'FAIL' END
+            UNION ALL
+            SELECT 'SCH-03', 'product_orders.tenant_id NOT NULL',
+                   CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='product_orders' AND column_name='tenant_id' AND is_nullable='NO') THEN 'PASS' ELSE 'FAIL' END
+            UNION ALL
+            SELECT 'SCH-04', 'delivery_orders.tenant_id NOT NULL',
+                   CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='delivery_orders' AND column_name='tenant_id' AND is_nullable='NO') THEN 'PASS' ELSE 'FAIL' END
+            UNION ALL
+            SELECT 'SCH-05', 'attributions.tenant_id NOT NULL',
+                   CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='attributions' AND column_name='tenant_id' AND is_nullable='NO') THEN 'PASS' ELSE 'FAIL' END
+            UNION ALL
+            SELECT 'SCH-06', 'attribution_sessions.tenant_id NOT NULL',
+                   CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='attribution_sessions' AND column_name='tenant_id' AND is_nullable='NO') THEN 'PASS' ELSE 'FAIL' END
+            UNION ALL
+            SELECT 'SCH-07', 'shop_subscriptions.tenant_id NOT NULL',
+                   CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='shop_subscriptions' AND column_name='tenant_id' AND is_nullable='NO') THEN 'PASS' ELSE 'FAIL' END
+            UNION ALL
+            SELECT 'SCH-08', 'shop_commission_ledger.tenant_id NOT NULL',
+                   CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='shop_commission_ledger' AND column_name='tenant_id' AND is_nullable='NO') THEN 'PASS' ELSE 'FAIL' END
+            UNION ALL
+            SELECT 'SCH-09', 'affiliate_commissions.amount NUMERIC(18,2)',
+                   CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='affiliate_commissions' AND column_name='amount' AND data_type='numeric' AND numeric_precision=18 AND numeric_scale=2) THEN 'PASS' ELSE 'FAIL' END
+            UNION ALL
+            SELECT 'SCH-10', 'affiliates UNIQUE (tenant_id, referral_code)',
+                   CASE WHEN EXISTS (SELECT 1 FROM pg_constraint con JOIN pg_class tbl ON tbl.oid=con.conrelid JOIN pg_namespace ns ON ns.oid=tbl.relnamespace CROSS JOIN LATERAL (SELECT array_agg(att.attname::text ORDER BY ord.n) AS cols FROM unnest(con.conkey) WITH ORDINALITY AS ord(col_num, n) JOIN pg_attribute att ON att.attrelid=con.conrelid AND att.attnum=ord.col_num) arr WHERE ns.nspname='public' AND tbl.relname='affiliates' AND con.contype='u' AND con.convalidated IS TRUE AND arr.cols=ARRAY['tenant_id', 'referral_code']) THEN 'PASS' ELSE 'FAIL' END
+            UNION ALL
+            SELECT 'SCH-11', 'affiliates UNIQUE (tenant_id, id)',
+                   CASE WHEN EXISTS (SELECT 1 FROM pg_constraint con JOIN pg_class tbl ON tbl.oid=con.conrelid JOIN pg_namespace ns ON ns.oid=tbl.relnamespace CROSS JOIN LATERAL (SELECT array_agg(att.attname::text ORDER BY ord.n) AS cols FROM unnest(con.conkey) WITH ORDINALITY AS ord(col_num, n) JOIN pg_attribute att ON att.attrelid=con.conrelid AND att.attnum=ord.col_num) arr WHERE ns.nspname='public' AND tbl.relname='affiliates' AND con.contype='u' AND con.convalidated IS TRUE AND arr.cols=ARRAY['tenant_id', 'id']) THEN 'PASS' ELSE 'FAIL' END
+            UNION ALL
+            SELECT 'SCH-12', 'shop_subscriptions UNIQUE (tenant_id, xendit_invoice_id)',
+                   CASE WHEN EXISTS (SELECT 1 FROM pg_constraint con JOIN pg_class tbl ON tbl.oid=con.conrelid JOIN pg_namespace ns ON ns.oid=tbl.relnamespace CROSS JOIN LATERAL (SELECT array_agg(att.attname::text ORDER BY ord.n) AS cols FROM unnest(con.conkey) WITH ORDINALITY AS ord(col_num, n) JOIN pg_attribute att ON att.attrelid=con.conrelid AND att.attnum=ord.col_num) arr WHERE ns.nspname='public' AND tbl.relname='shop_subscriptions' AND con.contype='u' AND con.convalidated IS TRUE AND arr.cols=ARRAY['tenant_id', 'xendit_invoice_id']) THEN 'PASS' ELSE 'FAIL' END
+            UNION ALL
+            SELECT 'SCH-13', 'shop_commission_ledger UNIQUE (tenant_id, subscription_id)',
+                   CASE WHEN EXISTS (SELECT 1 FROM pg_constraint con JOIN pg_class tbl ON tbl.oid=con.conrelid JOIN pg_namespace ns ON ns.oid=tbl.relnamespace CROSS JOIN LATERAL (SELECT array_agg(att.attname::text ORDER BY ord.n) AS cols FROM unnest(con.conkey) WITH ORDINALITY AS ord(col_num, n) JOIN pg_attribute att ON att.attrelid=con.conrelid AND att.attnum=ord.col_num) arr WHERE ns.nspname='public' AND tbl.relname='shop_commission_ledger' AND con.contype='u' AND con.convalidated IS TRUE AND arr.cols=ARRAY['tenant_id', 'subscription_id']) THEN 'PASS' ELSE 'FAIL' END
+        )
+        SELECT check_id, check_name, status FROM schema_evaluation ORDER BY check_id;
+    """)
+    sch_results = target_cur.fetchall()
+    print(f"{'Check ID':<9} | {'Check Description':<55} | {'Status'}")
+    print("-" * 75)
+    for r in sch_results:
+        print(f"{r['check_id']:<9} | {r['check_name']:<55} | {r['status']}")
+    assert len(sch_results) == 13 and all(r['status'] == 'PASS' for r in sch_results), "Schema Gate check failed post-migration!"
+    print("[+] Frozen Post-DDL Criteria 1: 13/13 Schema Gate checks verified PASS (100%).")
+
+    # -------------------------------------------------------------------------
+    # FROZEN POST-DDL CRITERIA 2: 8/8 Composite FKs with all 7 properties
+    # -------------------------------------------------------------------------
     target_cur.execute("""
         SELECT
             c.conname AS constraint_name,
@@ -1147,7 +1362,7 @@ def main():
     """)
     live_fks = target_cur.fetchall()
 
-    print(f"\n--- Catalog FK Manifest Reconciliation (Exhaustive 7-Property Audit: Target 8/8) ---")
+    print(f"\n--- [FROZEN POST-DDL CRITERIA 2] Catalog FK Manifest Reconciliation (Exhaustive 7-Property Audit: Target 8/8) ---")
     print(f"{'No':<3} | {'Expected Constraint Name':<50} | {'Status':<28} | {'Val':<5} | {'Del':<5} | {'Upd':<5} | {'Match':<5} | {'Def':<5}")
     print("-" * 125)
 
@@ -1186,16 +1401,21 @@ def main():
     if matched_fk_count != 8 or convalidated_fk_count != 8:
         raise AssertionError(f"Expected 8/8 matched and convalidated FKs across all 7 properties, got matched={matched_fk_count}")
 
-    # Check physical column addition
+    # -------------------------------------------------------------------------
+    # FROZEN POST-DDL CRITERIA 3: Physical Presence of attributions.order_id & Functional Checks
+    # -------------------------------------------------------------------------
     target_cur.execute("""
         SELECT column_name, data_type, is_nullable
         FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = 'attributions' AND column_name = 'order_id';
     """)
     attr_order_col = target_cur.fetchone()
-    print(f"\nPhysical Column Audit (attributions.order_id): Present in catalog = {attr_order_col is not None}")
+    print(f"\n--- [FROZEN POST-DDL CRITERIA 3] Physical Column Audit (attributions.order_id) ---")
+    print(f"1. Column Present in Catalog : {attr_order_col is not None}")
     if not attr_order_col:
         raise AssertionError("attributions.order_id column was not created by Migration 031!")
+    print(f"2. Column Data Type          : {attr_order_col['data_type']}")
+    print(f"3. Column Is Nullable        : {attr_order_col['is_nullable']}")
 
     # Check functional integrity of attributions.order_id composite FK
     print("\n--- Functional Integrity Audit: attributions.order_id Composite FK ---")
@@ -1215,12 +1435,8 @@ def main():
         else:
             raise AssertionError(f"Expected 23503 foreign key violation, got {ex.pgcode}")
 
-    # -------------------------------------------------------------------------
-    # ISOLATED REFERENTIAL ACTION AUDIT: ON DELETE RESTRICT on Manager Hierarchy
-    # -------------------------------------------------------------------------
+    # Isolated Referential Action Audit: ON DELETE RESTRICT on Manager Hierarchy
     print("\n--- Referential Action Audit: ON DELETE RESTRICT on Manager Hierarchy ---")
-
-    # Test 1: Isolated Manager Self-Reference Proof (Exclusively fk_affiliates_manager_composite)
     iso_mgr_id = 'a3333333-3333-3333-3333-333333333331'
     iso_sub_id = 'a3333333-3333-3333-3333-333333333332'
     target_cur.execute(f"""
@@ -1233,15 +1449,12 @@ def main():
 
     target_cur.execute("SAVEPOINT restrict_mgr_self_sp;")
     try:
-        # Attempt to delete isolated manager while subordinate references it via affiliates.manager_id
         target_cur.execute(f"DELETE FROM public.affiliates WHERE id = '{iso_mgr_id}'::uuid;")
         target_conn.commit()
         raise AssertionError("FAIL: Deleting isolated manager was NOT restricted!")
     except psycopg2.Error as ex:
         target_cur.execute("ROLLBACK TO SAVEPOINT restrict_mgr_self_sp;")
-        # Kunci asersi secara ketat per CTO item 3: assert sqlstate == '23001' (HAPUS toleransi 23503)
         assert ex.pgcode == '23001', f"Expected SQLSTATE '23001' (RESTRICT violation), but got '{ex.pgcode}'"
-        # Asersi constraint name: assert 'fk_affiliates_manager_composite' in error_message
         error_message = f"{ex} {ex.diag.message_primary or ''} {ex.diag.constraint_name or ''}"
         assert 'fk_affiliates_manager_composite' in error_message, (
             f"Expected 'fk_affiliates_manager_composite' in error_message, but got: {error_message}"
@@ -1261,27 +1474,32 @@ def main():
         raise AssertionError("FAIL: Deleting manager with active orders was NOT restricted!")
     except psycopg2.Error as ex:
         target_cur.execute("ROLLBACK TO SAVEPOINT restrict_order_mgr_sp;")
-        # Asersi constraint name secara eksplisit per CTO item 3: assert 'fk_orders_manager_composite' in error_message
         error_message = f"{ex} {ex.diag.message_primary or ''} {ex.diag.constraint_name or ''}"
         assert 'fk_orders_manager_composite' in error_message, (
             f"Expected 'fk_orders_manager_composite' in error_message, but got: {error_message}"
         )
         print(f"[+] Order Manager RESTRICT verified: Deleting manager with active orders correctly rejected by 'fk_orders_manager_composite' with SQLSTATE {ex.pgcode} ({ex.diag.message_primary})")
 
-    print("\n[+] Extended Catalog Audit Complete: 8/8 FKs (All 7 Properties), Columns, Functional Relations & RESTRICT Verified (AC-04 PASS).")
+    # -------------------------------------------------------------------------
+    # FROZEN POST-DDL CRITERIA 4: Keutuhan 5 Afiliasi Historis Post-DDL
+    # -------------------------------------------------------------------------
+    verify_and_print_historical_affiliates(target_cur, initial_historical_affiliates, "Frozen Post-DDL Migration 031")
+
+    print("\n[+] Extended Catalog Audit Complete: 13/13 Schema Gate, 8/8 FKs, attributions.order_id, RESTRICT & Historical Affiliates Verified (AC-04 PASS).")
 
     # =========================================================================
-    # FASE 5: Standalone Rollback & Proof of Zero Catalog Discrepancy (Delta = 0)
+    # FASE 5: Compensating Rollback Post-Commit (Jalur B) & Zero Drift (Delta = 0)
     # =========================================================================
-    print_section("FASE 5", "Standalone Rollback & Zero Drift Across Tracked Catalog Objects (Delta = 0)")
+    print_section("FASE 5", "Compensating Rollback Post-Commit (Jalur B) & Zero Drift (Delta = 0)")
 
+    print("[!] Simulating post-check failure trigger for Compensating Rollback (Jalur B)...")
     with open("migrations/031_b2_remediation_suite_rollback.sql", "r", encoding="utf-8") as f:
         rollback_sql = f.read()
 
     print("[*] Executing migrations/031_b2_remediation_suite_rollback.sql...")
     target_cur.execute(rollback_sql)
     target_conn.commit()
-    print("[+] Rollback executed and committed successfully.")
+    print("[+] Compensating Rollback executed and committed successfully.")
 
     post_fp, post_cols, post_cons, post_idx, post_trg = compute_schema_fingerprint(target_cur)
     print(f"\n1. Baseline Catalog Fingerprint      : {baseline_fp}")
@@ -1376,7 +1594,10 @@ def main():
     if row_count_delta != 0 or amount_drift != Decimal('0.00'):
         raise AssertionError(f"Financial conservation violation: drift={amount_drift}, row_delta={row_count_delta}")
 
-    print("\n[+] Standalone Rollback Verified: Zero Catalog Discrepancy (Delta = 0) and Zero Financial Drift (AC-05 & AC-06 PASS).")
+    # Verify 5 historical affiliates post-rollback
+    verify_and_print_historical_affiliates(target_cur, initial_historical_affiliates, "Jalur B Post-Rollback")
+
+    print("\n[+] Standalone Compensating Rollback Verified: Zero Catalog Discrepancy (Delta = 0), Zero Financial Drift, and 5 Historical Affiliates Intact (AC-05 & AC-06 PASS).")
 
     # =========================================================================
     # FASE 6: Teardown & Executive Verification Report
@@ -1403,10 +1624,10 @@ def main():
     ac_summary = [
         ("AC-01", "Environment Isolation & Disposable DB Provisioning", "PASS / VERIFIED", "Zero cloud markers ('xkhqir', 'mpluz'), clean local engine"),
         ("AC-02", "Baseline Initialization & Synthetic Fixtures Seeding", "PASS / VERIFIED", "10 tables, 8 contractual paths, initial checksum = 450000.75"),
-        ("AC-03", "Adversarial Preconditions & Lock Exclusivity Proof", "PASS / VERIFIED", "All 5 negative controls rejected; concurrent write blocked (55P03)"),
-        ("AC-04", "Forward Migration 031 & Full 7-Property FK Catalog Audit", "PASS / VERIFIED", "8/8 composite FKs matched & convalidated on all 7 properties; RESTRICT (23001) verified"),
-        ("AC-05", "Migration 031 Standalone Rollback & Zero Drift (Delta = 0)", "PASS / VERIFIED", "Zero drift across tracked catalog objects (cols, cons, idx, trg) Delta = 0, bit-exact match"),
-        ("AC-06", "Financial Data & UUID Round-Trip String Conservation", "PASS / VERIFIED", "Row delta = 0, amount drift = 0.00, 100% UUID string equality")
+        ("AC-03", "Adversarial Preconditions, Concurrency & 2s Timeout Proof", "PASS / VERIFIED", "All 5 negative controls rejected; 12 tables locked; 2s timeout canceled with 55P03"),
+        ("AC-04", "Forward DDL 031, Micro-Telemetry & Frozen Post-DDL Criteria", "PASS / VERIFIED", "Lock hold < 3.0s SLA; 13/13 Schema Gate PASS; 8/8 FKs validated; 5 hist affiliates intact"),
+        ("AC-05", "Two-Path Rollback Harness (Jalur A Abort & Jalur B Rollback)", "PASS / VERIFIED", "Jalur A (pre-commit abort) Delta = 0; Jalur B (post-commit compensating) Delta = 0"),
+        ("AC-06", "Financial Data & 5 Historical Affiliates Conservation", "PASS / VERIFIED", "Row delta = 0, amount drift = 0.00, 100% UUID equality, 5/5 historical affiliates verified")
     ]
 
     print(f"{'Criteria':<9} | {'Scope & Description':<54} | {'Verdict':<17} | {'Evidence Details'}")

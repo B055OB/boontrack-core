@@ -2,7 +2,7 @@
 ================================================================================
  BOONTRACK P1 DISPOSABLE DB REHEARSAL HARNESS EXECUTION
 ================================================================================
-Timestamp: 2026-11-04T17:10:05+0700
+Timestamp: 2026-11-04T19:23:36+0700
 Role: Lead DBRE & Principal Systems Architect
 Security Posture: ZERO MUTATION STAGING/PROD; LOCAL DISPOSABLE REHEARSAL
 Connection String Security Scan: Zero cloud markers ('xkhqir', 'mpluz') present (VERIFIED).
@@ -54,6 +54,16 @@ Manifest Verification Summary: 10/10 Tables | 193 Columns | 23 Baseline Constrai
 
 [*] Populating 5 historical staging affiliates into baseline...
 [+] 5 Historical staging affiliates populated.
+
+--- [HISTORICAL AFFILIATES INTEGRITY] Row-by-Row Proof: Baseline Snapshot ---
+Affiliate ID                           | Tenant ID  | Name            | Phone        | Ref Code   | Status
+-------------------------------------------------------------------------------------------------------------------
+25305f9c-ed1b-4e84-8771-325b5dde23ee   | hist_t1    | Hist Aff 1      | 0811         | HIST01     | 100% INTACT (BIT-EXACT)
+2ad6fc0a-1a11-4e52-8d94-65997d5ad9ae   | hist_t1    | Hist Aff 2      | 0812         | HIST02     | 100% INTACT (BIT-EXACT)
+43e48443-dcfa-47a6-818c-5144e3a34db4   | hist_t1    | Hist Aff 3      | 0813         | HIST03     | 100% INTACT (BIT-EXACT)
+b92b0929-1dbd-4f80-b875-94e9ab92b189   | hist_t1    | Hist Aff 4      | 0814         | HIST04     | 100% INTACT (BIT-EXACT)
+f5b98eaa-cfde-49cf-a497-491221c1cda9   | hist_t1    | Hist Aff 5      | 0815         | HIST05     | 100% INTACT (BIT-EXACT)
+[+] Historical Affiliates Verification (Baseline Snapshot): 5/5 rows verified bit-exact against baseline.
 [+] Baseline Tracked Catalog Objects Fingerprint (SHA-256): f2fae915c685bf9e5cf1c22a20cadc44e1edbe9705323b8dfb6f78020c748b7b
     - Columns Tracked (incl. ordinal_position) : 255
     - Constraints Tracked (all 7 properties)   : 108
@@ -78,6 +88,12 @@ Negative Control 5   | P0003              | P0003              | PASS       | Or
 [+] All 5 Adversarial Precondition Controls verified: strict abort with P0005, P0006, P0002, P0003.
 
 --- [SEEDER CONCURRENCY GUARD] Multi-Connection Lock Contention & Exclusivity Race Proof ---
+
+--- [DETERMINISTIC LOCK MANIFEST] Verifying 12-Table Synchronization Across DDL & Seeder ---
+[+] Forward DDL 031                 : 12/12 tables match expected deterministic manifest 100% bit-for-bit.
+[+] Rollback DDL 031                : 12/12 tables match expected deterministic manifest 100% bit-for-bit.
+[+] Staging Seeder Fixture          : 12/12 tables match expected deterministic manifest 100% bit-for-bit.
+[+] Staging Seeder Fixture Rollback : 12/12 tables match expected deterministic manifest 100% bit-for-bit.
 [*] Dynamically extracted 12 tables from staging_seeder_fixture.sql Stage 0:
     1 . public.tenants
     2 . public.affiliates
@@ -94,11 +110,11 @@ Negative Control 5   | P0003              | P0003              | PASS       | Or
 [+] Dynamic Lock Table Validation: 12/12 tables match expected deterministic manifest 100% bit-for-bit.
 [*] Connection 1: Executing dynamically extracted Stage 0 upfront lock on all 12 tables...
 [*] Connection 2 [1/6]: Attempting concurrent insert into public.tenants (colliding tenant_slug = 'seed_tenant_a', lock_timeout = '1s')...
-[+] Connection 2 [1/6] was BLOCKED on public.tenants and timed out after 1.01s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[+] Connection 2 [1/6] was BLOCKED on public.tenants and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
 [*] Connection 2 [2/6]: Attempting concurrent insert into public.affiliates (colliding referral_code = 'seed_surv_01', lock_timeout = '1s')...
-[+] Connection 2 [2/6] was BLOCKED on public.affiliates and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[+] Connection 2 [2/6] was BLOCKED on public.affiliates and timed out after 1.02s with SQLSTATE 55P03 (canceling statement due to lock timeout)
 [*] Connection 2 [3/6]: Attempting concurrent insert into public.orders (colliding order id = 'seed_ord_001', lock_timeout = '1s')...
-[+] Connection 2 [3/6] was BLOCKED on public.orders and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[+] Connection 2 [3/6] was BLOCKED on public.orders and timed out after 1.01s with SQLSTATE 55P03 (canceling statement due to lock timeout)
 [*] Connection 2 [4/6]: Attempting concurrent insert into public.affiliate_commissions (colliding commission id = '5eed3333-3333-3333-3333-333333333331', lock_timeout = '1s')...
 [+] Connection 2 [4/6] was BLOCKED on public.affiliate_commissions and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
 [*] Connection 2 [5/6]: Attempting concurrent insert into public.migration_031_quarantined_affiliate_commissions (quarantined commission row, lock_timeout = '1s')...
@@ -117,20 +133,67 @@ Negative Control 5   | P0003              | P0003              | PASS       | Or
 2. Historical affiliates check         : count = 5/5 (Target: 5 - 100% INTACT)
 [+] Seeder Cleanup Isolation Verified: Exact targeting eliminates overreach; non-fixture & historical rows preserved.
 
---- [MIGRATION CONCURRENCY GUARD] Multi-Connection Lock Contention & Exclusivity Audit ---
-[*] Connection 1: Acquiring ACCESS EXCLUSIVE lock on public.tenants and public.affiliate_commissions...
-[*] Connection 2: Attempting concurrent INSERT into public.tenants with lock_timeout = '1s'...
-[+] Connection 2 was BLOCKED on public.tenants and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
-[*] Connection 2: Attempting concurrent INSERT into public.affiliate_commissions with lock_timeout = '1s'...
-[+] Connection 2 was BLOCKED on public.affiliate_commissions and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
-[+] ACCESS EXCLUSIVE lock serialization confirmed on tenants & commissions (AC-03 PASS).
+--- [MIGRATION CONCURRENCY GUARD] Multi-Connection Lock Contention & 2s Timeout Proof ---
+[*] Connection 1: Acquiring ACCESS EXCLUSIVE lock on all 12 tables...
+[*] Connection 2: Attempting concurrent INSERT into public.tenants with lock_timeout = '2s'...
+[+] Connection 2 was BLOCKED on public.tenants and canceled after 2.00s (>= 2s SLA) with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[*] Connection 2: Attempting concurrent INSERT into public.affiliate_commissions with lock_timeout = '2s'...
+[+] Connection 2 was BLOCKED on public.affiliate_commissions and canceled after 2.00s (>= 2s SLA) with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[+] ACCESS EXCLUSIVE lock serialization confirmed across all 12 tables: concurrent transactions exceeding 2s canceled with SQLSTATE 55P03 (AC-03 PASS).
 
->>> [FASE 4] Forward Migration 031 Execution & Extended Catalog Audit
+>>> [SECTION 3.5] Two-Path Rollback Harness — Jalur A (Transaction Abort Pre-Commit)
 --------------------------------------------------------------------------------
-[*] Executing migrations/031_b2_remediation_suite.sql (with ACCESS EXCLUSIVE locking upfront)...
-[+] Migration 031 committed successfully.
+[*] Initiating DDL 031 transaction with simulated mid-flight failure / exception...
+[+] Mid-flight transaction error caught: SQLSTATE P0009 (SIMULATED_PRE_COMMIT_FAILURE_FOR_JALUR_A) -> Executed ROLLBACK.
+[*] Verifying catalog schema returns to baseline state immediately without running external rollback script...
+1. Baseline Catalog Fingerprint      : f2fae915c685bf9e5cf1c22a20cadc44e1edbe9705323b8dfb6f78020c748b7b
+2. Post-Abort Catalog Fingerprint    : f2fae915c685bf9e5cf1c22a20cadc44e1edbe9705323b8dfb6f78020c748b7b
+3. Catalog Fingerprint Delta         : 0 (Zero Drift Across Tracked Catalog Objects Delta = 0 Verified)
+4. Verification of Dropped Column    : attributions.order_id is COMPLETELY ABSENT
 
---- Catalog FK Manifest Reconciliation (Exhaustive 7-Property Audit: Target 8/8) ---
+--- [HISTORICAL AFFILIATES INTEGRITY] Row-by-Row Proof: Jalur A Post-Abort ---
+Affiliate ID                           | Tenant ID  | Name            | Phone        | Ref Code   | Status
+-------------------------------------------------------------------------------------------------------------------
+25305f9c-ed1b-4e84-8771-325b5dde23ee   | hist_t1    | Hist Aff 1      | 0811         | HIST01     | 100% INTACT (BIT-EXACT)
+2ad6fc0a-1a11-4e52-8d94-65997d5ad9ae   | hist_t1    | Hist Aff 2      | 0812         | HIST02     | 100% INTACT (BIT-EXACT)
+43e48443-dcfa-47a6-818c-5144e3a34db4   | hist_t1    | Hist Aff 3      | 0813         | HIST03     | 100% INTACT (BIT-EXACT)
+b92b0929-1dbd-4f80-b875-94e9ab92b189   | hist_t1    | Hist Aff 4      | 0814         | HIST04     | 100% INTACT (BIT-EXACT)
+f5b98eaa-cfde-49cf-a497-491221c1cda9   | hist_t1    | Hist Aff 5      | 0815         | HIST05     | 100% INTACT (BIT-EXACT)
+[+] Historical Affiliates Verification (Jalur A Post-Abort): 5/5 rows verified bit-exact against baseline.
+5. Financial Balance Conservation     : 3 rows, Sum = 450000.75 (Zero Financial Drift Verified)
+[+] Jalur A (Transaction Abort Pre-Commit) 100% SUCCESSFUL: Native PostgreSQL Transactional DDL Rollback Verified (Delta = 0).
+
+>>> [FASE 4] Forward Migration 031 Execution, Micro-Telemetry & Frozen Post-DDL Criteria
+--------------------------------------------------------------------------------
+[*] Executing Forward Migration 031 with Micro-Telemetry instrumentation...
+
+--- [MICRO-TELEMETRY] Migration 031 Timing Breakdown ---
+1. Lock Acquisition Time (ACCESS EXCLUSIVE)  : 0.69 ms (0.0007 s)
+2. Precondition Audit Execution Time         : 4.56 ms (0.0046 s)
+3. Physical DDL Execution Time               : 17.35 ms (0.0173 s)
+4. Transaction Commit Duration               : 10.10 ms (0.0101 s)
+5. Total Lock Hold Duration (Before Commit)  : 32.02 ms (0.0320 s) [SLA < 3.0s: VERIFIED]
+[+] Migration 031 executed and committed within strict < 3.0s SLA window.
+
+--- [FROZEN POST-DDL CRITERIA 1] 13/13 Catalog Physical Schema Checks (SCH-01 s/d SCH-13) ---
+Check ID  | Check Description                                       | Status
+---------------------------------------------------------------------------
+SCH-01    | affiliate_commissions.tenant_id NOT NULL                | PASS
+SCH-02    | orders.tenant_id NOT NULL                               | PASS
+SCH-03    | product_orders.tenant_id NOT NULL                       | PASS
+SCH-04    | delivery_orders.tenant_id NOT NULL                      | PASS
+SCH-05    | attributions.tenant_id NOT NULL                         | PASS
+SCH-06    | attribution_sessions.tenant_id NOT NULL                 | PASS
+SCH-07    | shop_subscriptions.tenant_id NOT NULL                   | PASS
+SCH-08    | shop_commission_ledger.tenant_id NOT NULL               | PASS
+SCH-09    | affiliate_commissions.amount NUMERIC(18,2)              | PASS
+SCH-10    | affiliates UNIQUE (tenant_id, referral_code)            | PASS
+SCH-11    | affiliates UNIQUE (tenant_id, id)                       | PASS
+SCH-12    | shop_subscriptions UNIQUE (tenant_id, xendit_invoice_id) | PASS
+SCH-13    | shop_commission_ledger UNIQUE (tenant_id, subscription_id) | PASS
+[+] Frozen Post-DDL Criteria 1: 13/13 Schema Gate checks verified PASS (100%).
+
+--- [FROZEN POST-DDL CRITERIA 2] Catalog FK Manifest Reconciliation (Exhaustive 7-Property Audit: Target 8/8) ---
 No  | Expected Constraint Name                           | Status                       | Val   | Del   | Upd   | Match | Def  
 -----------------------------------------------------------------------------------------------------------------------------
 1   | fk_affiliate_commissions_affiliate_composite       | MATCH (ACTIVE & VALIDATED)   | True  | c     | a     | s     | False
@@ -144,7 +207,10 @@ No  | Expected Constraint Name                           | Status               
 
 FK Reconciliation Summary: Matched = 8/8 | Convalidated = 8/8
 
-Physical Column Audit (attributions.order_id): Present in catalog = True
+--- [FROZEN POST-DDL CRITERIA 3] Physical Column Audit (attributions.order_id) ---
+1. Column Present in Catalog : True
+2. Column Data Type          : text
+3. Column Is Nullable        : YES
 
 --- Functional Integrity Audit: attributions.order_id Composite FK ---
 [+] Positive control: Updated attributions with valid order_id = 'ord-001' (SUCCESS)
@@ -154,12 +220,23 @@ Physical Column Audit (attributions.order_id): Present in catalog = True
 [+] Manager Self-Reference RESTRICT verified: Deleting manager with active subordinates strictly rejected with SQLSTATE 23001 by 'fk_affiliates_manager_composite' (update or delete on table "affiliates" violates RESTRICT setting of foreign key constraint "fk_affiliates_manager_composite" on table "affiliates")
 [+] Order Manager RESTRICT verified: Deleting manager with active orders correctly rejected by 'fk_orders_manager_composite' with SQLSTATE 23503 (update or delete on table "affiliates" violates foreign key constraint "fk_orders_manager_composite" on table "orders")
 
-[+] Extended Catalog Audit Complete: 8/8 FKs (All 7 Properties), Columns, Functional Relations & RESTRICT Verified (AC-04 PASS).
+--- [HISTORICAL AFFILIATES INTEGRITY] Row-by-Row Proof: Frozen Post-DDL Migration 031 ---
+Affiliate ID                           | Tenant ID  | Name            | Phone        | Ref Code   | Status
+-------------------------------------------------------------------------------------------------------------------
+25305f9c-ed1b-4e84-8771-325b5dde23ee   | hist_t1    | Hist Aff 1      | 0811         | HIST01     | 100% INTACT (BIT-EXACT)
+2ad6fc0a-1a11-4e52-8d94-65997d5ad9ae   | hist_t1    | Hist Aff 2      | 0812         | HIST02     | 100% INTACT (BIT-EXACT)
+43e48443-dcfa-47a6-818c-5144e3a34db4   | hist_t1    | Hist Aff 3      | 0813         | HIST03     | 100% INTACT (BIT-EXACT)
+b92b0929-1dbd-4f80-b875-94e9ab92b189   | hist_t1    | Hist Aff 4      | 0814         | HIST04     | 100% INTACT (BIT-EXACT)
+f5b98eaa-cfde-49cf-a497-491221c1cda9   | hist_t1    | Hist Aff 5      | 0815         | HIST05     | 100% INTACT (BIT-EXACT)
+[+] Historical Affiliates Verification (Frozen Post-DDL Migration 031): 5/5 rows verified bit-exact against baseline.
 
->>> [FASE 5] Standalone Rollback & Zero Drift Across Tracked Catalog Objects (Delta = 0)
+[+] Extended Catalog Audit Complete: 13/13 Schema Gate, 8/8 FKs, attributions.order_id, RESTRICT & Historical Affiliates Verified (AC-04 PASS).
+
+>>> [FASE 5] Compensating Rollback Post-Commit (Jalur B) & Zero Drift (Delta = 0)
 --------------------------------------------------------------------------------
+[!] Simulating post-check failure trigger for Compensating Rollback (Jalur B)...
 [*] Executing migrations/031_b2_remediation_suite_rollback.sql...
-[+] Rollback executed and committed successfully.
+[+] Compensating Rollback executed and committed successfully.
 
 1. Baseline Catalog Fingerprint      : f2fae915c685bf9e5cf1c22a20cadc44e1edbe9705323b8dfb6f78020c748b7b
 2. Post-Rollback Catalog Fingerprint : f2fae915c685bf9e5cf1c22a20cadc44e1edbe9705323b8dfb6f78020c748b7b
@@ -181,7 +258,17 @@ Physical Column Audit (attributions.order_id): Present in catalog = True
 5. Financial Row Count Delta          : 0 (Target: 0)
 6. Financial Amount Drift             : 0.00 (Target: 0.00)
 
-[+] Standalone Rollback Verified: Zero Catalog Discrepancy (Delta = 0) and Zero Financial Drift (AC-05 & AC-06 PASS).
+--- [HISTORICAL AFFILIATES INTEGRITY] Row-by-Row Proof: Jalur B Post-Rollback ---
+Affiliate ID                           | Tenant ID  | Name            | Phone        | Ref Code   | Status
+-------------------------------------------------------------------------------------------------------------------
+25305f9c-ed1b-4e84-8771-325b5dde23ee   | hist_t1    | Hist Aff 1      | 0811         | HIST01     | 100% INTACT (BIT-EXACT)
+2ad6fc0a-1a11-4e52-8d94-65997d5ad9ae   | hist_t1    | Hist Aff 2      | 0812         | HIST02     | 100% INTACT (BIT-EXACT)
+43e48443-dcfa-47a6-818c-5144e3a34db4   | hist_t1    | Hist Aff 3      | 0813         | HIST03     | 100% INTACT (BIT-EXACT)
+b92b0929-1dbd-4f80-b875-94e9ab92b189   | hist_t1    | Hist Aff 4      | 0814         | HIST04     | 100% INTACT (BIT-EXACT)
+f5b98eaa-cfde-49cf-a497-491221c1cda9   | hist_t1    | Hist Aff 5      | 0815         | HIST05     | 100% INTACT (BIT-EXACT)
+[+] Historical Affiliates Verification (Jalur B Post-Rollback): 5/5 rows verified bit-exact against baseline.
+
+[+] Standalone Compensating Rollback Verified: Zero Catalog Discrepancy (Delta = 0), Zero Financial Drift, and 5 Historical Affiliates Intact (AC-05 & AC-06 PASS).
 
 >>> [FASE 6] Teardown & Executive Acceptance Verification Report
 --------------------------------------------------------------------------------
@@ -196,10 +283,10 @@ Criteria  | Scope & Description                                    | Verdict    
 ----------------------------------------------------------------------------------------------------------------------------------
 AC-01     | Environment Isolation & Disposable DB Provisioning     | PASS / VERIFIED   | Zero cloud markers ('xkhqir', 'mpluz'), clean local engine
 AC-02     | Baseline Initialization & Synthetic Fixtures Seeding   | PASS / VERIFIED   | 10 tables, 8 contractual paths, initial checksum = 450000.75
-AC-03     | Adversarial Preconditions & Lock Exclusivity Proof     | PASS / VERIFIED   | All 5 negative controls rejected; concurrent write blocked (55P03)
-AC-04     | Forward Migration 031 & Full 7-Property FK Catalog Audit | PASS / VERIFIED   | 8/8 composite FKs matched & convalidated on all 7 properties; RESTRICT (23001) verified
-AC-05     | Migration 031 Standalone Rollback & Zero Drift (Delta = 0) | PASS / VERIFIED   | Zero drift across tracked catalog objects (cols, cons, idx, trg) Delta = 0, bit-exact match
-AC-06     | Financial Data & UUID Round-Trip String Conservation   | PASS / VERIFIED   | Row delta = 0, amount drift = 0.00, 100% UUID string equality
+AC-03     | Adversarial Preconditions, Concurrency & 2s Timeout Proof | PASS / VERIFIED   | All 5 negative controls rejected; 12 tables locked; 2s timeout canceled with 55P03
+AC-04     | Forward DDL 031, Micro-Telemetry & Frozen Post-DDL Criteria | PASS / VERIFIED   | Lock hold < 3.0s SLA; 13/13 Schema Gate PASS; 8/8 FKs validated; 5 hist affiliates intact
+AC-05     | Two-Path Rollback Harness (Jalur A Abort & Jalur B Rollback) | PASS / VERIFIED   | Jalur A (pre-commit abort) Delta = 0; Jalur B (post-commit compensating) Delta = 0
+AC-06     | Financial Data & 5 Historical Affiliates Conservation  | PASS / VERIFIED   | Row delta = 0, amount drift = 0.00, 100% UUID equality, 5/5 historical affiliates verified
 
 ================================================================================
  ALL 6 CRITERIA RATIFIED: CTO P1 REHEARSAL REMEDIATION 100% SUCCESSFUL

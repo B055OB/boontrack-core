@@ -36,15 +36,17 @@ SET LOCAL lock_timeout = '2s';
 -- -----------------------------------------------------------------------------
 LOCK TABLE 
     public.tenants,
-    public.affiliate_commissions, 
-    public.shop_subscriptions, 
-    public.shop_commission_ledger, 
-    public.orders, 
-    public.product_orders, 
-    public.delivery_orders, 
-    public.attributions, 
-    public.attribution_sessions, 
-    public.affiliates 
+    public.affiliates,
+    public.orders,
+    public.product_orders,
+    public.delivery_orders,
+    public.attributions,
+    public.attribution_sessions,
+    public.shop_subscriptions,
+    public.shop_commission_ledger,
+    public.affiliate_commissions,
+    public.migration_031_quarantined_affiliate_commissions,
+    public.migration_031_identifier_dedup_map
 IN ACCESS EXCLUSIVE MODE;
 
 -- -----------------------------------------------------------------------------

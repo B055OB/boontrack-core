@@ -31,21 +31,23 @@ SET LOCAL lock_timeout = '2s';
 -- [SAFETY GUARD] EXPLICIT TABLE LOCKING (CONCURRENT WRITES PROTECTION)
 LOCK TABLE 
     public.tenants,
-    public.affiliate_commissions, 
-    public.shop_subscriptions, 
-    public.shop_commission_ledger, 
+    public.affiliates,
     public.orders, 
     public.product_orders, 
     public.delivery_orders, 
     public.attributions, 
     public.attribution_sessions, 
-    public.affiliates 
+    public.shop_subscriptions, 
+    public.shop_commission_ledger, 
+    public.affiliate_commissions, 
+    public.migration_031_quarantined_affiliate_commissions,
+    public.migration_031_identifier_dedup_map
 IN ACCESS EXCLUSIVE MODE;
 ```
 
 ### Invariant Urutan Locking:
 1. **`public.tenants` Diletakkan pada Urutan Pertama:** Menjadi *root referential anchor* untuk mencegah *deadlock inversion* dengan transaksi operasional lain yang memvalidasi tenant.
-2. **Serialisasi Penuh 10 Tabel:** Seluruh operasi DML/write konkuren pada 10 tabel target diantrekan secara deterministik.
+2. **Serialisasi Penuh 12 Tabel:** Seluruh operasi DML/write konkuren pada 12 tabel target diantrekan secara deterministik.
 3. **Verifikasi Adversarial Multi-Koneksi:** Pengujian harness membuktikan bahwa setiap percobaan *write* konkuren (pada `public.tenants` maupun `public.affiliate_commissions`) saat lock dipegang langsung terblokir dan dibatalkan setelah 1.01s dengan error `55P03`.
 
 ---
@@ -93,15 +95,15 @@ Seluruh artefak kode, migrasi, seeder, dan pengujian diverifikasi secara kriptog
 
 | Berkas Artefak | Ukuran | SHA-256 Checksum | Peran / Deskripsi |
 |:---|:---|:---|:---|
-| `migrations/031_b2_remediation_suite.sql` | 21,315 bytes | `06cf23a77757fc802b483b8f76fecab4d12f649ceed55b750e88c10d49155001` | DDL forward migrasi 031 dengan locking `tenants` di awal dan type alignment |
-| `migrations/031_b2_remediation_suite_rollback.sql` | 6,631 bytes | `51f1ace563b14a04a9c4dc9fec99fb08dcef85a4241dfa85743beab162b4c270` | DDL rollback mandiri pembuktian $\Delta = 0$ dan pemulihan `varchar(100)` |
+| `migrations/031_b2_remediation_suite.sql` | 21,512 bytes | `ab4f1562f7e15fa0cf90bf86969be3c8ffde79858fea478ce3bf15a7dbfe5124` | DDL forward migrasi 031 dengan locking deterministik 12 tabel di awal dan type alignment |
+| `migrations/031_b2_remediation_suite_rollback.sql` | 6,729 bytes | `2733f1ac52143e330082c9e9b83d4b08ed691a412f93f982532537168ce73e7d` | DDL rollback mandiri pembuktian $\Delta = 0$ dan locking deterministik 12 tabel |
 | `staging_seeder_fixture.sql` | 15,887 bytes | `302431c189d01e57399a138566c6b9ff51dd2c45c60b970d5e6b83834665bed5` | DML seeder sintetis terisolasi (`seed_*`, `5eed%`) dengan 12-table locking di awal |
 | `staging_seeder_fixture_rollback.sql` | 8,014 bytes | `8f16e8b24497bfae440bcce0414672b455872459694e813d09008f892631c824` | DML pembersih seeder dengan asersi *zero-residual* dan 12-table locking simetris |
 | `scripts/staging_baseline_generated.sql` | 12,818 bytes | `8eff4ab893a0f397e0ca79bbb86ef6f534e527fde10afcbe21f1a62ac5aad4a0` | DDL baseline 10 tabel, 193 kolom, 23 constraint diekstrak dari Staging Supabase |
-| `rehearsal_p1_orchestrator.py` | 71,411 bytes | `2888f21dcd9496dbc6681e1a040a29e6f248c15b3ba5f4b8b480fef708341ce6` | Orkestrator otomatis rehearsal P1 lokal (AC-01 s/d AC-06, Dynamic Lock Validation, 6-Table Contention, Strict Manager RESTRICT) |
+| `rehearsal_p1_orchestrator.py` | 87,511 bytes | `6ef0340cb4b9bad25e51516bf1136d2ab98e1595bf43b147ec32fbbad97709de` | Orkestrator otomatis rehearsal P1 lokal (AC-01 s/d AC-06, Two-Path Rollback, Micro-Telemetry, 2s Timeout) |
 | `audit_b2_comprehensive_inspector.py` | 113,643 bytes | `e6b8769f7770e507ef36d2e8486e29682f494faeede686e2f8bf66f6c8fbee59` | Inspector read-only Staging (fail-closed, 7 properti FK) |
 | `test_assert_04_regression.py` | 20,389 bytes | `df78e6c7d426029c2ac9de728f4ca741d9b129e917a129b84d298266746efef1` | Suite uji regresi unit 12 skenario fail-closed |
-| `REHEARSAL_P1_FULL_EXECUTION.log` | 16,755 bytes | `bae024b0ac4edb54b83e48577c64526f03026ce9837b02f589dc1c3317c51da5` | Log mentah bukti eksekusi rehearsal P1 lokal terverifikasi |
+| `REHEARSAL_P1_FULL_EXECUTION.log` | 24,752 bytes | `a33678717d2e468c411f78d1747fcb434aaf1909933c474b166ba1127406dced` | Log mentah bukti eksekusi rehearsal P1 lokal terverifikasi |
 
 ---
 
