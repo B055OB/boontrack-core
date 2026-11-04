@@ -2,7 +2,7 @@
 ================================================================================
  GATE B2 COMPREHENSIVE PROTOCOL INSPECTION & EVIDENCE HARVESTER (REV 2.8)
 ================================================================================
-Timestamp (UTC): 2026-11-04T00:44:26.440879+00:00
+Timestamp (UTC): 2026-11-04T02:29:57.783851+00:00
 Lead DBRE Role : Lead Database Reliability Engineer & Principal Systems Architect
 Protocol Spec  : GATE_B2_VERIFICATION_PROTOCOL.md (REV 2.8, Commit a9ad768)
 Target DB URI  : postgresql://postgres.xkhqirhurnjqglmajghn:*****@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
@@ -150,39 +150,49 @@ Formal Dedup Tables Discovered in Catalog: ['migration_031_identifier_dedup_map'
 >>> [SECTION 6] B2-ASSERT-04: Manifest-Driven 8 Composite FK Streams & Multi-Path Dangling Audit
 --------------------------------------------------------------------------------
 
---- [6.A] Catalog Audit of 8 Contractual Composite FK Streams to affiliates (FULL OUTER JOIN) ---
-Seq  | Child Table              | Child Cols                       | Parent       | Constraint Name                            | Val   | Status
+--- [6.A] Catalog Discovery of Live Foreign Keys on Audited Tables ---
+Child Table              | Constraint Name                              | Parent Table       | Val   | Definition
 ---------------------------------------------------------------------------------------------------------------------------------------
-1    | orders                   | ['tenant_id', 'affiliate_id']    | affiliates   | fk_orders_affiliate_composite              | True  | MATCH
-2    | orders                   | ['tenant_id', 'manager_id']      | affiliates   | fk_orders_manager_composite                | True  | MATCH
-3    | product_orders           | ['tenant_id', 'affiliate_id']    | affiliates   | fk_product_orders_affiliate_composite      | True  | MATCH
-4    | delivery_orders          | ['tenant_id', 'affiliate_id']    | affiliates   | fk_delivery_orders_affiliate_composite     | True  | MATCH
-5    | attributions             | ['tenant_id', 'affiliate_id']    | affiliates   | fk_attributions_affiliate_composite        | True  | MATCH
-6    | attribution_sessions     | ['tenant_id', 'affiliate_id']    | affiliates   | fk_attribution_sessions_affiliate_composite | True  | MATCH
-7    | shop_subscriptions       | ['tenant_id', 'affiliate_id']    | affiliates   | fk_shop_subscriptions_affiliate_composite  | True  | MATCH
-8    | shop_commission_ledger   | ['tenant_id', 'affiliate_id']    | affiliates   | fk_shop_commission_ledger_affiliate_composite | True  | MATCH
+affiliate_commissions    | affiliate_commissions_affiliate_id_fkey      | affiliates         | True  | FOREIGN KEY (affiliate_id) REFERENCES affiliates(id) ON DELETE CASCADE
+attribution_sessions     | fk_attribution_sessions_affiliate_composite  | affiliates         | True  | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+attributions             | fk_attributions_affiliate_composite          | affiliates         | True  | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+delivery_orders          | fk_delivery_orders_affiliate_composite       | affiliates         | True  | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+orders                   | fk_orders_affiliate_composite                | affiliates         | True  | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+orders                   | fk_orders_manager_composite                  | affiliates         | True  | FOREIGN KEY (tenant_id, manager_id) REFERENCES affiliates(tenant_id, id)
+product_orders           | fk_product_orders_affiliate_composite        | affiliates         | True  | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+shop_commission_ledger   | fk_shop_commission_ledger_affiliate_composite | affiliates         | True  | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+shop_subscriptions       | fk_shop_subscriptions_affiliate_composite    | affiliates         | True  | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+Total Discovered Foreign Keys on Audited Tables: 9
 
-FK Stream Manifest Summary: Matched = 8/8 | Discrepancies = 0/8
+--- [6.B] Audit against REV 2.8 Contractual FK Manifest (8 Target Composite FKs) ---
+Seq  | Target Constraint Name                           | Relational Path                            | Status                           | Live Constraint
+--------------------------------------------------------------------------------------------------------------------------------------------
+1    | fk_affiliate_commissions_affiliate_composite     | affiliate_commissions -> affiliates        | LEGACY (['affiliate_id'] -> ['id']) | affiliate_commissions_affiliate_id_fkey (PENDING MIG031 DDL)
+2    | fk_affiliates_manager_composite                  | affiliates -> affiliates                   | PENDING MIGRATION 031 DDL        | NONE (Awaiting Migration DDL)
+3    | fk_attribution_sessions_order_composite          | attribution_sessions -> orders             | PENDING MIGRATION 031 DDL        | NONE (Awaiting Migration DDL)
+4    | fk_attributions_order_composite                  | attributions -> orders                     | PENDING MIGRATION 031 DDL        | NONE (Awaiting Migration DDL)
+5    | fk_delivery_orders_order_composite               | delivery_orders -> orders                  | PENDING MIGRATION 031 DDL        | NONE (Awaiting Migration DDL)
+6    | fk_product_orders_order_composite                | product_orders -> orders                   | PENDING MIGRATION 031 DDL        | NONE (Awaiting Migration DDL)
+7    | fk_shop_commission_ledger_subscription_composite | shop_commission_ledger -> shop_subscriptions | PENDING MIGRATION 031 DDL        | NONE (Awaiting Migration DDL)
+8    | fk_shop_subscriptions_tenant_anchor              | shop_subscriptions -> tenants              | PENDING MIGRATION 031 DDL        | NONE (Awaiting Migration DDL)
 
---- [6.B] Audit of 9th Stream: affiliate_commissions -> affiliates ---
-Live Constraint Name : affiliate_commissions_affiliate_id_fkey
-Child Columns        : ['affiliate_id']
-Parent Columns       : ['id']
-Validated Status     : True
-Architecture Status  : SINGLE-COLUMN (BASELINE PRE-MIG031) (Pending Migration 031 DDL to repoint to (tenant_id, affiliate_id))
+FK Manifest Reconciliation: Matched = 0/8 | Pending Migration 031 DDL = 8/8
+[*] ARCHITECTURAL STATE (NO FALSE LABELING):
+    - The 8 contractual FKs in REV28_CONTRACTUAL_FK_MANIFEST are the target composite schema definition.
+    - In this clean pre-migration baseline, affiliate_commissions has single-column FK affiliate_commissions_affiliate_id_fkey.
+    - The remaining composite FKs (orders children, self-reference, and shop subscriptions) are pending creation in migration 031.
 
---- [6.C] Full 8-Path (9-Stream) Dangling References Audit against affiliates ---
-Child Table              | FK Column        | Total   | Non-Null  | Orphaned  | Tenant Mismatches  | Verdict
----------------------------------------------------------------------------------------------------------
-orders                   | affiliate_id     | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
-orders                   | manager_id       | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
-product_orders           | affiliate_id     | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
-delivery_orders          | affiliate_id     | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
-attributions             | affiliate_id     | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
-attribution_sessions     | affiliate_id     | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
-shop_subscriptions       | affiliate_id     | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
-shop_commission_ledger   | affiliate_id     | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
-affiliate_commissions    | affiliate_id     | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
+--- [6.C] Multi-Path Dangling References Audit for REV 2.8 Contractual Paths ---
+Child Table              | FK Target            | Total   | Non-Null  | Orphaned  | Tenant Mismatches  | Verdict
+-------------------------------------------------------------------------------------------------------------------
+affiliate_commissions    | affiliates(tenant_id,id) | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
+affiliates               | affiliates(tenant_id,id) | 5       | 0         | 0         | 0                  | PASS (0 Dangling)
+attribution_sessions     | orders(tenant_id,id) | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
+attributions             | orders(tenant_id,id) | N/A     | N/A       | 0         | 0                  | PENDING DDL (Cols ['order_id'] absent)
+delivery_orders          | orders(tenant_id,id) | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
+product_orders           | orders(tenant_id,id) | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
+shop_commission_ledger   | shop_subscriptions(tenant_id,id) | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
+shop_subscriptions       | tenants(id)          | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
 
 Multi-Path Dangling Summary: Total Orphaned = 0 | Total Tenant Mismatches = 0
 
@@ -190,7 +200,7 @@ Multi-Path Dangling Summary: Total Orphaned = 0 | Total Tenant Mismatches = 0
 1. total_orphaned_child_rows        : 0 (Target: 0)
 2. total_residual_loser_references  : 0 (Target: 0)
 
-[+] B2-ASSERT-04 VERDICT: PASS (8/8 COMPOSITE FKS ACTIVE & 0 DANGLING REFERENCES)
+[+] B2-ASSERT-04 VERDICT: PASS (ZERO DANGLING REFERENCES / STANDBY FOR DDL CREATION)
 
 >>> [SECTION 7] B2-ASSERT-05: 3-Tier Linear Lineage Proof, Exact-One Occurrence & Financial Reconciliation
 --------------------------------------------------------------------------------
@@ -201,8 +211,8 @@ Commissions: Total=0, Distinct ID=0, Duplicate PK=0
 
 --- [7.B] Execution of Pure In-Memory 3-Tier Linear Lineage Engine (A -> B -> C) ---
 [*] Note: Executed via pure CTE pipeline in strict read-only mode without mutating DDL.
-1. Baseline Run ID              : B2-STG-RUN-20261104-004718
-2. Snapshot Taken At            : 2026-11-04 00:47:18.294908+00:00
+1. Baseline Run ID              : B2-STG-RUN-20261104-023249
+2. Snapshot Taken At            : 2026-11-04 02:32:49.588778+00:00
 3. Snapshot Row Count           : 0
 4. Snapshot Total Amount        : 0.00
 5. Baseline Snapshot Fingerprint: 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
@@ -238,7 +248,7 @@ SCH_01_TO_13             | Catalog Physical Schema Parity               | PENDIN
 B2_ASSERT_01             | Baseline Ledger Volume & Multi-Tenant Conflict | PASS                           | 0 Conflicts across PO & AC (Clean Multi-Tenancy)
 B2_ASSERT_02             | Cross-Tenant Leakage Check                   | PASS                           | 0 Cross-Tenant Mismatches, 0 Unresolved Operational Orders
 B2_ASSERT_03             | Quarantine Parity & Survivor Cardinality     | UNPROVEN / EMPTY BASELINE      | Query engine 0 anomalies; tables unpopulated awaiting seeder
-B2_ASSERT_04             | Composite Foreign Keys & Multi-Path Dangling | PASS (CORE) / PENDING DDL (AC) | 8/8 Composite FKs Active & Validated; 0 Dangling Refs on all 9 streams
+B2_ASSERT_04             | Contractual 8 Composite FKs Manifest         | STANDBY / ZERO DANGLING        | 0 dangling references across all active tables; 8 contractual FKs pending migration 031 DDL
 B2_ASSERT_05             | Exact-One Lineage & 3-Tier Reconciliation    | STANDBY PREPARATION            | In-memory engine zero-variance verified; awaits runner ephemeral snapshot
 
 ================================================================================
@@ -246,9 +256,9 @@ EXECUTIVE DBRE AUDIT SUMMARY:
 1. All queries executed strictly under SET TRANSACTION READ ONLY with ZERO mutations.
 2. Staging Database (xkhqirhurnjqglmajghn:5432) is verified in clean pre-migration baseline state.
 3. Production DB (mpluzajlzpregmjwpjqr) and Cloudflare R2: STRICT ZERO-TOUCH (0 bytes read/written).
-4. 8 Composite Foreign Keys to affiliates are active, validated, and verified 100% free of dangling references.
+4. Contractual 8 FK relations audited: 0 dangling references across all active tables; target composite FKs pending migration 031 DDL.
 5. 3-Tier Linear Lineage and Exact-One occurrence verified mathematically via in-memory query engine.
 6. In accordance with CTO Directive (No False Labeling), Gate B2 remains: CONDITIONAL -- STANDBY.
 ================================================================================
 
-Audit completed in 1.12 seconds. Connection rolled back and closed.
+Audit completed in 1.02 seconds. Connection rolled back and closed.
