@@ -2,7 +2,7 @@
 ================================================================================
  GATE B2 COMPREHENSIVE PROTOCOL INSPECTION & EVIDENCE HARVESTER (REV 2.8)
 ================================================================================
-Timestamp (UTC): 2026-11-04T03:38:01.589209+00:00
+Timestamp (UTC): 2026-11-04T05:38:41.468570+00:00
 Lead DBRE Role : Lead Database Reliability Engineer & Principal Systems Architect
 Protocol Spec  : GATE_B2_VERIFICATION_PROTOCOL.md (REV 2.8, Commit a9ad768)
 Target DB URI  : postgresql://postgres.xkhqirhurnjqglmajghn:*****@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
@@ -214,8 +214,8 @@ Commissions: Total=0, Distinct ID=0, Duplicate PK=0
 
 --- [7.B] Execution of Pure In-Memory 3-Tier Linear Lineage Engine (A -> B -> C) ---
 [*] Note: Executed via pure CTE pipeline in strict read-only mode without mutating DDL.
-1. Baseline Run ID              : B2-STG-RUN-20261104-034053
-2. Snapshot Taken At            : 2026-11-04 03:40:53.750631+00:00
+1. Baseline Run ID              : B2-STG-RUN-20261104-054135
+2. Snapshot Taken At            : 2026-11-04 05:41:35.401339+00:00
 3. Snapshot Row Count           : 0
 4. Snapshot Total Amount        : 0.00
 5. Baseline Snapshot Fingerprint: 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
@@ -264,4 +264,4 @@ EXECUTIVE DBRE AUDIT SUMMARY:
 6. In accordance with CTO Directive (No False Labeling), Gate B2 remains: CONDITIONAL -- STANDBY.
 ================================================================================
 
-Audit completed in 1.37 seconds. Connection rolled back and closed.
+Audit completed in 1.16 seconds. Connection rolled back and closed.

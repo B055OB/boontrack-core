@@ -32,6 +32,21 @@ SET LOCAL statement_timeout = '5s';
 SET LOCAL lock_timeout = '2s';
 
 -- -----------------------------------------------------------------------------
+-- [SAFETY GUARD] EXPLICIT TABLE LOCKING (CONCURRENT WRITES PROTECTION)
+-- -----------------------------------------------------------------------------
+LOCK TABLE 
+    public.affiliate_commissions, 
+    public.shop_subscriptions, 
+    public.shop_commission_ledger, 
+    public.orders, 
+    public.product_orders, 
+    public.delivery_orders, 
+    public.attributions, 
+    public.attribution_sessions, 
+    public.affiliates 
+IN ACCESS EXCLUSIVE MODE;
+
+-- -----------------------------------------------------------------------------
 -- [STAGE 1] DROP 8 COMPOSITE FOREIGN KEYS
 -- -----------------------------------------------------------------------------
 ALTER TABLE public.shop_subscriptions 

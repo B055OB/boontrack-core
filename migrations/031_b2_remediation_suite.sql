@@ -22,6 +22,24 @@ SET LOCAL statement_timeout = '5s';
 SET LOCAL lock_timeout = '2s';
 
 -- -----------------------------------------------------------------------------
+-- [SAFETY GUARD] EXPLICIT TABLE LOCKING (CONCURRENT WRITES PROTECTION)
+-- Memperoleh ACCESS EXCLUSIVE lock di awal transaksi sebelum precondition audit
+-- untuk menjamin isolasi penuh dan mencegah race condition data baru yang menyusup
+-- di antara proses audit prekondisi dan eksekusi DDL.
+-- -----------------------------------------------------------------------------
+LOCK TABLE 
+    public.affiliate_commissions, 
+    public.shop_subscriptions, 
+    public.shop_commission_ledger, 
+    public.orders, 
+    public.product_orders, 
+    public.delivery_orders, 
+    public.attributions, 
+    public.attribution_sessions, 
+    public.affiliates 
+IN ACCESS EXCLUSIVE MODE;
+
+-- -----------------------------------------------------------------------------
 -- [STAGE 1] COMPREHENSIVE PRECONDITION AUDIT
 -- Validasi pra-eksekusi: pastikan 0 baris orphan, 0 duplicate unique key,
 -- dan 0 tenant mismatch pada seluruh tabel yang akan diberi constraint.
@@ -360,6 +378,7 @@ COMMIT;
 BEGIN;
 SET LOCAL statement_timeout = '5s';
 SET LOCAL lock_timeout = '2s';
+LOCK TABLE public.affiliate_commissions, public.shop_subscriptions, public.shop_commission_ledger, public.orders, public.product_orders, public.delivery_orders, public.attributions, public.attribution_sessions, public.affiliates IN ACCESS EXCLUSIVE MODE;
 
 -- 1. DROP ALL 8 COMPOSITE FOREIGN KEYS (7 NEW + 1 REPLACED)
 ALTER TABLE public.shop_subscriptions DROP CONSTRAINT IF EXISTS fk_shop_subscriptions_tenant_anchor;

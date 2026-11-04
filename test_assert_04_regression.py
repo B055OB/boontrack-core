@@ -46,6 +46,10 @@ ALL_8_VALID_FKS = [
         "child_cols": ["tenant_id", "affiliate_id"],
         "parent_cols": ["tenant_id", "id"],
         "confdeltype": "c",  # CASCADE
+        "confupdtype": "a",  # NO ACTION
+        "confmatchtype": "s",  # SIMPLE
+        "condeferrable": False,
+        "condeferred": False,
         "convalidated": True
     },
     {
@@ -55,6 +59,10 @@ ALL_8_VALID_FKS = [
         "child_cols": ["tenant_id", "manager_id"],
         "parent_cols": ["tenant_id", "id"],
         "confdeltype": "r",  # RESTRICT (per CTO directive)
+        "confupdtype": "a",
+        "confmatchtype": "s",
+        "condeferrable": False,
+        "condeferred": False,
         "convalidated": True
     },
     {
@@ -64,6 +72,10 @@ ALL_8_VALID_FKS = [
         "child_cols": ["tenant_id", "order_id"],
         "parent_cols": ["tenant_id", "id"],
         "confdeltype": "c",  # CASCADE
+        "confupdtype": "a",
+        "confmatchtype": "s",
+        "condeferrable": False,
+        "condeferred": False,
         "convalidated": True
     },
     {
@@ -73,6 +85,10 @@ ALL_8_VALID_FKS = [
         "child_cols": ["tenant_id", "order_id"],
         "parent_cols": ["tenant_id", "id"],
         "confdeltype": "c",  # CASCADE
+        "confupdtype": "a",
+        "confmatchtype": "s",
+        "condeferrable": False,
+        "condeferred": False,
         "convalidated": True
     },
     {
@@ -82,6 +98,10 @@ ALL_8_VALID_FKS = [
         "child_cols": ["tenant_id", "order_id"],
         "parent_cols": ["tenant_id", "id"],
         "confdeltype": "c",  # CASCADE
+        "confupdtype": "a",
+        "confmatchtype": "s",
+        "condeferrable": False,
+        "condeferred": False,
         "convalidated": True
     },
     {
@@ -91,6 +111,10 @@ ALL_8_VALID_FKS = [
         "child_cols": ["tenant_id", "order_id"],
         "parent_cols": ["tenant_id", "id"],
         "confdeltype": "c",  # CASCADE
+        "confupdtype": "a",
+        "confmatchtype": "s",
+        "condeferrable": False,
+        "condeferred": False,
         "convalidated": True
     },
     {
@@ -100,6 +124,10 @@ ALL_8_VALID_FKS = [
         "child_cols": ["tenant_id", "subscription_id"],
         "parent_cols": ["tenant_id", "id"],
         "confdeltype": "c",  # CASCADE
+        "confupdtype": "a",
+        "confmatchtype": "s",
+        "condeferrable": False,
+        "condeferred": False,
         "convalidated": True
     },
     {
@@ -109,6 +137,10 @@ ALL_8_VALID_FKS = [
         "child_cols": ["tenant_id"],
         "parent_cols": ["id"],
         "confdeltype": "r",  # RESTRICT
+        "confupdtype": "a",
+        "confmatchtype": "s",
+        "condeferrable": False,
+        "condeferred": False,
         "convalidated": True
     }
 ]
@@ -298,10 +330,106 @@ class TestAssert04FailClosedRegression(unittest.TestCase):
         self.assertIn("DISCREPANCY", res["tag"])
         print("  -> Result: PASS (Rejected as expected: matched=7/8, discrepancy=1, ACTION_MISMATCH caught)")
 
+    def test_scenario_9_constraint_wrong_upd_action_must_fail(self):
+        """
+        Test 9: 8/8 FK ada dan tervalidasi, tetapi salah satu FK menggunakan ON UPDATE CASCADE ('c') alih-alih NO ACTION ('a') -> WAJIB FAIL
+        """
+        print("\n[RUNNING TEST 9] Scenario: 8/8 FKs exist, but 1 FK has confupdtype='c' instead of 'a'...")
+        mock_fks = copy.deepcopy(ALL_8_VALID_FKS)
+        mock_fks[0]["confupdtype"] = "c"
+
+        res = evaluate_b2_assert_04(
+            manifest=REV28_CONTRACTUAL_FK_MANIFEST,
+            live_fks=mock_fks,
+            columns_catalog=FULL_COLUMNS_CATALOG,
+            orphaned_count=0,
+            mismatch_count=0,
+            anti_join_orphaned=0,
+            anti_join_losers=0
+        )
+        self.assertFalse(res["is_pass"], "Test 9 Failed: evaluate_b2_assert_04 MUST NOT pass when ON UPDATE action mismatches")
+        self.assertEqual(res["matched_fk_count"], 7)
+        self.assertEqual(res["discrepancy_count"], 1)
+        self.assertEqual(res["verdict"], "FAIL/PENDING")
+        self.assertIn("DISCREPANCY", res["tag"])
+        print("  -> Result: PASS (Rejected as expected: matched=7/8, discrepancy=1, ON_UPDATE_MISMATCH caught)")
+
+    def test_scenario_10_constraint_wrong_match_type_must_fail(self):
+        """
+        Test 10: 8/8 FK ada dan tervalidasi, tetapi salah satu FK menggunakan confmatchtype='f' (FULL) alih-alih 's' (SIMPLE) -> WAJIB FAIL
+        """
+        print("\n[RUNNING TEST 10] Scenario: 8/8 FKs exist, but 1 FK has confmatchtype='f' instead of 's'...")
+        mock_fks = copy.deepcopy(ALL_8_VALID_FKS)
+        mock_fks[0]["confmatchtype"] = "f"
+
+        res = evaluate_b2_assert_04(
+            manifest=REV28_CONTRACTUAL_FK_MANIFEST,
+            live_fks=mock_fks,
+            columns_catalog=FULL_COLUMNS_CATALOG,
+            orphaned_count=0,
+            mismatch_count=0,
+            anti_join_orphaned=0,
+            anti_join_losers=0
+        )
+        self.assertFalse(res["is_pass"], "Test 10 Failed: evaluate_b2_assert_04 MUST NOT pass when match type mismatches")
+        self.assertEqual(res["matched_fk_count"], 7)
+        self.assertEqual(res["discrepancy_count"], 1)
+        self.assertEqual(res["verdict"], "FAIL/PENDING")
+        self.assertIn("DISCREPANCY", res["tag"])
+        print("  -> Result: PASS (Rejected as expected: matched=7/8, discrepancy=1, MATCH_TYPE_MISMATCH caught)")
+
+    def test_scenario_11_constraint_deferrable_true_must_fail(self):
+        """
+        Test 11: 8/8 FK ada dan tervalidasi, tetapi salah satu FK memiliki condeferrable=True -> WAJIB FAIL
+        """
+        print("\n[RUNNING TEST 11] Scenario: 8/8 FKs exist, but 1 FK has condeferrable=True...")
+        mock_fks = copy.deepcopy(ALL_8_VALID_FKS)
+        mock_fks[0]["condeferrable"] = True
+
+        res = evaluate_b2_assert_04(
+            manifest=REV28_CONTRACTUAL_FK_MANIFEST,
+            live_fks=mock_fks,
+            columns_catalog=FULL_COLUMNS_CATALOG,
+            orphaned_count=0,
+            mismatch_count=0,
+            anti_join_orphaned=0,
+            anti_join_losers=0
+        )
+        self.assertFalse(res["is_pass"], "Test 11 Failed: evaluate_b2_assert_04 MUST NOT pass when condeferrable is True")
+        self.assertEqual(res["matched_fk_count"], 7)
+        self.assertEqual(res["discrepancy_count"], 1)
+        self.assertEqual(res["verdict"], "FAIL/PENDING")
+        self.assertIn("DISCREPANCY", res["tag"])
+        print("  -> Result: PASS (Rejected as expected: matched=7/8, discrepancy=1, DEFERRABLE_MISMATCH caught)")
+
+    def test_scenario_12_constraint_deferred_true_must_fail(self):
+        """
+        Test 12: 8/8 FK ada dan tervalidasi, tetapi salah satu FK memiliki condeferred=True -> WAJIB FAIL
+        """
+        print("\n[RUNNING TEST 12] Scenario: 8/8 FKs exist, but 1 FK has condeferred=True...")
+        mock_fks = copy.deepcopy(ALL_8_VALID_FKS)
+        mock_fks[0]["condeferred"] = True
+
+        res = evaluate_b2_assert_04(
+            manifest=REV28_CONTRACTUAL_FK_MANIFEST,
+            live_fks=mock_fks,
+            columns_catalog=FULL_COLUMNS_CATALOG,
+            orphaned_count=0,
+            mismatch_count=0,
+            anti_join_orphaned=0,
+            anti_join_losers=0
+        )
+        self.assertFalse(res["is_pass"], "Test 12 Failed: evaluate_b2_assert_04 MUST NOT pass when condeferred is True")
+        self.assertEqual(res["matched_fk_count"], 7)
+        self.assertEqual(res["discrepancy_count"], 1)
+        self.assertEqual(res["verdict"], "FAIL/PENDING")
+        self.assertIn("DISCREPANCY", res["tag"])
+        print("  -> Result: PASS (Rejected as expected: matched=7/8, discrepancy=1, DEFERRED_MISMATCH caught)")
+
 
 def main():
     print("=" * 80)
-    print(" EXECUTING B2-ASSERT-04 FAIL-CLOSED REGRESSION TEST SUITE (8 SCENARIOS)")
+    print(" EXECUTING B2-ASSERT-04 FAIL-CLOSED REGRESSION TEST SUITE (12 SCENARIOS)")
     print("=" * 80)
     suite = unittest.TestLoader().loadTestsFromTestCase(TestAssert04FailClosedRegression)
     runner = unittest.TextTestRunner(verbosity=2)
@@ -314,9 +442,9 @@ def main():
     print(f"Failures          : {len(result.failures)}")
     print(f"Errors            : {len(result.errors)}")
     
-    if result.wasSuccessful() and result.testsRun == 8:
-        print("[+] ALL 8 REGRESSION SCENARIOS VERIFIED SUCCESSFULLY (8/8 PASS).")
-        print("[+] POSTURE: STRICT FAIL-CLOSED, NAME & ACTION MATCHING VERIFIED.")
+    if result.wasSuccessful() and result.testsRun == 12:
+        print("[+] ALL 12 REGRESSION SCENARIOS VERIFIED SUCCESSFULLY (12/12 PASS).")
+        print("[+] POSTURE: STRICT FAIL-CLOSED, ALL 7 CONSTRAINT PROPERTIES VERIFIED.")
         return 0
     else:
         print("[!] REGRESSION TEST FAILED: Verification criteria not met!")

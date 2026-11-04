@@ -2,10 +2,23 @@
 ================================================================================
  BOONTRACK P1 DISPOSABLE DB REHEARSAL HARNESS EXECUTION
 ================================================================================
-Timestamp: 2026-11-04T11:40:04+0700
+Timestamp: 2026-11-04T12:37:21+0700
 Role: Lead DBRE & Principal Systems Architect
 Security Posture: ZERO MUTATION STAGING/PROD; LOCAL DISPOSABLE REHEARSAL
 Connection String Security Scan: Zero cloud markers ('xkhqir', 'mpluz') present (VERIFIED).
+
+--- Staging Supabase Read-Only Tenancy Case Audit ---
+1. public.tenants.id                  : total = 2   | non-canonical uppercase = 0
+   public.affiliates                  : total = 5   | non-canonical uppercase = 0
+   public.orders                      : total = 0   | non-canonical uppercase = 0
+   public.product_orders              : total = 0   | non-canonical uppercase = 0
+   public.delivery_orders             : total = 0   | non-canonical uppercase = 0
+   public.attributions                : total = 0   | non-canonical uppercase = 0
+   public.attribution_sessions        : total = 0   | non-canonical uppercase = 0
+   public.shop_subscriptions          : total = 0   | non-canonical uppercase = 0
+   public.shop_commission_ledger      : total = 0   | non-canonical uppercase = 0
+   public.affiliate_commissions       : total = 0   | non-canonical uppercase = 0
+[+] Staging Tenancy Audit Result: 100% Canonical Lowercase RFC 4122 Verified (0 case deviations).
 
 >>> [FASE 1] Environment Isolation & Disposable Database Provisioning
 --------------------------------------------------------------------------------
@@ -21,16 +34,18 @@ Connection String Security Scan: Zero cloud markers ('xkhqir', 'mpluz') present 
 --------------------------------------------------------------------------------
 [*] Applying pre-031 baseline DDL for 10 audited tables + 5 dedup/snapshot tables...
 [+] Baseline physical schema tables successfully created.
-[+] Baseline Catalog Fingerprint (SHA-256): 257c37bbfab7c42ed84e17269a5c05d3ef45f3fba20d6d4845e1f7e17dec980c
-    - Catalog Columns Tracked     : 91
-    - Catalog Constraints Tracked : 42
+[+] Full Parity Baseline Catalog Fingerprint (SHA-256): 0820227b3fdb09442b52473e5ff11732e89846ddba4c081bcccd1a364918f63f
+    - Columns Tracked (incl. ordinal_position) : 91
+    - Constraints Tracked (all 7 properties)   : 42
+    - Indexes Tracked (standalone & unique)    : 17
+    - Triggers Tracked (user-defined)          : 0
 
 [*] Injecting non-empty synthetic fixtures covering all 8 contractual relational paths...
 1. Initial Commission Row Count  : 3 rows
 2. Initial Amount Checksum (Sum) : 450000.75
 [+] Synthetic fixture seeding verified: 8/8 contractual paths populated (AC-02 PASS).
 
->>> [FASE 3] Adversarial Precondition Controls (5 Negative Controls)
+>>> [FASE 3] Adversarial Precondition Controls & Concurrent Write Lock Test
 --------------------------------------------------------------------------------
 Test ID                | Expected SQLSTATE  | Observed SQLSTATE  | Result     | Description
 -------------------------------------------------------------------------------------------------------------------
@@ -42,22 +57,28 @@ Negative Control 5   | P0003              | P0003              | PASS       | Or
 
 [+] All 5 Adversarial Precondition Controls verified: strict abort with P0005, P0006, P0002, P0003 (AC-03 PASS).
 
+--- [CONCURRENCY GUARD] Multi-Connection Lock Contention & Exclusivity Audit ---
+[*] Connection 1: Acquiring ACCESS EXCLUSIVE lock on public.affiliate_commissions...
+[*] Connection 2: Attempting concurrent INSERT with lock_timeout = '1s'...
+[+] Connection 2 was BLOCKED and timed out after 1.01s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[+] ACCESS EXCLUSIVE lock serialization confirmed: ZERO concurrent writes can slip in during migration!
+
 >>> [FASE 4] Forward Migration 031 Execution & Extended Catalog Audit
 --------------------------------------------------------------------------------
-[*] Executing migrations/031_b2_remediation_suite.sql...
+[*] Executing migrations/031_b2_remediation_suite.sql (with ACCESS EXCLUSIVE locking upfront)...
 [+] Migration 031 committed successfully.
 
---- Catalog FK Manifest Reconciliation (Target: 8/8 Validated Composite FKs) ---
-No  | Expected Constraint Name                           | Status                       | Convalidated  | Action    
--------------------------------------------------------------------------------------------------------------------
-1   | fk_affiliate_commissions_affiliate_composite       | MATCH (ACTIVE & VALIDATED)   | True          | CASCADE
-2   | fk_affiliates_manager_composite                    | MATCH (ACTIVE & VALIDATED)   | True          | RESTRICT
-3   | fk_attribution_sessions_order_composite            | MATCH (ACTIVE & VALIDATED)   | True          | CASCADE
-4   | fk_attributions_order_composite                    | MATCH (ACTIVE & VALIDATED)   | True          | CASCADE
-5   | fk_delivery_orders_order_composite                 | MATCH (ACTIVE & VALIDATED)   | True          | CASCADE
-6   | fk_product_orders_order_composite                  | MATCH (ACTIVE & VALIDATED)   | True          | CASCADE
-7   | fk_shop_commission_ledger_subscription_composite   | MATCH (ACTIVE & VALIDATED)   | True          | CASCADE
-8   | fk_shop_subscriptions_tenant_anchor                | MATCH (ACTIVE & VALIDATED)   | True          | RESTRICT
+--- Catalog FK Manifest Reconciliation (Exhaustive 7-Property Audit: Target 8/8) ---
+No  | Expected Constraint Name                           | Status                       | Val   | Del   | Upd   | Match | Def  
+-----------------------------------------------------------------------------------------------------------------------------
+1   | fk_affiliate_commissions_affiliate_composite       | MATCH (ACTIVE & VALIDATED)   | True  | c     | a     | s     | False
+2   | fk_affiliates_manager_composite                    | MATCH (ACTIVE & VALIDATED)   | True  | r     | a     | s     | False
+3   | fk_attribution_sessions_order_composite            | MATCH (ACTIVE & VALIDATED)   | True  | c     | a     | s     | False
+4   | fk_attributions_order_composite                    | MATCH (ACTIVE & VALIDATED)   | True  | c     | a     | s     | False
+5   | fk_delivery_orders_order_composite                 | MATCH (ACTIVE & VALIDATED)   | True  | c     | a     | s     | False
+6   | fk_product_orders_order_composite                  | MATCH (ACTIVE & VALIDATED)   | True  | c     | a     | s     | False
+7   | fk_shop_commission_ledger_subscription_composite   | MATCH (ACTIVE & VALIDATED)   | True  | c     | a     | s     | False
+8   | fk_shop_subscriptions_tenant_anchor                | MATCH (ACTIVE & VALIDATED)   | True  | r     | a     | s     | False
 
 FK Reconciliation Summary: Matched = 8/8 | Convalidated = 8/8
 
@@ -70,18 +91,24 @@ Physical Column Audit (attributions.order_id): Present in catalog = True
 --- Referential Action Audit: ON DELETE RESTRICT on Manager Hierarchy ---
 [+] ON DELETE RESTRICT verified: Deleting manager with active subordinates correctly rejected with SQLSTATE 23001 (update or delete on table "affiliates" violates RESTRICT setting of foreign key constraint "fk_affiliates_manager_composite" on table "affiliates")
 
-[+] Extended Catalog Audit Complete: 8/8 FKs, Columns, Functional Relations & RESTRICT Verified (AC-04 PASS).
+[+] Extended Catalog Audit Complete: 8/8 FKs (All 7 Properties), Columns, Functional Relations & RESTRICT Verified (AC-04 PASS).
 
->>> [FASE 5] Standalone Rollback & Proof of Zero Catalog Discrepancy (Delta = 0)
+>>> [FASE 5] Standalone Rollback & Full Catalog Parity Verification (Delta = 0)
 --------------------------------------------------------------------------------
 [*] Executing migrations/031_b2_remediation_suite_rollback.sql...
 [+] Rollback executed and committed successfully.
 
-1. Baseline Catalog Fingerprint      : 257c37bbfab7c42ed84e17269a5c05d3ef45f3fba20d6d4845e1f7e17dec980c
-2. Post-Rollback Catalog Fingerprint : 257c37bbfab7c42ed84e17269a5c05d3ef45f3fba20d6d4845e1f7e17dec980c
-3. Catalog Fingerprint Delta         : 0 (Delta = 0 Verified)
+1. Baseline Catalog Fingerprint      : 0820227b3fdb09442b52473e5ff11732e89846ddba4c081bcccd1a364918f63f
+2. Post-Rollback Catalog Fingerprint : 0820227b3fdb09442b52473e5ff11732e89846ddba4c081bcccd1a364918f63f
+3. Catalog Fingerprint Delta         : 0 (Full Parity Delta = 0 Verified)
 4. Verification of Dropped Column    : attributions.order_id is COMPLETELY REMOVED
 5. Restoration of Legacy FK          : affiliate_commissions_affiliate_id_fkey (FOREIGN KEY (affiliate_id) REFERENCES affiliates(id) ON DELETE CASCADE)
+
+--- UUID Canonical Round-Trip Row-by-Row String Verification ---
+1. shop_subscriptions string matches : 2/2 identical (100% Bit-for-Bit)
+2. shop_commission_ledger matches   : 2/2 identical (100% Bit-for-Bit)
+3. Mixed-case UUID normalization test: 'A0000000-...' -> 'a0000000-0000-0000-0000-000000000001' (RFC 4122 Canonical Lowercase)
+[+] UUID Round-Trip Data Integrity: Zero String Divergence Verified.
 
 --- Financial Balance Conservation Audit ---
 1. Pre-Migration Commission Row Count  : 3
@@ -100,17 +127,17 @@ Physical Column Audit (attributions.order_id): Present in catalog = True
 [+] WSL engine keepalive process terminated cleanly.
 
 ================================================================================
- FINAL ACCEPTANCE CRITERIA (AC) VERIFICATION SUMMARY
+ FINAL ACCEPTANCE CRITERIA (AC) VERIFICATION SUMMARY (CTO REMEDIATED)
 ================================================================================
 Criteria  | Scope & Description                                    | Verdict           | Evidence Details
 ----------------------------------------------------------------------------------------------------------------------------------
 AC-01     | Environment Isolation & Disposable DB Provisioning     | PASS / VERIFIED   | Zero cloud markers ('xkhqir', 'mpluz'), clean local engine
 AC-02     | Baseline Initialization & Synthetic Fixtures Seeding   | PASS / VERIFIED   | 10 tables, 8 contractual paths, initial checksum = 450000.75
-AC-03     | Adversarial Precondition Controls (5 Negative Controls) | PASS / VERIFIED   | All 5 rejected: P0005 (scale/overflow), P0006, P0002, P0003
-AC-04     | Forward Migration 031 & Extended Catalog Audit         | PASS / VERIFIED   | 8/8 composite FKs matched & convalidated, RESTRICT/CASCADE verified
-AC-05     | Migration 031 Standalone Rollback & Zero Catalog Drift | PASS / VERIFIED   | Baseline FP == Post-Rollback FP (Delta = 0, exact bit-level match)
-AC-06     | Financial Data & Precision Balance Conservation        | PASS / VERIFIED   | Row delta = 0, amount checksum drift = 0.00 (Delta = 0.00)
+AC-03     | Adversarial Preconditions & Lock Exclusivity Proof     | PASS / VERIFIED   | All 5 negative controls rejected; concurrent write blocked (55P03)
+AC-04     | Forward Migration 031 & Full 7-Property FK Catalog Audit | PASS / VERIFIED   | 8/8 composite FKs matched & convalidated on all 7 properties; RESTRICT (23001) verified
+AC-05     | Migration 031 Standalone Rollback & Full Parity Delta = 0 | PASS / VERIFIED   | Full catalog parity (cols, cons, idx, trg) Delta = 0, bit-exact match
+AC-06     | Financial Data & UUID Round-Trip String Conservation   | PASS / VERIFIED   | Row delta = 0, amount drift = 0.00, 100% UUID string equality
 
 ================================================================================
- ALL 6 CRITERIA RATIFIED: P1 DISPOSABLE DB REHEARSAL 100% SUCCESSFUL
+ ALL 6 CRITERIA RATIFIED: CTO P1 REHEARSAL REMEDIATION 100% SUCCESSFUL
 ================================================================================

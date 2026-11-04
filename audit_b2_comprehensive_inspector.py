@@ -88,6 +88,10 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_cols": ["tenant_id", "id"],
         "expected_name": "fk_affiliate_commissions_affiliate_composite",
         "expected_confdeltype": "c",
+        "expected_confupdtype": "a",
+        "expected_confmatchtype": "s",
+        "expected_condeferrable": False,
+        "expected_condeferred": False,
         "expected_on_delete": "CASCADE",
         "description": "Affiliate Commissions -> Affiliates (Composite)"
     },
@@ -98,6 +102,10 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_cols": ["tenant_id", "id"],
         "expected_name": "fk_affiliates_manager_composite",
         "expected_confdeltype": "r",
+        "expected_confupdtype": "a",
+        "expected_confmatchtype": "s",
+        "expected_condeferrable": False,
+        "expected_condeferred": False,
         "expected_on_delete": "RESTRICT",
         "description": "Affiliates -> Affiliates (Manager Self-Reference Composite)"
     },
@@ -108,6 +116,10 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_cols": ["tenant_id", "id"],
         "expected_name": "fk_attribution_sessions_order_composite",
         "expected_confdeltype": "c",
+        "expected_confupdtype": "a",
+        "expected_confmatchtype": "s",
+        "expected_condeferrable": False,
+        "expected_condeferred": False,
         "expected_on_delete": "CASCADE",
         "description": "Attribution Sessions -> Orders (Composite)"
     },
@@ -118,6 +130,10 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_cols": ["tenant_id", "id"],
         "expected_name": "fk_attributions_order_composite",
         "expected_confdeltype": "c",
+        "expected_confupdtype": "a",
+        "expected_confmatchtype": "s",
+        "expected_condeferrable": False,
+        "expected_condeferred": False,
         "expected_on_delete": "CASCADE",
         "description": "Attributions -> Orders (Composite)"
     },
@@ -128,6 +144,10 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_cols": ["tenant_id", "id"],
         "expected_name": "fk_delivery_orders_order_composite",
         "expected_confdeltype": "c",
+        "expected_confupdtype": "a",
+        "expected_confmatchtype": "s",
+        "expected_condeferrable": False,
+        "expected_condeferred": False,
         "expected_on_delete": "CASCADE",
         "description": "Delivery Orders -> Orders (Composite)"
     },
@@ -138,6 +158,10 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_cols": ["tenant_id", "id"],
         "expected_name": "fk_product_orders_order_composite",
         "expected_confdeltype": "c",
+        "expected_confupdtype": "a",
+        "expected_confmatchtype": "s",
+        "expected_condeferrable": False,
+        "expected_condeferred": False,
         "expected_on_delete": "CASCADE",
         "description": "Product Orders -> Orders (Composite)"
     },
@@ -148,6 +172,10 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_cols": ["tenant_id", "id"],
         "expected_name": "fk_shop_commission_ledger_subscription_composite",
         "expected_confdeltype": "c",
+        "expected_confupdtype": "a",
+        "expected_confmatchtype": "s",
+        "expected_condeferrable": False,
+        "expected_condeferred": False,
         "expected_on_delete": "CASCADE",
         "description": "Shop Commission Ledger -> Shop Subscriptions (Composite)"
     },
@@ -158,6 +186,10 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_cols": ["id"],
         "expected_name": "fk_shop_subscriptions_tenant_anchor",
         "expected_confdeltype": "r",
+        "expected_confupdtype": "a",
+        "expected_confmatchtype": "s",
+        "expected_condeferrable": False,
+        "expected_condeferred": False,
         "expected_on_delete": "RESTRICT",
         "description": "Shop Subscriptions -> Tenants (Tenancy Anchor)"
     }
@@ -197,12 +229,17 @@ def evaluate_b2_assert_04(
             if lk['child_table'] == item['child_table'] and lk['parent_table'] == item['parent_table']:
                 # Check column mapping
                 if lk['child_cols'] == item['child_cols'] and lk['parent_cols'] == item['parent_cols']:
-                    # Check validation, name, and referential action
+                    # Check validation, name, and referential catalog properties
                     is_convalidated = lk.get('convalidated') is True
                     name_matches = (lk.get('constraint_name') == item['expected_name'])
-                    action_matches = (lk.get('confdeltype') == item['expected_confdeltype'])
+                    del_matches = (lk.get('confdeltype') == item['expected_confdeltype'])
+                    upd_matches = (lk.get('confupdtype') == item.get('expected_confupdtype', 'a'))
+                    match_matches = (lk.get('confmatchtype') == item.get('expected_confmatchtype', 's'))
+                    deferrable_matches = (lk.get('condeferrable') is item.get('expected_condeferrable', False))
+                    deferred_matches = (lk.get('condeferred') is item.get('expected_condeferred', False))
 
-                    if is_convalidated and name_matches and action_matches:
+                    if (is_convalidated and name_matches and del_matches and upd_matches and 
+                        match_matches and deferrable_matches and deferred_matches):
                         matched = lk
                         break
                     else:
@@ -212,10 +249,18 @@ def evaluate_b2_assert_04(
                             reasons.append("NOT_VALIDATED")
                         if not name_matches:
                             reasons.append(f"NAME_MISMATCH(exp='{item['expected_name']}',got='{lk.get('constraint_name')}')")
-                        if not action_matches:
+                        if not del_matches:
                             exp_act = REFERENTIAL_ACTION_MAP.get(item['expected_confdeltype'], item['expected_confdeltype'])
                             got_act = REFERENTIAL_ACTION_MAP.get(lk.get('confdeltype'), lk.get('confdeltype'))
-                            reasons.append(f"ACTION_MISMATCH(exp='{item['expected_confdeltype']}'[{exp_act}],got='{lk.get('confdeltype')}'[{got_act}])")
+                            reasons.append(f"ON_DELETE_MISMATCH(exp='{item['expected_confdeltype']}'[{exp_act}],got='{lk.get('confdeltype')}'[{got_act}])")
+                        if not upd_matches:
+                            reasons.append(f"ON_UPDATE_MISMATCH(exp='{item.get('expected_confupdtype', 'a')}',got='{lk.get('confupdtype')}')")
+                        if not match_matches:
+                            reasons.append(f"MATCH_TYPE_MISMATCH(exp='{item.get('expected_confmatchtype', 'u')}',got='{lk.get('confmatchtype')}')")
+                        if not deferrable_matches:
+                            reasons.append(f"DEFERRABLE_MISMATCH(exp={item.get('expected_condeferrable', False)},got={lk.get('condeferrable')})")
+                        if not deferred_matches:
+                            reasons.append(f"DEFERRED_MISMATCH(exp={item.get('expected_condeferred', False)},got={lk.get('condeferred')})")
                         discrepancy_reason = ", ".join(reasons)
                 else:
                     partial = lk
@@ -1069,6 +1114,10 @@ def main():
                 c.contype,
                 c.convalidated,
                 c.confdeltype,
+                c.confupdtype,
+                c.confmatchtype,
+                c.condeferrable,
+                c.condeferred,
                 array_agg(child_att.attname::text ORDER BY ord.n) AS child_cols,
                 array_agg(parent_att.attname::text ORDER BY ord.n) AS parent_cols,
                 pg_get_constraintdef(c.oid) AS constraint_definition
@@ -1089,7 +1138,7 @@ def main():
                   'delivery_orders', 'product_orders', 'shop_commission_ledger', 'shop_subscriptions',
                   'orders'
               )
-            GROUP BY c.conname, child_cls.relname, parent_cls.relname, c.contype, c.convalidated, c.confdeltype, c.oid
+            GROUP BY c.conname, child_cls.relname, parent_cls.relname, c.contype, c.convalidated, c.confdeltype, c.confupdtype, c.confmatchtype, c.condeferrable, c.condeferred, c.oid
             ORDER BY child_cls.relname, c.conname;
         """)
         live_fks = cur.fetchall()
