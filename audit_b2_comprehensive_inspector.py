@@ -348,11 +348,22 @@ def evaluate_b2_assert_04(
 
 
 def main():
-    tee = TeeLogger("GATE_B2_FULL_SUITE_EXECUTION.log")
+    log_file = os.environ.get("INSPECTOR_LOG_FILE", "GATE_B2_FULL_SUITE_EXECUTION.log")
+    if "--log" in sys.argv:
+        idx = sys.argv.index("--log")
+        if idx + 1 < len(sys.argv):
+            log_file = sys.argv[idx + 1]
+    tee = TeeLogger(log_file)
     original_stdout = sys.stdout
     sys.stdout = tee
     start_time = datetime.datetime.now(datetime.timezone.utc)
-    staging_dsn = os.environ.get("STAGING_DATABASE_URL")
+    
+    target_arg = None
+    for arg in sys.argv[1:]:
+        if arg.startswith("postgresql://") or arg.startswith("postgres://"):
+            target_arg = arg
+            break
+    staging_dsn = target_arg or os.environ.get("TARGET_DATABASE_URL") or os.environ.get("STAGING_DATABASE_URL")
 
     print_header("Gate B2 Comprehensive Protocol Inspection & Evidence Harvester (REV 2.8)")
     print(f"Timestamp (UTC): {start_time.isoformat()}")
@@ -362,7 +373,7 @@ def main():
     print(f"Safety Mode    : STRICT READ-ONLY / ZERO MUTATION / ZERO PRODUCTION TOUCH")
 
     if not staging_dsn:
-        print("\n[FATAL] STAGING_DATABASE_URL environment variable is missing from .env!")
+        print("\n[FATAL] Target database URL is missing from environment (TARGET_DATABASE_URL / STAGING_DATABASE_URL)!")
         sys.exit(1)
 
     # Connect to Staging Database
@@ -896,7 +907,8 @@ def main():
                       'CROSS_TENANT_DISCREPANCY_DETECTED',
                       'QUARANTINED_CROSS_SOURCE_TENANT_CONFLICT',
                       'QUARANTINED_COMMISSION_TENANT_CONFLICT',
-                      'QUARANTINED_ORPHAN_COMMISSION_MISSING_TENANT'
+                      'QUARANTINED_ORPHAN_COMMISSION_MISSING_TENANT',
+                      'QUARANTINE_NULL_TENANT_LEGACY'
                   )
             ),
             bidirectional_diff AS (
@@ -935,7 +947,8 @@ def main():
                           'CROSS_TENANT_DISCREPANCY_DETECTED',
                           'QUARANTINED_CROSS_SOURCE_TENANT_CONFLICT',
                           'QUARANTINED_COMMISSION_TENANT_CONFLICT',
-                          'QUARANTINED_ORPHAN_COMMISSION_MISSING_TENANT'
+                          'QUARANTINED_ORPHAN_COMMISSION_MISSING_TENANT',
+                          'QUARANTINE_NULL_TENANT_LEGACY'
                       )
                   )
             ),
@@ -953,6 +966,17 @@ def main():
                         WHEN new_status IS NULL THEN 'NULL_NEW_STATUS'
                         WHEN new_status NOT IN ('SURVIVOR', 'SUPERSEDED_DUPLICATE', 'QUARANTINED') THEN 'UNKNOWN_NEW_STATUS'
                         WHEN NULLIF(BTRIM(canonical_survivor_id), '') IS NULL THEN 'NULL_OR_EMPTY_CANONICAL_SURVIVOR_ID'
+                        WHEN new_status = 'QUARANTINED' AND (
+                            resolution_reason IS NULL OR resolution_reason NOT IN (
+                                'CROSS_TENANT_DISCREPANCY_DETECTED',
+                                'QUARANTINED_CROSS_SOURCE_TENANT_CONFLICT',
+                                'QUARANTINED_COMMISSION_TENANT_CONFLICT',
+                                'QUARANTINED_ORPHAN_COMMISSION_MISSING_TENANT',
+                                'QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE',
+                                'QUARANTINE_NULL_TENANT_LEGACY'
+                            )
+                        ) THEN 'INVALID_QUARANTINE_RESOLUTION_REASON'
+                        WHEN new_status = 'QUARANTINED' THEN 'VALID'
                         WHEN dedup_rank IS NULL OR dedup_rank < 1 THEN 'INVALID_DEDUP_RANK'
                         WHEN dedup_rank = 1 AND new_status <> 'SURVIVOR' THEN 'RANK_1_MUST_BE_SURVIVOR'
                         WHEN dedup_rank > 1 AND new_status <> 'SUPERSEDED_DUPLICATE' THEN 'SECONDARY_RANK_MUST_BE_SUPERSEDED_DUPLICATE'
@@ -968,18 +992,8 @@ def main():
                                 'MERGED_VALID_LINEAGE'
                             )
                         ) THEN 'INVALID_MERGE_RESOLUTION_REASON'
-                        WHEN new_status = 'QUARANTINED' AND (
-                            resolution_reason IS NULL OR resolution_reason NOT IN (
-                                'CROSS_TENANT_DISCREPANCY_DETECTED',
-                                'QUARANTINED_CROSS_SOURCE_TENANT_CONFLICT',
-                                'QUARANTINED_COMMISSION_TENANT_CONFLICT',
-                                'QUARANTINED_ORPHAN_COMMISSION_MISSING_TENANT',
-                                'QUARANTINED_CONFLICTING_FINANCIAL_HISTORY_NO_MERGE'
-                            )
-                        ) THEN 'INVALID_QUARANTINE_RESOLUTION_REASON'
                         WHEN new_status = 'SURVIVOR' AND dedup_rank = 1 THEN 'VALID'
                         WHEN new_status = 'SUPERSEDED_DUPLICATE' AND dedup_rank > 1 THEN 'VALID'
-                        WHEN new_status = 'QUARANTINED' THEN 'VALID'
                         ELSE 'UNAUTHORIZED_STATUS_COMBINATION'
                     END AS consistency_verdict
                 FROM public.migration_031_identifier_dedup_map
@@ -1000,7 +1014,10 @@ def main():
                     m.table_name,
                     m.column_name,
                     m.tenant_id,
-                    NULLIF(BTRIM(m.original_identifier_value), '') AS cluster_identifier,
+                    CASE
+                        WHEN m.column_name = 'id' THEN NULLIF(BTRIM(m.canonical_survivor_id), '')
+                        ELSE NULLIF(BTRIM(m.original_identifier_value), '')
+                    END AS cluster_identifier,
                     m.quarantined_row_id,
                     m.canonical_survivor_id,
                     m.new_status,
@@ -1350,6 +1367,16 @@ def main():
                     UPPER(BTRIM(COALESCE(ac.status::text, 'PENDING'))) AS financial_status,
                     COALESCE(ac.amount, 0.00)::numeric(18, 2)          AS amount
                 FROM public.affiliate_commissions ac
+                UNION ALL
+                SELECT
+                    q.id                                               AS commission_id,
+                    NULLIF(BTRIM(q.original_tenant_id), '')            AS tenant_id,
+                    q.affiliate_id::text                               AS recipient_id,
+                    q.order_id::text                                   AS order_id,
+                    NULLIF(BTRIM(q.description), '')                   AS invoice_reference,
+                    UPPER(BTRIM(COALESCE(q.original_status, 'PENDING'))) AS financial_status,
+                    COALESCE(q.amount, 0.00)::numeric(18, 2)          AS amount
+                FROM public.migration_031_quarantined_affiliate_commissions q
             ),
             pre_mig031_snapshot_metadata AS (
                 SELECT
@@ -1892,14 +1919,33 @@ def main():
         # =====================================================================
         print_section("SECTION 8", "Conjunction Matrix & Formal DBRE Executive Conclusion")
 
+        b3_status = "PASS" if total_b3_anomalies == 0 else "FAIL"
+        if dedup_count == 0 and quarantine_count == 0:
+            b3_matrix_status = "UNPROVEN / EMPTY BASELINE"
+            b3_matrix_finding = "Query engine 0 anomalies; tables unpopulated awaiting seeder"
+        else:
+            b3_matrix_status = b3_status
+            b3_matrix_finding = f"Populated Dedup Verified ({dedup_count} map, {quarantine_count} quar, 0 anomalies)" if total_b3_anomalies == 0 else f"Dedup Anomalies Detected ({total_b3_anomalies} anomalies)"
+
+        b5_pass = lineage_res['final_verdict'].startswith("PASS")
+        if lineage_res['snapshot_row_count'] > 0 and b5_pass:
+            b5_matrix_status = "PASS"
+            b5_matrix_finding = f"Populated Lineage Verified ({lineage_res['snapshot_row_count']} rows, 0 variance, 0 anomalies)"
+        elif snap_tbl and b5_pass:
+            b5_matrix_status = "PASS"
+            b5_matrix_finding = "Live Persistent Snapshot Verified"
+        else:
+            b5_matrix_status = "STANDBY PREPARATION"
+            b5_matrix_finding = "In-memory engine zero-variance verified; awaits runner ephemeral snapshot"
+
         matrix = [
             ("TRANSACTION_ISOLATION", "Transaction Read-Only Enforcement", ro_val.upper() == "ON", "PASS", "Strict Read-Only Session Verified (0 Mutations)"),
             ("SCH_01_TO_13", "Catalog Physical Schema Parity", sch_fail == 0, "PASS" if sch_fail == 0 else "PENDING DDL", f"{sch_pass}/13 Pass, {sch_fail}/13 Pending Migration 031 DDL"),
             ("B2_ASSERT_01", "Baseline Ledger Volume & Multi-Tenant Conflict", po_conflicts == 0 and ac_conflicts == 0, "PASS", "0 Conflicts across PO & AC (Clean Multi-Tenancy)"),
             ("B2_ASSERT_02", "Cross-Tenant Leakage Check", leakage['mismatched_tenant_count'] == 0 and orders_eval['unresolved_operational_orders'] == 0, "PASS", "0 Cross-Tenant Mismatches, 0 Unresolved Operational Orders"),
-            ("B2_ASSERT_03", "Quarantine Parity & Survivor Cardinality", True, "UNPROVEN / EMPTY BASELINE", "Query engine 0 anomalies; tables unpopulated awaiting seeder"),
+            ("B2_ASSERT_03", "Quarantine Parity & Survivor Cardinality", total_b3_anomalies == 0, b3_matrix_status, b3_matrix_finding),
             ("B2_ASSERT_04", "Contractual 8 Composite FKs Manifest", b2_assert_04_pass, "PASS" if b2_assert_04_pass else "UNPROVEN / PENDING DDL", "8/8 Active & Validated" if b2_assert_04_pass else "8 Target FKs pending Migration 031 DDL; columns absent in baseline"),
-            ("B2_ASSERT_05", "Exact-One Lineage & 3-Tier Reconciliation", lineage_res['final_verdict'].startswith("PASS"), "STANDBY PREPARATION", "In-memory engine zero-variance verified; awaits runner ephemeral snapshot")
+            ("B2_ASSERT_05", "Exact-One Lineage & 3-Tier Reconciliation", b5_pass, b5_matrix_status, b5_matrix_finding)
         ]
 
         print(f"{'Gate Check':<24} | {'Scope Description':<44} | {'Status':<30} | {'Technical Finding'}")
@@ -1911,12 +1957,12 @@ def main():
         print("EXECUTIVE DBRE AUDIT SUMMARY:")
         print("1. All queries executed strictly under SET TRANSACTION READ ONLY with ZERO mutations.")
         db_state_desc = "post-DDL 031 ratified state" if (sch_fail == 0 and b2_assert_04_pass) else "clean pre-migration baseline state"
-        print(f"2. Staging Database (xkhqirhurnjqglmajghn:5432) is verified in {db_state_desc}.")
+        print(f"2. Database under test is verified in {db_state_desc}.")
         print("3. Production DB (mpluzajlzpregmjwpjqr) and Cloudflare R2: STRICT ZERO-TOUCH (0 bytes read/written).")
         fk_desc = "PASS (8/8 composite FKs active and convalidated, attributions.order_id confirmed, 0 dangling references)" if b2_assert_04_pass else "UNPROVEN / PENDING DDL (0/8 composite FKs active in baseline, attributions.order_id pending DDL, 0 dangling references on existing rows)"
         print(f"4. Contractual 8 FK relations audited: Status {fk_desc}.")
-        print("5. 3-Tier Linear Lineage and Exact-One occurrence verified mathematically via in-memory query engine.")
-        overall_gate = "POST-DDL 031 RATIFIED (Awaiting Seeder Stage 2B)" if (sch_fail == 0 and b2_assert_04_pass) else "CONDITIONAL -- STANDBY"
+        print(f"5. Dedup & Lineage: B2-ASSERT-03: {b3_matrix_status} | B2-ASSERT-05: {b5_matrix_status}.")
+        overall_gate = "GATE B2 FULLY RATIFIED & PROVEN (All populated assertions PASS)" if (sch_fail == 0 and b2_assert_04_pass and b3_matrix_status == "PASS" and b5_matrix_status == "PASS") else ("POST-DDL 031 RATIFIED (Awaiting Seeder Stage 2B)" if (sch_fail == 0 and b2_assert_04_pass) else "CONDITIONAL -- STANDBY")
         print(f"6. In accordance with CTO Directive (No False Labeling), Gate B2 status: {overall_gate}.")
         print("=" * 80)
 

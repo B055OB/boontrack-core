@@ -79,10 +79,11 @@ WHERE id IN ('seed_ord_001', 'seed_ord_002')
 -- [STAGE 2] DEDUP GOVERNANCE & QUARANTINE LEDGER TEARDOWN
 -- -----------------------------------------------------------------------------
 
--- 2.1 Identifier Dedup Map (2 Fixture Rows)
+-- 2.1 Identifier Dedup Map (3 Fixture Rows)
 DELETE FROM public.migration_031_identifier_dedup_map 
 WHERE map_id IN ('5eed5555-5555-5555-5555-555555555551'::uuid, 
-                 '5eed5555-5555-5555-5555-555555555552'::uuid) 
+                 '5eed5555-5555-5555-5555-555555555552'::uuid,
+                 '5eed5555-5555-5555-5555-555555555553'::uuid) 
   AND tenant_id = '5eed0000-0000-0000-0000-000000000001';
 
 -- 2.2 Quarantined Affiliate Commissions (1 Fixture Row)
@@ -150,7 +151,8 @@ BEGIN
          WHERE id = '5eed4444-4444-4444-4444-444444444441'::uuid) +
         (SELECT COUNT(*) FROM public.migration_031_identifier_dedup_map 
          WHERE map_id IN ('5eed5555-5555-5555-5555-555555555551'::uuid, 
-                          '5eed5555-5555-5555-5555-555555555552'::uuid))
+                          '5eed5555-5555-5555-5555-555555555552'::uuid,
+                          '5eed5555-5555-5555-5555-555555555553'::uuid))
     ) INTO v_residual_cnt;
 
     IF v_residual_cnt > 0 THEN

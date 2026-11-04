@@ -1,7 +1,7 @@
 -- =============================================================================
 -- BOONTRACK STAGING SYNTHETIC SEEDER FIXTURE (REV 4.1.8)
 -- Target: Staging Database (xkhqirhurnjqglmajghn:5432)
--- Scope: 13 Synthetic Entities (Clean, Dedup Survivor/Loser, Quarantine, 8 FK Streams)
+-- Scope: 14 Synthetic Entities (Clean, Dedup Survivor/Loser, Quarantine Commission & Dedup Map Pair, 8 FK Streams)
 -- Isolation Invariant: Strictly namespaced explicit IDs with symmetric predicates.
 -- Safety Invariant: Precondition asserts 0 collision with existing staging rows.
 -- Concurrency Invariant: ACCESS EXCLUSIVE locking acquired before collision audit.
@@ -59,7 +59,11 @@ BEGIN
          WHERE id = '5eed4444-4444-4444-4444-444444444441'::uuid OR order_id = 'seed_ord_quar_001') +
         (SELECT COUNT(*) FROM public.migration_031_identifier_dedup_map 
          WHERE map_id IN ('5eed5555-5555-5555-5555-555555555551'::uuid, 
-                          '5eed5555-5555-5555-5555-555555555552'::uuid)) +
+                          '5eed5555-5555-5555-5555-555555555552'::uuid,
+                          '5eed5555-5555-5555-5555-555555555553'::uuid)
+            OR (table_name = 'affiliate_commissions' 
+                AND column_name = 'tenant_id' 
+                AND quarantined_row_id = '5eed4444-4444-4444-4444-444444444441')) +
         (SELECT COUNT(*) FROM public.orders 
          WHERE id IN ('seed_ord_001', 'seed_ord_002')) +
         (SELECT COUNT(*) FROM public.product_orders 
@@ -135,11 +139,11 @@ INSERT INTO public.migration_031_quarantined_affiliate_commissions (
 VALUES (
     '5eed4444-4444-4444-4444-444444444441'::uuid, 'seed_batch_001', '5eed0000-0000-0000-0000-000000000001', 
     '5eed0000-0000-0000-0000-000000000001', '5eed1111-1111-1111-1111-111111111111', 'seed_ord_quar_001', 
-    750000.00, 75000.00, 'PRODUCT_ORDER', 'PENDING', 'CROSS_TENANT_DISCREPANCY_DETECTED', 1, '{}'::jsonb, 'QUARANTINED_LOCKED'
+    750000.00, 75000.00, 'PRODUCT_ORDER', 'PENDING', 'QUARANTINE_NULL_TENANT_LEGACY', 1, '{}'::jsonb, 'QUARANTINED_LOCKED'
 );
 
 -- -----------------------------------------------------------------------------
--- [STAGE 6] IDENTIFIER DEDUP GOVERNANCE MAP (2 Rows: Survivor rank=1 & Loser rank=2)
+-- [STAGE 6] IDENTIFIER DEDUP GOVERNANCE MAP (3 Rows: Survivor rank=1, Loser rank=2, Quarantined Commission)
 -- -----------------------------------------------------------------------------
 INSERT INTO public.migration_031_identifier_dedup_map (
     map_id, migration_batch_id, table_name, column_name, tenant_id, 
@@ -156,6 +160,10 @@ VALUES
   ('5eed5555-5555-5555-5555-555555555552'::uuid, 'seed_batch_001', 'affiliates', 'id', '5eed0000-0000-0000-0000-000000000001',
    '5eed2222-2222-2222-2222-222222222222', '5eed2222-2222-2222-2222-222222222221', '5eed2222-2222-2222-2222-222222222222',
    '5eed2222-2222-2222-2222-222222222221', 2, 'SUPERSEDED_DUPLICATE', 'MERGED_TO_SURVIVOR',
+   false, '[]'::jsonb, '{}'::jsonb, 0, now(), now()),
+  ('5eed5555-5555-5555-5555-555555555553'::uuid, 'seed_batch_001', 'affiliate_commissions', 'tenant_id', '5eed0000-0000-0000-0000-000000000001',
+   '5eed4444-4444-4444-4444-444444444441', '5eed4444-4444-4444-4444-444444444441', '5eed0000-0000-0000-0000-000000000001',
+   'MOVED_TO_QUARANTINE_TABLE', 1, 'QUARANTINED', 'QUARANTINE_NULL_TENANT_LEGACY',
    false, '[]'::jsonb, '{}'::jsonb, 0, now(), now());
 
 -- -----------------------------------------------------------------------------
@@ -165,28 +173,28 @@ VALUES
 -- 7.1 Orders (2 streams: affiliate_id and manager_id)
 INSERT INTO public.orders (id, tenant_id, affiliate_id, manager_id, status, gross_amount)
 VALUES 
-  ('seed_ord_001', '5eed0000-0000-0000-0000-000000000001', '5eed2222-2222-2222-2222-222222222222'::uuid, NULL, 'PENDING', 100000.00),
-  ('seed_ord_002', '5eed0000-0000-0000-0000-000000000001', NULL, '5eed2222-2222-2222-2222-222222222222'::uuid, 'PENDING', 150000.00);
+  ('seed_ord_001', '5eed0000-0000-0000-0000-000000000001', '5eed2222-2222-2222-2222-222222222221'::uuid, NULL, 'PENDING', 100000.00),
+  ('seed_ord_002', '5eed0000-0000-0000-0000-000000000001', NULL, '5eed2222-2222-2222-2222-222222222221'::uuid, 'PENDING', 150000.00);
 
 -- 7.2 Product Orders
 INSERT INTO public.product_orders (id, order_id, tenant_id, affiliate_id, status)
 VALUES 
-  (50001, 'seed_ord_001', '5eed0000-0000-0000-0000-000000000001', '5eed2222-2222-2222-2222-222222222222'::uuid, 'PENDING');
+  (50001, 'seed_ord_001', '5eed0000-0000-0000-0000-000000000001', '5eed2222-2222-2222-2222-222222222221'::uuid, 'PENDING');
 
 -- 7.3 Delivery Orders
 INSERT INTO public.delivery_orders (id, tenant_id, order_id, provider, service_type, affiliate_id, status)
 VALUES 
-  ('5eed6666-6666-6666-6666-666666666661'::uuid, '5eed0000-0000-0000-0000-000000000001', 'seed_ord_001', 'JNE', 'REG', '5eed2222-2222-2222-2222-222222222222'::uuid, 'PENDING');
+  ('5eed6666-6666-6666-6666-666666666661'::uuid, '5eed0000-0000-0000-0000-000000000001', 'seed_ord_001', 'JNE', 'REG', '5eed2222-2222-2222-2222-222222222221'::uuid, 'PENDING');
 
 -- 7.4 Attributions
 INSERT INTO public.attributions (id, tenant_id, session_id, ip_hash, affiliate_id)
 VALUES 
-  ('5eed7777-7777-7777-7777-777777777771'::uuid, '5eed0000-0000-0000-0000-000000000001', 'seed_sess_001', 'seed_ip_hash_001', '5eed2222-2222-2222-2222-222222222222'::uuid);
+  ('5eed7777-7777-7777-7777-777777777771'::uuid, '5eed0000-0000-0000-0000-000000000001', 'seed_sess_001', 'seed_ip_hash_001', '5eed2222-2222-2222-2222-222222222221'::uuid);
 
 -- 7.5 Attribution Sessions
 INSERT INTO public.attribution_sessions (id, tenant_id, ip_hash, affiliate_id, order_id, referral_code)
 VALUES 
-  ('5eed8888-8888-8888-8888-888888888881'::uuid, '5eed0000-0000-0000-0000-000000000001', 'seed_ip_hash_001', '5eed2222-2222-2222-2222-222222222222'::uuid, 'seed_ord_001', 'seed_loser_01');
+  ('5eed8888-8888-8888-8888-888888888881'::uuid, '5eed0000-0000-0000-0000-000000000001', 'seed_ip_hash_001', '5eed2222-2222-2222-2222-222222222221'::uuid, 'seed_ord_001', 'seed_surv_01');
 
 -- 7.6 Shop Subscriptions
 INSERT INTO public.shop_subscriptions (
@@ -195,7 +203,7 @@ INSERT INTO public.shop_subscriptions (
 )
 VALUES 
   ('5eed9999-9999-9999-9999-999999999991'::uuid, 'seed_tenant_a', '5eed0000-0000-0000-0000-000000000001', 
-   '5eed2222-2222-2222-2222-222222222222'::uuid, 'ACTIVE', 299000.00, 
+   '5eed2222-2222-2222-2222-222222222221'::uuid, 'ACTIVE', 299000.00, 
    now() + interval '30 days', now() + interval '30 days', 'seed_inv_001');
 
 -- 7.7 Shop Commission Ledger
@@ -205,7 +213,7 @@ INSERT INTO public.shop_commission_ledger (
 )
 VALUES 
   ('5eedaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, '5eed9999-9999-9999-9999-999999999991'::uuid, 
-   'seed_tenant_a', '5eed0000-0000-0000-0000-000000000001', '5eed2222-2222-2222-2222-222222222222'::uuid, 
+   'seed_tenant_a', '5eed0000-0000-0000-0000-000000000001', '5eed2222-2222-2222-2222-222222222221'::uuid, 
    299000.00, 29900.00, 0.00, 269100.00, 'COMPLETED');
 
 -- -----------------------------------------------------------------------------
@@ -238,7 +246,8 @@ BEGIN
     
     SELECT COUNT(*) INTO v_map_cnt FROM public.migration_031_identifier_dedup_map 
     WHERE map_id IN ('5eed5555-5555-5555-5555-555555555551'::uuid, 
-                     '5eed5555-5555-5555-5555-555555555552'::uuid);
+                     '5eed5555-5555-5555-5555-555555555552'::uuid,
+                     '5eed5555-5555-5555-5555-555555555553'::uuid);
                      
     SELECT COUNT(*) INTO v_ord_cnt FROM public.orders 
     WHERE id IN ('seed_ord_001', 'seed_ord_002');
@@ -270,8 +279,8 @@ BEGIN
     IF v_quar_cnt <> 1 THEN
         RAISE EXCEPTION 'POSTCONDITION ERROR: Expected 1 seeded quarantined commission, found %', v_quar_cnt USING ERRCODE = 'P0003';
     END IF;
-    IF v_map_cnt <> 2 THEN
-        RAISE EXCEPTION 'POSTCONDITION ERROR: Expected 2 seeded dedup map rows, found %', v_map_cnt USING ERRCODE = 'P0003';
+    IF v_map_cnt <> 3 THEN
+        RAISE EXCEPTION 'POSTCONDITION ERROR: Expected 3 seeded dedup map rows, found %', v_map_cnt USING ERRCODE = 'P0003';
     END IF;
     IF v_ord_cnt <> 2 THEN
         RAISE EXCEPTION 'POSTCONDITION ERROR: Expected 2 seeded orders, found %', v_ord_cnt USING ERRCODE = 'P0003';

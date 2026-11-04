@@ -97,14 +97,15 @@ Seluruh artefak kode, migrasi, seeder, dan pengujian diverifikasi secara kriptog
 |:---|:---|:---|:---|
 | `migrations/031_b2_remediation_suite.sql` | 21,512 bytes | `ab4f1562f7e15fa0cf90bf86969be3c8ffde79858fea478ce3bf15a7dbfe5124` | DDL forward migrasi 031 dengan locking deterministik 12 tabel di awal dan type alignment |
 | `migrations/031_b2_remediation_suite_rollback.sql` | 6,729 bytes | `2733f1ac52143e330082c9e9b83d4b08ed691a412f93f982532537168ce73e7d` | DDL rollback mandiri pembuktian $\Delta = 0$ dan locking deterministik 12 tabel |
-| `staging_seeder_fixture.sql` | 15,887 bytes | `302431c189d01e57399a138566c6b9ff51dd2c45c60b970d5e6b83834665bed5` | DML seeder sintetis terisolasi (`seed_*`, `5eed%`) dengan 12-table locking di awal |
-| `staging_seeder_fixture_rollback.sql` | 8,014 bytes | `8f16e8b24497bfae440bcce0414672b455872459694e813d09008f892631c824` | DML pembersih seeder dengan asersi *zero-residual* dan 12-table locking simetris |
+| `staging_seeder_fixture.sql` | 16,659 bytes | `43fc8d03380858be03117342d6947b7065996b9922fc27638bee5cb042d51441` | DML seeder sintetis terisolasi (`seed_*`, `5eed%`) dengan 12-table locking di awal dan mapping dedup ASSERT-03 |
+| `staging_seeder_fixture_rollback.sql` | 8,149 bytes | `9ced38aa39b831842bd2235b607e1171d63b94695b49160b02b843e2bba4450c` | DML pembersih seeder dengan asersi *zero-residual* dan 12-table locking simetris |
 | `scripts/staging_baseline_generated.sql` | 12,818 bytes | `8eff4ab893a0f397e0ca79bbb86ef6f534e527fde10afcbe21f1a62ac5aad4a0` | DDL baseline 10 tabel, 193 kolom, 23 constraint diekstrak dari Staging Supabase |
-| `rehearsal_p1_orchestrator.py` | 87,511 bytes | `6ef0340cb4b9bad25e51516bf1136d2ab98e1595bf43b147ec32fbbad97709de` | Orkestrator otomatis rehearsal P1 lokal (AC-01 s/d AC-06, Two-Path Rollback, Micro-Telemetry, 2s Timeout) |
-| `audit_b2_comprehensive_inspector.py` | 114,128 bytes | `65cd01f400f648553ee0cc5c8014a147c5f54fd20b4851d69083a80cbe537ef9` | Inspector read-only Staging (fail-closed, 7 properti FK, type-cast aligned) |
+| `rehearsal_p1_orchestrator.py` | 101,131 bytes | `7c27db8f57099a605c49ce30c7881d2ed076ab131a9f02c59b29b74124ffdf40` | Orkestrator otomatis rehearsal P1 lokal (AC-01 s/d AC-06, Two-Path Rollback, Populated Gate B2 Proof, 2s Timeout) |
+| `audit_b2_comprehensive_inspector.py` | 116,827 bytes | `07f4aec82bd4deba061f975d0972a051363c639eb6f3a00a03fe322837a5d871` | Inspector read-only Staging (fail-closed, 7 properti FK, type-cast aligned, populated proof dynamic) |
 | `execute_fase_2a_staging_ddl.py` | 26,771 bytes | `c62ae9ae3a5946bc5a17e2ecd2cac9d75410edecdc633db7c4e553e2fb84ecf2` | Script eksekutor Fase 2A DDL Staging dengan instrumentasi mikro-telemetri lock |
 | `test_assert_04_regression.py` | 20,389 bytes | `df78e6c7d426029c2ac9de728f4ca741d9b129e917a129b84d298266746efef1` | Suite uji regresi unit 12 skenario fail-closed |
-| `REHEARSAL_P1_FULL_EXECUTION.log` | 24,752 bytes | `a33678717d2e468c411f78d1747fcb434aaf1909933c474b166ba1127406dced` | Log mentah bukti eksekusi rehearsal P1 lokal terverifikasi |
+| `REHEARSAL_P1_FULL_EXECUTION.log` | 49,557 bytes | `d4634840c66b52e828f73a0759201106e3756cce3eb62488faec62ba01dc005d` | Log mentah bukti eksekusi rehearsal P1 lokal terverifikasi |
+| `GATE_B2_POPULATED_EVIDENCE.log` | 20,107 bytes | `3bad4af09e7cd8f489495ee41992dcaec4ce51579719557275676ae9364d06a5` | Log bukti empiris verifikasi Gate B2 berpopulasi (ASSERT-03 & ASSERT-05 PASS) |
 | `FASE_2A_STAGING_EXECUTION_EVIDENCE.log` | 29,412 bytes | `78da13aa23da03acd6fc18e3f4eeafac558758713e5e59fe53cd7904a9624c79` | Log mentah bukti eksekusi Fase 2A Staging DDL dan telemetri SLA lock |
 
 ---
