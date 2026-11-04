@@ -173,7 +173,31 @@ BEGIN
         RAISE EXCEPTION 'PRECONDITION FAILED: shop_subscriptions -> tenants has % orphans, % mismatches', v_orphan_count, v_mismatch_count USING ERRCODE = 'P0003';
     END IF;
 
-    RAISE NOTICE '[PRECONDITION AUDIT PASSED] 0 orphan rows, 0 duplicate keys, 0 tenant mismatches, 0 NULL tenants.';
+    -- 4. Financial Amount Precision & Range Preconditions (SCH-09 Data Safety)
+    IF EXISTS (
+        SELECT 1 FROM public.affiliate_commissions 
+        WHERE amount IS NOT NULL AND scale(amount) > 2
+    ) THEN
+        RAISE EXCEPTION 'PRECONDITION FAILED: affiliate_commissions contains amount with scale > 2 (fractional truncation risk)' USING ERRCODE = 'P0005';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM public.affiliate_commissions 
+        WHERE amount IS NOT NULL AND abs(amount) >= 10^16
+    ) THEN
+        RAISE EXCEPTION 'PRECONDITION FAILED: affiliate_commissions contains amount exceeding numeric(18,2) range limit (abs >= 10^16)' USING ERRCODE = 'P0005';
+    END IF;
+
+    -- 5. Tenancy UUID Format Precondition for shop_subscriptions
+    IF EXISTS (
+        SELECT 1 FROM public.shop_subscriptions 
+        WHERE tenant_id IS NOT NULL 
+          AND tenant_id !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    ) THEN
+        RAISE EXCEPTION 'PRECONDITION FAILED: shop_subscriptions contains invalid UUID string in tenant_id' USING ERRCODE = 'P0006';
+    END IF;
+
+    RAISE NOTICE '[PRECONDITION AUDIT PASSED] 0 orphan rows, 0 duplicate keys, 0 tenant mismatches, 0 NULL tenants, 0 scale/range/uuid anomalies.';
 END $$;
 
 -- -----------------------------------------------------------------------------
@@ -238,7 +262,7 @@ ALTER TABLE public.affiliates
     ADD CONSTRAINT fk_affiliates_manager_composite 
     FOREIGN KEY (tenant_id, manager_id) 
     REFERENCES public.affiliates (tenant_id, id) 
-    ON DELETE SET NULL;
+    ON DELETE RESTRICT;
 
 -- 3. attribution_sessions -> orders (tenant_id, id)
 ALTER TABLE public.attribution_sessions 
@@ -315,6 +339,17 @@ COMMIT;
 -- ROLLBACK SPECIFICATION & RUNBOOK
 -- =============================================================================
 /*
+-- FINANCIAL DATA REVERSIBILITY NOTICE:
+--   1. Schema Type Reversibility: ALTER COLUMN amount TYPE numeric restores the unconstrained
+--      numeric data type in PostgreSQL catalog metadata.
+--   2. Precision & Truncation Boundary: During forward migration to numeric(18,2), if any values
+--      had scale > 2, fractional rounding or truncation occurred upon cast. Rolling back to
+--      numeric DOES NOT restore lost sub-cent fractional digits if they were altered.
+--      The forward migration precondition audit guarantees 0 rows had scale > 2 prior to migration,
+--      ensuring zero loss of precision under clean baseline conditions.
+--   3. Transaction Boundary: If this rollback is executed within the migration failure window,
+--      the entire forward transaction is rolled back via ROLLBACK, preserving bit-exact state.
+
 BEGIN;
 SET LOCAL statement_timeout = '5s';
 SET LOCAL lock_timeout = '2s';
@@ -351,5 +386,9 @@ ALTER TABLE public.affiliate_commissions ALTER COLUMN amount TYPE numeric;
 -- 5. REVERT SHOP_SUBSCRIPTIONS TENANT_ID TYPE TO VARCHAR
 ALTER TABLE public.shop_subscriptions ALTER COLUMN tenant_id TYPE character varying;
 
+-- 6. DROP ADDED SCHEMA COLUMN (attributions.order_id)
+ALTER TABLE public.attributions DROP COLUMN IF EXISTS order_id;
+
 COMMIT;
 */
+

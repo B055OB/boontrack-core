@@ -72,6 +72,14 @@ def print_section(section_id: str, title: str):
 # =============================================================================
 # REV 2.8 CONTRACTUAL COMPOSITE FOREIGN KEY MANIFEST & EVALUATION ENGINE
 # =============================================================================
+REFERENTIAL_ACTION_MAP = {
+    'a': 'NO ACTION',
+    'r': 'RESTRICT',
+    'c': 'CASCADE',
+    'n': 'SET NULL',
+    'd': 'SET DEFAULT'
+}
+
 REV28_CONTRACTUAL_FK_MANIFEST = [
     {
         "child_table": "affiliate_commissions",
@@ -79,6 +87,8 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_table": "affiliates",
         "parent_cols": ["tenant_id", "id"],
         "expected_name": "fk_affiliate_commissions_affiliate_composite",
+        "expected_confdeltype": "c",
+        "expected_on_delete": "CASCADE",
         "description": "Affiliate Commissions -> Affiliates (Composite)"
     },
     {
@@ -87,6 +97,8 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_table": "affiliates",
         "parent_cols": ["tenant_id", "id"],
         "expected_name": "fk_affiliates_manager_composite",
+        "expected_confdeltype": "r",
+        "expected_on_delete": "RESTRICT",
         "description": "Affiliates -> Affiliates (Manager Self-Reference Composite)"
     },
     {
@@ -95,6 +107,8 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_table": "orders",
         "parent_cols": ["tenant_id", "id"],
         "expected_name": "fk_attribution_sessions_order_composite",
+        "expected_confdeltype": "c",
+        "expected_on_delete": "CASCADE",
         "description": "Attribution Sessions -> Orders (Composite)"
     },
     {
@@ -103,6 +117,8 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_table": "orders",
         "parent_cols": ["tenant_id", "id"],
         "expected_name": "fk_attributions_order_composite",
+        "expected_confdeltype": "c",
+        "expected_on_delete": "CASCADE",
         "description": "Attributions -> Orders (Composite)"
     },
     {
@@ -111,6 +127,8 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_table": "orders",
         "parent_cols": ["tenant_id", "id"],
         "expected_name": "fk_delivery_orders_order_composite",
+        "expected_confdeltype": "c",
+        "expected_on_delete": "CASCADE",
         "description": "Delivery Orders -> Orders (Composite)"
     },
     {
@@ -119,6 +137,8 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_table": "orders",
         "parent_cols": ["tenant_id", "id"],
         "expected_name": "fk_product_orders_order_composite",
+        "expected_confdeltype": "c",
+        "expected_on_delete": "CASCADE",
         "description": "Product Orders -> Orders (Composite)"
     },
     {
@@ -127,6 +147,8 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_table": "shop_subscriptions",
         "parent_cols": ["tenant_id", "id"],
         "expected_name": "fk_shop_commission_ledger_subscription_composite",
+        "expected_confdeltype": "c",
+        "expected_on_delete": "CASCADE",
         "description": "Shop Commission Ledger -> Shop Subscriptions (Composite)"
     },
     {
@@ -135,6 +157,8 @@ REV28_CONTRACTUAL_FK_MANIFEST = [
         "parent_table": "tenants",
         "parent_cols": ["id"],
         "expected_name": "fk_shop_subscriptions_tenant_anchor",
+        "expected_confdeltype": "r",
+        "expected_on_delete": "RESTRICT",
         "description": "Shop Subscriptions -> Tenants (Tenancy Anchor)"
     }
 ]
@@ -153,26 +177,46 @@ def evaluate_b2_assert_04(
     Requires:
       matched_fk_count == 8 AND
       convalidated_fk_count == 8 AND
+      discrepancy_count == 0 AND
       orphaned_child_rows == 0 AND
       residual_loser_references == 0 AND
       pending_ddl_columns_count == 0
     """
     matched_fk_count = 0
     convalidated_fk_count = 0
+    discrepancy_count = 0
     reconciliation_details = []
 
     for item in manifest:
         matched = None
+        discrepant = None
+        discrepancy_reason = None
         partial = None
+
         for lk in live_fks:
             if lk['child_table'] == item['child_table'] and lk['parent_table'] == item['parent_table']:
+                # Check column mapping
                 if lk['child_cols'] == item['child_cols'] and lk['parent_cols'] == item['parent_cols']:
-                    # Constraint must be convalidated = True
-                    if lk.get('convalidated') is True:
+                    # Check validation, name, and referential action
+                    is_convalidated = lk.get('convalidated') is True
+                    name_matches = (lk.get('constraint_name') == item['expected_name'])
+                    action_matches = (lk.get('confdeltype') == item['expected_confdeltype'])
+
+                    if is_convalidated and name_matches and action_matches:
                         matched = lk
                         break
                     else:
-                        partial = lk
+                        discrepant = lk
+                        reasons = []
+                        if not is_convalidated:
+                            reasons.append("NOT_VALIDATED")
+                        if not name_matches:
+                            reasons.append(f"NAME_MISMATCH(exp='{item['expected_name']}',got='{lk.get('constraint_name')}')")
+                        if not action_matches:
+                            exp_act = REFERENTIAL_ACTION_MAP.get(item['expected_confdeltype'], item['expected_confdeltype'])
+                            got_act = REFERENTIAL_ACTION_MAP.get(lk.get('confdeltype'), lk.get('confdeltype'))
+                            reasons.append(f"ACTION_MISMATCH(exp='{item['expected_confdeltype']}'[{exp_act}],got='{lk.get('confdeltype')}'[{got_act}])")
+                        discrepancy_reason = ", ".join(reasons)
                 else:
                     partial = lk
 
@@ -182,6 +226,10 @@ def evaluate_b2_assert_04(
             live_name = matched['constraint_name']
             matched_fk_count += 1
             convalidated_fk_count += 1
+        elif discrepant:
+            status = f"DISCREPANCY ({discrepancy_reason})"
+            live_name = f"{discrepant.get('constraint_name')}"
+            discrepancy_count += 1
         elif partial:
             val_status = "NOT VALIDATED" if partial.get('convalidated') is False else "PENDING MIG031 DDL"
             status = f"LEGACY/PARTIAL ({partial['child_cols']} -> {partial['parent_cols']})"
@@ -195,7 +243,8 @@ def evaluate_b2_assert_04(
             "rel_path": rel_path,
             "status": status,
             "live_name": live_name,
-            "matched": matched is not None
+            "matched": matched is not None,
+            "discrepant": discrepant is not None
         })
 
     # Catalog columns audit for child tables
@@ -217,6 +266,7 @@ def evaluate_b2_assert_04(
     b2_assert_04_pass = (
         matched_fk_count == 8 and
         convalidated_fk_count == 8 and
+        discrepancy_count == 0 and
         total_orphaned == 0 and
         total_mismatches == 0 and
         total_losers == 0 and
@@ -226,6 +276,9 @@ def evaluate_b2_assert_04(
     if b2_assert_04_pass:
         verdict = "PASS"
         tag = "PASS (8/8 COMPOSITE FKS VALIDATED & 0 DANGLING)"
+    elif discrepancy_count > 0:
+        verdict = "FAIL/PENDING"
+        tag = f"FAIL/PENDING (DISCREPANCY: {discrepancy_count} CONSTRAINT(S) MISCONFIGURED)"
     elif pending_ddl_columns_count > 0 or matched_fk_count < 8 or convalidated_fk_count < 8:
         verdict = "FAIL/PENDING"
         tag = "UNPROVEN / PENDING DDL"
@@ -239,6 +292,7 @@ def evaluate_b2_assert_04(
         "tag": tag,
         "matched_fk_count": matched_fk_count,
         "convalidated_fk_count": convalidated_fk_count,
+        "discrepancy_count": discrepancy_count,
         "pending_ddl_columns_count": pending_ddl_columns_count,
         "missing_columns_detail": missing_columns_detail,
         "total_orphaned": total_orphaned,
@@ -1014,6 +1068,7 @@ def main():
                 parent_cls.relname AS parent_table,
                 c.contype,
                 c.convalidated,
+                c.confdeltype,
                 array_agg(child_att.attname::text ORDER BY ord.n) AS child_cols,
                 array_agg(parent_att.attname::text ORDER BY ord.n) AS parent_cols,
                 pg_get_constraintdef(c.oid) AS constraint_definition
@@ -1034,14 +1089,14 @@ def main():
                   'delivery_orders', 'product_orders', 'shop_commission_ledger', 'shop_subscriptions',
                   'orders'
               )
-            GROUP BY c.conname, child_cls.relname, parent_cls.relname, c.contype, c.convalidated, c.oid
+            GROUP BY c.conname, child_cls.relname, parent_cls.relname, c.contype, c.convalidated, c.confdeltype, c.oid
             ORDER BY child_cls.relname, c.conname;
         """)
         live_fks = cur.fetchall()
-        print(f"{'Child Table':<24} | {'Constraint Name':<44} | {'Parent Table':<18} | {'Val':<5} | {'Definition'}")
-        print("-" * 135)
+        print(f"{'Child Table':<24} | {'Constraint Name':<44} | {'Parent Table':<18} | {'Val':<5} | {'Act':<5} | {'Definition'}")
+        print("-" * 142)
         for fk in live_fks:
-            print(f"{fk['child_table']:<24} | {fk['constraint_name']:<44} | {fk['parent_table']:<18} | {str(fk['convalidated']):<5} | {fk['constraint_definition']}")
+            print(f"{fk['child_table']:<24} | {fk['constraint_name']:<44} | {fk['parent_table']:<18} | {str(fk['convalidated']):<5} | {str(fk['confdeltype']):<5} | {fk['constraint_definition']}")
         print(f"Total Discovered Validated Foreign Keys on Audited Tables: {len(live_fks)}")
 
         # 6.B: Exact Manifest-Driven Catalog Reconciliation (REV 2.8 Contractual 8 FKs)
@@ -1200,6 +1255,7 @@ def main():
         print(f"3. pending_ddl_columns_count        : {final_assert_04_eval['pending_ddl_columns_count']} (Target: 0)")
         print(f"4. matched_fk_count                 : {final_assert_04_eval['matched_fk_count']}/8 (Target: 8)")
         print(f"5. convalidated_fk_count            : {final_assert_04_eval['convalidated_fk_count']}/8 (Target: 8)")
+        print(f"6. discrepancy_count                : {final_assert_04_eval['discrepancy_count']} (Target: 0)")
         print(f"\n[+] B2-ASSERT-04 VERDICT: {b2_assert_04_verdict} ({b2_assert_04_tag})")
 
         # =====================================================================

@@ -2,7 +2,7 @@
 ================================================================================
  GATE B2 COMPREHENSIVE PROTOCOL INSPECTION & EVIDENCE HARVESTER (REV 2.8)
 ================================================================================
-Timestamp (UTC): 2026-11-04T03:00:06.642631+00:00
+Timestamp (UTC): 2026-11-04T03:38:01.589209+00:00
 Lead DBRE Role : Lead Database Reliability Engineer & Principal Systems Architect
 Protocol Spec  : GATE_B2_VERIFICATION_PROTOCOL.md (REV 2.8, Commit a9ad768)
 Target DB URI  : postgresql://postgres.xkhqirhurnjqglmajghn:*****@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
@@ -151,17 +151,17 @@ Formal Dedup Tables Discovered in Catalog: ['migration_031_identifier_dedup_map'
 --------------------------------------------------------------------------------
 
 --- [6.A] Catalog Discovery of Live Foreign Keys on Audited Tables (c.convalidated = TRUE) ---
-Child Table              | Constraint Name                              | Parent Table       | Val   | Definition
----------------------------------------------------------------------------------------------------------------------------------------
-affiliate_commissions    | affiliate_commissions_affiliate_id_fkey      | affiliates         | True  | FOREIGN KEY (affiliate_id) REFERENCES affiliates(id) ON DELETE CASCADE
-attribution_sessions     | fk_attribution_sessions_affiliate_composite  | affiliates         | True  | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
-attributions             | fk_attributions_affiliate_composite          | affiliates         | True  | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
-delivery_orders          | fk_delivery_orders_affiliate_composite       | affiliates         | True  | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
-orders                   | fk_orders_affiliate_composite                | affiliates         | True  | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
-orders                   | fk_orders_manager_composite                  | affiliates         | True  | FOREIGN KEY (tenant_id, manager_id) REFERENCES affiliates(tenant_id, id)
-product_orders           | fk_product_orders_affiliate_composite        | affiliates         | True  | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
-shop_commission_ledger   | fk_shop_commission_ledger_affiliate_composite | affiliates         | True  | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
-shop_subscriptions       | fk_shop_subscriptions_affiliate_composite    | affiliates         | True  | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+Child Table              | Constraint Name                              | Parent Table       | Val   | Act   | Definition
+----------------------------------------------------------------------------------------------------------------------------------------------
+affiliate_commissions    | affiliate_commissions_affiliate_id_fkey      | affiliates         | True  | c     | FOREIGN KEY (affiliate_id) REFERENCES affiliates(id) ON DELETE CASCADE
+attribution_sessions     | fk_attribution_sessions_affiliate_composite  | affiliates         | True  | a     | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+attributions             | fk_attributions_affiliate_composite          | affiliates         | True  | a     | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+delivery_orders          | fk_delivery_orders_affiliate_composite       | affiliates         | True  | a     | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+orders                   | fk_orders_affiliate_composite                | affiliates         | True  | a     | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+orders                   | fk_orders_manager_composite                  | affiliates         | True  | a     | FOREIGN KEY (tenant_id, manager_id) REFERENCES affiliates(tenant_id, id)
+product_orders           | fk_product_orders_affiliate_composite        | affiliates         | True  | a     | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+shop_commission_ledger   | fk_shop_commission_ledger_affiliate_composite | affiliates         | True  | a     | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+shop_subscriptions       | fk_shop_subscriptions_affiliate_composite    | affiliates         | True  | a     | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
 Total Discovered Validated Foreign Keys on Audited Tables: 9
 
 --- [6.B] Audit against REV 2.8 Contractual FK Manifest (8 Target Composite FKs) ---
@@ -201,6 +201,7 @@ Multi-Path Dangling Summary: Total Orphaned = 0 | Total Tenant Mismatches = 0
 3. pending_ddl_columns_count        : 1 (Target: 0)
 4. matched_fk_count                 : 0/8 (Target: 8)
 5. convalidated_fk_count            : 0/8 (Target: 8)
+6. discrepancy_count                : 0 (Target: 0)
 
 [+] B2-ASSERT-04 VERDICT: FAIL/PENDING (UNPROVEN / PENDING DDL)
 
@@ -213,8 +214,8 @@ Commissions: Total=0, Distinct ID=0, Duplicate PK=0
 
 --- [7.B] Execution of Pure In-Memory 3-Tier Linear Lineage Engine (A -> B -> C) ---
 [*] Note: Executed via pure CTE pipeline in strict read-only mode without mutating DDL.
-1. Baseline Run ID              : B2-STG-RUN-20261104-030258
-2. Snapshot Taken At            : 2026-11-04 03:02:58.503018+00:00
+1. Baseline Run ID              : B2-STG-RUN-20261104-034053
+2. Snapshot Taken At            : 2026-11-04 03:40:53.750631+00:00
 3. Snapshot Row Count           : 0
 4. Snapshot Total Amount        : 0.00
 5. Baseline Snapshot Fingerprint: 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
@@ -263,4 +264,4 @@ EXECUTIVE DBRE AUDIT SUMMARY:
 6. In accordance with CTO Directive (No False Labeling), Gate B2 remains: CONDITIONAL -- STANDBY.
 ================================================================================
 
-Audit completed in 1.08 seconds. Connection rolled back and closed.
+Audit completed in 1.37 seconds. Connection rolled back and closed.

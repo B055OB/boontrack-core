@@ -9,6 +9,18 @@
 --   4. Reversal of 3 NOT NULL Constraints (SCH-02, SCH-03, SCH-08)
 --   5. Reversal of Financial Data Type: affiliate_commissions.amount NUMERIC
 --   6. Reversal of shop_subscriptions.tenant_id to character varying
+--   7. Drop Added Column: attributions.order_id
+-- =============================================================================
+-- FINANCIAL DATA REVERSIBILITY NOTICE:
+--   1. Schema Type Reversibility: ALTER COLUMN amount TYPE numeric restores the unconstrained
+--      numeric data type in PostgreSQL catalog metadata.
+--   2. Precision & Truncation Boundary: During forward migration to numeric(18,2), if any values
+--      had scale > 2, fractional rounding or truncation occurred upon cast. Rolling back to
+--      numeric DOES NOT restore lost sub-cent fractional digits if they were altered.
+--      The forward migration precondition audit guarantees 0 rows had scale > 2 prior to migration,
+--      ensuring zero loss of precision under clean baseline conditions.
+--   3. Transaction Boundary: If this rollback is executed within the migration failure window,
+--      the entire forward transaction is rolled back via ROLLBACK, preserving bit-exact state.
 -- =============================================================================
 
 BEGIN;
@@ -92,4 +104,12 @@ ALTER TABLE public.affiliate_commissions
 ALTER TABLE public.shop_subscriptions 
     ALTER COLUMN tenant_id TYPE character varying;
 
+-- -----------------------------------------------------------------------------
+-- [STAGE 6] DROP ADDED SCHEMA COLUMN (attributions.order_id)
+-- -----------------------------------------------------------------------------
+ALTER TABLE public.attributions 
+    DROP COLUMN IF EXISTS order_id;
+
 COMMIT;
+
+

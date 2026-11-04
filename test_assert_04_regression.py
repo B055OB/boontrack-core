@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
 ================================================================================
-B2-ASSERT-04 FAIL-CLOSED REGRESSION TEST SUITE
+B2-ASSERT-04 FAIL-CLOSED REGRESSION TEST SUITE (REV 2.8 CONTRACTUAL HARNESS)
 ================================================================================
 Test suite verifying the fail-closed evaluation rules of B2-ASSERT-04
 against the REV 2.8 relational contract in GATE_B2_VERIFICATION_PROTOCOL.md.
 
-Mandated Failure Scenarios:
+Mandated Failure & Discrepancy Scenarios:
 - Test 1: 0 dangling references but 0/8 active FKs -> MUST FAIL
 - Test 2: 0 dangling references but 7/8 active FKs -> MUST FAIL
 - Test 3: 8/8 FKs registered but one has convalidated = False -> MUST FAIL
-
-Sanity Controls:
-- Test 4: Positive Control (8/8 Validated FKs, 0 Dangling, All Columns) -> MUST PASS
+- Test 4: Positive Control (8/8 Validated FKs, exact names & actions, 0 Dangling) -> MUST PASS
 - Test 5: Dangling Reference Rejection (8/8 Validated FKs, 3 Orphans) -> MUST FAIL
 - Test 6: Missing Schema Column Rejection (8/8 Validated FKs, Missing attributions.order_id) -> MUST FAIL
+- Test 7: Constraint Wrong Name (8/8 FKs exist, but 1 has wrong name) -> MUST FAIL (DISCREPANCY)
+- Test 8: Constraint Wrong Action (8/8 FKs exist, but manager self-ref has CASCADE instead of RESTRICT) -> MUST FAIL (DISCREPANCY)
 ================================================================================
 """
 
@@ -45,6 +45,7 @@ ALL_8_VALID_FKS = [
         "parent_table": "affiliates",
         "child_cols": ["tenant_id", "affiliate_id"],
         "parent_cols": ["tenant_id", "id"],
+        "confdeltype": "c",  # CASCADE
         "convalidated": True
     },
     {
@@ -53,6 +54,7 @@ ALL_8_VALID_FKS = [
         "parent_table": "affiliates",
         "child_cols": ["tenant_id", "manager_id"],
         "parent_cols": ["tenant_id", "id"],
+        "confdeltype": "r",  # RESTRICT (per CTO directive)
         "convalidated": True
     },
     {
@@ -61,6 +63,7 @@ ALL_8_VALID_FKS = [
         "parent_table": "orders",
         "child_cols": ["tenant_id", "order_id"],
         "parent_cols": ["tenant_id", "id"],
+        "confdeltype": "c",  # CASCADE
         "convalidated": True
     },
     {
@@ -69,6 +72,7 @@ ALL_8_VALID_FKS = [
         "parent_table": "orders",
         "child_cols": ["tenant_id", "order_id"],
         "parent_cols": ["tenant_id", "id"],
+        "confdeltype": "c",  # CASCADE
         "convalidated": True
     },
     {
@@ -77,6 +81,7 @@ ALL_8_VALID_FKS = [
         "parent_table": "orders",
         "child_cols": ["tenant_id", "order_id"],
         "parent_cols": ["tenant_id", "id"],
+        "confdeltype": "c",  # CASCADE
         "convalidated": True
     },
     {
@@ -85,6 +90,7 @@ ALL_8_VALID_FKS = [
         "parent_table": "orders",
         "child_cols": ["tenant_id", "order_id"],
         "parent_cols": ["tenant_id", "id"],
+        "confdeltype": "c",  # CASCADE
         "convalidated": True
     },
     {
@@ -93,6 +99,7 @@ ALL_8_VALID_FKS = [
         "parent_table": "shop_subscriptions",
         "child_cols": ["tenant_id", "subscription_id"],
         "parent_cols": ["tenant_id", "id"],
+        "confdeltype": "c",  # CASCADE
         "convalidated": True
     },
     {
@@ -101,6 +108,7 @@ ALL_8_VALID_FKS = [
         "parent_table": "tenants",
         "child_cols": ["tenant_id"],
         "parent_cols": ["id"],
+        "confdeltype": "r",  # RESTRICT
         "convalidated": True
     }
 ]
@@ -171,9 +179,9 @@ class TestAssert04FailClosedRegression(unittest.TestCase):
         )
         self.assertFalse(res["is_pass"], "Test 3 Failed: evaluate_b2_assert_04 MUST NOT pass when an FK is NOT VALID")
         self.assertEqual(res["convalidated_fk_count"], 7, "Convalidated count must be 7 when 1 FK is invalid")
+        self.assertGreater(res["discrepancy_count"], 0)
         self.assertEqual(res["verdict"], "FAIL/PENDING")
-        self.assertEqual(res["tag"], "UNPROVEN / PENDING DDL")
-        print("  -> Result: PASS (Rejected as expected: convalidated_fk_count=7, FAIL/PENDING)")
+        print("  -> Result: PASS (Rejected as expected: convalidated_fk_count=7, discrepancy=1, FAIL/PENDING)")
 
     def test_scenario_4_positive_control_all_valid_must_pass(self):
         """
@@ -192,6 +200,7 @@ class TestAssert04FailClosedRegression(unittest.TestCase):
         self.assertTrue(res["is_pass"], "Test 4 Failed: evaluate_b2_assert_04 MUST pass when all 8 FKs are active & validated")
         self.assertEqual(res["matched_fk_count"], 8)
         self.assertEqual(res["convalidated_fk_count"], 8)
+        self.assertEqual(res["discrepancy_count"], 0)
         self.assertEqual(res["verdict"], "PASS")
         self.assertEqual(res["tag"], "PASS (8/8 COMPOSITE FKS VALIDATED & 0 DANGLING)")
         print("  -> Result: PASS (Accepted as expected: PASS, 8/8 COMPOSITE FKS VALIDATED)")
@@ -239,10 +248,60 @@ class TestAssert04FailClosedRegression(unittest.TestCase):
         self.assertEqual(res["tag"], "UNPROVEN / PENDING DDL")
         print("  -> Result: PASS (Rejected as expected: pending_ddl_columns_count=1, UNPROVEN / PENDING DDL)")
 
+    def test_scenario_7_constraint_wrong_name_must_fail(self):
+        """
+        Test 7: 8/8 FK ada dan tervalidasi, tetapi salah satu FK menggunakan nama yang salah -> WAJIB ditolak (FAIL/PENDING)
+        """
+        print("\n[RUNNING TEST 7] Scenario: 8/8 FKs exist, but 1 FK has wrong constraint name...")
+        mock_fks = copy.deepcopy(ALL_8_VALID_FKS)
+        # Change name of fk_affiliates_manager_composite to an arbitrary name
+        mock_fks[1]["constraint_name"] = "fk_affiliates_manager_custom_name_wrong"
+
+        res = evaluate_b2_assert_04(
+            manifest=REV28_CONTRACTUAL_FK_MANIFEST,
+            live_fks=mock_fks,
+            columns_catalog=FULL_COLUMNS_CATALOG,
+            orphaned_count=0,
+            mismatch_count=0,
+            anti_join_orphaned=0,
+            anti_join_losers=0
+        )
+        self.assertFalse(res["is_pass"], "Test 7 Failed: evaluate_b2_assert_04 MUST NOT pass when constraint name mismatches manifest")
+        self.assertEqual(res["matched_fk_count"], 7)
+        self.assertEqual(res["discrepancy_count"], 1)
+        self.assertEqual(res["verdict"], "FAIL/PENDING")
+        self.assertIn("DISCREPANCY", res["tag"])
+        print("  -> Result: PASS (Rejected as expected: matched=7/8, discrepancy=1, NAME_MISMATCH caught)")
+
+    def test_scenario_8_constraint_wrong_action_must_fail(self):
+        """
+        Test 8: 8/8 FK ada dan tervalidasi, tetapi manager self-ref menggunakan ON DELETE CASCADE alih-alih RESTRICT -> WAJIB ditolak (FAIL/PENDING)
+        """
+        print("\n[RUNNING TEST 8] Scenario: 8/8 FKs exist, but fk_affiliates_manager_composite uses CASCADE instead of RESTRICT...")
+        mock_fks = copy.deepcopy(ALL_8_VALID_FKS)
+        # Change action from 'r' (RESTRICT) to 'c' (CASCADE) on affiliates manager self-ref
+        mock_fks[1]["confdeltype"] = "c"
+
+        res = evaluate_b2_assert_04(
+            manifest=REV28_CONTRACTUAL_FK_MANIFEST,
+            live_fks=mock_fks,
+            columns_catalog=FULL_COLUMNS_CATALOG,
+            orphaned_count=0,
+            mismatch_count=0,
+            anti_join_orphaned=0,
+            anti_join_losers=0
+        )
+        self.assertFalse(res["is_pass"], "Test 8 Failed: evaluate_b2_assert_04 MUST NOT pass when referential action mismatches manifest")
+        self.assertEqual(res["matched_fk_count"], 7)
+        self.assertEqual(res["discrepancy_count"], 1)
+        self.assertEqual(res["verdict"], "FAIL/PENDING")
+        self.assertIn("DISCREPANCY", res["tag"])
+        print("  -> Result: PASS (Rejected as expected: matched=7/8, discrepancy=1, ACTION_MISMATCH caught)")
+
 
 def main():
     print("=" * 80)
-    print(" EXECUTING B2-ASSERT-04 FAIL-CLOSED REGRESSION TEST SUITE")
+    print(" EXECUTING B2-ASSERT-04 FAIL-CLOSED REGRESSION TEST SUITE (8 SCENARIOS)")
     print("=" * 80)
     suite = unittest.TestLoader().loadTestsFromTestCase(TestAssert04FailClosedRegression)
     runner = unittest.TextTestRunner(verbosity=2)
@@ -255,12 +314,12 @@ def main():
     print(f"Failures          : {len(result.failures)}")
     print(f"Errors            : {len(result.errors)}")
     
-    if result.wasSuccessful():
-        print("[+] ALL 3 MANDATED REJECTION SCENARIOS + 3 SANITY CONTROLS VERIFIED SUCCESSFULLY.")
-        print("[+] POSTURE: STRICT FAIL-CLOSED INVARIANT FULLY UPHELD.")
+    if result.wasSuccessful() and result.testsRun == 8:
+        print("[+] ALL 8 REGRESSION SCENARIOS VERIFIED SUCCESSFULLY (8/8 PASS).")
+        print("[+] POSTURE: STRICT FAIL-CLOSED, NAME & ACTION MATCHING VERIFIED.")
         return 0
     else:
-        print("[!] REGRESSION TEST FAILED: Fail-closed posture compromised!")
+        print("[!] REGRESSION TEST FAILED: Verification criteria not met!")
         return 1
 
 
