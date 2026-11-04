@@ -1,0 +1,116 @@
+
+================================================================================
+ BOONTRACK P1 DISPOSABLE DB REHEARSAL HARNESS EXECUTION
+================================================================================
+Timestamp: 2026-11-04T11:40:04+0700
+Role: Lead DBRE & Principal Systems Architect
+Security Posture: ZERO MUTATION STAGING/PROD; LOCAL DISPOSABLE REHEARSAL
+Connection String Security Scan: Zero cloud markers ('xkhqir', 'mpluz') present (VERIFIED).
+
+>>> [FASE 1] Environment Isolation & Disposable Database Provisioning
+--------------------------------------------------------------------------------
+[*] Ensuring local PostgreSQL engine is active via WSL keepalive...
+[*] Cleanly provisioning disposable database...
+1. Connected Database         : boontrack_disposable_rehearsal
+2. Connected User             : postgres
+3. Network Endpoint           : 127.0.0.1:5432
+4. Engine Version             : PostgreSQL 18.6 (Ubuntu 18.6-0ubuntu0.26.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0, 64-bit
+5. Isolation Posture          : STRICT LOCAL DISPOSABLE REHEARSAL (AC-01 PASS)
+
+>>> [FASE 2] Baseline Initialization & Non-empty Synthetic Fixtures
+--------------------------------------------------------------------------------
+[*] Applying pre-031 baseline DDL for 10 audited tables + 5 dedup/snapshot tables...
+[+] Baseline physical schema tables successfully created.
+[+] Baseline Catalog Fingerprint (SHA-256): 257c37bbfab7c42ed84e17269a5c05d3ef45f3fba20d6d4845e1f7e17dec980c
+    - Catalog Columns Tracked     : 91
+    - Catalog Constraints Tracked : 42
+
+[*] Injecting non-empty synthetic fixtures covering all 8 contractual relational paths...
+1. Initial Commission Row Count  : 3 rows
+2. Initial Amount Checksum (Sum) : 450000.75
+[+] Synthetic fixture seeding verified: 8/8 contractual paths populated (AC-02 PASS).
+
+>>> [FASE 3] Adversarial Precondition Controls (5 Negative Controls)
+--------------------------------------------------------------------------------
+Test ID                | Expected SQLSTATE  | Observed SQLSTATE  | Result     | Description
+-------------------------------------------------------------------------------------------------------------------
+Negative Control 1   | P0005              | P0005              | PASS       | Scale > 2 fractional truncation risk rejection
+Negative Control 2   | P0005              | P0005              | PASS       | Numeric(18,2) range limit overflow rejection
+Negative Control 3   | P0006              | P0006              | PASS       | Non-UUID string tenancy rejection
+Negative Control 4   | P0002              | P0002              | PASS       | Duplicate unique key detection and abort
+Negative Control 5   | P0003              | P0003              | PASS       | Orphan child reference detection and abort
+
+[+] All 5 Adversarial Precondition Controls verified: strict abort with P0005, P0006, P0002, P0003 (AC-03 PASS).
+
+>>> [FASE 4] Forward Migration 031 Execution & Extended Catalog Audit
+--------------------------------------------------------------------------------
+[*] Executing migrations/031_b2_remediation_suite.sql...
+[+] Migration 031 committed successfully.
+
+--- Catalog FK Manifest Reconciliation (Target: 8/8 Validated Composite FKs) ---
+No  | Expected Constraint Name                           | Status                       | Convalidated  | Action    
+-------------------------------------------------------------------------------------------------------------------
+1   | fk_affiliate_commissions_affiliate_composite       | MATCH (ACTIVE & VALIDATED)   | True          | CASCADE
+2   | fk_affiliates_manager_composite                    | MATCH (ACTIVE & VALIDATED)   | True          | RESTRICT
+3   | fk_attribution_sessions_order_composite            | MATCH (ACTIVE & VALIDATED)   | True          | CASCADE
+4   | fk_attributions_order_composite                    | MATCH (ACTIVE & VALIDATED)   | True          | CASCADE
+5   | fk_delivery_orders_order_composite                 | MATCH (ACTIVE & VALIDATED)   | True          | CASCADE
+6   | fk_product_orders_order_composite                  | MATCH (ACTIVE & VALIDATED)   | True          | CASCADE
+7   | fk_shop_commission_ledger_subscription_composite   | MATCH (ACTIVE & VALIDATED)   | True          | CASCADE
+8   | fk_shop_subscriptions_tenant_anchor                | MATCH (ACTIVE & VALIDATED)   | True          | RESTRICT
+
+FK Reconciliation Summary: Matched = 8/8 | Convalidated = 8/8
+
+Physical Column Audit (attributions.order_id): Present in catalog = True
+
+--- Functional Integrity Audit: attributions.order_id Composite FK ---
+[+] Positive control: Updated attributions with valid order_id = 'ord-001' (SUCCESS)
+[+] Negative control: Fictitious order_id update correctly rejected with SQLSTATE 23503 (insert or update on table "attributions" violates foreign key constraint "fk_attributions_order_composite")
+
+--- Referential Action Audit: ON DELETE RESTRICT on Manager Hierarchy ---
+[+] ON DELETE RESTRICT verified: Deleting manager with active subordinates correctly rejected with SQLSTATE 23001 (update or delete on table "affiliates" violates RESTRICT setting of foreign key constraint "fk_affiliates_manager_composite" on table "affiliates")
+
+[+] Extended Catalog Audit Complete: 8/8 FKs, Columns, Functional Relations & RESTRICT Verified (AC-04 PASS).
+
+>>> [FASE 5] Standalone Rollback & Proof of Zero Catalog Discrepancy (Delta = 0)
+--------------------------------------------------------------------------------
+[*] Executing migrations/031_b2_remediation_suite_rollback.sql...
+[+] Rollback executed and committed successfully.
+
+1. Baseline Catalog Fingerprint      : 257c37bbfab7c42ed84e17269a5c05d3ef45f3fba20d6d4845e1f7e17dec980c
+2. Post-Rollback Catalog Fingerprint : 257c37bbfab7c42ed84e17269a5c05d3ef45f3fba20d6d4845e1f7e17dec980c
+3. Catalog Fingerprint Delta         : 0 (Delta = 0 Verified)
+4. Verification of Dropped Column    : attributions.order_id is COMPLETELY REMOVED
+5. Restoration of Legacy FK          : affiliate_commissions_affiliate_id_fkey (FOREIGN KEY (affiliate_id) REFERENCES affiliates(id) ON DELETE CASCADE)
+
+--- Financial Balance Conservation Audit ---
+1. Pre-Migration Commission Row Count  : 3
+2. Post-Rollback Commission Row Count : 3
+3. Pre-Migration Amount Checksum      : 450000.75
+4. Post-Rollback Amount Checksum      : 450000.75
+5. Financial Row Count Delta           : 0 (Target: 0)
+6. Financial Amount Drift              : 0.00 (Target: 0.00)
+
+[+] Standalone Rollback Verified: Zero Catalog Discrepancy (Delta = 0) and Zero Financial Drift (AC-05 & AC-06 PASS).
+
+>>> [FASE 6] Teardown & Executive Acceptance Verification Report
+--------------------------------------------------------------------------------
+[*] Tearing down disposable rehearsal database 'boontrack_disposable_rehearsal'...
+[+] Disposable database 'boontrack_disposable_rehearsal' successfully dropped.
+[+] WSL engine keepalive process terminated cleanly.
+
+================================================================================
+ FINAL ACCEPTANCE CRITERIA (AC) VERIFICATION SUMMARY
+================================================================================
+Criteria  | Scope & Description                                    | Verdict           | Evidence Details
+----------------------------------------------------------------------------------------------------------------------------------
+AC-01     | Environment Isolation & Disposable DB Provisioning     | PASS / VERIFIED   | Zero cloud markers ('xkhqir', 'mpluz'), clean local engine
+AC-02     | Baseline Initialization & Synthetic Fixtures Seeding   | PASS / VERIFIED   | 10 tables, 8 contractual paths, initial checksum = 450000.75
+AC-03     | Adversarial Precondition Controls (5 Negative Controls) | PASS / VERIFIED   | All 5 rejected: P0005 (scale/overflow), P0006, P0002, P0003
+AC-04     | Forward Migration 031 & Extended Catalog Audit         | PASS / VERIFIED   | 8/8 composite FKs matched & convalidated, RESTRICT/CASCADE verified
+AC-05     | Migration 031 Standalone Rollback & Zero Catalog Drift | PASS / VERIFIED   | Baseline FP == Post-Rollback FP (Delta = 0, exact bit-level match)
+AC-06     | Financial Data & Precision Balance Conservation        | PASS / VERIFIED   | Row delta = 0, amount checksum drift = 0.00 (Delta = 0.00)
+
+================================================================================
+ ALL 6 CRITERIA RATIFIED: P1 DISPOSABLE DB REHEARSAL 100% SUCCESSFUL
+================================================================================

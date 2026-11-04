@@ -99,8 +99,11 @@ ALTER TABLE public.affiliate_commissions
     ALTER COLUMN amount TYPE numeric;
 
 -- -----------------------------------------------------------------------------
--- [STAGE 5] REVERT SHOP_SUBSCRIPTIONS TENANT_ID TYPE
+-- [STAGE 5] REVERT SHOP_SUBSCRIPTIONS AND SHOP_COMMISSION_LEDGER TENANT_ID TYPE
 -- -----------------------------------------------------------------------------
+ALTER TABLE public.shop_commission_ledger 
+    ALTER COLUMN tenant_id TYPE character varying;
+
 ALTER TABLE public.shop_subscriptions 
     ALTER COLUMN tenant_id TYPE character varying;
 

@@ -47,14 +47,42 @@ BEGIN
         RAISE EXCEPTION 'PRECONDITION FAILED: % NULL/empty tenant_id rows detected in target NOT NULL tables', v_null_tenant_count USING ERRCODE = 'P0001';
     END IF;
 
-    -- 2. Duplicate Unique Key Preconditions
+    -- 2. Tenancy UUID Format Precondition for shop_subscriptions and shop_commission_ledger
+    IF EXISTS (
+        SELECT 1 FROM public.shop_subscriptions 
+        WHERE tenant_id IS NOT NULL 
+          AND tenant_id !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    ) OR EXISTS (
+        SELECT 1 FROM public.shop_commission_ledger 
+        WHERE tenant_id IS NOT NULL 
+          AND tenant_id !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    ) THEN
+        RAISE EXCEPTION 'PRECONDITION FAILED: shop_subscriptions or shop_commission_ledger contains invalid UUID string in tenant_id' USING ERRCODE = 'P0006';
+    END IF;
+
+    -- 3. Financial Amount Precision & Range Preconditions (SCH-09 Data Safety)
+    IF EXISTS (
+        SELECT 1 FROM public.affiliate_commissions 
+        WHERE amount IS NOT NULL AND scale(amount) > 2
+    ) THEN
+        RAISE EXCEPTION 'PRECONDITION FAILED: affiliate_commissions contains amount with scale > 2 (fractional truncation risk)' USING ERRCODE = 'P0005';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM public.affiliate_commissions 
+        WHERE amount IS NOT NULL AND abs(amount) >= 10^16
+    ) THEN
+        RAISE EXCEPTION 'PRECONDITION FAILED: affiliate_commissions contains amount exceeding numeric(18,2) range limit (abs >= 10^16)' USING ERRCODE = 'P0005';
+    END IF;
+
+    -- 4. Duplicate Unique Key Preconditions
     -- A. orders (tenant_id, id)
     SELECT COUNT(*) INTO v_dup_count
     FROM (
         SELECT tenant_id, id FROM public.orders GROUP BY tenant_id, id HAVING COUNT(*) > 1
     ) dup_orders;
     IF v_dup_count > 0 THEN
-        RAISE EXCEPTION 'PRECONDITION FAILED: Duplicate (tenant_id, id) detected in public.orders', v_dup_count USING ERRCODE = 'P0002';
+        RAISE EXCEPTION 'PRECONDITION FAILED: Duplicate (tenant_id, id) detected in public.orders (count: %)', v_dup_count USING ERRCODE = 'P0002';
     END IF;
 
     -- B. shop_subscriptions (tenant_id, id)
@@ -63,7 +91,7 @@ BEGIN
         SELECT tenant_id, id FROM public.shop_subscriptions GROUP BY tenant_id, id HAVING COUNT(*) > 1
     ) dup_sub_id;
     IF v_dup_count > 0 THEN
-        RAISE EXCEPTION 'PRECONDITION FAILED: Duplicate (tenant_id, id) detected in public.shop_subscriptions', v_dup_count USING ERRCODE = 'P0002';
+        RAISE EXCEPTION 'PRECONDITION FAILED: Duplicate (tenant_id, id) detected in public.shop_subscriptions (count: %)', v_dup_count USING ERRCODE = 'P0002';
     END IF;
 
     -- C. shop_subscriptions (tenant_id, xendit_invoice_id) [SCH-12]
@@ -74,7 +102,7 @@ BEGIN
         GROUP BY tenant_id, xendit_invoice_id HAVING COUNT(*) > 1
     ) dup_sub_inv;
     IF v_dup_count > 0 THEN
-        RAISE EXCEPTION 'PRECONDITION FAILED: Duplicate (tenant_id, xendit_invoice_id) detected in public.shop_subscriptions', v_dup_count USING ERRCODE = 'P0002';
+        RAISE EXCEPTION 'PRECONDITION FAILED: Duplicate (tenant_id, xendit_invoice_id) detected in public.shop_subscriptions (count: %)', v_dup_count USING ERRCODE = 'P0002';
     END IF;
 
     -- D. shop_commission_ledger (tenant_id, subscription_id) [SCH-13]
@@ -85,10 +113,10 @@ BEGIN
         GROUP BY tenant_id, subscription_id HAVING COUNT(*) > 1
     ) dup_ledger_sub;
     IF v_dup_count > 0 THEN
-        RAISE EXCEPTION 'PRECONDITION FAILED: Duplicate (tenant_id, subscription_id) detected in public.shop_commission_ledger', v_dup_count USING ERRCODE = 'P0002';
+        RAISE EXCEPTION 'PRECONDITION FAILED: Duplicate (tenant_id, subscription_id) detected in public.shop_commission_ledger (count: %)', v_dup_count USING ERRCODE = 'P0002';
     END IF;
 
-    -- 3. Orphan & Tenant Mismatch Preconditions across all 8 FK relations
+    -- 5. Orphan & Tenant Mismatch Preconditions across all 8 FK relations
     -- A. affiliate_commissions -> affiliates
     SELECT 
         COUNT(*) FILTER (WHERE c.affiliate_id IS NOT NULL AND p.id IS NULL),
@@ -173,30 +201,6 @@ BEGIN
         RAISE EXCEPTION 'PRECONDITION FAILED: shop_subscriptions -> tenants has % orphans, % mismatches', v_orphan_count, v_mismatch_count USING ERRCODE = 'P0003';
     END IF;
 
-    -- 4. Financial Amount Precision & Range Preconditions (SCH-09 Data Safety)
-    IF EXISTS (
-        SELECT 1 FROM public.affiliate_commissions 
-        WHERE amount IS NOT NULL AND scale(amount) > 2
-    ) THEN
-        RAISE EXCEPTION 'PRECONDITION FAILED: affiliate_commissions contains amount with scale > 2 (fractional truncation risk)' USING ERRCODE = 'P0005';
-    END IF;
-
-    IF EXISTS (
-        SELECT 1 FROM public.affiliate_commissions 
-        WHERE amount IS NOT NULL AND abs(amount) >= 10^16
-    ) THEN
-        RAISE EXCEPTION 'PRECONDITION FAILED: affiliate_commissions contains amount exceeding numeric(18,2) range limit (abs >= 10^16)' USING ERRCODE = 'P0005';
-    END IF;
-
-    -- 5. Tenancy UUID Format Precondition for shop_subscriptions
-    IF EXISTS (
-        SELECT 1 FROM public.shop_subscriptions 
-        WHERE tenant_id IS NOT NULL 
-          AND tenant_id !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-    ) THEN
-        RAISE EXCEPTION 'PRECONDITION FAILED: shop_subscriptions contains invalid UUID string in tenant_id' USING ERRCODE = 'P0006';
-    END IF;
-
     RAISE NOTICE '[PRECONDITION AUDIT PASSED] 0 orphan rows, 0 duplicate keys, 0 tenant mismatches, 0 NULL tenants, 0 scale/range/uuid anomalies.';
 END $$;
 
@@ -240,6 +244,9 @@ ALTER TABLE public.affiliate_commissions
 -- [STAGE 7] TYPE ALIGNMENT FOR TENANCY ANCHOR
 -- -----------------------------------------------------------------------------
 ALTER TABLE public.shop_subscriptions 
+    ALTER COLUMN tenant_id TYPE uuid USING tenant_id::uuid;
+
+ALTER TABLE public.shop_commission_ledger 
     ALTER COLUMN tenant_id TYPE uuid USING tenant_id::uuid;
 
 -- -----------------------------------------------------------------------------
@@ -383,7 +390,8 @@ ALTER TABLE public.shop_commission_ledger ALTER COLUMN tenant_id DROP NOT NULL;
 -- 4. REVERSE FINANCIAL DATA TYPE (SCH-09)
 ALTER TABLE public.affiliate_commissions ALTER COLUMN amount TYPE numeric;
 
--- 5. REVERT SHOP_SUBSCRIPTIONS TENANT_ID TYPE TO VARCHAR
+-- 5. REVERT SHOP_SUBSCRIPTIONS AND SHOP_COMMISSION_LEDGER TENANT_ID TYPE TO VARCHAR
+ALTER TABLE public.shop_commission_ledger ALTER COLUMN tenant_id TYPE character varying;
 ALTER TABLE public.shop_subscriptions ALTER COLUMN tenant_id TYPE character varying;
 
 -- 6. DROP ADDED SCHEMA COLUMN (attributions.order_id)
