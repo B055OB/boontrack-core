@@ -69,6 +69,185 @@ def print_section(section_id: str, title: str):
     print(f"\n>>> [{section_id}] {title}")
     print("-" * 80)
 
+# =============================================================================
+# REV 2.8 CONTRACTUAL COMPOSITE FOREIGN KEY MANIFEST & EVALUATION ENGINE
+# =============================================================================
+REV28_CONTRACTUAL_FK_MANIFEST = [
+    {
+        "child_table": "affiliate_commissions",
+        "child_cols": ["tenant_id", "affiliate_id"],
+        "parent_table": "affiliates",
+        "parent_cols": ["tenant_id", "id"],
+        "expected_name": "fk_affiliate_commissions_affiliate_composite",
+        "description": "Affiliate Commissions -> Affiliates (Composite)"
+    },
+    {
+        "child_table": "affiliates",
+        "child_cols": ["tenant_id", "manager_id"],
+        "parent_table": "affiliates",
+        "parent_cols": ["tenant_id", "id"],
+        "expected_name": "fk_affiliates_manager_composite",
+        "description": "Affiliates -> Affiliates (Manager Self-Reference Composite)"
+    },
+    {
+        "child_table": "attribution_sessions",
+        "child_cols": ["tenant_id", "order_id"],
+        "parent_table": "orders",
+        "parent_cols": ["tenant_id", "id"],
+        "expected_name": "fk_attribution_sessions_order_composite",
+        "description": "Attribution Sessions -> Orders (Composite)"
+    },
+    {
+        "child_table": "attributions",
+        "child_cols": ["tenant_id", "order_id"],
+        "parent_table": "orders",
+        "parent_cols": ["tenant_id", "id"],
+        "expected_name": "fk_attributions_order_composite",
+        "description": "Attributions -> Orders (Composite)"
+    },
+    {
+        "child_table": "delivery_orders",
+        "child_cols": ["tenant_id", "order_id"],
+        "parent_table": "orders",
+        "parent_cols": ["tenant_id", "id"],
+        "expected_name": "fk_delivery_orders_order_composite",
+        "description": "Delivery Orders -> Orders (Composite)"
+    },
+    {
+        "child_table": "product_orders",
+        "child_cols": ["tenant_id", "order_id"],
+        "parent_table": "orders",
+        "parent_cols": ["tenant_id", "id"],
+        "expected_name": "fk_product_orders_order_composite",
+        "description": "Product Orders -> Orders (Composite)"
+    },
+    {
+        "child_table": "shop_commission_ledger",
+        "child_cols": ["tenant_id", "subscription_id"],
+        "parent_table": "shop_subscriptions",
+        "parent_cols": ["tenant_id", "id"],
+        "expected_name": "fk_shop_commission_ledger_subscription_composite",
+        "description": "Shop Commission Ledger -> Shop Subscriptions (Composite)"
+    },
+    {
+        "child_table": "shop_subscriptions",
+        "child_cols": ["tenant_id"],
+        "parent_table": "tenants",
+        "parent_cols": ["id"],
+        "expected_name": "fk_shop_subscriptions_tenant_anchor",
+        "description": "Shop Subscriptions -> Tenants (Tenancy Anchor)"
+    }
+]
+
+def evaluate_b2_assert_04(
+    manifest,
+    live_fks,
+    columns_catalog,
+    orphaned_count=0,
+    mismatch_count=0,
+    anti_join_orphaned=0,
+    anti_join_losers=0
+):
+    """
+    Evaluates B2-ASSERT-04 under strict Fail-Closed rules.
+    Requires:
+      matched_fk_count == 8 AND
+      convalidated_fk_count == 8 AND
+      orphaned_child_rows == 0 AND
+      residual_loser_references == 0 AND
+      pending_ddl_columns_count == 0
+    """
+    matched_fk_count = 0
+    convalidated_fk_count = 0
+    reconciliation_details = []
+
+    for item in manifest:
+        matched = None
+        partial = None
+        for lk in live_fks:
+            if lk['child_table'] == item['child_table'] and lk['parent_table'] == item['parent_table']:
+                if lk['child_cols'] == item['child_cols'] and lk['parent_cols'] == item['parent_cols']:
+                    # Constraint must be convalidated = True
+                    if lk.get('convalidated') is True:
+                        matched = lk
+                        break
+                    else:
+                        partial = lk
+                else:
+                    partial = lk
+
+        rel_path = f"{item['child_table']} -> {item['parent_table']}"
+        if matched:
+            status = "MATCH (ACTIVE & VALIDATED)"
+            live_name = matched['constraint_name']
+            matched_fk_count += 1
+            convalidated_fk_count += 1
+        elif partial:
+            val_status = "NOT VALIDATED" if partial.get('convalidated') is False else "PENDING MIG031 DDL"
+            status = f"LEGACY/PARTIAL ({partial['child_cols']} -> {partial['parent_cols']})"
+            live_name = f"{partial['constraint_name']} ({val_status})"
+        else:
+            status = "PENDING MIGRATION 031 DDL"
+            live_name = "NONE (Awaiting Migration DDL)"
+
+        reconciliation_details.append({
+            "expected_name": item['expected_name'],
+            "rel_path": rel_path,
+            "status": status,
+            "live_name": live_name,
+            "matched": matched is not None
+        })
+
+    # Catalog columns audit for child tables
+    pending_ddl_columns_count = 0
+    missing_columns_detail = {}
+    for item in manifest:
+        c_tbl = item['child_table']
+        existing = columns_catalog.get(c_tbl, set())
+        missing = [col for col in item['child_cols'] if col not in existing]
+        if missing:
+            pending_ddl_columns_count += len(missing)
+            missing_columns_detail[c_tbl] = missing
+
+    total_orphaned = orphaned_count + anti_join_orphaned
+    total_mismatches = mismatch_count
+    total_losers = anti_join_losers
+
+    # Strict Fail-Closed Invariant
+    b2_assert_04_pass = (
+        matched_fk_count == 8 and
+        convalidated_fk_count == 8 and
+        total_orphaned == 0 and
+        total_mismatches == 0 and
+        total_losers == 0 and
+        pending_ddl_columns_count == 0
+    )
+
+    if b2_assert_04_pass:
+        verdict = "PASS"
+        tag = "PASS (8/8 COMPOSITE FKS VALIDATED & 0 DANGLING)"
+    elif pending_ddl_columns_count > 0 or matched_fk_count < 8 or convalidated_fk_count < 8:
+        verdict = "FAIL/PENDING"
+        tag = "UNPROVEN / PENDING DDL"
+    else:
+        verdict = "FAIL"
+        tag = "FAIL (DANGLING REFERENCES OR INTEGRITY VIOLATION)"
+
+    return {
+        "is_pass": b2_assert_04_pass,
+        "verdict": verdict,
+        "tag": tag,
+        "matched_fk_count": matched_fk_count,
+        "convalidated_fk_count": convalidated_fk_count,
+        "pending_ddl_columns_count": pending_ddl_columns_count,
+        "missing_columns_detail": missing_columns_detail,
+        "total_orphaned": total_orphaned,
+        "total_mismatches": total_mismatches,
+        "total_losers": total_losers,
+        "reconciliation_details": reconciliation_details
+    }
+
+
 def main():
     tee = TeeLogger("GATE_B2_FULL_SUITE_EXECUTION.log")
     original_stdout = sys.stdout
@@ -826,75 +1005,8 @@ def main():
         # =====================================================================
         print_section("SECTION 6", "B2-ASSERT-04: Manifest-Driven 8 Composite FK Streams & Multi-Path Dangling Audit")
 
-        REV28_CONTRACTUAL_FK_MANIFEST = [
-            {
-                "child_table": "affiliate_commissions",
-                "child_cols": ["tenant_id", "affiliate_id"],
-                "parent_table": "affiliates",
-                "parent_cols": ["tenant_id", "id"],
-                "expected_name": "fk_affiliate_commissions_affiliate_composite",
-                "description": "Affiliate Commissions -> Affiliates (Composite)"
-            },
-            {
-                "child_table": "affiliates",
-                "child_cols": ["tenant_id", "manager_id"],
-                "parent_table": "affiliates",
-                "parent_cols": ["tenant_id", "id"],
-                "expected_name": "fk_affiliates_manager_composite",
-                "description": "Affiliates -> Affiliates (Manager Self-Reference Composite)"
-            },
-            {
-                "child_table": "attribution_sessions",
-                "child_cols": ["tenant_id", "order_id"],
-                "parent_table": "orders",
-                "parent_cols": ["tenant_id", "id"],
-                "expected_name": "fk_attribution_sessions_order_composite",
-                "description": "Attribution Sessions -> Orders (Composite)"
-            },
-            {
-                "child_table": "attributions",
-                "child_cols": ["tenant_id", "order_id"],
-                "parent_table": "orders",
-                "parent_cols": ["tenant_id", "id"],
-                "expected_name": "fk_attributions_order_composite",
-                "description": "Attributions -> Orders (Composite)"
-            },
-            {
-                "child_table": "delivery_orders",
-                "child_cols": ["tenant_id", "order_id"],
-                "parent_table": "orders",
-                "parent_cols": ["tenant_id", "id"],
-                "expected_name": "fk_delivery_orders_order_composite",
-                "description": "Delivery Orders -> Orders (Composite)"
-            },
-            {
-                "child_table": "product_orders",
-                "child_cols": ["tenant_id", "order_id"],
-                "parent_table": "orders",
-                "parent_cols": ["tenant_id", "id"],
-                "expected_name": "fk_product_orders_order_composite",
-                "description": "Product Orders -> Orders (Composite)"
-            },
-            {
-                "child_table": "shop_commission_ledger",
-                "child_cols": ["tenant_id", "subscription_id"],
-                "parent_table": "shop_subscriptions",
-                "parent_cols": ["tenant_id", "id"],
-                "expected_name": "fk_shop_commission_ledger_subscription_composite",
-                "description": "Shop Commission Ledger -> Shop Subscriptions (Composite)"
-            },
-            {
-                "child_table": "shop_subscriptions",
-                "child_cols": ["tenant_id"],
-                "parent_table": "tenants",
-                "parent_cols": ["id"],
-                "expected_name": "fk_shop_subscriptions_tenant_anchor",
-                "description": "Shop Subscriptions -> Tenants (Tenancy Anchor)"
-            }
-        ]
-
-        # 6.A: Catalog Inspection of Foreign Keys on Audited Tables
-        print("\n--- [6.A] Catalog Discovery of Live Foreign Keys on Audited Tables ---")
+        # 6.A: Catalog Inspection of Foreign Keys on Audited Tables (Filtered by c.convalidated = TRUE)
+        print("\n--- [6.A] Catalog Discovery of Live Foreign Keys on Audited Tables (c.convalidated = TRUE) ---")
         cur.execute("""
             SELECT
                 c.conname AS constraint_name,
@@ -914,6 +1026,7 @@ def main():
             JOIN pg_attribute child_att ON child_att.attrelid = c.conrelid AND child_att.attnum = ord.child_col_num
             JOIN pg_attribute parent_att ON parent_att.attrelid = c.confrelid AND parent_att.attnum = ord.parent_col_num
             WHERE c.contype = 'f'
+              AND c.convalidated = TRUE
               AND child_ns.nspname = 'public'
               AND parent_ns.nspname = 'public'
               AND child_cls.relname IN (
@@ -929,47 +1042,38 @@ def main():
         print("-" * 135)
         for fk in live_fks:
             print(f"{fk['child_table']:<24} | {fk['constraint_name']:<44} | {fk['parent_table']:<18} | {str(fk['convalidated']):<5} | {fk['constraint_definition']}")
-        print(f"Total Discovered Foreign Keys on Audited Tables: {len(live_fks)}")
+        print(f"Total Discovered Validated Foreign Keys on Audited Tables: {len(live_fks)}")
 
         # 6.B: Exact Manifest-Driven Catalog Reconciliation (REV 2.8 Contractual 8 FKs)
         print("\n--- [6.B] Audit against REV 2.8 Contractual FK Manifest (8 Target Composite FKs) ---")
         print(f"{'Seq':<4} | {'Target Constraint Name':<48} | {'Relational Path':<42} | {'Status':<32} | {'Live Constraint'}")
         print("-" * 140)
 
-        matched_fk_count = 0
-        pending_ddl_count = 0
-        for idx, item in enumerate(REV28_CONTRACTUAL_FK_MANIFEST, 1):
-            matched = None
-            partial = None
-            for lk in live_fks:
-                if lk['child_table'] == item['child_table'] and lk['parent_table'] == item['parent_table']:
-                    if lk['child_cols'] == item['child_cols'] and lk['parent_cols'] == item['parent_cols']:
-                        matched = lk
-                        break
-                    else:
-                        partial = lk
-            
-            rel_path = f"{item['child_table']} -> {item['parent_table']}"
-            if matched:
-                status = "MATCH (ACTIVE & VALIDATED)"
-                live_name = matched['constraint_name']
-                matched_fk_count += 1
-            elif partial:
-                status = f"LEGACY ({partial['child_cols']} -> {partial['parent_cols']})"
-                live_name = f"{partial['constraint_name']} (PENDING MIG031 DDL)"
-                pending_ddl_count += 1
-            else:
-                status = "PENDING MIGRATION 031 DDL"
-                live_name = "NONE (Awaiting Migration DDL)"
-                pending_ddl_count += 1
+        # Pre-fetch columns catalog for all audited child tables
+        columns_catalog = {}
+        for item in REV28_CONTRACTUAL_FK_MANIFEST:
+            c_tbl = item['child_table']
+            if c_tbl not in columns_catalog:
+                cur.execute(f"""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_schema = 'public' AND table_name = '{c_tbl}';
+                """)
+                columns_catalog[c_tbl] = {r['column_name'] for r in cur.fetchall()}
 
-            print(f"{idx:<4} | {item['expected_name']:<48} | {rel_path:<42} | {status:<32} | {live_name}")
+        # Run manifest reconciliation
+        pre_eval = evaluate_b2_assert_04(
+            manifest=REV28_CONTRACTUAL_FK_MANIFEST,
+            live_fks=live_fks,
+            columns_catalog=columns_catalog
+        )
 
-        print(f"\nFK Manifest Reconciliation: Matched = {matched_fk_count}/8 | Pending Migration 031 DDL = {pending_ddl_count}/8")
-        print("[*] ARCHITECTURAL STATE (NO FALSE LABELING):")
-        print("    - The 8 contractual FKs in REV28_CONTRACTUAL_FK_MANIFEST are the target composite schema definition.")
-        print("    - In this clean pre-migration baseline, affiliate_commissions has single-column FK affiliate_commissions_affiliate_id_fkey.")
-        print("    - The remaining composite FKs (orders children, self-reference, and shop subscriptions) are pending creation in migration 031.")
+        for idx, rec in enumerate(pre_eval['reconciliation_details'], 1):
+            print(f"{idx:<4} | {rec['expected_name']:<48} | {rec['rel_path']:<42} | {rec['status']:<32} | {rec['live_name']}")
+
+        print(f"\nFK Manifest Reconciliation: Matched = {pre_eval['matched_fk_count']}/8 | Convalidated = {pre_eval['convalidated_fk_count']}/8")
+        print("[*] ARCHITECTURAL STATE (FAIL-CLOSED INVARIANT):")
+        print("    - Target architecture requires 8 validated composite foreign keys.")
+        print("    - Pre-migration baseline lacks composite constraints and pending physical schema columns.")
 
         # 6.C: Dangling References Audit across REV 2.8 Contractual Relational Paths
         print("\n--- [6.C] Multi-Path Dangling References Audit for REV 2.8 Contractual Paths ---")
@@ -985,16 +1089,11 @@ def main():
             p_cols = item['parent_cols']
             fk_target = f"{p_tbl}({','.join(p_cols)})"
 
-            # Check if columns exist in child table
-            cur.execute(f"""
-                SELECT column_name FROM information_schema.columns 
-                WHERE table_schema = 'public' AND table_name = '{c_tbl}';
-            """)
-            existing_cols = {r['column_name'] for r in cur.fetchall()}
+            existing_cols = columns_catalog.get(c_tbl, set())
             missing_cols = [col for col in c_cols if col not in existing_cols]
 
             if missing_cols:
-                print(f"{c_tbl:<24} | {fk_target:<20} | {'N/A':<7} | {'N/A':<9} | {'0':<9} | {'0':<18} | PENDING DDL (Cols {missing_cols} absent)")
+                print(f"{c_tbl:<24} | {fk_target:<20} | {'N/A':<7} | {'N/A':<9} | {'0':<9} | {'0':<18} | UNPROVEN / PENDING DDL (Cols {missing_cols} absent)")
                 continue
 
             if len(c_cols) == 2:
@@ -1005,23 +1104,24 @@ def main():
                         COUNT(*)::bigint AS total_rows,
                         COUNT(*) FILTER (WHERE c.{c_fk} IS NOT NULL)::bigint AS non_null_fk_rows,
                         COUNT(*) FILTER (WHERE c.{c_fk} IS NOT NULL AND p.{p_pk} IS NULL)::bigint AS orphaned_count,
-                        COUNT(*) FILTER (WHERE c.{c_fk} IS NOT NULL AND p.{p_pk} IS NOT NULL AND c.{c_tenant} IS DISTINCT FROM p.{p_tenant})::bigint AS tenant_mismatch_count
+                        COUNT(*) FILTER (WHERE c.{c_fk} IS NOT NULL AND p.{p_pk} IS NOT NULL AND c.{c_tenant}::text IS DISTINCT FROM p.{p_tenant}::text)::bigint AS tenant_mismatch_count
                     FROM public.{c_tbl} c
                     LEFT JOIN public.{p_tbl} p 
                       ON p.{p_pk}::text = c.{c_fk}::text;
                 """)
             else:
+                # Exact Tenancy Anchor: Direct equality c.tenant_id = p.id (no slug fallback, no constant 0)
                 c_tenant = c_cols[0]
                 p_pk = p_cols[0]
                 cur.execute(f"""
                     SELECT 
                         COUNT(*)::bigint AS total_rows,
                         COUNT(*) FILTER (WHERE c.{c_tenant} IS NOT NULL)::bigint AS non_null_fk_rows,
-                        COUNT(*) FILTER (WHERE c.{c_tenant} IS NOT NULL AND p.{p_pk}::text IS NULL)::bigint AS orphaned_count,
-                        0::bigint AS tenant_mismatch_count
+                        COUNT(*) FILTER (WHERE c.{c_tenant} IS NOT NULL AND p.{p_pk} IS NULL)::bigint AS orphaned_count,
+                        COUNT(*) FILTER (WHERE c.{c_tenant} IS NOT NULL AND p.{p_pk} IS NOT NULL AND c.{c_tenant}::text IS DISTINCT FROM p.{p_pk}::text)::bigint AS tenant_mismatch_count
                     FROM public.{c_tbl} c
                     LEFT JOIN public.{p_tbl} p 
-                      ON p.{p_pk}::text = c.{c_tenant}::text OR (c.{c_tenant} = p.slug);
+                      ON p.{p_pk}::text = c.{c_tenant}::text;
                 """)
 
             res = cur.fetchone()
@@ -1080,14 +1180,27 @@ def main():
             FROM anomalous_child_rows;
         """)
         anti_join = cur.fetchone()
-        print(f"1. total_orphaned_child_rows        : {anti_join['total_orphaned_child_rows']} (Target: 0)")
-        print(f"2. total_residual_loser_references  : {anti_join['total_residual_loser_references']} (Target: 0)")
 
-        b2_assert_04_pass = (total_orphaned_all_paths == 0 and total_mismatched_all_paths == 0 and 
-                             anti_join['total_orphaned_child_rows'] == 0 and 
-                             anti_join['total_residual_loser_references'] == 0)
-        b2_assert_04_tag = "PASS (ZERO DANGLING REFERENCES / STANDBY FOR DDL CREATION)" if b2_assert_04_pass else "FAIL (DANGLING REFERENCES DETECTED)"
-        print(f"\n[+] B2-ASSERT-04 VERDICT: {b2_assert_04_tag}")
+        # Final Strict Fail-Closed Evaluation
+        final_assert_04_eval = evaluate_b2_assert_04(
+            manifest=REV28_CONTRACTUAL_FK_MANIFEST,
+            live_fks=live_fks,
+            columns_catalog=columns_catalog,
+            orphaned_count=total_orphaned_all_paths,
+            mismatch_count=total_mismatched_all_paths,
+            anti_join_orphaned=anti_join['total_orphaned_child_rows'],
+            anti_join_losers=anti_join['total_residual_loser_references']
+        )
+        b2_assert_04_pass = final_assert_04_eval['is_pass']
+        b2_assert_04_verdict = final_assert_04_eval['verdict']
+        b2_assert_04_tag = final_assert_04_eval['tag']
+
+        print(f"1. total_orphaned_child_rows        : {final_assert_04_eval['total_orphaned']} (Target: 0)")
+        print(f"2. total_residual_loser_references  : {final_assert_04_eval['total_losers']} (Target: 0)")
+        print(f"3. pending_ddl_columns_count        : {final_assert_04_eval['pending_ddl_columns_count']} (Target: 0)")
+        print(f"4. matched_fk_count                 : {final_assert_04_eval['matched_fk_count']}/8 (Target: 8)")
+        print(f"5. convalidated_fk_count            : {final_assert_04_eval['convalidated_fk_count']}/8 (Target: 8)")
+        print(f"\n[+] B2-ASSERT-04 VERDICT: {b2_assert_04_verdict} ({b2_assert_04_tag})")
 
         # =====================================================================
         # 7. B2-ASSERT-05: 3-TIER LINEAR LINEAGE PROOF, EXACT-ONE OCCURRENCE & RECONCILIATION
@@ -1680,7 +1793,7 @@ def main():
             ("B2_ASSERT_01", "Baseline Ledger Volume & Multi-Tenant Conflict", po_conflicts == 0 and ac_conflicts == 0, "PASS", "0 Conflicts across PO & AC (Clean Multi-Tenancy)"),
             ("B2_ASSERT_02", "Cross-Tenant Leakage Check", leakage['mismatched_tenant_count'] == 0 and orders_eval['unresolved_operational_orders'] == 0, "PASS", "0 Cross-Tenant Mismatches, 0 Unresolved Operational Orders"),
             ("B2_ASSERT_03", "Quarantine Parity & Survivor Cardinality", True, "UNPROVEN / EMPTY BASELINE", "Query engine 0 anomalies; tables unpopulated awaiting seeder"),
-            ("B2_ASSERT_04", "Contractual 8 Composite FKs Manifest", b2_assert_04_pass, "STANDBY / ZERO DANGLING", "0 dangling references across all active tables; 8 contractual FKs pending migration 031 DDL"),
+            ("B2_ASSERT_04", "Contractual 8 Composite FKs Manifest", b2_assert_04_pass, "PASS" if b2_assert_04_pass else "UNPROVEN / PENDING DDL", "8/8 Active & Validated" if b2_assert_04_pass else "8 Target FKs pending Migration 031 DDL; columns absent in baseline"),
             ("B2_ASSERT_05", "Exact-One Lineage & 3-Tier Reconciliation", lineage_res['final_verdict'].startswith("PASS"), "STANDBY PREPARATION", "In-memory engine zero-variance verified; awaits runner ephemeral snapshot")
         ]
 
@@ -1694,7 +1807,7 @@ def main():
         print("1. All queries executed strictly under SET TRANSACTION READ ONLY with ZERO mutations.")
         print("2. Staging Database (xkhqirhurnjqglmajghn:5432) is verified in clean pre-migration baseline state.")
         print("3. Production DB (mpluzajlzpregmjwpjqr) and Cloudflare R2: STRICT ZERO-TOUCH (0 bytes read/written).")
-        print("4. Contractual 8 FK relations audited: 0 dangling references across all active tables; target composite FKs pending migration 031 DDL.")
+        print("4. Contractual 8 FK relations audited: Status UNPROVEN / PENDING DDL (0/8 composite FKs active in baseline, attributions.order_id pending DDL, 0 dangling references on existing rows).")
         print("5. 3-Tier Linear Lineage and Exact-One occurrence verified mathematically via in-memory query engine.")
         print("6. In accordance with CTO Directive (No False Labeling), Gate B2 remains: CONDITIONAL -- STANDBY.")
         print("=" * 80)
