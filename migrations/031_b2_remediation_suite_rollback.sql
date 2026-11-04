@@ -118,10 +118,19 @@ ALTER TABLE public.affiliate_commissions
 -- [STAGE 5] REVERT SHOP_SUBSCRIPTIONS AND SHOP_COMMISSION_LEDGER TENANT_ID TYPE
 -- -----------------------------------------------------------------------------
 ALTER TABLE public.shop_commission_ledger 
-    ALTER COLUMN tenant_id TYPE character varying;
+    ALTER COLUMN tenant_id TYPE character varying(100);
 
 ALTER TABLE public.shop_subscriptions 
-    ALTER COLUMN tenant_id TYPE character varying;
+    ALTER COLUMN tenant_id TYPE character varying(100);
+
+-- Restore legacy composite affiliate FKs on shop tables
+ALTER TABLE public.shop_subscriptions 
+    ADD CONSTRAINT fk_shop_subscriptions_affiliate_composite 
+    FOREIGN KEY (tenant_id, affiliate_id) REFERENCES public.affiliates (tenant_id, id);
+
+ALTER TABLE public.shop_commission_ledger 
+    ADD CONSTRAINT fk_shop_commission_ledger_affiliate_composite 
+    FOREIGN KEY (tenant_id, affiliate_id) REFERENCES public.affiliates (tenant_id, id);
 
 -- -----------------------------------------------------------------------------
 -- [STAGE 6] DROP ADDED SCHEMA COLUMN (attributions.order_id)

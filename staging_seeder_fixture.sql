@@ -1,9 +1,10 @@
 -- =============================================================================
--- BOONTRACK STAGING SYNTHETIC SEEDER FIXTURE (REV 4.1.7)
+-- BOONTRACK STAGING SYNTHETIC SEEDER FIXTURE (REV 4.1.8)
 -- Target: Staging Database (xkhqirhurnjqglmajghn:5432)
 -- Scope: 13 Synthetic Entities (Clean, Dedup Survivor/Loser, Quarantine, 8 FK Streams)
--- Isolation Invariant: Strictly namespaced IDs with 'seed_*' prefix or '5eed*' UUIDs.
+-- Isolation Invariant: Strictly namespaced explicit IDs with symmetric predicates.
 -- Safety Invariant: Precondition asserts 0 collision with existing staging rows.
+-- Concurrency Invariant: ACCESS EXCLUSIVE locking acquired before collision audit.
 -- Zero-Touch Guarantee: Production DB and Cloudflare R2 strictly untouched.
 -- =============================================================================
 
@@ -13,27 +14,57 @@ SET LOCAL statement_timeout = '10s';
 SET LOCAL lock_timeout = '2s';
 
 -- -----------------------------------------------------------------------------
--- [STAGE 0] PRECONDITION AUDIT & ISOLATION ASSERTION
--- Memverifikasi bahwa lingkungan staging bersih dari artefak seeded sebelumnya
--- dan menjamin tidak ada tabrakan dengan 5 data afiliasi historis eksisting.
+-- [STAGE 0] EXPLICIT CONCURRENCY LOCKING (RACE CONDITION PROTECTION)
+-- Memperoleh ACCESS EXCLUSIVE lock di awal transaksi sebelum collision audit
+-- untuk mencegah concurrent insert menyusup di antara audit dan injeksi.
+-- -----------------------------------------------------------------------------
+LOCK TABLE 
+    public.tenants, 
+    public.affiliates, 
+    public.shop_subscriptions, 
+    public.shop_commission_ledger 
+IN ACCESS EXCLUSIVE MODE;
+
+-- -----------------------------------------------------------------------------
+-- [STAGE 1] PRECONDITION AUDIT & SYMMETRIC COLLISION GUARD
+-- Memverifikasi bahwa seluruh ID dan predicate eksplisit yang akan dipakai
+-- belum ada di database, dan 5 afiliasi historis staging terlindungi penuh.
 -- -----------------------------------------------------------------------------
 DO $$
 DECLARE
     v_colliding_count INT;
     v_historical_affiliates_count INT;
 BEGIN
-    -- 1. Periksa tabrakan ID terisolasi ('seed_%' atau '5eed%')
+    -- 1. Periksa tabrakan ID dan kriteria eksplisit fixture
     SELECT (
-        (SELECT COUNT(*) FROM public.tenants WHERE id::text LIKE '5eed%' OR slug LIKE 'seed_%') +
-        (SELECT COUNT(*) FROM public.affiliates WHERE id::text LIKE '5eed%' OR name LIKE 'seed_%' OR referral_code LIKE 'seed_%') +
-        (SELECT COUNT(*) FROM public.affiliate_commissions WHERE id::text LIKE '5eed%' OR order_id LIKE 'seed_%') +
-        (SELECT COUNT(*) FROM public.orders WHERE id::text LIKE 'seed_%' OR id::text LIKE '5eed%') +
-        (SELECT COUNT(*) FROM public.product_orders WHERE order_id LIKE 'seed_%') +
-        (SELECT COUNT(*) FROM public.delivery_orders WHERE id::text LIKE '5eed%' OR order_id LIKE 'seed_%') +
-        (SELECT COUNT(*) FROM public.attributions WHERE id::text LIKE '5eed%' OR session_id LIKE 'seed_%') +
-        (SELECT COUNT(*) FROM public.attribution_sessions WHERE id::text LIKE '5eed%' OR order_id LIKE 'seed_%') +
-        (SELECT COUNT(*) FROM public.shop_subscriptions WHERE id::text LIKE '5eed%' OR tenant_slug LIKE 'seed_%') +
-        (SELECT COUNT(*) FROM public.shop_commission_ledger WHERE id::text LIKE '5eed%' OR tenant_slug LIKE 'seed_%')
+        (SELECT COUNT(*) FROM public.tenants 
+         WHERE id = '5eed0000-0000-0000-0000-000000000001'::uuid OR slug = 'seed_tenant_a') +
+        (SELECT COUNT(*) FROM public.affiliates 
+         WHERE id IN ('5eed1111-1111-1111-1111-111111111111'::uuid, 
+                      '5eed2222-2222-2222-2222-222222222221'::uuid, 
+                      '5eed2222-2222-2222-2222-222222222222'::uuid) 
+            OR referral_code IN ('seed_clean_01', 'seed_surv_01', 'seed_loser_01')) +
+        (SELECT COUNT(*) FROM public.affiliate_commissions 
+         WHERE id = '5eed3333-3333-3333-3333-333333333331'::uuid OR order_id = 'seed_ord_clean_001') +
+        (SELECT COUNT(*) FROM public.migration_031_quarantined_affiliate_commissions 
+         WHERE id = '5eed4444-4444-4444-4444-444444444441'::uuid OR order_id = 'seed_ord_quar_001') +
+        (SELECT COUNT(*) FROM public.migration_031_identifier_dedup_map 
+         WHERE map_id IN ('5eed5555-5555-5555-5555-555555555551'::uuid, 
+                          '5eed5555-5555-5555-5555-555555555552'::uuid)) +
+        (SELECT COUNT(*) FROM public.orders 
+         WHERE id IN ('seed_ord_001', 'seed_ord_002')) +
+        (SELECT COUNT(*) FROM public.product_orders 
+         WHERE id = 50001 OR order_id = 'seed_ord_001') +
+        (SELECT COUNT(*) FROM public.delivery_orders 
+         WHERE id = '5eed6666-6666-6666-6666-666666666661'::uuid OR order_id = 'seed_ord_001') +
+        (SELECT COUNT(*) FROM public.attributions 
+         WHERE id = '5eed7777-7777-7777-7777-777777777771'::uuid OR session_id = 'seed_sess_001') +
+        (SELECT COUNT(*) FROM public.attribution_sessions 
+         WHERE id = '5eed8888-8888-8888-8888-888888888881'::uuid OR order_id = 'seed_ord_001') +
+        (SELECT COUNT(*) FROM public.shop_subscriptions 
+         WHERE id = '5eed9999-9999-9999-9999-999999999991'::uuid OR xendit_invoice_id = 'seed_inv_001') +
+        (SELECT COUNT(*) FROM public.shop_commission_ledger 
+         WHERE id = '5eedaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid)
     ) INTO v_colliding_count;
 
     IF v_colliding_count > 0 THEN
@@ -59,48 +90,47 @@ BEGIN
 END $$;
 
 -- -----------------------------------------------------------------------------
--- [STAGE 1] TENANT ANCHOR
--- Tenant terisolasi khusus pengujian sintetis
+-- [STAGE 2] TENANT ANCHOR
 -- -----------------------------------------------------------------------------
 INSERT INTO public.tenants (id, slug)
-VALUES ('5eed0000-0000-0000-0000-000000000001', 'seed_tenant_a')
+VALUES ('5eed0000-0000-0000-0000-000000000001'::uuid, 'seed_tenant_a')
 ON CONFLICT (id) DO NOTHING;
 
 -- -----------------------------------------------------------------------------
--- [STAGE 2] AFFILIATES (3 Rows: 1 Clean, 1 Survivor, 1 Loser)
+-- [STAGE 3] AFFILIATES (3 Rows: 1 Clean, 1 Survivor, 1 Loser)
 -- -----------------------------------------------------------------------------
 INSERT INTO public.affiliates (
     id, tenant_id, name, phone_number, referral_code, commission_rate, status, role
 )
 VALUES 
-  ('5eed1111-1111-1111-1111-111111111111', '5eed0000-0000-0000-0000-000000000001', 'seed_aff_clean_001', '081200000001', 'seed_clean_01', 10.00, 'ACTIVE', 'affiliate'),
-  ('5eed2222-2222-2222-2222-222222222221', '5eed0000-0000-0000-0000-000000000001', 'seed_aff_surv_001',  '081200000002', 'seed_surv_01',  10.00, 'ACTIVE', 'affiliate'),
-  ('5eed2222-2222-2222-2222-222222222222', '5eed0000-0000-0000-0000-000000000001', 'seed_aff_loser_001', '081200000003', 'seed_loser_01', 10.00, 'ACTIVE', 'affiliate');
+  ('5eed1111-1111-1111-1111-111111111111'::uuid, '5eed0000-0000-0000-0000-000000000001', 'seed_aff_clean_001', '081200000001', 'seed_clean_01', 10.00, 'ACTIVE', 'affiliate'),
+  ('5eed2222-2222-2222-2222-222222222221'::uuid, '5eed0000-0000-0000-0000-000000000001', 'seed_aff_surv_001',  '081200000002', 'seed_surv_01',  10.00, 'ACTIVE', 'affiliate'),
+  ('5eed2222-2222-2222-2222-222222222222'::uuid, '5eed0000-0000-0000-0000-000000000001', 'seed_aff_loser_001', '081200000003', 'seed_loser_01', 10.00, 'ACTIVE', 'affiliate');
 
 -- -----------------------------------------------------------------------------
--- [STAGE 3] AFFILIATE COMMISSIONS (1 Clean Row)
+-- [STAGE 4] AFFILIATE COMMISSIONS (1 Clean Row)
 -- -----------------------------------------------------------------------------
 INSERT INTO public.affiliate_commissions (
     id, tenant_id, affiliate_id, order_id, order_amount, amount, status
 )
 VALUES 
-  ('5eed3333-3333-3333-3333-333333333331', '5eed0000-0000-0000-0000-000000000001', '5eed1111-1111-1111-1111-111111111111', 'seed_ord_clean_001', 500000.00, 50000.00, 'PAID');
+  ('5eed3333-3333-3333-3333-333333333331'::uuid, '5eed0000-0000-0000-0000-000000000001', '5eed1111-1111-1111-1111-111111111111'::uuid, 'seed_ord_clean_001', 500000.00, 50000.00, 'PAID');
 
 -- -----------------------------------------------------------------------------
--- [STAGE 4] QUARANTINED COMMISSIONS (1 Physically Isolated Row)
+-- [STAGE 5] QUARANTINED COMMISSIONS (1 Physically Isolated Row)
 -- -----------------------------------------------------------------------------
 INSERT INTO public.migration_031_quarantined_affiliate_commissions (
     id, migration_batch_id, tenant_id, original_tenant_id, affiliate_id, order_id, order_amount, amount, 
     commission_type, original_status, quarantine_reason, distinct_tenant_count, row_snapshot, approval_status
 )
 VALUES (
-    '5eed4444-4444-4444-4444-444444444441', 'seed_batch_001', '5eed0000-0000-0000-0000-000000000001', 
+    '5eed4444-4444-4444-4444-444444444441'::uuid, 'seed_batch_001', '5eed0000-0000-0000-0000-000000000001', 
     '5eed0000-0000-0000-0000-000000000001', '5eed1111-1111-1111-1111-111111111111', 'seed_ord_quar_001', 
     750000.00, 75000.00, 'PRODUCT_ORDER', 'PENDING', 'CROSS_TENANT_DISCREPANCY_DETECTED', 1, '{}'::jsonb, 'QUARANTINED_LOCKED'
 );
 
 -- -----------------------------------------------------------------------------
--- [STAGE 5] IDENTIFIER DEDUP GOVERNANCE MAP (2 Rows: Survivor rank=1 & Loser rank=2)
+-- [STAGE 6] IDENTIFIER DEDUP GOVERNANCE MAP (2 Rows: Survivor rank=1 & Loser rank=2)
 -- -----------------------------------------------------------------------------
 INSERT INTO public.migration_031_identifier_dedup_map (
     map_id, migration_batch_id, table_name, column_name, tenant_id, 
@@ -110,69 +140,67 @@ INSERT INTO public.migration_031_identifier_dedup_map (
     created_at, last_reconciled_at
 )
 VALUES 
-  ('5eed5555-5555-5555-5555-555555555551', 'seed_batch_001', 'affiliates', 'id', '5eed0000-0000-0000-0000-000000000001',
+  ('5eed5555-5555-5555-5555-555555555551'::uuid, 'seed_batch_001', 'affiliates', 'id', '5eed0000-0000-0000-0000-000000000001',
    '5eed2222-2222-2222-2222-222222222221', '5eed2222-2222-2222-2222-222222222221', '5eed2222-2222-2222-2222-222222222221',
    '5eed2222-2222-2222-2222-222222222221', 1, 'SURVIVOR', 'AUTHORITATIVE_PRIMARY_IDENTITY',
    false, '[]'::jsonb, '{}'::jsonb, 0, now(), now()),
-  ('5eed5555-5555-5555-5555-555555555552', 'seed_batch_001', 'affiliates', 'id', '5eed0000-0000-0000-0000-000000000001',
+  ('5eed5555-5555-5555-5555-555555555552'::uuid, 'seed_batch_001', 'affiliates', 'id', '5eed0000-0000-0000-0000-000000000001',
    '5eed2222-2222-2222-2222-222222222222', '5eed2222-2222-2222-2222-222222222221', '5eed2222-2222-2222-2222-222222222222',
    '5eed2222-2222-2222-2222-222222222221', 2, 'SUPERSEDED_DUPLICATE', 'MERGED_TO_SURVIVOR',
    false, '[]'::jsonb, '{}'::jsonb, 0, now(), now());
 
 -- -----------------------------------------------------------------------------
--- [STAGE 6] CHILD ENTITIES (7 Tables, 8 Streams repointed from Loser)
+-- [STAGE 7] CHILD ENTITIES (7 Tables, 8 Streams repointed from Loser)
 -- -----------------------------------------------------------------------------
 
--- 6.1 Orders (2 streams: affiliate_id and manager_id)
+-- 7.1 Orders (2 streams: affiliate_id and manager_id)
 INSERT INTO public.orders (id, tenant_id, affiliate_id, manager_id, status, gross_amount)
 VALUES 
   ('seed_ord_001', '5eed0000-0000-0000-0000-000000000001', '5eed2222-2222-2222-2222-222222222222'::uuid, NULL, 'PENDING', 100000.00),
   ('seed_ord_002', '5eed0000-0000-0000-0000-000000000001', NULL, '5eed2222-2222-2222-2222-222222222222'::uuid, 'PENDING', 150000.00);
 
--- 6.2 Product Orders
+-- 7.2 Product Orders
 INSERT INTO public.product_orders (id, order_id, tenant_id, affiliate_id, status)
 VALUES 
   (50001, 'seed_ord_001', '5eed0000-0000-0000-0000-000000000001', '5eed2222-2222-2222-2222-222222222222'::uuid, 'PENDING');
 
--- 6.3 Delivery Orders
+-- 7.3 Delivery Orders
 INSERT INTO public.delivery_orders (id, tenant_id, order_id, provider, service_type, affiliate_id, status)
 VALUES 
-  ('5eed6666-6666-6666-6666-666666666661', '5eed0000-0000-0000-0000-000000000001', 'seed_ord_001', 'JNE', 'REG', '5eed2222-2222-2222-2222-222222222222'::uuid, 'PENDING');
+  ('5eed6666-6666-6666-6666-666666666661'::uuid, '5eed0000-0000-0000-0000-000000000001', 'seed_ord_001', 'JNE', 'REG', '5eed2222-2222-2222-2222-222222222222'::uuid, 'PENDING');
 
--- 6.4 Attributions
+-- 7.4 Attributions
 INSERT INTO public.attributions (id, tenant_id, session_id, ip_hash, affiliate_id)
 VALUES 
-  ('5eed7777-7777-7777-7777-777777777771', '5eed0000-0000-0000-0000-000000000001', 'seed_sess_001', 'seed_ip_hash_001', '5eed2222-2222-2222-2222-222222222222'::uuid);
+  ('5eed7777-7777-7777-7777-777777777771'::uuid, '5eed0000-0000-0000-0000-000000000001', 'seed_sess_001', 'seed_ip_hash_001', '5eed2222-2222-2222-2222-222222222222'::uuid);
 
--- 6.5 Attribution Sessions
+-- 7.5 Attribution Sessions
 INSERT INTO public.attribution_sessions (id, tenant_id, ip_hash, affiliate_id, order_id, referral_code)
 VALUES 
-  ('5eed8888-8888-8888-8888-888888888881', '5eed0000-0000-0000-0000-000000000001', 'seed_ip_hash_001', '5eed2222-2222-2222-2222-222222222222'::uuid, 'seed_ord_001', 'seed_loser_01');
+  ('5eed8888-8888-8888-8888-888888888881'::uuid, '5eed0000-0000-0000-0000-000000000001', 'seed_ip_hash_001', '5eed2222-2222-2222-2222-222222222222'::uuid, 'seed_ord_001', 'seed_loser_01');
 
--- 6.6 Shop Subscriptions
+-- 7.6 Shop Subscriptions
 INSERT INTO public.shop_subscriptions (
     id, tenant_slug, tenant_id, affiliate_id, status, amount, 
     current_period_ends_at, expires_at, xendit_invoice_id
 )
 VALUES 
-  ('5eed9999-9999-9999-9999-999999999991', 'seed_tenant_a', '5eed0000-0000-0000-0000-000000000001', 
+  ('5eed9999-9999-9999-9999-999999999991'::uuid, 'seed_tenant_a', '5eed0000-0000-0000-0000-000000000001', 
    '5eed2222-2222-2222-2222-222222222222'::uuid, 'ACTIVE', 299000.00, 
    now() + interval '30 days', now() + interval '30 days', 'seed_inv_001');
 
--- 6.7 Shop Commission Ledger
+-- 7.7 Shop Commission Ledger
 INSERT INTO public.shop_commission_ledger (
     id, subscription_id, tenant_slug, tenant_id, affiliate_id, 
     gross_amount, affiliate_amount, am_amount, platform_net_amount, status
 )
 VALUES 
-  ('5eedaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '5eed9999-9999-9999-9999-999999999991', 
+  ('5eedaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, '5eed9999-9999-9999-9999-999999999991'::uuid, 
    'seed_tenant_a', '5eed0000-0000-0000-0000-000000000001', '5eed2222-2222-2222-2222-222222222222'::uuid, 
    299000.00, 29900.00, 0.00, 269100.00, 'COMPLETED');
 
 -- -----------------------------------------------------------------------------
--- [STAGE 7] POSTCONDITION VALIDATION ASSERTIONS
--- Memverifikasi bahwa seluruh 13 entitas sintetis terinjeksi dengan benar
--- dan 100% menggunakan ID terisolasi ('seed_*' atau '5eed*').
+-- [STAGE 8] POSTCONDITION VALIDATION ASSERTIONS
 -- -----------------------------------------------------------------------------
 DO $$
 DECLARE
@@ -188,17 +216,41 @@ DECLARE
     v_sub_cnt INT;
     v_ledg_cnt INT;
 BEGIN
-    SELECT COUNT(*) INTO v_aff_cnt FROM public.affiliates WHERE id::text LIKE '5eed%';
-    SELECT COUNT(*) INTO v_comm_cnt FROM public.affiliate_commissions WHERE id::text LIKE '5eed%';
-    SELECT COUNT(*) INTO v_quar_cnt FROM public.migration_031_quarantined_affiliate_commissions WHERE id::text LIKE '5eed%';
-    SELECT COUNT(*) INTO v_map_cnt FROM public.migration_031_identifier_dedup_map WHERE map_id::text LIKE '5eed%';
-    SELECT COUNT(*) INTO v_ord_cnt FROM public.orders WHERE id LIKE 'seed_%';
-    SELECT COUNT(*) INTO v_po_cnt FROM public.product_orders WHERE order_id LIKE 'seed_%';
-    SELECT COUNT(*) INTO v_do_cnt FROM public.delivery_orders WHERE id::text LIKE '5eed%';
-    SELECT COUNT(*) INTO v_attr_cnt FROM public.attributions WHERE id::text LIKE '5eed%';
-    SELECT COUNT(*) INTO v_sess_cnt FROM public.attribution_sessions WHERE id::text LIKE '5eed%';
-    SELECT COUNT(*) INTO v_sub_cnt FROM public.shop_subscriptions WHERE id::text LIKE '5eed%';
-    SELECT COUNT(*) INTO v_ledg_cnt FROM public.shop_commission_ledger WHERE id::text LIKE '5eed%';
+    SELECT COUNT(*) INTO v_aff_cnt FROM public.affiliates 
+    WHERE id IN ('5eed1111-1111-1111-1111-111111111111'::uuid, 
+                 '5eed2222-2222-2222-2222-222222222221'::uuid, 
+                 '5eed2222-2222-2222-2222-222222222222'::uuid);
+                 
+    SELECT COUNT(*) INTO v_comm_cnt FROM public.affiliate_commissions 
+    WHERE id = '5eed3333-3333-3333-3333-333333333331'::uuid;
+    
+    SELECT COUNT(*) INTO v_quar_cnt FROM public.migration_031_quarantined_affiliate_commissions 
+    WHERE id = '5eed4444-4444-4444-4444-444444444441'::uuid;
+    
+    SELECT COUNT(*) INTO v_map_cnt FROM public.migration_031_identifier_dedup_map 
+    WHERE map_id IN ('5eed5555-5555-5555-5555-555555555551'::uuid, 
+                     '5eed5555-5555-5555-5555-555555555552'::uuid);
+                     
+    SELECT COUNT(*) INTO v_ord_cnt FROM public.orders 
+    WHERE id IN ('seed_ord_001', 'seed_ord_002');
+    
+    SELECT COUNT(*) INTO v_po_cnt FROM public.product_orders 
+    WHERE id = 50001;
+    
+    SELECT COUNT(*) INTO v_do_cnt FROM public.delivery_orders 
+    WHERE id = '5eed6666-6666-6666-6666-666666666661'::uuid;
+    
+    SELECT COUNT(*) INTO v_attr_cnt FROM public.attributions 
+    WHERE id = '5eed7777-7777-7777-7777-777777777771'::uuid;
+    
+    SELECT COUNT(*) INTO v_sess_cnt FROM public.attribution_sessions 
+    WHERE id = '5eed8888-8888-8888-8888-888888888881'::uuid;
+    
+    SELECT COUNT(*) INTO v_sub_cnt FROM public.shop_subscriptions 
+    WHERE id = '5eed9999-9999-9999-9999-999999999991'::uuid;
+    
+    SELECT COUNT(*) INTO v_ledg_cnt FROM public.shop_commission_ledger 
+    WHERE id = '5eedaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid;
 
     IF v_aff_cnt <> 3 THEN
         RAISE EXCEPTION 'POSTCONDITION ERROR: Expected 3 seeded affiliates, found %', v_aff_cnt USING ERRCODE = 'P0003';

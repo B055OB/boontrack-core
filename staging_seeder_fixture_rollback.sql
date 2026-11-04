@@ -1,8 +1,9 @@
 -- =============================================================================
--- BOONTRACK STAGING SYNTHETIC SEEDER FIXTURE ROLLBACK / CLEANUP SCRIPT (REV 4.1.7)
+-- BOONTRACK STAGING SYNTHETIC SEEDER FIXTURE ROLLBACK / CLEANUP SCRIPT (REV 4.1.8)
 -- Target: Staging Database (xkhqirhurnjqglmajghn:5432)
 -- Purpose: Provable, zero-residual deletion of seeded synthetic entities.
--- Safety Invariant: Deletes ONLY isolated 'seed_*' and '5eed*' identifiers.
+-- Isolation Invariant: Strictly explicit fixture ID predicates (Zero Overreach).
+-- Safety Invariant: Deletes ONLY explicit '5eed*' / 'seed_*' fixture IDs.
 -- Historical Protection: Preserves 100% untouched historical production rows.
 -- Postcondition: Proves exactly 0 residual fixture rows remain post-cleanup.
 -- =============================================================================
@@ -13,64 +14,92 @@ SET LOCAL statement_timeout = '10s';
 SET LOCAL lock_timeout = '2s';
 
 -- -----------------------------------------------------------------------------
+-- [STAGE 0] EXPLICIT CONCURRENCY LOCKING
+-- -----------------------------------------------------------------------------
+LOCK TABLE 
+    public.tenants, 
+    public.affiliates, 
+    public.shop_subscriptions, 
+    public.shop_commission_ledger 
+IN ACCESS EXCLUSIVE MODE;
+
+-- -----------------------------------------------------------------------------
 -- [STAGE 1] CHILD TABLES TEARDOWN (TOPOLOGICAL REVERSE ORDER)
+-- Catatan DBRE: Klausa DELETE di bawah HANYA menargetkan ID spesifik fixture
+-- dan tenant_id fixture secara konjungtif (AND), MENGHILANGKAN seluruh klausa
+-- longgar 'OR tenant_id = ...' untuk menjamin nol overreach ke data lain.
 -- -----------------------------------------------------------------------------
 
--- 1.1 Shop Commission Ledger
+-- 1.1 Shop Commission Ledger (1 Fixture Row)
 DELETE FROM public.shop_commission_ledger 
-WHERE id::text LIKE '5eed%' OR tenant_slug = 'seed_tenant_a' OR tenant_id = '5eed0000-0000-0000-0000-000000000001';
+WHERE id = '5eedaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid 
+  AND tenant_id = '5eed0000-0000-0000-0000-000000000001';
 
--- 1.2 Shop Subscriptions
+-- 1.2 Shop Subscriptions (1 Fixture Row)
 DELETE FROM public.shop_subscriptions 
-WHERE id::text LIKE '5eed%' OR tenant_slug = 'seed_tenant_a' OR tenant_id = '5eed0000-0000-0000-0000-000000000001';
+WHERE id = '5eed9999-9999-9999-9999-999999999991'::uuid 
+  AND tenant_id = '5eed0000-0000-0000-0000-000000000001';
 
--- 1.3 Attribution Sessions
+-- 1.3 Attribution Sessions (1 Fixture Row)
 DELETE FROM public.attribution_sessions 
-WHERE id::text LIKE '5eed%' OR order_id LIKE 'seed_%' OR referral_code LIKE 'seed_%';
+WHERE id = '5eed8888-8888-8888-8888-888888888881'::uuid 
+  AND tenant_id = '5eed0000-0000-0000-0000-000000000001';
 
--- 1.4 Attributions
+-- 1.4 Attributions (1 Fixture Row)
 DELETE FROM public.attributions 
-WHERE id::text LIKE '5eed%' OR session_id LIKE 'seed_%';
+WHERE id = '5eed7777-7777-7777-7777-777777777771'::uuid 
+  AND tenant_id = '5eed0000-0000-0000-0000-000000000001';
 
--- 1.5 Delivery Orders
+-- 1.5 Delivery Orders (1 Fixture Row)
 DELETE FROM public.delivery_orders 
-WHERE id::text LIKE '5eed%' OR order_id LIKE 'seed_%';
+WHERE id = '5eed6666-6666-6666-6666-666666666661'::uuid 
+  AND tenant_id = '5eed0000-0000-0000-0000-000000000001';
 
--- 1.6 Product Orders
+-- 1.6 Product Orders (1 Fixture Row)
 DELETE FROM public.product_orders 
-WHERE order_id LIKE 'seed_%';
+WHERE id = 50001 
+  AND tenant_id = '5eed0000-0000-0000-0000-000000000001';
 
--- 1.7 Orders
+-- 1.7 Orders (2 Fixture Rows)
 DELETE FROM public.orders 
-WHERE id LIKE 'seed_%';
+WHERE id IN ('seed_ord_001', 'seed_ord_002') 
+  AND tenant_id = '5eed0000-0000-0000-0000-000000000001';
 
 -- -----------------------------------------------------------------------------
 -- [STAGE 2] DEDUP GOVERNANCE & QUARANTINE LEDGER TEARDOWN
 -- -----------------------------------------------------------------------------
 
--- 2.1 Identifier Dedup Map
+-- 2.1 Identifier Dedup Map (2 Fixture Rows)
 DELETE FROM public.migration_031_identifier_dedup_map 
-WHERE map_id::text LIKE '5eed%' OR migration_batch_id = 'seed_batch_001';
+WHERE map_id IN ('5eed5555-5555-5555-5555-555555555551'::uuid, 
+                 '5eed5555-5555-5555-5555-555555555552'::uuid) 
+  AND tenant_id = '5eed0000-0000-0000-0000-000000000001';
 
--- 2.2 Quarantined Affiliate Commissions
+-- 2.2 Quarantined Affiliate Commissions (1 Fixture Row)
 DELETE FROM public.migration_031_quarantined_affiliate_commissions 
-WHERE id::text LIKE '5eed%' OR migration_batch_id = 'seed_batch_001';
+WHERE id = '5eed4444-4444-4444-4444-444444444441'::uuid 
+  AND tenant_id = '5eed0000-0000-0000-0000-000000000001';
 
 -- -----------------------------------------------------------------------------
 -- [STAGE 3] PARENT COMMISSIONS & AFFILIATES TEARDOWN
 -- -----------------------------------------------------------------------------
 
--- 3.1 Affiliate Commissions
+-- 3.1 Affiliate Commissions (1 Clean Row)
 DELETE FROM public.affiliate_commissions 
-WHERE id::text LIKE '5eed%' OR order_id LIKE 'seed_%';
+WHERE id = '5eed3333-3333-3333-3333-333333333331'::uuid 
+  AND tenant_id = '5eed0000-0000-0000-0000-000000000001';
 
--- 3.2 Affiliates
+-- 3.2 Affiliates (3 Fixture Rows: Clean, Surv, Loser)
 DELETE FROM public.affiliates 
-WHERE id::text LIKE '5eed%' OR referral_code LIKE 'seed_%';
+WHERE id IN ('5eed1111-1111-1111-1111-111111111111'::uuid, 
+             '5eed2222-2222-2222-2222-222222222221'::uuid, 
+             '5eed2222-2222-2222-2222-222222222222'::uuid) 
+  AND tenant_id = '5eed0000-0000-0000-0000-000000000001';
 
--- 3.3 Tenant Anchor
+-- 3.3 Tenant Anchor (1 Fixture Row)
 DELETE FROM public.tenants 
-WHERE id = '5eed0000-0000-0000-0000-000000000001';
+WHERE id = '5eed0000-0000-0000-0000-000000000001'::uuid 
+  AND slug = 'seed_tenant_a';
 
 -- -----------------------------------------------------------------------------
 -- [STAGE 4] POST-CLEANUP PROVABLE ASSERTIONS
@@ -83,20 +112,35 @@ DECLARE
     v_residual_cnt INT;
     v_historical_affiliates_count INT;
 BEGIN
-    -- 1. Asersi Zero-Residual
+    -- 1. Asersi Zero-Residual Terhadap Seluruh ID Fixture Eksplisit
     SELECT (
-        (SELECT COUNT(*) FROM public.tenants WHERE id::text LIKE '5eed%' OR slug = 'seed_tenant_a') +
-        (SELECT COUNT(*) FROM public.affiliates WHERE id::text LIKE '5eed%' OR referral_code LIKE 'seed_%') +
-        (SELECT COUNT(*) FROM public.affiliate_commissions WHERE id::text LIKE '5eed%' OR order_id LIKE 'seed_%') +
-        (SELECT COUNT(*) FROM public.orders WHERE id LIKE 'seed_%') +
-        (SELECT COUNT(*) FROM public.product_orders WHERE order_id LIKE 'seed_%') +
-        (SELECT COUNT(*) FROM public.delivery_orders WHERE id::text LIKE '5eed%' OR order_id LIKE 'seed_%') +
-        (SELECT COUNT(*) FROM public.attributions WHERE id::text LIKE '5eed%' OR session_id LIKE 'seed_%') +
-        (SELECT COUNT(*) FROM public.attribution_sessions WHERE id::text LIKE '5eed%' OR order_id LIKE 'seed_%') +
-        (SELECT COUNT(*) FROM public.shop_subscriptions WHERE id::text LIKE '5eed%' OR tenant_slug = 'seed_tenant_a') +
-        (SELECT COUNT(*) FROM public.shop_commission_ledger WHERE id::text LIKE '5eed%' OR tenant_slug = 'seed_tenant_a') +
-        (SELECT COUNT(*) FROM public.migration_031_quarantined_affiliate_commissions WHERE id::text LIKE '5eed%' OR migration_batch_id = 'seed_batch_001') +
-        (SELECT COUNT(*) FROM public.migration_031_identifier_dedup_map WHERE map_id::text LIKE '5eed%' OR migration_batch_id = 'seed_batch_001')
+        (SELECT COUNT(*) FROM public.tenants 
+         WHERE id = '5eed0000-0000-0000-0000-000000000001'::uuid) +
+        (SELECT COUNT(*) FROM public.affiliates 
+         WHERE id IN ('5eed1111-1111-1111-1111-111111111111'::uuid, 
+                      '5eed2222-2222-2222-2222-222222222221'::uuid, 
+                      '5eed2222-2222-2222-2222-222222222222'::uuid)) +
+        (SELECT COUNT(*) FROM public.affiliate_commissions 
+         WHERE id = '5eed3333-3333-3333-3333-333333333331'::uuid) +
+        (SELECT COUNT(*) FROM public.orders 
+         WHERE id IN ('seed_ord_001', 'seed_ord_002')) +
+        (SELECT COUNT(*) FROM public.product_orders 
+         WHERE id = 50001) +
+        (SELECT COUNT(*) FROM public.delivery_orders 
+         WHERE id = '5eed6666-6666-6666-6666-666666666661'::uuid) +
+        (SELECT COUNT(*) FROM public.attributions 
+         WHERE id = '5eed7777-7777-7777-7777-777777777771'::uuid) +
+        (SELECT COUNT(*) FROM public.attribution_sessions 
+         WHERE id = '5eed8888-8888-8888-8888-888888888881'::uuid) +
+        (SELECT COUNT(*) FROM public.shop_subscriptions 
+         WHERE id = '5eed9999-9999-9999-9999-999999999991'::uuid) +
+        (SELECT COUNT(*) FROM public.shop_commission_ledger 
+         WHERE id = '5eedaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid) +
+        (SELECT COUNT(*) FROM public.migration_031_quarantined_affiliate_commissions 
+         WHERE id = '5eed4444-4444-4444-4444-444444444441'::uuid) +
+        (SELECT COUNT(*) FROM public.migration_031_identifier_dedup_map 
+         WHERE map_id IN ('5eed5555-5555-5555-5555-555555555551'::uuid, 
+                          '5eed5555-5555-5555-5555-555555555552'::uuid))
     ) INTO v_residual_cnt;
 
     IF v_residual_cnt > 0 THEN

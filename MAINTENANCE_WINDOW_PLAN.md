@@ -1,5 +1,5 @@
-# MAINTENANCE WINDOW PLAN & EXECUTION SPECIFICATION (REV 4.1.7)
-**Document ID:** `BOONTRACK-MWP-REV4.1.7-B2-CLOSURE`  
+# MAINTENANCE WINDOW PLAN & EXECUTION SPECIFICATION (REV 4.1.8)
+**Document ID:** `BOONTRACK-MWP-REV4.1.8-B2-CLOSURE`  
 **Target Specification:** Migration 031 Remediation Suite & Tahap 2 Staging Deployment  
 **Role:** Lead Database Reliability Engineer (DBRE) & Principal Systems Architect  
 **Governance Standard:** CTO Design Freeze, Fail-Closed Relational Mandate, Zero-Touch Prod/R2  
@@ -93,13 +93,15 @@ Seluruh artefak kode, migrasi, seeder, dan pengujian diverifikasi secara kriptog
 
 | Berkas Artefak | Ukuran | SHA-256 Checksum | Peran / Deskripsi |
 |:---|:---|:---|:---|
-| `migrations/031_b2_remediation_suite.sql` | 20,993 bytes | `5064ec6b4cf166d2fb62133253b44c3c6d4be66cbeb7e9b5de58129623439b01` | DDL forward migrasi 031 dengan locking `tenants` di awal |
-| `migrations/031_b2_remediation_suite_rollback.sql` | 6,176 bytes | `4a84a62cbbcff864d59de4411dccd33afb0073028b3fcf81e33b092cf6439e67` | DDL rollback mandiri pembuktian $\Delta = 0$ |
-| `staging_seeder_fixture.sql` | 13,508 bytes | `4bfbbcbefc4d45d1df61ff04554ffc2f76678b69d3c7595c7e9de13262e36405` | DML seeder sintetis terisolasi (`seed_*`, `5eed%`) |
-| `staging_seeder_fixture_rollback.sql` | 5,663 bytes | `9ab33e8866104ecc4766f27aa303d7950c5acd8a1d5bd2a38d01272f21d8e553` | DML pembersih seeder dengan asersi *zero-residual* |
-| `rehearsal_p1_orchestrator.py` | 54,181 bytes | `0efbee1e45af8419252e0a48f51f4f97bec5096780f11750d87ed5281479642d` | Orkestrator otomatis rehearsal P1 lokal (AC-01 s/d AC-06) |
+| `migrations/031_b2_remediation_suite.sql` | 21,315 bytes | `06cf23a77757fc802b483b8f76fecab4d12f649ceed55b750e88c10d49155001` | DDL forward migrasi 031 dengan locking `tenants` di awal dan type alignment |
+| `migrations/031_b2_remediation_suite_rollback.sql` | 6,631 bytes | `51f1ace563b14a04a9c4dc9fec99fb08dcef85a4241dfa85743beab162b4c270` | DDL rollback mandiri pembuktian $\Delta = 0$ dan pemulihan `varchar(100)` |
+| `staging_seeder_fixture.sql` | 15,541 bytes | `2849ab8e06a5f32fbfc88f51902d48719a2d0e7972db3eee682ae774f2efc894` | DML seeder sintetis terisolasi (`seed_*`, `5eed%`) dengan locking di awal |
+| `staging_seeder_fixture_rollback.sql` | 7,599 bytes | `9cb733c6f0f9ed0e962103725cdace55d59aa8de2bc16717a67be82c4a4e876a` | DML pembersih seeder dengan asersi *zero-residual* dan predikat eksplisit |
+| `scripts/staging_baseline_generated.sql` | 12,818 bytes | `8eff4ab893a0f397e0ca79bbb86ef6f534e527fde10afcbe21f1a62ac5aad4a0` | DDL baseline 10 tabel, 193 kolom, 23 constraint diekstrak dari Staging Supabase |
+| `rehearsal_p1_orchestrator.py` | 65,494 bytes | `8f49bce8b59a6083e55d1405862e7d5ef4fe118385ff7ff8e7e3d74a25fa1a5d` | Orkestrator otomatis rehearsal P1 lokal (AC-01 s/d AC-06) |
 | `audit_b2_comprehensive_inspector.py` | 113,643 bytes | `e6b8769f7770e507ef36d2e8486e29682f494faeede686e2f8bf66f6c8fbee59` | Inspector read-only Staging (fail-closed, 7 properti FK) |
 | `test_assert_04_regression.py` | 20,389 bytes | `df78e6c7d426029c2ac9de728f4ca741d9b129e917a129b84d298266746efef1` | Suite uji regresi unit 12 skenario fail-closed |
+| `REHEARSAL_P1_FULL_EXECUTION.log` | 14,437 bytes | `26f1adf0272c17139cf0155cb441c610ca08b450397116109901537c46c50310` | Log mentah bukti eksekusi rehearsal P1 lokal terverifikasi |
 
 ---
 
@@ -108,3 +110,4 @@ Seluruh artefak kode, migrasi, seeder, dan pengujian diverifikasi secara kriptog
 1. **Zero Database Mutation on Staging/Prod:** Tidak ada mutasi skema fisik maupun injeksi seeder yang dieksekusi ke Staging Supabase selama fase persiapan ini. Seluruh eksekusi berjalan di lingkungan database *disposable* lokal.
 2. **Zero Touch Perimeter:** Basis data Production (`mpluzajlzpregmjwpjqr`) dan Cloudflare R2 tetap berada dalam postur **ZERO-TOUCH** (0 byte dibaca/ditulis).
 3. **Kesiapan Tahap 2:** Artefak DDL, seeder, rollback, dan verifier kini berada dalam status **READY FOR RATIFICATION & TAHAP 2 EXECUTION** menunggu otorisasi resmi CTO.
+

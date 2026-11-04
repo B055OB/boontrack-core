@@ -261,7 +261,14 @@ ALTER TABLE public.affiliate_commissions
 
 -- -----------------------------------------------------------------------------
 -- [STAGE 7] TYPE ALIGNMENT FOR TENANCY ANCHOR
+-- Drop legacy composite affiliate FKs on shop tables before altering tenant_id to uuid
 -- -----------------------------------------------------------------------------
+ALTER TABLE public.shop_subscriptions 
+    DROP CONSTRAINT IF EXISTS fk_shop_subscriptions_affiliate_composite;
+
+ALTER TABLE public.shop_commission_ledger 
+    DROP CONSTRAINT IF EXISTS fk_shop_commission_ledger_affiliate_composite;
+
 ALTER TABLE public.shop_subscriptions 
     ALTER COLUMN tenant_id TYPE uuid USING tenant_id::uuid;
 

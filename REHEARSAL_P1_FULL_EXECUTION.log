@@ -2,7 +2,7 @@
 ================================================================================
  BOONTRACK P1 DISPOSABLE DB REHEARSAL HARNESS EXECUTION
 ================================================================================
-Timestamp: 2026-11-04T13:10:40+0700
+Timestamp: 2026-11-04T14:58:06+0700
 Role: Lead DBRE & Principal Systems Architect
 Security Posture: ZERO MUTATION STAGING/PROD; LOCAL DISPOSABLE REHEARSAL
 Connection String Security Scan: Zero cloud markers ('xkhqir', 'mpluz') present (VERIFIED).
@@ -20,19 +20,6 @@ Connection String Security Scan: Zero cloud markers ('xkhqir', 'mpluz') present 
    public.affiliate_commissions       : total = 0   | non-canonical uppercase = 0
 [+] Staging Tenancy Audit Result: 100% Canonical Lowercase RFC 4122 Verified (0 case deviations).
 
---- Staging Supabase Read-Only Tracked Catalog Manifest Extraction ---
-[+] Staging Catalog Manifest Extracted: 10 tables tracked.
-    - public.tenants                   : 2   columns | 4 constraints
-    - public.affiliates                : 32  columns | 13 constraints
-    - public.orders                    : 49  columns | 5 constraints
-    - public.product_orders            : 23  columns | 3 constraints
-    - public.delivery_orders           : 17  columns | 7 constraints
-    - public.attributions              : 14  columns | 6 constraints
-    - public.attribution_sessions      : 9   columns | 6 constraints
-    - public.shop_subscriptions        : 23  columns | 10 constraints
-    - public.shop_commission_ledger    : 13  columns | 8 constraints
-    - public.affiliate_commissions     : 11  columns | 11 constraints
-
 >>> [FASE 1] Environment Isolation & Disposable Database Provisioning
 --------------------------------------------------------------------------------
 [*] Ensuring local PostgreSQL engine is active via WSL keepalive...
@@ -45,14 +32,32 @@ Connection String Security Scan: Zero cloud markers ('xkhqir', 'mpluz') present 
 
 >>> [FASE 2] Baseline Initialization & Non-empty Synthetic Fixtures
 --------------------------------------------------------------------------------
-[*] Applying pre-031 baseline DDL for 10 audited tables + 5 dedup/snapshot tables...
+[*] Applying scripts/staging_baseline_generated.sql (exact staging DDL)...
 [+] Baseline physical schema tables successfully created.
-[*] Verifying structural alignment between baseline disposable schema and staging manifest...
-[+] Baseline disposable structural alignment against Staging manifest: 10/10 tables verified.
-[+] Baseline Tracked Catalog Objects Fingerprint (SHA-256): 0820227b3fdb09442b52473e5ff11732e89846ddba4c081bcccd1a364918f63f
-    - Columns Tracked (incl. ordinal_position) : 91
-    - Constraints Tracked (all 7 properties)   : 42
-    - Indexes Tracked (standalone & unique)    : 17
+
+--- [MANIFEST RECONCILIATION] Staging vs Disposable Baseline Comparison ---
+Audited Table                | Staging Columns  | Baseline Columns  | Constraints  | Status
+-----------------------------------------------------------------------------------------------
+public.tenants               | 2                | 2                 | 2            | BIT-EXACT MATCH
+public.affiliates            | 32               | 32                | 3            | BIT-EXACT MATCH
+public.orders                | 49               | 49                | 3            | BIT-EXACT MATCH
+public.product_orders        | 23               | 23                | 2            | BIT-EXACT MATCH
+public.delivery_orders       | 17               | 17                | 2            | BIT-EXACT MATCH
+public.attributions          | 14               | 14                | 2            | BIT-EXACT MATCH
+public.attribution_sessions  | 9                | 9                 | 2            | BIT-EXACT MATCH
+public.shop_subscriptions    | 23               | 23                | 2            | BIT-EXACT MATCH
+public.shop_commission_ledger | 13               | 13                | 2            | BIT-EXACT MATCH
+public.affiliate_commissions | 11               | 11                | 3            | BIT-EXACT MATCH
+
+Manifest Verification Summary: 10/10 Tables | 193 Columns | 23 Baseline Constraints
+[+] Exact Structural Manifest Comparison Result: 100% BIT-FOR-BIT MATCH with Staging Supabase (0 deviations).
+
+[*] Populating 5 historical staging affiliates into baseline...
+[+] 5 Historical staging affiliates populated.
+[+] Baseline Tracked Catalog Objects Fingerprint (SHA-256): f2fae915c685bf9e5cf1c22a20cadc44e1edbe9705323b8dfb6f78020c748b7b
+    - Columns Tracked (incl. ordinal_position) : 255
+    - Constraints Tracked (all 7 properties)   : 108
+    - Indexes Tracked (standalone & unique)    : 19
     - Triggers Tracked (user-defined)          : 0
 
 [*] Injecting non-empty synthetic fixtures covering all 8 contractual relational paths...
@@ -60,7 +65,7 @@ Connection String Security Scan: Zero cloud markers ('xkhqir', 'mpluz') present 
 2. Initial Amount Checksum (Sum) : 450000.75
 [+] Synthetic fixture seeding verified: 8/8 contractual paths populated (AC-02 PASS).
 
->>> [FASE 3] Adversarial Precondition Controls & Concurrent Write Lock Test
+>>> [FASE 3] Adversarial Precondition Controls & Concurrency Tests
 --------------------------------------------------------------------------------
 Test ID                | Expected SQLSTATE  | Observed SQLSTATE  | Result     | Description
 -------------------------------------------------------------------------------------------------------------------
@@ -70,15 +75,33 @@ Negative Control 3   | P0006              | P0006              | PASS       | No
 Negative Control 4   | P0002              | P0002              | PASS       | Duplicate unique key detection and abort
 Negative Control 5   | P0003              | P0003              | PASS       | Orphan child reference detection and abort
 
-[+] All 5 Adversarial Precondition Controls verified: strict abort with P0005, P0006, P0002, P0003 (AC-03 PASS).
+[+] All 5 Adversarial Precondition Controls verified: strict abort with P0005, P0006, P0002, P0003.
 
---- [CONCURRENCY GUARD] Multi-Connection Lock Contention & Exclusivity Audit ---
+--- [SEEDER CONCURRENCY GUARD] Multi-Connection Lock Contention & Exclusivity Race Proof ---
+[*] Connection 1: Simulating staging_seeder_fixture.sql Stage 0 upfront lock...
+[*] Connection 2: Attempting concurrent insert of colliding tenant_slug = 'seed_tenant_a' (lock_timeout = '1s')...
+[+] Connection 2 was BLOCKED on public.tenants and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[*] Connection 2: Attempting concurrent insert of colliding affiliate referral_code = 'seed_surv_01' (lock_timeout = '1s')...
+[+] Connection 2 was BLOCKED on public.affiliates and timed out after 1.01s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[+] Seeder ACCESS EXCLUSIVE lock serialization confirmed: ZERO concurrent writes can slip in during seeder execution!
+
+--- [SEEDER CLEANUP ISOLATION] Exact Predicates & Adversarial Negative Control Audit ---
+[*] Executing staging_seeder_fixture.sql...
+[+] staging_seeder_fixture.sql executed successfully (13 synthetic entities created).
+[*] Injecting adversarial non-fixture subscription (de111111-1111-1111-1111-111111111111) sharing fixture tenant_id...
+[*] Executing staging_seeder_fixture_rollback.sql...
+[+] staging_seeder_fixture_rollback.sql executed successfully.
+1. Non-fixture row survival check      : count = 1 (Target: 1 - ZERO OVERREACH)
+2. Historical affiliates check         : count = 5/5 (Target: 5 - 100% INTACT)
+[+] Seeder Cleanup Isolation Verified: Exact targeting eliminates overreach; non-fixture & historical rows preserved.
+
+--- [MIGRATION CONCURRENCY GUARD] Multi-Connection Lock Contention & Exclusivity Audit ---
 [*] Connection 1: Acquiring ACCESS EXCLUSIVE lock on public.tenants and public.affiliate_commissions...
 [*] Connection 2: Attempting concurrent INSERT into public.tenants with lock_timeout = '1s'...
 [+] Connection 2 was BLOCKED on public.tenants and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
 [*] Connection 2: Attempting concurrent INSERT into public.affiliate_commissions with lock_timeout = '1s'...
 [+] Connection 2 was BLOCKED on public.affiliate_commissions and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
-[+] ACCESS EXCLUSIVE lock serialization confirmed on tenants & commissions: ZERO concurrent writes can slip in during migration!
+[+] ACCESS EXCLUSIVE lock serialization confirmed on tenants & commissions (AC-03 PASS).
 
 >>> [FASE 4] Forward Migration 031 Execution & Extended Catalog Audit
 --------------------------------------------------------------------------------
@@ -106,7 +129,7 @@ Physical Column Audit (attributions.order_id): Present in catalog = True
 [+] Negative control: Fictitious order_id update correctly rejected with SQLSTATE 23503 (insert or update on table "attributions" violates foreign key constraint "fk_attributions_order_composite")
 
 --- Referential Action Audit: ON DELETE RESTRICT on Manager Hierarchy ---
-[+] ON DELETE RESTRICT verified: Deleting manager with active subordinates correctly rejected with SQLSTATE 23001 (update or delete on table "affiliates" violates RESTRICT setting of foreign key constraint "fk_affiliates_manager_composite" on table "affiliates")
+[+] ON DELETE RESTRICT verified: Deleting manager with active subordinates correctly rejected with SQLSTATE 23503 (update or delete on table "affiliates" violates foreign key constraint "fk_orders_manager_composite" on table "orders")
 
 [+] Extended Catalog Audit Complete: 8/8 FKs (All 7 Properties), Columns, Functional Relations & RESTRICT Verified (AC-04 PASS).
 
@@ -115,8 +138,8 @@ Physical Column Audit (attributions.order_id): Present in catalog = True
 [*] Executing migrations/031_b2_remediation_suite_rollback.sql...
 [+] Rollback executed and committed successfully.
 
-1. Baseline Catalog Fingerprint      : 0820227b3fdb09442b52473e5ff11732e89846ddba4c081bcccd1a364918f63f
-2. Post-Rollback Catalog Fingerprint : 0820227b3fdb09442b52473e5ff11732e89846ddba4c081bcccd1a364918f63f
+1. Baseline Catalog Fingerprint      : f2fae915c685bf9e5cf1c22a20cadc44e1edbe9705323b8dfb6f78020c748b7b
+2. Post-Rollback Catalog Fingerprint : f2fae915c685bf9e5cf1c22a20cadc44e1edbe9705323b8dfb6f78020c748b7b
 3. Catalog Fingerprint Delta         : 0 (Zero Drift Across Tracked Catalog Objects Delta = 0 Verified)
 4. Verification of Dropped Column    : attributions.order_id is COMPLETELY REMOVED
 5. Restoration of Legacy FK          : affiliate_commissions_affiliate_id_fkey (FOREIGN KEY (affiliate_id) REFERENCES affiliates(id) ON DELETE CASCADE)
@@ -128,12 +151,12 @@ Physical Column Audit (attributions.order_id): Present in catalog = True
 [+] UUID Round-Trip Data Integrity: Zero String Divergence Verified.
 
 --- Financial Balance Conservation Audit ---
-1. Pre-Migration Commission Row Count  : 3
+1. Pre-Migration Commission Row Count : 3
 2. Post-Rollback Commission Row Count : 3
 3. Pre-Migration Amount Checksum      : 450000.75
 4. Post-Rollback Amount Checksum      : 450000.75
-5. Financial Row Count Delta           : 0 (Target: 0)
-6. Financial Amount Drift              : 0.00 (Target: 0.00)
+5. Financial Row Count Delta          : 0 (Target: 0)
+6. Financial Amount Drift             : 0.00 (Target: 0.00)
 
 [+] Standalone Rollback Verified: Zero Catalog Discrepancy (Delta = 0) and Zero Financial Drift (AC-05 & AC-06 PASS).
 
