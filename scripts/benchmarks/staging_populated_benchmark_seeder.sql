@@ -1,55 +1,42 @@
 -- =============================================================================
--- BOONTRACK STAGING POPULATED WORKLOAD BENCHMARK SEEDER (OPTION B)
+-- BOONTRACK STAGING POPULATED WORKLOAD BENCHMARK SEEDER (OPTION B - REVISED)
 -- =============================================================================
 -- Classification: Lead DBRE & Principal Systems Architect
 -- Target Database: Staging Supabase (xkhqirhurnjqglmajghn:5432)
 -- Status: PREPARATION ARTIFACT (STAGING WRITE PENDING AUTHORIZATION)
 -- Target Benchmark Tenant: '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba'
+-- Mode: PURE DML (Zero DDL manipulation, separation of concerns guaranteed)
 -- Total Fixture Quota: Exactly 1,200 synthetic rows across 5 tables
 --   - public.orders                : 200 rows (ID: bench_ord_001 .. bench_ord_200)
 --   - public.product_orders        : 200 rows (180 COMPLETED, 20 PENDING)
---   - public.order_items           : 400 rows (2 items per product_order)
+--   - public.order_items           : 400 rows (2 items per product_order, FK product_order_id)
 --   - public.affiliate_commissions : 200 rows (Rp 10.000 / Rp 25.000 deterministic)
 --   - public.attributions          : 200 rows (FK-linked to orders and affiliates)
--- Security & Isolation: Strict 'bench_' prefix namespace; zero collision guard.
+-- Security & Isolation: Strict 'bench\_%' prefix with ESCAPE '\'; zero collision guard.
 -- Zero-Touch Guarantee: Production Supabase & Cloudflare R2 strictly untouched.
 -- =============================================================================
 
 BEGIN;
 
 -- -----------------------------------------------------------------------------
--- [STAGE 0] SESSION GUARDRAILS & DETERMINISTIC CONCURRENCY LOCKING
+-- [STAGE 0] SESSION GUARDRAILS & DEFINITIVE CONCURRENCY LOCKING
+-- Mode: SHARE ROW EXCLUSIVE (Blocks concurrent INSERT/UPDATE/DELETE; allows concurrent SELECT)
+-- Lock Order: orders -> product_orders -> order_items -> affiliate_commissions -> attributions
 -- -----------------------------------------------------------------------------
-SET LOCAL statement_timeout = '15s';
-SET LOCAL lock_timeout = '3s';
+SET LOCAL statement_timeout = '2000ms';
+SET LOCAL lock_timeout = '500ms';
 
--- Create table public.order_items if it has not yet been materialized in the catalog
-CREATE TABLE IF NOT EXISTS public.order_items (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id VARCHAR NOT NULL,
-    order_id VARCHAR NOT NULL,
-    product_order_id INTEGER NOT NULL,
-    item_sku VARCHAR NOT NULL,
-    item_name VARCHAR NOT NULL,
-    quantity INTEGER NOT NULL DEFAULT 1,
-    unit_price NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT fk_order_items_product_orders FOREIGN KEY (product_order_id) REFERENCES public.product_orders(id) ON DELETE CASCADE
-);
-
--- Acquire ACCESS EXCLUSIVE locks deterministically across all participating tables
 LOCK TABLE
-    public.tenants,
-    public.affiliates,
     public.orders,
     public.product_orders,
     public.order_items,
     public.affiliate_commissions,
     public.attributions
-IN ACCESS EXCLUSIVE MODE;
+IN SHARE ROW EXCLUSIVE MODE;
 
 -- -----------------------------------------------------------------------------
 -- [STAGE 1] PRECONDITION AUDIT & DETERMINISTIC COLLISION GUARD
+-- Menggunakan pola LIKE 'bench\_%' ESCAPE '\' untuk mencegah anomali wildcard
 -- -----------------------------------------------------------------------------
 DO $$
 DECLARE
@@ -70,17 +57,17 @@ BEGIN
     VALUES ('6b37fdf0-b1a2-49ad-bec5-7153b8a76fba'::uuid, 'staging-bench-tenant-6b37')
     ON CONFLICT (id) DO NOTHING;
 
-    -- 2. Collision Guard: Pastikan tidak ada data eksisting dengan prefix 'bench_ord_'
+    -- 2. Collision Guard Eksplisit: Pastikan tidak ada data eksisting dengan prefix 'bench\_'
     SELECT (
-        (SELECT COUNT(*) FROM public.orders WHERE id LIKE 'bench_ord_%') +
-        (SELECT COUNT(*) FROM public.product_orders WHERE order_id LIKE 'bench_ord_%') +
-        (SELECT COUNT(*) FROM public.order_items WHERE order_id LIKE 'bench_ord_%') +
-        (SELECT COUNT(*) FROM public.affiliate_commissions WHERE order_id LIKE 'bench_ord_%') +
-        (SELECT COUNT(*) FROM public.attributions WHERE order_id LIKE 'bench_ord_%')
+        (SELECT COUNT(*) FROM public.orders WHERE id LIKE 'bench\_%' ESCAPE '\') +
+        (SELECT COUNT(*) FROM public.product_orders WHERE order_id LIKE 'bench\_%' ESCAPE '\') +
+        (SELECT COUNT(*) FROM public.order_items WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND product_order_id BETWEEN 60001 AND 60200) +
+        (SELECT COUNT(*) FROM public.affiliate_commissions WHERE order_id LIKE 'bench\_%' ESCAPE '\') +
+        (SELECT COUNT(*) FROM public.attributions WHERE order_id LIKE 'bench\_%' ESCAPE '\')
     ) INTO v_colliding_count;
 
     IF v_colliding_count > 0 THEN
-        RAISE EXCEPTION 'COLLISION GUARD FAIL: Found % colliding records with prefix bench_ord_!', v_colliding_count;
+        RAISE EXCEPTION 'COLLISION GUARD FAIL: Found % colliding records with prefix bench\_!', v_colliding_count;
     END IF;
 
     RAISE NOTICE 'PRE-CHECK & COLLISION GUARD PASS: Tenant verified, 0 colliding rows.';
@@ -88,7 +75,7 @@ END $$;
 
 -- -----------------------------------------------------------------------------
 -- [STAGE 2] INJEKSI 200 ORDERS (PARENT ENTITY)
--- Mengisi external_order_id melalui order_number dan metadata JSONB
+-- Mengisi order_number dan metadata JSONB
 -- -----------------------------------------------------------------------------
 WITH gen_series AS (
     SELECT generate_series(1, 200) AS i
@@ -137,7 +124,8 @@ JOIN affiliate_pool a ON a.pool_idx = ((s.i - 1) % 3);
 
 -- -----------------------------------------------------------------------------
 -- [STAGE 3] INJEKSI 200 PRODUCT_ORDERS (CHILD ENTITY)
--- Distribusi status: 180 COMPLETED, 20 PENDING untuk evaluasi selective partial index
+-- Rentang ID deterministik: 60001 .. 60200
+-- Distribusi status: 180 COMPLETED, 20 PENDING
 -- -----------------------------------------------------------------------------
 WITH gen_series AS (
     SELECT generate_series(1, 200) AS i
@@ -178,7 +166,7 @@ JOIN affiliate_pool a ON a.pool_idx = ((s.i - 1) % 3);
 
 -- -----------------------------------------------------------------------------
 -- [STAGE 4] INJEKSI 400 ORDER_ITEMS (COMPOSITE RELATION TO PRODUCT_ORDERS)
--- Tepat 2 baris item per product_order
+-- Relasi FK: product_order_id merujuk ke public.product_orders(id) [60001..60200]
 -- -----------------------------------------------------------------------------
 WITH order_base AS (
     SELECT generate_series(1, 200) AS i
@@ -296,6 +284,7 @@ JOIN affiliate_pool a ON a.pool_idx = ((s.i - 1) % 3);
 -- -----------------------------------------------------------------------------
 -- [STAGE 7] POSTCONDITION VALIDATION & EXACT QUOTA VERIFICATION
 -- Memverifikasi bahwa seluruh baris sintetis tepat 1.200 baris
+-- Pola matching menggunakan LIKE 'bench\_%' ESCAPE '\'
 -- -----------------------------------------------------------------------------
 DO $$
 DECLARE
@@ -309,23 +298,24 @@ DECLARE
     v_total   INT;
 BEGIN
     SELECT COUNT(*) INTO v_ord_cnt FROM public.orders 
-    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND id LIKE 'bench_ord_%';
+    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND id LIKE 'bench\_%' ESCAPE '\';
 
     SELECT COUNT(*), 
            COUNT(*) FILTER (WHERE status = 'COMPLETED'),
            COUNT(*) FILTER (WHERE status = 'PENDING')
     INTO v_po_cnt, v_po_comp, v_po_pend 
     FROM public.product_orders 
-    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND order_id LIKE 'bench_ord_%';
+    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND order_id LIKE 'bench\_%' ESCAPE '\';
 
     SELECT COUNT(*) INTO v_itm_cnt FROM public.order_items 
-    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND order_id LIKE 'bench_ord_%';
+    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba'
+      AND product_order_id BETWEEN 60001 AND 60200;
 
     SELECT COUNT(*) INTO v_com_cnt FROM public.affiliate_commissions 
-    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND order_id LIKE 'bench_ord_%';
+    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND order_id LIKE 'bench\_%' ESCAPE '\';
 
     SELECT COUNT(*) INTO v_att_cnt FROM public.attributions 
-    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND order_id LIKE 'bench_ord_%';
+    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND order_id LIKE 'bench\_%' ESCAPE '\';
 
     v_total := v_ord_cnt + v_po_cnt + v_itm_cnt + v_com_cnt + v_att_cnt;
 
