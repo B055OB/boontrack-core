@@ -35,6 +35,7 @@ SET LOCAL lock_timeout = '2s';
 -- [SAFETY GUARD] EXPLICIT TABLE LOCKING (CONCURRENT WRITES PROTECTION)
 -- -----------------------------------------------------------------------------
 LOCK TABLE 
+    public.tenants,
     public.affiliate_commissions, 
     public.shop_subscriptions, 
     public.shop_commission_ledger, 

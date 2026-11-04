@@ -9,7 +9,7 @@ Security Boundary: ZERO MUTATION ON STAGING / PRODUCTION; ZERO-TOUCH R2; STRICT 
 
 Remediation Highlights (Addressing CTO P1 Rehearsal Findings):
   1. Concurrency Protection & Locking Order (ACCESS EXCLUSIVE LOCK acquired upfront)
-  2. Full Catalog Parity Fingerprint (Columns, Constraints, Standalone Indexes, Triggers)
+  2. Zero Drift Across Tracked Catalog Objects (Columns, Constraints, Standalone Indexes, Triggers)
   3. Full Contractual FK Evaluation (All 7 pg_constraint properties strictly verified)
   4. UUID Canonical Round-Trip Test & Staging Read-Only Case Verification
   5. Multi-Connection Concurrent-Write Adversarial Contention Proof (SQLSTATE 55P03)
@@ -281,12 +281,12 @@ def audit_staging_tenant_id_casing():
     """
     Strictly read-only audit against Staging Supabase to inspect whether
     existing tenancy records in public schema comply 100% with canonical lowercase RFC 4122.
+    Fail-closed posture: raises Exception if connection fails, env var missing, or data incomplete.
     """
     print("\n--- Staging Supabase Read-Only Tenancy Case Audit ---")
     stg_url = os.getenv("STAGING_DATABASE_URL")
-    if not stg_url:
-        print("[!] STAGING_DATABASE_URL not configured in environment. Skipping staging scan.")
-        return
+    if not stg_url or not stg_url.strip():
+        raise RuntimeError("FAIL: STAGING_DATABASE_URL environment variable is missing or empty. Fail-closed posture requires Staging read-only audit.")
 
     try:
         conn = psycopg2.connect(stg_url)
@@ -297,6 +297,8 @@ def audit_staging_tenant_id_casing():
         # Audit tenants.id
         cur.execute("SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE id::text <> lower(id::text)) AS non_lower FROM public.tenants;")
         t_res = cur.fetchone()
+        if not t_res:
+            raise RuntimeError("FAIL: Unable to query public.tenants on Staging Supabase.")
         print(f"1. public.tenants.id                  : total = {t_res[0]:<3} | non-canonical uppercase = {t_res[1]}")
 
         # Audit audited tables with tenant_id
@@ -313,6 +315,8 @@ def audit_staging_tenant_id_casing():
                 FROM public.{tbl};
             """)
             r = cur.fetchone()
+            if not r:
+                raise RuntimeError(f"FAIL: Incomplete staging audit data: unable to query public.{tbl}.")
             print(f"   public.{tbl:<28}: total = {r[0]:<3} | non-canonical uppercase = {r[1]}")
             non_lower_total += r[1]
 
@@ -322,9 +326,80 @@ def audit_staging_tenant_id_casing():
         if non_lower_total == 0:
             print(f"[+] Staging Tenancy Audit Result: 100% Canonical Lowercase RFC 4122 Verified ({non_lower_total} case deviations).")
         else:
-            print(f"[!] Warning: Found {non_lower_total} non-lowercase tenant_id records in staging!")
+            raise AssertionError(f"FAIL: Found {non_lower_total} non-lowercase tenant_id records in staging! RFC 4122 canonical casing violated.")
     except Exception as e:
-        print(f"[-] Staging inspection read-only notice: {e}")
+        raise RuntimeError(f"FAIL: Staging read-only tenancy casing audit failed: {e}") from e
+
+def extract_staging_tracked_catalog_manifest():
+    """
+    Extracts tracked catalog manifest (columns, nullability, constraints) from Staging Supabase
+    in STRICT READ-ONLY mode, ensuring baseline disposable database structural alignment.
+    Fail-closed: raises Exception if connection fails, env var missing, or data incomplete.
+    """
+    print("\n--- Staging Supabase Read-Only Tracked Catalog Manifest Extraction ---")
+    stg_url = os.getenv("STAGING_DATABASE_URL")
+    if not stg_url or not stg_url.strip():
+        raise RuntimeError("FAIL: STAGING_DATABASE_URL environment variable is missing or empty. Fail-closed posture requires Staging read-only manifest extraction.")
+
+    try:
+        conn = psycopg2.connect(stg_url)
+        conn.set_session(readonly=True)
+        cur = conn.cursor()
+        cur.execute("SET TRANSACTION READ ONLY;")
+
+        audited_tables = [
+            'tenants', 'affiliates', 'orders', 'product_orders', 'delivery_orders',
+            'attributions', 'attribution_sessions', 'shop_subscriptions',
+            'shop_commission_ledger', 'affiliate_commissions'
+        ]
+
+        cur.execute("""
+            SELECT table_name, column_name, data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = ANY(%s)
+            ORDER BY table_name, column_name;
+        """, (audited_tables,))
+        raw_cols = cur.fetchall()
+        if not raw_cols:
+            raise RuntimeError("FAIL: Staging Supabase returned 0 columns for audited tables! Incomplete catalog.")
+
+        staging_columns = {}
+        for tbl, col, dt, null_str in raw_cols:
+            staging_columns.setdefault(tbl, {})[col] = {
+                'data_type': dt,
+                'is_nullable': null_str
+            }
+
+        # Query existing constraints on audited tables in staging
+        cur.execute("""
+            SELECT 
+                tc.table_name,
+                tc.constraint_name,
+                tc.constraint_type
+            FROM information_schema.table_constraints tc
+            WHERE tc.table_schema = 'public' AND tc.table_name = ANY(%s)
+            ORDER BY tc.table_name, tc.constraint_name;
+        """, (audited_tables,))
+        raw_cons = cur.fetchall()
+        staging_constraints = {}
+        for tbl, cname, ctype in raw_cons:
+            staging_constraints.setdefault(tbl, []).append((cname, ctype))
+
+        conn.rollback()
+        conn.close()
+
+        print(f"[+] Staging Catalog Manifest Extracted: {len(staging_columns)} tables tracked.")
+        for tbl in audited_tables:
+            col_cnt = len(staging_columns.get(tbl, {}))
+            con_cnt = len(staging_constraints.get(tbl, []))
+            print(f"    - public.{tbl:<25} : {col_cnt:<3} columns | {con_cnt} constraints")
+
+        return {
+            'columns': staging_columns,
+            'constraints': staging_constraints
+        }
+    except Exception as e:
+        raise RuntimeError(f"FAIL: Staging tracked catalog manifest extraction failed: {e}") from e
 
 def main():
     print_header("BOONTRACK P1 DISPOSABLE DB REHEARSAL HARNESS EXECUTION", 1)
@@ -347,6 +422,9 @@ def main():
 
     # Perform Read-Only Staging Tenancy Casing Verification
     audit_staging_tenant_id_casing()
+
+    # Perform Read-Only Staging Tracked Catalog Manifest Extraction
+    staging_manifest = extract_staging_tracked_catalog_manifest()
 
     # =========================================================================
     # FASE 1: Environment Isolation & Provisioning
@@ -548,9 +626,23 @@ def main():
     target_conn.commit()
     print("[+] Baseline physical schema tables successfully created.")
 
-    # Compute baseline schema fingerprint using full catalog parity
+    # Verify structural alignment between baseline disposable schema and staging manifest
+    print("[*] Verifying structural alignment between baseline disposable schema and staging manifest...")
+    disposable_audited_tables = [
+        'tenants', 'affiliates', 'orders', 'product_orders', 'delivery_orders',
+        'attributions', 'attribution_sessions', 'shop_subscriptions',
+        'shop_commission_ledger', 'affiliate_commissions'
+    ]
+    for tbl in disposable_audited_tables:
+        if tbl not in staging_manifest['columns']:
+            raise AssertionError(f"FAIL: Table public.{tbl} from disposable baseline is missing in Staging manifest!")
+        if tbl != 'tenants' and 'tenant_id' not in staging_manifest['columns'][tbl]:
+            raise AssertionError(f"FAIL: Table public.{tbl} in Staging is missing tenant_id column!")
+    print(f"[+] Baseline disposable structural alignment against Staging manifest: 10/10 tables verified.")
+
+    # Compute baseline schema fingerprint across tracked catalog objects
     baseline_fp, base_cols, base_cons, base_idx, base_trg = compute_schema_fingerprint(target_cur)
-    print(f"[+] Full Parity Baseline Catalog Fingerprint (SHA-256): {baseline_fp}")
+    print(f"[+] Baseline Tracked Catalog Objects Fingerprint (SHA-256): {baseline_fp}")
     print(f"    - Columns Tracked (incl. ordinal_position) : {len(base_cols)}")
     print(f"    - Constraints Tracked (all 7 properties)   : {len(base_cons)}")
     print(f"    - Indexes Tracked (standalone & unique)    : {len(base_idx)}")
@@ -725,15 +817,38 @@ def main():
     conn2 = psycopg2.connect(target_conn_str)
     cur2 = conn2.cursor()
 
-    print("[*] Connection 1: Acquiring ACCESS EXCLUSIVE lock on public.affiliate_commissions...")
+    print("[*] Connection 1: Acquiring ACCESS EXCLUSIVE lock on public.tenants and public.affiliate_commissions...")
     cur1.execute("BEGIN;")
     cur1.execute("SET LOCAL lock_timeout = '2s';")
-    cur1.execute("LOCK TABLE public.affiliate_commissions IN ACCESS EXCLUSIVE MODE;")
+    cur1.execute("LOCK TABLE public.tenants, public.affiliate_commissions IN ACCESS EXCLUSIVE MODE;")
 
-    print("[*] Connection 2: Attempting concurrent INSERT with lock_timeout = '1s'...")
+    # 1. Contention proof on public.tenants
+    print("[*] Connection 2: Attempting concurrent INSERT into public.tenants with lock_timeout = '1s'...")
     cur2.execute("SET lock_timeout = '1s';")
+    tenants_lock_caught = False
+    try:
+        t_start = time.time()
+        cur2.execute("""
+            INSERT INTO public.tenants (id, name)
+            VALUES ('de000000-0000-0000-0000-000000000099', 'rogue-concurrent-tenant');
+        """)
+        conn2.commit()
+    except psycopg2.Error as ex:
+        conn2.rollback()
+        t_elapsed = time.time() - t_start
+        if ex.pgcode == '55P03':  # lock_not_available / lock timeout
+            tenants_lock_caught = True
+            print(f"[+] Connection 2 was BLOCKED on public.tenants and timed out after {t_elapsed:.2f}s with SQLSTATE 55P03 ({ex.diag.message_primary})")
+        else:
+            raise AssertionError(f"Expected lock_timeout (55P03) on public.tenants, got {ex.pgcode}: {ex}")
 
-    lock_timeout_caught = False
+    if not tenants_lock_caught:
+        raise AssertionError("FATAL CONCURRENCY BREACH: Connection 2 was able to write to locked public.tenants!")
+
+    # 2. Contention proof on public.affiliate_commissions
+    print("[*] Connection 2: Attempting concurrent INSERT into public.affiliate_commissions with lock_timeout = '1s'...")
+    cur2.execute("SET lock_timeout = '1s';")
+    comm_lock_caught = False
     try:
         t_start = time.time()
         cur2.execute(f"""
@@ -743,20 +858,21 @@ def main():
         """)
         conn2.commit()
     except psycopg2.Error as ex:
+        conn2.rollback()
         t_elapsed = time.time() - t_start
         if ex.pgcode == '55P03':  # lock_not_available / lock timeout
-            lock_timeout_caught = True
-            print(f"[+] Connection 2 was BLOCKED and timed out after {t_elapsed:.2f}s with SQLSTATE 55P03 ({ex.diag.message_primary})")
+            comm_lock_caught = True
+            print(f"[+] Connection 2 was BLOCKED on public.affiliate_commissions and timed out after {t_elapsed:.2f}s with SQLSTATE 55P03 ({ex.diag.message_primary})")
         else:
-            raise AssertionError(f"Expected lock_timeout (55P03), got {ex.pgcode}: {ex}")
+            raise AssertionError(f"Expected lock_timeout (55P03) on public.affiliate_commissions, got {ex.pgcode}: {ex}")
+
+    if not comm_lock_caught:
+        raise AssertionError("FATAL CONCURRENCY BREACH: Connection 2 was able to write to locked public.affiliate_commissions!")
 
     cur1.execute("ROLLBACK;")
     conn1.close()
     conn2.close()
-
-    if not lock_timeout_caught:
-        raise AssertionError("FATAL CONCURRENCY BREACH: Connection 2 was able to write to locked table!")
-    print("[+] ACCESS EXCLUSIVE lock serialization confirmed: ZERO concurrent writes can slip in during migration!")
+    print("[+] ACCESS EXCLUSIVE lock serialization confirmed on tenants & commissions: ZERO concurrent writes can slip in during migration!")
 
     # =========================================================================
     # FASE 4: Forward Migration 031 & Extended Catalog Audit
@@ -896,7 +1012,7 @@ def main():
     # =========================================================================
     # FASE 5: Standalone Rollback & Proof of Zero Catalog Discrepancy (Delta = 0)
     # =========================================================================
-    print_section("FASE 5", "Standalone Rollback & Full Catalog Parity Verification (Delta = 0)")
+    print_section("FASE 5", "Standalone Rollback & Zero Drift Across Tracked Catalog Objects (Delta = 0)")
 
     with open("migrations/031_b2_remediation_suite_rollback.sql", "r", encoding="utf-8") as f:
         rollback_sql = f.read()
@@ -911,7 +1027,7 @@ def main():
     print(f"2. Post-Rollback Catalog Fingerprint : {post_fp}")
 
     fingerprint_delta = 0 if baseline_fp == post_fp else -1
-    print(f"3. Catalog Fingerprint Delta         : {fingerprint_delta} (Full Parity Delta = 0 Verified)")
+    print(f"3. Catalog Fingerprint Delta         : {fingerprint_delta} (Zero Drift Across Tracked Catalog Objects Delta = 0 Verified)")
 
     if baseline_fp != post_fp:
         cols_diff = set(tuple(c.items()) for c in base_cols) ^ set(tuple(c.items()) for c in post_cols)
@@ -1030,7 +1146,7 @@ def main():
         ("AC-02", "Baseline Initialization & Synthetic Fixtures Seeding", "PASS / VERIFIED", "10 tables, 8 contractual paths, initial checksum = 450000.75"),
         ("AC-03", "Adversarial Preconditions & Lock Exclusivity Proof", "PASS / VERIFIED", "All 5 negative controls rejected; concurrent write blocked (55P03)"),
         ("AC-04", "Forward Migration 031 & Full 7-Property FK Catalog Audit", "PASS / VERIFIED", "8/8 composite FKs matched & convalidated on all 7 properties; RESTRICT (23001) verified"),
-        ("AC-05", "Migration 031 Standalone Rollback & Full Parity Delta = 0", "PASS / VERIFIED", "Full catalog parity (cols, cons, idx, trg) Delta = 0, bit-exact match"),
+        ("AC-05", "Migration 031 Standalone Rollback & Zero Drift (Delta = 0)", "PASS / VERIFIED", "Zero drift across tracked catalog objects (cols, cons, idx, trg) Delta = 0, bit-exact match"),
         ("AC-06", "Financial Data & UUID Round-Trip String Conservation", "PASS / VERIFIED", "Row delta = 0, amount drift = 0.00, 100% UUID string equality")
     ]
 

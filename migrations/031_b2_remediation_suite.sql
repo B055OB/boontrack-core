@@ -28,6 +28,7 @@ SET LOCAL lock_timeout = '2s';
 -- di antara proses audit prekondisi dan eksekusi DDL.
 -- -----------------------------------------------------------------------------
 LOCK TABLE 
+    public.tenants,
     public.affiliate_commissions, 
     public.shop_subscriptions, 
     public.shop_commission_ledger, 
@@ -378,7 +379,7 @@ COMMIT;
 BEGIN;
 SET LOCAL statement_timeout = '5s';
 SET LOCAL lock_timeout = '2s';
-LOCK TABLE public.affiliate_commissions, public.shop_subscriptions, public.shop_commission_ledger, public.orders, public.product_orders, public.delivery_orders, public.attributions, public.attribution_sessions, public.affiliates IN ACCESS EXCLUSIVE MODE;
+LOCK TABLE public.tenants, public.affiliate_commissions, public.shop_subscriptions, public.shop_commission_ledger, public.orders, public.product_orders, public.delivery_orders, public.attributions, public.attribution_sessions, public.affiliates IN ACCESS EXCLUSIVE MODE;
 
 -- 1. DROP ALL 8 COMPOSITE FOREIGN KEYS (7 NEW + 1 REPLACED)
 ALTER TABLE public.shop_subscriptions DROP CONSTRAINT IF EXISTS fk_shop_subscriptions_tenant_anchor;

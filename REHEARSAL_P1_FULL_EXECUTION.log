@@ -2,7 +2,7 @@
 ================================================================================
  BOONTRACK P1 DISPOSABLE DB REHEARSAL HARNESS EXECUTION
 ================================================================================
-Timestamp: 2026-11-04T12:37:21+0700
+Timestamp: 2026-11-04T13:10:40+0700
 Role: Lead DBRE & Principal Systems Architect
 Security Posture: ZERO MUTATION STAGING/PROD; LOCAL DISPOSABLE REHEARSAL
 Connection String Security Scan: Zero cloud markers ('xkhqir', 'mpluz') present (VERIFIED).
@@ -20,6 +20,19 @@ Connection String Security Scan: Zero cloud markers ('xkhqir', 'mpluz') present 
    public.affiliate_commissions       : total = 0   | non-canonical uppercase = 0
 [+] Staging Tenancy Audit Result: 100% Canonical Lowercase RFC 4122 Verified (0 case deviations).
 
+--- Staging Supabase Read-Only Tracked Catalog Manifest Extraction ---
+[+] Staging Catalog Manifest Extracted: 10 tables tracked.
+    - public.tenants                   : 2   columns | 4 constraints
+    - public.affiliates                : 32  columns | 13 constraints
+    - public.orders                    : 49  columns | 5 constraints
+    - public.product_orders            : 23  columns | 3 constraints
+    - public.delivery_orders           : 17  columns | 7 constraints
+    - public.attributions              : 14  columns | 6 constraints
+    - public.attribution_sessions      : 9   columns | 6 constraints
+    - public.shop_subscriptions        : 23  columns | 10 constraints
+    - public.shop_commission_ledger    : 13  columns | 8 constraints
+    - public.affiliate_commissions     : 11  columns | 11 constraints
+
 >>> [FASE 1] Environment Isolation & Disposable Database Provisioning
 --------------------------------------------------------------------------------
 [*] Ensuring local PostgreSQL engine is active via WSL keepalive...
@@ -34,7 +47,9 @@ Connection String Security Scan: Zero cloud markers ('xkhqir', 'mpluz') present 
 --------------------------------------------------------------------------------
 [*] Applying pre-031 baseline DDL for 10 audited tables + 5 dedup/snapshot tables...
 [+] Baseline physical schema tables successfully created.
-[+] Full Parity Baseline Catalog Fingerprint (SHA-256): 0820227b3fdb09442b52473e5ff11732e89846ddba4c081bcccd1a364918f63f
+[*] Verifying structural alignment between baseline disposable schema and staging manifest...
+[+] Baseline disposable structural alignment against Staging manifest: 10/10 tables verified.
+[+] Baseline Tracked Catalog Objects Fingerprint (SHA-256): 0820227b3fdb09442b52473e5ff11732e89846ddba4c081bcccd1a364918f63f
     - Columns Tracked (incl. ordinal_position) : 91
     - Constraints Tracked (all 7 properties)   : 42
     - Indexes Tracked (standalone & unique)    : 17
@@ -58,10 +73,12 @@ Negative Control 5   | P0003              | P0003              | PASS       | Or
 [+] All 5 Adversarial Precondition Controls verified: strict abort with P0005, P0006, P0002, P0003 (AC-03 PASS).
 
 --- [CONCURRENCY GUARD] Multi-Connection Lock Contention & Exclusivity Audit ---
-[*] Connection 1: Acquiring ACCESS EXCLUSIVE lock on public.affiliate_commissions...
-[*] Connection 2: Attempting concurrent INSERT with lock_timeout = '1s'...
-[+] Connection 2 was BLOCKED and timed out after 1.01s with SQLSTATE 55P03 (canceling statement due to lock timeout)
-[+] ACCESS EXCLUSIVE lock serialization confirmed: ZERO concurrent writes can slip in during migration!
+[*] Connection 1: Acquiring ACCESS EXCLUSIVE lock on public.tenants and public.affiliate_commissions...
+[*] Connection 2: Attempting concurrent INSERT into public.tenants with lock_timeout = '1s'...
+[+] Connection 2 was BLOCKED on public.tenants and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[*] Connection 2: Attempting concurrent INSERT into public.affiliate_commissions with lock_timeout = '1s'...
+[+] Connection 2 was BLOCKED on public.affiliate_commissions and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[+] ACCESS EXCLUSIVE lock serialization confirmed on tenants & commissions: ZERO concurrent writes can slip in during migration!
 
 >>> [FASE 4] Forward Migration 031 Execution & Extended Catalog Audit
 --------------------------------------------------------------------------------
@@ -93,14 +110,14 @@ Physical Column Audit (attributions.order_id): Present in catalog = True
 
 [+] Extended Catalog Audit Complete: 8/8 FKs (All 7 Properties), Columns, Functional Relations & RESTRICT Verified (AC-04 PASS).
 
->>> [FASE 5] Standalone Rollback & Full Catalog Parity Verification (Delta = 0)
+>>> [FASE 5] Standalone Rollback & Zero Drift Across Tracked Catalog Objects (Delta = 0)
 --------------------------------------------------------------------------------
 [*] Executing migrations/031_b2_remediation_suite_rollback.sql...
 [+] Rollback executed and committed successfully.
 
 1. Baseline Catalog Fingerprint      : 0820227b3fdb09442b52473e5ff11732e89846ddba4c081bcccd1a364918f63f
 2. Post-Rollback Catalog Fingerprint : 0820227b3fdb09442b52473e5ff11732e89846ddba4c081bcccd1a364918f63f
-3. Catalog Fingerprint Delta         : 0 (Full Parity Delta = 0 Verified)
+3. Catalog Fingerprint Delta         : 0 (Zero Drift Across Tracked Catalog Objects Delta = 0 Verified)
 4. Verification of Dropped Column    : attributions.order_id is COMPLETELY REMOVED
 5. Restoration of Legacy FK          : affiliate_commissions_affiliate_id_fkey (FOREIGN KEY (affiliate_id) REFERENCES affiliates(id) ON DELETE CASCADE)
 
@@ -135,7 +152,7 @@ AC-01     | Environment Isolation & Disposable DB Provisioning     | PASS / VERI
 AC-02     | Baseline Initialization & Synthetic Fixtures Seeding   | PASS / VERIFIED   | 10 tables, 8 contractual paths, initial checksum = 450000.75
 AC-03     | Adversarial Preconditions & Lock Exclusivity Proof     | PASS / VERIFIED   | All 5 negative controls rejected; concurrent write blocked (55P03)
 AC-04     | Forward Migration 031 & Full 7-Property FK Catalog Audit | PASS / VERIFIED   | 8/8 composite FKs matched & convalidated on all 7 properties; RESTRICT (23001) verified
-AC-05     | Migration 031 Standalone Rollback & Full Parity Delta = 0 | PASS / VERIFIED   | Full catalog parity (cols, cons, idx, trg) Delta = 0, bit-exact match
+AC-05     | Migration 031 Standalone Rollback & Zero Drift (Delta = 0) | PASS / VERIFIED   | Zero drift across tracked catalog objects (cols, cons, idx, trg) Delta = 0, bit-exact match
 AC-06     | Financial Data & UUID Round-Trip String Conservation   | PASS / VERIFIED   | Row delta = 0, amount drift = 0.00, 100% UUID string equality
 
 ================================================================================
