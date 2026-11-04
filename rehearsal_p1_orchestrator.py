@@ -841,15 +841,23 @@ def main():
     conn_seed_2 = psycopg2.connect(target_conn_str)
     cur_seed_2 = conn_seed_2.cursor()
 
-    print("[*] Connection 1: Simulating staging_seeder_fixture.sql Stage 0 upfront lock...")
+    print("[*] Connection 1: Simulating staging_seeder_fixture.sql Stage 0 upfront lock on all 12 tables...")
     cur_seed_1.execute("BEGIN;")
     cur_seed_1.execute("SET LOCAL lock_timeout = '2s';")
     cur_seed_1.execute("""
-        LOCK TABLE 
-            public.tenants, 
-            public.affiliates, 
-            public.shop_subscriptions, 
-            public.shop_commission_ledger 
+        LOCK TABLE
+            public.tenants,
+            public.affiliates,
+            public.orders,
+            public.product_orders,
+            public.delivery_orders,
+            public.attributions,
+            public.attribution_sessions,
+            public.shop_subscriptions,
+            public.shop_commission_ledger,
+            public.affiliate_commissions,
+            public.migration_031_quarantined_affiliate_commissions,
+            public.migration_031_identifier_dedup_map
         IN ACCESS EXCLUSIVE MODE;
     """)
 
@@ -899,10 +907,33 @@ def main():
     if not seed_ref_caught:
         raise AssertionError("FATAL CONCURRENCY BREACH: Connection 2 was able to write to locked public.affiliates during seeder run!")
 
+    # Attempt 3: Concurrent insert into public.orders
+    print("[*] Connection 2: Attempting concurrent insert of colliding order id = 'seed_ord_001' (lock_timeout = '1s')...")
+    cur_seed_2.execute("SET lock_timeout = '1s';")
+    seed_ord_caught = False
+    try:
+        t_start = time.time()
+        cur_seed_2.execute(f"""
+            INSERT INTO public.orders (id, tenant_id, status)
+            VALUES ('seed_ord_001', '{t1}', 'ROGUE');
+        """)
+        conn_seed_2.commit()
+    except psycopg2.Error as ex:
+        conn_seed_2.rollback()
+        t_elapsed = time.time() - t_start
+        if ex.pgcode == '55P03':
+            seed_ord_caught = True
+            print(f"[+] Connection 2 was BLOCKED on public.orders and timed out after {t_elapsed:.2f}s with SQLSTATE 55P03 ({ex.diag.message_primary})")
+        else:
+            raise AssertionError(f"Expected 55P03 lock timeout on orders, got {ex.pgcode}: {ex}")
+
+    if not seed_ord_caught:
+        raise AssertionError("FATAL CONCURRENCY BREACH: Connection 2 was able to write to locked public.orders during seeder run!")
+
     cur_seed_1.execute("ROLLBACK;")
     conn_seed_1.close()
     conn_seed_2.close()
-    print("[+] Seeder ACCESS EXCLUSIVE lock serialization confirmed: ZERO concurrent writes can slip in during seeder execution!")
+    print("[+] Seeder ACCESS EXCLUSIVE lock serialization confirmed across all 12 tables: ZERO concurrent writes can slip in!")
 
     # -------------------------------------------------------------------------
     # 3.3 SEEDER CLEANUP ISOLATION & NEGATIVE CONTROL TEST (CTO BLOCKER 2)
@@ -1153,19 +1184,57 @@ def main():
         else:
             raise AssertionError(f"Expected 23503 foreign key violation, got {ex.pgcode}")
 
-    # Check ON DELETE RESTRICT protection on manager self-reference
+    # -------------------------------------------------------------------------
+    # ISOLATED REFERENTIAL ACTION AUDIT: ON DELETE RESTRICT on Manager Hierarchy
+    # -------------------------------------------------------------------------
     print("\n--- Referential Action Audit: ON DELETE RESTRICT on Manager Hierarchy ---")
-    target_cur.execute("SAVEPOINT restrict_sp;")
+
+    # Test 1: Isolated Manager Self-Reference Proof (Exclusively fk_affiliates_manager_composite)
+    iso_mgr_id = 'a3333333-3333-3333-3333-333333333331'
+    iso_sub_id = 'a3333333-3333-3333-3333-333333333332'
+    target_cur.execute(f"""
+        INSERT INTO public.affiliates (id, tenant_id, name, phone_number, referral_code, manager_id)
+        VALUES 
+            ('{iso_mgr_id}'::uuid, '{t1}', 'Isolated Test Manager', '089900000001', 'REF-ISO-MGR-01', NULL),
+            ('{iso_sub_id}'::uuid, '{t1}', 'Isolated Test Subordinate', '089900000002', 'REF-ISO-SUB-01', '{iso_mgr_id}'::uuid);
+    """)
+    target_conn.commit()
+
+    target_cur.execute("SAVEPOINT restrict_mgr_self_sp;")
+    try:
+        # Attempt to delete isolated manager while subordinate references it via affiliates.manager_id
+        target_cur.execute(f"DELETE FROM public.affiliates WHERE id = '{iso_mgr_id}'::uuid;")
+        target_conn.commit()
+        raise AssertionError("FAIL: Deleting isolated manager was NOT restricted!")
+    except psycopg2.Error as ex:
+        target_cur.execute("ROLLBACK TO SAVEPOINT restrict_mgr_self_sp;")
+        if ex.pgcode in ('23503', '23001'):
+            triggered_constraint = ex.diag.constraint_name
+            if triggered_constraint != 'fk_affiliates_manager_composite':
+                raise AssertionError(
+                    f"FAIL: Expected fk_affiliates_manager_composite to restrict deletion, but got {triggered_constraint}!"
+                )
+            print(f"[+] Manager Self-Reference RESTRICT verified: Deleting manager with active subordinates correctly rejected by '{triggered_constraint}' with SQLSTATE {ex.pgcode} ({ex.diag.message_primary})")
+        else:
+            raise AssertionError(f"Expected 23503/23001 restrict violation, got {ex.pgcode}: {ex}")
+
+    # Clean up isolated test entities
+    target_cur.execute(f"DELETE FROM public.affiliates WHERE id = '{iso_sub_id}'::uuid;")
+    target_cur.execute(f"DELETE FROM public.affiliates WHERE id = '{iso_mgr_id}'::uuid;")
+    target_conn.commit()
+
+    # Test 2: Order Manager Hierarchy Proof (fk_orders_manager_composite)
+    target_cur.execute("SAVEPOINT restrict_order_mgr_sp;")
     try:
         target_cur.execute(f"DELETE FROM public.affiliates WHERE id = '{aff_mgr_01}';")
         target_conn.commit()
-        raise AssertionError("FAIL: Deleting referenced manager affiliate was NOT restricted!")
+        raise AssertionError("FAIL: Deleting manager with active orders was NOT restricted!")
     except psycopg2.Error as ex:
-        target_cur.execute("ROLLBACK TO SAVEPOINT restrict_sp;")
+        target_cur.execute("ROLLBACK TO SAVEPOINT restrict_order_mgr_sp;")
         if ex.pgcode in ('23503', '23001'):
-            print(f"[+] ON DELETE RESTRICT verified: Deleting manager with active subordinates correctly rejected with SQLSTATE {ex.pgcode} ({ex.diag.message_primary})")
+            print(f"[+] Order Manager RESTRICT verified: Deleting manager with active orders correctly rejected by '{ex.diag.constraint_name}' with SQLSTATE {ex.pgcode} ({ex.diag.message_primary})")
         else:
-            raise AssertionError(f"Expected 23503/23001 restrict/foreign key violation, got {ex.pgcode}")
+            raise AssertionError(f"Expected 23503/23001 restrict violation, got {ex.pgcode}")
 
     print("\n[+] Extended Catalog Audit Complete: 8/8 FKs (All 7 Properties), Columns, Functional Relations & RESTRICT Verified (AC-04 PASS).")
 

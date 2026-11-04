@@ -15,12 +15,22 @@ SET LOCAL lock_timeout = '2s';
 
 -- -----------------------------------------------------------------------------
 -- [STAGE 0] EXPLICIT CONCURRENCY LOCKING
+-- Memperoleh ACCESS EXCLUSIVE lock di awal transaksi teardown pada 12 tabel
+-- untuk menjamin isolasi mutlak selama pembersihan entitas sintetis.
 -- -----------------------------------------------------------------------------
-LOCK TABLE 
-    public.tenants, 
-    public.affiliates, 
-    public.shop_subscriptions, 
-    public.shop_commission_ledger 
+LOCK TABLE
+    public.tenants,
+    public.affiliates,
+    public.orders,
+    public.product_orders,
+    public.delivery_orders,
+    public.attributions,
+    public.attribution_sessions,
+    public.shop_subscriptions,
+    public.shop_commission_ledger,
+    public.affiliate_commissions,
+    public.migration_031_quarantined_affiliate_commissions,
+    public.migration_031_identifier_dedup_map
 IN ACCESS EXCLUSIVE MODE;
 
 -- -----------------------------------------------------------------------------

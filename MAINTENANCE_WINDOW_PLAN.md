@@ -95,13 +95,13 @@ Seluruh artefak kode, migrasi, seeder, dan pengujian diverifikasi secara kriptog
 |:---|:---|:---|:---|
 | `migrations/031_b2_remediation_suite.sql` | 21,315 bytes | `06cf23a77757fc802b483b8f76fecab4d12f649ceed55b750e88c10d49155001` | DDL forward migrasi 031 dengan locking `tenants` di awal dan type alignment |
 | `migrations/031_b2_remediation_suite_rollback.sql` | 6,631 bytes | `51f1ace563b14a04a9c4dc9fec99fb08dcef85a4241dfa85743beab162b4c270` | DDL rollback mandiri pembuktian $\Delta = 0$ dan pemulihan `varchar(100)` |
-| `staging_seeder_fixture.sql` | 15,541 bytes | `2849ab8e06a5f32fbfc88f51902d48719a2d0e7972db3eee682ae774f2efc894` | DML seeder sintetis terisolasi (`seed_*`, `5eed%`) dengan locking di awal |
-| `staging_seeder_fixture_rollback.sql` | 7,599 bytes | `9cb733c6f0f9ed0e962103725cdace55d59aa8de2bc16717a67be82c4a4e876a` | DML pembersih seeder dengan asersi *zero-residual* dan predikat eksplisit |
+| `staging_seeder_fixture.sql` | 15,887 bytes | `302431c189d01e57399a138566c6b9ff51dd2c45c60b970d5e6b83834665bed5` | DML seeder sintetis terisolasi (`seed_*`, `5eed%`) dengan 12-table locking di awal |
+| `staging_seeder_fixture_rollback.sql` | 8,014 bytes | `8f16e8b24497bfae440bcce0414672b455872459694e813d09008f892631c824` | DML pembersih seeder dengan asersi *zero-residual* dan 12-table locking simetris |
 | `scripts/staging_baseline_generated.sql` | 12,818 bytes | `8eff4ab893a0f397e0ca79bbb86ef6f534e527fde10afcbe21f1a62ac5aad4a0` | DDL baseline 10 tabel, 193 kolom, 23 constraint diekstrak dari Staging Supabase |
-| `rehearsal_p1_orchestrator.py` | 65,494 bytes | `8f49bce8b59a6083e55d1405862e7d5ef4fe118385ff7ff8e7e3d74a25fa1a5d` | Orkestrator otomatis rehearsal P1 lokal (AC-01 s/d AC-06) |
+| `rehearsal_p1_orchestrator.py` | 69,249 bytes | `704468766850ddbc910a53c5fff2564b0c424fca1a247391a077a9c9b5a63e62` | Orkestrator otomatis rehearsal P1 lokal (AC-01 s/d AC-06, Manager RESTRICT isolated proof) |
 | `audit_b2_comprehensive_inspector.py` | 113,643 bytes | `e6b8769f7770e507ef36d2e8486e29682f494faeede686e2f8bf66f6c8fbee59` | Inspector read-only Staging (fail-closed, 7 properti FK) |
 | `test_assert_04_regression.py` | 20,389 bytes | `df78e6c7d426029c2ac9de728f4ca741d9b129e917a129b84d298266746efef1` | Suite uji regresi unit 12 skenario fail-closed |
-| `REHEARSAL_P1_FULL_EXECUTION.log` | 14,437 bytes | `26f1adf0272c17139cf0155cb441c610ca08b450397116109901537c46c50310` | Log mentah bukti eksekusi rehearsal P1 lokal terverifikasi |
+| `REHEARSAL_P1_FULL_EXECUTION.log` | 15,043 bytes | `bf89edc0ba3eda421ffd6333e3ffbaa9fcbc6e2c89f9fa6f63f3abe883256811` | Log mentah bukti eksekusi rehearsal P1 lokal terverifikasi |
 
 ---
 

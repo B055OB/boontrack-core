@@ -2,7 +2,7 @@
 ================================================================================
  BOONTRACK P1 DISPOSABLE DB REHEARSAL HARNESS EXECUTION
 ================================================================================
-Timestamp: 2026-11-04T14:58:06+0700
+Timestamp: 2026-11-04T16:37:02+0700
 Role: Lead DBRE & Principal Systems Architect
 Security Posture: ZERO MUTATION STAGING/PROD; LOCAL DISPOSABLE REHEARSAL
 Connection String Security Scan: Zero cloud markers ('xkhqir', 'mpluz') present (VERIFIED).
@@ -78,12 +78,14 @@ Negative Control 5   | P0003              | P0003              | PASS       | Or
 [+] All 5 Adversarial Precondition Controls verified: strict abort with P0005, P0006, P0002, P0003.
 
 --- [SEEDER CONCURRENCY GUARD] Multi-Connection Lock Contention & Exclusivity Race Proof ---
-[*] Connection 1: Simulating staging_seeder_fixture.sql Stage 0 upfront lock...
+[*] Connection 1: Simulating staging_seeder_fixture.sql Stage 0 upfront lock on all 12 tables...
 [*] Connection 2: Attempting concurrent insert of colliding tenant_slug = 'seed_tenant_a' (lock_timeout = '1s')...
-[+] Connection 2 was BLOCKED on public.tenants and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[+] Connection 2 was BLOCKED on public.tenants and timed out after 1.01s with SQLSTATE 55P03 (canceling statement due to lock timeout)
 [*] Connection 2: Attempting concurrent insert of colliding affiliate referral_code = 'seed_surv_01' (lock_timeout = '1s')...
 [+] Connection 2 was BLOCKED on public.affiliates and timed out after 1.01s with SQLSTATE 55P03 (canceling statement due to lock timeout)
-[+] Seeder ACCESS EXCLUSIVE lock serialization confirmed: ZERO concurrent writes can slip in during seeder execution!
+[*] Connection 2: Attempting concurrent insert of colliding order id = 'seed_ord_001' (lock_timeout = '1s')...
+[+] Connection 2 was BLOCKED on public.orders and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[+] Seeder ACCESS EXCLUSIVE lock serialization confirmed across all 12 tables: ZERO concurrent writes can slip in!
 
 --- [SEEDER CLEANUP ISOLATION] Exact Predicates & Adversarial Negative Control Audit ---
 [*] Executing staging_seeder_fixture.sql...
@@ -129,7 +131,8 @@ Physical Column Audit (attributions.order_id): Present in catalog = True
 [+] Negative control: Fictitious order_id update correctly rejected with SQLSTATE 23503 (insert or update on table "attributions" violates foreign key constraint "fk_attributions_order_composite")
 
 --- Referential Action Audit: ON DELETE RESTRICT on Manager Hierarchy ---
-[+] ON DELETE RESTRICT verified: Deleting manager with active subordinates correctly rejected with SQLSTATE 23503 (update or delete on table "affiliates" violates foreign key constraint "fk_orders_manager_composite" on table "orders")
+[+] Manager Self-Reference RESTRICT verified: Deleting manager with active subordinates correctly rejected by 'fk_affiliates_manager_composite' with SQLSTATE 23001 (update or delete on table "affiliates" violates RESTRICT setting of foreign key constraint "fk_affiliates_manager_composite" on table "affiliates")
+[+] Order Manager RESTRICT verified: Deleting manager with active orders correctly rejected by 'fk_orders_manager_composite' with SQLSTATE 23503 (update or delete on table "affiliates" violates foreign key constraint "fk_orders_manager_composite" on table "orders")
 
 [+] Extended Catalog Audit Complete: 8/8 FKs (All 7 Properties), Columns, Functional Relations & RESTRICT Verified (AC-04 PASS).
 

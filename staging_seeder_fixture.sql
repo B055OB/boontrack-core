@@ -17,12 +17,21 @@ SET LOCAL lock_timeout = '2s';
 -- [STAGE 0] EXPLICIT CONCURRENCY LOCKING (RACE CONDITION PROTECTION)
 -- Memperoleh ACCESS EXCLUSIVE lock di awal transaksi sebelum collision audit
 -- untuk mencegah concurrent insert menyusup di antara audit dan injeksi.
+-- Menjangkau SELURUH 12 tabel yang terlibat dalam audit tabrakan dan seeder.
 -- -----------------------------------------------------------------------------
-LOCK TABLE 
-    public.tenants, 
-    public.affiliates, 
-    public.shop_subscriptions, 
-    public.shop_commission_ledger 
+LOCK TABLE
+    public.tenants,
+    public.affiliates,
+    public.orders,
+    public.product_orders,
+    public.delivery_orders,
+    public.attributions,
+    public.attribution_sessions,
+    public.shop_subscriptions,
+    public.shop_commission_ledger,
+    public.affiliate_commissions,
+    public.migration_031_quarantined_affiliate_commissions,
+    public.migration_031_identifier_dedup_map
 IN ACCESS EXCLUSIVE MODE;
 
 -- -----------------------------------------------------------------------------
