@@ -133,12 +133,12 @@ VALUES
 -- [STAGE 5] QUARANTINED COMMISSIONS (1 Physically Isolated Row)
 -- -----------------------------------------------------------------------------
 INSERT INTO public.migration_031_quarantined_affiliate_commissions (
-    id, migration_batch_id, tenant_id, original_tenant_id, affiliate_id, order_id, order_amount, amount, 
-    commission_type, original_status, quarantine_reason, distinct_tenant_count, row_snapshot, approval_status
+    id, migration_batch_id, tenant_id, original_tenant_id, affiliate_id, order_id, 
+    order_amount, amount, commission_type, original_status, quarantine_reason, distinct_tenant_count, row_snapshot, approval_status
 )
 VALUES (
-    '5eed4444-4444-4444-4444-444444444441'::uuid, 'seed_batch_001', '5eed0000-0000-0000-0000-000000000001', 
-    '5eed0000-0000-0000-0000-000000000001', '5eed1111-1111-1111-1111-111111111111', 'seed_ord_quar_001', 
+    '5eed4444-4444-4444-4444-444444444441'::uuid, 'seed_batch_001', NULL, 
+    NULL, '5eed1111-1111-1111-1111-111111111111', 'seed_ord_quar_001', 
     750000.00, 75000.00, 'PRODUCT_ORDER', 'PENDING', 'QUARANTINE_NULL_TENANT_LEGACY', 1, '{}'::jsonb, 'QUARANTINED_LOCKED'
 );
 
@@ -161,8 +161,8 @@ VALUES
    '5eed2222-2222-2222-2222-222222222222', '5eed2222-2222-2222-2222-222222222221', '5eed2222-2222-2222-2222-222222222222',
    '5eed2222-2222-2222-2222-222222222221', 2, 'SUPERSEDED_DUPLICATE', 'MERGED_TO_SURVIVOR',
    false, '[]'::jsonb, '{}'::jsonb, 0, now(), now()),
-  ('5eed5555-5555-5555-5555-555555555553'::uuid, 'seed_batch_001', 'affiliate_commissions', 'tenant_id', '5eed0000-0000-0000-0000-000000000001',
-   '5eed4444-4444-4444-4444-444444444441', '5eed4444-4444-4444-4444-444444444441', '5eed0000-0000-0000-0000-000000000001',
+  ('5eed5555-5555-5555-5555-555555555553'::uuid, 'seed_batch_001', 'affiliate_commissions', 'tenant_id', NULL,
+   '5eed4444-4444-4444-4444-444444444441', '5eed4444-4444-4444-4444-444444444441', NULL,
    'MOVED_TO_QUARANTINE_TABLE', 1, 'QUARANTINED', 'QUARANTINE_NULL_TENANT_LEGACY',
    false, '[]'::jsonb, '{}'::jsonb, 0, now(), now());
 

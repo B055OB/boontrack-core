@@ -2,7 +2,7 @@
 ================================================================================
  GATE B2 COMPREHENSIVE PROTOCOL INSPECTION & EVIDENCE HARVESTER (REV 2.8)
 ================================================================================
-Timestamp (UTC): 2026-11-04T14:45:05.379321+00:00
+Timestamp (UTC): 2026-11-04T15:44:37.511949+00:00
 Lead DBRE Role : Lead Database Reliability Engineer & Principal Systems Architect
 Protocol Spec  : GATE_B2_VERIFICATION_PROTOCOL.md (REV 2.8, Commit a9ad768)
 Target DB URI  : postgresql://postgres:*****@127.0.0.1:5432/boontrack_disposable_rehearsal
@@ -201,17 +201,17 @@ Commissions: Total=4, Distinct ID=4, Duplicate PK=0
 
 --- [7.B] Execution of Pure In-Memory 3-Tier Linear Lineage Engine (A -> B -> C) ---
 [*] Note: Executed via pure CTE pipeline in strict read-only mode without mutating DDL.
-1. Baseline Run ID              : B2-STG-RUN-20261104-214506
-2. Snapshot Taken At            : 2026-11-04 21:45:06.568932+07:00
+1. Baseline Run ID              : B2-STG-RUN-20261104-224437
+2. Snapshot Taken At            : 2026-11-04 22:44:37.839848+07:00
 3. Snapshot Row Count           : 5
 4. Snapshot Total Amount        : 575000.75
-5. Baseline Snapshot Fingerprint: 816a28328a104e4f338b353ef54e7e6e5452e8869d309e36ceb7cffd1be4d5f3
+5. Baseline Snapshot Fingerprint: 486419f3c99a3f4994be030ad33d915caf9271a267ba7802a4ba4e2479761d3a
 6. Expected Transformed Count   : 5
 7. Expected Transformed Amount  : 575000.75
-8. Expected Transformed Fprint  : 816a28328a104e4f338b353ef54e7e6e5452e8869d309e36ceb7cffd1be4d5f3
+8. Expected Transformed Fprint  : 486419f3c99a3f4994be030ad33d915caf9271a267ba7802a4ba4e2479761d3a
 9. Actual Post Migration Count  : 5
 10. Actual Post Migration Amount: 575000.75
-11. Actual Post Mig Fingerprint : 816a28328a104e4f338b353ef54e7e6e5452e8869d309e36ceb7cffd1be4d5f3
+11. Actual Post Mig Fingerprint : 486419f3c99a3f4994be030ad33d915caf9271a267ba7802a4ba4e2479761d3a
 12. Lineage A->B Anomalies Count: 0 (Target: 0)
 13. Row-Level Lineage Anomalies : 0 (Target: 0)
 14. Grouped Variance Anomalies  : 0 (Target: 0)
@@ -246,4 +246,4 @@ EXECUTIVE DBRE AUDIT SUMMARY:
 6. In accordance with CTO Directive (No False Labeling), Gate B2 status: GATE B2 FULLY RATIFIED & PROVEN (All populated assertions PASS).
 ================================================================================
 
-Audit completed in 1.19 seconds. Connection rolled back and closed.
+Audit completed in 0.33 seconds. Connection rolled back and closed.

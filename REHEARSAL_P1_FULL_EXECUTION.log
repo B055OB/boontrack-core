@@ -2,7 +2,7 @@
 ================================================================================
  BOONTRACK P1 DISPOSABLE DB REHEARSAL HARNESS EXECUTION
 ================================================================================
-Timestamp: 2026-11-04T21:44:42+0700
+Timestamp: 2026-11-04T22:44:16+0700
 Role: Lead DBRE & Principal Systems Architect
 Security Posture: ZERO MUTATION STAGING/PROD; LOCAL DISPOSABLE REHEARSAL
 Connection String Security Scan: Zero cloud markers ('xkhqir', 'mpluz') present (VERIFIED).
@@ -110,15 +110,15 @@ Negative Control 5   | P0003              | P0003              | PASS       | Or
 [+] Dynamic Lock Table Validation: 12/12 tables match expected deterministic manifest 100% bit-for-bit.
 [*] Connection 1: Executing dynamically extracted Stage 0 upfront lock on all 12 tables...
 [*] Connection 2 [1/6]: Attempting concurrent insert into public.tenants (colliding tenant_slug = 'seed_tenant_a', lock_timeout = '1s')...
-[+] Connection 2 [1/6] was BLOCKED on public.tenants and timed out after 1.02s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[+] Connection 2 [1/6] was BLOCKED on public.tenants and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
 [*] Connection 2 [2/6]: Attempting concurrent insert into public.affiliates (colliding referral_code = 'seed_surv_01', lock_timeout = '1s')...
-[+] Connection 2 [2/6] was BLOCKED on public.affiliates and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[+] Connection 2 [2/6] was BLOCKED on public.affiliates and timed out after 1.01s with SQLSTATE 55P03 (canceling statement due to lock timeout)
 [*] Connection 2 [3/6]: Attempting concurrent insert into public.orders (colliding order id = 'seed_ord_001', lock_timeout = '1s')...
-[+] Connection 2 [3/6] was BLOCKED on public.orders and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[+] Connection 2 [3/6] was BLOCKED on public.orders and timed out after 1.04s with SQLSTATE 55P03 (canceling statement due to lock timeout)
 [*] Connection 2 [4/6]: Attempting concurrent insert into public.affiliate_commissions (colliding commission id = '5eed3333-3333-3333-3333-333333333331', lock_timeout = '1s')...
 [+] Connection 2 [4/6] was BLOCKED on public.affiliate_commissions and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
 [*] Connection 2 [5/6]: Attempting concurrent insert into public.migration_031_quarantined_affiliate_commissions (quarantined commission row, lock_timeout = '1s')...
-[+] Connection 2 [5/6] was BLOCKED on public.migration_031_quarantined_affiliate_commissions and timed out after 1.03s with SQLSTATE 55P03 (canceling statement due to lock timeout)
+[+] Connection 2 [5/6] was BLOCKED on public.migration_031_quarantined_affiliate_commissions and timed out after 1.01s with SQLSTATE 55P03 (canceling statement due to lock timeout)
 [*] Connection 2 [6/6]: Attempting concurrent insert into public.migration_031_identifier_dedup_map (identifier dedup map row, lock_timeout = '1s')...
 [+] Connection 2 [6/6] was BLOCKED on public.migration_031_identifier_dedup_map and timed out after 1.00s with SQLSTATE 55P03 (canceling statement due to lock timeout)
 [+] Seeder ACCESS EXCLUSIVE lock serialization confirmed across all 12 tables (6/6 adversarial contention proofs BLOCKED with 55P03)!
@@ -173,11 +173,11 @@ f5b98eaa-cfde-49cf-a497-491221c1cda9   | hist_t1    | Hist Aff 5      | 0815    
 [*] Executing Forward Migration 031 with Micro-Telemetry instrumentation...
 
 --- [MICRO-TELEMETRY] Migration 031 Timing Breakdown ---
-1. Lock Acquisition Time (ACCESS EXCLUSIVE)  : 0.70 ms (0.0007 s)
-2. Precondition Audit Execution Time         : 44.17 ms (0.0442 s)
-3. Physical DDL Execution Time               : 88.45 ms (0.0885 s)
-4. Transaction Commit Duration               : 27.95 ms (0.0280 s)
-5. Total Lock Hold Duration (Before Commit)  : 160.58 ms (0.1606 s) [SLA < 3.0s: VERIFIED]
+1. Lock Acquisition Time (ACCESS EXCLUSIVE)  : 0.63 ms (0.0006 s)
+2. Precondition Audit Execution Time         : 3.14 ms (0.0031 s)
+3. Physical DDL Execution Time               : 14.65 ms (0.0146 s)
+4. Transaction Commit Duration               : 6.36 ms (0.0064 s)
+5. Total Lock Hold Duration (Before Commit)  : 24.14 ms (0.0241 s) [SLA < 3.0s: VERIFIED]
 [+] Migration 031 executed and committed within strict < 3.0s SLA window.
 
 --- [FROZEN POST-DDL CRITERIA 1] 13/13 Catalog Physical Schema Checks (SCH-01 s/d SCH-13) ---
@@ -247,7 +247,7 @@ f5b98eaa-cfde-49cf-a497-491221c1cda9   | hist_t1    | Hist Aff 5      | 0815    
 ================================================================================
  GATE B2 COMPREHENSIVE PROTOCOL INSPECTION & EVIDENCE HARVESTER (REV 2.8)
 ================================================================================
-Timestamp (UTC): 2026-11-04T14:45:05.379321+00:00
+Timestamp (UTC): 2026-11-04T15:44:37.511949+00:00
 Lead DBRE Role : Lead Database Reliability Engineer & Principal Systems Architect
 Protocol Spec  : GATE_B2_VERIFICATION_PROTOCOL.md (REV 2.8, Commit a9ad768)
 Target DB URI  : postgresql://postgres:*****@127.0.0.1:5432/boontrack_disposable_rehearsal
@@ -446,17 +446,17 @@ Commissions: Total=4, Distinct ID=4, Duplicate PK=0
 
 --- [7.B] Execution of Pure In-Memory 3-Tier Linear Lineage Engine (A -> B -> C) ---
 [*] Note: Executed via pure CTE pipeline in strict read-only mode without mutating DDL.
-1. Baseline Run ID              : B2-STG-RUN-20261104-214506
-2. Snapshot Taken At            : 2026-11-04 21:45:06.568932+07:00
+1. Baseline Run ID              : B2-STG-RUN-20261104-224437
+2. Snapshot Taken At            : 2026-11-04 22:44:37.839848+07:00
 3. Snapshot Row Count           : 5
 4. Snapshot Total Amount        : 575000.75
-5. Baseline Snapshot Fingerprint: 816a28328a104e4f338b353ef54e7e6e5452e8869d309e36ceb7cffd1be4d5f3
+5. Baseline Snapshot Fingerprint: 486419f3c99a3f4994be030ad33d915caf9271a267ba7802a4ba4e2479761d3a
 6. Expected Transformed Count   : 5
 7. Expected Transformed Amount  : 575000.75
-8. Expected Transformed Fprint  : 816a28328a104e4f338b353ef54e7e6e5452e8869d309e36ceb7cffd1be4d5f3
+8. Expected Transformed Fprint  : 486419f3c99a3f4994be030ad33d915caf9271a267ba7802a4ba4e2479761d3a
 9. Actual Post Migration Count  : 5
 10. Actual Post Migration Amount: 575000.75
-11. Actual Post Mig Fingerprint : 816a28328a104e4f338b353ef54e7e6e5452e8869d309e36ceb7cffd1be4d5f3
+11. Actual Post Mig Fingerprint : 486419f3c99a3f4994be030ad33d915caf9271a267ba7802a4ba4e2479761d3a
 12. Lineage A->B Anomalies Count: 0 (Target: 0)
 13. Row-Level Lineage Anomalies : 0 (Target: 0)
 14. Grouped Variance Anomalies  : 0 (Target: 0)
@@ -491,7 +491,7 @@ EXECUTIVE DBRE AUDIT SUMMARY:
 6. In accordance with CTO Directive (No False Labeling), Gate B2 status: GATE B2 FULLY RATIFIED & PROVEN (All populated assertions PASS).
 ================================================================================
 
-Audit completed in 1.19 seconds. Connection rolled back and closed.
+Audit completed in 0.33 seconds. Connection rolled back and closed.
 
 --- Inspector Conjunction Matrix & Verdict Output (GATE_B2_POPULATED_EVIDENCE.log) ---
 Conjunction Matrix & Formal DBRE Executive Conclusion

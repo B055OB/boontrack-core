@@ -79,17 +79,18 @@ WHERE id IN ('seed_ord_001', 'seed_ord_002')
 -- [STAGE 2] DEDUP GOVERNANCE & QUARANTINE LEDGER TEARDOWN
 -- -----------------------------------------------------------------------------
 
--- 2.1 Identifier Dedup Map (3 Fixture Rows)
+-- 2.1 Identifier Dedup Map (3 Fixture Rows: 2 tenant-scoped, 1 NULL-tenant quarantine map)
 DELETE FROM public.migration_031_identifier_dedup_map 
-WHERE map_id IN ('5eed5555-5555-5555-5555-555555555551'::uuid, 
-                 '5eed5555-5555-5555-5555-555555555552'::uuid,
-                 '5eed5555-5555-5555-5555-555555555553'::uuid) 
-  AND tenant_id = '5eed0000-0000-0000-0000-000000000001';
+WHERE (map_id IN ('5eed5555-5555-5555-5555-555555555551'::uuid, 
+                  '5eed5555-5555-5555-5555-555555555552'::uuid) 
+       AND tenant_id = '5eed0000-0000-0000-0000-000000000001')
+   OR (map_id = '5eed5555-5555-5555-5555-555555555553'::uuid 
+       AND tenant_id IS NULL);
 
--- 2.2 Quarantined Affiliate Commissions (1 Fixture Row)
+-- 2.2 Quarantined Affiliate Commissions (1 Fixture Row: NULL-tenant legacy commission)
 DELETE FROM public.migration_031_quarantined_affiliate_commissions 
 WHERE id = '5eed4444-4444-4444-4444-444444444441'::uuid 
-  AND tenant_id = '5eed0000-0000-0000-0000-000000000001';
+  AND tenant_id IS NULL;
 
 -- -----------------------------------------------------------------------------
 -- [STAGE 3] PARENT COMMISSIONS & AFFILIATES TEARDOWN
