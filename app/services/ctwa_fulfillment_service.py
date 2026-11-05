@@ -237,9 +237,16 @@ async def fulfill_onlineboost_ctwa_order(
             _ISSUED_TELEGRAM_LINKS_CACHE.get(f"{order_id}_DELIVERED")
             or (order_record.get("metadata") or {}).get("fulfillment_status") == "DELIVERED"
         )
+        is_penny_test = (
+            resolved_amount == 1500
+            or (order_record and str(order_record.get("product_id", "")).upper() == "TEST-PENNY-1500")
+            or (order_record and "penny" in str(order_record.get("product_title", "")).lower())
+        )
+        product_label = "Verifikasi Internal Sistem OnlineBoost" if is_penny_test else "Kelas Inkubasi CTWA Batch 1"
+
         if is_already_delivered:
             confirmation_message = (
-                f"Selamat Kak {resolved_name}! Pembayaran sebesar Rp{amt_formatted} untuk Kelas Inkubasi CTWA Batch 1 telah BERHASIL diverifikasi ✅\n\n"
+                f"Selamat Kak {resolved_name}! Pembayaran sebesar Rp{amt_formatted} untuk {product_label} telah BERHASIL diverifikasi ✅\n\n"
                 f"Berikut link akses eksklusif Kakak untuk bergabung ke Supergroup Praktikum: 🔗 {single_use_link}\n\n"
                 f"⚠️ Penting: Tautan di atas adalah link khusus 1 kali masuk dan berlaku selama 24 jam. Jangan dibagikan ke orang lain ya Kak!\n\n"
                 f"Sampai jumpa di ruang praktikum!"
@@ -386,8 +393,15 @@ async def fulfill_onlineboost_ctwa_order(
         logger.warning(f"[CTWA FULFILLMENT] Failed to record telegram_single_use_tokens: {_tok_err}")
 
     # 3. Susun Teks Konfirmasi Resmi Sesuai Spesifikasi Prompt
+    is_penny_test = (
+        resolved_amount == 1500
+        or (order_record and str(order_record.get("product_id", "")).upper() == "TEST-PENNY-1500")
+        or (order_record and "penny" in str(order_record.get("product_title", "")).lower())
+    )
+    product_label = "Verifikasi Internal Sistem OnlineBoost" if is_penny_test else "Kelas Inkubasi CTWA Batch 1"
+
     confirmation_message = (
-        f"Selamat Kak {resolved_name}! Pembayaran sebesar Rp{amt_formatted} untuk Kelas Inkubasi CTWA Batch 1 telah BERHASIL diverifikasi ✅\n\n"
+        f"Selamat Kak {resolved_name}! Pembayaran sebesar Rp{amt_formatted} untuk {product_label} telah BERHASIL diverifikasi ✅\n\n"
         f"Berikut link akses eksklusif Kakak untuk bergabung ke Supergroup Praktikum: 🔗 {single_use_link}\n\n"
         f"⚠️ Penting: Tautan di atas adalah link khusus 1 kali masuk dan berlaku selama 24 jam. Jangan dibagikan ke orang lain ya Kak!\n\n"
         f"Sampai jumpa di ruang praktikum!"

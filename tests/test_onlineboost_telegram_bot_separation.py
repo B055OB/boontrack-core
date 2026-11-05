@@ -6,6 +6,10 @@ Unit tests verifying Telegram Bot separation of concerns & strict security invar
 - Fail-closed invariant: if OnlineBoost bot token is missing, raise RuntimeError immediately
   without falling back to other bot tokens.
 - Golden Penny test SKU (TEST-PENNY-1500, Rp1.500) is isolated for internal verification.
+- Server-side access control: public callers cannot create internal test SKU invoices.
+- Strict settlement invariant: Rp1.500 settlement rejected for regular public orders.
+- Decoupled entitlement: test SKU does not grant regular class digital entitlement.
+- Triple-tier idempotency: duplicate webhooks do not re-invoke Telegram Bot API.
 """
 
 import os
@@ -13,6 +17,8 @@ import time
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from fastapi import HTTPException
+from app.core.rev1.exceptions import AuthorizationError
 from app.services.ctwa_fulfillment_service import (
     create_telegram_single_use_invite_link,
     fulfill_onlineboost_ctwa_order,
@@ -29,6 +35,9 @@ from app.services.academy_service import (
     ACADEMY_SKU_ID,
     ACADEMY_SETTLEMENT_PRICE,
 )
+from app.services.digital_fulfillment_service import fulfill_digital_order
+from app.routes.product_routes import get_product_by_id_endpoint
+from app.routes.xendit import send_whatsapp_payment_notification
 
 
 DUMMY_ONLINEBOOST_TOKEN = "123456:dummy_test_token"
@@ -197,13 +206,14 @@ async def test_golden_penny_test_sku_isolation():
     assert public_inv["total_amount"] == 249000
     assert public_inv["is_internal_only"] is False
 
-    # 2. Verify Internal Golden Penny Test SKU is exactly Rp1.500
+    # 2. Verify Internal Golden Penny Test SKU is exactly Rp1.500 with internal authorization
     penny_inv = generate_academy_qris_invoice(
         customer_name="Founder Test",
         customer_email="founder@example.com",
         customer_phone="08129999999",
         tenant_id="onlineboost",
         sku_id=TEST_PENNY_SKU_ID,
+        is_internal_authorized=True,
     )
     assert penny_inv["sku_id"] == TEST_PENNY_SKU_ID
     assert penny_inv["sku"] == TEST_PENNY_SKU_NAME
@@ -220,7 +230,7 @@ async def test_golden_penny_test_sku_isolation():
     )
     assert settle_res["status"] in ("PAID", "ALREADY_SETTLED")
 
-    # 4. Verify fulfillment execution with Rp1.500 works seamlessly
+    # 4. Verify fulfillment execution with Rp1.500 works seamlessly with internal label
     expected_invite = "https://t.me/+onlineboost_penny_success"
     mock_resp = MagicMock()
     mock_resp.status_code = 200
@@ -251,3 +261,136 @@ async def test_golden_penny_test_sku_isolation():
         assert res["status"] == "SUCCESS"
         assert res["single_use_invite_link"] == expected_invite
         assert "1.500" in res["confirmation_message"]
+        assert "Verifikasi Internal Sistem OnlineBoost" in res["confirmation_message"]
+
+
+# ============================================================================
+# MANDATORY CTO NEGATIVE TEST SUITE
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_public_user_cannot_create_internal_sku_invoice():
+    """Negative Test 1: Public caller without internal authorization MUST be rejected (fail-closed HTTP 403)."""
+    with pytest.raises(AuthorizationError) as exc_info:
+        generate_academy_qris_invoice(
+            customer_name="Public Attacker",
+            customer_email="attacker@public.com",
+            customer_phone="08123456789",
+            tenant_id="onlineboost",
+            sku_id=TEST_PENNY_SKU_ID,
+            is_internal_authorized=False,
+        )
+    assert exc_info.value.status_code == 403
+    assert "Access Denied" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_public_order_settlement_rejected_for_penny_amount():
+    """Negative Test 2: Public order (Rp249.000) settlement rejected if paying penny amount (Rp1.500)."""
+    pub_inv = generate_academy_qris_invoice(
+        customer_name="Regular Student",
+        customer_email="student@example.com",
+        customer_phone="08121111111",
+        tenant_id="onlineboost",
+        use_unique_code=False,
+    )
+    assert pub_inv["base_amount"] == ACADEMY_SETTLEMENT_PRICE
+    assert pub_inv["sku_id"] == ACADEMY_SKU_ID
+
+    # Attempt to settle regular public order with Rp 1.500
+    settle_res = settle_academy_invoice(
+        order_id=pub_inv["order_id"],
+        amount=1500,
+        tenant_id="onlineboost",
+    )
+    assert settle_res["status"] == "REJECTED_AMOUNT_MISMATCH"
+    assert "strictly restricted" in settle_res["error"] or "Amount mismatch" in settle_res["error"]
+
+
+@pytest.mark.asyncio
+async def test_penny_sku_does_not_grant_regular_class_entitlement():
+    """Negative Test 3: TEST-PENNY-1500 does NOT grant regular course digital entitlement or public course URL."""
+    # 1. Digital fulfillment engine must skip regular digital entitlement
+    df_res = await fulfill_digital_order(
+        order_id="ORD-PENNY-GUARD-01",
+        product_id=TEST_PENNY_SKU_ID,
+        tenant_id="onlineboost",
+        buyer_email="tester@internal.boontrack.com",
+        amount=1500,
+    )
+    assert df_res["status"] == "SKIPPED"
+    assert "does not grant regular class entitlement" in df_res["reason"]
+
+    # 2. WhatsApp notification message for penny order must decouple from public class URL
+    with patch("app.services.ctwa_fulfillment_service.fulfill_onlineboost_ctwa_order", new_callable=AsyncMock) as mock_fulfill:
+        mock_fulfill.return_value = {"status": "SUCCESS"}
+        await send_whatsapp_payment_notification(
+            phone="08123456789",
+            external_id="BTA-PENNY-TEST",
+            amount=1500,
+            tenant_id="onlineboost",
+            product_name="OnlineBoost Golden Penny Test",
+        )
+        assert mock_fulfill.called
+        call_kwargs = mock_fulfill.call_args[1]
+        assert call_kwargs["amount"] == 1500
+
+
+@pytest.mark.asyncio
+async def test_duplicate_webhook_does_not_generate_duplicate_telegram_invite():
+    """Negative Test 4: Replay/duplicate webhook does NOT invoke Telegram Bot API multiple times (Idempotency)."""
+    _ISSUED_TELEGRAM_LINKS_CACHE.clear()
+    order_id = "ORD-TEST-IDEMP-DOUBLE-001"
+    fixed_link = "https://t.me/+onlineboost_single_idemp"
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "ok": True,
+        "result": {
+            "invite_link": fixed_link,
+            "member_limit": 1,
+        },
+    }
+
+    with patch.dict(os.environ, {"TELEGRAM_ONLINEBOOST_BOT_TOKEN": DUMMY_ONLINEBOOST_TOKEN, "TELEGRAM_ONLINEBOOST_CHAT_ID": SUPERGROUP_CHAT_ID}), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+         patch("app.services.whatsapp.cloud_api.send_whatsapp_text", new_callable=AsyncMock) as mock_wa, \
+         patch("app.modules.tracking.capi_dispatcher.capi_dispatcher.dispatch_purchase", new_callable=AsyncMock):
+
+        mock_post.return_value = mock_resp
+        mock_wa.return_value = {"messages": [{"id": "wamid.IDEMP"}]}
+
+        # First webhook arrival
+        res1 = await fulfill_onlineboost_ctwa_order(
+            order_id=order_id,
+            buyer_name="Kak Idemp",
+            buyer_phone="08129999000",
+            amount=249000,
+            tenant_id="onlineboost",
+        )
+        assert res1["status"] == "SUCCESS"
+        assert res1["single_use_invite_link"] == fixed_link
+        assert mock_post.call_count == 1
+
+        # Second webhook arrival (duplicate/replay)
+        res2 = await fulfill_onlineboost_ctwa_order(
+            order_id=order_id,
+            buyer_name="Kak Idemp",
+            buyer_phone="08129999000",
+            amount=249000,
+            tenant_id="onlineboost",
+        )
+        assert res2["status"] == "SUCCESS"
+        assert res2["single_use_invite_link"] == fixed_link
+        assert res2.get("idempotency_hit") is True
+        # Telegram Bot API must NOT have been called a second time!
+        assert mock_post.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_storefront_catalog_cannot_resolve_internal_penny_sku():
+    """Verify storefront catalog routes return HTTP 404 for TEST-PENNY-1500."""
+    with pytest.raises(HTTPException) as exc_info:
+        await get_product_by_id_endpoint("TEST-PENNY-1500", tenant_slug="onlineboost")
+    assert exc_info.value.status_code == 404

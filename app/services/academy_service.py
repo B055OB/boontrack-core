@@ -51,6 +51,14 @@ class TenantContextViolation(PermissionError):
     """Raised when cross-tenant data access is attempted."""
     pass
 
+try:
+    from app.core.rev1.exceptions import AuthorizationError
+except ImportError:
+    from fastapi import HTTPException, status
+    class AuthorizationError(HTTPException):
+        def __init__(self, detail: str = "Access Denied: Context boundary violation"):
+            super().__init__(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
 # ============================================================================
 # 1. KONFIGURASI PRODUK & SKU
 # ============================================================================
@@ -1287,17 +1295,35 @@ def generate_academy_qris_invoice(
     use_unique_code: bool = True,
     static_qris_override: Optional[str] = None,
     sku_id: Optional[str] = None,
+    is_internal_authorized: bool = False,
+    auth_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Menghasilkan Dynamic QRIS Invoice:
     - Default: Rp 249.000 (+ 3-digit kode unik jika aktif) untuk SKU OB-BATCH1-249K.
-    - Test Isolation: Tepat Rp 1.500 untuk SKU internal test 'TEST-PENNY-1500'.
+    - Test Isolation: Tepat Rp 1.500 untuk SKU internal test 'TEST-PENNY-1500' (wajib otorisasi internal).
     TTL Expiry: Tepat 15 menit.
     """
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=ACADEMY_INVOICE_TTL_MINUTES)
 
     is_penny_test = (sku_id == TEST_PENNY_SKU_ID)
+
+    # Server-Side Access Control Guard for Internal Test SKU
+    if is_penny_test:
+        authorized = (
+            is_internal_authorized is True
+            or (auth_context and auth_context.get("role") in ("admin", "founder", "internal"))
+            or (auth_context and auth_context.get("is_internal") is True)
+        )
+        if not authorized:
+            logger.warning(
+                f"[AcademySecurity] Unauthorized attempt to create internal test SKU '{sku_id}' by {customer_email} (fail-closed)."
+            )
+            raise AuthorizationError(
+                f"Access Denied: SKU '{TEST_PENNY_SKU_ID}' is an isolated internal test SKU and requires verified internal/founder/admin authorization."
+            )
+
     resolved_sku_id = TEST_PENNY_SKU_ID if is_penny_test else ACADEMY_SKU_ID
     resolved_sku_name = TEST_PENNY_SKU_NAME if is_penny_test else ACADEMY_SKU_NAME
     base_price = TEST_PENNY_PRICE if is_penny_test else ACADEMY_SETTLEMENT_PRICE
@@ -1480,6 +1506,35 @@ def settle_academy_invoice(
         if invoice:
             expected_total = invoice.get("total_amount", ACADEMY_SETTLEMENT_PRICE)
             expected_base = invoice.get("base_amount", ACADEMY_SETTLEMENT_PRICE)
+            inv_sku = str(invoice.get("sku_id") or "").upper()
+
+            # 2a-0. Strict Invariant: Rp1.500 settlement is strictly restricted to TEST-PENNY-1500
+            if amount == 1500 and inv_sku != TEST_PENNY_SKU_ID:
+                logger.warning(
+                    f"[AcademyGate] Penny amount Rp 1.500 received for non-penny SKU '{inv_sku}' on order '{order_id}'. Rejected."
+                )
+                return {
+                    "status": "REJECTED_AMOUNT_MISMATCH",
+                    "order_id": order_id,
+                    "event_id": event_id,
+                    "amount": amount,
+                    "expected_amount": expected_total,
+                    "idempotency_hit": False,
+                    "error": f"Penny settlement (Rp 1.500) is strictly restricted to {TEST_PENNY_SKU_ID}. Regular class access denied.",
+                }
+            if inv_sku == TEST_PENNY_SKU_ID and amount is not None and amount != 1500:
+                logger.warning(
+                    f"[AcademyGate] Order '{order_id}' is TEST-PENNY-1500 but received Rp{amount} (expected Rp1,500). Rejected."
+                )
+                return {
+                    "status": "REJECTED_AMOUNT_MISMATCH",
+                    "order_id": order_id,
+                    "event_id": event_id,
+                    "amount": amount,
+                    "expected_amount": 1500,
+                    "idempotency_hit": False,
+                    "error": "TEST-PENNY-1500 orders require exact Rp 1.500 settlement.",
+                }
 
             # 2a. Amount Mismatch Rejection
             if invoice.get("unique_code") == 0 or expected_total == expected_base:
@@ -1589,6 +1644,39 @@ def settle_academy_invoice(
                     "idempotency_hit": True,
                     "message": "Payment already registered in financial_ledger.",
                 }
+
+            if not invoice:
+                cur.execute("SELECT product_id, gross_amount, tenant_slug FROM orders WHERE id = %s LIMIT 1;", (order_id,))
+                db_ord_row = cur.fetchone()
+                if db_ord_row:
+                    db_prod = str(db_ord_row[0] or "").upper()
+                    db_gross = int(float(db_ord_row[1] or 0))
+                    if amount == 1500 and db_prod != TEST_PENNY_SKU_ID:
+                        logger.warning(
+                            f"[AcademyGate] Penny amount Rp 1.500 received for non-penny SKU '{db_prod}' on order '{order_id}'. Rejected."
+                        )
+                        return {
+                            "status": "REJECTED_AMOUNT_MISMATCH",
+                            "order_id": order_id,
+                            "event_id": event_id,
+                            "amount": amount,
+                            "expected_amount": db_gross,
+                            "idempotency_hit": False,
+                            "error": f"Penny settlement (Rp 1.500) is strictly restricted to {TEST_PENNY_SKU_ID}. Access denied.",
+                        }
+                    if db_prod == TEST_PENNY_SKU_ID and amount is not None and amount != 1500:
+                        logger.warning(
+                            f"[AcademyGate] Order '{order_id}' is TEST-PENNY-1500 but received Rp{amount} (expected Rp1,500). Rejected."
+                        )
+                        return {
+                            "status": "REJECTED_AMOUNT_MISMATCH",
+                            "order_id": order_id,
+                            "event_id": event_id,
+                            "amount": amount,
+                            "expected_amount": 1500,
+                            "idempotency_hit": False,
+                            "error": "TEST-PENNY-1500 orders require exact Rp 1.500 settlement.",
+                        }
 
             payload_json = json.dumps(raw_payload, default=str)
 

@@ -9,9 +9,10 @@ Endpoints:
 5. POST /api/v1/academy/campaign/queue: Queue broadcast execution
 """
 
+import os
 import logging
 from typing import Optional, Dict, Any, List
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status, Request
 from pydantic import BaseModel, Field
 
 from app.services.academy_service import (
@@ -42,6 +43,8 @@ class CreateAcademyInvoiceRequest(BaseModel):
     customer_phone: str = Field(..., description="Nomor WhatsApp customer")
     tenant_id: Optional[str] = Field("onlineboost", description="Tenant slug")
     use_unique_code: Optional[bool] = Field(True, description="Tambahkan 3-digit kode unik")
+    sku_id: Optional[str] = Field(None, description="SKU ID yang dipesan")
+    internal_auth_key: Optional[str] = Field(None, description="Internal auth key untuk SKU internal")
 
 
 class AcademyPaidWebhookRequest(BaseModel):
@@ -80,17 +83,31 @@ async def get_academy_sku():
 
 
 @academy_router.post("/invoice", summary="Generate Dynamic QRIS Invoice")
-async def create_academy_invoice(payload: CreateAcademyInvoiceRequest):
+async def create_academy_invoice(payload: CreateAcademyInvoiceRequest, request: Request):
     """
-    Menghasilkan Dynamic QRIS Invoice Rp 249.000 (+ 3-digit kode unik jika aktif)
-    dengan masa berlaku TTL tepat 15 menit.
+    Menghasilkan Dynamic QRIS Invoice:
+    - Default: Rp 249.000 (+ 3-digit kode unik jika aktif) untuk SKU publik
+    - SKU Internal TEST-PENNY-1500: Tepat Rp 1.500 (wajib otorisasi internal)
+    Masa berlaku TTL tepat 15 menit.
     """
+    is_internal = False
+    auth_header = request.headers.get("X-Internal-Secret") or request.headers.get("Authorization") or ""
+    expected_secret = os.getenv("BOONTRACK_INTERNAL_HMAC_SECRET", "b055ob_secure_hmac_production_secret_key_2026_x9k")
+    master_key = os.getenv("APP_MASTER_KEY", "boontrack_master_security_secret_key_32bytes_len!")
+
+    if payload.internal_auth_key and payload.internal_auth_key == expected_secret:
+        is_internal = True
+    elif auth_header and (auth_header == expected_secret or auth_header == f"Bearer {master_key}"):
+        is_internal = True
+
     invoice = generate_academy_qris_invoice(
         customer_name=payload.customer_name,
         customer_email=payload.customer_email,
         customer_phone=payload.customer_phone,
         tenant_id=payload.tenant_id or "onlineboost",
         use_unique_code=payload.use_unique_code if payload.use_unique_code is not None else True,
+        sku_id=payload.sku_id,
+        is_internal_authorized=is_internal,
     )
     return {
         "status": "success",
