@@ -9,9 +9,11 @@ Endpoints:
 5. POST /api/v1/academy/campaign/queue: Queue broadcast execution
 """
 
+import os
+import json
 import logging
 from typing import Optional, Dict, Any, List
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status, Request
 from pydantic import BaseModel, Field
 
 from app.services.academy_service import (
@@ -42,6 +44,7 @@ class CreateAcademyInvoiceRequest(BaseModel):
     customer_phone: str = Field(..., description="Nomor WhatsApp customer")
     tenant_id: Optional[str] = Field("onlineboost", description="Tenant slug")
     use_unique_code: Optional[bool] = Field(True, description="Tambahkan 3-digit kode unik")
+    sku_id: Optional[str] = Field(None, description="SKU ID yang dipesan")
 
 
 class AcademyPaidWebhookRequest(BaseModel):
@@ -79,19 +82,98 @@ async def get_academy_sku():
     }
 
 
+def extract_request_headers(request: Optional[Any]) -> Dict[str, str]:
+    """Universal header extractor supporting FastAPI Request, aiohttp web.Request, dict, or mock."""
+    if request is None:
+        return {}
+    if hasattr(request, "headers") and request.headers is not None:
+        headers = request.headers
+        try:
+            return {str(k).lower(): str(v) for k, v in headers.items()}
+        except Exception:
+            pass
+    if isinstance(request, dict):
+        return {str(k).lower(): str(v) for k, v in request.items()}
+    return {}
+
+
 @academy_router.post("/invoice", summary="Generate Dynamic QRIS Invoice")
-async def create_academy_invoice(payload: CreateAcademyInvoiceRequest):
+async def create_academy_invoice(payload: CreateAcademyInvoiceRequest, request: Request = None):
     """
-    Menghasilkan Dynamic QRIS Invoice Rp 249.000 (+ 3-digit kode unik jika aktif)
-    dengan masa berlaku TTL tepat 15 menit.
+    Menghasilkan Dynamic QRIS Invoice:
+    - Default: Rp 249.000 (+ 3-digit kode unik jika aktif) untuk SKU publik
+    - SKU Internal TEST-PENNY-1500: Tepat Rp 1.500 (wajib otorisasi internal via secure headers)
+    Masa berlaku TTL tepat 15 menit.
     """
-    invoice = generate_academy_qris_invoice(
-        customer_name=payload.customer_name,
-        customer_email=payload.customer_email,
-        customer_phone=payload.customer_phone,
-        tenant_id=payload.tenant_id or "onlineboost",
-        use_unique_code=payload.use_unique_code if payload.use_unique_code is not None else True,
-    )
+    expected_secret = os.getenv("BOONTRACK_INTERNAL_HMAC_SECRET")
+    master_key = os.getenv("APP_MASTER_KEY")
+
+    # Fail-closed guard: Jika SKU internal diminta namun environment secret tidak dikonfigurasi
+    if payload.sku_id == "TEST-PENNY-1500":
+        if not expected_secret and not master_key:
+            logger.error("[AcademyRoutes] BOONTRACK_INTERNAL_HMAC_SECRET and APP_MASTER_KEY missing from environment. Fail-closed.")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Authentication service unavailable: internal security credentials not configured."
+            )
+
+    headers_dict = extract_request_headers(request)
+    x_secret = headers_dict.get("x-internal-secret")
+    auth_header = headers_dict.get("authorization", "")
+
+    is_internal = False
+    if x_secret and expected_secret and x_secret.strip() == expected_secret.strip():
+        is_internal = True
+    elif auth_header.startswith("Bearer ") and master_key and auth_header[7:].strip() == master_key.strip():
+        is_internal = True
+    elif auth_header.startswith("Bearer ") and expected_secret and auth_header[7:].strip() == expected_secret.strip():
+        is_internal = True
+    elif auth_header and expected_secret and auth_header.strip() == expected_secret.strip():
+        is_internal = True
+
+    try:
+        invoice = generate_academy_qris_invoice(
+            customer_name=payload.customer_name,
+            customer_email=payload.customer_email,
+            customer_phone=payload.customer_phone,
+            tenant_id=payload.tenant_id or "onlineboost",
+            use_unique_code=payload.use_unique_code if payload.use_unique_code is not None else True,
+            sku_id=payload.sku_id,
+            is_internal_authorized=is_internal,
+        )
+    except RuntimeError as r_err:
+        logger.error(f"[AcademyInvoice] Persistence failure: {r_err}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database persistence failure: {r_err}"
+        )
+
+    # Hardening Persistence Assertion for TEST-PENNY-1500
+    if payload.sku_id == "TEST-PENNY-1500":
+        order_id = invoice.get("order_id")
+        verified_db = False
+        try:
+            from app.core.database import get_db_connection
+            conn = get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM orders WHERE id = %s LIMIT 1;", (order_id,))
+                row = cur.fetchone()
+                if row:
+                    verified_db = True
+            conn.close()
+        except Exception as check_err:
+            logger.error(f"[AcademyInvoice] Persistence verification failed for '{order_id}': {check_err}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Database persistence verification failed for internal test SKU: {check_err}"
+            )
+        if not verified_db:
+            logger.error(f"[AcademyInvoice] Order '{order_id}' was not found in database. Fail-closed.")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Database persistence assertion failed: order '{order_id}' was not confirmed in database."
+            )
+
     return {
         "status": "success",
         "invoice": invoice,
@@ -185,9 +267,23 @@ def register_academy_routes(app):
             body = await request.json()
         except Exception:
             body = {}
-        payload = CreateAcademyInvoiceRequest(**body)
-        res = await create_academy_invoice(payload)
-        return web.json_response(res, headers=cors_headers)
+        try:
+            payload = CreateAcademyInvoiceRequest(**body)
+            res = await create_academy_invoice(payload, request=request)
+            return web.json_response(res, dumps=lambda o: json.dumps(o, default=str), headers=cors_headers)
+        except HTTPException as http_exc:
+            return web.json_response(
+                {"error": http_exc.detail, "detail": http_exc.detail},
+                status=http_exc.status_code,
+                headers=cors_headers,
+            )
+        except Exception as e:
+            logger.error(f"[aio_create_invoice] Unexpected error: {e}")
+            return web.json_response(
+                {"error": str(e), "detail": str(e)},
+                status=500,
+                headers=cors_headers,
+            )
 
     async def aio_get_invoice(request: web.Request):
         order_id = request.match_info.get("order_id", "")

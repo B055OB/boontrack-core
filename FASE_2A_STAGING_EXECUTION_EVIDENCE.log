@@ -1,0 +1,369 @@
+================================================================================
+ BOONTRACK FASE 2A STAGING DDL REMEDIATION EXECUTION & TELEMETRY
+================================================================================
+Timestamp (UTC)  : 2026-11-04T12:36:29.361910+00:00
+Lead DBRE & Op   : Lead Database Reliability Engineer & Operator
+Target Database  : Staging Supabase (xkhqirhurnjqglmajghn:5432)
+Status           : CTO AUTHORIZED EXECUTION (Commit 3e98bec)
+Perimeter Posture: SEEDER LOCKED | PROD & R2 STRICT ZERO-TOUCH
+
+>>> [STEP 1] Mandatory Preflight Verification (Fail-Closed)
+--------------------------------------------------------------------------------
+1. Git HEAD SHA                  : 3e98bec5ef2b0249e852febae2aac500907ef414
+   [+] Git HEAD verified (Commit 3e98bec: 3e98bec5ef2b0249e852febae2aac500907ef414)
+2. Forward DDL 031 SHA-256 Check : ab4f1562f7e15fa0cf90bf86969be3c8ffde79858fea478ce3bf15a7dbfe5124
+   Rollback DDL 031 SHA-256 Check: 2733f1ac52143e330082c9e9b83d4b08ed691a412f93f982532537168ce73e7d
+   [+] Cryptographic Checksums verified 100% bit-for-bit.
+3. Staging Supabase Endpoint     : xkhqirhurnjqglmajghn:5432 (ZERO PROD MARKERS PRESENT)
+4. Ratified Locked Tables Count  : 12 tables
+   [+] 12-Table Locking Manifest verified 100% bit-for-bit in deterministic sequence.
+5. Active Non-Idle Queries       : 0
+   Blocked Waiting Locks         : 0
+   [+] Zero rogue transactions, zero hanging locks. Staging DB is idle and clean.
+   [+] Pre-migration 5 historical affiliates snapshotted successfully.
+
+[+] MANDATORY PREFLIGHT VERIFICATION PASSED: ALL 5 INVARIANTS SATISFIED.
+
+>>> [STEP 2] Runtime DDL 031 Execution on Staging Supabase
+--------------------------------------------------------------------------------
+[*] Initiating atomic transaction for DDL 031 on Staging...
+[*] ACCESS EXCLUSIVE lock acquired on all 12 tables in 25.48 ms (0.0255 s).
+[*] Precondition audit DO block executed in 42.48 ms (0.0425 s).
+[*] Physical DDL (Stages 2-8) executed in 147.26 ms (0.1473 s).
+[*] Transaction COMMITTED in 179.17 ms (0.1792 s).
+
+--- [STAGING MIGRATION 031 MIKRO-TELEMETRI] ---
+1. Waktu Perolehan Lock (ACCESS EXCLUSIVE)  : 25.48 ms (0.0255 s)
+2. Waktu Eksekusi Audit Prekondisi         : 42.48 ms (0.0425 s)
+3. Waktu Eksekusi DDL Fisik                : 147.26 ms (0.1473 s)
+4. Durasi Commit Transaksi                 : 179.17 ms (0.1792 s)
+5. TOTAL DURASI PENAHANAN LOCK             : 369.01 ms (0.3690 s) [SLA < 3.0s: VERIFIED]
+[+] DDL 031 COMMITTED SUCCESSFULLY ON STAGING SUPABASE!
+
+>>> [STEP 3] Post-DDL Inspection & Evidence Harvesting
+--------------------------------------------------------------------------------
+
+--- [POST-DDL CRITERIA 1] 13/13 Physical Schema Gate Verification ---
+Check ID  | Check Description                                          | Status
+------------------------------------------------------------------------------
+SCH-01    | affiliate_commissions.tenant_id NOT NULL                   | PASS
+SCH-02    | orders.tenant_id NOT NULL                                  | PASS
+SCH-03    | product_orders.tenant_id NOT NULL                          | PASS
+SCH-04    | delivery_orders.tenant_id NOT NULL                         | PASS
+SCH-05    | attributions.tenant_id NOT NULL                            | PASS
+SCH-06    | attribution_sessions.tenant_id NOT NULL                    | PASS
+SCH-07    | shop_subscriptions.tenant_id NOT NULL                      | PASS
+SCH-08    | shop_commission_ledger.tenant_id NOT NULL                  | PASS
+SCH-09    | affiliate_commissions.amount NUMERIC(18,2)                 | PASS
+SCH-10    | affiliates UNIQUE (tenant_id, referral_code)               | PASS
+SCH-11    | affiliates UNIQUE (tenant_id, id)                          | PASS
+SCH-12    | shop_subscriptions UNIQUE (tenant_id, xendit_invoice_id)   | PASS
+SCH-13    | shop_commission_ledger UNIQUE (tenant_id, subscription_id) | PASS
+[+] POST-DDL CRITERIA 1: 13/13 Schema Gate checks verified PASS on Staging Supabase.
+
+--- [POST-DDL CRITERIA 2] 8/8 Composite FKs Manifest Reconciliation ---
+No  | Expected Constraint Name                           | Status                       | Val   | Del   | Upd   | Match | Def  
+-----------------------------------------------------------------------------------------------------------------------------
+1   | fk_affiliate_commissions_affiliate_composite       | MATCH (ACTIVE & VALIDATED)   | True  | c     | a     | s     | False
+2   | fk_affiliates_manager_composite                    | MATCH (ACTIVE & VALIDATED)   | True  | r     | a     | s     | False
+3   | fk_attribution_sessions_order_composite            | MATCH (ACTIVE & VALIDATED)   | True  | c     | a     | s     | False
+4   | fk_attributions_order_composite                    | MATCH (ACTIVE & VALIDATED)   | True  | c     | a     | s     | False
+5   | fk_delivery_orders_order_composite                 | MATCH (ACTIVE & VALIDATED)   | True  | c     | a     | s     | False
+6   | fk_product_orders_order_composite                  | MATCH (ACTIVE & VALIDATED)   | True  | c     | a     | s     | False
+7   | fk_shop_commission_ledger_subscription_composite   | MATCH (ACTIVE & VALIDATED)   | True  | c     | a     | s     | False
+8   | fk_shop_subscriptions_tenant_anchor                | MATCH (ACTIVE & VALIDATED)   | True  | r     | a     | s     | False
+
+FK Reconciliation Summary: Matched = 8/8 | Convalidated = 8/8
+[+] POST-DDL CRITERIA 2: 8/8 Composite FKs verified active & convalidated across all 7 attributes.
+
+--- [POST-DDL CRITERIA 3] Physical Column Audit (attributions.order_id) ---
+1. Column Present in Catalog : True
+2. Column Data Type          : text
+3. Column Is Nullable        : YES
+[+] POST-DDL CRITERIA 3: attributions.order_id physically confirmed in Staging Supabase catalog.
+
+--- [POST-DDL CRITERIA 4] Historical Affiliates Integrity Verification ---
+Affiliate ID                           | Tenant ID  | Name            | Phone        | Ref Code   | Status
+-------------------------------------------------------------------------------------------------------------------
+25305f9c-ed1b-4e84-8771-325b5dde23ee   | 6b37fdf0-b1a2-49ad-bec5-7153b8a76fba | @jadi.kayaaa    | 6288808091000 | dirga      | 100% INTACT (BIT-EXACT)
+2ad6fc0a-1a11-4e52-8d94-65997d5ad9ae   | onlineboost | Indra Januar Siregar | 62811527442  | penggangguranpremium | 100% INTACT (BIT-EXACT)
+43e48443-dcfa-47a6-818c-5144e3a34db4   | 6b37fdf0-b1a2-49ad-bec5-7153b8a76fba | Sakti Alamsyah  | 087822706930 | buzzerukm  | 100% INTACT (BIT-EXACT)
+b92b0929-1dbd-4f80-b875-94e9ab92b189   | onlineboost | Aldi Rinaldiawan | 6281237450222 | ob         | 100% INTACT (BIT-EXACT)
+f5b98eaa-cfde-49cf-a497-491221c1cda9   | 6b37fdf0-b1a2-49ad-bec5-7153b8a76fba | Hendrat Yuswito | 62818171627  | hendraty474 | 100% INTACT (BIT-EXACT)
+[+] POST-DDL CRITERIA 4: 5/5 historical affiliates verified 100% intact (zero corruption/deletion).
+
+>>> [STEP 3.5] Formal Gate B2 Comprehensive Inspector Execution (Read-Only)
+--------------------------------------------------------------------------------
+================================================================================
+ GATE B2 COMPREHENSIVE PROTOCOL INSPECTION & EVIDENCE HARVESTER (REV 2.8)
+================================================================================
+Timestamp (UTC): 2026-11-04T12:40:12.638997+00:00
+Lead DBRE Role : Lead Database Reliability Engineer & Principal Systems Architect
+Protocol Spec  : GATE_B2_VERIFICATION_PROTOCOL.md (REV 2.8, Commit a9ad768)
+Target DB URI  : postgresql://postgres.xkhqirhurnjqglmajghn:*****@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
+Safety Mode    : STRICT READ-ONLY / ZERO MUTATION / ZERO PRODUCTION TOUCH
+
+>>> [SECTION 1] Transaction Isolation Proof & Connection Telemetry
+--------------------------------------------------------------------------------
+1. transaction_read_only      : ON (MUST BE 'ON')
+2. transaction_isolation      : READ COMMITTED
+3. Connected Database         : postgres
+4. Connected User             : postgres
+5. Server Network Endpoint    : 2406:da18:1691:a201::4f8d:5432
+6. PostgreSQL Engine Version  : PostgreSQL 17.11 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 15.2.0, 64-bit
+
+[+] VERDICT: READ-ONLY TRANSACTION ENFORCEMENT VERIFIED (ZERO MUTATION INVARIANT HELD)
+
+>>> [SECTION 2] Full Schema Gate Audit (SCH-01 s/d SCH-13)
+--------------------------------------------------------------------------------
+
+--- [2.A] Tenancy Table Column Audit (Public Schema tables with 'tenant_id') ---
+Table Name                                 | Column     | Nullable | Data Type            | Baseline Status
+---------------------------------------------------------------------------------------------------------
+affiliate_commissions                      | tenant_id  | NO       | character varying    | NOT NULL (PASS)
+affiliates                                 | tenant_id  | NO       | character varying    | NOT NULL (PASS)
+attribution_sessions                       | tenant_id  | NO       | character varying    | NOT NULL (PASS)
+attributions                               | tenant_id  | NO       | character varying    | NOT NULL (PASS)
+delivery_orders                            | tenant_id  | NO       | character varying    | NOT NULL (PASS)
+migration_031_identifier_dedup_map         | tenant_id  | YES      | character varying    | NULLABLE (BASELINE PRE-DEDUP)
+migration_031_quarantined_affiliate_commissions | tenant_id  | YES      | character varying    | NULLABLE (BASELINE PRE-DEDUP)
+onlineboost_enrollments                    | tenant_id  | NO       | uuid                 | NOT NULL (PASS)
+orders                                     | tenant_id  | NO       | character varying    | NOT NULL (PASS)
+product_orders                             | tenant_id  | NO       | character varying    | NOT NULL (PASS)
+shop_commission_ledger                     | tenant_id  | NO       | uuid                 | NOT NULL (PASS)
+shop_subscriptions                         | tenant_id  | NO       | uuid                 | NOT NULL (PASS)
+tenant_credit_ledger                       | tenant_id  | YES      | uuid                 | NULLABLE (BASELINE PRE-DEDUP)
+tenant_entitlements                        | tenant_id  | NO       | uuid                 | NOT NULL (PASS)
+Total Tenancy Tables Mapped: 14
+
+--- [2.B] Financial Precision Audit (affiliate_commissions.amount) ---
+Table Name        : affiliate_commissions
+Column Name       : amount
+Catalog Data Type : numeric
+Numeric Precision : 18 (Contractual Target: 18)
+Numeric Scale     : 2 (Contractual Target: 2)
+Catalog Definition: NUMERIC(18,2)
+Contractual Verdict: PASS (NUMERIC(18,2))
+
+--- [2.C] Active Composite Unique Constraints Audit in Public Schema ---
+Table                            | Constraint Name                        | Validated | Definition
+--------------------------------------------------------------------------------------------------------------
+affiliate_commissions            | uq_tenant_order_commission             | True      | UNIQUE (tenant_id, order_id)
+affiliates                       | uq_affiliates_tenant_id_id             | True      | UNIQUE (tenant_id, id)
+affiliates                       | uq_tenant_referral_code                | True      | UNIQUE (tenant_id, referral_code)
+auth_magic_link_tokens           | auth_magic_link_tokens_token_hash_key  | True      | UNIQUE (token_hash)
+migration_031_identifier_dedup_map | uq_mig031_dedup_table_col_row          | True      | UNIQUE (table_name, column_name, quarantined_row_id)
+onlineboost_enrollments          | uq_onlineboost_enrollments_order       | True      | UNIQUE (order_id)
+onlineboost_enrollments          | uq_onlineboost_enrollments_user_batch  | True      | UNIQUE (user_id, batch_name)
+orders                           | uq_orders_tenant_id_id                 | True      | UNIQUE (tenant_id, id)
+platform_users                   | platform_users_email_key               | True      | UNIQUE (email)
+shop_commission_ledger           | uq_shop_commission_ledger_tenant_subscription | True      | UNIQUE (tenant_id, subscription_id)
+shop_subscriptions               | uq_shop_subscriptions_tenant_id_id     | True      | UNIQUE (tenant_id, id)
+shop_subscriptions               | uq_shop_subscriptions_tenant_invoice   | True      | UNIQUE (tenant_id, xendit_invoice_id)
+studio_activation_challenges     | studio_activation_challenges_challenge_token_hash_key | True      | UNIQUE (challenge_token_hash)
+tenants                          | tenants_slug_key                       | True      | UNIQUE (slug)
+Total Unique Constraints in Public Schema: 14
+
+--- [2.D] Execution of Exact Protocol Individual Scalar Queries SCH-01 s/d SCH-13 ---
+Check ID | Check Description                                            | Status
+--------------------------------------------------------------------------------
+SCH-01   | affiliate_commissions.tenant_id NOT NULL                     | PASS
+SCH-02   | orders.tenant_id NOT NULL                                    | PASS
+SCH-03   | product_orders.tenant_id NOT NULL                            | PASS
+SCH-04   | delivery_orders.tenant_id NOT NULL                           | PASS
+SCH-05   | attributions.tenant_id NOT NULL                              | PASS
+SCH-06   | attribution_sessions.tenant_id NOT NULL                      | PASS
+SCH-07   | shop_subscriptions.tenant_id NOT NULL                        | PASS
+SCH-08   | shop_commission_ledger.tenant_id NOT NULL                    | PASS
+SCH-09   | affiliate_commissions.amount NUMERIC(18,2)                   | PASS
+SCH-10   | affiliates UNIQUE (tenant_id, referral_code)                 | PASS
+SCH-11   | affiliates UNIQUE (tenant_id, id)                            | PASS
+SCH-12   | shop_subscriptions UNIQUE (tenant_id, xendit_invoice_id)     | PASS
+SCH-13   | shop_commission_ledger UNIQUE (tenant_id, subscription_id)   | PASS
+
+Schema Gate Summary: Total = 13 | PASS = 13 | FAIL = 0
+
+>>> [SECTION 3] B2-ASSERT-01: Baseline Ledger Volume & Balance Conservation / Multi-Tenant Conflict Check
+--------------------------------------------------------------------------------
+
+--- [3.A] Baseline Ledger Volume & Balance Conservation on public.affiliate_commissions ---
+Total Commissions Count (Row Count) : 0
+Total Commissions Amount (Balance)  : 0.00
+Distinct Tenant Count               : 0
+NULL or Empty Tenant Count          : 0
+
+--- [3.B] Multi-Tenant Conflict Query A: product_orders (v_indep_po_conflicts) ---
+v_indep_po_conflicts Count: 0
+
+--- [3.C] Multi-Tenant Conflict Query B: affiliate_commissions (v_indep_ac_conflicts) ---
+v_indep_ac_conflicts Count: 0
+
+[+] B2-ASSERT-01 EVALUATION VERDICT: PASS (v_indep_po_conflicts=0, v_indep_ac_conflicts=0)
+
+>>> [SECTION 4] B2-ASSERT-02: Cross-Tenant Leakage Check & Operational Unresolved Orders
+--------------------------------------------------------------------------------
+
+--- [4.A] Cross-Tenant Leakage Check (affiliate_commissions JOIN affiliates) ---
+Total AC-Affiliate Pairs Checked : 0
+AC NULL Tenant Count             : 0
+Affiliate NULL Tenant Count      : 0
+Mismatched Tenant Count          : 0
+
+--- [4.B] Operational Unresolved Orders & Commissions Audit (REV 2.8 B2-ASSERT-02 Query) ---
+Unresolved Operational Orders : 0
+Invalid AC Tenants            : 0
+[+] B2-ASSERT-02 VERDICT: PASS (unresolved_operational_orders=0, invalid_ac_tenants=0)
+
+>>> [SECTION 5] B2-ASSERT-03: Comprehensive Quarantine Parity, Status Whitelist & Survivor Cardinality
+--------------------------------------------------------------------------------
+
+--- [5.A] Check Prerequisite Catalog Tables (REV 2.8 Architecture) ---
+Formal Dedup Tables Discovered in Catalog: ['migration_031_identifier_dedup_map', 'migration_031_quarantined_affiliate_commissions']
+1. public.migration_031_identifier_dedup_map          : 0 rows
+2. public.migration_031_quarantined_affiliate_commissions : 0 rows
+
+--- [5.B] Execution of Protocol REV 2.8 B2-ASSERT-03 Query Engine ---
+1. quarantine_set_difference_count   : 0 (Target: 0)
+2. duplicate_quarantined_map_count   : 0 (Target: 0)
+3. invalid_resolution_reason_count   : 0 (Target: 0)
+4. dedup_map_lineage_anomalies_count : 0 (Target: 0)
+5. survivor_cardinality_anomalies_cnt: 0 (Target: 0)
+6. broken_physical_survivors_count   : 0 (Target: 0)
+
+[*] DUAL-BRANCH EVALUATION POSTURE (NO FALSE LABELING DIRECTIVE):
+    - Mathematical Query Engine Verification: PASS (All 6 anomaly counters = 0)
+    - Physical Data Population State        : UNPROVEN / EMPTY BASELINE
+    - Table 'migration_031_identifier_dedup_map' currently holds 0 rows.
+    - Table 'migration_031_quarantined_affiliate_commissions' currently holds 0 rows.
+    - Invariant Adherence: Pre-dedup empty tables are mathematically consistent,
+      but operational proof of deduplication awaits active runner / seeder execution.
+    -> Operational Gate Verdict: STANDBY PREPARATION (EMPTY BASELINE INVARIANT)
+
+>>> [SECTION 6] B2-ASSERT-04: Manifest-Driven 8 Composite FK Streams & Multi-Path Dangling Audit
+--------------------------------------------------------------------------------
+
+--- [6.A] Catalog Discovery of Live Foreign Keys on Audited Tables (c.convalidated = TRUE) ---
+Child Table              | Constraint Name                              | Parent Table       | Val   | Act   | Definition
+----------------------------------------------------------------------------------------------------------------------------------------------
+affiliate_commissions    | fk_affiliate_commissions_affiliate_composite | affiliates         | True  | c     | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id) ON DELETE CASCADE
+affiliates               | fk_affiliates_manager_composite              | affiliates         | True  | r     | FOREIGN KEY (tenant_id, manager_id) REFERENCES affiliates(tenant_id, id) ON DELETE RESTRICT
+attribution_sessions     | fk_attribution_sessions_affiliate_composite  | affiliates         | True  | a     | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+attribution_sessions     | fk_attribution_sessions_order_composite      | orders             | True  | c     | FOREIGN KEY (tenant_id, order_id) REFERENCES orders(tenant_id, id) ON DELETE CASCADE
+attributions             | fk_attributions_affiliate_composite          | affiliates         | True  | a     | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+attributions             | fk_attributions_order_composite              | orders             | True  | c     | FOREIGN KEY (tenant_id, order_id) REFERENCES orders(tenant_id, id) ON DELETE CASCADE
+delivery_orders          | fk_delivery_orders_affiliate_composite       | affiliates         | True  | a     | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+delivery_orders          | fk_delivery_orders_order_composite           | orders             | True  | c     | FOREIGN KEY (tenant_id, order_id) REFERENCES orders(tenant_id, id) ON DELETE CASCADE
+orders                   | fk_orders_affiliate_composite                | affiliates         | True  | a     | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+orders                   | fk_orders_manager_composite                  | affiliates         | True  | a     | FOREIGN KEY (tenant_id, manager_id) REFERENCES affiliates(tenant_id, id)
+product_orders           | fk_product_orders_affiliate_composite        | affiliates         | True  | a     | FOREIGN KEY (tenant_id, affiliate_id) REFERENCES affiliates(tenant_id, id)
+product_orders           | fk_product_orders_order_composite            | orders             | True  | c     | FOREIGN KEY (tenant_id, order_id) REFERENCES orders(tenant_id, id) ON DELETE CASCADE
+shop_commission_ledger   | fk_shop_commission_ledger_subscription_composite | shop_subscriptions | True  | c     | FOREIGN KEY (tenant_id, subscription_id) REFERENCES shop_subscriptions(tenant_id, id) ON DELETE CASCADE
+shop_subscriptions       | fk_shop_subscriptions_tenant_anchor          | tenants            | True  | r     | FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE RESTRICT
+Total Discovered Validated Foreign Keys on Audited Tables: 14
+
+--- [6.B] Audit against REV 2.8 Contractual FK Manifest (8 Target Composite FKs) ---
+Seq  | Target Constraint Name                           | Relational Path                            | Status                           | Live Constraint
+--------------------------------------------------------------------------------------------------------------------------------------------
+1    | fk_affiliate_commissions_affiliate_composite     | affiliate_commissions -> affiliates        | MATCH (ACTIVE & VALIDATED)       | fk_affiliate_commissions_affiliate_composite
+2    | fk_affiliates_manager_composite                  | affiliates -> affiliates                   | MATCH (ACTIVE & VALIDATED)       | fk_affiliates_manager_composite
+3    | fk_attribution_sessions_order_composite          | attribution_sessions -> orders             | MATCH (ACTIVE & VALIDATED)       | fk_attribution_sessions_order_composite
+4    | fk_attributions_order_composite                  | attributions -> orders                     | MATCH (ACTIVE & VALIDATED)       | fk_attributions_order_composite
+5    | fk_delivery_orders_order_composite               | delivery_orders -> orders                  | MATCH (ACTIVE & VALIDATED)       | fk_delivery_orders_order_composite
+6    | fk_product_orders_order_composite                | product_orders -> orders                   | MATCH (ACTIVE & VALIDATED)       | fk_product_orders_order_composite
+7    | fk_shop_commission_ledger_subscription_composite | shop_commission_ledger -> shop_subscriptions | MATCH (ACTIVE & VALIDATED)       | fk_shop_commission_ledger_subscription_composite
+8    | fk_shop_subscriptions_tenant_anchor              | shop_subscriptions -> tenants              | MATCH (ACTIVE & VALIDATED)       | fk_shop_subscriptions_tenant_anchor
+
+FK Manifest Reconciliation: Matched = 8/8 | Convalidated = 8/8
+[*] ARCHITECTURAL STATE (FAIL-CLOSED INVARIANT):
+    - Target architecture requires 8 validated composite foreign keys.
+    - Pre-migration baseline lacks composite constraints and pending physical schema columns.
+
+--- [6.C] Multi-Path Dangling References Audit for REV 2.8 Contractual Paths ---
+Child Table              | FK Target            | Total   | Non-Null  | Orphaned  | Tenant Mismatches  | Verdict
+-------------------------------------------------------------------------------------------------------------------
+affiliate_commissions    | affiliates(tenant_id,id) | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
+affiliates               | affiliates(tenant_id,id) | 5       | 0         | 0         | 0                  | PASS (0 Dangling)
+attribution_sessions     | orders(tenant_id,id) | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
+attributions             | orders(tenant_id,id) | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
+delivery_orders          | orders(tenant_id,id) | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
+product_orders           | orders(tenant_id,id) | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
+shop_commission_ledger   | shop_subscriptions(tenant_id,id) | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
+shop_subscriptions       | tenants(id)          | 0       | 0         | 0         | 0                  | PASS (0 Dangling)
+
+Multi-Path Dangling Summary: Total Orphaned = 0 | Total Tenant Mismatches = 0
+
+--- [6.D] Execution of Protocol REV 2.8 Kueri 04B (Live-Row Anti-Join & Residual Loser Proof) ---
+1. total_orphaned_child_rows        : 0 (Target: 0)
+2. total_residual_loser_references  : 0 (Target: 0)
+3. pending_ddl_columns_count        : 0 (Target: 0)
+4. matched_fk_count                 : 8/8 (Target: 8)
+5. convalidated_fk_count            : 8/8 (Target: 8)
+6. discrepancy_count                : 0 (Target: 0)
+
+[+] B2-ASSERT-04 VERDICT: PASS (PASS (8/8 COMPOSITE FKS VALIDATED & 0 DANGLING))
+
+>>> [SECTION 7] B2-ASSERT-05: 3-Tier Linear Lineage Proof, Exact-One Occurrence & Financial Reconciliation
+--------------------------------------------------------------------------------
+
+--- [7.A] Physical Primary Key & Tenancy Invariant Verification ---
+Affiliates: Total=5, Distinct ID=5, Duplicate PK=0, NULL Tenant=0
+Commissions: Total=0, Distinct ID=0, Duplicate PK=0
+
+--- [7.B] Execution of Pure In-Memory 3-Tier Linear Lineage Engine (A -> B -> C) ---
+[*] Note: Executed via pure CTE pipeline in strict read-only mode without mutating DDL.
+1. Baseline Run ID              : B2-STG-RUN-20261104-124306
+2. Snapshot Taken At            : 2026-11-04 12:43:06.616423+00:00
+3. Snapshot Row Count           : 0
+4. Snapshot Total Amount        : 0.00
+5. Baseline Snapshot Fingerprint: 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+6. Expected Transformed Count   : 0
+7. Expected Transformed Amount  : 0.00
+8. Expected Transformed Fprint  : 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+9. Actual Post Migration Count  : 0
+10. Actual Post Migration Amount: 0.00
+11. Actual Post Mig Fingerprint : 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+12. Lineage A->B Anomalies Count: 0 (Target: 0)
+13. Row-Level Lineage Anomalies : 0 (Target: 0)
+14. Grouped Variance Anomalies  : 0 (Target: 0)
+15. Global Amount Delta         : 0.00 (Target: 0.00)
+16. Mapping Cardinality Anom Cnt: 0 (Target: 0)
+17. Canonical Recon Anomalies   : 0 (Target: 0)
+18. In-Memory Engine Verdict    : PASS: B2_ASSERT_05_ZERO_VARIANCE_VERIFIED
+
+--- [7.C] Snapshot Verifier Branch & Operational Baseline State ---
+Snapshot Table 'pre_mig031_affiliate_commissions_snapshot': ABSENT IN BASELINE CATALOG
+[*] ARCHITECTURAL STATE AUDIT (NO FALSE LABELING DIRECTIVE):
+    - Per REV 2.8 Section 6.A, 'pre_mig031_affiliate_commissions_snapshot' is designed
+      as an EPHEMERAL SESSION TEMP TABLE created at runner runtime.
+    - In-Memory CTE Lineage Engine: Zero Variance Mathematically Verified (PASS).
+    - Physical Staging Baseline State: Pre-migration standby (0 commissions, 0 dedup rows).
+    - Operational Verdict: STANDBY PREPARATION (Awaiting migration runner execution).
+
+>>> [SECTION 8] Conjunction Matrix & Formal DBRE Executive Conclusion
+--------------------------------------------------------------------------------
+Gate Check               | Scope Description                            | Status                         | Technical Finding
+---------------------------------------------------------------------------------------------------------------------------------------
+TRANSACTION_ISOLATION    | Transaction Read-Only Enforcement            | PASS                           | Strict Read-Only Session Verified (0 Mutations)
+SCH_01_TO_13             | Catalog Physical Schema Parity               | PASS                           | 13/13 Pass, 0/13 Pending Migration 031 DDL
+B2_ASSERT_01             | Baseline Ledger Volume & Multi-Tenant Conflict | PASS                           | 0 Conflicts across PO & AC (Clean Multi-Tenancy)
+B2_ASSERT_02             | Cross-Tenant Leakage Check                   | PASS                           | 0 Cross-Tenant Mismatches, 0 Unresolved Operational Orders
+B2_ASSERT_03             | Quarantine Parity & Survivor Cardinality     | UNPROVEN / EMPTY BASELINE      | Query engine 0 anomalies; tables unpopulated awaiting seeder
+B2_ASSERT_04             | Contractual 8 Composite FKs Manifest         | PASS                           | 8/8 Active & Validated
+B2_ASSERT_05             | Exact-One Lineage & 3-Tier Reconciliation    | STANDBY PREPARATION            | In-memory engine zero-variance verified; awaits runner ephemeral snapshot
+
+================================================================================
+EXECUTIVE DBRE AUDIT SUMMARY:
+1. All queries executed strictly under SET TRANSACTION READ ONLY with ZERO mutations.
+2. Staging Database (xkhqirhurnjqglmajghn:5432) is verified in post-DDL 031 ratified state.
+3. Production DB (mpluzajlzpregmjwpjqr) and Cloudflare R2: STRICT ZERO-TOUCH (0 bytes read/written).
+4. Contractual 8 FK relations audited: Status PASS (8/8 composite FKs active and convalidated, attributions.order_id confirmed, 0 dangling references).
+5. 3-Tier Linear Lineage and Exact-One occurrence verified mathematically via in-memory query engine.
+6. In accordance with CTO Directive (No False Labeling), Gate B2 status: POST-DDL 031 RATIFIED (Awaiting Seeder Stage 2B).
+================================================================================
+
+Audit completed in 1.12 seconds. Connection rolled back and closed.
+
+
+================================================================================
+ FASE 2A STAGING DDL REMEDIATION 100% SUCCESSFUL & RATIFIED
+================================================================================

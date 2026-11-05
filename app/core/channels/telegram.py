@@ -247,8 +247,10 @@ async def send_onlineboost_message(
     reply_markup: Optional[Dict[str, Any]] = None,
     parse_mode: str = "Markdown"
 ) -> Optional[Dict[str, Any]]:
-    """Mengirim pesan via bot resmi OnlineBoost (@onlineboostbot) via Supabase Dynamic Dispatcher."""
-    token = get_dynamic_telegram_bot_token(bot_username="onlineboostbot")
+    """Mengirim pesan via bot resmi OnlineBoost (@onlineboostbot) via Supabase Dynamic Dispatcher / env token."""
+    token = os.getenv("TELEGRAM_ONLINEBOOST_BOT_TOKEN")
+    if not token:
+        token = get_dynamic_telegram_bot_token(bot_username="onlineboostbot")
     return await send_telegram_message(
         bot_token=token,
         chat_id=chat_id,

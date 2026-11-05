@@ -463,9 +463,14 @@ async def get_product_by_id_endpoint(
 ) -> Dict[str, Any]:
     """Mengambil rincian produk berdasarkan ID."""
     clean_id = str(id).strip()
+    if clean_id.upper() in ("TEST-PENNY-1500", "PENNY-1500"):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product with ID '{id}' not found"
+        )
     slug_to_search = slugify(tenant_slug) if tenant_slug else "onlineboost"
     products = onboarding_service.get_tenant_products(slug_to_search) or []
-    prod = next((p for p in products if str(p.get("id")) == clean_id or str(p.get("slug")) == clean_id), None)
+    prod = next((p for p in products if (str(p.get("id")) == clean_id or str(p.get("slug")) == clean_id) and not p.get("is_internal_only")), None)
 
     if not prod:
         supabase = get_supabase()
@@ -542,6 +547,8 @@ async def aiohttp_get_product(request: web.Request) -> web.Response:
     """Aiohttp handler untuk GET /api/v1/products/{id}."""
     cors_headers = _build_product_cors_headers(request)
     product_id = request.match_info.get("id")
+    if str(product_id).strip().upper() in ("TEST-PENNY-1500", "PENNY-1500"):
+        return web.json_response({"status": "error", "detail": f"Product with ID '{product_id}' not found"}, status=404, headers=cors_headers)
     tenant_slug = request.query.get("tenant_slug") or request.match_info.get("slug") or "onlineboost"
 
     products = onboarding_service.get_tenant_products(slugify(tenant_slug)) or []

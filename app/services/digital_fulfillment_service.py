@@ -156,6 +156,10 @@ async def fulfill_digital_order(
     Returns:
         { status, order_id, product_id, buyer_email, download_url (optional), granted_at }
     """
+    if str(product_id).upper() == "TEST-PENNY-1500":
+        logger.info(f"[DigitalFulfill] Skipping order {order_id}: TEST-PENNY-1500 does not grant regular class entitlement.")
+        return {"status": "SKIPPED", "reason": "TEST-PENNY-1500 does not grant regular class entitlement", "product_id": product_id}
+
     supabase = _get_supabase()
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -266,9 +270,9 @@ async def fulfill_if_digital(
         res = supabase.table("orders").select("id,product_id,metadata").eq("id", order_id).single().execute()
         order = res.data or {}
         product_id = order.get("product_id")
-        if not product_id:
-            logger.info(f"[DigitalFulfill] Order {order_id} has no product_id — skipping.")
-            return None
+        if not product_id or str(product_id).upper() == "TEST-PENNY-1500":
+            logger.info(f"[DigitalFulfill] Order {order_id} has product_id '{product_id}' — skipping.")
+            return {"status": "SKIPPED", "reason": "TEST-PENNY-1500 does not grant regular class entitlement"}
     except Exception as exc:
         logger.error(f"[DigitalFulfill] Could not fetch order {order_id}: {exc}")
         return None

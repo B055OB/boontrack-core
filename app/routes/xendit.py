@@ -92,6 +92,9 @@ async def send_whatsapp_payment_notification(
         if amount == 249000 or (248000 <= amount <= 249000):
             item_name = "Paket Lengkap Kelas Inkubasi CTWA Batch 1"
             access_url = "https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale"
+        elif amount == 1500 or (product_name and "penny" in str(product_name).lower()):
+            item_name = "Verifikasi Internal Sistem OnlineBoost"
+            access_url = None
 
     access_block = f"🔗 *Detail Link Akses Kelas Instan:*\n{access_url}\n\n" if access_url else ""
     text = (
@@ -196,6 +199,10 @@ async def send_capi_task(
     tenant_id: str = "boontrack-career",
 ) -> None:
     """Background task to dispatch Meta & TikTok Conversions API events without blocking webhook."""
+    if amount == 1500 or str(product_name or "").upper() == "TEST-PENNY-1500" or "penny" in str(product_name or "").lower():
+        logger.info(f"[Xendit CAPI] Skipping CAPI dispatch for penny test order '{external_id}' (amount={amount}, product={product_name}).")
+        return
+
     try:
         sess_ctx = get_user_session_context(phone) if phone else {}
         clid = sess_ctx.get("ctwa_clid")
@@ -937,6 +944,45 @@ async def process_xendit_webhook_core(
             }
         }
 
+    # Strict Invariant & Cross-Validation: order_id, tenant_id, sku_id, expected_amount
+    persisted_sku = str(
+        (persisted_order or {}).get("product_id")
+        or (stored_intent or {}).get("sku_id")
+        or ((stored_intent or {}).get("metadata") or {}).get("sku_id")
+        or ""
+    ).strip().upper()
+
+    if amount == 1500:
+        if not persisted_sku or persisted_sku != "TEST-PENNY-1500":
+            logger.error(
+                f"[Xendit Webhook] Cross-validation failure: amount Rp1.500 received for order '{external_id}' but persisted_sku is '{persisted_sku}'. Denying settlement."
+            )
+            if external_id:
+                release_payment_lock(external_id)
+            return {
+                "http_status": 400,
+                "response": {
+                    "status": "AMOUNT_MISMATCH",
+                    "error": "Penny settlement (Rp1.500) is strictly restricted to orders with persisted_sku == TEST-PENNY-1500.",
+                    "external_id": external_id,
+                }
+            }
+
+    if persisted_sku == "TEST-PENNY-1500" and amount != 1500:
+        logger.error(
+            f"[Xendit Webhook] Cross-validation failure: TEST-PENNY-1500 order '{external_id}' received unexpected amount Rp{amount:,} (expected Rp1,500). Denying settlement."
+        )
+        if external_id:
+            release_payment_lock(external_id)
+        return {
+            "http_status": 400,
+            "response": {
+                "status": "AMOUNT_MISMATCH",
+                "error": "TEST-PENNY-1500 order requires exact Rp1,500 settlement.",
+                "external_id": external_id,
+            }
+        }
+
     # Authoritative Tenant Resolution:
     # 1. Trusted database persisted order tenant_slug / tenant_id
     # 2. Trusted stored payment intent tenant_slug / tenant_id
@@ -1093,33 +1139,37 @@ async def process_xendit_webhook_core(
         )
 
     # Task 2: Meta Conversions API (CAPI) & TikTok CAPI Event
-    asyncio.create_task(
-        send_capi_task(
-            external_id=external_id,
-            amount=amount,
-            phone=customer_phone,
-            email=customer_email,
-            product_name=product_name,
-            currency="IDR",
-            tenant_id=tenant_id,
-        )
-    )
-
-    # Task 3: Instant Digital Fulfillment (auto-entitlement + signed download token)
-    try:
-        from app.services.digital_fulfillment_service import fulfill_if_digital
+    # Strictly isolated: Zero Meta CAPI purchase event for penny test orders
+    if persisted_sku != "TEST-PENNY-1500" and amount != 1500:
         asyncio.create_task(
-            fulfill_if_digital(
-                order_id=external_id,
-                tenant_id=tenant_id,
-                buyer_email=customer_email or "",
-                buyer_phone=customer_phone,
+            send_capi_task(
+                external_id=external_id,
                 amount=amount,
+                phone=customer_phone,
+                email=customer_email,
+                product_name=product_name,
+                currency="IDR",
+                tenant_id=tenant_id,
             )
         )
-        logger.info(f"[Xendit Webhook] Digital fulfillment task scheduled for order '{external_id}'")
-    except Exception as fe:
-        logger.warning(f"[Xendit Webhook] Digital fulfillment task could not be scheduled: {fe}")
+
+    # Task 3: Instant Digital Fulfillment (auto-entitlement + signed download token)
+    # Strictly isolated: Never grant digital course entitlement for internal penny test SKU!
+    if tenant_id != "onlineboost" and persisted_sku != "TEST-PENNY-1500" and amount != 1500:
+        try:
+            from app.services.digital_fulfillment_service import fulfill_if_digital
+            asyncio.create_task(
+                fulfill_if_digital(
+                    order_id=external_id,
+                    tenant_id=tenant_id,
+                    buyer_email=customer_email or "",
+                    buyer_phone=customer_phone,
+                    amount=amount,
+                )
+            )
+            logger.info(f"[Xendit Webhook] Digital fulfillment task scheduled for order '{external_id}'")
+        except Exception as fe:
+            logger.warning(f"[Xendit Webhook] Digital fulfillment task could not be scheduled: {fe}")
 
     # Task 3b: OnlineBoost CTWA Single-Use Telegram Link Fulfillment
     if tenant_id == "onlineboost":

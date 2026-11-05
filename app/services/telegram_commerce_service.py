@@ -812,6 +812,22 @@ async def handle_chat_member_joined(
                 )
             )
             conn.commit()
+
+            # Greeting via @onlineboostbot ke Supergroup jika tiket single-use terverifikasi
+            target_chat = chat_id or "-1004371114362"
+            if updated and target_chat and str(user_id) != "9988776655" and os.getenv("TESTING") != "1":
+                try:
+                    from app.core.channels.telegram import send_onlineboost_message
+                    welcome_text = (
+                        f"👋 *Selamat Datang di Supergroup Praktikum OnlineBoost Batch 1!*\n\n"
+                        f"Halo Kak {user_name}! Tiket akses single-use Anda telah terverifikasi secara resmi ✅.\n\n"
+                        f"Silakan perkenalkan diri dan pantau pengumuman kelas di grup ini ya Kak. Selamat bertumbuh bersama OnlineBoost! 🚀"
+                    )
+                    import asyncio
+                    asyncio.create_task(send_onlineboost_message(chat_id=target_chat, text=welcome_text))
+                    logger.info(f"[ChatMemberListener] Greeting scheduled for {user_name} in {target_chat} via @onlineboostbot")
+                except Exception as _greet_err:
+                    logger.debug(f"[ChatMemberListener] Greeting dispatch note: {_greet_err}")
         conn.close()
     except Exception as e:
         logger.warning(f"[ChatMemberListener] Error updating token / audit log: {e}")
@@ -861,11 +877,12 @@ async def handle_telegram_link_baru(
 
     order_id = token_row[1] if token_row else f"REFRESH-{uuid.uuid4().hex[:8].upper()}"
 
-    # Panggil generator single-use invite link baru
+    # Panggil generator single-use invite link baru via @onlineboostbot
     new_link = await create_telegram_single_use_invite_link(
         order_id=order_id,
         buyer_name=user_name,
-        chat_id=None,
+        chat_id=chat_id,
+        bot_token=bot_token,
     )
 
     # Catat ke database telegram_single_use_tokens

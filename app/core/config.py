@@ -75,6 +75,10 @@ class Settings:
         return os.getenv("TELEGRAM_ONLINEBOOST_BOT_TOKEN")
 
     @property
+    def TELEGRAM_ONLINEBOOST_CHAT_ID(self) -> str:
+        return os.getenv("TELEGRAM_ONLINEBOOST_CHAT_ID", "-1004371114362")
+
+    @property
     def TELEGRAM_CREATOR_BOT_TOKEN(self) -> Optional[str]:
         return os.getenv("TELEGRAM_CREATOR_BOT_TOKEN")
     

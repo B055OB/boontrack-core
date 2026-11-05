@@ -47,10 +47,11 @@ async def create_telegram_single_use_invite_link(
     order_id: str,
     buyer_name: str = "Peserta",
     chat_id: Optional[str] = None,
+    bot_token: Optional[str] = None,
 ) -> str:
     """
-    Panggil Telegram Bot API createChatInviteLink:
-    chat_id: "-1004371114362"
+    Panggil Telegram Bot API createChatInviteLink via @onlineboostbot:
+    chat_id: "-1004371114362" (Supergroup OnlineBoost Batch 1)
     member_limit: 1 (link otomatis hangus setelah 1 kali join)
     expire_date: int(time.time()) + 86400 (aktif 24 jam)
     name: f"Invite-{order_id}"
@@ -60,24 +61,32 @@ async def create_telegram_single_use_invite_link(
 
     target_chat_id = (
         chat_id
+        or os.getenv("TELEGRAM_ONLINEBOOST_CHAT_ID")
         or os.getenv("TELEGRAM_CTWA_CHAT_ID")
         or os.getenv("TELEGRAM_SUPERGROUP_CHAT_ID")
         or DEFAULT_CTWA_CHAT_ID
     )
-    bot_token = (
-        os.getenv("TELEGRAM_BOT_TOKEN")
-        or os.getenv("TELEGRAM_ACADEMY_BOT_TOKEN")
-        or ""
-    ).strip()
-    if not bot_token:
-        logger.error("[CTWA FULFILLMENT] TELEGRAM_BOT_TOKEN tidak dikonfigurasi di environment (fail-closed)")
-        raise ValueError("TELEGRAM_BOT_TOKEN is not configured in environment variables (fail-closed)")
+    resolved_bot_token = (
+        bot_token
+        or os.getenv("TELEGRAM_ONLINEBOOST_BOT_TOKEN")
+    )
+    if not resolved_bot_token:
+        try:
+            from app.core.channels.telegram import get_dynamic_telegram_bot_token
+            resolved_bot_token = get_dynamic_telegram_bot_token(bot_username="onlineboostbot")
+        except Exception:
+            pass
+
+    resolved_bot_token = resolved_bot_token.strip() if resolved_bot_token else ""
+    if not resolved_bot_token:
+        logger.error("[CTWA FULFILLMENT] OnlineBoost bot token is missing or not configured (fail-closed)")
+        raise RuntimeError("OnlineBoost bot token is missing or not configured. Fallback to other bot tokens is strictly prohibited.")
 
     expire_date = int(time.time()) + 86400
     invite_name = f"Invite-{order_id}"
 
-    if bot_token and target_chat_id:
-        url = f"https://api.telegram.org/bot{bot_token}/createChatInviteLink"
+    if resolved_bot_token and target_chat_id:
+        url = f"https://api.telegram.org/bot{resolved_bot_token}/createChatInviteLink"
         payload = {
             "chat_id": target_chat_id,
             "name": invite_name,
@@ -95,7 +104,7 @@ async def create_telegram_single_use_invite_link(
                         if order_id:
                             _ISSUED_TELEGRAM_LINKS_CACHE[order_id] = invite_link
                         logger.info(
-                            f"[CTWA FULFILLMENT] Generated single-use Telegram link for Order {order_id}: {invite_link}"
+                            f"[CTWA FULFILLMENT] Generated single-use Telegram link for Order {order_id} via @onlineboostbot: {invite_link}"
                         )
                         return invite_link
                     logger.warning(f"[CTWA FULFILLMENT] Telegram response missing invite_link: {data}")
@@ -144,6 +153,7 @@ async def fulfill_onlineboost_ctwa_order(
     tenant_id: str = "onlineboost",
     ctwa_clid: Optional[str] = None,
     chat_id: Optional[str] = None,
+    bot_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Eksekusi fulfillment pesanan lunas onlineboost:
@@ -214,6 +224,109 @@ async def fulfill_onlineboost_ctwa_order(
     )
     amt_formatted = format_idr(resolved_amount)
 
+    # ------------------------------------------------------------------------
+    # STRICT PENNY TEST ISOLATION (ZERO TELEGRAM INVITE & ZERO META CAPI)
+    # ------------------------------------------------------------------------
+    is_penny_test = (
+        resolved_amount == 1500
+        or (order_record and str(order_record.get("product_id", "")).upper() == "TEST-PENNY-1500")
+        or (order_record and "penny" in str(order_record.get("product_title", "")).lower())
+    )
+
+    if is_penny_test:
+        logger.info(f"[CTWA FULFILLMENT] Penny test SKU detected for order '{order_id}'. Executing zero-invite zero-capi fulfillment.")
+        is_already_verified = bool(
+            _ISSUED_TELEGRAM_LINKS_CACHE.get(f"{order_id}_DELIVERED") == "VERIFIED"
+            or (order_record.get("metadata") or {}).get("fulfillment_status") == "VERIFIED"
+        )
+        if is_already_verified:
+            logger.info(f"[CTWA FULFILLMENT] Idempotency hit: Penny order '{order_id}' already verified.")
+            return {
+                "status": "SUCCESS",
+                "order_id": order_id,
+                "single_use_invite_link": None,
+                "confirmation_message": "Verifikasi Sistem Berhasil",
+                "buyer_name": resolved_name,
+                "buyer_phone": clean_phone,
+                "amount": resolved_amount,
+                "wa_result": {"status": "skipped", "reason": "ALREADY_VERIFIED"},
+                "capi_result": {"status": "skipped", "reason": "PENNY_TEST_ZERO_CAPI"},
+                "idempotency_hit": True,
+                "is_internal_test": True,
+            }
+
+        current_meta = order_record.get("metadata") or {}
+        if isinstance(current_meta, str):
+            try:
+                current_meta = json.loads(current_meta)
+            except Exception:
+                current_meta = {}
+        if not isinstance(current_meta, dict):
+            current_meta = {}
+
+        current_meta["fulfillment_status"] = "VERIFIED"
+        current_meta["is_internal_test"] = True
+        current_meta["verified_at"] = datetime.now(timezone.utc).isoformat()
+
+        if sb and order_id:
+            try:
+                sb.table("orders").update({
+                    "metadata": current_meta,
+                    "status": "PAID",
+                    "payment_status": "PAID",
+                }).eq("id", order_id).execute()
+            except Exception as upd_err:
+                logger.warning(f"[CTWA FULFILLMENT] Failed updating Supabase penny order metadata: {upd_err}")
+
+        try:
+            from app.core.database import get_db_connection
+            conn = get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE orders 
+                    SET metadata = %s,
+                        status = 'PAID',
+                        payment_status = 'PAID',
+                        paid_at = COALESCE(paid_at, NOW()),
+                        updated_at = NOW()
+                    WHERE id = %s;
+                    """,
+                    (json.dumps(current_meta), order_id)
+                )
+                conn.commit()
+            conn.close()
+        except Exception as pg_upd_err:
+            logger.debug(f"[CTWA FULFILLMENT] Postgres metadata update note: {pg_upd_err}")
+
+        confirmation_message = "Verifikasi Sistem Berhasil"
+        wa_result = None
+        if clean_phone:
+            try:
+                wa_result = await cloud_api.send_whatsapp_text(
+                    to_phone=clean_phone,
+                    text=confirmation_message,
+                    tenant_id=tenant_id,
+                )
+                logger.info(f"[CTWA FULFILLMENT] WhatsApp verification text sent to {clean_phone} for Penny Order {order_id}")
+            except Exception as wa_err:
+                logger.warning(f"[CTWA FULFILLMENT] WhatsApp outbox dispatch note: {wa_err}")
+
+        _ISSUED_TELEGRAM_LINKS_CACHE[f"{order_id}_DELIVERED"] = "VERIFIED"
+
+        return {
+            "status": "SUCCESS",
+            "order_id": order_id,
+            "single_use_invite_link": None,
+            "confirmation_message": confirmation_message,
+            "buyer_name": resolved_name,
+            "buyer_phone": clean_phone,
+            "amount": resolved_amount,
+            "wa_result": wa_result,
+            "capi_result": {"status": "skipped", "reason": "PENNY_TEST_ZERO_CAPI"},
+            "is_internal_test": True,
+        }
+
     # 2. Cek apakah link single-use sudah diterbitkan sebelumnya (Idempotensi ketat)
     existing_link = (
         _ISSUED_TELEGRAM_LINKS_CACHE.get(order_id)
@@ -227,9 +340,11 @@ async def fulfill_onlineboost_ctwa_order(
             _ISSUED_TELEGRAM_LINKS_CACHE.get(f"{order_id}_DELIVERED")
             or (order_record.get("metadata") or {}).get("fulfillment_status") == "DELIVERED"
         )
+        product_label = "Kelas Inkubasi CTWA Batch 1"
+
         if is_already_delivered:
             confirmation_message = (
-                f"Selamat Kak {resolved_name}! Pembayaran sebesar Rp{amt_formatted} untuk Kelas Inkubasi CTWA Batch 1 telah BERHASIL diverifikasi ✅\n\n"
+                f"Selamat Kak {resolved_name}! Pembayaran sebesar Rp{amt_formatted} untuk {product_label} telah BERHASIL diverifikasi ✅\n\n"
                 f"Berikut link akses eksklusif Kakak untuk bergabung ke Supergroup Praktikum: 🔗 {single_use_link}\n\n"
                 f"⚠️ Penting: Tautan di atas adalah link khusus 1 kali masuk dan berlaku selama 24 jam. Jangan dibagikan ke orang lain ya Kak!\n\n"
                 f"Sampai jumpa di ruang praktikum!"
@@ -247,12 +362,13 @@ async def fulfill_onlineboost_ctwa_order(
                 "idempotency_hit": True,
             }
     else:
-        # Panggil Telegram Bot API createChatInviteLink
+        # Panggil Telegram Bot API createChatInviteLink via @onlineboostbot
         try:
             single_use_link = await create_telegram_single_use_invite_link(
                 order_id=order_id,
                 buyer_name=resolved_name,
                 chat_id=chat_id,
+                bot_token=bot_token,
             )
         except Exception as tg_err:
             logger.error(f"[CTWA FULFILLMENT] Failed generating Telegram invite for {order_id}: {tg_err}")
@@ -375,8 +491,10 @@ async def fulfill_onlineboost_ctwa_order(
         logger.warning(f"[CTWA FULFILLMENT] Failed to record telegram_single_use_tokens: {_tok_err}")
 
     # 3. Susun Teks Konfirmasi Resmi Sesuai Spesifikasi Prompt
+    product_label = "Kelas Inkubasi CTWA Batch 1"
+
     confirmation_message = (
-        f"Selamat Kak {resolved_name}! Pembayaran sebesar Rp{amt_formatted} untuk Kelas Inkubasi CTWA Batch 1 telah BERHASIL diverifikasi ✅\n\n"
+        f"Selamat Kak {resolved_name}! Pembayaran sebesar Rp{amt_formatted} untuk {product_label} telah BERHASIL diverifikasi ✅\n\n"
         f"Berikut link akses eksklusif Kakak untuk bergabung ke Supergroup Praktikum: 🔗 {single_use_link}\n\n"
         f"⚠️ Penting: Tautan di atas adalah link khusus 1 kali masuk dan berlaku selama 24 jam. Jangan dibagikan ke orang lain ya Kak!\n\n"
         f"Sampai jumpa di ruang praktikum!"
