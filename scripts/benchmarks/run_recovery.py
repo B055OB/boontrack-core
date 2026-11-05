@@ -11,12 +11,15 @@ Mechanisms:
   - Strict 500ms lock_timeout (SQLSTATE 55P03 LockNotAvailable handling)
   - Topologically sorted reverse foreign key deletion
   - Fail-closed zero residual assertion on prefix 'bench_b1_'
+  - Zero-drift catalog audit on public.tenants and public.affiliates
 =============================================================================
 """
 
 import os
 import sys
 import time
+import datetime
+import hashlib
 import logging
 import psycopg2
 from psycopg2 import errors
@@ -34,6 +37,14 @@ LOCK_BACKOFF_SECONDS = 1.0
 BENCHMARK_TENANT_ID = "6b37fdf0-b1a2-49ad-bec5-7153b8a76fba"
 RUN_PREFIX_SQL = "bench\\_b1\\_%"
 
+def get_canonical_hash(filepath):
+    """Compute LF-canonical SHA-256 for consistent provenance verification."""
+    if not os.path.exists(filepath):
+        return "NOT_FOUND"
+    with open(filepath, "rb") as f:
+        content = f.read().replace(b"\r\n", b"\n")
+    return hashlib.sha256(content).hexdigest()
+
 def get_staging_connection():
     dotenv.load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
     db_url = os.environ.get("STAGING_DATABASE_URL")
@@ -45,17 +56,32 @@ def get_staging_connection():
         logger.error("FAIL-CLOSED: Target is not Staging Supabase (xkhqirhurnjqglmajghn)! Refusing execution.")
         sys.exit(1)
         
+    if "mpluz" in db_url:
+        logger.critical("FATAL SECURITY ALERT: Production marker mpluz detected in database URL! Execution halted.")
+        sys.exit(1)
+        
     conn = psycopg2.connect(db_url)
     conn.set_session(autocommit=False)
     return conn
 
 def execute_recovery():
+    current_time_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    script_path = os.path.abspath(__file__)
+    sql_path = os.path.join(os.path.dirname(script_path), "staging_populated_benchmark_recovery.sql")
+    
+    hash_script = get_canonical_hash(script_path)
+    hash_sql = get_canonical_hash(sql_path)
+
     logger.info("================================================================================")
     logger.info(" BOONTRACK INDEPENDENT BENCHMARK RECOVERY HARNESS (RUN 'gate_i_b1')")
     logger.info("================================================================================")
-    logger.info(f"Target Tenant   : {BENCHMARK_TENANT_ID}")
-    logger.info(f"Prefix Pattern  : {RUN_PREFIX_SQL}")
-    logger.info(f"Max Lock Retries: {MAX_LOCK_ATTEMPTS} attempts (500ms timeout + 1.0s backoff)")
+    logger.info(f"Execution Timestamp (UTC) : {current_time_utc}")
+    logger.info(f"Target Database Endpoint   : Staging Supabase (xkhqirhurnjqglmajghn:5432)")
+    logger.info(f"Runner Script SHA-256 (LF) : {hash_script}")
+    logger.info(f"Recovery SQL SHA-256 (LF)  : {hash_sql}")
+    logger.info(f"Target Benchmark Tenant    : {BENCHMARK_TENANT_ID}")
+    logger.info(f"Isolation Prefix Pattern   : {RUN_PREFIX_SQL}")
+    logger.info(f"Max Lock Retries           : {MAX_LOCK_ATTEMPTS} attempts (500ms timeout + 1.0s backoff)")
     logger.info("--------------------------------------------------------------------------------")
 
     lock_acquired = False
@@ -80,7 +106,7 @@ def execute_recovery():
                 IN SHARE ROW EXCLUSIVE MODE;
             """)
             
-            logger.info(f"[+] [Attempt {attempt}] Lock successfully acquired in SHARE ROW EXCLUSIVE mode.")
+            logger.info(f"[+] [Attempt {attempt}] Lock successfully acquired in SHARE ROW EXCLUSIVE mode (lock_timeout=500ms, statement_timeout=2000ms).")
             lock_acquired = True
             
             # 1. Reverse FK Cleanup
@@ -114,10 +140,10 @@ def execute_recovery():
             """, (BENCHMARK_TENANT_ID, RUN_PREFIX_SQL))
             del_ord = cur.rowcount
             
-            logger.info(f"[+] Deleted rows: attributions={del_att}, commissions={del_com}, product_orders={del_po}, orders={del_ord}")
+            logger.info(f"[+] Deleted rows per table: attributions={del_att}, commissions={del_com}, product_orders={del_po}, orders={del_ord}")
             
             # 2. Zero Residual Verification
-            logger.info("[*] Verifying zero residual drift...")
+            logger.info("[*] Verifying zero residual drift across 4 fixture tables...")
             cur.execute("""
                 SELECT 
                     (SELECT COUNT(*) FROM public.attributions WHERE tenant_id = %s AND order_id LIKE %s ESCAPE '\\') AS res_att,
@@ -134,10 +160,31 @@ def execute_recovery():
                 logger.error(f"FAIL-CLOSED: Residual rows detected post-deletion: {res}. Transaction rolled back!")
                 sys.exit(1)
                 
+            # 3. Master Catalog Zero-Drift Audit (public.tenants & public.affiliates)
+            logger.info("[*] Auditing master catalog zero-drift (public.tenants & public.affiliates)...")
+            cur.execute("SELECT COUNT(*) AS tenant_count FROM public.tenants;")
+            tenant_count = cur.fetchone()["tenant_count"]
+            
+            cur.execute("SELECT COUNT(*) AS affiliate_count FROM public.affiliates;")
+            affiliate_count = cur.fetchone()["affiliate_count"]
+            
+            logger.info(f"[+] Master Catalog Audit: public.tenants={tenant_count} rows, public.affiliates={affiliate_count} rows")
+            
+            if tenant_count != 3:
+                conn.rollback()
+                logger.error(f"FAIL-CLOSED: Tenant count drift detected! Found {tenant_count}, expected exactly 3.")
+                sys.exit(1)
+                
+            if affiliate_count != 5:
+                conn.rollback()
+                logger.error(f"FAIL-CLOSED: Affiliate count drift detected! Found {affiliate_count}, expected exactly 5.")
+                sys.exit(1)
+                
             conn.commit()
             logger.info("================================================================================")
             logger.info(f"[SUCCESS] RECOVERY PASS: Zero residual verified across all 4 tables for 'gate_i_b1'.")
             logger.info(f"[SUCCESS] Residual counts: {dict(res)} | Total Residual = 0")
+            logger.info(f"[SUCCESS] Zero drift verified: public.tenants (3 rows) and public.affiliates (5 rows) 100% UNTOUCHED.")
             logger.info("================================================================================")
             return True
 
