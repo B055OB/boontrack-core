@@ -17,8 +17,10 @@ import time
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from app.core.rev1.exceptions import AuthorizationError
+from app.routes.academy_routes import create_academy_invoice, CreateAcademyInvoiceRequest
+from app.routes.xendit import process_xendit_webhook_core
 from app.services.ctwa_fulfillment_service import (
     create_telegram_single_use_invite_link,
     fulfill_onlineboost_ctwa_order,
@@ -230,24 +232,12 @@ async def test_golden_penny_test_sku_isolation():
     )
     assert settle_res["status"] in ("PAID", "ALREADY_SETTLED")
 
-    # 4. Verify fulfillment execution with Rp1.500 works seamlessly with internal label
-    expected_invite = "https://t.me/+onlineboost_penny_success"
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "ok": True,
-        "result": {
-            "invite_link": expected_invite,
-            "member_limit": 1,
-        },
-    }
-
+    # 4. Verify fulfillment execution with Rp1.500 works with Zero Telegram Invite & Zero CAPI
     with patch.dict(os.environ, {"TELEGRAM_ONLINEBOOST_BOT_TOKEN": DUMMY_ONLINEBOOST_TOKEN, "TELEGRAM_ONLINEBOOST_CHAT_ID": SUPERGROUP_CHAT_ID}), \
          patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
          patch("app.services.whatsapp.cloud_api.send_whatsapp_text", new_callable=AsyncMock) as mock_wa, \
-         patch("app.modules.tracking.capi_dispatcher.capi_dispatcher.dispatch_purchase", new_callable=AsyncMock):
+         patch("app.modules.tracking.capi_dispatcher.capi_dispatcher.dispatch_purchase", new_callable=AsyncMock) as mock_capi:
 
-        mock_post.return_value = mock_resp
         mock_wa.return_value = {"messages": [{"id": "wamid.PENNY"}]}
 
         res = await fulfill_onlineboost_ctwa_order(
@@ -259,9 +249,16 @@ async def test_golden_penny_test_sku_isolation():
         )
 
         assert res["status"] == "SUCCESS"
-        assert res["single_use_invite_link"] == expected_invite
-        assert "1.500" in res["confirmation_message"]
-        assert "Verifikasi Internal Sistem OnlineBoost" in res["confirmation_message"]
+        assert res["single_use_invite_link"] is None
+        assert res["confirmation_message"] == "Verifikasi Sistem Berhasil"
+        assert res.get("is_internal_test") is True
+        # Zero Telegram Bot API calls
+        assert mock_post.call_count == 0
+        # Zero Meta CAPI calls
+        assert mock_capi.call_count == 0
+        # WhatsApp outbox dispatched clean confirmation text
+        assert mock_wa.called
+        assert mock_wa.call_args[1]["text"] == "Verifikasi Sistem Berhasil" 
 
 
 # ============================================================================
@@ -394,3 +391,210 @@ async def test_storefront_catalog_cannot_resolve_internal_penny_sku():
     with pytest.raises(HTTPException) as exc_info:
         await get_product_by_id_endpoint("TEST-PENNY-1500", tenant_slug="onlineboost")
     assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_internal_sku_auth_fails_when_env_secrets_missing():
+    """Negative Test 5: create_academy_invoice fails-closed with HTTP 500 when env secrets are missing."""
+    req_payload = CreateAcademyInvoiceRequest(
+        customer_name="Founder Tester",
+        customer_email="founder@internal.com",
+        customer_phone="081233334444",
+        tenant_id="onlineboost",
+        sku_id=TEST_PENNY_SKU_ID,
+    )
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {}
+
+    with patch.dict(os.environ, {}, clear=True):
+        with pytest.raises(HTTPException) as exc_info:
+            await create_academy_invoice(req_payload, mock_request)
+        assert exc_info.value.status_code == 500
+        assert "Authentication service unavailable" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_internal_sku_auth_rejected_via_body_without_secure_header():
+    """Negative Test 6: create_academy_invoice fails-closed with HTTP 403 when called without secure headers."""
+    req_payload = CreateAcademyInvoiceRequest(
+        customer_name="Founder Tester",
+        customer_email="founder@internal.com",
+        customer_phone="081233334444",
+        tenant_id="onlineboost",
+        sku_id=TEST_PENNY_SKU_ID,
+    )
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {}  # No X-Internal-Secret or Authorization header
+
+    env_mock = {
+        "BOONTRACK_INTERNAL_HMAC_SECRET": "top_secret_hmac_123",
+        "APP_MASTER_KEY": "master_key_456",
+    }
+    with patch.dict(os.environ, env_mock):
+        with pytest.raises(HTTPException) as exc_info:
+            await create_academy_invoice(req_payload, mock_request)
+        assert exc_info.value.status_code == 403
+        assert "Access Denied" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_internal_sku_auth_succeeds_with_secure_header():
+    """Test: create_academy_invoice succeeds when authenticated via secure headers."""
+    env_mock = {
+        "BOONTRACK_INTERNAL_HMAC_SECRET": "top_secret_hmac_123",
+        "APP_MASTER_KEY": "master_key_456",
+    }
+    req_payload = CreateAcademyInvoiceRequest(
+        customer_name="Founder Tester",
+        customer_email="founder@internal.com",
+        customer_phone="081233334444",
+        tenant_id="onlineboost",
+        sku_id=TEST_PENNY_SKU_ID,
+    )
+
+    # Test via X-Internal-Secret header
+    mock_request_secret = MagicMock(spec=Request)
+    mock_request_secret.headers = {"X-Internal-Secret": "top_secret_hmac_123"}
+
+    with patch.dict(os.environ, env_mock):
+        res = await create_academy_invoice(req_payload, mock_request_secret)
+        assert res["status"] == "success"
+        inv = res["invoice"]
+        assert inv["sku_id"] == TEST_PENNY_SKU_ID
+        assert inv["total_amount"] == 1500
+
+    # Test via Authorization: Bearer <master_key> header
+    mock_request_bearer = MagicMock(spec=Request)
+    mock_request_bearer.headers = {"Authorization": "Bearer master_key_456"}
+
+    with patch.dict(os.environ, env_mock):
+        res_bearer = await create_academy_invoice(req_payload, mock_request_bearer)
+        assert res_bearer["status"] == "success"
+        assert res_bearer["invoice"]["total_amount"] == 1500
+
+
+@pytest.mark.asyncio
+async def test_penny_order_fulfillment_zero_telegram_and_zero_capi():
+    """Test: Penny order fulfillment strictly executes Zero Telegram Bot API calls and Zero Meta CAPI events."""
+    _ISSUED_TELEGRAM_LINKS_CACHE.clear()
+    order_id = "ORD-TEST-ZERO-CAPI-PENNY-01"
+
+    with patch.dict(os.environ, {"TELEGRAM_ONLINEBOOST_BOT_TOKEN": DUMMY_ONLINEBOOST_TOKEN, "TELEGRAM_ONLINEBOOST_CHAT_ID": SUPERGROUP_CHAT_ID}), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+         patch("app.services.whatsapp.cloud_api.send_whatsapp_text", new_callable=AsyncMock) as mock_wa, \
+         patch("app.modules.tracking.capi_dispatcher.capi_dispatcher.dispatch_purchase", new_callable=AsyncMock) as mock_capi:
+
+        mock_wa.return_value = {"messages": [{"id": "wamid.PENNY.ZERO"}]}
+
+        res = await fulfill_onlineboost_ctwa_order(
+            order_id=order_id,
+            buyer_name="Zero Capi Tester",
+            buyer_phone="081255556666",
+            amount=1500,
+            tenant_id="onlineboost",
+        )
+
+        assert res["status"] == "SUCCESS"
+        assert res["single_use_invite_link"] is None
+        assert res["confirmation_message"] == "Verifikasi Sistem Berhasil"
+        assert res.get("is_internal_test") is True
+
+        # Assert Zero Telegram Bot API calls made
+        assert mock_post.call_count == 0
+        # Assert Zero Meta CAPI calls made
+        assert mock_capi.call_count == 0
+        # Assert WhatsApp received plain text confirmation only
+        assert mock_wa.called
+        assert mock_wa.call_args[1]["text"] == "Verifikasi Sistem Berhasil"
+
+
+@pytest.mark.asyncio
+async def test_penny_settlement_rejected_when_persisted_sku_missing_or_mismatched():
+    """Negative Test 7: Webhook rejects penny settlement (Rp1.500) if persisted_sku is missing or not TEST-PENNY-1500."""
+    headers = {"x-callback-token": "aM08Ka1LQ9Jx1OsieBe6kcM1pK1Z5eWlpWAka5zBOuGpVbWS"}
+
+    # 1. Penny amount Rp1.500 with persisted order having NO SKU (persisted_sku is empty/None)
+    payload_no_sku = {
+        "id": "evt_test_penny_no_sku",
+        "external_id": "ORD-PENNY-NO-SKU",
+        "amount": 1500,
+        "status": "PAID",
+    }
+    with patch("app.routes.xendit._check_db_idempotency_sync", return_value=False), \
+         patch("app.routes.xendit._lookup_persisted_order_sync", return_value={"id": "ORD-PENNY-NO-SKU", "gross_amount": 1500, "product_id": None}):
+        res_no_sku = await process_xendit_webhook_core(payload_no_sku, headers)
+        assert res_no_sku["http_status"] == 400
+        assert res_no_sku["response"]["status"] == "AMOUNT_MISMATCH"
+        assert "strictly restricted" in res_no_sku["response"]["error"]
+
+    # 2. Penny amount Rp1.500 with regular class SKU (persisted_sku == "OB-BATCH1-249K")
+    payload_mismatch = {
+        "id": "evt_test_penny_mismatch",
+        "external_id": "ORD-PENNY-MISMATCH",
+        "amount": 1500,
+        "status": "PAID",
+    }
+    with patch("app.routes.xendit._check_db_idempotency_sync", return_value=False), \
+         patch("app.routes.xendit._lookup_persisted_order_sync", return_value={"id": "ORD-PENNY-MISMATCH", "gross_amount": 1500, "product_id": "OB-BATCH1-249K"}):
+        res_mismatch = await process_xendit_webhook_core(payload_mismatch, headers)
+        assert res_mismatch["http_status"] == 400
+        assert res_mismatch["response"]["status"] == "AMOUNT_MISMATCH"
+        assert "strictly restricted" in res_mismatch["response"]["error"]
+
+    # 3. Regular amount Rp249.000 for order persisted as TEST-PENNY-1500
+    payload_reverse = {
+        "id": "evt_test_penny_reverse",
+        "external_id": "ORD-PENNY-REVERSE",
+        "amount": 249000,
+        "status": "PAID",
+    }
+    with patch("app.routes.xendit._check_db_idempotency_sync", return_value=False), \
+         patch("app.routes.xendit._lookup_persisted_order_sync", return_value={"id": "ORD-PENNY-REVERSE", "gross_amount": 249000, "product_id": "TEST-PENNY-1500"}):
+        res_reverse = await process_xendit_webhook_core(payload_reverse, headers)
+        assert res_reverse["http_status"] == 400
+        assert res_reverse["response"]["status"] == "AMOUNT_MISMATCH"
+        assert "TEST-PENNY-1500 order requires exact Rp1,500 settlement." in res_reverse["response"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_penny_duplicate_webhook_does_not_call_telegram_or_resend_whatsapp():
+    """Negative Test 8: Replay/duplicate webhook for penny order remains strictly idempotent."""
+    _ISSUED_TELEGRAM_LINKS_CACHE.clear()
+    order_id = "ORD-TEST-PENNY-IDEMP-01"
+
+    with patch.dict(os.environ, {"TELEGRAM_ONLINEBOOST_BOT_TOKEN": DUMMY_ONLINEBOOST_TOKEN, "TELEGRAM_ONLINEBOOST_CHAT_ID": SUPERGROUP_CHAT_ID}), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+         patch("app.services.whatsapp.cloud_api.send_whatsapp_text", new_callable=AsyncMock) as mock_wa, \
+         patch("app.modules.tracking.capi_dispatcher.capi_dispatcher.dispatch_purchase", new_callable=AsyncMock) as mock_capi:
+
+        mock_wa.return_value = {"messages": [{"id": "wamid.PENNY.IDEMP"}]}
+
+        # First webhook arrival
+        res1 = await fulfill_onlineboost_ctwa_order(
+            order_id=order_id,
+            buyer_name="Kak Penny Idemp",
+            buyer_phone="08129999000",
+            amount=1500,
+            tenant_id="onlineboost",
+        )
+        assert res1["status"] == "SUCCESS"
+        assert res1["single_use_invite_link"] is None
+        assert mock_post.call_count == 0
+        assert mock_capi.call_count == 0
+        assert mock_wa.call_count == 1
+
+        # Second webhook arrival (duplicate/replay)
+        res2 = await fulfill_onlineboost_ctwa_order(
+            order_id=order_id,
+            buyer_name="Kak Penny Idemp",
+            buyer_phone="08129999000",
+            amount=1500,
+            tenant_id="onlineboost",
+        )
+        assert res2["status"] == "SUCCESS"
+        assert res2["single_use_invite_link"] is None
+        assert res2.get("idempotency_hit") is True
+        # Zero additional calls
+        assert mock_post.call_count == 0
+        assert mock_capi.call_count == 0
+        assert mock_wa.call_count == 1  # Not called again

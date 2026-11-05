@@ -44,7 +44,6 @@ class CreateAcademyInvoiceRequest(BaseModel):
     tenant_id: Optional[str] = Field("onlineboost", description="Tenant slug")
     use_unique_code: Optional[bool] = Field(True, description="Tambahkan 3-digit kode unik")
     sku_id: Optional[str] = Field(None, description="SKU ID yang dipesan")
-    internal_auth_key: Optional[str] = Field(None, description="Internal auth key untuk SKU internal")
 
 
 class AcademyPaidWebhookRequest(BaseModel):
@@ -87,17 +86,32 @@ async def create_academy_invoice(payload: CreateAcademyInvoiceRequest, request: 
     """
     Menghasilkan Dynamic QRIS Invoice:
     - Default: Rp 249.000 (+ 3-digit kode unik jika aktif) untuk SKU publik
-    - SKU Internal TEST-PENNY-1500: Tepat Rp 1.500 (wajib otorisasi internal)
+    - SKU Internal TEST-PENNY-1500: Tepat Rp 1.500 (wajib otorisasi internal via secure headers)
     Masa berlaku TTL tepat 15 menit.
     """
-    is_internal = False
-    auth_header = request.headers.get("X-Internal-Secret") or request.headers.get("Authorization") or ""
-    expected_secret = os.getenv("BOONTRACK_INTERNAL_HMAC_SECRET", "b055ob_secure_hmac_production_secret_key_2026_x9k")
-    master_key = os.getenv("APP_MASTER_KEY", "boontrack_master_security_secret_key_32bytes_len!")
+    expected_secret = os.getenv("BOONTRACK_INTERNAL_HMAC_SECRET")
+    master_key = os.getenv("APP_MASTER_KEY")
 
-    if payload.internal_auth_key and payload.internal_auth_key == expected_secret:
+    # Fail-closed guard: Jika SKU internal diminta namun environment secret tidak dikonfigurasi
+    if payload.sku_id == "TEST-PENNY-1500":
+        if not expected_secret and not master_key:
+            logger.error("[AcademyRoutes] BOONTRACK_INTERNAL_HMAC_SECRET and APP_MASTER_KEY missing from environment. Fail-closed.")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Authentication service unavailable: internal security credentials not configured."
+            )
+
+    is_internal = False
+    x_secret = request.headers.get("X-Internal-Secret")
+    auth_header = request.headers.get("Authorization") or ""
+
+    if x_secret and expected_secret and x_secret.strip() == expected_secret.strip():
         is_internal = True
-    elif auth_header and (auth_header == expected_secret or auth_header == f"Bearer {master_key}"):
+    elif auth_header.startswith("Bearer ") and master_key and auth_header[7:].strip() == master_key.strip():
+        is_internal = True
+    elif auth_header.startswith("Bearer ") and expected_secret and auth_header[7:].strip() == expected_secret.strip():
+        is_internal = True
+    elif auth_header and expected_secret and auth_header.strip() == expected_secret.strip():
         is_internal = True
 
     invoice = generate_academy_qris_invoice(

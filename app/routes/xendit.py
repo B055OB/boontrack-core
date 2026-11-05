@@ -199,6 +199,10 @@ async def send_capi_task(
     tenant_id: str = "boontrack-career",
 ) -> None:
     """Background task to dispatch Meta & TikTok Conversions API events without blocking webhook."""
+    if amount == 1500 or str(product_name or "").upper() == "TEST-PENNY-1500" or "penny" in str(product_name or "").lower():
+        logger.info(f"[Xendit CAPI] Skipping CAPI dispatch for penny test order '{external_id}' (amount={amount}, product={product_name}).")
+        return
+
     try:
         sess_ctx = get_user_session_context(phone) if phone else {}
         clid = sess_ctx.get("ctwa_clid")
@@ -948,20 +952,21 @@ async def process_xendit_webhook_core(
         or ""
     ).strip().upper()
 
-    if amount == 1500 and persisted_sku and persisted_sku != "TEST-PENNY-1500":
-        logger.error(
-            f"[Xendit Webhook] Cross-validation failure: amount Rp1.500 received for non-penny SKU '{persisted_sku}' on order '{external_id}'. Denying settlement."
-        )
-        if external_id:
-            release_payment_lock(external_id)
-        return {
-            "http_status": 400,
-            "response": {
-                "status": "AMOUNT_MISMATCH",
-                "error": "Penny settlement (Rp1.500) is strictly restricted to TEST-PENNY-1500.",
-                "external_id": external_id,
+    if amount == 1500:
+        if not persisted_sku or persisted_sku != "TEST-PENNY-1500":
+            logger.error(
+                f"[Xendit Webhook] Cross-validation failure: amount Rp1.500 received for order '{external_id}' but persisted_sku is '{persisted_sku}'. Denying settlement."
+            )
+            if external_id:
+                release_payment_lock(external_id)
+            return {
+                "http_status": 400,
+                "response": {
+                    "status": "AMOUNT_MISMATCH",
+                    "error": "Penny settlement (Rp1.500) is strictly restricted to orders with persisted_sku == TEST-PENNY-1500.",
+                    "external_id": external_id,
+                }
             }
-        }
 
     if persisted_sku == "TEST-PENNY-1500" and amount != 1500:
         logger.error(
@@ -1134,17 +1139,19 @@ async def process_xendit_webhook_core(
         )
 
     # Task 2: Meta Conversions API (CAPI) & TikTok CAPI Event
-    asyncio.create_task(
-        send_capi_task(
-            external_id=external_id,
-            amount=amount,
-            phone=customer_phone,
-            email=customer_email,
-            product_name=product_name,
-            currency="IDR",
-            tenant_id=tenant_id,
+    # Strictly isolated: Zero Meta CAPI purchase event for penny test orders
+    if persisted_sku != "TEST-PENNY-1500" and amount != 1500:
+        asyncio.create_task(
+            send_capi_task(
+                external_id=external_id,
+                amount=amount,
+                phone=customer_phone,
+                email=customer_email,
+                product_name=product_name,
+                currency="IDR",
+                tenant_id=tenant_id,
+            )
         )
-    )
 
     # Task 3: Instant Digital Fulfillment (auto-entitlement + signed download token)
     # Strictly isolated: Never grant digital course entitlement for internal penny test SKU!
