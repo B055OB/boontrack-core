@@ -9,7 +9,7 @@
 -- Fixture Run ID: 'gate_i_b1' (Strict deterministic namespace 'bench_b1_')
 -- Total Fixture Quota: Exactly 800 synthetic rows across 4 active tables
 --   - public.orders                : 200 rows (ID: bench_b1_ord_001 .. bench_b1_ord_200)
---   - public.product_orders        : 200 rows (180 COMPLETED, 20 PENDING, PK range 60001-60200)
+--   - public.product_orders        : 200 rows (180 COMPLETED, 20 PENDING, PK range -60001 to -60200)
 --   - public.affiliate_commissions : 200 rows (Rp 10.000 / Rp 25.000 deterministic)
 --   - public.attributions          : 200 rows (FK-linked to orders and affiliates)
 -- Security & Isolation: Strict 'bench\_b1\_%' prefix with ESCAPE '\'; zero collision guard.
@@ -37,7 +37,7 @@ IN SHARE ROW EXCLUSIVE MODE;
 -- [STAGE 1] PRECONDITION AUDIT & DETERMINISTIC COLLISION GUARD
 -- Menggunakan pola LIKE 'bench\_b1\_%' ESCAPE '\' untuk mencegah anomali wildcard
 -- ZERO DML pada public.tenants (HANYA validasi read-only keberadaan tenant)
--- PK Collision Guard pada public.product_orders (Rentang Integer 60001 - 60200)
+-- PK Collision Guard pada public.product_orders (Rentang Integer Negatif -60200 s/d -60001)
 -- -----------------------------------------------------------------------------
 DO $$
 DECLARE
@@ -76,16 +76,16 @@ BEGIN
         RAISE EXCEPTION 'COLLISION GUARD FAIL: Found % colliding records with prefix bench_b1_!', v_colliding_count;
     END IF;
 
-    -- 4. PK Collision Guard pada product_orders (Rentang Integer 60001 - 60200)
+    -- 4. PK Collision Guard pada product_orders (Rentang Integer Negatif -60200 s/d -60001)
     SELECT COUNT(*) INTO v_po_pk_collision
     FROM public.product_orders
-    WHERE id BETWEEN 60001 AND 60200;
+    WHERE id BETWEEN -60200 AND -60001;
 
     IF v_po_pk_collision > 0 THEN
-        RAISE EXCEPTION 'COLLISION GUARD FAIL: Ditemukan % existing rows pada product_orders.id range 60001-60200!', v_po_pk_collision;
+        RAISE EXCEPTION 'COLLISION GUARD FAIL: Ditemukan % existing rows pada product_orders.id range -60200 s/d -60001!', v_po_pk_collision;
     END IF;
 
-    RAISE NOTICE 'PRE-CHECK & COLLISION GUARD PASS: Tenant verified, 0 colliding rows, PK range 60001-60200 clear.';
+    RAISE NOTICE 'PRE-CHECK & COLLISION GUARD PASS: Tenant verified, 0 colliding rows, PK negative range -60200 s/d -60001 clear.';
 END $$;
 
 -- -----------------------------------------------------------------------------
@@ -139,7 +139,7 @@ JOIN affiliate_pool a ON a.pool_idx = ((s.i - 1) % 3);
 
 -- -----------------------------------------------------------------------------
 -- [STAGE 3] INJEKSI 200 PRODUCT_ORDERS (CHILD ENTITY)
--- Rentang ID deterministik: 60001 .. 60200
+-- Rentang ID deterministik: -60001 .. -60200 (Kuadran Negatif Disjoint Mutlak)
 -- Distribusi status: 180 COMPLETED, 20 PENDING
 -- -----------------------------------------------------------------------------
 WITH gen_series AS (
@@ -166,7 +166,7 @@ INSERT INTO public.product_orders (
     created_at
 )
 SELECT
-    60000 + s.i AS id,
+    -(60000 + s.i) AS id,
     'bench_b1_ord_' || LPAD(s.i::text, 3, '0') AS order_id,
     '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AS tenant_id,
     a.id AS affiliate_id,

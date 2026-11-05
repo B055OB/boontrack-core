@@ -77,14 +77,18 @@ BEGIN
     SELECT COUNT(*) INTO v_ord_count FROM public.orders 
     WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND id LIKE 'bench\_b1\_%' ESCAPE '\';
 
-    v_total_residual := v_att_count + v_com_count + v_po_count + v_ord_count;
+    -- Validasi eksplisit rentang PK negatif (-60200 s/d -60001)
+    SELECT COUNT(*) INTO v_po_neg_count FROM public.product_orders
+    WHERE id BETWEEN -60200 AND -60001;
+
+    v_total_residual := v_att_count + v_com_count + v_po_count + v_ord_count + v_po_neg_count;
 
     IF v_total_residual > 0 THEN
-        RAISE EXCEPTION 'RECOVERY ZERO RESIDUAL FAIL: Found % residual rows! (attributions=%, commissions=%, product_orders=%, orders=%)',
-            v_total_residual, v_att_count, v_com_count, v_po_count, v_ord_count;
+        RAISE EXCEPTION 'RECOVERY ZERO RESIDUAL FAIL: Found % residual rows! (attributions=%, commissions=%, product_orders=%, orders=%, product_orders_neg=%)',
+            v_total_residual, v_att_count, v_com_count, v_po_count, v_ord_count, v_po_neg_count;
     END IF;
 
-    RAISE NOTICE 'RECOVERY ZERO RESIDUAL PASS: Exactly 0 residual benchmark rows across all 4 tables.';
+    RAISE NOTICE 'RECOVERY ZERO RESIDUAL PASS: Exactly 0 residual benchmark rows across all 4 tables and PK negative range clear.';
 END $$;
 
 COMMIT;

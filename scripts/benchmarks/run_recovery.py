@@ -10,7 +10,7 @@ Mechanisms:
   - 5-attempt retry loop on lock acquisition with 1.0s backoff
   - Strict 500ms lock_timeout (SQLSTATE 55P03 LockNotAvailable handling)
   - Topologically sorted reverse foreign key deletion
-  - Fail-closed zero residual assertion on prefix 'bench_b1_'
+  - Fail-closed zero residual assertion on prefix 'bench_b1_' and negative PK range [-60200, -60001]
   - Zero-drift catalog audit on public.tenants and public.affiliates
 =============================================================================
 """
@@ -81,6 +81,7 @@ def execute_recovery():
     logger.info(f"Recovery SQL SHA-256 (LF)  : {hash_sql}")
     logger.info(f"Target Benchmark Tenant    : {BENCHMARK_TENANT_ID}")
     logger.info(f"Isolation Prefix Pattern   : {RUN_PREFIX_SQL}")
+    logger.info(f"PK Negative Range Guard    : [-60200, -60001]")
     logger.info(f"Max Lock Retries           : {MAX_LOCK_ATTEMPTS} attempts (500ms timeout + 1.0s backoff)")
     logger.info("--------------------------------------------------------------------------------")
 
@@ -143,17 +144,18 @@ def execute_recovery():
             logger.info(f"[+] Deleted rows per table: attributions={del_att}, commissions={del_com}, product_orders={del_po}, orders={del_ord}")
             
             # 2. Zero Residual Verification
-            logger.info("[*] Verifying zero residual drift across 4 fixture tables...")
+            logger.info("[*] Verifying zero residual drift across 4 fixture tables (and negative PK range -60200 to -60001)...")
             cur.execute("""
                 SELECT 
                     (SELECT COUNT(*) FROM public.attributions WHERE tenant_id = %s AND order_id LIKE %s ESCAPE '\\') AS res_att,
                     (SELECT COUNT(*) FROM public.affiliate_commissions WHERE tenant_id = %s AND order_id LIKE %s ESCAPE '\\') AS res_com,
                     (SELECT COUNT(*) FROM public.product_orders WHERE tenant_id = %s AND order_id LIKE %s ESCAPE '\\') AS res_po,
-                    (SELECT COUNT(*) FROM public.orders WHERE tenant_id = %s AND id LIKE %s ESCAPE '\\') AS res_ord;
+                    (SELECT COUNT(*) FROM public.orders WHERE tenant_id = %s AND id LIKE %s ESCAPE '\\') AS res_ord,
+                    (SELECT COUNT(*) FROM public.product_orders WHERE id BETWEEN -60200 AND -60001) AS res_po_neg;
             """, (BENCHMARK_TENANT_ID, RUN_PREFIX_SQL, BENCHMARK_TENANT_ID, RUN_PREFIX_SQL, BENCHMARK_TENANT_ID, RUN_PREFIX_SQL, BENCHMARK_TENANT_ID, RUN_PREFIX_SQL))
             
             res = cur.fetchone()
-            total_res = res["res_att"] + res["res_com"] + res["res_po"] + res["res_ord"]
+            total_res = res["res_att"] + res["res_com"] + res["res_po"] + res["res_ord"] + res["res_po_neg"]
             
             if total_res > 0:
                 conn.rollback()
@@ -183,7 +185,7 @@ def execute_recovery():
             conn.commit()
             logger.info("================================================================================")
             logger.info(f"[SUCCESS] RECOVERY PASS: Zero residual verified across all 4 tables for 'gate_i_b1'.")
-            logger.info(f"[SUCCESS] Residual counts: {dict(res)} | Total Residual = 0")
+            logger.info(f"[SUCCESS] Residual counts: {dict(res)} | Total Residual = 0 (PK negative range -60200 to -60001 clear)")
             logger.info(f"[SUCCESS] Zero drift verified: public.tenants (3 rows) and public.affiliates (5 rows) 100% UNTOUCHED.")
             logger.info("================================================================================")
             return True

@@ -61,6 +61,7 @@ WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba'
 -- -----------------------------------------------------------------------------
 -- [STAGE 2] ZERO RESIDUAL VERIFICATION ASSERTIONS (FAIL-CLOSED)
 -- Query COUNT(*) pada keempat tabel yang harus mengembalikan 0 baris untuk bench\_b1\_%
+-- Serta verifikasi zero-residual pada rentang PK negatif product_orders (-60200 s/d -60001)
 -- -----------------------------------------------------------------------------
 DO $$
 DECLARE
@@ -68,6 +69,7 @@ DECLARE
     v_com_count INT;
     v_po_count  INT;
     v_ord_count INT;
+    v_po_neg_count INT;
     v_total_residual INT;
 BEGIN
     SELECT COUNT(*) INTO v_att_count FROM public.attributions 
@@ -82,14 +84,18 @@ BEGIN
     SELECT COUNT(*) INTO v_ord_count FROM public.orders 
     WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND id LIKE 'bench\_b1\_%' ESCAPE '\';
 
-    v_total_residual := v_att_count + v_com_count + v_po_count + v_ord_count;
+    -- Validasi eksplisit rentang PK negatif (-60200 s/d -60001)
+    SELECT COUNT(*) INTO v_po_neg_count FROM public.product_orders
+    WHERE id BETWEEN -60200 AND -60001;
+
+    v_total_residual := v_att_count + v_com_count + v_po_count + v_ord_count + v_po_neg_count;
 
     IF v_total_residual > 0 THEN
-        RAISE EXCEPTION 'ZERO RESIDUAL VERIFICATION FAIL: Found % residual rows! (attributions=%, commissions=%, product_orders=%, orders=%)',
-            v_total_residual, v_att_count, v_com_count, v_po_count, v_ord_count;
+        RAISE EXCEPTION 'ZERO RESIDUAL VERIFICATION FAIL: Found % residual rows! (attributions=%, commissions=%, product_orders=%, orders=%, product_orders_neg=%)',
+            v_total_residual, v_att_count, v_com_count, v_po_count, v_ord_count, v_po_neg_count;
     END IF;
 
-    RAISE NOTICE 'ZERO RESIDUAL PASS: Exactly 0 residual benchmark rows across all 4 tables.';
+    RAISE NOTICE 'ZERO RESIDUAL PASS: Exactly 0 residual benchmark rows across all 4 tables and PK negative range clear.';
 END $$;
 
 COMMIT;
