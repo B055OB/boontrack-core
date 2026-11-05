@@ -1,12 +1,13 @@
 -- =============================================================================
--- BOONTRACK STAGING POPULATED WORKLOAD BENCHMARK CLEANUP (OPTION B - 800 ROWS)
+-- BOONTRACK STAGING POPULATED WORKLOAD BENCHMARK CLEANUP (OPTION B - RUN B1)
 -- =============================================================================
 -- Classification: Lead DBRE & Principal Systems Architect
 -- Target Database: Staging Supabase (xkhqirhurnjqglmajghn:5432)
 -- Status: PREPARATION ARTIFACT (STAGING WRITE PENDING AUTHORIZATION)
 -- Target Benchmark Tenant: '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba'
--- Mode: PURE DML (Zero DDL manipulation, non-existent order_items pruned)
--- Target Predicate: Strict 'bench\_%' pattern with ESCAPE '\'
+-- Mode: PURE DML (Zero DDL manipulation, ZERO DML on public.tenants)
+-- Fixture Run ID: 'gate_i_b1' (Strict deterministic namespace 'bench_b1_')
+-- Target Predicate: Strict 'bench\_b1\_%' pattern with ESCAPE '\'
 -- Execution Sequence: Strict reverse foreign key dependency order (4 tables):
 --   1. public.attributions
 --   2. public.affiliate_commissions
@@ -34,32 +35,32 @@ IN SHARE ROW EXCLUSIVE MODE;
 
 -- -----------------------------------------------------------------------------
 -- [STAGE 1] DELETE BERURUTAN TERBALIK BERDASARKAN INTEGRITAS FK (4 TABEL)
--- Menggunakan predikat eksplisit dengan ESCAPE '\'
+-- Menggunakan predikat eksplisit namespace run 'bench_b1_' dengan ESCAPE '\'
 -- -----------------------------------------------------------------------------
 
 -- 1. Attributions (Child of orders and affiliates)
 DELETE FROM public.attributions
 WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba'
-  AND order_id LIKE 'bench\_%' ESCAPE '\';
+  AND order_id LIKE 'bench\_b1\_%' ESCAPE '\';
 
 -- 2. Affiliate Commissions (Child of affiliates, references order_id)
 DELETE FROM public.affiliate_commissions
 WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba'
-  AND order_id LIKE 'bench\_%' ESCAPE '\';
+  AND order_id LIKE 'bench\_b1\_%' ESCAPE '\';
 
 -- 3. Product Orders (Child of orders)
 DELETE FROM public.product_orders
 WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba'
-  AND order_id LIKE 'bench\_%' ESCAPE '\';
+  AND order_id LIKE 'bench\_b1\_%' ESCAPE '\';
 
 -- 4. Orders (Parent table)
 DELETE FROM public.orders
 WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba'
-  AND id LIKE 'bench\_%' ESCAPE '\';
+  AND id LIKE 'bench\_b1\_%' ESCAPE '\';
 
 -- -----------------------------------------------------------------------------
 -- [STAGE 2] ZERO RESIDUAL VERIFICATION ASSERTIONS (FAIL-CLOSED)
--- Query COUNT(*) pada keempat tabel yang harus mengembalikan 0 baris untuk bench\_%
+-- Query COUNT(*) pada keempat tabel yang harus mengembalikan 0 baris untuk bench\_b1\_%
 -- -----------------------------------------------------------------------------
 DO $$
 DECLARE
@@ -70,16 +71,16 @@ DECLARE
     v_total_residual INT;
 BEGIN
     SELECT COUNT(*) INTO v_att_count FROM public.attributions 
-    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND order_id LIKE 'bench\_%' ESCAPE '\';
+    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND order_id LIKE 'bench\_b1\_%' ESCAPE '\';
 
     SELECT COUNT(*) INTO v_com_count FROM public.affiliate_commissions 
-    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND order_id LIKE 'bench\_%' ESCAPE '\';
+    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND order_id LIKE 'bench\_b1\_%' ESCAPE '\';
 
     SELECT COUNT(*) INTO v_po_count FROM public.product_orders 
-    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND order_id LIKE 'bench\_%' ESCAPE '\';
+    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND order_id LIKE 'bench\_b1\_%' ESCAPE '\';
 
     SELECT COUNT(*) INTO v_ord_count FROM public.orders 
-    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND id LIKE 'bench\_%' ESCAPE '\';
+    WHERE tenant_id = '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' AND id LIKE 'bench\_b1\_%' ESCAPE '\';
 
     v_total_residual := v_att_count + v_com_count + v_po_count + v_ord_count;
 
