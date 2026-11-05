@@ -9,7 +9,7 @@
 -- Fixture Run ID: 'gate_i_b1' (Strict deterministic namespace 'bench_b1_')
 -- Total Fixture Quota: Exactly 800 synthetic rows across 4 active tables
 --   - public.orders                : 200 rows (ID: bench_b1_ord_001 .. bench_b1_ord_200)
---   - public.product_orders        : 200 rows (180 COMPLETED, 20 PENDING)
+--   - public.product_orders        : 200 rows (180 COMPLETED, 20 PENDING, PK range 60001-60200)
 --   - public.affiliate_commissions : 200 rows (Rp 10.000 / Rp 25.000 deterministic)
 --   - public.attributions          : 200 rows (FK-linked to orders and affiliates)
 -- Security & Isolation: Strict 'bench\_b1\_%' prefix with ESCAPE '\'; zero collision guard.
@@ -37,12 +37,14 @@ IN SHARE ROW EXCLUSIVE MODE;
 -- [STAGE 1] PRECONDITION AUDIT & DETERMINISTIC COLLISION GUARD
 -- Menggunakan pola LIKE 'bench\_b1\_%' ESCAPE '\' untuk mencegah anomali wildcard
 -- ZERO DML pada public.tenants (HANYA validasi read-only keberadaan tenant)
+-- PK Collision Guard pada public.product_orders (Rentang Integer 60001 - 60200)
 -- -----------------------------------------------------------------------------
 DO $$
 DECLARE
     v_tenant_count INT;
     v_aff_count INT;
     v_colliding_count INT;
+    v_po_pk_collision INT;
 BEGIN
     -- 1. Verifikasi kehadiran tenant target '6b37fdf0-b1a2-49ad-bec5-7153b8a76fba' di public.tenants (Master Catalog)
     SELECT COUNT(*) INTO v_tenant_count
@@ -74,7 +76,16 @@ BEGIN
         RAISE EXCEPTION 'COLLISION GUARD FAIL: Found % colliding records with prefix bench_b1_!', v_colliding_count;
     END IF;
 
-    RAISE NOTICE 'PRE-CHECK & COLLISION GUARD PASS: Tenant verified, 0 colliding rows.';
+    -- 4. PK Collision Guard pada product_orders (Rentang Integer 60001 - 60200)
+    SELECT COUNT(*) INTO v_po_pk_collision
+    FROM public.product_orders
+    WHERE id BETWEEN 60001 AND 60200;
+
+    IF v_po_pk_collision > 0 THEN
+        RAISE EXCEPTION 'COLLISION GUARD FAIL: Ditemukan % existing rows pada product_orders.id range 60001-60200!', v_po_pk_collision;
+    END IF;
+
+    RAISE NOTICE 'PRE-CHECK & COLLISION GUARD PASS: Tenant verified, 0 colliding rows, PK range 60001-60200 clear.';
 END $$;
 
 -- -----------------------------------------------------------------------------
