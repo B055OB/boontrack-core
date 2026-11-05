@@ -71,8 +71,12 @@ To ensure that percentile calculations (specifically **p95** and **p99**) satisf
    - Target sampling duration: **30 seconds** per tier.
    - If the 30-second window elapses before the 100-sample quota is fulfilled for any category (e.g., under Tier C1 serial execution), the harness continues running until the 100-sample threshold is reached, bounded by a hard ceiling timeout of **120 seconds**.
 3. **Cool-Down Period:** A mandatory **15-second quiet window** separates consecutive tiers to allow WAL flushing, buffer cache stabilization, and connection draining.
-4. **Workload Composition:**
+4. **Workload Composition & Collision-Free Write Partitioning:**
    - Workload is divided into dedicated, decoupled worker streams: 60% Read Operations (evenly balanced across Q1, Q2, Q3) and 40% Write Operations (synthetic order and attribution ingestion).
+   - **Cross-Tier & Cross-Worker Key Isolation:** Every synthetic write transaction generates strictly disjoint identifiers without modulo wrap-around:
+     * **Order ID:** `order_id = f"bench_g2_{self.run_id}_t{self.tier}_w{self.worker_id}_{seq}"`
+     * **Linear Negative Primary Key (`product_orders.id`):** `pk_id = -(700000 + (self.tier_idx * 50000) + (self.worker_id * 2000) + seq)`
+   - **Worker Exception Propagation & Quota Assertion:** Any unhandled worker exception is captured in `self.worker_exceptions` and triggers an immediate fail-closed abort at tier completion. If any category (`Q1`, `Q2`, `Q3`, `WRITE`) finishes with $< 100$ samples, the runner raises `RuntimeError("QUOTA FAIL: Sample count below statistical threshold")`.
 
 ### 1.3 Operational Guardrails & Session Timeouts
 To prevent runaway queries, hung transactions, or lock waterfalls from destabilizing the Staging cluster, strict session-level timeouts are enforced on every database connection:
@@ -265,6 +269,32 @@ flowchart TD
    ```sql
    DROP INDEX CONCURRENTLY IF EXISTS public.idx_attributions_tenant_order;
    ```
+
+#### Teardown Exclusivity Protocol & Out-of-Band Crash Recovery Checklist (When Runner Process Dies Abruptly)
+Because `self._created_index_oid` resides in the Python runner's volatile process memory, an abrupt runner termination (`SIGKILL`, OOM killer, power loss, or network drop) destroys the in-memory OID handle before `teardown_index()` can execute. Under this scenario, **manual or automated out-of-band teardown MUST NOT blindly drop `idx_attributions_tenant_order`**; instead, the operator must follow this deterministic **RunID Comment Verification Checklist**:
+
+- [ ] **Step 1 — Inspect Catalog & Extract Persisted Provenance Comment:**
+  Query `pg_class` joined with `pg_description` to inspect whether `idx_attributions_tenant_order` exists and read its persisted comment:
+  ```sql
+  SELECT
+      c.oid AS index_oid,
+      c.relname AS index_name,
+      pg_catalog.obj_description(c.oid, 'pg_class') AS provenance_comment
+  FROM pg_catalog.pg_class c
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public'
+    AND c.relname = 'idx_attributions_tenant_order';
+  ```
+- [ ] **Step 2 — Verify Exclusive RunID Tag Ownership:**
+  Confirm that `provenance_comment` is non-null and matches the exact prefix `created_by_run_id:g2_<YYYYMMDD_HHMMSS>_<hex>` recorded in the crashed runner's stdout/log header.
+  * **Abort Rule:** If `provenance_comment` is `NULL` or does not contain `created_by_run_id:`, **STOP IMMEDIATELY** — the index was not provisioned by the Gate II benchmark harness and must not be dropped.
+- [ ] **Step 3 — Execute Out-of-Band Non-Blocking Teardown:**
+  Once and only once the `created_by_run_id:<run_id>` comment is verified, drop the orphaned benchmark index concurrently:
+  ```sql
+  DROP INDEX CONCURRENTLY public.idx_attributions_tenant_order;
+  ```
+- [ ] **Step 4 — Post-Drop Catalog Confirmation:**
+  Re-run the Step 1 query and assert that `0 rows` are returned (`index_residual = 0`).
 
 ---
 

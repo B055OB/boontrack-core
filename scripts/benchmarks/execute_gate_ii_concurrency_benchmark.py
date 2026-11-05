@@ -239,15 +239,20 @@ class ConcurrencyWorker:
     def __init__(
         self,
         worker_id: int,
+        tier: int,
+        tier_idx: int,
         run_id: str,
         dry_run: bool,
         db_url: Optional[str],
         scenario: str,
         collector: MetricCollector,
         abort_event: threading.Event,
-        min_samples: int
+        min_samples: int,
+        worker_exceptions: Optional[List[Exception]] = None
     ):
         self.worker_id = worker_id
+        self.tier = tier
+        self.tier_idx = tier_idx
         self.run_id = run_id
         self.dry_run = dry_run
         self.db_url = db_url
@@ -255,8 +260,14 @@ class ConcurrencyWorker:
         self.collector = collector
         self.abort_event = abort_event
         self.min_samples = min_samples
+        self.worker_exceptions: List[Exception] = worker_exceptions if worker_exceptions is not None else []
+        self._exc_lock = threading.Lock()
         self.conn = None
         self._seq_counter = 0
+
+    def _record_exception(self, exc: Exception) -> None:
+        with self._exc_lock:
+            self.worker_exceptions.append(exc)
 
     def init_connection(self):
         if self.dry_run:
@@ -310,6 +321,7 @@ class ConcurrencyWorker:
         except Exception as e:
             latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
             self.collector.record_sample(query_id, latency_ms, is_error=True)
+            self._record_exception(e)
             if self.conn and not self.dry_run:
                 self.conn.rollback()
             logger.warning(f"Worker {self.worker_id} read error on {query_id}: {e}")
@@ -317,12 +329,13 @@ class ConcurrencyWorker:
     def execute_write(self) -> None:
         start_ns = time.perf_counter_ns()
         self._seq_counter += 1
-        
-        # Negative PK range partitioned by run and worker:
-        # e.g., -70000 - (worker_id * 1000) - seq
-        neg_po_id = -(70000 + (self.worker_id * 1000) + (self._seq_counter % 1000))
-        order_key = f"bench_g2_{self.run_id}_{self.worker_id}_{self._seq_counter}"
-        
+        seq = self._seq_counter
+
+        # Collision-free Order ID and Linear Negative Primary Key Range across all tiers & workers:
+        order_id = f"bench_g2_{self.run_id}_t{self.tier}_w{self.worker_id}_{seq}"
+        pk_id = -(700000 + (self.tier_idx * 50000) + (self.worker_id * 2000) + seq)
+        attr_id = f"attr_g2_{self.run_id}_t{self.tier}_w{self.worker_id}_{seq}"
+
         try:
             if self.dry_run:
                 # Simulate write latency (heap write + B-tree update)
@@ -334,17 +347,17 @@ class ConcurrencyWorker:
                     # 1. Insert synthetic order
                     cur.execute(f"""
                         INSERT INTO public.orders (id, tenant_id, customer_id, total_amount, currency, status, created_at)
-                        VALUES ('{order_key}', '{BENCHMARK_TENANT_ID}', 'cust_g2_bench', 150.00, 'IDR', 'paid', NOW());
+                        VALUES ('{order_id}', '{BENCHMARK_TENANT_ID}', 'cust_g2_bench', 150.00, 'IDR', 'paid', NOW());
                     """)
-                    # 2. Insert product order with negative PK
+                    # 2. Insert product order with linear negative PK
                     cur.execute(f"""
                         INSERT INTO public.product_orders (id, tenant_id, order_id, product_id, quantity, unit_price, subtotal)
-                        VALUES ({neg_po_id}, '{BENCHMARK_TENANT_ID}', '{order_key}', 'prod_g2_bench', 1, 150.00, 150.00);
+                        VALUES ({pk_id}, '{BENCHMARK_TENANT_ID}', '{order_id}', 'prod_g2_bench', 1, 150.00, 150.00);
                     """)
                     # 3. Insert attribution
                     cur.execute(f"""
                         INSERT INTO public.attributions (id, tenant_id, order_id, affiliate_id, touchpoint_type, created_at)
-                        VALUES ('attr_g2_{self.run_id}_{self.worker_id}_{self._seq_counter}', '{BENCHMARK_TENANT_ID}', '{order_key}', 'aff_g2_bench', 'LAST_TOUCH', NOW());
+                        VALUES ('{attr_id}', '{BENCHMARK_TENANT_ID}', '{order_id}', 'aff_g2_bench', 'LAST_TOUCH', NOW());
                     """)
                 self.conn.commit()
 
@@ -354,16 +367,17 @@ class ConcurrencyWorker:
         except Exception as e:
             latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
             self.collector.record_sample("WRITE", latency_ms, is_error=True)
+            self._record_exception(e)
             if self.conn and not self.dry_run:
                 self.conn.rollback()
-            logger.warning(f"Worker {self.worker_id} write error on {order_key}: {e}")
+            logger.warning(f"Worker {self.worker_id} write error on {order_id}: {e}")
 
     def run_loop(self, deadline: float):
-        self.init_connection()
-        query_cycle = ["Q1", "Q2", "Q3"]
-        cycle_idx = self.worker_id % 3
-
         try:
+            self.init_connection()
+            query_cycle = ["Q1", "Q2", "Q3"]
+            cycle_idx = self.worker_id % 3
+
             while not self.abort_event.is_set():
                 # Check Circuit Breaker
                 if self.collector.get_error_rate() > CIRCUIT_BREAKER_ERROR_THRESHOLD:
@@ -394,7 +408,9 @@ class ConcurrencyWorker:
                     if now >= (deadline + 90):
                         logger.warning(f"Hard deadline cutoff reached for Worker {self.worker_id}")
                         break
-
+        except Exception as e:
+            self._record_exception(e)
+            self.abort_event.set()
         finally:
             self.close_connection()
 
@@ -531,6 +547,7 @@ class IndexManager:
 # -----------------------------------------------------------------------------
 def run_tier(
     concurrency: int,
+    tier_idx: int,
     duration_sec: int,
     min_samples: int,
     scenario: str,
@@ -539,11 +556,12 @@ def run_tier(
     db_url: Optional[str]
 ) -> Dict[str, Any]:
     logger.info("=" * 80)
-    logger.info(f" >>> RUNNING TIER C={concurrency} (Scenario {scenario}) | Min Samples = {min_samples} | Target Duration = {duration_sec}s")
+    logger.info(f" >>> RUNNING TIER C={concurrency} (TierIdx={tier_idx}, Scenario {scenario}) | Min Samples = {min_samples} | Target Duration = {duration_sec}s")
     logger.info("=" * 80)
 
     collector = MetricCollector()
     abort_event = threading.Event()
+    worker_exceptions: List[Exception] = []
     collector.start()
 
     deadline = time.perf_counter() + duration_sec
@@ -552,13 +570,16 @@ def run_tier(
     for wid in range(concurrency):
         worker = ConcurrencyWorker(
             worker_id=wid,
+            tier=concurrency,
+            tier_idx=tier_idx,
             run_id=run_id,
             dry_run=dry_run,
             db_url=db_url,
             scenario=scenario,
             collector=collector,
             abort_event=abort_event,
-            min_samples=min_samples
+            min_samples=min_samples,
+            worker_exceptions=worker_exceptions
         )
         t = threading.Thread(
             target=worker.run_loop,
@@ -574,11 +595,28 @@ def run_tier(
 
     collector.stop()
 
+    # 1. Fail-Closed Worker Exception Propagation (>= 1 worker exception triggers abort)
+    if len(worker_exceptions) >= 1:
+        first_exc = worker_exceptions[0]
+        if isinstance(first_exc, CircuitBreakerTripped):
+            raise first_exc
+        raise RuntimeError(
+            f"FAIL-CLOSED WORKER ABORT: {len(worker_exceptions)} worker exception(s) occurred in Tier C={concurrency}: {first_exc}"
+        ) from first_exc
+
+    # 2. Circuit Breaker Check
     if abort_event.is_set():
         raise CircuitBreakerTripped(f"Circuit breaker tripped in Tier C={concurrency} (Error rate > 1.0%)")
 
+    # 3. Statistical Sample Quota Assertion
+    for required_cat in ["Q1", "Q2", "Q3", "WRITE"]:
+        cat_count = collector.get_sample_count(required_cat)
+        if cat_count < min_samples:
+            raise RuntimeError("QUOTA FAIL: Sample count below statistical threshold")
+
     tier_summary = collector.compute_summary()
     tier_summary["concurrency"] = concurrency
+    tier_summary["tier_idx"] = tier_idx
     tier_summary["scenario"] = scenario
 
     logger.info(f"--- [TIER C={concurrency} SUMMARY (Scenario {scenario})] ---")
@@ -626,6 +664,7 @@ def run_benchmark(
     }
 
     index_mgr = IndexManager(db_url=db_url, dry_run=dry_run, run_id=run_id)
+    global_tier_idx = 0
 
     try:
         for sc in scenarios_to_run:
@@ -637,17 +676,20 @@ def run_benchmark(
                 index_mgr.provision_index()
 
             scenario_results = []
+            scenario_run_id = f"{run_id}_{sc.lower()}"
             try:
                 for c in tiers:
                     tier_res = run_tier(
                         concurrency=c,
+                        tier_idx=global_tier_idx,
                         duration_sec=duration_sec,
                         min_samples=min_samples,
                         scenario=sc,
-                        run_id=run_id,
+                        run_id=scenario_run_id,
                         dry_run=dry_run,
                         db_url=db_url
                     )
+                    global_tier_idx += 1
                     scenario_results.append(tier_res)
 
                     # Mandatory Cool-Down Period between tiers
