@@ -47,10 +47,11 @@ async def create_telegram_single_use_invite_link(
     order_id: str,
     buyer_name: str = "Peserta",
     chat_id: Optional[str] = None,
+    bot_token: Optional[str] = None,
 ) -> str:
     """
-    Panggil Telegram Bot API createChatInviteLink:
-    chat_id: "-1004371114362"
+    Panggil Telegram Bot API createChatInviteLink via @onlineboostbot:
+    chat_id: "-1004371114362" (Supergroup OnlineBoost Batch 1)
     member_limit: 1 (link otomatis hangus setelah 1 kali join)
     expire_date: int(time.time()) + 86400 (aktif 24 jam)
     name: f"Invite-{order_id}"
@@ -60,24 +61,37 @@ async def create_telegram_single_use_invite_link(
 
     target_chat_id = (
         chat_id
+        or os.getenv("TELEGRAM_ONLINEBOOST_CHAT_ID")
         or os.getenv("TELEGRAM_CTWA_CHAT_ID")
         or os.getenv("TELEGRAM_SUPERGROUP_CHAT_ID")
         or DEFAULT_CTWA_CHAT_ID
     )
-    bot_token = (
-        os.getenv("TELEGRAM_BOT_TOKEN")
-        or os.getenv("TELEGRAM_ACADEMY_BOT_TOKEN")
-        or ""
-    ).strip()
-    if not bot_token:
-        logger.error("[CTWA FULFILLMENT] TELEGRAM_BOT_TOKEN tidak dikonfigurasi di environment (fail-closed)")
-        raise ValueError("TELEGRAM_BOT_TOKEN is not configured in environment variables (fail-closed)")
+    resolved_bot_token = (
+        bot_token
+        or os.getenv("TELEGRAM_ONLINEBOOST_BOT_TOKEN")
+    )
+    if not resolved_bot_token:
+        try:
+            from app.core.channels.telegram import get_dynamic_telegram_bot_token
+            resolved_bot_token = get_dynamic_telegram_bot_token(bot_username="onlineboostbot")
+        except Exception:
+            pass
+    if not resolved_bot_token:
+        resolved_bot_token = (
+            os.getenv("TELEGRAM_BOT_TOKEN")
+            or os.getenv("TELEGRAM_ACADEMY_BOT_TOKEN")
+            or ""
+        )
+    resolved_bot_token = resolved_bot_token.strip() if resolved_bot_token else ""
+    if not resolved_bot_token:
+        logger.error("[CTWA FULFILLMENT] TELEGRAM_ONLINEBOOST_BOT_TOKEN tidak dikonfigurasi di environment (fail-closed)")
+        raise ValueError("TELEGRAM_ONLINEBOOST_BOT_TOKEN is not configured in environment variables (fail-closed)")
 
     expire_date = int(time.time()) + 86400
     invite_name = f"Invite-{order_id}"
 
-    if bot_token and target_chat_id:
-        url = f"https://api.telegram.org/bot{bot_token}/createChatInviteLink"
+    if resolved_bot_token and target_chat_id:
+        url = f"https://api.telegram.org/bot{resolved_bot_token}/createChatInviteLink"
         payload = {
             "chat_id": target_chat_id,
             "name": invite_name,
@@ -95,7 +109,7 @@ async def create_telegram_single_use_invite_link(
                         if order_id:
                             _ISSUED_TELEGRAM_LINKS_CACHE[order_id] = invite_link
                         logger.info(
-                            f"[CTWA FULFILLMENT] Generated single-use Telegram link for Order {order_id}: {invite_link}"
+                            f"[CTWA FULFILLMENT] Generated single-use Telegram link for Order {order_id} via @onlineboostbot: {invite_link}"
                         )
                         return invite_link
                     logger.warning(f"[CTWA FULFILLMENT] Telegram response missing invite_link: {data}")
@@ -144,6 +158,7 @@ async def fulfill_onlineboost_ctwa_order(
     tenant_id: str = "onlineboost",
     ctwa_clid: Optional[str] = None,
     chat_id: Optional[str] = None,
+    bot_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Eksekusi fulfillment pesanan lunas onlineboost:
@@ -247,12 +262,13 @@ async def fulfill_onlineboost_ctwa_order(
                 "idempotency_hit": True,
             }
     else:
-        # Panggil Telegram Bot API createChatInviteLink
+        # Panggil Telegram Bot API createChatInviteLink via @onlineboostbot
         try:
             single_use_link = await create_telegram_single_use_invite_link(
                 order_id=order_id,
                 buyer_name=resolved_name,
                 chat_id=chat_id,
+                bot_token=bot_token,
             )
         except Exception as tg_err:
             logger.error(f"[CTWA FULFILLMENT] Failed generating Telegram invite for {order_id}: {tg_err}")
