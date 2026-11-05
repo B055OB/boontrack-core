@@ -1393,6 +1393,7 @@ def generate_academy_qris_invoice(
     _ACADEMY_INVOICES_BY_AMOUNT[total_amount] = order_id
 
     # Persist ke Database orders / payment_intents jika koneksi aktif
+    db_persisted = False
     try:
         from app.core.database import get_db_connection
         conn = get_db_connection()
@@ -1419,10 +1420,23 @@ def generate_academy_qris_invoice(
             )
         )
         conn.commit()
+        # Verify persistence immediately
+        cur.execute("SELECT id FROM orders WHERE id = %s LIMIT 1;", (order_id,))
+        if cur.fetchone():
+            db_persisted = True
         cur.close()
         conn.close()
     except Exception as db_err:
-        logger.debug(f"[AcademyInvoice] DB orders insert note: {db_err}")
+        logger.error(f"[AcademyInvoice] DB orders insert error: {db_err}")
+        if is_penny_test:
+            _ACADEMY_INVOICES.pop(order_id, None)
+            _ACADEMY_INVOICES_BY_AMOUNT.pop(total_amount, None)
+            raise RuntimeError(f"Database persistence failure for internal test SKU '{order_id}': {db_err}")
+
+    if is_penny_test and not db_persisted:
+        _ACADEMY_INVOICES.pop(order_id, None)
+        _ACADEMY_INVOICES_BY_AMOUNT.pop(total_amount, None)
+        raise RuntimeError(f"Database persistence assertion failed: order '{order_id}' was not confirmed in database.")
 
     # Sinkronisasi ke Supabase jika tersedia
     supabase = get_supabase()

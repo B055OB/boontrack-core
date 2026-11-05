@@ -14,10 +14,13 @@ Unit tests verifying Telegram Bot separation of concerns & strict security invar
 
 import os
 import time
+import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import HTTPException, Request
+from fastapi.testclient import TestClient
+from app.main import app as fastapi_app
 from app.core.rev1.exceptions import AuthorizationError
 from app.routes.academy_routes import create_academy_invoice, CreateAcademyInvoiceRequest
 from app.routes.xendit import process_xendit_webhook_core
@@ -598,3 +601,151 @@ async def test_penny_duplicate_webhook_does_not_call_telegram_or_resend_whatsapp
         assert mock_post.call_count == 0
         assert mock_capi.call_count == 0
         assert mock_wa.call_count == 1  # Not called again
+
+
+# ============================================================================
+# P0-D INTEGRATION TEST RUNNER PARITY & PERSISTENCE HARDENING
+# ============================================================================
+
+async def invoke_aiohttp_invoice_endpoint(payload_dict: dict, headers_dict: dict = None):
+    """Invoke aiohttp invoice handler for runner parity verification."""
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+    from app.routes.academy_routes import register_academy_routes
+
+    aio_app = web.Application()
+    register_academy_routes(aio_app)
+    handler = [
+        r.handler for r in aio_app.router.routes()
+        if r.resource.canonical == "/api/v1/academy/invoice" and r.method == "POST"
+    ][0]
+    req = make_mocked_request("POST", "/api/v1/academy/invoice", headers=headers_dict or {}, app=aio_app)
+    req.json = AsyncMock(return_value=payload_dict)
+    resp = await handler(req)
+    return resp
+
+
+@pytest.mark.asyncio
+async def test_runner_parity_fastapi_and_aiohttp_unauthorized_rejected():
+    """Parity Test 1: Both FastAPI and aiohttp runners reject unauthorized requests for TEST-PENNY-1500 (HTTP 403)."""
+    env_mock = {
+        "BOONTRACK_INTERNAL_HMAC_SECRET": "test_parity_secret_123",
+        "APP_MASTER_KEY": "test_parity_master_456",
+    }
+    penny_payload = {
+        "customer_name": "Public Attacker",
+        "customer_email": "attacker@public.com",
+        "customer_phone": "081234567890",
+        "tenant_id": "onlineboost",
+        "sku_id": TEST_PENNY_SKU_ID,
+    }
+
+    with patch.dict(os.environ, env_mock):
+        # 1. FastAPI Runner
+        client = TestClient(fastapi_app)
+        resp_fastapi = client.post("/api/v1/academy/invoice", json=penny_payload, headers={})
+        assert resp_fastapi.status_code == 403
+        assert "Access Denied" in str(resp_fastapi.json())
+
+        # 2. aiohttp Runner
+        resp_aio = await invoke_aiohttp_invoice_endpoint(penny_payload, headers_dict={})
+        assert resp_aio.status == 403
+        body_aio = json.loads(resp_aio.body.decode())
+        assert "Access Denied" in str(body_aio)
+
+
+@pytest.mark.asyncio
+async def test_runner_parity_fastapi_and_aiohttp_valid_headers_pass():
+    """Parity Test 2: Both FastAPI and aiohttp runners accept authorized requests via secure headers (HTTP 200)."""
+    env_mock = {
+        "BOONTRACK_INTERNAL_HMAC_SECRET": "test_parity_secret_123",
+        "APP_MASTER_KEY": "test_parity_master_456",
+    }
+    penny_payload = {
+        "customer_name": "Founder Tester",
+        "customer_email": "founder@internal.com",
+        "customer_phone": "081299999999",
+        "tenant_id": "onlineboost",
+        "sku_id": TEST_PENNY_SKU_ID,
+    }
+
+    with patch.dict(os.environ, env_mock):
+        client = TestClient(fastapi_app)
+
+        # 1. FastAPI with X-Internal-Secret
+        res_fa_secret = client.post("/api/v1/academy/invoice", json=penny_payload, headers={"X-Internal-Secret": "test_parity_secret_123"})
+        assert res_fa_secret.status_code == 200
+        assert res_fa_secret.json()["invoice"]["total_amount"] == 1500
+        assert res_fa_secret.json()["invoice"]["sku_id"] == TEST_PENNY_SKU_ID
+
+        # 2. FastAPI with Authorization: Bearer <master_key>
+        res_fa_bearer = client.post("/api/v1/academy/invoice", json=penny_payload, headers={"Authorization": "Bearer test_parity_master_456"})
+        assert res_fa_bearer.status_code == 200
+        assert res_fa_bearer.json()["invoice"]["total_amount"] == 1500
+
+        # 3. aiohttp with X-Internal-Secret
+        res_aio_secret = await invoke_aiohttp_invoice_endpoint(penny_payload, headers_dict={"X-Internal-Secret": "test_parity_secret_123"})
+        assert res_aio_secret.status == 200
+        body_aio_secret = json.loads(res_aio_secret.body.decode())
+        assert body_aio_secret["invoice"]["total_amount"] == 1500
+        assert body_aio_secret["invoice"]["sku_id"] == TEST_PENNY_SKU_ID
+
+        # 4. aiohttp with Authorization: Bearer <master_key>
+        res_aio_bearer = await invoke_aiohttp_invoice_endpoint(penny_payload, headers_dict={"Authorization": "Bearer test_parity_master_456"})
+        assert res_aio_bearer.status == 200
+        body_aio_bearer = json.loads(res_aio_bearer.body.decode())
+        assert body_aio_bearer["invoice"]["total_amount"] == 1500
+
+
+@pytest.mark.asyncio
+async def test_runner_parity_fastapi_and_aiohttp_missing_env_secrets_fail_closed():
+    """Parity Test 3: Both FastAPI and aiohttp fail-closed with HTTP 500 when environment secrets are missing."""
+    penny_payload = {
+        "customer_name": "Founder Tester",
+        "customer_email": "founder@internal.com",
+        "customer_phone": "081299999999",
+        "tenant_id": "onlineboost",
+        "sku_id": TEST_PENNY_SKU_ID,
+    }
+
+    with patch.dict(os.environ, {}, clear=True):
+        # 1. FastAPI Runner
+        client = TestClient(fastapi_app)
+        res_fa = client.post("/api/v1/academy/invoice", json=penny_payload, headers={"X-Internal-Secret": "any"})
+        assert res_fa.status_code == 500
+        assert "Authentication service unavailable" in str(res_fa.json())
+
+        # 2. aiohttp Runner
+        res_aio = await invoke_aiohttp_invoice_endpoint(penny_payload, headers_dict={"X-Internal-Secret": "any"})
+        assert res_aio.status == 500
+        body_aio = json.loads(res_aio.body.decode())
+        assert "Authentication service unavailable" in str(body_aio)
+
+
+@pytest.mark.asyncio
+async def test_penny_persistence_failure_fails_closed():
+    """Hardening Test 4: Creation of TEST-PENNY-1500 fails-closed (HTTP 500) if database write fails."""
+    env_mock = {
+        "BOONTRACK_INTERNAL_HMAC_SECRET": "test_parity_secret_123",
+        "APP_MASTER_KEY": "test_parity_master_456",
+    }
+    penny_payload = {
+        "customer_name": "Founder Tester",
+        "customer_email": "founder@internal.com",
+        "customer_phone": "081299999999",
+        "tenant_id": "onlineboost",
+        "sku_id": TEST_PENNY_SKU_ID,
+    }
+
+    with patch.dict(os.environ, env_mock),          patch("app.core.database.get_db_connection", side_effect=Exception("Database connection timeout")):
+        # 1. FastAPI Runner fails-closed with HTTP 500
+        client = TestClient(fastapi_app)
+        res_fa = client.post("/api/v1/academy/invoice", json=penny_payload, headers={"X-Internal-Secret": "test_parity_secret_123"})
+        assert res_fa.status_code == 500
+        assert "persistence" in str(res_fa.json()).lower()
+
+        # 2. aiohttp Runner fails-closed with HTTP 500
+        res_aio = await invoke_aiohttp_invoice_endpoint(penny_payload, headers_dict={"X-Internal-Secret": "test_parity_secret_123"})
+        assert res_aio.status == 500
+        body_aio = json.loads(res_aio.body.decode())
+        assert "persistence" in str(body_aio).lower()
