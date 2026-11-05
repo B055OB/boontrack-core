@@ -1,0 +1,523 @@
+{
+  "timestamp_utc": "2026-11-05T05:26:47.042356+00:00",
+  "run_id": "g2_20261105_052647_a72d25",
+  "mode": "dry_run",
+  "scenarios": {
+    "A": [
+      {
+        "duration_sec": 2.909,
+        "overall_error_rate_pct": 0.0,
+        "categories": {
+          "Q1": {
+            "sample_count": 100,
+            "error_count": 0,
+            "total_attempts": 100,
+            "min_ms": 0.263,
+            "max_ms": 28.194,
+            "mean_ms": 1.222,
+            "p50_ms": 0.574,
+            "p90_ms": 1.332,
+            "p95_ms": 2.15,
+            "p99_ms": 13.259,
+            "throughput_ops_sec": 34.38
+          },
+          "Q2": {
+            "sample_count": 100,
+            "error_count": 0,
+            "total_attempts": 100,
+            "min_ms": 0.339,
+            "max_ms": 13.387,
+            "mean_ms": 1.188,
+            "p50_ms": 0.559,
+            "p90_ms": 1.633,
+            "p95_ms": 4.809,
+            "p99_ms": 12.055,
+            "throughput_ops_sec": 34.38
+          },
+          "Q3": {
+            "sample_count": 100,
+            "error_count": 0,
+            "total_attempts": 100,
+            "min_ms": 16.299,
+            "max_ms": 91.081,
+            "mean_ms": 20.153,
+            "p50_ms": 18.299,
+            "p90_ms": 23.794,
+            "p95_ms": 25.619,
+            "p99_ms": 38.254,
+            "throughput_ops_sec": 34.38
+          },
+          "WRITE": {
+            "sample_count": 207,
+            "error_count": 0,
+            "total_attempts": 207,
+            "min_ms": 1.444,
+            "max_ms": 25.99,
+            "mean_ms": 3.066,
+            "p50_ms": 2.025,
+            "p90_ms": 5.4,
+            "p95_ms": 8.368,
+            "p99_ms": 22.414,
+            "throughput_ops_sec": 71.16
+          }
+        },
+        "total_samples": 507,
+        "read_qps": 103.13,
+        "write_tps": 71.16,
+        "overall_throughput": 174.29,
+        "concurrency": 1,
+        "scenario": "A"
+      },
+      {
+        "duration_sec": 1.017,
+        "overall_error_rate_pct": 0.0,
+        "categories": {
+          "Q1": {
+            "sample_count": 114,
+            "error_count": 0,
+            "total_attempts": 114,
+            "min_ms": 0.258,
+            "max_ms": 140.304,
+            "mean_ms": 6.345,
+            "p50_ms": 0.572,
+            "p90_ms": 7.784,
+            "p95_ms": 36.799,
+            "p99_ms": 132.731,
+            "throughput_ops_sec": 112.11
+          },
+          "Q2": {
+            "sample_count": 115,
+            "error_count": 0,
+            "total_attempts": 115,
+            "min_ms": 0.397,
+            "max_ms": 140.261,
+            "mean_ms": 5.008,
+            "p50_ms": 0.64,
+            "p90_ms": 2.864,
+            "p95_ms": 16.159,
+            "p99_ms": 86.107,
+            "throughput_ops_sec": 113.1
+          },
+          "Q3": {
+            "sample_count": 114,
+            "error_count": 0,
+            "total_attempts": 114,
+            "min_ms": 16.288,
+            "max_ms": 140.227,
+            "mean_ms": 23.668,
+            "p50_ms": 18.155,
+            "p90_ms": 28.541,
+            "p95_ms": 50.544,
+            "p99_ms": 105.636,
+            "throughput_ops_sec": 112.11
+          },
+          "WRITE": {
+            "sample_count": 205,
+            "error_count": 0,
+            "total_attempts": 205,
+            "min_ms": 1.421,
+            "max_ms": 88.56,
+            "mean_ms": 4.751,
+            "p50_ms": 2.031,
+            "p90_ms": 4.159,
+            "p95_ms": 9.337,
+            "p99_ms": 86.345,
+            "throughput_ops_sec": 201.61
+          }
+        },
+        "total_samples": 548,
+        "read_qps": 337.32,
+        "write_tps": 201.61,
+        "overall_throughput": 538.93,
+        "concurrency": 5,
+        "scenario": "A"
+      },
+      {
+        "duration_sec": 1.017,
+        "overall_error_rate_pct": 0.0,
+        "categories": {
+          "Q1": {
+            "sample_count": 400,
+            "error_count": 0,
+            "total_attempts": 400,
+            "min_ms": 0.23,
+            "max_ms": 8.366,
+            "mean_ms": 0.809,
+            "p50_ms": 0.546,
+            "p90_ms": 1.181,
+            "p95_ms": 2.363,
+            "p99_ms": 5.207,
+            "throughput_ops_sec": 393.31
+          },
+          "Q2": {
+            "sample_count": 403,
+            "error_count": 0,
+            "total_attempts": 403,
+            "min_ms": 0.27,
+            "max_ms": 8.557,
+            "mean_ms": 0.794,
+            "p50_ms": 0.549,
+            "p90_ms": 1.166,
+            "p95_ms": 1.772,
+            "p99_ms": 4.437,
+            "throughput_ops_sec": 396.26
+          },
+          "Q3": {
+            "sample_count": 406,
+            "error_count": 0,
+            "total_attempts": 406,
+            "min_ms": 16.256,
+            "max_ms": 25.33,
+            "mean_ms": 18.305,
+            "p50_ms": 17.993,
+            "p90_ms": 20.185,
+            "p95_ms": 22.073,
+            "p99_ms": 24.379,
+            "throughput_ops_sec": 399.21
+          },
+          "WRITE": {
+            "sample_count": 820,
+            "error_count": 0,
+            "total_attempts": 820,
+            "min_ms": 1.356,
+            "max_ms": 9.814,
+            "mean_ms": 2.355,
+            "p50_ms": 2.018,
+            "p90_ms": 3.836,
+            "p95_ms": 5.405,
+            "p99_ms": 8.245,
+            "throughput_ops_sec": 806.29
+          }
+        },
+        "total_samples": 2029,
+        "read_qps": 1188.78,
+        "write_tps": 806.29,
+        "overall_throughput": 1995.07,
+        "concurrency": 10,
+        "scenario": "A"
+      },
+      {
+        "duration_sec": 1.063,
+        "overall_error_rate_pct": 0.0,
+        "categories": {
+          "Q1": {
+            "sample_count": 754,
+            "error_count": 0,
+            "total_attempts": 754,
+            "min_ms": 0.178,
+            "max_ms": 51.477,
+            "mean_ms": 1.161,
+            "p50_ms": 0.542,
+            "p90_ms": 1.252,
+            "p95_ms": 3.06,
+            "p99_ms": 14.464,
+            "throughput_ops_sec": 709.25
+          },
+          "Q2": {
+            "sample_count": 756,
+            "error_count": 0,
+            "total_attempts": 756,
+            "min_ms": 0.262,
+            "max_ms": 25.109,
+            "mean_ms": 0.858,
+            "p50_ms": 0.545,
+            "p90_ms": 1.236,
+            "p95_ms": 2.282,
+            "p99_ms": 5.667,
+            "throughput_ops_sec": 711.13
+          },
+          "Q3": {
+            "sample_count": 759,
+            "error_count": 0,
+            "total_attempts": 759,
+            "min_ms": 16.228,
+            "max_ms": 109.081,
+            "mean_ms": 19.438,
+            "p50_ms": 18.041,
+            "p90_ms": 21.562,
+            "p95_ms": 23.711,
+            "p99_ms": 50.961,
+            "throughput_ops_sec": 713.96
+          },
+          "WRITE": {
+            "sample_count": 1501,
+            "error_count": 0,
+            "total_attempts": 1501,
+            "min_ms": 1.336,
+            "max_ms": 25.684,
+            "mean_ms": 2.459,
+            "p50_ms": 2.019,
+            "p90_ms": 3.715,
+            "p95_ms": 5.654,
+            "p99_ms": 9.708,
+            "throughput_ops_sec": 1411.92
+          }
+        },
+        "total_samples": 3770,
+        "read_qps": 2134.34,
+        "write_tps": 1411.92,
+        "overall_throughput": 3546.27,
+        "concurrency": 20,
+        "scenario": "A"
+      }
+    ],
+    "B": [
+      {
+        "duration_sec": 1.574,
+        "overall_error_rate_pct": 0.0,
+        "categories": {
+          "Q1": {
+            "sample_count": 100,
+            "error_count": 0,
+            "total_attempts": 100,
+            "min_ms": 0.173,
+            "max_ms": 128.036,
+            "mean_ms": 2.13,
+            "p50_ms": 0.547,
+            "p90_ms": 0.924,
+            "p95_ms": 3.681,
+            "p99_ms": 10.68,
+            "throughput_ops_sec": 63.55
+          },
+          "Q2": {
+            "sample_count": 100,
+            "error_count": 0,
+            "total_attempts": 100,
+            "min_ms": 0.357,
+            "max_ms": 93.805,
+            "mean_ms": 2.338,
+            "p50_ms": 0.557,
+            "p90_ms": 1.227,
+            "p95_ms": 3.929,
+            "p99_ms": 56.836,
+            "throughput_ops_sec": 63.55
+          },
+          "Q3": {
+            "sample_count": 100,
+            "error_count": 0,
+            "total_attempts": 100,
+            "min_ms": 1.445,
+            "max_ms": 48.48,
+            "mean_ms": 2.708,
+            "p50_ms": 1.607,
+            "p90_ms": 4.251,
+            "p95_ms": 5.068,
+            "p99_ms": 13.527,
+            "throughput_ops_sec": 63.55
+          },
+          "WRITE": {
+            "sample_count": 204,
+            "error_count": 0,
+            "total_attempts": 204,
+            "min_ms": 1.482,
+            "max_ms": 100.517,
+            "mean_ms": 3.789,
+            "p50_ms": 2.025,
+            "p90_ms": 4.522,
+            "p95_ms": 5.906,
+            "p99_ms": 46.376,
+            "throughput_ops_sec": 129.64
+          }
+        },
+        "total_samples": 504,
+        "read_qps": 190.65,
+        "write_tps": 129.64,
+        "overall_throughput": 320.3,
+        "concurrency": 1,
+        "scenario": "B"
+      },
+      {
+        "duration_sec": 1.002,
+        "overall_error_rate_pct": 0.0,
+        "categories": {
+          "Q1": {
+            "sample_count": 539,
+            "error_count": 0,
+            "total_attempts": 539,
+            "min_ms": 0.226,
+            "max_ms": 11.746,
+            "mean_ms": 0.934,
+            "p50_ms": 0.56,
+            "p90_ms": 1.935,
+            "p95_ms": 3.077,
+            "p99_ms": 5.205,
+            "throughput_ops_sec": 537.79
+          },
+          "Q2": {
+            "sample_count": 540,
+            "error_count": 0,
+            "total_attempts": 540,
+            "min_ms": 0.261,
+            "max_ms": 10.396,
+            "mean_ms": 0.836,
+            "p50_ms": 0.559,
+            "p90_ms": 1.322,
+            "p95_ms": 2.017,
+            "p99_ms": 3.929,
+            "throughput_ops_sec": 538.79
+          },
+          "Q3": {
+            "sample_count": 540,
+            "error_count": 0,
+            "total_attempts": 540,
+            "min_ms": 1.113,
+            "max_ms": 12.139,
+            "mean_ms": 2.184,
+            "p50_ms": 1.655,
+            "p90_ms": 3.789,
+            "p95_ms": 4.729,
+            "p99_ms": 7.077,
+            "throughput_ops_sec": 538.79
+          },
+          "WRITE": {
+            "sample_count": 1073,
+            "error_count": 0,
+            "total_attempts": 1073,
+            "min_ms": 1.485,
+            "max_ms": 12.537,
+            "mean_ms": 2.624,
+            "p50_ms": 2.085,
+            "p90_ms": 4.361,
+            "p95_ms": 5.237,
+            "p99_ms": 8.761,
+            "throughput_ops_sec": 1070.6
+          }
+        },
+        "total_samples": 2692,
+        "read_qps": 1615.37,
+        "write_tps": 1070.6,
+        "overall_throughput": 2685.97,
+        "concurrency": 5,
+        "scenario": "B"
+      },
+      {
+        "duration_sec": 1.002,
+        "overall_error_rate_pct": 0.0,
+        "categories": {
+          "Q1": {
+            "sample_count": 1143,
+            "error_count": 0,
+            "total_attempts": 1143,
+            "min_ms": 0.232,
+            "max_ms": 10.745,
+            "mean_ms": 0.699,
+            "p50_ms": 0.543,
+            "p90_ms": 1.045,
+            "p95_ms": 1.765,
+            "p99_ms": 2.902,
+            "throughput_ops_sec": 1140.69
+          },
+          "Q2": {
+            "sample_count": 1141,
+            "error_count": 0,
+            "total_attempts": 1141,
+            "min_ms": 0.24,
+            "max_ms": 67.955,
+            "mean_ms": 0.858,
+            "p50_ms": 0.539,
+            "p90_ms": 1.185,
+            "p95_ms": 1.842,
+            "p99_ms": 2.86,
+            "throughput_ops_sec": 1138.7
+          },
+          "Q3": {
+            "sample_count": 1143,
+            "error_count": 0,
+            "total_attempts": 1143,
+            "min_ms": 1.057,
+            "max_ms": 68.498,
+            "mean_ms": 2.107,
+            "p50_ms": 1.643,
+            "p90_ms": 2.572,
+            "p95_ms": 3.551,
+            "p99_ms": 5.824,
+            "throughput_ops_sec": 1140.69
+          },
+          "WRITE": {
+            "sample_count": 2303,
+            "error_count": 0,
+            "total_attempts": 2303,
+            "min_ms": 1.483,
+            "max_ms": 81.829,
+            "mean_ms": 2.491,
+            "p50_ms": 2.101,
+            "p90_ms": 3.145,
+            "p95_ms": 3.976,
+            "p99_ms": 7.196,
+            "throughput_ops_sec": 2298.35
+          }
+        },
+        "total_samples": 5730,
+        "read_qps": 3420.08,
+        "write_tps": 2298.35,
+        "overall_throughput": 5718.43,
+        "concurrency": 10,
+        "scenario": "B"
+      },
+      {
+        "duration_sec": 1.005,
+        "overall_error_rate_pct": 0.0,
+        "categories": {
+          "Q1": {
+            "sample_count": 2158,
+            "error_count": 0,
+            "total_attempts": 2158,
+            "min_ms": 0.191,
+            "max_ms": 14.358,
+            "mean_ms": 0.818,
+            "p50_ms": 0.557,
+            "p90_ms": 1.126,
+            "p95_ms": 2.062,
+            "p99_ms": 6.424,
+            "throughput_ops_sec": 2147.43
+          },
+          "Q2": {
+            "sample_count": 2162,
+            "error_count": 0,
+            "total_attempts": 2162,
+            "min_ms": 0.238,
+            "max_ms": 14.256,
+            "mean_ms": 0.79,
+            "p50_ms": 0.55,
+            "p90_ms": 1.152,
+            "p95_ms": 1.984,
+            "p99_ms": 4.646,
+            "throughput_ops_sec": 2151.41
+          },
+          "Q3": {
+            "sample_count": 2164,
+            "error_count": 0,
+            "total_attempts": 2164,
+            "min_ms": 1.032,
+            "max_ms": 16.082,
+            "mean_ms": 2.199,
+            "p50_ms": 1.74,
+            "p90_ms": 3.328,
+            "p95_ms": 5.114,
+            "p99_ms": 7.895,
+            "throughput_ops_sec": 2153.4
+          },
+          "WRITE": {
+            "sample_count": 4331,
+            "error_count": 0,
+            "total_attempts": 4331,
+            "min_ms": 1.468,
+            "max_ms": 20.614,
+            "mean_ms": 2.648,
+            "p50_ms": 2.16,
+            "p90_ms": 4.043,
+            "p95_ms": 5.618,
+            "p99_ms": 8.829,
+            "throughput_ops_sec": 4309.78
+          }
+        },
+        "total_samples": 10815,
+        "read_qps": 6452.23,
+        "write_tps": 4309.78,
+        "overall_throughput": 10762.01,
+        "concurrency": 20,
+        "scenario": "B"
+      }
+    ]
+  }
+}
