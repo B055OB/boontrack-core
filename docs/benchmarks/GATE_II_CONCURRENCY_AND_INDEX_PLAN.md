@@ -113,16 +113,39 @@ In Gate I, Query 3 (Multi-Tenant Join) exhibited an execution time of **16.9ms**
 Because `public.attributions` lacks a composite index on `(tenant_id, order_id)`, PostgreSQL evaluates candidate rows via repeated sequential scans and filtering inside the join loop. Under high concurrency ($C=20$), 20 concurrent workers executing Q3 generate repeated shared-buffer page pin/read cycles and CPU-bound tuple filtering across worker backends.
 
 ### 2.2 Composite Index Candidate (Scenario B)
-To resolve this, Scenario B introduces a multi-column B-tree index tailored directly to the join predicate:
+To resolve this, Scenario B introduces a multi-column B-tree index tailored directly to the join predicate.
 
-```sql
--- DDL Migration Candidate (Zero-Downtime, Non-Blocking)
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_attributions_tenant_order
-ON public.attributions (tenant_id, order_id);
+#### Provisioning Protocol & Fail-Closed Pre-Check:
+To eliminate blind-overwrite hazards and ensure the database starts from a pristine state, provisioning enforces a strict two-stage protocol:
 
--- Provenance Tagging Guardrail: Annotate index with experiment Run ID
-COMMENT ON INDEX public.idx_attributions_tenant_order IS 'created_by_run_id:<BENCHMARK_RUN_ID>';
-```
+1. **Explicit Fail-Closed Pre-Check:**
+   Before issuing DDL, the runner queries `pg_indexes` to assert that no conflicting index exists:
+   ```sql
+   SELECT 1 FROM pg_indexes 
+   WHERE schemaname = 'public' AND indexname = 'idx_attributions_tenant_order';
+   ```
+   *Guardrail:* If a row is returned, execution **immediately aborts** with `RuntimeError` ("PRE-CONDITION ABORT: Index already exists").
+
+2. **Creation without `IF NOT EXISTS` Bypass Hazard:**
+   `IF NOT EXISTS` is intentionally eliminated to prevent silent no-ops against pre-existing objects:
+   ```sql
+   -- DDL Migration Candidate (Zero-Downtime, Non-Blocking, Strict Fail-Closed)
+   CREATE INDEX CONCURRENTLY idx_attributions_tenant_order
+   ON public.attributions (tenant_id, order_id);
+   ```
+
+3. **RunID Provenance Tagging & Physical OID Capture:**
+   Immediately following index creation, the runner annotates the index with its active execution Run ID and captures its physical object identifier (`oid`) from `pg_class`:
+   ```sql
+   -- Provenance Tagging Guardrail: Annotate index with experiment Run ID
+   COMMENT ON INDEX public.idx_attributions_tenant_order IS 'created_by_run_id:<BENCHMARK_RUN_ID>';
+
+   -- Capture Physical OID for Teardown Verification
+   SELECT c.oid FROM pg_class c 
+   JOIN pg_namespace n ON n.oid = c.relnamespace 
+   WHERE n.nspname = 'public' AND c.relname = 'idx_attributions_tenant_order';
+   ```
+   The captured integer OID is held in the runner's memory (`self._created_index_oid`) for the teardown assertions.
 
 #### Expected Query Plan Optimization:
 With `idx_attributions_tenant_order`, the PostgreSQL query planner is expected to replace the sequential scan with a targeted **Index Scan** or **Bitmap Index Scan**, seeking directly to the matching tuple:
@@ -195,25 +218,50 @@ flowchart TD
 
 ---
 
-### 3.2 Index Rollback Pre-Check Guardrail (RunID Verification)
-To strictly prevent an accidental or errant `DROP INDEX` from destroying a legitimate index in Staging or Production, the teardown protocol enforces **Provenance RunID Tagging and Pre-Check Verification**:
+### 3.2 Index Rollback Guardrail (Triple Assertion Pre-Check)
+To strictly prevent an accidental or errant `DROP INDEX` from destroying a legitimate index in Staging or Production, the teardown protocol enforces a **Triple Assertion Guardrail (OID + Name + RunID Tag)** before executing the concurrent drop:
 
-1. **Tagging During Creation:**
-   When `idx_attributions_tenant_order` is provisioned for Scenario B, it is immediately tagged with the unique benchmark execution UUID (`run_id`):
+```mermaid
+flowchart TD
+    subgraph Triple_Assertion["Triple Assertion Teardown Guardrail"]
+        A["Initiate Teardown"] --> B{"Assertion 1:<br/>Index exists in pg_indexes?"}
+        B -- No --> FAIL["Abort Drop & Throw Alert Exception"]
+        B -- Yes --> C{"Assertion 2:<br/>Current pg_class.oid == provisioned OID?"}
+        C -- No --> FAIL
+        C -- Yes --> D{"Assertion 3:<br/>pg_description matches 'created_by_run_id:<run_id>'?"}
+        D -- No --> FAIL
+        D -- Yes --> E["All 3 Assertions Passed<br/>DROP INDEX CONCURRENTLY IF EXISTS ..."]
+    end
+```
+
+#### The Three Mandatory Assertions:
+1. **Assertion 1 (Catalog Presence):**
    ```sql
-   COMMENT ON INDEX public.idx_attributions_tenant_order IS 'created_by_run_id:bench_run_20261105_b2a7';
+   SELECT 1 FROM pg_indexes 
+   WHERE schemaname = 'public' AND indexname = 'idx_attributions_tenant_order';
    ```
-2. **Teardown Pre-Check Assertion:**
-   Before executing `DROP INDEX`, the orchestrator queries PostgreSQL metadata to verify that:
-   - The index exists.
-   - The index comment contains the exact `created_by_run_id` generated at the start of this specific run:
+   *Failure Trigger:* If 0 rows return, the runner raises `TRIPLE ASSERTION ABORT (Assertion 1)`.
+
+2. **Assertion 2 (Physical OID Invariant Match):**
+   The runner queries PostgreSQL's physical object catalog to verify that the target index was not dropped and recreated or substituted:
+   ```sql
+   SELECT c.oid FROM pg_class c 
+   JOIN pg_namespace n ON n.oid = c.relnamespace 
+   WHERE n.nspname = 'public' AND c.relname = 'idx_attributions_tenant_order';
+   ```
+   *Failure Trigger:* If `current_oid != self._created_index_oid`, the runner raises `TRIPLE ASSERTION ABORT (Assertion 2)` and halts.
+
+3. **Assertion 3 (RunID Provenance Verification):**
+   The runner checks the object's description table using the verified physical OID:
    ```sql
    SELECT description
    FROM pg_description
-   WHERE objoid = 'public.idx_attributions_tenant_order'::regclass;
+   WHERE objoid = :current_oid;
    ```
-   *Guardrail:* If the comment is missing or does not match the active `run_id`, the script **REFUSES TO DROP** and raises a fatal configuration exception, requiring manual DBRE intervention.
-3. **Verified Non-Blocking Drop:**
+   *Failure Trigger:* If the comment does not match the active `created_by_run_id:<run_id>`, the runner raises `TRIPLE ASSERTION ABORT (Assertion 3)` and halts.
+
+4. **Verified Non-Blocking Drop:**
+   Only when all three assertions pass simultaneously does the orchestrator issue:
    ```sql
    DROP INDEX CONCURRENTLY IF EXISTS public.idx_attributions_tenant_order;
    ```

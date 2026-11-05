@@ -399,67 +399,130 @@ class ConcurrencyWorker:
             self.close_connection()
 
 # -----------------------------------------------------------------------------
-# DDL PROVISIONING & PROVENANCE ROLLBACK ENGINE
+# DDL PROVISIONING & PROVENANCE ROLLBACK ENGINE (TRIPLE ASSERTION GUARDRAIL)
 # -----------------------------------------------------------------------------
 class IndexManager:
-    """Manages CREATE/DROP INDEX CONCURRENTLY with RunID provenance verification."""
+    """
+    Manages CREATE/DROP INDEX CONCURRENTLY with:
+      1. Fail-Closed Pre-Check (Zero tolerance for existing index prior to run).
+      2. DDL without 'IF NOT EXISTS' bypass hazard.
+      3. Physical OID capture and RunID provenance tagging.
+      4. Triple Assertion Guardrail before DROP INDEX CONCURRENTLY.
+    """
     def __init__(self, db_url: Optional[str], dry_run: bool, run_id: str):
         self.db_url = db_url
         self.dry_run = dry_run
         self.run_id = run_id
+        self._created_index_oid: Optional[int] = None
 
     def provision_index(self):
         logger.info(f"[*] Provisioning Composite Index '{INDEX_NAME}' with RunID tag: {self.run_id}...")
         if self.dry_run:
-            logger.info("   [DRY-RUN] Simulating CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_attributions_tenant_order...")
+            logger.info(f"   [DRY-RUN] Pre-Check: Verifying '{INDEX_NAME}' does not exist in pg_indexes...")
+            logger.info(f"   [DRY-RUN] Simulating CREATE INDEX CONCURRENTLY {INDEX_NAME} ON public.attributions (tenant_id, order_id)...")
             logger.info(f"   [DRY-RUN] Simulating COMMENT ON INDEX public.{INDEX_NAME} IS 'created_by_run_id:{self.run_id}'...")
+            self._created_index_oid = 948271
+            logger.info(f"   [DRY-RUN] Captured physical OID for {INDEX_NAME}: {self._created_index_oid}")
             return
 
         conn = psycopg2.connect(self.db_url)
         conn.autocommit = True  # Required for CREATE INDEX CONCURRENTLY
         try:
             with conn.cursor() as cur:
+                # 1. FAIL-CLOSED PRE-CHECK
                 cur.execute(f"""
-                    CREATE INDEX CONCURRENTLY IF NOT EXISTS {INDEX_NAME}
+                    SELECT 1 FROM pg_indexes 
+                    WHERE schemaname = 'public' AND indexname = '{INDEX_NAME}';
+                """)
+                if cur.fetchone() is not None:
+                    raise RuntimeError(
+                        f"PRE-CONDITION ABORT: Index {INDEX_NAME} already exists prior to benchmark provisioning! "
+                        "Ensure clean schema state before running Scenario B."
+                    )
+
+                # 2. CREATE INDEX CONCURRENTLY (Without IF NOT EXISTS)
+                cur.execute(f"""
+                    CREATE INDEX CONCURRENTLY {INDEX_NAME}
                     ON public.attributions (tenant_id, order_id);
                 """)
+
+                # 3. TAG RUNID PROVENANCE
                 cur.execute(f"""
                     COMMENT ON INDEX public.{INDEX_NAME} IS 'created_by_run_id:{self.run_id}';
                 """)
-            logger.info("   [+] Composite index provisioned and tagged with run_id successfully.")
+
+                # 4. CAPTURE PHYSICAL OID
+                cur.execute(f"""
+                    SELECT c.oid FROM pg_class c 
+                    JOIN pg_namespace n ON n.oid = c.relnamespace 
+                    WHERE n.nspname = 'public' AND c.relname = '{INDEX_NAME}';
+                """)
+                oid_row = cur.fetchone()
+                if not oid_row or not oid_row[0]:
+                    raise RuntimeError(f"FATAL: Unable to resolve physical OID for newly created index {INDEX_NAME}!")
+                
+                self._created_index_oid = int(oid_row[0])
+                logger.info(f"   [+] Composite index provisioned and tagged with run_id successfully. Physical OID: {self._created_index_oid}")
         finally:
             conn.close()
 
     def teardown_index(self):
-        logger.info(f"[*] Teardown Guardrail: Verifying RunID tag on '{INDEX_NAME}' before drop...")
+        logger.info(f"[*] Teardown Guardrail: Executing Triple Assertion Guardrail on '{INDEX_NAME}' before drop...")
         if self.dry_run:
-            logger.info(f"   [DRY-RUN] Verified index comment contains 'created_by_run_id:{self.run_id}'.")
-            logger.info("   [DRY-RUN] Simulating DROP INDEX CONCURRENTLY IF EXISTS idx_attributions_tenant_order...")
+            logger.info(f"   [DRY-RUN] [Assertion 1/3] Verified index '{INDEX_NAME}' exists in pg_indexes.")
+            logger.info(f"   [DRY-RUN] [Assertion 2/3] Verified physical OID (948271 == {self._created_index_oid}).")
+            logger.info(f"   [DRY-RUN] [Assertion 3/3] Verified index comment matches 'created_by_run_id:{self.run_id}'.")
+            logger.info(f"   [DRY-RUN] Simulating DROP INDEX CONCURRENTLY IF EXISTS public.{INDEX_NAME}...")
             return
 
         conn = psycopg2.connect(self.db_url)
         conn.autocommit = True
         try:
             with conn.cursor() as cur:
-                # 1. Inspect description catalog
+                # ASSERTION 1: Index exists in pg_indexes
+                cur.execute(f"""
+                    SELECT 1 FROM pg_indexes 
+                    WHERE schemaname = 'public' AND indexname = '{INDEX_NAME}';
+                """)
+                if cur.fetchone() is None:
+                    raise RuntimeError(f"TRIPLE ASSERTION ABORT (Assertion 1): Index '{INDEX_NAME}' not found in pg_indexes!")
+
+                # ASSERTION 2: Physical OID matches self._created_index_oid exactly
+                cur.execute(f"""
+                    SELECT c.oid FROM pg_class c 
+                    JOIN pg_namespace n ON n.oid = c.relnamespace 
+                    WHERE n.nspname = 'public' AND c.relname = '{INDEX_NAME}';
+                """)
+                oid_row = cur.fetchone()
+                current_oid = int(oid_row[0]) if oid_row and oid_row[0] else None
+                if current_oid != self._created_index_oid:
+                    raise RuntimeError(
+                        f"TRIPLE ASSERTION ABORT (Assertion 2): Current index OID ({current_oid}) "
+                        f"does NOT match provisioned OID ({self._created_index_oid})! Refusing to drop unknown index."
+                    )
+
+                # ASSERTION 3: Comment on pg_description matches created_by_run_id:<run_id>
                 cur.execute(f"""
                     SELECT description
                     FROM pg_description
-                    WHERE objoid = 'public.{INDEX_NAME}'::regclass;
+                    WHERE objoid = {current_oid};
                 """)
-                row = cur.fetchone()
-                if not row or not row[0]:
-                    raise RuntimeError(f"GUARDRAIL ABORT: Index '{INDEX_NAME}' exists but lacks a provenance comment!")
+                desc_row = cur.fetchone()
+                if not desc_row or not desc_row[0]:
+                    raise RuntimeError(f"TRIPLE ASSERTION ABORT (Assertion 3): Index '{INDEX_NAME}' lacks provenance comment on pg_description!")
                 
-                comment = row[0]
+                comment = desc_row[0]
                 expected_tag = f"created_by_run_id:{self.run_id}"
                 if expected_tag not in comment:
-                    raise RuntimeError(f"GUARDRAIL ABORT: Index comment '{comment}' does not match active RunID '{expected_tag}'!")
+                    raise RuntimeError(
+                        f"TRIPLE ASSERTION ABORT (Assertion 3): Index comment '{comment}' does not match active RunID '{expected_tag}'!"
+                    )
 
-                logger.info(f"   [+] Provenance tag verified: {comment}")
-                # 2. Safe concurrent drop
+                logger.info(f"   [+] All 3 Assertions Passed: Index exists, OID={current_oid}, Comment='{comment}'.")
+                
+                # Verified concurrent drop
                 cur.execute(f"DROP INDEX CONCURRENTLY IF EXISTS public.{INDEX_NAME};")
-                logger.info("   [+] Composite index dropped safely via DROP INDEX CONCURRENTLY.")
+                logger.info(f"   [+] Composite index '{INDEX_NAME}' dropped safely via DROP INDEX CONCURRENTLY.")
         finally:
             conn.close()
 
@@ -693,3 +756,4 @@ if __name__ == "__main__":
         db_url=args.db_url,
         output_file=args.output
     )
+
