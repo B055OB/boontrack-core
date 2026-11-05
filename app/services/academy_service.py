@@ -62,6 +62,11 @@ ACADEMY_SKU_ID: str = "OB-BATCH1-249K"
 ACADEMY_SETTLEMENT_PRICE: int = 249000  # Rp 249.000
 ACADEMY_INVOICE_TTL_MINUTES: int = 15   # 15 menit
 
+# THE GOLDEN PENNY TEST SKU (STRICTLY ISOLATED INTERNAL TEST)
+TEST_PENNY_SKU_ID: str = "TEST-PENNY-1500"
+TEST_PENNY_SKU_NAME: str = "OnlineBoost Golden Penny Test Verification"
+TEST_PENNY_PRICE: int = 1500
+
 # Master Static QRIS fallback (Official BoonTrack QRIS)
 DEFAULT_STATIC_QRIS: str = (
     os.getenv("BOONTRACK_STATIC_QRIS")
@@ -1281,16 +1286,24 @@ def generate_academy_qris_invoice(
     tenant_id: str = "onlineboost",
     use_unique_code: bool = True,
     static_qris_override: Optional[str] = None,
+    sku_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Menghasilkan Dynamic QRIS Invoice Rp 249.000 (+ 3-digit kode unik jika aktif).
+    Menghasilkan Dynamic QRIS Invoice:
+    - Default: Rp 249.000 (+ 3-digit kode unik jika aktif) untuk SKU OB-BATCH1-249K.
+    - Test Isolation: Tepat Rp 1.500 untuk SKU internal test 'TEST-PENNY-1500'.
     TTL Expiry: Tepat 15 menit.
     """
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=ACADEMY_INVOICE_TTL_MINUTES)
 
-    # 1. Alokasi 3-digit kode unik jika aktif
-    if use_unique_code:
+    is_penny_test = (sku_id == TEST_PENNY_SKU_ID)
+    resolved_sku_id = TEST_PENNY_SKU_ID if is_penny_test else ACADEMY_SKU_ID
+    resolved_sku_name = TEST_PENNY_SKU_NAME if is_penny_test else ACADEMY_SKU_NAME
+    base_price = TEST_PENNY_PRICE if is_penny_test else ACADEMY_SETTLEMENT_PRICE
+
+    # 1. Alokasi 3-digit kode unik jika aktif (penny test tidak memakai unique code tambahan)
+    if use_unique_code and not is_penny_test:
         # Cari kode unik antara 100-999 yang tidak bertabrakan dengan invoice aktif
         unique_code = generate_unique_code(min_val=100, max_val=999)
         # Hindari tabrakan dengan invoice pending yang belum expired
@@ -1302,14 +1315,14 @@ def generate_academy_qris_invoice(
             and now < inv.get("expires_at_dt")
         }
         attempts = 0
-        while (ACADEMY_SETTLEMENT_PRICE + unique_code) in active_occupied and attempts < 20:
+        while (base_price + unique_code) in active_occupied and attempts < 20:
             unique_code = generate_unique_code(min_val=100, max_val=999)
             attempts += 1
     else:
         unique_code = 0
 
-    total_amount = ACADEMY_SETTLEMENT_PRICE + unique_code
-    order_id = f"BTA-ALUMNI-{uuid.uuid4().hex[:8].upper()}"
+    total_amount = base_price + unique_code
+    order_id = f"BTA-PENNY-{uuid.uuid4().hex[:8].upper()}" if is_penny_test else f"BTA-ALUMNI-{uuid.uuid4().hex[:8].upper()}"
 
     # 2. Emit Dynamic QRIS Payload (Tag 54 injected + Tag 01 set to dynamic 12 + CRC16 recalculation)
     base_qris = (static_qris_override or DEFAULT_STATIC_QRIS).strip()
@@ -1328,9 +1341,9 @@ def generate_academy_qris_invoice(
 
     invoice_data = {
         "order_id": order_id,
-        "sku": ACADEMY_SKU_NAME,
-        "sku_id": ACADEMY_SKU_ID,
-        "base_amount": ACADEMY_SETTLEMENT_PRICE,
+        "sku": resolved_sku_name,
+        "sku_id": resolved_sku_id,
+        "base_amount": base_price,
         "unique_code": unique_code,
         "total_amount": total_amount,
         "currency": "IDR",
@@ -1346,6 +1359,7 @@ def generate_academy_qris_invoice(
         "created_at": now.isoformat(),
         "status": "PENDING",
         "idempotency_key": idempotency_key,
+        "is_internal_only": is_penny_test,
     }
 
     # Simpan ke in-memory cache
@@ -1368,8 +1382,8 @@ def generate_academy_qris_invoice(
             (
                 order_id,
                 tenant_id,
-                ACADEMY_SKU_ID,
-                ACADEMY_SKU_NAME,
+                resolved_sku_id,
+                resolved_sku_name,
                 total_amount,
                 customer_name,
                 customer_phone,
@@ -1392,7 +1406,7 @@ def generate_academy_qris_invoice(
                 "id": str(uuid.uuid4()),
                 "tenant_id": tenant_id,
                 "order_id": order_id,
-                "amount": ACADEMY_SETTLEMENT_PRICE,
+                "amount": base_price,
                 "unique_code": unique_code,
                 "total_amount": total_amount,
                 "qr_string": qris_payload,
@@ -1465,25 +1479,26 @@ def settle_academy_invoice(
         # --- 2. Acceptance Gate Validations ---
         if invoice:
             expected_total = invoice.get("total_amount", ACADEMY_SETTLEMENT_PRICE)
+            expected_base = invoice.get("base_amount", ACADEMY_SETTLEMENT_PRICE)
 
             # 2a. Amount Mismatch Rejection
-            if invoice.get("unique_code") == 0 or expected_total == ACADEMY_SETTLEMENT_PRICE:
-                if amount is not None and amount != ACADEMY_SETTLEMENT_PRICE:
+            if invoice.get("unique_code") == 0 or expected_total == expected_base:
+                if amount is not None and amount != expected_base:
                     logger.warning(
                         f"[AcademyGate] Amount mismatch for order '{order_id}': "
-                        f"received {amount}, expected {ACADEMY_SETTLEMENT_PRICE}"
+                        f"received {amount}, expected {expected_base}"
                     )
                     return {
                         "status": "REJECTED_AMOUNT_MISMATCH",
                         "order_id": order_id,
                         "event_id": event_id,
                         "amount": amount,
-                        "expected_amount": ACADEMY_SETTLEMENT_PRICE,
+                        "expected_amount": expected_base,
                         "idempotency_hit": False,
-                        "error": f"Amount mismatch: received Rp {amount}, expected Rp {ACADEMY_SETTLEMENT_PRICE}",
+                        "error": f"Amount mismatch: received Rp {amount}, expected Rp {expected_base}",
                     }
             else:
-                if amount is not None and amount != expected_total and amount != ACADEMY_SETTLEMENT_PRICE and not (249100 <= amount <= 249999):
+                if amount is not None and amount != expected_total and amount != expected_base and not (249100 <= amount <= 249999):
                     logger.warning(
                         f"[AcademyGate] Amount mismatch for order '{order_id}': "
                         f"received {amount}, expected {expected_total}"
@@ -1605,7 +1620,7 @@ def settle_academy_invoice(
             cur.execute(
                 """
                 UPDATE orders 
-                SET status = 'PAID', updated_at = %s
+                SET status = 'PAID', payment_status = 'PAID', updated_at = %s
                 WHERE id = %s;
                 """,
                 (now_utc, order_id)
@@ -1657,6 +1672,7 @@ def settle_academy_invoice(
         _PROCESSED_EVENTS.add(event_id)
         if invoice:
             invoice["status"] = "PAID"
+            invoice["payment_status"] = "PAID"
             invoice["paid_at"] = now_utc.isoformat()
 
         return {

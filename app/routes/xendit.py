@@ -92,6 +92,9 @@ async def send_whatsapp_payment_notification(
         if amount == 249000 or (248000 <= amount <= 249000):
             item_name = "Paket Lengkap Kelas Inkubasi CTWA Batch 1"
             access_url = "https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale"
+        elif amount == 1500 or (product_name and "penny" in str(product_name).lower()):
+            item_name = "OnlineBoost Golden Penny Test Verification"
+            access_url = "https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale"
 
     access_block = f"🔗 *Detail Link Akses Kelas Instan:*\n{access_url}\n\n" if access_url else ""
     text = (

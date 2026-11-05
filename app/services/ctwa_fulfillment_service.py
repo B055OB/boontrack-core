@@ -76,16 +76,11 @@ async def create_telegram_single_use_invite_link(
             resolved_bot_token = get_dynamic_telegram_bot_token(bot_username="onlineboostbot")
         except Exception:
             pass
-    if not resolved_bot_token:
-        resolved_bot_token = (
-            os.getenv("TELEGRAM_BOT_TOKEN")
-            or os.getenv("TELEGRAM_ACADEMY_BOT_TOKEN")
-            or ""
-        )
+
     resolved_bot_token = resolved_bot_token.strip() if resolved_bot_token else ""
     if not resolved_bot_token:
-        logger.error("[CTWA FULFILLMENT] TELEGRAM_ONLINEBOOST_BOT_TOKEN tidak dikonfigurasi di environment (fail-closed)")
-        raise ValueError("TELEGRAM_ONLINEBOOST_BOT_TOKEN is not configured in environment variables (fail-closed)")
+        logger.error("[CTWA FULFILLMENT] OnlineBoost bot token is missing or not configured (fail-closed)")
+        raise RuntimeError("OnlineBoost bot token is missing or not configured. Fallback to other bot tokens is strictly prohibited.")
 
     expire_date = int(time.time()) + 86400
     invite_name = f"Invite-{order_id}"
