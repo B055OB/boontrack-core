@@ -113,12 +113,14 @@ def test_worker_reconciler_missing_tenant_id_raises_value_error():
 def test_worker_db_mutation_cross_tenant_rejected_zero_rows():
     """
     Simulates a worker job executing inside tenant_transaction for Tenant Alpha.
-    When attempting to update or delete an object belonging to Tenant Beta,
-    the mutation affects EXACTLY 0 rows.
+    When attempting to maliciously update an order belonging to Tenant Beta using only
+    the target order ID, the mutation affects EXACTLY 0 rows via PostgreSQL RLS enforcement.
+    Also verifies positive control: Tenant Alpha can update its own order.
     """
     alpha_tenant_id = "00000000-0000-0000-0000-00000000000a"
     beta_tenant_id = "00000000-0000-0000-0000-00000000000b"
     test_beta_order_id = "test-worker-beta-order-999"
+    test_alpha_order_id = "test-worker-alpha-order-111"
 
     if not os.getenv("POSTGRES_PASSWORD") and not os.getenv("DATABASE_URL"):
         pytest.fail("PostgreSQL credentials missing in environment. P1-B mandates live DB verification.")
@@ -133,46 +135,87 @@ def test_worker_db_mutation_cross_tenant_rejected_zero_rows():
         pytest.fail(f"PostgreSQL connection failed. P1-B mandates live DB verification: {exc}")
 
     try:
-        # Pre-seed test order for Tenant Beta in superuser/admin context
+        # 1. Setup/Seed: Create orders for Tenant Beta and Tenant Alpha in administrative context
         cur = conn.cursor()
         
-        # Clean up any leftover
-        cur.execute("DELETE FROM orders WHERE id = %s;", (test_beta_order_id,))
+        # Clean up any leftover test orders
+        cur.execute("DELETE FROM public.orders WHERE id IN (%s, %s);", (test_beta_order_id, test_alpha_order_id))
+        
+        # Seed Tenant Beta order
         cur.execute(
             """
-            INSERT INTO orders (id, tenant_id, tenant_slug, product_id, product_title, customer_name, customer_phone, status, gross_amount, created_at, updated_at)
+            INSERT INTO public.orders (id, tenant_id, tenant_slug, product_id, product_title, customer_name, customer_phone, status, gross_amount, created_at, updated_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
             ON CONFLICT (id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, status = EXCLUDED.status;
             """,
             (test_beta_order_id, beta_tenant_id, "tenant_beta", "prod_test_01", "Test Product", "Beta Customer", "62899999999", "PENDING", 250000),
         )
+
+        # Seed Tenant Alpha order (for positive control)
+        cur.execute(
+            """
+            INSERT INTO public.orders (id, tenant_id, tenant_slug, product_id, product_title, customer_name, customer_phone, status, gross_amount, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            ON CONFLICT (id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, status = EXCLUDED.status;
+            """,
+            (test_alpha_order_id, alpha_tenant_id, "tenant_alpha", "prod_test_01", "Test Product", "Alpha Customer", "62811111111", "PENDING", 150000),
+        )
         conn.commit()
         cur.close()
 
-        # Now execute worker job strictly scoped to Tenant Alpha
+        # 2. Cross-Tenant Attack Execution & Positive Control
+        # Enter tenant session via tenant_transaction(alpha_tenant_id, conn)
         with tenant_transaction(alpha_tenant_id, conn):
             worker_cur = conn.cursor()
             
-            # Tenant Alpha's worker tries to maliciously update Beta's order
+            # Cross-Tenant Attack: Tenant Alpha's worker tries to maliciously update Beta's order using ONLY order ID
+            # (PostgreSQL RLS performs the enforcement; no tenant_id condition in WHERE)
             worker_cur.execute(
                 """
-                UPDATE orders 
-                SET status = 'EXPIRED', updated_at = NOW() 
-                WHERE id = %s AND (tenant_id = current_setting('app.current_tenant_id', true)::uuid OR tenant_id = %s::uuid);
+                UPDATE public.orders 
+                SET status = 'TAMPERED', updated_at = NOW() 
+                WHERE id = %s;
                 """,
-                (test_beta_order_id, alpha_tenant_id),
+                (test_beta_order_id,),
             )
             affected = worker_cur.rowcount
             
-            # PROOF: 0 rows affected!
+            # PROOF: 0 rows affected! RLS hides and blocks foreign row.
             assert affected == 0, f"Cross-tenant breach! Worker affected {affected} rows."
+
+            # 4. Positive Control: Tenant Alpha CAN successfully update an order legitimately owned by Tenant Alpha
+            worker_cur.execute(
+                """
+                UPDATE public.orders 
+                SET status = 'PROCESSED', updated_at = NOW() 
+                WHERE id = %s;
+                """,
+                (test_alpha_order_id,),
+            )
+            alpha_affected = worker_cur.rowcount
+            assert alpha_affected == 1, f"Positive control failed! Expected 1 row affected for owned order, got {alpha_affected}."
+
             worker_cur.close()
 
-        # Clean up seeded order
-        clean_cur = conn.cursor()
-        clean_cur.execute("DELETE FROM orders WHERE id = %s;", (test_beta_order_id,))
+        # 3. Privilege Verification via administrative connection
+        admin_cur = conn.cursor()
+        
+        # Verify Beta order remains untampered (still PENDING)
+        admin_cur.execute("SELECT status FROM public.orders WHERE id = %s;", (test_beta_order_id,))
+        beta_status_row = admin_cur.fetchone()
+        assert beta_status_row is not None, "Beta order missing during verification!"
+        assert beta_status_row[0] == "PENDING", f"Security violation! Beta order status was tampered: {beta_status_row[0]}"
+
+        # Verify Alpha order was legitimately updated to PROCESSED
+        admin_cur.execute("SELECT status FROM public.orders WHERE id = %s;", (test_alpha_order_id,))
+        alpha_status_row = admin_cur.fetchone()
+        assert alpha_status_row is not None, "Alpha order missing during verification!"
+        assert alpha_status_row[0] == "PROCESSED", f"Positive control verification failed: expected PROCESSED, got {alpha_status_row[0]}"
+
+        # Clean up seeded orders
+        admin_cur.execute("DELETE FROM public.orders WHERE id IN (%s, %s);", (test_beta_order_id, test_alpha_order_id))
         conn.commit()
-        clean_cur.close()
+        admin_cur.close()
 
     finally:
         close_and_reset_connection(conn)
