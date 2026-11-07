@@ -1,204 +1,27 @@
-import asyncio
 import logging
 from aiohttp import web
-from app.payments.matcher import extract_clean_dana_amount, match_and_fulfill_payment
-from app.services.reconciliation_service import reconcile_incoming_mutation
-from app.services.whatsapp_service import send_whatsapp_text
-from app.services.cv_state_engine import GLOBAL_USER_STATES
-from app.services.capi_service import dispatch_seller_capi_purchase
 
 logger = logging.getLogger(__name__)
 
 
 async def handle_reader_mutation_webhook(request: web.Request) -> web.Response:
-    """Webhook listener untuk menerima notifikasi mutasi transaksi dari Android Reader & DANA Bisnis."""
-    try:
-        data = await request.json()
-    except Exception:
-        return web.Response(text="INVALID_PAYLOAD", status=400)
-
-    # Gabungkan title + body dari payload Android Reader agar parser bisa menangkap nominalnya
-    title_field = data.get("title") or ""
-    body_field = data.get("body") or ""
-    raw_message = (
-        data.get("raw_text")
-        or data.get("message")
-        or data.get("notification_text")
-        or f"{title_field} {body_field}".strip()
-        or ""
+    """
+    Phase 1 Stage 2 (P0-C):
+    Direct Tenant Rail (Android Notification Reader & DANA Bisnis personal mutation matcher)
+    is EXPERIMENTAL / PENDING_REVIEW and disabled for auto-settlement.
+    """
+    logger.warning("[PaymentPerimeterLockdown] Blocked Direct Tenant Rail reader mutation webhook.")
+    return web.json_response(
+        {
+            "status": "rejected",
+            "error_code": "DIRECT_TENANT_RAIL_DISABLED",
+            "detail": (
+                "DIRECT_TENANT_RAIL_DISABLED: Direct Tenant Rail (Android Reader / bank mutation auto-settlement) "
+                "is EXPERIMENTAL / PENDING_REVIEW and disabled."
+            ),
+        },
+        status=403,
     )
-    # Pastikan field raw_text tersedia untuk extract_clean_dana_amount
-    if not data.get("raw_text") and raw_message:
-        data["raw_text"] = raw_message
-
-    tenant_id = data.get("tenant_id", "boontrack-career")
-    direct_phone = data.get("user_phone") or data.get("phone")
-    amount = extract_clean_dana_amount(data)
-
-    logger.info(
-        f"[READER WEBHOOK] Received payload: title='{title_field}' body='{body_field}' "
-        f"-> raw_message='{raw_message}' -> parsed_amount=Rp{amount:,} "
-        f"tenant={tenant_id} phone={direct_phone}"
-    )
-
-    if amount <= 0:
-        logger.warning(f"[READER WEBHOOK] Could not parse valid amount from payload: {data}")
-        return web.Response(text="AMOUNT_REQUIRED", status=400)
-
-    try:
-        # 1. Jalankan Core Engine Reader Validation Matching (5-Parameter Verification)
-        from app.services.reader_validation_service import ReaderValidationService
-        val_res = await ReaderValidationService.validate_and_settle_mutation(
-            merchant_id=tenant_id,
-            incoming_amount=amount,
-            raw_text=raw_message,
-            explicit_ref=data.get("ref") or data.get("transaction_ref"),
-            source="reader_webhook",
-            raw_payload=data
-        )
-
-        if val_res.get("status") in ("SUCCESS", "ALREADY_SETTLED"):
-            logger.info(f"[READER WEBHOOK] Core Engine validated mutation: {val_res}")
-            return web.json_response(val_res, status=200)
-
-        # 2. Jalankan Unified Payment Matcher (Exact Document Jobs & Intent Fulfillment)
-        match_res = await match_and_fulfill_payment(
-            amount=amount,
-            raw_text=raw_message,
-            tenant_id=tenant_id,
-            source="reader_webhook",
-            direct_phone=direct_phone,
-            raw_payload=data
-        )
-
-        logger.info(f"[READER WEBHOOK] Match result for Rp{amount:,}: {match_res}")
-
-        if match_res.get("status") == "SUCCESS":
-            # Dispatch CAPI Ads Tracking Pro ke Meta & TikTok secara non-blocking
-            order_info = match_res.get("order") or match_res.get("data") or {}
-            pixel_config = match_res.get("pixel_config") or {}
-            if pixel_config:
-                asyncio.create_task(
-                    dispatch_seller_capi_purchase(
-                        order=order_info,
-                        pixel_config=pixel_config
-                    )
-                )
-
-            return web.json_response(match_res, status=200)
-        elif match_res.get("status") == "ALREADY_SETTLED":
-            return web.json_response(match_res, status=200)
-
-        # 2. Fallback: Eksekusi Smart Reconciliation (Near Match & Ambiguous)
-        status, intent, diff = await reconcile_incoming_mutation(
-            incoming_amount=amount,
-            raw_text=raw_message,
-            tenant_id=tenant_id
-        )
-
-        if not intent:
-            logger.warning(f"[MUTATION UNMATCHED] Rp{amount:,} tidak cocok dengan invoice pending manapun.")
-            return web.json_response({"status": "UNMATCHED", "action": "IGNORED"})
-
-        user_id = intent.get("user_id")
-        invoice_id = intent.get("invoice_id")
-        expected_amount = intent.get("total_amount")
-
-        # 1. EXACT MATCH: Langsung Selesaikan Order
-        if status == "EXACT_MATCH":
-            from app.services.tenant_context_resolver import tenant_context_resolver, has_capability
-            t_slug = intent.get("tenant_id") or "default"
-            context = await tenant_context_resolver.resolve_tenant(t_slug)
-
-            if has_capability(context, "digital_fulfillment") or (context and context.business_type == "DIGITAL") or t_slug == "digicorn":
-                try:
-                    from app.tenants.digicorn.service import digicorn_service
-                    await digicorn_service.deliver_paid_order(intent)
-                except Exception as e:
-                    logger.error(f"[PAYMENT WEBHOOK] Digital delivery error: {e}")
-                return web.json_response({
-                    "status": "SUCCESS",
-                    "action": "AUTO_FULFILLED_DIGITAL",
-                    "invoice": invoice_id,
-                    "tenant": t_slug
-                })
-
-            success_msg = (
-                f"🎉 *PEMBAYARAN TERVERIFIKASI!*\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🧾 *Invoice:* `{invoice_id}`\n"
-                f"💰 *Nominal Masuk:* Rp{amount:,}\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                "AI BoonTrack sedang memproses perombakan total CV Anda ke standar HR Senior. Hasil akan dikirimkan sesaat lagi! 🚀"
-            )
-            await send_whatsapp_text(user_id, success_msg)
-
-            if user_id in GLOBAL_USER_STATES:
-                GLOBAL_USER_STATES[user_id]["is_premium_paid"] = True
-                GLOBAL_USER_STATES[user_id]["tier"] = "premium_unlocked"
-
-            # Funnel Metric: career_premium_hr_converted
-            try:
-                from app.services.analytics_service import analytics_service
-                await analytics_service.log_funnel_event(
-                    event_name="career_premium_hr_converted",
-                    user_id=user_id,
-                    tenant_id="boontrack-career",
-                    utm_source="mutation_reader",
-                    metadata={
-                        "sender_wa_id": user_id,
-                        "amount": amount,
-                        "invoice_id": invoice_id,
-                        "verification_method": "reader_mutation"
-                    }
-                )
-            except Exception as e:
-                logger.warning(f"Error logging career_premium_hr_converted from reader: {e}")
-
-            return web.json_response({"status": "SUCCESS", "action": "AUTO_FULFILLED", "invoice": invoice_id})
-
-        # 2. NEAR MATCH (Typo Terdeteksi): Beri Tahu User Secara Halus
-        elif status == "NEAR_MATCH":
-            if intent.get("tenant_id") == "digicorn":
-                from app.core.channels.telegram import send_telegram_message
-                from app.core.tenants.registry import tenant_registry
-                bot_token = tenant_registry.get_telegram_token("digicorn")
-                if bot_token:
-                    await send_telegram_message(
-                        bot_token=bot_token,
-                        chat_id=user_id,
-                        text=(
-                            f"⚠️ *PEMBAYARAN DITERIMA (SELISIH NOMINAL)*\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"🧾 *Invoice:* `{invoice_id}`\n"
-                            f"📌 *Tagihan:* Rp{expected_amount:,}\n"
-                            f"📥 *Nominal Diterima:* Rp{amount:,} *(Selisih Rp{diff})*\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                            "Dana sudah masuk. Admin sedang memverifikasi secara kilat untuk mengirimkan link produk Anda. Mohon tunggu 1-2 menit ya! 🙏"
-                        )
-                    )
-                return web.json_response({"status": "REVIEW", "action": "NOTIFIED_USER_TELEGRAM", "invoice": invoice_id})
-
-            notice_msg = (
-                f"⚠️ *PEMBAYARAN DITERIMA (SELISIH NOMINAL)*\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🧾 *Invoice:* `{invoice_id}`\n"
-                f"📌 *Tagihan:* Rp{expected_amount:,}\n"
-                f"📥 *Nominal Diterima:* Rp{amount:,} *(Selisih Rp{diff})*\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                "Tenang, dana Anda sudah kami terima dengan aman. Sistem sedang melakukan verifikasi pencocokan manual kilat (1-2 menit). Mohon tunggu sebentar ya! 🙏"
-            )
-            await send_whatsapp_text(user_id, notice_msg)
-            return web.json_response({"status": "REVIEW", "action": "NOTIFIED_USER", "invoice": invoice_id})
-
-        # 3. AMBIGUOUS MATCH: Butuh Review Admin
-        elif status == "AMBIGUOUS":
-            return web.json_response({"status": "AMBIGUOUS", "action": "HOLD_FOR_MANUAL_REVIEW"})
-
-        return web.json_response({"status": "UNMATCHED", "action": "IGNORED"})
-    except Exception as e:
-        logger.exception(f"[READER WEBHOOK ISOLATION] Error processing reader mutation: {e}")
-        return web.json_response({"status": "error_isolated", "message": str(e)}, status=200)
 
 
 def register_payment_webhook_routes(app: web.Application):

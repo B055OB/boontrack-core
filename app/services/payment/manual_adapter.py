@@ -1,35 +1,81 @@
 """app/services/payment/manual_adapter.py
 Manual Transfer & Static QRIS Payment Adapter.
-Presents bank account details / static QRIS and sets state waiting for proof of transfer upload.
+STATUS: EXPERIMENTAL / PENDING_REVIEW (DISABLED IN PHASE 1 STAGE 2).
 """
 
 from typing import Dict, Any, Optional, List
 from app.services.payment.base import (
     PaymentAdapter,
+    PaymentConfigurationError,
     TransactionRequest,
     TransactionResponse,
     TransactionStatusResponse,
     WebhookResult,
 )
 
+FORBIDDEN_DUMMY_ACCOUNT_NUMBERS = frozenset({
+    "1234567890",
+    "0123456789",
+    "0000000000",
+    "1111111111",
+    "9999999999",
+    "123456",
+    "dummy",
+    "test",
+})
+
+FORBIDDEN_DUMMY_ACCOUNT_HOLDERS = frozenset({
+    "merchant store",
+    "dummy merchant",
+    "test merchant",
+    "boontrack dummy",
+    "example store",
+})
+
 
 class ManualTransferAdapter(PaymentAdapter):
     """
     Adapter untuk metode pembayaran transfer bank manual dan/atau QRIS statis toko.
-    Menyajikan detail rekening dan mengarahkan flow untuk menunggu upload bukti transfer.
+    STATUS: EXPERIMENTAL / PENDING_REVIEW (DISABLED IN PHASE 1 STAGE 2).
+
+    Invariants enforced:
+      - Zero hardcoded dummy bank accounts ('1234567890', 'BCA', 'Merchant Store').
+      - Fails closed with PaymentConfigurationError on missing or dummy bank config.
+      - Disabled for active checkout, invoice issuance, and webhook settlement.
     """
+
+    RAIL_STATUS = "EXPERIMENTAL_PENDING_REVIEW"
 
     def __init__(
         self,
-        bank_name: str = "BCA",
-        account_number: str = "1234567890",
-        account_holder: str = "Merchant Store",
+        bank_name: Optional[str] = None,
+        account_number: Optional[str] = None,
+        account_holder: Optional[str] = None,
         qris_image_url: Optional[str] = None,
         instructions: Optional[List[str]] = None,
     ):
-        self.bank_name = bank_name
-        self.account_number = account_number
-        self.account_holder = account_holder
+        clean_bank = str(bank_name or "").strip()
+        clean_acc_num = str(account_number or "").strip()
+        clean_holder = str(account_holder or "").strip()
+
+        if not clean_bank or not clean_acc_num or not clean_holder:
+            raise PaymentConfigurationError(
+                "INVALID_PAYMENT_CONFIG: ManualTransferAdapter requires explicit non-empty "
+                "bank_name, account_number, and account_holder. Default/fallback accounts are prohibited."
+            )
+
+        if (
+            clean_acc_num.lower() in FORBIDDEN_DUMMY_ACCOUNT_NUMBERS
+            or clean_holder.lower() in FORBIDDEN_DUMMY_ACCOUNT_HOLDERS
+        ):
+            raise PaymentConfigurationError(
+                "DUMMY_BANK_ACCOUNT_FORBIDDEN: Hardcoded or placeholder bank account "
+                "credentials ('1234567890', 'Merchant Store', etc.) are strictly prohibited."
+            )
+
+        self.bank_name = clean_bank
+        self.account_number = clean_acc_num
+        self.account_holder = clean_holder
         self.qris_image_url = qris_image_url
         self.instructions = instructions or [
             f"Transfer tepat senilai nominal pesanan ke rekening {self.bank_name}: {self.account_number} a.n. {self.account_holder}.",
@@ -38,43 +84,25 @@ class ManualTransferAdapter(PaymentAdapter):
         ]
 
     async def create_transaction(self, request: TransactionRequest) -> TransactionResponse:
-        """Membuat transaksi transfer manual dengan detail rekening dan panduan upload bukti."""
-        transaction_id = f"MANUAL-{request.order_id}"
-
-        custom_instructions = list(self.instructions)
-        if self.qris_image_url:
-            custom_instructions.insert(
-                0,
-                f"Atau scan QRIS statis toko melalui tautan/gambar: {self.qris_image_url}"
-            )
-
-        return TransactionResponse(
-            transaction_id=transaction_id,
-            order_id=request.order_id,
-            status="WAITING_PAYMENT",
-            payment_method="MANUAL_TRANSFER",
-            amount=request.amount,
-            bank_name=self.bank_name,
-            account_number=self.account_number,
-            account_holder=self.account_holder,
-            qr_image_url=self.qris_image_url,
-            instructions=custom_instructions,
-            raw_response={
-                "type": "manual_transfer",
-                "bank_name": self.bank_name,
-                "account_number": self.account_number,
-                "account_holder": self.account_holder,
-                "awaiting_proof": True,
-            }
+        """
+        Phase 1 Stage 2 (P0-C): Direct Tenant Rail is EXPERIMENTAL / PENDING_REVIEW
+        and strictly disabled on active checkout and invoice issuance paths.
+        """
+        raise PaymentConfigurationError(
+            "DIRECT_TENANT_RAIL_DISABLED: Manual/direct tenant transfer rail and static QRIS "
+            "are EXPERIMENTAL / PENDING_REVIEW and disabled for checkout and invoice issuance."
         )
 
     async def check_status(self, transaction_id: str) -> TransactionStatusResponse:
-        """Mengecek status pembayaran manual."""
+        """Mengecek status pembayaran manual (Direct Tenant Rail disabled)."""
         return TransactionStatusResponse(
             transaction_id=transaction_id,
-            status="WAITING_PAYMENT",
+            status="REJECTED_DIRECT_RAIL_DISABLED",
             amount=0,
-            raw_response={"awaiting_proof": True}
+            raw_response={
+                "error": "DIRECT_TENANT_RAIL_DISABLED",
+                "rail_status": self.RAIL_STATUS,
+            },
         )
 
     async def handle_webhook(
@@ -83,19 +111,21 @@ class ManualTransferAdapter(PaymentAdapter):
         headers: Optional[Dict[str, str]] = None
     ) -> WebhookResult:
         """
-        Memproses callback verifikasi manual atau reader.
+        Phase 1 Stage 2 (P0-C): Direct Tenant Rail auto-settlement is disabled.
+        Always returns is_valid=False so no caller can settle an order via ManualTransferAdapter.
         """
         order_id = str(payload.get("order_id") or payload.get("merchant_order_id") or "")
         amount = int(payload.get("amount") or payload.get("total_amount") or 0)
-        action = str(payload.get("action") or payload.get("status") or "").upper()
-
-        is_verified = action in ("VERIFIED", "APPROVED", "SUCCESS", "PAID")
         return WebhookResult(
-            is_valid=True,
+            is_valid=False,
             order_id=order_id,
             transaction_id=str(payload.get("transaction_id") or f"MANUAL-{order_id}"),
             amount=amount,
-            status="SUCCESS" if is_verified else "PENDING",
-            message="Manual payment verified" if is_verified else "Awaiting verification",
-            raw_payload=payload
+            status="REJECTED_DIRECT_RAIL_DISABLED",
+            message="DIRECT_TENANT_RAIL_DISABLED: Direct Tenant Rail auto-settlement is disabled.",
+            raw_payload={
+                "error": "DIRECT_TENANT_RAIL_DISABLED",
+                "rail_status": self.RAIL_STATUS,
+            },
         )
+

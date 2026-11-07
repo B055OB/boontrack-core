@@ -117,7 +117,6 @@ async def handle_order_paid_fulfillment(
             "success": True,
             "order_id": order_id,
             "tenant_slug": "onlineboost",
-            "tier": "CHECKOUT_LITE",
             "status": "PAID",
             "access_url": ob_res.get("single_use_invite_link"),
             "wa_dispatched": bool(ob_res.get("wa_result")),
@@ -125,24 +124,9 @@ async def handle_order_paid_fulfillment(
             "message": "Order OnlineBoost CTWA fulfilled with single-use Telegram link",
         }
 
-    # 2. Update Langganan Tenant ke Tier 'CHECKOUT_LITE'
-    try:
-        if sb and resolved_tenant:
-            t_res = sb.table("tenants").select("tier, metadata").eq("slug", resolved_tenant).limit(1).execute()
-            if t_res.data:
-                meta = t_res.data[0].get("metadata") or {}
-                meta["tier"] = "CHECKOUT_LITE"
-                meta["plan_tier"] = "CHECKOUT_LITE"
-                meta["subscription_status"] = "ACTIVE"
-                meta["subscription_tier"] = "CHECKOUT_LITE"
-                
-                sb.table("tenants").update({
-                    "status": "active",
-                    "metadata": meta
-                }).eq("slug", resolved_tenant).execute()
-                logger.info(f"[FULFILLMENT TIER] Langganan tenant '{resolved_tenant}' berhasil diupdate ke CHECKOUT_LITE.")
-    except Exception as tier_err:
-        logger.warning(f"[FULFILLMENT TIER WARN] Gagal sinkronisasi tier CHECKOUT_LITE: {tier_err}")
+    # Phase 1 Stage 2 (P0-E):
+    # D2C order fulfillment is strictly isolated from SaaS subscription tier mutations.
+    # Automatic CHECKOUT_LITE tier upgrade on D2C product purchase has been removed.
 
     # 3. Resolusi Akses Produk Digital
     access_url = order_data.get("download_url")
@@ -259,10 +243,9 @@ async def handle_order_paid_fulfillment(
         "success": True,
         "order_id": order_id,
         "tenant_slug": resolved_tenant,
-        "tier": "CHECKOUT_LITE",
         "status": "PAID",
         "access_url": access_url,
         "wa_dispatched": wa_dispatched,
         "capi_dispatched": capi_dispatched,
-        "message": f"Order #{order_id} berhasil disetujui, tenant di-upgrade ke CHECKOUT_LITE, dan akses produk terkirim."
+        "message": f"Order #{order_id} berhasil dipenuhi dan akses produk terkirim.",
     }
