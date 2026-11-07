@@ -262,6 +262,17 @@ def init_test_schema():
       CONSTRAINT uq_payment_events_provider_event_id UNIQUE (provider, event_id),
       CONSTRAINT uq_payment_events_provider_provider_event_id UNIQUE (provider, provider_event_id)
     );
+    ALTER TABLE public.payment_events ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.payment_events FORCE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_payment_events ON public.payment_events;
+    CREATE POLICY tenant_isolation_payment_events ON public.payment_events
+      FOR ALL TO authenticated
+      USING (
+        tenant_id = current_setting('app.current_tenant_id', true)::text
+      )
+      WITH CHECK (
+        tenant_id = current_setting('app.current_tenant_id', true)::text
+      );
 
     -- Table: financial_ledger (Aligned with Migration 033: tenant_id VARCHAR(100) + nullable fee/net)
     CREATE TABLE IF NOT EXISTS public.financial_ledger (
@@ -298,6 +309,17 @@ def init_test_schema():
         )
       )
     );
+    ALTER TABLE public.financial_ledger ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.financial_ledger FORCE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_financial_ledger ON public.financial_ledger;
+    CREATE POLICY tenant_isolation_financial_ledger ON public.financial_ledger
+      FOR ALL TO authenticated
+      USING (
+        tenant_id = current_setting('app.current_tenant_id', true)::text
+      )
+      WITH CHECK (
+        tenant_id = current_setting('app.current_tenant_id', true)::text
+      );
 
     -- Table: trial_quota_reservations (Migration 034: Persistent Atomic Trial Quota Reservation Store)
     CREATE TABLE IF NOT EXISTS public.trial_quota_reservations (
@@ -339,8 +361,16 @@ def init_test_schema():
     DROP POLICY IF EXISTS service_role_trial_quota ON public.trial_quota_reservations;
     CREATE POLICY service_role_trial_quota ON public.trial_quota_reservations
       AS PERMISSIVE FOR ALL TO service_role
-      USING (true)
-      WITH CHECK (true);
+      USING (
+        tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+        OR tenant_slug = NULLIF(current_setting('app.current_tenant_id', true), '')
+        OR tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')
+      )
+      WITH CHECK (
+        tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+        OR tenant_slug = NULLIF(current_setting('app.current_tenant_id', true), '')
+        OR tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')
+      );
 
     -- Table: staging_alumni_cpm
     CREATE TABLE IF NOT EXISTS public.staging_alumni_cpm (
