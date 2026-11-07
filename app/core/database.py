@@ -430,13 +430,24 @@ def _init_db_sync():
         );
     """)
 
-    # 11. Migration kolom tenants: timezone & currency
+    # 11. Migration kolom tenants: timezone, currency, & metadata (CredentialProfileMapper)
     cur.execute("""
         DO $$
         BEGIN
             IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'tenants') THEN
                 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS timezone VARCHAR(64) NOT NULL DEFAULT 'Asia/Jakarta';
                 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS currency VARCHAR(16) NOT NULL DEFAULT 'IDR';
+                ALTER TABLE tenants ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'orders') THEN
+                ALTER TABLE orders ADD COLUMN IF NOT EXISTS sku_id VARCHAR(255);
+                ALTER TABLE orders ADD COLUMN IF NOT EXISTS amount NUMERIC(14, 2);
+                ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(32) DEFAULT 'PENDING';
+                ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_status VARCHAR(32) DEFAULT 'PENDING';
+                ALTER TABLE orders ADD COLUMN IF NOT EXISTS fulfillment_status VARCHAR(64) NOT NULL DEFAULT 'UNFULFILLED';
+                ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
+                ALTER TABLE orders ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+                ALTER TABLE orders ADD COLUMN IF NOT EXISTS fulfillment_metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
             END IF;
         END $$;
     """)
@@ -515,26 +526,92 @@ def _init_db_sync():
         CREATE INDEX IF NOT EXISTS idx_tenant_prospects_status ON control_plane.tenant_prospects(status);
     """)
 
-    # 16. Tabel payment_events (Webhook Inbound Idempotency Guard)
+    # 16. Tabel payment_events (Webhook Inbound Idempotency Guard — Expand/Migrate Contract)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS payment_events (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             provider VARCHAR(64) NOT NULL,
             event_id VARCHAR(128) UNIQUE NOT NULL,
+            provider_event_id VARCHAR(128),
             reference_id VARCHAR(128),
+            order_id VARCHAR(128),
+            tenant_id VARCHAR(100) NOT NULL,
             event_type VARCHAR(64) NOT NULL,
+            amount NUMERIC(14, 2),
             payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+            raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
             status VARCHAR(64) NOT NULL DEFAULT 'PROCESSING',
+            record_classification VARCHAR(64) NOT NULL DEFAULT 'STAGE3_SETTLEMENT',
             processed_at TIMESTAMPTZ,
+            s2s_verification_status VARCHAR(64),
+            s2s_claimed_at TIMESTAMPTZ,
+            s2s_lease_expires_at TIMESTAMPTZ,
+            s2s_claimed_by VARCHAR(128),
+            s2s_attempt_count INT NOT NULL DEFAULT 0,
+            s2s_last_error TEXT,
+            s2s_verified_at TIMESTAMPTZ,
+            s2s_status_code VARCHAR(32),
+            s2s_reference VARCHAR(128),
+            s2s_response_payload JSONB,
             created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_payment_events_provider_event_id UNIQUE (provider, event_id),
+            CONSTRAINT uq_payment_events_provider_provider_event_id UNIQUE (provider, provider_event_id)
         );
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS provider_event_id VARCHAR(128);
         ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS reference_id VARCHAR(128);
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS order_id VARCHAR(128);
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(100);
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS amount NUMERIC(14, 2);
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS status VARCHAR(64) NOT NULL DEFAULT 'PROCESSING';
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS record_classification VARCHAR(64) NOT NULL DEFAULT 'STAGE3_SETTLEMENT';
         ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ;
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS s2s_verification_status VARCHAR(64);
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS s2s_claimed_at TIMESTAMPTZ;
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS s2s_lease_expires_at TIMESTAMPTZ;
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS s2s_claimed_by VARCHAR(128);
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS s2s_attempt_count INT NOT NULL DEFAULT 0;
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS s2s_last_error TEXT;
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS s2s_verified_at TIMESTAMPTZ;
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS s2s_status_code VARCHAR(32);
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS s2s_reference VARCHAR(128);
+        ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS s2s_response_payload JSONB;
         ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
         ALTER TABLE payment_events ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'payment_events'
+                  AND column_name = 'tenant_id'
+                  AND (
+                      data_type <> 'character varying'
+                      OR character_maximum_length IS DISTINCT FROM 100
+                  )
+            ) THEN
+                ALTER TABLE public.payment_events
+                    ALTER COLUMN tenant_id TYPE VARCHAR(100) USING tenant_id::text;
+            END IF;
+        END $$;
+    """)
+
+    cur.execute("SELECT 1 FROM public.payment_events WHERE tenant_id IS NULL LIMIT 1;")
+    if cur.fetchone() is not None:
+        conn.rollback()
+        cur.close()
+        conn.close()
+        raise RuntimeError("STARTUP_HALTED: Found NULL tenant_id in payment_events table")
+
+    cur.execute("""
+        ALTER TABLE public.payment_events
+            ALTER COLUMN tenant_id SET NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_payment_events_event_id ON payment_events(event_id);
         CREATE INDEX IF NOT EXISTS idx_payment_events_ref_id ON payment_events(reference_id);
+        CREATE INDEX IF NOT EXISTS idx_payment_events_order_id ON payment_events(order_id);
+        CREATE INDEX IF NOT EXISTS idx_payment_events_tenant_id ON payment_events(tenant_id);
         CREATE INDEX IF NOT EXISTS idx_payment_events_status ON payment_events(status);
     """)
 
@@ -543,21 +620,48 @@ def _init_db_sync():
         CREATE TABLE IF NOT EXISTS financial_ledger (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             order_id VARCHAR(128) NOT NULL,
-            tenant_id VARCHAR(64) NOT NULL,
+            tenant_id VARCHAR(100) NOT NULL,
             provider VARCHAR(64) NOT NULL,
             event_id VARCHAR(128),
             gross_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
-            fee_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
-            net_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+            fee_amount NUMERIC(14, 2),
+            net_amount NUMERIC(14, 2),
             currency VARCHAR(16) NOT NULL DEFAULT 'IDR',
             transaction_type VARCHAR(64) NOT NULL DEFAULT 'PAYMENT_CREDIT',
             status VARCHAR(32) NOT NULL DEFAULT 'SETTLED',
+            transaction_status VARCHAR(32) NOT NULL DEFAULT 'SETTLED',
+            reconciliation_status VARCHAR(64) NOT NULL DEFAULT 'PENDING_RECONCILIATION',
             metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
             created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        ALTER TABLE financial_ledger ALTER COLUMN fee_amount DROP NOT NULL;
+        ALTER TABLE financial_ledger ALTER COLUMN fee_amount DROP DEFAULT;
+        ALTER TABLE financial_ledger ALTER COLUMN net_amount DROP NOT NULL;
+        ALTER TABLE financial_ledger ALTER COLUMN net_amount DROP DEFAULT;
+        ALTER TABLE financial_ledger ADD COLUMN IF NOT EXISTS transaction_status VARCHAR(32) NOT NULL DEFAULT 'SETTLED';
+        ALTER TABLE financial_ledger ADD COLUMN IF NOT EXISTS reconciliation_status VARCHAR(64) NOT NULL DEFAULT 'PENDING_RECONCILIATION';
+        ALTER TABLE financial_ledger DROP CONSTRAINT IF EXISTS chk_financial_ledger_reconciliation_integrity;
+        ALTER TABLE financial_ledger ADD CONSTRAINT chk_financial_ledger_reconciliation_integrity CHECK (
+            (reconciliation_status = 'PENDING_RECONCILIATION' AND fee_amount IS NULL AND net_amount IS NULL)
+            OR (
+                reconciliation_status = 'RECONCILED'
+                AND fee_amount IS NOT NULL
+                AND net_amount IS NOT NULL
+                AND fee_amount >= 0
+                AND net_amount = gross_amount - fee_amount
+            )
+            OR (
+                reconciliation_status = 'HISTORICAL_UNVERIFIED_ZERO_FEE'
+                AND fee_amount IS NOT NULL
+                AND net_amount IS NOT NULL
+                AND fee_amount = 0
+                AND net_amount = gross_amount
+            )
+        ) NOT VALID;
         CREATE INDEX IF NOT EXISTS idx_financial_ledger_order ON financial_ledger(order_id);
         CREATE INDEX IF NOT EXISTS idx_financial_ledger_tenant ON financial_ledger(tenant_id);
         CREATE INDEX IF NOT EXISTS idx_financial_ledger_event ON financial_ledger(event_id);
+        CREATE INDEX IF NOT EXISTS idx_financial_ledger_reconciliation_status ON financial_ledger(reconciliation_status);
         CREATE UNIQUE INDEX IF NOT EXISTS uq_financial_ledger_order_credit ON financial_ledger (order_id) WHERE (transaction_type = 'PAYMENT_CREDIT');
 
         CREATE TABLE IF NOT EXISTS commission_ledger (
