@@ -24,12 +24,41 @@ load_dotenv()
 logger = logging.getLogger("XENDIT_SERVICE")
 
 
+class XenditAPIError(Exception):
+    """Structured exception for Xendit API gateway outcomes."""
+
+    def __init__(
+        self,
+        status_code: Optional[int],
+        message: str,
+        error_code: Optional[str] = None,
+        raw_response: Optional[Any] = None,
+        is_definitive_rejection: Optional[bool] = None,
+    ):
+        self.provider = "XENDIT"
+        self.status_code = status_code
+        self.error_code = error_code or "XENDIT_API_ERROR"
+        self.message = message
+        self.raw_response = raw_response
+
+        # Definitive rejection: 400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found, 422 Unprocessable
+        # Ambiguous outcome: 5xx Server Error, 408 Request Timeout, 429 Rate Limit, None (network/socket drop)
+        if is_definitive_rejection is not None:
+            self.is_definitive_rejection = is_definitive_rejection
+        elif status_code is not None:
+            self.is_definitive_rejection = status_code in (400, 401, 403, 404, 422)
+        else:
+            self.is_definitive_rejection = False
+
+        super().__init__(f"[XENDIT] HTTP {self.status_code} ({self.error_code}): {self.message}")
+
+
 class XenditService:
     """Client wrapper for Xendit QR Codes & Payment APIs."""
 
     def __init__(self):
         self.provider = os.getenv("PAYMENT_GATEWAY_PROVIDER", "midtrans").strip().lower()
-        
+
         secret_key = os.getenv("XENDIT_SECRET_KEY")
         if not secret_key or not secret_key.strip():
             raise ValueError("[SECURITY FAIL-CLOSED] XENDIT_SECRET_KEY is mandatory and not set.")
@@ -179,14 +208,46 @@ class XenditService:
 
         logger.info(f"[XENDIT] Calling POST {endpoint} with payload: {payload}")
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(endpoint, json=payload, headers=headers)
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(endpoint, json=payload, headers=headers)
+        except (httpx.TimeoutException, TimeoutError) as t_err:
+            raise XenditAPIError(
+                status_code=None,
+                error_code="GATEWAY_TIMEOUT",
+                message=f"Xendit connection timed out: {t_err}",
+                is_definitive_rejection=False,
+            )
+        except httpx.RequestError as req_err:
+            raise XenditAPIError(
+                status_code=None,
+                error_code="CONNECTION_ERROR",
+                message=f"Xendit connection failed: {req_err}",
+                is_definitive_rejection=False,
+            )
 
         logger.info(f"[XENDIT] Status: {resp.status_code}, Response: {resp.text[:200]}")
 
         if resp.status_code not in (200, 201):
-            logger.error(f"[XENDIT_ERROR] Status: {resp.status_code}, Body: {resp.text}")
-            raise RuntimeError(f"Xendit API ({resp.status_code}): {resp.text}")
+            err_code = "XENDIT_API_ERROR"
+            err_msg = resp.text
+            try:
+                err_json = resp.json()
+                if isinstance(err_json, dict):
+                    err_code = err_json.get("error_code") or err_json.get("code") or err_code
+                    err_msg = err_json.get("message") or err_msg
+            except Exception:
+                pass
+
+            is_definitive = resp.status_code in (400, 401, 403, 404, 422)
+            logger.error(f"[XENDIT_ERROR] Status: {resp.status_code}, Code: {err_code}, Message: {err_msg}")
+            raise XenditAPIError(
+                status_code=resp.status_code,
+                error_code=err_code,
+                message=err_msg,
+                raw_response=resp.text,
+                is_definitive_rejection=is_definitive,
+            )
 
         data = resp.json()
 
@@ -194,7 +255,13 @@ class XenditService:
         qr_string = str(data.get("qr_string") or "").strip()
         if not qr_string:
             logger.error(f"[XENDIT_ERROR] Missing 'qr_string' in response: {data}")
-            raise RuntimeError(f"Xendit response missing 'qr_string': {data}")
+            raise XenditAPIError(
+                status_code=resp.status_code,
+                error_code="MALFORMED_RESPONSE",
+                message="Xendit response missing 'qr_string'",
+                raw_response=data,
+                is_definitive_rejection=False,
+            )
 
         # For sandbox or development, qr_string might be a placeholder or raw string
         logger.info(f"[XENDIT] Using authentic Xendit qr_string for QR generation (starts with 000201: {qr_string.startswith('000201')})")

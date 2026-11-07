@@ -4,6 +4,7 @@ Implements PaymentAdapter interface according to ARCHITECTURE.md §10.1.
 """
 
 import os
+import hmac
 import logging
 from typing import Dict, Any, Optional, List
 import httpx
@@ -19,7 +20,8 @@ from app.services.xendit_service import xendit_service
 
 logger = logging.getLogger("XENDIT_ADAPTER")
 
-_PAID_STATUSES = {"PAID", "SETTLED", "COMPLETED", "SUCCEEDED", "LUNAS"}
+# P1 Stage 3 Step 2B.2: Strict final statuses (non-standard "LUNAS" removed)
+_PAID_STATUSES = {"PAID", "SETTLED", "COMPLETED", "SUCCEEDED"}
 
 
 class XenditAdapter(PaymentAdapter):
@@ -44,15 +46,15 @@ class XenditAdapter(PaymentAdapter):
         self.api_url = os.getenv("XENDIT_API_URL", "https://api.xendit.co").rstrip("/")
 
     def verify_webhook_token(self, token: Optional[str]) -> bool:
-        """Verifikasi token callback dari header 'x-callback-token'."""
+        """Verifikasi token callback dari header 'x-callback-token' menggunakan constant-time compare."""
         if not token or not str(token).strip():
             return False
         clean_in = str(token).strip()
         expected = self.callback_token
         alt_token = (os.getenv("XENDIT_WEBHOOK_VERIFICATION_TOKEN") or os.getenv("XENDIT_CALLBACK_TOKEN") or "").strip()
-        if expected and clean_in == expected:
+        if expected and hmac.compare_digest(clean_in, expected):
             return True
-        if alt_token and clean_in == alt_token:
+        if alt_token and hmac.compare_digest(clean_in, alt_token):
             return True
         return False
 
@@ -167,6 +169,20 @@ class XenditAdapter(PaymentAdapter):
         # 2. Parsing bentuk data (support top-level atau data_obj)
         data_obj = payload.get("data") if isinstance(payload.get("data"), dict) else payload
 
+        # Currency validation (P1 Stage 3: IDR only for domestic flows)
+        currency = str(data_obj.get("currency") or payload.get("currency") or "IDR").strip().upper()
+        if currency != "IDR":
+            logger.warning(f"[XENDIT_ADAPTER] Rejected non-IDR currency: {currency}")
+            return WebhookResult(
+                is_valid=False,
+                order_id="",
+                transaction_id="",
+                amount=0,
+                status="FAILED",
+                message=f"Non-IDR currency rejected: {currency}",
+                raw_payload=payload,
+            )
+
         external_id = str(
             data_obj.get("external_id")
             or data_obj.get("reference_id")
@@ -181,7 +197,7 @@ class XenditAdapter(PaymentAdapter):
             or data_obj.get("payment_id")
             or payload.get("id")
             or payload.get("payment_id")
-            or external_id
+            or ""
         )
 
         raw_amount = (
@@ -191,10 +207,28 @@ class XenditAdapter(PaymentAdapter):
             or payload.get("paid_amount")
             or 0
         )
-        try:
-            amount_val = int(raw_amount)
-        except (ValueError, TypeError):
+        # Strict integer check: reject booleans, fractions, or malformed strings
+        if isinstance(raw_amount, bool):
             amount_val = 0
+            is_valid = False
+        elif isinstance(raw_amount, float):
+            if not raw_amount.is_integer():
+                amount_val = 0
+                is_valid = False
+            else:
+                amount_val = int(raw_amount)
+        elif isinstance(raw_amount, str):
+            if "." in raw_amount or not raw_amount.strip().isdigit():
+                amount_val = 0
+                is_valid = False
+            else:
+                amount_val = int(raw_amount.strip())
+        else:
+            try:
+                amount_val = int(raw_amount)
+            except (ValueError, TypeError):
+                amount_val = 0
+                is_valid = False
 
         raw_status = str(
             data_obj.get("status")

@@ -19,6 +19,35 @@ from app.services.payment.base import (
 logger = logging.getLogger("DUITKU_ADAPTER")
 
 
+class DuitkuAPIError(Exception):
+    """Structured exception for Duitku API gateway outcomes."""
+
+    def __init__(
+        self,
+        status_code: Optional[int],
+        message: str,
+        error_code: Optional[str] = None,
+        raw_response: Optional[Any] = None,
+        is_definitive_rejection: Optional[bool] = None,
+    ):
+        self.provider = "DUITKU"
+        self.status_code = status_code
+        self.error_code = error_code or "DUITKU_API_ERROR"
+        self.message = message
+        self.raw_response = raw_response
+
+        # Definitive rejection: 400 Bad Request, 401 Unauthorized, 403 Forbidden, 422 Unprocessable,
+        # or Duitku application codes 01 (bad merchant), 02 (invalid sig)
+        if is_definitive_rejection is not None:
+            self.is_definitive_rejection = is_definitive_rejection
+        elif status_code is not None:
+            self.is_definitive_rejection = status_code in (400, 401, 403, 404, 422)
+        else:
+            self.is_definitive_rejection = False
+
+        super().__init__(f"[DUITKU] HTTP {self.status_code} ({self.error_code}): {self.message}")
+
+
 class DuitkuAdapter(PaymentAdapter):
     """
     Adapter integrasi Payment Gateway Duitku (Dynamic QRIS, Virtual Account, & Callback Webhook).
@@ -107,20 +136,77 @@ class DuitkuAdapter(PaymentAdapter):
         provider_ref = None
         raw_res = {}
 
+        res = None
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 res = await client.post(self.inquiry_url, json=payload)
-                if res.status_code == 200:
-                    raw_res = res.json()
-                    payment_url = raw_res.get("paymentUrl")
-                    qr_string = raw_res.get("qrString")
-                    va_number = raw_res.get("vaNumber")
-                    provider_ref = raw_res.get("reference")
-        except Exception as err:
-            logger.warning(f"[DUITKU_ADAPTER] Upstream inquiry connection error: {err}")
+        except (httpx.TimeoutException, TimeoutError) as t_err:
+            raise DuitkuAPIError(
+                status_code=None,
+                error_code="GATEWAY_TIMEOUT",
+                message=f"Duitku connection timed out: {t_err}",
+                is_definitive_rejection=False,
+            )
+        except httpx.RequestError as req_err:
+            raise DuitkuAPIError(
+                status_code=None,
+                error_code="CONNECTION_ERROR",
+                message=f"Duitku connection failed: {req_err}",
+                is_definitive_rejection=False,
+            )
 
-        # Fallback simulator / sandbox jika kredensial belum ada atau timeout
+        allow_simulator = bool(self.is_sandbox) and (
+            os.getenv("DUITKU_ALLOW_SIMULATOR", "false").lower() in ("true", "1")
+            or getattr(self, "allow_simulator", False)
+        )
+
+        if res.status_code != 200:
+            if not allow_simulator:
+                is_definitive = res.status_code in (400, 401, 403, 404, 422)
+                logger.error(f"[DUITKU_ERROR] Upstream HTTP {res.status_code} - {res.text}")
+                raise DuitkuAPIError(
+                    status_code=res.status_code,
+                    error_code="UPSTREAM_HTTP_ERROR",
+                    message=res.text,
+                    raw_response=res.text,
+                    is_definitive_rejection=is_definitive,
+                )
+        else:
+            try:
+                raw_res = res.json()
+            except Exception:
+                raw_res = {}
+
+            # Duitku response code evaluation (e.g. statusCode "00" = SUCCESS)
+            status_code_str = str(raw_res.get("statusCode") or "00").strip()
+            if status_code_str not in ("00", "SUCCESS", "PENDING"):
+                status_msg = str(raw_res.get("statusMessage") or "Duitku inquiry rejected").strip()
+                is_def = status_code_str in ("01", "02", "03", "04")
+                if not allow_simulator:
+                    logger.error(f"[DUITKU_ERROR] Duitku inquiry rejected: code={status_code_str}, msg={status_msg}")
+                    raise DuitkuAPIError(
+                        status_code=200,
+                        error_code=f"DUITKU_{status_code_str}",
+                        message=status_msg,
+                        raw_response=raw_res,
+                        is_definitive_rejection=is_def,
+                    )
+
+            payment_url = raw_res.get("paymentUrl")
+            qr_string = raw_res.get("qrString")
+            va_number = raw_res.get("vaNumber")
+            provider_ref = raw_res.get("reference")
+
+        # Fallback simulator / sandbox jika kredensial belum ada atau timeout (strictly guarded behind sandbox)
         if not provider_ref:
+            if not allow_simulator:
+                raise DuitkuAPIError(
+                    status_code=res.status_code if res else None,
+                    error_code="MALFORMED_RESPONSE",
+                    message="Duitku response missing reference and simulator fallback is disabled in production",
+                    raw_response=raw_res or (res.text if res else None),
+                    is_definitive_rejection=False,
+                )
             provider_ref = f"DTK-REF-{request.order_id}"
             payment_url = payment_url or f"https://sandbox.duitku.com/pay/{request.order_id}"
             if "SP" in payment_method_code or "QRIS" in method:

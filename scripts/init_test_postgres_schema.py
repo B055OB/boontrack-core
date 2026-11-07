@@ -194,17 +194,26 @@ def init_test_schema():
       ('00000000-0000-0000-0000-00000000000b', 'Tenant Beta', 'tenant_beta')
     ON CONFLICT (slug) DO NOTHING;
 
-    -- Table: orders
+    -- Table: orders (Aligned with Migration 033 & Staging Baseline: tenant_id VARCHAR(100))
     CREATE TABLE IF NOT EXISTS public.orders (
       id VARCHAR PRIMARY KEY,
-      tenant_id UUID NOT NULL,
+      tenant_id VARCHAR(100) NOT NULL,
       tenant_slug VARCHAR NOT NULL,
+      sku_id VARCHAR(255),
       product_id VARCHAR,
       product_title VARCHAR,
       customer_name VARCHAR,
       customer_phone VARCHAR,
+      customer_email VARCHAR,
       status VARCHAR NOT NULL,
+      payment_status VARCHAR(32) DEFAULT 'PENDING',
+      order_status VARCHAR(32) DEFAULT 'PENDING',
+      fulfillment_status VARCHAR(64) NOT NULL DEFAULT 'UNFULFILLED',
       gross_amount NUMERIC,
+      amount NUMERIC(14, 2),
+      paid_at TIMESTAMPTZ,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      fulfillment_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
@@ -214,13 +223,124 @@ def init_test_schema():
     CREATE POLICY p1_tenant_isolation_orders ON public.orders
       AS PERMISSIVE FOR ALL TO public
       USING (
-        tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))
+        tenant_id::text = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
         OR tenant_slug = NULLIF(current_setting('app.current_tenant_id', true), '')
       )
       WITH CHECK (
-        tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))
+        tenant_id::text = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
         OR tenant_slug = NULLIF(current_setting('app.current_tenant_id', true), '')
       );
+
+    -- Table: payment_events (Aligned with Migration 033: tenant_id VARCHAR(100) + DuitkuS2SVerifier columns)
+    CREATE TABLE IF NOT EXISTS public.payment_events (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      provider VARCHAR(64) NOT NULL,
+      event_id VARCHAR(128) UNIQUE NOT NULL,
+      provider_event_id VARCHAR(128),
+      reference_id VARCHAR(128),
+      order_id VARCHAR(128),
+      tenant_id VARCHAR(100) NOT NULL,
+      event_type VARCHAR(64) NOT NULL,
+      amount NUMERIC(14, 2),
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status VARCHAR(64) NOT NULL DEFAULT 'PROCESSING',
+      record_classification VARCHAR(64) NOT NULL DEFAULT 'STAGE3_SETTLEMENT',
+      processed_at TIMESTAMPTZ,
+      s2s_verification_status VARCHAR(64),
+      s2s_claimed_at TIMESTAMPTZ,
+      s2s_lease_expires_at TIMESTAMPTZ,
+      s2s_claimed_by VARCHAR(128),
+      s2s_attempt_count INT NOT NULL DEFAULT 0,
+      s2s_last_error TEXT,
+      s2s_verified_at TIMESTAMPTZ,
+      s2s_status_code VARCHAR(32),
+      s2s_reference VARCHAR(128),
+      s2s_response_payload JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT uq_payment_events_provider_event_id UNIQUE (provider, event_id),
+      CONSTRAINT uq_payment_events_provider_provider_event_id UNIQUE (provider, provider_event_id)
+    );
+
+    -- Table: financial_ledger (Aligned with Migration 033: tenant_id VARCHAR(100) + nullable fee/net)
+    CREATE TABLE IF NOT EXISTS public.financial_ledger (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      order_id VARCHAR(128) NOT NULL,
+      tenant_id VARCHAR(100) NOT NULL,
+      provider VARCHAR(64) NOT NULL,
+      event_id VARCHAR(128),
+      gross_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      fee_amount NUMERIC(14, 2),
+      net_amount NUMERIC(14, 2),
+      currency VARCHAR(16) NOT NULL DEFAULT 'IDR',
+      transaction_type VARCHAR(64) NOT NULL DEFAULT 'PAYMENT_CREDIT',
+      status VARCHAR(32) NOT NULL DEFAULT 'SETTLED',
+      transaction_status VARCHAR(32) NOT NULL DEFAULT 'SETTLED',
+      reconciliation_status VARCHAR(64) NOT NULL DEFAULT 'PENDING_RECONCILIATION',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT chk_financial_ledger_reconciliation_integrity CHECK (
+        (reconciliation_status = 'PENDING_RECONCILIATION' AND fee_amount IS NULL AND net_amount IS NULL)
+        OR (
+          reconciliation_status = 'RECONCILED'
+          AND fee_amount IS NOT NULL
+          AND net_amount IS NOT NULL
+          AND fee_amount >= 0
+          AND net_amount = gross_amount - fee_amount
+        )
+        OR (
+          reconciliation_status = 'HISTORICAL_UNVERIFIED_ZERO_FEE'
+          AND fee_amount IS NOT NULL
+          AND net_amount IS NOT NULL
+          AND fee_amount = 0
+          AND net_amount = gross_amount
+        )
+      )
+    );
+
+    -- Table: trial_quota_reservations (Migration 034: Persistent Atomic Trial Quota Reservation Store)
+    CREATE TABLE IF NOT EXISTS public.trial_quota_reservations (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id VARCHAR(100) NOT NULL,
+      tenant_slug VARCHAR(100),
+      order_id VARCHAR(128) NOT NULL,
+      status VARCHAR(32) NOT NULL DEFAULT 'RESERVED',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      CONSTRAINT uq_trial_quota_tenant_order UNIQUE (tenant_id, order_id),
+      CONSTRAINT chk_trial_quota_non_empty CHECK (
+        BTRIM(tenant_id) <> ''
+        AND BTRIM(order_id) <> ''
+      ),
+      CONSTRAINT chk_trial_quota_status CHECK (
+        status IN ('RESERVED', 'COMMITTED', 'RELEASED', 'AMBIGUOUS_TIMEOUT')
+      )
+    );
+    CREATE INDEX IF NOT EXISTS idx_trial_quota_tenant_status
+    ON public.trial_quota_reservations (tenant_id, status);
+
+    CREATE INDEX IF NOT EXISTS idx_trial_quota_slug_status
+    ON public.trial_quota_reservations (tenant_slug, status);
+
+    ALTER TABLE public.trial_quota_reservations ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.trial_quota_reservations FORCE ROW LEVEL SECURITY;
+
+    DROP POLICY IF EXISTS p1_tenant_isolation_trial_quota ON public.trial_quota_reservations;
+    CREATE POLICY p1_tenant_isolation_trial_quota ON public.trial_quota_reservations
+      AS PERMISSIVE FOR SELECT TO authenticated
+      USING (
+        tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+        OR tenant_slug = NULLIF(current_setting('app.current_tenant_id', true), '')
+        OR tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')
+      );
+
+    DROP POLICY IF EXISTS service_role_trial_quota ON public.trial_quota_reservations;
+    CREATE POLICY service_role_trial_quota ON public.trial_quota_reservations
+      AS PERMISSIVE FOR ALL TO service_role
+      USING (true)
+      WITH CHECK (true);
 
     -- Table: staging_alumni_cpm
     CREATE TABLE IF NOT EXISTS public.staging_alumni_cpm (
@@ -639,6 +759,11 @@ def init_test_schema():
     GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role, boontrack_test_app_user;
     GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated, anon, service_role, boontrack_test_app_user;
     GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated, anon, service_role, boontrack_test_app_user;
+
+    -- Strict least privilege for trial_quota_reservations: zero write privileges for anon or authenticated
+    REVOKE ALL ON public.trial_quota_reservations FROM anon;
+    REVOKE ALL ON public.trial_quota_reservations FROM authenticated;
+    GRANT SELECT ON public.trial_quota_reservations TO authenticated;
     """)
 
     cur.close()
