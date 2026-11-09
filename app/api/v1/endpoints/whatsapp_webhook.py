@@ -20,6 +20,11 @@ from fastapi.responses import JSONResponse
 from app.schemas.whatsapp import WhatsAppWebhookPayload
 from app.services.idempotency import idempotency_service
 from app.services.tenant_resolver import resolve_tenant_by_phone_number_id
+from app.core.security.meta_webhook_verifier import (
+    get_meta_verify_tokens,
+    verify_meta_handshake_token,
+    verify_meta_webhook_signature,
+)
 
 logger = logging.getLogger("WHATSAPP_WEBHOOK_INGESTION")
 
@@ -41,19 +46,6 @@ async def _dispatch_to_traffic_splitter(payload: Dict[str, Any]) -> None:
             exc_info=True,
         )
 
-def get_meta_verify_tokens() -> list[str]:
-    """Retrieve officially configured Meta WhatsApp webhook verification tokens from environment.
-    Fails closed if no verification tokens are configured in the environment.
-    """
-    candidates = [
-        os.getenv("WHATSAPP_VERIFY_TOKEN"),
-        os.getenv("META_WHATSAPP_VERIFY_TOKEN"),
-        os.getenv("META_WEBHOOK_VERIFY_TOKEN"),
-        os.getenv("ONLINEBOOST_WEBHOOK_VERIFY_TOKEN"),
-    ]
-    return [c.strip() for c in candidates if c and c.strip()]
-
-
 # =============================================================================
 # 1. GET Handshake Verification (Meta Hub Challenge)
 # =============================================================================
@@ -74,7 +66,6 @@ async def verify_webhook_handshake(
     - hub.verify_token: matching configured WHATSAPP_VERIFY_TOKEN
     - hub.challenge: verification challenge string
     """
-    valid_tokens = get_meta_verify_tokens()
     mode = hub_mode or request.query_params.get("mode")
     token = (
         hub_verify_token
@@ -83,7 +74,7 @@ async def verify_webhook_handshake(
     )
     challenge = hub_challenge or request.query_params.get("challenge")
 
-    if mode == "subscribe" and token and valid_tokens and str(token).strip() in valid_tokens:
+    if mode == "subscribe" and verify_meta_handshake_token(token):
         logger.info("[WHATSAPP WEBHOOK] Handshake verified successfully.")
         return Response(
             content=str(challenge or ""),
@@ -91,9 +82,7 @@ async def verify_webhook_handshake(
             status_code=200,
         )
 
-    logger.warning(
-        f"[WHATSAPP WEBHOOK] Handshake failed or unconfigured. Mode: {mode}, Token mismatch: {token}"
-    )
+    logger.warning("[WHATSAPP WEBHOOK] Handshake failed: mode or token mismatch or unconfigured.")
     return Response(
         content="Verification token mismatch",
         media_type="text/plain",
@@ -272,15 +261,26 @@ async def ingest_whatsapp_webhook(
        TrafficSplitter via BackgroundTasks.
     5. Return HTTP 200 immediately for non-opt-out valid events.
     """
+    # 1. Cryptographically verify Meta X-Hub-Signature-256 against exact raw body bytes (FAIL-CLOSED)
+    raw_body = await request.body()
+    signature_header = request.headers.get("X-Hub-Signature-256")
+
+    is_valid, err_msg, status_code = verify_meta_webhook_signature(raw_body, signature_header)
+    if not is_valid:
+        return JSONResponse(
+            status_code=status_code,
+            content={"status": "error", "message": err_msg},
+        )
+
+    # 2. Only parse and validate JSON after authentication succeeds
     try:
-        raw_body = await request.body()
         if not raw_body:
             return JSONResponse(status_code=200, content={"status": "empty_body"})
         raw_payload = json.loads(raw_body)
     except Exception as exc:
         logger.error(f"[WHATSAPP WEBHOOK] JSON decode error: {exc}")
         return JSONResponse(
-            status_code=200,
+            status_code=400,
             content={"status": "error", "message": "invalid_json_format"},
         )
 

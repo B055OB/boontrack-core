@@ -4,6 +4,13 @@ import logging
 from app.core.security.rate_limiter import wa_rate_limiter, WhatsAppRateLimiter
 from app.core.security.masking import mask_pii_string, mask_payload_dict, ZeroPIILogFilter
 from app.core.security.encryption import encrypt_pii, decrypt_pii, generate_blind_index
+from app.core.security.meta_webhook_verifier import (
+    get_meta_app_secret,
+    get_meta_verify_tokens,
+    compute_meta_webhook_signature,
+    verify_meta_webhook_signature,
+    verify_meta_handshake_token,
+)
 
 logger = logging.getLogger("SECURITY_CORE")
 
@@ -45,5 +52,10 @@ __all__ = [
     "decrypt_string",
     "encrypt_pii",
     "decrypt_pii",
-    "generate_blind_index"
+    "generate_blind_index",
+    "get_meta_app_secret",
+    "get_meta_verify_tokens",
+    "compute_meta_webhook_signature",
+    "verify_meta_webhook_signature",
+    "verify_meta_handshake_token",
 ]

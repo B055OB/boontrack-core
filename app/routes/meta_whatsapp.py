@@ -16,12 +16,19 @@ Inbound Logic:
    - ZERO BOT RESPONSE.
 """
 
+import json
+import logging
 import os
 import re
-import logging
 from typing import Optional
 from fastapi import APIRouter, Request, Response, Query
 from fastapi.responses import JSONResponse
+
+from app.core.security.meta_webhook_verifier import (
+    get_meta_verify_tokens,
+    verify_meta_handshake_token,
+    verify_meta_webhook_signature,
+)
 
 from app.services.whatsapp_service import (
     extract_meta_whatsapp_event,
@@ -43,19 +50,6 @@ user_tenant_sessions.clear()
 meta_whatsapp_router = APIRouter(tags=["Meta WhatsApp Official Gateway"])
 router = meta_whatsapp_router
 
-def get_meta_verify_tokens() -> list[str]:
-    """Retrieve officially configured Meta WhatsApp webhook verification tokens from environment.
-    Fails closed if no verification tokens are configured in the environment.
-    """
-    candidates = [
-        os.getenv("WHATSAPP_VERIFY_TOKEN"),
-        os.getenv("META_WHATSAPP_VERIFY_TOKEN"),
-        os.getenv("META_WEBHOOK_VERIFY_TOKEN"),
-        os.getenv("ONLINEBOOST_WEBHOOK_VERIFY_TOKEN"),
-    ]
-    return [c.strip() for c in candidates if c and c.strip()]
-
-
 # =============================================================================
 # 1. GET Handshake Verification (Meta Hub Challenge)
 # =============================================================================
@@ -69,16 +63,15 @@ async def verify_webhook_handshake(
     hub_challenge: Optional[str] = Query(None, alias="hub.challenge"),
 ):
     """Verifikasi webhook handshake resmi Meta Cloud API."""
-    valid_tokens = get_meta_verify_tokens()
     mode = hub_mode or request.query_params.get("mode")
     token = hub_verify_token or request.query_params.get("token") or request.query_params.get("verify_token")
     challenge = hub_challenge or request.query_params.get("challenge")
 
-    if mode == "subscribe" and token and valid_tokens and str(token).strip() in valid_tokens:
+    if mode == "subscribe" and verify_meta_handshake_token(token):
         logger.info("[META WABA GATEWAY] Webhook handshake verified successfully.")
         return Response(content=str(challenge or ""), media_type="text/plain", status_code=200)
 
-    logger.warning(f"[META WABA GATEWAY] Handshake token mismatch or unconfigured: {token}")
+    logger.warning("[META WABA GATEWAY] Handshake token mismatch or unconfigured.")
     return Response(content="Verification token mismatch", media_type="text/plain", status_code=403)
 
 
@@ -91,13 +84,24 @@ async def verify_webhook_handshake(
 async def handle_whatsapp_webhook(request: Request):
     """
     Inbound Receiver Tunggal Meta WABA Gateway:
+    - Verifikasi HMAC-SHA256 signature terhadap raw body bytes sebelum pemrosesan.
     - JIKA format pesan: AKTIVASI BT-XXXX -> Proses verifikasi database & balas konfirmasi sukses via Meta WABA.
     - JIKA pesan teks lainnya: DROP / PASS tanpa membalas apa pun (HTTP 200 OK).
     """
+    raw_body = await request.body()
+    signature_header = request.headers.get("X-Hub-Signature-256")
+
+    is_valid, err_msg, status_code = verify_meta_webhook_signature(raw_body, signature_header)
+    if not is_valid:
+        return JSONResponse(
+            status_code=status_code,
+            content={"status": "error", "message": err_msg},
+        )
+
     try:
-        data = await request.json()
+        data = json.loads(raw_body) if raw_body else {}
     except Exception:
-        return JSONResponse(status_code=200, content={"status": "error", "message": "Invalid JSON format"})
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid JSON format"})
 
     # Abaikan event jika hanya memuat 'statuses' (delivery receipts / read receipts)
     has_statuses = False

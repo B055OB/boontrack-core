@@ -7,12 +7,18 @@ FastAPI Router for Meta WhatsApp Business Cloud API (WABA) Integration:
 4. POST /api/v1/webhook/waba: Ingestion of message status updates ('sent', 'delivered', 'read', 'failed').
 """
 
+import json
 import os
 import uuid
 import logging
 from typing import Optional, Dict, Any, List, Union, Tuple
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
+
+from app.core.security.meta_webhook_verifier import (
+    verify_meta_webhook_signature,
+    verify_meta_handshake_token,
+)
 
 from app.services.meta_waba_service import (
     meta_waba_dispatcher,
@@ -24,15 +30,6 @@ from app.services.meta_waba_service import (
 logger = logging.getLogger("META_WABA_ROUTES")
 
 waba_router = APIRouter(tags=["Meta WABA Cloud API"])
-
-# Recognized webhook verification tokens
-VERIFY_TOKENS = [
-    os.getenv("META_WEBHOOK_VERIFY_TOKEN", "boontrack-secure-verify-token"),
-    os.getenv("WHATSAPP_VERIFY_TOKEN", "boontrack_master_verify_token_2026"),
-    "boontrack-secure-verify-token",
-    "boontrack_master_verify_token_2026",
-    "boontrack_career_token",
-]
 
 # Approved Meta WABA Template Registry: Template Name -> Authorized Tenants & Registered Language
 APPROVED_WABA_TEMPLATES: Dict[str, Dict[str, Any]] = {
@@ -565,11 +562,11 @@ async def verify_waba_webhook_handshake(
     """
     GET /api/v1/webhook/waba: Handshake verifikasi webhook Meta (hub.mode, hub.verify_token, hub.challenge).
     """
-    if hub_mode == "subscribe" and hub_verify_token in VERIFY_TOKENS:
-        logger.info(f"[WABA Webhook Handshake OK] Token matched: {hub_verify_token}")
+    if hub_mode == "subscribe" and verify_meta_handshake_token(hub_verify_token):
+        logger.info("[WABA Webhook Handshake OK] Handshake verified successfully.")
         return Response(content=hub_challenge or "", media_type="text/plain", status_code=200)
 
-    logger.warning(f"[WABA Webhook Handshake Mismatch] Provided: {hub_verify_token}")
+    logger.warning("[WABA Webhook Handshake Mismatch] Verification token mismatch or unconfigured.")
     return Response(content="Verification token mismatch", media_type="text/plain", status_code=403)
 
 
@@ -577,13 +574,34 @@ async def verify_waba_webhook_handshake(
     "/api/v1/webhook/waba",
     summary="Meta WABA Webhook Status Ingestion Callback",
 )
-async def receive_waba_webhook_events(payload: Dict[str, Any]):
+async def receive_waba_webhook_events(request: Request):
     """
     POST /api/v1/webhook/waba: Ingestion callback status pesan ('sent', 'delivered', 'read', 'failed')
     dan update status log broadcast secara idempotensial.
     """
+    raw_body = await request.body()
+    signature_header = request.headers.get("X-Hub-Signature-256")
+
+    is_valid, err_msg, status_code = verify_meta_webhook_signature(raw_body, signature_header)
+    if not is_valid:
+        return Response(
+            content=json.dumps({"status": "error", "message": err_msg}),
+            media_type="application/json",
+            status_code=status_code,
+        )
+
+    try:
+        payload = json.loads(raw_body) if raw_body else {}
+    except Exception as exc:
+        logger.error(f"[WABA Webhook Status] JSON decode error: {exc}")
+        return Response(
+            content=json.dumps({"status": "error", "message": "invalid_json_format"}),
+            media_type="application/json",
+            status_code=400,
+        )
+
     updated_count = 0
-    entries = payload.get("entry", [])
+    entries = payload.get("entry", []) if isinstance(payload, dict) else []
 
     for entry in entries:
         changes = entry.get("changes", [])
