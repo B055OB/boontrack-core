@@ -7,6 +7,63 @@ from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
 
 
+class PaymentConfigurationError(ValueError):
+    """Raised when tenant payment configuration is missing, incomplete, or uses prohibited dummy fallbacks."""
+
+    def __init__(
+        self,
+        message: str = "Tenant payment configuration is missing or invalid.",
+        error_code: str = "PAYMENT_METHOD_UNCONFIGURED",
+        http_status: int = 422,
+    ):
+        super().__init__(message)
+        self.message = message
+        self.error_code = error_code
+        self.http_status = http_status
+
+
+class PaymentAuthorizationError(PermissionError):
+    """Raised when payment mutation authentication, HMAC verification, nonce check, or canonical tenant ownership fails."""
+
+    def __init__(
+        self,
+        message: str = "Payment operation is not authorized.",
+        error_code: str = "PAYMENT_AUTHORIZATION_FAILED",
+        http_status: int = 403,
+    ):
+        super().__init__(message)
+        self.message = message
+        self.error_code = error_code
+        self.http_status = http_status
+
+
+class ReplayStoreUnavailableError(PaymentAuthorizationError):
+    """Raised when the PostgreSQL Authoritative Anti-Replay Store is unreachable or fails to persist a nonce (fail-closed)."""
+
+    def __init__(
+        self,
+        message: str = "Authoritative PostgreSQL anti-replay store is unavailable.",
+        error_code: str = "AUTHORITATIVE_REPLAY_STORE_UNAVAILABLE",
+        http_status: int = 503,
+    ):
+        super().__init__(message=message, error_code=error_code, http_status=http_status)
+
+
+class SettlementProvenanceError(RuntimeError):
+    """Raised when settlement provenance contract validation, key lifecycle, or cryptographic signature verification fails."""
+
+    def __init__(
+        self,
+        message: str = "Settlement provenance verification failed.",
+        error_code: str = "REJECTED_UNVERIFIED_SETTLEMENT",
+        http_status: int = 422,
+    ):
+        super().__init__(message)
+        self.message = message
+        self.error_code = error_code
+        self.http_status = http_status
+
+
 class TransactionRequest(BaseModel):
     order_id: str = Field(..., description="Unique merchant order ID or invoice ID")
     amount: int = Field(..., gt=0, description="Transaction amount in IDR (integer)")

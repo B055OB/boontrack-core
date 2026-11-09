@@ -2,7 +2,7 @@ import logging
 import re
 from datetime import datetime, timedelta
 from aiohttp import web
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from app.services.whatsapp_service import get_supabase
@@ -86,54 +86,14 @@ async def preview_upgrade_logic(target_tier: str = "PRO_SCALE", tenant_id: Optio
 
 
 # --- Shared Webhook Logic ---
-async def handle_xendit_subscription_webhook_logic(payload: dict):
-    status = str(payload.get("status", "")).upper()
-    metadata = payload.get("metadata", {}) or {}
-    external_id = str(payload.get("external_id", "") or payload.get("id", ""))
-    
-    if status == "PAID":
-        tenant_slug = metadata.get("tenant_slug")
-
-        if not tenant_slug and external_id.startswith("sub_"):
-            parts = external_id.split("_")
-            if external_id.startswith("sub_upgrade_") and len(parts) >= 3 and parts[2]:
-                tenant_slug = sanitize_slug(parts[2])
-            elif len(parts) >= 2 and parts[1]:
-                tenant_slug = sanitize_slug(parts[1])
-
-        if not tenant_slug:
-            logger.warning(f"[XENDIT WEBHOOK IGNORED] Tidak ada tenant_slug valid. Payload: {payload}")
-            return {
-                "status": "ignored",
-                "reason": "Missing tenant_slug in metadata and external_id"
-            }, 200
-
-        plan_tier = metadata.get("plan_tier") or metadata.get("target_tier") or "solo"
-        affiliate_id = metadata.get("affiliate_id")
-        am_id = metadata.get("am_id")
-        paid_amount = payload.get("amount") or metadata.get("amount")
-        is_upgrade = bool(
-            metadata.get("is_upgrade") or 
-            metadata.get("type") == "SUBSCRIPTION_UPGRADE" or 
-            external_id.startswith("sub_upgrade_")
-        )
-        target_valid_until = metadata.get("new_valid_until")
-
-        logger.info(f"[XENDIT WEBHOOK PROCESS] Mengaktifkan tenant: {tenant_slug}, Plan: {plan_tier}, Amount: {paid_amount}, Inv: {external_id}, Upgrade: {is_upgrade}")
-
-        result = await process_successful_subscription(
-            tenant_slug=tenant_slug,
-            plan_tier=plan_tier,
-            xendit_invoice_id=external_id,
-            affiliate_id=affiliate_id,
-            am_id=am_id,
-            paid_amount=paid_amount,
-            is_upgrade=is_upgrade,
-            target_valid_until=target_valid_until
-        )
-        return result, 200
-
-    return {"status": "ignored", "reason": f"Invoice status is {status}"}, 200
+async def handle_xendit_subscription_webhook_logic(payload: dict) -> tuple[dict, int]:
+    """P1 Stage 3 Step 2B.2 (CTO Decision #2): SaaS subscription webhooks are strictly locked."""
+    logger.warning("[SAAS_BILLING_HOLD] Inbound Xendit subscription callback rejected under Stage 3 lockdown.")
+    return {
+        "status": "error",
+        "error_code": "SAAS_BILLING_WEBHOOK_STAGE3_HOLD",
+        "detail": "SaaS subscription and top-up webhooks are strictly locked under Stage 3 (CTO Decision #2).",
+    }, 403
 
 
 # --- Pydantic Payload Schema ---
@@ -315,6 +275,9 @@ async def fastapi_create_sub(payload: CreateSubPayload):
 
 
 @shop_subscription_fastapi_router.post("/webhook/xendit")
+@shop_subscription_fastapi_router.post("/api/v1/shop/subscriptions/webhook/xendit")
 async def fastapi_xendit_sub_webhook(payload: dict):
-    res, _ = await handle_xendit_subscription_webhook_logic(payload)
+    res, status_code = await handle_xendit_subscription_webhook_logic(payload)
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail=res)
     return res

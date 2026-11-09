@@ -326,7 +326,7 @@ def audit_and_enforce_rls(verify_only: bool = False) -> bool:
         print("=" * 80 + "\n")
         return False
     else:
-        print("  STATUS: [PASS] 100% INVARIAN KEAMANAN KATALOG POSTGRESQL TERPENUHI.")
+        print("  STATUS: [PASS] INVARIAN KEAMANAN VALID")
         print("  - Seluruh view tersimpan dengan 'security_invoker=true' di pg_class.reloptions.")
         print("  - Role aplikasi terverifikasi bebas dari hak istimewa rolbypassrls.")
         print("  - Tabel kritikal memiliki kebijakan isolasi tenant_id dan FORCE RLS aktif.")

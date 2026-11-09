@@ -285,32 +285,10 @@ def execute_order_settlement_transaction(
             (now_utc, now_utc, str(external_id))
         )
         if cur.rowcount == 0 and not ord_row:
-            # If order record did not exist in DB yet, auto-create as PAID
-            cur.execute(
-                """
-                INSERT INTO orders (
-                    id, tenant_slug, product_id, product_title, gross_amount,
-                    customer_name, customer_phone, customer_email, status, created_at, updated_at, paid_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'PAID', %s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET
-                    status = 'PAID',
-                    updated_at = EXCLUDED.updated_at,
-                    paid_at = EXCLUDED.paid_at;
-                """,
-                (
-                    str(external_id),
-                    tenant_id,
-                    order_prod_id or "prod_digital",
-                    product_name or "Produk Digital",
-                    amount,
-                    "Customer",
-                    customer_phone or "-",
-                    customer_email,
-                    now_utc,
-                    now_utc,
-                    now_utc,
-                )
-            )
+            # P1 Stage 3 Step 2B.2 (FIN-RISK-03): Ghost order auto-insert is strictly prohibited.
+            logger.warning(f"[SETTLEMENT FAIL-CLOSED] Ghost order auto-creation rejected for unregistered order: '{external_id}'")
+            conn.rollback()
+            raise ValueError(f"Order '{external_id}' not found in database. Ghost order creation prohibited.")
 
         # 4. Atomic Stock Deduction (FASE 4)
         if order_prod_id and order_prod_id not in ("prod_digital", "generic_digital"):

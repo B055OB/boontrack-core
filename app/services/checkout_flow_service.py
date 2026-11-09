@@ -13,7 +13,7 @@ from app.services.whatsapp_service import (
     send_whatsapp_image,
     send_whatsapp_text,
     get_supabase,
-    normalize_phone_number
+    normalize_phone_number,
 )
 from app.services.xendit_service import xendit_service
 from app.services.qris_generator import generate_qris_png_bytes
@@ -22,6 +22,50 @@ from app.core.tracing import log_structured_event, set_trace_context, get_trace_
 logger = logging.getLogger("CHECKOUT_FLOW_SERVICE")
 
 PROCESSED_WEBHOOK_EVENTS = set()
+
+
+def _is_definitive_provider_rejection(err: Exception) -> bool:
+    """
+    Evaluates whether an exception represents a definitive gateway rejection
+    BEFORE transaction execution (e.g. 400 Bad Request, 401 Unauthorized,
+    403 Forbidden, 422 Unprocessable Entity with explicit client validation error).
+
+    Uses structured exception contracts (XenditAPIError, MidtransAPIError, DuitkuAPIError)
+    and explicit status codes. Never relies on generic exception message parsing.
+    """
+    import asyncio
+
+    # 1. Structured gateway error contract takes highest precedence
+    if hasattr(err, "is_definitive_rejection"):
+        return bool(err.is_definitive_rejection)
+
+    # 2. Obvious network / socket / timeout ambiguities -> NEVER definitive rejection
+    if isinstance(err, (asyncio.TimeoutError, TimeoutError, ConnectionError, ConnectionResetError, BrokenPipeError)):
+        return False
+
+    # 3. Check HTTP status code if present on exception or response
+    status_code = getattr(err, "status_code", None)
+    if status_code is None and hasattr(err, "response"):
+        resp = getattr(err, "response", None)
+        status_code = getattr(resp, "status_code", None)
+
+    if status_code is not None:
+        try:
+            code = int(status_code)
+            # 5xx Server errors are ambiguous (gateway could have processed request)
+            if code >= 500:
+                return False
+            # 408 Request Timeout and 429 Rate Limited are ambiguous
+            if code in (408, 429):
+                return False
+            # 400, 401, 403, 404, 422 are definitive client/provider rejections
+            if code in (400, 401, 403, 404, 422):
+                return True
+        except (ValueError, TypeError):
+            pass
+
+    # 4. Default invariant: If outcome cannot be definitively proven, preserve slot!
+    return False
 
 
 async def create_d2c_order_and_dispatch_qris(
@@ -34,11 +78,38 @@ async def create_d2c_order_and_dispatch_qris(
     delivery_asset_url: Optional[str] = None,
     correlation_id: Optional[str] = None,
     customer_email: Optional[str] = None,
+    provider_override: Optional[str] = None,
+    credential_mapper: Optional[Any] = None,
+    order_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """1. Membuat record pesanan di Supabase & PostgreSQL dengan trace/correlation_id.
-    2. Menghasilkan QRIS Dinamis via Gateway.
-    3. Mengirimkan Native QR Image + Ringkasan Pesanan ke WhatsApp Buyer.
     """
+    1. Membuat record pesanan di Supabase & PostgreSQL dengan trace/correlation_id.
+    2. Menghasilkan QRIS Dinamis via Native Payment Gateway (Xendit / Midtrans / Duitku).
+    3. Phase 1 Stage 3 Step 2B.1:
+       - Menggunakan CredentialProfileMapper untuk memilih profil checkout secara otoritatif.
+       - active_provider bertindak sebagai default jika tidak ada provider_override.
+       - Setiap order baru wajib menyimpan explicit binding provider dan credential_profile_id.
+       - Zero plaintext secret di order metadata; kegagalan resolusi profil fail-closed sebelum transaksi dibuat.
+       - Persistent atomic trial quota reservation backed by PostgreSQL (elimination of TOCTOU race condition).
+    4. Mengirimkan Native QR Image + Ringkasan Pesanan ke WhatsApp Buyer.
+    """
+    import copy
+    import json
+    import uuid
+    import asyncio
+    from fastapi import HTTPException
+    from app.services.tenant_context_resolver import tenant_context_resolver
+    from app.services.payment.base import (
+        PaymentAuthorizationError,
+        PaymentConfigurationError,
+    )
+    from app.services.payment.factory import PaymentAdapterFactory
+    from app.services.payment.manual_adapter import ManualTransferAdapter
+    from app.core.security.payment_auth_guard import (
+        CredentialProfileMapper,
+        TenantCredentialProfile,
+    )
+
     supabase = get_supabase()
     clean_phone = normalize_phone_number(customer_phone)
     if not clean_phone:
@@ -46,9 +117,9 @@ async def create_d2c_order_and_dispatch_qris(
     if not customer_name or not str(customer_name).strip():
         raise ValueError("customer_name wajib diisi dan tidak boleh kosong.")
 
-    order_id = f"ORD-{merchant_slug.upper()[:6]}-{int(datetime.now().timestamp())}"
+    order_id = order_id or f"ORD-{merchant_slug.upper()[:6]}-{uuid.uuid4().hex[:10].upper()}"
     active_corr = correlation_id or order_id
-    
+
     set_trace_context(correlation_id=active_corr, tenant_id=merchant_slug)
     log_structured_event(
         service="checkout_flow",
@@ -60,14 +131,9 @@ async def create_d2c_order_and_dispatch_qris(
         correlation_id=active_corr,
     )
 
-    # 1. Resolve Tenant Context & Payment Provider (Manual Transfer vs Gateway)
-    from app.services.tenant_context_resolver import tenant_context_resolver
-    from app.services.payment.factory import PaymentAdapterFactory
-    from app.services.payment.manual_adapter import ManualTransferAdapter
-
+    # 1. Resolve Tenant Context (Fail-Closed on Missing Tenant)
     tenant_ctx = await tenant_context_resolver.resolve_context(merchant_slug)
     if not tenant_ctx:
-        from fastapi import HTTPException
         raise HTTPException(
             status_code=422,
             detail="MERCHANT_QRIS_NOT_CONFIGURED",
@@ -82,71 +148,287 @@ async def create_d2c_order_and_dispatch_qris(
     if is_trial:
         from app.core.trial_guardrail import trial_guardrail
         trial_guardrail.check_order_quota(merchant_slug, is_trial=True)
-        trial_guardrail.record_order(merchant_slug)
 
-    adapter = PaymentAdapterFactory.resolve(tenant_ctx)
-    is_manual = isinstance(adapter, ManualTransferAdapter)
-    pcfg = (tenant_ctx.metadata if tenant_ctx else {}).get("payment_config") or {}
+    # 1.6 Stage 3 Step 2B.1: Authoritative Credential Profile Resolution & Order Binding
+    tenant_meta = tenant_ctx.metadata if isinstance(tenant_ctx.metadata, dict) else {}
+    pay_cfg = tenant_meta.get("payment_config") if isinstance(tenant_meta.get("payment_config"), dict) else {}
+    has_modern_profiles = bool(
+        "credential_profiles" in tenant_meta
+        or "credential_profiles" in pay_cfg
+    )
 
-    provider = os.getenv("PAYMENT_GATEWAY_PROVIDER", "").strip().lower()
+    mapper: CredentialProfileMapper = credential_mapper or CredentialProfileMapper()
+    checkout_profile: Optional[TenantCredentialProfile] = None
+    bound_provider: str = ""
+    bound_profile_id: Optional[str] = None
+    canonical_tenant_uuid: Optional[str] = None
+    resolved_secret: Optional[str] = None
+
+    # Finding #1: Authoritative tenant identity must be a valid canonical UUID
+    raw_tid = getattr(tenant_ctx, "tenant_id", None)
+    if raw_tid and isinstance(raw_tid, str):
+        try:
+            parsed_u = uuid.UUID(raw_tid.strip())
+            canonical_tenant_uuid = str(parsed_u).lower()
+        except (ValueError, AttributeError):
+            canonical_tenant_uuid = None
+
+    if has_modern_profiles:
+        # Reject missing, non-UUID, or guessed tenant IDs on modern profiles fail-closed
+        if not canonical_tenant_uuid:
+            raise HTTPException(
+                status_code=422,
+                detail="INVALID_CANONICAL_TENANT_ID: Authoritative tenant context lacks a valid canonical UUID.",
+            )
+
+        try:
+            checkout_profile = mapper.resolve_checkout_profile(
+                tenant_meta,
+                requested_provider=provider_override,
+            )
+        except PaymentConfigurationError as cfg_err:
+            err_code = getattr(cfg_err, "error_code", "PAYMENT_CONFIGURATION_ERROR")
+            raise HTTPException(
+                status_code=cfg_err.http_status if hasattr(cfg_err, "http_status") else 422,
+                detail=f"{err_code}: {str(cfg_err)}",
+            )
+        except PaymentAuthorizationError as auth_err:
+            err_code = getattr(auth_err, "error_code", "PAYMENT_AUTHORIZATION_ERROR")
+            raise HTTPException(
+                status_code=auth_err.http_status if hasattr(auth_err, "http_status") else 403,
+                detail=f"{err_code}: {str(auth_err)}",
+            )
+
+        # Finding #1 & #8: Tenant A cannot use Tenant B's profile
+        if checkout_profile.canonical_tenant_id != canonical_tenant_uuid:
+            raise HTTPException(
+                status_code=403,
+                detail=f"CREDENTIAL_PROFILE_TENANT_MISMATCH: Profile '{checkout_profile.credential_profile_id}' "
+                       f"belongs to tenant '{checkout_profile.canonical_tenant_id}', not authoritative tenant '{canonical_tenant_uuid}'.",
+            )
+
+        # Finding #3: Determine secret unambiguously; do not pick arbitrary ACTIVE secret
+        active_secrets = [s for s in checkout_profile.verification_secrets if s.status == "ACTIVE"]
+        if len(active_secrets) == 0:
+            raise HTTPException(
+                status_code=503,
+                detail=f"CREDENTIAL_SECRET_UNAVAILABLE: No active secret version configured for profile '{checkout_profile.credential_profile_id}'.",
+            )
+        if len(active_secrets) > 1:
+            raise HTTPException(
+                status_code=403,
+                detail=f"AMBIGUOUS_CREDENTIAL_SECRET_VERSION: Ambiguous active secret versions in profile '{checkout_profile.credential_profile_id}'. Multiple secrets marked ACTIVE.",
+            )
+
+        active_secret = active_secrets[0]
+        try:
+            resolved_secret = mapper._resolve_secret_ref(active_secret.secret_ref)
+        except Exception:
+            logger.error(
+                f"[CHECKOUT_SECURITY] Credential secret resolution failed for tenant '{canonical_tenant_uuid}' "
+                f"profile '{checkout_profile.credential_profile_id}' correlation_id '{active_corr}'"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="CREDENTIAL_SECRET_UNAVAILABLE: Payment credential secret is currently unavailable for checkout.",
+            )
+
+        # Finding #2: Zero global env fallback for modern profiles
+        if not resolved_secret or not str(resolved_secret).strip():
+            logger.error(
+                f"[CHECKOUT_SECURITY] Resolved credential secret is empty for tenant '{canonical_tenant_uuid}' "
+                f"profile '{checkout_profile.credential_profile_id}' correlation_id '{active_corr}'"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="CREDENTIAL_SECRET_UNAVAILABLE: Payment credential secret is currently unavailable for checkout.",
+            )
+
+        # Finding #5: Bound provider and credential_profile_id must be valid non-empty values
+        bound_provider = str(checkout_profile.provider or "").strip().upper()
+        bound_profile_id = str(checkout_profile.credential_profile_id or "").strip()
+        if not bound_provider or not bound_profile_id:
+            raise HTTPException(
+                status_code=422,
+                detail="INVALID_CREDENTIAL_PROFILE: Resolved profile possesses empty provider or credential_profile_id.",
+            )
+    else:
+        # Finding #6: Legacy fallback path evaluated separately. Explicit profile binding is None.
+        try:
+            adapter = PaymentAdapterFactory.resolve(tenant_ctx, provider_override=provider_override)
+        except PaymentConfigurationError as cfg_err:
+            raise HTTPException(
+                status_code=422,
+                detail=str(cfg_err),
+            )
+
+        if isinstance(adapter, ManualTransferAdapter):
+            raise HTTPException(
+                status_code=422,
+                detail="DIRECT_TENANT_RAIL_DISABLED: Manual transfer and static QRIS checkout are disabled.",
+            )
+
+        bound_provider = str(provider_override or getattr(adapter, "provider", None) or os.getenv("PAYMENT_GATEWAY_PROVIDER") or "XENDIT").upper()
+        bound_profile_id = None
+
     meta_payload = {
         "merchant_slug": merchant_slug,
         "customer_name": customer_name,
-        "correlation_id": active_corr
+        "correlation_id": active_corr,
+        "provider": bound_provider,
+        "credential_profile_id": bound_profile_id,
     }
 
-    if is_manual:
-        static_payload = pcfg.get("static_qris_payload") or ""
-        qr_code_url = adapter.qris_image_url or pcfg.get("qris_image_url") or ""
-        if not static_payload and not qr_code_url:
-            from fastapi import HTTPException
-            raise HTTPException(
-                status_code=422,
-                detail="MERCHANT_QRIS_NOT_CONFIGURED",
-            )
+    target_tenant_id = canonical_tenant_uuid or str(getattr(tenant_ctx, "tenant_id", None) or merchant_slug)
 
-        qr_string = ""
-        if static_payload:
-            from app.utils.qris_generator import generate_dynamic_qris_payload
-            qr_string = generate_dynamic_qris_payload(static_payload, total_amount, invoice_id=order_id)
-            qr_png_bytes = generate_qris_png_bytes(qr_string)
-            if not qr_code_url:
-                from app.utils.qris_generator import get_qr_code_image_url
-                qr_code_url = get_qr_code_image_url(qr_string, size=600)
-        else:
-            qr_png_bytes = b""
-        expires_at = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
-    elif provider == "midtrans" or (not provider and os.getenv("MIDTRANS_SERVER_KEY")):
-        from app.services.midtrans_service import midtrans_service
-        qris_data = await midtrans_service.create_qris_charge(
+    # 1.6.5 Atomic persistent trial quota reservation before gateway dispatch
+    if is_trial:
+        from app.core.trial_guardrail import trial_guardrail
+        if canonical_tenant_uuid:
+            trial_guardrail.register_tenant_alias(merchant_slug, canonical_tenant_uuid)
+        trial_guardrail.reserve_slot(
+            tenant_id=target_tenant_id,
             order_id=order_id,
-            amount=total_amount,
-            customer_name=customer_name,
-            customer_phone=clean_phone,
-            tenant_id=merchant_slug,
-            metadata=meta_payload
+            is_trial=True,
+            tenant_slug=merchant_slug,
         )
-        qr_string = qris_data.get("qr_string", "")
-        qr_code_url = qris_data.get("qr_code_url", "")
-        qr_png_bytes = generate_qris_png_bytes(qr_string) if qr_string else b""
-        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
-    else:
-        qris_data = await xendit_service.create_dynamic_qris(
-            external_id=order_id,
-            amount=total_amount,
-            tenant_id=merchant_slug,
-            customer_phone=clean_phone,
-            metadata=meta_payload
+
+    # 1.7 Dispatch QRIS Generation via Selected Native Gateway using profile credentials
+    # Wrapped with atomic release on definitive failure and quarantine on timeout
+    try:
+        if bound_provider == "MIDTRANS":
+            from app.services.midtrans_service import midtrans_service
+            mid_client = midtrans_service
+            if checkout_profile and resolved_secret:
+                mid_client = copy.copy(midtrans_service)
+                mid_client.server_key = resolved_secret
+                mid_client.client_key = checkout_profile.expected_provider_account_id
+                mid_client.is_production = (checkout_profile.environment == "production")
+                mid_client.api_base_url = (
+                    "https://api.midtrans.com/v2" if mid_client.is_production else "https://api.sandbox.midtrans.com/v2"
+                )
+
+            qris_data = await mid_client.create_qris_charge(
+                order_id=order_id,
+                amount=total_amount,
+                customer_name=customer_name,
+                customer_phone=clean_phone,
+                tenant_id=merchant_slug,
+                metadata=meta_payload,
+            )
+            if qris_data.get("is_synthetic") and mid_client.is_production:
+                from app.services.midtrans_service import MidtransAPIError
+                raise MidtransAPIError(
+                    status_code=502,
+                    error_code="SYNTHETIC_SUCCESS_PROHIBITED",
+                    message="Midtrans returned synthetic QRIS in production",
+                    is_definitive_rejection=False,
+                )
+            qr_string = qris_data.get("qr_string", "")
+            qr_code_url = qris_data.get("qr_code_url", "")
+            qr_png_bytes = generate_qris_png_bytes(qr_string) if qr_string else b""
+            expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+        elif bound_provider == "DUITKU":
+            from app.services.payment.gateway_duitku import DuitkuAdapter
+            from app.services.payment.base import TransactionRequest
+
+            duitku_merchant_code = (
+                checkout_profile.expected_provider_account_id
+                if checkout_profile
+                else os.getenv("DUITKU_MERCHANT_CODE", "")
+            )
+            # Finding #2: Zero global env fallback for modern profiles
+            duitku_api_key = resolved_secret if checkout_profile else os.getenv("DUITKU_API_KEY", "")
+
+            duitku_adapter = DuitkuAdapter(
+                merchant_code=duitku_merchant_code,
+                api_key=duitku_api_key,
+                is_sandbox=(checkout_profile.environment == "sandbox" if checkout_profile else None),
+            )
+            tx_req = TransactionRequest(
+                order_id=order_id,
+                amount=total_amount,
+                customer_name=customer_name,
+                customer_phone=clean_phone,
+                customer_email=customer_email,
+                payment_method="QRIS",
+                metadata=meta_payload,
+            )
+            tx_resp = await duitku_adapter.create_transaction(tx_req)
+            tx_id = getattr(tx_resp, "transaction_id", None)
+            if isinstance(tx_id, str) and tx_id.startswith("DTK-REF-") and not duitku_adapter.is_sandbox:
+                from app.services.payment.gateway_duitku import DuitkuAPIError
+                raise DuitkuAPIError(
+                    status_code=502,
+                    error_code="SIMULATOR_SUCCESS_PROHIBITED",
+                    message="Duitku returned simulator reference in production",
+                    is_definitive_rejection=False,
+                )
+            qr_string = tx_resp.qr_string or ""
+            qr_code_url = tx_resp.payment_url or ""
+            qr_png_bytes = generate_qris_png_bytes(qr_string) if qr_string else b""
+            expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+        else:
+            # Default XENDIT
+            from app.services.xendit_service import xendit_service
+            xen_client = xendit_service
+            if checkout_profile and resolved_secret:
+                xen_client = copy.copy(xendit_service)
+                xen_client.secret_key = resolved_secret
+                xen_client.env = checkout_profile.environment
+
+            qris_data = await xen_client.create_dynamic_qris(
+                external_id=order_id,
+                amount=total_amount,
+                tenant_id=merchant_slug,
+                customer_phone=clean_phone,
+                metadata=meta_payload,
+            )
+            qr_string = qris_data.get("qr_string", "")
+            qr_code_url = qris_data.get("qr_code_url", "")
+            qr_png_bytes = generate_qris_png_bytes(qr_string) if qr_string else b""
+            expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+    except Exception as gw_err:
+        if is_trial:
+            from app.core.trial_guardrail import trial_guardrail
+            if _is_definitive_provider_rejection(gw_err):
+                trial_guardrail.release_slot(
+                    tenant_id=target_tenant_id,
+                    order_id=order_id,
+                    is_trial=True,
+                    tenant_slug=merchant_slug,
+                )
+            else:
+                trial_guardrail.quarantine_timeout_slot(
+                    tenant_id=target_tenant_id,
+                    order_id=order_id,
+                    is_trial=True,
+                    tenant_slug=merchant_slug,
+                )
+        raise
+
+    # Commit trial order quota slot upon successful gateway dispatch
+    if is_trial:
+        from app.core.trial_guardrail import trial_guardrail
+        trial_guardrail.commit_slot(
+            tenant_id=target_tenant_id,
+            order_id=order_id,
+            is_trial=True,
+            tenant_slug=merchant_slug,
         )
-        qr_string = qris_data.get("qr_string", "")
-        qr_code_url = qris_data.get("qr_code_url", "")
-        qr_png_bytes = generate_qris_png_bytes(qr_string) if qr_string else b""
-        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
 
     # 2. Simpan order ke database PostgreSQL (Immutable Source of Truth)
     first_item = items[0] if items and isinstance(items, list) else {}
     prod_id = first_item.get("product_id") or "prod_sample"
     prod_title = first_item.get("title") or "Sample Product"
+
+    order_metadata = {
+        "provider": bound_provider,
+        "credential_profile_id": bound_profile_id,
+        "canonical_tenant_id": canonical_tenant_uuid,
+        "merchant_slug": merchant_slug,
+        "correlation_id": active_corr,
+    }
 
     try:
         from app.core.database import get_db_connection
@@ -155,15 +437,19 @@ async def create_d2c_order_and_dispatch_qris(
         cur.execute(
             """
             INSERT INTO orders (
-                id, tenant_slug, product_id, product_title, gross_amount,
-                customer_name, customer_phone, customer_email, status, correlation_id, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', %s, NOW(), NOW())
+                id, tenant_id, tenant_slug, product_id, product_title, gross_amount,
+                customer_name, customer_phone, customer_email, status, correlation_id,
+                metadata, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', %s, %s::jsonb, NOW(), NOW())
             ON CONFLICT (id) DO UPDATE SET
+                tenant_id = COALESCE(EXCLUDED.tenant_id, orders.tenant_id),
                 correlation_id = EXCLUDED.correlation_id,
+                metadata = COALESCE(orders.metadata, '{}'::jsonb) || EXCLUDED.metadata,
                 updated_at = NOW();
             """,
             (
                 str(order_id),
+                canonical_tenant_uuid or str(tenant_ctx.tenant_id or merchant_slug),
                 merchant_slug,
                 str(prod_id),
                 str(prod_title),
@@ -171,13 +457,14 @@ async def create_d2c_order_and_dispatch_qris(
                 customer_name,
                 clean_phone,
                 customer_email,
-                correlation_id
-            )
+                correlation_id,
+                json.dumps(order_metadata),
+            ),
         )
         conn.commit()
         cur.close()
         conn.close()
-        logger.info(f"[DB ORDER INSERT PG] Order {order_id} stored in Postgres with correlation_id '{correlation_id}'.")
+        logger.info(f"[DB ORDER INSERT PG] Order {order_id} stored in Postgres with profile '{bound_profile_id}' and provider '{bound_provider}'.")
     except Exception as pg_err:
         logger.warning(f"[DB ORDER INSERT PG WARNING] {pg_err}")
 
@@ -186,6 +473,7 @@ async def create_d2c_order_and_dispatch_qris(
         try:
             supabase.table("orders").upsert({
                 "id": str(order_id),
+                "tenant_id": canonical_tenant_uuid or str(tenant_ctx.tenant_id or merchant_slug),
                 "tenant_slug": merchant_slug,
                 "product_id": str(prod_id),
                 "product_title": str(prod_title),
@@ -195,45 +483,31 @@ async def create_d2c_order_and_dispatch_qris(
                 "customer_email": customer_email,
                 "status": "PENDING",
                 "correlation_id": correlation_id,
+                "metadata": order_metadata,
             }).execute()
         except Exception as db_err:
             logger.warning(f"[DB ORDER INSERT WARNING] {db_err}")
 
     # 4. Format Pesan WhatsApp Invoice Summary
-    scheme = ""
-    if not scheme:
-        t_lower = str(prod_title or "").lower()
-        if any(w in t_lower for w in ["dp", "uang muka", "tiket", "komitmen"]):
-            scheme = "dp"
-        elif "pelunasan" in t_lower:
-            scheme = "pelunasan"
-        else:
-            scheme = "lunas"
+    t_lower = str(prod_title or "").lower()
+    if any(w in t_lower for w in ["dp", "uang muka", "tiket", "komitmen"]):
+        scheme = "dp"
+    elif "pelunasan" in t_lower:
+        scheme = "pelunasan"
+    else:
+        scheme = "lunas"
     scheme_label = "Tagihan DP" if scheme == "dp" else ("Pelunasan" if scheme == "pelunasan" else "Lunas")
 
     amount_fmt = f"Rp{total_amount:,.0f}".replace(",", ".")
-    if is_manual:
-        bank_details = f"🏦 *Bank:* {adapter.bank_name}\n🔢 *No. Rekening:* `{adapter.account_number}`\n👤 *Atas Nama:* {adapter.account_holder}"
-        caption = (
-            f"Halo Kak *{customer_name}*, terima kasih telah melakukan pemesanan di *{merchant_slug}*! 🛍️\n\n"
-            f"📄 *No. Pesanan:* `{order_id}`\n"
-            f"💰 *Total Tagihan ({scheme_label}):* *{amount_fmt}*\n\n"
-            f"Silakan lakukan pembayaran melalui transfer manual ke rekening berikut:\n"
-            f"{bank_details}\n\n"
-            f"Atau scan kode QRIS toko yang tertera.\n\n"
-            f"📸 *Setelah melakukan transfer/pembayaran, silakan langsung kirimkan foto/screenshot bukti transfer ke chat ini ya Kak agar langsung dicek dan diverifikasi oleh sistem.*"
-        )
-    else:
-        caption = (
-            f"Halo Kak *{customer_name}*, terima kasih telah melakukan pemesanan di *{merchant_slug}*! 🛍️\n\n"
-            f"📄 *No. Pesanan:* `{order_id}`\n"
-            f"💰 *Total Tagihan ({scheme_label}):* *{amount_fmt}*\n"
-            f"⏱️ *Batas Waktu Bayar:* 15 Menit\n\n"
-            f"Silakan scan kode QRIS di atas melalui m-Banking atau E-Wallet pilihan Anda.\n\n"
-            f"📸 *Setelah melakukan transfer/pembayaran, silakan langsung kirimkan foto/screenshot bukti transfer ke chat ini ya Kak agar langsung dicek dan diverifikasi oleh sistem.*"
-        )
+    caption = (
+        f"Halo Kak *{customer_name}*, terima kasih telah melakukan pemesanan di *{merchant_slug}*! 🛍️\n\n"
+        f"📄 *No. Pesanan:* `{order_id}`\n"
+        f"💰 *Total Tagihan ({scheme_label}):* *{amount_fmt}*\n"
+        f"⏱️ *Batas Waktu Bayar:* 15 Menit\n\n"
+        f"Silakan scan kode QRIS di atas melalui m-Banking atau E-Wallet pilihan Anda."
+    )
 
-    # 5. Dispatch WhatsApp Native Image QRIS / Static QR ke Buyer (Decoupled & Resilient)
+    # 5. Dispatch WhatsApp Native Image QRIS ke Buyer (Decoupled & Resilient)
     img_to_send = qr_png_bytes or qr_code_url
     if clean_phone:
         try:
@@ -243,7 +517,7 @@ async def create_d2c_order_and_dispatch_qris(
                         to_phone=clean_phone,
                         image_path_or_bytes=img_to_send,
                         caption=caption,
-                        tenant_id=merchant_slug
+                        tenant_id=merchant_slug,
                     )
                 except Exception as wa_err:
                     logger.warning(f"[WA QRIS Dispatch Warning] {wa_err}")
@@ -281,7 +555,7 @@ async def create_d2c_order_and_dispatch_qris(
         entity_type="payment",
         entity_id=order_id,
         status="SUCCESS",
-        provider="manual" if is_manual else (provider or "xendit"),
+        provider=bound_provider.lower() if bound_provider else (provider or "xendit"),
         tenant_id=merchant_slug,
         correlation_id=active_corr,
     )
@@ -289,19 +563,29 @@ async def create_d2c_order_and_dispatch_qris(
     return {
         "order_id": order_id,
         "merchant_slug": merchant_slug,
-        "tenant_id": merchant_slug,
+        "tenant_id": canonical_tenant_uuid or str(tenant_ctx.tenant_id or merchant_slug),
         "total_amount": total_amount,
         "qr_string": qr_string,
         "qr_code_url": qr_code_url,
         "expires_at": expires_at,
         "status": "PENDING",
         "correlation_id": active_corr,
-        "payment_method": "MANUAL_TRANSFER" if is_manual else "QRIS_DYNAMIC",
+        "payment_method": "QRIS_DYNAMIC",
+        "provider": bound_provider,
+        "credential_profile_id": bound_profile_id,
+        "metadata": order_metadata,
     }
 
 
 async def reconcile_payment_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Menangani webhook gateway pembayaran secara Idempotent (anti-duplikasi)."""
+    """P1 Stage 3 Step 2B.2: Internal Post-Verification Settlement Dispatch Helper.
+    
+    Invariants (Founder Decision 3 & FIN-RISK-04):
+    1. May remain ONLY as an internal dispatcher when needed; never treats raw external data as settlement authority.
+    2. Zero fallback updates: permanently eliminates `except Exception -> orders.update(status='PAID')`.
+    3. Stage 4 Boundary Isolation: zero direct external WhatsApp dispatch during settlement.
+    4. Fails closed on database transaction failure.
+    """
     event_id = payload.get("id") or payload.get("external_id")
     external_id = payload.get("external_id") or payload.get("reference_id")
     payment_status = str(payload.get("status", "")).upper()
@@ -332,84 +616,36 @@ async def reconcile_payment_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
             except Exception as e2:
                 logger.debug(f"[RECONCILE DB NOTE] {e2}")
 
+        if not order_data:
+            logger.warning(f"[RECONCILE FAIL-CLOSED] Order '{external_id}' not found in DB. Zero ghost orders.")
+            return {"status": "rejected", "reason": "order_not_found", "order_id": external_id}
+
         # Persistent DB State Guard: If already PAID or CONFIRMED -> return ACK NO-OP
-        if order_data and str(order_data.get("status") or "").upper() in ("PAID", "SETTLED", "COMPLETED", "LUNAS", "CONFIRMED"):
+        if str(order_data.get("status") or "").upper() in ("PAID", "SETTLED", "COMPLETED", "LUNAS", "CONFIRMED"):
             logger.info(f"[WEBHOOK IDEMPOTENT DB] Order {external_id} already marked PAID in DB. Skipping.")
             return {"status": "skipped", "reason": "order_already_paid", "idempotent": True}
 
-        # Single Database Transaction Settlement
+        # Single Database Transaction Settlement (Fail-Closed, Zero Bypass Update)
         try:
             from app.services.checkout_service import execute_order_settlement_transaction
+            raw_gross = order_data.get("gross_amount") or payload.get("amount") or 0
+            exact_amount = int(raw_gross)
             execute_order_settlement_transaction(
                 event_id=str(event_id),
                 external_id=str(external_id),
-                tenant_id=(order_data or {}).get("tenant_slug") or "default",
-                amount=int(float((order_data or {}).get("gross_amount") or payload.get("amount") or 0)),
+                tenant_id=order_data.get("tenant_slug") or "default",
+                amount=exact_amount,
                 payload=payload,
                 provider="CHECKOUT_FLOW",
-                customer_phone=(order_data or {}).get("customer_phone"),
-                product_name=(order_data or {}).get("product_title"),
+                customer_phone=order_data.get("customer_phone"),
+                product_name=order_data.get("product_title"),
             )
         except Exception as tx_err:
-            logger.warning(f"[RECONCILE DB TX Note] {tx_err}")
-            try:
-                supabase.table("orders").update({
-                    "status": "PAID",
-                    "paid_at": datetime.now(timezone.utc).isoformat()
-                }).eq("id", external_id).execute()
-            except Exception:
-                pass
+            logger.error(f"[RECONCILE DB TX ERROR] Transaction aborted: {tx_err}")
+            # P1 Stage 3 Step 2B.2 (FIN-RISK-04): Zero fallback update to PAID!
+            raise tx_err
 
     merchant = (order_data or {}).get("tenant_slug") or payload.get("tenant_slug") or "default"
-
-    # Kirim WhatsApp E-Receipt & Akses Produk Otomatis
-    if order_data:
-        buyer_phone = order_data.get("customer_phone")
-        buyer_name = order_data.get("customer_name", "Kakak")
-        merchant = order_data.get("tenant_slug", merchant)
-        is_digital = order_data.get("is_digital", True)
-        asset_url = order_data.get("delivery_asset_url") or "https://drive.google.com"
-
-        if is_digital:
-            fulfillment_msg = (
-                f"✅ *PEMBAYARAN BERHASIL!* 🎉\n\n"
-                f"Terima kasih Kak *{buyer_name}*, pembayaran untuk pesanan `{external_id}` telah kami terima.\n\n"
-                f"📂 *Akses Produk Digital Anda:*\n{asset_url}\n\n"
-                f"Silakan simpan link di atas. Jika ada pertanyaan atau kendala akses, silakan balas pesan ini!"
-            )
-        else:
-            fulfillment_msg = (
-                f"✅ *PEMBAYARAN BERHASIL!* 📦\n\n"
-                f"Terima kasih Kak *{buyer_name}*, pembayaran untuk pesanan `{external_id}` sukses.\n\n"
-                f"Pesanan Anda saat ini sedang disiapkan oleh tim *{merchant}* dan resi pengiriman akan diinfokan segera."
-            )
-
-        if buyer_phone:
-            try:
-                await send_whatsapp_text(to_phone=buyer_phone, text=fulfillment_msg, tenant_id=merchant)
-                log_structured_event(
-                    service="whatsapp_delivery",
-                    event_type="WA_NOTIF_DISPATCHED",
-                    entity_type="message",
-                    entity_id=str(external_id),
-                    status="SUCCESS",
-                    provider="meta",
-                    tenant_id=merchant,
-                    correlation_id=str(external_id),
-                )
-            except Exception as wa_settle_err:
-                logger.error(f"[WA Settlement Outage Isolated] Dispatch failed: {wa_settle_err}")
-                log_structured_event(
-                    service="whatsapp_delivery",
-                    event_type="WA_NOTIF_FAILED",
-                    entity_type="message",
-                    entity_id=str(external_id),
-                    status="FAILED",
-                    error_code="EXTERNAL_API_DOWN",
-                    provider="meta",
-                    tenant_id=merchant,
-                    correlation_id=str(external_id),
-                )
 
     log_structured_event(
         service="checkout_flow",

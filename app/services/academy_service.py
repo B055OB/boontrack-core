@@ -51,6 +51,14 @@ class TenantContextViolation(PermissionError):
     """Raised when cross-tenant data access is attempted."""
     pass
 
+try:
+    from app.core.rev1.exceptions import AuthorizationError
+except ImportError:
+    from fastapi import HTTPException, status
+    class AuthorizationError(HTTPException):
+        def __init__(self, detail: str = "Access Denied: Context boundary violation"):
+            super().__init__(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
 # ============================================================================
 # 1. KONFIGURASI PRODUK & SKU
 # ============================================================================
@@ -61,6 +69,11 @@ LEGACY_ACADEMY_SKU_ID: str = "OB-BATCH1-249K"
 ACADEMY_SKU_ID: str = "OB-BATCH1-249K"
 ACADEMY_SETTLEMENT_PRICE: int = 249000  # Rp 249.000
 ACADEMY_INVOICE_TTL_MINUTES: int = 15   # 15 menit
+
+# THE GOLDEN PENNY TEST SKU (STRICTLY ISOLATED INTERNAL TEST)
+TEST_PENNY_SKU_ID: str = "TEST-PENNY-1500"
+TEST_PENNY_SKU_NAME: str = "OnlineBoost Golden Penny Test Verification"
+TEST_PENNY_PRICE: int = 1500
 
 # Master Static QRIS fallback (Official BoonTrack QRIS)
 DEFAULT_STATIC_QRIS: str = (
@@ -1281,16 +1294,42 @@ def generate_academy_qris_invoice(
     tenant_id: str = "onlineboost",
     use_unique_code: bool = True,
     static_qris_override: Optional[str] = None,
+    sku_id: Optional[str] = None,
+    is_internal_authorized: bool = False,
+    auth_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Menghasilkan Dynamic QRIS Invoice Rp 249.000 (+ 3-digit kode unik jika aktif).
+    Menghasilkan Dynamic QRIS Invoice:
+    - Default: Rp 249.000 (+ 3-digit kode unik jika aktif) untuk SKU OB-BATCH1-249K.
+    - Test Isolation: Tepat Rp 1.500 untuk SKU internal test 'TEST-PENNY-1500' (wajib otorisasi internal).
     TTL Expiry: Tepat 15 menit.
     """
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=ACADEMY_INVOICE_TTL_MINUTES)
 
-    # 1. Alokasi 3-digit kode unik jika aktif
-    if use_unique_code:
+    is_penny_test = (sku_id == TEST_PENNY_SKU_ID)
+
+    # Server-Side Access Control Guard for Internal Test SKU
+    if is_penny_test:
+        authorized = (
+            is_internal_authorized is True
+            or (auth_context and auth_context.get("role") in ("admin", "founder", "internal"))
+            or (auth_context and auth_context.get("is_internal") is True)
+        )
+        if not authorized:
+            logger.warning(
+                f"[AcademySecurity] Unauthorized attempt to create internal test SKU '{sku_id}' by {customer_email} (fail-closed)."
+            )
+            raise AuthorizationError(
+                f"Access Denied: SKU '{TEST_PENNY_SKU_ID}' is an isolated internal test SKU and requires verified internal/founder/admin authorization."
+            )
+
+    resolved_sku_id = TEST_PENNY_SKU_ID if is_penny_test else ACADEMY_SKU_ID
+    resolved_sku_name = TEST_PENNY_SKU_NAME if is_penny_test else ACADEMY_SKU_NAME
+    base_price = TEST_PENNY_PRICE if is_penny_test else ACADEMY_SETTLEMENT_PRICE
+
+    # 1. Alokasi 3-digit kode unik jika aktif (penny test tidak memakai unique code tambahan)
+    if use_unique_code and not is_penny_test:
         # Cari kode unik antara 100-999 yang tidak bertabrakan dengan invoice aktif
         unique_code = generate_unique_code(min_val=100, max_val=999)
         # Hindari tabrakan dengan invoice pending yang belum expired
@@ -1302,14 +1341,14 @@ def generate_academy_qris_invoice(
             and now < inv.get("expires_at_dt")
         }
         attempts = 0
-        while (ACADEMY_SETTLEMENT_PRICE + unique_code) in active_occupied and attempts < 20:
+        while (base_price + unique_code) in active_occupied and attempts < 20:
             unique_code = generate_unique_code(min_val=100, max_val=999)
             attempts += 1
     else:
         unique_code = 0
 
-    total_amount = ACADEMY_SETTLEMENT_PRICE + unique_code
-    order_id = f"BTA-ALUMNI-{uuid.uuid4().hex[:8].upper()}"
+    total_amount = base_price + unique_code
+    order_id = f"BTA-PENNY-{uuid.uuid4().hex[:8].upper()}" if is_penny_test else f"BTA-ALUMNI-{uuid.uuid4().hex[:8].upper()}"
 
     # 2. Emit Dynamic QRIS Payload (Tag 54 injected + Tag 01 set to dynamic 12 + CRC16 recalculation)
     base_qris = (static_qris_override or DEFAULT_STATIC_QRIS).strip()
@@ -1328,9 +1367,9 @@ def generate_academy_qris_invoice(
 
     invoice_data = {
         "order_id": order_id,
-        "sku": ACADEMY_SKU_NAME,
-        "sku_id": ACADEMY_SKU_ID,
-        "base_amount": ACADEMY_SETTLEMENT_PRICE,
+        "sku": resolved_sku_name,
+        "sku_id": resolved_sku_id,
+        "base_amount": base_price,
         "unique_code": unique_code,
         "total_amount": total_amount,
         "currency": "IDR",
@@ -1346,6 +1385,7 @@ def generate_academy_qris_invoice(
         "created_at": now.isoformat(),
         "status": "PENDING",
         "idempotency_key": idempotency_key,
+        "is_internal_only": is_penny_test,
     }
 
     # Simpan ke in-memory cache
@@ -1353,6 +1393,7 @@ def generate_academy_qris_invoice(
     _ACADEMY_INVOICES_BY_AMOUNT[total_amount] = order_id
 
     # Persist ke Database orders / payment_intents jika koneksi aktif
+    db_persisted = False
     try:
         from app.core.database import get_db_connection
         conn = get_db_connection()
@@ -1368,8 +1409,8 @@ def generate_academy_qris_invoice(
             (
                 order_id,
                 tenant_id,
-                ACADEMY_SKU_ID,
-                ACADEMY_SKU_NAME,
+                resolved_sku_id,
+                resolved_sku_name,
                 total_amount,
                 customer_name,
                 customer_phone,
@@ -1379,10 +1420,23 @@ def generate_academy_qris_invoice(
             )
         )
         conn.commit()
+        # Verify persistence immediately
+        cur.execute("SELECT id FROM orders WHERE id = %s LIMIT 1;", (order_id,))
+        if cur.fetchone():
+            db_persisted = True
         cur.close()
         conn.close()
     except Exception as db_err:
-        logger.debug(f"[AcademyInvoice] DB orders insert note: {db_err}")
+        logger.error(f"[AcademyInvoice] DB orders insert error: {db_err}")
+        if is_penny_test:
+            _ACADEMY_INVOICES.pop(order_id, None)
+            _ACADEMY_INVOICES_BY_AMOUNT.pop(total_amount, None)
+            raise RuntimeError(f"Database persistence failure for internal test SKU '{order_id}': {db_err}")
+
+    if is_penny_test and not db_persisted:
+        _ACADEMY_INVOICES.pop(order_id, None)
+        _ACADEMY_INVOICES_BY_AMOUNT.pop(total_amount, None)
+        raise RuntimeError(f"Database persistence assertion failed: order '{order_id}' was not confirmed in database.")
 
     # Sinkronisasi ke Supabase jika tersedia
     supabase = get_supabase()
@@ -1392,7 +1446,7 @@ def generate_academy_qris_invoice(
                 "id": str(uuid.uuid4()),
                 "tenant_id": tenant_id,
                 "order_id": order_id,
-                "amount": ACADEMY_SETTLEMENT_PRICE,
+                "amount": base_price,
                 "unique_code": unique_code,
                 "total_amount": total_amount,
                 "qr_string": qris_payload,
@@ -1465,25 +1519,55 @@ def settle_academy_invoice(
         # --- 2. Acceptance Gate Validations ---
         if invoice:
             expected_total = invoice.get("total_amount", ACADEMY_SETTLEMENT_PRICE)
+            expected_base = invoice.get("base_amount", ACADEMY_SETTLEMENT_PRICE)
+            inv_sku = str(invoice.get("sku_id") or "").upper()
+
+            # 2a-0. Strict Invariant: Rp1.500 settlement is strictly restricted to TEST-PENNY-1500
+            if amount == 1500 and inv_sku != TEST_PENNY_SKU_ID:
+                logger.warning(
+                    f"[AcademyGate] Penny amount Rp 1.500 received for non-penny SKU '{inv_sku}' on order '{order_id}'. Rejected."
+                )
+                return {
+                    "status": "REJECTED_AMOUNT_MISMATCH",
+                    "order_id": order_id,
+                    "event_id": event_id,
+                    "amount": amount,
+                    "expected_amount": expected_total,
+                    "idempotency_hit": False,
+                    "error": f"Penny settlement (Rp 1.500) is strictly restricted to {TEST_PENNY_SKU_ID}. Regular class access denied.",
+                }
+            if inv_sku == TEST_PENNY_SKU_ID and amount is not None and amount != 1500:
+                logger.warning(
+                    f"[AcademyGate] Order '{order_id}' is TEST-PENNY-1500 but received Rp{amount} (expected Rp1,500). Rejected."
+                )
+                return {
+                    "status": "REJECTED_AMOUNT_MISMATCH",
+                    "order_id": order_id,
+                    "event_id": event_id,
+                    "amount": amount,
+                    "expected_amount": 1500,
+                    "idempotency_hit": False,
+                    "error": "TEST-PENNY-1500 orders require exact Rp 1.500 settlement.",
+                }
 
             # 2a. Amount Mismatch Rejection
-            if invoice.get("unique_code") == 0 or expected_total == ACADEMY_SETTLEMENT_PRICE:
-                if amount is not None and amount != ACADEMY_SETTLEMENT_PRICE:
+            if invoice.get("unique_code") == 0 or expected_total == expected_base:
+                if amount is not None and amount != expected_base:
                     logger.warning(
                         f"[AcademyGate] Amount mismatch for order '{order_id}': "
-                        f"received {amount}, expected {ACADEMY_SETTLEMENT_PRICE}"
+                        f"received {amount}, expected {expected_base}"
                     )
                     return {
                         "status": "REJECTED_AMOUNT_MISMATCH",
                         "order_id": order_id,
                         "event_id": event_id,
                         "amount": amount,
-                        "expected_amount": ACADEMY_SETTLEMENT_PRICE,
+                        "expected_amount": expected_base,
                         "idempotency_hit": False,
-                        "error": f"Amount mismatch: received Rp {amount}, expected Rp {ACADEMY_SETTLEMENT_PRICE}",
+                        "error": f"Amount mismatch: received Rp {amount}, expected Rp {expected_base}",
                     }
             else:
-                if amount is not None and amount != expected_total and amount != ACADEMY_SETTLEMENT_PRICE and not (249100 <= amount <= 249999):
+                if amount is not None and amount != expected_total and amount != expected_base and not (249100 <= amount <= 249999):
                     logger.warning(
                         f"[AcademyGate] Amount mismatch for order '{order_id}': "
                         f"received {amount}, expected {expected_total}"
@@ -1575,6 +1659,39 @@ def settle_academy_invoice(
                     "message": "Payment already registered in financial_ledger.",
                 }
 
+            if not invoice:
+                cur.execute("SELECT product_id, gross_amount, tenant_slug FROM orders WHERE id = %s LIMIT 1;", (order_id,))
+                db_ord_row = cur.fetchone()
+                if db_ord_row:
+                    db_prod = str(db_ord_row[0] or "").upper()
+                    db_gross = int(float(db_ord_row[1] or 0))
+                    if amount == 1500 and db_prod != TEST_PENNY_SKU_ID:
+                        logger.warning(
+                            f"[AcademyGate] Penny amount Rp 1.500 received for non-penny SKU '{db_prod}' on order '{order_id}'. Rejected."
+                        )
+                        return {
+                            "status": "REJECTED_AMOUNT_MISMATCH",
+                            "order_id": order_id,
+                            "event_id": event_id,
+                            "amount": amount,
+                            "expected_amount": db_gross,
+                            "idempotency_hit": False,
+                            "error": f"Penny settlement (Rp 1.500) is strictly restricted to {TEST_PENNY_SKU_ID}. Access denied.",
+                        }
+                    if db_prod == TEST_PENNY_SKU_ID and amount is not None and amount != 1500:
+                        logger.warning(
+                            f"[AcademyGate] Order '{order_id}' is TEST-PENNY-1500 but received Rp{amount} (expected Rp1,500). Rejected."
+                        )
+                        return {
+                            "status": "REJECTED_AMOUNT_MISMATCH",
+                            "order_id": order_id,
+                            "event_id": event_id,
+                            "amount": amount,
+                            "expected_amount": 1500,
+                            "idempotency_hit": False,
+                            "error": "TEST-PENNY-1500 orders require exact Rp 1.500 settlement.",
+                        }
+
             payload_json = json.dumps(raw_payload, default=str)
 
             # 3a. Catat ke payment_events (Append-Only Audit Ledger)
@@ -1605,7 +1722,7 @@ def settle_academy_invoice(
             cur.execute(
                 """
                 UPDATE orders 
-                SET status = 'PAID', updated_at = %s
+                SET status = 'PAID', payment_status = 'PAID', updated_at = %s
                 WHERE id = %s;
                 """,
                 (now_utc, order_id)
@@ -1657,6 +1774,7 @@ def settle_academy_invoice(
         _PROCESSED_EVENTS.add(event_id)
         if invoice:
             invoice["status"] = "PAID"
+            invoice["payment_status"] = "PAID"
             invoice["paid_at"] = now_utc.isoformat()
 
         return {

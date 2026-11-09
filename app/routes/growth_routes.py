@@ -130,17 +130,76 @@ def get_affiliate_portal_fastapi(tenant_id: str, referral_code: str):
     return {"success": True, "data": data}
 
 @router.post("/simulate/order-paid")
-async def simulate_order_paid_fastapi(req: SimulatePaidRequest, request: Request):
+async def simulate_order_paid_fastapi(request: Request):
+    """
+    Phase 1 Stage 2 (P0-E):
+    - Hard-blocked in production environments (HTTP 403 SIMULATION_PROHIBITED_IN_PRODUCTION).
+    - Requires Stage 1 internal HMAC authentication + canonical tenant ownership + PostgreSQL replay store in non-production.
+    """
+    from app.core.database import get_db_connection
+    from app.core.security.payment_auth_guard import (
+        PaymentAuthError,
+        ReplayStoreUnavailableError,
+        is_production_environment,
+        verify_stage2_internal_mutation_request,
+    )
+
+    if is_production_environment():
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error_code": "SIMULATION_PROHIBITED_IN_PRODUCTION",
+                "message": "SIMULATION_PROHIBITED_IN_PRODUCTION: Growth order-paid simulation is strictly prohibited in production.",
+            },
+        )
+
+    raw_body_bytes = await request.body()
+    try:
+        body_json = json.loads(raw_body_bytes.decode("utf-8")) if raw_body_bytes else {}
+        req = SimulatePaidRequest(**body_json)
+    except Exception as parse_err:
+        raise HTTPException(status_code=422, detail=str(parse_err))
+
+    headers_dict = dict(request.headers)
+    raw_query_string = request.scope.get("query_string", b"").decode("latin-1")
+
+    try:
+        auth_ctx = verify_stage2_internal_mutation_request(
+            headers=headers_dict,
+            http_method="POST",
+            raw_path=request.url.path,
+            raw_query_string=raw_query_string,
+            order_id=req.order_id,
+            raw_body_bytes=raw_body_bytes,
+            db_conn_factory=get_db_connection,
+        )
+    except ReplayStoreUnavailableError as err:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": err.error_code, "message": err.message},
+        )
+    except PaymentAuthError as err:
+        raise HTTPException(
+            status_code=err.http_status,
+            detail={"error_code": err.error_code, "message": err.message},
+        )
+
     client_ip = request.client.host if request.client else "127.0.0.1"
     await process_order_paid_growth_event(
-        tenant_id=req.tenant_id,
+        tenant_id=auth_ctx.canonical_tenant_id,
         order_id=req.order_id,
         order_amount=req.amount,
         customer_phone=req.customer_phone,
         customer_email=req.customer_email,
-        client_ip=client_ip
+        client_ip=client_ip,
     )
-    return {"success": True, "message": f"Event order PAID #{req.order_id} berhasil diproses oleh Growth Worker."}
+    return {
+        "success": True,
+        "order_id": req.order_id,
+        "tenant_id": auth_ctx.canonical_tenant_id,
+        "actor_id": auth_ctx.actor_id,
+        "message": f"Event order PAID #{req.order_id} berhasil diproses oleh Growth Worker.",
+    }
 
 # --- AIOHTTP HANDLERS ---
 async def aiohttp_track_handler(request: web.Request):
@@ -179,20 +238,76 @@ async def aiohttp_portal_handler(request: web.Request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 async def aiohttp_simulate_paid_handler(request: web.Request):
+    """
+    Phase 1 Stage 2 (P0-E):
+    - Hard-blocked in production environments (HTTP 403 SIMULATION_PROHIBITED_IN_PRODUCTION).
+    - Requires Stage 1 internal HMAC authentication + canonical tenant ownership + PostgreSQL replay store in non-production.
+    """
+    from app.core.database import get_db_connection
+    from app.core.security.payment_auth_guard import (
+        PaymentAuthError,
+        ReplayStoreUnavailableError,
+        is_production_environment,
+        verify_stage2_internal_mutation_request,
+    )
+
+    if is_production_environment():
+        return web.json_response(
+            {
+                "success": False,
+                "error_code": "SIMULATION_PROHIBITED_IN_PRODUCTION",
+                "detail": "SIMULATION_PROHIBITED_IN_PRODUCTION: Growth order-paid simulation is strictly prohibited in production.",
+            },
+            status=403,
+        )
+
+    raw_body_bytes = await request.read()
     try:
-        body = await request.json()
+        body = json.loads(raw_body_bytes.decode("utf-8")) if raw_body_bytes else {}
+    except Exception as parse_err:
+        return web.json_response({"success": False, "error": str(parse_err)}, status=422)
+
+    order_id = str(body.get("order_id") or "").strip()
+    headers_dict = dict(request.headers)
+    raw_query_string = request.query_string or ""
+
+    try:
+        auth_ctx = verify_stage2_internal_mutation_request(
+            headers=headers_dict,
+            http_method="POST",
+            raw_path=request.path,
+            raw_query_string=raw_query_string,
+            order_id=order_id,
+            raw_body_bytes=raw_body_bytes,
+            db_conn_factory=get_db_connection,
+        )
+    except ReplayStoreUnavailableError as err:
+        return web.json_response(
+            {"success": False, "error_code": err.error_code, "detail": err.message},
+            status=503,
+        )
+    except PaymentAuthError as err:
+        return web.json_response(
+            {"success": False, "error_code": err.error_code, "detail": err.message},
+            status=err.http_status,
+        )
+
+    try:
         client_ip = request.remote or "127.0.0.1"
         await process_order_paid_growth_event(
-            tenant_id=body.get("tenant_id", ""),
-            order_id=body.get("order_id", ""),
+            tenant_id=auth_ctx.canonical_tenant_id,
+            order_id=order_id,
             order_amount=float(body.get("amount", 0)),
             customer_phone=body.get("customer_phone", "08123456789"),
             customer_email=body.get("customer_email", "buyer@gmail.com"),
-            client_ip=client_ip
+            client_ip=client_ip,
         )
         return web.json_response({
             "success": True,
-            "message": f"Event order PAID #{body.get('order_id')} berhasil diproses oleh Growth Worker."
+            "order_id": order_id,
+            "tenant_id": auth_ctx.canonical_tenant_id,
+            "actor_id": auth_ctx.actor_id,
+            "message": f"Event order PAID #{order_id} berhasil diproses oleh Growth Worker.",
         })
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
