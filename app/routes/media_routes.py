@@ -14,12 +14,15 @@ import os
 import io
 import uuid
 import logging
+from datetime import datetime, timezone
 from io import BytesIO
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from PIL import Image
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, status, Request
 from aiohttp import web
+
+from app.core.jwt_secret import verify_jwt_token_strict
 
 logger = logging.getLogger("MEDIA_UPLOAD_ROUTE")
 
@@ -46,6 +49,293 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.pat
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
+ALLOWED_IMAGE_MIME_TYPES = {
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+}
+
+STATUS_422 = getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422)
+
+
+def validate_image_file_security(
+    raw_content: bytes,
+    declared_content_type: str,
+    filename: str = "upload.jpg",
+) -> str:
+    """
+    Validasi keamanan file gambar:
+    - Ukuran maksimal 5MB. File kosong atau > 5MB ditolak HTTP 422 Unprocessable Entity.
+    - Hanya izinkan MIME type: image/jpeg, image/png, image/webp.
+    - Inspeksi biner magic-byte untuk mendeteksi MIME spoofing / executable injection.
+    - Validasi integritas struktur gambar dengan Pillow.
+    Mengembalikan canonical MIME type yang terdeteksi atau melempar HTTPException(422).
+    """
+    file_size = len(raw_content)
+    if file_size == 0:
+        raise HTTPException(
+            status_code=STATUS_422,
+            detail="File upload tidak boleh kosong.",
+        )
+
+    if file_size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=STATUS_422,
+            detail=f"Ukuran file ({round(file_size / (1024 * 1024), 2)} MB) melebihi batas maksimal 5 MB.",
+        )
+
+    clean_mime = (declared_content_type or "").lower().strip()
+    if clean_mime == "image/jpg":
+        clean_mime = "image/jpeg"
+
+    if clean_mime not in ALLOWED_IMAGE_MIME_TYPES:
+        raise HTTPException(
+            status_code=STATUS_422,
+            detail=f"Tipe MIME '{declared_content_type}' tidak diizinkan. Hanya menerima image/jpeg, image/png, image/webp.",
+        )
+
+    # Inspeksi Magic Bytes Biner
+    # JPEG: starts with FF D8 FF
+    is_jpeg = raw_content.startswith(b"\xFF\xD8\xFF")
+    # PNG: starts with 89 50 4E 47 0D 0A 1A 0A
+    is_png = raw_content.startswith(b"\x89PNG\r\n\x1a\n")
+    # WebP: starts with RIFF (offset 0..4) and has WEBP (offset 8..12)
+    is_webp = (
+        len(raw_content) >= 12
+        and raw_content.startswith(b"RIFF")
+        and raw_content[8:12] == b"WEBP"
+    )
+
+    detected_mime = None
+    if is_jpeg:
+        detected_mime = "image/jpeg"
+    elif is_png:
+        detected_mime = "image/png"
+    elif is_webp:
+        detected_mime = "image/webp"
+
+    if not detected_mime:
+        raise HTTPException(
+            status_code=STATUS_422,
+            detail="Tanda tangan biner (magic bytes) tidak sesuai dengan format gambar yang diizinkan (JPEG, PNG, WebP).",
+        )
+
+    if detected_mime != clean_mime:
+        raise HTTPException(
+            status_code=STATUS_422,
+            detail=f"MIME spoofing terdeteksi: header menyatakan '{declared_content_type}' tetapi tanda tangan file adalah '{detected_mime}'.",
+        )
+
+    # Validasi struktur Pillow (mencegah polyglot payload / corrupt image)
+    try:
+        with Image.open(BytesIO(raw_content)) as img_chk:
+            img_chk.verify()
+    except Exception as img_err:
+        raise HTTPException(
+            status_code=STATUS_422,
+            detail=f"Struktur file gambar korup atau tidak valid: {img_err}",
+        )
+
+    return detected_mime
+
+
+def extract_raw_auth_token(request: Any) -> Optional[str]:
+    """Ekstraksi token sesi mentah dari Authorization header, custom headers, atau cookies."""
+    # 1. Header Authorization
+    headers = getattr(request, "headers", {}) or {}
+    auth_header = headers.get("Authorization") or headers.get("authorization")
+    if auth_header:
+        clean = auth_header.strip()
+        if clean.lower().startswith("bearer "):
+            return clean[7:].strip()
+        return clean
+
+    # 2. Custom session headers
+    for h_name in ("X-Session-Token", "x-session-token", "X-Merchant-Token", "x-merchant-token"):
+        custom_tok = headers.get(h_name)
+        if custom_tok and str(custom_tok).strip():
+            return str(custom_tok).strip()
+
+    # 3. Cookies
+    cookies = getattr(request, "cookies", {}) or {}
+    for c_name in ("sb-access-token", "sb:token", "access_token", "session", "auth_token", "merchant_session"):
+        c_val = cookies.get(c_name)
+        if c_val and str(c_val).strip():
+            return str(c_val).strip()
+
+    return None
+
+
+def verify_signed_merchant_session(request: Any) -> Dict[str, Any]:
+    """
+    Memvalidasi sesi/token merchant yang tertandatangan kriptografis.
+    Mendukung Core JWT realm dan Supabase JWT realm.
+    Raises:
+    - HTTP 401 Unauthorized jika token tidak ada, kedaluwarsa, atau tanda tangan tidak valid.
+    """
+    token = extract_raw_auth_token(request)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Autentikasi merchant diperlukan: header Authorization Bearer atau token sesi tidak ditemukan.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    verified_claims = None
+    resolved_realm = None
+
+    # Realm 1: Core JWT
+    try:
+        verified_claims = verify_jwt_token_strict(token, realm="core")
+        resolved_realm = "core"
+    except Exception as core_err:
+        logger.debug(f"[UPLOAD AUTH] Core realm verification rejected: {core_err}")
+
+    # Realm 2: Supabase JWT fallback
+    if not verified_claims:
+        try:
+            verified_claims = verify_jwt_token_strict(token, realm="supabase")
+            resolved_realm = "supabase"
+        except Exception as supa_err:
+            logger.debug(f"[UPLOAD AUTH] Supabase realm verification rejected: {supa_err}")
+
+    if not verified_claims:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token sesi merchant tidak valid, telah kedaluwarsa, atau tanda tangan kriptografis gagal.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Ekstraksi identitas server-side murni
+    merchant_id = (
+        verified_claims.get("merchant_id")
+        or verified_claims.get("sub")
+        or verified_claims.get("user_id")
+        or verified_claims.get("email")
+    )
+    if not merchant_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Klaim merchant_id ('sub' atau 'merchant_id') tidak ditemukan dalam sesi tertanda.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    tenant_id = (
+        verified_claims.get("tenant_id")
+        or verified_claims.get("tenant_slug")
+        or (verified_claims.get("app_metadata") or {}).get("tenant_id")
+        or (verified_claims.get("user_metadata") or {}).get("tenant_id")
+        or (verified_claims.get("app_metadata") or {}).get("tenant_slug")
+        or (verified_claims.get("user_metadata") or {}).get("tenant_slug")
+        or verified_claims.get("tenant")
+    )
+    if not tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Klaim tenant_id / tenant_slug tidak ditemukan dalam sesi tertanda.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return {
+        "tenant_id": str(tenant_id).strip(),
+        "merchant_id": str(merchant_id).strip(),
+        "realm": resolved_realm,
+        "claims": verified_claims,
+    }
+
+
+def validate_no_cross_tenant_tampering(
+    verified_tenant_id: str,
+    request: Any,
+    form_data: Optional[Dict[str, Any]] = None,
+    folder_param: Optional[str] = None,
+) -> None:
+    """
+    Validasi mutlak anti-cross-tenant & anti-path-traversal:
+    - Jika client mengirimkan X-Tenant-ID / X-Tenant-Slug yang tidak cocok -> HTTP 403 Forbidden.
+    - Jika client mengirimkan parameter tenant_id / tenant_slug yang tidak cocok -> HTTP 403 Forbidden.
+    - Jika client mencoba path traversal ('..', '/', '\\') pada folder -> HTTP 403 Forbidden.
+    - Jika client mencoba mengarahkan folder ke namespace tenant lain -> HTTP 403 Forbidden.
+    """
+    headers = getattr(request, "headers", {}) or {}
+
+    # 1. Validasi Header Client
+    h_tenant_id = headers.get("X-Tenant-ID") or headers.get("x-tenant-id")
+    if h_tenant_id and str(h_tenant_id).strip() and str(h_tenant_id).strip() != verified_tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Akses cross-tenant ditolak: header X-Tenant-ID '{h_tenant_id}' tidak cocok dengan session tenant '{verified_tenant_id}'.",
+        )
+
+    h_tenant_slug = headers.get("X-Tenant-Slug") or headers.get("x-tenant-slug")
+    if h_tenant_slug and str(h_tenant_slug).strip() and str(h_tenant_slug).strip() != verified_tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Akses cross-tenant ditolak: header X-Tenant-Slug '{h_tenant_slug}' tidak cocok dengan session tenant '{verified_tenant_id}'.",
+        )
+
+    # 2. Validasi Query Parameters
+    query_params = getattr(request, "query_params", None)
+    if query_params is None and hasattr(request, "query"):
+        query_params = request.query
+    if query_params:
+        q_tenant = query_params.get("tenant_id") or query_params.get("tenant_slug")
+        if q_tenant and str(q_tenant).strip() and str(q_tenant).strip() != verified_tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Akses cross-tenant ditolak: query param tenant '{q_tenant}' tidak cocok dengan session tenant '{verified_tenant_id}'.",
+            )
+
+    # 3. Validasi Path Parameters (jika rute menyertakan /tenants/{slug})
+    path_params = getattr(request, "path_params", {}) or {}
+    p_slug = path_params.get("slug")
+    if not p_slug and hasattr(request, "match_info"):
+        p_slug = request.match_info.get("slug")
+    if p_slug and str(p_slug).strip() and str(p_slug).strip() != verified_tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Akses cross-tenant ditolak: path tenant '{p_slug}' tidak cocok dengan session tenant '{verified_tenant_id}'.",
+        )
+
+    # 4. Validasi Form Data
+    if form_data:
+        f_tenant = form_data.get("tenant_id") or form_data.get("tenant_slug") or form_data.get("tenant")
+        if f_tenant and str(f_tenant).strip() and str(f_tenant).strip() != verified_tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Akses cross-tenant ditolak: form field tenant '{f_tenant}' tidak cocok dengan session tenant '{verified_tenant_id}'.",
+            )
+
+        f_folder = form_data.get("folder")
+        if f_folder and isinstance(f_folder, str):
+            clean_f = f_folder.strip()
+            if ".." in clean_f or clean_f.startswith("/") or "\\" in clean_f:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Percobaan path traversal terdeteksi pada parameter folder form.",
+                )
+            if clean_f.startswith("tenants/") and not clean_f.startswith(f"tenants/{verified_tenant_id}"):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Akses cross-tenant ditolak: dilarang mengunggah ke namespace tenant lain.",
+                )
+
+    # 5. Validasi folder_param langsung
+    if folder_param:
+        clean_p = folder_param.strip()
+        if ".." in clean_p or clean_p.startswith("/") or "\\" in clean_p:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Percobaan path traversal terdeteksi pada parameter folder.",
+            )
+        if clean_p.startswith("tenants/") and not clean_p.startswith(f"tenants/{verified_tenant_id}"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Akses cross-tenant ditolak: dilarang mengunggah ke namespace tenant lain.",
+            )
+
+
 async def process_and_upload_image_bytes(
     raw_content: bytes,
     original_filename: str = "upload.jpg",
@@ -53,6 +343,7 @@ async def process_and_upload_image_bytes(
     base_url: str = "",
     folder: Optional[str] = None,
     is_qris: bool = False,
+    custom_filename: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Memvalidasi gambar (mendukung QRIS dan gambar produk), mengoptimasi:
@@ -129,7 +420,28 @@ async def process_and_upload_image_bytes(
 
     unique_id = uuid.uuid4().hex
 
-    if is_qris_mode:
+    if custom_filename:
+        filename = custom_filename
+        fn_low = filename.lower()
+        if is_qris_mode or fn_low.endswith(".png"):
+            out_buffer = BytesIO()
+            img.save(out_buffer, "PNG", optimize=True)
+            final_bytes = out_buffer.getvalue()
+            file_size_kb = round(len(final_bytes) / 1024, 2)
+            out_content_type = "image/png"
+        elif fn_low.endswith((".jpg", ".jpeg")):
+            jpg_buffer = BytesIO()
+            img.save(jpg_buffer, "JPEG", quality=WEBP_QUALITY, optimize=True)
+            final_bytes = jpg_buffer.getvalue()
+            file_size_kb = round(len(final_bytes) / 1024, 2)
+            out_content_type = "image/jpeg"
+        else:
+            webp_buffer = BytesIO()
+            img.save(webp_buffer, "WEBP", quality=WEBP_QUALITY, optimize=True)
+            final_bytes = webp_buffer.getvalue()
+            file_size_kb = round(len(final_bytes) / 1024, 2)
+            out_content_type = "image/webp"
+    elif is_qris_mode:
         # QRIS disimpan sebagai PNG lossless agar module barcode tidak mengalami kompresi blur
         out_buffer = BytesIO()
         img.save(out_buffer, "PNG", optimize=True)
@@ -216,6 +528,7 @@ async def process_and_upload_image_bytes(
         "qris_url": image_url,
         "qris_image_url": image_url,
         "path": f"/{target_folder}/{filename}",
+        "storage_path": f"{target_folder}/{filename}",
         "filename": filename,
         "folder": target_folder,
         "is_qris": is_qris_mode,
@@ -230,6 +543,7 @@ async def process_and_upload_image_bytes(
             "qris_url": image_url,
             "filename": filename,
             "path": f"/{target_folder}/{filename}",
+            "storage_path": f"{target_folder}/{filename}",
             "folder": target_folder,
         }
     }
@@ -360,7 +674,136 @@ async def upload_qris_image_endpoint(
 
 
 # General & direct upload aliases
-@general_upload_router.post("/api/v1/upload", summary="Direct v1 upload endpoint")
+@general_upload_router.post(
+    "/api/v1/upload",
+    status_code=status.HTTP_201_CREATED,
+    summary="Hardened tenant upload endpoint with signed merchant authorization",
+)
+async def hardened_tenant_upload_endpoint(
+    request: Request,
+    file: Optional[UploadFile] = File(None),
+    image: Optional[UploadFile] = File(None),
+    qris: Optional[UploadFile] = File(None),
+    qris_image: Optional[UploadFile] = File(None),
+    folder: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    POST /api/v1/upload (Security Remediation Issue #27)
+    - Validasi Sesi Merchant Tertanda (Signed Authentication): HTTP 401 jika anonim / token tidak valid.
+    - Server-Derived Identity: tenant_id dan merchant_id diambil murni dari klaim sesi server-side.
+    - Anti-Cross-Tenant Tampering: HTTP 403 jika client mencoba spoofing X-Tenant-ID / form tenant_id / folder path traversal.
+    - File & Magic Bytes Validation: HTTP 422 jika file > 5MB, format non-gambar, atau magic bytes spoofed.
+    - Tenant-Scoped Storage Namespace: tenants/{verified_tenant_id}/uploads/{YYYY}/{MM}/{uuid4}.{ext}.
+    - Status Code: HTTP 201 Created.
+    """
+    # 1. Validasi Sesi Merchant Tertanda (MANDATORY)
+    session = verify_signed_merchant_session(request)
+    verified_tenant_id = session["tenant_id"]
+    verified_merchant_id = session["merchant_id"]
+
+    # 2. Ekstrak Form Data untuk Cek Spoofing & Deteksi File
+    upload_file = file or image or qris or qris_image
+    form_data = {}
+    try:
+        raw_form = await request.form()
+        form_data = dict(raw_form)
+        if upload_file is None:
+            for key in ("file", "image", "qris", "qris_image", "qris_file", "qr", "qr_image", "photo", "picture", "media", "upload"):
+                val = raw_form.get(key)
+                if isinstance(val, UploadFile):
+                    upload_file = val
+                    break
+            if upload_file is None:
+                for k, v in raw_form.items():
+                    if isinstance(v, UploadFile):
+                        upload_file = v
+                        break
+    except Exception:
+        pass
+
+    # 3. Validasi Mutlak Anti Cross-Tenant & Anti-Path-Traversal
+    validate_no_cross_tenant_tampering(
+        verified_tenant_id=verified_tenant_id,
+        request=request,
+        form_data=form_data,
+        folder_param=folder,
+    )
+
+    if upload_file is None:
+        raise HTTPException(
+            status_code=STATUS_422,
+            detail="File gambar tidak ditemukan dalam request form data.",
+        )
+
+    raw_content = await upload_file.read()
+    orig_filename = upload_file.filename or "upload.jpg"
+    declared_mime = upload_file.content_type or "image/jpeg"
+
+    # 4. Validasi Keamanan File & Magic Bytes (Max 5MB, MIME, Magic bytes, Pillow verify)
+    detected_mime = validate_image_file_security(
+        raw_content=raw_content,
+        declared_content_type=declared_mime,
+        filename=orig_filename,
+    )
+
+    # 5. Deteksi QRIS
+    fn_lower = orig_filename.lower()
+    form_folder = form_data.get("folder")
+    form_type = form_data.get("type")
+    is_qris = (
+        "qris" in fn_lower
+        or folder == "qris"
+        or form_folder == "qris"
+        or form_type == "qris"
+        or qris is not None
+        or qris_image is not None
+    )
+
+    # 6. Tenant-Scoped Storage Namespace:
+    # tenants/{verified_tenant_id}/uploads/{YYYY}/{MM}/{uuid4}.{ext}
+    now = datetime.now(timezone.utc)
+    year_str = now.strftime("%Y")
+    month_str = now.strftime("%m")
+    unique_id = uuid.uuid4().hex
+
+    if is_qris:
+        ext = "png"
+    else:
+        ext = "webp"
+
+    final_filename = f"{unique_id}.{ext}"
+    storage_folder = f"tenants/{verified_tenant_id}/uploads/{year_str}/{month_str}"
+    storage_path = f"{storage_folder}/{final_filename}"
+    base_url = str(request.base_url).rstrip("/")
+
+    res = await process_and_upload_image_bytes(
+        raw_content=raw_content,
+        original_filename=orig_filename,
+        content_type=detected_mime,
+        base_url=base_url,
+        folder=storage_folder,
+        is_qris=is_qris,
+        custom_filename=final_filename,
+    )
+
+    # 7. Bind Identitas & Metadata Namespace
+    res["tenant_id"] = verified_tenant_id
+    res["merchant_id"] = verified_merchant_id
+    res["storage_path"] = storage_path
+    res["path"] = f"/{storage_path}"
+    res["folder"] = storage_folder
+    res["filename"] = final_filename
+    if "data" in res and isinstance(res["data"], dict):
+        res["data"]["tenant_id"] = verified_tenant_id
+        res["data"]["merchant_id"] = verified_merchant_id
+        res["data"]["storage_path"] = storage_path
+        res["data"]["path"] = f"/{storage_path}"
+        res["data"]["folder"] = storage_folder
+        res["data"]["filename"] = final_filename
+
+    return res
+
+
 @general_upload_router.post("/api/upload", summary="Direct upload endpoint")
 @general_upload_router.post("/api/media/upload", summary="Direct media upload endpoint")
 @general_upload_router.post("/api/v1/products/upload-image", summary="Products image upload endpoint")
@@ -411,6 +854,22 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
     """Handler upload gambar multipart untuk aiohttp server pada Railway."""
     cors_headers = _build_cors_headers(request)
 
+    is_hardened_route = request.path.rstrip("/") == "/api/v1/upload"
+    verified_tenant_id = None
+    verified_merchant_id = None
+
+    if is_hardened_route:
+        try:
+            session = verify_signed_merchant_session(request)
+            verified_tenant_id = session["tenant_id"]
+            verified_merchant_id = session["merchant_id"]
+        except HTTPException as auth_exc:
+            return web.json_response(
+                {"status": "error", "detail": auth_exc.detail},
+                status=auth_exc.status_code,
+                headers=cors_headers,
+            )
+
     raw_content: Optional[bytes] = None
     content_type: str = "image/jpeg"
     filename: str = "upload.jpg"
@@ -418,6 +877,7 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
     type_param: Optional[str] = request.query.get("type")
     path_lower = request.path.lower()
     is_qris = "qris" in path_lower or folder == "qris" or type_param == "qris"
+    post_data = None
 
     # 1. Coba ekstrak via request.post()
     try:
@@ -471,14 +931,62 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
         except Exception as multi_err:
             logger.debug(f"[aiohttp_upload_image multipart extract note]: {multi_err}")
 
+    if is_hardened_route:
+        # Cek anti cross-tenant tampering
+        try:
+            validate_no_cross_tenant_tampering(
+                verified_tenant_id=verified_tenant_id,
+                request=request,
+                form_data=dict(post_data) if post_data is not None else None,
+                folder_param=folder,
+            )
+        except HTTPException as ct_exc:
+            return web.json_response(
+                {"status": "error", "detail": ct_exc.detail},
+                status=ct_exc.status_code,
+                headers=cors_headers,
+            )
+
     if raw_content is None:
+        err_status = 422 if is_hardened_route else 400
         return web.json_response(
             {"status": "error", "detail": "File gambar tidak ditemukan dalam form data (gunakan field 'file', 'image', atau 'qris')"},
-            status=400,
+            status=err_status,
             headers=cors_headers
         )
 
     base_url = f"{request.scheme}://{request.host}"
+
+    custom_final_filename = None
+    target_folder = folder
+
+    if is_hardened_route:
+        try:
+            detected_mime = validate_image_file_security(
+                raw_content=raw_content,
+                declared_content_type=content_type,
+                filename=filename,
+            )
+            content_type = detected_mime
+        except HTTPException as val_exc:
+            return web.json_response(
+                {"status": "error", "detail": val_exc.detail},
+                status=val_exc.status_code,
+                headers=cors_headers,
+            )
+
+        now = datetime.now(timezone.utc)
+        year_str = now.strftime("%Y")
+        month_str = now.strftime("%m")
+        unique_id = uuid.uuid4().hex
+
+        if is_qris:
+            ext = "png"
+        else:
+            ext = "webp"
+
+        custom_final_filename = f"{unique_id}.{ext}"
+        target_folder = f"tenants/{verified_tenant_id}/uploads/{year_str}/{month_str}"
 
     try:
         res = await process_and_upload_image_bytes(
@@ -486,9 +994,27 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
             original_filename=filename,
             content_type=content_type,
             base_url=base_url,
-            folder=folder,
-            is_qris=is_qris
+            folder=target_folder,
+            is_qris=is_qris,
+            custom_filename=custom_final_filename,
         )
+
+        if is_hardened_route:
+            storage_path = f"{target_folder}/{custom_final_filename}"
+            res["tenant_id"] = verified_tenant_id
+            res["merchant_id"] = verified_merchant_id
+            res["storage_path"] = storage_path
+            res["path"] = f"/{storage_path}"
+            res["folder"] = target_folder
+            res["filename"] = custom_final_filename
+            if "data" in res and isinstance(res["data"], dict):
+                res["data"]["tenant_id"] = verified_tenant_id
+                res["data"]["merchant_id"] = verified_merchant_id
+                res["data"]["storage_path"] = storage_path
+                res["data"]["path"] = f"/{storage_path}"
+                res["data"]["folder"] = target_folder
+                res["data"]["filename"] = custom_final_filename
+
         # Jika request menyertakan tenant slug (/api/v1/tenants/{slug}/...), sinkronkan otomatis ke settings
         slug = request.match_info.get("slug")
         if slug and res.get("url"):
@@ -501,11 +1027,13 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
             except Exception as auto_sync_err:
                 logger.debug(f"[auto_sync_tenant_qris note]: {auto_sync_err}")
 
-        return web.json_response(res, status=200, headers=cors_headers)
+        resp_status = 201 if is_hardened_route else 200
+        return web.json_response(res, status=resp_status, headers=cors_headers)
     except ValueError as ve:
+        err_code = 422 if is_hardened_route else 400
         return web.json_response(
             {"status": "error", "detail": str(ve)},
-            status=400,
+            status=err_code,
             headers=cors_headers
         )
     except Exception as exc:
