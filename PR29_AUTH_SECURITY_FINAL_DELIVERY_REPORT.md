@@ -6,8 +6,8 @@
 **PR URL:** https://github.com/B055OB/boontrack-core/pull/29  
 **Refs:** Issue #27  
 **Status:** **IMPLEMENTED — PENDING CTO APPROVAL**  
-**Date:** 2026-11-10  
-**Latest Baseline:** `de9691fd425cc302bdfcdfe0cf02bd5534ca08bf`
+**Date:** 2026-11-11  
+**Latest Baseline:** `e58ecc11d6e13fb8580d44f4baae132332d366d0`
 
 ---
 
@@ -30,13 +30,15 @@ Dedicated second-pass security remediation closing all confirmed and conditional
 | **P0 — Active Owner Re-registration Guard (HTTP 409)** | 🔴 P0 Critical | ✅ CLOSED |
 | **P0 — Preflight Check for Unowned `public.tenants` Slugs** | 🔴 P0 Critical | ✅ CLOSED |
 | **P0 — Inactive/Suspended Merchant Self-Reactivation Guard** | 🔴 P0 Critical | ✅ CLOSED |
-| **P1 — Distributed Verification Rate Limiting (IP Abuse + Challenge Lockout)** | 🟡 P1 High | ✅ CLOSED |
+| **P0 — Verification Challenge Rate Limiting & Cycling OTP Resistance** | 🔴 P0 Critical | ✅ CLOSED |
+| **P0 — Trusted Client IP Resolver & Spoofed Header Protection (`trusted_proxy.py`)** | 🔴 P0 Critical | ✅ CLOSED |
 | **P1 — CSPRNG OTP Generation (`secrets`)** | 🟡 P1 High | ✅ CLOSED |
+| **P1 — Scheduled Background Cleanup Reconciliation & Leader Lock** | 🟡 P1 High | ✅ CLOSED |
 | **P1 — Observable Reservation Rollback & Dead-Letter Queue (7-day Redis TTL)** | 🟡 P1 High | ✅ CLOSED |
-| **P1 — Durable Dead-Letter Reconciliation Routine (`reconcile_pending_cleanups`)** | 🟡 P1 High | ✅ CLOSED |
+| **P1 — Supabase Dual-Table Compensating Recovery & Error Reconciliation** | 🟡 P1 High | ✅ CLOSED |
 | **P1 — Real Redis Service Container in CI (`redis:7-alpine`)** | 🟡 P1 High | ✅ CLOSED |
 | **P1 — Production-Grade CI Test Schema (`merchants` & `cs_agents`)** | 🟡 P1 High | ✅ CLOSED |
-| **P1 — Dedicated Live PostgreSQL Integration Suite (16 Tests)** | 🟡 P1 High | ✅ CLOSED |
+| **P1 — Dedicated Live PostgreSQL Integration Suite (20 Tests)** | 🟡 P1 High | ✅ CLOSED |
 
 ---
 
@@ -64,6 +66,8 @@ Dedicated second-pass security remediation closing all confirmed and conditional
 - **Remediation:**
   - If `tenants.insert` fails in Supabase during registration, compensating `merchants.delete` executes immediately, removing the pending row and returning `(False, error)`.
   - If `tenants.update` fails or affects 0 rows in Supabase during activation, compensating `merchants.update` reverts the merchant status back to `PENDING_VERIFICATION`, returning `(False, error)`.
+  - If compensating rollback encounters an error, the failure is durably recorded in `{bt:auth}:cleanup_dead_letter:{slug}` (7-day TTL) and enqueued to `{bt:auth}:cleanup_dead_letter_set`.
+  - In `_delete_pending_merchant`: if PostgreSQL fails but Supabase cleanup succeeds, obsolete PostgreSQL error is cleared and returns `(True, None)`.
 
 ### P0 — Tenant Status Transition Guard & Zero-Rowcount Rollback
 - **Vulnerability:** `ON CONFLICT DO UPDATE` during activation could unconditionally reactivate suspended or disabled tenants.
@@ -71,31 +75,40 @@ Dedicated second-pass security remediation closing all confirmed and conditional
   - In PostgreSQL, activation executes `UPDATE public.tenants SET status = 'ACTIVE', is_active = true WHERE lower(slug) = %s AND status = 'PENDING_VERIFICATION' AND is_active = false;`.
   - Enforces `cur.rowcount == 1`. If zero rows are affected (e.g. tenant is `SUSPENDED`, `DISABLED`, or missing), transaction rolls back immediately with `conn.rollback()` and returns `(False, error)`. Merchant status update is rolled back atomically.
 
-### P1 — OTP Verification Rate Limiting
-- **Implementation:** `VerificationRateLimiter` enforces:
-  - Per-source IP rate limit: max 15 requests per 60 seconds (`{bt:auth}:ratelimit:ip:{client_ip}`).
-  - Per-challenge lockout: max 5 failed attempts before lockout (`{bt:auth}:ratelimit:challenge:{challenge_id}`).
-  - Generic error messages that do not leak whether an email or OTP exists.
-  - Atomic Redis counters via Lua script with TTL.
-  - Fails closed in production if Redis is unavailable.
+### P0 — Verification Challenge Rate Limiting & Cycling OTP Resistance
+- **Vulnerability:** Using client-provided OTP value as the rate limiting challenge identifier allowed attackers to cycle through candidate OTP values without ever triggering the lockout threshold.
+- **Remediation:**
+  - Mint server-issued challenge identifier (`challenge_id = f"ch_{secrets.token_urlsafe(24)}"`) bound to verification sessions on registration and magic link requests.
+  - Verification enforces multi-tier controls:
+    1. **IP Abuse Rate Limit:** Max 15 requests per 60 seconds (`{bt:auth}:ratelimit:ip:{client_ip}`).
+    2. **Challenge Lockout:** Max 5 failed attempts per challenge session (`{bt:auth}:ratelimit:challenge:{challenge_id}`) with 900-second lockout. Cycling OTP guesses against the same challenge cannot reset or evade the failure counter.
+    3. **Account Lockout:** Max 5 failed attempts per email account (`{bt:auth}:ratelimit:account:{email}`) with 900-second lockout.
+  - Preserves single-use atomic consumption and generic responses (`HTTP 401` on invalid code, `HTTP 429` on lockout) to prevent account and OTP enumeration.
+  - Production strictly fails closed (`HTTP 503`) if distributed token store (Redis) rate limiting is unavailable.
 
-### P1 — Slug Lock Correctness
+### P0 — Trusted Client IP Resolver & Spoofed Header Protection
+- **Vulnerability:** Relying on raw leftmost `X-Forwarded-For` splitting allowed clients to spoof arbitrary source IPs by sending forged header values.
+- **Remediation:**
+  - Implemented `TrustedProxyResolver` and `get_trusted_client_ip(request)` in [`app/core/security/trusted_proxy.py`](file:///C:/boontrack-core/app/core/security/trusted_proxy.py).
+  - Inspects direct peer IP (`request.client.host` in FastAPI, `request.remote` in aiohttp).
+  - If direct peer IP is untrusted, all forwarded headers (`X-Forwarded-For`, `CF-Connecting-IP`) are treated as untrusted payload and discarded; direct peer IP is returned.
+  - If direct peer IP is a trusted proxy (Loopback, RFC1918, IPv6 ULA, or Cloudflare CIDRs, configurable via `TRUSTED_PROXIES`), traverses `X-Forwarded-For` right-to-left skipping trusted proxies to find the authentic client IP.
+  - Supports `CF-Connecting-IP` only when direct peer is verified to be a Cloudflare edge IP.
+
+### P1 — Scheduled Background Cleanup Reconciliation & Leader Lock
+- **Implementation:**
+  - Wired cleanup reconciliation into application startup in [`app/main.py`](file:///C:/boontrack-core/app/main.py) and spawned periodic background reconciler worker `start_cleanup_reconciler_worker(interval_seconds=60)`.
+  - Enforces distributed leader election via atomic lease lock `{bt:auth}:__auth_reconciler_leader__` (120s TTL) and per-slug lock `{bt:auth}:__reconcile_{slug}__` (60s TTL) to prevent split-brain worker races.
+  - **Active Tenant Guard:** Reconciler checks tenant status across PostgreSQL and Supabase; if a tenant is `ACTIVE` (or `is_active=True`), reconciler and `_delete_pending_merchant` strictly refuse to delete it, clearing it safely from the dead-letter queue.
+  - Automatically prunes expired records from `{bt:auth}:cleanup_dead_letter_set`.
+
+### P1 — Slug Lock Correctness & Redis Cluster Invariant
 - **Implementation:**
   - Unique 32-character hex lease token generated per lock acquisition via `secrets.token_hex(16)`.
   - Atomic compare-and-delete release via Lua script `_REDIS_RELEASE_LOCK_LUA`.
-  - In production mode, strictly fails closed if Redis is unavailable without falling back to memory.
-
-### P1 — Real Redis Integration & Cluster Hash Tag Invariant
-- **Implementation:**
   - Added `redis:7-alpine` container service and environment variables (`REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`) to `.github/workflows/cto-security-audit.yml`.
   - Prefixed all auth Redis keys with `{bt:auth}:` hash tag (`{bt:auth}:magic_link:...`, `{bt:auth}:magic_link_otp:...`, `{bt:auth}:slug_lock:...`, `{bt:auth}:ratelimit:...`, `{bt:auth}:cleanup_dead_letter:...`).
   - Guarantees multi-key operations and Lua scripts hash to the exact same hash slot on Redis Cluster without `CROSSSLOT` errors.
-
-### P1 — Observable Cleanup & Dead-Letter Queue
-- **Implementation:**
-  - Call sites of `_delete_pending_merchant` check result and emit `[SECURITY_ALERT][PENDING_CLEANUP_FAILURE]` structured telemetry.
-  - Failures are recorded to Redis key `{bt:auth}:cleanup_dead_letter:{slug}` (7-day TTL) and durable set `{bt:auth}:cleanup_dead_letter_set`.
-  - `reconcile_pending_cleanups()` routine retries pending deletions and cleans registry upon recovery.
 
 ---
 
@@ -103,14 +116,17 @@ Dedicated second-pass security remediation closing all confirmed and conditional
 
 | File | Type | Description |
 | :--- | :--- | :--- |
-| [`app/routes/auth_routes.py`](file:///C:/boontrack-core/app/routes/auth_routes.py) | Modified | Strict fail-closed persistence, atomic distributed Redis Lua consumption, fail-closed distributed store guard, dual-table tenant provisioning (`merchants` + `public.tenants`), status transition guard, verification rate limiting, slug lease tokens, dead-letter cleanup telemetry and reconciliation. |
+| [`app/core/security/trusted_proxy.py`](file:///C:/boontrack-core/app/core/security/trusted_proxy.py) | **New** | `TrustedProxyResolver` and `get_trusted_client_ip` enforcing right-to-left traversal across trusted proxies and rejecting spoofed headers from untrusted direct peers. |
+| [`app/routes/auth_routes.py`](file:///C:/boontrack-core/app/routes/auth_routes.py) | Modified | Server-issued challenge ID, multi-tier verification rate limiting (IP, challenge, account), strict fail-closed persistence, atomic Redis Lua consumption, dual-table tenant provisioning (`merchants` + `public.tenants`), status transition guard, slug lease tokens, active tenant guard, dead-letter cleanup reconciliation worker. |
+| [`app/routes/tenant_onboard_routes.py`](file:///C:/boontrack-core/app/routes/tenant_onboard_routes.py) | Modified | Replaced naive leftmost `X-Forwarded-For` splitting with `get_trusted_client_ip(request)` across FastAPI and aiohttp handlers. |
+| [`app/main.py`](file:///C:/boontrack-core/app/main.py) | Modified | Wired `@app.on_event("startup")` to execute initial auth cleanup reconciliation and launch `start_cleanup_reconciler_worker(interval_seconds=60)`. |
 | [`scripts/init_test_postgres_schema.py`](file:///C:/boontrack-core/scripts/init_test_postgres_schema.py) | Modified | Added production-grade schema, indexes, and RLS policies for `public.merchants` and `public.cs_agents` matching the production contract and passing the catalog RLS audit gate. |
 | [`app/routes/media_routes.py`](file:///C:/boontrack-core/app/routes/media_routes.py) | Modified | Test registry isolation via `_is_test_registry_allowed()`, preventing in-memory test overrides in production. |
 | [`.github/workflows/cto-security-audit.yml`](file:///C:/boontrack-core/.github/workflows/cto-security-audit.yml) | Modified | Added `redis:7-alpine` service container, Redis environment variables, and explicit CI step executing unit tests and live PostgreSQL integration tests. |
 | [`tests/api/test_auth_registration_security.py`](file:///C:/boontrack-core/tests/api/test_auth_registration_security.py) | Modified | 17 comprehensive security regression tests covering unit persistence, failure modes, and security invariants. |
 | [`tests/test_email_auth.py`](file:///C:/boontrack-core/tests/test_email_auth.py) | Modified | Updated assertions: `status=pending_verification`, no token on register, separate welcome vs verification email failure tests (12 tests). |
-| [`tests/test_auth_postgres_integration.py`](file:///C:/boontrack-core/tests/test_auth_postgres_integration.py) | Expanded | 16 dedicated live PostgreSQL & distributed token store integration tests (concurrency, lifecycle, upload auth, rollback, active owner, suspended, race conditions, fail-closed, tenant preflight race, tenant suspended transition, tenant zero rows, Supabase compensating rollback, rate limiting lockout, slug lock lease token, dead-letter recovery, multi-instance Redis). |
-| [`AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md`](file:///C:/boontrack-core/AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md) | Updated | Section 7: PR #29 delivery summary, status wording `IMPLEMENTED — PENDING CTO APPROVAL`. |
+| [`tests/test_auth_postgres_integration.py`](file:///C:/boontrack-core/tests/test_auth_postgres_integration.py) | Expanded | 20 dedicated live PostgreSQL & distributed token store integration tests (concurrency, lifecycle, upload auth, rollback, active owner, suspended, race conditions, fail-closed, tenant preflight race, tenant suspended transition, tenant zero rows, Supabase compensating rollback, rate limiting lockout, slug lock lease token, dead-letter recovery, multi-instance Redis, challenge cycling lockout, trusted IP spoofing defense, scheduled reconciler active preservation, Supabase compensating scenarios). |
+| [`AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md`](file:///C:/boontrack-core/AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md) | Updated | Final architectural parity notes and PR #29 delivery summary. |
 
 ---
 
@@ -134,6 +150,10 @@ Dedicated second-pass security remediation closing all confirmed and conditional
 | 14 | `test_14_slug_lock_lease_token_correctness_and_atomic_release` | Distributed slug lock with 32-char hex lease token and Lua compare-and-delete | Concurrent acquisition returns None; invalid lease token cannot release lock; correct lease releases atomically | ✅ PASSED |
 | 15 | `test_15_dead_letter_queue_and_reconciliation_recovery` | Reservation cleanup failure during rollback | Records to dead-letter queue; `reconcile_pending_cleanups()` retries and reconciles reservations successfully | ✅ PASSED |
 | 16 | `test_16_redis_multi_instance_cluster_hash_tag_and_paired_deletion` | Two independent `TokenStore` instances sharing live Redis container | Atomic Lua consumption with `{bt:auth}:` cluster hash tags; paired token and OTP keys deleted simultaneously | ✅ PASSED (in CI with `redis:7-alpine`) |
+| 17 | `test_17_challenge_rate_limiting_cycling_otps_locked_out_and_account_controls` | Server-issued challenge ID, 5 cycling OTP guesses, account lockout, Redis outage fail-closed | 6th cycling attempt rejected with HTTP 429; account lockout triggered; Redis outage in production fails closed | ✅ PASSED |
+| 18 | `test_18_trusted_client_ip_and_spoofed_forwarded_headers` | Untrusted peer IP vs trusted proxy right-to-left traversal and Cloudflare header verification | Spoofed headers from untrusted direct peer discarded; authentic client IP extracted through trusted proxies | ✅ PASSED |
+| 19 | `test_19_scheduled_cleanup_reconciliation_and_active_tenant_preservation` | Background reconciler worker with leader lock and ACTIVE tenant preservation guard | Refuses to delete active tenants; clears dead-letter queue; verifies startup hook in `app/main.py` | ✅ PASSED |
+| 20 | `test_20_supabase_compensating_recovery_dual_table_scenarios` | All 6 Supabase dual-table compensating scenarios under simulated partial failures | Clean rollback on tenant failures, dead-letter recording on compensation errors, error cleared on Supabase success | ✅ PASSED |
 
 ---
 
@@ -143,12 +163,12 @@ Dedicated second-pass security remediation closing all confirmed and conditional
 | :--- | :---: | :---: | :---: | :---: |
 | `tests/api/test_auth_registration_security.py` | 17 | ✅ 17/17 PASSED | PASSED | PASSED |
 | `tests/test_email_auth.py` | 12 | ✅ 12/12 PASSED | PASSED | PASSED |
-| `tests/test_auth_postgres_integration.py` | 16 | ✅ 16/16 PASSED | 15 Passed (1 Skipped) | 16 Passed (with `redis:7-alpine`) |
+| `tests/test_auth_postgres_integration.py` | 20 | ✅ 20/20 PASSED | 19 Passed (1 Skipped) | 20 Passed (with `redis:7-alpine`) |
 | `tests/test_media_upload.py` | 12 | ✅ 12/12 PASSED | PASSED | PASSED |
 | `tests/api/test_upload_alias_authorization.py` | 30 | ✅ 30/30 PASSED | PASSED | PASSED |
 | `tests/api/test_upload_security.py` | 16 | ✅ 16/16 PASSED | PASSED | PASSED |
 | `tests/api/test_aiohttp_upload_security.py` | 18 | ✅ 18/18 PASSED | PASSED | PASSED |
-| **Total Across All 7 Suites** | **121** | ✅ **121/121 PASSED (100% Green)** | **120 Passed, 1 Skipped** | **121/121 Passed** |
+| **Total Across All 7 Suites** | **125** | ✅ **125/125 PASSED (100% Green)** | **124 Passed, 1 Skipped** | **125/125 Passed** |
 
 ---
 
@@ -177,4 +197,3 @@ CREATE INDEX IF NOT EXISTS idx_merchants_status ON merchants (status);
 2. Rebase or merge updated `main` into PR #29 (`security/auth-registration-identity-verification`).
 3. PR #29 merged into `main` only after DB migration readiness.
 4. Neither PR is merged without independent CTO sign-off.
-

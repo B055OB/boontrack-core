@@ -6,12 +6,14 @@ import secrets
 import random
 import logging
 import threading
+import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any, Tuple, List, Sequence
+from typing import Optional, Dict, Any, Tuple, List, Sequence, Set
 from fastapi import APIRouter, HTTPException, status, Request
 from pydantic import BaseModel, EmailStr, Field
 from app.core.tenant_loader import LOADED_CONFIG_TENANTS, TENANT_REGISTRY
+from app.core.security.trusted_proxy import get_trusted_client_ip
 
 try:
     from jose import jwt
@@ -346,6 +348,7 @@ def _insert_pending_merchant(
                     supabase.table("merchants").delete().eq("slug", clean_s).ilike("owner_email", clean_e).eq("status", "PENDING_VERIFICATION").execute()
                 except Exception as comp_err:
                     logger.critical(f"[COMPENSATING_ROLLBACK_FAILED] Merchants insert rollback failed for '{clean_s}': {comp_err}")
+                    _record_dead_letter_cleanup(clean_s, clean_e, f"MERCHANT_COMPENSATION_DELETE_FAILED: {comp_err}", action="delete")
                 _pending_registrations.pop(clean_s, None)
                 t_err_str = str(t_exc)
                 if "unique" in t_err_str.lower() or "duplicate" in t_err_str.lower() or "23505" in t_err_str:
@@ -477,21 +480,27 @@ def _activate_pending_merchant(slug: str, owner_email: str) -> Tuple[bool, Optio
                 if not t_res.data or len(t_res.data) == 0:
                     # Compensating rollback: revert merchant back to PENDING_VERIFICATION
                     try:
-                        supabase.table("merchants").update({
+                        rev_res = supabase.table("merchants").update({
                             "status": "PENDING_VERIFICATION",
                             "is_otp_verified": False,
                         }).eq("slug", clean_s).ilike("owner_email", clean_e).eq("status", "ACTIVE").execute()
+                        if not rev_res.data or len(rev_res.data) == 0:
+                            _record_dead_letter_cleanup(clean_s, clean_e, "MERCHANT_STATUS_REVERT_ZERO_ROWS", action="revert")
                     except Exception as comp_err:
                         logger.critical(f"[COMPENSATING_ROLLBACK_FAILED] Merchant status revert failed for '{clean_s}': {comp_err}")
+                        _record_dead_letter_cleanup(clean_s, clean_e, f"MERCHANT_STATUS_REVERT_FAILED: {comp_err}", action="revert")
                     return False, f"TENANT_ACTIVATION_AFFECTED_ZERO_ROWS: Tenant '{clean_s}' was not in PENDING_VERIFICATION state"
             except Exception as t_exc:
                 try:
-                    supabase.table("merchants").update({
+                    rev_res = supabase.table("merchants").update({
                         "status": "PENDING_VERIFICATION",
                         "is_otp_verified": False,
                     }).eq("slug", clean_s).ilike("owner_email", clean_e).eq("status", "ACTIVE").execute()
+                    if not rev_res.data or len(rev_res.data) == 0:
+                        _record_dead_letter_cleanup(clean_s, clean_e, "MERCHANT_STATUS_REVERT_ZERO_ROWS", action="revert")
                 except Exception as comp_err:
                     logger.critical(f"[COMPENSATING_ROLLBACK_FAILED] Merchant status revert failed for '{clean_s}': {comp_err}")
+                    _record_dead_letter_cleanup(clean_s, clean_e, f"MERCHANT_STATUS_REVERT_FAILED: {comp_err}", action="revert")
                 return False, f"SUPABASE_TENANT_ACTIVATION_ERROR: {t_exc}"
 
             if _is_test_registry_allowed():
@@ -510,11 +519,45 @@ def _activate_pending_merchant(slug: str, owner_email: str) -> Tuple[bool, Optio
     return False, f"DB_CONN_ERROR: {err_detail}"
 
 
+def _record_dead_letter_cleanup(slug: str, owner_email: str, error: str, action: str = "delete") -> None:
+    """Durably records a failed cleanup or compensating rollback in recovery state."""
+    clean_s = str(slug).strip().lower()
+    clean_e = str(owner_email).strip().lower()
+    payload = {
+        "slug": clean_s,
+        "owner_email": clean_e,
+        "action": action,
+        "error": str(error),
+        "timestamp": time.time(),
+    }
+    _DEAD_LETTER_CLEANUP_REGISTRY[clean_s] = payload
+    try:
+        if token_store and token_store._redis_client:
+            key = f"{_AUTH_HASH_TAG}:cleanup_dead_letter:{clean_s}"
+            token_store._redis_client.setex(key, 604800, json.dumps(payload))  # 7-day TTL
+            token_store._redis_client.sadd(f"{_AUTH_HASH_TAG}:cleanup_dead_letter_set", clean_s)
+    except Exception as re:
+        logger.warning(f"[DEAD_LETTER] Failed to persist to Redis: {re}")
+
+
+def _clear_dead_letter_cleanup(slug: str) -> None:
+    """Removes a reconciled cleanup record from local memory and Redis."""
+    clean_s = str(slug).strip().lower()
+    _DEAD_LETTER_CLEANUP_REGISTRY.pop(clean_s, None)
+    try:
+        if token_store and token_store._redis_client:
+            token_store._redis_client.delete(f"{_AUTH_HASH_TAG}:cleanup_dead_letter:{clean_s}")
+            token_store._redis_client.srem(f"{_AUTH_HASH_TAG}:cleanup_dead_letter_set", clean_s)
+    except Exception:
+        pass
+
+
 def _delete_pending_merchant(slug: str, owner_email: str) -> Tuple[bool, Optional[str]]:
     """
     Rolls back a pending merchant reservation when email dispatch fails.
     Deletes pending rows from both merchants and public.tenants.
     Cleanup failures are observable and recorded in durable dead-letter recovery state.
+    Strictly guards against deleting ACTIVE or established tenant records.
     """
     clean_s = str(slug).strip().lower()
     clean_e = str(owner_email).strip().lower()
@@ -522,6 +565,44 @@ def _delete_pending_merchant(slug: str, owner_email: str) -> Tuple[bool, Optiona
     _pending_registrations.pop(clean_s, None)
     _in_memory_merchants.pop(clean_s, None)
 
+    # 1. Guard: Check if tenant is ACTIVE or established. Never delete ACTIVE tenants!
+    is_active = False
+    try:
+        from app.core.database import get_db_connection
+        conn_check = get_db_connection()
+        try:
+            with conn_check.cursor() as cur:
+                cur.execute(
+                    "SELECT status, is_active FROM public.tenants WHERE lower(slug) = %s LIMIT 1;",
+                    (clean_s,),
+                )
+                row = cur.fetchone()
+                if row and (row[0] == "ACTIVE" or row[1] is True):
+                    is_active = True
+        finally:
+            try:
+                conn_check.close()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    if not is_active:
+        try:
+            supabase = get_supabase()
+            if supabase:
+                t_check = supabase.table("tenants").select("status, is_active").eq("slug", clean_s).limit(1).execute()
+                if t_check.data and (t_check.data[0].get("status") == "ACTIVE" or t_check.data[0].get("is_active") is True):
+                    is_active = True
+        except Exception:
+            pass
+
+    if is_active:
+        logger.info(f"[CLEANUP GUARD] Tenant '{clean_s}' is ACTIVE. Refusing to delete and clearing dead-letter.")
+        _clear_dead_letter_cleanup(clean_s)
+        return True, None
+
+    # 2. Database Cleanup via PostgreSQL
     cleanup_error = None
     try:
         from app.core.database import get_db_connection
@@ -547,15 +628,7 @@ def _delete_pending_merchant(slug: str, owner_email: str) -> Tuple[bool, Optiona
                     (clean_s,),
                 )
             conn.commit()
-
-            # Successfully cleaned up from database, remove from dead-letter queue if present
-            _DEAD_LETTER_CLEANUP_REGISTRY.pop(clean_s, None)
-            try:
-                if token_store and token_store._redis_client:
-                    token_store._redis_client.delete(f"{_AUTH_HASH_TAG}:cleanup_dead_letter:{clean_s}")
-                    token_store._redis_client.srem(f"{_AUTH_HASH_TAG}:cleanup_dead_letter_set", clean_s)
-            except Exception:
-                pass
+            _clear_dead_letter_cleanup(clean_s)
             return True, None
         except Exception as e:
             try:
@@ -571,74 +644,163 @@ def _delete_pending_merchant(slug: str, owner_email: str) -> Tuple[bool, Optiona
     except Exception as e:
         cleanup_error = str(e)
 
+    # 3. Supabase Cleanup Fallback
+    supabase_succeeded = False
+    supabase_err = None
     try:
         supabase = get_supabase()
         if supabase:
             supabase.table("merchants").delete().eq("slug", clean_s).ilike("owner_email", clean_e).eq("status", "PENDING_VERIFICATION").execute()
             supabase.table("tenants").delete().eq("slug", clean_s).eq("status", "PENDING_VERIFICATION").execute()
-    except Exception:
-        pass
+            supabase_succeeded = True
+            # Supabase cleanup succeeded: clear obsolete PostgreSQL error
+            cleanup_error = None
+            _clear_dead_letter_cleanup(clean_s)
+            return True, None
+    except Exception as s_del_err:
+        supabase_err = str(s_del_err)
 
-    if cleanup_error:
-        logger.critical(
-            f"[SECURITY_ALERT][PENDING_CLEANUP_FAILURE] Failed to rollback pending reservation for slug='{clean_s}' email='{clean_e}': {cleanup_error}"
-        )
-        payload = {
-            "slug": clean_s,
-            "owner_email": clean_e,
-            "error": cleanup_error,
-            "timestamp": time.time(),
-        }
-        _DEAD_LETTER_CLEANUP_REGISTRY[clean_s] = payload
-        try:
-            if token_store and token_store._redis_client:
-                key = f"{_AUTH_HASH_TAG}:cleanup_dead_letter:{clean_s}"
-                token_store._redis_client.setex(key, 604800, json.dumps(payload))  # 7-day TTL
-                token_store._redis_client.sadd(f"{_AUTH_HASH_TAG}:cleanup_dead_letter_set", clean_s)
-        except Exception:
-            pass
-        return False, cleanup_error
-
-    return True, None
+    # 4. If neither succeeded, record failure in durable recovery state
+    effective_err = cleanup_error or supabase_err or "Cleanup failed across PostgreSQL and Supabase"
+    logger.critical(
+        f"[SECURITY_ALERT][PENDING_CLEANUP_FAILURE] Failed to rollback pending reservation for slug='{clean_s}' email='{clean_e}': {effective_err}"
+    )
+    _record_dead_letter_cleanup(clean_s, clean_e, effective_err, action="delete")
+    return False, effective_err
 
 
-def reconcile_pending_cleanups() -> Dict[str, List[str]]:
+def reconcile_pending_cleanups() -> Dict[str, Any]:
     """
     Durable reconciliation routine for failed cleanup tasks.
     Retries deletion of pending reservations for entries in the dead-letter queue.
+    Uses distributed locking to ensure only one reconciler claims a record at a time.
+    Prunes expired entries from the dead-letter index set.
     """
     reconciled: List[str] = []
     failed: List[str] = []
 
-    slugs_to_retry = set(_DEAD_LETTER_CLEANUP_REGISTRY.keys())
+    # Acquire distributed reconciler lock if distributed store is available
+    reconciler_lease = None
     try:
-        if token_store and token_store._redis_client:
-            redis_slugs = token_store._redis_client.smembers(f"{_AUTH_HASH_TAG}:cleanup_dead_letter_set")
-            if redis_slugs:
-                slugs_to_retry.update(redis_slugs)
-    except Exception as re:
-        logger.warning(f"[RECONCILE] Failed to fetch dead-letter set from Redis: {re}")
+        reconciler_lease = token_store.acquire_slug_lock(
+            slug="__auth_reconciler_leader__",
+            user_email="system:reconciler",
+            ttl_seconds=30,
+        )
+        if not reconciler_lease:
+            logger.info("[RECONCILE] Another reconciler holds the leader lock. Skipping cycle.")
+            return {"reconciled": [], "failed": [], "skipped": True}
+    except Exception as le:
+        logger.debug(f"[RECONCILE] Leader lock acquisition notice: {le}")
 
-    for slug in sorted(slugs_to_retry):
-        clean_s = slug.strip().lower()
-        owner_email = ""
-        if clean_s in _DEAD_LETTER_CLEANUP_REGISTRY:
-            owner_email = _DEAD_LETTER_CLEANUP_REGISTRY[clean_s].get("owner_email", "")
-        if not owner_email and token_store and token_store._redis_client:
+    try:
+        slugs_to_retry = set(_DEAD_LETTER_CLEANUP_REGISTRY.keys())
+        expired_slugs: Set[str] = set()
+        redis_slugs: Set[str] = set()
+        try:
+            if token_store and token_store._redis_client:
+                raw_set = token_store._redis_client.smembers(f"{_AUTH_HASH_TAG}:cleanup_dead_letter_set")
+                if raw_set:
+                    for s in raw_set:
+                        s_str = s.decode() if isinstance(s, bytes) else str(s)
+                        redis_slugs.add(s_str)
+                    slugs_to_retry.update(redis_slugs)
+        except Exception as re:
+            logger.warning(f"[RECONCILE] Failed to fetch dead-letter set from Redis: {re}")
+
+        for slug in sorted(slugs_to_retry):
+            clean_s = slug.strip().lower()
+            owner_email = ""
+            raw_payload = None
+
+            if clean_s in _DEAD_LETTER_CLEANUP_REGISTRY:
+                raw_payload = _DEAD_LETTER_CLEANUP_REGISTRY[clean_s]
+                owner_email = raw_payload.get("owner_email", "")
+
+            if not owner_email and token_store and token_store._redis_client:
+                try:
+                    raw = token_store._redis_client.get(f"{_AUTH_HASH_TAG}:cleanup_dead_letter:{clean_s}")
+                    if raw:
+                        parsed = json.loads(raw)
+                        owner_email = parsed.get("owner_email", "")
+                    else:
+                        # Record expired from Redis key TTL! Prune from index set to maintain consistency
+                        expired_slugs.add(clean_s)
+                        continue
+                except Exception:
+                    pass
+
+            # Acquire per-slug distributed lock so only one worker claims this record
+            record_lease = None
             try:
-                raw = token_store._redis_client.get(f"{_AUTH_HASH_TAG}:cleanup_dead_letter:{clean_s}")
-                if raw:
-                    owner_email = json.loads(raw).get("owner_email", "")
+                record_lease = token_store.acquire_slug_lock(
+                    slug=f"__reconcile_{clean_s}__",
+                    user_email="system:record_reconciler",
+                    ttl_seconds=15,
+                )
+                if not record_lease:
+                    logger.debug(f"[RECONCILE] Record for '{clean_s}' is locked by another worker. Skipping.")
+                    continue
             except Exception:
                 pass
 
-        ok, err = _delete_pending_merchant(clean_s, owner_email)
-        if ok:
-            reconciled.append(clean_s)
-        else:
-            failed.append(clean_s)
+            try:
+                ok, err = _delete_pending_merchant(clean_s, owner_email)
+                if ok:
+                    reconciled.append(clean_s)
+                else:
+                    failed.append(clean_s)
+            finally:
+                if record_lease:
+                    try:
+                        token_store.release_slug_lock(f"__reconcile_{clean_s}__", record_lease)
+                    except Exception:
+                        pass
 
-    return {"reconciled": reconciled, "failed": failed}
+        # Prune expired dead-letter records from index set
+        if expired_slugs and token_store and token_store._redis_client:
+            try:
+                for exp_s in expired_slugs:
+                    token_store._redis_client.srem(f"{_AUTH_HASH_TAG}:cleanup_dead_letter_set", exp_s)
+            except Exception:
+                pass
+
+        return {"reconciled": reconciled, "failed": failed}
+    finally:
+        if reconciler_lease:
+            try:
+                token_store.release_slug_lock("__auth_reconciler_leader__", reconciler_lease)
+            except Exception:
+                pass
+
+
+_reconciler_task: Optional[asyncio.Task] = None
+
+
+async def _cleanup_reconciler_loop(interval_seconds: int = 60):
+    """Periodic background worker for pending cleanup reconciliation."""
+    logger.info(f"[AUTH RECONCILER] Starting periodic background reconciler (interval: {interval_seconds}s)")
+    while True:
+        try:
+            res = reconcile_pending_cleanups()
+            if res.get("reconciled") or res.get("failed"):
+                logger.info(f"[AUTH RECONCILER] Periodic reconciliation run completed: {res}")
+        except Exception as re_err:
+            logger.error(f"[AUTH RECONCILER] Periodic reconciliation error: {re_err}")
+        await asyncio.sleep(interval_seconds)
+
+
+def start_cleanup_reconciler_worker(interval_seconds: int = 60) -> Optional[asyncio.Task]:
+    """Starts the background cleanup reconciler task if not already running."""
+    global _reconciler_task
+    if _reconciler_task is None or _reconciler_task.done():
+        try:
+            loop = asyncio.get_running_loop()
+            _reconciler_task = loop.create_task(_cleanup_reconciler_loop(interval_seconds=interval_seconds))
+            return _reconciler_task
+        except RuntimeError:
+            return None
+    return _reconciler_task
 
 
 def _resolve_verified_user_membership(
@@ -1093,6 +1255,7 @@ class VerificationRateLimiter:
     Shared distributed rate limiter for OTP / magic link verification.
     - Per-source IP rate limiting: max 15 requests/minute.
     - Per-challenge attempt counter: max 5 failed attempts before lockout (900s TTL).
+    - Per-account attempt counter: max 5 failed attempts before lockout (900s TTL).
     - Atomic Redis counters via Lua script.
     - Production fail-closed if Redis is unavailable.
     """
@@ -1100,6 +1263,7 @@ class VerificationRateLimiter:
         self._store = token_store_instance
         self._local_ip_history: Dict[str, List[float]] = defaultdict(list)
         self._local_challenge_fails: Dict[str, Dict[str, Any]] = {}
+        self._local_account_fails: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.Lock()
 
     @property
@@ -1174,51 +1338,114 @@ class VerificationRateLimiter:
                     return True, max(retry_after, 1)
             return False, 0
 
-    def record_failed_attempt(self, challenge_id: str, ttl_seconds: int = 900) -> int:
-        """Records a failed verification attempt. Returns current count."""
-        if not challenge_id:
-            return 0
-        clean_id = str(challenge_id).strip()
-        key = f"{_AUTH_HASH_TAG}:ratelimit:challenge:{clean_id}"
+    def is_account_locked(self, account_id: str) -> Tuple[bool, int]:
+        """Checks if an account (email) has reached the max failed attempts (5)."""
+        if not account_id or os.getenv("BOONTRACK_DISABLE_AUTH_RATE_LIMIT", "").lower() in ("1", "true"):
+            return False, 0
+
+        clean_acc = str(account_id).strip().lower()
+        key = f"{_AUTH_HASH_TAG}:ratelimit:account:{clean_acc}"
 
         if self.store._redis_client:
             try:
-                res = self.store._redis_client.eval(_REDIS_INCR_EXPIRE_LUA, 1, key, ttl_seconds)
-                return int(res[0])
+                val = self.store._redis_client.get(key)
+                if val and int(val) >= 5:
+                    ttl = self.store._redis_client.ttl(key)
+                    return True, max(int(ttl), 1)
+                return False, 0
             except Exception as e:
                 if _is_distributed_token_store_required():
-                    raise RuntimeError(f"[SECURITY FAIL-CLOSED] Record challenge failure Redis error: {e}")
+                    raise RuntimeError(f"[SECURITY FAIL-CLOSED] Account lockout Redis error: {e}")
+
+        if _is_distributed_token_store_required():
+            raise RuntimeError("[SECURITY FAIL-CLOSED] Distributed account rate limiter requires Redis in production.")
 
         now = time.time()
         with self._lock:
-            entry = self._local_challenge_fails.get(clean_id)
-            if not entry or now > entry.get("expire_at", 0):
-                self._local_challenge_fails[clean_id] = {"count": 1, "expire_at": now + ttl_seconds}
-                return 1
-            entry["count"] += 1
-            return entry["count"]
+            entry = self._local_account_fails.get(clean_acc)
+            if entry:
+                if now > entry.get("expire_at", 0):
+                    self._local_account_fails.pop(clean_acc, None)
+                    return False, 0
+                if entry.get("count", 0) >= 5:
+                    retry_after = int(entry.get("expire_at", 0) - now)
+                    return True, max(retry_after, 1)
+            return False, 0
 
-    def reset_challenge(self, challenge_id: str) -> None:
+    def record_failed_attempt(
+        self,
+        challenge_id: str,
+        account_id: Optional[str] = None,
+        ttl_seconds: int = 900,
+    ) -> int:
+        """Records a failed verification attempt against challenge and optional account."""
+        if not challenge_id and not account_id:
+            return 0
+        clean_id = str(challenge_id).strip() if challenge_id else None
+        clean_acc = str(account_id).strip().lower() if account_id else None
+
+        current_count = 0
+        if self.store._redis_client:
+            try:
+                if clean_id:
+                    key = f"{_AUTH_HASH_TAG}:ratelimit:challenge:{clean_id}"
+                    res = self.store._redis_client.eval(_REDIS_INCR_EXPIRE_LUA, 1, key, ttl_seconds)
+                    current_count = int(res[0])
+                if clean_acc:
+                    acc_key = f"{_AUTH_HASH_TAG}:ratelimit:account:{clean_acc}"
+                    self.store._redis_client.eval(_REDIS_INCR_EXPIRE_LUA, 1, acc_key, ttl_seconds)
+                return current_count
+            except Exception as e:
+                if _is_distributed_token_store_required():
+                    raise RuntimeError(f"[SECURITY FAIL-CLOSED] Record failure Redis error: {e}")
+
+        if _is_distributed_token_store_required():
+            raise RuntimeError("[SECURITY FAIL-CLOSED] Distributed rate limiter requires Redis in production.")
+
+        now = time.time()
+        with self._lock:
+            if clean_id:
+                entry = self._local_challenge_fails.get(clean_id)
+                if not entry or now > entry.get("expire_at", 0):
+                    self._local_challenge_fails[clean_id] = {"count": 1, "expire_at": now + ttl_seconds}
+                    current_count = 1
+                else:
+                    entry["count"] += 1
+                    current_count = entry["count"]
+            if clean_acc:
+                acc_entry = self._local_account_fails.get(clean_acc)
+                if not acc_entry or now > acc_entry.get("expire_at", 0):
+                    self._local_account_fails[clean_acc] = {"count": 1, "expire_at": now + ttl_seconds}
+                else:
+                    acc_entry["count"] += 1
+            return current_count
+
+    def reset_challenge(self, challenge_id: str, account_id: Optional[str] = None) -> None:
         """Resets the attempt counter upon successful verification."""
-        if not challenge_id:
-            return
-        clean_id = str(challenge_id).strip()
-        key = f"{_AUTH_HASH_TAG}:ratelimit:challenge:{clean_id}"
+        clean_id = str(challenge_id).strip() if challenge_id else None
+        clean_acc = str(account_id).strip().lower() if account_id else None
 
         if self.store._redis_client:
             try:
-                self.store._redis_client.delete(key)
+                if clean_id:
+                    self.store._redis_client.delete(f"{_AUTH_HASH_TAG}:ratelimit:challenge:{clean_id}")
+                if clean_acc:
+                    self.store._redis_client.delete(f"{_AUTH_HASH_TAG}:ratelimit:account:{clean_acc}")
             except Exception:
                 pass
 
         with self._lock:
-            self._local_challenge_fails.pop(clean_id, None)
+            if clean_id:
+                self._local_challenge_fails.pop(clean_id, None)
+            if clean_acc:
+                self._local_account_fails.pop(clean_acc, None)
 
     def reset_all(self) -> None:
         """Resets local state (used in testing)."""
         with self._lock:
             self._local_ip_history.clear()
             self._local_challenge_fails.clear()
+            self._local_account_fails.clear()
 
 
 verification_rate_limiter = VerificationRateLimiter()
@@ -1257,6 +1484,8 @@ class MagicLinkRequest(BaseModel):
 class MagicLinkVerifyRequest(BaseModel):
     token: Optional[str] = None
     otp_code: Optional[str] = None
+    challenge_id: Optional[str] = None
+    email: Optional[str] = None
 
 
 class AuthUser(BaseModel):
@@ -1280,8 +1509,8 @@ class AuthResponse(BaseModel):
 async def request_magic_link(req: MagicLinkRequest):
     """
     POST /api/v1/auth/magic-link/request
-    Generates single-use cryptographic token & 6-digit OTP, stores in Redis,
-    and sends branded BoonTrack magic link email to the merchant.
+    Generates single-use cryptographic token, 6-digit OTP, and server-issued challenge_id.
+    Stores in Redis and sends branded BoonTrack magic link email to the merchant.
     """
     email_clean = req.email.strip().lower()
 
@@ -1295,6 +1524,7 @@ async def request_magic_link(req: MagicLinkRequest):
 
     token = secrets.token_urlsafe(32)
     otp_code = generate_secure_otp(6)
+    challenge_id = f"ch_{secrets.token_urlsafe(24)}"
 
     # Construct destination URL
     base_url = (req.redirect_url or f"{FRONTEND_URL}/auth/verify").rstrip("/")
@@ -1305,6 +1535,7 @@ async def request_magic_link(req: MagicLinkRequest):
         "email": email_clean,
         "token": token,
         "otp_code": otp_code,
+        "challenge_id": challenge_id,
         "tenant_slug": req.tenant_slug,
         "is_registration": False,
         "created_at": time.time(),
@@ -1338,6 +1569,7 @@ async def request_magic_link(req: MagicLinkRequest):
         "status": "success",
         "message": f"Tautan masuk ajaib dan kode verifikasi telah dikirim ke {email_clean}.",
         "email": email_clean,
+        "challenge_id": challenge_id,
         "ttl_seconds": 900,
     }
 
@@ -1348,7 +1580,7 @@ async def verify_magic_link(req: MagicLinkVerifyRequest, request: Request = None
     POST /api/v1/auth/magic-link/verify
     Validates token or 6-digit OTP, consumes it atomically to prevent race/replay,
     validates tenant and membership authority, and returns a signed JWT session token.
-    Enforces IP-based and challenge-based distributed rate limiting and lockout.
+    Enforces IP-based, server-issued challenge, and account-level distributed rate limiting and lockout.
     """
     token_to_verify = (req.token or "").strip()
     otp_to_verify = (req.otp_code or "").strip()
@@ -1359,15 +1591,10 @@ async def verify_magic_link(req: MagicLinkVerifyRequest, request: Request = None
             detail="Harap sertakan token verifikasi atau kode OTP 6 digit.",
         )
 
-    # Client IP resolution for rate limiting
-    client_ip = "127.0.0.1"
-    if request is not None:
-        client_ip = (
-            request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-            or (request.client.host if request.client else "127.0.0.1")
-        )
+    # 1. Authoritative Trusted Client IP Resolution
+    client_ip = get_trusted_client_ip(request)
 
-    # 1. IP Rate Limiting Check (Max 15 requests / minute per IP)
+    # 2. IP Rate Limiting Check (Max 15 requests / minute per client IP)
     try:
         allowed_ip, retry_after = verification_rate_limiter.is_ip_allowed(client_ip)
         if not allowed_ip:
@@ -1382,14 +1609,23 @@ async def verify_magic_link(req: MagicLinkVerifyRequest, request: Request = None
             detail="Layanan pembatasan laju verifikasi terdistribusi tidak tersedia (fail-closed).",
         )
 
-    # 2. Challenge Lockout Check (Max 5 failed attempts per challenge identifier)
-    challenge_id = otp_to_verify or token_to_verify
+    # 3. Resolve Challenge Identity and Account Identity
+    effective_challenge_id = (req.challenge_id or "").strip()
+    if not effective_challenge_id:
+        if token_to_verify:
+            effective_challenge_id = f"tok_{token_to_verify}"
+        elif otp_to_verify:
+            effective_challenge_id = f"otp_{otp_to_verify}"
+
+    effective_account = str(req.email).strip().lower() if req.email else None
+
+    # 4. Challenge Lockout Check (Max 5 failed attempts per challenge identifier)
     try:
-        is_locked, ch_retry = verification_rate_limiter.is_challenge_locked(challenge_id)
+        is_locked, ch_retry = verification_rate_limiter.is_challenge_locked(effective_challenge_id)
         if is_locked:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Batas percobaan verifikasi untuk kode ini telah tercapai. Silakan minta tautan atau OTP baru.",
+                detail="Batas percobaan verifikasi telah tercapai. Silakan coba lagi nanti.",
             )
     except RuntimeError as r_err:
         logger.error(f"[AUTH VERIFY CHALLENGE FAIL-CLOSED] {r_err}")
@@ -1398,7 +1634,23 @@ async def verify_magic_link(req: MagicLinkVerifyRequest, request: Request = None
             detail="Layanan verifikasi terdistribusi tidak tersedia (fail-closed).",
         )
 
-    # 3. ATOMIC SINGLE-USE CONSUMPTION: Retrieves and invalidates session atomically
+    # 5. Account Lockout Check (Max 5 failed attempts per account identifier)
+    if effective_account:
+        try:
+            acc_locked, acc_retry = verification_rate_limiter.is_account_locked(effective_account)
+            if acc_locked:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Batas percobaan verifikasi telah tercapai. Silakan coba lagi nanti.",
+                )
+        except RuntimeError as r_err:
+            logger.error(f"[AUTH VERIFY ACCOUNT FAIL-CLOSED] {r_err}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Layanan verifikasi terdistribusi tidak tersedia (fail-closed).",
+            )
+
+    # 6. ATOMIC SINGLE-USE CONSUMPTION: Retrieves and invalidates session atomically
     try:
         session_data = token_store.consume_verification_session(
             token=token_to_verify,
@@ -1413,22 +1665,53 @@ async def verify_magic_link(req: MagicLinkVerifyRequest, request: Request = None
 
     if not session_data:
         try:
-            verification_rate_limiter.record_failed_attempt(challenge_id)
-        except RuntimeError:
-            pass
+            verification_rate_limiter.record_failed_attempt(
+                challenge_id=effective_challenge_id,
+                account_id=effective_account,
+            )
+        except RuntimeError as r_err:
+            logger.error(f"[AUTH VERIFY RECORD FAILURE FAIL-CLOSED] {r_err}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Layanan verifikasi terdistribusi tidak tersedia (fail-closed).",
+            )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Tautan masuk atau kode OTP tidak valid atau telah kadaluarsa.",
         )
 
-    # Successful verification session consumption: reset challenge failure counters
+    # If client passed challenge_id, ensure session matches
+    if req.challenge_id and session_data.get("challenge_id"):
+        if req.challenge_id.strip() != session_data["challenge_id"]:
+            try:
+                verification_rate_limiter.record_failed_attempt(
+                    challenge_id=effective_challenge_id,
+                    account_id=effective_account,
+                )
+            except RuntimeError as r_err:
+                logger.error(f"[AUTH VERIFY MISMATCH FAIL-CLOSED] {r_err}")
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Layanan verifikasi terdistribusi tidak tersedia (fail-closed).",
+                )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Tautan masuk atau kode OTP tidak valid atau telah kadaluarsa.",
+            )
+
+    # Successful verification session consumption: reset challenge and account failure counters
     try:
-        verification_rate_limiter.reset_challenge(challenge_id)
+        session_email = session_data.get("email")
+        verification_rate_limiter.reset_challenge(effective_challenge_id, account_id=session_email)
+        if session_data.get("challenge_id"):
+            verification_rate_limiter.reset_challenge(session_data["challenge_id"])
         paired_token = session_data.get("token")
         paired_otp = session_data.get("otp_code")
         if paired_token:
+            verification_rate_limiter.reset_challenge(f"tok_{paired_token}")
             verification_rate_limiter.reset_challenge(paired_token)
         if paired_otp:
+            verification_rate_limiter.reset_challenge(f"otp_{paired_otp}")
             verification_rate_limiter.reset_challenge(paired_otp)
     except Exception:
         pass
@@ -1639,6 +1922,7 @@ async def handle_register_logic(req: RegisterRequest) -> Dict[str, Any]:
         # Step 2: Generate Cryptographic Verification Challenge bound to email & slug
         token = secrets.token_urlsafe(32)
         otp_code = generate_secure_otp(6)
+        challenge_id = f"ch_{secrets.token_urlsafe(24)}"
         base_url = f"{FRONTEND_URL}/auth/verify".rstrip("/")
         magic_link_url = f"{base_url}?token={token}"
 
@@ -1647,6 +1931,7 @@ async def handle_register_logic(req: RegisterRequest) -> Dict[str, Any]:
             "name": user_name,
             "token": token,
             "otp_code": otp_code,
+            "challenge_id": challenge_id,
             "tenant_slug": slug,
             "role": "merchant",
             "is_registration": True,
@@ -1712,6 +1997,7 @@ async def handle_register_logic(req: RegisterRequest) -> Dict[str, Any]:
             "message": f"Registrasi merchant berhasil. Tautan verifikasi dan kode OTP telah dikirim ke {user_email}.",
             "email": user_email,
             "tenant_slug": slug,
+            "challenge_id": challenge_id,
             "requires_verification": True,
             "user": {
                 "email": user_email,

@@ -134,6 +134,23 @@ app = FastAPI(
     version="1.0.0",
 )
 
+@app.on_event("startup")
+async def startup_event():
+    """
+    Application startup lifecycle event:
+    - Runs pending auth cleanup reconciliation.
+    - Starts the durable periodic cleanup reconciler background task.
+    """
+    try:
+        from app.routes.auth_routes import reconcile_pending_cleanups, start_cleanup_reconciler_worker
+        try:
+            reconcile_pending_cleanups()
+        except Exception as r_err:
+            logger.warning(f"[STARTUP] Initial auth cleanup reconciliation notice: {r_err}")
+        start_cleanup_reconciler_worker(interval_seconds=60)
+    except Exception as e:
+        logger.warning(f"[STARTUP] Could not start auth cleanup reconciler: {e}")
+
 from app.core.logging_sanitizer import install_global_pii_sanitizer, sanitize_pii_recursive
 install_global_pii_sanitizer()
 
