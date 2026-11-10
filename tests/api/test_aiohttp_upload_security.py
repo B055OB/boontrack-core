@@ -500,3 +500,117 @@ class TestAioHttpUploadSecurityParity(AioHTTPTestCase):
         # STRICT ASSERTION: must be exactly HTTP 413
         self.assertEqual(resp.status, 413)
 
+    @unittest_run_loop
+    async def test_aiohttp_chunked_streaming_without_content_length_oversized_aborts_early(self):
+        """15. Real aiohttp network runner: Streamed chunked transfer without Content-Length aborts early with HTTP 413 (CTO P1)."""
+        import asyncio
+        token = make_signed_merchant_token(tenant_id="tenant-alpha-001")
+        boundary = "----AioHttpChunkedTestBoundary"
+
+        yield_counter = 0
+
+        async def chunked_body_generator():
+            nonlocal yield_counter
+            # Multipart header
+            header = (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="file"; filename="oversized.png"\r\n'
+                f"Content-Type: image/png\r\n\r\n"
+            ).encode("utf-8")
+            yield_counter += 1
+            yield header
+
+            # 100 chunks * 64 KB = ~6.4 MB total (exceeds 5 MB limit + 64 KB overhead)
+            for _ in range(100):
+                yield_counter += 1
+                yield b"A" * 65536
+                await asyncio.sleep(0.001)
+
+            footer = f"\r\n--{boundary}--\r\n".encode("utf-8")
+            yield_counter += 1
+            yield footer
+
+        resp = await self.client.request(
+            "POST",
+            "/api/v1/upload",
+            data=chunked_body_generator(),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+            },
+        )
+        self.assertEqual(resp.status, 413)
+        self.assertLess(yield_counter, 100, f"Aiohttp server should abort early: expected < 100 chunks, got {yield_counter}")
+
+    @unittest_run_loop
+    async def test_aiohttp_tenant_aliases_anonymous_rejected(self):
+        """16. All aiohttp tenant upload aliases reject anonymous requests with HTTP 401."""
+        aliases = [
+            "/api/v1/tenants/demo-shop/upload",
+            "/api/v1/tenants/demo-shop/qris/upload",
+            "/api/v1/tenants/demo-shop/upload-qris",
+            "/api/v1/tenant/demo-shop/upload",
+            "/api/v1/tenant/demo-shop/qris/upload",
+        ]
+        img_data = create_valid_test_image(format="PNG", size=(10, 10)).read()
+
+        for path in aliases:
+            form = FormData()
+            form.add_field("file", img_data, filename="test.png", content_type="image/png")
+            resp = await self.client.request("POST", path, data=form)
+            self.assertEqual(resp.status, 401, f"Expected 401 on anonymous aiohttp {path}, got {resp.status}")
+
+    @unittest_run_loop
+    async def test_aiohttp_tenant_aliases_cross_tenant_rejected(self):
+        """17. All aiohttp tenant upload aliases reject cross-tenant access with HTTP 403."""
+        token = make_signed_merchant_token(tenant_id="tenant-alpha-001")
+        aliases = [
+            "/api/v1/tenants/victim-shop/upload",
+            "/api/v1/tenants/victim-shop/qris/upload",
+            "/api/v1/tenants/victim-shop/upload-qris",
+            "/api/v1/tenant/victim-shop/upload",
+            "/api/v1/tenant/victim-shop/qris/upload",
+        ]
+        img_data = create_valid_test_image(format="PNG", size=(10, 10)).read()
+
+        for path in aliases:
+            form = FormData()
+            form.add_field("file", img_data, filename="test.png", content_type="image/png")
+            resp = await self.client.request(
+                "POST",
+                path,
+                data=form,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.assertEqual(resp.status, 403, f"Expected 403 on cross-tenant aiohttp {path}, got {resp.status}")
+
+    @unittest_run_loop
+    async def test_aiohttp_tenant_aliases_positive_authorized_upload(self):
+        """18. All aiohttp tenant upload aliases succeed with scoped storage namespace when authorized."""
+        token = make_signed_merchant_token(tenant_id="tenant-alpha-001")
+        aliases = [
+            "/api/v1/tenants/tenant-alpha-001/upload",
+            "/api/v1/tenants/tenant-alpha-001/qris/upload",
+            "/api/v1/tenants/tenant-alpha-001/upload-qris",
+            "/api/v1/tenant/tenant-alpha-001/upload",
+            "/api/v1/tenant/tenant-alpha-001/qris/upload",
+        ]
+
+        for path in aliases:
+            img_data = create_valid_test_image(format="PNG", size=(10, 10)).read()
+            form = FormData()
+            form.add_field("file", img_data, filename="auth.png", content_type="image/png")
+            resp = await self.client.request(
+                "POST",
+                path,
+                data=form,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.assertIn(resp.status, (200, 201), f"Expected 200/201 on authorized aiohttp {path}, got {resp.status}")
+            data = await resp.json()
+            self.assertEqual(data.get("tenant_id"), "tenant-alpha-001")
+            self.assertTrue(
+                data.get("storage_path", "").startswith("tenants/tenant-alpha-001/uploads/"),
+                f"Storage path {data.get('storage_path')} not scoped to tenant namespace",
+            )
+

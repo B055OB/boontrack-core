@@ -343,6 +343,107 @@ def test_membership_validation_independent_cs_agents_merchants_lookup():
         )
 
 
+def test_tenant_lookup_returns_not_found_while_merchant_membership_exists():
+    """
+    CTO Work Order P0:
+    When tenant lookup in database returns NOT_FOUND (0 rows),
+    membership validation MUST fail-closed with strictly HTTP 403 Forbidden,
+    even if merchant membership records exist.
+    """
+    clear_merchant_membership_registry()
+
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    # Tenant query returns None (row not found)
+    mock_cur.fetchone.return_value = None
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+
+    with patch("app.core.database.get_db_connection", return_value=mock_conn):
+        with pytest.raises(Exception) as exc_info:
+            validate_merchant_tenant_membership(
+                merchant_id="owner@nonexistent.com",
+                tenant_id="tenant-ghost-404",
+            )
+        assert exc_info.value.status_code == 403
+        assert "tidak ditemukan" in exc_info.value.detail
+
+
+def test_tenant_lookup_throws_database_exception_while_merchant_membership_exists():
+    """
+    CTO Work Order P0:
+    When tenant lookup throws an operational / database exception (non-null tenant_err),
+    it MUST NOT be ignored and MUST fail-closed with strictly HTTP 503 Service Unavailable.
+    """
+    clear_merchant_membership_registry()
+
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_cur.execute.side_effect = Exception("PostgreSQL server terminated unexpectedly")
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+
+    with patch("app.core.database.get_db_connection", return_value=mock_conn):
+        with pytest.raises(Exception) as exc_info:
+            validate_merchant_tenant_membership(
+                merchant_id="owner@test.com",
+                tenant_id="tenant-db-crash-001",
+            )
+        assert exc_info.value.status_code == 503
+        assert "Layanan otorisasi database tidak tersedia" in exc_info.value.detail
+
+
+def test_membership_query_active_record_but_tenant_lookup_fails():
+    """
+    CTO Work Order P0:
+    When membership query would return an active record, but tenant lookup returns explicitly
+    inactive/suspended, the validation MUST strictly reject with HTTP 403 Forbidden.
+    """
+    clear_merchant_membership_registry()
+
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    # Tenant query returns explicitly inactive tenant
+    mock_cur.fetchone.return_value = (False, "SUSPENDED")
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+
+    with patch("app.core.database.get_db_connection", return_value=mock_conn):
+        with pytest.raises(Exception) as exc_info:
+            validate_merchant_tenant_membership(
+                merchant_id="owner@test.com",
+                tenant_id="tenant-suspended-001",
+            )
+        assert exc_info.value.status_code == 403
+        assert "dinonaktifkan atau tidak aktif" in exc_info.value.detail
+
+
+def test_no_database_lookup_error_can_produce_authorization_success():
+    """
+    CTO Work Order P0:
+    Negative assertion: No database lookup error (tenant or membership level)
+    can ever produce an authorization success.
+    """
+    clear_merchant_membership_registry()
+
+    error_scenarios = [
+        # 1. Connection error on tenant query
+        Exception("Connection refused (ECONNREFUSED)"),
+        # 2. Syntax/Schema error on tenant query
+        Exception("relation 'public.tenants' does not exist"),
+        # 3. Read timeout
+        TimeoutError("Query timed out after 5000ms"),
+    ]
+
+    for err in error_scenarios:
+        with patch("app.core.database.get_db_connection", side_effect=err):
+            with pytest.raises(Exception) as exc_info:
+                validate_merchant_tenant_membership(
+                    merchant_id="merchant@test.com",
+                    tenant_id="tenant-err-test",
+                )
+            # Must strictly raise 503, NEVER allow or return None
+            assert exc_info.value.status_code == 503
+            assert "Layanan otorisasi database tidak tersedia" in exc_info.value.detail
+
+
 # ===========================================================================
 # 4. True Chunked / Streaming Bounded Limits (ASGI Receive Boundary)
 # ===========================================================================

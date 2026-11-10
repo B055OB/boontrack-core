@@ -461,7 +461,18 @@ def validate_merchant_tenant_membership(
     # 4. Check production database: verify tenant status if not in test registry
     if not in_test_registry:
         is_active_tenant, tenant_err = _query_db_tenant_active(clean_t)
-        if tenant_err is None and not is_active_tenant:
+        if tenant_err is not None:
+            if tenant_err == "NOT_FOUND":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Tenant '{clean_t}' tidak ditemukan di sistem.",
+                )
+            logger.error(f"[FAIL-CLOSED] Database tenant status lookup failed for '{clean_t}': {tenant_err}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Layanan otorisasi database tidak tersedia (fail-closed tenant lookup).",
+            )
+        if not is_active_tenant:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Tenant '{clean_t}' dinonaktifkan atau tidak aktif.",
@@ -1462,42 +1473,20 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
     is_qris = "qris" in path_lower or folder == "qris" or type_param == "qris"
     post_data = None
 
-    # 1. Coba ekstrak via request.post()
-    try:
-        post_data = await request.post()
-        if post_data.get("folder") == "qris" or post_data.get("type") == "qris":
-            is_qris = True
-            folder = "qris"
-        elif post_data.get("folder") and not folder:
-            folder = str(post_data.get("folder"))
-
-        for key in ("file", "image", "qris", "qris_image", "qris_file", "qr", "qr_image", "photo", "picture", "media", "upload"):
-            field = post_data.get(key)
-            if field and hasattr(field, "file"):
-                if is_tenant_route:
-                    try:
-                        raw_content = read_bounded_sync_file(field.file, max_bytes=MAX_FILE_SIZE)
-                    except ValueError as ve:
-                        return web.json_response(
-                            {"status": "error", "detail": str(ve)},
-                            status=413,
-                            headers=cors_headers,
-                        )
-                else:
-                    raw_content = field.file.read()
-                filename = getattr(field, "filename", "upload.jpg") or "upload.jpg"
-                content_type = getattr(field, "content_type", "image/jpeg") or "image/jpeg"
-                if "qris" in key or "qr" in key:
-                    is_qris = True
-                    folder = "qris"
-                break
-
-        if raw_content is None:
-            for k, v in post_data.items():
-                if v and hasattr(v, "file"):
+    # 1. Chunked streaming handling: stream directly via request.multipart() when Content-Length is missing
+    is_chunked = request.headers.get("Transfer-Encoding", "").lower() == "chunked" or request.content_length is None
+    if is_chunked and request.content_type == "multipart/form-data":
+        try:
+            reader = await request.multipart()
+            field = await reader.next()
+            while field is not None:
+                field_name = getattr(field, "name", "")
+                if field_name == "folder" and not folder:
+                    folder = await field.text()
+                elif hasattr(field, "filename") and field.filename:
                     if is_tenant_route:
                         try:
-                            raw_content = read_bounded_sync_file(v.file, max_bytes=MAX_FILE_SIZE)
+                            raw_content = await read_bounded_async_field(field, max_bytes=MAX_FILE_SIZE)
                         except ValueError as ve:
                             return web.json_response(
                                 {"status": "error", "detail": str(ve)},
@@ -1505,29 +1494,90 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
                                 headers=cors_headers,
                             )
                     else:
-                        raw_content = v.file.read()
-                    filename = getattr(v, "filename", "upload.jpg") or "upload.jpg"
-                    content_type = getattr(v, "content_type", "image/jpeg") or "image/jpeg"
-                    if "qris" in str(k).lower() or "qr" in str(k).lower():
+                        raw_content = await field.read()
+                    filename = field.filename
+                    content_type = field.headers.get("Content-Type", "image/jpeg")
+                    if "qris" in str(field_name).lower() or "qr" in str(field_name).lower():
                         is_qris = True
                         folder = "qris"
                     break
-    except web.HTTPRequestEntityTooLarge as too_large_err:
-        return web.json_response(
-            {"status": "error", "detail": f"Ukuran request melebihi batas maksimal yang diizinkan: {too_large_err}"},
-            status=413,
-            headers=cors_headers,
-        )
-    except web.HTTPException as web_exc:
-        if getattr(web_exc, "status", getattr(web_exc, "status_code", 0)) == 413:
+                field = await reader.next()
+        except web.HTTPRequestEntityTooLarge as multi_large_err:
             return web.json_response(
-                {"status": "error", "detail": f"Ukuran request melebihi batas maksimal yang diizinkan: {web_exc}"},
+                {"status": "error", "detail": f"Ukuran request melebihi batas maksimal yang diizinkan: {multi_large_err}"},
                 status=413,
                 headers=cors_headers,
             )
-        logger.debug(f"[aiohttp_upload_image post extract web_exc]: {web_exc}")
-    except Exception as post_err:
-        logger.debug(f"[aiohttp_upload_image post extract note]: {post_err}")
+        except Exception as multi_err:
+            logger.debug(f"[aiohttp_upload_image chunked multipart note]: {multi_err}")
+
+    # 2. Coba ekstrak via request.post() jika belum mendapatkan file
+    if raw_content is None:
+        try:
+            post_data = await request.post()
+            if post_data.get("folder") == "qris" or post_data.get("type") == "qris":
+                is_qris = True
+                folder = "qris"
+            elif post_data.get("folder") and not folder:
+                folder = str(post_data.get("folder"))
+
+            for key in ("file", "image", "qris", "qris_image", "qris_file", "qr", "qr_image", "photo", "picture", "media", "upload"):
+                field = post_data.get(key)
+                if field and hasattr(field, "file"):
+                    if is_tenant_route:
+                        try:
+                            raw_content = read_bounded_sync_file(field.file, max_bytes=MAX_FILE_SIZE)
+                        except ValueError as ve:
+                            return web.json_response(
+                                {"status": "error", "detail": str(ve)},
+                                status=413,
+                                headers=cors_headers,
+                            )
+                    else:
+                        raw_content = field.file.read()
+                    filename = getattr(field, "filename", "upload.jpg") or "upload.jpg"
+                    content_type = getattr(field, "content_type", "image/jpeg") or "image/jpeg"
+                    if "qris" in key or "qr" in key:
+                        is_qris = True
+                        folder = "qris"
+                    break
+
+            if raw_content is None:
+                for k, v in post_data.items():
+                    if v and hasattr(v, "file"):
+                        if is_tenant_route:
+                            try:
+                                raw_content = read_bounded_sync_file(v.file, max_bytes=MAX_FILE_SIZE)
+                            except ValueError as ve:
+                                return web.json_response(
+                                    {"status": "error", "detail": str(ve)},
+                                    status=413,
+                                    headers=cors_headers,
+                                )
+                        else:
+                            raw_content = v.file.read()
+                        filename = getattr(v, "filename", "upload.jpg") or "upload.jpg"
+                        content_type = getattr(v, "content_type", "image/jpeg") or "image/jpeg"
+                        if "qris" in str(k).lower() or "qr" in str(k).lower():
+                            is_qris = True
+                            folder = "qris"
+                        break
+        except web.HTTPRequestEntityTooLarge as too_large_err:
+            return web.json_response(
+                {"status": "error", "detail": f"Ukuran request melebihi batas maksimal yang diizinkan: {too_large_err}"},
+                status=413,
+                headers=cors_headers,
+            )
+        except web.HTTPException as web_exc:
+            if getattr(web_exc, "status", getattr(web_exc, "status_code", 0)) == 413:
+                return web.json_response(
+                    {"status": "error", "detail": f"Ukuran request melebihi batas maksimal yang diizinkan: {web_exc}"},
+                    status=413,
+                    headers=cors_headers,
+                )
+            logger.debug(f"[aiohttp_upload_image post extract web_exc]: {web_exc}")
+        except Exception as post_err:
+            logger.debug(f"[aiohttp_upload_image post extract note]: {post_err}")
 
     # 2. Coba ekstrak via request.multipart() jika post_data belum mendapatkan file
     if raw_content is None:
