@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 from app.main import app
 from app.routes.auth_routes import token_store, register_auth_test_merchant, clear_auth_test_registries
@@ -219,10 +219,20 @@ def test_magic_link_missing_parameters_returns_400():
     assert response.status_code == 400
 
 
+def _mock_db_conn():
+    conn = MagicMock()
+    cur = MagicMock()
+    cur.fetchone.return_value = None  # Clean query, 0 existing rows
+    cur.rowcount = 1
+    conn.cursor.return_value.__enter__.return_value = cur
+    return conn
+
+
 def test_merchant_registration_triggers_welcome_and_verification_emails():
     """POST /api/v1/auth/register returns pending_verification (NO JWT) and sends emails."""
     with patch.object(email_service, "send_merchant_welcome_email", new_callable=AsyncMock) as mock_welcome, \
          patch.object(email_service, "send_magic_link_email", new_callable=AsyncMock) as mock_magic, \
+         patch("app.core.database.get_db_connection", side_effect=_mock_db_conn), \
          patch("app.routes.auth_routes.get_supabase", return_value=None):
         mock_welcome.return_value = True
         mock_magic.return_value = True
@@ -259,6 +269,7 @@ def test_merchant_registration_succeeds_when_welcome_email_fails():
     """Non-critical welcome email failure does not block registration; returns 201 pending_verification."""
     with patch.object(email_service, "send_merchant_welcome_email", new_callable=AsyncMock) as mock_welcome, \
          patch.object(email_service, "send_magic_link_email", new_callable=AsyncMock) as mock_magic, \
+         patch("app.core.database.get_db_connection", side_effect=_mock_db_conn), \
          patch("app.routes.auth_routes.get_supabase", return_value=None):
         mock_welcome.side_effect = Exception("Resend API Timeout / Network Error")
         mock_magic.return_value = True
@@ -283,6 +294,7 @@ def test_merchant_registration_fails_closed_when_verification_email_fails():
     """Critical verification email failure must fail closed with 503 and rollback pending reservation."""
     with patch.object(email_service, "send_merchant_welcome_email", new_callable=AsyncMock) as mock_welcome, \
          patch.object(email_service, "send_magic_link_email", new_callable=AsyncMock) as mock_magic, \
+         patch("app.core.database.get_db_connection", side_effect=_mock_db_conn), \
          patch("app.routes.auth_routes.get_supabase", return_value=None):
         mock_welcome.return_value = True
         mock_magic.side_effect = Exception("SMTP Connection Timeout")

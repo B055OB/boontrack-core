@@ -326,30 +326,39 @@ class TestAuthRegistrationSecurity(unittest.TestCase):
         slug = "rollback-reservation-shop"
         email = "user@rollback.com"
 
-        # 1. First attempt: email dispatch fails
-        with patch.object(email_service, "send_magic_link_email", new_callable=AsyncMock) as mock_magic:
-            mock_magic.return_value = False  # Email failed
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_cur.fetchone.return_value = None  # Clean lookup: 0 existing rows
+        mock_cur.rowcount = 1
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cur
 
-            res = self.client.post(
-                "/api/v1/auth/register",
-                json={"email": email, "name": "User", "tenant_slug": slug},
-            )
-            self.assertEqual(res.status_code, 503)
-            self.assertIn("Reservasi tenant dibatalkan", res.json()["detail"])
+        with patch("app.core.database.get_db_connection", return_value=mock_conn), \
+             patch("app.routes.auth_routes.get_supabase", return_value=None):
 
-            # Verify slug is NOT permanently reserved in pending registry
-            self.assertNotIn(slug, _pending_registrations)
+            # 1. First attempt: email dispatch fails
+            with patch.object(email_service, "send_magic_link_email", new_callable=AsyncMock) as mock_magic:
+                mock_magic.return_value = False  # Email failed
 
-        # 2. Second attempt: email dispatch succeeds -> returns 201
-        with patch.object(email_service, "send_magic_link_email", new_callable=AsyncMock) as mock_magic:
-            mock_magic.return_value = True
+                res = self.client.post(
+                    "/api/v1/auth/register",
+                    json={"email": email, "name": "User", "tenant_slug": slug},
+                )
+                self.assertEqual(res.status_code, 503)
+                self.assertIn("Reservasi tenant dibatalkan", res.json()["detail"])
 
-            res2 = self.client.post(
-                "/api/v1/auth/register",
-                json={"email": email, "name": "User", "tenant_slug": slug},
-            )
-            self.assertEqual(res2.status_code, 201)
-            self.assertEqual(res2.json()["status"], "pending_verification")
+                # Verify slug is NOT permanently reserved in pending registry
+                self.assertNotIn(slug, _pending_registrations)
+
+            # 2. Second attempt: email dispatch succeeds -> returns 201
+            with patch.object(email_service, "send_magic_link_email", new_callable=AsyncMock) as mock_magic:
+                mock_magic.return_value = True
+
+                res2 = self.client.post(
+                    "/api/v1/auth/register",
+                    json={"email": email, "name": "User", "tenant_slug": slug},
+                )
+                self.assertEqual(res2.status_code, 201)
+                self.assertEqual(res2.json()["status"], "pending_verification")
 
     # -------------------------------------------------------------------------
     # CTO Test 9: Two concurrent OTP verifications => at most one JWT
