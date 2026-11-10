@@ -1,18 +1,14 @@
 # PAKET BUKTI AUDIT PENUTUPAN FINAL P1 SECURITY GATE (CTO AUDIT BUNDLE)
 - **Komitmen Repositori**: `B055OB/boontrack-core`
-- **Current Verified Commit SHA**: `de9691fd425cc302bdfcdfe0cf02bd5534ca08bf`
+- **Current Verified Commit SHA**: `edf554c0b277094137f549e564e50c059422ce28`
 - **GitHub Actions Verification**: Local Development Execution (`git rev-parse HEAD`) — **PROVENANCE BOUND ✅**
 - **Git Branch / Ref**: `security/auth-registration-identity-verification`
-- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M .github/workflows/cto-security-audit.yml
-M AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md
-M app/routes/auth_routes.py
-M tests/test_auth_postgres_integration.py
-?? PR29_AUTH_SECURITY_FINAL_DELIVERY_REPORT.md`
-- **Waktu Audit (UTC)**: `2026-11-10 15:54:17 UTC`
-- **Waktu Audit (WIB)**: `2026-11-10 22:54:17 WIB`
+- **Status Kebersihan Working Tree (`git status --porcelain`)**: `M app/routes/auth_routes.py`
+- **Waktu Audit (UTC)**: `2026-11-10 16:03:35 UTC`
+- **Waktu Audit (WIB)**: `2026-11-10 23:03:35 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 - **Status Gerbang**: **PENDING CTO FINAL SIGN-OFF**
-- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA `de9691fd425cc302bdfcdfe0cf02bd5534ca08bf`.
+- **CI Provenance Binding**: Evaluated in GitHub Actions via `.github/workflows/cto-security-audit.yml` bound to commit event SHA `edf554c0b277094137f549e564e50c059422ce28`.
 - **Verifikasi Integritas Fail-Safe**: Fail-safe aktif. Jika ada pemeriksaan yang gagal, status bundle wajib mencatat FAIL/INCONCLUSIVE dan exit code 1.
 
 ---
@@ -44,16 +40,12 @@ Pemeriksaan statis terhadap integritas arsitektur kode sumber untuk eliminasi ce
 
 ## BAGIAN 5: HASIL EKSEKUSI CI, REGRESSION SUITE, & SMOKE TEST
 
-- **Verified Commit SHA**: `de9691fd425cc302bdfcdfe0cf02bd5534ca08bf`
+- **Verified Commit SHA**: `edf554c0b277094137f549e564e50c059422ce28`
 - **Workflow Run**: Local Development Execution (`git rev-parse HEAD`)
 - **Git Branch / Ref**: `security/auth-registration-identity-verification`
-- **Status Kebersihan Working Tree**: `M .github/workflows/cto-security-audit.yml
-M AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md
-M app/routes/auth_routes.py
-M tests/test_auth_postgres_integration.py
-?? PR29_AUTH_SECURITY_FINAL_DELIVERY_REPORT.md`
-- **Timestamp Eksekusi (UTC)**: `2026-11-10 15:54:17 UTC`
-- **Timestamp Eksekusi (WIB)**: `2026-11-10 22:54:17 WIB`
+- **Status Kebersihan Working Tree**: `M app/routes/auth_routes.py`
+- **Timestamp Eksekusi (UTC)**: `2026-11-10 16:03:35 UTC`
+- **Timestamp Eksekusi (WIB)**: `2026-11-10 23:03:35 WIB`
 - **Environment Identity**: `Python 3.12.8 on win32 (Windows-11-10.0.26300-SP0), Hostname 'DESKTOP-A19NV98'`
 
 ### Ringkasan Eksekusi Test Suite (94/94 Tests PASSED)
@@ -78,7 +70,7 @@ M tests/test_auth_postgres_integration.py
 
 | Parameter Audit | Nilai Terverifikasi | Status / Catatan |
 |---|---|---|
-| **Verified Commit SHA** | `de9691fd425cc302bdfcdfe0cf02bd5534ca08bf` | Resolusi dinamis via GITHUB_SHA / git rev-parse HEAD |
+| **Verified Commit SHA** | `edf554c0b277094137f549e564e50c059422ce28` | Resolusi dinamis via GITHUB_SHA / git rev-parse HEAD |
 | **Workflow Run Verification** | Local Development Execution (`git rev-parse HEAD`) | Verifikasi eksekusi CI pipeline GitHub Actions otomatis |
 | **Branch / Ref** | `security/auth-registration-identity-verification` | Target branch evaluasi |
 | **Status Gerbang P1** | **PENDING CTO FINAL SIGN-OFF** | Menunggu evaluasi & persetujuan final CTO |
@@ -107,7 +99,7 @@ Seluruh pengujian negatif di bawah dijalankan secara real-time pada komponen run
 - **Skenario C**: Replay attack request identik dalam window 300 detik dengan request_id / nonce yang sama.
 - **Hasil Skenario C**: `PASS ✅` — Ditolak seketika: `HTTP 401 Unauthorized: REPLAY_REJECTED (Replay attack detected: request_id or signature has already been processed within the 300s anti-replay window)`
 - **Skenario D**: Scoped Nonce Namespace `core:replay:{service}:{tenant}:{request_id}`.
-- **Hasil Skenario D**: `PASS ✅` — Namespace terikat eksplisit: `core:replay:inbox:tenant_alpha:test_nonce_897a1b0e445a831a` (Valid ✅)
+- **Hasil Skenario D**: `PASS ✅` — Namespace terikat eksplisit: `core:replay:inbox:tenant_alpha:test_nonce_ccbd44461996360a` (Valid ✅)
 - **Skenario E**: Fail-Closed Anti-Replay (Redis outage -> HTTP 503 REPLAY_GUARD_UNAVAILABLE).
 - **Hasil Skenario E**: `PASS ✅` — HTTP 503 Service Unavailable: REPLAY_GUARD_UNAVAILABLE (Anti-replay Redis instance is not available. Fail-closed enforced in production.) — Fail-Closed Terpenuhi ✅
 

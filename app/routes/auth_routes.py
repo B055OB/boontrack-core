@@ -857,6 +857,9 @@ class TokenStore:
         lease_token = secrets.token_hex(16)
         key = f"{_AUTH_HASH_TAG}:slug_lock:{clean_s}"
 
+        if _is_distributed_token_store_required() and not self._is_redis_healthy():
+            raise RuntimeError("[SECURITY FAIL-CLOSED] Distributed slug lock requires Redis in production but unavailable.")
+
         if self._redis_client:
             try:
                 acquired = self._redis_client.set(key, lease_token, nx=True, ex=ttl_seconds)
@@ -894,6 +897,9 @@ class TokenStore:
 
         clean_s = str(slug).strip().lower()
         key = f"{_AUTH_HASH_TAG}:slug_lock:{clean_s}"
+
+        if _is_distributed_token_store_required() and not self._is_redis_healthy():
+            raise RuntimeError("[SECURITY FAIL-CLOSED] Distributed slug lock requires Redis in production but unavailable.")
 
         released = False
         if self._redis_client:
