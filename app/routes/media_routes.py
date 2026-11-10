@@ -242,10 +242,10 @@ def verify_signed_merchant_session(request: Any) -> Dict[str, Any]:
 
     # --- Tenant Identity (server-side only; user_metadata DILARANG) ---
     # Hierarki kepercayaan:
-    # 1. top-level tenant_id  (Core JWT — diterbitkan server setelah auth terverifikasi)
+    # 1. top-level tenant_id  (Core JWT - diterbitkan server setelah auth terverifikasi)
     # 2. top-level tenant_slug (Core JWT)
-    # 3. app_metadata.tenant_id (Supabase — server-set, tidak dapat dimanipulasi pengguna)
-    # 4. app_metadata.tenant_slug (Supabase — server-set)
+    # 3. app_metadata.tenant_id (Supabase - server-set, tidak dapat dimanipulasi pengguna)
+    # 4. app_metadata.tenant_slug (Supabase - server-set)
     # Sumber yang TIDAK diizinkan: user_metadata.* (user-editable, tidak dapat dipercaya)
     tenant_id = (
         verified_claims.get("tenant_id")
@@ -300,7 +300,7 @@ def _validate_folder_path_components(raw_folder: str, verified_tenant_id: str, l
     # Reject URL-encoded traversal (decode and check)
     decoded = urllib.parse.unquote(clean)
     if decoded != clean:
-        # URL encoding was present — always reject to prevent bypass
+        # URL encoding was present - always reject to prevent bypass
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Percobaan path traversal terdeteksi pada {label}: URL encoding pada path dilarang.",
@@ -772,7 +772,7 @@ async def hardened_tenant_upload_endpoint(
                     detail=f"Ukuran request ({round(_cl_int / (1024 * 1024), 2)} MB) melebihi batas maksimal yang diizinkan. Tolak sebelum membaca body.",
                 )
         except ValueError:
-            pass  # Malformed Content-Length — will fail at body read stage
+            pass  # Malformed Content-Length - will fail at body read stage
 
     # 2. Ekstrak Form Data untuk Cek Spoofing & Deteksi File
     upload_file = file or image or qris or qris_image
