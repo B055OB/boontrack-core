@@ -30,6 +30,16 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: 5432
@@ -37,6 +47,9 @@ jobs:
       POSTGRES_USER: test_user
       POSTGRES_PASSWORD: test_password
       DATABASE_URL: postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      REDIS_URL: redis://127.0.0.1:6379/0
       XENDIT_SECRET_KEY: test_ci_xendit_secret_key_mock_12345
       XENDIT_CALLBACK_TOKEN: test_ci_xendit_callback_token_mock_12345
       SUPABASE_URL: https://mpluzajlzpregmjwpjqr.supabase.co

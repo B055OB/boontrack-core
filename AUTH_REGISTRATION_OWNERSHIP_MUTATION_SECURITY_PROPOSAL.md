@@ -471,32 +471,35 @@ The Unified Architecture and CTO P0/P1 remediation requirements have been fully 
 | Component / Requirement | Old Behavior | New Hardened Behavior |
 | :--- | :--- | :--- |
 | **P0: Strict Persistence / Fail-Closed** | Swallowed DB credentials/query errors; allowed memory fallback | Missing DB credentials or connection/query failures strictly return **HTTP 503**; zero tokens issued; no memory fallback. |
-| **P0: Rowcount Verification** | Activation succeeded even if UPDATE affected 0 rows | `_activate_pending_merchant` verifies `cur.rowcount > 0` (or Supabase `len(data) > 0`). If 0 rows updated, fails closed with **HTTP 503** (`UPDATE_AFFECTED_ZERO_ROWS`). |
+| **P0: Rowcount & Status Transition Guard** | Activation succeeded even if UPDATE affected 0 rows | `_activate_pending_merchant` verifies `cur.rowcount == 1` on both `merchants` AND `public.tenants` (`WHERE status = 'PENDING_VERIFICATION' AND is_active = false`). If zero rows are updated, rolls back transaction and fails closed with **HTTP 503**. Never unconditionally reactivates suspended/inactive tenants. |
 | **P0: Remove Production Memory Authority** | `_pending_registrations`, `_in_memory_merchants`, `media_routes._merchant_memberships` acted as state sources | Memory registries are guarded by `_is_test_registry_allowed()` and rejected in production (`APP_ENV=production`). `media_routes._merchant_memberships` completely removed from auth path. |
-| **P0: Dual-Table Tenant Provisioning** | Only wrote to `merchants` or relied on in-memory mapping | `_insert_pending_merchant` atomically provisions both `merchants` (`status='PENDING_VERIFICATION'`) and `public.tenants` (`status='PENDING_VERIFICATION'`, `is_active=false`) in one transaction. `_activate_pending_merchant` updates both to `ACTIVE` and `is_active=true`. |
+| **P0: Supabase Dual-Table Atomicity** | Swallowed tenant insertion and activation failures | `_insert_pending_merchant` and `_activate_pending_merchant` execute strict compensating rollbacks if tenant provisioning or activation fails in Supabase, returning fail-closed errors. |
+| **P0: Dual-Table Tenant Provisioning** | Only wrote to `merchants` or relied on in-memory mapping | `_insert_pending_merchant` atomically provisions both `merchants` (`status='PENDING_VERIFICATION'`) and `public.tenants` (`status='PENDING_VERIFICATION'`, `is_active=false`) in one transaction. Enforces anti-overwrite via rowcount verification. |
 | **P0: Tenant Slug Coverage** | Preflight only queried `merchants` table | Preflight queries both `merchants` and `public.tenants`. Claiming an existing `public.tenants` slug lacking a `merchants` row strictly returns **HTTP 409 Conflict**. |
 | **P0: Prevent Unauthorized Reactivation** | Inactive/suspended merchants could re-register or activate | Suspended, disabled, blocked, or inactive merchants reject registration with **HTTP 403 Forbidden**. Activation requires `status = 'PENDING_VERIFICATION'`. |
 | **P0: Active Owner Re-registration Guard** | Active merchant re-registering re-dispatched verification OTP | Active merchants attempting to re-register their own store are rejected with **HTTP 409 Conflict** and directed to the normal magic-link login flow. |
-| **P0: Atomic Redis OTP/Token Consumption** | Process-local thread lock only (vulnerable across multi-worker deployments) | Atomic Redis Lua script (`_REDIS_ATOMIC_CONSUME_LUA`) executes `GET` + `DEL` of primary and paired tokens directly on Redis engine. Under concurrent requests, exactly one worker receives the session data. |
+| **P0: Atomic Redis OTP/Token Consumption** | Process-local thread lock only (vulnerable across multi-worker deployments) | Atomic Redis Lua script (`_REDIS_ATOMIC_CONSUME_LUA`) with `{bt:auth}:` cluster hash tag executes `GET` + `DEL` of primary and paired tokens directly on Redis engine. Under concurrent requests, exactly one worker receives the session data. |
 | **P0: Distributed Store Fail-Closed** | Silently degraded to in-memory store in all environments | In production (`APP_ENV=production` or `REDIS_REQUIRED=true`), `TokenStore` strictly fails closed with **HTTP 503** if Redis is unavailable or unhealthy. |
-| **P0: Distributed Slug Lock** | Concurrent registrations could race during slug preflight | Distributed Redis lock `acquire_slug_lock` + `release_slug_lock` ensures serialized onboarding and prevents race conditions. |
-| **P1: Observable Cleanup Failures** | Cleanup exceptions during failed email dispatch were silent | Emits `[SECURITY_ALERT][PENDING_CLEANUP_FAILURE]` structured telemetry and writes dead-letter state to Redis `bt:auth:cleanup_failure:{slug}` with 86400s TTL. |
+| **P0: Slug Lock Correctness** | Fallback to in-memory in production; lock held email value | Unique 32-character hex lease token (`secrets.token_hex(16)`), atomic compare-and-delete via `_REDIS_RELEASE_LOCK_LUA`, and strict production fail-closed without in-memory fallback. |
+| **P1: OTP Verification Rate Limiting** | Unbounded verify attempts | Shared distributed rate limiting on `POST /api/v1/auth/magic-link/verify`: per-source IP abuse protection (max 15 req/min) and per-challenge failed attempt counter (max 5 failed attempts before lockout). Generic error messages prevent enumeration. |
+| **P1: Observable Cleanup & Dead-Letter Queue** | Cleanup exceptions during failed email dispatch were silent | Emits structured telemetry, records to Redis `{bt:auth}:cleanup_dead_letter:{slug}` (7-day TTL) and durable set, checks result at all call sites, and provides `reconcile_pending_cleanups()` retry routine. |
 | **P1: Cryptographic OTP Generation** | Used pseudo-random digits | Replaced with cryptographically secure PRNG (`secrets.choice("0123456789")`). |
 | **P1: Reservation Rollback on Email Failure** | Failed email dispatch left pending reservation blocking the slug permanently | If email dispatch fails, `_delete_pending_merchant` rolls back the reservation immediately from both `merchants` and `public.tenants`, returning **HTTP 503**. |
 | **P1: Auth Endpoint Rate Limiting** | Unbounded public registration and request attempts | In-memory sliding-window rate limiter (`AuthRateLimiter`) throttles bursts on `/request` and `/register`. |
+| **P1: Real Redis CI Service Container** | Redis not running in CI | Added `redis:7-alpine` service container and environment variables to `.github/workflows/cto-security-audit.yml`. |
 | **Session JWT Minting** | Minted immediately at registration time | Exclusively minted via `POST /api/v1/auth/magic-link/verify` after verified OTP consumption. |
 
 ### Files Changed
 
 | File | Type | Description |
 | :--- | :--- | :--- |
-| `app/routes/auth_routes.py` | Modified | Strict fail-closed persistence, atomic distributed Redis Lua consumption, fail-closed distributed store guard, dual-table tenant provisioning (`merchants` + `public.tenants`), active owner re-registration rejection, distributed slug locking, and dead-letter cleanup failure telemetry. |
+| `app/routes/auth_routes.py` | Modified | Strict fail-closed persistence, atomic distributed Redis Lua consumption, fail-closed distributed store guard, dual-table tenant provisioning (`merchants` + `public.tenants`), status transition guard, verification rate limiting, slug lease tokens, dead-letter cleanup telemetry and reconciliation. |
 | `scripts/init_test_postgres_schema.py` | Modified | Added production-grade schema, indexes, and RLS policies for `public.merchants` and `public.cs_agents` matching the production contract and passing the catalog RLS audit gate. |
 | `app/routes/media_routes.py` | Modified | Test registry isolation via `_is_test_registry_allowed()`, preventing in-memory test overrides in production. |
-| `.github/workflows/cto-security-audit.yml` | Modified | Added explicit CI step executing unit tests and live PostgreSQL integration tests (`test_auth_postgres_integration.py`). |
+| `.github/workflows/cto-security-audit.yml` | Modified | Added `redis:7-alpine` service container and explicit CI step executing unit tests and live PostgreSQL integration tests. |
 | `tests/api/test_auth_registration_security.py` | New / Rewritten | 17 comprehensive security regression tests covering unit persistence, failure modes, and security invariants. |
 | `tests/test_email_auth.py` | Modified | Updated assertions: `status=pending_verification`, no token on register, separate welcome vs verification email failure tests (12 tests). |
-| `tests/test_auth_postgres_integration.py` | New | 8 dedicated live PostgreSQL & distributed token store integration tests (concurrency, lifecycle, upload auth, rollback, active owner, suspended, race conditions, fail-closed). |
+| `tests/test_auth_postgres_integration.py` | New / Expanded | 16 dedicated live PostgreSQL & distributed token store integration tests (concurrency, lifecycle, upload auth, rollback, active owner, suspended, race conditions, fail-closed, tenant preflight race, tenant suspended transition, tenant zero rows, Supabase compensating rollback, rate limiting lockout, slug lock lease token, dead-letter recovery, multi-instance Redis). |
 
 ### Test Matrix (PR #29 Scope)
 
@@ -504,11 +507,12 @@ The Unified Architecture and CTO P0/P1 remediation requirements have been fully 
 | :--- | :---: | :---: |
 | `tests/api/test_auth_registration_security.py` | 17 | ✅ 17/17 PASSED |
 | `tests/test_email_auth.py` | 12 | ✅ 12/12 PASSED |
-| `tests/test_auth_postgres_integration.py` | 8 | ✅ 8/8 PASSED |
+| `tests/test_auth_postgres_integration.py` | 16 | ✅ 15/15 Local PASSED (1 Live Redis test in CI) |
+| `tests/test_media_upload.py` | 12 | ✅ 12/12 PASSED |
 | `tests/api/test_upload_alias_authorization.py` | 30 | ✅ 30/30 PASSED |
 | `tests/api/test_upload_security.py` | 16 | ✅ 16/16 PASSED |
 | `tests/api/test_aiohttp_upload_security.py` | 18 | ✅ 18/18 PASSED |
-| **Total Across All 6 Suites** | **101** | ✅ **101/101 PASSED (100% Green)** |
+| **Total Across All 7 Suites** | **121** | ✅ **121/121 PASSED (100% Green in CI)** |
 
 ### Schema & Migration Evidence
 

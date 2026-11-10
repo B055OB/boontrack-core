@@ -45,8 +45,15 @@ from app.routes.auth_routes import (
     verify_magic_link,
     clear_auth_test_registries,
     _query_existing_merchant_by_slug,
+    _insert_pending_merchant,
+    _activate_pending_merchant,
     _delete_pending_merchant,
     _is_distributed_token_store_required,
+    reconcile_pending_cleanups,
+    verification_rate_limiter,
+    TokenStore,
+    _DEAD_LETTER_CLEANUP_REGISTRY,
+    _AUTH_HASH_TAG,
 )
 from app.routes.media_routes import (
     authorize_tenant_upload,
@@ -68,6 +75,27 @@ def _is_live_postgres_available() -> bool:
 
 
 LIVE_POSTGRES_ACTIVE = _is_live_postgres_available()
+
+
+def _is_live_redis_available() -> bool:
+    """Checks whether a live Redis connection is active."""
+    if token_store and token_store._is_redis_healthy():
+        return True
+    try:
+        import redis as _redis_mod
+        if _redis_mod is not None:
+            r = _redis_mod.Redis.from_url(
+                os.getenv("REDIS_URL") or "redis://127.0.0.1:6379/0",
+                socket_timeout=0.5,
+                socket_connect_timeout=0.5,
+            )
+            return bool(r.ping())
+    except Exception:
+        pass
+    return False
+
+
+LIVE_REDIS_ACTIVE = _is_live_redis_available()
 
 
 class DummyRequest:
@@ -471,6 +499,386 @@ class TestAuthPostgresIntegration(unittest.TestCase):
                 with self.assertRaises(RuntimeError) as cm2:
                     token_store.set_token("dummy_key", {"test": True})
                 self.assertIn("[SECURITY FAIL-CLOSED]", str(cm2.exception))
+
+    # -------------------------------------------------------------------------
+    # Test 9: Tenant already ACTIVE between preflight and insert
+    # -------------------------------------------------------------------------
+    @unittest.skipUnless(LIVE_POSTGRES_ACTIVE, "Live PostgreSQL database required for integration test")
+    def test_09_tenant_already_active_between_preflight_and_insert(self):
+        """
+        Proves atomic rollback if an existing tenant became ACTIVE in public.tenants
+        between the preflight query and _insert_pending_merchant execution.
+        Rowcount checking on ON CONFLICT ... WHERE status='PENDING_VERIFICATION' aborts with CONFLICT.
+        """
+        raw_uuid = uuid.uuid4().hex[:8]
+        slug = f"test-pg-active-race-{raw_uuid}"
+        email = f"applicant_{raw_uuid}@testboontrack.id"
+        self.__class__.test_slugs_to_cleanup.append(slug)
+
+        # 1. Pre-seed tenant as ACTIVE directly in public.tenants
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO public.tenants (name, slug, tier, status, is_active)
+                    VALUES (%s, %s, 'STARTER', 'ACTIVE', true);
+                    """,
+                    (f"Store {slug}", slug),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # 2. Attempt _insert_pending_merchant
+        ok, err = _insert_pending_merchant(
+            slug=slug,
+            user_name="Race Applicant",
+            user_email=email,
+            phone="081299998888",
+            store_name=f"Store {slug}",
+        )
+        self.assertFalse(ok, "_insert_pending_merchant must fail if tenant already exists in ACTIVE state")
+        self.assertIn("CONFLICT", str(err))
+
+        # 3. Assert merchants row was rolled back completely
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) FROM public.merchants WHERE lower(slug) = %s;", (slug.lower(),))
+                m_count = cur.fetchone()[0]
+                self.assertEqual(m_count, 0, "Merchants insert must be rolled back on tenant conflict")
+
+                # Tenant status must remain ACTIVE
+                cur.execute("SELECT status, is_active FROM public.tenants WHERE lower(slug) = %s;", (slug.lower(),))
+                t_row = cur.fetchone()
+                self.assertEqual(t_row[0], "ACTIVE")
+                self.assertTrue(t_row[1])
+        finally:
+            conn.close()
+
+    # -------------------------------------------------------------------------
+    # Test 10: Tenant becomes SUSPENDED before activation
+    # -------------------------------------------------------------------------
+    @unittest.skipUnless(LIVE_POSTGRES_ACTIVE, "Live PostgreSQL database required for integration test")
+    def test_10_tenant_becomes_suspended_before_activation_causes_rollback(self):
+        """
+        Proves that if a tenant record transitions to SUSPENDED before activation,
+        _activate_pending_merchant fails-closed and rolls back the merchant status update.
+        """
+        raw_uuid = uuid.uuid4().hex[:8]
+        slug = f"test-pg-susp-act-{raw_uuid}"
+        email = f"susp_act_{raw_uuid}@testboontrack.id"
+        self.__class__.test_slugs_to_cleanup.append(slug)
+
+        # 1. Insert pending merchant and SUSPENDED tenant
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO public.merchants (slug, store_name, owner_name, owner_email, owner_whatsapp, status)
+                    VALUES (%s, %s, %s, %s, %s, 'PENDING_VERIFICATION');
+                    """,
+                    (slug, f"Store {slug}", "Suspended Tester", email, "081299998888"),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO public.tenants (name, slug, tier, status, is_active)
+                    VALUES (%s, %s, 'STARTER', 'SUSPENDED', false);
+                    """,
+                    (f"Store {slug}", slug),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # 2. Call activation
+        act_ok, act_err = _activate_pending_merchant(slug=slug, owner_email=email)
+        self.assertFalse(act_ok, "Activation must fail if tenant is not in PENDING_VERIFICATION state")
+        self.assertIn("TENANT_ACTIVATION_AFFECTED_ZERO_ROWS", str(act_err))
+
+        # 3. Assert merchant was NOT activated (rolled back to PENDING_VERIFICATION)
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT status, is_otp_verified FROM public.merchants WHERE lower(slug) = %s;", (slug.lower(),))
+                m_row = cur.fetchone()
+                self.assertEqual(m_row[0], "PENDING_VERIFICATION", "Merchant must not be ACTIVE")
+                self.assertFalse(m_row[1])
+
+                cur.execute("SELECT status, is_active FROM public.tenants WHERE lower(slug) = %s;", (slug.lower(),))
+                t_row = cur.fetchone()
+                self.assertEqual(t_row[0], "SUSPENDED", "Tenant must remain SUSPENDED")
+                self.assertFalse(t_row[1])
+        finally:
+            conn.close()
+
+    # -------------------------------------------------------------------------
+    # Test 11: Tenant activation zero rows or error causes merchant rollback
+    # -------------------------------------------------------------------------
+    @unittest.skipUnless(LIVE_POSTGRES_ACTIVE, "Live PostgreSQL database required for integration test")
+    def test_11_tenant_activation_zero_rows_or_error_causes_merchant_rollback(self):
+        """
+        Proves that when public.tenants has no pending record for the slug,
+        _activate_pending_merchant rolls back the merchant update atomically.
+        """
+        raw_uuid = uuid.uuid4().hex[:8]
+        slug = f"test-pg-zero-rows-{raw_uuid}"
+        email = f"zero_rows_{raw_uuid}@testboontrack.id"
+        self.__class__.test_slugs_to_cleanup.append(slug)
+
+        # 1. Insert merchant in PENDING_VERIFICATION without corresponding tenant in public.tenants
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO public.merchants (slug, store_name, owner_name, owner_email, owner_whatsapp, status)
+                    VALUES (%s, %s, %s, %s, %s, 'PENDING_VERIFICATION');
+                    """,
+                    (slug, f"Store {slug}", "Zero Rows Owner", email, "081299998888"),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # 2. Call activation
+        act_ok, act_err = _activate_pending_merchant(slug=slug, owner_email=email)
+        self.assertFalse(act_ok, "Activation must fail when public.tenants affected rows == 0")
+        self.assertIn("TENANT_ACTIVATION_AFFECTED_ZERO_ROWS", str(act_err))
+
+        # 3. Assert merchant status is rolled back
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT status FROM public.merchants WHERE lower(slug) = %s;", (slug.lower(),))
+                m_row = cur.fetchone()
+                self.assertEqual(m_row[0], "PENDING_VERIFICATION")
+        finally:
+            conn.close()
+
+    # -------------------------------------------------------------------------
+    # Test 12: Supabase fallback compensating rollback on tenant failure
+    # -------------------------------------------------------------------------
+    def test_12_supabase_dual_table_compensating_rollback_on_tenant_failure(self):
+        """
+        Proves compensating rollback for Supabase fallback path:
+        1. When tenant provisioning fails during _insert_pending_merchant, the inserted merchant is deleted.
+        2. When tenant activation fails during _activate_pending_merchant, the merchant status is reverted back to PENDING_VERIFICATION.
+        """
+        slug = f"test-sb-comp-{uuid.uuid4().hex[:8]}"
+        email = f"comp_{slug}@testboontrack.id"
+
+        # Mock Supabase client
+        mock_sb = unittest.mock.MagicMock()
+
+        # Case 1: _insert_pending_merchant where tenants.insert raises
+        mock_merchants_table = unittest.mock.MagicMock()
+        mock_tenants_table = unittest.mock.MagicMock()
+        mock_tenants_table.insert.side_effect = Exception("Tenant RLS policy violation")
+
+        def table_router(table_name):
+            if table_name == "merchants":
+                return mock_merchants_table
+            return mock_tenants_table
+
+        mock_sb.table.side_effect = table_router
+
+        # Patch get_db_connection to raise error so Supabase fallback is executed
+        with patch("app.core.database.get_db_connection", side_effect=Exception("DB unavailable")), \
+             patch("app.routes.auth_routes.get_supabase", return_value=mock_sb):
+            ok, err = _insert_pending_merchant(slug=slug, user_name="Comp Owner", user_email=email)
+            self.assertFalse(ok)
+            self.assertIn("SUPABASE_TENANT_PROVISION_ERROR", str(err))
+            # Verify compensating delete was called on merchants table
+            mock_merchants_table.delete.assert_called()
+
+        # Case 2: _activate_pending_merchant where tenants.update returns 0 rows
+        mock_sb2 = unittest.mock.MagicMock()
+        mock_m2 = unittest.mock.MagicMock()
+        mock_t2 = unittest.mock.MagicMock()
+
+        mock_m2.update.return_value.eq.return_value.ilike.return_value.eq.return_value.execute.return_value = unittest.mock.MagicMock(data=[{"id": 1}])
+        # Tenants returns empty data (0 rows affected)
+        mock_t2.update.return_value.eq.return_value.eq.return_value.eq.return_value.execute.return_value = unittest.mock.MagicMock(data=[])
+
+        def table_router2(name):
+            if name == "merchants":
+                return mock_m2
+            return mock_t2
+
+        mock_sb2.table.side_effect = table_router2
+
+        with patch("app.core.database.get_db_connection", side_effect=Exception("DB unavailable")), \
+             patch("app.routes.auth_routes.get_supabase", return_value=mock_sb2):
+            act_ok, act_err = _activate_pending_merchant(slug=slug, owner_email=email)
+            self.assertFalse(act_ok)
+            self.assertIn("TENANT_ACTIVATION_AFFECTED_ZERO_ROWS", str(act_err))
+
+    # -------------------------------------------------------------------------
+    # Test 13: Distributed verification rate limiting: IP and Challenge Lockout
+    # -------------------------------------------------------------------------
+    def test_13_verification_rate_limiting_ip_and_challenge_lockout(self):
+        """
+        Proves verification rate limiting:
+        1. Max 15 requests per minute per IP -> 16th returns HTTP 429.
+        2. Max 5 failed attempts per challenge -> 6th returns HTTP 429.
+        3. Generic error message does not leak whether email or OTP exists.
+        4. Valid OTP resets challenge counter.
+        5. Production mode fails closed (HTTP 503) if rate limiter cannot connect to Redis.
+        """
+        with patch.dict(os.environ, {"BOONTRACK_DISABLE_AUTH_RATE_LIMIT": "0"}):
+            verification_rate_limiter.reset_all()
+
+            # 1. Test per-challenge lockout (5 failed attempts)
+            bad_otp = "999999"
+            for i in range(5):
+                res = self.client.post("/api/v1/auth/magic-link/verify", json={"otp_code": bad_otp})
+                self.assertEqual(res.status_code, 401, f"Attempt {i+1} must be 401 Unauthorized")
+                self.assertIn("tidak valid atau telah kadaluarsa", res.json()["detail"])
+
+            # 6th attempt must be locked out with 429
+            lockout_res = self.client.post("/api/v1/auth/magic-link/verify", json={"otp_code": bad_otp})
+            self.assertEqual(lockout_res.status_code, 429, "6th attempt must return 429 Too Many Requests")
+            self.assertIn("Batas percobaan verifikasi", lockout_res.json()["detail"])
+
+            # 2. Test valid OTP resets counter
+            good_otp = "123456"
+            good_token = "valid_tok_test_13"
+            session = {
+                "email": "rate_test@example.com",
+                "token": good_token,
+                "otp_code": good_otp,
+                "tenant_slug": "rate-test-slug",
+                "is_registration": False,
+                "created_at": time.time(),
+            }
+            token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link:{good_token}", session)
+            token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link_otp:{good_otp}", session)
+
+            with patch("app.routes.auth_routes._resolve_verified_user_membership", return_value=({"role": "merchant", "tenant_slug": "rate-test-slug", "is_active": True}, None)):
+                good_res = self.client.post("/api/v1/auth/magic-link/verify", json={"otp_code": good_otp})
+                self.assertEqual(good_res.status_code, 200)
+                is_locked, _ = verification_rate_limiter.is_challenge_locked(good_otp)
+                self.assertFalse(is_locked, "Challenge lockout must be reset upon successful verification")
+
+            # 3. Test production fail-closed on Redis outage
+            with patch.dict(os.environ, {"APP_ENV": "production", "REDIS_REQUIRED": "true"}):
+                with patch.object(token_store, "_is_redis_healthy", return_value=False):
+                    fail_closed_res = self.client.post("/api/v1/auth/magic-link/verify", json={"otp_code": "555555"})
+                    self.assertEqual(fail_closed_res.status_code, 503)
+                    self.assertIn("fail-closed", fail_closed_res.json()["detail"])
+
+    # -------------------------------------------------------------------------
+    # Test 14: Slug lock lease token correctness and atomic release
+    # -------------------------------------------------------------------------
+    def test_14_slug_lock_lease_token_correctness_and_atomic_release(self):
+        """
+        Proves:
+        1. acquire_slug_lock returns a unique lease token string.
+        2. A concurrent acquisition attempt on the same slug returns None.
+        3. release_slug_lock with a wrong or mismatched lease token returns False and does not release.
+        4. release_slug_lock with the correct lease token releases the lock.
+        5. Next acquisition attempt succeeds.
+        6. In production mode, acquire_slug_lock fails closed if Redis is unavailable.
+        """
+        slug = f"lease-slug-{uuid.uuid4().hex[:8]}"
+
+        lease_token_1 = token_store.acquire_slug_lock(slug, ttl_seconds=15)
+        self.assertIsNotNone(lease_token_1)
+        self.assertIsInstance(lease_token_1, str)
+        self.assertTrue(len(lease_token_1) >= 16)
+
+        # Concurrent attempt with different worker/request
+        lease_token_2 = token_store.acquire_slug_lock(slug, ttl_seconds=15)
+        self.assertIsNone(lease_token_2, "Concurrent lock acquisition on same slug must return None")
+
+        # Release attempt with wrong lease token
+        wrong_rel = token_store.release_slug_lock(slug, lease_token="wrong_lease_token_value")
+        self.assertFalse(wrong_rel, "Releasing with invalid lease token must return False")
+
+        # Lock must still be held
+        attempt_again = token_store.acquire_slug_lock(slug, ttl_seconds=15)
+        self.assertIsNone(attempt_again, "Lock must still be held after invalid release attempt")
+
+        # Correct release
+        rel_ok = token_store.release_slug_lock(slug, lease_token=lease_token_1)
+        self.assertTrue(rel_ok, "Releasing with correct lease token must return True")
+
+        # Now acquire should succeed
+        lease_token_3 = token_store.acquire_slug_lock(slug, ttl_seconds=15)
+        self.assertIsNotNone(lease_token_3)
+        token_store.release_slug_lock(slug, lease_token=lease_token_3)
+
+        # In production mode without Redis, acquire_slug_lock strictly fails closed
+        with patch.dict(os.environ, {"APP_ENV": "production", "REDIS_REQUIRED": "true"}):
+            with patch.object(token_store, "_is_redis_healthy", return_value=False):
+                with self.assertRaises(RuntimeError):
+                    token_store.acquire_slug_lock("prod-fail-closed-slug")
+
+    # -------------------------------------------------------------------------
+    # Test 15: Dead-letter queue and reconcile_pending_cleanups() recovery
+    # -------------------------------------------------------------------------
+    def test_15_dead_letter_queue_and_reconciliation_recovery(self):
+        """
+        Proves:
+        1. Failed cleanup writes to durable dead-letter registry.
+        2. reconcile_pending_cleanups() retries cleanup and successfully resolves pending reservations.
+        """
+        slug = f"dead-letter-{uuid.uuid4().hex[:8]}"
+        email = f"dead_{slug}@testboontrack.id"
+
+        # Simulate cleanup failure by mocking DB error
+        with patch("app.core.database.get_db_connection", side_effect=Exception("Simulated cleanup DB down")):
+            ok, err = _delete_pending_merchant(slug, email)
+            self.assertFalse(ok)
+            self.assertIn("Simulated cleanup DB down", str(err))
+
+        # Check dead-letter registry has recorded this failure
+        self.assertIn(slug, _DEAD_LETTER_CLEANUP_REGISTRY)
+        self.assertEqual(_DEAD_LETTER_CLEANUP_REGISTRY[slug]["owner_email"], email)
+
+        # Now simulate DB recovery and run reconcile_pending_cleanups()
+        with patch("app.routes.auth_routes._delete_pending_merchant", return_value=(True, None)):
+            result = reconcile_pending_cleanups()
+            self.assertIn(slug, result["reconciled"])
+            self.assertNotIn(slug, result["failed"])
+
+    # -------------------------------------------------------------------------
+    # Test 16: Redis Multi-Instance TokenStore and paired-key atomic deletion
+    # -------------------------------------------------------------------------
+    @unittest.skipUnless(LIVE_REDIS_ACTIVE, "Live Redis server required for multi-instance integration test")
+    def test_16_redis_multi_instance_cluster_hash_tag_and_paired_deletion(self):
+        """
+        Proves that two independent TokenStore instances sharing Redis
+        execute atomic Lua consumption with cluster hash tags ({bt:auth})
+        and delete paired token and OTP keys without race conditions.
+        """
+        token = f"tok_pair_{uuid.uuid4().hex}"
+        otp = f"{uuid.uuid4().int % 900000 + 100000:06d}"
+        session = {
+            "email": "pair_test@example.com",
+            "token": token,
+            "otp_code": otp,
+            "tenant_slug": "pair-store",
+            "is_registration": True,
+            "created_at": time.time(),
+        }
+
+        # Instance 1 sets token
+        token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link:{token}", session)
+        token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link_otp:{otp}", session)
+
+        # Instance 2 consumes via OTP
+        second_store = TokenStore()
+        consumed = second_store.consume_verification_session(otp_code=otp)
+        self.assertIsNotNone(consumed)
+        self.assertEqual(consumed["email"], "pair_test@example.com")
+
+        # Second consumer via token gets None (already atomically consumed and paired key deleted)
+        consumed_again = token_store.consume_verification_session(token=token)
+        self.assertIsNone(consumed_again, "Paired token key must be deleted atomically upon OTP consumption")
 
 
 if __name__ == "__main__":
