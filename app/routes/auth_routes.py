@@ -1441,7 +1441,14 @@ class VerificationRateLimiter:
                 self._local_account_fails.pop(clean_acc, None)
 
     def reset_all(self) -> None:
-        """Resets local state (used in testing)."""
+        """Resets local state and Redis rate limit keys (used in testing)."""
+        if self.store and hasattr(self.store, "_is_redis_healthy") and self.store._is_redis_healthy():
+            try:
+                keys = self.store._redis_client.keys(f"{_AUTH_HASH_TAG}:ratelimit:*")
+                if keys:
+                    self.store._redis_client.delete(*keys)
+            except Exception:
+                pass
         with self._lock:
             self._local_ip_history.clear()
             self._local_challenge_fails.clear()

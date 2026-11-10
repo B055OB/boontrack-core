@@ -924,15 +924,18 @@ class TestAuthPostgresIntegration(unittest.TestCase):
             self.assertIn("Batas percobaan verifikasi", res_6th.json()["detail"])
 
             # 3. Concurrent failed guesses across independent clients
+            verification_rate_limiter.reset_all()
             conc_challenge = f"ch_conc_{uuid.uuid4().hex[:12]}"
-            def make_failed_attempt(guess_otp):
+            def make_failed_attempt(item):
+                i, guess_otp = item
                 return self.client.post(
                     "/api/v1/auth/magic-link/verify",
                     json={"challenge_id": conc_challenge, "otp_code": guess_otp},
+                    headers={"X-Forwarded-For": f"198.51.100.{i+1}"},
                 ).status_code
 
             with ThreadPoolExecutor(max_workers=5) as pool:
-                guesses = [f"{100000 + i}" for i in range(10)]
+                guesses = [(i, f"{100000 + i}") for i in range(10)]
                 statuses = list(pool.map(make_failed_attempt, guesses))
 
             # Exactly 5 should be 401 and remaining 5 should be 429
