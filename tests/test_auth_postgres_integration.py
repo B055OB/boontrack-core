@@ -738,42 +738,60 @@ class TestAuthPostgresIntegration(unittest.TestCase):
         with patch.dict(os.environ, {"BOONTRACK_DISABLE_AUTH_RATE_LIMIT": "0"}):
             verification_rate_limiter.reset_all()
 
-            # 1. Test per-challenge lockout (5 failed attempts)
+            # 1. Test per-challenge lockout (5 failed attempts against an authoritative challenge)
+            ch_13 = f"ch_test_13_{uuid.uuid4().hex[:8]}"
+            tok_13 = f"tok_test_13_{uuid.uuid4().hex}"
+            session_13 = {
+                "email": "test13_lockout@example.com",
+                "token": tok_13,
+                "otp_code": "112233",
+                "challenge_id": ch_13,
+                "tenant_slug": "rate-test-slug",
+                "is_registration": False,
+                "created_at": time.time(),
+            }
+            token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link:{tok_13}", session_13)
+            token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link_otp:{session_13['otp_code']}", session_13)
+            token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link_challenge:{ch_13}", session_13)
+
             bad_otp = "999999"
             for i in range(5):
-                res = self.client.post("/api/v1/auth/magic-link/verify", json={"otp_code": bad_otp})
+                res = self.client.post("/api/v1/auth/magic-link/verify", json={"challenge_id": ch_13, "otp_code": bad_otp})
                 self.assertEqual(res.status_code, 401, f"Attempt {i+1} must be 401 Unauthorized")
                 self.assertIn("tidak valid atau telah kadaluarsa", res.json()["detail"])
 
             # 6th attempt must be locked out with 429
-            lockout_res = self.client.post("/api/v1/auth/magic-link/verify", json={"otp_code": bad_otp})
+            lockout_res = self.client.post("/api/v1/auth/magic-link/verify", json={"challenge_id": ch_13, "otp_code": bad_otp})
             self.assertEqual(lockout_res.status_code, 429, "6th attempt must return 429 Too Many Requests")
             self.assertIn("Batas percobaan verifikasi", lockout_res.json()["detail"])
 
             # 2. Test valid OTP resets counter
             good_otp = "123456"
-            good_token = "valid_tok_test_13"
+            good_token = f"valid_tok_test_13_{uuid.uuid4().hex}"
+            good_ch = f"ch_good_13_{uuid.uuid4().hex[:8]}"
             session = {
                 "email": "rate_test@example.com",
                 "token": good_token,
                 "otp_code": good_otp,
+                "challenge_id": good_ch,
                 "tenant_slug": "rate-test-slug",
                 "is_registration": False,
                 "created_at": time.time(),
             }
             token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link:{good_token}", session)
             token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link_otp:{good_otp}", session)
+            token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link_challenge:{good_ch}", session)
 
             with patch("app.routes.auth_routes._resolve_verified_user_membership", return_value=({"role": "merchant", "tenant_slug": "rate-test-slug", "is_active": True}, None)):
-                good_res = self.client.post("/api/v1/auth/magic-link/verify", json={"otp_code": good_otp})
+                good_res = self.client.post("/api/v1/auth/magic-link/verify", json={"challenge_id": good_ch, "otp_code": good_otp})
                 self.assertEqual(good_res.status_code, 200)
-                is_locked, _ = verification_rate_limiter.is_challenge_locked(good_otp)
+                is_locked, _ = verification_rate_limiter.is_challenge_locked(good_ch)
                 self.assertFalse(is_locked, "Challenge lockout must be reset upon successful verification")
 
             # 3. Test production fail-closed on Redis outage
             with patch.dict(os.environ, {"APP_ENV": "production", "REDIS_REQUIRED": "true"}):
                 with patch.object(token_store, "_is_redis_healthy", return_value=False):
-                    fail_closed_res = self.client.post("/api/v1/auth/magic-link/verify", json={"otp_code": "555555"})
+                    fail_closed_res = self.client.post("/api/v1/auth/magic-link/verify", json={"challenge_id": good_ch, "otp_code": "555555"})
                     self.assertEqual(fail_closed_res.status_code, 503)
                     self.assertIn("fail-closed", fail_closed_res.json()["detail"])
 
@@ -996,9 +1014,24 @@ class TestAuthPostgresIntegration(unittest.TestCase):
             self.assertEqual(res_blind.status_code, 401)
 
             # 6. Attempt to reuse a challenge belonging to another email fails
+            ch_reuse = f"ch_reuse_{uuid.uuid4().hex[:12]}"
+            tok_reuse = f"tok_reuse_{uuid.uuid4().hex}"
+            session_reuse = {
+                "email": "legit_owner@boontrack.id",
+                "token": tok_reuse,
+                "otp_code": "654321",
+                "challenge_id": ch_reuse,
+                "tenant_slug": "legit-shop",
+                "is_registration": False,
+                "created_at": time.time(),
+            }
+            token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link:{tok_reuse}", session_reuse)
+            token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link_otp:{session_reuse['otp_code']}", session_reuse)
+            token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link_challenge:{ch_reuse}", session_reuse)
+
             res_mismatch = self.client.post(
                 "/api/v1/auth/magic-link/verify",
-                json={"challenge_id": ch_rot, "otp_code": session_rot["otp_code"], "email": "attacker@evil.test"},
+                json={"challenge_id": ch_reuse, "otp_code": session_reuse['otp_code'], "email": "attacker@evil.test"},
             )
             self.assertEqual(res_mismatch.status_code, 401)
 

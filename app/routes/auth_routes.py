@@ -1015,12 +1015,26 @@ def _resolve_verified_user_membership(
 # ---------------------------------------------------------------------------
 
 _REDIS_ATOMIC_CONSUME_LUA = f"""
-local primary_key = KEYS[1]
-local val = redis.call('GET', primary_key)
+local val = nil
+for i = 1, #KEYS do
+    local k = KEYS[i]
+    if k and k ~= '' then
+        local found = redis.call('GET', k)
+        if found then
+            val = found
+            break
+        end
+    end
+end
 if not val then
     return nil
 end
-redis.call('DEL', primary_key)
+for i = 1, #KEYS do
+    local k = KEYS[i]
+    if k and k ~= '' then
+        redis.call('DEL', k)
+    end
+end
 local ok, data = pcall(cjson.decode, val)
 if ok and type(data) == 'table' then
     if data.token and data.token ~= '' then
@@ -1273,10 +1287,10 @@ class TokenStore:
 
         # 1. Distributed Redis Atomic Lua Script Execution
         if self._redis_client:
-            target_key = challenge_key or otp_key or token_key
-            if target_key:
+            keys_to_check = [k for k in (challenge_key, otp_key, token_key) if k]
+            if keys_to_check:
                 try:
-                    raw = self._redis_client.eval(_REDIS_ATOMIC_CONSUME_LUA, 1, target_key)
+                    raw = self._redis_client.eval(_REDIS_ATOMIC_CONSUME_LUA, len(keys_to_check), *keys_to_check)
                     if raw:
                         session_data = json.loads(raw)
                         # Clean local memory mirror if present
