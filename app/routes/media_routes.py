@@ -14,6 +14,7 @@ import os
 import io
 import uuid
 import logging
+import urllib.parse
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Dict, Any, Optional, Union
@@ -221,19 +222,42 @@ def verify_signed_merchant_session(request: Any) -> Dict[str, Any]:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # --- Role Authorization (server-side claim only) ---
+    # Role diekstrak dari top-level JWT claim (Core JWT) atau dari app_metadata (Supabase, server-set).
+    # Jangan percayai user_metadata.role karena dapat dimanipulasi pengguna.
+    _authorized_roles: frozenset = frozenset({"merchant", "owner", "admin", "staff", "supervisor"})
+    role = (
+        verified_claims.get("role")
+        or (verified_claims.get("app_metadata") or {}).get("role")
+        or ""
+    ).lower().strip()
+    if role not in _authorized_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Role '{role}' tidak memiliki otorisasi untuk mengakses endpoint upload merchant. "
+                f"Hanya role merchant, owner, admin, supervisor, atau staff yang diizinkan."
+            ),
+        )
+
+    # --- Tenant Identity (server-side only; user_metadata DILARANG) ---
+    # Hierarki kepercayaan:
+    # 1. top-level tenant_id  (Core JWT — diterbitkan server setelah auth terverifikasi)
+    # 2. top-level tenant_slug (Core JWT)
+    # 3. app_metadata.tenant_id (Supabase — server-set, tidak dapat dimanipulasi pengguna)
+    # 4. app_metadata.tenant_slug (Supabase — server-set)
+    # Sumber yang TIDAK diizinkan: user_metadata.* (user-editable, tidak dapat dipercaya)
     tenant_id = (
         verified_claims.get("tenant_id")
         or verified_claims.get("tenant_slug")
         or (verified_claims.get("app_metadata") or {}).get("tenant_id")
-        or (verified_claims.get("user_metadata") or {}).get("tenant_id")
         or (verified_claims.get("app_metadata") or {}).get("tenant_slug")
-        or (verified_claims.get("user_metadata") or {}).get("tenant_slug")
         or verified_claims.get("tenant")
     )
     if not tenant_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Klaim tenant_id / tenant_slug tidak ditemukan dalam sesi tertanda.",
+            detail="Klaim tenant_id / tenant_slug tidak ditemukan dalam sesi tertanda (atau hanya tersedia di user_metadata yang tidak dipercaya).",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -243,6 +267,60 @@ def verify_signed_merchant_session(request: Any) -> Dict[str, Any]:
         "realm": resolved_realm,
         "claims": verified_claims,
     }
+
+
+def _validate_folder_path_components(raw_folder: str, verified_tenant_id: str, label: str = "folder") -> None:
+    """
+    Validasi komponen path folder dengan component-safe logic (bukan string-prefix).
+
+    Pemeriksaan:
+    - Menolak absolute path (diawali '/')
+    - Menolak backslash separator ('\\')
+    - Menolak literal path traversal ('..')
+    - Menolak URL-encoded path traversal ('%2e%2e', '%2f', dll.)
+    - Jika diawali 'tenants/', memastikan komponen kedua PERSIS sama dengan verified_tenant_id
+      (menolak lookalike seperti tenant-alpha-evil jika tenant adalah tenant-alpha).
+    """
+    clean = raw_folder.strip()
+
+    # Reject absolute paths
+    if clean.startswith("/") or clean.startswith("\\"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Percobaan path traversal terdeteksi pada {label}: absolute path tidak diizinkan.",
+        )
+
+    # Reject backslash
+    if "\\" in clean:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Percobaan path traversal terdeteksi pada {label}: karakter backslash tidak diizinkan.",
+        )
+
+    # Reject URL-encoded traversal (decode and check)
+    decoded = urllib.parse.unquote(clean)
+    if decoded != clean:
+        # URL encoding was present — always reject to prevent bypass
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Percobaan path traversal terdeteksi pada {label}: URL encoding pada path dilarang.",
+        )
+
+    # Reject literal '..'
+    parts = clean.split("/")
+    if ".." in parts or "." in parts:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Percobaan path traversal terdeteksi pada {label}: '..' atau '.' dalam path dilarang.",
+        )
+
+    # Component-safe tenant namespace validation
+    if parts and parts[0] == "tenants":
+        if len(parts) < 2 or parts[1] != verified_tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Akses cross-tenant ditolak: komponen tenant '{parts[1] if len(parts) > 1 else '(empty)'}' tidak cocok dengan session tenant '{verified_tenant_id}'.",
+            )
 
 
 def validate_no_cross_tenant_tampering(
@@ -309,31 +387,11 @@ def validate_no_cross_tenant_tampering(
 
         f_folder = form_data.get("folder")
         if f_folder and isinstance(f_folder, str):
-            clean_f = f_folder.strip()
-            if ".." in clean_f or clean_f.startswith("/") or "\\" in clean_f:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Percobaan path traversal terdeteksi pada parameter folder form.",
-                )
-            if clean_f.startswith("tenants/") and not clean_f.startswith(f"tenants/{verified_tenant_id}"):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Akses cross-tenant ditolak: dilarang mengunggah ke namespace tenant lain.",
-                )
+            _validate_folder_path_components(f_folder, verified_tenant_id, label="form folder")
 
     # 5. Validasi folder_param langsung
     if folder_param:
-        clean_p = folder_param.strip()
-        if ".." in clean_p or clean_p.startswith("/") or "\\" in clean_p:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Percobaan path traversal terdeteksi pada parameter folder.",
-            )
-        if clean_p.startswith("tenants/") and not clean_p.startswith(f"tenants/{verified_tenant_id}"):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Akses cross-tenant ditolak: dilarang mengunggah ke namespace tenant lain.",
-            )
+        _validate_folder_path_components(folder_param, verified_tenant_id, label="folder param")
 
 
 async def process_and_upload_image_bytes(
@@ -701,6 +759,21 @@ async def hardened_tenant_upload_endpoint(
     verified_tenant_id = session["tenant_id"]
     verified_merchant_id = session["merchant_id"]
 
+    # 1b. Content-Length pre-check (before reading body into memory)
+    # Reject clearly oversized requests early to prevent DoS via full-body allocation.
+    # +65536 provides headroom for form field overhead beyond the binary payload.
+    _cl_header = request.headers.get("content-length")
+    if _cl_header:
+        try:
+            _cl_int = int(_cl_header)
+            if _cl_int > MAX_FILE_SIZE + 65536:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Ukuran request ({round(_cl_int / (1024 * 1024), 2)} MB) melebihi batas maksimal yang diizinkan. Tolak sebelum membaca body.",
+                )
+        except ValueError:
+            pass  # Malformed Content-Length — will fail at body read stage
+
     # 2. Ekstrak Form Data untuk Cek Spoofing & Deteksi File
     upload_file = file or image or qris or qris_image
     form_data = {}
@@ -867,6 +940,16 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
             return web.json_response(
                 {"status": "error", "detail": auth_exc.detail},
                 status=auth_exc.status_code,
+                headers=cors_headers,
+            )
+
+    # Content-Length pre-check for aiohttp (before reading body)
+    if is_hardened_route:
+        _aio_cl = request.content_length
+        if _aio_cl is not None and _aio_cl > MAX_FILE_SIZE + 65536:
+            return web.json_response(
+                {"status": "error", "detail": f"Ukuran request ({round(_aio_cl / (1024 * 1024), 2)} MB) melebihi batas maksimal yang diizinkan."},
+                status=413,
                 headers=cors_headers,
             )
 
