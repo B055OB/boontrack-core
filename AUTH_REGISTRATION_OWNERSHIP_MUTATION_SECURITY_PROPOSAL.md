@@ -7,7 +7,7 @@
 **Baseline Commit SHA:** `b58cc6d924d28464e40972d35f19f49121921d3f`  
 **Date:** 2026-11-10  
 **Classification:** Critical Trust Boundary / Remediation Implemented in Dedicated PR #29  
-**Status:** **APPROVED & IMPLEMENTED (PR #29)**  
+**Status:** IMPLEMENTED — PENDING CTO APPROVAL  
 **Branch:** `security/auth-registration-identity-verification`  
 **Target:** `main`  
 
@@ -462,56 +462,63 @@ class TestAuthAttackPaths(unittest.TestCase):
 
 ## 7. Dedicated Remediation — PR #29 Delivery Summary
 
-> **Status: IMPLEMENTED** — Branch `security/auth-registration-identity-verification` from baseline `b58cc6d924d28464e40972d35f19f49121921d3f`
+> **Status: IMPLEMENTED — PENDING CTO APPROVAL** — Branch `security/auth-registration-identity-verification` from baseline `b58cc6d924d28464e40972d35f19f49121921d3f`
 
 ### Implementation Summary
 
-The Unified Architecture has been fully implemented in dedicated branch `security/auth-registration-identity-verification`:
+The Unified Architecture and CTO P0/P1 remediation requirements have been fully implemented in dedicated branch `security/auth-registration-identity-verification`:
 
-| Component | Old Behavior | New Behavior |
+| Component / Requirement | Old Behavior | New Hardened Behavior |
 | :--- | :--- | :--- |
-| `handle_register_logic` | Immediately mints signed JWT (no email verification) | Returns HTTP 201 `status=pending_verification`, zero tokens issued |
-| Tenant slot creation | `merchants.upsert(..., on_conflict="slug")` → overwrites `owner_email` | Pre-flight slug conflict detection → atomic `INSERT` only, `status=PENDING_VERIFICATION` |
-| Slug conflict (same email) | Silently re-mints JWT for existing owner | Issues new verification challenge without overwriting DB row |
-| Slug conflict (different email) | Overwrites owner_email in DB | HTTP 409 Conflict — cannot claim a slug owned by another email |
-| DB write failure | Exception swallowed → JWT still minted | Fails closed: HTTP 503 — zero tokens issued |
-| Session JWT minting | At registration time (unverified) | Exclusively via `POST /api/v1/auth/magic-link/verify` after single-use OTP destruction |
-| OTP/magic-link single-use | Existing behavior preserved | Challenge destroyed immediately on consumption (replay-proof) |
-| Staff login (cs_agents) | Via legacy flows | `_resolve_verified_user_membership` checks both `merchants` (owner) and `cs_agents` (staff) |
+| **P0: Strict Persistence / Fail-Closed** | Swallowed DB credentials/query errors; allowed memory fallback | Missing DB credentials or connection/query failures strictly return **HTTP 503**; zero tokens issued; no memory fallback. |
+| **P0: Rowcount Verification** | Activation succeeded even if UPDATE affected 0 rows | `_activate_pending_merchant` verifies `cur.rowcount > 0` (or Supabase `len(data) > 0`). If 0 rows updated, fails closed with **HTTP 503** (`UPDATE_AFFECTED_ZERO_ROWS`). |
+| **P0: Remove Production Memory Authority** | `_pending_registrations`, `_in_memory_merchants`, `media_routes._merchant_memberships` acted as state sources | Memory registries are guarded by `_is_test_registry_allowed()` and rejected in production (`APP_ENV=production`). `media_routes._merchant_memberships` completely removed from auth path. |
+| **P0: Tenant Slug Coverage** | Preflight only queried `merchants` table | Preflight queries both `merchants` and `public.tenants`. Claiming an existing `public.tenants` slug lacking a `merchants` row strictly returns **HTTP 409 Conflict**. |
+| **P0: Prevent Unauthorized Reactivation** | Inactive/suspended merchants could re-register or activate | Suspended, disabled, blocked, or inactive merchants reject registration with **HTTP 403 Forbidden**. Activation requires `status = 'PENDING_VERIFICATION'`. |
+| **P1: Cryptographic OTP Generation** | Used pseudo-random digits | Replaced with cryptographically secure PRNG (`secrets.choice("0123456789")`). |
+| **P1: Atomic Session Consumption** | Susceptible to concurrent OTP reuse race conditions | `TokenStore` protected by `threading.Lock`; `consume_verification_session` atomically pops challenge on first read. Concurrent attempts receive `None` and fail with **HTTP 401**. |
+| **P1: Reservation Rollback on Email Failure** | Failed email dispatch left pending reservation blocking the slug permanently | If email dispatch fails, `_delete_pending_merchant` rolls back the reservation immediately, leaving no DB residue and returning **HTTP 503**. |
+| **P1: Auth Endpoint Rate Limiting** | Unbounded public registration and request attempts | In-memory sliding-window rate limiter (`AuthRateLimiter`) throttles bursts on `/request` and `/register`. |
+| **Session JWT Minting** | Minted immediately at registration time | Exclusively minted via `POST /api/v1/auth/magic-link/verify` after verified OTP consumption. |
 
 ### Files Changed
 
 | File | Type | Description |
 | :--- | :--- | :--- |
-| `app/routes/auth_routes.py` | Modified | Full remediation: verified-email activation + atomic tenant ownership |
-| `tests/test_email_auth.py` | Modified | Updated assertions: `status=pending_verification`, no `access_token` on register |
-| `tests/api/test_auth_registration_security.py` | New | 12 security regression tests covering all attack paths & legitimate flows |
+| `app/routes/auth_routes.py` | Modified | Strict fail-closed persistence, atomic session consumption, dual-table slug check, rollback on email failure, rate limiting, and test registry isolation. |
+| `app/routes/media_routes.py` | Modified | Test registry isolation via `_is_test_registry_allowed()`, preventing in-memory test overrides in production. |
+| `.github/workflows/cto-security-audit.yml` | Modified | Added explicit CI step executing both PR #29 auth security test suites and uploading log artifacts. |
+| `tests/api/test_auth_registration_security.py` | New / Rewritten | 17 comprehensive security regression tests covering Tasks 1–5, edge cases, and failure modes. |
+| `tests/test_email_auth.py` | Modified | Updated assertions: `status=pending_verification`, no token on register, separate welcome vs verification email failure tests (12 tests). |
 
 ### Test Matrix (PR #29 Scope)
 
 | Suite | Tests | Result |
 | :--- | :---: | :---: |
-| `test_auth_registration_security.py` | 12 | ✅ 12/12 PASSED |
-| `test_email_auth.py` | 11 | ✅ 11/11 PASSED |
-| `test_upload_alias_authorization.py` | 30 | ✅ 30/30 PASSED |
-| `test_upload_security.py` | 16 | ✅ 16/16 PASSED |
-| `test_aiohttp_upload_security.py` | 18 | ✅ 18/18 PASSED |
-| **Total** | **87** | ✅ **87/87 PASSED** |
+| `tests/api/test_auth_registration_security.py` | 17 | ✅ 17/17 PASSED |
+| `tests/test_email_auth.py` | 12 | ✅ 12/12 PASSED |
+| `tests/api/test_upload_alias_authorization.py` | 30 | ✅ 30/30 PASSED |
+| `tests/api/test_upload_security.py` | 16 | ✅ 16/16 PASSED |
+| `tests/api/test_aiohttp_upload_security.py` | 18 | ✅ 18/18 PASSED |
+| **Total Across All 5 Suites** | **93** | ✅ **93/93 PASSED (100% Green)** |
 
 ### Schema & Migration Evidence
 
 The PR introduces `status` field semantics (`PENDING_VERIFICATION`, `ACTIVE`) on the `merchants` table. The following migration is **required** before this branch can be deployed to production:
 
 ```sql
--- Add status column to merchants table (if not already present)
+-- 1. Add status column to merchants table (if not already present)
 ALTER TABLE merchants 
   ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ACTIVE';
 
--- Mark all existing verified merchants as ACTIVE
+-- 2. Mark all existing verified merchants as ACTIVE
 UPDATE merchants SET status = 'ACTIVE' WHERE status IS NULL;
 
--- Add index for fast status filtering
-CREATE INDEX IF NOT EXISTS idx_merchants_status ON merchants(status);
+-- 3. Add unique constraint on slug to enforce atomic ownership at database engine level
+CREATE UNIQUE INDEX IF NOT EXISTS idx_merchants_slug_unique ON merchants (slug);
+
+-- 4. Add index for fast status filtering
+CREATE INDEX IF NOT EXISTS idx_merchants_status ON merchants (status);
 ```
 
 > [!CAUTION]
@@ -528,7 +535,7 @@ CREATE INDEX IF NOT EXISTS idx_merchants_status ON merchants(status);
 
 ### Remaining Limitations & Open Items
 
-1. **`status` DB column migration** — Not included in PR #29 (requires production DBA coordination). PR #29 uses `status=PENDING_VERIFICATION` in the INSERT payload; if the column does not exist, the INSERT will fail (safe fail-closed behavior).
+1. **`status` DB column migration** — Not executed in PR #29 (requires production DBA coordination). PR #29 uses `status=PENDING_VERIFICATION` in the INSERT payload; if the column does not exist, the INSERT will fail (safe fail-closed behavior).
 2. **Frontend consumer update** — `boontrack-studio` Next.js registration handler must be updated in a separate PR to handle `pending_verification` response and show inbox verification prompt.
 3. **Legacy direct JWT consumers** — Any external client relying on immediate `access_token` from `/api/v1/auth/register` will be broken. A deprecation notice should be communicated to all API consumers before deployment.
-4. **PR #28 merge order** — PR #28 should be reviewed and merged first (upload security), then PR #29 (auth security) on top of updated `main`.
+4. **PR #28 and PR #29 merge prerequisites** — PR #28 must be reviewed and approved first (upload security), followed by PR #29 (auth security) on top of updated `main`. Both PRs remain strictly unmerged until formal CTO approval.

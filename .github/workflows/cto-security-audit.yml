@@ -118,6 +118,17 @@ jobs:
             exit 1
           }
 
+      - name: Run Auth Registration & Identity Verification Security Test Suites (PR #29)
+        run: |
+          set -o pipefail
+          python -m pytest tests/api/test_auth_registration_security.py tests/test_email_auth.py -v -ra --tb=short 2>&1 | tee /tmp/auth_security_test_results.log || {
+            echo "## ❌ Auth Security Pytest Failures" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat /tmp/auth_security_test_results.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          }
+
       - name: Execute PostgreSQL Catalog RLS & Security Invoker Audit Gate
         run: |
           set -o pipefail
@@ -144,6 +155,7 @@ jobs:
           path: |
             /tmp/test_results.log
             /tmp/upload_security_test_results.log
+            /tmp/auth_security_test_results.log
             /tmp/rls_audit.log
             /tmp/prod_catalog_audit.log
           retention-days: 7

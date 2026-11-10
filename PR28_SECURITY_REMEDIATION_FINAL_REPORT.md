@@ -162,13 +162,14 @@ tests/api/test_upload_alias_authorization.py (30 tests)     [PASSED: 30/30]
 
 | Attribute | Detail |
 | :--- | :--- |
+| **Status** | **IMPLEMENTED — PENDING CTO APPROVAL** |
 | **Branch** | `security/auth-registration-identity-verification` |
 | **Base** | `main` |
 | **Closes** | Attack Path A (self-asserted email JWT impersonation) |
 | **Closes** | Attack Path B (tenant slug `upsert` ownership mutation) |
-| **Changed files** | `app/routes/auth_routes.py`, `tests/test_email_auth.py`, `tests/api/test_auth_registration_security.py` |
-| **New test count** | 12 security regression tests |
-| **Full regression** | ✅ 87/87 passed (all upload + auth suites) |
-| **Schema migration required** | Yes — `ALTER TABLE merchants ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ACTIVE'` |
+| **Changed files** | `app/routes/auth_routes.py`, `app/routes/media_routes.py`, `.github/workflows/cto-security-audit.yml`, `tests/test_email_auth.py`, `tests/api/test_auth_registration_security.py` |
+| **New test count** | 17 security regression tests |
+| **Full regression** | ✅ 93/93 passed (all upload + auth suites) |
+| **Schema migration required** | Yes — `ALTER TABLE merchants ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ACTIVE'; CREATE UNIQUE INDEX IF NOT EXISTS idx_merchants_slug_unique ON merchants (slug);` |
 | **Frontend update required** | `boontrack-studio` Next.js registration handler (separate PR) |
 

@@ -11,6 +11,7 @@ Mendukung:
 """
 
 import os
+import sys
 import io
 import uuid
 import logging
@@ -286,6 +287,22 @@ def clear_merchant_membership_registry() -> None:
     _merchant_memberships.clear()
 
 
+def _is_test_registry_allowed() -> bool:
+    """
+    Strict security check: ensures in-memory test registries cannot act as production authorization sources.
+    Returns False if running in production mode.
+    """
+    for env_var in ("APP_ENV", "ENV", "ENVIRONMENT", "BOONTRACK_ENV"):
+        val = os.getenv(env_var, "").strip().lower()
+        if val in ("prod", "production"):
+            return False
+    if os.getenv("BOONTRACK_TEST_REGISTRY_ENABLED", "").lower() in ("1", "true"):
+        return True
+    if "pytest" in sys.modules:
+        return True
+    return False
+
+
 def _query_db_tenant_active(tenant_id: str) -> Tuple[bool, Optional[str]]:
     """
     Queries public.tenants table to verify tenant exists and is active.
@@ -424,39 +441,41 @@ def validate_merchant_tenant_membership(
         )
 
     # 2. Check tenant-level active status
-    # 2a. Check _test_tenants_registry (test fixture override)
+    # 2a. Check _test_tenants_registry (test fixture override, allowed only in test/dev mode)
     in_test_registry = False
-    try:
-        from app.api.deps import _test_tenants_registry
-        if clean_t in _test_tenants_registry:
-            in_test_registry = True
-            t_data = _test_tenants_registry[clean_t]
-            if not t_data.get("is_active", True):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Tenant '{clean_t}' dinonaktifkan atau tidak aktif.",
-                )
-    except ImportError:
-        pass
+    if _is_test_registry_allowed():
+        try:
+            from app.api.deps import _test_tenants_registry
+            if clean_t in _test_tenants_registry:
+                in_test_registry = True
+                t_data = _test_tenants_registry[clean_t]
+                if not t_data.get("is_active", True):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"Tenant '{clean_t}' dinonaktifkan atau tidak aktif.",
+                    )
+        except ImportError:
+            pass
 
     # 3. Check explicit test fixtures in _merchant_memberships registry
-    # The in-memory registry may only be used as an explicit test fixture.
-    if (clean_m, clean_t) in _merchant_memberships:
-        mem = _merchant_memberships[(clean_m, clean_t)]
-        if not mem.get("is_active", True):
+    # The in-memory registry may only be used as an explicit test fixture in non-production test mode.
+    if _is_test_registry_allowed():
+        if (clean_m, clean_t) in _merchant_memberships:
+            mem = _merchant_memberships[(clean_m, clean_t)]
+            if not mem.get("is_active", True):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Keanggotaan merchant '{merchant_id}' pada tenant '{tenant_id}' telah dicabut atau dinonaktifkan.",
+                )
+            return  # Explicitly active test fixture
+
+        # If test fixtures exist for this tenant, but this merchant is not in them:
+        tenant_fixtures = [m for (m, t) in _merchant_memberships.keys() if t == clean_t]
+        if tenant_fixtures and clean_m not in tenant_fixtures:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Keanggotaan merchant '{merchant_id}' pada tenant '{tenant_id}' telah dicabut atau dinonaktifkan.",
+                detail=f"Merchant principal '{merchant_id}' tidak memiliki keanggotaan aktif pada tenant '{tenant_id}'.",
             )
-        return  # Explicitly active test fixture
-
-    # If test fixtures exist for this tenant, but this merchant is not in them:
-    tenant_fixtures = [m for (m, t) in _merchant_memberships.keys() if t == clean_t]
-    if tenant_fixtures and clean_m not in tenant_fixtures:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Merchant principal '{merchant_id}' tidak memiliki keanggotaan aktif pada tenant '{tenant_id}'.",
-        )
 
     # 4. Check production database: verify tenant status if not in test registry
     if not in_test_registry:

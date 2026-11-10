@@ -255,13 +255,13 @@ def test_merchant_registration_triggers_welcome_and_verification_emails():
         assert "https://shop.boontrack.com/login" in call_kwargs["dashboard_url"]
 
 
-def test_merchant_registration_succeeds_even_if_email_fails():
-    """Registration response must still succeed in pending_verification even if email dispatch fails."""
+def test_merchant_registration_succeeds_when_welcome_email_fails():
+    """Non-critical welcome email failure does not block registration; returns 201 pending_verification."""
     with patch.object(email_service, "send_merchant_welcome_email", new_callable=AsyncMock) as mock_welcome, \
          patch.object(email_service, "send_magic_link_email", new_callable=AsyncMock) as mock_magic, \
          patch("app.routes.auth_routes.get_supabase", return_value=None):
         mock_welcome.side_effect = Exception("Resend API Timeout / Network Error")
-        mock_magic.side_effect = Exception("SMTP Connection Timeout")
+        mock_magic.return_value = True
 
         response = client.post(
             "/api/v1/auth/register",
@@ -271,10 +271,29 @@ def test_merchant_registration_succeeds_even_if_email_fails():
             },
         )
 
-        # Response registrasi tetap berhasil 201 Created (pending verification)
         assert response.status_code == 201
         data = response.json()
         assert data["status"] == "pending_verification"
         assert data["requires_verification"] is True
         assert data["user"]["email"] == "resend_error@boontrack.com"
         assert "access_token" not in data
+
+
+def test_merchant_registration_fails_closed_when_verification_email_fails():
+    """Critical verification email failure must fail closed with 503 and rollback pending reservation."""
+    with patch.object(email_service, "send_merchant_welcome_email", new_callable=AsyncMock) as mock_welcome, \
+         patch.object(email_service, "send_magic_link_email", new_callable=AsyncMock) as mock_magic, \
+         patch("app.routes.auth_routes.get_supabase", return_value=None):
+        mock_welcome.return_value = True
+        mock_magic.side_effect = Exception("SMTP Connection Timeout")
+
+        response = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "smtp_fail@boontrack.com",
+                "name": "Merchant SMTP Fail",
+            },
+        )
+
+        assert response.status_code == 503
+        assert "Reservasi tenant dibatalkan" in response.json()["detail"]
