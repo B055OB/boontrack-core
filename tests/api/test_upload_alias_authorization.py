@@ -444,6 +444,62 @@ def test_no_database_lookup_error_can_produce_authorization_success():
             assert "Layanan otorisasi database tidak tersedia" in exc_info.value.detail
 
 
+def test_isolated_tenant_lookup_not_found_fails_closed_before_membership_check():
+    """
+    TASK 1 — Test 1:
+    Tenant lookup returns: (False, "NOT_FOUND")
+    Mock membership lookup to return: ({"is_active": True, "role": "owner"}, None)
+    Expected: HTTP 403 Forbidden.
+    Assert: _query_db_merchant_membership was NOT called.
+    """
+    clear_merchant_membership_registry()
+    try:
+        from app.api.deps import _test_tenants_registry
+        _test_tenants_registry.pop("tenant-isolated-p0-404", None)
+    except ImportError:
+        pass
+
+    with patch("app.routes.media_routes._query_db_tenant_active", return_value=(False, "NOT_FOUND")) as mock_tenant:
+        with patch("app.routes.media_routes._query_db_merchant_membership", return_value=({"is_active": True, "role": "owner"}, None)) as mock_membership:
+            with pytest.raises(Exception) as exc_info:
+                validate_merchant_tenant_membership(
+                    merchant_id="merchant_p0_1@test.com",
+                    tenant_id="tenant-isolated-p0-404",
+                )
+            assert exc_info.value.status_code == 403
+            assert "tidak ditemukan" in exc_info.value.detail
+            mock_tenant.assert_called_once()
+            mock_membership.assert_not_called()
+
+
+def test_isolated_tenant_lookup_db_error_fails_closed_before_membership_check():
+    """
+    TASK 1 — Test 2:
+    Tenant lookup returns: (False, "DB_QUERY_ERROR: simulated failure")
+    Mock membership lookup to return: ({"is_active": True, "role": "owner"}, None)
+    Expected: HTTP 503 Service Unavailable.
+    Assert: _query_db_merchant_membership was NOT called.
+    """
+    clear_merchant_membership_registry()
+    try:
+        from app.api.deps import _test_tenants_registry
+        _test_tenants_registry.pop("tenant-isolated-p0-503", None)
+    except ImportError:
+        pass
+
+    with patch("app.routes.media_routes._query_db_tenant_active", return_value=(False, "DB_QUERY_ERROR: simulated failure")) as mock_tenant:
+        with patch("app.routes.media_routes._query_db_merchant_membership", return_value=({"is_active": True, "role": "owner"}, None)) as mock_membership:
+            with pytest.raises(Exception) as exc_info:
+                validate_merchant_tenant_membership(
+                    merchant_id="merchant_p0_2@test.com",
+                    tenant_id="tenant-isolated-p0-503",
+                )
+            assert exc_info.value.status_code == 503
+            assert "Layanan otorisasi database tidak tersedia" in exc_info.value.detail
+            mock_tenant.assert_called_once()
+            mock_membership.assert_not_called()
+
+
 # ===========================================================================
 # 4. True Chunked / Streaming Bounded Limits (ASGI Receive Boundary)
 # ===========================================================================
