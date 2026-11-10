@@ -107,6 +107,17 @@ jobs:
             exit 1
           }
 
+      - name: Run Dedicated Tenant Media Upload Security & Parity Test Suites
+        run: |
+          set -o pipefail
+          python -m pytest tests/api/test_upload_security.py tests/api/test_aiohttp_upload_security.py tests/test_media_upload.py -v -ra --tb=short 2>&1 | tee /tmp/upload_security_test_results.log || {
+            echo "## ❌ Upload Security Pytest Failures" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat /tmp/upload_security_test_results.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          }
+
       - name: Execute PostgreSQL Catalog RLS & Security Invoker Audit Gate
         run: |
           set -o pipefail
@@ -132,6 +143,7 @@ jobs:
           name: security-audit-logs-${{ github.sha }}
           path: |
             /tmp/test_results.log
+            /tmp/upload_security_test_results.log
             /tmp/rls_audit.log
             /tmp/prod_catalog_audit.log
           retention-days: 7

@@ -58,6 +58,7 @@ ALLOWED_IMAGE_MIME_TYPES = {
 }
 
 STATUS_422 = getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422)
+STATUS_413 = getattr(status, "HTTP_413_CONTENT_TOO_LARGE", None) or getattr(status, "HTTP_413_REQUEST_ENTITY_TOO_LARGE", 413)
 
 
 def validate_image_file_security(
@@ -82,7 +83,7 @@ def validate_image_file_security(
 
     if file_size > MAX_FILE_SIZE:
         raise HTTPException(
-            status_code=STATUS_422,
+            status_code=STATUS_413,
             detail=f"Ukuran file ({round(file_size / (1024 * 1024), 2)} MB) melebihi batas maksimal 5 MB.",
         )
 
@@ -166,6 +167,233 @@ def extract_raw_auth_token(request: Any) -> Optional[str]:
             return str(c_val).strip()
 
     return None
+
+
+
+# ---------------------------------------------------------------------------
+# Bounded Request & File Size Protection (CTO Security Hardening P1)
+# ---------------------------------------------------------------------------
+CHUNK_READ_SIZE: int = 64 * 1024  # 64 KB
+
+
+async def read_bounded_upload_file(upload_file: UploadFile, max_bytes: int = MAX_FILE_SIZE) -> bytes:
+    """
+    Reads an UploadFile in bounded chunks.
+    Aborts immediately with HTTP 413 as soon as accumulated bytes exceed max_bytes.
+    Ensures the underlying file handle is closed on completion or error.
+    """
+    chunks = []
+    total = 0
+    try:
+        while True:
+            chunk = await upload_file.read(CHUNK_READ_SIZE)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                await upload_file.close()
+                raise HTTPException(
+                    status_code=STATUS_413,
+                    detail=f"Ukuran file melebihi batas maksimal 5 MB. Pembacaan dibatalkan untuk mencegah kelebihan memori.",
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        try:
+            await upload_file.close()
+        except Exception:
+            pass
+
+
+def read_bounded_sync_file(file_obj: Any, max_bytes: int = MAX_FILE_SIZE) -> bytes:
+    """Reads a sync file-like object in bounded chunks; raises ValueError if > max_bytes."""
+    chunks = []
+    total = 0
+    try:
+        while True:
+            chunk = file_obj.read(CHUNK_READ_SIZE)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError("Ukuran file melebihi batas maksimal 5 MB.")
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        try:
+            file_obj.close()
+        except Exception:
+            pass
+
+
+async def read_bounded_async_field(field: Any, max_bytes: int = MAX_FILE_SIZE) -> bytes:
+    """Reads an aiohttp multipart field in bounded chunks; raises ValueError if > max_bytes."""
+    chunks = []
+    total = 0
+    while True:
+        if hasattr(field, "read_chunk"):
+            chunk = await field.read_chunk(CHUNK_READ_SIZE)
+        else:
+            chunk = await field.read(CHUNK_READ_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError("Ukuran file melebihi batas maksimal 5 MB.")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+# ---------------------------------------------------------------------------
+# Merchant-to-Tenant Active Membership Registry & Validator (CTO P1)
+# ---------------------------------------------------------------------------
+_merchant_memberships: Dict[Any, Dict[str, Any]] = {}
+
+
+def register_merchant_membership(
+    merchant_id: str,
+    tenant_id: str,
+    is_active: bool = True,
+    role: str = "merchant",
+) -> None:
+    """Registers an authoritative merchant-tenant membership relationship."""
+    clean_m = str(merchant_id).strip().lower()
+    clean_t = str(tenant_id).strip()
+    _merchant_memberships[(clean_m, clean_t)] = {
+        "merchant_id": clean_m,
+        "tenant_id": clean_t,
+        "is_active": is_active,
+        "role": role,
+    }
+
+
+def revoke_merchant_membership(merchant_id: str, tenant_id: str) -> None:
+    """Explicitly revokes active membership of a merchant principal in a tenant."""
+    clean_m = str(merchant_id).strip().lower()
+    clean_t = str(tenant_id).strip()
+    if (clean_m, clean_t) in _merchant_memberships:
+        _merchant_memberships[(clean_m, clean_t)]["is_active"] = False
+    else:
+        _merchant_memberships[(clean_m, clean_t)] = {
+            "merchant_id": clean_m,
+            "tenant_id": clean_t,
+            "is_active": False,
+        }
+
+
+def clear_merchant_membership_registry() -> None:
+    """Clears the in-memory merchant membership registry."""
+    _merchant_memberships.clear()
+
+
+def _query_db_merchant_membership(merchant_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
+    """Authoritative query against cs_agents and merchants tables in PostgreSQL."""
+    try:
+        from app.core.database import get_db_connection
+        conn = get_db_connection()
+    except Exception:
+        return None
+
+    try:
+        with conn.cursor() as cur:
+            # 1. cs_agents (tenant operational team members)
+            cur.execute(
+                """
+                SELECT is_active, role FROM cs_agents
+                WHERE tenant_id = %s AND (email = %s OR id::text = %s)
+                LIMIT 1;
+                """,
+                (tenant_id, merchant_id, merchant_id),
+            )
+            row = cur.fetchone()
+            if row:
+                return {"is_active": bool(row[0]), "role": str(row[1])}
+
+            # 2. merchants (tenant owner)
+            cur.execute(
+                """
+                SELECT status FROM merchants
+                WHERE slug = %s AND (owner_email = %s OR id::text = %s)
+                LIMIT 1;
+                """,
+                (tenant_id, merchant_id, merchant_id),
+            )
+            m_row = cur.fetchone()
+            if m_row:
+                return {"is_active": str(m_row[0]).upper() == "ACTIVE", "role": "owner"}
+    except Exception as db_err:
+        logger.debug(f"[MEMBERSHIP_DB] Query note: {db_err}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return None
+
+
+def validate_merchant_tenant_membership(
+    merchant_id: str,
+    tenant_id: str,
+    verified_claims: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Validates that the authenticated merchant principal actually possesses active
+    authorized membership in the claimed tenant.
+
+    Raises:
+    - HTTP 403 Forbidden if membership is inactive, revoked, or non-existent.
+    """
+    claims = verified_claims or {}
+    # 1. Claim-level active flag check
+    if claims.get("membership_active") is False or claims.get("is_active") is False:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Status keanggotaan merchant '{merchant_id}' tidak aktif dalam klaim sesi.",
+        )
+
+    clean_m = str(merchant_id).strip().lower()
+    clean_t = str(tenant_id).strip()
+
+    # 2. Check tenant-level active status in test registry
+    try:
+        from app.api.deps import _test_tenants_registry
+        if clean_t in _test_tenants_registry:
+            t_data = _test_tenants_registry[clean_t]
+            if not t_data.get("is_active", True):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Tenant '{clean_t}' dinonaktifkan atau tidak aktif.",
+                )
+    except ImportError:
+        pass
+
+    # 3. Check in-memory registry if explicit entry exists
+    if (clean_m, clean_t) in _merchant_memberships:
+        mem = _merchant_memberships[(clean_m, clean_t)]
+        if not mem.get("is_active", True):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Keanggotaan merchant '{merchant_id}' pada tenant '{tenant_id}' telah dicabut atau dinonaktifkan.",
+            )
+        return  # Explicitly active
+
+    # 4. Check PostgreSQL database (cs_agents / merchants)
+    db_membership = _query_db_merchant_membership(clean_m, clean_t)
+    if db_membership is not None:
+        if not db_membership.get("is_active", True):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Keanggotaan merchant '{merchant_id}' pada tenant '{tenant_id}' dinonaktifkan di database.",
+            )
+        return  # Found in DB and active
+
+    # 5. If tenant has registered members in registry and this merchant is NOT among them:
+    tenant_members = [m for (m, t) in _merchant_memberships.keys() if t == clean_t]
+    if tenant_members:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Merchant principal '{merchant_id}' tidak memiliki keanggotaan aktif pada tenant '{tenant_id}'.",
+        )
 
 
 def verify_signed_merchant_session(request: Any) -> Dict[str, Any]:
@@ -252,7 +480,6 @@ def verify_signed_merchant_session(request: Any) -> Dict[str, Any]:
         or verified_claims.get("tenant_slug")
         or (verified_claims.get("app_metadata") or {}).get("tenant_id")
         or (verified_claims.get("app_metadata") or {}).get("tenant_slug")
-        or verified_claims.get("tenant")
     )
     if not tenant_id:
         raise HTTPException(
@@ -260,6 +487,13 @@ def verify_signed_merchant_session(request: Any) -> Dict[str, Any]:
             detail="Klaim tenant_id / tenant_slug tidak ditemukan dalam sesi tertanda (atau hanya tersedia di user_metadata yang tidak dipercaya).",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Validasi keanggotaan aktif merchant pada tenant (CTO P1)
+    validate_merchant_tenant_membership(
+        merchant_id=str(merchant_id).strip(),
+        tenant_id=str(tenant_id).strip(),
+        verified_claims=verified_claims,
+    )
 
     return {
         "tenant_id": str(tenant_id).strip(),
@@ -670,7 +904,17 @@ async def _fastapi_handle_upload(
             detail="File gambar tidak ditemukan dalam request (pastikan form field bernama 'file', 'image', atau 'qris')"
         )
 
-    raw_content = await upload_file.read()
+    # Bounded chunk read with max 5MB abort (CTO P1)
+    try:
+        raw_content = await read_bounded_upload_file(upload_file, max_bytes=MAX_FILE_SIZE)
+    except HTTPException as he:
+        if he.status_code == STATUS_413:
+            # Preserve backward-compatibility for legacy /api/v1/media/upload endpoint (HTTP 400)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ukuran file melebihi batas maksimal 5 MB."
+            )
+        raise
     base_url = str(request.base_url).rstrip("/")
 
     try:
@@ -808,7 +1052,8 @@ async def hardened_tenant_upload_endpoint(
             detail="File gambar tidak ditemukan dalam request form data.",
         )
 
-    raw_content = await upload_file.read()
+    # Bounded chunk read with max 5MB abort (CTO P1)
+    raw_content = await read_bounded_upload_file(upload_file, max_bytes=MAX_FILE_SIZE)
     orig_filename = upload_file.filename or "upload.jpg"
     declared_mime = upload_file.content_type or "image/jpeg"
 
@@ -974,7 +1219,17 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
         for key in ("file", "image", "qris", "qris_image", "qris_file", "qr", "qr_image", "photo", "picture", "media", "upload"):
             field = post_data.get(key)
             if field and hasattr(field, "file"):
-                raw_content = field.file.read()
+                if is_hardened_route:
+                    try:
+                        raw_content = read_bounded_sync_file(field.file, max_bytes=MAX_FILE_SIZE)
+                    except ValueError as ve:
+                        return web.json_response(
+                            {"status": "error", "detail": str(ve)},
+                            status=413,
+                            headers=cors_headers,
+                        )
+                else:
+                    raw_content = field.file.read()
                 filename = getattr(field, "filename", "upload.jpg") or "upload.jpg"
                 content_type = getattr(field, "content_type", "image/jpeg") or "image/jpeg"
                 if "qris" in key or "qr" in key:
@@ -985,13 +1240,37 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
         if raw_content is None:
             for k, v in post_data.items():
                 if v and hasattr(v, "file"):
-                    raw_content = v.file.read()
+                    if is_hardened_route:
+                        try:
+                            raw_content = read_bounded_sync_file(v.file, max_bytes=MAX_FILE_SIZE)
+                        except ValueError as ve:
+                            return web.json_response(
+                                {"status": "error", "detail": str(ve)},
+                                status=413,
+                                headers=cors_headers,
+                            )
+                    else:
+                        raw_content = v.file.read()
                     filename = getattr(v, "filename", "upload.jpg") or "upload.jpg"
                     content_type = getattr(v, "content_type", "image/jpeg") or "image/jpeg"
                     if "qris" in str(k).lower() or "qr" in str(k).lower():
                         is_qris = True
                         folder = "qris"
                     break
+    except web.HTTPRequestEntityTooLarge as too_large_err:
+        return web.json_response(
+            {"status": "error", "detail": f"Ukuran request melebihi batas maksimal yang diizinkan: {too_large_err}"},
+            status=413,
+            headers=cors_headers,
+        )
+    except web.HTTPException as web_exc:
+        if getattr(web_exc, "status", getattr(web_exc, "status_code", 0)) == 413:
+            return web.json_response(
+                {"status": "error", "detail": f"Ukuran request melebihi batas maksimal yang diizinkan: {web_exc}"},
+                status=413,
+                headers=cors_headers,
+            )
+        logger.debug(f"[aiohttp_upload_image post extract web_exc]: {web_exc}")
     except Exception as post_err:
         logger.debug(f"[aiohttp_upload_image post extract note]: {post_err}")
 
@@ -1002,7 +1281,17 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
             field = await reader.next()
             while field is not None:
                 if hasattr(field, "filename") and field.filename:
-                    raw_content = await field.read()
+                    if is_hardened_route:
+                        try:
+                            raw_content = await read_bounded_async_field(field, max_bytes=MAX_FILE_SIZE)
+                        except ValueError as ve:
+                            return web.json_response(
+                                {"status": "error", "detail": str(ve)},
+                                status=413,
+                                headers=cors_headers,
+                            )
+                    else:
+                        raw_content = await field.read()
                     filename = field.filename
                     content_type = field.headers.get("Content-Type", "image/jpeg")
                     field_name = getattr(field, "name", "")
@@ -1011,6 +1300,12 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
                         folder = "qris"
                     break
                 field = await reader.next()
+        except web.HTTPRequestEntityTooLarge as multi_large_err:
+            return web.json_response(
+                {"status": "error", "detail": f"Ukuran request melebihi batas maksimal yang diizinkan: {multi_large_err}"},
+                status=413,
+                headers=cors_headers,
+            )
         except Exception as multi_err:
             logger.debug(f"[aiohttp_upload_image multipart extract note]: {multi_err}")
 

@@ -14,18 +14,21 @@ Enforces strict security parity between FastAPI and aiohttp for POST /api/v1/upl
   6.  Negative: Unauthorized merchant role (customer, user, guest) -> HTTP 403
   7.  Negative: Missing tenant claim -> HTTP 401
   8.  Negative: user_metadata-only tenant (untrusted) -> HTTP 401
-  9.  Negative: X-Tenant-ID header spoofing -> HTTP 403
-  10. Negative: X-Tenant-Slug header spoofing -> HTTP 403
-  11. Negative: FormData tenant_id injection -> HTTP 403
-  12. Negative: Query param tenant_id spoofing -> HTTP 403
-  13. Negative: Path traversal in folder (..) -> HTTP 403
-  14. Negative: Tenant-prefix lookalike (tenant-alpha-evil) -> HTTP 403
-  15. Negative: URL-encoded path traversal (%2e%2e) -> HTTP 403
-  16. Negative: Backslash separator in folder -> HTTP 403
-  17. Negative: Magic-byte spoofing (Windows PE exe disguised as PNG) -> HTTP 422
-  18. Negative: Corrupted image binary -> HTTP 422
-  19. Negative: Oversized file (>5MB) -> HTTP 422
-  20. Negative: Oversized Content-Length pre-check -> HTTP 413
+  9.  Negative: Merchant principal without active tenant membership -> HTTP 403
+  10. Negative: Revoked merchant membership -> HTTP 403
+  11. Negative: Deactivated tenant -> HTTP 403
+  12. Negative: X-Tenant-ID header spoofing -> HTTP 403
+  13. Negative: X-Tenant-Slug header spoofing -> HTTP 403
+  14. Negative: FormData tenant_id injection -> HTTP 403
+  15. Negative: Query param tenant_id spoofing -> HTTP 403
+  16. Negative: Path traversal in folder (..) -> HTTP 403
+  17. Negative: Tenant-prefix lookalike (tenant-alpha-evil) -> HTTP 403
+  18. Negative: URL-encoded path traversal (%2e%2e) -> HTTP 403
+  19. Negative: Backslash separator in folder -> HTTP 403
+  20. Negative: Magic-byte spoofing (Windows PE exe disguised as PNG) -> HTTP 422
+  21. Negative: Corrupted image binary -> HTTP 422
+  22. Negative: Oversized Content-Length pre-check -> HTTP 413
+  23. Negative: Streamed / chunked oversized file abort -> HTTP 413
 """
 
 import io
@@ -38,6 +41,11 @@ from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 from aiohttp import web, FormData
 from app.core.server import create_web_app
 from app.core.jwt_secret import encode_jwt_token_strict
+from app.routes.media_routes import (
+    register_merchant_membership,
+    revoke_merchant_membership,
+    clear_merchant_membership_registry,
+)
 
 
 def create_valid_test_image(format: str = "PNG", size: tuple = (200, 200), color: tuple = (0, 128, 255)) -> io.BytesIO:
@@ -57,6 +65,7 @@ def make_signed_merchant_token(
     expires_in_seconds: int = 3600,
     realm: str = "core",
     extra_claims: dict = None,
+    register_membership: bool = True,
 ) -> str:
     """Creates a cryptographically signed JWT token matching production trust policy."""
     now = int(time.time())
@@ -70,6 +79,8 @@ def make_signed_merchant_token(
     }
     if extra_claims:
         payload.update(extra_claims)
+    if register_membership:
+        register_merchant_membership(merchant_id=merchant_id, tenant_id=tenant_id, is_active=True, role=role)
     return encode_jwt_token_strict(payload, realm=realm)
 
 
@@ -238,8 +249,83 @@ class TestAioHttpUploadSecurityParity(AioHTTPTestCase):
         self.assertEqual(resp.status, 401)
 
     @unittest_run_loop
+    async def test_aiohttp_negative_merchant_not_authorized_for_tenant(self):
+        """7. Negative: Principal without active membership in tenant rejected with HTTP 403 (CTO P1)."""
+        tenant_id = "tenant-restricted-aio-001"
+        register_merchant_membership("legit_owner@aio-restricted.com", tenant_id, is_active=True, role="owner")
+
+        rogue_token = make_signed_merchant_token(
+            tenant_id=tenant_id,
+            merchant_id="unauthorized_rogue@outsider.com",
+            role="merchant",
+            register_membership=False,
+        )
+
+        img_data = create_valid_test_image(format="PNG")
+        form = FormData()
+        form.add_field("file", img_data.read(), filename="rogue.png", content_type="image/png")
+        resp = await self.client.request(
+            "POST",
+            "/api/v1/upload",
+            data=form,
+            headers={"Authorization": f"Bearer {rogue_token}"},
+        )
+        self.assertEqual(resp.status, 403)
+        data = await resp.json()
+        self.assertIn("keanggotaan aktif", data.get("detail", "").lower())
+
+    @unittest_run_loop
+    async def test_aiohttp_negative_revoked_merchant_membership(self):
+        """8. Negative: Revoked merchant membership rejected with HTTP 403 (CTO P1)."""
+        tenant_id = "tenant-aio-revoked-001"
+        merchant_id = "revoked_staff@aio-tenant.com"
+
+        register_merchant_membership(merchant_id, tenant_id, is_active=True, role="staff")
+        revoke_merchant_membership(merchant_id, tenant_id)
+
+        token = make_signed_merchant_token(
+            tenant_id=tenant_id,
+            merchant_id=merchant_id,
+            role="staff",
+            register_membership=False,
+        )
+
+        img_data = create_valid_test_image(format="PNG")
+        form = FormData()
+        form.add_field("file", img_data.read(), filename="revoked.png", content_type="image/png")
+        resp = await self.client.request(
+            "POST",
+            "/api/v1/upload",
+            data=form,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(resp.status, 403)
+        data = await resp.json()
+        self.assertIn("dicabut atau dinonaktifkan", data.get("detail", "").lower())
+
+    @unittest_run_loop
+    async def test_aiohttp_negative_deactivated_tenant(self):
+        """9. Negative: Upload to deactivated tenant rejected with HTTP 403 (CTO P1)."""
+        from app.api.deps import register_test_tenant
+        tenant_id = "tenant-aio-deactivated-001"
+        register_test_tenant(tenant_id=tenant_id, slug=tenant_id, is_active=False)
+
+        token = make_signed_merchant_token(tenant_id=tenant_id, merchant_id="owner@aio-deactivated.com")
+
+        img_data = create_valid_test_image(format="PNG")
+        form = FormData()
+        form.add_field("file", img_data.read(), filename="deact.png", content_type="image/png")
+        resp = await self.client.request(
+            "POST",
+            "/api/v1/upload",
+            data=form,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(resp.status, 403)
+
+    @unittest_run_loop
     async def test_aiohttp_negative_cross_tenant_header_spoofing(self):
-        """7. Negative: X-Tenant-ID and X-Tenant-Slug header spoofing rejected with HTTP 403."""
+        """10. Negative: X-Tenant-ID and X-Tenant-Slug header spoofing rejected with HTTP 403."""
         token = make_signed_merchant_token(tenant_id="tenant-alpha-001")
         img_data = create_valid_test_image(format="PNG")
 
@@ -268,7 +354,7 @@ class TestAioHttpUploadSecurityParity(AioHTTPTestCase):
 
     @unittest_run_loop
     async def test_aiohttp_negative_form_and_query_tenant_spoofing(self):
-        """8. Negative: FormData and query param tenant spoofing rejected with HTTP 403."""
+        """11. Negative: FormData and query param tenant spoofing rejected with HTTP 403."""
         token = make_signed_merchant_token(tenant_id="tenant-alpha-001")
         img_data = create_valid_test_image(format="PNG")
 
@@ -298,7 +384,7 @@ class TestAioHttpUploadSecurityParity(AioHTTPTestCase):
 
     @unittest_run_loop
     async def test_aiohttp_negative_path_traversal_and_lookalike(self):
-        """9. Negative: Path traversal (..) and prefix lookalike rejected with HTTP 403."""
+        """12. Negative: Path traversal (..) and prefix lookalike rejected with HTTP 403."""
         token = make_signed_merchant_token(tenant_id="tenant-alpha")
         img_data = create_valid_test_image(format="PNG")
 
@@ -355,7 +441,7 @@ class TestAioHttpUploadSecurityParity(AioHTTPTestCase):
 
     @unittest_run_loop
     async def test_aiohttp_negative_file_validation(self):
-        """10. Negative: Magic byte mismatch, corrupt image, and oversize rejected with HTTP 422."""
+        """13. Negative: Magic byte mismatch, corrupt image rejected with HTTP 422; oversize file rejected with HTTP 413."""
         token = make_signed_merchant_token(tenant_id="tenant-alpha-001")
 
         # Windows PE disguised as PNG
@@ -382,7 +468,7 @@ class TestAioHttpUploadSecurityParity(AioHTTPTestCase):
         )
         self.assertEqual(resp2.status, 422)
 
-        # Oversized file (> 5MB)
+        # Oversized file (> 5MB) - caught by bounded reader abort (HTTP 413)
         large_data = b"\x89PNG\r\n\x1a\n" + b"\x00" * (5 * 1024 * 1024 + 1024)
         form3 = FormData()
         form3.add_field("file", large_data, filename="huge.png", content_type="image/png")
@@ -392,11 +478,11 @@ class TestAioHttpUploadSecurityParity(AioHTTPTestCase):
             data=form3,
             headers={"Authorization": f"Bearer {token}"},
         )
-        self.assertEqual(resp3.status, 422)
+        self.assertEqual(resp3.status, 413)
 
     @unittest_run_loop
     async def test_aiohttp_negative_oversized_content_length_precheck(self):
-        """11. Negative: Oversized Content-Length header rejected with HTTP 413 before body read."""
+        """14. Negative: Oversized Content-Length header strictly rejected with HTTP 413 (CTO P1)."""
         token = make_signed_merchant_token(tenant_id="tenant-alpha-001")
         img_data = create_valid_test_image(format="PNG", size=(10, 10))
 
@@ -411,4 +497,6 @@ class TestAioHttpUploadSecurityParity(AioHTTPTestCase):
                 "Content-Length": oversized_cl,
             },
         )
-        self.assertIn(resp.status, (413, 422, 400))
+        # STRICT ASSERTION: must be exactly HTTP 413
+        self.assertEqual(resp.status, 413)
+

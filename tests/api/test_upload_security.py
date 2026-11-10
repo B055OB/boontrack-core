@@ -4,7 +4,7 @@ tests/api/test_upload_security.py
 Security Remediation & Hardening Test Suite for GitHub Issue #27 / PR #28:
 "security(core): enforce signed merchant authorization on tenant upload route"
 
-Coverage matrix (15 scenarios, FastAPI /api/v1/upload):
+Coverage matrix (FastAPI /api/v1/upload):
   POSITIVE
     1.  Authenticated Merchant — valid token, scoped namespace, HTTP 201.
 
@@ -16,18 +16,24 @@ Coverage matrix (15 scenarios, FastAPI /api/v1/upload):
     6.  user_metadata-only tenant (Supabase JWT where tenant appears only in
         user_metadata, not in app_metadata or top-level → HTTP 401).
 
-  NEGATIVE — Cross-Tenant Spoofing (HTTP 403)
-    7.  X-Tenant-ID header spoofing.
-    8.  X-Tenant-Slug header spoofing.
-    9.  FormData tenant_id injection.
-    10. Query param tenant_id spoofing.
-    11. Tenant-prefix lookalike in folder (tenant-alpha-evil when auth=tenant-alpha → 403).
-    12. URL-encoded path traversal (%2e%2e → HTTP 403).
-    13. Backslash separator in folder path (HTTP 403).
+  NEGATIVE — Active Merchant Membership (HTTP 403)
+    7.  Cryptographically valid token but merchant is NOT an active member of tenant (HTTP 403).
+    8.  Revoked / inactive merchant membership (HTTP 403).
+    9.  Deactivated / inactive tenant (HTTP 403).
 
-  NEGATIVE — File Validation (HTTP 422)
-    14. Spoofed magic bytes / non-image / corrupt image / empty file.
-    15. Content-Length pre-check: oversized body before read (HTTP 413).
+  NEGATIVE — Cross-Tenant Spoofing (HTTP 403)
+    10. X-Tenant-ID header spoofing.
+    11. X-Tenant-Slug header spoofing.
+    12. FormData tenant_id injection.
+    13. Query param tenant_id spoofing.
+    14. Tenant-prefix lookalike in folder (tenant-alpha-evil when auth=tenant-alpha → 403).
+    15. URL-encoded path traversal (%2e%2e → HTTP 403).
+    16. Backslash separator in folder path (HTTP 403).
+
+  NEGATIVE — File & Request Size Validation (HTTP 422 / 413)
+    17. Spoofed magic bytes / non-image / corrupt image / empty file (HTTP 422).
+    18. Content-Length pre-check: oversized body before read (HTTP 413).
+    19. Streamed / chunked oversized body: bounded chunk abort (HTTP 413).
 """
 
 import io
@@ -40,6 +46,11 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core.jwt_secret import encode_jwt_token_strict
+from app.routes.media_routes import (
+    register_merchant_membership,
+    revoke_merchant_membership,
+    clear_merchant_membership_registry,
+)
 
 client = TestClient(app)
 
@@ -65,6 +76,7 @@ def make_signed_merchant_token(
     expires_in_seconds: int = 3600,
     realm: str = "core",
     extra_claims: dict | None = None,
+    register_membership: bool = True,
 ) -> str:
     """Creates a cryptographically signed JWT token matching production trust policy."""
     now = int(time.time())
@@ -78,6 +90,8 @@ def make_signed_merchant_token(
     }
     if extra_claims:
         payload.update(extra_claims)
+    if register_membership:
+        register_merchant_membership(merchant_id=merchant_id, tenant_id=tenant_id, is_active=True, role=role)
     return encode_jwt_token_strict(payload, realm=realm)
 
 
@@ -226,12 +240,13 @@ def test_upload_negative_cross_tenant_spoofing():
 
 
 # ---------------------------------------------------------------------------
-# 4. NEGATIVE — Invalid Files, Spoofed Magic Bytes & Oversize (HTTP 422)
+# 4. NEGATIVE — Invalid Files, Spoofed Magic Bytes & Empty File (HTTP 422)
 # ---------------------------------------------------------------------------
 
 def test_upload_negative_invalid_file():
     """
-    Non-image, spoofed magic bytes, corrupt binary, oversize, empty → HTTP 422.
+    Non-image, spoofed magic bytes, corrupt binary, empty file → HTTP 422.
+    Oversized file triggers bounded reader abort -> HTTP 413.
     """
     token = make_signed_merchant_token(tenant_id="tenant-alpha-001")
 
@@ -263,12 +278,12 @@ def test_upload_negative_invalid_file():
                        headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 422
 
-    # 4e. Oversize file > 5MB (PNG magic header + padding)
+    # 4e. Oversize file > 5MB — caught by bounded chunk reader (HTTP 413)
     large_data = b"\x89PNG\r\n\x1a\n" + b"\x00" * (5 * 1024 * 1024 + 1024)
     resp = client.post("/api/v1/upload",
                        files={"file": ("huge.png", io.BytesIO(large_data), "image/png")},
                        headers={"Authorization": f"Bearer {token}"})
-    assert resp.status_code == 422
+    assert resp.status_code == 413
     assert "melebihi batas maksimal 5 MB" in resp.json().get("detail", "")
 
     # 4f. Empty file
@@ -285,7 +300,6 @@ def test_upload_negative_invalid_file():
 def test_upload_negative_invalid_merchant_role():
     """
     Token with unauthorized role (customer, user, anonymous) → HTTP 403.
-    Token is otherwise valid (correct signature, non-expired, has tenant claim).
     """
     img_data = create_valid_test_image(format="PNG")
 
@@ -323,13 +337,11 @@ def test_upload_negative_missing_tenant_claim():
     Server must reject with HTTP 401 (missing authoritative tenant claim).
     """
     now = int(time.time())
-    # Token without any tenant info whatsoever
     payload_no_tenant = {
         "sub": "merchant@example.com",
         "merchant_id": "merchant@example.com",
         "role": "merchant",
         "exp": now + 3600,
-        # Deliberately omitting tenant_id, tenant_slug, app_metadata, tenant
     }
     token_no_tenant = encode_jwt_token_strict(payload_no_tenant, realm="core")
 
@@ -350,28 +362,18 @@ def test_upload_negative_missing_tenant_claim():
 def test_upload_negative_user_metadata_tenant_spoofing():
     """
     Supabase-style JWT where the tenant claim is ONLY present in user_metadata
-    (user-editable, untrusted). The server must reject this with HTTP 401 since
-    user_metadata is not a trusted authorization source.
-
-    Security principle: user_metadata can be set by the client and must not independently
-    grant tenant identity for upload authorization.
+    (user-editable, untrusted). Server must reject with HTTP 401.
     """
     now = int(time.time())
-    # Simulate a Supabase JWT structure where tenant only appears in user_metadata
     payload_user_meta_only = {
         "sub": "attacker@evil.com",
         "role": "merchant",
         "exp": now + 3600,
-        # No top-level tenant_id or tenant_slug
-        # No app_metadata (server-set)
-        # Only user_metadata (user-editable — MUST be rejected)
         "user_metadata": {
             "tenant_id": "tenant-alpha-victim",
             "tenant_slug": "tenant-alpha-victim",
         },
-        # Deliberately omit: tenant_id, tenant_slug, app_metadata, tenant
     }
-    # We use realm="core" for simplicity; the same principle applies to Supabase realm.
     token_user_meta_only = encode_jwt_token_strict(payload_user_meta_only, realm="core")
 
     img_data = create_valid_test_image(format="PNG")
@@ -381,19 +383,107 @@ def test_upload_negative_user_metadata_tenant_spoofing():
         headers={"Authorization": f"Bearer {token_user_meta_only}"},
     )
     assert resp.status_code == 401, (
-        f"user_metadata tenant MUST be rejected (HTTP 401), got {resp.status_code}: {resp.text}. "
-        "Security violation: user_metadata is user-editable and must not grant tenant access."
+        f"user_metadata tenant MUST be rejected (HTTP 401), got {resp.status_code}: {resp.text}."
     )
 
 
 # ---------------------------------------------------------------------------
-# 8. NEGATIVE — Query Param Tenant Spoofing (HTTP 403)
+# 8. NEGATIVE — Active Merchant Membership Enforcement (CTO P1 Directive)
+# ---------------------------------------------------------------------------
+
+def test_upload_negative_merchant_not_authorized_for_tenant():
+    """
+    CTO Directive P1:
+    A cryptographically valid, non-expired token containing an allowed merchant role
+    and a tenant claim, but belonging to a principal without active membership in that
+    tenant, MUST be rejected with HTTP 403 Forbidden.
+    """
+    tenant_id = "tenant-restricted-001"
+    # Register legitimate owner
+    register_merchant_membership("legit_owner@restricted.com", tenant_id, is_active=True, role="owner")
+
+    # Mint token for an unauthorized principal claiming this tenant, WITHOUT membership registration
+    rogue_token = make_signed_merchant_token(
+        tenant_id=tenant_id,
+        merchant_id="unauthorized_rogue@outsider.com",
+        role="merchant",
+        register_membership=False,  # NOT registered in this tenant
+    )
+
+    img_data = create_valid_test_image(format="PNG")
+    resp = client.post(
+        "/api/v1/upload",
+        files={"file": ("rogue.png", img_data, "image/png")},
+        headers={"Authorization": f"Bearer {rogue_token}"},
+    )
+    assert resp.status_code == 403, (
+        f"Principal without active tenant membership must be HTTP 403, got {resp.status_code}: {resp.text}"
+    )
+    assert "keanggotaan aktif" in resp.json().get("detail", "").lower()
+
+
+def test_upload_negative_revoked_merchant_membership():
+    """
+    CTO Directive P1:
+    A token for a merchant whose membership has been revoked / deactivated
+    MUST be rejected with HTTP 403 Forbidden.
+    """
+    tenant_id = "tenant-revocation-test"
+    merchant_id = "former_staff@revoked.com"
+
+    # Register then explicitly revoke
+    register_merchant_membership(merchant_id, tenant_id, is_active=True, role="staff")
+    revoke_merchant_membership(merchant_id, tenant_id)
+
+    token = make_signed_merchant_token(
+        tenant_id=tenant_id,
+        merchant_id=merchant_id,
+        role="staff",
+        register_membership=False,
+    )
+
+    img_data = create_valid_test_image(format="PNG")
+    resp = client.post(
+        "/api/v1/upload",
+        files={"file": ("revoked.png", img_data, "image/png")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403, (
+        f"Revoked merchant membership must be HTTP 403, got {resp.status_code}: {resp.text}"
+    )
+    assert "dicabut atau dinonaktifkan" in resp.json().get("detail", "").lower()
+
+
+def test_upload_negative_deactivated_tenant():
+    """
+    CTO Directive P1:
+    A token for a deactivated or disabled tenant MUST be rejected with HTTP 403.
+    """
+    from app.api.deps import register_test_tenant
+    tenant_id = "tenant-deactivated-001"
+    register_test_tenant(tenant_id=tenant_id, slug=tenant_id, is_active=False)
+
+    token = make_signed_merchant_token(tenant_id=tenant_id, merchant_id="owner@deactivated.com")
+
+    img_data = create_valid_test_image(format="PNG")
+    resp = client.post(
+        "/api/v1/upload",
+        files={"file": ("deactivated_tenant.png", img_data, "image/png")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403, (
+        f"Deactivated tenant must be HTTP 403, got {resp.status_code}: {resp.text}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 9. NEGATIVE — Query Param Tenant Spoofing (HTTP 403)
 # ---------------------------------------------------------------------------
 
 def test_upload_negative_query_tenant_spoofing():
     """
     Valid token for tenant-alpha. Client injects ?tenant_id=tenant-bravo-victim in query string.
-    Must be rejected with HTTP 403 (cross-tenant tampering detection).
+    Must be rejected with HTTP 403.
     """
     token_alpha = make_signed_merchant_token(tenant_id="tenant-alpha-001")
     img_data = create_valid_test_image(format="PNG")
@@ -410,13 +500,12 @@ def test_upload_negative_query_tenant_spoofing():
 
 
 # ---------------------------------------------------------------------------
-# 9. NEGATIVE — Tenant-Prefix Lookalike in Folder (HTTP 403)
+# 10. NEGATIVE — Tenant-Prefix Lookalike in Folder (HTTP 403)
 # ---------------------------------------------------------------------------
 
 def test_upload_negative_tenant_prefix_lookalike():
     """
     Token is for 'tenant-alpha'. Folder is 'tenants/tenant-alpha-evil/uploads'.
-    Old startswith() check would PASS this ('tenants/tenant-alpha-evil'.startswith('tenants/tenant-alpha')).
     Component-safe check MUST reject this with HTTP 403.
     """
     token_alpha = make_signed_merchant_token(tenant_id="tenant-alpha")
@@ -435,13 +524,12 @@ def test_upload_negative_tenant_prefix_lookalike():
 
 
 # ---------------------------------------------------------------------------
-# 10. NEGATIVE — URL-Encoded Path Traversal in Folder (HTTP 403)
+# 11. NEGATIVE — URL-Encoded Path Traversal in Folder (HTTP 403)
 # ---------------------------------------------------------------------------
 
 def test_upload_negative_url_encoded_traversal():
     """
-    URL-encoded path traversal: folder='%2e%2e/etc' or '%2f' separator.
-    Old check only catches literal '..'; URL-encoded form must also be rejected → HTTP 403.
+    URL-encoded path traversal: folder='%2e%2e/etc' or '%2f' separator -> HTTP 403.
     """
     token = make_signed_merchant_token(tenant_id="tenant-alpha-001")
     img_data = create_valid_test_image(format="PNG")
@@ -465,7 +553,7 @@ def test_upload_negative_url_encoded_traversal():
 
 
 # ---------------------------------------------------------------------------
-# 11. NEGATIVE — Backslash Separator in Folder (HTTP 403)
+# 12. NEGATIVE — Backslash Separator in Folder (HTTP 403)
 # ---------------------------------------------------------------------------
 
 def test_upload_negative_backslash_separator():
@@ -494,40 +582,53 @@ def test_upload_negative_backslash_separator():
 
 
 # ---------------------------------------------------------------------------
-# 12. NEGATIVE — Content-Length Pre-check (HTTP 413 Before Body Read)
+# 13. NEGATIVE — Content-Length Pre-check & Bounded Read (Strict HTTP 413)
 # ---------------------------------------------------------------------------
 
 def test_upload_negative_oversized_content_length_precheck():
     """
-    Request with Content-Length header claiming > 5MB + overhead.
-    Server MUST reject with HTTP 413 BEFORE reading the body into memory,
-    preventing DoS via full-body allocation.
+    CTO Directive P1:
+    Request with Content-Length claiming > 5MB + overhead MUST strictly return HTTP 413
+    BEFORE reading the body into memory.
     """
     token = make_signed_merchant_token(tenant_id="tenant-alpha-001")
-
-    # Simulate a large Content-Length header without actually sending huge body.
-    # TestClient sends the actual body from the BytesIO; we craft a valid small image
-    # but lie about Content-Length in a way that triggers the pre-check.
-    # Since TestClient does not let us override Content-Length directly in a clean way,
-    # we verify the guard with an actual oversized payload constructed in memory.
-    # The guard fires when the declared Content-Length exceeds MAX_FILE_SIZE + 65536.
-    # We test using the actual header approach supported by httpx (TestClient):
     img_data = create_valid_test_image(format="PNG", size=(10, 10))
 
-    # 12a: Real oversized Content-Length via headers override
-    # httpx (used by TestClient) allows setting custom headers including content-length
-    oversized_cl = str(5 * 1024 * 1024 + 65537 + 1)  # Just over the guard threshold
+    oversized_cl = str(5 * 1024 * 1024 + 65537 + 1)
     resp = client.post(
         "/api/v1/upload",
-        content=img_data.read(),  # Send the small body
+        content=img_data.read(),
         headers={
             "Authorization": f"Bearer {token}",
-            "Content-Type": "multipart/form-data; boundary=----TestBoundary",
+            "Content-Type": "image/png",
             "Content-Length": oversized_cl,
         },
     )
-    # May get 413 (pre-check fired) or 422 (body read failed due to boundary mismatch)
-    # Either is acceptable — the important thing is NOT 201 or 500
-    assert resp.status_code in (413, 422, 400), (
-        f"Oversized Content-Length should be rejected early (413/422/400), got {resp.status_code}"
+    # STRICT ASSERTION: must be exactly HTTP 413
+    assert resp.status_code == 413, (
+        f"Oversized Content-Length header MUST strictly receive HTTP 413, got {resp.status_code}: {resp.text}"
     )
+
+
+def test_upload_negative_streamed_chunked_oversized_body():
+    """
+    CTO Directive P1:
+    Request with oversized streamed body (> 5 MB) without valid Content-Length or chunked
+    MUST be aborted by the bounded chunk reader and return strictly HTTP 413
+    without buffering the complete oversized payload into memory.
+    """
+    token = make_signed_merchant_token(tenant_id="tenant-alpha-001")
+
+    # Generate oversized payload > 5MB
+    large_stream = io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"\x00" * (5 * 1024 * 1024 + 200_000))
+
+    resp = client.post(
+        "/api/v1/upload",
+        files={"file": ("streamed_huge.png", large_stream, "image/png")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    # STRICT ASSERTION: bounded chunk read aborts and returns HTTP 413
+    assert resp.status_code == 413, (
+        f"Oversized streamed file MUST be aborted with HTTP 413, got {resp.status_code}: {resp.text}"
+    )
+    assert "melebihi batas maksimal" in resp.json().get("detail", "").lower()
