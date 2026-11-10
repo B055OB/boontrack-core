@@ -121,7 +121,7 @@ jobs:
       - name: Run Auth Registration & Identity Verification Security Test Suites (PR #29)
         run: |
           set -o pipefail
-          python -m pytest tests/api/test_auth_registration_security.py tests/test_email_auth.py -v -ra --tb=short 2>&1 | tee /tmp/auth_security_test_results.log || {
+          python -m pytest tests/api/test_auth_registration_security.py tests/test_email_auth.py tests/test_auth_postgres_integration.py -v -ra --tb=short 2>&1 | tee /tmp/auth_security_test_results.log || {
             echo "## ❌ Auth Security Pytest Failures" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             cat /tmp/auth_security_test_results.log >> $GITHUB_STEP_SUMMARY
