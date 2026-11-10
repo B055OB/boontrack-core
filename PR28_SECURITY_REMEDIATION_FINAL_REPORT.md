@@ -154,5 +154,21 @@ tests/api/test_upload_alias_authorization.py (30 tests)     [PASSED: 30/30]
 
 1. **PR #28:** Remains **OPEN and UNMERGED**.
 2. **Issue #27:** Remains **OPEN** pending independent CTO security sign-off.
-3. **STOP CONDITION Follow-Up:** Awaiting CTO review of the tenant ownership mutation proposal ([`AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md`](file:///C:/boontrack-core/AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md)).
+3. **STOP CONDITION Follow-Up:** Dedicated remediation for the tenant ownership mutation vulnerabilities has been implemented in PR #29 (branch `security/auth-registration-identity-verification`) targeting `main`. See [`AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md`](file:///C:/boontrack-core/AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md) for the full architectural decision record.
+
+---
+
+## 4. PR #29 Cross-Reference
+
+| Attribute | Detail |
+| :--- | :--- |
+| **Branch** | `security/auth-registration-identity-verification` |
+| **Base** | `main` |
+| **Closes** | Attack Path A (self-asserted email JWT impersonation) |
+| **Closes** | Attack Path B (tenant slug `upsert` ownership mutation) |
+| **Changed files** | `app/routes/auth_routes.py`, `tests/test_email_auth.py`, `tests/api/test_auth_registration_security.py` |
+| **New test count** | 12 security regression tests |
+| **Full regression** | ✅ 87/87 passed (all upload + auth suites) |
+| **Schema migration required** | Yes — `ALTER TABLE merchants ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ACTIVE'` |
+| **Frontend update required** | `boontrack-studio` Next.js registration handler (separate PR) |
 

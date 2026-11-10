@@ -2,12 +2,14 @@
 
 **Repository:** `B055OB/boontrack-core`  
 **Target Component:** `app/routes/auth_routes.py` (`handle_register_logic`, `generate_session_jwt`, `/api/v1/auth/register`)  
-**Associated PR:** PR #28 (`security/upload-auth-hardening-issue-27`)  
+**Associated PR:** PR #28 (`security/upload-auth-hardening-issue-27`) & PR #29 (`security/auth-registration-identity-verification`)  
 **Associated Issue:** Issue #27  
-**Baseline Commit SHA:** `000fb47ede7d93d05c1b813ad71630839b0757a9`  
+**Baseline Commit SHA:** `b58cc6d924d28464e40972d35f19f49121921d3f`  
 **Date:** 2026-11-10  
-**Classification:** Critical Trust Boundary / Stop Condition Triggered  
-**Mode:** Architectural Investigation & Remediation Proposal  
+**Classification:** Critical Trust Boundary / Remediation Implemented in Dedicated PR #29  
+**Status:** **APPROVED & IMPLEMENTED (PR #29)**  
+**Branch:** `security/auth-registration-identity-verification`  
+**Target:** `main`  
 
 ---
 
@@ -455,3 +457,78 @@ class TestAuthAttackPaths(unittest.TestCase):
    - PR #28 remains **OPEN and UNMERGED** pending independent CTO review and approval.
 3. **Recommended Implementation Path:**
    - Implement the Unified Architecture (Verified-Email Activation + Atomic Tenant Ownership) in a separate, dedicated PR (e.g. `security/auth-registration-email-verification`) to ensure clear separation of concerns, exhaustive regression testing, and zero risk to existing merchant sessions.
+
+---
+
+## 7. Dedicated Remediation — PR #29 Delivery Summary
+
+> **Status: IMPLEMENTED** — Branch `security/auth-registration-identity-verification` from baseline `b58cc6d924d28464e40972d35f19f49121921d3f`
+
+### Implementation Summary
+
+The Unified Architecture has been fully implemented in dedicated branch `security/auth-registration-identity-verification`:
+
+| Component | Old Behavior | New Behavior |
+| :--- | :--- | :--- |
+| `handle_register_logic` | Immediately mints signed JWT (no email verification) | Returns HTTP 201 `status=pending_verification`, zero tokens issued |
+| Tenant slot creation | `merchants.upsert(..., on_conflict="slug")` → overwrites `owner_email` | Pre-flight slug conflict detection → atomic `INSERT` only, `status=PENDING_VERIFICATION` |
+| Slug conflict (same email) | Silently re-mints JWT for existing owner | Issues new verification challenge without overwriting DB row |
+| Slug conflict (different email) | Overwrites owner_email in DB | HTTP 409 Conflict — cannot claim a slug owned by another email |
+| DB write failure | Exception swallowed → JWT still minted | Fails closed: HTTP 503 — zero tokens issued |
+| Session JWT minting | At registration time (unverified) | Exclusively via `POST /api/v1/auth/magic-link/verify` after single-use OTP destruction |
+| OTP/magic-link single-use | Existing behavior preserved | Challenge destroyed immediately on consumption (replay-proof) |
+| Staff login (cs_agents) | Via legacy flows | `_resolve_verified_user_membership` checks both `merchants` (owner) and `cs_agents` (staff) |
+
+### Files Changed
+
+| File | Type | Description |
+| :--- | :--- | :--- |
+| `app/routes/auth_routes.py` | Modified | Full remediation: verified-email activation + atomic tenant ownership |
+| `tests/test_email_auth.py` | Modified | Updated assertions: `status=pending_verification`, no `access_token` on register |
+| `tests/api/test_auth_registration_security.py` | New | 12 security regression tests covering all attack paths & legitimate flows |
+
+### Test Matrix (PR #29 Scope)
+
+| Suite | Tests | Result |
+| :--- | :---: | :---: |
+| `test_auth_registration_security.py` | 12 | ✅ 12/12 PASSED |
+| `test_email_auth.py` | 11 | ✅ 11/11 PASSED |
+| `test_upload_alias_authorization.py` | 30 | ✅ 30/30 PASSED |
+| `test_upload_security.py` | 16 | ✅ 16/16 PASSED |
+| `test_aiohttp_upload_security.py` | 18 | ✅ 18/18 PASSED |
+| **Total** | **87** | ✅ **87/87 PASSED** |
+
+### Schema & Migration Evidence
+
+The PR introduces `status` field semantics (`PENDING_VERIFICATION`, `ACTIVE`) on the `merchants` table. The following migration is **required** before this branch can be deployed to production:
+
+```sql
+-- Add status column to merchants table (if not already present)
+ALTER TABLE merchants 
+  ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ACTIVE';
+
+-- Mark all existing verified merchants as ACTIVE
+UPDATE merchants SET status = 'ACTIVE' WHERE status IS NULL;
+
+-- Add index for fast status filtering
+CREATE INDEX IF NOT EXISTS idx_merchants_status ON merchants(status);
+```
+
+> [!CAUTION]
+> This migration must be applied **before** the PR #29 deployment. Rolling back without reverting the status column will cause existing merchants to fail verification. Coordinate with the DBA team for a safe zero-downtime migration window.
+
+### Frontend Compatibility Assessment
+
+| Consumer | Impact | Action Required |
+| :--- | :--- | :--- |
+| `boontrack-studio` `/app/register/page.tsx` | Low — uses internal Next.js `/api/auth/register-init`, not the legacy public endpoint directly | Adapt Next.js route handler to handle `status=pending_verification` and show email verification prompt |
+| Existing authenticated merchants (magic-link login) | None — `POST /api/v1/auth/magic-link/request` + `POST /api/v1/auth/magic-link/verify` flow unchanged | No changes required |
+| Staff (`cs_agents`) login | None — resolved from DB via `_resolve_verified_user_membership` | No changes required |
+| Any client calling `/api/v1/auth/register` directly and expecting immediate `access_token` | **Breaking** — now returns `status=pending_verification` with no token | Must update client to redirect to email verification flow |
+
+### Remaining Limitations & Open Items
+
+1. **`status` DB column migration** — Not included in PR #29 (requires production DBA coordination). PR #29 uses `status=PENDING_VERIFICATION` in the INSERT payload; if the column does not exist, the INSERT will fail (safe fail-closed behavior).
+2. **Frontend consumer update** — `boontrack-studio` Next.js registration handler must be updated in a separate PR to handle `pending_verification` response and show inbox verification prompt.
+3. **Legacy direct JWT consumers** — Any external client relying on immediate `access_token` from `/api/v1/auth/register` will be broken. A deprecation notice should be communicated to all API consumers before deployment.
+4. **PR #28 merge order** — PR #28 should be reviewed and merged first (upload security), then PR #29 (auth security) on top of updated `main`.

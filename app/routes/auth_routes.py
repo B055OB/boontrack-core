@@ -1,11 +1,12 @@
 import os
+import sys
 import time
 import json
 import secrets
 import random
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple, List, Sequence
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 from app.core.tenant_loader import LOADED_CONFIG_TENANTS, TENANT_REGISTRY
@@ -41,6 +42,410 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://app.boontrack.com")
 
 
+# ---------------------------------------------------------------------------
+# Test Fixture Registries (Isolated In-Memory for Unit Tests)
+# ---------------------------------------------------------------------------
+_in_memory_merchants: Dict[str, Dict[str, Any]] = {}
+_pending_registrations: Dict[str, Dict[str, Any]] = {}
+
+
+def register_auth_test_merchant(
+    slug: str,
+    owner_email: str,
+    is_active: bool = True,
+    role: str = "merchant",
+) -> None:
+    """Registers an in-memory test merchant fixture for auth tests."""
+    clean_s = str(slug).strip().lower()
+    clean_e = str(owner_email).strip().lower()
+    _in_memory_merchants[clean_s] = {
+        "slug": clean_s,
+        "owner_email": clean_e,
+        "status": "ACTIVE" if is_active else "INACTIVE",
+        "role": role,
+    }
+    try:
+        from app.routes.media_routes import register_merchant_membership
+        register_merchant_membership(clean_e, clean_s, is_active=is_active, role=role)
+    except Exception:
+        pass
+
+
+def clear_auth_test_registries() -> None:
+    """Clears in-memory test registries for pristine test runs."""
+    _in_memory_merchants.clear()
+    _pending_registrations.clear()
+
+
+def _is_dev_or_test_env() -> bool:
+    if "pytest" in sys.modules:
+        return True
+    for key in ("APP_ENV", "ENV", "ENVIRONMENT"):
+        if os.getenv(key, "").strip().lower() in ("test", "testing", "dev", "development", "local"):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Authoritative Database Helpers (PostgreSQL & Supabase Fallback)
+# ---------------------------------------------------------------------------
+
+def _query_existing_merchant_by_slug(slug: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """
+    Authoritatively checks if a merchant with the given slug already exists.
+    Returns (record_dict, error_msg).
+    - If found: returns ({"slug": ..., "owner_email": ..., "status": ...}, None)
+    - If cleanly 0 rows found: returns (None, None)
+    - If DB lookup error occurs: returns (None, error_str)
+    """
+    clean_s = str(slug).strip().lower()
+
+    # 1. In-memory test fixtures check
+    if clean_s in _in_memory_merchants:
+        m = _in_memory_merchants[clean_s]
+        return {
+            "slug": clean_s,
+            "owner_email": str(m.get("owner_email", "")).strip().lower(),
+            "status": str(m.get("status", "ACTIVE")).upper(),
+        }, None
+
+    try:
+        from app.routes.media_routes import _merchant_memberships
+        for (m_id, t_id), data in _merchant_memberships.items():
+            if str(t_id).strip().lower() == clean_s:
+                return {
+                    "slug": clean_s,
+                    "owner_email": str(m_id).strip().lower(),
+                    "status": "ACTIVE" if data.get("is_active", True) else "INACTIVE",
+                }, None
+    except Exception:
+        pass
+
+    # 2. PostgreSQL Direct Query
+    psql_err = None
+    try:
+        from app.core.database import get_db_connection
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT slug, lower(owner_email), status FROM merchants
+                    WHERE lower(slug) = %s OR id::text = %s
+                    LIMIT 1;
+                    """,
+                    (clean_s, clean_s),
+                )
+                row = cur.fetchone()
+                if row:
+                    return {
+                        "slug": str(row[0]),
+                        "owner_email": str(row[1] or "").strip().lower(),
+                        "status": str(row[2] or "ACTIVE").upper(),
+                    }, None
+                return None, None
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    except Exception as exc:
+        psql_err = str(exc)
+
+    # 3. Supabase Client Fallback
+    try:
+        supabase = get_supabase()
+        if supabase:
+            res = supabase.table("merchants").select("slug, owner_email, status").eq("slug", clean_s).limit(1).execute()
+            if res.data and len(res.data) > 0:
+                row = res.data[0]
+                return {
+                    "slug": str(row.get("slug")),
+                    "owner_email": str(row.get("owner_email", "")).strip().lower(),
+                    "status": str(row.get("status", "ACTIVE")).upper(),
+                }, None
+            return None, None
+    except Exception as s_exc:
+        return None, f"DB_QUERY_ERROR: psql({psql_err}), supabase({s_exc})"
+
+    # If PostgreSQL threw an operational error (e.g. connection refused) and Supabase wasn't configured:
+    if psql_err and "credentials are not configured" not in psql_err:
+        return None, f"DB_CONN_ERROR: {psql_err}"
+
+    return None, None
+
+
+def _insert_pending_merchant(
+    slug: str,
+    user_name: str,
+    user_email: str,
+    phone: str = "",
+    store_name: str = "",
+) -> Tuple[bool, Optional[str]]:
+    """
+    Atomically inserts a new merchant record with status 'PENDING_VERIFICATION'.
+    NEVER uses upsert on conflict!
+    Returns (success: bool, error_msg: Optional[str]).
+    """
+    clean_s = str(slug).strip().lower()
+    clean_e = str(user_email).strip().lower()
+
+    # In-memory test registry
+    _pending_registrations[clean_s] = {
+        "slug": clean_s,
+        "store_name": store_name or user_name,
+        "owner_name": user_name,
+        "owner_email": clean_e,
+        "owner_whatsapp": phone or "",
+        "status": "PENDING_VERIFICATION",
+    }
+
+    psql_err = None
+    try:
+        from app.core.database import get_db_connection
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO merchants (slug, store_name, owner_name, owner_email, owner_whatsapp, status)
+                    VALUES (%s, %s, %s, %s, %s, 'PENDING_VERIFICATION');
+                    """,
+                    (clean_s, store_name or user_name, user_name, clean_e, phone or ""),
+                )
+            conn.commit()
+            return True, None
+        except Exception as ins_err:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            err_str = str(ins_err)
+            if "unique" in err_str.lower() or "duplicate" in err_str.lower() or "23505" in err_str:
+                return False, f"CONFLICT: {ins_err}"
+            return False, f"DB_INSERT_ERROR: {ins_err}"
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    except Exception as conn_err:
+        psql_err = str(conn_err)
+
+    # Supabase Client Fallback (Insert only, NEVER upsert)
+    try:
+        supabase = get_supabase()
+        if supabase:
+            supabase.table("merchants").insert({
+                "slug": clean_s,
+                "store_name": store_name or user_name,
+                "owner_name": user_name,
+                "owner_email": clean_e,
+                "owner_whatsapp": phone or "",
+                "status": "PENDING_VERIFICATION",
+            }).execute()
+            return True, None
+    except Exception as s_err:
+        err_str = str(s_err)
+        if "unique" in err_str.lower() or "duplicate" in err_str.lower() or "23505" in err_str:
+            return False, f"CONFLICT: {s_err}"
+        return False, f"SUPABASE_INSERT_ERROR: {s_err}"
+
+    if psql_err and "credentials are not configured" not in psql_err:
+        return False, f"DB_CONN_ERROR: {psql_err}"
+
+    return True, None
+
+
+def _activate_pending_merchant(slug: str, owner_email: str) -> Tuple[bool, Optional[str]]:
+    """
+    Activates a verified merchant record in the database.
+    Updates status to 'ACTIVE' for matching slug and owner_email.
+    """
+    clean_s = str(slug).strip().lower()
+    clean_e = str(owner_email).strip().lower()
+
+    # Update in-memory fixtures
+    if clean_s in _pending_registrations:
+        _pending_registrations[clean_s]["status"] = "ACTIVE"
+    _in_memory_merchants[clean_s] = {
+        "slug": clean_s,
+        "owner_email": clean_e,
+        "status": "ACTIVE",
+    }
+    try:
+        from app.routes.media_routes import register_merchant_membership
+        register_merchant_membership(clean_e, clean_s, is_active=True, role="merchant")
+    except Exception:
+        pass
+
+    psql_err = None
+    try:
+        from app.core.database import get_db_connection
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE merchants SET status = 'ACTIVE'
+                    WHERE (lower(slug) = %s OR id::text = %s) AND lower(owner_email) = %s;
+                    """,
+                    (clean_s, clean_s, clean_e),
+                )
+            conn.commit()
+            return True, None
+        except Exception as upd_err:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return False, f"DB_UPDATE_ERROR: {upd_err}"
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    except Exception as conn_err:
+        psql_err = str(conn_err)
+
+    try:
+        supabase = get_supabase()
+        if supabase:
+            supabase.table("merchants").update({"status": "ACTIVE"}).eq("slug", clean_s).ilike("owner_email", clean_e).execute()
+            return True, None
+    except Exception as s_err:
+        return False, f"SUPABASE_UPDATE_ERROR: {s_err}"
+
+    if psql_err and "credentials are not configured" not in psql_err:
+        return False, f"DB_CONN_ERROR: {psql_err}"
+
+    return True, None
+
+
+def _resolve_verified_user_membership(
+    email: str,
+    claimed_tenant_slug: Optional[str] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """
+    Authoritative resolution of merchant owner or staff membership for a verified email.
+    Returns (membership_dict, error_msg).
+    - If found: returns ({"role": ..., "tenant_slug": ..., "is_active": bool}, None)
+    - If cleanly 0 rows: returns (None, None)
+    - If DB lookup error: returns (None, error_str)
+    """
+    clean_e = str(email).strip().lower()
+    clean_t = str(claimed_tenant_slug or "").strip().lower() if claimed_tenant_slug else None
+
+    # 1. In-memory fixtures check
+    if clean_t and clean_t in _in_memory_merchants:
+        m = _in_memory_merchants[clean_t]
+        if m.get("owner_email", "").strip().lower() == clean_e:
+            is_active = str(m.get("status", "ACTIVE")).upper() == "ACTIVE"
+            return {"role": m.get("role", "merchant"), "tenant_slug": clean_t, "is_active": is_active}, None
+
+    try:
+        from app.routes.media_routes import _merchant_memberships
+        for (m_id, t_id), data in _merchant_memberships.items():
+            if str(m_id).strip().lower() == clean_e:
+                if not clean_t or str(t_id).strip().lower() == clean_t:
+                    return {
+                        "role": data.get("role", "merchant"),
+                        "tenant_slug": str(t_id),
+                        "is_active": data.get("is_active", True),
+                    }, None
+    except Exception:
+        pass
+
+    # 2. Database lookup
+    try:
+        from app.core.database import get_db_connection
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                # 2a. Check merchants (owner)
+                if clean_t:
+                    cur.execute(
+                        """
+                        SELECT status, slug FROM merchants
+                        WHERE (lower(slug) = %s OR id::text = %s) AND lower(owner_email) = %s
+                        LIMIT 1;
+                        """,
+                        (clean_t, clean_t, clean_e),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT status, slug FROM merchants
+                        WHERE lower(owner_email) = %s
+                        LIMIT 1;
+                        """,
+                        (clean_e,),
+                    )
+                row = cur.fetchone()
+                if row:
+                    status_val = str(row[0] or "ACTIVE").upper()
+                    is_active = status_val in ("ACTIVE", "TRIAL", "PROVISIONED")
+                    return {"role": "merchant", "tenant_slug": str(row[1]), "is_active": is_active}, None
+
+                # 2b. Check cs_agents (staff)
+                if clean_t:
+                    cur.execute(
+                        """
+                        SELECT role, tenant_id, presence FROM cs_agents
+                        WHERE lower(email) = %s AND (lower(tenant_id) = %s OR tenant_id = %s)
+                        LIMIT 1;
+                        """,
+                        (clean_e, clean_t, clean_t),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT role, tenant_id, presence FROM cs_agents
+                        WHERE lower(email) = %s
+                        LIMIT 1;
+                        """,
+                        (clean_e,),
+                    )
+                agent_row = cur.fetchone()
+                if agent_row:
+                    presence = str(agent_row[2] or "active").lower()
+                    is_active = presence != "offline"
+                    return {"role": str(agent_row[0]), "tenant_slug": str(agent_row[1]), "is_active": is_active}, None
+
+                # Cleanly 0 rows found in both
+                return None, None
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    except Exception as db_err:
+        err_msg = str(db_err)
+        # Check if Supabase client can resolve it
+        try:
+            supabase = get_supabase()
+            if supabase:
+                query = supabase.table("merchants").select("slug, status").ilike("owner_email", clean_e)
+                if clean_t:
+                    query = query.eq("slug", clean_t)
+                res = query.limit(1).execute()
+                if res.data and len(res.data) > 0:
+                    item = res.data[0]
+                    is_act = str(item.get("status", "ACTIVE")).upper() in ("ACTIVE", "TRIAL", "PROVISIONED")
+                    return {"role": "merchant", "tenant_slug": str(item.get("slug")), "is_active": is_act}, None
+        except Exception:
+            pass
+
+        if "credentials are not configured" not in err_msg:
+            return None, f"DB_LOOKUP_ERROR: {err_msg}"
+
+    return None, None
+
+
+# ---------------------------------------------------------------------------
+# Token Store & Session JWT
+# ---------------------------------------------------------------------------
+
 class TokenStore:
     """
     Hybrid token store combining Redis with in-memory TTL fallback.
@@ -67,7 +472,6 @@ class TokenStore:
 
     def set_token(self, key: str, value: Dict[str, Any], ttl_seconds: int = 900) -> None:
         """Stores token data with TTL (default 15 minutes)."""
-        # Always store in memory store as fallback / fast cache
         expire_at = time.time() + ttl_seconds
         self._memory_store[key] = {
             "data": value,
@@ -82,7 +486,6 @@ class TokenStore:
 
     def get_token(self, key: str) -> Optional[Dict[str, Any]]:
         """Retrieves and verifies unexpired token data."""
-        # Try Redis first if available
         if self._redis_client:
             try:
                 raw = self._redis_client.get(key)
@@ -91,7 +494,6 @@ class TokenStore:
             except Exception as e:
                 logger.warning(f"[AUTH REDIS] Failed to get token from Redis: {e}")
 
-        # In-memory check
         entry = self._memory_store.get(key)
         if not entry:
             return None
@@ -114,15 +516,20 @@ class TokenStore:
 token_store = TokenStore()
 
 
-def generate_session_jwt(email: str, tenant_slug: Optional[str] = None, expires_days: int = 7) -> str:
-    """Generates signed JWT session token for authenticated merchant."""
+def generate_session_jwt(
+    email: str,
+    tenant_slug: Optional[str] = None,
+    role: str = "merchant",
+    expires_days: int = 7,
+) -> str:
+    """Generates signed JWT session token for authenticated merchant or staff."""
     now = datetime.now(timezone.utc)
     exp = now + timedelta(days=expires_days)
     payload = {
         "sub": email,
         "email": email,
         "tenant_slug": tenant_slug or "default",
-        "role": "merchant",
+        "role": role or "merchant",
         "iss": get_core_jwt_issuer(),
         "aud": get_core_jwt_audience(),
         "iat": int(now.timestamp()),
@@ -146,6 +553,7 @@ class MagicLinkVerifyRequest(BaseModel):
 
 class AuthUser(BaseModel):
     email: str
+    name: Optional[str] = None
     tenant_slug: Optional[str] = None
     role: str = "merchant"
 
@@ -181,6 +589,7 @@ async def request_magic_link(req: MagicLinkRequest):
         "token": token,
         "otp_code": otp_code,
         "tenant_slug": req.tenant_slug,
+        "is_registration": False,
         "created_at": time.time(),
     }
 
@@ -214,7 +623,7 @@ async def verify_magic_link(req: MagicLinkVerifyRequest):
     """
     POST /api/v1/auth/magic-link/verify
     Validates token or 6-digit OTP, consumes it immediately to prevent replay,
-    and returns a signed JWT session token.
+    validates tenant and membership authority, and returns a signed JWT session token.
     """
     token_to_verify = (req.token or "").strip()
     otp_to_verify = (req.otp_code or "").strip()
@@ -243,10 +652,12 @@ async def verify_magic_link(req: MagicLinkVerifyRequest):
             detail="Tautan masuk atau kode OTP tidak valid atau telah kadaluarsa.",
         )
 
-    email = session_data["email"]
-    tenant_slug = session_data.get("tenant_slug")
+    email = session_data["email"].strip().lower()
+    claimed_tenant_slug = session_data.get("tenant_slug")
+    is_registration = session_data.get("is_registration", False)
     stored_token = session_data.get("token")
     stored_otp = session_data.get("otp_code")
+    user_name = session_data.get("name")
 
     # 3. SINGLE-USE ENFORCEMENT: Immediately invalidate both token and OTP
     if stored_token:
@@ -254,10 +665,48 @@ async def verify_magic_link(req: MagicLinkVerifyRequest):
     if stored_otp:
         token_store.delete_token(f"bt:auth:magic_link_otp:{stored_otp}")
 
-    # 4. Generate JWT session token
-    jwt_token = generate_session_jwt(email=email, tenant_slug=tenant_slug)
+    # 4. RESOLVE IDENTITY & MEMBERSHIP AUTHORIZATION
+    resolved_tenant = claimed_tenant_slug or "default"
+    resolved_role = "merchant"
 
-    logger.info(f"[AUTH MAGIC LINK] Verified successfully for {email}. Session issued.")
+    if is_registration:
+        # Case A: Onboarding activation of pending merchant
+        act_ok, act_err = _activate_pending_merchant(slug=claimed_tenant_slug, owner_email=email)
+        if not act_ok:
+            logger.error(f"[AUTH VERIFY] Failed to activate pending merchant '{email}' on '{claimed_tenant_slug}': {act_err}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Gagal mengaktifkan akun merchant di database (fail-closed).",
+            )
+        resolved_tenant = claimed_tenant_slug
+        resolved_role = "merchant"
+    else:
+        # Case B: Existing user login — resolve from database
+        membership, m_err = _resolve_verified_user_membership(email=email, claimed_tenant_slug=claimed_tenant_slug)
+        if m_err:
+            logger.error(f"[AUTH VERIFY] Database membership lookup failed for '{email}': {m_err}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Layanan database otorisasi keanggotaan tidak tersedia (fail-closed).",
+            )
+        if membership is None:
+            logger.warning(f"[AUTH VERIFY] No active membership found for '{email}' on claimed tenant '{claimed_tenant_slug}'")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Email '{email}' tidak memiliki keanggotaan aktif pada sistem atau tenant yang diklaim.",
+            )
+        if not membership.get("is_active", True):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Keanggotaan merchant '{email}' dinonaktifkan.",
+            )
+        resolved_role = membership.get("role", "merchant")
+        resolved_tenant = membership.get("tenant_slug", claimed_tenant_slug or "default")
+
+    # 5. Generate JWT session token ONLY after proof of verification & membership
+    jwt_token = generate_session_jwt(email=email, tenant_slug=resolved_tenant, role=resolved_role)
+
+    logger.info(f"[AUTH MAGIC LINK] Verified successfully for {email} on tenant '{resolved_tenant}' (role={resolved_role}). Session issued.")
 
     return AuthResponse(
         status="success",
@@ -266,10 +715,12 @@ async def verify_magic_link(req: MagicLinkVerifyRequest):
         token_type="bearer",
         user=AuthUser(
             email=email,
-            tenant_slug=tenant_slug,
-            role="merchant",
+            name=user_name,
+            tenant_slug=resolved_tenant,
+            role=resolved_role,
         ),
     )
+
 
 # Magic Impersonation Internal Route
 from fastapi import Query
@@ -310,43 +761,105 @@ class RegisterRequest(BaseModel):
 
 
 async def handle_register_logic(req: RegisterRequest) -> Dict[str, Any]:
+    """
+    Public merchant registration handler.
+    Strictly fail-closed; never issues a session JWT without verified email proof.
+    Enforces atomic slug ownership check and single-use OTP/magic-link challenge dispatch.
+    """
     user_email = req.email.strip().lower()
     user_name = req.name.strip()
     slug_raw = req.tenant_slug or req.store_name or user_name
     slug = "".join(c if c.isalnum() or c == "-" else "-" for c in slug_raw.lower()).strip("-") or "merchant"
 
-    try:
-        supabase = get_supabase()
-        if supabase:
-            supabase.table("merchants").upsert({
-                "slug": slug,
-                "store_name": req.store_name or user_name,
-                "owner_name": user_name,
-                "owner_email": user_email,
-                "owner_whatsapp": req.phone or "",
-                "status": "ACTIVE",
-            }, on_conflict="slug").execute()
-    except Exception as db_err:
-        logger.warning(f"[AUTH REGISTER DB] Error persisting merchant record: {db_err}")
+    # Step 1: Pre-flight check on existing slug (Fail-Closed)
+    existing_merchant, q_err = _query_existing_merchant_by_slug(slug)
+    if q_err:
+        logger.error(f"[AUTH REGISTER] Database lookup failed for slug '{slug}': {q_err}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Layanan database tidak tersedia untuk verifikasi slug (fail-closed).",
+        )
 
-    # Tepat setelah proses insert/commit merchant atau user baru ke database berhasil, panggil email onboarding
+    if existing_merchant is not None:
+        existing_owner = existing_merchant.get("owner_email", "").strip().lower()
+        if existing_owner != user_email:
+            # Different owner attempting to claim existing slug -> HTTP 409 Conflict
+            logger.warning(f"[AUTH REGISTER] Slug conflict: '{slug}' already owned by '{existing_owner}', attempted by '{user_email}'")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Tenant slug '{slug}' sudah terdaftar untuk pemilik lain.",
+            )
+        # Existing slug belongs to the same email -> requires verification before JWT issuance!
+        logger.info(f"[AUTH REGISTER] Existing merchant re-registering: '{user_email}' for '{slug}'. Dispatching verification challenge.")
+    else:
+        # Atomic insert of pending merchant (NEVER upsert on conflict)
+        ins_ok, ins_err = _insert_pending_merchant(
+            slug=slug,
+            user_name=user_name,
+            user_email=user_email,
+            phone=req.phone or "",
+            store_name=req.store_name or user_name,
+        )
+        if not ins_ok:
+            if "CONFLICT" in str(ins_err):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Tenant slug '{slug}' sudah terdaftar (conflict detected).",
+                )
+            logger.error(f"[AUTH REGISTER] Failed to insert pending merchant: {ins_err}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Layanan database gagal menyimpan data registrasi (fail-closed).",
+            )
+
+    # Step 2: Generate Cryptographic Verification Challenge bound to email & slug
+    token = secrets.token_urlsafe(32)
+    otp_code = f"{random.randint(100000, 999999)}"
+    base_url = f"{FRONTEND_URL}/auth/verify".rstrip("/")
+    magic_link_url = f"{base_url}?token={token}"
+
+    session_data = {
+        "email": user_email,
+        "name": user_name,
+        "token": token,
+        "otp_code": otp_code,
+        "tenant_slug": slug,
+        "role": "merchant",
+        "is_registration": True,
+        "created_at": time.time(),
+    }
+
+    token_store.set_token(f"bt:auth:magic_link:{token}", session_data, ttl_seconds=900)
+    token_store.set_token(f"bt:auth:magic_link_otp:{otp_code}", session_data, ttl_seconds=900)
+
+    # Step 3: Dispatch Verification Email
     try:
-        from app.services.email_service import email_service
+        await email_service.send_magic_link_email(
+            to_email=user_email,
+            magic_link_url=magic_link_url,
+            otp_code=otp_code,
+            tenant_name=slug,
+        )
+    except Exception as mail_err:
+        logger.warning(f"[AUTH REGISTER EMAIL] Gagal mengirim magic link verification email: {mail_err}")
+
+    # Also trigger welcome email if appropriate (non-blocking)
+    try:
         await email_service.send_merchant_welcome_email(
             to_email=user_email,
             merchant_name=user_name,
-            dashboard_url=os.getenv("FRONTEND_URL", "https://shop.boontrack.com/login")
+            dashboard_url=os.getenv("FRONTEND_URL", "https://shop.boontrack.com/login"),
         )
-    except Exception as mail_err:
-        logger.warning(f"[AUTH REGISTER EMAIL] Gagal mengirim welcome email: {mail_err}")
+    except Exception as welcome_err:
+        logger.warning(f"[AUTH REGISTER EMAIL] Gagal mengirim welcome email: {welcome_err}")
 
-    token = generate_session_jwt(email=user_email, tenant_slug=slug)
-
+    # Step 4: Return Pending Verification Response (NO ACCESS TOKEN!)
     return {
-        "status": "success",
-        "message": "Registrasi merchant berhasil.",
-        "access_token": token,
-        "token_type": "bearer",
+        "status": "pending_verification",
+        "message": f"Registrasi merchant berhasil. Tautan verifikasi dan kode OTP telah dikirim ke {user_email}.",
+        "email": user_email,
+        "tenant_slug": slug,
+        "requires_verification": True,
         "user": {
             "email": user_email,
             "name": user_name,
