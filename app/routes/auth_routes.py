@@ -9,7 +9,7 @@ import threading
 import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any, Tuple, List, Sequence, Set
+from typing import Optional, Dict, Any, Tuple, List, Sequence, Set, Union
 from fastapi import APIRouter, HTTPException, status, Request
 from pydantic import BaseModel, EmailStr, Field
 from app.core.tenant_loader import LOADED_CONFIG_TENANTS, TENANT_REGISTRY
@@ -95,6 +95,14 @@ def clear_auth_test_registries() -> None:
     try:
         token_store._memory_store.clear()
         token_store._slug_locks.clear()
+    except Exception:
+        pass
+    try:
+        request_rate_limiter.reset()
+    except Exception:
+        pass
+    try:
+        register_rate_limiter.reset()
     except Exception:
         pass
     try:
@@ -564,6 +572,7 @@ def _revert_pending_merchant_activation(slug: str, owner_email: str) -> Tuple[bo
     Reverts merchant record from ACTIVE back to PENDING_VERIFICATION (is_active=False).
     Guarantees tenant record remains in consistent state.
     Strictly preserves tenant records: NEVER deletes the merchant or tenant rows.
+    Guarded by Active Tenant Guard: will NOT revert merchant if tenant is ACTIVE.
     """
     clean_s = str(slug).strip().lower()
     clean_e = str(owner_email).strip().lower()
@@ -574,8 +583,47 @@ def _revert_pending_merchant_activation(slug: str, owner_email: str) -> Tuple[bo
         if clean_s in _in_memory_merchants:
             _in_memory_merchants[clean_s]["status"] = "PENDING_VERIFICATION"
 
+    # Active Tenant Guard: If tenant is ACTIVE or is_active=True, refuse to revert automatically.
+    # Preserve both records and retain dead-letter entry for manual reconciliation.
+    tenant_active = False
+    try:
+        from app.core.database import get_db_connection
+        conn_t = get_db_connection()
+        try:
+            with conn_t.cursor() as cur_t:
+                cur_t.execute(
+                    "SELECT status, is_active FROM public.tenants WHERE lower(slug) = %s LIMIT 1;",
+                    (clean_s,),
+                )
+                t_row = cur_t.fetchone()
+                if t_row and (t_row[0] == "ACTIVE" or t_row[1] is True):
+                    tenant_active = True
+        finally:
+            try:
+                conn_t.close()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    if not tenant_active:
+        try:
+            supabase = get_supabase()
+            if supabase:
+                t_check = supabase.table("tenants").select("status, is_active").eq("slug", clean_s).limit(1).execute()
+                if t_check.data and (t_check.data[0].get("status") == "ACTIVE" or t_check.data[0].get("is_active") is True):
+                    tenant_active = True
+        except Exception:
+            pass
+
+    if tenant_active:
+        logger.warning(
+            f"[REVERT GUARD] Tenant '{clean_s}' is ACTIVE or is_active=true. Refusing to revert merchant and retaining dead-letter record."
+        )
+        return False, "CANNOT_REVERT_ACTIVE_TENANT: Tenant is ACTIVE or is_active=true"
+
     revert_error = None
-    # 1. PostgreSQL Revert
+    # 1. PostgreSQL Revert with authoritative ownership and rowcount state verification
     try:
         from app.core.database import get_db_connection
         conn = get_db_connection()
@@ -585,12 +633,18 @@ def _revert_pending_merchant_activation(slug: str, owner_email: str) -> Tuple[bo
                     """
                     UPDATE merchants
                     SET status = 'PENDING_VERIFICATION', is_otp_verified = false
-                    WHERE lower(slug) = %s AND (status = 'ACTIVE' OR status = 'PENDING_VERIFICATION');
+                    WHERE lower(slug) = %s AND lower(owner_email) = %s
+                      AND (status = 'ACTIVE' OR status = 'PENDING_VERIFICATION');
                     """,
-                    (clean_s,),
+                    (clean_s, clean_e),
                 )
-            conn.commit()
-            return True, None
+                affected = cur.rowcount
+            if affected == 1:
+                conn.commit()
+                return True, None
+            else:
+                conn.rollback()
+                revert_error = f"PostgreSQL UPDATE affected {affected} rows (expected 1)"
         except Exception as p_err:
             try:
                 conn.rollback()
@@ -605,15 +659,41 @@ def _revert_pending_merchant_activation(slug: str, owner_email: str) -> Tuple[bo
     except Exception as c_err:
         revert_error = str(c_err)
 
-    # 2. Supabase Fallback
+    # 2. Supabase Fallback with data inspection and secondary state query
     try:
         supabase = get_supabase()
         if supabase:
-            supabase.table("merchants").update({
-                "status": "PENDING_VERIFICATION",
-                "is_otp_verified": False,
-            }).eq("slug", clean_s).execute()
-            return True, None
+            res = (
+                supabase.table("merchants")
+                .update({
+                    "status": "PENDING_VERIFICATION",
+                    "is_otp_verified": False,
+                })
+                .eq("slug", clean_s)
+                .ilike("owner_email", clean_e)
+                .execute()
+            )
+            data = getattr(res, "data", None)
+            if data and len(data) == 1:
+                return True, None
+            # If 0 rows returned, perform secondary state query
+            chk = (
+                supabase.table("merchants")
+                .select("id, status, owner_email")
+                .eq("slug", clean_s)
+                .execute()
+            )
+            chk_data = getattr(chk, "data", None) or []
+            if chk_data:
+                first = chk_data[0]
+                if str(first.get("owner_email", "")).strip().lower() != clean_e:
+                    revert_error = f"{revert_error}; Supabase revert failed: owner_email mismatch"
+                elif first.get("status") == "PENDING_VERIFICATION":
+                    return True, None
+                else:
+                    revert_error = f"{revert_error}; Supabase UPDATE affected 0 rows, status remains {first.get('status')}"
+            else:
+                revert_error = f"{revert_error}; Supabase UPDATE affected 0 rows and merchant not found"
     except Exception as s_err:
         revert_error = f"{revert_error}; Supabase error: {s_err}"
 
@@ -720,13 +800,29 @@ def _delete_pending_merchant(slug: str, owner_email: str) -> Tuple[bool, Optiona
         if supabase:
             res_m = supabase.table("merchants").delete().eq("slug", clean_s).ilike("owner_email", clean_e).eq("status", "PENDING_VERIFICATION").execute()
             res_t = supabase.table("tenants").delete().eq("slug", clean_s).eq("status", "PENDING_VERIFICATION").execute()
-            # Distinguish real deletion from zero-row / RLS filtered no-op
+
+            # Inspect merchant deletion outcome independently
             if hasattr(res_m, "data") and res_m.data is not None and len(res_m.data) == 0:
-                chk = supabase.table("merchants").select("id, status").eq("slug", clean_s).execute()
-                if chk.data and len(chk.data) > 0:
-                    raise RuntimeError("Supabase DELETE affected 0 rows due to RLS policy or status mismatch")
+                chk_m = supabase.table("merchants").select("id, status").eq("slug", clean_s).execute()
+                if chk_m.data and len(chk_m.data) > 0:
+                    raise RuntimeError("Supabase DELETE merchants affected 0 rows due to RLS policy or status mismatch")
+
+            # Inspect tenant deletion outcome independently
+            if hasattr(res_t, "data") and res_t.data is not None and len(res_t.data) == 0:
+                chk_t = supabase.table("tenants").select("id, status").eq("slug", clean_s).execute()
+                if chk_t.data and len(chk_t.data) > 0:
+                    raise RuntimeError("Supabase DELETE tenants affected 0 rows due to RLS policy or status mismatch")
+
+            # Secondary state verification: verify final state of both records before reporting recovery success
+            verify_m = supabase.table("merchants").select("id, status").eq("slug", clean_s).execute()
+            if verify_m.data and len(verify_m.data) > 0:
+                raise RuntimeError("Supabase merchants record still exists after deletion attempt")
+
+            verify_t = supabase.table("tenants").select("id, status").eq("slug", clean_s).execute()
+            if verify_t.data and len(verify_t.data) > 0:
+                raise RuntimeError("Supabase tenants record still exists after deletion attempt")
+
             supabase_succeeded = True
-            # Supabase cleanup succeeded: clear obsolete PostgreSQL error
             cleanup_error = None
             _clear_dead_letter_cleanup(clean_s)
             return True, None
@@ -1356,13 +1452,26 @@ def generate_secure_otp(length: int = 6) -> str:
 class DistributedAuthRateLimiter:
     """
     Distributed rate limiter for public auth endpoints (request magic link, register).
-    Uses atomic Redis counters with cluster hash tags ({bt:auth}:ratelimit:auth:...)
+    Uses atomic Redis counters with cluster hash tags ({bt:auth}:ratelimit:auth:{endpoint}:...)
     and fails closed in production mode if Redis is unavailable.
     """
-    def __init__(self, max_requests: int = 15, window_seconds: int = 60, store: Optional[TokenStore] = None):
-        self.max_requests = max_requests
-        self.window_seconds = window_seconds
-        self.store = store
+    def __init__(
+        self,
+        endpoint: Union[str, int] = "default",
+        max_requests: int = 15,
+        window_seconds: int = 60,
+        store: Optional[TokenStore] = None,
+    ):
+        if isinstance(endpoint, int):
+            self.max_requests = endpoint
+            self.window_seconds = max_requests
+            self.endpoint = "default"
+            self.store = window_seconds if isinstance(window_seconds, TokenStore) else store
+        else:
+            self.endpoint = endpoint
+            self.max_requests = max_requests
+            self.window_seconds = window_seconds
+            self.store = store
         self._history: Dict[str, List[float]] = defaultdict(list)
         self._lock = threading.Lock()
 
@@ -1374,7 +1483,7 @@ class DistributedAuthRateLimiter:
             return True, 0
 
         target = f"{identifier}:{client_ip}" if client_ip else str(identifier).strip()
-        key = f"{_AUTH_HASH_TAG}:ratelimit:auth:{target}"
+        key = f"{_AUTH_HASH_TAG}:ratelimit:auth:{self.endpoint}:{target}"
         store = self._get_store()
 
         # Production fail-closed check
@@ -1421,7 +1530,11 @@ class DistributedAuthRateLimiter:
 
 
 AuthRateLimiter = DistributedAuthRateLimiter
-auth_rate_limiter = DistributedAuthRateLimiter(max_requests=15, window_seconds=60)
+# Route-specific rate limiters with designated budgets
+request_rate_limiter = DistributedAuthRateLimiter(endpoint="request", max_requests=30, window_seconds=60)
+register_rate_limiter = DistributedAuthRateLimiter(endpoint="register", max_requests=10, window_seconds=60)
+# Default alias for backwards compatibility
+auth_rate_limiter = register_rate_limiter
 
 
 class VerificationRateLimiter:
@@ -1687,17 +1800,18 @@ class AuthResponse(BaseModel):
 # --- Endpoints ---
 
 @router.post("/request", response_model=Dict[str, Any])
-async def request_magic_link(req: MagicLinkRequest):
+async def request_magic_link(req: MagicLinkRequest, request: Request = None):
     """
     POST /api/v1/auth/magic-link/request
     Generates single-use cryptographic token, 6-digit OTP, and server-issued challenge_id.
     Stores in Redis and sends branded BoonTrack magic link email to the merchant.
     """
     email_clean = req.email.strip().lower()
+    client_ip = get_trusted_client_ip(request)
 
-    # Rate limiting guard
+    # Route-specific rate limiting guard (30 req/min for /request)
     try:
-        allowed, retry_after = auth_rate_limiter.is_allowed(email_clean)
+        allowed, retry_after = request_rate_limiter.is_allowed(email_clean, client_ip=client_ip)
         if not allowed:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -1816,36 +1930,25 @@ async def verify_magic_link(req: MagicLinkVerifyRequest, request: Request = None
             )
     elif otp_to_verify:
         submitted_challenge = (req.challenge_id or "").strip()
-        if submitted_challenge:
-            try:
-                authoritative_session = token_store.get_challenge_session(submitted_challenge)
-            except RuntimeError as r_err:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Layanan token verifikasi terdistribusi tidak tersedia (fail-closed).",
-                )
-            if not authoritative_session:
-                # Submitted challenge is unknown, forged, or expired.
-                # Unknown/forged challenge IDs must NOT create unlimited independent challenge buckets.
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Tautan masuk atau kode OTP tidak valid atau telah kadaluarsa.",
-                )
-        else:
-            # Fallback for callers that only submit otp_code
-            try:
-                authoritative_session = token_store.get_token(f"{_AUTH_HASH_TAG}:magic_link_otp:{otp_to_verify}")
-            except RuntimeError as r_err:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Layanan token verifikasi terdistribusi tidak tersedia (fail-closed).",
-                )
-            if not authoritative_session:
-                # Blind OTP guess without challenge or valid session: reject immediately without creating rate limit bucket
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Tautan masuk atau kode OTP tidak valid atau telah kadaluarsa.",
-                )
+        if not submitted_challenge:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Harap sertakan challenge_id verifikasi yang valid bersama kode OTP.",
+            )
+        try:
+            authoritative_session = token_store.get_challenge_session(submitted_challenge)
+        except RuntimeError as r_err:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Layanan token verifikasi terdistribusi tidak tersedia (fail-closed).",
+            )
+        if not authoritative_session:
+            # Submitted challenge is unknown, forged, or expired.
+            # Unknown/forged challenge IDs must NOT create unlimited independent challenge buckets.
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Tautan masuk atau kode OTP tidak valid atau telah kadaluarsa.",
+            )
 
     if not authoritative_session:
         raise HTTPException(
@@ -2057,7 +2160,7 @@ class RegisterRequest(BaseModel):
     store_name: Optional[str] = None
 
 
-async def handle_register_logic(req: RegisterRequest) -> Dict[str, Any]:
+async def handle_register_logic(req: RegisterRequest, request: Optional[Request] = None) -> Dict[str, Any]:
     """
     Public merchant registration handler.
     Strictly fail-closed; never issues a session JWT without verified email proof.
@@ -2067,10 +2170,11 @@ async def handle_register_logic(req: RegisterRequest) -> Dict[str, Any]:
     user_name = req.name.strip()
     slug_raw = req.tenant_slug or req.store_name or user_name
     slug = "".join(c if c.isalnum() or c == "-" else "-" for c in slug_raw.lower()).strip("-") or "merchant"
+    client_ip = get_trusted_client_ip(request)
 
-    # Rate limiting guard per email
+    # Route-specific rate limiting guard per email and client IP (10 req/min for /register)
     try:
-        allowed, retry_after = auth_rate_limiter.is_allowed(user_email)
+        allowed, retry_after = register_rate_limiter.is_allowed(user_email, client_ip=client_ip)
         if not allowed:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -2261,15 +2365,15 @@ async def handle_register_logic(req: RegisterRequest) -> Dict[str, Any]:
 
 
 @router.post("/register", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
-async def register_merchant_magic_link(req: RegisterRequest):
+async def register_merchant_magic_link(req: RegisterRequest, request: Request = None):
     """POST /api/v1/auth/magic-link/register"""
-    return await handle_register_logic(req)
+    return await handle_register_logic(req, request=request)
 
 
 auth_general_router = APIRouter(prefix="/api/v1/auth", tags=["Merchant Auth"])
 
 
 @auth_general_router.post("/register", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
-async def register_merchant_general(req: RegisterRequest):
+async def register_merchant_general(req: RegisterRequest, request: Request = None):
     """POST /api/v1/auth/register"""
-    return await handle_register_logic(req)
+    return await handle_register_logic(req, request=request)

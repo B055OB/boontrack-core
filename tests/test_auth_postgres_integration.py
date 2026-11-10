@@ -44,6 +44,7 @@ from app.routes.auth_routes import (
     request_magic_link,
     verify_magic_link,
     clear_auth_test_registries,
+    register_auth_test_merchant,
     _query_existing_merchant_by_slug,
     _insert_pending_merchant,
     _activate_pending_merchant,
@@ -238,7 +239,7 @@ class TestAuthPostgresIntegration(unittest.TestCase):
             conn.close()
 
         # 2. Activate via OTP
-        verify_req = {"otp_code": captured_tokens["otp_code"]}
+        verify_req = {"otp_code": captured_tokens["otp_code"], "challenge_id": reg_data["challenge_id"]}
         v_res = self.client.post("/api/v1/auth/magic-link/verify", json=verify_req)
         self.assertEqual(v_res.status_code, 200)
         v_data = v_res.json()
@@ -393,9 +394,10 @@ class TestAuthPostgresIntegration(unittest.TestCase):
         with patch.object(email_service, "send_magic_link_email", side_effect=mock_send):
             req_login = self.client.post("/api/v1/auth/magic-link/request", json={"email": email, "tenant_slug": slug})
             self.assertEqual(req_login.status_code, 200)
+            req_data = req_login.json()
 
         self.assertTrue(len(captured_otp) > 0)
-        verify_res = self.client.post("/api/v1/auth/magic-link/verify", json={"otp_code": captured_otp[0]})
+        verify_res = self.client.post("/api/v1/auth/magic-link/verify", json={"otp_code": captured_otp[0], "challenge_id": req_data["challenge_id"]})
         self.assertEqual(verify_res.status_code, 200)
         self.assertIn("access_token", verify_res.json())
 
@@ -1006,12 +1008,59 @@ class TestAuthPostgresIntegration(unittest.TestCase):
             )
             self.assertEqual(res_rot_6th.status_code, 429, "Rotating client email cannot evade challenge lockout")
 
-            # 5. Omitting challenge_id and email returns 401 without creating rate-limit buckets
-            res_blind = self.client.post(
+            # 5. Omitting challenge_id when verifying numeric OTP returns HTTP 400 Bad Request
+            # Repeated invalid attempts without challenge_id across rotating IPs all fail with 400
+            for rot_ip_idx in range(5):
+                res_blind = self.client.post(
+                    "/api/v1/auth/magic-link/verify",
+                    json={"otp_code": "999999"},
+                    headers={"CF-Connecting-IP": f"198.51.100.{rot_ip_idx+10}"},
+                )
+                self.assertEqual(res_blind.status_code, 400, "Verifying OTP without challenge_id must return HTTP 400")
+                self.assertIn("challenge_id", res_blind.json()["detail"].lower())
+
+            # Valid challenge-bound verification succeeds with 200 OK
+            valid_ch_test = f"ch_bound_{uuid.uuid4().hex[:12]}"
+            valid_tok_test = f"tok_bound_{uuid.uuid4().hex}"
+            valid_otp_test = "771122"
+            valid_email_test = "bound_owner@boontrack.id"
+            register_auth_test_merchant(slug="bound-store", owner_email=valid_email_test, is_active=True)
+            bound_payload = {
+                "email": valid_email_test,
+                "token": valid_tok_test,
+                "otp_code": valid_otp_test,
+                "challenge_id": valid_ch_test,
+                "tenant_slug": "bound-store",
+                "is_registration": False,
+                "created_at": time.time(),
+            }
+            token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link:{valid_tok_test}", bound_payload)
+            token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link_otp:{valid_otp_test}", bound_payload)
+            token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link_challenge:{valid_ch_test}", bound_payload)
+
+            res_valid_ch = self.client.post(
                 "/api/v1/auth/magic-link/verify",
-                json={"otp_code": "999999"},
+                json={"challenge_id": valid_ch_test, "otp_code": valid_otp_test},
             )
-            self.assertEqual(res_blind.status_code, 401)
+            self.assertEqual(res_valid_ch.status_code, 200)
+            self.assertIn("access_token", res_valid_ch.json())
+
+            # Valid high-entropy token verification without challenge_id succeeds (preserving token flow)
+            valid_tok_flow = f"tok_flow_{uuid.uuid4().hex}"
+            token_payload = {
+                "email": valid_email_test,
+                "token": valid_tok_flow,
+                "tenant_slug": "bound-store",
+                "is_registration": False,
+                "created_at": time.time(),
+            }
+            token_store.set_token(f"{_AUTH_HASH_TAG}:magic_link:{valid_tok_flow}", token_payload)
+            res_valid_tok = self.client.post(
+                "/api/v1/auth/magic-link/verify",
+                json={"token": valid_tok_flow},
+            )
+            self.assertEqual(res_valid_tok.status_code, 200)
+            self.assertIn("access_token", res_valid_tok.json())
 
             # 6. Attempt to reuse a challenge belonging to another email fails
             ch_reuse = f"ch_reuse_{uuid.uuid4().hex[:12]}"
@@ -1270,6 +1319,98 @@ class TestAuthPostgresIntegration(unittest.TestCase):
             finally:
                 conn3.close()
 
+        # 2b. Active Tenant Guard on action='revert':
+        # If tenant is ACTIVE or is_active=true, do NOT revert the merchant automatically.
+        # Preserve both records and retain the dead-letter entry for manual reconciliation.
+        rev_active_slug = f"rev-act-guard-{uuid.uuid4().hex[:8]}"
+        rev_active_email = f"owner_{rev_active_slug}@testboontrack.id"
+
+        if LIVE_POSTGRES_ACTIVE:
+            conn = get_db_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO public.tenants (name, slug, tier, status, is_active)
+                        VALUES (%s, %s, 'STARTER', 'ACTIVE', true)
+                        ON CONFLICT (slug) DO UPDATE SET status = 'ACTIVE', is_active = true;
+                        """,
+                        (rev_active_slug, rev_active_slug),
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO public.merchants (slug, store_name, owner_name, owner_email, owner_whatsapp, status)
+                        VALUES (%s, %s, 'Owner Rev Active', %s, '08123456789', 'ACTIVE')
+                        ON CONFLICT DO NOTHING;
+                        """,
+                        (rev_active_slug, rev_active_slug, rev_active_email),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+            _record_dead_letter_cleanup(rev_active_slug, rev_active_email, "simulated activation failure on active tenant", action="revert")
+            res_act_rev = reconcile_pending_cleanups()
+            # Must NOT be in reconciled; dead-letter record retained!
+            self.assertIn(rev_active_slug, res_act_rev["failed"])
+            self.assertIn(rev_active_slug, _DEAD_LETTER_CLEANUP_REGISTRY)
+
+            conn_chk = get_db_connection()
+            try:
+                with conn_chk.cursor() as cur:
+                    cur.execute("SELECT status FROM public.merchants WHERE lower(slug) = %s;", (rev_active_slug,))
+                    m_row = cur.fetchone()
+                    self.assertEqual(m_row[0], "ACTIVE", "Active tenant's merchant must NOT be reverted")
+
+                    cur.execute("SELECT status, is_active FROM public.tenants WHERE lower(slug) = %s;", (rev_active_slug,))
+                    t_row = cur.fetchone()
+                    self.assertEqual(t_row[0], "ACTIVE")
+                    self.assertTrue(t_row[1])
+            finally:
+                conn_chk.close()
+
+            # Clean up dead-letter test entry
+            _clear_dead_letter_cleanup(rev_active_slug)
+
+        # 2c. Revert with owner mismatch and zero-rowcount scenarios
+        mismatch_slug = f"rev-mismatch-{uuid.uuid4().hex[:8]}"
+        mismatch_real_email = f"real_{mismatch_slug}@boontrack.id"
+        mismatch_wrong_email = f"wrong_{mismatch_slug}@boontrack.id"
+
+        if LIVE_POSTGRES_ACTIVE:
+            conn = get_db_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO public.tenants (name, slug, tier, status, is_active)
+                        VALUES (%s, %s, 'STARTER', 'PENDING_VERIFICATION', false)
+                        ON CONFLICT (slug) DO NOTHING;
+                        """,
+                        (mismatch_slug, mismatch_slug),
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO public.merchants (slug, store_name, owner_name, owner_email, owner_whatsapp, status)
+                        VALUES (%s, %s, 'Mismatch Owner', %s, '08123456789', 'ACTIVE')
+                        ON CONFLICT DO NOTHING;
+                        """,
+                        (mismatch_slug, mismatch_slug, mismatch_real_email),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+            # Revert with mismatched email returns False (affected 0 rows)
+            ok_mis, err_mis = _revert_pending_merchant_activation(mismatch_slug, mismatch_wrong_email)
+            self.assertFalse(ok_mis)
+            self.assertIn("affected 0 rows", str(err_mis))
+
+            # Non-existent slug returns False (affected 0 rows)
+            ok_zero, err_zero = _revert_pending_merchant_activation("non_existent_slug_xyz", "anyone@boontrack.id")
+            self.assertFalse(ok_zero)
+            self.assertIn("affected 0 rows", str(err_zero))
+
         # 3. Production fail-closed on leader lock unavailable
         with patch.dict(os.environ, {"APP_ENV": "production", "REDIS_REQUIRED": "true"}):
             with patch.object(token_store, "_is_redis_healthy", return_value=False):
@@ -1448,6 +1589,25 @@ class TestAuthPostgresIntegration(unittest.TestCase):
             ok_zero, err_zero = _delete_pending_merchant(slug="zero-row-slug", owner_email="test@zero.id")
             self.assertFalse(ok_zero, "Zero-row or RLS-filtered delete must not report success")
 
+        # Scenario 8: Tenant deletion returns 0 rows (RLS filtered / status mismatch) while merchant succeeds
+        mock_sb_t_zero = unittest.mock.MagicMock()
+        mock_m_succ = unittest.mock.MagicMock()
+        mock_t_zero = unittest.mock.MagicMock()
+        # Merchant delete succeeds with 1 row deleted
+        mock_m_succ.delete.return_value.eq.return_value.ilike.return_value.eq.return_value.execute.return_value = unittest.mock.MagicMock(data=[{"id": 1}])
+        # Tenant delete returns 0 rows
+        mock_t_zero.delete.return_value.eq.return_value.eq.return_value.execute.return_value = unittest.mock.MagicMock(data=[])
+        # Secondary select on tenant shows tenant row STILL exists!
+        mock_t_zero.select.return_value.eq.return_value.execute.return_value = unittest.mock.MagicMock(data=[{"id": 1, "status": "PENDING_VERIFICATION"}])
+        mock_sb_t_zero.table.side_effect = lambda name: mock_m_succ if name == "merchants" else mock_t_zero
+
+        with patch("app.core.database.get_db_connection", side_effect=Exception("PostgreSQL connection refused")), \
+             patch("app.routes.auth_routes.get_supabase", return_value=mock_sb_t_zero):
+            ok_t_zero, err_t_zero = _delete_pending_merchant(slug="tenant-zero-slug", owner_email="test@zero.id")
+            self.assertFalse(ok_t_zero, "Tenant deletion returning zero rows while row exists must fail recovery")
+            self.assertIn("tenant-zero-slug", _DEAD_LETTER_CLEANUP_REGISTRY)
+            self.assertEqual(_DEAD_LETTER_CLEANUP_REGISTRY["tenant-zero-slug"]["action"], "delete")
+
     # -------------------------------------------------------------------------
     # Test 21: Distributed Public Auth Rate Limiter & Multi-Instance Sync (CTO P1)
     # -------------------------------------------------------------------------
@@ -1455,14 +1615,16 @@ class TestAuthPostgresIntegration(unittest.TestCase):
         """
         Proves:
         1. Two independent DistributedAuthRateLimiter instances share rate limit counters via Redis.
-        2. Bursts on public magic-link request and registration endpoints are throttled.
-        3. In production mode, Redis outage strictly fails closed (HTTP 503).
+        2. Route-specific budgets: 30 req/min for /request and 10 req/min for /register.
+        3. Bursts on public magic-link request and registration endpoints are throttled.
+        4. In production mode, Redis outage strictly fails closed (HTTP 503).
+        5. Actual HTTP endpoints enforce separate budgets across shared Redis.
         """
         store1 = TokenStore()
         store2 = TokenStore()
 
-        limiter1 = DistributedAuthRateLimiter(max_requests=5, window_seconds=60, store=store1)
-        limiter2 = DistributedAuthRateLimiter(max_requests=5, window_seconds=60, store=store2)
+        limiter1 = DistributedAuthRateLimiter(endpoint="test", max_requests=5, window_seconds=60, store=store1)
+        limiter2 = DistributedAuthRateLimiter(endpoint="test", max_requests=5, window_seconds=60, store=store2)
 
         test_user = f"burst_user_{uuid.uuid4().hex[:6]}@boontrack.id"
 
@@ -1485,6 +1647,54 @@ class TestAuthPostgresIntegration(unittest.TestCase):
                 allowed_6th, retry_after = limiter2.is_allowed(test_user)
                 self.assertFalse(allowed_6th, "6th request across distributed instances must be rate limited")
                 self.assertGreater(retry_after, 0)
+
+            # Route-specific budgets test (30 req/min for request, 10 req/min for register)
+            req_store1 = TokenStore()
+            req_store2 = TokenStore()
+            lim_req1 = DistributedAuthRateLimiter(endpoint="request", max_requests=30, window_seconds=60, store=req_store1)
+            lim_req2 = DistributedAuthRateLimiter(endpoint="request", max_requests=30, window_seconds=60, store=req_store2)
+
+            reg_store1 = TokenStore()
+            reg_store2 = TokenStore()
+            lim_reg1 = DistributedAuthRateLimiter(endpoint="register", max_requests=10, window_seconds=60, store=reg_store1)
+            lim_reg2 = DistributedAuthRateLimiter(endpoint="register", max_requests=10, window_seconds=60, store=reg_store2)
+
+            lim_req1.reset()
+            lim_reg1.reset()
+
+            user_budget = f"budget_user_{uuid.uuid4().hex[:6]}@boontrack.id"
+
+            if store1._is_redis_healthy() and store2._is_redis_healthy():
+                # Register budget (10 max across 2 instances)
+                for _ in range(5):
+                    self.assertTrue(lim_reg1.is_allowed(user_budget)[0])
+                for _ in range(5):
+                    self.assertTrue(lim_reg2.is_allowed(user_budget)[0])
+                # 11th request: rejected!
+                self.assertFalse(lim_reg2.is_allowed(user_budget)[0])
+
+                # Request budget (30 max across 2 instances, distinct from register)
+                for _ in range(15):
+                    self.assertTrue(lim_req1.is_allowed(user_budget)[0])
+                for _ in range(15):
+                    self.assertTrue(lim_req2.is_allowed(user_budget)[0])
+                # 31st request: rejected!
+                self.assertFalse(lim_req2.is_allowed(user_budget)[0])
+
+            # HTTP endpoint rate limit testing across instances
+            http_user = f"http_rate_{uuid.uuid4().hex[:6]}@boontrack.id"
+            from app.routes.auth_routes import request_rate_limiter, register_rate_limiter
+            request_rate_limiter.reset()
+            register_rate_limiter.reset()
+
+            with patch.object(request_rate_limiter, "max_requests", 3):
+                for _ in range(3):
+                    res_http = self.client.post("/api/v1/auth/magic-link/request", json={"email": http_user})
+                    self.assertEqual(res_http.status_code, 200)
+                # 4th HTTP request must return 429
+                res_http_4th = self.client.post("/api/v1/auth/magic-link/request", json={"email": http_user})
+                self.assertEqual(res_http_4th.status_code, 429)
+                self.assertIn("Terlalu banyak permintaan autentikasi", res_http_4th.json()["detail"])
 
             # Production mode fail-closed when Redis is down
             with patch.dict(os.environ, {"APP_ENV": "production", "REDIS_REQUIRED": "true"}):

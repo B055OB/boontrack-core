@@ -511,14 +511,14 @@ The Unified Architecture and CTO P0/P1 remediation requirements have been fully 
 
 | Suite | Tests | Result |
 | :--- | :---: | :---: |
-| `tests/api/test_auth_registration_security.py` | 17 | ✅ 17/17 PASSED |
-| `tests/test_email_auth.py` | 12 | ✅ 12/12 PASSED |
+| `tests/api/test_auth_registration_security.py` | 18 | ✅ 18/18 PASSED |
+| `tests/test_email_auth.py` | 13 | ✅ 13/13 PASSED |
 | `tests/test_auth_postgres_integration.py` | 21 | ✅ 20/20 Local PASSED (1 Live Redis test in CI) |
 | `tests/test_media_upload.py` | 12 | ✅ 12/12 PASSED |
 | `tests/api/test_upload_alias_authorization.py` | 30 | ✅ 30/30 PASSED |
 | `tests/api/test_upload_security.py` | 16 | ✅ 16/16 PASSED |
 | `tests/api/test_aiohttp_upload_security.py` | 18 | ✅ 18/18 PASSED |
-| **Total Across All 7 Suites** | **126** | ✅ **126/126 PASSED (100% Green in CI)** |
+| **Total Across All 7 Suites** | **128** | ✅ **128/128 PASSED (100% Green in CI)** |
 
 ### Schema & Migration Evidence
 

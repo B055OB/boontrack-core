@@ -139,24 +139,27 @@ def test_magic_link_verify_with_otp_success():
     test_email = "otp_login@boontrack.com"
     test_token = "token_for_otp_999"
     test_otp = "345678"
+    test_challenge = "ch_otp_test_345678"
     test_slug = "tokomitra"
 
     # Register authoritative merchant test fixture
     register_auth_test_merchant(slug=test_slug, owner_email=test_email, is_active=True)
 
-    # Seed token and OTP in store
+    # Seed token, OTP, and challenge in store
     payload = {
         "email": test_email,
         "token": test_token,
         "otp_code": test_otp,
+        "challenge_id": test_challenge,
         "tenant_slug": test_slug,
     }
     token_store.set_token(f"bt:auth:magic_link:{test_token}", payload, ttl_seconds=900)
     token_store.set_token(f"bt:auth:magic_link_otp:{test_otp}", payload, ttl_seconds=900)
+    token_store.set_token(f"bt:auth:magic_link_challenge:{test_challenge}", payload, ttl_seconds=900)
 
     response = client.post(
         "/api/v1/auth/magic-link/verify",
-        json={"otp_code": test_otp},
+        json={"otp_code": test_otp, "challenge_id": test_challenge},
     )
 
     assert response.status_code == 200
@@ -172,6 +175,7 @@ def test_magic_link_single_use_replay_prevention():
     test_email = "replay_prevention@boontrack.com"
     test_token = "single_use_token_replay_test"
     test_otp = "112233"
+    test_challenge = "ch_replay_112233"
     test_slug = "storeone"
 
     # Register authoritative merchant test fixture
@@ -181,10 +185,12 @@ def test_magic_link_single_use_replay_prevention():
         "email": test_email,
         "token": test_token,
         "otp_code": test_otp,
+        "challenge_id": test_challenge,
         "tenant_slug": test_slug,
     }
     token_store.set_token(f"bt:auth:magic_link:{test_token}", payload, ttl_seconds=900)
     token_store.set_token(f"bt:auth:magic_link_otp:{test_otp}", payload, ttl_seconds=900)
+    token_store.set_token(f"bt:auth:magic_link_challenge:{test_challenge}", payload, ttl_seconds=900)
 
     # First attempt: SUCCESS
     res1 = client.post("/api/v1/auth/magic-link/verify", json={"token": test_token})
@@ -197,8 +203,15 @@ def test_magic_link_single_use_replay_prevention():
     assert "tidak valid" in res2.json()["detail"].lower() or "kadaluarsa" in res2.json()["detail"].lower()
 
     # Attempt with associated OTP also fails: 401 UNAUTHORIZED
-    res3 = client.post("/api/v1/auth/magic-link/verify", json={"otp_code": test_otp})
+    res3 = client.post("/api/v1/auth/magic-link/verify", json={"otp_code": test_otp, "challenge_id": test_challenge})
     assert res3.status_code == 401
+
+
+def test_magic_link_verify_otp_without_challenge_id_fails_400():
+    """Verifying OTP without challenge_id must return 400 Bad Request."""
+    res = client.post("/api/v1/auth/magic-link/verify", json={"otp_code": "123456"})
+    assert res.status_code == 400
+    assert "challenge_id" in res.json()["detail"].lower()
 
 
 def test_magic_link_invalid_token_returns_401():

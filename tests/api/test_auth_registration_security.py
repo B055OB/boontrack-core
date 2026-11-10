@@ -145,27 +145,27 @@ class TestAuthRegistrationSecurity(unittest.TestCase):
         email = "founder@failed-act.com"
         otp = "771122"
 
-        token_store.set_token(
-            f"bt:auth:magic_link_otp:{otp}",
-            {
-                "email": email,
-                "name": "Founder",
-                "otp_code": otp,
-                "token": "token-failed-act-123",
-                "tenant_slug": slug,
-                "role": "merchant",
-                "is_registration": True,
-                "created_at": 1000,
-            },
-            ttl_seconds=900,
-        )
+        ch4 = f"ch_failed_act_{otp}"
+        payload4 = {
+            "email": email,
+            "name": "Founder",
+            "otp_code": otp,
+            "challenge_id": ch4,
+            "token": "token-failed-act-123",
+            "tenant_slug": slug,
+            "role": "merchant",
+            "is_registration": True,
+            "created_at": 1000,
+        }
+        token_store.set_token(f"bt:auth:magic_link_otp:{otp}", payload4, ttl_seconds=900)
+        token_store.set_token(f"bt:auth:magic_link_challenge:{ch4}", payload4, ttl_seconds=900)
 
         with patch("app.core.database.get_db_connection", side_effect=Exception("DB deadlock during activation")), \
              patch("app.routes.auth_routes.get_supabase", return_value=None):
 
             res = self.client.post(
                 "/api/v1/auth/magic-link/verify",
-                json={"otp_code": otp},
+                json={"otp_code": otp, "challenge_id": ch4},
             )
 
             self.assertEqual(res.status_code, 503)
@@ -213,20 +213,20 @@ class TestAuthRegistrationSecurity(unittest.TestCase):
         email = "user@zero-row.com"
         otp = "998877"
 
-        token_store.set_token(
-            f"bt:auth:magic_link_otp:{otp}",
-            {
-                "email": email,
-                "name": "User",
-                "otp_code": otp,
-                "token": "tok-zero-123",
-                "tenant_slug": slug,
-                "role": "merchant",
-                "is_registration": True,
-                "created_at": 1000,
-            },
-            ttl_seconds=900,
-        )
+        ch5 = f"ch_zero_{otp}"
+        payload5 = {
+            "email": email,
+            "name": "User",
+            "otp_code": otp,
+            "challenge_id": ch5,
+            "token": "tok-zero-123",
+            "tenant_slug": slug,
+            "role": "merchant",
+            "is_registration": True,
+            "created_at": 1000,
+        }
+        token_store.set_token(f"bt:auth:magic_link_otp:{otp}", payload5, ttl_seconds=900)
+        token_store.set_token(f"bt:auth:magic_link_challenge:{ch5}", payload5, ttl_seconds=900)
 
         mock_conn = MagicMock()
         mock_cur = MagicMock()
@@ -238,7 +238,7 @@ class TestAuthRegistrationSecurity(unittest.TestCase):
 
             res = self.client.post(
                 "/api/v1/auth/magic-link/verify",
-                json={"otp_code": otp},
+                json={"otp_code": otp, "challenge_id": ch5},
             )
 
             self.assertEqual(res.status_code, 503)
@@ -373,26 +373,26 @@ class TestAuthRegistrationSecurity(unittest.TestCase):
         email = "user@concurrency.com"
         otp = "654321"
 
-        token_store.set_token(
-            f"bt:auth:magic_link_otp:{otp}",
-            {
-                "email": email,
-                "name": "Concurrent User",
-                "otp_code": otp,
-                "token": "tok-concurrent-123",
-                "tenant_slug": slug,
-                "role": "merchant",
-                "is_registration": True,
-                "created_at": 1000,
-            },
-            ttl_seconds=900,
-        )
+        ch9 = f"ch_concurrent_{otp}"
+        payload9 = {
+            "email": email,
+            "name": "Concurrent User",
+            "otp_code": otp,
+            "challenge_id": ch9,
+            "token": "tok-concurrent-123",
+            "tenant_slug": slug,
+            "role": "merchant",
+            "is_registration": True,
+            "created_at": 1000,
+        }
+        token_store.set_token(f"bt:auth:magic_link_otp:{otp}", payload9, ttl_seconds=900)
+        token_store.set_token(f"bt:auth:magic_link_challenge:{ch9}", payload9, ttl_seconds=900)
 
         with patch("app.routes.auth_routes._activate_pending_merchant", return_value=(True, None)):
             def send_verify():
                 return self.client.post(
                     "/api/v1/auth/magic-link/verify",
-                    json={"otp_code": otp},
+                    json={"otp_code": otp, "challenge_id": ch9},
                 )
 
             with ThreadPoolExecutor(max_workers=2) as executor:
@@ -493,14 +493,15 @@ class TestAuthRegistrationSecurity(unittest.TestCase):
             self.assertEqual(reg_data["status"], "pending_verification")
             self.assertNotIn("access_token", reg_data)
 
-            # Extract OTP sent in email
+            # Extract OTP and challenge sent in email
             call_kwargs = mock_magic.call_args.kwargs
             otp_code = call_kwargs["otp_code"]
+            ch_id = reg_data["challenge_id"]
 
-            # 2. Verify with valid OTP
+            # 2. Verify with valid OTP and challenge_id
             ver_res = self.client.post(
                 "/api/v1/auth/magic-link/verify",
-                json={"otp_code": otp_code},
+                json={"otp_code": otp_code, "challenge_id": ch_id},
             )
             self.assertEqual(ver_res.status_code, 200)
             ver_data = ver_res.json()
@@ -562,9 +563,11 @@ class TestAuthRegistrationSecurity(unittest.TestCase):
             self.assertEqual(req_res.status_code, 200)
 
             otp = mock_send.call_args.kwargs["otp_code"]
+            req_data = req_res.json()
+            ch_id = req_data["challenge_id"]
             ver_res = self.client.post(
                 "/api/v1/auth/magic-link/verify",
-                json={"otp_code": otp},
+                json={"otp_code": otp, "challenge_id": ch_id},
             )
             self.assertEqual(ver_res.status_code, 200)
             self.assertIn("access_token", ver_res.json())
@@ -584,16 +587,16 @@ class TestAuthRegistrationSecurity(unittest.TestCase):
         staff_role = "staff"
 
         otp = "334455"
-        token_store.set_token(
-            f"bt:auth:magic_link_otp:{otp}",
-            {
-                "email": staff_email,
-                "otp_code": otp,
-                "tenant_slug": tenant_slug,
-                "is_registration": False,
-            },
-            ttl_seconds=900,
-        )
+        ch14 = f"ch_staff_{otp}"
+        payload14 = {
+            "email": staff_email,
+            "otp_code": otp,
+            "challenge_id": ch14,
+            "tenant_slug": tenant_slug,
+            "is_registration": False,
+        }
+        token_store.set_token(f"bt:auth:magic_link_otp:{otp}", payload14, ttl_seconds=900)
+        token_store.set_token(f"bt:auth:magic_link_challenge:{ch14}", payload14, ttl_seconds=900)
 
         mock_membership = {
             "role": staff_role,
@@ -604,7 +607,7 @@ class TestAuthRegistrationSecurity(unittest.TestCase):
         with patch("app.routes.auth_routes._resolve_verified_user_membership", return_value=(mock_membership, None)):
             res = self.client.post(
                 "/api/v1/auth/magic-link/verify",
-                json={"otp_code": otp},
+                json={"otp_code": otp, "challenge_id": ch14},
             )
 
             self.assertEqual(res.status_code, 200)
@@ -652,10 +655,19 @@ class TestAuthRegistrationSecurity(unittest.TestCase):
         """Expired or replayed OTP returns HTTP 401 Unauthorized."""
         res = self.client.post(
             "/api/v1/auth/magic-link/verify",
-            json={"otp_code": "000000"},
+            json={"otp_code": "000000", "challenge_id": "ch_expired_test"},
         )
         self.assertEqual(res.status_code, 401)
         self.assertIn("tidak valid atau telah kadaluarsa", res.json()["detail"])
+
+    def test_otp_verify_without_challenge_id_fails_with_400(self):
+        """Verifying OTP without challenge_id returns HTTP 400 Bad Request."""
+        res = self.client.post(
+            "/api/v1/auth/magic-link/verify",
+            json={"otp_code": "000000"},
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("challenge_id", res.json()["detail"].lower())
 
 
 if __name__ == "__main__":
