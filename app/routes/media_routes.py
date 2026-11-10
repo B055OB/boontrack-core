@@ -17,7 +17,7 @@ import logging
 import urllib.parse
 from datetime import datetime, timezone
 from io import BytesIO
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Union, Tuple, List
 from PIL import Image
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, status, Request
@@ -286,49 +286,117 @@ def clear_merchant_membership_registry() -> None:
     _merchant_memberships.clear()
 
 
-def _query_db_merchant_membership(merchant_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
-    """Authoritative query against cs_agents and merchants tables in PostgreSQL."""
+def _query_db_tenant_active(tenant_id: str) -> Tuple[bool, Optional[str]]:
+    """
+    Queries public.tenants table to verify tenant exists and is active.
+    Returns (is_active: bool, error_msg: Optional[str]).
+    If error_msg is not None, lookup failed or tenant does not exist.
+    """
+    clean_t = str(tenant_id).strip()
     try:
         from app.core.database import get_db_connection
         conn = get_db_connection()
-    except Exception:
-        return None
+    except Exception as exc:
+        return False, f"DB_CONN_ERROR: {exc}"
 
     try:
         with conn.cursor() as cur:
-            # 1. cs_agents (tenant operational team members)
             cur.execute(
                 """
-                SELECT is_active, role FROM cs_agents
-                WHERE tenant_id = %s AND (email = %s OR id::text = %s)
+                SELECT is_active, status FROM public.tenants
+                WHERE id::text = %s OR slug = %s
                 LIMIT 1;
                 """,
-                (tenant_id, merchant_id, merchant_id),
+                (clean_t, clean_t),
             )
             row = cur.fetchone()
-            if row:
-                return {"is_active": bool(row[0]), "role": str(row[1])}
-
-            # 2. merchants (tenant owner)
-            cur.execute(
-                """
-                SELECT status FROM merchants
-                WHERE slug = %s AND (owner_email = %s OR id::text = %s)
-                LIMIT 1;
-                """,
-                (tenant_id, merchant_id, merchant_id),
-            )
-            m_row = cur.fetchone()
-            if m_row:
-                return {"is_active": str(m_row[0]).upper() == "ACTIVE", "role": "owner"}
-    except Exception as db_err:
-        logger.debug(f"[MEMBERSHIP_DB] Query note: {db_err}")
+            if row is None:
+                return False, "NOT_FOUND"
+            is_active_val = row[0] if row[0] is not None else True
+            status_val = str(row[1] or "ACTIVE").upper()
+            if not is_active_val or status_val not in ("ACTIVE", "TRIAL", "PROVISIONED"):
+                return False, None  # Explicitly inactive
+            return True, None
+    except Exception as q_err:
+        return False, f"DB_QUERY_ERROR: {q_err}"
     finally:
         try:
             conn.close()
         except Exception:
             pass
-    return None
+
+
+def _query_db_merchant_membership(merchant_id: str, tenant_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """
+    Authoritative query against cs_agents and merchants tables in PostgreSQL.
+    Returns (result_dict, error_msg).
+    - If result_dict is dict and error_msg is None: matching membership row found.
+    - If result_dict is None and error_msg is None: cleanly executed, 0 rows found.
+    - If error_msg is str: database lookup could not complete (fail-closed trigger).
+    """
+    clean_m = str(merchant_id).strip().lower()
+    clean_t = str(tenant_id).strip()
+
+    try:
+        from app.core.database import get_db_connection
+        conn = get_db_connection()
+    except Exception as exc:
+        return None, f"DB_CONN_ERROR: {exc}"
+
+    cs_err = None
+    merch_err = None
+
+    try:
+        with conn.cursor() as cur:
+            # 1. cs_agents (tenant operational team members: owner, admin, supervisor, agent)
+            try:
+                cur.execute(
+                    """
+                    SELECT is_active, role FROM cs_agents
+                    WHERE (tenant_id = %s OR tenant_id = %s)
+                      AND (lower(email) = %s OR id::text = %s)
+                    LIMIT 1;
+                    """,
+                    (clean_t, clean_t.lower(), clean_m, clean_m),
+                )
+                row = cur.fetchone()
+                if row:
+                    return {"is_active": bool(row[0]), "role": str(row[1])}, None
+            except Exception as e1:
+                cs_err = str(e1)
+                logger.debug(f"[MEMBERSHIP_DB] cs_agents query note: {e1}")
+
+            # 2. merchants (tenant owner)
+            try:
+                cur.execute(
+                    """
+                    SELECT status FROM merchants
+                    WHERE (slug = %s OR id::text = %s)
+                      AND (lower(owner_email) = %s OR id::text = %s)
+                    LIMIT 1;
+                    """,
+                    (clean_t.lower(), clean_t, clean_m, clean_m),
+                )
+                m_row = cur.fetchone()
+                if m_row:
+                    return {"is_active": str(m_row[0]).upper() == "ACTIVE", "role": "owner"}, None
+            except Exception as e2:
+                merch_err = str(e2)
+                logger.debug(f"[MEMBERSHIP_DB] merchants query note: {e2}")
+
+        # If both sub-queries suffered SQL/operational errors, report DB error
+        if cs_err and merch_err:
+            return None, f"DB_LOOKUP_ERROR: cs_agents({cs_err}), merchants({merch_err})"
+
+        # Both queries finished without fatal connection failure, 0 rows found
+        return None, None
+    except Exception as overall_err:
+        return None, f"DB_ERROR: {overall_err}"
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def validate_merchant_tenant_membership(
@@ -338,12 +406,16 @@ def validate_merchant_tenant_membership(
 ) -> None:
     """
     Validates that the authenticated merchant principal actually possesses active
-    authorized membership in the claimed tenant.
+    authorized membership in the claimed tenant. Fail-closed on all paths.
 
     Raises:
     - HTTP 403 Forbidden if membership is inactive, revoked, or non-existent.
+    - HTTP 503 Service Unavailable if database is unreachable or lookup fails.
     """
     claims = verified_claims or {}
+    clean_m = str(merchant_id).strip().lower()
+    clean_t = str(tenant_id).strip()
+
     # 1. Claim-level active flag check
     if claims.get("membership_active") is False or claims.get("is_active") is False:
         raise HTTPException(
@@ -351,13 +423,13 @@ def validate_merchant_tenant_membership(
             detail=f"Status keanggotaan merchant '{merchant_id}' tidak aktif dalam klaim sesi.",
         )
 
-    clean_m = str(merchant_id).strip().lower()
-    clean_t = str(tenant_id).strip()
-
-    # 2. Check tenant-level active status in test registry
+    # 2. Check tenant-level active status
+    # 2a. Check _test_tenants_registry (test fixture override)
+    in_test_registry = False
     try:
         from app.api.deps import _test_tenants_registry
         if clean_t in _test_tenants_registry:
+            in_test_registry = True
             t_data = _test_tenants_registry[clean_t]
             if not t_data.get("is_active", True):
                 raise HTTPException(
@@ -367,7 +439,8 @@ def validate_merchant_tenant_membership(
     except ImportError:
         pass
 
-    # 3. Check in-memory registry if explicit entry exists
+    # 3. Check explicit test fixtures in _merchant_memberships registry
+    # The in-memory registry may only be used as an explicit test fixture.
     if (clean_m, clean_t) in _merchant_memberships:
         mem = _merchant_memberships[(clean_m, clean_t)]
         if not mem.get("is_active", True):
@@ -375,25 +448,101 @@ def validate_merchant_tenant_membership(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Keanggotaan merchant '{merchant_id}' pada tenant '{tenant_id}' telah dicabut atau dinonaktifkan.",
             )
-        return  # Explicitly active
+        return  # Explicitly active test fixture
 
-    # 4. Check PostgreSQL database (cs_agents / merchants)
-    db_membership = _query_db_merchant_membership(clean_m, clean_t)
-    if db_membership is not None:
-        if not db_membership.get("is_active", True):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Keanggotaan merchant '{merchant_id}' pada tenant '{tenant_id}' dinonaktifkan di database.",
-            )
-        return  # Found in DB and active
-
-    # 5. If tenant has registered members in registry and this merchant is NOT among them:
-    tenant_members = [m for (m, t) in _merchant_memberships.keys() if t == clean_t]
-    if tenant_members:
+    # If test fixtures exist for this tenant, but this merchant is not in them:
+    tenant_fixtures = [m for (m, t) in _merchant_memberships.keys() if t == clean_t]
+    if tenant_fixtures and clean_m not in tenant_fixtures:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Merchant principal '{merchant_id}' tidak memiliki keanggotaan aktif pada tenant '{tenant_id}'.",
         )
+
+    # 4. Check production database: verify tenant status if not in test registry
+    if not in_test_registry:
+        is_active_tenant, tenant_err = _query_db_tenant_active(clean_t)
+        if tenant_err is None and not is_active_tenant:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Tenant '{clean_t}' dinonaktifkan atau tidak aktif.",
+            )
+
+    # 5. Check production database: verify merchant membership
+    db_membership, db_err = _query_db_merchant_membership(clean_m, clean_t)
+
+    # Database unavailable: FAIL CLOSED with HTTP 503
+    if db_err is not None:
+        logger.error(f"[FAIL-CLOSED] Database authorization lookup failed for {clean_m}@{clean_t}: {db_err}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Layanan otorisasi database tidak tersedia (fail-closed).",
+        )
+
+    # No membership found: FAIL CLOSED with HTTP 403
+    if db_membership is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Merchant principal '{merchant_id}' tidak memiliki keanggotaan aktif pada tenant '{tenant_id}'.",
+        )
+
+    # Membership row found: verify is_active flag
+    if not db_membership.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Keanggotaan merchant '{merchant_id}' pada tenant '{tenant_id}' dinonaktifkan di database.",
+        )
+
+
+def authorize_tenant_upload(
+    request: Any,
+    expected_slug: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Centralized authorization guard for ALL tenant-owned upload routes.
+    1. Enforces signed merchant session (HTTP 401 if missing/invalid).
+    2. Validates path slug matches the verified tenant (HTTP 403 if mismatch).
+    3. Validates active merchant membership (HTTP 403 if revoked/absent, HTTP 503 if DB error).
+    4. Enforces subscription mutation guard (HTTP 403 if blocked).
+    Returns verified session dict: {"tenant_id": ..., "merchant_id": ..., "claims": ...}.
+    """
+    # 1. Signed merchant session verification
+    session = verify_signed_merchant_session(request)
+    verified_tenant_id = session["tenant_id"]
+    verified_merchant_id = session["merchant_id"]
+    claims = session.get("claims", {})
+
+    # 2. Path slug match enforcement (Anti-Cross-Tenant)
+    if expected_slug:
+        clean_expected = str(expected_slug).strip().lower()
+        verified_slug = str(claims.get("tenant_slug") or verified_tenant_id).strip().lower()
+        verified_id_lower = str(verified_tenant_id).strip().lower()
+        if clean_expected not in (verified_slug, verified_id_lower):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"Akses cross-tenant ditolak: path tenant '{expected_slug}' "
+                    f"tidak cocok dengan session tenant '{verified_tenant_id}'."
+                ),
+            )
+
+    # 3. Active membership validation (Fail-Closed)
+    validate_merchant_tenant_membership(
+        merchant_id=verified_merchant_id,
+        tenant_id=verified_tenant_id,
+        verified_claims=claims,
+    )
+
+    # 4. Subscription mutation guard (AFTER authentication & authorization)
+    slug_to_check = expected_slug or claims.get("tenant_slug") or verified_tenant_id
+    try:
+        from app.core.subscription_guard import assert_tenant_mutation_allowed
+        assert_tenant_mutation_allowed(str(slug_to_check))
+    except HTTPException:
+        raise
+    except Exception as sub_err:
+        logger.debug(f"[SUBSCRIPTION_GUARD] check note: {sub_err}")
+
+    return session
 
 
 def verify_signed_merchant_session(request: Any) -> Dict[str, Any]:
@@ -854,6 +1003,7 @@ async def _fastapi_handle_upload(
     folder: Optional[str] = None,
     is_qris: bool = False,
     slug: Optional[str] = None,
+    verified_session: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     upload_file = file or image or qris or qris_image
 
@@ -867,19 +1017,21 @@ async def _fastapi_handle_upload(
     elif query_folder:
         folder = query_folder
 
-    if upload_file is None:
-        try:
-            form = await request.form()
-            form_folder = form.get("folder")
-            form_type = form.get("type")
-            if form_folder == "qris" or form_type == "qris":
-                is_qris = True
-                folder = "qris"
-            elif form_folder and not folder:
-                folder = str(form_folder)
+    form_data = {}
+    try:
+        raw_form = await request.form()
+        form_data = dict(raw_form)
+        form_folder = form_data.get("folder")
+        form_type = form_data.get("type")
+        if form_folder == "qris" or form_type == "qris":
+            is_qris = True
+            folder = "qris"
+        elif form_folder and not folder:
+            folder = str(form_folder)
 
+        if upload_file is None:
             for key in ("file", "image", "qris", "qris_image", "qris_file", "qr", "qr_image", "photo", "picture", "media", "upload"):
-                val = form.get(key)
+                val = form_data.get(key)
                 if isinstance(val, UploadFile):
                     upload_file = val
                     if "qris" in key.lower() or "qr" in key.lower():
@@ -888,20 +1040,54 @@ async def _fastapi_handle_upload(
                     break
 
             if upload_file is None:
-                for k, val in form.items():
+                for k, val in form_data.items():
                     if isinstance(val, UploadFile):
                         upload_file = val
                         if "qris" in k.lower() or "qr" in k.lower():
                             is_qris = True
                             folder = "qris"
                         break
-        except Exception:
-            pass
+    except Exception:
+        pass
 
     if upload_file is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="File gambar tidak ditemukan dalam request (pastikan form field bernama 'file', 'image', atau 'qris')"
+        )
+
+    # Deteksi apakah rute merupakan rute milik tenant (/tenants/{slug} atau /tenant/{slug})
+    detected_slug = slug
+    if not detected_slug:
+        parts = [p for p in request.url.path.split("/") if p]
+        if "tenants" in parts:
+            idx = parts.index("tenants")
+            if idx + 1 < len(parts):
+                detected_slug = parts[idx + 1]
+        elif "tenant" in parts:
+            idx = parts.index("tenant")
+            if idx + 1 < len(parts):
+                detected_slug = parts[idx + 1]
+
+    # 1. Sentralisasi Otorisasi: Rute tenant WAJIB memiliki sesi merchant tertanda dan keanggotaan aktif
+    if detected_slug and verified_session is None:
+        verified_session = authorize_tenant_upload(request, expected_slug=detected_slug)
+
+    # 2. Rute Publik / Global: DILARANG menulis ke namespace tenant dan tidak boleh mengubah settings tenant
+    if not detected_slug:
+        if folder and ("tenants" in folder or "tenant" in folder):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Akses cross-tenant ditolak: endpoint upload publik dilarang menulis ke namespace tenant.",
+            )
+
+    # 3. Validasi Anti-Tampering untuk rute tenant
+    if detected_slug and verified_session:
+        validate_no_cross_tenant_tampering(
+            verified_tenant_id=verified_session["tenant_id"],
+            request=request,
+            form_data=form_data,
+            folder_param=folder,
         )
 
     # Bounded chunk read with max 5MB abort (CTO P1)
@@ -910,12 +1096,30 @@ async def _fastapi_handle_upload(
     except HTTPException as he:
         if he.status_code == STATUS_413:
             # Preserve backward-compatibility for legacy /api/v1/media/upload endpoint (HTTP 400)
+            if not detected_slug:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Ukuran file melebihi batas maksimal 5 MB."
+                )
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=STATUS_413,
                 detail="Ukuran file melebihi batas maksimal 5 MB."
             )
         raise
     base_url = str(request.base_url).rstrip("/")
+
+    # Tenant-scoped storage path derivation
+    custom_final_filename = None
+    target_upload_folder = folder
+    if detected_slug and verified_session:
+        now = datetime.now(timezone.utc)
+        year_str = now.strftime("%Y")
+        month_str = now.strftime("%m")
+        unique_id = uuid.uuid4().hex
+        ext = "png" if is_qris else "webp"
+        custom_final_filename = f"{unique_id}.{ext}"
+        verified_tenant_id = verified_session["tenant_id"]
+        target_upload_folder = f"tenants/{verified_tenant_id}/uploads/{year_str}/{month_str}"
 
     try:
         res = await process_and_upload_image_bytes(
@@ -923,20 +1127,39 @@ async def _fastapi_handle_upload(
             original_filename=upload_file.filename or ("qris.png" if is_qris else "upload.jpg"),
             content_type=upload_file.content_type or ("image/png" if is_qris else "image/jpeg"),
             base_url=base_url,
-            folder=folder,
-            is_qris=is_qris
+            folder=target_upload_folder,
+            is_qris=is_qris,
+            custom_filename=custom_final_filename,
         )
-        # Jika ada tenant slug di path atau request, auto-sync ke settings
-        tenant_slug = slug or request.path_params.get("slug")
-        if tenant_slug and res.get("url"):
-            try:
-                from app.services.onboarding_service import onboarding_service
-                onboarding_service.update_tenant_settings(tenant_slug, {
-                    "qris_image_url": res["url"],
-                    "qris_url": res["url"],
-                })
-            except Exception as auto_sync_err:
-                logger.debug(f"[auto_sync_tenant_qris note]: {auto_sync_err}")
+
+        if detected_slug and verified_session:
+            verified_tenant_id = verified_session["tenant_id"]
+            verified_merchant_id = verified_session["merchant_id"]
+            storage_path = f"{target_upload_folder}/{custom_final_filename}"
+            res["tenant_id"] = verified_tenant_id
+            res["merchant_id"] = verified_merchant_id
+            res["storage_path"] = storage_path
+            res["path"] = f"/{storage_path}"
+            res["folder"] = target_upload_folder
+            res["filename"] = custom_final_filename
+            if "data" in res and isinstance(res["data"], dict):
+                res["data"]["tenant_id"] = verified_tenant_id
+                res["data"]["merchant_id"] = verified_merchant_id
+                res["data"]["storage_path"] = storage_path
+                res["data"]["path"] = f"/{storage_path}"
+                res["data"]["folder"] = target_upload_folder
+                res["data"]["filename"] = custom_final_filename
+
+            # Auto-sync settings HANYA untuk verified_tenant_id (anti-overwrite tenant lain)
+            if is_qris and res.get("url"):
+                try:
+                    from app.services.onboarding_service import onboarding_service
+                    onboarding_service.update_tenant_settings(verified_tenant_id, {
+                        "qris_image_url": res["url"],
+                        "qris_url": res["url"],
+                    })
+                except Exception as auto_sync_err:
+                    logger.debug(f"[auto_sync_tenant_qris note]: {auto_sync_err}")
 
         return res
     except ValueError as ve:
@@ -998,8 +1221,8 @@ async def hardened_tenant_upload_endpoint(
     - Tenant-Scoped Storage Namespace: tenants/{verified_tenant_id}/uploads/{YYYY}/{MM}/{uuid4}.{ext}.
     - Status Code: HTTP 201 Created.
     """
-    # 1. Validasi Sesi Merchant Tertanda (MANDATORY)
-    session = verify_signed_merchant_session(request)
+    # 1. Validasi Sesi Merchant & Keanggotaan Aktif Tenant (MANDATORY)
+    session = authorize_tenant_upload(request, expected_slug=None)
     verified_tenant_id = session["tenant_id"]
     verified_merchant_id = session["merchant_id"]
 
@@ -1143,13 +1366,31 @@ async def general_upload_endpoint(
     qris: Optional[UploadFile] = File(None),
     qris_image: Optional[UploadFile] = File(None),
 ) -> Dict[str, Any]:
+    # Extract slug ONLY from URL path segments for tenant-specific routes
+    parts = [p for p in request.url.path.split("/") if p]
+    extracted_slug = None
+    if "tenants" in parts:
+        idx = parts.index("tenants")
+        if idx + 1 < len(parts):
+            extracted_slug = parts[idx + 1]
+    elif "tenant" in parts:
+        idx = parts.index("tenant")
+        if idx + 1 < len(parts):
+            extracted_slug = parts[idx + 1]
+
+    verified_session = None
+    if extracted_slug:
+        # Tenant-owned route: MUST enforce signed merchant authorization matching slug!
+        verified_session = authorize_tenant_upload(request, expected_slug=extracted_slug)
+
     return await _fastapi_handle_upload(
         request,
         file=file,
         image=image,
         qris=qris,
         qris_image=qris_image,
-        slug=slug
+        slug=extracted_slug,
+        verified_session=verified_session,
     )
 
 
@@ -1172,15 +1413,29 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
     """Handler upload gambar multipart untuk aiohttp server pada Railway."""
     cors_headers = _build_cors_headers(request)
 
+    req_slug = request.match_info.get("slug")
+    if not req_slug:
+        parts = [p for p in request.path.split("/") if p]
+        if "tenants" in parts:
+            idx = parts.index("tenants")
+            if idx + 1 < len(parts):
+                req_slug = parts[idx + 1]
+        elif "tenant" in parts:
+            idx = parts.index("tenant")
+            if idx + 1 < len(parts):
+                req_slug = parts[idx + 1]
+
     is_hardened_route = request.path.rstrip("/") == "/api/v1/upload"
+    is_tenant_route = is_hardened_route or bool(req_slug)
     verified_tenant_id = None
     verified_merchant_id = None
+    verified_session = None
 
-    if is_hardened_route:
+    if is_tenant_route:
         try:
-            session = verify_signed_merchant_session(request)
-            verified_tenant_id = session["tenant_id"]
-            verified_merchant_id = session["merchant_id"]
+            verified_session = authorize_tenant_upload(request, expected_slug=req_slug)
+            verified_tenant_id = verified_session["tenant_id"]
+            verified_merchant_id = verified_session["merchant_id"]
         except HTTPException as auth_exc:
             return web.json_response(
                 {"status": "error", "detail": auth_exc.detail},
@@ -1189,7 +1444,7 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
             )
 
     # Content-Length pre-check for aiohttp (before reading body)
-    if is_hardened_route:
+    if is_tenant_route:
         _aio_cl = request.content_length
         if _aio_cl is not None and _aio_cl > MAX_FILE_SIZE + 65536:
             return web.json_response(
@@ -1219,7 +1474,7 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
         for key in ("file", "image", "qris", "qris_image", "qris_file", "qr", "qr_image", "photo", "picture", "media", "upload"):
             field = post_data.get(key)
             if field and hasattr(field, "file"):
-                if is_hardened_route:
+                if is_tenant_route:
                     try:
                         raw_content = read_bounded_sync_file(field.file, max_bytes=MAX_FILE_SIZE)
                     except ValueError as ve:
@@ -1240,7 +1495,7 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
         if raw_content is None:
             for k, v in post_data.items():
                 if v and hasattr(v, "file"):
-                    if is_hardened_route:
+                    if is_tenant_route:
                         try:
                             raw_content = read_bounded_sync_file(v.file, max_bytes=MAX_FILE_SIZE)
                         except ValueError as ve:
@@ -1281,7 +1536,7 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
             field = await reader.next()
             while field is not None:
                 if hasattr(field, "filename") and field.filename:
-                    if is_hardened_route:
+                    if is_tenant_route:
                         try:
                             raw_content = await read_bounded_async_field(field, max_bytes=MAX_FILE_SIZE)
                         except ValueError as ve:
@@ -1309,7 +1564,14 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
         except Exception as multi_err:
             logger.debug(f"[aiohttp_upload_image multipart extract note]: {multi_err}")
 
-    if is_hardened_route:
+    if not is_tenant_route and folder and ("tenants" in folder or "tenant" in folder):
+        return web.json_response(
+            {"status": "error", "detail": "Akses cross-tenant ditolak: endpoint publik dilarang menulis ke namespace tenant."},
+            status=403,
+            headers=cors_headers,
+        )
+
+    if is_tenant_route:
         # Cek anti cross-tenant tampering
         try:
             validate_no_cross_tenant_tampering(
@@ -1326,7 +1588,7 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
             )
 
     if raw_content is None:
-        err_status = 422 if is_hardened_route else 400
+        err_status = 422 if is_tenant_route else 400
         return web.json_response(
             {"status": "error", "detail": "File gambar tidak ditemukan dalam form data (gunakan field 'file', 'image', atau 'qris')"},
             status=err_status,
@@ -1338,7 +1600,7 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
     custom_final_filename = None
     target_folder = folder
 
-    if is_hardened_route:
+    if is_tenant_route:
         try:
             detected_mime = validate_image_file_security(
                 raw_content=raw_content,
@@ -1377,7 +1639,7 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
             custom_filename=custom_final_filename,
         )
 
-        if is_hardened_route:
+        if is_tenant_route:
             storage_path = f"{target_folder}/{custom_final_filename}"
             res["tenant_id"] = verified_tenant_id
             res["merchant_id"] = verified_merchant_id
@@ -1393,19 +1655,18 @@ async def aiohttp_upload_image(request: web.Request) -> web.Response:
                 res["data"]["folder"] = target_folder
                 res["data"]["filename"] = custom_final_filename
 
-        # Jika request menyertakan tenant slug (/api/v1/tenants/{slug}/...), sinkronkan otomatis ke settings
-        slug = request.match_info.get("slug")
-        if slug and res.get("url"):
+        # Jika rute milik tenant, sinkronkan otomatis ke settings HANYA untuk verified_tenant_id
+        if is_tenant_route and is_qris and res.get("url"):
             try:
                 from app.services.onboarding_service import onboarding_service
-                onboarding_service.update_tenant_settings(slug, {
+                onboarding_service.update_tenant_settings(verified_tenant_id, {
                     "qris_image_url": res["url"],
                     "qris_url": res["url"],
                 })
             except Exception as auto_sync_err:
                 logger.debug(f"[auto_sync_tenant_qris note]: {auto_sync_err}")
 
-        resp_status = 201 if is_hardened_route else 200
+        resp_status = 201 if is_tenant_route else 200
         return web.json_response(res, status=resp_status, headers=cors_headers)
     except ValueError as ve:
         err_code = 422 if is_hardened_route else 400

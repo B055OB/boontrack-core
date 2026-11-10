@@ -153,6 +153,79 @@ async def global_unhandled_exception_handler(request: Request, exc: Exception):
         content={"detail": "INTERNAL_SERVER_ERROR", "message": "An unexpected server error occurred."}
     )
 
+class RequestSizeLimitMiddleware:
+    """
+    Enforces total request body limits at the ASGI receive boundary before multipart parsing (CTO P1).
+    Intercepts streaming chunks via `receive()` and aborts with HTTP 413 immediately
+    if cumulative bytes exceed the maximum allowed request body size (5 MB + 64 KB overhead).
+    """
+    def __init__(self, app, max_upload_size: int = 5 * 1024 * 1024 + 65536):
+        self.app = app
+        self.max_upload_size = max_upload_size
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        path = scope.get("path", "").lower()
+        is_upload_path = (
+            path.endswith("/upload")
+            or "/upload/" in path
+            or "/upload-" in path
+            or path.endswith("/upload-image")
+        )
+        if not is_upload_path:
+            return await self.app(scope, receive, send)
+
+        # Legacy /api/v1/media/upload endpoint contract expects HTTP 400
+        is_legacy_media_upload = path == "/api/v1/media/upload"
+        rejection_status = 400 if is_legacy_media_upload else 413
+
+        # 1. Early Content-Length Header check
+        for name, value in scope.get("headers", []):
+            if name.lower() == b"content-length":
+                try:
+                    if int(value) > self.max_upload_size:
+                        response = JSONResponse(
+                            {
+                                "status": "error",
+                                "detail": f"Ukuran file melebihi batas maksimal 5 MB.",
+                            },
+                            status_code=rejection_status,
+                        )
+                        return await response(scope, receive, send)
+                except ValueError:
+                    pass
+
+        # 2. Streaming byte counter wrapping `receive` at ASGI boundary
+        bytes_received = 0
+
+        async def bounded_receive():
+            nonlocal bytes_received
+            message = await receive()
+            if message["type"] == "http.request":
+                body_chunk = message.get("body", b"")
+                bytes_received += len(body_chunk)
+                if bytes_received > self.max_upload_size:
+                    raise HTTPException(
+                        status_code=rejection_status,
+                        detail="Ukuran file melebihi batas maksimal 5 MB.",
+                    )
+            return message
+
+        try:
+            return await self.app(scope, bounded_receive, send)
+        except HTTPException as he:
+            if he.status_code in (400, 413):
+                response = JSONResponse(
+                    {"status": "error", "detail": he.detail or "Ukuran file melebihi batas maksimal 5 MB."},
+                    status_code=he.status_code,
+                )
+                return await response(scope, receive, send)
+            raise
+
+
+app.add_middleware(RequestSizeLimitMiddleware)
 app.add_middleware(TracingMiddleware)
 
 app.add_middleware(

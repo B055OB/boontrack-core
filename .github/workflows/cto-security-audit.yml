@@ -110,7 +110,7 @@ jobs:
       - name: Run Dedicated Tenant Media Upload Security & Parity Test Suites
         run: |
           set -o pipefail
-          python -m pytest tests/api/test_upload_security.py tests/api/test_aiohttp_upload_security.py tests/test_media_upload.py -v -ra --tb=short 2>&1 | tee /tmp/upload_security_test_results.log || {
+          python -m pytest tests/api/test_upload_security.py tests/api/test_aiohttp_upload_security.py tests/test_media_upload.py tests/api/test_upload_alias_authorization.py -v -ra --tb=short 2>&1 | tee /tmp/upload_security_test_results.log || {
             echo "## ❌ Upload Security Pytest Failures" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             cat /tmp/upload_security_test_results.log >> $GITHUB_STEP_SUMMARY
