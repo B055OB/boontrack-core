@@ -481,13 +481,14 @@ The Unified Architecture and CTO P0/P1 remediation requirements have been fully 
 | **P0: Atomic Redis OTP/Token Consumption** | Process-local thread lock only (vulnerable across multi-worker deployments) | Atomic Redis Lua script (`_REDIS_ATOMIC_CONSUME_LUA`) with `{bt:auth}:` cluster hash tag executes `GET` + `DEL` of primary and paired tokens directly on Redis engine. Under concurrent requests, exactly one worker receives the session data. |
 | **P0: Distributed Store Fail-Closed** | Silently degraded to in-memory store in all environments | In production (`APP_ENV=production` or `REDIS_REQUIRED=true`), `TokenStore` strictly fails closed with **HTTP 503** if Redis is unavailable or unhealthy. |
 | **P0: Slug Lock Correctness** | Fallback to in-memory in production; lock held email value | Unique 32-character hex lease token (`secrets.token_hex(16)`), atomic compare-and-delete via `_REDIS_RELEASE_LOCK_LUA`, and strict production fail-closed without in-memory fallback. |
-| **P0: Verification Challenge Rate Limiting** | Client OTP used as challenge ID; vulnerable to cycling OTP guesses | Server-issued challenge identifier (`challenge_id = f"ch_{secrets.token_urlsafe(24)}"`) bound to verification sessions; 5 failed guesses per challenge/account triggers 900s lockout; cycling OTP guesses cannot reset counter; production fails closed on Redis outage. |
-| **P0: Trusted Client IP Resolver** | Leftmost `X-Forwarded-For` splitting vulnerable to client IP spoofing | `TrustedProxyResolver` in `app/core/security/trusted_proxy.py` traverses right-to-left across trusted proxies; untrusted direct peer headers are discarded. |
-| **P1: Observable Cleanup & Dead-Letter Queue** | Cleanup exceptions during failed email dispatch were silent | Emits structured telemetry, records to Redis `{bt:auth}:cleanup_dead_letter:{slug}` (7-day TTL) and durable set, checks result at all call sites, and provides `reconcile_pending_cleanups()` retry routine with distributed leader lock and active tenant preservation. |
+| **P0: Verification Challenge Rate Limiting & Authoritative Identity** | Client OTP used as challenge ID; vulnerable to cycling OTP guesses | Server-issued challenge identifier (`challenge_id = f"ch_{secrets.token_urlsafe(24)}"`) bound to verification sessions in Redis; account identity derived from stored server session; unknown/forged challenges return 401 without creating Redis keys; 5 failed guesses per challenge/account triggers 900s lockout; cycling OTP guesses cannot reset counter; production fails closed on Redis outage. |
+| **P0: Hardened Trusted Proxy Boundary** | Leftmost `X-Forwarded-For` splitting vulnerable to client IP spoofing | `TrustedProxyResolver` in `app/core/security/trusted_proxy.py` traverses right-to-left across trusted proxies; `CF-Connecting-IP` honored strictly from verified Cloudflare CIDRs (private RFC1918 proxies cannot inject); untrusted direct peer headers are discarded. |
+| **P1: Action-Aware Durable Cleanup & Reconciliation** | Cleanup exceptions during failed email dispatch were silent; activation compensation deleted tenant rows | Differentiates `action="delete"` (registration failure rollback) from `action="revert"` (activation failure rollback without row deletion). Active Tenant Guard prevents deleting/reverting established tenants. Distributed leader lock and per-record lock fail closed in production. Records to Redis `{bt:auth}:cleanup_dead_letter:{slug}` (7-day TTL). |
+| **P1: State-Based Supabase Recovery & RLS Detection** | Mocked Supabase deletion success without verifying actual database state | Asserts real database row state on PostgreSQL; inspects Supabase delete response (`res_m.data == 0`) with secondary SELECT to catch RLS-filtered or status mismatch failures. |
+| **P1: Distributed Public Auth Rate Limiter** | Unbounded public registration and request attempts | Distributed rate limiter (`DistributedAuthRateLimiter`) with atomic Redis Lua script (`_REDIS_INCR_EXPIRE_LUA`), cluster hash tag `{bt:auth}:ratelimit:auth:`, and production fail-closed behavior on `/request` and `/register`. |
 | **P1: Scheduled Background Reconciler Worker** | Dead-letter reconciliation required manual trigger | Application startup hook in `app/main.py` launches background worker `start_cleanup_reconciler_worker(60)` with distributed leader lock. |
 | **P1: Cryptographic OTP Generation** | Used pseudo-random digits | Replaced with cryptographically secure PRNG (`secrets.choice("0123456789")`). |
 | **P1: Reservation Rollback on Email Failure** | Failed email dispatch left pending reservation blocking the slug permanently | If email dispatch fails, `_delete_pending_merchant` rolls back the reservation immediately from both `merchants` and `public.tenants`, returning **HTTP 503**. |
-| **P1: Auth Endpoint Rate Limiting** | Unbounded public registration and request attempts | In-memory sliding-window rate limiter (`AuthRateLimiter`) throttles bursts on `/request` and `/register`. |
 | **P1: Real Redis CI Service Container** | Redis not running in CI | Added `redis:7-alpine` service container and environment variables to `.github/workflows/cto-security-audit.yml`. |
 | **Session JWT Minting** | Minted immediately at registration time | Exclusively minted via `POST /api/v1/auth/magic-link/verify` after verified OTP consumption. |
 
@@ -495,8 +496,8 @@ The Unified Architecture and CTO P0/P1 remediation requirements have been fully 
 
 | File | Type | Description |
 | :--- | :--- | :--- |
-| `app/core/security/trusted_proxy.py` | New | `TrustedProxyResolver` and `get_trusted_client_ip` enforcing right-to-left traversal across trusted proxies and rejecting spoofed headers from untrusted direct peers. |
-| `app/routes/auth_routes.py` | Modified | Strict fail-closed persistence, atomic distributed Redis Lua consumption, fail-closed distributed store guard, dual-table tenant provisioning (`merchants` + `public.tenants`), status transition guard, server-issued challenge ID rate limiting, slug lease tokens, dead-letter cleanup telemetry and background reconciliation. |
+| `app/core/security/trusted_proxy.py` | New | `TrustedProxyResolver` and `get_trusted_client_ip` enforcing right-to-left traversal across trusted proxies, Cloudflare CIDR verification, private proxy CF-injection rejection, and untrusted peer header discard. |
+| `app/routes/auth_routes.py` | Modified | Authoritative server-side challenge resolution, multi-tier rate limiting, `DistributedAuthRateLimiter`, action-aware reconciliation (`delete` vs `revert`), active tenant preservation, RLS-filtered Supabase delete detection, fail-closed persistence, atomic Redis Lua consumption. |
 | `app/routes/tenant_onboard_routes.py` | Modified | Replaced naive leftmost `X-Forwarded-For` splitting with `get_trusted_client_ip(request)` across FastAPI and aiohttp handlers. |
 | `app/main.py` | Modified | Wired startup reconciliation and background worker `start_cleanup_reconciler_worker(interval_seconds=60)`. |
 | `scripts/init_test_postgres_schema.py` | Modified | Added production-grade schema, indexes, and RLS policies for `public.merchants` and `public.cs_agents` matching the production contract and passing the catalog RLS audit gate. |
@@ -504,7 +505,7 @@ The Unified Architecture and CTO P0/P1 remediation requirements have been fully 
 | `.github/workflows/cto-security-audit.yml` | Modified | Added `redis:7-alpine` service container and explicit CI step executing unit tests and live PostgreSQL integration tests. |
 | `tests/api/test_auth_registration_security.py` | New / Rewritten | 17 comprehensive security regression tests covering unit persistence, failure modes, and security invariants. |
 | `tests/test_email_auth.py` | Modified | Updated assertions: `status=pending_verification`, no token on register, separate welcome vs verification email failure tests (12 tests). |
-| `tests/test_auth_postgres_integration.py` | New / Expanded | 20 dedicated live PostgreSQL & distributed token store integration tests (concurrency, lifecycle, upload auth, rollback, active owner, suspended, race conditions, fail-closed, tenant preflight race, tenant suspended transition, tenant zero rows, Supabase compensating rollback, rate limiting lockout, slug lock lease token, dead-letter recovery, multi-instance Redis, challenge cycling lockout, trusted IP spoofing defense, scheduled reconciler active preservation, Supabase compensating scenarios). |
+| `tests/test_auth_postgres_integration.py` | New / Expanded | 21 dedicated live PostgreSQL & distributed token store integration tests (concurrency, lifecycle, upload auth, rollback, active owner, suspended, race conditions, fail-closed, tenant preflight race, tenant suspended transition, tenant zero rows, Supabase compensating rollback, rate limiting lockout, slug lock lease token, dead-letter recovery, multi-instance Redis, challenge cycling lockout, trusted IP spoofing defense, scheduled reconciler active preservation, Supabase compensating scenarios, distributed public auth rate limiter). |
 
 ### Test Matrix (PR #29 Scope)
 
@@ -512,12 +513,12 @@ The Unified Architecture and CTO P0/P1 remediation requirements have been fully 
 | :--- | :---: | :---: |
 | `tests/api/test_auth_registration_security.py` | 17 | ✅ 17/17 PASSED |
 | `tests/test_email_auth.py` | 12 | ✅ 12/12 PASSED |
-| `tests/test_auth_postgres_integration.py` | 20 | ✅ 19/19 Local PASSED (1 Live Redis test in CI) |
+| `tests/test_auth_postgres_integration.py` | 21 | ✅ 20/20 Local PASSED (1 Live Redis test in CI) |
 | `tests/test_media_upload.py` | 12 | ✅ 12/12 PASSED |
 | `tests/api/test_upload_alias_authorization.py` | 30 | ✅ 30/30 PASSED |
 | `tests/api/test_upload_security.py` | 16 | ✅ 16/16 PASSED |
 | `tests/api/test_aiohttp_upload_security.py` | 18 | ✅ 18/18 PASSED |
-| **Total Across All 7 Suites** | **125** | ✅ **125/125 PASSED (100% Green in CI)** |
+| **Total Across All 7 Suites** | **126** | ✅ **126/126 PASSED (100% Green in CI)** |
 
 ### Schema & Migration Evidence
 
