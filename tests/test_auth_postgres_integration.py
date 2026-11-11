@@ -20,9 +20,10 @@ import uuid
 import time
 import json
 import unittest
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch, AsyncMock
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 # Ensure boontrack core is importable
@@ -38,6 +39,7 @@ from app.core.database import get_db_connection
 from app.routes.auth_routes import (
     token_store,
     handle_register_logic,
+    auth_general_router,
     RegisterRequest,
     MagicLinkRequest,
     MagicLinkVerifyRequest,
@@ -1847,7 +1849,9 @@ class TestAuthPostgresIntegration(unittest.TestCase):
             request_rate_limiter.reset()
             register_rate_limiter.reset()
 
-            with patch.object(request_rate_limiter, "max_requests", 3):
+            with patch.object(email_service, "send_magic_link_email", new_callable=AsyncMock, return_value=True), \
+                 patch.object(email_service, "send_merchant_welcome_email", new_callable=AsyncMock, return_value=True), \
+                 patch.object(request_rate_limiter, "max_requests", 3):
                 for _ in range(3):
                     res_http = self.client.post("/api/v1/auth/magic-link/request", json={"email": http_user})
                     self.assertEqual(res_http.status_code, 200)
@@ -1856,21 +1860,30 @@ class TestAuthPostgresIntegration(unittest.TestCase):
                 self.assertEqual(res_http_4th.status_code, 429)
                 self.assertIn("Terlalu banyak permintaan autentikasi", res_http_4th.json()["detail"])
 
-            # 5. Actual Registration HTTP Rate Limit Test (CTO P1 Hardening)
+            # 5. Actual Registration HTTP Rate Limit Test (CTO P1 Hardening & Cross-Instance Verification)
             # Verify:
             # - Actual /api/v1/auth/register endpoint using real register_rate_limiter (budget: 10 requests).
             # - 10 consecutive registration requests succeed (HTTP 201).
             # - 11th registration request fails with HTTP 429 and proper error message.
-            # - Independent application instance sharing Redis CANNOT bypass the limit (gets HTTP 429).
+            # - Distinct application instance (app2) mounting auth_general_router sharing Redis CANNOT bypass the limit (gets HTTP 429).
+            # - Independent OS worker process executing in separate Python process via subprocess CANNOT bypass the limit (gets blocked).
+            # - Empirically prove that TrustedProxyResolver resolves distinct client IPs from trusted loopback peer (203.0.113.10 vs 203.0.113.20).
             # - Request with rotated IP for the same account CANNOT bypass the limit (gets HTTP 429).
             from contextlib import ExitStack
             reg_http_user = f"reg_http_user_{uuid.uuid4().hex[:6]}@boontrack.id"
             register_rate_limiter.reset()
 
-            client_instance_2 = TestClient(app)
+            # Independent application instance app2 mounting auth_general_router
+            app2 = FastAPI()
+            app2.include_router(auth_general_router)
+            client_app_2 = TestClient(app2, client=("127.0.0.1", 50002))
+
+            # Trusted client for IP rotation test
+            trusted_client_rot = TestClient(app, client=("127.0.0.1", 50003))
 
             with ExitStack() as stack:
-                stack.enter_context(patch.object(email_service, "send_magic_link_email", return_value=True))
+                stack.enter_context(patch.object(email_service, "send_magic_link_email", new_callable=AsyncMock, return_value=True))
+                stack.enter_context(patch.object(email_service, "send_merchant_welcome_email", new_callable=AsyncMock, return_value=True))
                 if not LIVE_POSTGRES_ACTIVE:
                     stack.enter_context(patch("app.routes.auth_routes._query_existing_merchant_by_slug", return_value=(None, None)))
                     stack.enter_context(patch("app.routes.auth_routes._insert_pending_merchant", return_value=(True, None)))
@@ -1909,9 +1922,9 @@ class TestAuthPostgresIntegration(unittest.TestCase):
                 self.assertEqual(res_reg_11th.status_code, 429)
                 self.assertIn("Terlalu banyak permintaan registrasi", res_reg_11th.json()["detail"])
 
-                # Cross-instance bypass test: second client instance must also be blocked (HTTP 429)
+                # Cross-instance bypass test: second independent application instance (app2) must also be blocked (HTTP 429)
                 overflow_slug_2 = f"rlim-overflow-2-{uuid.uuid4().hex[:8]}"
-                res_reg_cross = client_instance_2.post(
+                res_reg_cross = client_app_2.post(
                     "/api/v1/auth/register",
                     json={
                         "email": reg_http_user,
@@ -1924,11 +1937,51 @@ class TestAuthPostgresIntegration(unittest.TestCase):
                 self.assertEqual(res_reg_cross.status_code, 429, "Second application instance sharing Redis must be rate-limited")
                 self.assertIn("Terlalu banyak permintaan registrasi", res_reg_cross.json()["detail"])
 
-                # IP rotation bypass test: request with different X-Forwarded-For must also be blocked (HTTP 429)
+                # Independent OS worker process: verify across separate Python processes sharing Redis
+                if store1._is_redis_healthy():
+                    worker_script = f"""
+import os
+import sys
+sys.path.insert(0, os.path.abspath("."))
+os.environ["APP_ENV"] = "test"
+os.environ["BOONTRACK_DISABLE_AUTH_RATE_LIMIT"] = "0"
+from app.routes.auth_routes import register_rate_limiter
+allowed, retry_after = register_rate_limiter.is_allowed("{reg_http_user}", client_ip="203.0.113.88")
+if allowed:
+    sys.exit(10)
+sys.exit(0)
+"""
+                    worker_proc = subprocess.run(
+                        [sys.executable, "-c", worker_script],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    self.assertEqual(
+                        worker_proc.returncode,
+                        0,
+                        f"Independent OS worker process must be blocked by shared Redis counter; stderr: {worker_proc.stderr}",
+                    )
+
+                # Empirical proof that TrustedProxyResolver resolves distinct client IPs from trusted loopback peer
+                mock_req_1 = unittest.mock.MagicMock()
+                mock_req_1.client.host = "127.0.0.1"
+                mock_req_1.headers = {"x-forwarded-for": "203.0.113.10"}
+                ip_1 = get_trusted_client_ip(mock_req_1)
+                self.assertEqual(ip_1, "203.0.113.10")
+
+                mock_req_2 = unittest.mock.MagicMock()
+                mock_req_2.client.host = "127.0.0.1"
+                mock_req_2.headers = {"x-forwarded-for": "203.0.113.20"}
+                ip_2 = get_trusted_client_ip(mock_req_2)
+                self.assertEqual(ip_2, "203.0.113.20")
+                self.assertNotEqual(ip_1, ip_2)
+
+                # IP rotation bypass test: request with rotated IP (203.0.113.20) via trusted loopback peer must also be blocked (HTTP 429)
                 overflow_slug_3 = f"rlim-overflow-3-{uuid.uuid4().hex[:8]}"
-                res_reg_ip = self.client.post(
+                res_reg_ip = trusted_client_rot.post(
                     "/api/v1/auth/register",
-                    headers={"X-Forwarded-For": "203.0.113.199"},
+                    headers={"X-Forwarded-For": "203.0.113.20"},
                     json={
                         "email": reg_http_user,
                         "name": "IP Rotation User",
