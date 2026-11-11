@@ -33,8 +33,26 @@ _FORBIDDEN_TARGET_MARKERS = (
     "neon.tech",
 )
 
-_ALLOWLIST_PG_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "test-postgres"})
-_ALLOWLIST_REDIS_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "test-redis"})
+_ALLOWLIST_PG_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_ALLOWLIST_REDIS_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _is_docker_internal_net() -> bool:
+    return os.getenv("TEST_IN_DOCKER_INTERNAL_NET", "").strip() == "1"
+
+
+def _allowed_pg_hosts() -> frozenset[str]:
+    if _is_docker_internal_net():
+        return _ALLOWLIST_PG_HOSTS | {"test-postgres"}
+    return _ALLOWLIST_PG_HOSTS
+
+
+def _allowed_redis_hosts() -> frozenset[str]:
+    if _is_docker_internal_net():
+        return _ALLOWLIST_REDIS_HOSTS | {"test-redis"}
+    return _ALLOWLIST_REDIS_HOSTS
+
+
 _ALLOWLIST_SUPABASE_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 _DISPOSABLE_DB_NAME_RE = re.compile(r"^(test_boontrack|bt_.*_test_[a-z0-9_]+)$")
 _DISPOSABLE_SUPABASE_INVALID_HOST_RE = re.compile(r"^[a-z0-9-]+\.supabase\.invalid$")
@@ -157,7 +175,7 @@ def assert_disposable_postgres_target(
                         raise TestIsolationViolation(
                             f"[TEST ISOLATION GUARD] Forbidden non-disposable PostgreSQL query {qk} marker '{q_marker}'."
                         )
-                    if qv_clean.lower() not in _ALLOWLIST_PG_HOSTS:
+                    if qv_clean.lower() not in _allowed_pg_hosts():
                         raise TestIsolationViolation(
                             f"[TEST ISOLATION GUARD] Non-allowlisted PostgreSQL query {qk} '{qv_clean}'."
                         )
@@ -196,7 +214,7 @@ def assert_disposable_postgres_target(
         return
 
     clean_host = resolved_host.lower()
-    if clean_host not in _ALLOWLIST_PG_HOSTS:
+    if clean_host not in _allowed_pg_hosts():
         raise TestIsolationViolation(
             f"[TEST ISOLATION GUARD] Non-allowlisted PostgreSQL host '{resolved_host}'. "
             f"Allowed disposable hosts: {sorted(_ALLOWLIST_PG_HOSTS)}."
@@ -234,7 +252,7 @@ def assert_disposable_redis_target(
     if allow_if_unconfigured and not raw_url and not clean_host:
         return
 
-    if clean_host.lower() not in _ALLOWLIST_REDIS_HOSTS:
+    if clean_host.lower() not in _allowed_redis_hosts():
         raise TestIsolationViolation(
             f"[TEST ISOLATION GUARD] Non-allowlisted Redis host '{clean_host}'. "
             f"Allowed hosts: {sorted(_ALLOWLIST_REDIS_HOSTS)}."
@@ -306,7 +324,7 @@ def verify_connected_postgres_is_disposable(conn: Any) -> None:
         except ValueError:
             ip_obj = None
 
-        in_docker_net = os.getenv("TEST_IN_DOCKER_INTERNAL_NET", "").strip() == "1"
+        in_docker_net = _is_docker_internal_net()
         allowed_ip = bool(
             ip_obj is not None
             and (ip_obj.is_loopback or (in_docker_net and ip_obj.is_private))
@@ -691,7 +709,7 @@ def bootstrap_isolated_test_env(repo_root: Optional[Path] = None) -> None:
         if k in ("STAGING_DATABASE_URL", "SUPABASE_DB_URL", "REVOKED_STAGING_DB_PASSWORD"):
             os.environ.pop(k, None)
             continue
-        if is_ci and k in ci_keep_vars and os.getenv(k, "").strip():
+        if (is_ci or _is_docker_internal_net()) and k in ci_keep_vars and os.getenv(k, "").strip():
             continue
         os.environ[k] = v
 

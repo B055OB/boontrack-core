@@ -103,7 +103,7 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         import redis as _redis_mod
 
         redis_url = os.getenv("REDIS_URL") or (
-            f"redis://{os.getenv('REDIS_HOST', '127.0.0.1')}:{os.getenv('REDIS_PORT', '56379')}/0"
+            f"redis://{os.getenv('REDIS_HOST', '127.0.0.1')}:{os.getenv('REDIS_PORT', '6379')}/0"
         )
         assert_disposable_redis_target(redis_url=redis_url, allow_if_unconfigured=False)
         r_client = _redis_mod.Redis.from_url(redis_url, socket_timeout=2.0, socket_connect_timeout=2.0)

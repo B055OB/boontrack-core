@@ -17,9 +17,10 @@ RUN dos2unix requirements.txt && \
     pip install --no-deps aiogram==2.25.2 && \
     pip install pytest pytest-asyncio pytest-cov mypy pre-commit
 
-# .dockerignore excludes .env and .env.*; explicitly assert .env never enters image
+# .dockerignore excludes .env and .env.*; explicitly assert no real .env secrets enter image
 COPY . .
 RUN test ! -f /workspace/.env && \
+    test -z "$(find /workspace -maxdepth 2 -name '.env*' ! -name '.env.test' ! -name '.env.example')" && \
     mkdir -p /tmp/.pytest_cache /workspace/assets/uploads /workspace/docs/audit && \
-    find /workspace -type f \( -name "*.py" -o -name "*.sh" -o -name "*.yml" \) -exec dos2unix {} +
+    find /workspace -type f \( -name "*.py" -o -name "*.sh" -o -name "*.yml" -o -name ".env.test" \) -exec dos2unix {} +
 
