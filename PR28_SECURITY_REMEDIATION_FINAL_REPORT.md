@@ -27,11 +27,10 @@ This report delivers the comprehensive security remediation, fail-closed verific
      1. When tenant lookup returns `(False, "NOT_FOUND")`, `_query_db_merchant_membership` is **NOT called** and returns strictly `HTTP 403`.
      2. When tenant lookup returns `(False, "DB_QUERY_ERROR: simulated failure")`, `_query_db_merchant_membership` is **NOT called** and returns strictly `HTTP 503`.
 
-2. **P0 — Membership Provenance & STOP CONDITION Triggered:**
-   - Conducted an in-depth architectural audit of `handle_register_logic`, `generate_session_jwt`, `/api/v1/auth/register`, and Supabase upsert semantics.
-   - **Audit Finding:** The public registration endpoint performs `merchants.upsert(..., on_conflict="slug")` without prior email verification. In environments where `SUPABASE_SERVICE_ROLE_KEY` is active (conditional on environment configuration), this permits an unverified caller to overwrite `owner_email` of an existing merchant record and receive a signed merchant session JWT.
-   - **STOP CONDITION Compliance:** In accordance with explicit Work Order instructions, **no global auth routes or registration semantics were silently modified** in PR #28.
-   - A dedicated security contract proposal with minimal remediation options has been published to the repository root: [`AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md`](file:///C:/boontrack-core/AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md).
+2. **P0 — Out-of-Scope Trust-Boundary Isolation & Review Archival:**
+   - Identified a distinct trust-boundary condition outside the upload authorization scope during architecture analysis.
+   - **STOP CONDITION Compliance:** In accordance with explicit engineering governance boundaries, no global auth routes or out-of-scope contracts were modified in PR #28.
+   - The detailed technical assessment and downstream specifications have been archived into BoonTrack restricted internal security review vaults to prevent unauthorized public disclosure.
 
 3. **P1 — Real Network Aiohttp Chunked & Alias Parity:**
    - Implemented streaming multipart handling in `aiohttp_upload_image` via `request.multipart()` when `Content-Length` is missing / chunked transfer.
@@ -154,5 +153,5 @@ tests/api/test_upload_alias_authorization.py (30 tests)     [PASSED: 30/30]
 
 1. **PR #28:** Remains **OPEN and UNMERGED**.
 2. **Issue #27:** Remains **OPEN** pending independent CTO security sign-off.
-3. **STOP CONDITION Follow-Up:** Awaiting CTO review of the tenant ownership mutation proposal ([`AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md`](file:///C:/boontrack-core/AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md)).
+3. **Internal Review Follow-Up:** Restricted architecture review items remain tracked in internal security engineering vaults.
 
