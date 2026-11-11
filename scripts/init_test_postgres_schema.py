@@ -194,6 +194,90 @@ def init_test_schema():
       ('00000000-0000-0000-0000-00000000000b', 'Tenant Beta', 'tenant_beta')
     ON CONFLICT (slug) DO NOTHING;
 
+    -- Table: merchants (Production-grade transactional merchant registry)
+    CREATE TABLE IF NOT EXISTS public.merchants (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      slug VARCHAR UNIQUE NOT NULL,
+      store_name VARCHAR NOT NULL,
+      business_category VARCHAR DEFAULT 'Retail / E-Commerce',
+      owner_name VARCHAR NOT NULL,
+      owner_whatsapp VARCHAR DEFAULT '',
+      owner_email VARCHAR NOT NULL,
+      status VARCHAR NOT NULL DEFAULT 'ACTIVE',
+      plan_tier VARCHAR DEFAULT 'STARTER',
+      is_otp_verified BOOLEAN DEFAULT FALSE,
+      active_until TIMESTAMPTZ,
+      referral_code VARCHAR,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    ALTER TABLE public.merchants ADD COLUMN IF NOT EXISTS status VARCHAR NOT NULL DEFAULT 'ACTIVE';
+    ALTER TABLE public.merchants ADD COLUMN IF NOT EXISTS is_otp_verified BOOLEAN DEFAULT FALSE;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_merchants_slug_unique ON public.merchants (slug);
+    CREATE INDEX IF NOT EXISTS idx_merchants_status ON public.merchants (status);
+    CREATE INDEX IF NOT EXISTS idx_merchants_owner_email ON public.merchants (lower(owner_email));
+
+    ALTER TABLE public.merchants ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.merchants NO FORCE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS service_role_all_merchants ON public.merchants;
+    CREATE POLICY service_role_all_merchants ON public.merchants
+      AS PERMISSIVE FOR ALL TO service_role
+      USING (true)
+      WITH CHECK (true);
+
+    INSERT INTO public.merchants (slug, store_name, owner_name, owner_email, status, plan_tier)
+    VALUES
+      ('tenant_alpha', 'Tenant Alpha Store', 'Alpha Owner', 'owner_alpha@boontrack.com', 'ACTIVE', 'STARTER'),
+      ('tenant_beta', 'Tenant Beta Store', 'Beta Owner', 'owner_beta@boontrack.com', 'ACTIVE', 'STARTER')
+    ON CONFLICT (slug) DO NOTHING;
+
+    -- Table: cs_agents (Tenant team members & operational staff)
+    CREATE TABLE IF NOT EXISTS public.cs_agents (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id VARCHAR NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      phone VARCHAR(50),
+      email VARCHAR(255),
+      role VARCHAR(20) NOT NULL DEFAULT 'agent' CHECK (role IN ('owner', 'supervisor', 'agent', 'admin')),
+      presence VARCHAR(20) NOT NULL DEFAULT 'offline' CHECK (presence IN ('active', 'break', 'offline')),
+      max_active_chats INT NOT NULL DEFAULT 10,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+    ALTER TABLE public.cs_agents ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.cs_agents FORCE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_cs_agents ON public.cs_agents;
+    CREATE POLICY tenant_isolation_cs_agents ON public.cs_agents
+      AS PERMISSIVE FOR ALL TO public
+      USING (
+        tenant_id = public.current_app_tenant_slug()
+        OR tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+      )
+      WITH CHECK (
+        tenant_id = public.current_app_tenant_slug()
+        OR tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+      );
+
+    DROP POLICY IF EXISTS service_role_all_cs_agents ON public.cs_agents;
+    CREATE POLICY service_role_all_cs_agents ON public.cs_agents
+      AS PERMISSIVE FOR ALL TO service_role
+      USING (
+        tenant_id = public.current_app_tenant_slug()
+        OR tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+        OR NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL
+      )
+      WITH CHECK (
+        tenant_id = public.current_app_tenant_slug()
+        OR tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+        OR NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL
+      );
+
+    INSERT INTO public.cs_agents (tenant_id, name, email, role, is_active)
+    VALUES
+      ('tenant_alpha', 'Staff Alpha', 'staff_alpha@boontrack.com', 'admin', true)
+    ON CONFLICT DO NOTHING;
+
     -- Table: orders (Aligned with Migration 033 & Staging Baseline: tenant_id VARCHAR(100))
     CREATE TABLE IF NOT EXISTS public.orders (
       id VARCHAR PRIMARY KEY,

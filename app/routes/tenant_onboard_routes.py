@@ -24,6 +24,7 @@ from app.schemas.tenant_prospect_schema import (
 )
 from app.services.prospect_service import prospect_service
 from app.services.lead_capi_service import dispatch_meta_lead_event
+from app.core.security.trusted_proxy import get_trusted_client_ip
 
 logger = logging.getLogger("TENANT_ONBOARD_ROUTES")
 
@@ -64,11 +65,7 @@ async def submit_tenant_onboard_endpoint(
         prospect = prospect_service.create_prospect(intake_payload)
 
         # 2. Extract metadata request untuk Meta CAPI (User-Agent, Client IP)
-        client_ip = (
-            request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-            or request.headers.get("x-real-ip")
-            or (request.client.host if request.client else None)
-        )
+        client_ip = get_trusted_client_ip(request)
         client_user_agent = request.headers.get("user-agent")
 
         # 3. Schedule Asynchronous Meta CAPI Lead Dispatch (Non-blocking)
@@ -192,11 +189,7 @@ async def aiohttp_submit_tenant_onboard(request: web.Request) -> web.Response:
         prospect = prospect_service.create_prospect(payload)
 
         # Ekstraksi client metadata untuk Meta CAPI
-        client_ip = (
-            request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-            or request.headers.get("x-real-ip")
-            or request.remote
-        )
+        client_ip = get_trusted_client_ip(request)
         client_user_agent = request.headers.get("user-agent")
 
         # Non-blocking CAPI background task

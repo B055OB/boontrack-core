@@ -231,9 +231,9 @@ async def tenant_upload_media_endpoint(
     qris: Optional[UploadFile] = File(None),
     qris_image: Optional[UploadFile] = File(None),
 ):
-    """Menerima upload gambar QRIS atau media untuk tenant dan mengupdate profile settings secara otomatis."""
-    from app.core.subscription_guard import assert_tenant_mutation_allowed
-    assert_tenant_mutation_allowed(slug)
+    """Menerima upload gambar QRIS atau media untuk tenant dengan verifikasi otorisasi merchant."""
+    from app.routes.media_routes import authorize_tenant_upload, _fastapi_handle_upload
+    session = authorize_tenant_upload(request, expected_slug=slug)
 
     path_lower = request.url.path.lower()
     is_qris = "qris" in path_lower or qris is not None or qris_image is not None
@@ -246,7 +246,8 @@ async def tenant_upload_media_endpoint(
         qris_image=qris_image,
         is_qris=is_qris,
         folder=folder,
-        slug=slug
+        slug=slug,
+        verified_session=session,
     )
 
 

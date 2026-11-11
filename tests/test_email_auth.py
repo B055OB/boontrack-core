@@ -1,8 +1,8 @@
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 from app.main import app
-from app.routes.auth_routes import token_store
+from app.routes.auth_routes import token_store, register_auth_test_merchant, clear_auth_test_registries
 from app.services.email_service import (
     email_service,
     render_magic_link_html,
@@ -10,6 +10,14 @@ from app.services.email_service import (
 )
 
 client = TestClient(app)
+
+
+def setup_function():
+    clear_auth_test_registries()
+
+
+def teardown_function():
+    clear_auth_test_registries()
 
 
 def test_email_template_magic_link():
@@ -94,6 +102,10 @@ def test_magic_link_verify_with_token_success():
     test_email = "token_login@boontrack.com"
     test_token = "valid_test_token_12345"
     test_otp = "778899"
+    test_slug = "tokoberkah"
+
+    # Register authoritative merchant test fixture
+    register_auth_test_merchant(slug=test_slug, owner_email=test_email, is_active=True)
 
     # Seed token in token store
     token_store.set_token(
@@ -102,7 +114,7 @@ def test_magic_link_verify_with_token_success():
             "email": test_email,
             "token": test_token,
             "otp_code": test_otp,
-            "tenant_slug": "tokoberkah",
+            "tenant_slug": test_slug,
         },
         ttl_seconds=900,
     )
@@ -118,7 +130,7 @@ def test_magic_link_verify_with_token_success():
     assert "access_token" in data
     assert data["token_type"] == "bearer"
     assert data["user"]["email"] == test_email
-    assert data["user"]["tenant_slug"] == "tokoberkah"
+    assert data["user"]["tenant_slug"] == test_slug
     assert data["user"]["role"] == "merchant"
 
 
@@ -127,20 +139,27 @@ def test_magic_link_verify_with_otp_success():
     test_email = "otp_login@boontrack.com"
     test_token = "token_for_otp_999"
     test_otp = "345678"
+    test_challenge = "ch_otp_test_345678"
+    test_slug = "tokomitra"
 
-    # Seed token and OTP in store
+    # Register authoritative merchant test fixture
+    register_auth_test_merchant(slug=test_slug, owner_email=test_email, is_active=True)
+
+    # Seed token, OTP, and challenge in store
     payload = {
         "email": test_email,
         "token": test_token,
         "otp_code": test_otp,
-        "tenant_slug": "tokomitra",
+        "challenge_id": test_challenge,
+        "tenant_slug": test_slug,
     }
     token_store.set_token(f"bt:auth:magic_link:{test_token}", payload, ttl_seconds=900)
     token_store.set_token(f"bt:auth:magic_link_otp:{test_otp}", payload, ttl_seconds=900)
+    token_store.set_token(f"bt:auth:magic_link_challenge:{test_challenge}", payload, ttl_seconds=900)
 
     response = client.post(
         "/api/v1/auth/magic-link/verify",
-        json={"otp_code": test_otp},
+        json={"otp_code": test_otp, "challenge_id": test_challenge},
     )
 
     assert response.status_code == 200
@@ -148,7 +167,7 @@ def test_magic_link_verify_with_otp_success():
     assert data["status"] == "success"
     assert "access_token" in data
     assert data["user"]["email"] == test_email
-    assert data["user"]["tenant_slug"] == "tokomitra"
+    assert data["user"]["tenant_slug"] == test_slug
 
 
 def test_magic_link_single_use_replay_prevention():
@@ -156,15 +175,22 @@ def test_magic_link_single_use_replay_prevention():
     test_email = "replay_prevention@boontrack.com"
     test_token = "single_use_token_replay_test"
     test_otp = "112233"
+    test_challenge = "ch_replay_112233"
+    test_slug = "storeone"
+
+    # Register authoritative merchant test fixture
+    register_auth_test_merchant(slug=test_slug, owner_email=test_email, is_active=True)
 
     payload = {
         "email": test_email,
         "token": test_token,
         "otp_code": test_otp,
-        "tenant_slug": "storeone",
+        "challenge_id": test_challenge,
+        "tenant_slug": test_slug,
     }
     token_store.set_token(f"bt:auth:magic_link:{test_token}", payload, ttl_seconds=900)
     token_store.set_token(f"bt:auth:magic_link_otp:{test_otp}", payload, ttl_seconds=900)
+    token_store.set_token(f"bt:auth:magic_link_challenge:{test_challenge}", payload, ttl_seconds=900)
 
     # First attempt: SUCCESS
     res1 = client.post("/api/v1/auth/magic-link/verify", json={"token": test_token})
@@ -177,8 +203,15 @@ def test_magic_link_single_use_replay_prevention():
     assert "tidak valid" in res2.json()["detail"].lower() or "kadaluarsa" in res2.json()["detail"].lower()
 
     # Attempt with associated OTP also fails: 401 UNAUTHORIZED
-    res3 = client.post("/api/v1/auth/magic-link/verify", json={"otp_code": test_otp})
+    res3 = client.post("/api/v1/auth/magic-link/verify", json={"otp_code": test_otp, "challenge_id": test_challenge})
     assert res3.status_code == 401
+
+
+def test_magic_link_verify_otp_without_challenge_id_fails_400():
+    """Verifying OTP without challenge_id must return 400 Bad Request."""
+    res = client.post("/api/v1/auth/magic-link/verify", json={"otp_code": "123456"})
+    assert res.status_code == 400
+    assert "challenge_id" in res.json()["detail"].lower()
 
 
 def test_magic_link_invalid_token_returns_401():
@@ -199,11 +232,23 @@ def test_magic_link_missing_parameters_returns_400():
     assert response.status_code == 400
 
 
-def test_merchant_registration_triggers_welcome_email():
-    """POST /api/v1/auth/register should trigger send_merchant_welcome_email."""
+def _mock_db_conn():
+    conn = MagicMock()
+    cur = MagicMock()
+    cur.fetchone.return_value = None  # Clean query, 0 existing rows
+    cur.rowcount = 1
+    conn.cursor.return_value.__enter__.return_value = cur
+    return conn
+
+
+def test_merchant_registration_triggers_welcome_and_verification_emails():
+    """POST /api/v1/auth/register returns pending_verification (NO JWT) and sends emails."""
     with patch.object(email_service, "send_merchant_welcome_email", new_callable=AsyncMock) as mock_welcome, \
+         patch.object(email_service, "send_magic_link_email", new_callable=AsyncMock) as mock_magic, \
+         patch("app.core.database.get_db_connection", side_effect=_mock_db_conn), \
          patch("app.routes.auth_routes.get_supabase", return_value=None):
         mock_welcome.return_value = True
+        mock_magic.return_value = True
 
         response = client.post(
             "/api/v1/auth/register",
@@ -217,12 +262,15 @@ def test_merchant_registration_triggers_welcome_email():
 
         assert response.status_code == 201
         data = response.json()
-        assert data["status"] == "success"
+        assert data["status"] == "pending_verification"
+        assert data["requires_verification"] is True
         assert data["user"]["email"] == "owner_baru@boontrack.com"
         assert data["user"]["name"] == "Budi Sukses"
-        assert "access_token" in data
+        assert "access_token" not in data  # CRITICAL SECURITY INVARIANT: No direct JWT
 
-        # Verifikasi pemanggilan send_merchant_welcome_email
+        # Verification email dispatched
+        assert mock_magic.called
+        # Welcome email dispatched
         assert mock_welcome.called
         call_kwargs = mock_welcome.call_args.kwargs
         assert call_kwargs["to_email"] == "owner_baru@boontrack.com"
@@ -230,11 +278,14 @@ def test_merchant_registration_triggers_welcome_email():
         assert "https://shop.boontrack.com/login" in call_kwargs["dashboard_url"]
 
 
-def test_merchant_registration_succeeds_even_if_email_fails():
-    """Registration response must still succeed even if email dispatch fails/timeouts."""
+def test_merchant_registration_succeeds_when_welcome_email_fails():
+    """Non-critical welcome email failure does not block registration; returns 201 pending_verification."""
     with patch.object(email_service, "send_merchant_welcome_email", new_callable=AsyncMock) as mock_welcome, \
+         patch.object(email_service, "send_magic_link_email", new_callable=AsyncMock) as mock_magic, \
+         patch("app.core.database.get_db_connection", side_effect=_mock_db_conn), \
          patch("app.routes.auth_routes.get_supabase", return_value=None):
         mock_welcome.side_effect = Exception("Resend API Timeout / Network Error")
+        mock_magic.return_value = True
 
         response = client.post(
             "/api/v1/auth/register",
@@ -244,10 +295,30 @@ def test_merchant_registration_succeeds_even_if_email_fails():
             },
         )
 
-        # Response registrasi tetap berhasil 201 Created
         assert response.status_code == 201
         data = response.json()
-        assert data["status"] == "success"
+        assert data["status"] == "pending_verification"
+        assert data["requires_verification"] is True
         assert data["user"]["email"] == "resend_error@boontrack.com"
-        assert mock_welcome.called
+        assert "access_token" not in data
 
+
+def test_merchant_registration_fails_closed_when_verification_email_fails():
+    """Critical verification email failure must fail closed with 503 and rollback pending reservation."""
+    with patch.object(email_service, "send_merchant_welcome_email", new_callable=AsyncMock) as mock_welcome, \
+         patch.object(email_service, "send_magic_link_email", new_callable=AsyncMock) as mock_magic, \
+         patch("app.core.database.get_db_connection", side_effect=_mock_db_conn), \
+         patch("app.routes.auth_routes.get_supabase", return_value=None):
+        mock_welcome.return_value = True
+        mock_magic.side_effect = Exception("SMTP Connection Timeout")
+
+        response = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "smtp_fail@boontrack.com",
+                "name": "Merchant SMTP Fail",
+            },
+        )
+
+        assert response.status_code == 503
+        assert "Reservasi tenant dibatalkan" in response.json()["detail"]

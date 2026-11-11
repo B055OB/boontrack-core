@@ -30,6 +30,16 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: 5432
@@ -37,6 +47,9 @@ jobs:
       POSTGRES_USER: test_user
       POSTGRES_PASSWORD: test_password
       DATABASE_URL: postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      REDIS_URL: redis://127.0.0.1:6379/0
       XENDIT_SECRET_KEY: test_ci_xendit_secret_key_mock_12345
       XENDIT_CALLBACK_TOKEN: test_ci_xendit_callback_token_mock_12345
       SUPABASE_URL: https://mpluzajlzpregmjwpjqr.supabase.co
@@ -67,7 +80,7 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install --prefer-binary -r requirements.txt; fi
           pip install --no-deps aiogram==2.25.2
-          pip install pytest pytest-asyncio pytest-cov
+          pip install pytest pytest-asyncio pytest-cov mypy pre-commit
 
       - name: Verify Tested Commit SHA Provenance
         run: |
@@ -92,6 +105,15 @@ jobs:
           fi
           echo "========================================================"
 
+      - name: Run Static Typecheck & Pre-Commit Quality Gate (CTO P2)
+        run: |
+          set -o pipefail
+          echo "========================================================"
+          echo "EXECUTING PRE-COMMIT & MYPY QUALITY GATES"
+          echo "--------------------------------------------------------"
+          python -m pre_commit run --all-files --show-diff-on-failure
+          python -m mypy --follow-imports=skip --ignore-missing-imports app/routes/auth_routes.py tests/test_auth_postgres_integration.py
+
       - name: Initialize PostgreSQL Test Database Roles & RLS Schema
         run: |
           python scripts/init_test_postgres_schema.py
@@ -103,6 +125,28 @@ jobs:
             echo "## ❌ Pytest Failures" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             cat /tmp/test_results.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          }
+
+      - name: Run Dedicated Tenant Media Upload Security & Parity Test Suites
+        run: |
+          set -o pipefail
+          python -m pytest tests/api/test_upload_security.py tests/api/test_aiohttp_upload_security.py tests/test_media_upload.py tests/api/test_upload_alias_authorization.py -v -ra --tb=short 2>&1 | tee /tmp/upload_security_test_results.log || {
+            echo "## ❌ Upload Security Pytest Failures" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat /tmp/upload_security_test_results.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          }
+
+      - name: Run Auth Registration & Identity Verification Security Test Suites (PR #29)
+        run: |
+          set -o pipefail
+          python -m pytest tests/api/test_auth_registration_security.py tests/test_email_auth.py tests/test_auth_postgres_integration.py -v -ra --tb=short 2>&1 | tee /tmp/auth_security_test_results.log || {
+            echo "## ❌ Auth Security Pytest Failures" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat /tmp/auth_security_test_results.log >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit 1
           }
@@ -132,6 +176,8 @@ jobs:
           name: security-audit-logs-${{ github.sha }}
           path: |
             /tmp/test_results.log
+            /tmp/upload_security_test_results.log
+            /tmp/auth_security_test_results.log
             /tmp/rls_audit.log
             /tmp/prod_catalog_audit.log
           retention-days: 7
