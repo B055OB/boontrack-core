@@ -11,32 +11,21 @@ Proves:
 """
 
 import os
+import sys
+from pathlib import Path
 import time
 import json
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-if not os.getenv("DATABASE_URL"):
-    pg_user = os.getenv("POSTGRES_USER", "test_user")
-    pg_pass = os.getenv("POSTGRES_PASSWORD", "test_password")
-    pg_host = os.getenv("POSTGRES_HOST", "127.0.0.1")
-    pg_port = os.getenv("POSTGRES_PORT", "5432")
-    pg_db = os.getenv("POSTGRES_DB", "test_boontrack")
-    os.environ["DATABASE_URL"] = f"postgresql://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-if not os.getenv("XENDIT_SECRET_KEY"):
-    os.environ["XENDIT_SECRET_KEY"] = "test_ci_xendit_secret_key_mock_12345"
-if not os.getenv("XENDIT_CALLBACK_TOKEN"):
-    os.environ["XENDIT_CALLBACK_TOKEN"] = "test_ci_xendit_callback_token_mock_12345"
-if not os.getenv("SUPABASE_URL"):
-    os.environ["SUPABASE_URL"] = "http://127.0.0.1:54321"
-if not os.getenv("SUPABASE_KEY"):
-    os.environ["SUPABASE_KEY"] = "test_ci_supabase_anon_key_mock_999"
-if not os.getenv("SUPABASE_ANON_KEY"):
-    os.environ["SUPABASE_ANON_KEY"] = "test_ci_supabase_anon_key_mock_999"
-if not os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
-    os.environ["SUPABASE_SERVICE_ROLE_KEY"] = "test_ci_supabase_service_role_key_mock_999"
+from app.core.security.test_isolation_guard import bootstrap_isolated_test_env
+
+bootstrap_isolated_test_env(_REPO_ROOT)
 
 from app.main import app
 from app.core.security.inter_service_auth import (

@@ -22,3 +22,4 @@ COPY . .
 RUN test ! -f /workspace/.env && \
     mkdir -p /tmp/.pytest_cache /workspace/assets/uploads /workspace/docs/audit && \
     find /workspace -type f \( -name "*.py" -o -name "*.sh" -o -name "*.yml" \) -exec dos2unix {} +
+

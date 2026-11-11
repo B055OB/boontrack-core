@@ -19,6 +19,10 @@ if not supabase_url or not supabase_anon_key:
         "SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_KEY) must be provided in the environment."
     )
 
+from app.core.security.test_isolation_guard import assert_disposable_supabase_url
+
+assert_disposable_supabase_url(supabase_url, allow_empty=False)
+
 try:
     # Standard restricted client bound by RLS
     supabase: Client = create_client(supabase_url, supabase_anon_key)
@@ -36,6 +40,7 @@ def get_admin_supabase_client() -> Client:
         raise RuntimeError(
             "[SECURITY FAIL-CLOSED] SUPABASE_SERVICE_ROLE_KEY is required for administrative operations but not configured."
         )
+    assert_disposable_supabase_url(supabase_url, allow_empty=False)
     return create_client(supabase_url, admin_key)
 
 

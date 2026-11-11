@@ -1344,8 +1344,8 @@ if __name__ == "__main__":
     import os
 
     os.environ.setdefault(
-        "STAGE1_TEST_DISPOSABLE_PG_DSN",
-        "postgresql://postgres:rehearsal_pass@127.0.0.1:5432/bt_stage1_disposable_test_033",
+        "STAGE3_STEP0_DISPOSABLE_PG_DSN",
+        "postgresql://test_user:test_password@127.0.0.1:5432/bt_stage1_disposable_test_step0",
     )
     if "--rehearse-033a" in sys.argv:
         import psycopg2

@@ -164,13 +164,25 @@ jobs:
             "api.biteship.com"
           )
           for host in "${BLOCKED_HOSTS[@]}"; do
-            for ip in $(getent ahostsv4 "$host" | awk '{print $1}' | sort -u); do
-              sudo iptables -I OUTPUT 1 -d "$ip" ! -d 127.0.0.0/8 -j REJECT --reject-with icmp-net-unreachable || true
+            for ip in $( (getent ahostsv4 "$host" 2>/dev/null || true) | awk '{print $1}' | sort -u ); do
+              case "$ip" in
+                ""|127.*) continue ;;
+              esac
+              sudo iptables -I OUTPUT 1 -d "$ip" -j REJECT
             done
+            for ip6 in $( (getent ahostsv6 "$host" 2>/dev/null || true) | awk '{print $1}' | sort -u ); do
+              case "$ip6" in
+                ""|::1|::ffff:*|fe80:*) continue ;;
+              esac
+              sudo ip6tables -I OUTPUT 1 -d "$ip6" -j REJECT
+            done
+          done
+          for host in "${BLOCKED_HOSTS[@]}"; do
             echo "127.0.0.1 $host" | sudo tee -a /etc/hosts >/dev/null
+            echo "::1 $host" | sudo tee -a /etc/hosts >/dev/null
           done
           sudo iptables -A OUTPUT ! -o lo ! -d 127.0.0.0/8 -p tcp -m multiport --dports 5432,5433,6543,6379,6380,25,465,587,2525 -j REJECT --reject-with tcp-reset
-          sudo ip6tables -A OUTPUT ! -o lo ! -d ::1/128 -p tcp -m multiport --dports 5432,5433,6543,6379,6380,25,465,587,2525 -j REJECT --reject-with tcp-reset || true
+          sudo ip6tables -A OUTPUT ! -o lo ! -d ::1/128 -p tcp -m multiport --dports 5432,5433,6543,6379,6380,25,465,587,2525 -j REJECT
 
       - name: Preflight Disposable PostgreSQL, Redis & Clean Environment
         run: |

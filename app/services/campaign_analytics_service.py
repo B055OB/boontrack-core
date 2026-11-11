@@ -6,6 +6,7 @@ from supabase import create_client, Client
 logger = logging.getLogger("CAMPAIGN_ANALYTICS_SERVICE")
 
 from app.core.security.test_isolation_guard import (
+    TestIsolationViolation,
     assert_disposable_supabase_url,
     safe_load_dotenv,
 )
@@ -19,6 +20,8 @@ if supabase_url and supabase_key:
     assert_disposable_supabase_url(supabase_url, allow_empty=False)
     try:
         supabase = create_client(supabase_url, supabase_key)
+    except TestIsolationViolation:
+        raise
     except Exception as e:
         logger.warning(f"Failed to create Supabase client: {e}")
 

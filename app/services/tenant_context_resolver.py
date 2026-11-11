@@ -30,6 +30,11 @@ def get_supabase():
     if _supabase_client is not None:
         return _supabase_client
 
+    from app.core.security.test_isolation_guard import (
+        TestIsolationViolation,
+        assert_disposable_supabase_url,
+    )
+
     try:
         from supabase import create_client
         url = (
@@ -46,8 +51,11 @@ def get_supabase():
             or ""
         )
         if url and key:
+            assert_disposable_supabase_url(url, allow_empty=False)
             _supabase_client = create_client(url, key)
             return _supabase_client
+    except TestIsolationViolation:
+        raise
     except Exception as e:
         logger.error(f"[TENANT_RESOLVER] Supabase client init error: {e}")
 

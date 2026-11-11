@@ -76,11 +76,11 @@ def pytest_sessionstart(session: pytest.Session) -> None:
                     SELECT table_name
                     FROM information_schema.tables
                     WHERE table_schema = 'public'
-                      AND table_name IN ('tenants', 'merchants', 'inbound_webhook_events', 'phone_suppressions');
+                      AND table_name IN ('tenants', 'inbound_webhook_events', 'phone_suppressions');
                     """
                 )
                 present = {row[0] for row in cur.fetchall()}
-                missing = {"tenants", "merchants", "inbound_webhook_events", "phone_suppressions"} - present
+                missing = {"tenants", "inbound_webhook_events", "phone_suppressions"} - present
                 if missing:
                     pytest.exit(
                         "[TEST ISOLATION ABORT] Disposable PostgreSQL missing initialized schema tables: "

@@ -19,7 +19,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 _FORBIDDEN_TARGET_MARKERS = (
     "mpluzajlzpregmjwpjqr",
@@ -42,6 +42,10 @@ _DISPOSABLE_SUPABASE_INVALID_HOST_RE = re.compile(r"^[a-z0-9-]+\.supabase\.inval
 _HOOKS_INSTALLED = False
 _BOOTSTRAPPED = False
 _ORIGINAL_DOTENV_LOAD: Any = None
+
+
+class TestIsolationViolation(RuntimeError):
+    """Raised when test isolation, target allowlist, or disposable-DB invariants are violated."""
 
 
 def is_strict_test_guard_active() -> bool:
@@ -134,17 +138,47 @@ def assert_disposable_postgres_target(
     if raw_dsn:
         marker = _contains_forbidden_marker(raw_dsn)
         if marker:
-            raise RuntimeError(
+            raise TestIsolationViolation(
                 f"[TEST ISOLATION GUARD] Forbidden non-disposable PostgreSQL target marker '{marker}' in DSN."
             )
         if "://" in raw_dsn:
             u = urlparse(raw_dsn)
             scheme = (u.scheme or "").lower()
             if not (scheme == "postgres" or scheme.startswith("postgresql")):
-                raise RuntimeError(f"[TEST ISOLATION GUARD] Invalid PostgreSQL DSN scheme: '{scheme}'.")
-            resolved_host = (u.hostname or resolved_host).strip()
-            resolved_db = (u.path or "").lstrip("/").strip() or resolved_db
-            resolved_user = (u.username or resolved_user).strip()
+                raise TestIsolationViolation(f"[TEST ISOLATION GUARD] Invalid PostgreSQL DSN scheme: '{scheme}'.")
+            qs = parse_qs(u.query or "")
+            for qk in ("hostaddr", "host"):
+                for qv in qs.get(qk, ()):
+                    qv_clean = qv.strip()
+                    if not qv_clean:
+                        continue
+                    q_marker = _contains_forbidden_marker(qv_clean)
+                    if q_marker:
+                        raise TestIsolationViolation(
+                            f"[TEST ISOLATION GUARD] Forbidden non-disposable PostgreSQL query {qk} marker '{q_marker}'."
+                        )
+                    if qv_clean.lower() not in _ALLOWLIST_PG_HOSTS:
+                        raise TestIsolationViolation(
+                            f"[TEST ISOLATION GUARD] Non-allowlisted PostgreSQL query {qk} '{qv_clean}'."
+                        )
+            for qdb in qs.get("dbname", ()):
+                qdb_clean = qdb.strip()
+                if qdb_clean and not _DISPOSABLE_DB_NAME_RE.match(qdb_clean):
+                    raise TestIsolationViolation(
+                        f"[TEST ISOLATION GUARD] Non-disposable PostgreSQL query dbname '{qdb_clean}'."
+                    )
+            for quser in qs.get("user", ()):
+                quser_marker = _contains_forbidden_marker(quser.strip())
+                if quser_marker:
+                    raise TestIsolationViolation(
+                        f"[TEST ISOLATION GUARD] Forbidden PostgreSQL query user marker '{quser_marker}'."
+                    )
+            q_host = (qs.get("host") or qs.get("hostaddr") or [""])[0].strip()
+            q_db = (qs.get("dbname") or [""])[0].strip()
+            q_user = (qs.get("user") or [""])[0].strip()
+            resolved_host = (u.hostname or q_host or resolved_host).strip()
+            resolved_db = (u.path or "").lstrip("/").strip() or q_db or resolved_db
+            resolved_user = (u.username or q_user or resolved_user).strip()
         else:
             kw = _parse_libpq_dsn(raw_dsn)
             resolved_host = (kw.get("host") or kw.get("hostaddr") or resolved_host).strip()
@@ -154,7 +188,7 @@ def assert_disposable_postgres_target(
     for field_name, field_val in (("host", resolved_host), ("dbname", resolved_db), ("user", resolved_user)):
         marker = _contains_forbidden_marker(field_val)
         if marker:
-            raise RuntimeError(
+            raise TestIsolationViolation(
                 f"[TEST ISOLATION GUARD] Forbidden non-disposable PostgreSQL {field_name} ('{marker}')."
             )
 
@@ -163,13 +197,13 @@ def assert_disposable_postgres_target(
 
     clean_host = resolved_host.lower()
     if clean_host not in _ALLOWLIST_PG_HOSTS:
-        raise RuntimeError(
+        raise TestIsolationViolation(
             f"[TEST ISOLATION GUARD] Non-allowlisted PostgreSQL host '{resolved_host}'. "
             f"Allowed disposable hosts: {sorted(_ALLOWLIST_PG_HOSTS)}."
         )
 
     if not _DISPOSABLE_DB_NAME_RE.match(resolved_db):
-        raise RuntimeError(
+        raise TestIsolationViolation(
             f"[TEST ISOLATION GUARD] Non-disposable PostgreSQL database name '{resolved_db}'. "
             f"Database must match '{_DISPOSABLE_DB_NAME_RE.pattern}' (bare 'postgres' is prohibited)."
         )
@@ -191,7 +225,7 @@ def assert_disposable_redis_target(
     if raw_url:
         marker = _contains_forbidden_marker(raw_url)
         if marker:
-            raise RuntimeError(
+            raise TestIsolationViolation(
                 f"[TEST ISOLATION GUARD] Forbidden Redis URL marker '{marker}'."
             )
         u = urlparse(raw_url)
@@ -201,7 +235,7 @@ def assert_disposable_redis_target(
         return
 
     if clean_host.lower() not in _ALLOWLIST_REDIS_HOSTS:
-        raise RuntimeError(
+        raise TestIsolationViolation(
             f"[TEST ISOLATION GUARD] Non-allowlisted Redis host '{clean_host}'. "
             f"Allowed hosts: {sorted(_ALLOWLIST_REDIS_HOSTS)}."
         )
@@ -216,11 +250,11 @@ def assert_disposable_supabase_url(url: Optional[str], *, allow_empty: bool = Tr
     if not raw:
         if allow_empty:
             return
-        raise RuntimeError("[TEST ISOLATION GUARD] Empty SUPABASE_URL.")
+        raise TestIsolationViolation("[TEST ISOLATION GUARD] Empty SUPABASE_URL.")
 
     marker = _contains_forbidden_marker(raw)
     if marker:
-        raise RuntimeError(
+        raise TestIsolationViolation(
             f"[TEST ISOLATION GUARD] Forbidden production/staging Supabase marker '{marker}' in SUPABASE_URL."
         )
 
@@ -229,7 +263,7 @@ def assert_disposable_supabase_url(url: Optional[str], *, allow_empty: bool = Tr
     if hostname in _ALLOWLIST_SUPABASE_HOSTS or _DISPOSABLE_SUPABASE_INVALID_HOST_RE.match(hostname):
         return
 
-    raise RuntimeError(
+    raise TestIsolationViolation(
         f"[TEST ISOLATION GUARD] Non-allowlisted Supabase host '{hostname}'. "
         "Allowed targets: 127.0.0.1, localhost, or *.supabase.invalid."
     )
@@ -249,7 +283,7 @@ def verify_connected_postgres_is_disposable(conn: Any) -> None:
             conn.close()
         except Exception:
             pass
-        raise RuntimeError(
+        raise TestIsolationViolation(
             f"[TEST ISOLATION GUARD] Failed server-side disposable DB verification: {exc}"
         ) from exc
 
@@ -261,7 +295,7 @@ def verify_connected_postgres_is_disposable(conn: Any) -> None:
             conn.close()
         except Exception:
             pass
-        raise RuntimeError(
+        raise TestIsolationViolation(
             f"[TEST ISOLATION GUARD] Refusing operation on non-disposable server database '{actual_db}'."
         )
 
@@ -282,7 +316,7 @@ def verify_connected_postgres_is_disposable(conn: Any) -> None:
                 conn.close()
             except Exception:
                 pass
-            raise RuntimeError(
+            raise TestIsolationViolation(
                 f"[TEST ISOLATION GUARD] Refusing connection to non-local PostgreSQL server IP '{server_addr}'."
             )
 
@@ -294,7 +328,7 @@ def validate_isolated_test_environment() -> None:
 
     for forbidden_var in ("STAGING_DATABASE_URL", "SUPABASE_DB_URL"):
         if os.getenv(forbidden_var, "").strip():
-            raise RuntimeError(
+            raise TestIsolationViolation(
                 f"[TEST ISOLATION GUARD] Forbidden environment variable '{forbidden_var}' must be empty in test mode."
             )
 

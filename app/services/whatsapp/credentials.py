@@ -22,6 +22,7 @@ def get_supabase() -> Optional[Client]:
     global _supabase_client
     if _supabase_client is None:
         from app.core.security.test_isolation_guard import (
+            TestIsolationViolation,
             assert_disposable_supabase_url,
             safe_load_dotenv,
         )
@@ -44,6 +45,8 @@ def get_supabase() -> Optional[Client]:
             assert_disposable_supabase_url(supabase_url, allow_empty=False)
             try:
                 _supabase_client = create_client(supabase_url, supabase_key)
+            except TestIsolationViolation:
+                raise
             except Exception as e:
                 logger.error(f"[Supabase Init Error] {e}")
     return _supabase_client

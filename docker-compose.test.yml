@@ -92,3 +92,4 @@ networks:
   test_internal_net:
     driver: bridge
     internal: true
+
