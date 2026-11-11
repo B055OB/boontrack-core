@@ -58,11 +58,14 @@ from app.routes.auth_routes import (
     _record_dead_letter_cleanup,
     _clear_dead_letter_cleanup,
     verification_rate_limiter,
+    VerificationRateLimiter,
     DistributedAuthRateLimiter,
     auth_rate_limiter,
     TokenStore,
     _DEAD_LETTER_CLEANUP_REGISTRY,
     _AUTH_HASH_TAG,
+    _is_production_environment,
+    _is_auth_rate_limit_disabled,
 )
 from app.core.security.trusted_proxy import get_trusted_client_ip, TrustedProxyResolver
 from app.routes.media_routes import (
@@ -2147,6 +2150,144 @@ sys.exit(0)
         _clear_dead_letter_cleanup(mixed_slug_1)
         _clear_dead_letter_cleanup(mixed_slug_2)
         _clear_dead_letter_cleanup(mixed_slug_3)
+
+    # -------------------------------------------------------------------------
+    # Test 23: Production Rate Limit Bypass Prevention & Fail-Closed Invariants
+    # -------------------------------------------------------------------------
+    def test_23_production_rate_limit_bypass_prevention_and_fail_closed(self):
+        """
+        CTO WORK ORDER REMEDIATION:
+        Proves:
+        1. In production mode (APP_ENV, ENV, ENVIRONMENT, BOONTRACK_ENV in prod/production),
+           setting BOONTRACK_DISABLE_AUTH_RATE_LIMIT=true is STRICTLY IGNORED.
+        2. DistributedAuthRateLimiter.is_allowed() enforces limits and rejects requests when budget is exceeded.
+        3. VerificationRateLimiter.is_ip_allowed() enforces IP limits and rejects requests when limit is exceeded.
+        4. VerificationRateLimiter.is_challenge_locked() enforces challenge lockout when attempts >= 5.
+        5. VerificationRateLimiter.is_account_locked() enforces account lockout when attempts >= 5.
+        6. When Redis is unavailable in production mode, all 4 rate-limiting methods strictly fail closed (raise RuntimeError).
+        7. In non-production environments (test/development), the BOONTRACK_DISABLE_AUTH_RATE_LIMIT override
+           remains fully functional.
+        """
+        # A. Verify _is_production_environment and _is_auth_rate_limit_disabled across environment variables
+        prod_variants = [
+            {"APP_ENV": "production"},
+            {"APP_ENV": "prod"},
+            {"ENV": "production"},
+            {"ENVIRONMENT": "production"},
+            {"BOONTRACK_ENV": "production"},
+        ]
+
+        for env_dict in prod_variants:
+            with patch.dict(os.environ, {**env_dict, "BOONTRACK_DISABLE_AUTH_RATE_LIMIT": "true"}):
+                self.assertTrue(_is_production_environment(), f"Must recognize production for {env_dict}")
+                self.assertFalse(_is_auth_rate_limit_disabled(), f"Override must be ignored in production for {env_dict}")
+
+        # B. Non-production environment override behavior
+        non_prod_variants = [
+            {"APP_ENV": "test", "ENV": "", "ENVIRONMENT": "", "BOONTRACK_ENV": ""},
+            {"APP_ENV": "development", "ENV": "", "ENVIRONMENT": "", "BOONTRACK_ENV": ""},
+            {"APP_ENV": "staging", "ENV": "", "ENVIRONMENT": "", "BOONTRACK_ENV": ""},
+        ]
+
+        for env_dict in non_prod_variants:
+            with patch.dict(os.environ, {**env_dict, "BOONTRACK_DISABLE_AUTH_RATE_LIMIT": "true"}):
+                self.assertFalse(_is_production_environment(), f"Must not be production for {env_dict}")
+                self.assertTrue(_is_auth_rate_limit_disabled(), f"Override must be active outside production for {env_dict}")
+
+            with patch.dict(os.environ, {**env_dict, "BOONTRACK_DISABLE_AUTH_RATE_LIMIT": "0"}):
+                self.assertFalse(_is_auth_rate_limit_disabled(), f"Override must be inactive when 0 for {env_dict}")
+
+        # C. Production mode with BOONTRACK_DISABLE_AUTH_RATE_LIMIT=true cannot bypass rate limiting
+        prod_env = {
+            "APP_ENV": "production",
+            "ENV": "",
+            "ENVIRONMENT": "",
+            "BOONTRACK_ENV": "",
+            "BOONTRACK_DISABLE_AUTH_RATE_LIMIT": "true",
+            "REDIS_REQUIRED": "1",
+        }
+
+        # Create isolated TokenStore with mock redis client for deterministic counter testing
+        mock_redis = unittest.mock.MagicMock()
+        mock_store = TokenStore()
+        mock_store._redis_client = mock_redis
+
+        with patch.dict(os.environ, prod_env):
+            # 1. DistributedAuthRateLimiter in production with bypass attempted:
+            lim = DistributedAuthRateLimiter(endpoint="prod_test", max_requests=3, window_seconds=60, store=mock_store)
+            # Simulate Redis EVAL returning current=4, ttl=55 (budget 3 exceeded)
+            mock_redis.eval.return_value = [4, 55]
+            allowed, retry_after = lim.is_allowed("attacker@prod.test", client_ip="198.51.100.1")
+            self.assertFalse(allowed, "BOONTRACK_DISABLE_AUTH_RATE_LIMIT=true must NOT bypass DistributedAuthRateLimiter in production")
+            self.assertEqual(retry_after, 55)
+
+            # 2. VerificationRateLimiter.is_ip_allowed in production with bypass attempted:
+            v_lim = VerificationRateLimiter(token_store_instance=mock_store)
+            # Simulate Redis EVAL returning current=16, ttl=45 (limit 15 exceeded)
+            mock_redis.eval.return_value = [16, 45]
+            allowed_ip, retry_after_ip = v_lim.is_ip_allowed("198.51.100.2")
+            self.assertFalse(allowed_ip, "BOONTRACK_DISABLE_AUTH_RATE_LIMIT=true must NOT bypass is_ip_allowed in production")
+            self.assertEqual(retry_after_ip, 45)
+
+            # 3. VerificationRateLimiter.is_challenge_locked in production with bypass attempted:
+            mock_redis.get.return_value = "5"
+            mock_redis.ttl.return_value = 600
+            locked_ch, ttl_ch = v_lim.is_challenge_locked("ch_test_production_lockout")
+            self.assertTrue(locked_ch, "BOONTRACK_DISABLE_AUTH_RATE_LIMIT=true must NOT bypass is_challenge_locked in production")
+            self.assertEqual(ttl_ch, 600)
+
+            # 4. VerificationRateLimiter.is_account_locked in production with bypass attempted:
+            mock_redis.get.return_value = "5"
+            mock_redis.ttl.return_value = 750
+            locked_acc, ttl_acc = v_lim.is_account_locked("victim@prod.test")
+            self.assertTrue(locked_acc, "BOONTRACK_DISABLE_AUTH_RATE_LIMIT=true must NOT bypass is_account_locked in production")
+            self.assertEqual(ttl_acc, 750)
+
+        # D. Production Redis failure fail-closed verification
+        unhealthy_store = TokenStore()
+        unhealthy_store._redis_client = None
+
+        with patch.dict(os.environ, prod_env):
+            # 1. DistributedAuthRateLimiter fails closed on Redis outage
+            lim_fail = DistributedAuthRateLimiter(endpoint="fail_test", max_requests=5, window_seconds=60, store=unhealthy_store)
+            with self.assertRaises(RuntimeError) as cm1:
+                lim_fail.is_allowed("user@prod.fail")
+            self.assertIn("SECURITY FAIL-CLOSED", str(cm1.exception))
+
+            # 2. VerificationRateLimiter.is_ip_allowed fails closed on Redis outage
+            v_lim_fail = VerificationRateLimiter(token_store_instance=unhealthy_store)
+            with self.assertRaises(RuntimeError) as cm2:
+                v_lim_fail.is_ip_allowed("203.0.113.99")
+            self.assertIn("SECURITY FAIL-CLOSED", str(cm2.exception))
+
+            # 3. VerificationRateLimiter.is_challenge_locked fails closed on Redis outage
+            with self.assertRaises(RuntimeError) as cm3:
+                v_lim_fail.is_challenge_locked("ch_fail_production")
+            self.assertIn("SECURITY FAIL-CLOSED", str(cm3.exception))
+
+            # 4. VerificationRateLimiter.is_account_locked fails closed on Redis outage
+            with self.assertRaises(RuntimeError) as cm4:
+                v_lim_fail.is_account_locked("user@prod.fail")
+            self.assertIn("SECURITY FAIL-CLOSED", str(cm4.exception))
+
+        # E. Non-production bypass verified working as intended for dev/test speed
+        dev_env = {
+            "APP_ENV": "test",
+            "ENV": "",
+            "ENVIRONMENT": "",
+            "BOONTRACK_ENV": "",
+            "BOONTRACK_DISABLE_AUTH_RATE_LIMIT": "true",
+            "REDIS_REQUIRED": "0",
+        }
+        with patch.dict(os.environ, dev_env):
+            lim_dev = DistributedAuthRateLimiter(endpoint="dev_test", max_requests=1, window_seconds=60, store=unhealthy_store)
+            v_lim_dev = VerificationRateLimiter(token_store_instance=unhealthy_store)
+
+            # All 4 methods bypass cleanly in dev/test without needing Redis
+            self.assertEqual(lim_dev.is_allowed("dev_user@boontrack.id"), (True, 0))
+            self.assertEqual(v_lim_dev.is_ip_allowed("127.0.0.1"), (True, 0))
+            self.assertEqual(v_lim_dev.is_challenge_locked("any_challenge"), (False, 0))
+            self.assertEqual(v_lim_dev.is_account_locked("any_account@boontrack.id"), (False, 0))
 
 
 if __name__ == "__main__":

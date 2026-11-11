@@ -115,15 +115,38 @@ def clear_auth_test_registries() -> None:
         pass
 
 
+def _is_production_environment() -> bool:
+    """
+    Returns True if the application is running in production mode.
+    Evaluates APP_ENV, ENV, ENVIRONMENT, and BOONTRACK_ENV for 'prod' or 'production'.
+    """
+    for env_var in ("APP_ENV", "ENV", "ENVIRONMENT", "BOONTRACK_ENV"):
+        val = os.getenv(env_var, "").strip().lower()
+        if val in ("prod", "production"):
+            return True
+    return False
+
+
+def _is_auth_rate_limit_disabled() -> bool:
+    """
+    Checks if the BOONTRACK_DISABLE_AUTH_RATE_LIMIT override is active.
+    CRITICAL SECURITY GUARD:
+    This override is strictly honored ONLY outside production mode.
+    In production (APP_ENV, ENV, ENVIRONMENT, or BOONTRACK_ENV configured as prod/production),
+    the override is completely ignored to prevent authentication rate limit bypass.
+    """
+    if _is_production_environment():
+        return False
+    return os.getenv("BOONTRACK_DISABLE_AUTH_RATE_LIMIT", "").strip().lower() in ("1", "true", "yes")
+
+
 def _is_test_registry_allowed() -> bool:
     """
     Strict security check: ensures in-memory test registries cannot act as production authorization sources.
     Returns False if running in production mode.
     """
-    for env_var in ("APP_ENV", "ENV", "ENVIRONMENT", "BOONTRACK_ENV"):
-        val = os.getenv(env_var, "").strip().lower()
-        if val in ("prod", "production"):
-            return False
+    if _is_production_environment():
+        return False
     if os.getenv("BOONTRACK_TEST_REGISTRY_ENABLED", "").lower() in ("1", "true"):
         return True
     if "pytest" in sys.modules:
@@ -1243,10 +1266,8 @@ def _is_distributed_token_store_required() -> bool:
     In production mode or when REDIS_REQUIRED is explicitly configured, in-memory fallbacks
     are prohibited to prevent multi-worker session inconsistencies.
     """
-    for env_var in ("APP_ENV", "ENV", "ENVIRONMENT", "BOONTRACK_ENV"):
-        val = os.getenv(env_var, "").strip().lower()
-        if val in ("prod", "production"):
-            return True
+    if _is_production_environment():
+        return True
     if os.getenv("REDIS_REQUIRED", "").strip().lower() in ("1", "true", "yes"):
         return True
     return False
@@ -1552,7 +1573,7 @@ class DistributedAuthRateLimiter:
         return self.store or token_store
 
     def is_allowed(self, identifier: str, client_ip: Optional[str] = None) -> Tuple[bool, int]:
-        if os.getenv("BOONTRACK_DISABLE_AUTH_RATE_LIMIT", "").lower() in ("1", "true"):
+        if _is_auth_rate_limit_disabled():
             return True, 0
 
         clean_id = str(identifier).strip().lower()
@@ -1677,7 +1698,7 @@ class VerificationRateLimiter:
 
     def is_ip_allowed(self, client_ip: str) -> Tuple[bool, int]:
         """Checks per-source IP rate limit (15 req/60s)."""
-        if os.getenv("BOONTRACK_DISABLE_AUTH_RATE_LIMIT", "").lower() in ("1", "true"):
+        if _is_auth_rate_limit_disabled():
             return True, 0
 
         clean_ip = str(client_ip or "127.0.0.1").strip()
@@ -1711,7 +1732,9 @@ class VerificationRateLimiter:
 
     def is_challenge_locked(self, challenge_id: str) -> Tuple[bool, int]:
         """Checks if a challenge has reached the max failed attempts (5)."""
-        if not challenge_id or os.getenv("BOONTRACK_DISABLE_AUTH_RATE_LIMIT", "").lower() in ("1", "true"):
+        if not challenge_id:
+            return False, 0
+        if _is_auth_rate_limit_disabled():
             return False, 0
 
         clean_id = str(challenge_id).strip()
@@ -1745,7 +1768,9 @@ class VerificationRateLimiter:
 
     def is_account_locked(self, account_id: str) -> Tuple[bool, int]:
         """Checks if an account (email) has reached the max failed attempts (5)."""
-        if not account_id or os.getenv("BOONTRACK_DISABLE_AUTH_RATE_LIMIT", "").lower() in ("1", "true"):
+        if not account_id:
+            return False, 0
+        if _is_auth_rate_limit_disabled():
             return False, 0
 
         clean_acc = str(account_id).strip().lower()

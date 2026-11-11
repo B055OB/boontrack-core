@@ -48,6 +48,7 @@ Dedicated comprehensive security remediation closing all confirmed and condition
 | **P1 — Separated Rate Limiter Counters (Account vs IP Buckets)** | 🟡 P1 High | ✅ CLOSED | Rotating IP or email cannot reset rate limit counters |
 | **P1 — Actual Registration HTTP Rate Limit Integration Test** | 🟡 P1 High | ✅ CLOSED | 10 requests accepted (201), 11th request rejected (429); cross-instance verified |
 | **P1 — Mandatory Redis Health in CI (`redis:7-alpine`)** | 🟡 P1 High | ✅ CLOSED | Distributed rate limiter & hash tag assertions enforced |
+| **P0 — Production Rate-Limit Bypass Prevention (`BOONTRACK_DISABLE_AUTH_RATE_LIMIT`)** | 🔴 P0 Critical | ✅ CLOSED | Override ignored in prod; fails closed on Redis outage |
 | **P2 — Remote Quality Gate (mypy & pre-commit in CI)** | 🟢 P2 Medium | ✅ PASSED | Integrated into GitHub Actions workflow, 100% clean |
 | **P2 — Commit SHA Reconciliation & Provenance Verification** | 🟢 P2 Medium | ✅ VERIFIED | All three git identities explicitly documented |
 
@@ -110,23 +111,33 @@ Dedicated comprehensive security remediation closing all confirmed and condition
   - Pre-commit configuration (`.pre-commit-config.yaml`) validates AST syntax and runs static type checking.
   - Verified across multiple CI runs (Passed with exit code 0).
 
+### 6. Production Rate-Limit Bypass Prevention (`BOONTRACK_DISABLE_AUTH_RATE_LIMIT`) (P0/P1)
+- **Target:** `app/routes/auth_routes.py` (`DistributedAuthRateLimiter.is_allowed`, `VerificationRateLimiter.is_ip_allowed`, `VerificationRateLimiter.is_challenge_locked`, `VerificationRateLimiter.is_account_locked`)
+- **Remediation & Evidence:**
+  - Audited all occurrences of `BOONTRACK_DISABLE_AUTH_RATE_LIMIT` across the repository.
+  - Implemented `_is_production_environment()` and `_is_auth_rate_limit_disabled()`: in production (`APP_ENV`, `ENV`, `ENVIRONMENT`, `BOONTRACK_ENV` configured as `prod` or `production`), the environment override is **strictly ignored**.
+  - Rate limiting is enforced consistently across `DistributedAuthRateLimiter.is_allowed()`, `VerificationRateLimiter.is_ip_allowed()`, `VerificationRateLimiter.is_challenge_locked()`, and `VerificationRateLimiter.is_account_locked()`.
+  - In production mode, Redis outages strictly fail closed (`raise RuntimeError("[SECURITY FAIL-CLOSED]...")`).
+  - Outside production (development/test), `BOONTRACK_DISABLE_AUTH_RATE_LIMIT` continues to function for test execution speed.
+  - Added dedicated regression coverage `TestAuthPostgresIntegration.test_23_production_rate_limit_bypass_prevention_and_fail_closed`.
+
 ---
 
 ## Changed Files Inventory
 
 | File | Type | Description |
 | :--- | :--- | :--- |
-| [`app/routes/auth_routes.py`](file:///C:/boontrack-core/app/routes/auth_routes.py) | Modified | Enforced atomic Supabase RPC or fail-closed on revert; eliminated check-then-update; fail-closed tenant guard with row locking. |
-| [`tests/test_auth_postgres_integration.py`](file:///C:/boontrack-core/tests/test_auth_postgres_integration.py) | Modified | Added Scenario 2e (PostgreSQL query exception), Section 5 (Actual Registration HTTP Rate Limit), distinct `app2` instance, OS worker subprocess, and empirical `TrustedProxyResolver` proof. |
+| [`app/routes/auth_routes.py`](file:///C:/boontrack-core/app/routes/auth_routes.py) | Modified | Enforced atomic Supabase RPC or fail-closed on revert; eliminated check-then-update; fail-closed tenant guard; strictly ignored `BOONTRACK_DISABLE_AUTH_RATE_LIMIT` in production across all rate limiters. |
+| [`tests/test_auth_postgres_integration.py`](file:///C:/boontrack-core/tests/test_auth_postgres_integration.py) | Modified | Added Scenario 2e (PostgreSQL query exception), Section 5 (Actual Registration HTTP Rate Limit), distinct `app2` instance, OS worker subprocess, empirical `TrustedProxyResolver` proof, and `test_23` (Production Rate Limit Bypass Prevention). |
 | [`.github/workflows/cto-security-audit.yml`](file:///C:/boontrack-core/.github/workflows/cto-security-audit.yml) | Modified | Added `mypy` and `pre-commit` quality gate step before integration tests. |
 | [`.pre-commit-config.yaml`](file:///C:/boontrack-core/.pre-commit-config.yaml) | Tracked | Configured local hooks for `mypy-auth` and `check-ast`. |
-| [`PR29_AUTH_SECURITY_FINAL_DELIVERY_REPORT.md`](file:///C:/boontrack-core/PR29_AUTH_SECURITY_FINAL_DELIVERY_REPORT.md) | Updated | Comprehensive delivery report updated with exact SHA reconciliation, cross-instance evidence, and test count arithmetic. |
+| [`PR29_AUTH_SECURITY_FINAL_DELIVERY_REPORT.md`](file:///C:/boontrack-core/PR29_AUTH_SECURITY_FINAL_DELIVERY_REPORT.md) | Updated | Comprehensive delivery report updated with exact SHA reconciliation, rate limit bypass closure, cross-instance evidence, and test count arithmetic. |
 
 ---
 
 ## Full Regression Test Matrix (CI Execution Arithmetic Reconciled)
 
-The CI workflow executes 3 sequential Pytest steps totaling **242 passing tests**:
+The CI workflow executes 3 sequential Pytest steps totaling **243 passing tests**:
 
 ### Step 1: Core Security Gates, R2 Storage, HMAC, Multi-Tenant RLS, Worker Isolation & Meta Webhooks (113 Tests)
 | Test File | Description | Tests | Status |
@@ -152,20 +163,20 @@ The CI workflow executes 3 sequential Pytest steps totaling **242 passing tests*
 | `tests/api/test_upload_alias_authorization.py` | Upload URL aliases & authorization | 30 | ✅ 30/30 PASSED |
 | **Subtotal Step 2** | **Upload Security Suites** | **76** | ✅ **76/76 PASSED** |
 
-### Step 3: Auth Registration & Identity Verification Security Suites (PR #29) (53 Tests)
+### Step 3: Auth Registration & Identity Verification Security Suites (PR #29) (54 Tests)
 | Test File | Description | Tests | Status |
 | :--- | :--- | :---: | :---: |
 | `tests/api/test_auth_registration_security.py` | PR #29 Auth registration fail-closed & memory authority removal | 18 | ✅ 18/18 PASSED |
 | `tests/test_email_auth.py` | PR #29 Email auth & challenge-bound OTP verification | 13 | ✅ 13/13 PASSED |
-| `tests/test_auth_postgres_integration.py` | PR #29 Live PostgreSQL, Redis cluster, Rate limit, and Cleanup suites | 22 | ✅ 22/22 PASSED |
-| **Subtotal Step 3** | **Auth Security Suites** | **53** | ✅ **53/53 PASSED** |
+| `tests/test_auth_postgres_integration.py` | PR #29 Live PostgreSQL, Redis cluster, Rate limit bypass prevention, and Cleanup suites | 23 | ✅ 23/23 PASSED |
+| **Subtotal Step 3** | **Auth Security Suites** | **54** | ✅ **54/54 PASSED** |
 
 ### Quality & Audit Gates
 | Gate Name | Scope | Status |
 | :--- | :--- | :---: |
 | **Static Quality Gate (mypy + pre-commit)** | Python AST validation & static type checking | ✅ PASSED |
 | **PostgreSQL Catalog RLS Audit Gate** | pg_class / pg_policy security invoker audit | ✅ PASSED |
-| **Total Automated Test Count** | **Grand Total (113 + 76 + 53)** | ✅ **242 / 242 PASSED (100% Green)** |
+| **Total Automated Test Count** | **Grand Total (113 + 76 + 54)** | ✅ **243 / 243 PASSED (100% Green)** |
 
 ---
 
