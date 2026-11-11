@@ -681,65 +681,31 @@ def _revert_pending_merchant_activation(slug: str, owner_email: str) -> Tuple[bo
     except Exception as c_err:
         revert_error = f"POSTGRESQL_CONNECTION_ERROR: {c_err}"
 
-    # 2. Supabase Fallback (Only reachable if PostgreSQL connection failed/unavailable)
+    # 2. Supabase Fallback: Only allow atomic transactional RPC or fail closed.
+    # Non-atomic check-then-update across separate REST requests is strictly prohibited.
     try:
         supabase = get_supabase()
         if supabase:
-            # Check tenant status first in Supabase - MUST FAIL CLOSED on error!
-            t_check = supabase.table("tenants").select("status, is_active").eq("slug", clean_s).limit(1).execute()
-            t_data = getattr(t_check, "data", None)
-            if t_data is None:
-                fail_msg = f"TENANT_GUARD_UNKNOWN_STATE: Supabase query returned no data; prior_error={revert_error}"
-                logger.critical(f"[FAIL-CLOSED REVERT] {fail_msg}")
-                return False, fail_msg
-
-            if len(t_data) > 0 and (t_data[0].get("status") == "ACTIVE" or t_data[0].get("is_active") is True):
-                logger.warning(
-                    f"[REVERT GUARD] Supabase reports tenant '{clean_s}' is ACTIVE or is_active=true. Refusing revert."
-                )
-                return False, "CANNOT_REVERT_ACTIVE_TENANT: Tenant is ACTIVE or is_active=true"
-
-            # Execute merchant update in Supabase
-            res = (
-                supabase.table("merchants")
-                .update({
-                    "status": "PENDING_VERIFICATION",
-                    "is_otp_verified": False,
-                })
-                .eq("slug", clean_s)
-                .ilike("owner_email", clean_e)
-                .execute()
-            )
-            data = getattr(res, "data", None)
-            if data and len(data) == 1:
-                return True, None
-
-            # Secondary state query to verify
-            chk = (
-                supabase.table("merchants")
-                .select("id, status, owner_email")
-                .eq("slug", clean_s)
-                .execute()
-            )
-            chk_data = getattr(chk, "data", None) or []
-            if chk_data:
-                first = chk_data[0]
-                if str(first.get("owner_email", "")).strip().lower() != clean_e:
-                    revert_error = f"{revert_error}; Supabase revert failed: owner_email mismatch"
-                elif first.get("status") == "PENDING_VERIFICATION":
+            try:
+                rpc_res = supabase.rpc(
+                    "revert_pending_merchant_activation",
+                    {"p_slug": clean_s, "p_owner_email": clean_e},
+                ).execute()
+                rpc_data = getattr(rpc_res, "data", None)
+                if rpc_data is True or (isinstance(rpc_data, dict) and rpc_data.get("success") is True):
                     return True, None
-                else:
-                    revert_error = f"{revert_error}; Supabase UPDATE affected 0 rows, status remains {first.get('status')}"
-            else:
-                revert_error = f"{revert_error}; Supabase UPDATE affected 0 rows and merchant not found"
-            return False, revert_error
+                elif isinstance(rpc_data, dict) and "CANNOT_REVERT_ACTIVE_TENANT" in str(rpc_data.get("error", "")):
+                    return False, "CANNOT_REVERT_ACTIVE_TENANT: Tenant is ACTIVE or is_active=true"
+                elif isinstance(rpc_data, dict) and rpc_data.get("error"):
+                    return False, f"SUPABASE_RPC_REVERT_ERROR: {rpc_data.get('error')}"
+            except Exception as rpc_err:
+                logger.warning(f"[REVERT RPC] Supabase atomic RPC unavailable: {rpc_err}")
     except Exception as s_err:
-        fail_msg = f"TENANT_GUARD_UNKNOWN_STATE: Supabase error: {s_err}; prior_error={revert_error}"
-        logger.critical(f"[FAIL-CLOSED REVERT] {fail_msg}")
-        return False, fail_msg
+        pass
 
-    # If neither PostgreSQL nor Supabase was available
-    fail_msg = f"TENANT_GUARD_UNKNOWN_STATE: Database unavailable; prior_error={revert_error}"
+    # Fail closed when PostgreSQL is unavailable and no transactional RPC can confirm atomic revert
+    fail_msg = f"TENANT_GUARD_UNKNOWN_STATE: Atomic revert requires PostgreSQL transaction or transactional RPC; prior_error={revert_error}"
+    logger.critical(f"[FAIL-CLOSED REVERT] {fail_msg}")
     return False, fail_msg
 
 

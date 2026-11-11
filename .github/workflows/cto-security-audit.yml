@@ -80,7 +80,7 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install --prefer-binary -r requirements.txt; fi
           pip install --no-deps aiogram==2.25.2
-          pip install pytest pytest-asyncio pytest-cov
+          pip install pytest pytest-asyncio pytest-cov mypy pre-commit
 
       - name: Verify Tested Commit SHA Provenance
         run: |
@@ -104,6 +104,15 @@ jobs:
             echo "Direct Push / Dispatch Commit:          ${{ github.sha }}"
           fi
           echo "========================================================"
+
+      - name: Run Static Typecheck & Pre-Commit Quality Gate (CTO P2)
+        run: |
+          set -o pipefail
+          echo "========================================================"
+          echo "EXECUTING PRE-COMMIT & MYPY QUALITY GATES"
+          echo "--------------------------------------------------------"
+          python -m pre_commit run --all-files --show-diff-on-failure
+          python -m mypy --follow-imports=skip --ignore-missing-imports app/routes/auth_routes.py tests/test_auth_postgres_integration.py
 
       - name: Initialize PostgreSQL Test Database Roles & RLS Schema
         run: |

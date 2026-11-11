@@ -1432,12 +1432,50 @@ class TestAuthPostgresIntegration(unittest.TestCase):
 
         # Supabase tenant check returns None / error -> fail closed
         mock_sb_err = unittest.mock.MagicMock()
-        mock_sb_err.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = Exception("Supabase network error")
+        mock_sb_err.rpc.return_value.execute.side_effect = Exception("Supabase network error")
         with patch("app.core.database.get_db_connection", side_effect=Exception("PG Down")):
             with patch("app.routes.auth_routes.get_supabase", return_value=mock_sb_err):
                 ok_sb_unk, err_sb_unk = _revert_pending_merchant_activation("sb_unk_slug", "owner@sb.test")
                 self.assertFalse(ok_sb_unk, "Revert must fail closed when Supabase tenant check errors")
                 self.assertIn("TENANT_GUARD_UNKNOWN_STATE", str(err_sb_unk))
+
+        # 2e. PostgreSQL Query Exception Test (CTO P1 Hardening)
+        # Verify:
+        # - PostgreSQL connection succeeds (get_db_connection returns mock_pg_conn).
+        # - Query on tenant guard raises an exception during execution.
+        # - Must execute conn.rollback().
+        # - Must return (False, "TENANT_GUARD_UNKNOWN_STATE...").
+        # - Must NOT call Supabase fallback (fail-closed immediately).
+        # - Must retain dead-letter record.
+        query_fail_slug = f"query-fail-{uuid.uuid4().hex[:8]}"
+        query_fail_email = f"query_fail_{query_fail_slug}@boontrack.id"
+
+        mock_pg_conn = unittest.mock.MagicMock()
+        mock_pg_cur = unittest.mock.MagicMock()
+        mock_pg_conn.cursor.return_value.__enter__.return_value = mock_pg_cur
+        mock_pg_cur.execute.side_effect = Exception("Simulated PostgreSQL tenant guard query timeout/failure")
+
+        mock_supabase_probe = unittest.mock.MagicMock()
+
+        _record_dead_letter_cleanup(query_fail_slug, query_fail_email, "simulated query exception test", action="revert")
+
+        with patch("app.core.database.get_db_connection", return_value=mock_pg_conn):
+            with patch("app.routes.auth_routes.get_supabase", return_value=mock_supabase_probe):
+                ok_qf, err_qf = _revert_pending_merchant_activation(query_fail_slug, query_fail_email)
+                self.assertFalse(ok_qf, "Revert must fail when PostgreSQL query raises an exception")
+                self.assertIn("TENANT_GUARD_UNKNOWN_STATE", str(err_qf))
+                self.assertIn("Simulated PostgreSQL tenant guard query timeout/failure", str(err_qf))
+                # Verify rollback was called on PostgreSQL connection
+                mock_pg_conn.rollback.assert_called()
+                # Verify Supabase fallback is NOT called when connection succeeded
+                mock_supabase_probe.table.assert_not_called()
+                mock_supabase_probe.rpc.assert_not_called()
+
+        # Verify dead-letter record is preserved
+        res_reconcile = reconcile_pending_cleanups()
+        self.assertIn(query_fail_slug, res_reconcile["failed"])
+        self.assertIn(query_fail_slug, _DEAD_LETTER_CLEANUP_REGISTRY)
+        _clear_dead_letter_cleanup(query_fail_slug)
 
         # 3. Production fail-closed on leader lock unavailable
         with patch.dict(os.environ, {"APP_ENV": "production", "REDIS_REQUIRED": "true"}):
@@ -1817,6 +1855,90 @@ class TestAuthPostgresIntegration(unittest.TestCase):
                 res_http_4th = self.client.post("/api/v1/auth/magic-link/request", json={"email": http_user})
                 self.assertEqual(res_http_4th.status_code, 429)
                 self.assertIn("Terlalu banyak permintaan autentikasi", res_http_4th.json()["detail"])
+
+            # 5. Actual Registration HTTP Rate Limit Test (CTO P1 Hardening)
+            # Verify:
+            # - Actual /api/v1/auth/register endpoint using real register_rate_limiter (budget: 10 requests).
+            # - 10 consecutive registration requests succeed (HTTP 201).
+            # - 11th registration request fails with HTTP 429 and proper error message.
+            # - Independent application instance sharing Redis CANNOT bypass the limit (gets HTTP 429).
+            # - Request with rotated IP for the same account CANNOT bypass the limit (gets HTTP 429).
+            from contextlib import ExitStack
+            reg_http_user = f"reg_http_user_{uuid.uuid4().hex[:6]}@boontrack.id"
+            register_rate_limiter.reset()
+
+            client_instance_2 = TestClient(app)
+
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(email_service, "send_magic_link_email", return_value=True))
+                if not LIVE_POSTGRES_ACTIVE:
+                    stack.enter_context(patch("app.routes.auth_routes._query_existing_merchant_by_slug", return_value=(None, None)))
+                    stack.enter_context(patch("app.routes.auth_routes._insert_pending_merchant", return_value=(True, None)))
+
+                # 10 successful registrations with distinct tenant slugs
+                for idx in range(10):
+                    unique_slug = f"rlim-slug-{uuid.uuid4().hex[:8]}"
+                    if LIVE_POSTGRES_ACTIVE:
+                        self.__class__.test_slugs_to_cleanup.append(unique_slug)
+                    reg_payload = {
+                        "email": reg_http_user,
+                        "name": f"Rate Limit Test User {idx}",
+                        "tenant_slug": unique_slug,
+                        "phone": "081299998888",
+                        "store_name": f"Store {idx}",
+                    }
+                    res_reg = self.client.post("/api/v1/auth/register", json=reg_payload)
+                    self.assertEqual(
+                        res_reg.status_code,
+                        201,
+                        f"Registration request {idx + 1}/10 must be allowed; got {res_reg.status_code}: {res_reg.text}",
+                    )
+
+                # 11th registration request on client instance 1: must be blocked (HTTP 429)
+                overflow_slug_1 = f"rlim-overflow-1-{uuid.uuid4().hex[:8]}"
+                res_reg_11th = self.client.post(
+                    "/api/v1/auth/register",
+                    json={
+                        "email": reg_http_user,
+                        "name": "Overflow User 1",
+                        "tenant_slug": overflow_slug_1,
+                        "phone": "081299998888",
+                        "store_name": "Overflow Store 1",
+                    },
+                )
+                self.assertEqual(res_reg_11th.status_code, 429)
+                self.assertIn("Terlalu banyak permintaan registrasi", res_reg_11th.json()["detail"])
+
+                # Cross-instance bypass test: second client instance must also be blocked (HTTP 429)
+                overflow_slug_2 = f"rlim-overflow-2-{uuid.uuid4().hex[:8]}"
+                res_reg_cross = client_instance_2.post(
+                    "/api/v1/auth/register",
+                    json={
+                        "email": reg_http_user,
+                        "name": "Cross Instance User",
+                        "tenant_slug": overflow_slug_2,
+                        "phone": "081299998888",
+                        "store_name": "Overflow Store 2",
+                    },
+                )
+                self.assertEqual(res_reg_cross.status_code, 429, "Second application instance sharing Redis must be rate-limited")
+                self.assertIn("Terlalu banyak permintaan registrasi", res_reg_cross.json()["detail"])
+
+                # IP rotation bypass test: request with different X-Forwarded-For must also be blocked (HTTP 429)
+                overflow_slug_3 = f"rlim-overflow-3-{uuid.uuid4().hex[:8]}"
+                res_reg_ip = self.client.post(
+                    "/api/v1/auth/register",
+                    headers={"X-Forwarded-For": "203.0.113.199"},
+                    json={
+                        "email": reg_http_user,
+                        "name": "IP Rotation User",
+                        "tenant_slug": overflow_slug_3,
+                        "phone": "081299998888",
+                        "store_name": "Overflow Store 3",
+                    },
+                )
+                self.assertEqual(res_reg_ip.status_code, 429, "Rotating IP must NOT bypass account registration rate limit")
+                self.assertIn("Terlalu banyak permintaan registrasi", res_reg_ip.json()["detail"])
 
             # Production mode fail-closed when Redis is down
             with patch.dict(os.environ, {"APP_ENV": "production", "REDIS_REQUIRED": "true"}):
