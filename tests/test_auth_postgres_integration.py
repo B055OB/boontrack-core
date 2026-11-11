@@ -1423,6 +1423,22 @@ class TestAuthPostgresIntegration(unittest.TestCase):
             self.assertFalse(ok_zero)
             self.assertIn("affected 0 rows", str(err_zero))
 
+        # 2d. Fail-Closed Tenant Guard on Revert when DB error occurs (CTO P1)
+        with patch("app.core.database.get_db_connection", side_effect=Exception("PG DB Error during revert")):
+            with patch("app.routes.auth_routes.get_supabase", return_value=None):
+                ok_unk, err_unk = _revert_pending_merchant_activation("unknown_err_slug", "owner@unknown.test")
+                self.assertFalse(ok_unk, "Revert must fail closed when tenant state is unknown")
+                self.assertIn("TENANT_GUARD_UNKNOWN_STATE", str(err_unk))
+
+        # Supabase tenant check returns None / error -> fail closed
+        mock_sb_err = unittest.mock.MagicMock()
+        mock_sb_err.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = Exception("Supabase network error")
+        with patch("app.core.database.get_db_connection", side_effect=Exception("PG Down")):
+            with patch("app.routes.auth_routes.get_supabase", return_value=mock_sb_err):
+                ok_sb_unk, err_sb_unk = _revert_pending_merchant_activation("sb_unk_slug", "owner@sb.test")
+                self.assertFalse(ok_sb_unk, "Revert must fail closed when Supabase tenant check errors")
+                self.assertIn("TENANT_GUARD_UNKNOWN_STATE", str(err_sb_unk))
+
         # 3. Production fail-closed on leader lock unavailable
         with patch.dict(os.environ, {"APP_ENV": "production", "REDIS_REQUIRED": "true"}):
             with patch.object(token_store, "_is_redis_healthy", return_value=False):
@@ -1752,13 +1768,40 @@ class TestAuthPostgresIntegration(unittest.TestCase):
 
                 # 3. Verify Redis key independence
                 if req_store1._redis_client:
-                    reg_keys = req_store1._redis_client.keys(f"{_AUTH_HASH_TAG}:ratelimit:auth:register:{user_budget}*")
-                    req_keys = req_store1._redis_client.keys(f"{_AUTH_HASH_TAG}:ratelimit:auth:request:{user_budget}*")
+                    reg_keys = req_store1._redis_client.keys(f"{_AUTH_HASH_TAG}:ratelimit:auth:register:account:{user_budget}*")
+                    req_keys = req_store1._redis_client.keys(f"{_AUTH_HASH_TAG}:ratelimit:auth:request:account:{user_budget}*")
                     self.assertGreater(len(reg_keys), 0)
                     self.assertGreater(len(req_keys), 0)
                     self.assertNotEqual(set(reg_keys), set(req_keys), "Register and request rate limit keys must be independent")
             elif _IS_CI:
                 self.fail("Redis independent endpoint budget assertions must not be skipped in CI")
+
+            # 4. Independent Account vs IP Buckets test (CTO P1):
+            # Rotasi IP tidak boleh mereset counter akun, dan pergantian email tidak boleh mereset counter IP
+            account_user = f"acc_rot_{uuid.uuid4().hex[:6]}@boontrack.id"
+            lim_ip_acc = DistributedAuthRateLimiter(endpoint="rot_test", max_requests=5, window_seconds=60, store=store1)
+            lim_ip_acc.reset()
+
+            # A. IP Rotation: 5 requests from 5 different IPs for the SAME account
+            for i in range(5):
+                allowed, _ = lim_ip_acc.is_allowed(account_user, client_ip=f"192.0.2.{i+1}")
+                self.assertTrue(allowed, f"Request {i+1} with rotating IP should be allowed")
+            # 6th request from a brand new IP for the same account must be BLOCKED (account locked out)
+            allowed_6th_ip, _ = lim_ip_acc.is_allowed(account_user, client_ip="192.0.2.99")
+            self.assertFalse(allowed_6th_ip, "Rotating IP must NOT reset account bucket counter")
+
+            # B. Email Rotation: 5 requests for 5 different accounts from the SAME IP
+            static_ip = "198.51.100.42"
+            lim_ip_acc2 = DistributedAuthRateLimiter(endpoint="rot_test2", max_requests=5, window_seconds=60, store=store1)
+            lim_ip_acc2.reset()
+            for i in range(5):
+                rotating_user = f"rot_user_{i}_{uuid.uuid4().hex[:4]}@boontrack.id"
+                allowed, _ = lim_ip_acc2.is_allowed(rotating_user, client_ip=static_ip)
+                self.assertTrue(allowed, f"Request {i+1} with rotating email should be allowed")
+            # 6th request with a brand new email from the same IP must be BLOCKED (IP locked out)
+            brand_new_user = f"rot_user_new_{uuid.uuid4().hex[:4]}@boontrack.id"
+            allowed_6th_email, _ = lim_ip_acc2.is_allowed(brand_new_user, client_ip=static_ip)
+            self.assertFalse(allowed_6th_email, "Rotating email must NOT reset IP bucket counter")
 
             # HTTP endpoint rate limit testing across instances
             http_user = f"http_rate_{uuid.uuid4().hex[:6]}@boontrack.id"

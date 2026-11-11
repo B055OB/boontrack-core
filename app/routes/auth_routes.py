@@ -389,7 +389,7 @@ def _insert_pending_merchant(
                     logger.critical(
                         f"[COMPENSATING_ROLLBACK_FAILED] Merchants insert rollback failed for '{clean_s}': {comp_err_msg}"
                     )
-                    _record_dead_letter_cleanup(clean_s, clean_e, comp_err_msg, action="delete")
+                    _record_dead_letter_cleanup(clean_s, clean_e, comp_err_msg or "COMPENSATING_ROLLBACK_FAILED", action="delete")
 
                 _pending_registrations.pop(clean_s, None)
                 t_err_str = str(t_exc)
@@ -617,52 +617,35 @@ def _revert_pending_merchant_activation(slug: str, owner_email: str) -> Tuple[bo
         if clean_s in _in_memory_merchants:
             _in_memory_merchants[clean_s]["status"] = "PENDING_VERIFICATION"
 
-    # Active Tenant Guard: If tenant is ACTIVE or is_active=True, refuse to revert automatically.
-    # Preserve both records and retain dead-letter entry for manual reconciliation.
-    tenant_active = False
-    try:
-        from app.core.database import get_db_connection
-        conn_t = get_db_connection()
-        try:
-            with conn_t.cursor() as cur_t:
-                cur_t.execute(
-                    "SELECT status, is_active FROM public.tenants WHERE lower(slug) = %s LIMIT 1;",
-                    (clean_s,),
-                )
-                t_row = cur_t.fetchone()
-                if t_row and (t_row[0] == "ACTIVE" or t_row[1] is True):
-                    tenant_active = True
-        finally:
-            try:
-                conn_t.close()
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    if not tenant_active:
-        try:
-            supabase = get_supabase()
-            if supabase:
-                t_check = supabase.table("tenants").select("status, is_active").eq("slug", clean_s).limit(1).execute()
-                if t_check.data and (t_check.data[0].get("status") == "ACTIVE" or t_check.data[0].get("is_active") is True):
-                    tenant_active = True
-        except Exception:
-            pass
-
-    if tenant_active:
-        logger.warning(
-            f"[REVERT GUARD] Tenant '{clean_s}' is ACTIVE or is_active=true. Refusing to revert merchant and retaining dead-letter record."
-        )
-        return False, "CANNOT_REVERT_ACTIVE_TENANT: Tenant is ACTIVE or is_active=true"
-
     revert_error = None
-    # 1. PostgreSQL Revert with authoritative ownership and rowcount state verification
+
+    # 1. PostgreSQL Atomic Transaction: Tenant Guard + Merchant Revert in the SAME transaction
     try:
         from app.core.database import get_db_connection
         conn = get_db_connection()
         try:
             with conn.cursor() as cur:
+                # Row-locking check on tenant within the transaction
+                cur.execute(
+                    """
+                    SELECT status, is_active FROM public.tenants
+                    WHERE lower(slug) = %s
+                    FOR SHARE
+                    LIMIT 1;
+                    """,
+                    (clean_s,),
+                )
+                t_row = cur.fetchone()
+
+                # If tenant is ACTIVE or is_active=True, refuse to revert automatically (preserving active tenant)
+                if t_row and (t_row[0] == "ACTIVE" or t_row[1] is True):
+                    conn.rollback()
+                    logger.warning(
+                        f"[REVERT GUARD] Tenant '{clean_s}' is ACTIVE or is_active=true. Refusing to revert merchant and retaining dead-letter record."
+                    )
+                    return False, "CANNOT_REVERT_ACTIVE_TENANT: Tenant is ACTIVE or is_active=true"
+
+                # Within the SAME transaction: update merchant status
                 cur.execute(
                     """
                     UPDATE merchants
@@ -673,30 +656,50 @@ def _revert_pending_merchant_activation(slug: str, owner_email: str) -> Tuple[bo
                     (clean_s, clean_e),
                 )
                 affected = cur.rowcount
-            if affected == 1:
-                conn.commit()
-                return True, None
-            else:
-                conn.rollback()
-                revert_error = f"PostgreSQL UPDATE affected {affected} rows (expected 1)"
+                if affected == 1:
+                    conn.commit()
+                    return True, None
+                else:
+                    conn.rollback()
+                    revert_error = f"PostgreSQL UPDATE affected {affected} rows (expected 1)"
+                    return False, revert_error
         except Exception as p_err:
             try:
                 conn.rollback()
             except Exception:
                 pass
-            revert_error = str(p_err)
+            revert_error = f"POSTGRESQL_TRANSACTION_ERROR: {p_err}"
+            logger.critical(f"[FAIL-CLOSED REVERT] PostgreSQL tenant guard / update failed: {p_err}")
+            # Do NOT fall through to Supabase if PostgreSQL connection was established and query failed
+            # Fail closed immediately! UNKNOWN STATE!
+            return False, f"TENANT_GUARD_UNKNOWN_STATE: PostgreSQL error: {p_err}"
         finally:
             try:
                 conn.close()
             except Exception:
                 pass
     except Exception as c_err:
-        revert_error = str(c_err)
+        revert_error = f"POSTGRESQL_CONNECTION_ERROR: {c_err}"
 
-    # 2. Supabase Fallback with data inspection and secondary state query
+    # 2. Supabase Fallback (Only reachable if PostgreSQL connection failed/unavailable)
     try:
         supabase = get_supabase()
         if supabase:
+            # Check tenant status first in Supabase - MUST FAIL CLOSED on error!
+            t_check = supabase.table("tenants").select("status, is_active").eq("slug", clean_s).limit(1).execute()
+            t_data = getattr(t_check, "data", None)
+            if t_data is None:
+                fail_msg = f"TENANT_GUARD_UNKNOWN_STATE: Supabase query returned no data; prior_error={revert_error}"
+                logger.critical(f"[FAIL-CLOSED REVERT] {fail_msg}")
+                return False, fail_msg
+
+            if len(t_data) > 0 and (t_data[0].get("status") == "ACTIVE" or t_data[0].get("is_active") is True):
+                logger.warning(
+                    f"[REVERT GUARD] Supabase reports tenant '{clean_s}' is ACTIVE or is_active=true. Refusing revert."
+                )
+                return False, "CANNOT_REVERT_ACTIVE_TENANT: Tenant is ACTIVE or is_active=true"
+
+            # Execute merchant update in Supabase
             res = (
                 supabase.table("merchants")
                 .update({
@@ -710,7 +713,8 @@ def _revert_pending_merchant_activation(slug: str, owner_email: str) -> Tuple[bo
             data = getattr(res, "data", None)
             if data and len(data) == 1:
                 return True, None
-            # If 0 rows returned, perform secondary state query
+
+            # Secondary state query to verify
             chk = (
                 supabase.table("merchants")
                 .select("id, status, owner_email")
@@ -728,10 +732,15 @@ def _revert_pending_merchant_activation(slug: str, owner_email: str) -> Tuple[bo
                     revert_error = f"{revert_error}; Supabase UPDATE affected 0 rows, status remains {first.get('status')}"
             else:
                 revert_error = f"{revert_error}; Supabase UPDATE affected 0 rows and merchant not found"
+            return False, revert_error
     except Exception as s_err:
-        revert_error = f"{revert_error}; Supabase error: {s_err}"
+        fail_msg = f"TENANT_GUARD_UNKNOWN_STATE: Supabase error: {s_err}; prior_error={revert_error}"
+        logger.critical(f"[FAIL-CLOSED REVERT] {fail_msg}")
+        return False, fail_msg
 
-    return False, revert_error
+    # If neither PostgreSQL nor Supabase was available
+    fail_msg = f"TENANT_GUARD_UNKNOWN_STATE: Database unavailable; prior_error={revert_error}"
+    return False, fail_msg
 
 
 def _delete_pending_merchant(slug: str, owner_email: str) -> Tuple[bool, Optional[str]]:
@@ -1580,21 +1589,42 @@ class DistributedAuthRateLimiter:
         if os.getenv("BOONTRACK_DISABLE_AUTH_RATE_LIMIT", "").lower() in ("1", "true"):
             return True, 0
 
-        target = f"{identifier}:{client_ip}" if client_ip else str(identifier).strip()
-        key = f"{_AUTH_HASH_TAG}:ratelimit:auth:{self.endpoint}:{target}"
+        clean_id = str(identifier).strip().lower()
+        clean_ip = str(client_ip).strip() if client_ip else None
+
         store = self._get_store()
 
         # Production fail-closed check
         if _is_distributed_token_store_required() and not store._is_redis_healthy():
             raise RuntimeError("[SECURITY FAIL-CLOSED] Distributed auth rate limiter requires Redis in production but unavailable.")
 
+        # Key schemas: Separate Account Bucket and IP Bucket
+        account_key = f"{_AUTH_HASH_TAG}:ratelimit:auth:{self.endpoint}:account:{clean_id}"
+        ip_key = f"{_AUTH_HASH_TAG}:ratelimit:auth:{self.endpoint}:ip:{clean_ip}" if clean_ip else None
+
         if store and store._redis_client:
             try:
-                res = store._redis_client.eval(_REDIS_INCR_EXPIRE_LUA, 1, key, self.window_seconds)
-                current = res[0]
-                ttl = res[1]
-                if current > self.max_requests:
-                    return False, max(ttl, 1)
+                # 1. Independent Account Bucket evaluation
+                res_acc = store._redis_client.eval(_REDIS_INCR_EXPIRE_LUA, 1, account_key, self.window_seconds)
+                acc_current = int(res_acc[0])
+                acc_ttl = int(res_acc[1])
+
+                # 2. Independent IP Bucket evaluation
+                ip_current = 0
+                ip_ttl = 0
+                if ip_key:
+                    res_ip = store._redis_client.eval(_REDIS_INCR_EXPIRE_LUA, 1, ip_key, self.window_seconds)
+                    ip_current = int(res_ip[0])
+                    ip_ttl = int(res_ip[1])
+
+                # Rotasi IP tidak boleh mereset counter akun:
+                if acc_current > self.max_requests:
+                    return False, max(acc_ttl, 1)
+
+                # Pergantian email tidak boleh mereset counter IP:
+                if ip_key and ip_current > self.max_requests:
+                    return False, max(ip_ttl, 1)
+
                 return True, 0
             except Exception as e:
                 if _is_distributed_token_store_required():
@@ -1604,13 +1634,37 @@ class DistributedAuthRateLimiter:
         # Local in-memory sliding window fallback for non-production
         now = time.time()
         with self._lock:
-            timestamps = self._history[target]
-            self._history[target] = [t for t in timestamps if now - t < self.window_seconds]
-            if len(self._history[target]) >= self.max_requests:
-                oldest = self._history[target][0]
-                retry_after = int(self.window_seconds - (now - oldest))
-                return False, max(retry_after, 1)
-            self._history[target].append(now)
+            # 1. Account Bucket
+            acc_target = f"account:{clean_id}"
+            acc_history = self._history[acc_target]
+            self._history[acc_target] = [t for t in acc_history if now - t < self.window_seconds]
+            acc_blocked = len(self._history[acc_target]) >= self.max_requests
+            acc_retry = 0
+            if acc_blocked:
+                oldest_acc = self._history[acc_target][0]
+                acc_retry = max(int(self.window_seconds - (now - oldest_acc)), 1)
+
+            # 2. IP Bucket
+            ip_blocked = False
+            ip_retry = 0
+            if clean_ip:
+                ip_target = f"ip:{clean_ip}"
+                ip_history = self._history[ip_target]
+                self._history[ip_target] = [t for t in ip_history if now - t < self.window_seconds]
+                ip_blocked = len(self._history[ip_target]) >= self.max_requests
+                if ip_blocked:
+                    oldest_ip = self._history[ip_target][0]
+                    ip_retry = max(int(self.window_seconds - (now - oldest_ip)), 1)
+
+            if acc_blocked:
+                return False, acc_retry
+            if ip_blocked:
+                return False, ip_retry
+
+            self._history[acc_target].append(now)
+            if clean_ip:
+                self._history[f"ip:{clean_ip}"].append(now)
+
             return True, 0
 
     def reset(self) -> None:
@@ -2169,7 +2223,7 @@ async def verify_magic_link(req: MagicLinkVerifyRequest, request: Request = None
 
     if is_registration:
         # Case A: Onboarding activation of pending merchant
-        act_ok, act_err = _activate_pending_merchant(slug=claimed_tenant_slug, owner_email=email)
+        act_ok, act_err = _activate_pending_merchant(slug=str(claimed_tenant_slug or ""), owner_email=email)
         if not act_ok:
             logger.error(f"[AUTH VERIFY] Failed to activate pending merchant '{email}' on '{claimed_tenant_slug}': {act_err}")
             raise HTTPException(

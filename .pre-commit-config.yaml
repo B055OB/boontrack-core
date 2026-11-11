@@ -1,0 +1,16 @@
+repos:
+  - repo: local
+    hooks:
+      - id: mypy-auth
+        name: mypy auth static typecheck
+        entry: mypy --follow-imports=skip --ignore-missing-imports
+        language: system
+        types: [python]
+        files: ^(app/routes/auth_routes\.py|tests/test_auth_postgres_integration\.py|tests/api/test_auth_registration_security\.py|tests/test_email_auth\.py)$
+      - id: check-ast
+        name: validate python ast syntax
+        entry: python -m py_compile
+        language: system
+        types: [python]
+        files: ^(app/routes/auth_routes\.py|tests/test_auth_postgres_integration\.py)$
+
