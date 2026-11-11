@@ -32,8 +32,16 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-from dotenv import load_dotenv
-load_dotenv()
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.core.security.test_isolation_guard import (
+    assert_disposable_postgres_target,
+    is_strict_test_guard_active,
+    safe_load_dotenv,
+    verify_connected_postgres_is_disposable,
+)
+
+safe_load_dotenv()
 
 if not os.getenv("EVOLUTION_API_KEY"):
     os.environ["EVOLUTION_API_KEY"] = "ci_test_evolution_api_key_placeholder"
@@ -41,25 +49,39 @@ if not os.getenv("EVOLUTION_API_KEY"):
 if not os.getenv("R2_ACCOUNT_ID") or "_" in os.getenv("R2_ACCOUNT_ID", ""):
     os.environ["R2_ACCOUNT_ID"] = os.getenv("R2_ACCOUNT_ID", "test-ci-r2-account").replace("_", "-")
 
-if not os.getenv("POSTGRES_HOST") or os.getenv("POSTGRES_HOST") == "postgres":
-    os.environ["POSTGRES_HOST"] = "127.0.0.1"
-if not os.getenv("POSTGRES_PORT"):
-    os.environ["POSTGRES_PORT"] = "5432"
-if not os.getenv("POSTGRES_PASSWORD"):
-    os.environ["POSTGRES_PASSWORD"] = "test_password"
-if not os.getenv("POSTGRES_USER"):
-    os.environ["POSTGRES_USER"] = "test_user"
-if not os.getenv("POSTGRES_DB"):
-    os.environ["POSTGRES_DB"] = "test_boontrack"
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if os.getenv("DATABASE_URL", "").strip():
+    assert_disposable_postgres_target(dsn=os.getenv("DATABASE_URL"), allow_if_unconfigured=False)
+else:
+    if not os.getenv("POSTGRES_HOST") or os.getenv("POSTGRES_HOST") == "postgres":
+        os.environ["POSTGRES_HOST"] = "127.0.0.1"
+    if not os.getenv("POSTGRES_PORT"):
+        os.environ["POSTGRES_PORT"] = "5432"
+    if not os.getenv("POSTGRES_PASSWORD"):
+        os.environ["POSTGRES_PASSWORD"] = "test_password"
+    if not os.getenv("POSTGRES_USER"):
+        os.environ["POSTGRES_USER"] = "test_user"
+    if not os.getenv("POSTGRES_DB"):
+        os.environ["POSTGRES_DB"] = "test_boontrack"
+    if is_strict_test_guard_active():
+        assert_disposable_postgres_target(
+            host=os.getenv("POSTGRES_HOST"),
+            port=os.getenv("POSTGRES_PORT"),
+            dbname=os.getenv("POSTGRES_DB"),
+            user=os.getenv("POSTGRES_USER"),
+            allow_if_unconfigured=False,
+        )
 
 from app.core.config import settings
-settings.POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
-settings.POSTGRES_USER = os.getenv("POSTGRES_USER")
-settings.POSTGRES_DB = os.getenv("POSTGRES_DB")
-settings.POSTGRES_PORT = os.getenv("POSTGRES_PORT")
-settings.POSTGRES_HOST = os.getenv("POSTGRES_HOST")
+if os.getenv("POSTGRES_PASSWORD"):
+    settings.POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+if os.getenv("POSTGRES_USER"):
+    settings.POSTGRES_USER = os.getenv("POSTGRES_USER")
+if os.getenv("POSTGRES_DB"):
+    settings.POSTGRES_DB = os.getenv("POSTGRES_DB")
+if os.getenv("POSTGRES_PORT"):
+    settings.POSTGRES_PORT = os.getenv("POSTGRES_PORT")
+if os.getenv("POSTGRES_HOST"):
+    settings.POSTGRES_HOST = os.getenv("POSTGRES_HOST")
 
 from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException
@@ -205,6 +227,8 @@ class CTOEvidenceBundleGenerator:
     def generate_section_1(self) -> str:
         try:
             conn = get_db_connection()
+            if is_strict_test_guard_active():
+                verify_connected_postgres_is_disposable(conn)
             cur = conn.cursor()
 
             # 1. Fetch all tables in public schema
@@ -436,6 +460,8 @@ class CTOEvidenceBundleGenerator:
         l2_msg = ""
         try:
             conn = get_db_connection()
+            if is_strict_test_guard_active():
+                verify_connected_postgres_is_disposable(conn)
             cur = conn.cursor()
             try:
                 # Transaksi 1: Masuk sebagai authenticated dengan tenant_alpha via SET LOCAL
@@ -460,6 +486,8 @@ class CTOEvidenceBundleGenerator:
 
                 # Transaksi 2: Ambil koneksi baru dari pool dan pastikan context bersih
                 conn2 = get_db_connection()
+                if is_strict_test_guard_active():
+                    verify_connected_postgres_is_disposable(conn2)
                 cur2 = conn2.cursor()
                 cur2.execute("SELECT current_setting('app.current_tenant_id', true);")
                 pool_hygiene_context = cur2.fetchone()[0]
@@ -730,6 +758,8 @@ class CTOEvidenceBundleGenerator:
 
             # Verify connection hygiene after transaction exit
             verify_conn = get_db_connection()
+            if is_strict_test_guard_active():
+                verify_connected_postgres_is_disposable(verify_conn)
             try:
                 with verify_conn.cursor() as verify_cur:
                     verify_cur.execute("SELECT current_user, current_setting('role', true);")
@@ -761,6 +791,8 @@ class CTOEvidenceBundleGenerator:
     def generate_section_3(self) -> str:
         try:
             conn = get_db_connection()
+            if is_strict_test_guard_active():
+                verify_connected_postgres_is_disposable(conn)
             cur = conn.cursor()
 
             # Database connection details

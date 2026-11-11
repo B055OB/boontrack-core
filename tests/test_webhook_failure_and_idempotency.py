@@ -19,10 +19,21 @@ Test Coverage:
    - Non-dictionary change values.
 """
 
+import os
+import sys
+from pathlib import Path
 import unittest
 from unittest.mock import patch, AsyncMock, MagicMock
 from datetime import datetime, timezone, timedelta
 from fastapi.testclient import TestClient
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from app.core.security.test_isolation_guard import bootstrap_isolated_test_env
+
+bootstrap_isolated_test_env(_REPO_ROOT)
 
 from app.main import app
 from app.whatsapp.traffic_splitter import (

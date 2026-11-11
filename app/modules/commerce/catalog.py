@@ -13,6 +13,8 @@ class CommerceCatalogService:
         if not db_url:
             raise RuntimeError("DATABASE_URL is not set")
         clean_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+        from app.core.security.test_isolation_guard import assert_disposable_postgres_target
+        assert_disposable_postgres_target(dsn=clean_url, allow_if_unconfigured=False)
         return await asyncpg.connect(clean_url, timeout=5)
 
     @classmethod

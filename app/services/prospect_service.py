@@ -18,6 +18,15 @@ logger = logging.getLogger("PROSPECT_SERVICE")
 
 def get_db_connection():
     """Returns a direct psycopg2 database connection."""
+    from app.core.security.test_isolation_guard import assert_disposable_postgres_target
+
+    assert_disposable_postgres_target(
+        host=settings.POSTGRES_HOST,
+        port=settings.POSTGRES_PORT,
+        dbname=settings.POSTGRES_DB,
+        user=settings.POSTGRES_USER,
+        allow_if_unconfigured=False,
+    )
     return psycopg2.connect(
         host=settings.POSTGRES_HOST,
         port=settings.POSTGRES_PORT,

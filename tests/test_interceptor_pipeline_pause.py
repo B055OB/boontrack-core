@@ -216,45 +216,139 @@ async def test_2d_active_pause_gate_mutes_ai():
 
 @pytest.mark.asyncio
 async def test_contact_isolation_a_vs_b():
-    # Verify that pausing contact A does not pause contact B in DB
+    # Verify with a deterministic stateful in-memory table double that pausing contact A
+    # does not pause contact B (no external Supabase HTTP calls, no silent skip).
     phone_a = "628999111001"
     phone_b = "628999111002"
     tenant = "test_tenant_iso"
 
-    from app.services.whatsapp_service import get_supabase
-    sb = get_supabase()
-    if not sb:
-        pytest.skip("Supabase not available for live DB test")
+    class _FakeResp:
+        def __init__(self, data):
+            self.data = data
 
-    try:
-        # Pause contact A
-        await check_and_handle_session_handover_and_toggle(
-            tenant_slug=tenant,
-            sender_phone=phone_a,
-            incoming_text="pause",
-            sender_name="Admin"
-        )
+    class _FakeTableQuery:
+        def __init__(self, store: list):
+            self._store = store
+            self._op = "select"
+            self._payload = None
+            self._on_conflict = None
+            self._eq_filters = []
+            self._in_filters = []
+            self._maybe_single = False
 
-        # Check contact A state -> should be paused
-        res_a = await check_and_handle_session_handover_and_toggle(
-            tenant_slug=tenant,
-            sender_phone=phone_a,
-            incoming_text="Halo",
-            sender_name="User A"
-        )
-        assert res_a is not None
-        assert res_a.get("bot_paused") is True
-        assert res_a.get("action") == "DROP_PAUSED"
+        def select(self, *_cols):
+            self._op = "select"
+            return self
 
-        # Check contact B state -> should NOT be paused (returns None, normal flow continues)
-        res_b = await check_and_handle_session_handover_and_toggle(
-            tenant_slug=tenant,
-            sender_phone=phone_b,
-            incoming_text="Halo",
-            sender_name="User B"
-        )
-        assert res_b is None
+        def upsert(self, payload: dict, on_conflict: str = ""):
+            self._op = "upsert"
+            self._payload = dict(payload)
+            self._on_conflict = [c.strip() for c in on_conflict.split(",") if c.strip()]
+            return self
 
-    finally:
-        # Cleanup
-        sb.table("conversation_sessions").delete().eq("tenant_id", tenant).in_("user_identifier", [phone_a, phone_b]).execute()
+        def update(self, payload: dict):
+            self._op = "update"
+            self._payload = dict(payload)
+            return self
+
+        def delete(self):
+            self._op = "delete"
+            return self
+
+        def eq(self, col: str, val):
+            self._eq_filters.append((col, val))
+            return self
+
+        def in_(self, col: str, vals):
+            self._in_filters.append((col, set(vals)))
+            return self
+
+        def or_(self, _expr: str):
+            return self
+
+        def maybe_single(self):
+            self._maybe_single = True
+            return self
+
+        def _matches(self, row: dict) -> bool:
+            for col, val in self._eq_filters:
+                if row.get(col) != val:
+                    return False
+            for col, vals in self._in_filters:
+                if row.get(col) not in vals:
+                    return False
+            return True
+
+        def execute(self):
+            if self._op == "upsert":
+                conflict_cols = self._on_conflict or []
+                for idx, existing in enumerate(self._store):
+                    if conflict_cols and all(existing.get(c) == self._payload.get(c) for c in conflict_cols):
+                        updated = dict(existing)
+                        updated.update(self._payload)
+                        self._store[idx] = updated
+                        return _FakeResp([updated])
+                row = dict(self._payload)
+                self._store.append(row)
+                return _FakeResp([row])
+            if self._op == "update":
+                updated_rows = []
+                for row in self._store:
+                    if self._matches(row):
+                        row.update(self._payload)
+                        updated_rows.append(row)
+                return _FakeResp(updated_rows)
+            if self._op == "delete":
+                kept = [r for r in self._store if not self._matches(r)]
+                removed = [r for r in self._store if self._matches(r)]
+                self._store[:] = kept
+                return _FakeResp(removed)
+            matched = [dict(r) for r in self._store if self._matches(r)]
+            if self._maybe_single:
+                return _FakeResp(matched[0] if matched else None)
+            return _FakeResp(matched)
+
+    class _InMemorySupabaseDouble:
+        def __init__(self):
+            self._tables = {"conversation_sessions": [], "conversations": []}
+
+        def table(self, name: str):
+            return _FakeTableQuery(self._tables.setdefault(name, []))
+
+    fake_sb = _InMemorySupabaseDouble()
+
+    with (
+        patch("app.routes.whatsapp_gateway_routes.get_supabase", return_value=fake_sb),
+        patch("app.services.whatsapp_service.get_supabase", return_value=fake_sb),
+    ):
+        try:
+            # Pause contact A
+            await check_and_handle_session_handover_and_toggle(
+                tenant_slug=tenant,
+                sender_phone=phone_a,
+                incoming_text="pause",
+                sender_name="Admin"
+            )
+
+            # Check contact A state -> should be paused
+            res_a = await check_and_handle_session_handover_and_toggle(
+                tenant_slug=tenant,
+                sender_phone=phone_a,
+                incoming_text="Halo",
+                sender_name="User A"
+            )
+            assert res_a is not None
+            assert res_a.get("bot_paused") is True
+            assert res_a.get("action") == "DROP_PAUSED"
+
+            # Check contact B state -> should NOT be paused (returns None, normal flow continues)
+            res_b = await check_and_handle_session_handover_and_toggle(
+                tenant_slug=tenant,
+                sender_phone=phone_b,
+                incoming_text="Halo",
+                sender_name="User B"
+            )
+            assert res_b is None
+
+        finally:
+            fake_sb.table("conversation_sessions").delete().eq("tenant_id", tenant).in_("user_identifier", [phone_a, phone_b]).execute()

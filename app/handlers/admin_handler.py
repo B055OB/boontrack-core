@@ -10,11 +10,24 @@ class AdminHandler:
     """
 
     def _get_db_conn(self):
+        from app.core.security.test_isolation_guard import assert_disposable_postgres_target
+
+        host = os.getenv("POSTGRES_HOST", "postgres")
+        port = os.getenv("POSTGRES_PORT", "5432")
+        dbname = os.getenv("POSTGRES_DB")
+        user = os.getenv("POSTGRES_USER")
+        assert_disposable_postgres_target(
+            host=host,
+            port=port,
+            dbname=dbname,
+            user=user,
+            allow_if_unconfigured=False,
+        )
         return psycopg2.connect(
-            host=os.getenv("POSTGRES_HOST", "postgres"),
-            port=os.getenv("POSTGRES_PORT", "5432"),
-            dbname=os.getenv("POSTGRES_DB"),
-            user=os.getenv("POSTGRES_USER"),
+            host=host,
+            port=port,
+            dbname=dbname,
+            user=user,
             password=os.getenv("POSTGRES_PASSWORD")
         )
 

@@ -38,21 +38,13 @@ from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
-# Force test database URL pointing to disposable postgres cluster on port 55439
-TEST_PG_PORT = os.getenv("TEST_PG_PORT", "55439")
-TEST_DB_URL = f"postgresql://postgres:postgres@127.0.0.1:{TEST_PG_PORT}/postgres"
-os.environ["DATABASE_URL"] = TEST_DB_URL
-os.environ["POSTGRES_PORT"] = TEST_PG_PORT
-os.environ["POSTGRES_HOST"] = "127.0.0.1"
-os.environ["POSTGRES_DB"] = "postgres"
-os.environ["POSTGRES_USER"] = "postgres"
-os.environ["POSTGRES_PASSWORD"] = "postgres"
-os.environ["APP_ENV"] = "development"
-
-# Ensure repository root is on sys.path
+# Ensure repository root is on sys.path and enforce isolated synthetic env before `app.*` imports
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from app.core.security.test_isolation_guard import bootstrap_isolated_test_env
+bootstrap_isolated_test_env(REPO_ROOT)
 
 import psycopg2
 import pytest

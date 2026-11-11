@@ -22,18 +22,16 @@ import sys
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
-# Default to ephemeral test cluster on 55439 for PostgreSQL integration
-os.environ["DATABASE_URL"] = "postgresql://postgres@127.0.0.1:55439/postgres"
-os.environ["POSTGRES_PORT"] = "55439"
-os.environ["POSTGRES_HOST"] = "127.0.0.1"
-os.environ["POSTGRES_DB"] = "postgres"
-os.environ["POSTGRES_USER"] = "postgres"
-os.environ["POSTGRES_PASSWORD"] = ""
-
-# Ensure repository root is on sys.path
+# Ensure repository root is on sys.path and enforce isolated synthetic env before `app.*` imports
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from app.core.security.test_isolation_guard import (
+    assert_disposable_postgres_target,
+    bootstrap_isolated_test_env,
+)
+bootstrap_isolated_test_env(REPO_ROOT)
 
 import multiprocessing
 import psycopg2
@@ -1532,7 +1530,8 @@ def test_24_authenticated_role_privilege_and_rls_lockdown():
     4. Authenticated role has SELECT access strictly constrained to own tenant rows by RLS.
     5. Legitimate backend operations continue operating seamlessly.
     """
-    conn = psycopg2.connect("postgresql://postgres@127.0.0.1:55439/postgres", connect_timeout=3)
+    assert_disposable_postgres_target(dsn=os.environ.get("DATABASE_URL"), allow_if_unconfigured=False)
+    conn = psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=3)
     cur = conn.cursor()
 
     test_tid = "24242424-0000-0000-0000-000000000024"
@@ -1628,16 +1627,15 @@ from pathlib import Path
 import multiprocessing
 import psycopg2
 
-os.environ["DATABASE_URL"] = "postgresql://postgres@127.0.0.1:55439/postgres"
-os.environ["POSTGRES_PORT"] = "55439"
-os.environ["POSTGRES_HOST"] = "127.0.0.1"
-os.environ["POSTGRES_DB"] = "postgres"
-os.environ["POSTGRES_USER"] = "postgres"
-os.environ["POSTGRES_PASSWORD"] = ""
-
-REPO_ROOT = Path("C:/boontrack-core")
+REPO_ROOT = Path(__REPO_ROOT_REPR__)
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from app.core.security.test_isolation_guard import (
+    assert_disposable_postgres_target,
+    bootstrap_isolated_test_env,
+)
+bootstrap_isolated_test_env(REPO_ROOT)
 
 from app.core.trial_guardrail import PostgresTrialQuotaStore, TrialLimitExceededException
 
@@ -1646,7 +1644,8 @@ def _worker_reserve_slot(tenant_id, order_id, barrier, result_queue):
     conn = None
     cur = None
     try:
-        conn = psycopg2.connect("postgresql://postgres@127.0.0.1:55439/postgres", connect_timeout=3)
+        assert_disposable_postgres_target(dsn=os.environ.get("DATABASE_URL"), allow_if_unconfigured=False)
+        conn = psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=3)
         cur = conn.cursor()
         cur.execute("SELECT pg_backend_pid();")
         pg_pid = cur.fetchone()[0]
@@ -1747,7 +1746,7 @@ if __name__ == "__main__":
 
     store.reset(test_tenant_id)
     print(f"MP_VERIFIED: {len(os_pids)} OS PIDs {sorted(list(os_pids))}, {len(pg_pids)} PG PIDs {sorted(list(pg_pids))}, 1 success, 7 rejected, final count {final_count}")
-'''
+'''.replace("__REPO_ROOT_REPR__", repr(str(REPO_ROOT)))
 
     tmp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False)
     tmp_path = tmp_file.name

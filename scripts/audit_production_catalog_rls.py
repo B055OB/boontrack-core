@@ -35,10 +35,14 @@ REPO_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from dotenv import load_dotenv
-load_dotenv(dotenv_path=os.path.join(REPO_ROOT, ".env"), override=True)
+from pathlib import Path
 
 from app.core.database import get_db_connection
+from app.core.security.test_isolation_guard import (
+    assert_disposable_postgres_target,
+    is_strict_test_guard_active,
+    verify_connected_postgres_is_disposable,
+)
 
 logger = logging.getLogger("PRODUCTION_CATALOG_AUDIT")
 
@@ -65,10 +69,13 @@ TENANT_POLICY_EXCEPTION_WHITELIST = {
 }
 
 
-def run_production_catalog_audit() -> Tuple[bool, Dict[str, Any], str]:
+def run_production_catalog_audit(ci_only: Optional[bool] = None) -> Tuple[bool, Dict[str, Any], str]:
     """Executes a pure read-only catalog audit against the target database.
     Guarantees ZERO mutations: uses read-only transaction and only executes SELECT queries.
     """
+    effective_ci_only = bool(ci_only) or is_strict_test_guard_active() or (
+        os.getenv("CI", "").strip().lower() in ("1", "true", "yes")
+    )
     now_utc = datetime.now(timezone.utc)
     wib_tz = timezone(timedelta(hours=7))
     now_wib = now_utc.astimezone(wib_tz)
@@ -104,7 +111,17 @@ def run_production_catalog_audit() -> Tuple[bool, Dict[str, Any], str]:
 
     conn = None
     try:
+        if effective_ci_only:
+            assert_disposable_postgres_target(
+                dsn=os.getenv("DATABASE_URL"),
+                host=os.getenv("POSTGRES_HOST"),
+                dbname=os.getenv("POSTGRES_DB"),
+                user=os.getenv("POSTGRES_USER"),
+                allow_if_unconfigured=False,
+            )
         conn = get_db_connection()
+        if effective_ci_only:
+            verify_connected_postgres_is_disposable(conn)
         conn.set_session(readonly=True, autocommit=True)
         cur = conn.cursor()
 
@@ -315,7 +332,9 @@ def run_production_catalog_audit() -> Tuple[bool, Dict[str, Any], str]:
     audit_dir = os.path.join(REPO_ROOT, "docs", "audit")
     os.makedirs(audit_dir, exist_ok=True)
 
-    is_ci_ephemeral = (audit_data.get("engine_info", {}).get("database") == "test_boontrack" or (os.getenv("CI") == "true" and not os.getenv("FORCE_WRITE_PROD_REPORT")))
+    is_ci_ephemeral = effective_ci_only or (
+        audit_data.get("engine_info", {}).get("database") == "test_boontrack"
+    )
     if is_ci_ephemeral:
         print("[CI EPHEMERAL CHECK] Target is CI ephemeral test database. Writing to docs/audit/ci_catalog_rls_report.json (.md).")
         audit_data["audit_metadata"]["title"] = "CI Sandbox & Ephemeral Fixture Catalog RLS Security Verification"
@@ -415,7 +434,38 @@ def run_production_catalog_audit() -> Tuple[bool, Dict[str, Any], str]:
 
 
 if __name__ == "__main__":
-    success, data, report = run_production_catalog_audit()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Production/CI PostgreSQL Catalog RLS Read-Only Audit")
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--ci-only",
+        action="store_true",
+        help="Run strictly against isolated disposable CI/test PostgreSQL (never loads .env).",
+    )
+    mode_group.add_argument(
+        "--production-audit",
+        action="store_true",
+        help="Authorized designated DBA/infra read-only production catalog audit (explicitly loads .env).",
+    )
+    args = parser.parse_args()
+
+    strict_ci_env = is_strict_test_guard_active() or (os.getenv("CI", "").strip().lower() in ("1", "true", "yes"))
+    if args.production_audit:
+        if strict_ci_env:
+            print("❌ REFUSED: --production-audit cannot be executed inside CI or strict test guard.", file=sys.stderr)
+            sys.exit(1)
+        from dotenv import load_dotenv
+        load_dotenv(dotenv_path=os.path.join(REPO_ROOT, ".env"), override=True)
+        run_ci_only = False
+    elif args.ci_only or strict_ci_env:
+        os.environ.setdefault("TEST_STRICT_DB_GUARD", "1")
+        run_ci_only = True
+    else:
+        print("❌ REFUSED: Specify --ci-only or --production-audit explicitly.", file=sys.stderr)
+        sys.exit(1)
+
+    success, data, report = run_production_catalog_audit(ci_only=run_ci_only)
     print(report)
     if not success:
         print("\n❌ CRITICAL: Production catalog audit failed!", file=sys.stderr)

@@ -1,10 +1,9 @@
 import os
 from datetime import datetime
-from dotenv import load_dotenv
-
 from typing import Optional
+from app.core.security.test_isolation_guard import safe_load_dotenv
 
-load_dotenv()
+safe_load_dotenv()
 
 class Settings:
     """Core Application Settings.

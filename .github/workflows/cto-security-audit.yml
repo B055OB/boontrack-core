@@ -29,25 +29,79 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     env:
+      APP_ENV: test
+      ENV: test
+      ENVIRONMENT: test
+      BOONTRACK_ENV: test
+      TEST_STRICT_DB_GUARD: "1"
+      TEST_REQUIRE_DISPOSABLE_SERVICES: "1"
+      ENABLE_LOCAL_REDIS: "true"
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: 5432
       POSTGRES_DB: test_boontrack
       POSTGRES_USER: test_user
       POSTGRES_PASSWORD: test_password
       DATABASE_URL: postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack
+      STAGE1_TEST_DISPOSABLE_PG_DSN: postgresql://test_user:test_password@127.0.0.1:5432/bt_stage1_disposable_test_stage1
+      STAGE3_STEP0_DISPOSABLE_PG_DSN: postgresql://test_user:test_password@127.0.0.1:5432/bt_stage1_disposable_test_step0
+      STAGE3_STEP1_DISPOSABLE_PG_DSN: postgresql://test_user:test_password@127.0.0.1:5432/bt_stage1_disposable_test_step1
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      REDIS_URL: redis://127.0.0.1:6379/0
       XENDIT_SECRET_KEY: test_ci_xendit_secret_key_mock_12345
       XENDIT_CALLBACK_TOKEN: test_ci_xendit_callback_token_mock_12345
-      SUPABASE_URL: https://mpluzajlzpregmjwpjqr.supabase.co
+      XENDIT_API_URL: http://127.0.0.1:58083
+      XENDIT_ENV: sandbox
+      SUPABASE_URL: http://127.0.0.1:54321
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      EXPECTED_SUPABASE_URL: http://127.0.0.1:54321
       SUPABASE_KEY: test_ci_supabase_anon_key_mock_999
       SUPABASE_ANON_KEY: test_ci_supabase_anon_key_mock_999
       SUPABASE_SERVICE_ROLE_KEY: test_ci_supabase_service_role_key_mock_999
+      STAGING_DATABASE_URL: ""
+      SUPABASE_DB_URL: ""
+      REVOKED_STAGING_DB_PASSWORD: ""
+      RESEND_API_KEY: ""
+      SMTP_HOST: ""
+      SMTP_PORT: "587"
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
+      EMAIL_FROM: noreply@test.boontrack.invalid
       BOONTRACK_HMAC_SECRET: test_ci_secure_hmac_secret_for_pipeline_999
       EVOLUTION_API_KEY: test_ci_evolution_api_key_placeholder
+      EVOLUTION_API_URL: http://127.0.0.1:58080
+      WA_GATEWAY_BASE_URL: http://127.0.0.1:58080
+      WAHA_API_KEY: ""
+      WHATSAPP_TOKEN: ""
+      META_SYSTEM_USER_TOKEN: ""
+      WABA_ACCESS_TOKEN: ""
+      TELEGRAM_BOT_TOKEN: ""
+      TELEGRAM_CREATOR_BOT_TOKEN: ""
+      TELEGRAM_ONLINEBOOST_BOT_TOKEN: ""
+      BITESHIP_API_KEY: ""
+      BITESHIP_BASE_URL: http://127.0.0.1:58082
+      DUITKU_API_KEY: ""
+      LLM_PROVIDER: mock
+      GEMINI_API_KEY: ""
+      GROQ_API_KEY: ""
+      OPENROUTER_API_KEY: ""
       R2_ACCESS_KEY_ID: test_ci_r2_access_key
       R2_SECRET_ACCESS_KEY: test_ci_r2_secret_key
       R2_ACCOUNT_ID: test-ci-r2-account
+      R2_ENDPOINT: http://127.0.0.1:59000
+      R2_ENDPOINT_URL: http://127.0.0.1:59000
+      R2_PUBLIC_DOMAIN: http://127.0.0.1:59000
       CI: "true"
 
     steps:
@@ -92,6 +146,51 @@ jobs:
           fi
           echo "========================================================"
 
+      - name: Enforce Kernel Network Egress Isolation & DNS Sinkhole
+        run: |
+          set -euo pipefail
+          BLOCKED_HOSTS=(
+            "mpluzajlzpregmjwpjqr.supabase.co"
+            "db.mpluzajlzpregmjwpjqr.supabase.co"
+            "xkhqirhurnjqglmajghn.supabase.co"
+            "db.xkhqirhurnjqglmajghn.supabase.co"
+            "aws-0-ap-southeast-1.pooler.supabase.com"
+            "aws-1-ap-southeast-1.pooler.supabase.com"
+            "evolution-api-production-abb7.up.railway.app"
+            "api.resend.com"
+            "api.telegram.org"
+            "graph.facebook.com"
+            "api.xendit.co"
+            "api.biteship.com"
+          )
+          for host in "${BLOCKED_HOSTS[@]}"; do
+            for ip in $(getent ahostsv4 "$host" | awk '{print $1}' | sort -u); do
+              sudo iptables -I OUTPUT 1 -d "$ip" ! -d 127.0.0.0/8 -j REJECT --reject-with icmp-net-unreachable || true
+            done
+            echo "127.0.0.1 $host" | sudo tee -a /etc/hosts >/dev/null
+          done
+          sudo iptables -A OUTPUT ! -o lo ! -d 127.0.0.0/8 -p tcp -m multiport --dports 5432,5433,6543,6379,6380,25,465,587,2525 -j REJECT --reject-with tcp-reset
+          sudo ip6tables -A OUTPUT ! -o lo ! -d ::1/128 -p tcp -m multiport --dports 5432,5433,6543,6379,6380,25,465,587,2525 -j REJECT --reject-with tcp-reset || true
+
+      - name: Preflight Disposable PostgreSQL, Redis & Clean Environment
+        run: |
+          set -euo pipefail
+          test ! -f .env
+          python - <<'PY'
+          import psycopg2, redis
+          from app.core.security.test_isolation_guard import (
+              validate_isolated_test_environment,
+              verify_connected_postgres_is_disposable,
+          )
+          validate_isolated_test_environment()
+          conn = psycopg2.connect("postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack", connect_timeout=5)
+          verify_connected_postgres_is_disposable(conn)
+          conn.close()
+          r = redis.Redis(host="127.0.0.1", port=6379, socket_timeout=5)
+          assert r.ping() is True
+          print("[OK] Preflight verified isolated PostgreSQL + Redis + clean CI env")
+          PY
+
       - name: Initialize PostgreSQL Test Database Roles & RLS Schema
         run: |
           python scripts/init_test_postgres_schema.py
@@ -128,7 +227,7 @@ jobs:
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit 1
           }
-          python scripts/audit_production_catalog_rls.py 2>&1 | tee /tmp/prod_catalog_audit.log || {
+          python scripts/audit_production_catalog_rls.py --ci-only 2>&1 | tee /tmp/prod_catalog_audit.log || {
             echo "## ❌ Production Catalog RLS Audit Gate Failure" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             cat /tmp/prod_catalog_audit.log >> $GITHUB_STEP_SUMMARY
@@ -166,8 +265,6 @@ jobs:
           name: cto-p1-evidence-bundle-${{ github.sha }}
           path: |
             docs/audit/CTO_P1_SECURITY_GATE_EVIDENCE_BUNDLE.md
-            docs/audit/production_catalog_rls_report.json
-            docs/audit/production_catalog_rls_report.md
             docs/audit/ci_catalog_rls_report.json
             docs/audit/ci_catalog_rls_report.md
             /tmp/bundle_generation.log

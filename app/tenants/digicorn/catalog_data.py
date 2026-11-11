@@ -1,10 +1,13 @@
 import asyncio
 import os
 import asyncpg
-from dotenv import load_dotenv
+from app.core.security.test_isolation_guard import (
+    assert_disposable_postgres_target,
+    safe_load_dotenv,
+)
 
-# Muat DATABASE_URL dari file .env
-load_dotenv()
+# Muat DATABASE_URL secara aman (refuses root .env under active test isolation)
+safe_load_dotenv()
 
 SEED_ITEMS = [
     {
@@ -96,7 +99,8 @@ async def seed():
         return
 
     clean_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
-    
+    assert_disposable_postgres_target(dsn=clean_url, allow_if_unconfigured=False)
+
     print(f"Connecting to Supabase...")
     conn = await asyncpg.connect(clean_url)
     try:

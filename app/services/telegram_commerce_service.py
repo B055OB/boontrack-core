@@ -25,9 +25,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Union
 import httpx
-from dotenv import load_dotenv
+from app.core.security.test_isolation_guard import safe_load_dotenv
 
-load_dotenv()
+safe_load_dotenv()
 logger = logging.getLogger("TELEGRAM_COMMERCE")
 
 _BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()

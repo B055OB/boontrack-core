@@ -1,0 +1,94 @@
+name: boontrack-test
+
+services:
+  test-postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_DB: test_boontrack
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,noexec,nosuid,size=512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d test_boontrack"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks:
+      - test_host_bridge
+      - test_internal_net
+
+  test-redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:56379:6379"
+    tmpfs:
+      - /data:rw,noexec,nosuid,size=64m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks:
+      - test_host_bridge
+      - test_internal_net
+
+  test-runner:
+    profiles: ["isolated-runner"]
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    working_dir: /workspace
+    env_file:
+      - .env.test
+    environment:
+      APP_ENV: test
+      ENV: test
+      ENVIRONMENT: test
+      BOONTRACK_ENV: test
+      CI: "true"
+      TEST_STRICT_DB_GUARD: "1"
+      TEST_REQUIRE_DISPOSABLE_SERVICES: "1"
+      TEST_IN_DOCKER_INTERNAL_NET: "1"
+      ENABLE_LOCAL_REDIS: "true"
+      POSTGRES_HOST: test-postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: test_boontrack
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+      DATABASE_URL: postgresql://test_user:test_password@test-postgres:5432/test_boontrack
+      STAGE1_TEST_DISPOSABLE_PG_DSN: postgresql://test_user:test_password@test-postgres:5432/bt_stage1_disposable_test_stage1
+      STAGE3_STEP0_DISPOSABLE_PG_DSN: postgresql://test_user:test_password@test-postgres:5432/bt_stage1_disposable_test_step0
+      STAGE3_STEP1_DISPOSABLE_PG_DSN: postgresql://test_user:test_password@test-postgres:5432/bt_stage1_disposable_test_step1
+      REDIS_HOST: test-redis
+      REDIS_PORT: "6379"
+      REDIS_URL: redis://test-redis:6379/0
+      PYTHONDONTWRITEBYTECODE: "1"
+    tmpfs:
+      - /tmp/.pytest_cache:rw,nosuid,size=64m
+      - /workspace/assets/uploads:rw,nosuid,size=128m
+      - /workspace/docs/audit:rw,nosuid,size=32m
+    depends_on:
+      test-postgres:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+    networks:
+      - test_internal_net
+    command: >
+      sh -c "python scripts/init_test_postgres_schema.py &&
+             python scripts/enable_rls_security.py --verify &&
+             python scripts/audit_production_catalog_rls.py --ci-only &&
+             python -m pytest -o cache_dir=/tmp/.pytest_cache -v -ra --tb=short"
+
+networks:
+  test_host_bridge:
+    driver: bridge
+  test_internal_net:
+    driver: bridge
+    internal: true

@@ -1,6 +1,15 @@
-from dotenv import load_dotenv
 import os
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from app.core.security.test_isolation_guard import bootstrap_isolated_test_env
+
+bootstrap_isolated_test_env(_REPO_ROOT)
+
 """tests/test_kelasbos_storefront_and_booking.py
 ------------------------------------------------
 Comprehensive Test Suite for Tenant "Kelas Bos" (slug: kelasbos):

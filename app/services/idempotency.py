@@ -71,6 +71,9 @@ class IdempotencyService:
             return None
 
         self._redis_last_check = now
+        from app.core.security.test_isolation_guard import assert_disposable_redis_target
+
+        assert_disposable_redis_target(redis_url=self.redis_url, allow_if_unconfigured=False)
         try:
             client = aioredis.from_url(
                 self.redis_url,
@@ -305,6 +308,11 @@ class IdempotencyService:
                 await sess.commit()
                 return res
         except Exception as exc:
+            from app.core.security.test_isolation_guard import is_disposable_services_required
+            if is_disposable_services_required():
+                err_name = type(exc).__name__
+                if any(tok in err_name for tok in ("UndefinedTable", "InsufficientPrivilege", "ProgrammingError")) or "does not exist" in str(exc) or "permission denied" in str(exc):
+                    raise
             logger.debug(f"[DURABLE IDEMPOTENCY] SQLAlchemy insert not available/error: {exc}")
             return None
 
@@ -380,6 +388,11 @@ class IdempotencyService:
                     conn.commit()
                     return str(row[0]) if row else False
             except Exception as insert_err:
+                from app.core.security.test_isolation_guard import is_disposable_services_required
+                if is_disposable_services_required():
+                    err_name = type(insert_err).__name__
+                    if any(tok in err_name for tok in ("UndefinedTable", "InsufficientPrivilege", "ProgrammingError")) or "does not exist" in str(insert_err) or "permission denied" in str(insert_err):
+                        raise
                 logger.debug(f"[DURABLE IDEMPOTENCY] psycopg2 insert error: {insert_err}")
                 return None
             finally:

@@ -19,17 +19,18 @@ logger = logging.getLogger(__name__)
 # Config
 # ---------------------------------------------------------------------------
 
+from app.core.security.test_isolation_guard import (
+    is_strict_test_guard_active,
+    safe_load_dotenv,
+)
+
+safe_load_dotenv()
+
 EVOLUTION_BASE_URL = (
     os.getenv("EVOLUTION_API_URL")
     or os.getenv("WA_GATEWAY_BASE_URL")
-    or "https://evolution-api-production-abb7.up.railway.app"
+    or ("" if is_strict_test_guard_active() else "https://evolution-api-production-abb7.up.railway.app")
 ).rstrip("/")
-
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
 
 EVOLUTION_API_KEY = (
     os.getenv("EVOLUTION_API_KEY")

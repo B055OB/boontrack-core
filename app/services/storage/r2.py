@@ -14,9 +14,12 @@ import posixpath
 import urllib.parse
 from pathlib import PurePosixPath
 from typing import Union, Optional
-from dotenv import load_dotenv
+from app.core.security.test_isolation_guard import (
+    is_strict_test_guard_active,
+    safe_load_dotenv,
+)
 
-load_dotenv()
+safe_load_dotenv()
 
 logger = logging.getLogger("R2_STORAGE")
 
@@ -84,8 +87,9 @@ class R2Client:
                 from urllib.parse import urlparse
                 parsed = urlparse(raw)
                 host = parsed.netloc.lower()
+                pure_local_test = is_strict_test_guard_active() and (parsed.hostname or "").lower() in ("127.0.0.1", "localhost")
                 # Guard against custom CDN domain (assets.boontrack.com / r2.dev)
-                if "boontrack.com" in host or "r2.dev" in host or "r2.cloudflarestorage.com" not in host:
+                if not pure_local_test and ("boontrack.com" in host or "r2.dev" in host or "r2.cloudflarestorage.com" not in host):
                     logger.warning(f"[R2] Custom domain detected in endpoint ('{host}'). Re-routing to pure R2 S3 endpoint.")
                     return pure_default
                 # Guard against bucket prefix on hostname

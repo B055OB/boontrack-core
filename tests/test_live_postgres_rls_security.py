@@ -71,6 +71,15 @@ def non_superuser_db_conn(bootstrap_non_superuser_role):
     else:
         login_user = "boontrack_test_app_user"
 
+    from app.core.security.test_isolation_guard import assert_disposable_postgres_target
+
+    assert_disposable_postgres_target(
+        host=settings.POSTGRES_HOST,
+        port=int(settings.POSTGRES_PORT or 5432),
+        dbname=settings.POSTGRES_DB,
+        user=login_user,
+        allow_if_unconfigured=False,
+    )
     conn = psycopg2.connect(
         host=settings.POSTGRES_HOST,
         port=int(settings.POSTGRES_PORT or 5432),

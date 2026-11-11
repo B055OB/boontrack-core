@@ -18,11 +18,11 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 if not os.getenv("DATABASE_URL"):
-    pg_user = os.getenv("POSTGRES_USER", "postgres")
-    pg_pass = os.getenv("POSTGRES_PASSWORD", "postgres")
+    pg_user = os.getenv("POSTGRES_USER", "test_user")
+    pg_pass = os.getenv("POSTGRES_PASSWORD", "test_password")
     pg_host = os.getenv("POSTGRES_HOST", "127.0.0.1")
     pg_port = os.getenv("POSTGRES_PORT", "5432")
-    pg_db = os.getenv("POSTGRES_DB", "postgres")
+    pg_db = os.getenv("POSTGRES_DB", "test_boontrack")
     os.environ["DATABASE_URL"] = f"postgresql://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
 
 if not os.getenv("XENDIT_SECRET_KEY"):
@@ -30,7 +30,7 @@ if not os.getenv("XENDIT_SECRET_KEY"):
 if not os.getenv("XENDIT_CALLBACK_TOKEN"):
     os.environ["XENDIT_CALLBACK_TOKEN"] = "test_ci_xendit_callback_token_mock_12345"
 if not os.getenv("SUPABASE_URL"):
-    os.environ["SUPABASE_URL"] = "https://mpluzajlzpregmjwpjqr.supabase.co"
+    os.environ["SUPABASE_URL"] = "http://127.0.0.1:54321"
 if not os.getenv("SUPABASE_KEY"):
     os.environ["SUPABASE_KEY"] = "test_ci_supabase_anon_key_mock_999"
 if not os.getenv("SUPABASE_ANON_KEY"):

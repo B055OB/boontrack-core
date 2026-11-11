@@ -26,6 +26,10 @@ class _StandalonePytestShim:
     def skip(msg: str) -> None:
         raise _StandalonePytestShim.Skipped(msg)
 
+    @staticmethod
+    def fail(msg: str) -> None:
+        raise AssertionError(msg)
+
     class raises:
         def __init__(self, exc_type: Any, match: Optional[str] = None) -> None:
             self.exc_type = exc_type
@@ -51,6 +55,9 @@ pytest: Any = sys.modules.get("pytest") or _StandalonePytestShim()
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from app.core.security.test_isolation_guard import bootstrap_isolated_test_env
+bootstrap_isolated_test_env(REPO_ROOT)
 
 from app.core.security.payment_auth_guard import CanonicalTenantResolver
 
@@ -925,7 +932,11 @@ def _get_verified_disposable_pg_dsn() -> Optional[str]:
     import re
     from urllib.parse import urlparse
 
-    dsn = os.environ.get("STAGE1_TEST_DISPOSABLE_PG_DSN", "").strip()
+    dsn = (
+        os.environ.get("STAGE3_STEP0_DISPOSABLE_PG_DSN")
+        or os.environ.get("STAGE1_TEST_DISPOSABLE_PG_DSN")
+        or ""
+    ).strip()
     if not dsn:
         return None
     if _VERIFIED_DSN_CACHE == dsn:
@@ -933,7 +944,10 @@ def _get_verified_disposable_pg_dsn() -> Optional[str]:
     parsed = urlparse(dsn)
     if parsed.scheme not in ("postgresql", "postgres"):
         raise RuntimeError(f"FORBIDDEN_DB_SCHEME: {parsed.scheme}")
-    if parsed.hostname not in ("127.0.0.1", "localhost", "::1"):
+    allowed_hosts = {"127.0.0.1", "localhost", "::1"}
+    if os.getenv("TEST_IN_DOCKER_INTERNAL_NET", "").strip() == "1":
+        allowed_hosts.add("test-postgres")
+    if parsed.hostname not in allowed_hosts:
         raise RuntimeError(f"FORBIDDEN_NON_LOCAL_DB_HOST: {parsed.hostname}")
     db_name = (parsed.path or "").lstrip("/")
     if not re.match(r"^bt_stage1_disposable_test_[a-z0-9_]+$", db_name):
@@ -943,13 +957,23 @@ def _get_verified_disposable_pg_dsn() -> Optional[str]:
     import subprocess
     import time
 
+    disable_wsl_spawn = (
+        os.getenv("TEST_STRICT_DB_GUARD", "").strip() == "1"
+        or os.getenv("TEST_REQUIRE_DISPOSABLE_SERVICES", "").strip() == "1"
+        or os.getenv("CI", "").strip().lower() in ("1", "true", "yes")
+    )
+
     for _attempt in range(2):
         try:
             conn = psycopg2.connect(dsn)
             conn.close()
             break
         except psycopg2.OperationalError as exc:
-            if _attempt == 0 and ("Connection refused" in str(exc) or "closed unexpectedly" in str(exc)):
+            if (
+                _attempt == 0
+                and not disable_wsl_spawn
+                and ("Connection refused" in str(exc) or "closed unexpectedly" in str(exc))
+            ):
                 subprocess.Popen(
                     ["wsl", "-d", "Ubuntu", "-u", "root", "bash", "-c", "service postgresql start && sleep 600"],
                     stdin=subprocess.DEVNULL,
@@ -962,7 +986,7 @@ def _get_verified_disposable_pg_dsn() -> Optional[str]:
                 for _ in range(30):
                     time.sleep(0.1)
                     try:
-                        c = psycopg2.connect(dsn.rsplit("/", 1)[0] + "/postgres")
+                        c = psycopg2.connect(dsn.rsplit("/", 1)[0] + "/test_boontrack")
                         c.close()
                         break
                     except Exception:
@@ -970,7 +994,7 @@ def _get_verified_disposable_pg_dsn() -> Optional[str]:
                 continue
             if "does not exist" not in str(exc):
                 raise
-            admin_dsn = dsn.rsplit("/", 1)[0] + "/postgres"
+            admin_dsn = dsn.rsplit("/", 1)[0] + "/test_boontrack"
             admin_conn = psycopg2.connect(admin_dsn)
             admin_conn.autocommit = True
             try:
@@ -1043,7 +1067,10 @@ def test_11_live_disposable_pg_migration_033_full_rehearsal() -> None:
     """
     dsn = _get_verified_disposable_pg_dsn()
     if not dsn:
-        pytest.skip("STAGE1_TEST_DISPOSABLE_PG_DSN not set; skipping live disposable PG test.")
+        from app.core.security.test_isolation_guard import is_disposable_services_required
+        if is_disposable_services_required():
+            pytest.fail("STAGE3_STEP0_DISPOSABLE_PG_DSN / disposable PG missing while strict disposable services are required.")
+        pytest.skip("STAGE3_STEP0_DISPOSABLE_PG_DSN not set; skipping live disposable PG test.")
 
     import psycopg2
 
@@ -1208,7 +1235,10 @@ def test_12_live_disposable_pg_preflight_collision_and_rollback_rehearsal() -> N
     """
     dsn = _get_verified_disposable_pg_dsn()
     if not dsn:
-        pytest.skip("STAGE1_TEST_DISPOSABLE_PG_DSN not set; skipping live disposable PG test.")
+        from app.core.security.test_isolation_guard import is_disposable_services_required
+        if is_disposable_services_required():
+            pytest.fail("STAGE3_STEP0_DISPOSABLE_PG_DSN / disposable PG missing while strict disposable services are required.")
+        pytest.skip("STAGE3_STEP0_DISPOSABLE_PG_DSN not set; skipping live disposable PG test.")
 
     import psycopg2
 

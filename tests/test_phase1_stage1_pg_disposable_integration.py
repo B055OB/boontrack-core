@@ -69,10 +69,13 @@ def assert_strictly_disposable_local_postgres_dsn(dsn: str) -> Tuple[str, str]:
     if parsed.scheme not in ("postgresql", "postgres"):
         raise RuntimeError(f"Invalid DSN scheme '{parsed.scheme}'; expected postgresql://")
     host = (parsed.hostname or "").strip().lower()
-    if host not in ("127.0.0.1", "localhost", "::1"):
+    allowed_hosts = {"127.0.0.1", "localhost", "::1"}
+    if os.getenv("TEST_IN_DOCKER_INTERNAL_NET", "").strip() == "1":
+        allowed_hosts.add("test-postgres")
+    if host not in allowed_hosts:
         raise RuntimeError(
             f"FORBIDDEN_NON_LOCAL_DB_HOST: '{host}'. Live Stage 1 integration tests may only "
-            "run against loopback (127.0.0.1 / localhost)."
+            "run against loopback or isolated test-postgres network."
         )
     db_name = (parsed.path or "").lstrip("/").strip()
     if not DISPOSABLE_DB_NAME_PATTERN.match(db_name):
@@ -84,6 +87,8 @@ def assert_strictly_disposable_local_postgres_dsn(dsn: str) -> Tuple[str, str]:
 
 
 def _get_verified_disposable_dsn() -> str:
+    import ipaddress
+
     raw_dsn = os.environ.get(ENV_DISPOSABLE_PG_DSN, "")
     dsn, db_name = assert_strictly_disposable_local_postgres_dsn(raw_dsn)
     try:
@@ -91,7 +96,7 @@ def _get_verified_disposable_dsn() -> str:
     except psycopg2.OperationalError as exc:
         if "does not exist" not in str(exc):
             raise
-        admin_dsn = dsn.rsplit("/", 1)[0] + "/postgres"
+        admin_dsn = dsn.rsplit("/", 1)[0] + "/test_boontrack"
         admin_conn = psycopg2.connect(admin_dsn)
         admin_conn.autocommit = True
         try:
@@ -108,8 +113,11 @@ def _get_verified_disposable_dsn() -> str:
             actual_db, server_addr = row
             if actual_db != db_name or not DISPOSABLE_DB_NAME_PATTERN.match(actual_db):
                 raise RuntimeError(f"Connected database '{actual_db}' does not match disposable contract.")
-            if server_addr and server_addr not in ("127.0.0.1", "::1", "127.0.0.1/32", "::1/128"):
-                raise RuntimeError(f"Connected server address '{server_addr}' is not loopback!")
+            if server_addr:
+                ip_obj = ipaddress.ip_address(server_addr.split("/", 1)[0])
+                in_docker = os.getenv("TEST_IN_DOCKER_INTERNAL_NET", "").strip() == "1"
+                if not (ip_obj.is_loopback or (in_docker and ip_obj.is_private)):
+                    raise RuntimeError(f"Connected server address '{server_addr}' is not loopback or isolated test network!")
     finally:
         conn.close()
     return dsn

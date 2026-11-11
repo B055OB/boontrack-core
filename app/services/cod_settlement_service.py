@@ -7,7 +7,11 @@ from app.services.adapters import WhatsAppAdapter
 from app.services.meta_capi_service import send_meta_capi_purchase
 
 def get_db():
-    return psycopg2.connect(os.getenv("DATABASE_URL", "").strip())
+    from app.core.security.test_isolation_guard import assert_disposable_postgres_target
+
+    db_url = os.getenv("DATABASE_URL", "").strip()
+    assert_disposable_postgres_target(dsn=db_url, allow_if_unconfigured=False)
+    return psycopg2.connect(db_url)
 
 async def reconcile_single_cod_order(order_id: str, tenant_id: str) -> Dict[str, Any]:
     """

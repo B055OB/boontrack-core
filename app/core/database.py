@@ -9,6 +9,7 @@ from contextlib import contextmanager
 import psycopg2
 from psycopg2.extras import RealDictCursor, RealDictRow
 from app.core.config import settings
+from app.core.security.test_isolation_guard import assert_disposable_postgres_target
 from sqlalchemy.ext.declarative import declarative_base
 
 logger = logging.getLogger("APP_DATABASE")
@@ -94,6 +95,7 @@ def get_db_connection():
     """
     database_url = os.getenv("DATABASE_URL", "").strip()
     if database_url:
+        assert_disposable_postgres_target(dsn=database_url, allow_if_unconfigured=False)
         return psycopg2.connect(database_url)
 
     host = settings.POSTGRES_HOST or os.getenv("POSTGRES_HOST")
@@ -117,6 +119,14 @@ def get_db_connection():
             f"[SECURITY FAIL-CLOSED] PostgreSQL connection credentials are not configured: {', '.join(missing)}. "
             "Neither DATABASE_URL nor discrete credentials were provided in the environment."
         )
+
+    assert_disposable_postgres_target(
+        host=host,
+        port=port,
+        dbname=dbname,
+        user=user,
+        allow_if_unconfigured=False,
+    )
 
     return psycopg2.connect(
         host=host,

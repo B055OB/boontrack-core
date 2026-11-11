@@ -15,11 +15,9 @@ try:
 except ImportError:
     aiosmtplib = None
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+from app.core.security.test_isolation_guard import safe_load_dotenv
+
+safe_load_dotenv()
 
 logger = logging.getLogger("EMAIL_SERVICE")
 

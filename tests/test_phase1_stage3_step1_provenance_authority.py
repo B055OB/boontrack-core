@@ -54,6 +54,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from app.core.security.test_isolation_guard import bootstrap_isolated_test_env
+bootstrap_isolated_test_env(REPO_ROOT)
+
 from app.core.security.provenance_authority import (
     ALLOWED_PROVIDERS,
     ALLOWED_VERIFICATION_METHODS,
@@ -1093,12 +1096,15 @@ def _get_effective_disposable_pg_dsn() -> Tuple[str, str]:
 
     dsn = os.environ.get(
         "STAGE3_STEP1_DISPOSABLE_PG_DSN",
-        "postgresql://postgres:rehearsal_pass@127.0.0.1:5432/bt_stage1_disposable_test_step1",
+        "postgresql://test_user:test_password@127.0.0.1:5432/bt_stage1_disposable_test_step1",
     ).strip()
     parsed = urlparse(dsn)
     if parsed.scheme not in ("postgresql", "postgres"):
         raise RuntimeError(f"FORBIDDEN_DB_SCHEME: {parsed.scheme}")
-    if parsed.hostname not in ("127.0.0.1", "localhost", "::1"):
+    allowed_hosts = {"127.0.0.1", "localhost", "::1"}
+    if os.getenv("TEST_IN_DOCKER_INTERNAL_NET", "").strip() == "1":
+        allowed_hosts.add("test-postgres")
+    if parsed.hostname not in allowed_hosts:
         raise RuntimeError(f"FORBIDDEN_NON_LOCAL_HOST: {parsed.hostname}")
     db_name = (parsed.path or "").lstrip("/")
     if db_name != EXACT_DISPOSABLE_STEP1_DB_NAME:
@@ -1120,7 +1126,7 @@ def _prepare_disposable_pg_step1_db() -> Tuple[str, str]:
 
     dsn, db_name = _get_effective_disposable_pg_dsn()
     parsed = urlparse(dsn)
-    admin_dsn = dsn.rsplit("/", 1)[0] + "/postgres"
+    admin_dsn = dsn.rsplit("/", 1)[0] + "/test_boontrack"
 
     try:
         adm = psycopg2.connect(admin_dsn)
@@ -1176,15 +1182,18 @@ def _drop_disposable_pg_step1_db(dsn: Optional[str] = None, db_name: Optional[st
             f"Cleanup strictly restricted to exact '{EXACT_DISPOSABLE_STEP1_DB_NAME}'."
         )
 
-    # 2. Validate target_dsn host is strictly loopback
+    # 2. Validate target_dsn host is strictly loopback (or internal docker network)
     parsed = urlparse(target_dsn)
-    if parsed.hostname not in ("127.0.0.1", "localhost", "::1"):
+    allowed_hosts = {"127.0.0.1", "localhost", "::1"}
+    if os.getenv("TEST_IN_DOCKER_INTERNAL_NET", "").strip() == "1":
+        allowed_hosts.add("test-postgres")
+    if parsed.hostname not in allowed_hosts:
         raise RuntimeError(f"FORBIDDEN_NON_LOCAL_HOST: {parsed.hostname}")
 
     # 3. Ownership Guard: target must have been created by the currently executing process
     if (target_dsn, target_db_name) not in _DISPOSABLE_DBS_CREATED_THIS_RUN:
         # Check if an unowned or orphaned database exists in PostgreSQL
-        admin_dsn = target_dsn.rsplit("/", 1)[0] + "/postgres"
+        admin_dsn = target_dsn.rsplit("/", 1)[0] + "/test_boontrack"
         try:
             adm_check = psycopg2.connect(admin_dsn)
             adm_check.autocommit = True
@@ -1216,7 +1225,7 @@ def _drop_disposable_pg_step1_db(dsn: Optional[str] = None, db_name: Optional[st
 
     expected_marker = _DISPOSABLE_DBS_CREATED_THIS_RUN[(target_dsn, target_db_name)]
 
-    admin_dsn = target_dsn.rsplit("/", 1)[0] + "/postgres"
+    admin_dsn = target_dsn.rsplit("/", 1)[0] + "/test_boontrack"
     try:
         adm = psycopg2.connect(admin_dsn)
     except psycopg2.OperationalError as conn_err:
