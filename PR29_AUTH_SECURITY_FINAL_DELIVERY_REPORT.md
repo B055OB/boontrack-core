@@ -20,9 +20,11 @@ Dedicated comprehensive security remediation closing all confirmed and condition
 | **B — Tenant Slug `upsert` Ownership Mutation** | 🔴 P0 Critical | ✅ CLOSED |
 | **P0 — Strict Fail-Closed Persistence & Credential Checking** | 🔴 P0 Critical | ✅ CLOSED |
 | **P0 — Dual-Table Atomicity & Compensating Rollback (PostgreSQL & Supabase)** | 🔴 P0 Critical | ✅ CLOSED |
+| **P0 — Supabase Compensating Deletion & Independent Absence Verification** | 🔴 P0 Critical | ✅ CLOSED |
+| **P0 — PostgreSQL Dual-Table Cleanup with Affected-Row & State Inspection** | 🔴 P0 Critical | ✅ CLOSED |
+| **P0 — Active Tenant Guard on `action="revert"` and `action="delete"`** | 🔴 P0 Critical | ✅ CLOSED |
 | **P0 — Tenant Status Transition Guard & Zero-Rowcount Rollback** | 🔴 P0 Critical | ✅ CLOSED |
 | **P0 — Authoritative Ownership & Row State Verification on Revert** | 🔴 P0 Critical | ✅ CLOSED |
-| **P0 — Active Tenant Guard on `action="revert"`** | 🔴 P0 Critical | ✅ CLOSED |
 | **P0 — Independent Supabase Dual-Table Deletion Verification** | 🔴 P0 Critical | ✅ CLOSED |
 | **P0 — Challenge-Bound OTP Verification (Mandatory Server Challenge ID)** | 🔴 P0 Critical | ✅ CLOSED |
 | **P0 — Production Memory Authority Removal** | 🔴 P0 Critical | ✅ CLOSED |
@@ -36,13 +38,14 @@ Dedicated comprehensive security remediation closing all confirmed and condition
 | **P0 — Preflight Check for Unowned `public.tenants` Slugs** | 🔴 P0 Critical | ✅ CLOSED |
 | **P0 — Inactive/Suspended Merchant Self-Reactivation Guard** | 🔴 P0 Critical | ✅ CLOSED |
 | **P1 — Route-Specific Public Auth Rate Limiter Budgets (30/min `/request`, 10/min `/register`)** | 🟡 P1 High | ✅ CLOSED |
+| **P1 — Mandatory Redis Health Enforcement in CI Environment** | 🟡 P1 High | ✅ CLOSED |
 | **P1 — Action-Aware Reconciliation (`action="delete"` vs `action="revert"`)** | 🟡 P1 High | ✅ CLOSED |
 | **P1 — Active Tenant Guard & Leader Lock in Cleanup Reconciliation** | 🟡 P1 High | ✅ CLOSED |
 | **P1 — CSPRNG OTP Generation (`secrets`)** | 🟡 P1 High | ✅ CLOSED |
 | **P1 — Observable Reservation Rollback & Dead-Letter Queue (7-day Redis TTL)** | 🟡 P1 High | ✅ CLOSED |
 | **P1 — Real Redis Service Container in CI (`redis:7-alpine`)** | 🟡 P1 High | ✅ CLOSED |
 | **P1 — Production-Grade CI Test Schema (`merchants` & `cs_agents`)** | 🟡 P1 High | ✅ CLOSED |
-| **P1 — Dedicated Live PostgreSQL Integration Suite (21 Tests)** | 🟡 P1 High | ✅ CLOSED |
+| **P1 — Dedicated Live PostgreSQL Integration Suite (22 Tests)** | 🟡 P1 High | ✅ CLOSED |
 
 ---
 
@@ -65,48 +68,41 @@ Dedicated comprehensive security remediation closing all confirmed and condition
   - Suspended/inactive merchant re-registration returns `HTTP 403 Forbidden`.
   - Insert-only semantics: `_insert_pending_merchant` inserts into both `merchants` and `public.tenants` with anti-overwrite rowcount verification.
 
-### P0 — Authoritative Ownership & Row State Verification on Revert
-- **Vulnerability:** Reverting merchant status (`_revert_pending_merchant_activation`) previously updated solely based on `slug` without asserting `owner_email` or rowcount. If zero rows were updated or an unowned merchant existed, it returned success and cleared dead-letter state.
+### P0 — Supabase Compensating Deletion & Independent Absence Verification
+- **Vulnerability:** In `_insert_pending_merchant` (Supabase fallback), when tenant provisioning failed, the compensating merchant deletion previously executed without inspecting `res_del.data` and without verifying record absence. If RLS policies or status mismatches caused zero rows to be deleted, an orphaned merchant reservation remained without being recorded in the dead-letter queue.
 - **Remediation:**
-  - Added `lower(owner_email) = %s` predicate to PostgreSQL merchant revert query:
-    ```sql
-    UPDATE merchants
-    SET status = 'PENDING_VERIFICATION', is_otp_verified = false
-    WHERE lower(slug) = %s AND lower(owner_email) = %s
-      AND (status = 'ACTIVE' OR status = 'PENDING_VERIFICATION');
-    ```
-  - Enforced `cur.rowcount == 1`. If zero rows are affected, transaction rolls back immediately and returns `(False, "PostgreSQL UPDATE affected 0 rows (expected 1)")`.
-  - Supabase update fallback inspects `res.data` (`len(res.data) == 1`) and executes a secondary state verification query if zero rows were returned.
-  - Dead-letter state is retained on any unsuccessful revert.
+  - In `_insert_pending_merchant`:
+    1. Inspects `res_del.data` independently.
+    2. If `res_del.data` is empty (`len == 0`), runs a secondary query on `merchants` to verify if the record still exists.
+    3. If the record still exists or compensating delete throws an exception, marks the rollback as failed and persists a durable dead-letter entry in `_DEAD_LETTER_CLEANUP_REGISTRY` (with Redis TTL of 7 days).
+    4. Performs an independent absence check (`verify_m`) even if `del_data` returns rows to confirm the merchant row was completely deleted.
+  - Verified by `test_20` Scenarios 9 and 10 in `tests/test_auth_postgres_integration.py`.
 
-### P0 — Active Tenant Guard on `action="revert"`
-- **Vulnerability:** Reverting an active merchant when the corresponding tenant was already `ACTIVE` would desynchronize the database into a split state (`tenants.status='ACTIVE'` vs `merchants.status='PENDING_VERIFICATION'`).
+### P0 — PostgreSQL Dual-Table Cleanup with Affected-Row & State Inspection
+- **Vulnerability:** `_delete_pending_merchant` previously ran PostgreSQL DELETE statements without inspecting `cur.rowcount` and without checking the remaining row state before committing and clearing dead-letter records. A partial deletion (e.g. merchant deleted, but tenant retained due to `is_active=true`) would commit the partial state and clear the dead-letter queue.
 - **Remediation:**
-  - Before reverting merchant status in `_revert_pending_merchant_activation`, query tenant state in PostgreSQL (`SELECT status, is_active FROM public.tenants WHERE lower(slug) = %s LIMIT 1;`) and Supabase.
-  - If tenant status is `ACTIVE` or `is_active=True`, automatically aborts with `(False, "CANNOT_REVERT_ACTIVE_TENANT: Tenant is ACTIVE or is_active=true")`.
-  - Preserves both records and retains the dead-letter record for manual reconciliation.
+  - In `_delete_pending_merchant`:
+    1. Tracks affected row counts: `m_deleted = cur.rowcount` and `t_deleted = cur.rowcount`.
+    2. Runs secondary state queries on both `merchants` (`rem_m`) and `public.tenants` (`rem_t`).
+    3. If either `rem_m is not None` or `rem_t is not None`, issues `conn.rollback()`, raises `POSTGRESQL_CLEANUP_INCONSISTENT_STATE`, and creates a durable dead-letter record.
+    4. Guards against Supabase fallback masking: if primary PostgreSQL detects `POSTGRESQL_CLEANUP_INCONSISTENT_STATE`, Supabase fallback is bypassed and failure is logged immediately.
+  - Verified by `test_22` live PostgreSQL mixed-state integration test.
 
-### P0 — Independent Supabase Dual-Table Deletion Verification
-- **Vulnerability:** In `_delete_pending_merchant`, Supabase fallback previously inspected only merchant deletion (`res_m`), ignoring tenant deletion (`res_t`). If tenant deletion affected 0 rows due to RLS or status mismatch, an orphaned tenant record remained while returning success.
+### P0 — Active Tenant Guard on `action="delete"` and `action="revert"`
+- **Vulnerability:** Blindly skipping deletion when `is_active=true` on `tenants` risked leaving an orphaned `merchants` row in `PENDING_VERIFICATION` while clearing the dead-letter queue.
 - **Remediation:**
-  - Inspects `res_m.data` and `res_t.data` independently.
-  - If either deletion returns 0 rows, executes an independent secondary SELECT query on that table. If the row still exists, raises `RuntimeError` to abort and retain dead-letter state.
-  - Verifies the final state of both records before reporting cleanup success.
+  - In `_delete_pending_merchant`, checks whether **both** `tenants` (`status == 'ACTIVE' and is_active is True`) and `merchants` (`status == 'ACTIVE'`) are established active records.
+  - If both are established active, deletion is safely refused and dead-letter is cleared.
+  - If a mixed state exists (e.g. merchant is `PENDING_VERIFICATION` while tenant is `ACTIVE`, or tenant has `is_active=true` but `status='PENDING_VERIFICATION'`), it proceeds to dual-table cleanup where PostgreSQL transaction rollback and dead-letter retention are enforced.
+  - In `_revert_pending_merchant_activation`, checks tenant state and refuses automatic revert if tenant is `ACTIVE` or `is_active=true`, retaining the dead-letter record.
 
-### P0 — Challenge-Bound OTP Verification
-- **Vulnerability:** OTP verification previously fell back to blind OTP-only lookup without requiring `challenge_id`, bypassing challenge-level and account-level failure tracking.
+### P0 — Mandatory Redis Health Enforcement in CI
+- **Vulnerability:** Local tests skipped multi-instance and distributed rate-limiting tests when Redis was offline. If CI runner lacked a running Redis container, tests could silently pass without executing cross-instance assertions.
 - **Remediation:**
-  - Mandatory server-issued `challenge_id` when verifying numeric OTP: `req.challenge_id` must be present, or `HTTP 400 Bad Request` ("Harap sertakan challenge_id verifikasi yang valid bersama kode OTP.") is returned immediately.
-  - High-entropy magic-link token verification (`req.token`) is preserved without requiring `challenge_id`.
-  - Unknown/forged `challenge_id` returns `HTTP 401 Unauthorized` without allocating Redis rate-limit buckets.
-
-### P1 — Route-Specific Public Auth Rate Limiter Budgets
-- **Implementation:**
-  - Separate `DistributedAuthRateLimiter` instances:
-    - `request_rate_limiter`: `max_requests=30, window_seconds=60` for `POST /api/v1/auth/magic-link/request`.
-    - `register_rate_limiter`: `max_requests=10, window_seconds=60` for `POST /api/v1/auth/register` and `POST /api/v1/auth/magic-link/register`.
-  - Incorporates endpoint identifier, target account (`email_clean`), and client IP into Redis key: `{bt:auth}:ratelimit:auth:{endpoint}:{target}:{client_ip}`.
-  - Enforces atomic Redis Lua script `_REDIS_INCR_EXPIRE_LUA` and fail-closed production behavior.
+  - Added `_is_ci_environment()` detecting `CI`, `GITHUB_ACTIONS`, or `CONTINUOUS_INTEGRATION`.
+  - In `test_16`: `@unittest.skipIf(not _IS_CI and not LIVE_REDIS_ACTIVE, ...)` — asserts `self.assertTrue(LIVE_REDIS_ACTIVE)` in CI.
+  - In `test_21`: Asserts `store1._is_redis_healthy()` and `store2._is_redis_healthy()` in CI; calls `self.fail()` if Redis cross-instance assertions would otherwise be skipped.
+  - Verified independent rate limit budgets (`register` 10 req/min vs `request` 30 req/min) across independent Redis stores and verified key schema independence (`{bt:auth}:ratelimit:auth:register:...` vs `{bt:auth}:ratelimit:auth:request:...`).
 
 ---
 
@@ -114,11 +110,11 @@ Dedicated comprehensive security remediation closing all confirmed and condition
 
 | File | Type | Description |
 | :--- | :--- | :--- |
-| [`app/routes/auth_routes.py`](file:///C:/boontrack-core/app/routes/auth_routes.py) | Modified | Authoritative revert with `owner_email` predicate and rowcount verification; Active Tenant Guard on `action="revert"`; independent Supabase deletion verification; challenge-bound OTP verification (HTTP 400 on missing challenge); route-specific rate limiters (30/min for request, 10/min for register). |
+| [`app/routes/auth_routes.py`](file:///C:/boontrack-core/app/routes/auth_routes.py) | Modified | Authoritative dual-table compensating deletion with independent response inspection; PostgreSQL dual-table cleanup with affected rowcount & state verification; Active Tenant Guard requiring both merchant & tenant active state; challenge-bound OTP verification; route-specific distributed rate limiters. |
+| [`tests/test_auth_postgres_integration.py`](file:///C:/boontrack-core/tests/test_auth_postgres_integration.py) | Modified | 22 tests: added test 20 Scenarios 9 & 10 (Supabase compensating delete), test 21 mandatory CI Redis assertions & independent route budgets, and test 22 live PostgreSQL mixed-state cleanup reconciliation. |
 | [`tests/api/test_auth_registration_security.py`](file:///C:/boontrack-core/tests/api/test_auth_registration_security.py) | Modified | 18 tests: updated OTP verify requests with `challenge_id`, added test verifying OTP without `challenge_id` fails with HTTP 400. |
 | [`tests/test_email_auth.py`](file:///C:/boontrack-core/tests/test_email_auth.py) | Modified | 13 tests: updated OTP verify requests with `challenge_id`, added test verifying OTP without `challenge_id` fails with HTTP 400. |
-| [`tests/test_auth_postgres_integration.py`](file:///C:/boontrack-core/tests/test_auth_postgres_integration.py) | Modified | 21 tests: expanded with live PostgreSQL tests for Active Tenant Guard on revert, owner mismatch on revert, zero rowcount on revert, independent Supabase deletion failure, challenge-bound OTP verification, and route-specific rate limit budgets across instances. |
-| [`AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md`](file:///C:/boontrack-core/AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md) | Updated | Documented final security sign-off deltas, authoritative revert, and rate-limit contract. |
+| [`AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md`](file:///C:/boontrack-core/AUTH_REGISTRATION_OWNERSHIP_MUTATION_SECURITY_PROPOSAL.md) | Updated | Documented final security sign-off deltas, authoritative revert, compensating cleanup, and rate-limit contract. |
 | [`PR29_AUTH_SECURITY_FINAL_DELIVERY_REPORT.md`](file:///C:/boontrack-core/PR29_AUTH_SECURITY_FINAL_DELIVERY_REPORT.md) | Updated | Comprehensive final delivery report for PR #29. |
 
 ---
@@ -129,12 +125,12 @@ Dedicated comprehensive security remediation closing all confirmed and condition
 | :--- | :---: | :---: | :---: | :---: |
 | `tests/api/test_auth_registration_security.py` | 18 | ✅ 18/18 PASSED | PASSED | PASSED |
 | `tests/test_email_auth.py` | 13 | ✅ 13/13 PASSED | PASSED | PASSED |
-| `tests/test_auth_postgres_integration.py` | 21 | ✅ 21/21 PASSED | 20 Passed (1 Skipped) | 21 Passed (with `redis:7-alpine`) |
+| `tests/test_auth_postgres_integration.py` | 22 | ✅ 22/22 PASSED | 21 Passed (1 Skipped locally, mandatory in CI) | 22 Passed (with `redis:7-alpine`) |
 | `tests/test_media_upload.py` | 12 | ✅ 12/12 PASSED | PASSED | PASSED |
 | `tests/api/test_upload_alias_authorization.py` | 30 | ✅ 30/30 PASSED | PASSED | PASSED |
 | `tests/api/test_upload_security.py` | 16 | ✅ 16/16 PASSED | PASSED | PASSED |
 | `tests/api/test_aiohttp_upload_security.py` | 18 | ✅ 18/18 PASSED | PASSED | PASSED |
-| **Total Across All 7 Suites** | **128** | ✅ **128/128 PASSED (100% Green)** | **127 Passed, 1 Skipped** | **128/128 Passed** |
+| **Total Across All 7 Suites** | **129** | ✅ **129/129 PASSED (100% Green)** | **128 Passed, 1 Skipped** | **129/129 Passed** |
 
 ---
 

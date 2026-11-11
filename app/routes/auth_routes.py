@@ -351,12 +351,46 @@ def _insert_pending_merchant(
                     "is_active": False,
                 }).execute()
             except Exception as t_exc:
-                # Compensating rollback of merchants row
+                # Compensating rollback of merchants row with independent DELETE inspection & absence verification
+                comp_failed = False
+                comp_err_msg = None
                 try:
-                    supabase.table("merchants").delete().eq("slug", clean_s).ilike("owner_email", clean_e).eq("status", "PENDING_VERIFICATION").execute()
+                    res_del = (
+                        supabase.table("merchants")
+                        .delete()
+                        .eq("slug", clean_s)
+                        .ilike("owner_email", clean_e)
+                        .eq("status", "PENDING_VERIFICATION")
+                        .execute()
+                    )
+                    # Inspect DELETE response independently
+                    del_data = getattr(res_del, "data", None)
+                    if del_data is not None and len(del_data) == 0:
+                        chk_m = supabase.table("merchants").select("id, status").eq("slug", clean_s).execute()
+                        chk_data = getattr(chk_m, "data", None) or []
+                        if len(chk_data) > 0:
+                            comp_failed = True
+                            comp_err_msg = (
+                                "Supabase compensating DELETE merchants affected 0 rows due to RLS policy or "
+                                "status mismatch; merchant record still exists"
+                            )
+                    else:
+                        # Verify merchant record is actually absent
+                        verify_m = supabase.table("merchants").select("id, status").eq("slug", clean_s).execute()
+                        v_data = getattr(verify_m, "data", None) or []
+                        if len(v_data) > 0:
+                            comp_failed = True
+                            comp_err_msg = "Supabase merchant record still exists after compensating delete"
                 except Exception as comp_err:
-                    logger.critical(f"[COMPENSATING_ROLLBACK_FAILED] Merchants insert rollback failed for '{clean_s}': {comp_err}")
-                    _record_dead_letter_cleanup(clean_s, clean_e, f"MERCHANT_COMPENSATION_DELETE_FAILED: {comp_err}", action="delete")
+                    comp_failed = True
+                    comp_err_msg = f"MERCHANT_COMPENSATION_DELETE_FAILED: {comp_err}"
+
+                if comp_failed:
+                    logger.critical(
+                        f"[COMPENSATING_ROLLBACK_FAILED] Merchants insert rollback failed for '{clean_s}': {comp_err_msg}"
+                    )
+                    _record_dead_letter_cleanup(clean_s, clean_e, comp_err_msg, action="delete")
+
                 _pending_registrations.pop(clean_s, None)
                 t_err_str = str(t_exc)
                 if "unique" in t_err_str.lower() or "duplicate" in t_err_str.lower() or "23505" in t_err_str:
@@ -713,8 +747,9 @@ def _delete_pending_merchant(slug: str, owner_email: str) -> Tuple[bool, Optiona
     _pending_registrations.pop(clean_s, None)
     _in_memory_merchants.pop(clean_s, None)
 
-    # 1. Guard: Check if tenant is ACTIVE or established. Never delete ACTIVE tenants!
-    is_active = False
+    # 1. Guard: Check if both tenant and merchant are already established and ACTIVE.
+    # Never delete an established active tenant/merchant pair, and safely clear dead-letter.
+    both_established_active = False
     try:
         from app.core.database import get_db_connection
         conn_check = get_db_connection()
@@ -724,9 +759,17 @@ def _delete_pending_merchant(slug: str, owner_email: str) -> Tuple[bool, Optiona
                     "SELECT status, is_active FROM public.tenants WHERE lower(slug) = %s LIMIT 1;",
                     (clean_s,),
                 )
-                row = cur.fetchone()
-                if row and (row[0] == "ACTIVE" or row[1] is True):
-                    is_active = True
+                t_row = cur.fetchone()
+                cur.execute(
+                    "SELECT status FROM merchants WHERE lower(slug) = %s OR id::text = %s LIMIT 1;",
+                    (clean_s, clean_s),
+                )
+                m_row = cur.fetchone()
+                if t_row and m_row:
+                    t_is_active = (t_row[0] == "ACTIVE" and t_row[1] is True)
+                    m_is_active = (m_row[0] == "ACTIVE")
+                    if t_is_active and m_is_active:
+                        both_established_active = True
         finally:
             try:
                 conn_check.close()
@@ -735,28 +778,37 @@ def _delete_pending_merchant(slug: str, owner_email: str) -> Tuple[bool, Optiona
     except Exception:
         pass
 
-    if not is_active:
+    if not both_established_active:
         try:
             supabase = get_supabase()
             if supabase:
                 t_check = supabase.table("tenants").select("status, is_active").eq("slug", clean_s).limit(1).execute()
-                if t_check.data and (t_check.data[0].get("status") == "ACTIVE" or t_check.data[0].get("is_active") is True):
-                    is_active = True
+                m_check = supabase.table("merchants").select("status").eq("slug", clean_s).limit(1).execute()
+                t_data = getattr(t_check, "data", None) or []
+                m_data = getattr(m_check, "data", None) or []
+                if t_data and m_data:
+                    t_d = t_data[0]
+                    m_d = m_data[0]
+                    t_is_active = (t_d.get("status") == "ACTIVE" and t_d.get("is_active") is True)
+                    m_is_active = (m_d.get("status") == "ACTIVE")
+                    if t_is_active and m_is_active:
+                        both_established_active = True
         except Exception:
             pass
 
-    if is_active:
-        logger.info(f"[CLEANUP GUARD] Tenant '{clean_s}' is ACTIVE. Refusing to delete and clearing dead-letter.")
+    if both_established_active:
+        logger.info(f"[CLEANUP GUARD] Tenant and merchant '{clean_s}' are both established ACTIVE. Preserving active state and clearing dead-letter.")
         _clear_dead_letter_cleanup(clean_s)
         return True, None
 
-    # 2. Database Cleanup via PostgreSQL
+    # 2. Database Cleanup via PostgreSQL with rowcount inspection and independent state verification
     cleanup_error = None
     try:
         from app.core.database import get_db_connection
         conn = get_db_connection()
         try:
             with conn.cursor() as cur:
+                # 1. Delete merchants row and inspect affected count
                 cur.execute(
                     """
                     DELETE FROM merchants
@@ -766,6 +818,9 @@ def _delete_pending_merchant(slug: str, owner_email: str) -> Tuple[bool, Optiona
                     """,
                     (clean_s, clean_s, clean_e),
                 )
+                m_deleted = cur.rowcount
+
+                # 2. Delete public.tenants row and inspect affected count
                 cur.execute(
                     """
                     DELETE FROM public.tenants
@@ -775,6 +830,41 @@ def _delete_pending_merchant(slug: str, owner_email: str) -> Tuple[bool, Optiona
                     """,
                     (clean_s,),
                 )
+                t_deleted = cur.rowcount
+
+                # 3. Verify final merchant and tenant states independently
+                cur.execute(
+                    """
+                    SELECT id, status, lower(owner_email) FROM merchants
+                    WHERE lower(slug) = %s OR id::text = %s
+                    LIMIT 1;
+                    """,
+                    (clean_s, clean_s),
+                )
+                rem_m = cur.fetchone()
+
+                cur.execute(
+                    """
+                    SELECT slug, status, is_active FROM public.tenants
+                    WHERE lower(slug) = %s
+                    LIMIT 1;
+                    """,
+                    (clean_s,),
+                )
+                rem_t = cur.fetchone()
+
+                # 4. Strict consistency check: never report success or clear dead-letter
+                # if either table still retains an inconsistent record
+                if rem_m is not None or rem_t is not None:
+                    conn.rollback()
+                    err_msg = (
+                        f"POSTGRESQL_CLEANUP_INCONSISTENT_STATE: Remaining records detected after DELETE "
+                        f"(merchants_remaining={rem_m is not None}, tenants_remaining={rem_t is not None}, "
+                        f"m_deleted={m_deleted}, t_deleted={t_deleted})"
+                    )
+                    cleanup_error = err_msg
+                    raise RuntimeError(err_msg)
+
             conn.commit()
             _clear_dead_letter_cleanup(clean_s)
             return True, None
@@ -791,6 +881,14 @@ def _delete_pending_merchant(slug: str, owner_email: str) -> Tuple[bool, Optiona
                 pass
     except Exception as e:
         cleanup_error = str(e)
+
+    # If PostgreSQL detected an inconsistent state in the primary database, do NOT let Supabase fallback mask it
+    if cleanup_error and "POSTGRESQL_CLEANUP_INCONSISTENT_STATE" in cleanup_error:
+        logger.critical(
+            f"[SECURITY_ALERT][PENDING_CLEANUP_FAILURE] Primary PostgreSQL detected inconsistent state for '{clean_s}': {cleanup_error}"
+        )
+        _record_dead_letter_cleanup(clean_s, clean_e, cleanup_error, action="delete")
+        return False, cleanup_error
 
     # 3. Supabase Cleanup Fallback
     supabase_succeeded = False

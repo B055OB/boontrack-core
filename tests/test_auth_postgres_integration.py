@@ -85,6 +85,16 @@ def _is_live_postgres_available() -> bool:
 LIVE_POSTGRES_ACTIVE = _is_live_postgres_available()
 
 
+def _is_ci_environment() -> bool:
+    for var in ("CI", "GITHUB_ACTIONS", "CONTINUOUS_INTEGRATION"):
+        if os.getenv(var, "").strip().lower() in ("true", "1", "yes"):
+            return True
+    return False
+
+
+_IS_CI = _is_ci_environment()
+
+
 def _is_live_redis_available() -> bool:
     """Checks whether a live Redis connection is active."""
     if token_store and token_store._is_redis_healthy():
@@ -94,8 +104,8 @@ def _is_live_redis_available() -> bool:
         if _redis_mod is not None:
             r = _redis_mod.Redis.from_url(
                 os.getenv("REDIS_URL") or "redis://127.0.0.1:6379/0",
-                socket_timeout=0.5,
-                socket_connect_timeout=0.5,
+                socket_timeout=1.0,
+                socket_connect_timeout=1.0,
             )
             return bool(r.ping())
     except Exception:
@@ -876,13 +886,15 @@ class TestAuthPostgresIntegration(unittest.TestCase):
     # -------------------------------------------------------------------------
     # Test 16: Redis Multi-Instance TokenStore and paired-key atomic deletion
     # -------------------------------------------------------------------------
-    @unittest.skipUnless(LIVE_REDIS_ACTIVE, "Live Redis server required for multi-instance integration test")
+    @unittest.skipIf(not _IS_CI and not LIVE_REDIS_ACTIVE, "Live Redis server required for multi-instance integration test (mandatory in CI)")
     def test_16_redis_multi_instance_cluster_hash_tag_and_paired_deletion(self):
         """
         Proves that two independent TokenStore instances sharing Redis
         execute atomic Lua consumption with cluster hash tags ({bt:auth})
         and delete paired token and OTP keys without race conditions.
         """
+        if _IS_CI:
+            self.assertTrue(LIVE_REDIS_ACTIVE, "Live Redis container (redis:7-alpine) is mandatory in CI environment!")
         token = f"tok_pair_{uuid.uuid4().hex}"
         otp = f"{uuid.uuid4().int % 900000 + 100000:06d}"
         session = {
@@ -1608,6 +1620,51 @@ class TestAuthPostgresIntegration(unittest.TestCase):
             self.assertIn("tenant-zero-slug", _DEAD_LETTER_CLEANUP_REGISTRY)
             self.assertEqual(_DEAD_LETTER_CLEANUP_REGISTRY["tenant-zero-slug"]["action"], "delete")
 
+        # Scenario 9: In _insert_pending_merchant via Supabase, tenant fails, compensating merchant delete affects 0 rows
+        # while merchant record still exists -> must record durable dead-letter
+        slug9 = f"comp-zero-{uuid.uuid4().hex[:8]}"
+        email9 = f"comp_zero_{slug9}@example.test"
+        mock_sb_s9 = unittest.mock.MagicMock()
+        mock_m9 = unittest.mock.MagicMock()
+        mock_t9 = unittest.mock.MagicMock()
+        # Merchant insert succeeds
+        mock_m9.insert.return_value.execute.return_value = unittest.mock.MagicMock(data=[{"id": 1}])
+        # Tenant insert fails
+        mock_t9.insert.side_effect = Exception("Tenant provision failed on conflict")
+        # Compensating delete affects 0 rows (RLS policy filtered)
+        mock_m9.delete.return_value.eq.return_value.ilike.return_value.eq.return_value.execute.return_value = unittest.mock.MagicMock(data=[])
+        # Secondary SELECT shows merchant record STILL exists!
+        mock_m9.select.return_value.eq.return_value.execute.return_value = unittest.mock.MagicMock(data=[{"id": 1, "status": "PENDING_VERIFICATION"}])
+        mock_sb_s9.table.side_effect = lambda name: mock_m9 if name == "merchants" else mock_t9
+
+        with patch("app.core.database.get_db_connection", side_effect=Exception("DB down")), \
+             patch("app.routes.auth_routes.get_supabase", return_value=mock_sb_s9):
+            ok9, err9 = _insert_pending_merchant(slug=slug9, user_name="User9", user_email=email9)
+            self.assertFalse(ok9)
+            self.assertIn(slug9, _DEAD_LETTER_CLEANUP_REGISTRY)
+            self.assertEqual(_DEAD_LETTER_CLEANUP_REGISTRY[slug9]["action"], "delete")
+            self.assertIn("affected 0 rows", _DEAD_LETTER_CLEANUP_REGISTRY[slug9]["error"])
+
+        # Scenario 10: In _insert_pending_merchant via Supabase, tenant fails, compensating delete returns data=[{"id": 1}]
+        # but secondary select shows merchant STILL exists -> must record durable dead-letter
+        slug10 = f"comp-still-{uuid.uuid4().hex[:8]}"
+        email10 = f"comp_still_{slug10}@example.test"
+        mock_sb_s10 = unittest.mock.MagicMock()
+        mock_m10 = unittest.mock.MagicMock()
+        mock_t10 = unittest.mock.MagicMock()
+        mock_m10.insert.return_value.execute.return_value = unittest.mock.MagicMock(data=[{"id": 1}])
+        mock_t10.insert.side_effect = Exception("Tenant provision failed")
+        mock_m10.delete.return_value.eq.return_value.ilike.return_value.eq.return_value.execute.return_value = unittest.mock.MagicMock(data=[{"id": 1}])
+        mock_m10.select.return_value.eq.return_value.execute.return_value = unittest.mock.MagicMock(data=[{"id": 1, "status": "PENDING_VERIFICATION"}])
+        mock_sb_s10.table.side_effect = lambda name: mock_m10 if name == "merchants" else mock_t10
+
+        with patch("app.core.database.get_db_connection", side_effect=Exception("DB down")), \
+             patch("app.routes.auth_routes.get_supabase", return_value=mock_sb_s10):
+            ok10, err10 = _insert_pending_merchant(slug=slug10, user_name="User10", user_email=email10)
+            self.assertFalse(ok10)
+            self.assertIn(slug10, _DEAD_LETTER_CLEANUP_REGISTRY)
+            self.assertEqual(_DEAD_LETTER_CLEANUP_REGISTRY[slug10]["action"], "delete")
+
     # -------------------------------------------------------------------------
     # Test 21: Distributed Public Auth Rate Limiter & Multi-Instance Sync (CTO P1)
     # -------------------------------------------------------------------------
@@ -1636,7 +1693,12 @@ class TestAuthPostgresIntegration(unittest.TestCase):
                 allowed, _ = limiter1.is_allowed(test_user)
                 self.assertTrue(allowed)
 
-            # If Redis is running, limiter2 sees the 3 requests made by limiter1
+            # Enforce that Redis health is mandatory in CI
+            if _IS_CI:
+                self.assertTrue(store1._is_redis_healthy(), "Redis store1 must be healthy in CI (redis:7-alpine)")
+                self.assertTrue(store2._is_redis_healthy(), "Redis store2 must be healthy in CI (redis:7-alpine)")
+
+            # Multi-instance cross-process rate limiting assertions
             if store1._is_redis_healthy() and store2._is_redis_healthy():
                 # Make 2 requests via limiter2
                 for _ in range(2):
@@ -1647,6 +1709,8 @@ class TestAuthPostgresIntegration(unittest.TestCase):
                 allowed_6th, retry_after = limiter2.is_allowed(test_user)
                 self.assertFalse(allowed_6th, "6th request across distributed instances must be rate limited")
                 self.assertGreater(retry_after, 0)
+            elif _IS_CI:
+                self.fail("Redis cross-instance rate limiting assertions must not be skipped in CI")
 
             # Route-specific budgets test (30 req/min for request, 10 req/min for register)
             req_store1 = TokenStore()
@@ -1664,8 +1728,12 @@ class TestAuthPostgresIntegration(unittest.TestCase):
 
             user_budget = f"budget_user_{uuid.uuid4().hex[:6]}@boontrack.id"
 
-            if store1._is_redis_healthy() and store2._is_redis_healthy():
-                # Register budget (10 max across 2 instances)
+            if _IS_CI:
+                self.assertTrue(reg_store1._is_redis_healthy(), "Redis reg_store1 must be healthy in CI")
+                self.assertTrue(reg_store2._is_redis_healthy(), "Redis reg_store2 must be healthy in CI")
+
+            if reg_store1._is_redis_healthy() and reg_store2._is_redis_healthy():
+                # 1. Register budget (10 max across 2 instances sharing Redis)
                 for _ in range(5):
                     self.assertTrue(lim_reg1.is_allowed(user_budget)[0])
                 for _ in range(5):
@@ -1673,13 +1741,24 @@ class TestAuthPostgresIntegration(unittest.TestCase):
                 # 11th request: rejected!
                 self.assertFalse(lim_reg2.is_allowed(user_budget)[0])
 
-                # Request budget (30 max across 2 instances, distinct from register)
+                # 2. Independent budget proof: Even though user_budget is locked out on register (10/10 consumed),
+                # the SAME user_budget can STILL make requests on the request endpoint (budget 30)!
                 for _ in range(15):
-                    self.assertTrue(lim_req1.is_allowed(user_budget)[0])
+                    self.assertTrue(lim_req1.is_allowed(user_budget)[0], "Request endpoint must have independent budget")
                 for _ in range(15):
-                    self.assertTrue(lim_req2.is_allowed(user_budget)[0])
+                    self.assertTrue(lim_req2.is_allowed(user_budget)[0], "Request endpoint must have independent budget")
                 # 31st request: rejected!
                 self.assertFalse(lim_req2.is_allowed(user_budget)[0])
+
+                # 3. Verify Redis key independence
+                if req_store1._redis_client:
+                    reg_keys = req_store1._redis_client.keys(f"{_AUTH_HASH_TAG}:ratelimit:auth:register:{user_budget}*")
+                    req_keys = req_store1._redis_client.keys(f"{_AUTH_HASH_TAG}:ratelimit:auth:request:{user_budget}*")
+                    self.assertGreater(len(reg_keys), 0)
+                    self.assertGreater(len(req_keys), 0)
+                    self.assertNotEqual(set(reg_keys), set(req_keys), "Register and request rate limit keys must be independent")
+            elif _IS_CI:
+                self.fail("Redis independent endpoint budget assertions must not be skipped in CI")
 
             # HTTP endpoint rate limit testing across instances
             http_user = f"http_rate_{uuid.uuid4().hex[:6]}@boontrack.id"
@@ -1701,6 +1780,155 @@ class TestAuthPostgresIntegration(unittest.TestCase):
                 with patch.object(store1, "_is_redis_healthy", return_value=False):
                     with self.assertRaises(RuntimeError):
                         limiter1.is_allowed("prod_user@boontrack.id")
+
+
+
+
+    # -------------------------------------------------------------------------
+    # Test 22: Live PostgreSQL Mixed-State Cleanup & Consistency Verification (CTO P0)
+    # -------------------------------------------------------------------------
+    @unittest.skipUnless(LIVE_POSTGRES_ACTIVE, "Live PostgreSQL database required for integration test")
+    def test_22_live_postgres_mixed_state_cleanup_reconciliation(self):
+        """
+        Proves:
+        1. PostgreSQL dual-table cleanup inspects affected-row counts.
+        2. Independently verifies final merchant and tenant states after deletion.
+        3. Never clears dead-letter when one record remains inconsistent.
+        4. Mixed-state (tenant remaining as active/non-pending) triggers rollback and creates dead-letter.
+        5. Mixed-state (merchant owner mismatch) triggers rollback and creates dead-letter.
+        """
+        # Scenario 1: Mixed state where merchants has pending row, but tenants is ACTIVE / is_active=true
+        mixed_slug_1 = f"mix-state-1-{uuid.uuid4().hex[:8]}"
+        mixed_email_1 = f"owner_{mixed_slug_1}@boontrack.id"
+
+        conn1 = get_db_connection()
+        try:
+            with conn1.cursor() as cur:
+                # Seed merchants row in PENDING_VERIFICATION
+                cur.execute(
+                    """
+                    INSERT INTO public.merchants (slug, store_name, owner_name, owner_email, owner_whatsapp, status)
+                    VALUES (%s, %s, 'Mixed 1', %s, '08123456789', 'PENDING_VERIFICATION')
+                    ON CONFLICT DO NOTHING;
+                    """,
+                    (mixed_slug_1, mixed_slug_1, mixed_email_1),
+                )
+                # Seed tenants row in ACTIVE / is_active=true state (so DELETE WHERE is_active=false will NOT delete it!)
+                cur.execute(
+                    """
+                    INSERT INTO public.tenants (name, slug, tier, status, is_active)
+                    VALUES (%s, %s, 'STARTER', 'ACTIVE', true)
+                    ON CONFLICT (slug) DO UPDATE SET status = 'ACTIVE', is_active = true;
+                    """,
+                    (mixed_slug_1, mixed_slug_1),
+                )
+            conn1.commit()
+        finally:
+            conn1.close()
+
+        # In Scenario 1, merchants is PENDING_VERIFICATION while tenants is ACTIVE.
+        # Guard does NOT clear dead-letter because merchant is pending (inconsistent mixed state).
+        # PostgreSQL cleanup rolls back because rem_t is not None, and records dead-letter.
+        ok_mix1, err_mix1 = _delete_pending_merchant(mixed_slug_1, mixed_email_1)
+        self.assertFalse(ok_mix1)
+        self.assertIn("POSTGRESQL_CLEANUP_INCONSISTENT_STATE", str(err_mix1))
+        self.assertIn(mixed_slug_1, _DEAD_LETTER_CLEANUP_REGISTRY)
+        self.assertEqual(_DEAD_LETTER_CLEANUP_REGISTRY[mixed_slug_1]["action"], "delete")
+
+        # Scenario 2: What if tenants was PENDING_VERIFICATION with is_active=true?
+        mixed_slug_2 = f"mix-state-2-{uuid.uuid4().hex[:8]}"
+        mixed_email_2 = f"owner_{mixed_slug_2}@boontrack.id"
+
+        conn2 = get_db_connection()
+        try:
+            with conn2.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO public.merchants (slug, store_name, owner_name, owner_email, owner_whatsapp, status)
+                    VALUES (%s, %s, 'Mixed 2', %s, '08123456789', 'PENDING_VERIFICATION')
+                    ON CONFLICT DO NOTHING;
+                    """,
+                    (mixed_slug_2, mixed_slug_2, mixed_email_2),
+                )
+                # Seed tenant row as PENDING_VERIFICATION but with is_active=true
+                # This bypasses the active guard (status != ACTIVE), but DELETE query specifies is_active=false,
+                # so the tenant row is NOT deleted!
+                cur.execute(
+                    """
+                    INSERT INTO public.tenants (name, slug, tier, status, is_active)
+                    VALUES (%s, %s, 'STARTER', 'PENDING_VERIFICATION', true)
+                    ON CONFLICT (slug) DO UPDATE SET status = 'PENDING_VERIFICATION', is_active = true;
+                    """,
+                    (mixed_slug_2, mixed_slug_2),
+                )
+            conn2.commit()
+        finally:
+            conn2.close()
+
+        ok_mix2, err_mix2 = _delete_pending_merchant(mixed_slug_2, mixed_email_2)
+        # Must fail because rem_t is not None (tenants row remained)!
+        self.assertFalse(ok_mix2)
+        self.assertIn("POSTGRESQL_CLEANUP_INCONSISTENT_STATE", str(err_mix2))
+        self.assertIn(mixed_slug_2, _DEAD_LETTER_CLEANUP_REGISTRY)
+        self.assertEqual(_DEAD_LETTER_CLEANUP_REGISTRY[mixed_slug_2]["action"], "delete")
+
+        # Verify in PostgreSQL: Transaction was rolled back! Both rows still exist!
+        conn_v2 = get_db_connection()
+        try:
+            with conn_v2.cursor() as cur:
+                cur.execute("SELECT status FROM public.merchants WHERE lower(slug) = %s;", (mixed_slug_2,))
+                self.assertIsNotNone(cur.fetchone())
+                cur.execute("SELECT status, is_active FROM public.tenants WHERE lower(slug) = %s;", (mixed_slug_2,))
+                self.assertIsNotNone(cur.fetchone())
+        finally:
+            conn_v2.close()
+
+        # Scenario 2: Mixed state where merchants has mismatched owner_email
+        mixed_slug_3 = f"mix-state-3-{uuid.uuid4().hex[:8]}"
+        mixed_email_real = f"real_{mixed_slug_3}@boontrack.id"
+        mixed_email_wrong = f"wrong_{mixed_slug_3}@boontrack.id"
+
+        conn3 = get_db_connection()
+        try:
+            with conn3.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO public.merchants (slug, store_name, owner_name, owner_email, owner_whatsapp, status)
+                    VALUES (%s, %s, 'Mixed 3', %s, '08123456789', 'PENDING_VERIFICATION')
+                    ON CONFLICT DO NOTHING;
+                    """,
+                    (mixed_slug_3, mixed_slug_3, mixed_email_real),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO public.tenants (name, slug, tier, status, is_active)
+                    VALUES (%s, %s, 'STARTER', 'PENDING_VERIFICATION', false)
+                    ON CONFLICT (slug) DO UPDATE SET status = 'PENDING_VERIFICATION', is_active = false;
+                    """,
+                    (mixed_slug_3, mixed_slug_3),
+                )
+            conn3.commit()
+        finally:
+            conn3.close()
+
+        # Attempt cleanup with mismatched email
+        ok_mix3, err_mix3 = _delete_pending_merchant(mixed_slug_3, mixed_email_wrong)
+        self.assertFalse(ok_mix3)
+        self.assertIn("POSTGRESQL_CLEANUP_INCONSISTENT_STATE", str(err_mix3))
+        self.assertIn(mixed_slug_3, _DEAD_LETTER_CLEANUP_REGISTRY)
+
+        # Clean up test rows
+        conn_clean = get_db_connection()
+        try:
+            with conn_clean.cursor() as cur:
+                cur.execute("DELETE FROM public.merchants WHERE slug IN (%s, %s, %s);", (mixed_slug_1, mixed_slug_2, mixed_slug_3))
+                cur.execute("DELETE FROM public.tenants WHERE slug IN (%s, %s, %s);", (mixed_slug_1, mixed_slug_2, mixed_slug_3))
+            conn_clean.commit()
+        finally:
+            conn_clean.close()
+        _clear_dead_letter_cleanup(mixed_slug_1)
+        _clear_dead_letter_cleanup(mixed_slug_2)
+        _clear_dead_letter_cleanup(mixed_slug_3)
 
 
 if __name__ == "__main__":
