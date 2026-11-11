@@ -37,7 +37,7 @@ async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncS
 
 def create_web_app() -> web.Application:
     """Membangun instance web.Application aiohttp dengan seluruh middleware dan sub-router terisolasi."""
-    app = web.Application(middlewares=[cors_middleware])
+    app = web.Application(middlewares=[cors_middleware], client_max_size=10 * 1024 * 1024)
 
     # 1. Base API Endpoints (Health, Tenant System Status, Tracker, Webchat, DANA Webhook)
     register_api_routes(app)
