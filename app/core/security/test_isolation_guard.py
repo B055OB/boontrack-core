@@ -18,7 +18,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, NoReturn, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 _FORBIDDEN_TARGET_MARKERS = (
@@ -287,34 +287,147 @@ def assert_disposable_supabase_url(url: Optional[str], *, allow_empty: bool = Tr
     )
 
 
+_PG_TX_IDLE = 0
+_PG_TX_ACTIVE = 1
+_PG_TX_INTRANS = 2
+_PG_TX_INERROR = 3
+_PG_TX_UNKNOWN = 4
+_PG_TX_STATUS_NAMES = {
+    _PG_TX_IDLE: "IDLE",
+    _PG_TX_ACTIVE: "ACTIVE",
+    _PG_TX_INTRANS: "INTRANS",
+    _PG_TX_INERROR: "INERROR",
+    _PG_TX_UNKNOWN: "UNKNOWN",
+}
+
+
+def _close_unverified_connection(conn: Any) -> Optional[Exception]:
+    """Closes a PostgreSQL connection fail-closed, returning any close error instead of swallowing it."""
+    try:
+        if conn is not None and not bool(getattr(conn, "closed", False)):
+            conn.close()
+    except Exception as close_exc:
+        return close_exc
+    return None
+
+
+def _fail_closed_pg_verification(
+    conn: Any,
+    message: str,
+    *,
+    cause: Optional[Exception] = None,
+) -> NoReturn:
+    """Closes an unverified or unsafe connection and raises TestIsolationViolation."""
+    close_exc = _close_unverified_connection(conn)
+    if close_exc is None and isinstance(cause, TestIsolationViolation):
+        raise cause
+    full_message = message if close_exc is None else f"{message} (close failed: {close_exc})"
+    if cause is not None:
+        raise TestIsolationViolation(full_message) from cause
+    raise TestIsolationViolation(full_message)
+
+
+def _inspect_pg_connection_state(conn: Any) -> Tuple[bool, int]:
+    """Reads `(autocommit, libpq_transaction_status)` without mutating connection state."""
+    if conn is None or bool(getattr(conn, "closed", True)):
+        raise TestIsolationViolation(
+            "[TEST ISOLATION GUARD] Refusing verification on null or closed PostgreSQL connection."
+        )
+
+    autocommit = getattr(conn, "autocommit", None)
+    if not isinstance(autocommit, bool):
+        _fail_closed_pg_verification(
+            conn,
+            f"[TEST ISOLATION GUARD] Refusing verification on connection with non-boolean autocommit ({autocommit!r}).",
+        )
+
+    raw_status: Any = None
+    get_tx_status = getattr(conn, "get_transaction_status", None)
+    if callable(get_tx_status):
+        try:
+            raw_status = get_tx_status()
+        except Exception as exc:
+            _fail_closed_pg_verification(
+                conn,
+                f"[TEST ISOLATION GUARD] Failed inspecting PostgreSQL transaction status: {exc}",
+                cause=exc,
+            )
+    else:
+        info = getattr(conn, "info", None)
+        if info is not None:
+            try:
+                raw_status = getattr(info, "transaction_status", None)
+            except Exception as exc:
+                _fail_closed_pg_verification(
+                    conn,
+                    f"[TEST ISOLATION GUARD] Failed inspecting PostgreSQL connection info status: {exc}",
+                    cause=exc,
+                )
+
+    if isinstance(raw_status, bool) or not isinstance(raw_status, int):
+        _fail_closed_pg_verification(
+            conn,
+            f"[TEST ISOLATION GUARD] Unable to inspect PostgreSQL transaction status ({raw_status!r}).",
+        )
+
+    tx_status = int(raw_status)
+    if tx_status not in _PG_TX_STATUS_NAMES:
+        _fail_closed_pg_verification(
+            conn,
+            f"[TEST ISOLATION GUARD] Unexpected PostgreSQL transaction status code ({tx_status}).",
+        )
+
+    return autocommit, tx_status
+
+
 def verify_connected_postgres_is_disposable(conn: Any) -> None:
-    """Server-side guard verifying an open psycopg2 connection is strictly on a disposable DB."""
+    """Server-side guard verifying an open psycopg2 connection targets a disposable DB.
+
+    Inspects initial transaction state and preserves caller-owned transactions:
+    - Starts IDLE + autocommit=False: closes only the verification transaction via rollback()
+      and verifies return to IDLE.
+    - Starts IDLE + autocommit=True: leaves connection in IDLE without rollback().
+    - Starts INTRANS (caller-owned transaction): leaves transaction intact without rollback()
+      or autocommit mutation.
+    - Fails closed on ACTIVE, INERROR, UNKNOWN, or unreadable connection states.
+    """
     if not is_strict_test_guard_active():
         return
+
+    initial_autocommit, initial_status = _inspect_pg_connection_state(conn)
+    if initial_status not in (_PG_TX_IDLE, _PG_TX_INTRANS):
+        status_label = _PG_TX_STATUS_NAMES[initial_status]
+        _fail_closed_pg_verification(
+            conn,
+            f"[TEST ISOLATION GUARD] Refusing verification in unsafe initial PostgreSQL transaction state '{status_label}'.",
+        )
 
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT current_database(), coalesce(inet_server_addr()::text, 'local-socket');")
             row = cur.fetchone()
+    except TestIsolationViolation as exc:
+        _fail_closed_pg_verification(conn, str(exc), cause=exc)
     except Exception as exc:
-        try:
-            conn.close()
-        except Exception:
-            pass
-        raise TestIsolationViolation(
-            f"[TEST ISOLATION GUARD] Failed server-side disposable DB verification: {exc}"
-        ) from exc
+        _fail_closed_pg_verification(
+            conn,
+            f"[TEST ISOLATION GUARD] Failed server-side disposable DB verification: {exc}",
+            cause=exc,
+        )
 
-    actual_db = str(row[0] if row else "").strip()
-    server_addr = str(row[1] if row and len(row) > 1 else "").strip()
+    if not row or len(row) < 2:
+        _fail_closed_pg_verification(
+            conn,
+            "[TEST ISOLATION GUARD] Server-side disposable DB verification returned empty identity row.",
+        )
+
+    actual_db = str(row[0] if row[0] is not None else "").strip()
+    server_addr = str(row[1] if row[1] is not None else "").strip()
 
     if not _DISPOSABLE_DB_NAME_RE.match(actual_db):
-        try:
-            conn.close()
-        except Exception:
-            pass
-        raise TestIsolationViolation(
-            f"[TEST ISOLATION GUARD] Refusing operation on non-disposable server database '{actual_db}'."
+        _fail_closed_pg_verification(
+            conn,
+            f"[TEST ISOLATION GUARD] Refusing operation on non-disposable server database '{actual_db}'.",
         )
 
     if server_addr and server_addr != "local-socket":
@@ -330,12 +443,55 @@ def verify_connected_postgres_is_disposable(conn: Any) -> None:
             and (ip_obj.is_loopback or (in_docker_net and ip_obj.is_private))
         )
         if not allowed_ip:
+            _fail_closed_pg_verification(
+                conn,
+                f"[TEST ISOLATION GUARD] Refusing connection to non-local PostgreSQL server IP '{server_addr}'.",
+            )
+
+    post_autocommit, post_status = _inspect_pg_connection_state(conn)
+    if post_autocommit != initial_autocommit:
+        _fail_closed_pg_verification(
+            conn,
+            f"[TEST ISOLATION GUARD] Unexpected autocommit mutation during verification: {initial_autocommit} -> {post_autocommit}.",
+        )
+
+    if initial_status == _PG_TX_IDLE and not initial_autocommit:
+        if post_status == _PG_TX_INTRANS:
             try:
-                conn.close()
-            except Exception:
-                pass
-            raise TestIsolationViolation(
-                f"[TEST ISOLATION GUARD] Refusing connection to non-local PostgreSQL server IP '{server_addr}'."
+                conn.rollback()
+            except Exception as rb_exc:
+                _fail_closed_pg_verification(
+                    conn,
+                    f"[TEST ISOLATION GUARD] Failed to restore IDLE transaction state after verification: {rb_exc}",
+                    cause=rb_exc,
+                )
+        elif post_status != _PG_TX_IDLE:
+            status_label = _PG_TX_STATUS_NAMES[post_status]
+            _fail_closed_pg_verification(
+                conn,
+                f"[TEST ISOLATION GUARD] Unexpected post-SELECT PostgreSQL transaction state '{status_label}'.",
+            )
+
+        restored_autocommit, restored_status = _inspect_pg_connection_state(conn)
+        if restored_autocommit is not False or restored_status != _PG_TX_IDLE:
+            status_label = _PG_TX_STATUS_NAMES[restored_status]
+            _fail_closed_pg_verification(
+                conn,
+                f"[TEST ISOLATION GUARD] Connection did not return to IDLE cleanly (state='{status_label}', autocommit={restored_autocommit}).",
+            )
+    elif initial_status == _PG_TX_IDLE and initial_autocommit:
+        if post_status != _PG_TX_IDLE:
+            status_label = _PG_TX_STATUS_NAMES[post_status]
+            _fail_closed_pg_verification(
+                conn,
+                f"[TEST ISOLATION GUARD] Unexpected active transaction '{status_label}' after SELECT under autocommit=True.",
+            )
+    elif initial_status == _PG_TX_INTRANS:
+        if post_status != _PG_TX_INTRANS:
+            status_label = _PG_TX_STATUS_NAMES[post_status]
+            _fail_closed_pg_verification(
+                conn,
+                f"[TEST ISOLATION GUARD] Caller-owned INTRANS transaction transitioned unexpectedly to '{status_label}'.",
             )
 
 
