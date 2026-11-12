@@ -18,7 +18,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, NoReturn, Optional, Tuple
+from typing import Any, Dict, List, NoReturn, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 _FORBIDDEN_TARGET_MARKERS = (
@@ -64,6 +64,8 @@ _ORIGINAL_DOTENV_LOAD: Any = None
 
 class TestIsolationViolation(RuntimeError):
     """Raised when test isolation, target allowlist, or disposable-DB invariants are violated."""
+
+    __test__ = False
 
 
 def is_strict_test_guard_active() -> bool:
@@ -115,6 +117,84 @@ def _contains_forbidden_marker(value: Optional[str]) -> Optional[str]:
         if marker in lower:
             return marker
     return None
+
+
+_RFC1918_PRIVATE_NETWORKS: Tuple[ipaddress.IPv4Network, ...] = (
+    ipaddress.IPv4Network("10.0.0.0/8"),
+    ipaddress.IPv4Network("172.16.0.0/12"),
+    ipaddress.IPv4Network("192.168.0.0/16"),
+)
+_DISALLOWED_SPECIAL_NETWORKS: Tuple[ipaddress.IPv4Network, ...] = (
+    ipaddress.IPv4Network("192.0.2.0/24"),
+    ipaddress.IPv4Network("198.51.100.0/24"),
+    ipaddress.IPv4Network("203.0.113.0/24"),
+)
+
+
+def _get_allowed_pg_cidrs() -> Tuple[ipaddress.IPv4Network, ...]:
+    """Parses and strictly validates TEST_ALLOWED_PG_CIDRS fail-closed.
+
+    Returns:
+        Tuple of validated IPv4Network objects. If unset or empty, returns ().
+    Raises:
+        TestIsolationViolation on any parsing error, invalid prefix, non-RFC1918,
+        disallowed/documentation network, or forbidden marker.
+    """
+    raw = os.getenv("TEST_ALLOWED_PG_CIDRS", "")
+    if not raw or not raw.strip():
+        return ()
+
+    marker = _contains_forbidden_marker(raw)
+    if marker:
+        raise TestIsolationViolation(
+            f"[TEST ISOLATION GUARD] Forbidden marker '{marker}' detected in TEST_ALLOWED_PG_CIDRS."
+        )
+
+    tokens = raw.split(",")
+    parsed: List[ipaddress.IPv4Network] = []
+    for raw_token in tokens:
+        token = raw_token.strip()
+        if not token:
+            raise TestIsolationViolation(
+                "[TEST ISOLATION GUARD] Empty token or trailing comma in TEST_ALLOWED_PG_CIDRS."
+            )
+        if "/" not in token:
+            raise TestIsolationViolation(
+                f"[TEST ISOLATION GUARD] CIDR '{token}' in TEST_ALLOWED_PG_CIDRS must include an explicit '/prefix' mask."
+            )
+        try:
+            net = ipaddress.ip_network(token, strict=True)
+        except ValueError as exc:
+            raise TestIsolationViolation(
+                f"[TEST ISOLATION GUARD] Invalid CIDR '{token}' in TEST_ALLOWED_PG_CIDRS: {exc}"
+            ) from exc
+
+        if not isinstance(net, ipaddress.IPv4Network) or net.version != 4:
+            raise TestIsolationViolation(
+                f"[TEST ISOLATION GUARD] CIDR '{token}' in TEST_ALLOWED_PG_CIDRS must be an IPv4 network."
+            )
+
+        if not (24 <= net.prefixlen <= 32):
+            raise TestIsolationViolation(
+                f"[TEST ISOLATION GUARD] Prefix length for CIDR '{token}' must be between /24 and /32 (got /{net.prefixlen})."
+            )
+
+        if (
+            net.is_loopback
+            or net.is_link_local
+            or net.is_multicast
+            or net.is_unspecified
+            or any(net.subnet_of(dis) or dis.subnet_of(net) for dis in _DISALLOWED_SPECIAL_NETWORKS)
+            or not any(net.subnet_of(rfc) for rfc in _RFC1918_PRIVATE_NETWORKS)
+        ):
+            raise TestIsolationViolation(
+                f"[TEST ISOLATION GUARD] CIDR '{token}' must be strictly within RFC 1918 private IPv4 space "
+                "and not loopback, link-local, multicast, or documentation space."
+            )
+
+        parsed.append(net)
+
+    return tuple(parsed)
 
 
 def _parse_libpq_dsn(raw: str) -> Dict[str, str]:
@@ -437,10 +517,9 @@ def verify_connected_postgres_is_disposable(conn: Any) -> None:
         except ValueError:
             ip_obj = None
 
-        in_docker_net = _is_docker_internal_net()
         allowed_ip = bool(
             ip_obj is not None
-            and (ip_obj.is_loopback or (in_docker_net and ip_obj.is_private))
+            and (ip_obj.is_loopback or any(ip_obj in net for net in _get_allowed_pg_cidrs()))
         )
         if not allowed_ip:
             _fail_closed_pg_verification(
@@ -499,6 +578,9 @@ def validate_isolated_test_environment() -> None:
     """Fail-fast validation of all database, cache, Supabase, and disallowed backup/staging env vars."""
     if not is_strict_test_guard_active():
         return
+
+    # Eagerly validate TEST_ALLOWED_PG_CIDRS syntax and security invariants at startup
+    _get_allowed_pg_cidrs()
 
     for forbidden_var in ("STAGING_DATABASE_URL", "SUPABASE_DB_URL"):
         if os.getenv(forbidden_var, "").strip():
@@ -859,6 +941,7 @@ def bootstrap_isolated_test_env(repo_root: Optional[Path] = None) -> None:
         "STAGE3_STEP1_DISPOSABLE_PG_DSN",
         "TEST_REQUIRE_DISPOSABLE_SERVICES",
         "TEST_IN_DOCKER_INTERNAL_NET",
+        "TEST_ALLOWED_PG_CIDRS",
     })
 
     for k, v in test_profile.items():

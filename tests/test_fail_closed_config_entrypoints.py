@@ -153,6 +153,7 @@ def _run_isolated_code(code_snippet: str, extra_vars=None):
         "TEST_STRICT_DB_GUARD",
         "TEST_REQUIRE_DISPOSABLE_SERVICES",
         "TEST_IN_DOCKER_INTERNAL_NET",
+        "TEST_ALLOWED_PG_CIDRS",
     ]
     for key in keys_to_remove:
         clean_env.pop(key, None)

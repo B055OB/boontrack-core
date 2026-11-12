@@ -71,6 +71,7 @@ CI_ISOLATED_TEST_SUITES = (
     "tests/test_media_upload.py",
     "tests/api/test_upload_alias_authorization.py",
     "tests/test_checkout_recovery_remediation.py",
+    "tests/test_allowed_pg_cidrs.py",
 )
 
 
@@ -131,11 +132,12 @@ def validate_static_isolation(repo_root: Path) -> None:
         raise RuntimeError(
             f"{ENV_FILE_NAME} must define non-empty {REQUIRED_ENV_SENTINEL_VAR} sentinel."
         )
-    if raw_profile.get("TEST_IN_DOCKER_INTERNAL_NET", "").strip():
-        raise RuntimeError(
-            f"{ENV_FILE_NAME} must NOT define TEST_IN_DOCKER_INTERNAL_NET "
-            "(it is reserved strictly for test-runner inside docker-compose.test.yml)."
-        )
+    for reserved_var in ("TEST_IN_DOCKER_INTERNAL_NET", "TEST_ALLOWED_PG_CIDRS"):
+        if raw_profile.get(reserved_var, "").strip():
+            raise RuntimeError(
+                f"{ENV_FILE_NAME} must NOT define {reserved_var} "
+                "(it is reserved strictly for dynamic test-runner / CI environment injection)."
+            )
 
     sys.path.insert(0, str(repo_root))
     from app.core.security.test_isolation_guard import (
@@ -250,6 +252,7 @@ def build_inner_test_command(pytest_args: list[str], run_all: bool) -> str:
         pytest_cmd = [*base_pytest, "-v", "-ra", "--tb=short", *CI_ISOLATED_TEST_SUITES]
 
     steps = [
+        'export TEST_ALLOWED_PG_CIDRS=$(python -c \'import socket; print(socket.gethostbyname("test-postgres") + "/32")\')',
         "python scripts/init_test_postgres_schema.py",
         "python scripts/enable_rls_security.py --verify",
         "python scripts/audit_production_catalog_rls.py --ci-only",

@@ -79,7 +79,8 @@ services:
     networks:
       - test_internal_net
     command: >
-      sh -c "python scripts/init_test_postgres_schema.py &&
+      sh -c "export TEST_ALLOWED_PG_CIDRS=$$(python -c 'import socket; print(socket.gethostbyname(\"test-postgres\") + \"/32\")') &&
+             python scripts/init_test_postgres_schema.py &&
              python scripts/enable_rls_security.py --verify &&
              python scripts/audit_production_catalog_rls.py --ci-only &&
              python -m pytest -o cache_dir=/tmp/.pytest_cache -v -ra --tb=short

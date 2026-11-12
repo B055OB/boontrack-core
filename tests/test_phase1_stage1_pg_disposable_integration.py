@@ -40,6 +40,7 @@ from app.services.payment.base import (
     PaymentAuthorizationError,
     ReplayStoreUnavailableError,
 )
+from app.core.security.test_isolation_guard import _get_allowed_pg_cidrs
 
 ENV_DISPOSABLE_PG_DSN = "STAGE1_TEST_DISPOSABLE_PG_DSN"
 DISPOSABLE_DB_NAME_PATTERN = re.compile(r"^bt_stage1_disposable_test_[a-z0-9_]+$")
@@ -115,8 +116,7 @@ def _get_verified_disposable_dsn() -> str:
                 raise RuntimeError(f"Connected database '{actual_db}' does not match disposable contract.")
             if server_addr:
                 ip_obj = ipaddress.ip_address(server_addr.split("/", 1)[0])
-                in_docker = os.getenv("TEST_IN_DOCKER_INTERNAL_NET", "").strip() == "1"
-                if not (ip_obj.is_loopback or (in_docker and ip_obj.is_private)):
+                if not (ip_obj is not None and (ip_obj.is_loopback or any(ip_obj in net for net in _get_allowed_pg_cidrs()))):
                     raise RuntimeError(f"Connected server address '{server_addr}' is not loopback or isolated test network!")
     finally:
         conn.close()
