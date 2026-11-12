@@ -233,7 +233,8 @@ jobs:
           for subnet in "${DOCKER_SERVICE_SUBNETS[@]}"; do
             echo "Adding narrowly scoped ACCEPT for Docker service subnet $subnet (ports 5432,5433,6543,6379,6380)"
             sudo iptables -A OUTPUT -d "$subnet" -p tcp -m multiport --dports 5432,5433,6543,6379,6380 -j ACCEPT
-            sudo iptables -A OUTPUT -d "$subnet" -j REJECT --reject-with tcp-reset
+            sudo iptables -A OUTPUT -d "$subnet" -p tcp -j REJECT --reject-with tcp-reset
+            sudo iptables -A OUTPUT -d "$subnet" -j REJECT
           done
 
           echo "=== 4. Apply Non-Loopback DB/Cache and SMTP Egress REJECT Rules ==="
