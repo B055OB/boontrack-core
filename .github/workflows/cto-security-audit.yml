@@ -248,7 +248,7 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import socket, sys, psycopg2, redis, subprocess
+          import json, socket, sys, psycopg2, redis, subprocess
 
           def assert_blocked(host: str, port: int, desc: str) -> None:
               s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -297,14 +297,17 @@ jobs:
               assert_blocked("1.1.1.1", smtp_port, f"SMTP port {smtp_port} external")
 
           print("--- 6. Testing Unapproved Ports on Docker Bridge Subnet ---")
-          pg_cids = subprocess.check_output(["docker", "ps", "--filter", "ancestor=postgres:15", "-q"], text=True).strip().splitlines()
-          redis_cids = subprocess.check_output(["docker", "ps", "--filter", "ancestor=redis:7-alpine", "-q"], text=True).strip().splitlines()
+          pg_cids = [c.strip() for c in subprocess.check_output(["docker", "ps", "--filter", "ancestor=postgres:15", "-q"], text=True).splitlines() if c.strip()]
+          redis_cids = [c.strip() for c in subprocess.check_output(["docker", "ps", "--filter", "ancestor=redis:7-alpine", "-q"], text=True).splitlines() if c.strip()]
           container_ips = []
           for cid in (pg_cids + redis_cids):
-              raw_ips = subprocess.check_output(["docker", "inspect", cid, "--format", '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}'], text=True)
-              for ip_str in raw_ips.splitlines():
-                  if ip_str.strip():
-                      container_ips.append(ip_str.strip())
+              raw_json = subprocess.check_output(["docker", "inspect", cid], text=True)
+              inspect_data = json.loads(raw_json)
+              for entry in inspect_data:
+                  for net_name, net_data in entry.get("NetworkSettings", {}).get("Networks", {}).items():
+                      ip = net_data.get("IPAddress")
+                      if ip:
+                          container_ips.append(ip)
           container_ips = sorted(set(container_ips))
           print(f"  Detected Docker container IPs: {container_ips}")
           for c_ip in container_ips:
