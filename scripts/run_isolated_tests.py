@@ -70,6 +70,7 @@ CI_ISOLATED_TEST_SUITES = (
     "tests/api/test_aiohttp_upload_security.py",
     "tests/test_media_upload.py",
     "tests/api/test_upload_alias_authorization.py",
+    "tests/test_checkout_recovery_remediation.py",
 )
 
 

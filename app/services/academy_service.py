@@ -107,6 +107,230 @@ _HOLD_QUEUE_ENTRIES: Dict[Tuple[str, str], Dict[str, Any]] = {}  # (tenant_id, p
 _HOLD_QUEUE_PROCESSED_EVENT_IDS: Set[str] = set()       # idempotency set for hold-queue webhook events
 _allow_hold_queue_in_memory_fallback: bool = True
 _SETTLE_THREAD_LOCK = threading.Lock()                  # atomic lock for thread-safe mutations
+_CHECKOUT_TOKEN_MGR_LOCK = threading.Lock()
+_DEFAULT_CHECKOUT_TOKEN_MANAGER: Optional[Any] = None
+
+
+def _get_checkout_token_manager(session_token_manager: Optional[Any] = None) -> Any:
+    """Returns supplied token manager or lazily constructs process default CheckoutSessionTokenManager."""
+    if session_token_manager is not None:
+        return session_token_manager
+    global _DEFAULT_CHECKOUT_TOKEN_MANAGER
+    with _CHECKOUT_TOKEN_MGR_LOCK:
+        if _DEFAULT_CHECKOUT_TOKEN_MANAGER is None:
+            from app.core.security.payment_auth_guard import CheckoutSessionTokenManager
+            _DEFAULT_CHECKOUT_TOKEN_MANAGER = CheckoutSessionTokenManager()
+        return _DEFAULT_CHECKOUT_TOKEN_MANAGER
+
+
+def _parse_dt_utc(val: Any) -> Optional[datetime]:
+    """Parses datetime or ISO-8601 timestamp string into timezone-aware UTC datetime."""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val if val.tzinfo is not None else val.replace(tzinfo=timezone.utc)
+    if isinstance(val, str):
+        raw = val.strip()
+        if not raw:
+            return None
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(raw)
+            return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+    return None
+
+
+def _is_unique_violation(exc: Exception, constraint_hint: Optional[str] = None) -> bool:
+    """Checks whether exception represents a PostgreSQL UniqueViolation (SQLSTATE 23505)."""
+    is_uv = getattr(exc, "pgcode", None) == "23505" or exc.__class__.__name__ == "UniqueViolation"
+    if not is_uv:
+        return False
+    if constraint_hint is None:
+        return True
+    hint = constraint_hint.lower()
+    diag_name = str(getattr(getattr(exc, "diag", None), "constraint_name", "") or "").lower()
+    return (hint in diag_name) or (hint in str(exc).lower())
+
+
+def _resolve_canonical_tenant_tx(cur: Any, requested_tenant: Optional[str]) -> Tuple[str, str, str]:
+    """Resolves requested tenant identifier against public.tenants -> (tenant_id, canonical_tenant_id, tenant_slug)."""
+    from app.core.database import normalize_db_row
+    from app.core.security.payment_auth_guard import is_production_environment
+
+    clean_req = str(requested_tenant or "onlineboost").strip() or "onlineboost"
+    req_lower = clean_req.lower()
+
+    cur.execute(
+        """
+        SELECT id::text AS id, slug
+        FROM public.tenants
+        WHERE id::text = %s OR LOWER(slug) = LOWER(%s)
+        LIMIT 1;
+        """,
+        (clean_req, clean_req),
+    )
+    row = cur.fetchone()
+    norm = normalize_db_row(row, ("id", "slug")) if row is not None else None
+    if norm and norm.get("id"):
+        canon_id = str(norm["id"]).strip().lower()
+        slug_val = str(norm.get("slug") or req_lower).strip().lower()
+        return canon_id, canon_id, slug_val
+
+    if is_production_environment(os.environ):
+        raise TenantContextViolation(
+            f"Unknown tenant '{clean_req}' in production environment."
+        )
+
+    return req_lower, req_lower, req_lower
+
+
+def _build_dynamic_qris_payload(
+    total_amount: int,
+    order_id: str,
+    static_qris_override: Optional[str] = None,
+) -> str:
+    """Generates dynamic QRIS payload for a computed total_amount and order_id."""
+    base_qris = (static_qris_override or DEFAULT_STATIC_QRIS).strip()
+    try:
+        return generate_dynamic_qris_payload(
+            static_payload=base_qris,
+            amount=total_amount,
+            invoice_id=order_id,
+        )
+    except Exception as exc:
+        logger.warning(f"[AcademyQRIS] Fallback to default QRIS generator: {exc}")
+        return f"00020101021254{len(str(total_amount)):02d}{total_amount}5802ID5909BoonTrack6012Kab. Bandung6105402866304ABCD"
+
+
+def _build_invoice_record_from_db_row(
+    row: Any,
+    now_utc: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Constructs normalized invoice + checkout_session dictionary from durable PostgreSQL JOIN row."""
+    from app.core.database import normalize_db_row
+
+    cols = (
+        "order_id",
+        "tenant_id",
+        "canonical_tenant_id",
+        "tenant_slug",
+        "sku_id",
+        "product_title",
+        "base_amount",
+        "unique_code",
+        "total_amount",
+        "qr_string",
+        "customer_name",
+        "customer_phone",
+        "customer_email",
+        "order_status",
+        "session_state",
+        "jti",
+        "cs_key_id",
+        "iat_epoch",
+        "exp_epoch",
+        "revoked",
+        "revoked_at",
+        "expires_at",
+        "created_at",
+        "settled_at",
+        "paid_at",
+    )
+    norm = normalize_db_row(row, cols)
+    assert norm is not None
+
+    ref_now = now_utc or datetime.now(timezone.utc)
+    expires_at_dt = _parse_dt_utc(norm.get("expires_at"))
+    created_at_dt = _parse_dt_utc(norm.get("created_at"))
+    paid_at_dt = _parse_dt_utc(norm.get("paid_at") or norm.get("settled_at"))
+
+    order_status = str(norm.get("order_status") or "PENDING").strip().upper()
+    session_state = str(norm.get("session_state") or "ACTIVE").strip().upper()
+    is_revoked = (
+        bool(norm.get("revoked", False))
+        or session_state in ("REVOKED", "CANCELLED")
+        or order_status in ("CANCELLED", "REVOKED")
+    )
+    is_expired = (
+        (session_state == "EXPIRED" or order_status == "EXPIRED")
+        or (
+            expires_at_dt is not None
+            and ref_now > expires_at_dt
+            and order_status != "PAID"
+            and session_state != "SETTLED"
+        )
+    )
+
+    if order_status == "PAID" or session_state == "SETTLED":
+        effective_status = "PAID"
+    elif is_revoked:
+        effective_status = "CANCELLED" if order_status == "CANCELLED" else "REVOKED"
+    elif is_expired:
+        effective_status = "EXPIRED"
+    else:
+        effective_status = order_status
+
+    sku_id = str(norm.get("sku_id") or ACADEMY_SKU_ID).strip()
+    sku_title = str(
+        norm.get("product_title")
+        or (TEST_PENNY_SKU_NAME if sku_id.upper() == TEST_PENNY_SKU_ID else ACADEMY_SKU_NAME)
+    )
+    qr_string = str(norm.get("qr_string") or "")
+    total_amount = int(float(norm.get("total_amount") or 0))
+    base_amount = int(float(norm.get("base_amount") or 0))
+    unique_code = int(norm.get("unique_code") or 0)
+
+    exp_epoch = int(norm.get("exp_epoch") or 0)
+    if expires_at_dt is not None:
+        exp_epoch = min(exp_epoch, int(expires_at_dt.timestamp())) if exp_epoch > 0 else int(expires_at_dt.timestamp())
+
+    canonical_tenant_id = str(norm.get("canonical_tenant_id") or norm.get("tenant_id") or "").strip().lower()
+    tenant_id = str(norm.get("tenant_id") or canonical_tenant_id).strip()
+    tenant_slug = str(norm.get("tenant_slug") or tenant_id).strip().lower()
+    customer_email = str(norm.get("customer_email") or "").strip().lower()
+    order_id = str(norm.get("order_id") or "").strip()
+
+    record: Dict[str, Any] = {
+        "order_id": order_id,
+        "sku": sku_title,
+        "sku_id": sku_id,
+        "base_amount": base_amount,
+        "unique_code": unique_code,
+        "total_amount": total_amount,
+        "currency": "IDR",
+        "qr_string": qr_string,
+        "qr_image_url": get_qr_code_image_url(qr_string, size=600) if qr_string else "",
+        "customer_name": str(norm.get("customer_name") or ""),
+        "customer_email": customer_email,
+        "customer_phone": str(norm.get("customer_phone") or ""),
+        "tenant_id": tenant_id,
+        "canonical_tenant_id": canonical_tenant_id,
+        "tenant_slug": tenant_slug,
+        "ttl_minutes": ACADEMY_INVOICE_TTL_MINUTES,
+        "expires_at": expires_at_dt.isoformat() if expires_at_dt else None,
+        "expires_at_dt": expires_at_dt,
+        "created_at": created_at_dt.isoformat() if created_at_dt else None,
+        "status": effective_status,
+        "payment_status": effective_status if effective_status == "PAID" else order_status,
+        "idempotency_key": f"idemp_{order_id}_{customer_email}",
+        "is_internal_only": (sku_id.upper() == TEST_PENNY_SKU_ID),
+        "checkout_session": {
+            "jti": str(norm.get("jti") or ""),
+            "iat": int(norm.get("iat_epoch") or 0),
+            "exp": exp_epoch,
+            "revoked": is_revoked,
+            "order_id": order_id,
+            "canonical_tenant_id": canonical_tenant_id,
+            "cs_key_id": str(norm.get("cs_key_id") or ""),
+            "session_state": session_state,
+        },
+    }
+    if paid_at_dt is not None:
+        record["paid_at"] = paid_at_dt.isoformat()
+    return record
 
 # ============================================================================
 # CUSTOMER ENTITLEMENT MANAGER
@@ -346,19 +570,24 @@ def parse_raw_body_webhook_authenticated(
 
 def get_academy_invoice_scoped(order_id: str, requesting_tenant_id: str) -> Optional[Dict[str, Any]]:
     """
-    Mengambil invoice dengan strict cross-tenant data isolation.
+    Mengambil invoice dari durable PostgreSQL dengan strict cross-tenant data isolation.
     Jika order_id dimiliki oleh tenant lain, tolak akses dan raise TenantContextViolation.
     """
-    invoice = _ACADEMY_INVOICES.get(order_id)
+    invoice = get_academy_invoice(order_id)
     if not invoice:
         return None
 
-    owner_tenant = str(invoice.get("tenant_id", "")).strip().lower()
+    allowed_owners = {
+        str(invoice.get(field) or "").strip().lower()
+        for field in ("tenant_id", "canonical_tenant_id", "tenant_slug")
+        if invoice.get(field)
+    }
     requesting = str(requesting_tenant_id or "").strip().lower()
 
-    if owner_tenant and requesting and owner_tenant != requesting:
+    if allowed_owners and requesting and requesting not in allowed_owners:
+        owner_label = invoice.get("tenant_id") or invoice.get("tenant_slug")
         raise TenantContextViolation(
-            f"Cross-tenant access violation: Invoice '{order_id}' belongs to tenant '{owner_tenant}', "
+            f"Cross-tenant access violation: Invoice '{order_id}' belongs to tenant '{owner_label}', "
             f"access forbidden for tenant '{requesting}'."
         )
     return invoice
@@ -1287,6 +1516,276 @@ def format_idr(amount: Any) -> str:
 # 1. GENERATOR QRIS & INVOICE DENGAN IDEMPOTENCY LOCK
 # ============================================================================
 
+def _pick_next_unique_code(occupied: Set[int], tried: Set[int]) -> int:
+    """Selects an unused 3-digit unique code (100-999) avoiding occupied/tried codes."""
+    blocked = occupied | tried
+    for _ in range(15):
+        candidate = int(generate_unique_code(min_val=100, max_val=999))
+        if 100 <= candidate <= 999 and candidate not in blocked:
+            return candidate
+    available = [code for code in range(100, 1000) if code not in blocked]
+    if not available:
+        raise RuntimeError(
+            "Exhausted all active unique_code slots (100-999) for this tenant and base amount."
+        )
+    return secrets.SystemRandom().choice(available)
+
+
+def _insert_order_and_session_attempt(
+    cur: Any,
+    *,
+    order_id: str,
+    tenant_id_col: str,
+    canonical_tenant_id: str,
+    tenant_slug: str,
+    resolved_sku_id: str,
+    resolved_sku_name: str,
+    base_price: int,
+    unique_code: int,
+    total_amount: int,
+    qris_payload: str,
+    customer_name: str,
+    customer_phone: str,
+    customer_email: str,
+    session_meta: Dict[str, Any],
+    now: datetime,
+    expires_at: datetime,
+) -> None:
+    """Executes paired INSERT into orders and checkout_sessions inside current transaction/savepoint."""
+    cur.execute(
+        """
+        INSERT INTO public.orders (
+            id, tenant_id, tenant_slug, sku_id, product_id, product_title,
+            gross_amount, amount, customer_name, customer_phone, customer_email,
+            status, payment_status, order_status, created_at, updated_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', 'PENDING', 'PENDING', %s, %s);
+        """,
+        (
+            order_id,
+            tenant_id_col,
+            tenant_slug,
+            resolved_sku_id,
+            resolved_sku_id,
+            resolved_sku_name,
+            total_amount,
+            total_amount,
+            customer_name,
+            customer_phone,
+            customer_email,
+            now,
+            now,
+        ),
+    )
+    cur.execute(
+        """
+        INSERT INTO public.checkout_sessions (
+            order_id, tenant_id, canonical_tenant_id, tenant_slug, sku_id,
+            base_amount, unique_code, total_amount, qr_string, session_state,
+            jti, cs_key_id, iat_epoch, exp_epoch, revoked,
+            created_at, updated_at, expires_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'ACTIVE', %s, %s, %s, %s, FALSE, %s, %s, %s);
+        """,
+        (
+            order_id,
+            tenant_id_col,
+            canonical_tenant_id,
+            tenant_slug,
+            resolved_sku_id,
+            base_price,
+            unique_code,
+            total_amount,
+            qris_payload,
+            session_meta["jti"],
+            session_meta["cs_key_id"],
+            int(session_meta["iat"]),
+            int(session_meta["exp"]),
+            now,
+            now,
+            expires_at,
+        ),
+    )
+
+
+def _persist_order_and_checkout_session_tx(
+    *,
+    order_id: str,
+    requested_tenant: str,
+    resolved_sku_id: str,
+    resolved_sku_name: str,
+    base_price: int,
+    use_unique_code: bool,
+    is_penny_test: bool,
+    static_qris_override: Optional[str],
+    customer_name: str,
+    customer_phone: str,
+    customer_email: str,
+    token_mgr: Any,
+    now_epoch: int,
+) -> Dict[str, Any]:
+    """Atomically resolves tenant, allocates unique_code (savepoint-retried on 23505),
+    and commits orders + checkout_sessions in one PostgreSQL transaction.
+    """
+    from app.core.database import get_db_connection
+
+    now = datetime.fromtimestamp(now_epoch, tz=timezone.utc)
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        tenant_id_col, canonical_tenant_id, tenant_slug = _resolve_canonical_tenant_tx(
+            cur, requested_tenant
+        )
+
+        token_str, session_meta = token_mgr.issue_token(
+            order_id=order_id,
+            canonical_tenant_id=canonical_tenant_id,
+            ttl_seconds=ACADEMY_INVOICE_TTL_MINUTES * 60,
+            now_epoch=now_epoch,
+        )
+        expires_at = datetime.fromtimestamp(int(session_meta["exp"]), tz=timezone.utc)
+
+        if use_unique_code and not is_penny_test:
+            # Release expired active sessions before sampling free unique codes
+            cur.execute(
+                """
+                UPDATE public.checkout_sessions
+                SET session_state = 'EXPIRED',
+                    updated_at = %s
+                WHERE tenant_id = %s
+                  AND base_amount = %s
+                  AND session_state = 'ACTIVE'
+                  AND revoked = FALSE
+                  AND expires_at <= %s;
+                """,
+                (now, tenant_id_col, base_price, now),
+            )
+            cur.execute(
+                """
+                SELECT unique_code
+                FROM public.checkout_sessions
+                WHERE tenant_id = %s
+                  AND base_amount = %s
+                  AND session_state = 'ACTIVE'
+                  AND revoked = FALSE
+                  AND expires_at > %s;
+                """,
+                (tenant_id_col, base_price, now),
+            )
+            occupied = {int(r[0]) for r in (cur.fetchall() or []) if r and r[0]}
+            tried: Set[int] = set()
+            allocated: Optional[Tuple[int, int, str]] = None
+
+            for _ in range(64):
+                candidate = _pick_next_unique_code(occupied, tried)
+                total_amount = base_price + candidate
+                qris_payload = _build_dynamic_qris_payload(
+                    total_amount, order_id, static_qris_override
+                )
+                cur.execute("SAVEPOINT sp_checkout_alloc;")
+                try:
+                    _insert_order_and_session_attempt(
+                        cur,
+                        order_id=order_id,
+                        tenant_id_col=tenant_id_col,
+                        canonical_tenant_id=canonical_tenant_id,
+                        tenant_slug=tenant_slug,
+                        resolved_sku_id=resolved_sku_id,
+                        resolved_sku_name=resolved_sku_name,
+                        base_price=base_price,
+                        unique_code=candidate,
+                        total_amount=total_amount,
+                        qris_payload=qris_payload,
+                        customer_name=customer_name,
+                        customer_phone=customer_phone,
+                        customer_email=customer_email,
+                        session_meta=session_meta,
+                        now=now,
+                        expires_at=expires_at,
+                    )
+                    cur.execute("RELEASE SAVEPOINT sp_checkout_alloc;")
+                    allocated = (candidate, total_amount, qris_payload)
+                    break
+                except Exception as ins_err:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_checkout_alloc;")
+                    if _is_unique_violation(ins_err, "unique_amount"):
+                        tried.add(candidate)
+                        continue
+                    raise
+
+            if allocated is None:
+                raise RuntimeError(
+                    f"Unable to allocate collision-free unique_code for order '{order_id}'."
+                )
+            unique_code, total_amount, qris_payload = allocated
+        else:
+            unique_code = 0
+            total_amount = base_price
+            qris_payload = _build_dynamic_qris_payload(
+                total_amount, order_id, static_qris_override
+            )
+            _insert_order_and_session_attempt(
+                cur,
+                order_id=order_id,
+                tenant_id_col=tenant_id_col,
+                canonical_tenant_id=canonical_tenant_id,
+                tenant_slug=tenant_slug,
+                resolved_sku_id=resolved_sku_id,
+                resolved_sku_name=resolved_sku_name,
+                base_price=base_price,
+                unique_code=unique_code,
+                total_amount=total_amount,
+                qris_payload=qris_payload,
+                customer_name=customer_name,
+                customer_phone=customer_phone,
+                customer_email=customer_email,
+                session_meta=session_meta,
+                now=now,
+                expires_at=expires_at,
+            )
+
+        conn.commit()
+        return {
+            "tenant_id": tenant_id_col,
+            "canonical_tenant_id": canonical_tenant_id,
+            "tenant_slug": tenant_slug,
+            "unique_code": unique_code,
+            "total_amount": total_amount,
+            "qris_payload": qris_payload,
+            "token_str": token_str,
+            "session_meta": session_meta,
+            "now": now,
+            "expires_at": expires_at,
+        }
+    except TenantContextViolation:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        raise
+    except Exception as db_err:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        logger.error(f"[AcademyInvoice] Atomic DB persistence failed for '{order_id}': {db_err}")
+        raise RuntimeError(f"Database persistence failure for invoice '{order_id}': {db_err}") from db_err
+    finally:
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def generate_academy_qris_invoice(
     customer_name: str,
     customer_email: str,
@@ -1297,16 +1796,15 @@ def generate_academy_qris_invoice(
     sku_id: Optional[str] = None,
     is_internal_authorized: bool = False,
     auth_context: Optional[Dict[str, Any]] = None,
+    session_token_manager: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     Menghasilkan Dynamic QRIS Invoice:
     - Default: Rp 249.000 (+ 3-digit kode unik jika aktif) untuk SKU OB-BATCH1-249K.
     - Test Isolation: Tepat Rp 1.500 untuk SKU internal test 'TEST-PENNY-1500' (wajib otorisasi internal).
     TTL Expiry: Tepat 15 menit.
+    Atomically persists `orders` and `checkout_sessions` in PostgreSQL before returning any invoice or token.
     """
-    now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(minutes=ACADEMY_INVOICE_TTL_MINUTES)
-
     is_penny_test = (sku_id == TEST_PENNY_SKU_ID)
 
     # Server-Side Access Control Guard for Internal Test SKU
@@ -1328,42 +1826,35 @@ def generate_academy_qris_invoice(
     resolved_sku_name = TEST_PENNY_SKU_NAME if is_penny_test else ACADEMY_SKU_NAME
     base_price = TEST_PENNY_PRICE if is_penny_test else ACADEMY_SETTLEMENT_PRICE
 
-    # 1. Alokasi 3-digit kode unik jika aktif (penny test tidak memakai unique code tambahan)
-    if use_unique_code and not is_penny_test:
-        # Cari kode unik antara 100-999 yang tidak bertabrakan dengan invoice aktif
-        unique_code = generate_unique_code(min_val=100, max_val=999)
-        # Hindari tabrakan dengan invoice pending yang belum expired
-        active_occupied = {
-            inv["total_amount"]
-            for inv in _ACADEMY_INVOICES.values()
-            if inv.get("status") == "PENDING"
-            and inv.get("expires_at_dt")
-            and now < inv.get("expires_at_dt")
-        }
-        attempts = 0
-        while (base_price + unique_code) in active_occupied and attempts < 20:
-            unique_code = generate_unique_code(min_val=100, max_val=999)
-            attempts += 1
-    else:
-        unique_code = 0
-
-    total_amount = base_price + unique_code
+    norm_email = customer_email.lower().strip()
+    norm_phone = normalize_phone_number(customer_phone) or customer_phone
     order_id = f"BTA-PENNY-{uuid.uuid4().hex[:8].upper()}" if is_penny_test else f"BTA-ALUMNI-{uuid.uuid4().hex[:8].upper()}"
+    token_mgr = _get_checkout_token_manager(session_token_manager)
+    now_epoch = int(time.time())
 
-    # 2. Emit Dynamic QRIS Payload (Tag 54 injected + Tag 01 set to dynamic 12 + CRC16 recalculation)
-    base_qris = (static_qris_override or DEFAULT_STATIC_QRIS).strip()
-    try:
-        qris_payload = generate_dynamic_qris_payload(
-            static_payload=base_qris,
-            amount=total_amount,
-            invoice_id=order_id,
-        )
-    except Exception as e:
-        logger.warning(f"[AcademyQRIS] Fallback to default QRIS generator: {e}")
-        qris_payload = f"00020101021254{len(str(total_amount)):02d}{total_amount}5802ID5909BoonTrack6012Kab. Bandung6105402866304ABCD"
+    persisted = _persist_order_and_checkout_session_tx(
+        order_id=order_id,
+        requested_tenant=tenant_id,
+        resolved_sku_id=resolved_sku_id,
+        resolved_sku_name=resolved_sku_name,
+        base_price=base_price,
+        use_unique_code=bool(use_unique_code),
+        is_penny_test=is_penny_test,
+        static_qris_override=static_qris_override,
+        customer_name=customer_name,
+        customer_phone=norm_phone,
+        customer_email=norm_email,
+        token_mgr=token_mgr,
+        now_epoch=now_epoch,
+    )
 
+    unique_code = persisted["unique_code"]
+    total_amount = persisted["total_amount"]
+    qris_payload = persisted["qris_payload"]
+    now = persisted["now"]
+    expires_at = persisted["expires_at"]
     qr_image_url = get_qr_code_image_url(qris_payload, size=600)
-    idempotency_key = f"idemp_{order_id}_{customer_email.lower().strip()}"
+    idempotency_key = f"idemp_{order_id}_{norm_email}"
 
     invoice_data = {
         "order_id": order_id,
@@ -1376,9 +1867,11 @@ def generate_academy_qris_invoice(
         "qr_string": qris_payload,
         "qr_image_url": qr_image_url,
         "customer_name": customer_name,
-        "customer_email": customer_email.lower().strip(),
-        "customer_phone": normalize_phone_number(customer_phone) or customer_phone,
-        "tenant_id": tenant_id,
+        "customer_email": norm_email,
+        "customer_phone": norm_phone,
+        "tenant_id": persisted["tenant_id"],
+        "canonical_tenant_id": persisted["canonical_tenant_id"],
+        "tenant_slug": persisted["tenant_slug"],
         "ttl_minutes": ACADEMY_INVOICE_TTL_MINUTES,
         "expires_at": expires_at.isoformat(),
         "expires_at_dt": expires_at,
@@ -1386,65 +1879,20 @@ def generate_academy_qris_invoice(
         "status": "PENDING",
         "idempotency_key": idempotency_key,
         "is_internal_only": is_penny_test,
+        "checkout_session": persisted["session_meta"],
     }
 
-    # Simpan ke in-memory cache
-    _ACADEMY_INVOICES[order_id] = invoice_data
+    # Update local cache ONLY after PostgreSQL commit succeeds (never store plaintext token in shared dict)
+    _ACADEMY_INVOICES[order_id] = dict(invoice_data)
     _ACADEMY_INVOICES_BY_AMOUNT[total_amount] = order_id
 
-    # Persist ke Database orders / payment_intents jika koneksi aktif
-    db_persisted = False
-    try:
-        from app.core.database import get_db_connection
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO orders (
-                id, tenant_slug, product_id, product_title, gross_amount,
-                customer_name, customer_phone, customer_email, status, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', %s, %s)
-            ON CONFLICT (id) DO NOTHING;
-            """,
-            (
-                order_id,
-                tenant_id,
-                resolved_sku_id,
-                resolved_sku_name,
-                total_amount,
-                customer_name,
-                customer_phone,
-                customer_email,
-                now,
-                now,
-            )
-        )
-        conn.commit()
-        # Verify persistence immediately
-        cur.execute("SELECT id FROM orders WHERE id = %s LIMIT 1;", (order_id,))
-        if cur.fetchone():
-            db_persisted = True
-        cur.close()
-        conn.close()
-    except Exception as db_err:
-        logger.error(f"[AcademyInvoice] DB orders insert error: {db_err}")
-        if is_penny_test:
-            _ACADEMY_INVOICES.pop(order_id, None)
-            _ACADEMY_INVOICES_BY_AMOUNT.pop(total_amount, None)
-            raise RuntimeError(f"Database persistence failure for internal test SKU '{order_id}': {db_err}")
-
-    if is_penny_test and not db_persisted:
-        _ACADEMY_INVOICES.pop(order_id, None)
-        _ACADEMY_INVOICES_BY_AMOUNT.pop(total_amount, None)
-        raise RuntimeError(f"Database persistence assertion failed: order '{order_id}' was not confirmed in database.")
-
-    # Sinkronisasi ke Supabase jika tersedia
+    # Sinkronisasi non-blocking opsional ke Supabase jika tersedia
     supabase = get_supabase()
     if supabase:
         try:
             supabase.table("payment_intents").insert({
                 "id": str(uuid.uuid4()),
-                "tenant_id": tenant_id,
+                "tenant_id": persisted["tenant_id"],
                 "order_id": order_id,
                 "amount": base_price,
                 "unique_code": unique_code,
@@ -1458,25 +1906,599 @@ def generate_academy_qris_invoice(
         except Exception as sb_err:
             logger.debug(f"[AcademyInvoice] Supabase payment_intents insert note: {sb_err}")
 
-    return invoice_data
+    result_with_token = dict(invoice_data)
+    result_with_token["_checkout_session_token"] = persisted["token_str"]
+    return result_with_token
+
+
+_DURABLE_INVOICE_SELECT_SQL = """
+    SELECT
+        o.id AS order_id,
+        cs.tenant_id,
+        cs.canonical_tenant_id,
+        cs.tenant_slug,
+        cs.sku_id,
+        o.product_title,
+        cs.base_amount,
+        cs.unique_code,
+        cs.total_amount,
+        cs.qr_string,
+        o.customer_name,
+        o.customer_phone,
+        o.customer_email,
+        o.status AS order_status,
+        cs.session_state,
+        cs.jti,
+        cs.cs_key_id,
+        cs.iat_epoch,
+        cs.exp_epoch,
+        cs.revoked,
+        cs.revoked_at,
+        cs.expires_at,
+        cs.created_at,
+        cs.settled_at,
+        o.paid_at
+    FROM public.checkout_sessions cs
+    INNER JOIN public.orders o ON o.id = cs.order_id
+"""
 
 
 def get_academy_invoice(order_id: str) -> Optional[Dict[str, Any]]:
-    """Mengambil invoice berdasarkan order_id."""
-    return _ACADEMY_INVOICES.get(order_id)
+    """Mengambil invoice secara otoritatif dari PostgreSQL (`checkout_sessions` JOIN `orders`)."""
+    clean_order_id = str(order_id or "").strip()
+    if not clean_order_id:
+        return None
+    from app.core.database import get_db_connection
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            f"{_DURABLE_INVOICE_SELECT_SQL} WHERE cs.order_id = %s LIMIT 1;",
+            (clean_order_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        record = _build_invoice_record_from_db_row(row)
+        _ACADEMY_INVOICES[clean_order_id] = dict(record)
+        return record
+    except Exception as db_err:
+        logger.error(f"[AcademyInvoice] Durable get_academy_invoice failed for '{clean_order_id}': {db_err}")
+        return None
+    finally:
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def revoke_academy_checkout_session(order_id: str, reason: str = "REVOKED") -> bool:
+    """Marks a durable checkout session revoked in PostgreSQL."""
+    clean_order_id = str(order_id or "").strip()
+    if not clean_order_id:
+        return False
+    from app.core.database import get_db_connection
+
+    conn = None
+    cur = None
+    now_utc = datetime.now(timezone.utc)
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE public.checkout_sessions
+            SET revoked = TRUE,
+                revoked_at = COALESCE(revoked_at, %s),
+                revocation_reason = %s,
+                session_state = 'REVOKED',
+                updated_at = %s
+            WHERE order_id = %s
+            RETURNING order_id;
+            """,
+            (now_utc, str(reason or "REVOKED")[:255], now_utc, clean_order_id),
+        )
+        updated = cur.fetchone()
+        conn.commit()
+        if not updated:
+            return False
+        cached = _ACADEMY_INVOICES.get(clean_order_id)
+        if cached:
+            cached["status"] = "REVOKED"
+            cs = cached.get("checkout_session")
+            if isinstance(cs, dict):
+                cs["revoked"] = True
+                cs["session_state"] = "REVOKED"
+        return True
+    except Exception as db_err:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        logger.error(f"[AcademyInvoice] Failed to revoke checkout session '{clean_order_id}': {db_err}")
+        return False
+    finally:
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def get_academy_invoice_by_amount(amount: int) -> Optional[Dict[str, Any]]:
-    """Mengambil invoice berdasarkan total_amount unik."""
-    order_id = _ACADEMY_INVOICES_BY_AMOUNT.get(amount)
-    if order_id:
-        return _ACADEMY_INVOICES.get(order_id)
-    return None
+    """Mengambil invoice berdasarkan total_amount unik dari PostgreSQL."""
+    from app.core.database import get_db_connection
+
+    conn = None
+    cur = None
+    now_utc = datetime.now(timezone.utc)
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            {_DURABLE_INVOICE_SELECT_SQL}
+            WHERE cs.total_amount = %s
+              AND cs.session_state = 'ACTIVE'
+              AND cs.revoked = FALSE
+              AND cs.expires_at > %s
+            ORDER BY cs.created_at DESC
+            LIMIT 1;
+            """,
+            (int(amount), now_utc),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return _build_invoice_record_from_db_row(row, now_utc=now_utc)
+    except Exception as db_err:
+        logger.error(f"[AcademyInvoice] Durable get_academy_invoice_by_amount failed for amount={amount}: {db_err}")
+        return None
+    finally:
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # ============================================================================
 # IDEMPOTENCY LOCK: FINANCIAL_LEDGER & PAYMENT_EVENTS
 # ============================================================================
+
+def _validate_settlement_gates(
+    *,
+    order_id: str,
+    event_id: str,
+    amount: Optional[int],
+    requested_tenant: str,
+    inv_sku: str,
+    expected_base: int,
+    expected_total: int,
+    allowed_tenants: Set[str],
+    owner_label: str,
+    is_revoked: bool,
+) -> Optional[Dict[str, Any]]:
+    """Evaluates revocation, SKU penny isolation, amount matching, and tenant isolation gates."""
+    if is_revoked:
+        return {
+            "status": "REJECTED_SESSION_REVOKED",
+            "order_id": order_id,
+            "event_id": event_id,
+            "idempotency_hit": False,
+            "error": f"Checkout session for order '{order_id}' has been revoked or cancelled.",
+        }
+
+    if amount == 1500 and inv_sku != TEST_PENNY_SKU_ID:
+        return {
+            "status": "REJECTED_AMOUNT_MISMATCH",
+            "order_id": order_id,
+            "event_id": event_id,
+            "amount": amount,
+            "expected_amount": expected_total,
+            "idempotency_hit": False,
+            "error": f"Penny settlement (Rp 1.500) is strictly restricted to {TEST_PENNY_SKU_ID}. Regular class access denied.",
+        }
+
+    if inv_sku == TEST_PENNY_SKU_ID and amount is not None and amount != 1500:
+        return {
+            "status": "REJECTED_AMOUNT_MISMATCH",
+            "order_id": order_id,
+            "event_id": event_id,
+            "amount": amount,
+            "expected_amount": 1500,
+            "idempotency_hit": False,
+            "error": "TEST-PENNY-1500 orders require exact Rp 1.500 settlement.",
+        }
+
+    if expected_total == expected_base:
+        if amount is not None and amount != expected_base:
+            return {
+                "status": "REJECTED_AMOUNT_MISMATCH",
+                "order_id": order_id,
+                "event_id": event_id,
+                "amount": amount,
+                "expected_amount": expected_base,
+                "idempotency_hit": False,
+                "error": f"Amount mismatch: received Rp {amount}, expected Rp {expected_base}",
+            }
+    elif amount is not None and amount != expected_total and amount != expected_base:
+        return {
+            "status": "REJECTED_AMOUNT_MISMATCH",
+            "order_id": order_id,
+            "event_id": event_id,
+            "amount": amount,
+            "expected_amount": expected_total,
+            "idempotency_hit": False,
+            "error": f"Amount mismatch: received Rp {amount}, expected Rp {expected_total}",
+        }
+
+    req_tenant = str(requested_tenant or "").strip().lower()
+    if allowed_tenants and req_tenant and req_tenant not in allowed_tenants:
+        return {
+            "status": "REJECTED_TENANT_MISMATCH",
+            "order_id": order_id,
+            "event_id": event_id,
+            "tenant_id": requested_tenant,
+            "expected_tenant": owner_label,
+            "idempotency_hit": False,
+            "error": f"Tenant mismatch: Invoice '{order_id}' belongs to tenant '{owner_label}', not '{requested_tenant}'",
+        }
+
+    return None
+
+
+def _execute_atomic_settlement_tx(
+    *,
+    order_id: str,
+    event_id: str,
+    provider: str,
+    amount: Optional[int],
+    raw_payload: Dict[str, Any],
+    requested_tenant: str,
+    now_utc: datetime,
+) -> Dict[str, Any]:
+    """Locks order row in PostgreSQL and commits payment_events, orders, checkout_sessions,
+    and financial_ledger atomically. Rolls back completely on any failure.
+    """
+    from app.core.database import get_db_connection, normalize_db_row
+
+    provider_upper = str(provider or "QRIS").strip().upper() or "QRIS"
+    provider_event_val = str(raw_payload.get("provider_event_id") or event_id).strip() or event_id
+    payload_json = json.dumps(raw_payload, default=str)
+
+    order_cols = (
+        "id",
+        "tenant_id",
+        "tenant_slug",
+        "sku_id",
+        "product_id",
+        "gross_amount",
+        "amount",
+        "order_status",
+        "payment_status",
+        "base_amount",
+        "unique_code",
+        "total_amount",
+        "canonical_tenant_id",
+        "session_state",
+        "revoked",
+        "expires_at",
+    )
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT
+                o.id,
+                o.tenant_id,
+                o.tenant_slug,
+                COALESCE(o.sku_id, o.product_id) AS sku_id,
+                o.product_id,
+                o.gross_amount,
+                o.amount,
+                o.status AS order_status,
+                o.payment_status,
+                cs.base_amount,
+                cs.unique_code,
+                cs.total_amount,
+                cs.canonical_tenant_id,
+                cs.session_state,
+                cs.revoked,
+                cs.expires_at
+            FROM public.orders o
+            LEFT JOIN public.checkout_sessions cs ON cs.order_id = o.id
+            WHERE o.id = %s
+            FOR UPDATE OF o;
+            """,
+            (order_id,),
+        )
+        raw_row = cur.fetchone()
+        if not raw_row:
+            conn.rollback()
+            return {
+                "status": "ORDER_NOT_FOUND",
+                "order_id": order_id,
+                "event_id": event_id,
+                "idempotency_hit": False,
+                "error": f"Order '{order_id}' not found in authoritative PostgreSQL store.",
+            }
+
+        row = normalize_db_row(raw_row, order_cols)
+        assert row is not None
+
+        db_tenant_id = str(row.get("tenant_id") or "").strip()
+        db_canonical_tenant = str(row.get("canonical_tenant_id") or db_tenant_id).strip().lower()
+        db_tenant_slug = str(row.get("tenant_slug") or "").strip().lower()
+        canonical_db_tenant_id = db_tenant_id or db_canonical_tenant or db_tenant_slug
+        if not canonical_db_tenant_id:
+            raise RuntimeError(f"Order '{order_id}' lacks canonical tenant_id for atomic settlement.")
+
+        db_order_status = str(row.get("order_status") or "PENDING").strip().upper()
+        db_session_state = str(row.get("session_state")).strip().upper() if row.get("session_state") else None
+        db_revoked = bool(row.get("revoked", False)) or (
+            db_session_state in ("REVOKED", "CANCELLED")
+        ) or (db_order_status in ("REVOKED", "CANCELLED"))
+        db_expires_at = _parse_dt_utc(row.get("expires_at"))
+
+        cur.execute(
+            """
+            SELECT id FROM public.financial_ledger
+            WHERE order_id = %s AND transaction_type = 'PAYMENT_CREDIT'
+            LIMIT 1;
+            """,
+            (order_id,),
+        )
+        existing_ledger = cur.fetchone()
+
+        cur.execute(
+            """
+            SELECT event_id FROM public.payment_events
+            WHERE (provider = %s AND event_id = %s) OR event_id = %s
+            LIMIT 1;
+            """,
+            (provider_upper, event_id, event_id),
+        )
+        existing_event = cur.fetchone()
+
+        if db_order_status == "PAID" or db_session_state == "SETTLED" or existing_ledger or existing_event:
+            conn.rollback()
+            _SETTLED_ORDERS.add(order_id)
+            _PROCESSED_EVENTS.add(event_id)
+            return {
+                "status": "ALREADY_SETTLED",
+                "order_id": order_id,
+                "event_id": event_id,
+                "idempotency_hit": True,
+                "message": "Payment has already been settled and locked against double-entry.",
+            }
+
+        inv_sku = str(row.get("sku_id") or row.get("product_id") or "").strip().upper()
+        expected_total = int(
+            float(
+                row.get("total_amount")
+                if row.get("total_amount") is not None
+                else (row.get("gross_amount") or row.get("amount") or ACADEMY_SETTLEMENT_PRICE)
+            )
+        )
+        expected_base = int(
+            float(row.get("base_amount") if row.get("base_amount") is not None else expected_total)
+        )
+        allowed_tenants = {
+            v for v in (db_tenant_id.lower(), db_canonical_tenant, db_tenant_slug) if v
+        }
+        owner_label = db_tenant_slug or canonical_db_tenant_id
+
+        gate_rejection = _validate_settlement_gates(
+            order_id=order_id,
+            event_id=event_id,
+            amount=amount,
+            requested_tenant=requested_tenant,
+            inv_sku=inv_sku,
+            expected_base=expected_base,
+            expected_total=expected_total,
+            allowed_tenants=allowed_tenants,
+            owner_label=owner_label,
+            is_revoked=db_revoked,
+        )
+        if gate_rejection is not None:
+            conn.rollback()
+            return gate_rejection
+
+        is_expired = (
+            db_session_state == "EXPIRED"
+            or db_order_status == "EXPIRED"
+            or (db_expires_at is not None and now_utc > db_expires_at)
+        )
+        if is_expired:
+            cur.execute(
+                """
+                UPDATE public.orders
+                SET status = 'EXPIRED', payment_status = 'EXPIRED', order_status = 'EXPIRED', updated_at = %s
+                WHERE id = %s;
+                """,
+                (now_utc, order_id),
+            )
+            if db_session_state is not None:
+                cur.execute(
+                    """
+                    UPDATE public.checkout_sessions
+                    SET session_state = 'EXPIRED', updated_at = %s
+                    WHERE order_id = %s AND revoked = FALSE AND session_state = 'ACTIVE';
+                    """,
+                    (now_utc, order_id),
+                )
+            conn.commit()
+            return {
+                "status": "MANUAL_RECONCILIATION",
+                "routed_to": "MANUAL_RECONCILIATION_QUEUE",
+                "order_id": order_id,
+                "event_id": event_id,
+                "amount": amount or expected_total,
+                "expired_at": db_expires_at.isoformat() if db_expires_at else now_utc.isoformat(),
+                "tenant_id": requested_tenant or canonical_db_tenant_id,
+                "reason": "Settlement arrived after 15m expiration. Routed to manual audit.",
+                "idempotency_hit": False,
+            }
+
+        settle_amount = int(amount if amount is not None else expected_total)
+
+        cur.execute(
+            """
+            INSERT INTO public.payment_events (
+                provider, event_id, provider_event_id, reference_id, order_id,
+                tenant_id, event_type, amount, payload, raw_payload,
+                status, processed_at, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, 'PAYMENT_SETTLED', %s, %s::jsonb, %s::jsonb, 'PROCESSED', %s, %s, %s)
+            ON CONFLICT (provider, event_id) DO NOTHING
+            RETURNING event_id;
+            """,
+            (
+                provider_upper,
+                event_id,
+                provider_event_val,
+                order_id,
+                order_id,
+                canonical_db_tenant_id,
+                settle_amount,
+                payload_json,
+                payload_json,
+                now_utc,
+                now_utc,
+                now_utc,
+            ),
+        )
+        if not cur.fetchone():
+            conn.rollback()
+            _PROCESSED_EVENTS.add(event_id)
+            return {
+                "status": "ALREADY_SETTLED",
+                "order_id": order_id,
+                "event_id": event_id,
+                "idempotency_hit": True,
+                "message": "Duplicate payment event blocked atomically.",
+            }
+
+        cur.execute(
+            """
+            UPDATE public.orders
+            SET status = 'PAID',
+                payment_status = 'PAID',
+                order_status = 'PAID',
+                paid_at = COALESCE(paid_at, %s),
+                updated_at = %s
+            WHERE id = %s;
+            """,
+            (now_utc, now_utc, order_id),
+        )
+
+        if db_session_state is not None:
+            cur.execute(
+                """
+                UPDATE public.checkout_sessions
+                SET session_state = 'SETTLED',
+                    settled_at = COALESCE(settled_at, %s),
+                    updated_at = %s
+                WHERE order_id = %s
+                  AND revoked = FALSE
+                  AND session_state IN ('ACTIVE', 'SETTLED');
+                """,
+                (now_utc, now_utc, order_id),
+            )
+
+        cur.execute(
+            """
+            INSERT INTO public.financial_ledger (
+                order_id, tenant_id, provider, event_id, gross_amount,
+                fee_amount, net_amount, currency, transaction_type,
+                status, transaction_status, reconciliation_status,
+                metadata, created_at
+            ) VALUES (%s, %s, %s, %s, %s, NULL, NULL, 'IDR', 'PAYMENT_CREDIT', 'SETTLED', 'SETTLED', 'PENDING_RECONCILIATION', %s::jsonb, %s)
+            ON CONFLICT (order_id) WHERE (transaction_type = 'PAYMENT_CREDIT') DO NOTHING
+            RETURNING id;
+            """,
+            (
+                order_id,
+                canonical_db_tenant_id,
+                provider_upper,
+                event_id,
+                settle_amount,
+                payload_json,
+                now_utc,
+            ),
+        )
+        if not cur.fetchone():
+            conn.rollback()
+            _SETTLED_ORDERS.add(order_id)
+            return {
+                "status": "ALREADY_SETTLED",
+                "order_id": order_id,
+                "event_id": event_id,
+                "idempotency_hit": True,
+                "message": "Duplicate financial ledger credit prevented atomically.",
+            }
+
+        conn.commit()
+        return {
+            "status": "PAID",
+            "order_id": order_id,
+            "event_id": event_id,
+            "tenant_id": canonical_db_tenant_id,
+            "amount": settle_amount,
+            "idempotency_hit": False,
+            "settled_at": now_utc.isoformat(),
+        }
+    except Exception as db_e:
+        logger.error(f"[AcademySettlement] DB settlement failed (transaction rolled back): {db_e}")
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return {
+            "status": "FAILED_DB_PERSISTENCE",
+            "order_id": order_id,
+            "event_id": event_id,
+            "idempotency_hit": False,
+            "error": f"Database settlement failed and was rolled back: {db_e}",
+        }
+    finally:
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
 
 def settle_academy_invoice(
     order_id: str,
@@ -1487,304 +2509,59 @@ def settle_academy_invoice(
     tenant_id: str = "onlineboost",
 ) -> Dict[str, Any]:
     """
-    Eksekusi settlement pembayaran dengan IDEMPOTENCY KEY KETAT & ACCEPTANCE GATES:
-    1. Validasi Amount Mismatch: Tolak jika amount tidak sesuai dengan invoice / Rp 249.000.
-    2. Validasi Tenant Mismatch: Tolak jika tenant berbeda dengan tenant pemilik invoice.
-    3. Validasi Expiry 15 Menit: Jika settlement tiba lewat 15 menit, route ke MANUAL_RECONCILIATION_QUEUE.
-    4. Kunci order_id di memory & PostgreSQL `financial_ledger`
-       (UNIQUE INDEX: `uq_financial_ledger_order_credit ON financial_ledger (order_id)`).
-    5. Kunci event_id di memory & PostgreSQL `payment_events`
-       (UNIQUE CONSTRAINT: `event_id UNIQUE`).
-    6. Mencegah double-settlement. Jika sudah lunas, langsung return status ALREADY_SETTLED.
+    Eksekusi settlement pembayaran secara atomik di PostgreSQL:
+    1. Mengunci baris `orders` (`FOR UPDATE OF o`) & memverifikasi idempotency di DB.
+    2. Validasi revocation, SKU isolation, amount mismatch, tenant mismatch, dan expiry 15 menit.
+    3. Menyimpan `payment_events` (dengan canonical `tenant_id`), `orders`, `checkout_sessions`,
+       dan `financial_ledger` dalam satu transaksi atomik.
+    4. Rollback penuh pada kegagalan SQL tanpa memutasi state RAM dan tidak pernah mengembalikan `PAID`.
     """
-    event_id = str(event_id or f"evt_bta_{order_id}").strip()
+    clean_order_id = str(order_id or "").strip()
+    clean_event_id = str(event_id or f"evt_bta_{clean_order_id}").strip()
     now_utc = datetime.now(timezone.utc)
-    raw_payload = raw_payload or {}
+    payload_dict = raw_payload or {}
 
     with _SETTLE_THREAD_LOCK:
-        # --- 1. Memory Idempotency Check ---
-        if order_id in _SETTLED_ORDERS or event_id in _PROCESSED_EVENTS:
-            logger.info(f"[AcademyIdempotency] Order '{order_id}' or event '{event_id}' already settled. Skipped.")
-            return {
-                "status": "ALREADY_SETTLED",
-                "order_id": order_id,
-                "event_id": event_id,
-                "idempotency_hit": True,
-                "message": "Payment has already been settled and locked against double-entry.",
-            }
+        result = _execute_atomic_settlement_tx(
+            order_id=clean_order_id,
+            event_id=clean_event_id,
+            provider=provider,
+            amount=amount,
+            raw_payload=payload_dict,
+            requested_tenant=tenant_id,
+            now_utc=now_utc,
+        )
 
-        # Ambil invoice
-        invoice = _ACADEMY_INVOICES.get(order_id)
+        status_val = result.get("status")
+        cached_inv = _ACADEMY_INVOICES.get(clean_order_id)
 
-        # --- 2. Acceptance Gate Validations ---
-        if invoice:
-            expected_total = invoice.get("total_amount", ACADEMY_SETTLEMENT_PRICE)
-            expected_base = invoice.get("base_amount", ACADEMY_SETTLEMENT_PRICE)
-            inv_sku = str(invoice.get("sku_id") or "").upper()
+        if status_val == "MANUAL_RECONCILIATION":
+            if cached_inv:
+                cached_inv["status"] = "EXPIRED"
+            _MANUAL_RECONCILIATION_QUEUE.append({
+                "order_id": clean_order_id,
+                "event_id": clean_event_id,
+                "amount": result.get("amount"),
+                "tenant_id": result.get("tenant_id"),
+                "expired_at": result.get("expired_at"),
+                "received_at": now_utc.isoformat(),
+                "status": "MANUAL_RECONCILIATION",
+                "reason": "Settlement arrived after 15m expiration",
+            })
+            return result
 
-            # 2a-0. Strict Invariant: Rp1.500 settlement is strictly restricted to TEST-PENNY-1500
-            if amount == 1500 and inv_sku != TEST_PENNY_SKU_ID:
-                logger.warning(
-                    f"[AcademyGate] Penny amount Rp 1.500 received for non-penny SKU '{inv_sku}' on order '{order_id}'. Rejected."
-                )
-                return {
-                    "status": "REJECTED_AMOUNT_MISMATCH",
-                    "order_id": order_id,
-                    "event_id": event_id,
-                    "amount": amount,
-                    "expected_amount": expected_total,
-                    "idempotency_hit": False,
-                    "error": f"Penny settlement (Rp 1.500) is strictly restricted to {TEST_PENNY_SKU_ID}. Regular class access denied.",
-                }
-            if inv_sku == TEST_PENNY_SKU_ID and amount is not None and amount != 1500:
-                logger.warning(
-                    f"[AcademyGate] Order '{order_id}' is TEST-PENNY-1500 but received Rp{amount} (expected Rp1,500). Rejected."
-                )
-                return {
-                    "status": "REJECTED_AMOUNT_MISMATCH",
-                    "order_id": order_id,
-                    "event_id": event_id,
-                    "amount": amount,
-                    "expected_amount": 1500,
-                    "idempotency_hit": False,
-                    "error": "TEST-PENNY-1500 orders require exact Rp 1.500 settlement.",
-                }
+        if status_val == "PAID":
+            _SETTLED_ORDERS.add(clean_order_id)
+            _PROCESSED_EVENTS.add(clean_event_id)
+            if cached_inv:
+                cached_inv["status"] = "PAID"
+                cached_inv["payment_status"] = "PAID"
+                cached_inv["paid_at"] = result.get("settled_at")
+                cs = cached_inv.get("checkout_session")
+                if isinstance(cs, dict):
+                    cs["session_state"] = "SETTLED"
 
-            # 2a. Amount Mismatch Rejection
-            if invoice.get("unique_code") == 0 or expected_total == expected_base:
-                if amount is not None and amount != expected_base:
-                    logger.warning(
-                        f"[AcademyGate] Amount mismatch for order '{order_id}': "
-                        f"received {amount}, expected {expected_base}"
-                    )
-                    return {
-                        "status": "REJECTED_AMOUNT_MISMATCH",
-                        "order_id": order_id,
-                        "event_id": event_id,
-                        "amount": amount,
-                        "expected_amount": expected_base,
-                        "idempotency_hit": False,
-                        "error": f"Amount mismatch: received Rp {amount}, expected Rp {expected_base}",
-                    }
-            else:
-                if amount is not None and amount != expected_total and amount != expected_base and not (249100 <= amount <= 249999):
-                    logger.warning(
-                        f"[AcademyGate] Amount mismatch for order '{order_id}': "
-                        f"received {amount}, expected {expected_total}"
-                    )
-                    return {
-                        "status": "REJECTED_AMOUNT_MISMATCH",
-                        "order_id": order_id,
-                        "event_id": event_id,
-                        "amount": amount,
-                        "expected_amount": expected_total,
-                        "idempotency_hit": False,
-                        "error": f"Amount mismatch: received Rp {amount}, expected Rp {expected_total}",
-                    }
-
-            # 2b. Tenant Mismatch Rejection
-            inv_tenant = str(invoice.get("tenant_id", "")).strip().lower()
-            req_tenant = str(tenant_id or "").strip().lower()
-            if inv_tenant and req_tenant and inv_tenant != req_tenant:
-                logger.warning(
-                    f"[AcademyGate] Tenant mismatch for order '{order_id}': "
-                    f"invoice belongs to '{inv_tenant}', received '{req_tenant}'"
-                )
-                return {
-                    "status": "REJECTED_TENANT_MISMATCH",
-                    "order_id": order_id,
-                    "event_id": event_id,
-                    "tenant_id": tenant_id,
-                    "expected_tenant": inv_tenant,
-                    "idempotency_hit": False,
-                    "error": f"Tenant mismatch: Invoice '{order_id}' belongs to tenant '{inv_tenant}', not '{tenant_id}'",
-                }
-
-            # 2c. Expiry 15-Minute TTL Check (Route to Manual Reconciliation)
-            if invoice.get("expires_at_dt") and now_utc > invoice["expires_at_dt"]:
-                logger.warning(
-                    f"[AcademyGate] Order '{order_id}' expired at {invoice['expires_at_dt']}. "
-                    f"Routing to manual reconciliation queue."
-                )
-                invoice["status"] = "EXPIRED"
-                recon_entry = {
-                    "order_id": order_id,
-                    "event_id": event_id,
-                    "amount": amount or expected_total,
-                    "tenant_id": tenant_id,
-                    "expired_at": invoice["expires_at_dt"].isoformat(),
-                    "received_at": now_utc.isoformat(),
-                    "status": "MANUAL_RECONCILIATION",
-                    "reason": "Settlement arrived after 15m expiration",
-                }
-                _MANUAL_RECONCILIATION_QUEUE.append(recon_entry)
-                return {
-                    "status": "MANUAL_RECONCILIATION",
-                    "routed_to": "MANUAL_RECONCILIATION_QUEUE",
-                    "order_id": order_id,
-                    "event_id": event_id,
-                    "amount": amount or expected_total,
-                    "reason": "Settlement arrived after 15m expiration. Routed to manual audit.",
-                    "idempotency_hit": False,
-                }
-
-        settle_amount = amount or (invoice["total_amount"] if invoice else ACADEMY_SETTLEMENT_PRICE)
-
-        # --- 3. Database Idempotency Check & Atomic Locks ---
-        conn = None
-        cur = None
-        try:
-            from app.core.database import get_db_connection
-            conn = get_db_connection()
-            cur = conn.cursor()
-
-            # Cek apakah order_id sudah ada di financial_ledger
-            cur.execute(
-                """
-                SELECT id, status, gross_amount FROM financial_ledger 
-                WHERE order_id = %s AND transaction_type = 'PAYMENT_CREDIT' LIMIT 1;
-                """,
-                (order_id,)
-            )
-            existing_ledger = cur.fetchone()
-            if existing_ledger:
-                logger.info(f"[AcademyIdempotency] Order '{order_id}' found in financial_ledger. Returning ALREADY_SETTLED.")
-                _SETTLED_ORDERS.add(order_id)
-                _PROCESSED_EVENTS.add(event_id)
-                return {
-                    "status": "ALREADY_SETTLED",
-                    "order_id": order_id,
-                    "event_id": event_id,
-                    "idempotency_hit": True,
-                    "message": "Payment already registered in financial_ledger.",
-                }
-
-            if not invoice:
-                cur.execute("SELECT product_id, gross_amount, tenant_slug FROM orders WHERE id = %s LIMIT 1;", (order_id,))
-                db_ord_row = cur.fetchone()
-                if db_ord_row:
-                    db_prod = str(db_ord_row[0] or "").upper()
-                    db_gross = int(float(db_ord_row[1] or 0))
-                    if amount == 1500 and db_prod != TEST_PENNY_SKU_ID:
-                        logger.warning(
-                            f"[AcademyGate] Penny amount Rp 1.500 received for non-penny SKU '{db_prod}' on order '{order_id}'. Rejected."
-                        )
-                        return {
-                            "status": "REJECTED_AMOUNT_MISMATCH",
-                            "order_id": order_id,
-                            "event_id": event_id,
-                            "amount": amount,
-                            "expected_amount": db_gross,
-                            "idempotency_hit": False,
-                            "error": f"Penny settlement (Rp 1.500) is strictly restricted to {TEST_PENNY_SKU_ID}. Access denied.",
-                        }
-                    if db_prod == TEST_PENNY_SKU_ID and amount is not None and amount != 1500:
-                        logger.warning(
-                            f"[AcademyGate] Order '{order_id}' is TEST-PENNY-1500 but received Rp{amount} (expected Rp1,500). Rejected."
-                        )
-                        return {
-                            "status": "REJECTED_AMOUNT_MISMATCH",
-                            "order_id": order_id,
-                            "event_id": event_id,
-                            "amount": amount,
-                            "expected_amount": 1500,
-                            "idempotency_hit": False,
-                            "error": "TEST-PENNY-1500 orders require exact Rp 1.500 settlement.",
-                        }
-
-            payload_json = json.dumps(raw_payload, default=str)
-
-            # 3a. Catat ke payment_events (Append-Only Audit Ledger)
-            cur.execute(
-                """
-                INSERT INTO payment_events (
-                    provider, event_id, reference_id, event_type, payload, status, processed_at,
-                    created_at, updated_at, order_id, provider_event_id, amount, raw_payload
-                ) VALUES (%s, %s, %s, 'PAYMENT_SETTLED', %s, 'PROCESSED', %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (event_id) DO NOTHING;
-                """,
-                (
-                    provider.upper(),
-                    event_id,
-                    order_id,
-                    payload_json,
-                    now_utc,
-                    now_utc,
-                    now_utc,
-                    order_id,
-                    event_id,
-                    settle_amount,
-                    payload_json,
-                )
-            )
-
-            # 3b. Update status orders menjadi LUNAS/PAID
-            cur.execute(
-                """
-                UPDATE orders 
-                SET status = 'PAID', payment_status = 'PAID', updated_at = %s
-                WHERE id = %s;
-                """,
-                (now_utc, order_id)
-            )
-
-            # 3c. Catat ke financial_ledger (Strict Unique Constraint)
-            cur.execute(
-                """
-                INSERT INTO financial_ledger (
-                    order_id, tenant_id, provider, event_id, gross_amount, fee_amount, net_amount,
-                    currency, transaction_type, status, metadata, created_at
-                ) VALUES (%s, %s, %s, %s, %s, 0, %s, 'IDR', 'PAYMENT_CREDIT', 'SETTLED', %s, %s)
-                ON CONFLICT (order_id) WHERE (transaction_type = 'PAYMENT_CREDIT') DO NOTHING;
-                """,
-                (
-                    order_id,
-                    tenant_id,
-                    provider.upper(),
-                    event_id,
-                    settle_amount,
-                    settle_amount,
-                    payload_json,
-                    now_utc,
-                )
-            )
-
-            conn.commit()
-        except Exception as db_e:
-            logger.warning(f"[AcademySettlement] DB settlement note: {db_e}")
-            if conn:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-        finally:
-            if cur:
-                try:
-                    cur.close()
-                except Exception:
-                    pass
-            if conn:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-
-        # Kunci di memory
-        _SETTLED_ORDERS.add(order_id)
-        _PROCESSED_EVENTS.add(event_id)
-        if invoice:
-            invoice["status"] = "PAID"
-            invoice["payment_status"] = "PAID"
-            invoice["paid_at"] = now_utc.isoformat()
-
-        return {
-            "status": "PAID",
-            "order_id": order_id,
-            "event_id": event_id,
-            "amount": settle_amount,
-            "idempotency_hit": False,
-            "settled_at": now_utc.isoformat(),
-        }
+        return result
 
 
 # ============================================================================
@@ -3133,16 +3910,8 @@ class AcademyBotStateMachine:
                 tenant_id=tenant_id,
             )
 
-            # Jika ditolak karena mismatch atau dialihkan ke rekonsiliasi manual, return langsung
-            if settlement_res.get("status") in (
-                "REJECTED_AMOUNT_MISMATCH",
-                "REJECTED_TENANT_MISMATCH",
-                "MANUAL_RECONCILIATION",
-            ):
-                return settlement_res
-
             # Jika sudah pernah disettle sebelumnya (idempotency hit), cegah kirim notifikasi dobel
-            if settlement_res.get("idempotency_hit"):
+            if settlement_res.get("idempotency_hit") or settlement_res.get("status") == "ALREADY_SETTLED":
                 logger.info(f"[AcademyState2] Idempotency hit for {order_id}. Double-notification prevented.")
                 return {
                     "status": "ALREADY_SETTLED",
@@ -3151,8 +3920,12 @@ class AcademyBotStateMachine:
                     "notified": False,
                 }
 
-            # Ambil data customer dari invoice atau raw payload
-            invoice = _ACADEMY_INVOICES.get(order_id) or {}
+            # Fail closed: Hentikan entitlement/delivery untuk segala status selain PAID
+            if settlement_res.get("status") != "PAID":
+                return settlement_res
+
+            # Ambil data customer dari durable storage (atau raw payload)
+            invoice = get_academy_invoice(order_id) or _ACADEMY_INVOICES.get(order_id) or {}
             raw = raw_payload or {}
             customer_name = (
                 invoice.get("customer_name")

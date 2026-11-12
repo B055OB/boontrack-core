@@ -25,6 +25,7 @@ from app.services.academy_service import (
     ACADEMY_INVOICE_TTL_MINUTES,
     ACADEMY_BROADCAST_TEMPLATE_NAME,
     ACADEMY_BROADCAST_NASKAH,
+    TenantContextViolation,
     generate_academy_qris_invoice,
     get_academy_invoice,
     academy_bot,
@@ -163,6 +164,13 @@ async def create_academy_invoice(
             use_unique_code=payload.use_unique_code if payload.use_unique_code is not None else True,
             sku_id=payload.sku_id,
             is_internal_authorized=is_internal,
+            session_token_manager=_CHECKOUT_TOKEN_MANAGER,
+        )
+    except TenantContextViolation as tc_err:
+        logger.warning(f"[AcademyInvoice] Tenant context rejected: {tc_err}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(tc_err),
         )
     except RuntimeError as r_err:
         logger.error(f"[AcademyInvoice] Persistence failure: {r_err}")
@@ -171,42 +179,17 @@ async def create_academy_invoice(
             detail=f"Database persistence failure: {r_err}",
         )
 
-    # Hardening Persistence Assertion for TEST-PENNY-1500
-    if payload.sku_id == "TEST-PENNY-1500":
-        order_id = invoice.get("order_id")
-        verified_db = False
-        try:
-            from app.core.database import get_db_connection
-            conn = get_db_connection()
-            with conn.cursor() as cur:
-                cur.execute("SELECT id FROM orders WHERE id = %s LIMIT 1;", (order_id,))
-                row = cur.fetchone()
-                if row:
-                    verified_db = True
-            conn.close()
-        except Exception as check_err:
-            logger.error(f"[AcademyInvoice] Persistence verification failed for '{order_id}': {check_err}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Database persistence verification failed for internal test SKU: {check_err}",
-            )
-        if not verified_db:
-            logger.error(f"[AcademyInvoice] Order '{order_id}' was not found in database. Fail-closed.")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Database persistence assertion failed: order '{order_id}' was not confirmed in database.",
-            )
-
-    # P0-D: Issue ownership-bound signed checkout session token
+    # Extract token issued atomically during checkout session DB persistence
     from datetime import datetime, timezone
-    canonical_tenant_id = str(invoice.get("tenant_id") or payload.tenant_id or "onlineboost").strip()
-    token_str, session_meta = _CHECKOUT_TOKEN_MANAGER.issue_token(
-        order_id=str(invoice["order_id"]),
-        canonical_tenant_id=canonical_tenant_id,
-    )
-    invoice["canonical_tenant_id"] = canonical_tenant_id
-    invoice["checkout_session"] = session_meta
-    exp_iso = datetime.fromtimestamp(session_meta["exp"], tz=timezone.utc).isoformat()
+    token_str = invoice.pop("_checkout_session_token", None)
+    session_meta = invoice.get("checkout_session") or {}
+    if not token_str or not session_meta:
+        logger.error("[AcademyInvoice] Checkout session token missing after persistence. Fail-closed.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database persistence failure: checkout session token missing.",
+        )
+    exp_iso = invoice.get("expires_at") or datetime.fromtimestamp(session_meta["exp"], tz=timezone.utc).isoformat()
 
     if response is not None:
         for hdr_k, hdr_v in CHECKOUT_SECURITY_HEADERS.items():
