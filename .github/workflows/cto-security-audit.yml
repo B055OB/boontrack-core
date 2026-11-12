@@ -288,8 +288,8 @@ jobs:
           assert_blocked("1.1.1.1", 5432, "External PostgreSQL port")
           assert_blocked("8.8.8.8", 6379, "External Redis port")
           assert_blocked("1.1.1.1", 6543, "External Supabase pooler port")
-          assert_blocked("db.mpluzajlzpregmjwpjqr.supabase.co", 5432, "Blocked Supabase DB sinkhole")
           assert_blocked("evolution-api-production-abb7.up.railway.app", 58080, "Blocked Railway app sinkhole")
+          assert_blocked("api.telegram.org", 443, "Blocked Telegram API sinkhole")
 
           print("--- 5. Testing SMTP Ports Blocking ---")
           for smtp_port in (25, 465, 587, 2525):
