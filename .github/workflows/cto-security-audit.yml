@@ -149,6 +149,53 @@ jobs:
       - name: Enforce Kernel Network Egress Isolation & DNS Sinkhole
         run: |
           set -euo pipefail
+
+          echo "=== 1. Runtime Detection of Docker Service Container Subnets ==="
+          PG_CONTAINER=$(docker ps --filter "ancestor=postgres:15" -q | head -n 1)
+          REDIS_CONTAINER=$(docker ps --filter "ancestor=redis:7-alpine" -q | head -n 1)
+
+          if [ -z "$PG_CONTAINER" ] || [ -z "$REDIS_CONTAINER" ]; then
+            PG_CONTAINER=$(docker ps --format '{{.ID}} {{.Image}}' | grep -i postgres | awk '{print $1}' | head -n 1)
+            REDIS_CONTAINER=$(docker ps --format '{{.ID}} {{.Image}}' | grep -i redis | awk '{print $1}' | head -n 1)
+          fi
+
+          if [ -z "$PG_CONTAINER" ] || [ -z "$REDIS_CONTAINER" ]; then
+            echo "❌ FAIL-CLOSED: PostgreSQL or Redis service container not detected at runtime." >&2
+            docker ps -a
+            exit 1
+          fi
+
+          PG_NETS=$(docker inspect "$PG_CONTAINER" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' | grep -v '^$')
+          REDIS_NETS=$(docker inspect "$REDIS_CONTAINER" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' | grep -v '^$')
+          SERVICE_NETS=$(printf "%s\n%s\n" "$PG_NETS" "$REDIS_NETS" | sort -u | grep -v '^$')
+
+          if [ -z "$SERVICE_NETS" ]; then
+            echo "❌ FAIL-CLOSED: No network found for PostgreSQL/Redis service containers." >&2
+            exit 1
+          fi
+
+          DOCKER_SERVICE_SUBNETS=()
+          for net in $SERVICE_NETS; do
+            subnet=$(docker network inspect "$net" --format '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' | grep -v '^$' | head -n 1)
+            if [[ -z "$subnet" || ! "$subnet" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]]; then
+              echo "❌ FAIL-CLOSED: Invalid or missing subnet for Docker service network '''$net''': '''$subnet'''" >&2
+              exit 1
+            fi
+            DOCKER_SERVICE_SUBNETS+=("$subnet")
+          done
+
+          DOCKER_SERVICE_SUBNETS=($(printf "%s\n" "${DOCKER_SERVICE_SUBNETS[@]}" | sort -u))
+          if [ ${#DOCKER_SERVICE_SUBNETS[@]} -eq 0 ]; then
+            echo "❌ FAIL-CLOSED: Zero valid Docker service subnets detected." >&2
+            exit 1
+          fi
+
+          echo "Detected PostgreSQL Container: $PG_CONTAINER"
+          echo "Detected Redis Container:      $REDIS_CONTAINER"
+          echo "Detected Service Networks:     $SERVICE_NETS"
+          echo "Detected Service Subnets:      ${DOCKER_SERVICE_SUBNETS[*]}"
+
+          echo "=== 2. Apply DNS Sinkhole and Host-Specific Egress Blocks ==="
           BLOCKED_HOSTS=(
             "mpluzajlzpregmjwpjqr.supabase.co"
             "db.mpluzajlzpregmjwpjqr.supabase.co"
@@ -181,8 +228,92 @@ jobs:
             echo "127.0.0.1 $host" | sudo tee -a /etc/hosts >/dev/null
             echo "::1 $host" | sudo tee -a /etc/hosts >/dev/null
           done
+
+          echo "=== 3. Add Scoped ACCEPT for Docker Service Subnets (DB/Cache Ports Only) & Block Rest ==="
+          for subnet in "${DOCKER_SERVICE_SUBNETS[@]}"; do
+            echo "Adding narrowly scoped ACCEPT for Docker service subnet $subnet (ports 5432,5433,6543,6379,6380)"
+            sudo iptables -A OUTPUT -d "$subnet" -p tcp -m multiport --dports 5432,5433,6543,6379,6380 -j ACCEPT
+            sudo iptables -A OUTPUT -d "$subnet" -j REJECT --reject-with tcp-reset
+          done
+
+          echo "=== 4. Apply Non-Loopback DB/Cache and SMTP Egress REJECT Rules ==="
           sudo iptables -A OUTPUT ! -o lo ! -d 127.0.0.0/8 -p tcp -m multiport --dports 5432,5433,6543,6379,6380,25,465,587,2525 -j REJECT --reject-with tcp-reset
           sudo ip6tables -A OUTPUT ! -o lo ! -d ::1/128 -p tcp -m multiport --dports 5432,5433,6543,6379,6380,25,465,587,2525 -j REJECT
+
+          echo "=== 5. Verify iptables OUTPUT Rules Ordering ==="
+          sudo iptables -L OUTPUT -n -v --line-numbers
+
+      - name: Verify Firewall Isolation & Egress Security Rules
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import socket, sys, psycopg2, redis, subprocess
+
+          def assert_blocked(host: str, port: int, desc: str) -> None:
+              s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+              s.settimeout(2.0)
+              try:
+                  s.connect((host, port))
+                  s.close()
+                  raise AssertionError(f"SECURITY VIOLATION: {desc} ({host}:{port}) SUCCEEDED, expected BLOCKED!")
+              except (ConnectionRefusedError, socket.timeout, OSError) as e:
+                  print(f"  [OK] BLOCKED: {desc} ({host}:{port}) -> {type(e).__name__}: {e}")
+
+          print("--- 1. Testing Loopback Connectivity ---")
+          s_srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          s_srv.bind(("127.0.0.1", 0))
+          lo_port = s_srv.getsockname()[1]
+          s_srv.listen(1)
+          s_cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          s_cli.connect(("127.0.0.1", lo_port))
+          s_cli.close()
+          s_srv.close()
+          print(f"  [OK] Loopback socket connection succeeded on port {lo_port}")
+
+          print("--- 2. Testing PostgreSQL Service-Container Connectivity ---")
+          conn = psycopg2.connect("postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack", connect_timeout=5)
+          cur = conn.cursor()
+          cur.execute("SELECT 1;")
+          assert cur.fetchone() == (1,)
+          conn.close()
+          print("  [OK] PostgreSQL service container connected and query returned (1,)")
+
+          print("--- 3. Testing Redis Service-Container Connectivity ---")
+          r = redis.Redis(host="127.0.0.1", port=6379, socket_timeout=5)
+          assert r.ping() is True
+          print("  [OK] Redis service container ping succeeded")
+
+          print("--- 4. Testing External Egress to Representative Prohibited Destinations ---")
+          assert_blocked("1.1.1.1", 5432, "External PostgreSQL port")
+          assert_blocked("8.8.8.8", 6379, "External Redis port")
+          assert_blocked("1.1.1.1", 6543, "External Supabase pooler port")
+          assert_blocked("db.mpluzajlzpregmjwpjqr.supabase.co", 5432, "Blocked Supabase DB sinkhole")
+          assert_blocked("evolution-api-production-abb7.up.railway.app", 58080, "Blocked Railway app sinkhole")
+
+          print("--- 5. Testing SMTP Ports Blocking ---")
+          for smtp_port in (25, 465, 587, 2525):
+              assert_blocked("127.0.0.1", smtp_port, f"SMTP port {smtp_port} on loopback")
+              assert_blocked("1.1.1.1", smtp_port, f"SMTP port {smtp_port} external")
+
+          print("--- 6. Testing Unapproved Ports on Docker Bridge Subnet ---")
+          pg_cids = subprocess.check_output(["docker", "ps", "--filter", "ancestor=postgres:15", "-q"], text=True).strip().splitlines()
+          redis_cids = subprocess.check_output(["docker", "ps", "--filter", "ancestor=redis:7-alpine", "-q"], text=True).strip().splitlines()
+          container_ips = []
+          for cid in (pg_cids + redis_cids):
+              raw_ips = subprocess.check_output(["docker", "inspect", cid, "--format", '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}'], text=True)
+              for ip_str in raw_ips.splitlines():
+                  if ip_str.strip():
+                      container_ips.append(ip_str.strip())
+          container_ips = sorted(set(container_ips))
+          print(f"  Detected Docker container IPs: {container_ips}")
+          for c_ip in container_ips:
+              assert_blocked(c_ip, 8080, f"Unapproved HTTP alt port on container {c_ip}")
+              assert_blocked(c_ip, 22, f"Unapproved SSH port on container {c_ip}")
+              assert_blocked(c_ip, 25, f"SMTP port 25 on container {c_ip}")
+              assert_blocked(c_ip, 587, f"SMTP port 587 on container {c_ip}")
+
+          print("\n[OK] All mandatory firewall isolation & egress security checks PASSED!")
+          PY
 
       - name: Preflight Disposable PostgreSQL, Redis & Clean Environment
         run: |
