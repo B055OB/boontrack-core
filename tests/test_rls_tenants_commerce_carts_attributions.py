@@ -18,11 +18,13 @@ from app.core.database import (
     get_db_connection,
     close_and_reset_connection,
 )
+from app.core.security.test_isolation_guard import verify_connected_postgres_is_disposable
 
 
 @pytest.fixture
 def db_conn():
     conn = get_db_connection()
+    verify_connected_postgres_is_disposable(conn)
     yield conn
     close_and_reset_connection(conn)
 
@@ -377,11 +379,11 @@ def test_public_tenant_column_least_privilege_and_anon_role_audit(db_conn):
 
     # 3. Test storefront gateway endpoint (Settings Sanitization)
     sf_resp = client.get("/api/v1/tenants/boon/storefront")
-    if sf_resp.status_code == 200:
-        sf_data = sf_resp.json()
-        settings = sf_data.get("settings", {})
-        assert "payout" not in settings, "Payout info must NOT be exposed on public storefront!"
-        assert "bank_accounts" not in settings, "Bank accounts must NOT be exposed on public storefront!"
+    assert sf_resp.status_code == 200, f"Expected deterministic 200 for boon storefront, got {sf_resp.status_code}: {sf_resp.text}"
+    sf_data = sf_resp.json()
+    settings = sf_data.get("settings", {})
+    assert "payout" not in settings, "Payout info must NOT be exposed on public storefront!"
+    assert "bank_accounts" not in settings, "Bank accounts must NOT be exposed on public storefront!"
 
 
 

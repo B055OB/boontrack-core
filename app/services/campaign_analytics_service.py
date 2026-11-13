@@ -5,16 +5,23 @@ from supabase import create_client, Client
 
 logger = logging.getLogger("CAMPAIGN_ANALYTICS_SERVICE")
 
-from dotenv import load_dotenv
-load_dotenv()
+from app.core.security.test_isolation_guard import (
+    TestIsolationViolation,
+    assert_disposable_supabase_url,
+    safe_load_dotenv,
+)
+safe_load_dotenv()
 
 # Supabase Client (Least Privilege: Anon Key)
 supabase_url = os.getenv("SUPABASE_URL", "").strip()
 supabase_key = (os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "")).strip()
 supabase: Optional[Client] = None
 if supabase_url and supabase_key:
+    assert_disposable_supabase_url(supabase_url, allow_empty=False)
     try:
         supabase = create_client(supabase_url, supabase_key)
+    except TestIsolationViolation:
+        raise
     except Exception as e:
         logger.warning(f"Failed to create Supabase client: {e}")
 

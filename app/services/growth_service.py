@@ -11,7 +11,10 @@ from app.services.meta_capi_service import send_meta_capi_purchase
 
 
 def get_db_connection():
+    from app.core.security.test_isolation_guard import assert_disposable_postgres_target
+
     db_url = (os.getenv("DATABASE_URL") or "").strip()
+    assert_disposable_postgres_target(dsn=db_url, allow_if_unconfigured=False)
     return psycopg2.connect(db_url)
 
 def bind_attribution_session(

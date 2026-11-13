@@ -89,6 +89,12 @@ def get_redis_client():
         _redis_available = False
         return None
 
+    from app.core.security.test_isolation_guard import (
+        TestIsolationViolation,
+        assert_disposable_redis_target,
+    )
+    assert_disposable_redis_target(redis_url=redis_url, allow_if_unconfigured=False)
+
     try:
         import redis
         connect_timeout = float(os.getenv("REDIS_CONNECT_TIMEOUT", "1.5"))
@@ -105,6 +111,8 @@ def get_redis_client():
         masked_url = redis_url.split("@")[-1] if "@" in redis_url else redis_url
         logger.info(f"[REDIS] Successfully connected to Redis instance ({masked_url}).")
         return _redis_client
+    except TestIsolationViolation:
+        raise
     except Exception as e:
         _redis_available = False
         logger.warning(f"[REDIS] Redis daemon unavailable ({e}). Using in-memory fallback mechanism.")

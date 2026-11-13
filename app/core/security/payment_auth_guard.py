@@ -24,8 +24,10 @@ import hmac
 import json
 import logging
 import os
+import re
+import secrets
 import time
-from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 import uuid
 
 from app.services.payment.base import (
@@ -1145,7 +1147,7 @@ def validate_order_status_transition(
 def is_production_environment(environ: Optional[Mapping[str, str]] = None) -> bool:
     """Returns True if the runtime environment is configured as production."""
     env = environ if environ is not None else os.environ
-    for key in ("APP_ENV", "ENVIRONMENT", "RAILWAY_ENVIRONMENT", "NODE_ENV"):
+    for key in ("APP_ENV", "ENVIRONMENT", "RAILWAY_ENVIRONMENT", "NODE_ENV", "ENV"):
         val = str(env.get(key, "")).strip().lower()
         if val in ("production", "prod", "live"):
             return True
@@ -1286,6 +1288,109 @@ CHECKOUT_SECURITY_HEADERS: Dict[str, str] = {
     "X-Content-Type-Options": "nosniff",
 }
 
+ENV_BOONTRACK_INTERNAL_HMAC_SECRET: str = "BOONTRACK_INTERNAL_HMAC_SECRET"
+ENV_PROVENANCE_SIGNING_PRIVATE_KEYRING: str = "PAYMENT_PROVENANCE_SIGNING_PRIVATE_KEYRING_JSON"
+
+_CHECKOUT_KEY_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_FORBIDDEN_INSECURE_CHECKOUT_SECRETS: Tuple[Tuple[str, str], ...] = (
+    ("insecure fallback literal APP_MASTER_KEY", "boontrack_master_security_secret_key_32bytes_len!"),
+    ("insecure fallback literal BLIND_INDEX_SALT", "boontrack_blind_index_salt_secure_2026"),
+)
+
+
+def _validate_checkout_key_id(kid: Any) -> str:
+    """Validates checkout session key ID type, whitespace absence, and strict ASCII identifier format."""
+    if not isinstance(kid, str):
+        raise PaymentConfigurationError("Checkout session key_id must be a string.")
+    if not kid or kid != kid.strip() or any(ch.isspace() for ch in kid):
+        raise PaymentConfigurationError("Invalid checkout session key_id: whitespace is forbidden.")
+    if not _CHECKOUT_KEY_ID_PATTERN.fullmatch(kid):
+        raise PaymentConfigurationError(f"Invalid checkout session key_id '{kid}'.")
+    return kid
+
+
+def _extract_keyring_secrets_from_env(env: Mapping[str, str], env_var: str, fields: Sequence[str], label_prefix: str) -> List[Tuple[str, str]]:
+    """Extracts secret material from sibling JSON keyring environment variables for separation checks."""
+    collected: List[Tuple[str, str]] = []
+    raw = str(env.get(env_var, "") or "").strip()
+    if not raw:
+        return collected
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return collected
+    if not isinstance(parsed, Mapping):
+        return collected
+    for entry_id, entry_meta in parsed.items():
+        if isinstance(entry_meta, Mapping):
+            for field in fields:
+                val = entry_meta.get(field)
+                if isinstance(val, str) and val.strip():
+                    collected.append((f"{label_prefix}[{entry_id}].{field}", val.strip()))
+        elif isinstance(entry_meta, str) and entry_meta.strip():
+            collected.append((f"{label_prefix}[{entry_id}]", entry_meta.strip()))
+    return collected
+
+
+def _collect_forbidden_checkout_secrets(env: Mapping[str, str]) -> List[Tuple[str, str]]:
+    """Builds the list of sibling/master/fallback secrets forbidden from reuse in checkout keyring."""
+    forbidden: List[Tuple[str, str]] = list(_FORBIDDEN_INSECURE_CHECKOUT_SECRETS)
+    for env_name in (ENV_APP_MASTER_KEY, ENV_BOONTRACK_INTERNAL_HMAC_SECRET):
+        val = str(env.get(env_name, "") or "").strip()
+        if val:
+            forbidden.append((env_name, val))
+    forbidden.extend(
+        _extract_keyring_secrets_from_env(env, ENV_INTERNAL_HMAC_KEYRING, ("secret",), ENV_INTERNAL_HMAC_KEYRING)
+    )
+    forbidden.extend(
+        _extract_keyring_secrets_from_env(
+            env,
+            ENV_PROVENANCE_SIGNING_PRIVATE_KEYRING,
+            ("private_key_hex", "secret", "private_key", "signing_key"),
+            ENV_PROVENANCE_SIGNING_PRIVATE_KEYRING,
+        )
+    )
+    return forbidden
+
+
+def _validate_checkout_keyring_entry(
+    kid: Any,
+    meta: Any,
+    forbidden_secrets: Sequence[Tuple[str, str]],
+) -> Tuple[str, Dict[str, str]]:
+    """Validates a single checkout session keyring entry and enforces key-separation policies."""
+    clean_kid = _validate_checkout_key_id(kid)
+    if not isinstance(meta, Mapping):
+        raise PaymentConfigurationError(
+            f"Checkout session key '{clean_kid}' metadata must be a mapping."
+        )
+    raw_secret = meta.get("secret")
+    if not isinstance(raw_secret, str):
+        raise PaymentConfigurationError(
+            f"Checkout session key '{clean_kid}' secret must be a string."
+        )
+    secret = raw_secret.strip()
+    if len(secret) < 32:
+        raise PaymentConfigurationError(
+            f"Checkout session key '{clean_kid}' secret must be at least 32 characters."
+        )
+    for label, forbidden_val in forbidden_secrets:
+        if hmac.compare_digest(secret, forbidden_val):
+            raise PaymentConfigurationError(
+                f"Checkout session key '{clean_kid}' is forbidden from reusing {label}."
+            )
+    raw_status = meta.get("status")
+    if not isinstance(raw_status, str):
+        raise PaymentConfigurationError(
+            f"Checkout session key '{clean_kid}' status must be a string."
+        )
+    status = raw_status.strip().upper()
+    if status not in ("ACTIVE", "VERIFY_ONLY", "REVOKED"):
+        raise PaymentConfigurationError(
+            f"Checkout session key '{clean_kid}' has invalid status '{status}'."
+        )
+    return clean_kid, {"secret": secret, "status": status}
+
 # Process-local ephemeral key used ONLY in non-production when CHECKOUT_SESSION_HMAC_KEYRING_JSON is unset
 _EPHEMERAL_DEV_CS_KEY_ID: str = "cs_ephemeral_dev_k1"
 _EPHEMERAL_DEV_CS_SECRET: str = secrets.token_hex(32)
@@ -1379,7 +1484,7 @@ class CheckoutSessionTokenManager:
         environ: Optional[Mapping[str, str]] = None,
     ) -> None:
         env = environ if environ is not None else os.environ
-        master_key = str(env.get(ENV_APP_MASTER_KEY, "")).strip()
+        forbidden_secrets = _collect_forbidden_checkout_secrets(env)
 
         if keys is None:
             raw_json = str(env.get(ENV_CHECKOUT_SESSION_KEYRING, "")).strip()
@@ -1409,26 +1514,15 @@ class CheckoutSessionTokenManager:
         self._active_key_id: Optional[str] = None
 
         for kid, meta in keys.items():
-            clean_kid = str(kid).strip()
-            if not clean_kid or "." in clean_kid or ":" in clean_kid:
-                raise PaymentConfigurationError(f"Invalid checkout session key_id '{clean_kid}'.")
-            secret = str(meta.get("secret") or "").strip()
-            status = str(meta.get("status") or "").strip().upper()
-            if len(secret) < 32:
-                raise PaymentConfigurationError(
-                    f"Checkout session key '{clean_kid}' secret must be at least 32 characters."
-                )
-            if master_key and hmac.compare_digest(secret, master_key):
-                raise PaymentConfigurationError(
-                    f"Checkout session key '{clean_kid}' is forbidden from reusing APP_MASTER_KEY."
-                )
-            if status not in ("ACTIVE", "VERIFY_ONLY", "REVOKED"):
-                raise PaymentConfigurationError(
-                    f"Checkout session key '{clean_kid}' has invalid status '{status}'."
-                )
-            self._keys[clean_kid] = {"secret": secret, "status": status}
-            if status == "ACTIVE" and self._active_key_id is None:
+            clean_kid, validated_entry = _validate_checkout_keyring_entry(kid, meta, forbidden_secrets)
+            self._keys[clean_kid] = validated_entry
+            if validated_entry["status"] == "ACTIVE" and self._active_key_id is None:
                 self._active_key_id = clean_kid
+
+        if is_production_environment(env) and self._active_key_id is None:
+            raise PaymentConfigurationError(
+                f"{ENV_CHECKOUT_SESSION_KEYRING} must contain at least one ACTIVE key in production."
+            )
 
     def _compute_sig(
         self,

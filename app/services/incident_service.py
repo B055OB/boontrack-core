@@ -16,7 +16,10 @@ def log_tenant_incident(
     Severity: 'LOW', 'MEDIUM', 'CRITICAL'
     Service: 'WhatsApp', 'Payment', 'Webhook', 'AI', 'Shipping'
     """
+    from app.core.security.test_isolation_guard import assert_disposable_postgres_target
+
     db_url = (os.getenv("DATABASE_URL") or "").strip()
+    assert_disposable_postgres_target(dsn=db_url, allow_if_unconfigured=False)
     conn = None
     try:
         conn = psycopg2.connect(db_url)

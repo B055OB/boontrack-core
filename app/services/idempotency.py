@@ -71,6 +71,9 @@ class IdempotencyService:
             return None
 
         self._redis_last_check = now
+        from app.core.security.test_isolation_guard import assert_disposable_redis_target
+
+        assert_disposable_redis_target(redis_url=self.redis_url, allow_if_unconfigured=False)
         try:
             client = aioredis.from_url(
                 self.redis_url,
@@ -84,6 +87,9 @@ class IdempotencyService:
             logger.info("[IDEMPOTENCY] Connected to async Redis accelerator.")
             return self._redis
         except Exception as err:
+            from app.core.security.test_isolation_guard import TestIsolationViolation
+            if isinstance(err, TestIsolationViolation):
+                raise
             self._redis_available = False
             logger.warning(
                 f"[IDEMPOTENCY] Async Redis unavailable ({err}). "
@@ -305,6 +311,16 @@ class IdempotencyService:
                 await sess.commit()
                 return res
         except Exception as exc:
+            from app.core.security.test_isolation_guard import (
+                TestIsolationViolation,
+                is_disposable_services_required,
+            )
+            if isinstance(exc, TestIsolationViolation):
+                raise
+            if is_disposable_services_required():
+                err_name = type(exc).__name__
+                if any(tok in err_name for tok in ("UndefinedTable", "InsufficientPrivilege", "ProgrammingError")) or "does not exist" in str(exc) or "permission denied" in str(exc):
+                    raise
             logger.debug(f"[DURABLE IDEMPOTENCY] SQLAlchemy insert not available/error: {exc}")
             return None
 
@@ -355,6 +371,9 @@ class IdempotencyService:
                 from app.core.database import get_db_connection
                 conn = get_db_connection()
             except Exception as conn_err:
+                from app.core.security.test_isolation_guard import TestIsolationViolation
+                if isinstance(conn_err, TestIsolationViolation):
+                    raise
                 logger.debug(f"[DURABLE IDEMPOTENCY] psycopg2 get_db_connection error: {conn_err}")
                 return None
 
@@ -380,6 +399,16 @@ class IdempotencyService:
                     conn.commit()
                     return str(row[0]) if row else False
             except Exception as insert_err:
+                from app.core.security.test_isolation_guard import (
+                    TestIsolationViolation,
+                    is_disposable_services_required,
+                )
+                if isinstance(insert_err, TestIsolationViolation):
+                    raise
+                if is_disposable_services_required():
+                    err_name = type(insert_err).__name__
+                    if any(tok in err_name for tok in ("UndefinedTable", "InsufficientPrivilege", "ProgrammingError")) or "does not exist" in str(insert_err) or "permission denied" in str(insert_err):
+                        raise
                 logger.debug(f"[DURABLE IDEMPOTENCY] psycopg2 insert error: {insert_err}")
                 return None
             finally:
@@ -387,7 +416,17 @@ class IdempotencyService:
 
         try:
             return await asyncio.to_thread(_sync_worker)
-        except Exception:
+        except Exception as worker_err:
+            from app.core.security.test_isolation_guard import (
+                TestIsolationViolation,
+                is_disposable_services_required,
+            )
+            if isinstance(worker_err, TestIsolationViolation):
+                raise
+            if is_disposable_services_required():
+                err_name = type(worker_err).__name__
+                if any(tok in err_name for tok in ("UndefinedTable", "InsufficientPrivilege", "ProgrammingError")) or "does not exist" in str(worker_err) or "permission denied" in str(worker_err):
+                    raise
             return None
 
     # =========================================================================

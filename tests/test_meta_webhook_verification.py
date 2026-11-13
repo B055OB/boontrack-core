@@ -4,10 +4,16 @@ Unit & Integration tests for Meta WhatsApp GET /webhook/whatsapp endpoint.
 
 import os
 import sys
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
+from app.core.security.test_isolation_guard import bootstrap_isolated_test_env
+
+bootstrap_isolated_test_env(_REPO_ROOT)
 
 from fastapi.testclient import TestClient
 from app.main import app

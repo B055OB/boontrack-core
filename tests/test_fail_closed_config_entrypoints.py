@@ -134,10 +134,26 @@ def _run_isolated_code(code_snippet: str, extra_vars=None):
         "POSTGRES_DB",
         "POSTGRES_USER",
         "POSTGRES_PASSWORD",
+        "STAGE1_TEST_DISPOSABLE_PG_DSN",
+        "STAGE3_STEP0_DISPOSABLE_PG_DSN",
+        "STAGE3_STEP1_DISPOSABLE_PG_DSN",
+        "STAGING_DATABASE_URL",
+        "SUPABASE_DB_URL",
+        "REVOKED_STAGING_DB_PASSWORD",
         "SUPABASE_URL",
+        "NEXT_PUBLIC_SUPABASE_URL",
+        "EXPECTED_SUPABASE_URL",
         "SUPABASE_KEY",
         "SUPABASE_ANON_KEY",
+        "SUPABASE_PUBLISHABLE_KEY",
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+        "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
         "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_SERVICE_KEY",
+        "TEST_STRICT_DB_GUARD",
+        "TEST_REQUIRE_DISPOSABLE_SERVICES",
+        "TEST_IN_DOCKER_INTERNAL_NET",
+        "TEST_ALLOWED_PG_CIDRS",
     ]
     for key in keys_to_remove:
         clean_env.pop(key, None)
@@ -201,7 +217,7 @@ def test_app_main_fail_closed_without_supabase_key():
     code = "import app.main"
     proc = _run_isolated_code(code, extra_vars={
         "DATABASE_URL": "postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack",
-        "SUPABASE_URL": "https://valid-supabase-url.supabase.co",
+        "SUPABASE_URL": "https://synthetic-test.supabase.invalid",
     })
     assert proc.returncode != 0
     assert "[SECURITY FAIL-CLOSED]" in proc.stderr
@@ -225,7 +241,7 @@ def test_webhook_payment_fail_closed_without_supabase_key():
     code = "import app.api.webhook_payment"
     proc = _run_isolated_code(code, extra_vars={
         "DATABASE_URL": "postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack",
-        "SUPABASE_URL": "https://valid-supabase-url.supabase.co",
+        "SUPABASE_URL": "https://synthetic-test.supabase.invalid",
     })
     assert proc.returncode != 0
     assert "[SECURITY FAIL-CLOSED]" in proc.stderr
@@ -241,7 +257,7 @@ def test_main_rejects_service_role_key_as_standard_client():
     code = "import app.main"
     proc = _run_isolated_code(code, extra_vars={
         "DATABASE_URL": "postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack",
-        "SUPABASE_URL": "https://valid-supabase-url.supabase.co",
+        "SUPABASE_URL": "https://synthetic-test.supabase.invalid",
         "SUPABASE_SERVICE_ROLE_KEY": "secret-service-role-key-that-must-not-be-default",
     })
     assert proc.returncode != 0
@@ -265,7 +281,7 @@ def test_webhook_payment_verified_admin_client_boundary(monkeypatch):
 
     monkeypatch.setenv("XENDIT_CALLBACK_TOKEN", "verified_token_12345")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "admin_service_role_key_xyz")
-    monkeypatch.setenv("SUPABASE_URL", "https://valid-supabase-url.supabase.co")
+    monkeypatch.setenv("SUPABASE_URL", "https://synthetic-test.supabase.invalid")
 
     # 1. Missing header -> PermissionError
     with pytest.raises(PermissionError) as exc_missing:

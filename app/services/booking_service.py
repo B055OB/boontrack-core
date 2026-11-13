@@ -46,10 +46,15 @@ class BookingEngine:
         self.db_url = db_url or os.getenv("DATABASE_URL")
 
     def _get_connection(self):
+        from app.core.security.test_isolation_guard import (
+            assert_disposable_postgres_target,
+            safe_load_dotenv,
+        )
+
         if not self.db_url:
-            from dotenv import load_dotenv
-            load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env'))
+            safe_load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env'))
             self.db_url = os.getenv("DATABASE_URL")
+        assert_disposable_postgres_target(dsn=self.db_url, allow_if_unconfigured=False)
         return psycopg2.connect(self.db_url)
 
     def get_available_slots(

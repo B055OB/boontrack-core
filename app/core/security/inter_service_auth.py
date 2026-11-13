@@ -22,9 +22,13 @@ import logging
 import threading
 from typing import Optional, Dict, Any, Union, Tuple
 from fastapi import Request, HTTPException, status
-from dotenv import load_dotenv
+from app.core.security.test_isolation_guard import (
+    TestIsolationViolation,
+    assert_disposable_redis_target,
+    safe_load_dotenv,
+)
 
-load_dotenv()
+safe_load_dotenv()
 
 logger = logging.getLogger("INTER_SERVICE_AUTH")
 
@@ -62,9 +66,10 @@ class InterServiceReplayGuard:
         self._connect_redis()
 
     def _connect_redis(self):
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        assert_disposable_redis_target(redis_url=redis_url, allow_if_unconfigured=False)
         try:
             import redis
-            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
             client = redis.Redis.from_url(
                 redis_url,
                 decode_responses=True,
@@ -74,13 +79,22 @@ class InterServiceReplayGuard:
             client.ping()
             self._redis = client
             logger.info("[ReplayGuard] Connected to Redis for atomic anti-replay guard.")
+        except TestIsolationViolation:
+            raise
         except Exception:
             self._redis = None
 
     def is_production(self) -> bool:
         if os.getenv("STRICT_REPLAY_GUARD", "").lower() in ("true", "1", "yes"):
             return True
-        env = os.getenv("ENVIRONMENT", os.getenv("APP_ENV", os.getenv("RAILWAY_ENVIRONMENT", ""))).strip().lower()
+        env = (
+            os.getenv("ENVIRONMENT")
+            or os.getenv("APP_ENV")
+            or os.getenv("ENV")
+            or os.getenv("BOONTRACK_ENV")
+            or os.getenv("RAILWAY_ENVIRONMENT")
+            or ""
+        ).strip().lower()
         return env in ("production", "prod", "staging")
 
     def build_nonce_key(self, request_id: str, tenant_id: str = "default", service_name: str = "inbox") -> str:

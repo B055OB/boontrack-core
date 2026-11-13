@@ -35,7 +35,10 @@ class SimulatePaidRequest(BaseModel):
     customer_email: Optional[str] = "buyer@gmail.com"
 
 def get_db():
+    from app.core.security.test_isolation_guard import assert_disposable_postgres_target
+
     db_url = (os.getenv("DATABASE_URL") or "").strip()
+    assert_disposable_postgres_target(dsn=db_url, allow_if_unconfigured=False)
     return psycopg2.connect(db_url)
 
 def fetch_portal_data(tenant_id: str, referral_code: str):

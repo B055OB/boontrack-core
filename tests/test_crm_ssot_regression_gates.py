@@ -11,14 +11,21 @@ Gates Verified:
 
 import os
 import sys
+from pathlib import Path
 import uuid
 from decimal import Decimal
 from datetime import datetime, timezone
 import pytest
-from dotenv import load_dotenv
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-load_dotenv(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env")))
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
+from app.core.security.test_isolation_guard import (
+    bootstrap_isolated_test_env,
+    verify_connected_postgres_is_disposable,
+)
+
+bootstrap_isolated_test_env(_REPO_ROOT)
 
 from app.core.database import get_db_connection
 from app.utils.phone_sanitizer import clean_phone_number, sanitize_phone_number
@@ -226,29 +233,55 @@ def test_gate_3_idempotent_order_contact_sync_single_contact_increase():
 
 
 # ==============================================================================
-# GATE 4: FINANCIAL AGGREGATION ZERO DEVIATION
+# GATE 4: FINANCIAL AGGREGATION ZERO DEVIATION (SYNTHETIC DISPOSABLE FIXTURE)
 # ==============================================================================
 def test_gate_4_financial_aggregation_zero_deviation():
     """Buktikan query agregasi finansial (total omzet & jumlah order) di tabel orders
-    tidak mengalami deviasi atau perubahan nilai dari baseline.
+    terhitung presisi tanpa deviasi menggunakan fixture transaksi sintetis di DB disposabel.
     """
+    tenant_slug = "onlineboost"
+    tenant_uuid = resolve_tenant_uuid(tenant_slug) or tenant_slug
+
+    order_id_1 = f"ORD-TEST-GATE4-1-{uuid.uuid4().hex[:6]}"
+    order_id_2 = f"ORD-TEST-GATE4-2-{uuid.uuid4().hex[:6]}"
+
     conn = get_db_connection()
+    verify_connected_postgres_is_disposable(conn)
     cur = conn.cursor()
     try:
         cur.execute("""
-            SELECT count(*) as total_orders, coalesce(sum(gross_amount), 0) as total_gross_amount
-            FROM orders;
-        """)
-        total_orders, total_amount = cur.fetchone()
+            SELECT count(*), coalesce(sum(gross_amount), 0)
+            FROM orders
+            WHERE tenant_slug = %s;
+        """, (tenant_slug,))
+        base_orders, base_amount = cur.fetchone()
 
-        # Baseline produksi terverifikasi saat audit CTO
-        # 417 orders, Rp 75,536,085.00
-        assert total_orders >= 417, f"[GATE 4 FAIL] Total orders berkurang! Current: {total_orders}"
-        assert Decimal(str(total_amount)) >= Decimal("75536085.00"), (
-            f"[GATE 4 FAIL] Total gross amount berkurang! Current: {total_amount}"
+        cur.execute("""
+            INSERT INTO orders (
+                id, tenant_id, tenant_slug, product_id, product_title, gross_amount,
+                customer_name, customer_phone, customer_email, status, created_at, updated_at
+            ) VALUES
+                (%s, %s, %s, 'prod_gate4_1', 'Gate 4 Fixture 1', 249000.00, 'Fixture Satu', '628111000111', 'f1@test.invalid', 'LUNAS', NOW(), NOW()),
+                (%s, %s, %s, 'prod_gate4_2', 'Gate 4 Fixture 2', 149000.00, 'Fixture Dua', '628111000222', 'f2@test.invalid', 'LUNAS', NOW(), NOW());
+        """, (order_id_1, tenant_uuid, tenant_slug, order_id_2, tenant_uuid, tenant_slug))
+        conn.commit()
+
+        cur.execute("""
+            SELECT count(*), coalesce(sum(gross_amount), 0)
+            FROM orders
+            WHERE tenant_slug = %s;
+        """, (tenant_slug,))
+        after_orders, after_amount = cur.fetchone()
+
+        assert after_orders == base_orders + 2, f"[GATE 4 FAIL] Order delta mismatch: {base_orders} -> {after_orders}"
+        delta_amount = Decimal(str(after_amount)) - Decimal(str(base_amount))
+        assert delta_amount == Decimal("398000.00"), (
+            f"[GATE 4 FAIL] Financial aggregation deviation! Expected +398000.00, got {delta_amount}"
         )
 
     finally:
+        cur.execute("DELETE FROM orders WHERE id IN (%s, %s);", (order_id_1, order_id_2))
+        conn.commit()
         cur.close()
         conn.close()
 

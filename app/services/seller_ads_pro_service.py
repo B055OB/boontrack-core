@@ -7,7 +7,11 @@ import time
 import hashlib
 
 def get_db():
-    return psycopg2.connect(os.getenv("DATABASE_URL", "").strip())
+    from app.core.security.test_isolation_guard import assert_disposable_postgres_target
+
+    db_url = os.getenv("DATABASE_URL", "").strip()
+    assert_disposable_postgres_target(dsn=db_url, allow_if_unconfigured=False)
+    return psycopg2.connect(db_url)
 
 def hash_data(val: Optional[str]) -> Optional[str]:
     if not val:

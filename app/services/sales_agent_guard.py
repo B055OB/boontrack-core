@@ -148,14 +148,26 @@ class StoreContextBoundaryManager:
 
     @staticmethod
     def _get_db_conn():
+        from app.core.security.test_isolation_guard import assert_disposable_postgres_target
+
         host = os.getenv("POSTGRES_HOST")
         if host:
+            port = os.getenv("POSTGRES_PORT", "6543")
+            dbname = os.getenv("POSTGRES_DB", "postgres")
+            user = os.getenv("POSTGRES_USER")
+            assert_disposable_postgres_target(
+                host=host,
+                port=port,
+                dbname=dbname,
+                user=user,
+                allow_if_unconfigured=False,
+            )
             try:
                 return psycopg2.connect(
                     host=host,
-                    port=os.getenv("POSTGRES_PORT", "6543"),
-                    dbname=os.getenv("POSTGRES_DB", "postgres"),
-                    user=os.getenv("POSTGRES_USER"),
+                    port=port,
+                    dbname=dbname,
+                    user=user,
                     password=os.getenv("POSTGRES_PASSWORD"),
                     connect_timeout=5,
                 )
@@ -163,6 +175,7 @@ class StoreContextBoundaryManager:
                 pass
         db_url = os.getenv("DATABASE_URL")
         if db_url:
+            assert_disposable_postgres_target(dsn=db_url, allow_if_unconfigured=False)
             return psycopg2.connect(db_url, connect_timeout=5)
         return None
 

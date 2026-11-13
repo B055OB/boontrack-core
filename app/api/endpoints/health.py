@@ -216,7 +216,7 @@ async def tenant_cache_refresh_handler(request: web.Request) -> web.Response:
 
     # 7. Environment diagnostics
     supabase_url = os.getenv("SUPABASE_URL", "")
-    expected_url = "https://mpluzajlzpregmjwpjqr.supabase.co"
+    expected_url = os.getenv("EXPECTED_SUPABASE_URL", "").strip()
     database_url = os.getenv("DATABASE_URL", "")
     masked_db = re.sub(r":([^:@]+)@", r":***@", database_url) if database_url else ""
 

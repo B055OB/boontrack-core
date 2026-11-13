@@ -28,6 +28,10 @@ if CORE_DIR not in sys.path:
     sys.path.insert(0, CORE_DIR)
 
 from app.core.database import get_db_connection
+from app.core.security.test_isolation_guard import (
+    is_strict_test_guard_active,
+    verify_connected_postgres_is_disposable,
+)
 
 # Pastikan UTF-8 encoding untuk stdout
 if hasattr(sys.stdout, 'reconfigure'):
@@ -46,7 +50,12 @@ def audit_and_enforce_rls(verify_only: bool = False) -> bool:
 
     try:
         conn = get_db_connection()
-        conn.autocommit = False
+        if is_strict_test_guard_active():
+            verify_connected_postgres_is_disposable(conn)
+        if verify_only:
+            conn.set_session(readonly=True, autocommit=False)
+        else:
+            conn.autocommit = False
         cur = conn.cursor()
 
         cur.execute("SELECT current_database(), current_user, version();")

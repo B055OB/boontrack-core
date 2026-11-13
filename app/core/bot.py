@@ -1,8 +1,8 @@
 import os
 import logging
-from dotenv import load_dotenv
+from app.core.security.test_isolation_guard import safe_load_dotenv
 
-load_dotenv()
+safe_load_dotenv()
 
 logger = logging.getLogger("TELEGRAM_BOT_CORE")
 

@@ -28,8 +28,16 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from app.core.security.test_isolation_guard import (
+    bootstrap_isolated_test_env,
+    is_disposable_services_required,
+)
+
+bootstrap_isolated_test_env()
+
 from app.core.security.meta_webhook_verifier import compute_meta_webhook_signature
 from app.main import app
+from app.services.idempotency import idempotency_service
 
 
 class TestMetaWebhookP0Authentication(unittest.TestCase):
@@ -49,6 +57,8 @@ class TestMetaWebhookP0Authentication(unittest.TestCase):
             },
         )
         self.env_patcher.start()
+        if is_disposable_services_required():
+            idempotency_service._in_memory_durable_events.clear()
         self.client = TestClient(app)
 
     def tearDown(self):
@@ -105,6 +115,8 @@ class TestMetaWebhookP0Authentication(unittest.TestCase):
         data = resp.json()
         self.assertEqual(data.get("status"), "success")
         self.assertEqual(data.get("enqueued"), 1)
+        if is_disposable_services_required():
+            self.assertEqual(len(idempotency_service._in_memory_durable_events), 0)
 
     # -------------------------------------------------------------------------
     # 2. Missing signature rejected (HTTP 401)
@@ -235,6 +247,8 @@ class TestMetaWebhookP0Authentication(unittest.TestCase):
         self.assertEqual(resp2.status_code, 200)
         self.assertEqual(resp2.json().get("enqueued"), 0)
         self.assertEqual(resp2.json().get("duplicates"), 1)
+        if is_disposable_services_required():
+            self.assertEqual(len(idempotency_service._in_memory_durable_events), 0)
 
     # -------------------------------------------------------------------------
     # 9. Valid opt-out is successfully persisted

@@ -1,8 +1,8 @@
 {
   "audit_metadata": {
     "title": "CI Sandbox & Ephemeral Fixture Catalog RLS Security Verification",
-    "timestamp_utc": "2026-10-15 10:05:31 UTC",
-    "timestamp_wib": "2026-10-15 17:05:31 WIB",
+    "timestamp_utc": "2026-11-13 03:49:23 UTC",
+    "timestamp_wib": "2026-11-13 10:49:23 WIB",
     "target": "CTO P1 Security Gate Verification",
     "mode": "PURE READ-ONLY (ZERO DDL / MUTATIONS)",
     "environment": "CI Pipeline Ephemeral Container (PostgreSQL 15)"
@@ -13,15 +13,15 @@
     "host": "127.0.0.1",
     "port": "5432",
     "connection_endpoint": "127.0.0.1:5432",
-    "version": "PostgreSQL 15.19 (Debian 15.19-1.pgdg13+2) on x86_64-pc-linux-gnu",
+    "version": "PostgreSQL 15.20 (Debian 15.20-1.pgdg13+1) on x86_64-pc-linux-gnu",
     "readonly_transaction": true,
     "transaction_read_only_setting": "on"
   },
   "tenant_tables": {
-    "total_tenant_scoped": 11,
-    "rls_enabled_count": 11,
-    "force_rls_count": 11,
-    "compliant_count": 11,
+    "total_tenant_scoped": 16,
+    "rls_enabled_count": 16,
+    "force_rls_count": 16,
+    "compliant_count": 16,
     "tables": [
       {
         "table_name": "affiliate_commissions",
@@ -69,6 +69,15 @@
         "compliant": true
       },
       {
+        "table_name": "checkout_sessions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
         "table_name": "commerce_products",
         "relrowsecurity": true,
         "relforcerowsecurity": true,
@@ -87,10 +96,37 @@
         "compliant": true
       },
       {
+        "table_name": "financial_ledger",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
         "table_name": "orders",
         "relrowsecurity": true,
         "relforcerowsecurity": true,
         "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "payment_events",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 1,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "phone_suppressions",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
         "has_tenant_isolation": true,
         "wildcard_violations": [],
         "compliant": true
@@ -109,6 +145,15 @@
         "relrowsecurity": true,
         "relforcerowsecurity": true,
         "policy_count": 3,
+        "has_tenant_isolation": true,
+        "wildcard_violations": [],
+        "compliant": true
+      },
+      {
+        "table_name": "trial_quota_reservations",
+        "relrowsecurity": true,
+        "relforcerowsecurity": true,
+        "policy_count": 2,
         "has_tenant_isolation": true,
         "wildcard_violations": [],
         "compliant": true

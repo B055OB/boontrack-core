@@ -284,10 +284,13 @@ def _sync_biteship_status_to_db(booking_id: str, mapped_status: str, raw_payload
         logger.debug(f"[BITESHIP SUPABASE SYNC NOTE] {db_err}")
 
     # 2. PostgreSQL Connection jika ada
+    db_url = os.getenv("DATABASE_URL", "").strip()
+    if db_url:
+        from app.core.security.test_isolation_guard import assert_disposable_postgres_target
+        assert_disposable_postgres_target(dsn=db_url, allow_if_unconfigured=False)
     try:
         import psycopg2
         from psycopg2.extras import RealDictCursor
-        db_url = os.getenv("DATABASE_URL", "").strip()
         if db_url:
             conn = psycopg2.connect(db_url)
             cur = conn.cursor(cursor_factory=RealDictCursor)

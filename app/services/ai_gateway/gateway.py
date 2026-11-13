@@ -77,14 +77,26 @@ class AIGateway:
         )
 
     def _get_db_conn(self):
+        from app.core.security.test_isolation_guard import assert_disposable_postgres_target
+
         host = os.getenv("POSTGRES_HOST")
         if host:
+            port = os.getenv("POSTGRES_PORT", "6543")
+            dbname = os.getenv("POSTGRES_DB", "postgres")
+            user = os.getenv("POSTGRES_USER")
+            assert_disposable_postgres_target(
+                host=host,
+                port=port,
+                dbname=dbname,
+                user=user,
+                allow_if_unconfigured=False,
+            )
             try:
                 return psycopg2.connect(
                     host=host,
-                    port=os.getenv("POSTGRES_PORT", "6543"),
-                    dbname=os.getenv("POSTGRES_DB", "postgres"),
-                    user=os.getenv("POSTGRES_USER"),
+                    port=port,
+                    dbname=dbname,
+                    user=user,
                     password=os.getenv("POSTGRES_PASSWORD"),
                     connect_timeout=3,
                 )
@@ -94,6 +106,7 @@ class AIGateway:
         db_url = os.getenv("DATABASE_URL")
         if db_url:
             clean_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+            assert_disposable_postgres_target(dsn=clean_url, allow_if_unconfigured=False)
             try:
                 return psycopg2.connect(clean_url, connect_timeout=3)
             except Exception:

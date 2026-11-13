@@ -29,25 +29,79 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     env:
+      APP_ENV: test
+      ENV: test
+      ENVIRONMENT: test
+      BOONTRACK_ENV: test
+      TEST_STRICT_DB_GUARD: "1"
+      TEST_REQUIRE_DISPOSABLE_SERVICES: "1"
+      ENABLE_LOCAL_REDIS: "true"
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: 5432
       POSTGRES_DB: test_boontrack
       POSTGRES_USER: test_user
       POSTGRES_PASSWORD: test_password
       DATABASE_URL: postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack
+      STAGE1_TEST_DISPOSABLE_PG_DSN: postgresql://test_user:test_password@127.0.0.1:5432/bt_stage1_disposable_test_stage1
+      STAGE3_STEP0_DISPOSABLE_PG_DSN: postgresql://test_user:test_password@127.0.0.1:5432/bt_stage1_disposable_test_step0
+      STAGE3_STEP1_DISPOSABLE_PG_DSN: postgresql://test_user:test_password@127.0.0.1:5432/bt_stage1_disposable_test_step1
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      REDIS_URL: redis://127.0.0.1:6379/0
       XENDIT_SECRET_KEY: test_ci_xendit_secret_key_mock_12345
       XENDIT_CALLBACK_TOKEN: test_ci_xendit_callback_token_mock_12345
-      SUPABASE_URL: https://mpluzajlzpregmjwpjqr.supabase.co
+      XENDIT_API_URL: http://127.0.0.1:58083
+      XENDIT_ENV: sandbox
+      SUPABASE_URL: http://127.0.0.1:54321
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      EXPECTED_SUPABASE_URL: http://127.0.0.1:54321
       SUPABASE_KEY: test_ci_supabase_anon_key_mock_999
       SUPABASE_ANON_KEY: test_ci_supabase_anon_key_mock_999
       SUPABASE_SERVICE_ROLE_KEY: test_ci_supabase_service_role_key_mock_999
+      STAGING_DATABASE_URL: ""
+      SUPABASE_DB_URL: ""
+      REVOKED_STAGING_DB_PASSWORD: ""
+      RESEND_API_KEY: ""
+      SMTP_HOST: ""
+      SMTP_PORT: "587"
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
+      EMAIL_FROM: noreply@test.boontrack.invalid
       BOONTRACK_HMAC_SECRET: test_ci_secure_hmac_secret_for_pipeline_999
       EVOLUTION_API_KEY: test_ci_evolution_api_key_placeholder
+      EVOLUTION_API_URL: http://127.0.0.1:58080
+      WA_GATEWAY_BASE_URL: http://127.0.0.1:58080
+      WAHA_API_KEY: ""
+      WHATSAPP_TOKEN: ""
+      META_SYSTEM_USER_TOKEN: ""
+      WABA_ACCESS_TOKEN: ""
+      TELEGRAM_BOT_TOKEN: ""
+      TELEGRAM_CREATOR_BOT_TOKEN: ""
+      TELEGRAM_ONLINEBOOST_BOT_TOKEN: ""
+      BITESHIP_API_KEY: ""
+      BITESHIP_BASE_URL: http://127.0.0.1:58082
+      DUITKU_API_KEY: ""
+      LLM_PROVIDER: mock
+      GEMINI_API_KEY: ""
+      GROQ_API_KEY: ""
+      OPENROUTER_API_KEY: ""
       R2_ACCESS_KEY_ID: test_ci_r2_access_key
       R2_SECRET_ACCESS_KEY: test_ci_r2_secret_key
       R2_ACCOUNT_ID: test-ci-r2-account
+      R2_ENDPOINT: http://127.0.0.1:59000
+      R2_ENDPOINT_URL: http://127.0.0.1:59000
+      R2_PUBLIC_DOMAIN: http://127.0.0.1:59000
       CI: "true"
 
     steps:
@@ -91,6 +145,537 @@ jobs:
             echo "Direct Push / Dispatch Commit:          ${{ github.sha }}"
           fi
           echo "========================================================"
+          echo "PR_HEAD_SHA=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
+          echo "PR_BASE_SHA=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_ENV"
+          git status --porcelain | tee /tmp/pre_audit_git_status.log || true
+
+      - name: Enforce Kernel Network Egress Isolation & DNS Sinkhole
+        run: |
+          set -euo pipefail
+
+          echo "=== 1. Runtime Detection of Docker Service Container Subnets & IPs ==="
+          PG_CONTAINER=$(docker ps --filter "ancestor=postgres:15" -q | head -n 1)
+          REDIS_CONTAINER=$(docker ps --filter "ancestor=redis:7-alpine" -q | head -n 1)
+
+          if [ -z "$PG_CONTAINER" ] || [ -z "$REDIS_CONTAINER" ]; then
+            PG_CONTAINER=$(docker ps --format '{{.ID}} {{.Image}}' | grep -i postgres | awk '{print $1}' | head -n 1)
+            REDIS_CONTAINER=$(docker ps --format '{{.ID}} {{.Image}}' | grep -i redis | awk '{print $1}' | head -n 1)
+          fi
+
+          if [ -z "$PG_CONTAINER" ] || [ -z "$REDIS_CONTAINER" ]; then
+            echo "❌ FAIL-CLOSED: PostgreSQL or Redis service container not detected at runtime." >&2
+            docker ps -a
+            exit 1
+          fi
+
+          PG_IP=$(docker inspect "$PG_CONTAINER" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}' | grep -v '^$' | head -n 1)
+          REDIS_IP=$(docker inspect "$REDIS_CONTAINER" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}' | grep -v '^$' | head -n 1)
+
+          IPV4_REGEX="^([0-9]{1,3}\.){3}[0-9]{1,3}$"
+          if [[ -z "$PG_IP" || ! "$PG_IP" =~ $IPV4_REGEX ]]; then
+            echo "❌ FAIL-CLOSED: Invalid or missing PG_IP: '$PG_IP'" >&2
+            exit 1
+          fi
+          if [[ -z "$REDIS_IP" || ! "$REDIS_IP" =~ $IPV4_REGEX ]]; then
+            echo "❌ FAIL-CLOSED: Invalid or missing REDIS_IP: '$REDIS_IP'" >&2
+            exit 1
+          fi
+          if [ "$PG_IP" = "$REDIS_IP" ]; then
+            echo "❌ FAIL-CLOSED: PG_IP and REDIS_IP collided ($PG_IP == $REDIS_IP)" >&2
+            exit 1
+          fi
+
+          PG_NETS=$(docker inspect "$PG_CONTAINER" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' | grep -v '^$')
+          REDIS_NETS=$(docker inspect "$REDIS_CONTAINER" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' | grep -v '^$')
+          SERVICE_NETS=$(printf "%s\n%s\n" "$PG_NETS" "$REDIS_NETS" | sort -u | grep -v '^$')
+
+          if [ -z "$SERVICE_NETS" ]; then
+            echo "❌ FAIL-CLOSED: No network found for PostgreSQL/Redis service containers." >&2
+            exit 1
+          fi
+
+          DOCKER_SERVICE_SUBNETS=()
+          DOCKER_SERVICE_GATEWAYS=()
+          for net in $SERVICE_NETS; do
+            subnet=$(docker network inspect "$net" --format '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' | grep -v '^$' | head -n 1)
+            gw=$(docker network inspect "$net" --format '{{range .IPAM.Config}}{{.Gateway}}{{"\n"}}{{end}}' | grep -v '^$' | head -n 1)
+            if [ -z "$gw" ]; then
+              gw=$(docker inspect "$PG_CONTAINER" --format "{{with index .NetworkSettings.Networks \"$net\"}}{{.Gateway}}{{end}}" 2>/dev/null || true)
+            fi
+            if [[ -z "$subnet" || ! "$subnet" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]]; then
+              echo "❌ FAIL-CLOSED: Invalid or missing subnet for Docker service network '$net': '$subnet'" >&2
+              exit 1
+            fi
+            DOCKER_SERVICE_SUBNETS+=("$subnet")
+            if [[ -n "$gw" && "$gw" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              DOCKER_SERVICE_GATEWAYS+=("$gw")
+            fi
+          done
+
+          DOCKER_SERVICE_SUBNETS=($(printf "%s\n" "${DOCKER_SERVICE_SUBNETS[@]}" | sort -u))
+          DOCKER_SERVICE_GATEWAYS=($(printf "%s\n" "${DOCKER_SERVICE_GATEWAYS[@]:-}" | sort -u | grep -v '^$' || true))
+          if [ ${#DOCKER_SERVICE_SUBNETS[@]} -eq 0 ]; then
+            echo "❌ FAIL-CLOSED: Zero valid Docker service subnets detected." >&2
+            exit 1
+          fi
+
+          echo "Detected PostgreSQL Container: $PG_CONTAINER"
+          echo "Detected Redis Container:      $REDIS_CONTAINER"
+          echo "Detected PG_IP:                $PG_IP"
+          echo "Detected REDIS_IP:             $REDIS_IP"
+          echo "Detected Service Networks:     $SERVICE_NETS"
+          echo "Detected Service Subnets:      ${DOCKER_SERVICE_SUBNETS[*]}"
+          echo "Detected Service Gateways:     ${DOCKER_SERVICE_GATEWAYS[*]:-none}"
+
+          echo "TEST_ALLOWED_PG_CIDRS=${PG_IP}/32" >> "$GITHUB_ENV"
+          echo "PG_IP=${PG_IP}" >> "$GITHUB_ENV"
+          echo "REDIS_IP=${REDIS_IP}" >> "$GITHUB_ENV"
+          echo "DOCKER_SERVICE_SUBNETS=${DOCKER_SERVICE_SUBNETS[*]}" >> "$GITHUB_ENV"
+
+          echo "=== 2. Pre-resolve Public IPs of Blocked Hosts (Before /etc/hosts modification) ==="
+          BLOCKED_HOSTS=(
+            "mpluzajlzpregmjwpjqr.supabase.co"
+            "db.mpluzajlzpregmjwpjqr.supabase.co"
+            "xkhqirhurnjqglmajghn.supabase.co"
+            "db.xkhqirhurnjqglmajghn.supabase.co"
+            "aws-0-ap-southeast-1.pooler.supabase.com"
+            "aws-1-ap-southeast-1.pooler.supabase.com"
+            "evolution-api-production-abb7.up.railway.app"
+            "api.resend.com"
+            "api.telegram.org"
+            "graph.facebook.com"
+            "api.xendit.co"
+            "api.biteship.com"
+          )
+
+          RESOLVED_PUBLIC_IPV4S=()
+          RESOLVED_PUBLIC_IPV6S=()
+
+          for host in "${BLOCKED_HOSTS[@]}"; do
+            for ip in $( (getent ahostsv4 "$host" 2>/dev/null || true) | awk '{print $1}' | sort -u ); do
+              case "$ip" in
+                ""|127.*|192.0.2.*|10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*|192.168.*) continue ;;
+                *) RESOLVED_PUBLIC_IPV4S+=("$ip") ;;
+              esac
+            done
+            for ip6 in $( (getent ahostsv6 "$host" 2>/dev/null || true) | awk '{print $1}' | sort -u ); do
+              case "$ip6" in
+                ""|::1|::ffff:*|fe80:*|2001:db8:*) continue ;;
+                *) RESOLVED_PUBLIC_IPV6S+=("$ip6") ;;
+              esac
+            done
+          done
+
+          RESOLVED_PUBLIC_IPV4S=($(printf "%s\n" "${RESOLVED_PUBLIC_IPV4S[@]:-}" | sort -u | grep -v '^$' || true))
+          RESOLVED_PUBLIC_IPV6S=($(printf "%s\n" "${RESOLVED_PUBLIC_IPV6S[@]:-}" | sort -u | grep -v '^$' || true))
+
+          echo "Pre-resolved public IPv4s: ${RESOLVED_PUBLIC_IPV4S[*]:-none}"
+          echo "Pre-resolved public IPv6s: ${RESOLVED_PUBLIC_IPV6S[*]:-none}"
+
+          echo "=== 3. Clean and Populate /etc/hosts with RFC 5737 and RFC 3849 Sinkhole IPs ==="
+          for host in "${BLOCKED_HOSTS[@]}"; do
+            sudo sed -i "/[[:space:]]${host}$/d" /etc/hosts
+            sudo sed -i "/[[:space:]]${host}[[:space:]]/d" /etc/hosts
+            echo "192.0.2.1 $host" | sudo tee -a /etc/hosts >/dev/null
+            echo "2001:db8::1 $host" | sudo tee -a /etc/hosts >/dev/null
+          done
+
+          echo "=== 4. Configure Sinkhole Routes and Reverse Path Filtering ==="
+          sudo sysctl -w net.ipv4.conf.all.rp_filter=0 2>/dev/null || true
+          sudo sysctl -w net.ipv4.conf.default.rp_filter=0 2>/dev/null || true
+          for iface in /proc/sys/net/ipv4/conf/*; do
+            [ -d "$iface" ] && sudo sysctl -w "net.ipv4.conf.$(basename "$iface").rp_filter=0" 2>/dev/null || true
+          done
+          sudo ip route replace 192.0.2.0/24 dev lo 2>/dev/null || sudo ip route add 192.0.2.0/24 dev lo 2>/dev/null || true
+          sudo ip -6 route replace 2001:db8::/32 dev lo 2>/dev/null || sudo ip -6 route add 2001:db8::/32 dev lo 2>/dev/null || true
+
+          echo "=== 5. Configure Strict Least-Privilege OUTPUT Chain Firewall Rules ==="
+          sudo iptables -F OUTPUT
+          sudo ip6tables -F OUTPUT
+          sudo iptables -P OUTPUT ACCEPT
+          sudo ip6tables -P OUTPUT ACCEPT
+
+          echo "Applying Rule 1: Sinkhole prefixes (192.0.2.0/24 & 2001:db8::/32)"
+          sudo iptables -A OUTPUT -d 192.0.2.0/24 -p tcp -j REJECT --reject-with tcp-reset
+          sudo iptables -A OUTPUT -d 192.0.2.0/24 -p udp -j REJECT --reject-with icmp-port-unreachable
+          sudo iptables -A OUTPUT -d 192.0.2.0/24 -j REJECT --reject-with icmp-port-unreachable
+          sudo ip6tables -A OUTPUT -d 2001:db8::/32 -p tcp -j REJECT --reject-with tcp-reset
+          sudo ip6tables -A OUTPUT -d 2001:db8::/32 -p udp -j REJECT --reject-with icmp6-port-unreachable
+          sudo ip6tables -A OUTPUT -d 2001:db8::/32 -j REJECT --reject-with icmp6-port-unreachable
+
+          echo "Applying Rule 2: Pre-resolved public IPs from blocked hosts"
+          for ip in "${RESOLVED_PUBLIC_IPV4S[@]:-}"; do
+            [ -z "$ip" ] && continue
+            sudo iptables -A OUTPUT -d "$ip" -p tcp -j REJECT --reject-with tcp-reset
+            sudo iptables -A OUTPUT -d "$ip" -j REJECT --reject-with icmp-port-unreachable
+          done
+          for ip6 in "${RESOLVED_PUBLIC_IPV6S[@]:-}"; do
+            [ -z "$ip6" ] && continue
+            sudo ip6tables -A OUTPUT -d "$ip6" -p tcp -j REJECT --reject-with tcp-reset
+            sudo ip6tables -A OUTPUT -d "$ip6" -j REJECT --reject-with icmp6-port-unreachable
+          done
+
+          echo "Applying Rule 3: Universal SMTP blocking on ports 25, 465, 587, 2525"
+          sudo iptables -A OUTPUT -p tcp -m multiport --dports 25,465,587,2525 -j REJECT --reject-with tcp-reset
+          sudo ip6tables -A OUTPUT -p tcp -m multiport --dports 25,465,587,2525 -j REJECT --reject-with tcp-reset
+
+          echo "Applying Rule 4: Least-privilege /32 container rules (PG: 5432, Redis: 6379)"
+          sudo iptables -A OUTPUT -d "${PG_IP}/32" -p tcp --dport 5432 -j ACCEPT
+          sudo iptables -A OUTPUT -d "${REDIS_IP}/32" -p tcp --dport 6379 -j ACCEPT
+
+          echo "Applying Rule 4b: Permit host gateway / local delivery for kernel REJECT responses"
+          for gw in "${DOCKER_SERVICE_GATEWAYS[@]:-}"; do
+            sudo iptables -A OUTPUT -d "${gw}/32" -j ACCEPT
+          done
+          for subnet in "${DOCKER_SERVICE_SUBNETS[@]}"; do
+            sudo iptables -A OUTPUT -d "$subnet" -m addrtype --dst-type LOCAL -j ACCEPT 2>/dev/null || true
+          done
+
+          echo "Applying Rule 5: Reject remaining traffic on Docker service subnets"
+          for subnet in "${DOCKER_SERVICE_SUBNETS[@]}"; do
+            sudo iptables -A OUTPUT -d "$subnet" -p tcp -j REJECT --reject-with tcp-reset
+            sudo iptables -A OUTPUT -d "$subnet" -j REJECT --reject-with icmp-admin-prohibited
+          done
+
+          echo "Applying Rule 6: Reject non-loopback DB/Pooler/Redis egress"
+          sudo iptables -A OUTPUT ! -o lo ! -d 127.0.0.0/8 -p tcp -m multiport --dports 5432,5433,6543,6379,6380 -j REJECT --reject-with tcp-reset
+          sudo ip6tables -A OUTPUT ! -o lo ! -d ::1/128 -p tcp -m multiport --dports 5432,5433,6543,6379,6380 -j REJECT --reject-with tcp-reset
+
+          echo "=== 6. Verify iptables and ip6tables OUTPUT Rules Ordering ==="
+          sudo iptables -L OUTPUT -n -v --line-numbers
+          sudo ip6tables -L OUTPUT -n -v --line-numbers
+
+      - name: Verify Firewall Isolation & Egress Security Rules
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import errno
+          import json
+          import os
+          import psycopg2
+          import redis
+          import socket
+          import subprocess
+          import sys
+          import time
+
+          REJECTED_ERRNOS = {
+              errno.ECONNREFUSED,
+              errno.ECONNRESET,
+              errno.ENETUNREACH,
+              errno.EHOSTUNREACH,
+              errno.EACCES,
+              errno.EPERM,
+          }
+
+          BLOCKED_HOSTS = [
+              "mpluzajlzpregmjwpjqr.supabase.co",
+              "db.mpluzajlzpregmjwpjqr.supabase.co",
+              "xkhqirhurnjqglmajghn.supabase.co",
+              "db.xkhqirhurnjqglmajghn.supabase.co",
+              "aws-0-ap-southeast-1.pooler.supabase.com",
+              "aws-1-ap-southeast-1.pooler.supabase.com",
+              "evolution-api-production-abb7.up.railway.app",
+              "api.resend.com",
+              "api.telegram.org",
+              "graph.facebook.com",
+              "api.xendit.co",
+              "api.biteship.com",
+          ]
+
+          def assert_actively_rejected(host: str, port: int, desc: str, timeout: float = 2.0) -> None:
+              try:
+                  addr_infos = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+              except socket.gaierror as e:
+                  raise AssertionError(f"SECURITY AUDIT FAILURE: DNS resolution failed for {desc} ({host}:{port}) -> {e}")
+
+              if not addr_infos:
+                  raise AssertionError(f"SECURITY AUDIT FAILURE: No addresses resolved for {desc} ({host}:{port})")
+
+              for family, socktype, proto, canonname, sockaddr in addr_infos:
+                  s = socket.socket(family, socktype, proto)
+                  s.settimeout(timeout)
+                  try:
+                      s.connect(sockaddr)
+                      s.close()
+                      raise AssertionError(f"SECURITY VIOLATION: {desc} ({sockaddr}) SUCCEEDED, expected ACTIVELY REJECTED!")
+                  except (socket.gaierror, socket.timeout, TimeoutError) as e:
+                      raise AssertionError(f"SECURITY VIOLATION: {desc} ({sockaddr}) TIMED OUT ({type(e).__name__}: {e}), expected active rejection (RST/ICMP)!")
+                  except OSError as e:
+                      err = getattr(e, "errno", None)
+                      if err in REJECTED_ERRNOS:
+                          print(f"  [OK] ACTIVELY REJECTED: {desc} ({sockaddr}) -> errno {err} ({os.strerror(err) if err else e})")
+                      else:
+                          raise AssertionError(f"SECURITY VIOLATION: {desc} ({sockaddr}) failed with unapproved error errno={err} ({type(e).__name__}: {e})")
+                  finally:
+                      try:
+                          s.close()
+                      except Exception:
+                          pass
+
+          def get_iptables_counters(ip6: bool = False):
+              cmd = ["sudo", "ip6tables" if ip6 else "iptables", "-L", "OUTPUT", "-v", "-n", "-x"]
+              output = subprocess.check_output(cmd, text=True)
+              rules = []
+              for line in output.splitlines():
+                  parts = line.strip().split()
+                  if len(parts) >= 9 and parts[0].isdigit() and parts[1].isdigit():
+                      rules.append({
+                          "pkts": int(parts[0]),
+                          "bytes": int(parts[1]),
+                          "target": parts[2],
+                          "prot": parts[3],
+                          "destination": parts[8],
+                          "raw": line.strip(),
+                      })
+              return rules
+
+          def get_total_pkts(filter_fn, ip6: bool = False) -> int:
+              rules = get_iptables_counters(ip6=ip6)
+              return sum(r["pkts"] for r in rules if filter_fn(r))
+
+          pg_ip = os.environ.get("PG_IP", "").strip()
+          redis_ip = os.environ.get("REDIS_IP", "").strip()
+          docker_subnets = [s.strip() for s in os.environ.get("DOCKER_SERVICE_SUBNETS", "").split() if s.strip()]
+
+          if not pg_ip or not redis_ip:
+              raise AssertionError(f"FAIL-CLOSED: PG_IP ('{pg_ip}') or REDIS_IP ('{redis_ip}') not exported to GITHUB_ENV")
+
+          print(f"Verified Runtime IPs: PG_IP={pg_ip}, REDIS_IP={redis_ip}, Subnets={docker_subnets}")
+
+          print("--- 1. Testing Loopback Connectivity ---")
+          s_srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          s_srv.bind(("127.0.0.1", 0))
+          lo_port = s_srv.getsockname()[1]
+          s_srv.listen(1)
+          s_cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          s_cli.connect(("127.0.0.1", lo_port))
+          s_cli.close()
+          s_srv.close()
+          print(f"  [OK] Loopback socket connection succeeded on port {lo_port}")
+
+          print("--- 2. Testing Positive /32 Container Connectivity & Packet Counter Proofs ---")
+          accept_filter = lambda r: r["target"] == "ACCEPT" and (pg_ip in r["raw"] or redis_ip in r["raw"])
+          pkts_accept_before = get_total_pkts(accept_filter, ip6=False)
+
+          conn_direct = psycopg2.connect(f"postgresql://test_user:test_password@{pg_ip}:5432/test_boontrack", connect_timeout=5)
+          cur_direct = conn_direct.cursor()
+          cur_direct.execute("SELECT 1;")
+          assert cur_direct.fetchone() == (1,)
+          conn_direct.close()
+          print(f"  [OK] Direct /32 PostgreSQL connected at {pg_ip}:5432")
+
+          conn_lo = psycopg2.connect("postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack", connect_timeout=5)
+          cur_lo = conn_lo.cursor()
+          cur_lo.execute("SELECT 1;")
+          assert cur_lo.fetchone() == (1,)
+          conn_lo.close()
+          print("  [OK] Loopback forwarded PostgreSQL connected at 127.0.0.1:5432")
+
+          r_direct = redis.Redis(host=redis_ip, port=6379, socket_timeout=5)
+          assert r_direct.ping() is True
+          print(f"  [OK] Direct /32 Redis connected at {redis_ip}:6379")
+
+          r_lo = redis.Redis(host="127.0.0.1", port=6379, socket_timeout=5)
+          assert r_lo.ping() is True
+          print("  [OK] Loopback forwarded Redis connected at 127.0.0.1:6379")
+
+          pkts_accept_after = get_total_pkts(accept_filter, ip6=False)
+          delta_accept = pkts_accept_after - pkts_accept_before
+          print(f"  [PROOF] Positive /32 container ACCEPT rule Δpkts = {delta_accept}")
+          assert delta_accept >= 1, f"Expected positive /32 ACCEPT Δpkts >= 1, got {delta_accept}"
+
+          print("--- 3. Testing Cross-Port & Unapproved Container Ports Rejection ---")
+          def is_subnet_reject(r):
+              if r["target"] != "REJECT":
+                  return False
+              return any(sub in r["raw"] or sub in r["destination"] for sub in docker_subnets)
+
+          pkts_subnet_before = get_total_pkts(is_subnet_reject, ip6=False)
+
+          assert_actively_rejected(pg_ip, 6379, f"Cross-port Redis on PG container {pg_ip}")
+          assert_actively_rejected(redis_ip, 5432, f"Cross-port PG on Redis container {redis_ip}")
+
+          forbidden_ports = (5433, 6543, 6380, 8080, 22)
+          for port in forbidden_ports:
+              assert_actively_rejected(pg_ip, port, f"Forbidden port {port} on PG container {pg_ip}")
+              assert_actively_rejected(redis_ip, port, f"Forbidden port {port} on Redis container {redis_ip}")
+
+          pkts_subnet_after = get_total_pkts(is_subnet_reject, ip6=False)
+          delta_subnet = pkts_subnet_after - pkts_subnet_before
+          print(f"  [PROOF] Subnet REJECT rule Δpkts = {delta_subnet}")
+          assert delta_subnet >= 1, f"Expected subnet REJECT Δpkts >= 1, got {delta_subnet}"
+
+          print("--- 4. Testing Universal SMTP Blocking & Counter Proofs ---")
+          is_smtp_rule = lambda r: "25,465,587,2525" in r["raw"]
+          pkts_smtp_v4_before = get_total_pkts(is_smtp_rule, ip6=False)
+          pkts_smtp_v6_before = get_total_pkts(is_smtp_rule, ip6=True)
+
+          smtp_ports = (25, 465, 587, 2525)
+          for port in smtp_ports:
+              assert_actively_rejected("127.0.0.1", port, f"SMTP port {port} on loopback")
+              assert_actively_rejected("::1", port, f"SMTP port {port} on IPv6 loopback")
+              assert_actively_rejected(pg_ip, port, f"SMTP port {port} on PG container")
+              assert_actively_rejected(redis_ip, port, f"SMTP port {port} on Redis container")
+              assert_actively_rejected("1.1.1.1", port, f"SMTP port {port} external")
+
+          pkts_smtp_v4_after = get_total_pkts(is_smtp_rule, ip6=False)
+          pkts_smtp_v6_after = get_total_pkts(is_smtp_rule, ip6=True)
+          delta_smtp_v4 = pkts_smtp_v4_after - pkts_smtp_v4_before
+          delta_smtp_v6 = pkts_smtp_v6_after - pkts_smtp_v6_before
+          print(f"  [PROOF] SMTP IPv4 REJECT rule Δpkts = {delta_smtp_v4}")
+          print(f"  [PROOF] SMTP IPv6 REJECT rule Δpkts = {delta_smtp_v6}")
+          assert delta_smtp_v4 >= 1, f"Expected SMTP IPv4 REJECT Δpkts >= 1, got {delta_smtp_v4}"
+          assert delta_smtp_v6 >= 1, f"Expected SMTP IPv6 REJECT Δpkts >= 1, got {delta_smtp_v6}"
+
+          print("--- 5. Testing DNS Sinkhole, External Egress & Packet Proofs ---")
+          print("  Verifying DNS sinkhole resolution strictly maps to RFC 5737 and RFC 3849...")
+          for host in BLOCKED_HOSTS:
+              res = socket.getaddrinfo(host, 443, socket.AF_UNSPEC, socket.SOCK_STREAM)
+              v4_addrs = set()
+              v6_addrs = set()
+              for item in res:
+                  ip = item[4][0]
+                  if item[0] == socket.AF_INET:
+                      v4_addrs.add(ip)
+                  elif item[0] == socket.AF_INET6:
+                      v6_addrs.add(ip)
+
+              for ip in v4_addrs:
+                  if ip.startswith("127."):
+                      raise AssertionError(f"SECURITY VIOLATION: Host {host} leaked loopback IPv4 {ip}")
+              for ip in v6_addrs:
+                  if ip == "::1":
+                      raise AssertionError(f"SECURITY VIOLATION: Host {host} leaked loopback IPv6 {ip}")
+
+              assert v4_addrs == {"192.0.2.1"}, f"Host {host} expected IPv4 {{'192.0.2.1'}}, got {v4_addrs}"
+              assert v6_addrs == {"2001:db8::1"}, f"Host {host} expected IPv6 {{'2001:db8::1'}}, got {v6_addrs}"
+              print(f"  [OK] Host {host} -> strictly {{192.0.2.1}} and {{2001:db8::1}}")
+
+          is_sinkhole_v4 = lambda r: "192.0.2.0/24" in r["raw"]
+          is_sinkhole_v6 = lambda r: "2001:db8::/32" in r["raw"]
+          is_ext_db_v4 = lambda r: "5432,5433,6543,6379,6380" in r["raw"]
+
+          pkts_sh_v4_before = get_total_pkts(is_sinkhole_v4, ip6=False)
+          pkts_sh_v6_before = get_total_pkts(is_sinkhole_v6, ip6=True)
+          pkts_ext_db_before = get_total_pkts(is_ext_db_v4, ip6=False)
+
+          for host in BLOCKED_HOSTS:
+              assert_actively_rejected(host, 443, f"Blocked host HTTPS {host}")
+              assert_actively_rejected(host, 80, f"Blocked host HTTP {host}")
+              assert_actively_rejected(host, 5432, f"Blocked host DB {host}")
+
+          assert_actively_rejected("192.0.2.1", 443, "Direct IPv4 sinkhole HTTPS")
+          assert_actively_rejected("192.0.2.1", 80, "Direct IPv4 sinkhole HTTP")
+          assert_actively_rejected("2001:db8::1", 443, "Direct IPv6 sinkhole HTTPS")
+          assert_actively_rejected("2001:db8::1", 80, "Direct IPv6 sinkhole HTTP")
+
+          def assert_udp_actively_rejected(target_ip: str, target_port: int, desc: str, timeout: float = 1.5) -> int:
+              family = socket.AF_INET6 if ":" in target_ip else socket.AF_INET
+              s = socket.socket(family, socket.SOCK_DGRAM)
+              s.settimeout(timeout)
+              err = None
+              try:
+                  s.connect((target_ip, target_port))
+                  try:
+                      s.send(b"audit-sinkhole-probe")
+                  except (socket.timeout, TimeoutError) as e:
+                      raise AssertionError(f"SECURITY VIOLATION: UDP send to {desc} ({target_ip}:{target_port}) TIMED OUT ({type(e).__name__}: {e}), expected active rejection!")
+                  except OSError as e:
+                      err = getattr(e, "errno", None)
+                      if err in REJECTED_ERRNOS:
+                          print(f"  [OK] ACTIVELY REJECTED UDP (send): {desc} ({target_ip}:{target_port}) -> errno {err} ({os.strerror(err) if err else e})")
+                          return err
+                      raise AssertionError(f"SECURITY VIOLATION: UDP send to {desc} ({target_ip}:{target_port}) failed with unapproved errno={err} ({type(e).__name__}: {e})")
+
+                  try:
+                      data = s.recv(256)
+                      raise AssertionError(f"SECURITY VIOLATION: UDP probe {desc} ({target_ip}:{target_port}) unexpectedly received {len(data)} bytes ({data!r}), expected active rejection!")
+                  except (socket.timeout, TimeoutError) as e:
+                      raise AssertionError(f"SECURITY VIOLATION: UDP recv on {desc} ({target_ip}:{target_port}) TIMED OUT ({type(e).__name__}: {e}), expected active ICMP rejection!")
+                  except OSError as e:
+                      err = getattr(e, "errno", None)
+                      if err in REJECTED_ERRNOS:
+                          print(f"  [OK] ACTIVELY REJECTED UDP (recv): {desc} ({target_ip}:{target_port}) -> errno {err} ({os.strerror(err) if err else e})")
+                          return err
+                      raise AssertionError(f"SECURITY VIOLATION: UDP recv on {desc} ({target_ip}:{target_port}) failed with unapproved errno={err} ({type(e).__name__}: {e})")
+              except (socket.timeout, TimeoutError) as e:
+                  raise AssertionError(f"SECURITY VIOLATION: UDP connect to {desc} ({target_ip}:{target_port}) TIMED OUT ({type(e).__name__}: {e}), expected active rejection!")
+              except OSError as e:
+                  err = getattr(e, "errno", None)
+                  if err in REJECTED_ERRNOS:
+                      print(f"  [OK] ACTIVELY REJECTED UDP (connect): {desc} ({target_ip}:{target_port}) -> errno {err} ({os.strerror(err) if err else e})")
+                      return err
+                  raise AssertionError(f"SECURITY VIOLATION: UDP connect to {desc} ({target_ip}:{target_port}) failed with unapproved errno={err} ({type(e).__name__}: {e})")
+              finally:
+                  try:
+                      s.close()
+                  except Exception:
+                      pass
+
+          assert_actively_rejected("1.1.1.1", 5432, "External PostgreSQL port")
+          assert_actively_rejected("8.8.8.8", 6379, "External Redis port")
+          assert_actively_rejected("1.1.1.1", 6543, "External Supabase pooler port")
+          assert_actively_rejected("1.1.1.1", 5433, "External alt PG port")
+          assert_actively_rejected("1.1.1.1", 6380, "External alt Redis port")
+
+          pkts_sh_v4_after = get_total_pkts(is_sinkhole_v4, ip6=False)
+          pkts_sh_v6_after = get_total_pkts(is_sinkhole_v6, ip6=True)
+          pkts_ext_db_after = get_total_pkts(is_ext_db_v4, ip6=False)
+
+          delta_sh_v4 = pkts_sh_v4_after - pkts_sh_v4_before
+          delta_sh_v6 = pkts_sh_v6_after - pkts_sh_v6_before
+          delta_ext_db = pkts_ext_db_after - pkts_ext_db_before
+
+          print(f"  [PROOF] General Sinkhole IPv4 REJECT rule Δpkts = {delta_sh_v4}")
+          print(f"  [PROOF] General Sinkhole IPv6 REJECT rule Δpkts = {delta_sh_v6}")
+          print(f"  [PROOF] External DB REJECT rule Δpkts = {delta_ext_db}")
+
+          assert delta_sh_v4 >= 1, f"Expected sinkhole IPv4 REJECT Δpkts >= 1, got {delta_sh_v4}"
+          assert delta_sh_v6 >= 1, f"Expected sinkhole IPv6 REJECT Δpkts >= 1, got {delta_sh_v6}"
+          assert delta_ext_db >= 1, f"Expected external DB REJECT Δpkts >= 1, got {delta_ext_db}"
+
+          print("--- 6. Testing Dedicated UDP Sinkhole Rejection & Independent Packet Proofs ---")
+          is_udp_sinkhole_v4 = lambda r: r["target"] == "REJECT" and "192.0.2.0/24" in r["destination"] and r["prot"] == "udp"
+          is_udp_sinkhole_v6 = lambda r: r["target"] == "REJECT" and "2001:db8::/32" in r["destination"] and r["prot"] == "udp"
+
+          pkts_udp_v4_before = get_total_pkts(is_udp_sinkhole_v4, ip6=False)
+          err_v4_dns = assert_udp_actively_rejected("192.0.2.1", 53, "Direct IPv4 sinkhole UDP DNS")
+          err_v4_custom = assert_udp_actively_rejected("192.0.2.1", 12345, "Direct IPv4 sinkhole UDP unassigned port")
+          pkts_udp_v4_after = get_total_pkts(is_udp_sinkhole_v4, ip6=False)
+          delta_udp_v4 = pkts_udp_v4_after - pkts_udp_v4_before
+          print(f"  [PROOF] Dedicated UDP IPv4 sinkhole REJECT rule Δpkts = {delta_udp_v4} (observed errnos: {err_v4_dns}, {err_v4_custom})")
+          assert delta_udp_v4 >= 1, f"Expected dedicated UDP IPv4 sinkhole REJECT Δpkts >= 1, got {delta_udp_v4}"
+
+          pkts_udp_v6_before = get_total_pkts(is_udp_sinkhole_v6, ip6=True)
+          err_v6_dns = assert_udp_actively_rejected("2001:db8::1", 53, "Direct IPv6 sinkhole UDP DNS")
+          err_v6_custom = assert_udp_actively_rejected("2001:db8::1", 12345, "Direct IPv6 sinkhole UDP unassigned port")
+          pkts_udp_v6_after = get_total_pkts(is_udp_sinkhole_v6, ip6=True)
+          delta_udp_v6 = pkts_udp_v6_after - pkts_udp_v6_before
+          print(f"  [PROOF] Dedicated UDP IPv6 sinkhole REJECT rule Δpkts = {delta_udp_v6} (observed errnos: {err_v6_dns}, {err_v6_custom})")
+          assert delta_udp_v6 >= 1, f"Expected dedicated UDP IPv6 sinkhole REJECT Δpkts >= 1, got {delta_udp_v6}"
+
+          print("\n[OK] All mandatory firewall isolation, /32 rules, DNS sinkhole, and packet counter proofs PASSED!")
+          PY
+
+      - name: Preflight Disposable PostgreSQL, Redis & Clean Environment
+        run: |
+          set -euo pipefail
+          test ! -f .env
+          python - <<'PY'
+          import psycopg2, redis
+          from app.core.security.test_isolation_guard import (
+              validate_isolated_test_environment,
+              verify_connected_postgres_is_disposable,
+          )
+          validate_isolated_test_environment()
+          conn = psycopg2.connect("postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack", connect_timeout=5)
+          verify_connected_postgres_is_disposable(conn)
+          conn.close()
+          r = redis.Redis(host="127.0.0.1", port=6379, socket_timeout=5)
+          assert r.ping() is True
+          print("[OK] Preflight verified isolated PostgreSQL + Redis + clean CI env")
+          PY
 
       - name: Initialize PostgreSQL Test Database Roles & RLS Schema
         run: |
@@ -109,11 +694,189 @@ jobs:
 
       - name: Run Dedicated Tenant Media Upload Security & Parity Test Suites
         run: |
-          set -o pipefail
+          set -euo pipefail
+
+          echo "=== 1. Starting Route-Aware Local HTTP Stub (127.0.0.1:54321) ==="
+          python - <<'PY_STUB' > /tmp/stub_54321.log 2>&1 &
+          import http.server
+          import json
+          import sys
+          import urllib.parse
+
+          class StubHandler(http.server.BaseHTTPRequestHandler):
+              def log_message(self, format, *args):
+                  sys.stderr.write(f"[STUB-54321] {self.command} {self.path}\n")
+
+              def _send_json(self, status_code: int, data: any, extra_headers: dict = None):
+                  body = json.dumps(data).encode("utf-8")
+                  self.send_response(status_code)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(body)))
+                  if extra_headers:
+                      for k, v in extra_headers.items():
+                          self.send_header(k, v)
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def do_HEAD(self):
+                  parsed = urllib.parse.urlparse(self.path)
+                  path = parsed.path
+                  if path == "/health" or path == "/" or path.startswith("/rest/v1/") or path.startswith("/storage/v1/"):
+                      self.send_response(200)
+                      self.send_header("Content-Type", "application/json")
+                      self.send_header("Content-Length", "2")
+                      self.end_headers()
+                  else:
+                      self.send_response(404)
+                      self.send_header("Content-Type", "application/json")
+                      self.end_headers()
+
+              def do_OPTIONS(self):
+                  self.send_response(200)
+                  self.send_header("Access-Control-Allow-Origin", "*")
+                  self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+                  self.send_header("Access-Control-Allow-Headers", "*")
+                  self.send_header("Content-Length", "0")
+                  self.end_headers()
+
+              def do_GET(self):
+                  parsed = urllib.parse.urlparse(self.path)
+                  path = parsed.path
+
+                  if path == "/health":
+                      self._send_json(200, {"status": "ok"})
+                      return
+
+                  if path.startswith("/rest/v1/"):
+                      accept = self.headers.get("Accept", "")
+                      prefer = self.headers.get("Prefer", "")
+                      extra = {}
+                      if "count=" in prefer:
+                          extra["Content-Range"] = "0-0/0"
+                      if "application/vnd.pgrst.object+json" in accept:
+                          self._send_json(200, {}, extra)
+                      else:
+                          self._send_json(200, [], extra)
+                      return
+
+                  if path.startswith("/storage/v1/"):
+                      if "/bucket" in path:
+                          self._send_json(200, [
+                              {"id": "media", "name": "media", "public": True},
+                              {"id": "qris", "name": "qris", "public": True},
+                              {"id": "product-images", "name": "product-images", "public": True},
+                              {"id": "products", "name": "products", "public": True},
+                              {"id": "public", "name": "public", "public": True},
+                          ])
+                          return
+                      self._send_json(200, {"message": "ok", "Key": path})
+                      return
+
+                  self._send_json(404, {"error": "not_found", "path": path})
+
+              def do_POST(self):
+                  parsed = urllib.parse.urlparse(self.path)
+                  path = parsed.path
+                  length = int(self.headers.get("Content-Length", 0))
+                  if length > 0:
+                      _ = self.rfile.read(length)
+
+                  if path == "/health":
+                      self._send_json(200, {"status": "ok"})
+                      return
+
+                  if path.startswith("/rest/v1/"):
+                      accept = self.headers.get("Accept", "")
+                      prefer = self.headers.get("Prefer", "")
+                      extra = {}
+                      if "application/vnd.pgrst.object+json" in accept:
+                          resp = {}
+                      else:
+                          resp = []
+                      self._send_json(201, resp, extra)
+                      return
+
+                  if path.startswith("/storage/v1/"):
+                      storage_key = path.replace("/storage/v1/object/", "")
+                      self._send_json(200, {
+                          "Key": storage_key,
+                          "Id": "stub-id-123",
+                          "message": "Successfully uploaded"
+                      })
+                      return
+
+                  self._send_json(404, {"error": "not_found", "path": path})
+
+              def do_PUT(self):
+                  self.do_POST()
+
+              def do_PATCH(self):
+                  self.do_POST()
+
+              def do_DELETE(self):
+                  parsed = urllib.parse.urlparse(self.path)
+                  path = parsed.path
+                  if path.startswith("/rest/v1/") or path.startswith("/storage/v1/"):
+                      self._send_json(200, {"message": "deleted"})
+                      return
+                  self._send_json(404, {"error": "not_found"})
+
+          class ReusableThreadingServer(http.server.ThreadingHTTPServer):
+              allow_reuse_address = True
+              daemon_threads = True
+
+          server = ReusableThreadingServer(("127.0.0.1", 54321), StubHandler)
+          sys.stderr.write("Serving HTTP stub on 127.0.0.1:54321\n")
+          sys.stderr.flush()
+          server.serve_forever()
+          PY_STUB
+          STUB_PID=$!
+          echo "Started HTTP stub on PID $STUB_PID"
+
+          trap 'echo "Cleaning up HTTP stub (PID $STUB_PID)..."; kill -9 $STUB_PID 2>/dev/null || true' EXIT INT TERM
+
+          echo "=== 2. Polling Stub Readiness (Fail-Closed 5s Timeout) ==="
+          READY=0
+          for i in $(seq 1 25); do
+            if curl -s -f http://127.0.0.1:54321/health >/dev/null 2>&1 || python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:54321/health')" >/dev/null 2>&1; then
+              echo "✅ HTTP Stub is READY on 127.0.0.1:54321 after ${i} attempts"
+              READY=1
+              break
+            fi
+            sleep 0.2
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            echo "❌ FAIL-CLOSED: Local HTTP stub on 127.0.0.1:54321 failed to become ready within 5 seconds" >&2
+            cat /tmp/stub_54321.log >&2 || true
+            exit 1
+          fi
+
+          echo "=== 3. Executing Step 12 Pytest Suite ==="
+          SUPABASE_URL="http://127.0.0.1:54321" \
+          NEXT_PUBLIC_SUPABASE_URL="http://127.0.0.1:54321" \
+          EXPECTED_SUPABASE_URL="http://127.0.0.1:54321" \
           python -m pytest tests/api/test_upload_security.py tests/api/test_aiohttp_upload_security.py tests/test_media_upload.py tests/api/test_upload_alias_authorization.py -v -ra --tb=short 2>&1 | tee /tmp/upload_security_test_results.log || {
             echo "## ❌ Upload Security Pytest Failures" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             cat /tmp/upload_security_test_results.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          }
+
+      - name: Run Checkout Recovery, Academy Warm Launch & Payment Reconciliation Regression Suites
+        run: |
+          set -o pipefail
+          echo "=== Checkout Recovery Regression Suite (Tested on $(git rev-parse HEAD)) ===" | tee /tmp/checkout_regression.log
+          git log -1 --format="Commit SHA: %H%nAuthor: %an%nDate: %ad%nMessage: %s" | tee -a /tmp/checkout_regression.log
+          python -m pytest \
+            tests/test_checkout_recovery_remediation.py \
+            tests/test_academy_warm_launch.py \
+            tests/test_payment_reconciliation.py \
+            -v -ra --tb=short 2>&1 | tee -a /tmp/checkout_regression.log || {
+            echo "## ❌ Checkout Recovery Regression Suite Failure" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat /tmp/checkout_regression.log >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit 1
           }
@@ -128,7 +891,7 @@ jobs:
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit 1
           }
-          python scripts/audit_production_catalog_rls.py 2>&1 | tee /tmp/prod_catalog_audit.log || {
+          python scripts/audit_production_catalog_rls.py --ci-only 2>&1 | tee /tmp/prod_catalog_audit.log || {
             echo "## ❌ Production Catalog RLS Audit Gate Failure" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             cat /tmp/prod_catalog_audit.log >> $GITHUB_STEP_SUMMARY
@@ -144,6 +907,7 @@ jobs:
           path: |
             /tmp/test_results.log
             /tmp/upload_security_test_results.log
+            /tmp/checkout_regression.log
             /tmp/rls_audit.log
             /tmp/prod_catalog_audit.log
           retention-days: 7
@@ -166,8 +930,6 @@ jobs:
           name: cto-p1-evidence-bundle-${{ github.sha }}
           path: |
             docs/audit/CTO_P1_SECURITY_GATE_EVIDENCE_BUNDLE.md
-            docs/audit/production_catalog_rls_report.json
-            docs/audit/production_catalog_rls_report.md
             docs/audit/ci_catalog_rls_report.json
             docs/audit/ci_catalog_rls_report.md
             /tmp/bundle_generation.log

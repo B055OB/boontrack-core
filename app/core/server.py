@@ -9,6 +9,7 @@ except ModuleNotFoundError:
     Dispatcher = None
 
 from app.core.middlewares import cors_middleware
+from app.core.security.test_isolation_guard import assert_disposable_postgres_target
 from app.api.endpoints import register_api_routes
 from app.core.tenant_loader import (
     load_dynamic_tenants,
@@ -32,6 +33,7 @@ if DATABASE_URL.startswith("postgres://"):
 elif DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
+assert_disposable_postgres_target(dsn=DATABASE_URL, allow_if_unconfigured=False)
 engine = create_async_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
 async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 

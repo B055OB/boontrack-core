@@ -6,8 +6,11 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from dotenv import load_dotenv
-load_dotenv()
+from app.core.security.test_isolation_guard import (
+    assert_disposable_supabase_url,
+    safe_load_dotenv,
+)
+safe_load_dotenv()
 
 from app.modules.public_services.router import fastapi_public_service_router
 import asyncio
@@ -37,6 +40,8 @@ if not supabase_url or not supabase_anon_key:
         "SUPABASE_SERVICE_ROLE_KEY is strictly prohibited for standard application client."
     )
 
+assert_disposable_supabase_url(supabase_url, allow_empty=False)
+
 try:
     # Standard tenant/merchant/public client (restricted by RLS) with bounded HTTP socket timeout
     supabase_client: Client = create_client(
@@ -59,6 +64,7 @@ def get_admin_supabase_client() -> Client:
         raise RuntimeError(
             "[SECURITY FAIL-CLOSED] SUPABASE_SERVICE_ROLE_KEY is required for administrative operations but not configured."
         )
+    assert_disposable_supabase_url(supabase_url, allow_empty=False)
     return create_client(
         supabase_url,
         admin_key,
@@ -535,7 +541,7 @@ async def fastapi_tenant_cache_refresh(
             sb_record = {"error": str(e_sb)}
 
     supabase_url_val = os.getenv("SUPABASE_URL", "")
-    expected_url = "https://mpluzajlzpregmjwpjqr.supabase.co"
+    expected_url = os.getenv("EXPECTED_SUPABASE_URL", "").strip()
     database_url_val = os.getenv("DATABASE_URL", "")
     masked_db = re.sub(r":([^:@]+)@", r":***@", database_url_val) if database_url_val else ""
 

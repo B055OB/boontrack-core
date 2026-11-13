@@ -15,11 +15,11 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 from uuid import uuid4
 import httpx
-from dotenv import load_dotenv
+from app.core.security.test_isolation_guard import safe_load_dotenv
 
 from app.services.reconciliation_service import PAYMENT_INTENTS
 
-load_dotenv()
+safe_load_dotenv()
 
 logger = logging.getLogger("XENDIT_SERVICE")
 

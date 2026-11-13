@@ -9,6 +9,7 @@ from contextlib import contextmanager
 import psycopg2
 from psycopg2.extras import RealDictCursor, RealDictRow
 from app.core.config import settings
+from app.core.security.test_isolation_guard import assert_disposable_postgres_target
 from sqlalchemy.ext.declarative import declarative_base
 
 logger = logging.getLogger("APP_DATABASE")
@@ -94,6 +95,7 @@ def get_db_connection():
     """
     database_url = os.getenv("DATABASE_URL", "").strip()
     if database_url:
+        assert_disposable_postgres_target(dsn=database_url, allow_if_unconfigured=False)
         return psycopg2.connect(database_url)
 
     host = settings.POSTGRES_HOST or os.getenv("POSTGRES_HOST")
@@ -117,6 +119,14 @@ def get_db_connection():
             f"[SECURITY FAIL-CLOSED] PostgreSQL connection credentials are not configured: {', '.join(missing)}. "
             "Neither DATABASE_URL nor discrete credentials were provided in the environment."
         )
+
+    assert_disposable_postgres_target(
+        host=host,
+        port=port,
+        dbname=dbname,
+        user=user,
+        allow_if_unconfigured=False,
+    )
 
     return psycopg2.connect(
         host=host,
@@ -798,6 +808,72 @@ def _init_db_sync():
         CREATE INDEX IF NOT EXISTS idx_tenant_waba_phone_number_id ON tenant_waba_configs(waba_phone_number_id);
         CREATE INDEX IF NOT EXISTS idx_tenant_waba_tenant_id ON tenant_waba_configs(tenant_id);
         CREATE INDEX IF NOT EXISTS idx_tenant_waba_is_active ON tenant_waba_configs(is_active);
+
+        -- Tabel checkout_sessions (Migration 035: Durable Checkout Sessions & Unique-Code Lock)
+        DO $$
+        BEGIN
+            IF to_regclass('public.orders') IS NOT NULL THEN
+                CREATE TABLE IF NOT EXISTS public.checkout_sessions (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    order_id VARCHAR(128) NOT NULL UNIQUE REFERENCES public.orders(id) ON DELETE CASCADE,
+                    tenant_id VARCHAR(100) NOT NULL,
+                    canonical_tenant_id VARCHAR(100) NOT NULL,
+                    tenant_slug VARCHAR(128) NOT NULL,
+                    sku_id VARCHAR(255) NOT NULL,
+                    base_amount BIGINT NOT NULL,
+                    unique_code INT NOT NULL DEFAULT 0,
+                    total_amount BIGINT NOT NULL,
+                    qr_string TEXT NOT NULL,
+                    session_state VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+                    jti VARCHAR(128) NOT NULL,
+                    cs_key_id VARCHAR(64) NOT NULL,
+                    iat_epoch BIGINT NOT NULL,
+                    exp_epoch BIGINT NOT NULL,
+                    revoked BOOLEAN NOT NULL DEFAULT FALSE,
+                    revoked_at TIMESTAMPTZ,
+                    revocation_reason VARCHAR(255),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    settled_at TIMESTAMPTZ,
+                    CONSTRAINT uq_checkout_sessions_jti UNIQUE (jti),
+                    CONSTRAINT chk_checkout_sessions_non_blank CHECK (
+                        BTRIM(order_id) <> ''
+                        AND BTRIM(tenant_id) <> ''
+                        AND BTRIM(canonical_tenant_id) <> ''
+                        AND BTRIM(tenant_slug) <> ''
+                        AND BTRIM(sku_id) <> ''
+                        AND BTRIM(jti) <> ''
+                        AND BTRIM(cs_key_id) <> ''
+                    ),
+                    CONSTRAINT chk_checkout_sessions_amounts CHECK (
+                        base_amount >= 0
+                        AND total_amount > 0
+                        AND total_amount = base_amount + unique_code
+                    ),
+                    CONSTRAINT chk_checkout_sessions_unique_code CHECK (
+                        unique_code = 0 OR (unique_code >= 100 AND unique_code <= 999)
+                    ),
+                    CONSTRAINT chk_checkout_sessions_state CHECK (
+                        session_state IN ('ACTIVE', 'SETTLED', 'EXPIRED', 'REVOKED', 'CANCELLED')
+                    ),
+                    CONSTRAINT chk_checkout_sessions_epoch_bounds CHECK (
+                        iat_epoch > 0 AND exp_epoch >= iat_epoch
+                    )
+                );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_checkout_sessions_active_unique_amount
+                ON public.checkout_sessions (tenant_id, base_amount, unique_code)
+                WHERE (session_state = 'ACTIVE' AND revoked = FALSE AND unique_code > 0);
+
+                CREATE INDEX IF NOT EXISTS idx_checkout_sessions_total_amount_active
+                ON public.checkout_sessions (total_amount, created_at DESC)
+                WHERE (session_state = 'ACTIVE' AND revoked = FALSE);
+
+                CREATE INDEX IF NOT EXISTS idx_checkout_sessions_tenant_state_expires
+                ON public.checkout_sessions (tenant_id, session_state, expires_at);
+            END IF;
+        END $$;
     """)
 
     conn.commit()

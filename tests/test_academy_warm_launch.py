@@ -141,30 +141,31 @@ def test_generate_qris_invoice_without_unique_code():
 
 def test_settle_academy_invoice_strict_idempotency():
     """
-    Uji penguncian idempotency key:
+    Uji penguncian idempotency key berbasis PostgreSQL:
     Settlement pertama berhasil; settlement ulang untuk order_id atau event_id yang sama
     WAJIB mengembalikan ALREADY_SETTLED dan mencegah double-settlement.
     """
     import uuid
-    order_id = f"BTA-ALUMNI-TEST-{uuid.uuid4().hex[:8]}"
+    from app.services.academy_service import generate_academy_qris_invoice
+
     event_id = f"evt_xendit_test_{uuid.uuid4().hex[:8]}"
 
-    # Mock invoice awal di sistem
-    _ACADEMY_INVOICES[order_id] = {
-        "order_id": order_id,
-        "total_amount": 249450,
-        "customer_name": "Alumni Mayar",
-        "customer_email": "alumni@mayar.id",
-        "customer_phone": "6281234567890",
-        "status": "PENDING",
-    }
+    # Seed invoice + checkout session secara durable ke PostgreSQL
+    invoice = generate_academy_qris_invoice(
+        customer_name="Alumni Mayar",
+        customer_email="alumni@mayar.id",
+        customer_phone="6281234567890",
+        use_unique_code=True,
+    )
+    order_id = invoice["order_id"]
+    total_amount = int(invoice["total_amount"])
 
     # 1. Settlement Pertama
     res1 = settle_academy_invoice(
         order_id=order_id,
         event_id=event_id,
         provider="QRIS",
-        amount=249450,
+        amount=total_amount,
     )
     assert res1["status"] == "PAID"
     assert res1["idempotency_hit"] is False
@@ -176,7 +177,7 @@ def test_settle_academy_invoice_strict_idempotency():
         order_id=order_id,
         event_id=event_id,
         provider="QRIS",
-        amount=249450,
+        amount=total_amount,
     )
     assert res2["status"] == "ALREADY_SETTLED"
     assert res2["idempotency_hit"] is True
@@ -187,7 +188,7 @@ def test_settle_academy_invoice_strict_idempotency():
         order_id=order_id,
         event_id="evt_different_id_same_order",
         provider="QRIS",
-        amount=249450,
+        amount=total_amount,
     )
     assert res3["status"] == "ALREADY_SETTLED"
     assert res3["idempotency_hit"] is True
@@ -506,7 +507,7 @@ def test_fastapi_academy_sku_endpoint():
 
 
 def test_fastapi_academy_invoice_endpoint():
-    """POST /api/v1/academy/invoice"""
+    """POST /api/v1/academy/invoice harus mengembalikan DTO aman dengan PII email dimasking."""
     client = TestClient(app)
     payload = {
         "customer_name": "Rian Pratama",
@@ -522,30 +523,49 @@ def test_fastapi_academy_invoice_endpoint():
     invoice = data["invoice"]
     assert invoice["order_id"].startswith("BTA-ALUMNI-")
     assert 249100 <= invoice["total_amount"] <= 249999
-    assert invoice["customer_email"] == "rian@gmail.com"
+    assert invoice["customer_email"] == "ri***@gmail.com"
+    assert "rian@gmail.com" not in resp.text
 
 
 def test_fastapi_academy_paid_webhook_endpoint_and_idempotency():
-    """POST /api/v1/academy/webhook/paid dengan pengujian idempotency."""
+    """POST /api/v1/academy/webhook/paid wajib ditolak 403; settlement terverifikasi menjaga idempotency."""
     client = TestClient(app)
 
-    # 1. Buat invoice
+    # 1. Buat invoice durable di PostgreSQL
     inv_resp = client.post("/api/v1/academy/invoice", json={
         "customer_name": "Bambang Tri",
         "customer_email": "bambang@gmail.com",
         "customer_phone": "6289988776655",
     })
-    order_id = inv_resp.json()["invoice"]["order_id"]
+    assert inv_resp.status_code == 200
+    inv_data = inv_resp.json()
+    invoice = inv_data["invoice"]
+    order_id = invoice["order_id"]
+    total_amount = int(invoice["total_amount"])
+    token = inv_data["checkout_session_token"]
 
     webhook_payload = {
         "order_id": order_id,
         "event_id": f"evt_webhook_{order_id}",
         "status": "PAID",
         "provider": "QRIS",
-        "amount": 249500,
+        "amount": total_amount,
     }
 
-    # 2. Webhook Pertama: Berhasil verifikasi
+    # 2. Perimeter Lockdown: unverified /api/v1/academy/webhook/paid wajib ditolak 403
+    blocked_resp = client.post("/api/v1/academy/webhook/paid", json=webhook_payload)
+    assert blocked_resp.status_code == 403
+    assert blocked_resp.json()["detail"]["error_code"] == "UNVERIFIED_WEBHOOK_MUTATION_BLOCKED"
+
+    # Pastikan status order di PostgreSQL tetap PENDING setelah percobaan unverified webhook
+    poll_before = client.get(
+        f"/api/v1/academy/invoice/{order_id}",
+        headers={"X-Checkout-Session-Token": token},
+    )
+    assert poll_before.status_code == 200
+    assert poll_before.json()["invoice"]["status"] == "PENDING"
+
+    # 3. Settlement Pertama melalui handler internal terverifikasi + dispatch Telegram
     mock_tg_resp = MagicMock()
     mock_tg_resp.status_code = 200
     mock_tg_resp.json.return_value = {
@@ -557,20 +577,31 @@ def test_fastapi_academy_paid_webhook_endpoint_and_idempotency():
     with patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "mock_tg_token", "TELEGRAM_ACADEMY_CHAT_ID": "-100123456789"}), \
          patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_tg_resp), \
          patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
-        resp1 = client.post("/api/v1/academy/webhook/paid", json=webhook_payload)
-        assert resp1.status_code == 200
-        data1 = resp1.json()
+        data1 = asyncio.run(
+            academy_bot.handle_webhook_paid(
+                order_id=order_id,
+                event_id=webhook_payload["event_id"],
+                provider="QRIS",
+                amount=total_amount,
+            )
+        )
         assert data1["status"] == "SUCCESS"
         assert data1["order_id"] == order_id
         assert "https://t.me/+" in data1["single_use_telegram_link"]
 
-    # 3. Webhook Kedua: Idempotency hit (mencegah dobel settlement)
-    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock):
-        resp2 = client.post("/api/v1/academy/webhook/paid", json=webhook_payload)
-        assert resp2.status_code == 200
-        data2 = resp2.json()
+    # 4. Callback Kedua (Duplicate/Replay): Idempotency hit (mencegah dobel settlement)
+    with patch("app.services.academy_service.send_whatsapp_text", new_callable=AsyncMock) as mock_send_dup:
+        data2 = asyncio.run(
+            academy_bot.handle_webhook_paid(
+                order_id=order_id,
+                event_id=webhook_payload["event_id"],
+                provider="QRIS",
+                amount=total_amount,
+            )
+        )
         assert data2["status"] == "ALREADY_SETTLED"
         assert data2["idempotency_hit"] is True
+        mock_send_dup.assert_not_called()
 
 
 def test_fastapi_academy_campaign_draft_and_queue_endpoints():

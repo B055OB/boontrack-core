@@ -153,6 +153,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 _db_url = os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://").replace("postgres://", "postgresql://")
+if _db_url:
+    from app.core.security.test_isolation_guard import assert_disposable_postgres_target
+    assert_disposable_postgres_target(dsn=_db_url, allow_if_unconfigured=False)
 _sync_engine = create_engine(_db_url, pool_pre_ping=True) if _db_url else None
 _SessionFactory = sessionmaker(bind=_sync_engine) if _sync_engine else None
 

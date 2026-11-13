@@ -8,7 +8,11 @@ from app.services.shipping_interface import BookingRequest
 
 
 def get_db():
-    return psycopg2.connect(os.getenv("DATABASE_URL", "").strip())
+    from app.core.security.test_isolation_guard import assert_disposable_postgres_target
+
+    db_url = os.getenv("DATABASE_URL", "").strip()
+    assert_disposable_postgres_target(dsn=db_url, allow_if_unconfigured=False)
+    return psycopg2.connect(db_url)
 
 DEFAULT_ORIGIN = {
     "name": "BoonTrack Fulfillment Center",

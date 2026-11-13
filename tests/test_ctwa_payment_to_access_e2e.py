@@ -18,12 +18,26 @@ End-to-End Payment-to-Access Integration Test Suite:
 """
 
 import os
+import sys
+from pathlib import Path
 import json
 import time
 import uuid
 import unittest
 from unittest.mock import patch, AsyncMock, MagicMock
 from fastapi.testclient import TestClient
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from app.core.security.test_isolation_guard import (
+    bootstrap_isolated_test_env,
+    is_disposable_services_required,
+    verify_connected_postgres_is_disposable,
+)
+
+bootstrap_isolated_test_env(_REPO_ROOT)
 
 from app.main import app
 from app.core.database import get_db_connection
@@ -42,7 +56,7 @@ class TestCtwaPaymentToAccessE2E(unittest.TestCase):
         self.client = TestClient(app)
         self.valid_xendit_token = os.getenv(
             "XENDIT_CALLBACK_TOKEN",
-            os.getenv("XENDIT_WEBHOOK_VERIFICATION_TOKEN", "aM08Ka1LQ9Jx1OsieBe6kcM1pK1Z5eWlpWAka5zBOuGpVbWS")
+            os.getenv("XENDIT_WEBHOOK_VERIFICATION_TOKEN", "test_ci_xendit_callback_token_mock_12345")
         )
         self.test_order_id = f"ORD-OB-CTWA-{uuid.uuid4().hex[:8].upper()}"
         self.customer_phone = "6281299998888"
@@ -50,20 +64,22 @@ class TestCtwaPaymentToAccessE2E(unittest.TestCase):
         self.customer_email = "budi.pratama@example.com"
         _ISSUED_TELEGRAM_LINKS_CACHE.clear()
 
-        # Seed initial PENDING order ke PostgreSQL
+        # Seed initial PENDING order ke PostgreSQL disposabel
         conn = get_db_connection()
+        verify_connected_postgres_is_disposable(conn)
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO orders (
-                    id, tenant_slug, product_id, product_title, gross_amount,
+                    id, tenant_id, tenant_slug, product_id, product_title, gross_amount,
                     customer_name, customer_phone, customer_email, status,
                     created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', NOW(), NOW())
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', NOW(), NOW())
                 ON CONFLICT (id) DO UPDATE SET status = 'PENDING';
                 """,
                 (
                     self.test_order_id,
+                    "onlineboost",
                     "onlineboost",
                     "kelas-inkubasi-ctwa-batch-1-scale",
                     "Kelas Inkubasi CTWA Batch 1 - Scale Bundle",
@@ -77,17 +93,22 @@ class TestCtwaPaymentToAccessE2E(unittest.TestCase):
         conn.close()
 
     def tearDown(self):
-        # Cleanup order and ledger
+        # Cleanup strictly scoped to verified disposable PostgreSQL test order and ledger
+        conn = None
         try:
             conn = get_db_connection()
+            verify_connected_postgres_is_disposable(conn)
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM financial_ledger WHERE order_id = %s;", (self.test_order_id,))
                 cur.execute("DELETE FROM payment_events WHERE reference_id = %s OR order_id = %s;", (self.test_order_id, self.test_order_id))
                 cur.execute("DELETE FROM orders WHERE id = %s;", (self.test_order_id,))
                 conn.commit()
-            conn.close()
         except Exception:
-            pass
+            if is_disposable_services_required():
+                raise
+        finally:
+            if conn is not None and not conn.closed:
+                conn.close()
         _ISSUED_TELEGRAM_LINKS_CACHE.clear()
 
     # =========================================================================

@@ -111,16 +111,40 @@ class PostgresTrialQuotaStore:
                     f"PostgreSQL trial quota store connection factory failed: {e}"
                 )
 
-        try:
-            db_url = os.getenv("STAGE1_TEST_DISPOSABLE_PG_DSN") or os.getenv("DATABASE_URL", "").strip()
-            if db_url:
-                return psycopg2.connect(db_url, connect_timeout=3)
+        from app.core.security.test_isolation_guard import assert_disposable_postgres_target
 
-            host = os.getenv("POSTGRES_HOST", "127.0.0.1")
-            port = os.getenv("POSTGRES_PORT", "55439" if os.getenv("STAGE3_EPHEMERAL_PG") else "55439")
-            dbname = os.getenv("POSTGRES_DB", "postgres")
-            user = os.getenv("POSTGRES_USER", "postgres")
-            password = os.getenv("POSTGRES_PASSWORD", "")
+        db_url = os.getenv("DATABASE_URL", "").strip()
+        if db_url:
+            assert_disposable_postgres_target(dsn=db_url, allow_if_unconfigured=False)
+            try:
+                return psycopg2.connect(db_url, connect_timeout=3)
+            except Exception as e:
+                logger.error("[CFO Guardrail] Direct PostgreSQL connection failed: %s", e)
+                raise TrialQuotaStoreUnavailableError(
+                    f"PostgreSQL authoritative trial quota store is unreachable: {e}"
+                )
+
+        host = os.getenv("POSTGRES_HOST", "").strip()
+        port = os.getenv("POSTGRES_PORT", "").strip() or "5432"
+        dbname = os.getenv("POSTGRES_DB", "").strip()
+        user = os.getenv("POSTGRES_USER", "").strip()
+        password = os.getenv("POSTGRES_PASSWORD", "")
+
+        if host or dbname or user:
+            assert_disposable_postgres_target(
+                host=host,
+                port=port,
+                dbname=dbname,
+                user=user,
+                allow_if_unconfigured=False,
+            )
+
+        if not (host and dbname and user and password):
+            raise TrialQuotaStoreUnavailableError(
+                "[CFO Guardrail] FAIL-CLOSED: Incomplete PostgreSQL credentials for trial quota store."
+            )
+
+        try:
             return psycopg2.connect(
                 host=host,
                 port=port,

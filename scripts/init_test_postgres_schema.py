@@ -6,23 +6,56 @@ creates helper functions, tables, views, and strict RLS policies for 100% CI dat
 
 import os
 import sys
-
-from dotenv import load_dotenv
-load_dotenv()
-
-# Synchronize environment variables and settings with CI or local test DB
-if not os.getenv("POSTGRES_HOST") or os.getenv("POSTGRES_HOST") == "postgres":
-    os.environ["POSTGRES_HOST"] = "127.0.0.1"
-if not os.getenv("POSTGRES_PORT"):
-    os.environ["POSTGRES_PORT"] = "5432"
-if not os.getenv("POSTGRES_PASSWORD"):
-    os.environ["POSTGRES_PASSWORD"] = "test_password"
-if not os.getenv("POSTGRES_USER"):
-    os.environ["POSTGRES_USER"] = "test_user"
-if not os.getenv("POSTGRES_DB"):
-    os.environ["POSTGRES_DB"] = "test_boontrack"
+from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.core.security.test_isolation_guard import (
+    assert_disposable_postgres_target,
+    bootstrap_isolated_test_env,
+    is_strict_test_guard_active,
+    safe_load_dotenv,
+    verify_connected_postgres_is_disposable,
+)
+
+if is_strict_test_guard_active():
+    bootstrap_isolated_test_env()
+else:
+    safe_load_dotenv()
+
+# Synchronize environment variables and settings cleanly with CI or local disposable test DB
+_db_url = os.getenv("DATABASE_URL", "").strip()
+if _db_url:
+    assert_disposable_postgres_target(dsn=_db_url, allow_if_unconfigured=False)
+    _u = urlparse(_db_url)
+    if _u.hostname and not os.getenv("POSTGRES_HOST"):
+        os.environ["POSTGRES_HOST"] = _u.hostname
+    if _u.port and not os.getenv("POSTGRES_PORT"):
+        os.environ["POSTGRES_PORT"] = str(_u.port)
+    if _u.path and _u.path.lstrip("/") and not os.getenv("POSTGRES_DB"):
+        os.environ["POSTGRES_DB"] = _u.path.lstrip("/")
+    if _u.username and not os.getenv("POSTGRES_USER"):
+        os.environ["POSTGRES_USER"] = _u.username
+    if _u.password and not os.getenv("POSTGRES_PASSWORD"):
+        os.environ["POSTGRES_PASSWORD"] = _u.password
+else:
+    if not os.getenv("POSTGRES_HOST") or os.getenv("POSTGRES_HOST") == "postgres":
+        os.environ["POSTGRES_HOST"] = "127.0.0.1"
+    if not os.getenv("POSTGRES_PORT"):
+        os.environ["POSTGRES_PORT"] = "5432"
+    if not os.getenv("POSTGRES_PASSWORD"):
+        os.environ["POSTGRES_PASSWORD"] = "test_password"
+    if not os.getenv("POSTGRES_USER"):
+        os.environ["POSTGRES_USER"] = "test_user"
+    if not os.getenv("POSTGRES_DB"):
+        os.environ["POSTGRES_DB"] = "test_boontrack"
+    assert_disposable_postgres_target(
+        host=os.getenv("POSTGRES_HOST"),
+        port=os.getenv("POSTGRES_PORT"),
+        dbname=os.getenv("POSTGRES_DB"),
+        user=os.getenv("POSTGRES_USER"),
+        allow_if_unconfigured=False,
+    )
 
 from app.core.config import settings
 settings.POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
@@ -41,7 +74,16 @@ if sys.platform == "win32":
 
 
 def init_test_schema():
+    assert_disposable_postgres_target(
+        dsn=os.getenv("DATABASE_URL") or None,
+        host=os.getenv("POSTGRES_HOST"),
+        port=os.getenv("POSTGRES_PORT"),
+        dbname=os.getenv("POSTGRES_DB"),
+        user=os.getenv("POSTGRES_USER"),
+        allow_if_unconfigured=False,
+    )
     conn = get_db_connection()
+    verify_connected_postgres_is_disposable(conn)
     conn.autocommit = True
     cur = conn.cursor()
 
@@ -309,6 +351,9 @@ def init_test_schema():
         )
       )
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_financial_ledger_order_credit
+      ON public.financial_ledger (order_id)
+      WHERE (transaction_type = 'PAYMENT_CREDIT');
     ALTER TABLE public.financial_ledger ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.financial_ledger FORCE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation_financial_ledger ON public.financial_ledger;
@@ -319,6 +364,104 @@ def init_test_schema():
       )
       WITH CHECK (
         tenant_id = current_setting('app.current_tenant_id', true)::text
+      );
+
+    -- Table: checkout_sessions (Migration 035: Durable Checkout Sessions & Unique-Code Lock)
+    CREATE TABLE IF NOT EXISTS public.checkout_sessions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      order_id VARCHAR(128) NOT NULL UNIQUE REFERENCES public.orders(id) ON DELETE CASCADE,
+      tenant_id VARCHAR(100) NOT NULL,
+      canonical_tenant_id VARCHAR(100) NOT NULL,
+      tenant_slug VARCHAR(128) NOT NULL,
+      sku_id VARCHAR(255) NOT NULL,
+      base_amount BIGINT NOT NULL,
+      unique_code INT NOT NULL DEFAULT 0,
+      total_amount BIGINT NOT NULL,
+      qr_string TEXT NOT NULL,
+      session_state VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+      jti VARCHAR(128) NOT NULL,
+      cs_key_id VARCHAR(64) NOT NULL,
+      iat_epoch BIGINT NOT NULL,
+      exp_epoch BIGINT NOT NULL,
+      revoked BOOLEAN NOT NULL DEFAULT FALSE,
+      revoked_at TIMESTAMPTZ,
+      revocation_reason VARCHAR(255),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      settled_at TIMESTAMPTZ,
+      CONSTRAINT uq_checkout_sessions_jti UNIQUE (jti),
+      CONSTRAINT chk_checkout_sessions_non_blank CHECK (
+        BTRIM(order_id) <> ''
+        AND BTRIM(tenant_id) <> ''
+        AND BTRIM(canonical_tenant_id) <> ''
+        AND BTRIM(tenant_slug) <> ''
+        AND BTRIM(sku_id) <> ''
+        AND BTRIM(jti) <> ''
+        AND BTRIM(cs_key_id) <> ''
+      ),
+      CONSTRAINT chk_checkout_sessions_amounts CHECK (
+        base_amount >= 0
+        AND total_amount > 0
+        AND total_amount = base_amount + unique_code
+      ),
+      CONSTRAINT chk_checkout_sessions_unique_code CHECK (
+        unique_code = 0 OR (unique_code >= 100 AND unique_code <= 999)
+      ),
+      CONSTRAINT chk_checkout_sessions_state CHECK (
+        session_state IN ('ACTIVE', 'SETTLED', 'EXPIRED', 'REVOKED', 'CANCELLED')
+      ),
+      CONSTRAINT chk_checkout_sessions_epoch_bounds CHECK (
+        iat_epoch > 0 AND exp_epoch >= iat_epoch
+      )
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_checkout_sessions_active_unique_amount
+      ON public.checkout_sessions (tenant_id, base_amount, unique_code)
+      WHERE (session_state = 'ACTIVE' AND revoked = FALSE AND unique_code > 0);
+    CREATE INDEX IF NOT EXISTS idx_checkout_sessions_total_amount_active
+      ON public.checkout_sessions (total_amount, created_at DESC)
+      WHERE (session_state = 'ACTIVE' AND revoked = FALSE);
+    CREATE INDEX IF NOT EXISTS idx_checkout_sessions_tenant_state_expires
+      ON public.checkout_sessions (tenant_id, session_state, expires_at);
+    ALTER TABLE public.checkout_sessions ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.checkout_sessions FORCE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS p1_tenant_isolation_checkout_sessions ON public.checkout_sessions;
+    CREATE POLICY p1_tenant_isolation_checkout_sessions ON public.checkout_sessions
+      AS PERMISSIVE FOR SELECT TO authenticated
+      USING (
+        NULLIF(current_setting('app.current_tenant_id', true), '') IS NOT NULL
+        AND (
+          tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')
+          OR canonical_tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')
+          OR tenant_slug = NULLIF(current_setting('app.current_tenant_id', true), '')
+          OR (
+            current_setting('app.current_tenant_id', true) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            AND canonical_tenant_id = LOWER(current_setting('app.current_tenant_id', true))
+          )
+        )
+      );
+    DROP POLICY IF EXISTS service_role_all_checkout_sessions ON public.checkout_sessions;
+    CREATE POLICY service_role_all_checkout_sessions ON public.checkout_sessions
+      AS PERMISSIVE FOR ALL TO service_role
+      USING (
+        NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL
+        OR tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')
+        OR canonical_tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')
+        OR tenant_slug = NULLIF(current_setting('app.current_tenant_id', true), '')
+        OR (
+          current_setting('app.current_tenant_id', true) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          AND canonical_tenant_id = LOWER(current_setting('app.current_tenant_id', true))
+        )
+      )
+      WITH CHECK (
+        NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL
+        OR tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')
+        OR canonical_tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')
+        OR tenant_slug = NULLIF(current_setting('app.current_tenant_id', true), '')
+        OR (
+          current_setting('app.current_tenant_id', true) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          AND canonical_tenant_id = LOWER(current_setting('app.current_tenant_id', true))
+        )
       );
 
     -- Table: trial_quota_reservations (Migration 034: Persistent Atomic Trial Quota Reservation Store)
@@ -752,6 +895,59 @@ def init_test_schema():
         OR tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
       );
 
+    -- Table: inbound_webhook_events (Durable idempotency; zero tenant_id -> ENABLE RLS DEFAULT DENY, owner-only writes)
+    CREATE TABLE IF NOT EXISTS public.inbound_webhook_events (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      channel_provider VARCHAR(50) NOT NULL DEFAULT 'whatsapp_meta',
+      provider_message_id VARCHAR(255) NOT NULL,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status VARCHAR(50) NOT NULL DEFAULT 'RECEIVED',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT uq_inbound_webhook_channel_provider_msg_id UNIQUE (channel_provider, provider_message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_inbound_webhook_provider_msg_id ON public.inbound_webhook_events(provider_message_id);
+    CREATE INDEX IF NOT EXISTS idx_inbound_webhook_created_at ON public.inbound_webhook_events(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_inbound_webhook_status ON public.inbound_webhook_events(status);
+    ALTER TABLE public.inbound_webhook_events ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.inbound_webhook_events NO FORCE ROW LEVEL SECURITY;
+
+    -- Table: phone_suppressions (Tenant opt-out registry with strict dual-resolution + FORCE RLS)
+    CREATE TABLE IF NOT EXISTS public.phone_suppressions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id VARCHAR(100) NOT NULL,
+      phone_number VARCHAR(50) NOT NULL,
+      reason TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT phone_suppressions_tenant_phone_key UNIQUE (tenant_id, phone_number)
+    );
+    CREATE INDEX IF NOT EXISTS idx_phone_suppressions_tenant_phone ON public.phone_suppressions(tenant_id, phone_number);
+    ALTER TABLE public.phone_suppressions ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.phone_suppressions FORCE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_phone_suppressions ON public.phone_suppressions;
+    CREATE POLICY tenant_isolation_phone_suppressions ON public.phone_suppressions
+      AS PERMISSIVE FOR ALL TO authenticated
+      USING (
+        tenant_id = public.current_app_tenant_slug()
+        OR tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+      )
+      WITH CHECK (
+        tenant_id = public.current_app_tenant_slug()
+        OR tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+      );
+    DROP POLICY IF EXISTS service_role_all_phone_suppressions ON public.phone_suppressions;
+    CREATE POLICY service_role_all_phone_suppressions ON public.phone_suppressions
+      AS PERMISSIVE FOR ALL TO service_role
+      USING (
+        tenant_id = public.current_app_tenant_slug()
+        OR tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+        OR NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL
+      )
+      WITH CHECK (
+        tenant_id = public.current_app_tenant_slug()
+        OR tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+        OR NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL
+      );
+
     -- 4. REQUIRED VIEWS WITH SECURITY_INVOKER = TRUE
     DROP VIEW IF EXISTS public.v_affiliate_ledger CASCADE;
     DROP VIEW IF EXISTS public.affiliate_ledger CASCADE;
@@ -790,10 +986,16 @@ def init_test_schema():
     GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated, anon, service_role, boontrack_test_app_user;
     GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated, anon, service_role, boontrack_test_app_user;
 
-    -- Strict least privilege for trial_quota_reservations: zero write privileges for anon or authenticated
+    -- Strict least privilege for trial_quota_reservations & checkout_sessions: zero write privileges for anon or authenticated
     REVOKE ALL ON public.trial_quota_reservations FROM anon;
     REVOKE ALL ON public.trial_quota_reservations FROM authenticated;
     GRANT SELECT ON public.trial_quota_reservations TO authenticated;
+
+    REVOKE ALL ON public.checkout_sessions FROM PUBLIC;
+    REVOKE ALL ON public.checkout_sessions FROM anon;
+    REVOKE ALL ON public.checkout_sessions FROM authenticated;
+    GRANT SELECT ON public.checkout_sessions TO authenticated;
+    GRANT ALL ON public.checkout_sessions TO service_role;
     """)
 
     cur.close()
