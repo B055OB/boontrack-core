@@ -622,7 +622,168 @@ jobs:
 
       - name: Run Dedicated Tenant Media Upload Security & Parity Test Suites
         run: |
-          set -o pipefail
+          set -euo pipefail
+
+          echo "=== 1. Starting Route-Aware Local HTTP Stub (127.0.0.1:54321) ==="
+          python - <<'PY_STUB' > /tmp/stub_54321.log 2>&1 &
+          import http.server
+          import json
+          import sys
+          import urllib.parse
+
+          class StubHandler(http.server.BaseHTTPRequestHandler):
+              def log_message(self, format, *args):
+                  sys.stderr.write(f"[STUB-54321] {self.command} {self.path}\n")
+
+              def _send_json(self, status_code: int, data: any, extra_headers: dict = None):
+                  body = json.dumps(data).encode("utf-8")
+                  self.send_response(status_code)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(body)))
+                  if extra_headers:
+                      for k, v in extra_headers.items():
+                          self.send_header(k, v)
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def do_HEAD(self):
+                  parsed = urllib.parse.urlparse(self.path)
+                  path = parsed.path
+                  if path == "/health" or path == "/" or path.startswith("/rest/v1/") or path.startswith("/storage/v1/"):
+                      self.send_response(200)
+                      self.send_header("Content-Type", "application/json")
+                      self.send_header("Content-Length", "2")
+                      self.end_headers()
+                  else:
+                      self.send_response(404)
+                      self.send_header("Content-Type", "application/json")
+                      self.end_headers()
+
+              def do_OPTIONS(self):
+                  self.send_response(200)
+                  self.send_header("Access-Control-Allow-Origin", "*")
+                  self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+                  self.send_header("Access-Control-Allow-Headers", "*")
+                  self.send_header("Content-Length", "0")
+                  self.end_headers()
+
+              def do_GET(self):
+                  parsed = urllib.parse.urlparse(self.path)
+                  path = parsed.path
+
+                  if path == "/health":
+                      self._send_json(200, {"status": "ok"})
+                      return
+
+                  if path.startswith("/rest/v1/"):
+                      accept = self.headers.get("Accept", "")
+                      prefer = self.headers.get("Prefer", "")
+                      extra = {}
+                      if "count=" in prefer:
+                          extra["Content-Range"] = "0-0/0"
+                      if "application/vnd.pgrst.object+json" in accept:
+                          self._send_json(200, {}, extra)
+                      else:
+                          self._send_json(200, [], extra)
+                      return
+
+                  if path.startswith("/storage/v1/"):
+                      if "/bucket" in path:
+                          self._send_json(200, [
+                              {"id": "media", "name": "media", "public": True},
+                              {"id": "qris", "name": "qris", "public": True},
+                              {"id": "product-images", "name": "product-images", "public": True},
+                              {"id": "products", "name": "products", "public": True},
+                              {"id": "public", "name": "public", "public": True},
+                          ])
+                          return
+                      self._send_json(200, {"message": "ok", "Key": path})
+                      return
+
+                  self._send_json(404, {"error": "not_found", "path": path})
+
+              def do_POST(self):
+                  parsed = urllib.parse.urlparse(self.path)
+                  path = parsed.path
+                  length = int(self.headers.get("Content-Length", 0))
+                  if length > 0:
+                      _ = self.rfile.read(length)
+
+                  if path == "/health":
+                      self._send_json(200, {"status": "ok"})
+                      return
+
+                  if path.startswith("/rest/v1/"):
+                      accept = self.headers.get("Accept", "")
+                      prefer = self.headers.get("Prefer", "")
+                      extra = {}
+                      if "application/vnd.pgrst.object+json" in accept:
+                          resp = {}
+                      else:
+                          resp = []
+                      self._send_json(201, resp, extra)
+                      return
+
+                  if path.startswith("/storage/v1/"):
+                      storage_key = path.replace("/storage/v1/object/", "")
+                      self._send_json(200, {
+                          "Key": storage_key,
+                          "Id": "stub-id-123",
+                          "message": "Successfully uploaded"
+                      })
+                      return
+
+                  self._send_json(404, {"error": "not_found", "path": path})
+
+              def do_PUT(self):
+                  self.do_POST()
+
+              def do_PATCH(self):
+                  self.do_POST()
+
+              def do_DELETE(self):
+                  parsed = urllib.parse.urlparse(self.path)
+                  path = parsed.path
+                  if path.startswith("/rest/v1/") or path.startswith("/storage/v1/"):
+                      self._send_json(200, {"message": "deleted"})
+                      return
+                  self._send_json(404, {"error": "not_found"})
+
+          class ReusableThreadingServer(http.server.ThreadingHTTPServer):
+              allow_reuse_address = True
+              daemon_threads = True
+
+          server = ReusableThreadingServer(("127.0.0.1", 54321), StubHandler)
+          sys.stderr.write("Serving HTTP stub on 127.0.0.1:54321\n")
+          sys.stderr.flush()
+          server.serve_forever()
+          PY_STUB
+          STUB_PID=$!
+          echo "Started HTTP stub on PID $STUB_PID"
+
+          trap 'echo "Cleaning up HTTP stub (PID $STUB_PID)..."; kill -9 $STUB_PID 2>/dev/null || true' EXIT INT TERM
+
+          echo "=== 2. Polling Stub Readiness (Fail-Closed 5s Timeout) ==="
+          READY=0
+          for i in $(seq 1 25); do
+            if curl -s -f http://127.0.0.1:54321/health >/dev/null 2>&1 || python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:54321/health')" >/dev/null 2>&1; then
+              echo "✅ HTTP Stub is READY on 127.0.0.1:54321 after ${i} attempts"
+              READY=1
+              break
+            fi
+            sleep 0.2
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            echo "❌ FAIL-CLOSED: Local HTTP stub on 127.0.0.1:54321 failed to become ready within 5 seconds" >&2
+            cat /tmp/stub_54321.log >&2 || true
+            exit 1
+          fi
+
+          echo "=== 3. Executing Step 12 Pytest Suite ==="
+          SUPABASE_URL="http://127.0.0.1:54321" \
+          NEXT_PUBLIC_SUPABASE_URL="http://127.0.0.1:54321" \
+          EXPECTED_SUPABASE_URL="http://127.0.0.1:54321" \
           python -m pytest tests/api/test_upload_security.py tests/api/test_aiohttp_upload_security.py tests/test_media_upload.py tests/api/test_upload_alias_authorization.py -v -ra --tb=short 2>&1 | tee /tmp/upload_security_test_results.log || {
             echo "## ❌ Upload Security Pytest Failures" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
