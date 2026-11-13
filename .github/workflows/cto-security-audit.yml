@@ -46,7 +46,6 @@ jobs:
       BOONTRACK_ENV: test
       TEST_STRICT_DB_GUARD: "1"
       TEST_REQUIRE_DISPOSABLE_SERVICES: "1"
-      TEST_IN_DOCKER_INTERNAL_NET: "1"
       ENABLE_LOCAL_REDIS: "true"
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: 5432
@@ -151,7 +150,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "=== 1. Runtime Detection of Docker Service Container Subnets ==="
+          echo "=== 1. Runtime Detection of Docker Service Container Subnets & IPs ==="
           PG_CONTAINER=$(docker ps --filter "ancestor=postgres:15" -q | head -n 1)
           REDIS_CONTAINER=$(docker ps --filter "ancestor=redis:7-alpine" -q | head -n 1)
 
@@ -163,6 +162,23 @@ jobs:
           if [ -z "$PG_CONTAINER" ] || [ -z "$REDIS_CONTAINER" ]; then
             echo "❌ FAIL-CLOSED: PostgreSQL or Redis service container not detected at runtime." >&2
             docker ps -a
+            exit 1
+          fi
+
+          PG_IP=$(docker inspect "$PG_CONTAINER" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}' | grep -v '^$' | head -n 1)
+          REDIS_IP=$(docker inspect "$REDIS_CONTAINER" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}' | grep -v '^$' | head -n 1)
+
+          IPV4_REGEX="^([0-9]{1,3}\.){3}[0-9]{1,3}$"
+          if [[ -z "$PG_IP" || ! "$PG_IP" =~ $IPV4_REGEX ]]; then
+            echo "❌ FAIL-CLOSED: Invalid or missing PG_IP: '$PG_IP'" >&2
+            exit 1
+          fi
+          if [[ -z "$REDIS_IP" || ! "$REDIS_IP" =~ $IPV4_REGEX ]]; then
+            echo "❌ FAIL-CLOSED: Invalid or missing REDIS_IP: '$REDIS_IP'" >&2
+            exit 1
+          fi
+          if [ "$PG_IP" = "$REDIS_IP" ]; then
+            echo "❌ FAIL-CLOSED: PG_IP and REDIS_IP collided ($PG_IP == $REDIS_IP)" >&2
             exit 1
           fi
 
@@ -179,7 +195,7 @@ jobs:
           for net in $SERVICE_NETS; do
             subnet=$(docker network inspect "$net" --format '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' | grep -v '^$' | head -n 1)
             if [[ -z "$subnet" || ! "$subnet" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]]; then
-              echo "❌ FAIL-CLOSED: Invalid or missing subnet for Docker service network '''$net''': '''$subnet'''" >&2
+              echo "❌ FAIL-CLOSED: Invalid or missing subnet for Docker service network '$net': '$subnet'" >&2
               exit 1
             fi
             DOCKER_SERVICE_SUBNETS+=("$subnet")
@@ -193,10 +209,17 @@ jobs:
 
           echo "Detected PostgreSQL Container: $PG_CONTAINER"
           echo "Detected Redis Container:      $REDIS_CONTAINER"
+          echo "Detected PG_IP:                $PG_IP"
+          echo "Detected REDIS_IP:             $REDIS_IP"
           echo "Detected Service Networks:     $SERVICE_NETS"
           echo "Detected Service Subnets:      ${DOCKER_SERVICE_SUBNETS[*]}"
 
-          echo "=== 2. Apply DNS Sinkhole and Host-Specific Egress Blocks ==="
+          echo "TEST_ALLOWED_PG_CIDRS=${PG_IP}/32" >> "$GITHUB_ENV"
+          echo "PG_IP=${PG_IP}" >> "$GITHUB_ENV"
+          echo "REDIS_IP=${REDIS_IP}" >> "$GITHUB_ENV"
+          echo "DOCKER_SERVICE_SUBNETS=${DOCKER_SERVICE_SUBNETS[*]}" >> "$GITHUB_ENV"
+
+          echo "=== 2. Pre-resolve Public IPs of Blocked Hosts (Before /etc/hosts modification) ==="
           BLOCKED_HOSTS=(
             "mpluzajlzpregmjwpjqr.supabase.co"
             "db.mpluzajlzpregmjwpjqr.supabase.co"
@@ -211,55 +234,186 @@ jobs:
             "api.xendit.co"
             "api.biteship.com"
           )
+
+          RESOLVED_PUBLIC_IPV4S=()
+          RESOLVED_PUBLIC_IPV6S=()
+
           for host in "${BLOCKED_HOSTS[@]}"; do
             for ip in $( (getent ahostsv4 "$host" 2>/dev/null || true) | awk '{print $1}' | sort -u ); do
               case "$ip" in
-                ""|127.*) continue ;;
+                ""|127.*|192.0.2.*|10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*|192.168.*) continue ;;
+                *) RESOLVED_PUBLIC_IPV4S+=("$ip") ;;
               esac
-              sudo iptables -I OUTPUT 1 -d "$ip" -j REJECT
             done
             for ip6 in $( (getent ahostsv6 "$host" 2>/dev/null || true) | awk '{print $1}' | sort -u ); do
               case "$ip6" in
-                ""|::1|::ffff:*|fe80:*) continue ;;
+                ""|::1|::ffff:*|fe80:*|2001:db8:*) continue ;;
+                *) RESOLVED_PUBLIC_IPV6S+=("$ip6") ;;
               esac
-              sudo ip6tables -I OUTPUT 1 -d "$ip6" -j REJECT
             done
           done
+
+          RESOLVED_PUBLIC_IPV4S=($(printf "%s\n" "${RESOLVED_PUBLIC_IPV4S[@]:-}" | sort -u | grep -v '^$' || true))
+          RESOLVED_PUBLIC_IPV6S=($(printf "%s\n" "${RESOLVED_PUBLIC_IPV6S[@]:-}" | sort -u | grep -v '^$' || true))
+
+          echo "Pre-resolved public IPv4s: ${RESOLVED_PUBLIC_IPV4S[*]:-none}"
+          echo "Pre-resolved public IPv6s: ${RESOLVED_PUBLIC_IPV6S[*]:-none}"
+
+          echo "=== 3. Clean and Populate /etc/hosts with RFC 5737 and RFC 3849 Sinkhole IPs ==="
           for host in "${BLOCKED_HOSTS[@]}"; do
-            echo "127.0.0.1 $host" | sudo tee -a /etc/hosts >/dev/null
-            echo "::1 $host" | sudo tee -a /etc/hosts >/dev/null
+            sudo sed -i "/[[:space:]]${host}$/d" /etc/hosts
+            sudo sed -i "/[[:space:]]${host}[[:space:]]/d" /etc/hosts
+            echo "192.0.2.1 $host" | sudo tee -a /etc/hosts >/dev/null
+            echo "2001:db8::1 $host" | sudo tee -a /etc/hosts >/dev/null
           done
 
-          echo "=== 3. Add Scoped ACCEPT for Docker Service Subnets (DB/Cache Ports Only) & Block Rest ==="
+          echo "=== 4. Configure Sinkhole Routes to Loopback Interface ==="
+          sudo ip route replace 192.0.2.0/24 dev lo 2>/dev/null || sudo ip route add 192.0.2.0/24 dev lo 2>/dev/null || true
+          sudo ip -6 route replace 2001:db8::/32 dev lo 2>/dev/null || sudo ip -6 route add 2001:db8::/32 dev lo 2>/dev/null || true
+
+          echo "=== 5. Configure Strict Least-Privilege OUTPUT Chain Firewall Rules ==="
+          sudo iptables -F OUTPUT
+          sudo ip6tables -F OUTPUT
+          sudo iptables -P OUTPUT ACCEPT
+          sudo ip6tables -P OUTPUT ACCEPT
+
+          echo "Applying Rule 1: Sinkhole prefixes (192.0.2.0/24 & 2001:db8::/32)"
+          sudo iptables -A OUTPUT -d 192.0.2.0/24 -p tcp -j REJECT --reject-with tcp-reset
+          sudo iptables -A OUTPUT -d 192.0.2.0/24 -j REJECT --reject-with icmp-port-unreachable
+          sudo ip6tables -A OUTPUT -d 2001:db8::/32 -p tcp -j REJECT --reject-with tcp-reset
+          sudo ip6tables -A OUTPUT -d 2001:db8::/32 -j REJECT --reject-with icmp6-port-unreachable
+
+          echo "Applying Rule 2: Pre-resolved public IPs from blocked hosts"
+          for ip in "${RESOLVED_PUBLIC_IPV4S[@]:-}"; do
+            [ -z "$ip" ] && continue
+            sudo iptables -A OUTPUT -d "$ip" -p tcp -j REJECT --reject-with tcp-reset
+            sudo iptables -A OUTPUT -d "$ip" -j REJECT --reject-with icmp-port-unreachable
+          done
+          for ip6 in "${RESOLVED_PUBLIC_IPV6S[@]:-}"; do
+            [ -z "$ip6" ] && continue
+            sudo ip6tables -A OUTPUT -d "$ip6" -p tcp -j REJECT --reject-with tcp-reset
+            sudo ip6tables -A OUTPUT -d "$ip6" -j REJECT --reject-with icmp6-port-unreachable
+          done
+
+          echo "Applying Rule 3: Universal SMTP blocking on ports 25, 465, 587, 2525"
+          sudo iptables -A OUTPUT -p tcp -m multiport --dports 25,465,587,2525 -j REJECT --reject-with tcp-reset
+          sudo ip6tables -A OUTPUT -p tcp -m multiport --dports 25,465,587,2525 -j REJECT --reject-with tcp-reset
+
+          echo "Applying Rule 4: Least-privilege /32 container rules (PG: 5432, Redis: 6379)"
+          sudo iptables -A OUTPUT -d "${PG_IP}/32" -p tcp --dport 5432 -j ACCEPT
+          sudo iptables -A OUTPUT -d "${REDIS_IP}/32" -p tcp --dport 6379 -j ACCEPT
+
+          echo "Applying Rule 5: Reject remaining traffic on Docker service subnets"
           for subnet in "${DOCKER_SERVICE_SUBNETS[@]}"; do
-            echo "Adding narrowly scoped ACCEPT for Docker service subnet $subnet (ports 5432,5433,6543,6379,6380)"
-            sudo iptables -A OUTPUT -d "$subnet" -p tcp -m multiport --dports 5432,5433,6543,6379,6380 -j ACCEPT
             sudo iptables -A OUTPUT -d "$subnet" -p tcp -j REJECT --reject-with tcp-reset
-            sudo iptables -A OUTPUT -d "$subnet" -j REJECT
+            sudo iptables -A OUTPUT -d "$subnet" -j REJECT --reject-with icmp-port-unreachable
           done
 
-          echo "=== 4. Apply Non-Loopback DB/Cache and SMTP Egress REJECT Rules ==="
-          sudo iptables -A OUTPUT ! -o lo ! -d 127.0.0.0/8 -p tcp -m multiport --dports 5432,5433,6543,6379,6380,25,465,587,2525 -j REJECT --reject-with tcp-reset
-          sudo ip6tables -A OUTPUT ! -o lo ! -d ::1/128 -p tcp -m multiport --dports 5432,5433,6543,6379,6380,25,465,587,2525 -j REJECT
+          echo "Applying Rule 6: Reject non-loopback DB/Pooler/Redis egress"
+          sudo iptables -A OUTPUT ! -o lo ! -d 127.0.0.0/8 -p tcp -m multiport --dports 5432,5433,6543,6379,6380 -j REJECT --reject-with tcp-reset
+          sudo ip6tables -A OUTPUT ! -o lo ! -d ::1/128 -p tcp -m multiport --dports 5432,5433,6543,6379,6380 -j REJECT --reject-with tcp-reset
 
-          echo "=== 5. Verify iptables OUTPUT Rules Ordering ==="
+          echo "=== 6. Verify iptables and ip6tables OUTPUT Rules Ordering ==="
           sudo iptables -L OUTPUT -n -v --line-numbers
+          sudo ip6tables -L OUTPUT -n -v --line-numbers
 
       - name: Verify Firewall Isolation & Egress Security Rules
         run: |
           set -euo pipefail
           python - <<'PY'
-          import json, socket, sys, psycopg2, redis, subprocess
+          import errno
+          import json
+          import os
+          import psycopg2
+          import redis
+          import socket
+          import subprocess
+          import sys
+          import time
 
-          def assert_blocked(host: str, port: int, desc: str) -> None:
-              s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-              s.settimeout(2.0)
+          REJECTED_ERRNOS = {
+              errno.ECONNREFUSED,
+              errno.ECONNRESET,
+              errno.ENETUNREACH,
+              errno.EHOSTUNREACH,
+              errno.EACCES,
+              errno.EPERM,
+          }
+
+          BLOCKED_HOSTS = [
+              "mpluzajlzpregmjwpjqr.supabase.co",
+              "db.mpluzajlzpregmjwpjqr.supabase.co",
+              "xkhqirhurnjqglmajghn.supabase.co",
+              "db.xkhqirhurnjqglmajghn.supabase.co",
+              "aws-0-ap-southeast-1.pooler.supabase.com",
+              "aws-1-ap-southeast-1.pooler.supabase.com",
+              "evolution-api-production-abb7.up.railway.app",
+              "api.resend.com",
+              "api.telegram.org",
+              "graph.facebook.com",
+              "api.xendit.co",
+              "api.biteship.com",
+          ]
+
+          def assert_actively_rejected(host: str, port: int, desc: str, timeout: float = 2.0) -> None:
               try:
-                  s.connect((host, port))
-                  s.close()
-                  raise AssertionError(f"SECURITY VIOLATION: {desc} ({host}:{port}) SUCCEEDED, expected BLOCKED!")
-              except (ConnectionRefusedError, socket.timeout, OSError) as e:
-                  print(f"  [OK] BLOCKED: {desc} ({host}:{port}) -> {type(e).__name__}: {e}")
+                  addr_infos = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+              except socket.gaierror as e:
+                  raise AssertionError(f"SECURITY AUDIT FAILURE: DNS resolution failed for {desc} ({host}:{port}) -> {e}")
+
+              if not addr_infos:
+                  raise AssertionError(f"SECURITY AUDIT FAILURE: No addresses resolved for {desc} ({host}:{port})")
+
+              for family, socktype, proto, canonname, sockaddr in addr_infos:
+                  s = socket.socket(family, socktype, proto)
+                  s.settimeout(timeout)
+                  try:
+                      s.connect(sockaddr)
+                      s.close()
+                      raise AssertionError(f"SECURITY VIOLATION: {desc} ({sockaddr}) SUCCEEDED, expected ACTIVELY REJECTED!")
+                  except (socket.gaierror, socket.timeout, TimeoutError) as e:
+                      raise AssertionError(f"SECURITY VIOLATION: {desc} ({sockaddr}) TIMED OUT ({type(e).__name__}: {e}), expected active rejection (RST/ICMP)!")
+                  except OSError as e:
+                      err = getattr(e, "errno", None)
+                      if err in REJECTED_ERRNOS:
+                          print(f"  [OK] ACTIVELY REJECTED: {desc} ({sockaddr}) -> errno {err} ({os.strerror(err) if err else e})")
+                      else:
+                          raise AssertionError(f"SECURITY VIOLATION: {desc} ({sockaddr}) failed with unapproved error errno={err} ({type(e).__name__}: {e})")
+                  finally:
+                      try:
+                          s.close()
+                      except Exception:
+                          pass
+
+          def get_iptables_counters(ip6: bool = False):
+              cmd = ["sudo", "ip6tables" if ip6 else "iptables", "-L", "OUTPUT", "-v", "-n", "-x"]
+              output = subprocess.check_output(cmd, text=True)
+              rules = []
+              for line in output.splitlines():
+                  parts = line.strip().split()
+                  if len(parts) >= 9 and parts[0].isdigit() and parts[1].isdigit():
+                      rules.append({
+                          "pkts": int(parts[0]),
+                          "bytes": int(parts[1]),
+                          "target": parts[2],
+                          "prot": parts[3],
+                          "destination": parts[8],
+                          "raw": line.strip(),
+                      })
+              return rules
+
+          def get_total_pkts(filter_fn, ip6: bool = False) -> int:
+              rules = get_iptables_counters(ip6=ip6)
+              return sum(r["pkts"] for r in rules if filter_fn(r))
+
+          pg_ip = os.environ.get("PG_IP", "").strip()
+          redis_ip = os.environ.get("REDIS_IP", "").strip()
+          docker_subnets = [s.strip() for s in os.environ.get("DOCKER_SERVICE_SUBNETS", "").split() if s.strip()]
+
+          if not pg_ip or not redis_ip:
+              raise AssertionError(f"FAIL-CLOSED: PG_IP ('{pg_ip}') or REDIS_IP ('{redis_ip}') not exported to GITHUB_ENV")
+
+          print(f"Verified Runtime IPs: PG_IP={pg_ip}, REDIS_IP={redis_ip}, Subnets={docker_subnets}")
 
           print("--- 1. Testing Loopback Connectivity ---")
           s_srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -272,52 +426,164 @@ jobs:
           s_srv.close()
           print(f"  [OK] Loopback socket connection succeeded on port {lo_port}")
 
-          print("--- 2. Testing PostgreSQL Service-Container Connectivity ---")
-          conn = psycopg2.connect("postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack", connect_timeout=5)
-          cur = conn.cursor()
-          cur.execute("SELECT 1;")
-          assert cur.fetchone() == (1,)
-          conn.close()
-          print("  [OK] PostgreSQL service container connected and query returned (1,)")
+          print("--- 2. Testing Positive /32 Container Connectivity & Packet Counter Proofs ---")
+          accept_filter = lambda r: r["target"] == "ACCEPT" and (pg_ip in r["raw"] or redis_ip in r["raw"])
+          pkts_accept_before = get_total_pkts(accept_filter, ip6=False)
 
-          print("--- 3. Testing Redis Service-Container Connectivity ---")
-          r = redis.Redis(host="127.0.0.1", port=6379, socket_timeout=5)
-          assert r.ping() is True
-          print("  [OK] Redis service container ping succeeded")
+          conn_direct = psycopg2.connect(f"postgresql://test_user:test_password@{pg_ip}:5432/test_boontrack", connect_timeout=5)
+          cur_direct = conn_direct.cursor()
+          cur_direct.execute("SELECT 1;")
+          assert cur_direct.fetchone() == (1,)
+          conn_direct.close()
+          print(f"  [OK] Direct /32 PostgreSQL connected at {pg_ip}:5432")
 
-          print("--- 4. Testing External Egress to Representative Prohibited Destinations ---")
-          assert_blocked("1.1.1.1", 5432, "External PostgreSQL port")
-          assert_blocked("8.8.8.8", 6379, "External Redis port")
-          assert_blocked("1.1.1.1", 6543, "External Supabase pooler port")
-          assert_blocked("evolution-api-production-abb7.up.railway.app", 58080, "Blocked Railway app sinkhole")
-          assert_blocked("api.telegram.org", 443, "Blocked Telegram API sinkhole")
+          conn_lo = psycopg2.connect("postgresql://test_user:test_password@127.0.0.1:5432/test_boontrack", connect_timeout=5)
+          cur_lo = conn_lo.cursor()
+          cur_lo.execute("SELECT 1;")
+          assert cur_lo.fetchone() == (1,)
+          conn_lo.close()
+          print("  [OK] Loopback forwarded PostgreSQL connected at 127.0.0.1:5432")
 
-          print("--- 5. Testing SMTP Ports Blocking ---")
-          for smtp_port in (25, 465, 587, 2525):
-              assert_blocked("127.0.0.1", smtp_port, f"SMTP port {smtp_port} on loopback")
-              assert_blocked("1.1.1.1", smtp_port, f"SMTP port {smtp_port} external")
+          r_direct = redis.Redis(host=redis_ip, port=6379, socket_timeout=5)
+          assert r_direct.ping() is True
+          print(f"  [OK] Direct /32 Redis connected at {redis_ip}:6379")
 
-          print("--- 6. Testing Unapproved Ports on Docker Bridge Subnet ---")
-          pg_cids = [c.strip() for c in subprocess.check_output(["docker", "ps", "--filter", "ancestor=postgres:15", "-q"], text=True).splitlines() if c.strip()]
-          redis_cids = [c.strip() for c in subprocess.check_output(["docker", "ps", "--filter", "ancestor=redis:7-alpine", "-q"], text=True).splitlines() if c.strip()]
-          container_ips = []
-          for cid in (pg_cids + redis_cids):
-              raw_json = subprocess.check_output(["docker", "inspect", cid], text=True)
-              inspect_data = json.loads(raw_json)
-              for entry in inspect_data:
-                  for net_name, net_data in entry.get("NetworkSettings", {}).get("Networks", {}).items():
-                      ip = net_data.get("IPAddress")
-                      if ip:
-                          container_ips.append(ip)
-          container_ips = sorted(set(container_ips))
-          print(f"  Detected Docker container IPs: {container_ips}")
-          for c_ip in container_ips:
-              assert_blocked(c_ip, 8080, f"Unapproved HTTP alt port on container {c_ip}")
-              assert_blocked(c_ip, 22, f"Unapproved SSH port on container {c_ip}")
-              assert_blocked(c_ip, 25, f"SMTP port 25 on container {c_ip}")
-              assert_blocked(c_ip, 587, f"SMTP port 587 on container {c_ip}")
+          r_lo = redis.Redis(host="127.0.0.1", port=6379, socket_timeout=5)
+          assert r_lo.ping() is True
+          print("  [OK] Loopback forwarded Redis connected at 127.0.0.1:6379")
 
-          print("\n[OK] All mandatory firewall isolation & egress security checks PASSED!")
+          pkts_accept_after = get_total_pkts(accept_filter, ip6=False)
+          delta_accept = pkts_accept_after - pkts_accept_before
+          print(f"  [PROOF] Positive /32 container ACCEPT rule Δpkts = {delta_accept}")
+          assert delta_accept >= 1, f"Expected positive /32 ACCEPT Δpkts >= 1, got {delta_accept}"
+
+          print("--- 3. Testing Cross-Port & Unapproved Container Ports Rejection ---")
+          def is_subnet_reject(r):
+              if r["target"] != "REJECT":
+                  return False
+              return any(sub in r["raw"] or sub in r["destination"] for sub in docker_subnets)
+
+          pkts_subnet_before = get_total_pkts(is_subnet_reject, ip6=False)
+
+          assert_actively_rejected(pg_ip, 6379, f"Cross-port Redis on PG container {pg_ip}")
+          assert_actively_rejected(redis_ip, 5432, f"Cross-port PG on Redis container {redis_ip}")
+
+          forbidden_ports = (5433, 6543, 6380, 8080, 22)
+          for port in forbidden_ports:
+              assert_actively_rejected(pg_ip, port, f"Forbidden port {port} on PG container {pg_ip}")
+              assert_actively_rejected(redis_ip, port, f"Forbidden port {port} on Redis container {redis_ip}")
+
+          pkts_subnet_after = get_total_pkts(is_subnet_reject, ip6=False)
+          delta_subnet = pkts_subnet_after - pkts_subnet_before
+          print(f"  [PROOF] Subnet REJECT rule Δpkts = {delta_subnet}")
+          assert delta_subnet >= 1, f"Expected subnet REJECT Δpkts >= 1, got {delta_subnet}"
+
+          print("--- 4. Testing Universal SMTP Blocking & Counter Proofs ---")
+          is_smtp_rule = lambda r: "25,465,587,2525" in r["raw"]
+          pkts_smtp_v4_before = get_total_pkts(is_smtp_rule, ip6=False)
+          pkts_smtp_v6_before = get_total_pkts(is_smtp_rule, ip6=True)
+
+          smtp_ports = (25, 465, 587, 2525)
+          for port in smtp_ports:
+              assert_actively_rejected("127.0.0.1", port, f"SMTP port {port} on loopback")
+              assert_actively_rejected("::1", port, f"SMTP port {port} on IPv6 loopback")
+              assert_actively_rejected(pg_ip, port, f"SMTP port {port} on PG container")
+              assert_actively_rejected(redis_ip, port, f"SMTP port {port} on Redis container")
+              assert_actively_rejected("1.1.1.1", port, f"SMTP port {port} external")
+
+          pkts_smtp_v4_after = get_total_pkts(is_smtp_rule, ip6=False)
+          pkts_smtp_v6_after = get_total_pkts(is_smtp_rule, ip6=True)
+          delta_smtp_v4 = pkts_smtp_v4_after - pkts_smtp_v4_before
+          delta_smtp_v6 = pkts_smtp_v6_after - pkts_smtp_v6_before
+          print(f"  [PROOF] SMTP IPv4 REJECT rule Δpkts = {delta_smtp_v4}")
+          print(f"  [PROOF] SMTP IPv6 REJECT rule Δpkts = {delta_smtp_v6}")
+          assert delta_smtp_v4 >= 1, f"Expected SMTP IPv4 REJECT Δpkts >= 1, got {delta_smtp_v4}"
+          assert delta_smtp_v6 >= 1, f"Expected SMTP IPv6 REJECT Δpkts >= 1, got {delta_smtp_v6}"
+
+          print("--- 5. Testing DNS Sinkhole, External Egress & Packet Proofs ---")
+          print("  Verifying DNS sinkhole resolution strictly maps to RFC 5737 and RFC 3849...")
+          for host in BLOCKED_HOSTS:
+              res = socket.getaddrinfo(host, 443, socket.AF_UNSPEC, socket.SOCK_STREAM)
+              v4_addrs = set()
+              v6_addrs = set()
+              for item in res:
+                  ip = item[4][0]
+                  if item[0] == socket.AF_INET:
+                      v4_addrs.add(ip)
+                  elif item[0] == socket.AF_INET6:
+                      v6_addrs.add(ip)
+
+              for ip in v4_addrs:
+                  if ip.startswith("127."):
+                      raise AssertionError(f"SECURITY VIOLATION: Host {host} leaked loopback IPv4 {ip}")
+              for ip in v6_addrs:
+                  if ip == "::1":
+                      raise AssertionError(f"SECURITY VIOLATION: Host {host} leaked loopback IPv6 {ip}")
+
+              assert v4_addrs == {"192.0.2.1"}, f"Host {host} expected IPv4 {{'192.0.2.1'}}, got {v4_addrs}"
+              assert v6_addrs == {"2001:db8::1"}, f"Host {host} expected IPv6 {{'2001:db8::1'}}, got {v6_addrs}"
+              print(f"  [OK] Host {host} -> strictly {{192.0.2.1}} and {{2001:db8::1}}")
+
+          is_sinkhole_v4 = lambda r: "192.0.2.0/24" in r["raw"]
+          is_sinkhole_v6 = lambda r: "2001:db8::/32" in r["raw"]
+          is_ext_db_v4 = lambda r: "5432,5433,6543,6379,6380" in r["raw"]
+
+          pkts_sh_v4_before = get_total_pkts(is_sinkhole_v4, ip6=False)
+          pkts_sh_v6_before = get_total_pkts(is_sinkhole_v6, ip6=True)
+          pkts_ext_db_before = get_total_pkts(is_ext_db_v4, ip6=False)
+
+          for host in BLOCKED_HOSTS:
+              assert_actively_rejected(host, 443, f"Blocked host HTTPS {host}")
+              assert_actively_rejected(host, 80, f"Blocked host HTTP {host}")
+              assert_actively_rejected(host, 5432, f"Blocked host DB {host}")
+
+          assert_actively_rejected("192.0.2.1", 443, "Direct IPv4 sinkhole HTTPS")
+          assert_actively_rejected("192.0.2.1", 80, "Direct IPv4 sinkhole HTTP")
+          assert_actively_rejected("2001:db8::1", 443, "Direct IPv6 sinkhole HTTPS")
+          assert_actively_rejected("2001:db8::1", 80, "Direct IPv6 sinkhole HTTP")
+
+          def send_udp_probe(target_ip: str, target_port: int) -> None:
+              family = socket.AF_INET6 if ":" in target_ip else socket.AF_INET
+              s = socket.socket(family, socket.SOCK_DGRAM)
+              s.settimeout(0.5)
+              try:
+                  s.connect((target_ip, target_port))
+                  s.send(b"audit-sinkhole-probe")
+                  try:
+                      s.recv(256)
+                  except OSError:
+                      pass
+              finally:
+                  s.close()
+
+          send_udp_probe("192.0.2.1", 53)
+          send_udp_probe("192.0.2.1", 12345)
+          send_udp_probe("2001:db8::1", 53)
+          send_udp_probe("2001:db8::1", 12345)
+
+          assert_actively_rejected("1.1.1.1", 5432, "External PostgreSQL port")
+          assert_actively_rejected("8.8.8.8", 6379, "External Redis port")
+          assert_actively_rejected("1.1.1.1", 6543, "External Supabase pooler port")
+          assert_actively_rejected("1.1.1.1", 5433, "External alt PG port")
+          assert_actively_rejected("1.1.1.1", 6380, "External alt Redis port")
+
+          pkts_sh_v4_after = get_total_pkts(is_sinkhole_v4, ip6=False)
+          pkts_sh_v6_after = get_total_pkts(is_sinkhole_v6, ip6=True)
+          pkts_ext_db_after = get_total_pkts(is_ext_db_v4, ip6=False)
+
+          delta_sh_v4 = pkts_sh_v4_after - pkts_sh_v4_before
+          delta_sh_v6 = pkts_sh_v6_after - pkts_sh_v6_before
+          delta_ext_db = pkts_ext_db_after - pkts_ext_db_before
+
+          print(f"  [PROOF] Sinkhole IPv4 REJECT rule Δpkts = {delta_sh_v4}")
+          print(f"  [PROOF] Sinkhole IPv6 REJECT rule Δpkts = {delta_sh_v6}")
+          print(f"  [PROOF] External DB REJECT rule Δpkts = {delta_ext_db}")
+
+          assert delta_sh_v4 >= 1, f"Expected sinkhole IPv4 REJECT Δpkts >= 1, got {delta_sh_v4}"
+          assert delta_sh_v6 >= 1, f"Expected sinkhole IPv6 REJECT Δpkts >= 1, got {delta_sh_v6}"
+          assert delta_ext_db >= 1, f"Expected external DB REJECT Δpkts >= 1, got {delta_ext_db}"
+
+          print("\n[OK] All mandatory firewall isolation, /32 rules, DNS sinkhole, and packet counter proofs PASSED!")
           PY
 
       - name: Preflight Disposable PostgreSQL, Redis & Clean Environment
