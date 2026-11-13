@@ -571,13 +571,18 @@ jobs:
               s.settimeout(0.5)
               try:
                   s.connect((target_ip, target_port))
-                  s.send(b"audit-sinkhole-probe")
                   try:
+                      s.send(b"audit-sinkhole-probe")
                       s.recv(256)
                   except OSError:
                       pass
+              except OSError:
+                  pass
               finally:
-                  s.close()
+                  try:
+                      s.close()
+                  except Exception:
+                      pass
 
           send_udp_probe("192.0.2.1", 53)
           send_udp_probe("192.0.2.1", 12345)
