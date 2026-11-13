@@ -267,7 +267,9 @@ jobs:
             echo "2001:db8::1 $host" | sudo tee -a /etc/hosts >/dev/null
           done
 
-          echo "=== 4. Configure Sinkhole Routes to Loopback Interface ==="
+          echo "=== 4. Configure Sinkhole Routes and Reverse Path Filtering ==="
+          sudo sysctl -w net.ipv4.conf.all.rp_filter=2 2>/dev/null || true
+          sudo sysctl -w net.ipv4.conf.default.rp_filter=2 2>/dev/null || true
           sudo ip route replace 192.0.2.0/24 dev lo 2>/dev/null || sudo ip route add 192.0.2.0/24 dev lo 2>/dev/null || true
           sudo ip -6 route replace 2001:db8::/32 dev lo 2>/dev/null || sudo ip -6 route add 2001:db8::/32 dev lo 2>/dev/null || true
 
@@ -305,7 +307,6 @@ jobs:
 
           echo "Applying Rule 5: Reject remaining traffic on Docker service subnets"
           for subnet in "${DOCKER_SERVICE_SUBNETS[@]}"; do
-            sudo iptables -A OUTPUT -d "$subnet" -p tcp -j REJECT --reject-with tcp-reset
             sudo iptables -A OUTPUT -d "$subnet" -j REJECT --reject-with icmp-port-unreachable
           done
 
