@@ -192,16 +192,25 @@ jobs:
           fi
 
           DOCKER_SERVICE_SUBNETS=()
+          DOCKER_SERVICE_GATEWAYS=()
           for net in $SERVICE_NETS; do
             subnet=$(docker network inspect "$net" --format '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' | grep -v '^$' | head -n 1)
+            gw=$(docker network inspect "$net" --format '{{range .IPAM.Config}}{{.Gateway}}{{"\n"}}{{end}}' | grep -v '^$' | head -n 1)
+            if [ -z "$gw" ]; then
+              gw=$(docker inspect "$PG_CONTAINER" --format "{{with index .NetworkSettings.Networks \"$net\"}}{{.Gateway}}{{end}}" 2>/dev/null || true)
+            fi
             if [[ -z "$subnet" || ! "$subnet" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]]; then
               echo "❌ FAIL-CLOSED: Invalid or missing subnet for Docker service network '$net': '$subnet'" >&2
               exit 1
             fi
             DOCKER_SERVICE_SUBNETS+=("$subnet")
+            if [[ -n "$gw" && "$gw" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              DOCKER_SERVICE_GATEWAYS+=("$gw")
+            fi
           done
 
           DOCKER_SERVICE_SUBNETS=($(printf "%s\n" "${DOCKER_SERVICE_SUBNETS[@]}" | sort -u))
+          DOCKER_SERVICE_GATEWAYS=($(printf "%s\n" "${DOCKER_SERVICE_GATEWAYS[@]:-}" | sort -u | grep -v '^$' || true))
           if [ ${#DOCKER_SERVICE_SUBNETS[@]} -eq 0 ]; then
             echo "❌ FAIL-CLOSED: Zero valid Docker service subnets detected." >&2
             exit 1
@@ -213,6 +222,7 @@ jobs:
           echo "Detected REDIS_IP:             $REDIS_IP"
           echo "Detected Service Networks:     $SERVICE_NETS"
           echo "Detected Service Subnets:      ${DOCKER_SERVICE_SUBNETS[*]}"
+          echo "Detected Service Gateways:     ${DOCKER_SERVICE_GATEWAYS[*]:-none}"
 
           echo "TEST_ALLOWED_PG_CIDRS=${PG_IP}/32" >> "$GITHUB_ENV"
           echo "PG_IP=${PG_IP}" >> "$GITHUB_ENV"
@@ -268,8 +278,11 @@ jobs:
           done
 
           echo "=== 4. Configure Sinkhole Routes and Reverse Path Filtering ==="
-          sudo sysctl -w net.ipv4.conf.all.rp_filter=2 2>/dev/null || true
-          sudo sysctl -w net.ipv4.conf.default.rp_filter=2 2>/dev/null || true
+          sudo sysctl -w net.ipv4.conf.all.rp_filter=0 2>/dev/null || true
+          sudo sysctl -w net.ipv4.conf.default.rp_filter=0 2>/dev/null || true
+          for iface in /proc/sys/net/ipv4/conf/*; do
+            [ -d "$iface" ] && sudo sysctl -w "net.ipv4.conf.$(basename "$iface").rp_filter=0" 2>/dev/null || true
+          done
           sudo ip route replace 192.0.2.0/24 dev lo 2>/dev/null || sudo ip route add 192.0.2.0/24 dev lo 2>/dev/null || true
           sudo ip -6 route replace 2001:db8::/32 dev lo 2>/dev/null || sudo ip -6 route add 2001:db8::/32 dev lo 2>/dev/null || true
 
@@ -305,9 +318,18 @@ jobs:
           sudo iptables -A OUTPUT -d "${PG_IP}/32" -p tcp --dport 5432 -j ACCEPT
           sudo iptables -A OUTPUT -d "${REDIS_IP}/32" -p tcp --dport 6379 -j ACCEPT
 
+          echo "Applying Rule 4b: Permit host gateway / local delivery for kernel REJECT responses"
+          for gw in "${DOCKER_SERVICE_GATEWAYS[@]:-}"; do
+            sudo iptables -A OUTPUT -d "${gw}/32" -j ACCEPT
+          done
+          for subnet in "${DOCKER_SERVICE_SUBNETS[@]}"; do
+            sudo iptables -A OUTPUT -d "$subnet" -m addrtype --dst-type LOCAL -j ACCEPT 2>/dev/null || true
+          done
+
           echo "Applying Rule 5: Reject remaining traffic on Docker service subnets"
           for subnet in "${DOCKER_SERVICE_SUBNETS[@]}"; do
-            sudo iptables -A OUTPUT -d "$subnet" -j REJECT --reject-with icmp-port-unreachable
+            sudo iptables -A OUTPUT -d "$subnet" -p tcp -j REJECT --reject-with tcp-reset
+            sudo iptables -A OUTPUT -d "$subnet" -j REJECT --reject-with icmp-admin-prohibited
           done
 
           echo "Applying Rule 6: Reject non-loopback DB/Pooler/Redis egress"
