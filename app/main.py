@@ -89,7 +89,6 @@ from app.routes.shop_subscription_routes import (
     subscription_fastapi_router,
 )
 from app.routes.shop_event_routes import shop_event_fastapi_router
-from app.api.webhook_payment import router as webhook_payment_router
 from app.services.payout_service import PayoutService
 
 # IMPORT ROUTER ENTITLEMENT, WHATSAPP GATEWAY, PROVISIONING, GROWTH & SHIPPING LOGISTICS
@@ -338,7 +337,6 @@ app.include_router(shop_gateway_fastapi_router)
 app.include_router(shop_subscription_fastapi_router)
 app.include_router(subscription_fastapi_router)
 app.include_router(shop_event_fastapi_router)
-app.include_router(webhook_payment_router)
 
 # DAFTARKAN ENTITLEMENT, WHATSAPP GATEWAY, CONTROL, PROVISIONING & GROWTH ROUTER
 app.include_router(entitlement_router)
