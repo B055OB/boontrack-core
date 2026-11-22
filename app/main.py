@@ -128,6 +128,7 @@ from fastapi.staticfiles import StaticFiles
 
 # Supabase Client is initialized above at entry point
 
+from app.core.database import get_db_connection
 from app.core.tracing import TracingMiddleware
 
 # ============================================================================
@@ -407,71 +408,132 @@ async def root_health_check():
     }
 
 
+POSTGRES_READINESS_STATEMENT_TIMEOUT_MS = 2500
+POSTGRES_READINESS_TIMEOUT_SECONDS = 3.0
+
+
+def _probe_postgres_readiness_sync() -> bool:
+    """Bounded read-only PostgreSQL connectivity probe (`SELECT 1`).
+    Executes in a read-only transaction with a 2500ms statement timeout and
+    unconditionally closes cursor and connection in finally blocks.
+    """
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        if hasattr(conn, "set_session"):
+            try:
+                conn.set_session(readonly=True, autocommit=False)
+            except Exception:
+                pass
+        cur = conn.cursor()
+        cur.execute(f"SET LOCAL statement_timeout = '{POSTGRES_READINESS_STATEMENT_TIMEOUT_MS}ms';")
+        cur.execute("SELECT 1;")
+        row = cur.fetchone()
+        return bool(row is not None and row[0] == 1)
+    finally:
+        if cur is not None:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 @app.get("/ready", summary="Dependency Readiness Check")
 async def readiness_check(response: Response):
-    """Readiness probe: Validates genuine dependency connectivity to Supabase.
-    Returns HTTP 200 when ready to serve requests, or HTTP 503 when dependencies are unreachable.
-    Uses bounded HTTP timeouts configured at client initialization without mutating shared state.
-    Public responses return sanitized error categories; diagnostics are preserved in server logs.
+    """Readiness probe: Validates genuine dependency connectivity to BOTH Supabase REST and PostgreSQL.
+    Returns HTTP 200 only when both Supabase (`active`) and PostgreSQL (`active`) succeed,
+    or HTTP 503 when either dependency is unreachable, unconfigured, degraded, or times out.
+    Public responses strictly return sanitized statuses/categories without leaking DSNs,
+    credentials, hostnames, or raw exception messages.
     """
-    db_status = "unconfigured"
-    is_ready = False
-    error_category: Optional[str] = None
+    supabase_status = "unconfigured"
+    supabase_error_category: Optional[str] = None
 
     if not supabase_client:
-        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        return {
-            "status": "unhealthy",
-            "service": "boontrack-core",
-            "version": "1.0.0",
-            "database": {"supabase": "unconfigured"},
-            "dependencies": {
-                "supabase": {
-                    "status": "unconfigured",
-                    "category": "DEPENDENCY_NOT_CONFIGURED"
-                }
-            }
-        }
+        supabase_status = "unconfigured"
+        supabase_error_category = "DEPENDENCY_NOT_CONFIGURED"
+    else:
+        try:
+            # Offload synchronous query to worker thread.
+            # ClientOptions(postgrest_client_timeout=SUPABASE_HTTP_TIMEOUT) guarantees socket terminates.
+            res = await asyncio.to_thread(lambda: supabase_client.table("tenants").select("id").limit(1).execute())
+            if res and hasattr(res, "data") and res.data is not None:
+                supabase_status = "active"
+            else:
+                supabase_status = "degraded"
+                supabase_error_category = "DEPENDENCY_MALFORMED_RESPONSE"
+        except (httpx.TimeoutException, asyncio.TimeoutError, TimeoutError):
+            logger.warning("[READINESS CHECK] Supabase connection timed out")
+            supabase_status = "timeout"
+            supabase_error_category = "DEPENDENCY_TIMEOUT"
+        except Exception as e:
+            logger.warning("[READINESS CHECK] Supabase connection error (%s)", type(e).__name__)
+            supabase_status = "unreachable"
+            supabase_error_category = "DEPENDENCY_UNREACHABLE"
+
+    postgres_status = "unavailable"
+    postgres_error_category: Optional[str] = None
 
     try:
-        # Offload synchronous query to worker thread.
-        # ClientOptions(postgrest_client_timeout=SUPABASE_HTTP_TIMEOUT) guarantees socket terminates.
-        res = await asyncio.to_thread(lambda: supabase_client.table("tenants").select("id").limit(1).execute())
-        if res and hasattr(res, "data") and res.data is not None:
-            db_status = "active"
-            is_ready = True
+        pg_ok = await asyncio.wait_for(
+            asyncio.to_thread(_probe_postgres_readiness_sync),
+            timeout=POSTGRES_READINESS_TIMEOUT_SECONDS,
+        )
+        if pg_ok:
+            postgres_status = "active"
         else:
-            db_status = "degraded"
-            is_ready = False
-            error_category = "DEPENDENCY_MALFORMED_RESPONSE"
-    except (httpx.TimeoutException, TimeoutError) as e:
-        logger.warning(f"[READINESS CHECK] Supabase connection timed out: {e}")
-        db_status = "timeout"
-        is_ready = False
-        error_category = "DEPENDENCY_TIMEOUT"
+            postgres_status = "degraded"
+            postgres_error_category = "DEPENDENCY_MALFORMED_RESPONSE"
+    except (asyncio.TimeoutError, TimeoutError):
+        logger.warning("[READINESS CHECK] PostgreSQL probe timed out")
+        postgres_status = "timeout"
+        postgres_error_category = "DEPENDENCY_TIMEOUT"
     except Exception as e:
-        logger.warning(f"[READINESS CHECK] Supabase connection error: {e}")
-        db_status = "unreachable"
-        is_ready = False
-        error_category = "DEPENDENCY_UNREACHABLE"
+        err_type = type(e).__name__
+        err_msg_lower = str(e).lower()
+        if err_type == "QueryCanceled" or "statement timeout" in err_msg_lower or "timeout" in err_msg_lower:
+            logger.warning("[READINESS CHECK] PostgreSQL probe timed out (%s)", err_type)
+            postgres_status = "timeout"
+            postgres_error_category = "DEPENDENCY_TIMEOUT"
+        else:
+            logger.warning("[READINESS CHECK] PostgreSQL probe unavailable (%s)", err_type)
+            postgres_status = "unavailable"
+            postgres_error_category = "DEPENDENCY_UNAVAILABLE"
 
+    is_ready = (supabase_status == "active") and (postgres_status == "active")
     if not is_ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
-    dep_info = {"status": db_status}
-    if error_category:
-        dep_info["category"] = error_category
+    supabase_dep: Dict[str, str] = {"status": supabase_status}
+    if supabase_error_category:
+        supabase_dep["category"] = supabase_error_category
+
+    postgres_dep: Dict[str, str] = {"status": postgres_status}
+    if postgres_error_category:
+        postgres_dep["category"] = postgres_error_category
 
     return {
         "status": "ready" if is_ready else "unhealthy",
         "service": "boontrack-core",
         "version": "1.0.0",
         "database": {
-            "supabase": db_status
+            "supabase": supabase_status,
+            "postgres": postgres_status,
         },
         "dependencies": {
-            "supabase": dep_info
-        }
+            "supabase": supabase_dep,
+            "postgres": postgres_dep,
+        },
     }
 
 
