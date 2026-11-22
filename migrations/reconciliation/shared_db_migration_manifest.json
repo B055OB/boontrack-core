@@ -420,10 +420,6 @@
         {
           "repo": "inbox",
           "file": "20261122_revoke_public_is_jti_revoked.sql"
-        }
-        {
-          "repo": "inbox",
-          "file": "20261122_revoke_public_is_jti_revoked.sql"
         },
         {
           "repo": "inbox",
@@ -480,10 +476,6 @@
           "repo": "core",
           "file": "035_durable_checkout_sessions.sql"
         },
-        {
-          "repo": "core",
-          "file": "036_create_merchants_registry.sql"
-        }
         {
           "repo": "core",
           "file": "036_create_merchants_registry.sql"

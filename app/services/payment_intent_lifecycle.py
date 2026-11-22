@@ -103,37 +103,82 @@ class PaymentIntentLifecycleService:
 
     def initiate_or_reconcile_intent(
         self,
-        tenant_id: str,
-        order_id: str,
-        amount: int,
-        idempotency_key: str,
-        request_payload: Union[Dict[str, Any], str, bytes],
-        total_amount: Optional[int] = None,
+        tenant_id: Optional[str] = None,
+        order_id: Optional[str] = None,
+        amount: Optional[Union[int, float]] = None,
+        idempotency_key: Optional[str] = None,
+        request_payload: Optional[Union[Dict[str, Any], str, bytes]] = None,
+        total_amount: Optional[Union[int, float]] = None,
         db_conn: Optional[Any] = None,
+        *,
+        db: Optional[Any] = None,
+        sku: Optional[str] = None,
+        rail: Optional[str] = None,
+        provider: Optional[str] = None,
+        channel: Optional[str] = None,
+        request_fingerprint: Optional[str] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """Initiates a new payment intent under the given idempotency key,
         or reconciles/returns the existing intent if already present.
+
+        Accepts both positional/payload and explicit keyword arguments.
+        Returns both payment_intent_id and intent_id.
 
         Raises:
             HTTPException(409): If an intent exists for idempotency_key with a
                                 different request fingerprint.
             ValueError: If mandatory parameters are missing or invalid.
         """
-        if not idempotency_key or not str(idempotency_key).strip():
+        clean_idempotency_key = str(
+            idempotency_key if idempotency_key is not None else kwargs.get("idempotency_key", "")
+        ).strip()
+        clean_tenant_id = str(
+            tenant_id if tenant_id is not None else kwargs.get("tenant_id", "")
+        ).strip()
+        clean_order_id = str(
+            order_id if order_id is not None else kwargs.get("order_id", "")
+        ).strip()
+
+        if not clean_idempotency_key:
             raise ValueError("idempotency_key is required")
-        if not tenant_id or not str(tenant_id).strip():
+        if not clean_tenant_id:
             raise ValueError("tenant_id is required")
-        if not order_id or not str(order_id).strip():
+        if not clean_order_id:
             raise ValueError("order_id is required")
 
-        clean_idempotency_key = str(idempotency_key).strip()
-        clean_tenant_id = str(tenant_id).strip()
-        clean_order_id = str(order_id).strip()
-        computed_fingerprint = compute_request_fingerprint(request_payload)
-        effective_total_amount = total_amount if total_amount is not None else amount
+        raw_amount = amount if amount is not None else kwargs.get("amount", 0)
+        try:
+            effective_amount = int(raw_amount)
+        except (ValueError, TypeError):
+            effective_amount = 0
 
-        conn = db_conn or self._get_connection()
-        owns_conn = db_conn is None and conn is not None
+        raw_total = total_amount if total_amount is not None else kwargs.get("total_amount", effective_amount)
+        try:
+            effective_total_amount = int(raw_total)
+        except (ValueError, TypeError):
+            effective_total_amount = effective_amount
+
+        # Resolve fingerprint
+        if request_fingerprint is not None and str(request_fingerprint).strip():
+            computed_fingerprint = str(request_fingerprint).strip()
+        elif request_payload is not None:
+            computed_fingerprint = compute_request_fingerprint(request_payload)
+        else:
+            synth_payload = {
+                "tenant_id": clean_tenant_id,
+                "order_id": clean_order_id,
+                "amount": effective_amount,
+                "idempotency_key": clean_idempotency_key,
+            }
+            for opt_k in ("sku", "rail", "provider", "channel"):
+                v = locals().get(opt_k) if locals().get(opt_k) is not None else kwargs.get(opt_k)
+                if v is not None:
+                    synth_payload[opt_k] = v
+            computed_fingerprint = compute_request_fingerprint(synth_payload)
+
+        conn = db if db is not None else (db_conn if db_conn is not None else (kwargs.get("db") or kwargs.get("db_conn") or self._get_connection()))
+        owns_conn = db is None and db_conn is None and "db" not in kwargs and "db_conn" not in kwargs and conn is not None
 
         if conn is not None:
             try:
@@ -172,6 +217,8 @@ class PaymentIntentLifecycleService:
                         )
                         return {
                             "id": str(intent_id),
+                            "intent_id": str(intent_id),
+                            "payment_intent_id": str(intent_id),
                             "tenant_id": t_id,
                             "order_id": o_id,
                             "amount": amt,
@@ -202,7 +249,7 @@ class PaymentIntentLifecycleService:
                             intent_id,
                             clean_tenant_id,
                             clean_order_id,
-                            int(amount),
+                            int(effective_amount),
                             int(effective_total_amount),
                             clean_idempotency_key,
                             computed_fingerprint,
@@ -219,10 +266,12 @@ class PaymentIntentLifecycleService:
                         f"for key '{clean_idempotency_key}'."
                     )
                     return {
-                        "id": intent_id,
+                        "id": str(intent_id),
+                        "intent_id": str(intent_id),
+                        "payment_intent_id": str(intent_id),
                         "tenant_id": clean_tenant_id,
                         "order_id": clean_order_id,
-                        "amount": int(amount),
+                        "amount": int(effective_amount),
                         "total_amount": int(effective_total_amount),
                         "qr_string": None,
                         "qr_image_url": None,
@@ -254,13 +303,22 @@ class PaymentIntentLifecycleService:
                     status_code=409,
                     detail=f"Idempotency conflict: request fingerprint mismatch for key '{clean_idempotency_key}'."
                 )
-            return {**existing, "is_reused": True}
+            return {
+                **existing,
+                "id": str(existing.get("id")),
+                "intent_id": str(existing.get("id")),
+                "payment_intent_id": str(existing.get("id")),
+                "is_reused": True,
+            }
 
+        new_intent_id = str(uuid.uuid4())
         new_intent = {
-            "id": str(uuid.uuid4()),
+            "id": new_intent_id,
+            "intent_id": new_intent_id,
+            "payment_intent_id": new_intent_id,
             "tenant_id": clean_tenant_id,
             "order_id": clean_order_id,
-            "amount": int(amount),
+            "amount": int(effective_amount),
             "total_amount": int(effective_total_amount),
             "qr_string": None,
             "qr_image_url": None,
@@ -366,6 +424,8 @@ class PaymentIntentLifecycleService:
 
                     return {
                         "id": str(intent_id),
+                        "intent_id": str(intent_id),
+                        "payment_intent_id": str(intent_id),
                         "tenant_id": t_id,
                         "order_id": o_id,
                         "amount": amt,
@@ -412,6 +472,8 @@ class PaymentIntentLifecycleService:
                 "provider_ref": provider_ref,
             },
         })
+        intent["intent_id"] = str(intent.get("id"))
+        intent["payment_intent_id"] = str(intent.get("id"))
         return intent
 
     def reconcile_intent_status(
@@ -515,6 +577,8 @@ class PaymentIntentLifecycleService:
 
                     return {
                         "id": str(intent_id),
+                        "intent_id": str(intent_id),
+                        "payment_intent_id": str(intent_id),
                         "tenant_id": t_id,
                         "order_id": o_id,
                         "amount": amt,
@@ -559,6 +623,8 @@ class PaymentIntentLifecycleService:
             intent["initiation_state"] = STATE_CANCELLED
             intent["status"] = "FAILED"
 
+        intent["intent_id"] = str(intent.get("id"))
+        intent["payment_intent_id"] = str(intent.get("id"))
         return intent
 
     def _record_outbox_event(
@@ -573,14 +639,27 @@ class PaymentIntentLifecycleService:
         if not conn:
             return
         event_id = f"evt_{uuid.uuid4().hex}"
+        tenant_id = payload.get("tenant_id")
+        order_id = payload.get("order_id") or str(aggregate_id)
+        idempotency_key = payload.get("idempotency_key")
+        intent_id_candidate = payload.get("intent_id")
+        payment_intent_id = None
+        if intent_id_candidate:
+            try:
+                payment_intent_id = str(uuid.UUID(str(intent_id_candidate)))
+            except Exception:
+                payment_intent_id = None
+
         try:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO public.payment_outbox_events (
-                        event_id, aggregate_id, event_type, payload, signature, delivery_status
+                        event_id, aggregate_id, event_type, payload, signature, delivery_status,
+                        canonical_tenant_id, order_id, payment_intent_id, idempotency_key, status
                     ) VALUES (
-                        %s, %s, %s, %s, %s, 'PENDING'
+                        %s, %s, %s, %s, %s, 'PENDING',
+                        %s, %s, %s, %s, 'PENDING'
                     );
                     """,
                     (
@@ -589,6 +668,10 @@ class PaymentIntentLifecycleService:
                         str(event_type),
                         json.dumps(payload, default=str),
                         signature,
+                        tenant_id,
+                        order_id,
+                        payment_intent_id,
+                        idempotency_key,
                     ),
                 )
         except Exception as e:

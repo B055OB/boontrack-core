@@ -99,10 +99,23 @@ CREATE INDEX IF NOT EXISTS idx_payment_intents_initiation_state
 CREATE TABLE IF NOT EXISTS public.payment_outbox_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_id VARCHAR(128) NOT NULL,
-    aggregate_id VARCHAR(150) NOT NULL,
+    aggregate_id VARCHAR(150),
     event_type VARCHAR(64) NOT NULL,
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     signature VARCHAR(255),
+    canonical_tenant_id VARCHAR(100),
+    order_id VARCHAR(150),
+    payment_intent_id UUID,
+    provider VARCHAR(64),
+    provider_event_id VARCHAR(150),
+    idempotency_key VARCHAR(255),
+    provenance_envelope JSONB DEFAULT '{}'::jsonb,
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    attempt_count INT NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    locked_by VARCHAR(100),
+    locked_at TIMESTAMPTZ,
+    last_error TEXT,
     delivery_status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
     retry_count INT NOT NULL DEFAULT 0,
     next_retry_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -114,6 +127,32 @@ CREATE TABLE IF NOT EXISTS public.payment_outbox_events (
         CHECK (delivery_status IN ('PENDING', 'DELIVERED', 'FAILED', 'DEAD_LETTER'))
 );
 
+-- Ensure all Core settlement & outbox dispatcher columns exist if table pre-existed
+ALTER TABLE public.payment_outbox_events
+    ADD COLUMN IF NOT EXISTS canonical_tenant_id VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS order_id VARCHAR(150),
+    ADD COLUMN IF NOT EXISTS payment_intent_id UUID,
+    ADD COLUMN IF NOT EXISTS provider VARCHAR(64),
+    ADD COLUMN IF NOT EXISTS provider_event_id VARCHAR(150),
+    ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS provenance_envelope JSONB DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    ADD COLUMN IF NOT EXISTS attempt_count INT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS locked_by VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS locked_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS last_error TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_payment_outbox_status_attempt
+    ON public.payment_outbox_events (status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_payment_outbox_order_id
+    ON public.payment_outbox_events (order_id);
+CREATE INDEX IF NOT EXISTS idx_payment_outbox_canonical_tenant
+    ON public.payment_outbox_events (canonical_tenant_id);
+CREATE INDEX IF NOT EXISTS idx_payment_outbox_payment_intent
+    ON public.payment_outbox_events (payment_intent_id);
+CREATE INDEX IF NOT EXISTS idx_payment_outbox_idempotency_key
+    ON public.payment_outbox_events (idempotency_key);
 CREATE INDEX IF NOT EXISTS idx_payment_outbox_status_retry
     ON public.payment_outbox_events (delivery_status, next_retry_at);
 CREATE INDEX IF NOT EXISTS idx_payment_outbox_aggregate
