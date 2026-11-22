@@ -61,16 +61,33 @@ class PaymentAdapterFactory:
         credential_mapper: Optional[CredentialProfileMapper] = None,
     ) -> PaymentAdapter:
         """Menentukan dan menginisialisasi PaymentAdapter sesuai kontrak terisolasi Xendit Native PG."""
+        # DEF-10: Fail closed on None / empty config (no fallback to ManualTransferAdapter)
+        if not context_or_config and not provider_override:
+            raise PaymentConfigurationError(
+                "MISSING_PAYMENT_CONFIG: Tenant does not have a valid payment gateway configuration. "
+                "Silent fallback to manual transfer adapter is prohibited."
+            )
+
         config: Dict[str, Any] = {}
         meta: Dict[str, Any] = {}
 
         if isinstance(context_or_config, TenantRuntimeContext):
             meta = getattr(context_or_config, "metadata", {}) or {}
             config = meta.get("payment_config") if isinstance(meta.get("payment_config"), dict) else {}
+            if not config and not provider_override:
+                raise PaymentConfigurationError(
+                    "MISSING_PAYMENT_CONFIG: Tenant does not have a valid payment gateway configuration. "
+                    "Silent fallback to manual transfer adapter is prohibited."
+                )
         elif isinstance(context_or_config, dict):
             meta = dict(context_or_config)
             nested = context_or_config.get("payment_config")
             config = nested if isinstance(nested, dict) else context_or_config
+            if not config and not provider_override:
+                raise PaymentConfigurationError(
+                    "MISSING_PAYMENT_CONFIG: Tenant does not have a valid payment gateway configuration. "
+                    "Silent fallback to manual transfer adapter is prohibited."
+                )
 
         # Security Check: Reject plaintext provider secrets in metadata or config
         for forbidden_key in ("secret_key", "api_key", "server_key", "callback_token", "secret_value"):
@@ -82,36 +99,78 @@ class PaymentAdapterFactory:
                         "CLIENT_PLAINTEXT_SECRET_REJECTED: Client-supplied plaintext secrets are strictly prohibited."
                     )
 
+        raw_rail = str(config.get("rail") or config.get("mode") or "").strip().upper()
+        raw_provider = str(provider_override or config.get("provider") or config.get("gateway") or "").strip().lower()
+
+        # Direct Tenant Rail -> DIRECT_TENANT_RAIL_DISABLED
+        if raw_rail in ("MANUAL_TRANSFER", "DIRECT_TENANT", "STATIC_QRIS") or raw_provider in (
+            "manual",
+            "manual_transfer",
+            "bank_transfer",
+            "static_qris",
+            "direct_tenant",
+            "personal_qris",
+        ):
+            raise PaymentConfigurationError(
+                "DIRECT_TENANT_RAIL_DISABLED: Direct Tenant Rail (manual bank transfer / static QRIS) "
+                "is EXPERIMENTAL / PENDING_REVIEW and disabled for active checkout and adapter resolution."
+            )
+
         # 1. Reject / check explicit exclusions on provider_override or config hints
         if provider_override:
             clean_override = str(provider_override).strip().lower()
-            if clean_override in EXCLUDED_PROVIDERS:
+            if clean_override in ("midtrans", "dodo"):
                 raise PaymentConfigurationError(
                     f"EXCLUDED_PROVIDER: Provider '{provider_override}' is explicitly excluded. "
                     "Only XENDIT Native PG (rail='NATIVE_PG', provider='XENDIT', channel='DYNAMIC_QRIS') is permitted."
                 )
 
-        raw_provider = str(config.get("provider") or config.get("gateway") or "").strip().lower()
-        if raw_provider in EXCLUDED_PROVIDERS:
+        if raw_provider in ("midtrans", "dodo"):
             raise PaymentConfigurationError(
                 f"EXCLUDED_PROVIDER: Provider '{raw_provider}' is explicitly excluded. "
                 "Only XENDIT Native PG (rail='NATIVE_PG', provider='XENDIT', channel='DYNAMIC_QRIS') is permitted."
             )
 
+        if not raw_provider:
+            raise PaymentConfigurationError(
+                "MISSING_PAYMENT_PROVIDER: Payment configuration must specify a valid Native Payment Gateway "
+                "provider ('xendit' or 'duitku'). Silent fallback is prohibited."
+            )
+
+        if raw_provider not in ("xendit", "qris_xendit", "xendit_qris", "xendit_invoice", "duitku", "gateway", "dynamic_qris"):
+            raise PaymentConfigurationError(
+                f"UNSUPPORTED_PAYMENT_PROVIDER: Provider '{raw_provider}' is not a supported Native Payment Gateway "
+                "or is disabled. Silent fallback to ManualTransferAdapter is prohibited."
+            )
+
+        # Duitku Native PG adapter resolution
+        if raw_provider in ("duitku", "gateway", "dynamic_qris"):
+            from app.services.payment.gateway_duitku import DuitkuAdapter
+            merchant_code = str(config.get("merchant_code") or "").strip()
+            api_key = str(config.get("api_key") or "").strip()
+            callback_url = config.get("callback_url")
+            return_url = config.get("return_url")
+            is_sandbox = config.get("is_sandbox")
+            if not (merchant_code and api_key):
+                raise PaymentConfigurationError(
+                    "MISSING_PROVIDER_CREDENTIALS: Duitku adapter requires non-empty 'merchant_code' and 'api_key' "
+                    "in tenant payment_config."
+                )
+            return DuitkuAdapter(
+                merchant_code=merchant_code,
+                api_key=api_key,
+                callback_url=callback_url,
+                return_url=return_url,
+                is_sandbox=is_sandbox,
+            )
+
         # 2. Server-side Normalization: rail="NATIVE_PG", provider="XENDIT", channel="DYNAMIC_QRIS"
-        raw_rail = str(config.get("rail") or config.get("mode") or "").strip().upper()
         if raw_rail in ("PAYMENT_GATEWAY", "GATEWAY", "XENDIT"):
             rail = "NATIVE_PG"
         elif raw_rail:
             rail = raw_rail
         else:
             rail = "NATIVE_PG"
-
-        if rail in ("MANUAL_TRANSFER", "DIRECT_TENANT", "STATIC_QRIS"):
-            raise PaymentConfigurationError(
-                "DIRECT_TENANT_RAIL_DISABLED: Direct Tenant Rail (manual bank transfer / static QRIS) "
-                "is EXPERIMENTAL / PENDING_REVIEW and disabled for active checkout and adapter resolution."
-            )
 
         if rail != "NATIVE_PG":
             raise PaymentConfigurationError(
@@ -141,16 +200,43 @@ class PaymentAdapterFactory:
         if has_profiles:
             try:
                 prof = mapper.resolve_checkout_profile(meta, requested_provider="XENDIT")
+                # DEF-15: Keep verification_secrets strictly for inbound webhook callback_token
                 active_secs = [s for s in prof.verification_secrets if s.status == "ACTIVE"]
-                if not active_secs:
-                    raise PaymentConfigurationError(
-                        f"MISSING_PROVIDER_CREDENTIALS: No active secret version in credential profile '{prof.credential_profile_id}'."
-                    )
-                secret_key = mapper.resolve_secret_ref(active_secs[0].secret_ref)
-                callback_token = prof.expected_provider_account_id
+                if active_secs:
+                    callback_token = mapper.resolve_secret_ref(active_secs[0].secret_ref)
                 is_sandbox = (prof.environment == "sandbox")
             except (PaymentAuthorizationError, PaymentConfigurationError) as err:
                 raise PaymentConfigurationError(str(err)) from err
+
+            # DEF-15: Always resolve outbound secret_key from api_credentials.secret_ref (or outbound provider secret ref)
+            if isinstance(api_creds, dict) and (api_creds.get("secret_ref") or api_creds.get("secret_key_ref")):
+                sec_ref = api_creds.get("secret_ref") or api_creds.get("secret_key_ref")
+                secret_key = mapper.resolve_secret_ref(sec_ref)
+                if not callback_token:
+                    cb_ref = api_creds.get("callback_token_ref")
+                    if cb_ref:
+                        callback_token = mapper.resolve_secret_ref(cb_ref)
+                    else:
+                        callback_token = api_creds.get("callback_token") or ""
+                if "is_sandbox" in api_creds:
+                    is_sandbox = bool(api_creds.get("is_sandbox", True))
+            elif config.get("secret_ref"):
+                secret_key = mapper.resolve_secret_ref(config["secret_ref"])
+                if not callback_token:
+                    callback_token = config.get("callback_token") or ""
+                if "is_sandbox" in config:
+                    is_sandbox = bool(config.get("is_sandbox", True))
+            elif config.get("secret_key") or config.get("api_key"):
+                raw_sec = config.get("secret_key") or config.get("api_key")
+                if str(raw_sec).startswith(("env://", "vault://")):
+                    secret_key = mapper.resolve_secret_ref(str(raw_sec))
+                else:
+                    secret_key = str(raw_sec).strip()
+                if not callback_token:
+                    callback_token = config.get("callback_token") or ""
+            elif os.getenv("XENDIT_SECRET_KEY"):
+                secret_key = os.getenv("XENDIT_SECRET_KEY", "").strip()
+
         elif isinstance(api_creds, dict):
             sec_ref = api_creds.get("secret_ref") or api_creds.get("secret_key_ref")
             if not sec_ref:
@@ -168,15 +254,12 @@ class PaymentAdapterFactory:
             secret_key = mapper.resolve_secret_ref(config["secret_ref"])
             callback_token = config.get("callback_token") or ""
             is_sandbox = bool(config.get("is_sandbox", True))
-        else:
+        elif config.get("secret_key") or config.get("api_key"):
             raw_sec = config.get("secret_key") or config.get("api_key")
-            if raw_sec:
-                if str(raw_sec).startswith(("env://", "vault://")):
-                    secret_key = mapper.resolve_secret_ref(str(raw_sec))
-                else:
-                    secret_key = str(raw_sec).strip()
+            if str(raw_sec).startswith(("env://", "vault://")):
+                secret_key = mapper.resolve_secret_ref(str(raw_sec))
             else:
-                secret_key = os.getenv("XENDIT_SECRET_KEY", "").strip()
+                secret_key = str(raw_sec).strip()
 
             callback_token = (
                 config.get("callback_token")
@@ -188,6 +271,9 @@ class PaymentAdapterFactory:
             is_sandbox = config.get("is_sandbox")
             if is_sandbox is None:
                 is_sandbox = (os.getenv("XENDIT_ENV", "sandbox").strip().lower() == "sandbox")
+        else:
+            # Missing credentials in config
+            pass
 
         if not secret_key:
             raise PaymentConfigurationError(

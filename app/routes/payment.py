@@ -94,6 +94,8 @@ class CreateDynamicQRISResponse(BaseModel):
     qr_code_url: str
     expired_at: str
     tenant_id: str
+    payment_intent_id: Optional[str] = None
+    intent_id: Optional[str] = None
 
 
 @payment_router.post(
@@ -222,53 +224,35 @@ async def create_dynamic_qris_endpoint(
         unique_code = 0
         sku = sku or "PROD_DEFAULT"
 
-    # 4. Enforce InternalPaymentHMACVerifier for Inbox-to-Core calls
+    # 4. Enforce InternalPaymentHMACVerifier for mutation calls (DEF-05)
     req_headers = dict(request.headers)
-    has_hmac_headers = any(
-        k in req_headers
-        for k in (
-            "x-payment-internal-key-id",
-            "x-payment-internal-signature",
-            "x-payment-internal-nonce",
-            "x-payment-internal-timestamp",
-            "x-internal-hmac",
-            "x-signature",
-        )
+    raw_body = await request.body()
+    from app.core.security.payment_auth_guard import (
+        verify_stage2_payment_initiation_request,
+        PaymentAuthorizationError,
     )
-    is_internal_inbox = (
-        req_headers.get("x-internal-service", "").lower() == "inbox"
-        or os.getenv("ENFORCE_PAYMENT_HMAC", "0") == "1"
-        or request.url.path.endswith("/payments/initiate")
-    )
-
-    if has_hmac_headers or is_internal_inbox:
-        raw_body = await request.body()
-        from app.core.security.payment_auth_guard import (
-            verify_stage2_payment_initiation_request,
-            PaymentAuthorizationError,
+    try:
+        auth_ctx = verify_stage2_payment_initiation_request(
+            headers=req_headers,
+            http_method=request.method,
+            canonical_path=request.url.path,
+            order_id=order_id,
+            tenant_id_or_slug=target_tenant,
+            derived_amount=authoritative_amount,
+            sku_id=sku,
+            raw_body=raw_body,
+            db_connection_factory=get_db_connection,
         )
-        try:
-            auth_ctx = verify_stage2_payment_initiation_request(
-                headers=req_headers,
-                http_method=request.method,
-                canonical_path=request.url.path,
-                order_id=order_id,
-                tenant_id_or_slug=target_tenant,
-                derived_amount=authoritative_amount,
-                sku_id=sku,
-                raw_body=raw_body,
-                db_connection_factory=get_db_connection,
-            )
-            if auth_ctx and auth_ctx.canonical_tenant_slug:
-                target_tenant = auth_ctx.canonical_tenant_slug
-        except PaymentAuthorizationError as auth_err:
-            raise HTTPException(
-                status_code=getattr(auth_err, "http_status", 403),
-                detail={
-                    "error_code": auth_err.error_code,
-                    "message": auth_err.message,
-                },
-            )
+        if auth_ctx and auth_ctx.canonical_tenant_slug:
+            target_tenant = auth_ctx.canonical_tenant_slug
+    except PaymentAuthorizationError as auth_err:
+        raise HTTPException(
+            status_code=getattr(auth_err, "http_status", 403),
+            detail={
+                "error_code": auth_err.error_code,
+                "message": auth_err.message,
+            },
+        )
 
     # 5. Resolve tenant runtime context & adapter
     from app.services.tenant_context_resolver import tenant_context_resolver
@@ -297,7 +281,7 @@ async def create_dynamic_qris_endpoint(
             detail="DIRECT_TENANT_RAIL_DISABLED: Manual transfer and static QRIS checkout are disabled.",
         )
 
-    # 6. Terminal 2 Cross-Account Integration (PaymentIntentLifecycleService)
+    # 6. Terminal 2 Cross-Account Integration (PaymentIntentLifecycleService) (DEF-03)
     lifecycle_svc = None
     try:
         from app.services.payment_intent_lifecycle import PaymentIntentLifecycleService
@@ -316,7 +300,6 @@ async def create_dynamic_qris_endpoint(
         or req_headers.get("x-idempotency-key")
         or order_id
     )
-    request_fingerprint = f"{target_tenant}:{order_id}:{authoritative_amount}:{sku}"
     intent_data = None
     intent_id = None
     db_conn = None
@@ -329,38 +312,64 @@ async def create_dynamic_qris_endpoint(
             db_conn = None
 
         try:
+            payload_dict = payload.dict() if hasattr(payload, "dict") else payload.model_dump()
             intent_data = lifecycle_svc.initiate_or_reconcile_intent(
-                db=db_conn,
                 tenant_id=target_tenant,
                 order_id=order_id,
-                idempotency_key=idempotency_key,
-                sku=sku,
                 amount=authoritative_amount,
-                rail="NATIVE_PG",
-                provider="XENDIT",
-                channel="DYNAMIC_QRIS",
-                request_fingerprint=request_fingerprint,
+                idempotency_key=idempotency_key,
+                request_payload=payload_dict,
+                total_amount=authoritative_amount,
+                db_conn=db_conn,
             )
+            if db_conn:
+                try:
+                    db_conn.commit()
+                except Exception:
+                    pass
+
             if isinstance(intent_data, dict):
-                intent_id = intent_data.get("intent_id")
+                intent_id = intent_data.get("id") or intent_data.get("intent_id")
                 # If intent was already reconciled and active, return existing QR payload directly
-                if intent_data.get("qr_string") and intent_data.get("status") == "ACTIVE":
+                has_qr = bool(intent_data.get("qr_string") or intent_data.get("qr_image_url"))
+                is_active = (
+                    intent_data.get("status") in ("ACTIVE", "PENDING")
+                    or intent_data.get("initiation_state") in ("ACTIVE", "INITIATING")
+                )
+                if has_qr and is_active and intent_data.get("is_reused"):
                     if db_conn:
                         try:
                             db_conn.close()
                         except Exception:
                             pass
+                    intent_id_str = str(intent_id) if intent_id else None
                     return CreateDynamicQRISResponse(
                         status="ACTIVE",
                         external_id=order_id,
                         amount=intent_data.get("amount", authoritative_amount),
-                        qr_string=intent_data.get("qr_string"),
-                        qr_code_url=intent_data.get("qr_code_url", ""),
-                        expired_at=intent_data.get("expires_at", ""),
+                        qr_string=intent_data.get("qr_string") or "",
+                        qr_code_url=intent_data.get("qr_image_url", intent_data.get("qr_code_url", "")),
+                        expired_at=str(intent_data.get("expires_at", "") or ""),
                         tenant_id=target_tenant,
+                        payment_intent_id=intent_id_str,
+                        intent_id=intent_id_str,
                     )
+        except HTTPException:
+            if db_conn:
+                try:
+                    db_conn.close()
+                except Exception:
+                    pass
+            raise
         except Exception as lc_err:
-            logger.warning(f"[PAYMENT_LIFECYCLE] Intent initiation note: {lc_err}")
+            logger.error(f"[PAYMENT_LIFECYCLE] Intent initiation error: {lc_err}", exc_info=True)
+            if isinstance(lc_err, (TypeError, ValueError)):
+                if db_conn:
+                    try:
+                        db_conn.close()
+                    except Exception:
+                        pass
+                raise
 
     # 7. Execute Dynamic QRIS via XenditAdapter (using instance-resolved self.secret_key)
     try:
@@ -378,6 +387,23 @@ async def create_dynamic_qris_endpoint(
         )
     except Exception as prov_err:
         logger.error(f"[XENDIT_EXECUTION_ERROR] {prov_err}")
+        if lifecycle_svc is not None and hasattr(lifecycle_svc, "mark_provider_result"):
+            try:
+                lifecycle_svc.mark_provider_result(
+                    idempotency_key=idempotency_key,
+                    success=False,
+                    is_timeout_or_5xx=True,
+                    error_message=str(prov_err),
+                    raw_response={"error": str(prov_err)},
+                    db_conn=db_conn,
+                )
+                if db_conn:
+                    try:
+                        db_conn.commit()
+                    except Exception:
+                        pass
+            except Exception as mark_err:
+                logger.warning(f"[PAYMENT_LIFECYCLE] mark_provider_result error on provider failure: {mark_err}")
         if db_conn:
             try:
                 db_conn.close()
@@ -388,20 +414,42 @@ async def create_dynamic_qris_endpoint(
             detail=f"Payment gateway error: {str(prov_err)}",
         )
 
-    # 8. Mark provider result in PaymentIntentLifecycleService
-    if lifecycle_svc is not None and intent_id and hasattr(lifecycle_svc, "mark_provider_result"):
+    # 8. Mark provider result in PaymentIntentLifecycleService (DEF-03)
+    if lifecycle_svc is not None and hasattr(lifecycle_svc, "mark_provider_result"):
         try:
-            lifecycle_svc.mark_provider_result(
-                db=db_conn,
-                intent_id=intent_id,
-                provider_reference=res.get("qr_id") or res.get("id") or order_id,
-                status=res.get("status", "ACTIVE"),
+            exp_val = res.get("expired_at") or res.get("expires_at")
+            exp_dt = None
+            if isinstance(exp_val, str) and exp_val:
+                try:
+                    exp_dt = datetime.fromisoformat(exp_val.replace("Z", "+00:00"))
+                except Exception:
+                    exp_dt = None
+            elif isinstance(exp_val, datetime):
+                exp_dt = exp_val
+
+            res_intent = lifecycle_svc.mark_provider_result(
+                idempotency_key=idempotency_key,
+                success=True,
+                provider_ref=res.get("qr_id") or res.get("id") or order_id,
                 qr_string=res.get("qr_string", ""),
-                qr_code_url=res.get("qr_code_url", ""),
+                qr_image_url=res.get("qr_code_url", ""),
+                expires_at=exp_dt,
                 raw_response=res,
+                db_conn=db_conn,
             )
+            if db_conn:
+                try:
+                    db_conn.commit()
+                except Exception:
+                    pass
+            if isinstance(res_intent, dict) and not intent_id:
+                intent_id = res_intent.get("id") or res_intent.get("intent_id")
+        except HTTPException:
+            raise
         except Exception as mark_err:
-            logger.warning(f"[PAYMENT_LIFECYCLE] mark_provider_result note: {mark_err}")
+            logger.error(f"[PAYMENT_LIFECYCLE] mark_provider_result error: {mark_err}", exc_info=True)
+            if isinstance(mark_err, (TypeError, ValueError)):
+                raise
 
     if db_conn:
         try:
@@ -409,14 +457,18 @@ async def create_dynamic_qris_endpoint(
         except Exception:
             pass
 
+    # DEF-09: Include payment_intent_id and intent_id in CreateDynamicQRISResponse
+    intent_id_str = str(intent_id) if intent_id else None
     return CreateDynamicQRISResponse(
         status=res.get("status", "ACTIVE"),
         external_id=res.get("external_id", order_id),
         amount=res.get("amount", authoritative_amount),
         qr_string=res.get("qr_string", ""),
         qr_code_url=res.get("qr_code_url", ""),
-        expired_at=res.get("expired_at", res.get("expires_at", "")),
+        expired_at=str(res.get("expired_at", res.get("expires_at", "")) or ""),
         tenant_id=target_tenant,
+        payment_intent_id=intent_id_str,
+        intent_id=intent_id_str,
     )
 
 
